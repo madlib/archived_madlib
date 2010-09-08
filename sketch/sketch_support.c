@@ -96,7 +96,8 @@ unsigned int leftmost_zero(unsigned char *bits, size_t numsketches, size_t sketc
  * This function makes destructive updates; the caller should make sure to check
  * that we're being called in an agg context!
  */
-Datum array_set_bit_in_place(bytea *bitmap, int4 numsketches, int4 sketchsz_bits, int4 sketchnum, int4 bitnum)
+Datum array_set_bit_in_place(bytea *bitmap, int4 numsketches, 
+                             int4 sketchsz_bits, int4 sketchnum, int4 bitnum)
 {
   char            mask;
 

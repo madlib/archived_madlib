@@ -41,8 +41,8 @@ typedef struct {
   int64 counters[1];
 } cmtransval;
 
-void countmin_iter_c(int64 *, char * /* , int */);
-void countmin_num_iter_c(int64 *, Datum, cmtransval *);
+void countmin_trans_c(int64 *, char * /* , int */);
+void countmin_num_trans_c(int64 *, Datum, cmtransval *);
 Datum countmin_getcount_c(int64 *, char *input);
 Datum cmsketch_rangecount_c(cmtransval *, Datum, Datum);
 Datum cmsketch_centile_c(cmtransval *transval, int centile);
@@ -51,7 +51,7 @@ int64 cmsketch_min(int64 *counters, char *hashbits);
 void find_ranges(Datum, Datum, int, rangelist *, Oid);
 Datum countmin_dump_c(int64 *);
 
-Datum cmsketch_iter(PG_FUNCTION_ARGS);
+Datum cmsketch_trans(PG_FUNCTION_ARGS);
 Datum cmsketch_getcount(PG_FUNCTION_ARGS);
 Datum cmsketch_rangecount(PG_FUNCTION_ARGS);
 Datum cmsketch_centile(PG_FUNCTION_ARGS);
@@ -94,11 +94,11 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS);
                           0)))
         
         
-PG_FUNCTION_INFO_V1(cmsketch_iter);
+PG_FUNCTION_INFO_V1(cmsketch_trans);
 
 // This is the UDF interface.  It just converts args into C strings and 
-// calls the interesting logic in countmin_iter_c
-Datum cmsketch_iter(PG_FUNCTION_ARGS)
+// calls the interesting logic in countmin_trans_c
+Datum cmsketch_trans(PG_FUNCTION_ARGS)
 {
   bytea          *transblob = NULL;
   cmtransval     *transval;
@@ -173,7 +173,7 @@ Datum cmsketch_iter(PG_FUNCTION_ARGS)
   if (!PG_ARGISNULL(1)) {
     // convert input to a cstring
     string = OidOutputFunctionCall(transval->outFuncOid, PG_GETARG_DATUM(1));      
-    countmin_iter_c(counters, string /* , 0 */);
+    countmin_trans_c(counters, string /* , 0 */);
     
     // for numeric types we do the "dyadic ranges" as well
     switch (element_type) {
@@ -182,7 +182,7 @@ Datum cmsketch_iter(PG_FUNCTION_ARGS)
       case INT8OID:
       // case FLOAT4OID:
       // case FLOAT8OID:
-        countmin_num_iter_c(counters, PG_GETARG_DATUM(1), transval);
+        countmin_num_trans_c(counters, PG_GETARG_DATUM(1), transval);
     }
     // elog(WARNING, "returning transval of size %d", VARSIZE(transblob));
     PG_RETURN_DATUM(PointerGetDatum(transblob));
@@ -190,7 +190,7 @@ Datum cmsketch_iter(PG_FUNCTION_ARGS)
   else PG_RETURN_DATUM(PointerGetDatum(transblob)); 
 }
 
-void countmin_num_iter_c(int64 *counters, Datum val, cmtransval *transval)
+void countmin_num_trans_c(int64 *counters, Datum val, cmtransval *transval)
 {
   int64 inputi = (int64)DatumGetVal(val, transval->elementTypeOid);
   char *newstring;
@@ -205,14 +205,14 @@ void countmin_num_iter_c(int64 *counters, Datum val, cmtransval *transval)
     inputi >>= 1;
     newstring = OidOutputFunctionCall(transval->outFuncOid, inputi);      
     // elog(WARNING, "inputi = %ld, newstring = \"%s\", sketchno = %d", inputi, newstring, j);
-    countmin_iter_c(&counters[ROWS*COLUMNS*j], newstring /* , (inputi > 0) */);
+    countmin_trans_c(&counters[ROWS*COLUMNS*j], newstring /* , (inputi > 0) */);
   }
 }
 
 // Main loop of Cormode and Muthukrishnan's sketching algorithm.
 // For each call, we get an md5 hash of the value passed in.
 // We use successive 16-bit runs of the hash to choose a cell in each row of the sketch to increment.
-void countmin_iter_c(int64 *counters, char *input /* , int debug */) 
+void countmin_trans_c(int64 *counters, char *input /* , int debug */) 
 {
 //  uint64 index = 0, tmp;
 //  unsigned char c[HASHLEN_BITS/CHAR_BIT+1];
