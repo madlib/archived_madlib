@@ -323,6 +323,9 @@ bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
   bool  success = FALSE;
   size_t newsize;
   
+  if (s_in->num_vals >= s_in->capacity)
+    elog(ERROR, "attempt to insert into full sortasort");
+    
   success = sortasort_try_insert(s_in, v);
   if (success) return (transblob);
   
