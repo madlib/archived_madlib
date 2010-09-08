@@ -11,7 +11,8 @@
 #include "sketch_support.h"
 
 /* 
- * Simple linear function to find the rightmost one (# trailing zeros).
+ * Simple linear function to find the rightmost bit that's set to one 
+ * (i.e. the # of trailing zeros to the right).
  */
 unsigned int rightmost_one(unsigned char *bits, size_t numsketches, size_t sketchsz_bits, size_t sketchnum)
 {
@@ -25,13 +26,16 @@ unsigned int rightmost_one(unsigned char *bits, size_t numsketches, size_t sketc
    
   /* 
    * loop through the chunks of bits from right to left, counting zeros.  
-   * stop when we hit a 1.
+   * stop when we hit a 1.  
+   * XXX currently we look at CHAR_BIT (8) bits at a time
+   * which would seem to avoid any 32- vs. 64-bit concerns.  
+   * might be worth tuning this up to do 32 bits at a time.
    */
    for (i = sketchsz_bits/(CHAR_BIT) - 1; i >= 0; i--)
    {         
      unsigned int v = (unsigned int) s[i];
 
-     if (!v)
+     if (!v) // all CHAR_BIT of these bits are 0
        c += CHAR_BIT /* * sizeof(unsigned int) */;
      else
      {
@@ -44,6 +48,8 @@ unsigned int rightmost_one(unsigned char *bits, size_t numsketches, size_t sketc
 
 /*
  * Simple linear function to find the leftmost zero (# leading 1's)
+ * Would be nice to unify with the previous -- e.g. a foomost_bar function
+ * where foo would be left or right, and bar would be 0 or 1.
  */
 unsigned int leftmost_zero(unsigned char *bits, size_t numsketches, size_t sketchsz_bits, size_t sketchnum)
 {
@@ -136,15 +142,17 @@ unsigned int ui_rightmost_one(unsigned int v)
 }
 
 // postgres internal md5 routine only provides public access to text output
-// here we convert that text (in hex notation) back into bytes
+// here we convert that text (in hex notation) back into bytes.
+// postgres hex output has two hex characters for each 8-bit byte.
+// so the output of this will be exactly half as many bytes as the input.
 void hex_to_bytes(char *hex, unsigned char *bytes, size_t hexlen)
 {
   int i;
   
-  for (i = 0; i < hexlen; i+=2) 
+  for (i = 0; i < hexlen; i+=2) // +2 to consume 2 hex characters each time
   {
-    char c1 = hex[i];
-    char c2 = hex[i+1];
+    char c1 = hex[i];   // high-order bits
+    char c2 = hex[i+1]; // low-order bits
     int b1 = 0, b2 = 0;
     
     if (isdigit(c1)) b1 = c1 - '0';
@@ -155,7 +163,7 @@ void hex_to_bytes(char *hex, unsigned char *bytes, size_t hexlen)
     else if (c2 >= 'A' && c2 <= 'F') b2 = c2 - 'A' + 10;
     else if (c2 >= 'a' && c2 <= 'f') b2 = c2 - 'a' + 10;
     
-    bytes[i/2] = b1*16 + b2;
+    bytes[i/2] = b1*16 + b2;  // i/2 because our for loop is incrementing by 2
   }
   
 }
@@ -183,4 +191,3 @@ bit_print(unsigned char *c, int numbytes)
 	}
   elog(NOTICE, "bitmap: %s", p);
 }
-
