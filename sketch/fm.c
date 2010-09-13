@@ -72,7 +72,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
                    || IsA(fcinfo->context, WindowAggState)
     #endif
     	      )))
-          elog(NOTICE, "destructive pass by reference outside agg");
+          elog(ERROR, "destructive pass by reference outside agg");
 
 
   /* get the provided element, being careful in case it's NULL */
@@ -206,7 +206,7 @@ Datum fmsketch_getcount(PG_FUNCTION_ARGS)
   fmtransval     *transval = (fmtransval *)VARDATA((PG_GETARG_BYTEA_P(0)));
   
   // if status is not BIG then get count from htab
-  if (transval->status == SMALL)
+  if (transval->status == SMALL) 
     return ((sortasort *)(transval->storage))->num_vals;
   // else get count via fm
   else 
@@ -247,13 +247,25 @@ Datum fmsketch_merge(PG_FUNCTION_ARGS)
 {
   bytea *transblob1 = (bytea *)PG_GETARG_BYTEA_P(0);
   bytea *transblob2 = (bytea *)PG_GETARG_BYTEA_P(1);
-  fmtransval *transval1 = (fmtransval *)VARDATA(transblob1);
-  fmtransval *transval2 = (fmtransval *)VARDATA(transblob2);
+  fmtransval *transval1, *transval2;
   sortasort *s1, *s2;
   sortasort *sortashort, *sortabig;
   bytea *tblob_big, *tblob_small;
   int i;
   
+  // deal with the case where one or both items is the initial value of ''
+  if (VARSIZE(transblob1) == VARHDRSZ) {
+    // elog(NOTICE, "transblob1 is empty");
+    PG_RETURN_DATUM(PointerGetDatum(transblob2));
+  }
+  if (VARSIZE(transblob2) == VARHDRSZ) {
+    // elog(NOTICE, "transblob1 is empty");
+    PG_RETURN_DATUM(PointerGetDatum(transblob1));
+  }
+
+  transval1 = (fmtransval *)VARDATA(transblob1);
+  transval2 = (fmtransval *)VARDATA(transblob2);
+
   if (transval1->status == BIG && transval2->status == BIG) {
     // easy case: merge two FM sketches via bitwise OR.
     PG_RETURN_DATUM(big_or(transblob1, transblob2));
@@ -261,7 +273,6 @@ Datum fmsketch_merge(PG_FUNCTION_ARGS)
   else if (transval1->status == SMALL && transval2->status == SMALL) {
     s1 = (sortasort *)(transval1->storage);
     s2 = (sortasort *)(transval2->storage);
-    // elog(NOTICE, "merging shorts: %d with %d", s1->num_vals, s2->num_vals);
     tblob_big = (s1->num_vals > s2->num_vals) ? transblob1 : transblob2;
     tblob_small = (s1->num_vals <= s2->num_vals) ? transblob2 : transblob1;
     sortashort = (s1->num_vals <= s2->num_vals) ? s1 : s2;
@@ -287,13 +298,15 @@ Datum fmsketch_merge(PG_FUNCTION_ARGS)
     
   if (transval1->status == SMALL) {
     s1 = (sortasort *)(transval1->storage);
-    for(i = 0; i < s1->num_vals; i++)
+    for(i = 0; i < s1->num_vals; i++) {
       fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s1,i));
+    }
   }
   if (transval2->status == SMALL) {
     s2 = (sortasort *)(transval2->storage);
-    for(i = 0; i < s2->num_vals; i++)
+    for(i = 0; i < s2->num_vals; i++) {
       fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s2,i));
+    }
   }
   PG_RETURN_DATUM(PointerGetDatum(tblob_big));
 }
@@ -328,7 +341,7 @@ bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
     
   success = sortasort_try_insert(s_in, v);
   if (success < 0)
-    elog(ERROR, "insufficient directory capacity in sortasort")
+    elog(ERROR, "insufficient directory capacity in sortasort");
     
   if (success == TRUE) return (transblob);
   
@@ -346,7 +359,8 @@ bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
     s_in->storage_sz = s_in->storage_sz*2 + strlen(v);
     // Can't figure out how to make pfree happy with transblob
     // pfree(transblob);
+    transblob = newblob;
     success = sortasort_try_insert(s_in, v);
   }
-  return(newblob);
+  return(transblob);
 }

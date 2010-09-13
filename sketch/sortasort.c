@@ -58,7 +58,7 @@ int sortasort_try_insert(sortasort *s_in, char *v)
     /* found!  just return TRUE */
     return TRUE;
   }
-  
+
   /* sanity check */
   if (found < -1 || found >= s_in->num_vals)
     elog(ERROR, "invalid offset %d returned by sortasort_find", found);
@@ -83,7 +83,7 @@ int sortasort_try_insert(sortasort *s_in, char *v)
 
   // re-sort every SORTA_SLOP vals
   if (s_in->num_vals % SORTA_SLOP == 0)
-    qsort_arg(s_in->dir, s_in->num_vals, sizeof(unsigned), sorta_cmp, (void *)s_in);
+    qsort_arg(s_in->dir, s_in->num_vals, sizeof(s_in->dir[0]), sorta_cmp, (void *)s_in);
   
   return TRUE;
 }
@@ -98,27 +98,34 @@ int sortasort_try_insert(sortasort *s_in, char *v)
 //       at position 0
 int sortasort_find(sortasort *s, char *v)
 {
-  int guess, diff;
+  int theguess, diff;
   int hi = (s->num_vals/SORTA_SLOP)*SORTA_SLOP;
-  int min = 0, max = hi;
+  int themin = 0, themax = hi - 1;
   int i;
+  int addend, subtrahend;
 
   // binary search on the front of the sortasort
-  if (max > s->num_vals)
-    elog(ERROR, "max = %d, num_vals = %d", max, s->num_vals);
-  guess = hi / 2;
-  while (min < (max - 1)) {
-    if (!(diff = strcmp((SORTASORT_GETVAL(s,guess)), v)))
-      return guess;
+  if (themax >= s->num_vals) {
+    elog(ERROR, "max = %d, num_vals = %d", themax, s->num_vals);
+  }
+  theguess = hi / 2;
+  while (themin < themax ) {
+    if (!(diff = strcmp((SORTASORT_GETVAL(s,theguess)), v)))
+      return theguess;
+    if (themin == themax - 1) break;
     else if (diff < 0) {
       // undershot
-      min = guess;
-      guess += (max - guess) / 2;
+      addend = (themax - theguess) / 2;
+      if (!addend) addend = 1;
+      themin = theguess;
+      theguess += addend;
     }
     else {
       // overshot
-      max = guess;
-      guess -= (guess - min) / 2;
+      subtrahend = (theguess - themin) / 2;
+      if (!subtrahend) subtrahend = 1;
+      themax = theguess;
+      theguess -= subtrahend;
     }
   }
   
