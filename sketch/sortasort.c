@@ -69,6 +69,10 @@ int sortasort_try_insert(sortasort *s_in, char *v)
     return FALSE;
   }
   
+ // return -1 if no more capacity
+ if (s_in->num_vals >= s_in->capacity)
+    return -1;
+
   // copy v to the current storage offset, put a pointer into dir, 
   // update num_vals and storage_cur
   memcpy((SORTASORT_DATA(s_in) + s_in->storage_cur), v, strlen(v) + 1); // +1 to pick up the '\0'

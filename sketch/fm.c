@@ -327,7 +327,10 @@ bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
     elog(ERROR, "attempt to insert into full sortasort");
     
   success = sortasort_try_insert(s_in, v);
-  if (success) return (transblob);
+  if (success < 0)
+    elog(ERROR, "insufficient directory capacity in sortasort")
+    
+  if (success == TRUE) return (transblob);
   
   while (!success) {
     // else insufficient space
