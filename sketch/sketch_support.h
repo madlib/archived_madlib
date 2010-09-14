@@ -1,7 +1,7 @@
 #ifndef SKETCH_SUPPORT_H
 #define SKETCH_SUPPORT_H
 
-#define HASHLEN_BITS 16*8 /* md5 hash length in bits */
+#define MD5_HASHLEN_BITS 16*8 /* md5 hash length in bits */
 
 Datum array_set_bit_in_place(bytea *, int4, int4, int4, int4);
 unsigned int rightmost_one(unsigned char *, size_t, size_t, size_t);

@@ -174,7 +174,7 @@ void
 bit_print(unsigned char *c, int numbytes)
 {
   int j, i, l;
-  char p[HASHLEN_BITS+2];
+  char p[MD5_HASHLEN_BITS+2];
   unsigned int n;
   
   for (j = 0, l=0; j < numbytes; j++) {

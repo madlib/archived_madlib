@@ -215,9 +215,9 @@ void countmin_num_trans_c(int64 *counters, Datum val, cmtransval *transval)
 void countmin_trans_c(int64 *counters, char *input /* , int debug */) 
 {
 //  uint64 index = 0, tmp;
-//  unsigned char c[HASHLEN_BITS/CHAR_BIT+1];
+//  unsigned char c[MD5_HASHLEN_BITS/CHAR_BIT+1];
 //  int rmost;
-  // unsigned int hashes[HASHLEN_BITS/sizeof(unsigned int)];
+  // unsigned int hashes[MD5_HASHLEN_BITS/sizeof(unsigned int)];
   int i;
   // bytea *digest;
   Datum result;
@@ -297,7 +297,7 @@ int64 cmsketch_min(int64 *counters, char *hashbits)
 // Only needs to look at the first sketch.
 Datum countmin_getcount_c(int64 *counters, char *input)
 {
-  // unsigned char c[HASHLEN_BITS/CHAR_BIT+1];
+  // unsigned char c[MD5_HASHLEN_BITS/CHAR_BIT+1];
   // bytea *digest;
   Datum result;
   Datum nhash;
@@ -391,7 +391,7 @@ Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
   Oid typeOid = transval->elementTypeOid;
   int64 cursum = 0;
   int i;
-  // unsigned char c[HASHLEN_BITS/CHAR_BIT+1];
+  // unsigned char c[MD5_HASHLEN_BITS/CHAR_BIT+1];
   // bytea *digest;
   Datum result;
   Datum nhash;

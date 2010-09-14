@@ -22,7 +22,7 @@ PG_MODULE_MAGIC;
 #endif
 
 #define NMAP 256
-#define FMSKETCH_SZ (VARHDRSZ + NMAP*(HASHLEN_BITS)/CHAR_BIT)
+#define FMSKETCH_SZ (VARHDRSZ + NMAP*(MD5_HASHLEN_BITS)/CHAR_BIT)
 #define MINVALS 1024*12
 
 // initial size for a sortasort: we'll guess at 8 bytes per string.
@@ -72,7 +72,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
                    || IsA(fcinfo->context, WindowAggState)
     #endif
     	      )))
-          elog(ERROR, "destructive pass by reference outside agg");
+          elog(ERROR, "UDF call to a function that only works for aggs (destructive pass by reference)");
 
 
   /* get the provided element, being careful in case it's NULL */
@@ -88,9 +88,12 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
     
     // convert input to a cstring
     string = OidOutputFunctionCall(funcOid, PG_GETARG_DATUM(1));
+    // XXX should we pfree this string by hand???  What memory context are we in??
 
     // if this is the first call, initialize transval to hold a sortasort
-    if (VARSIZE(transblob) <= VARHDRSZ+8) {
+    // on the first call, we should have the empty string (if the agg was declared properly!)
+    // XXX is it better form to have the initial value be NULL??
+    if (VARSIZE(transblob) <= VARHDRSZ) {
       size_t blobsz = VARHDRSZ + sizeof(fmtransval) + SORTASORT_INITIAL_STORAGE;
       transblob = (bytea *)palloc(blobsz);
       SET_VARSIZE(transblob, blobsz);
@@ -104,6 +107,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
     }
     
     // if we've seen < MINVALS distinct values, place string into the sortasort
+    // XXXX Would be cleaner to try the sortasort insert and if it fails, then continue.
     if (transval->status == SMALL 
         && ((sortasort *)(transval->storage))->num_vals < MINVALS) {
       PG_RETURN_DATUM(PointerGetDatum(fmsketch_sortasort_insert(transblob, string)));
@@ -117,32 +121,40 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
       sortasort *s = (sortasort *)(transval->storage);
       bytea *newblob = fm_new();
       transval = (fmtransval *)VARDATA(newblob);
+ 
+      // XXXX would like to pfree the old transblob, but the memory allocator doesn't like it
+      // XXXX Meanwhile we know that this memory "leak" is of fixed size and will get
+      // XXXX deallocated "soon" when the memory context is destroyed.
       
+      // "catch up" on the past as if we were doing FM from the beginning:
       // apply the FM sketching algorithm to each value previously stored in the sortasort
       for (i = 0; i < MINVALS; i++)
         fmsketch_trans_c(newblob, SORTASORT_GETVAL(s,i));
         
-      // XXXX would like to pfree the old transblob, but the memory allocator doesn't like it
-
       // drop through to insert the current string in "BIG" mode
       transblob = newblob;
     }
         
     // if we're here we've seen >=MINVALS distinct values and are in BIG mode. 
-    // Apply FM algorithm to this string
+    // Just for sanity, let's check.
     if (transval->status != BIG)
       elog(ERROR, "FM sketch with more than min vals marked as SMALL");
+
+    // Apply FM algorithm to this string
     PG_RETURN_DATUM(fmsketch_trans_c(transblob, string));
   }
   else PG_RETURN_NULL(); 
 }
 
+// generate a bytea holding a transval in BIG mode, with the right amount of 
+// zero bits for an empty FM sketch.
 bytea *fm_new()
 {
-  bytea *newblob = (bytea *)palloc(VARHDRSZ + sizeof(fmtransval) + FMSKETCH_SZ);
+  int fmsize = VARHDRSZ + sizeof(fmtransval) + FMSKETCH_SZ;
+  bytea *newblob = (bytea *)palloc(fmsize);
   fmtransval *transval;
 
-  SET_VARSIZE(newblob, VARHDRSZ + sizeof(fmtransval) + FMSKETCH_SZ);
+  SET_VARSIZE(newblob, fmsize);
   transval = (fmtransval *)VARDATA(newblob);
   transval->status = BIG; 
 
@@ -163,9 +175,9 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
   fmtransval     *transval = (fmtransval *) VARDATA(transblob);
   bytea          *bitmaps = (bytea *)transval->storage;
   uint64          index;
-  unsigned char   c[HASHLEN_BITS/CHAR_BIT+1];
+  unsigned char   c[MD5_HASHLEN_BITS/CHAR_BIT+1];
   int             rmost;
-  // unsigned int hashes[HASHLEN_BITS/sizeof(unsigned int)];
+  // unsigned int hashes[MD5_HASHLEN_BITS/sizeof(unsigned int)];
   bytea           *digest;
   Datum           result;
 
@@ -173,11 +185,18 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
   // md5 result.  We then convert it back into binary.
   // XXX The internal POSTGRES source code is actually converting from binary to the bytea
   //     so this is rather wasteful, but the internal code is marked static and unavailable here.
+  // XXX In fact, the full cost right now is:
+  // XXX -- outfunc converts internal type to CString
+  // XXX -- here we convert CString to text, to call md5_bytea
+  // XXX -- md5_bytea generates a byte array which is converts to hex text
+  // XXX -- we then call hex_to_bytes to convert back to the byte array
   result = DirectFunctionCall1(md5_bytea, PointerGetDatum(cstring_to_text(input)) /* CStringGetTextDatum(input) */);
   digest = (bytea *)DatumGetPointer(result);
   
-  // XXXX Why does the 3rd argument work here?
-  hex_to_bytes((char *)VARDATA(digest), c, (HASHLEN_BITS/CHAR_BIT)*2);
+  // 3rd argument: the Postgres hex text representation uses two characters for each 32-bit integer.
+  // Each character is 8 bits.  So it uses 16 bits for each 32-bit integer.
+  // XXXXX HUH??? 
+  hex_to_bytes((char *)VARDATA(digest), c, (MD5_HASHLEN_BITS/CHAR_BIT)*2);
     
   /*    
    * During the insertion we insert each element
@@ -189,12 +208,12 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
   /*
    * Find index of the rightmost non-0 bit.  Turn on that bit (from left!) in the sketch.
    */
-  rmost = rightmost_one(c, 1, HASHLEN_BITS, 0);
+  rmost = rightmost_one(c, 1, MD5_HASHLEN_BITS, 0);
   
   // last argument must be the index of the bit position from the right.
   // i.e. position 0 is the rightmost.
   // so to set the bit at rmost from the left, we subtract from the total number of bits.
-  result = array_set_bit_in_place(bitmaps, NMAP, HASHLEN_BITS, index, (HASHLEN_BITS - 1) - rmost);
+  result = array_set_bit_in_place(bitmaps, NMAP, MD5_HASHLEN_BITS, index, (MD5_HASHLEN_BITS - 1) - rmost);
   return PointerGetDatum(transblob);
 }
 
@@ -224,13 +243,13 @@ Datum fmsketch_getcount_c(bytea *bitmaps)
 //  int R = 0; // Flajolet/Martin's R is handled by leftmost_zero
   unsigned int S = 0;
   static double phi = 0.77351; /* the magic constant */
-  /* char out[NMAP*HASHLEN_BITS]; */
+  /* char out[NMAP*MD5_HASHLEN_BITS]; */
   int i;
   unsigned int lz;
   
   for (i = 0; i < NMAP; i++)
   {
-    lz = leftmost_zero((unsigned char *)VARDATA(bitmaps), NMAP, HASHLEN_BITS, i);
+    lz = leftmost_zero((unsigned char *)VARDATA(bitmaps), NMAP, MD5_HASHLEN_BITS, i);
     S = S + lz;
   }
   
