@@ -206,6 +206,9 @@ Datum fmsketch_getcount(PG_FUNCTION_ARGS)
   fmtransval     *transval = (fmtransval *)VARDATA((PG_GETARG_BYTEA_P(0)));
   
   // if status is not BIG then get count from htab
+  if (VARSIZE((PG_GETARG_BYTEA_P(0))) == VARHDRSZ)
+    // nothing was ever aggregated!
+    return (0);
   if (transval->status == SMALL) 
     return ((sortasort *)(transval->storage))->num_vals;
   // else get count via fm
