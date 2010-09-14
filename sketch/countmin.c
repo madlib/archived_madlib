@@ -215,9 +215,9 @@ void countmin_num_trans_c(int64 *counters, Datum val, cmtransval *transval)
 void countmin_trans_c(int64 *counters, char *input /* , int debug */) 
 {
 //  uint64 index = 0, tmp;
-//  unsigned char c[MD5_HASHLEN_BITS/CHAR_BIT+1];
+//  unsigned char c[HASHLEN_BITS/CHAR_BIT+1];
 //  int rmost;
-  // unsigned int hashes[MD5_HASHLEN_BITS/sizeof(unsigned int)];
+  // unsigned int hashes[HASHLEN_BITS/sizeof(unsigned int)];
   int i;
   // bytea *digest;
   Datum result;
@@ -234,7 +234,7 @@ void countmin_trans_c(int64 *counters, char *input /* , int debug */)
   /* for each row of the sketch, use the 16 bits starting at 2^i mod COLUMNS, and
      increment the corresponding cell. */
   for (i = 0; i < ROWS; i++) {
-    memmove((void *)&twobytes, (void *)((char *)VARDATA(nhash) + 2*i), 2);
+    memmove((void *)&twobytes, (void *)((char *)VARDATA( DatumGetPointer(nhash)) + 2*i), 2);
     // elog(WARNING, "twobytes at %d is %d", 2*i, twobytes);
     col = twobytes % COLUMNS;
     oldval = counters[i*COLUMNS + col];  
@@ -297,17 +297,19 @@ int64 cmsketch_min(int64 *counters, char *hashbits)
 // Only needs to look at the first sketch.
 Datum countmin_getcount_c(int64 *counters, char *input)
 {
-  // unsigned char c[MD5_HASHLEN_BITS/CHAR_BIT+1];
+  // unsigned char c[HASHLEN_BITS/CHAR_BIT+1];
   // bytea *digest;
   Datum result;
   Datum nhash;
-  
+
   /* get the md5 hash of the input.  Return val is textual representation of a big hex number. */
   result = DirectFunctionCall1(md5_bytea, PointerGetDatum(cstring_to_text(input)));
   // digest = (bytea *)DatumGetPointer(result);
   nhash = DirectFunctionCall2(binary_decode, result, CStringGetTextDatum("hex"));
-    
-  PG_RETURN_INT64(cmsketch_min(counters, VARDATA(nhash)));
+
+  // VARDATA needs a pointer so added DatumGetPointer 
+  PG_RETURN_INT64(cmsketch_min(counters, VARDATA( DatumGetPointer(nhash))));
+	
 }
 
 // This routine only works on numeric types
@@ -391,7 +393,7 @@ Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
   Oid typeOid = transval->elementTypeOid;
   int64 cursum = 0;
   int i;
-  // unsigned char c[MD5_HASHLEN_BITS/CHAR_BIT+1];
+  // unsigned char c[HASHLEN_BITS/CHAR_BIT+1];
   // bytea *digest;
   Datum result;
   Datum nhash;
@@ -412,7 +414,7 @@ Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
     nhash = DirectFunctionCall2(binary_decode, result, CStringGetTextDatum("hex"));
     // elog(WARNING, "Summing in sketchno %d for string \"%s\"", sketchno, newstring);
     cursketch = &(counters[sketchno*ROWS*COLUMNS]);
-    cursum += cmsketch_min(cursketch, VARDATA(nhash));
+    cursum += cmsketch_min(cursketch, VARDATA( DatumGetPointer(nhash)));
   }
   PG_RETURN_DATUM(cursum);
 }
@@ -633,7 +635,7 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
   counters = ((cmtransval *)VARDATA(transblob))->counters;
   for (i=0, j=0; i < (VARSIZE(transblob) - VARHDRSZ)/sizeof(int64); i++) {
     if (counters[i] != 0)
-      j += sprintf(&newblob[j], "[%d:%ld], ", i, counters[i]);
+      j += sprintf(&newblob[j], "[%d:%Ld], ", i, counters[i]);
 	if (j > 10000) break;
   }
   newblob[j] = '\0';
