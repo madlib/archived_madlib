@@ -114,7 +114,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
         if (VARSIZE(transblob) <= VARHDRSZ) {
             size_t blobsz = VARHDRSZ + sizeof(fmtransval) +
                             SORTASORT_INITIAL_STORAGE;
-            transblob = (bytea *)palloc(blobsz);
+            transblob = (bytea *)palloc0(blobsz);
             SET_VARSIZE(transblob, blobsz);
             transval = (fmtransval *)VARDATA(transblob);
             transval->status = SMALL;
@@ -195,15 +195,14 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
 bytea *fm_new()
 {
     int         fmsize = VARHDRSZ + sizeof(fmtransval) + FMSKETCH_SZ;
-    bytea *     newblob = (bytea *)palloc(fmsize);
+	// use palloc0 to make sure it's initialized to 0
+    bytea *     newblob = (bytea *)palloc0(fmsize);
     fmtransval *transval;
 
     SET_VARSIZE(newblob, fmsize);
     transval = (fmtransval *)VARDATA(newblob);
     transval->status = BIG;
 
-    /* zero out a new array of FM Sketch bitmaps */
-    MemSet(VARDATA((bytea *)transval->storage), 0, FMSKETCH_SZ - VARHDRSZ);
     SET_VARSIZE((bytea *)transval->storage, FMSKETCH_SZ);
     return(newblob);
 }
@@ -221,33 +220,11 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
     fmtransval *  transval = (fmtransval *) VARDATA(transblob);
     bytea *       bitmaps = (bytea *)transval->storage;
     uint64        index;
-    unsigned char c[MD5_HASHLEN_BITS/CHAR_BIT+1];
+	unsigned char *c;
     int           rmost;
-    /* unsigned int hashes[MD5_HASHLEN_BITS/sizeof(unsigned int)]; */
-    bytea *       digest;
-    Datum         result;
+	Datum         result;
 
-    /*
-     * The POSTGRES code for md5 returns a bytea with a textual representation of the
-     * md5 result.  We then convert it back into binary.
-     * XXX The internal POSTGRES source code is actually converting from binary to the bytea
-     *     so this is rather wasteful, but the internal code is marked static and unavailable here.
-     * XXX In fact, the full cost right now is:
-     * XXX -- outfunc converts internal type to CString
-     * XXX -- here we convert CString to text, to call md5_bytea
-     * XXX -- md5_bytea generates a byte array which is converts to hex text
-     * XXX -- we then call hex_to_bytes to convert back to the byte array
-     */
-    result =
-        DirectFunctionCall1(md5_bytea,
-                            PointerGetDatum(cstring_to_text(input)) /* CStringGetTextDatum(input) */);
-    digest = (bytea *)DatumGetPointer(result);
-
-    /*
-     * 3rd argument: the Postgres hex text representation uses *two* 8-bit characters for each 8-bit byte.
-     * So the length of the digest is twice the length of a normal hash value.
-     */
-    hex_to_bytes((char *)VARDATA(digest), c, (MD5_HASHLEN_BITS/CHAR_BIT)*2);
+	c = (unsigned char *)VARDATA(md5_datum(input));
 
     /*
      * During the insertion we insert each element

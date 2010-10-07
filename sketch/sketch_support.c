@@ -11,6 +11,7 @@
 #include "nodes/execnodes.h"
 #include "fmgr.h"
 #include "sketch_support.h"
+#include "utils/builtins.h"
 
 /*
  * Simple linear function to find the rightmost bit that's set to one
@@ -228,4 +229,23 @@ bit_print(unsigned char *c, int numbytes)
         p[l] = '\0';
     }
     elog(NOTICE, "bitmap: %s", p);
+}
+
+/*
+ * The POSTGRES code for md5 returns a bytea with a textual representation of the
+ * md5 result.  We then convert it back into binary.
+ * XXX The internal POSTGRES source code is actually converting from binary to the bytea
+ *     so this is rather wasteful, but the internal code is marked static and unavailable here.
+ * XXX In fact, the full cost right now is:
+ * XXX -- outfunc converts internal type to CString
+ * XXX -- here we convert CString to text, to call md5_bytea
+ * XXX -- md5_bytea generates a byte array which it converts to hex text
+ * XXX -- we then call binary_decode to convert back to the byte array.
+ * XXX -- (alternatively we could call hex_to_bytes in sketch_support.c for the last step)
+ */
+Datum md5_datum(char *input)
+{
+	Datum hashtxt = DirectFunctionCall1(md5_bytea, PointerGetDatum(cstring_to_text(input)));
+	
+    return DirectFunctionCall2(binary_decode, hashtxt, CStringGetTextDatum("hex"));
 }
