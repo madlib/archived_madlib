@@ -62,7 +62,7 @@
  * and a cache of handy metadata that we'll reuse across calls
  */
 typedef struct {
-    Oid outFuncOid;
+    Oid outFuncOid; /* oid of the OutFunc for the data type we're supporting (int8) */
     int64 counters[RANGES][DEPTH][NUMCOUNTERS];
 } cmtransval;
 #define TRANSVAL_SZ (VARHDRSZ + sizeof(cmtransval))
@@ -156,6 +156,9 @@ Datum cmsketch_trans(PG_FUNCTION_ARGS)
     else PG_RETURN_DATUM(PointerGetDatum(transblob));
 }
 
+/*
+ * if the transblob is not initialized, do so now
+ */
 bytea *cmsketch_check_transval(bytea *transblob)
 {
     bool        typIsVarlena;
@@ -205,8 +208,8 @@ void countmin_dyadic_trans_c(int64 *counters,
 
 /*
  * Main loop of Cormode and Muthukrishnan's sketching algorithm, for setting counters in
- * sketches at a single "dyadic range". For each call, we want to run a DEPTH independent
- * hash functions.  We do this by running a single md5 hash function, and using
+ * sketches at a single "dyadic range". For each call, we want to use DEPTH independent
+ * hash functions.  We do this by using a single md5 hash function, and taking
  * successive 16-bit runs of the result as independent hash outputs.
  */
 void countmin_trans_c(int64 *counters, char *input /* , int debug */)
@@ -240,21 +243,22 @@ Datum cmsketch_combine(PG_FUNCTION_ARGS)
 {
     bytea *counterblob1 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(0));
     bytea *counterblob2 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(1));
-    int64 *counters1 = (int64 *)VARDATA(counterblob1);
     int64 *counters2 = (int64 *)VARDATA(counterblob2);
     bytea *newblob;
     int64 *newcounters;
     int    i;
-    int    sz = MAX(VARSIZE(counterblob1), VARSIZE(counterblob2));
+	int    sz = VARSIZE(counterblob1);
 
+	/* allocate a new transval as a copy of counterblob1 */
     newblob = (bytea *)palloc(sz);
-    SET_VARSIZE(newblob, sz);
+	memcpy(newblob, counterblob1, sz);
     newcounters = (int64 *)VARDATA(newblob);
 
+	/* add in values from counterblob2 */
     for (i = 0;
          i < RANGES*DEPTH*NUMCOUNTERS;
          i++)
-        newcounters[i] = counters1[i] + counters2[i];
+        newcounters[i] += counters2[i];
 
     PG_RETURN_DATUM(PointerGetDatum(newblob));
 }
@@ -468,7 +472,6 @@ Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
             curguess = higuess - (higuess - curguess) / 2;
         }
     }
-/*    return(cmsketch_rangecount_c(transval, MINVAL, curguess)); */
     return(curguess);
 }
 
@@ -551,7 +554,6 @@ Datum cmsketch_histogram_c(cmtransval *transval,
 /****** SUPPORT ROUTINES *******/
 PG_FUNCTION_INFO_V1(cmsketch_dump);
 
-/* UDF wrapper.  All the interesting stuff is in fmsketch_dump_c */
 Datum cmsketch_dump(PG_FUNCTION_ARGS)
 {
     bytea *transblob = (bytea *)PG_GETARG_BYTEA_P(0);
