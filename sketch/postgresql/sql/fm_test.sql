@@ -15,4 +15,5 @@ select fmcount(T.i::text)
   from generate_series(1,100) AS R(i),
        generate_series(1,10000,10) AS T(i);
 
-
+-- tests for all-NULL column
+select fmcount(NULL::integer) from generate_series(1,10000) as R(i);
