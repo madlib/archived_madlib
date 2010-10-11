@@ -104,7 +104,7 @@ unsigned int leftmost_zero(unsigned char *bits,
                 ((s[i] * 0x0802LU &
                   0x22110LU) |
                  (s[i] * 0x8020LU &
-                                  0x88440LU)) * 0x10101LU >> 16;
+                  0x88440LU)) * 0x10101LU >> 16;
             v = (unsigned int) b ^ 0xff;
 
             c += ui_rightmost_one(v);
@@ -245,13 +245,15 @@ bit_print(unsigned char *c, int numbytes)
  */
 Datum md5_datum(char *input)
 {
-	Datum hashtxt = DirectFunctionCall1(md5_bytea, PointerGetDatum(cstring_to_text(input)));
-	
-    return DirectFunctionCall2(binary_decode, hashtxt, CStringGetTextDatum("hex"));
+    Datum hashtxt =
+        DirectFunctionCall1(md5_bytea, PointerGetDatum(cstring_to_text(input)));
+
+    return DirectFunctionCall2(binary_decode, hashtxt,
+                               CStringGetTextDatum("hex"));
 }
 
 
-//  TEST ROUTINES
+/*  TEST ROUTINES */
 PG_FUNCTION_INFO_V1(sketch_array_set_bit_in_place);
 Datum sketch_array_set_bit_in_place(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(sketch_rightmost_one);

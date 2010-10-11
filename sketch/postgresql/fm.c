@@ -195,7 +195,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
 bytea *fm_new()
 {
     int         fmsize = VARHDRSZ + sizeof(fmtransval) + FMSKETCH_SZ;
-	// use palloc0 to make sure it's initialized to 0
+    /* use palloc0 to make sure it's initialized to 0 */
     bytea *     newblob = (bytea *)palloc0(fmsize);
     fmtransval *transval;
 
@@ -217,14 +217,14 @@ bytea *fm_new()
  */
 Datum fmsketch_trans_c(bytea *transblob, char *input)
 {
-    fmtransval *  transval = (fmtransval *) VARDATA(transblob);
-    bytea *       bitmaps = (bytea *)transval->storage;
-    uint64        index;
-	unsigned char *c;
-    int           rmost;
-	Datum         result;
+    fmtransval *   transval = (fmtransval *) VARDATA(transblob);
+    bytea *        bitmaps = (bytea *)transval->storage;
+    uint64         index;
+    unsigned char *c;
+    int            rmost;
+    Datum          result;
 
-	c = (unsigned char *)VARDATA(md5_datum(input));
+    c = (unsigned char *)VARDATA(md5_datum(input));
 
     /*
      * During the insertion we insert each element
@@ -281,8 +281,10 @@ Datum fmsketch_getcount_c(bytea *bitmaps)
 {
 /*  int R = 0; // Flajolet/Martin's R is handled by leftmost_zero */
     unsigned int  S = 0;
-    static double phi = 0.77351;     /* the magic constant */
-    /* char out[NMAP*MD5_HASHLEN_BITS]; */
+    static double phi = 0.77351;     /*
+                                      * the magic constant 
+                                      * char out[NMAP*MD5_HASHLEN_BITS]; 
+                                      */
     int           i;
     unsigned int  lz;
 
