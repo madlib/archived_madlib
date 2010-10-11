@@ -1,0 +1,121 @@
+\i sketches.sql
+DROP FUNCTION IF EXISTS  big_or(bitmap1 bytea, bitmap2 bytea) CASCADE;
+psql:sketches.sql:1: NOTICE:  function big_or(bytea,bytea) does not exist, skipping
+CREATE FUNCTION big_or(bitmap1 bytea, bitmap2 bytea)
+RETURNS bytea
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS fmsketch_trans(bitmaps bytea, input anyelement) CASCADE;
+psql:sketches.sql:7: NOTICE:  function fmsketch_trans(bytea,anyelement) does not exist, skipping
+CREATE FUNCTION fmsketch_trans(bitmaps bytea, input anyelement) 
+RETURNS bytea 
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS fmsketch_getcount(bitmaps bytea) CASCADE;
+psql:sketches.sql:13: NOTICE:  function fmsketch_getcount(bytea) does not exist, skipping
+CREATE FUNCTION fmsketch_getcount(bitmaps bytea) 
+RETURNS int8 
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS fmsketch_merge(bitmaps1 bytea, bitmaps2 bytea) CASCADE;
+psql:sketches.sql:19: NOTICE:  function fmsketch_merge(bytea,bytea) does not exist, skipping
+CREATE FUNCTION fmsketch_merge(bitmaps1 bytea, bitmaps2 bytea) 
+RETURNS bytea 
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP AGGREGATE IF EXISTS fmcount(anyelement);
+psql:sketches.sql:25: NOTICE:  aggregate fmcount(anyelement) does not exist, skipping
+CREATE AGGREGATE fmcount(anyelement)
+(
+    sfunc = fmsketch_trans,
+    stype = bytea, 
+    finalfunc = fmsketch_getcount,
+--  UNCOMMENT THE NEXT LINE TO PARALLELIZE ON GREENPLUM
+--    prefunc = fmsketch_merge,
+    initcond = '' 
+);
+DROP FUNCTION IF EXISTS cmsketch_trans(bytea, int8) CASCADE;
+psql:sketches.sql:36: NOTICE:  function cmsketch_trans(bytea,int8) does not exist, skipping
+CREATE FUNCTION cmsketch_trans(bitmaps bytea, input int8) 
+RETURNS bytea 
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS cmsketch_out(bytea) CASCADE;
+psql:sketches.sql:42: NOTICE:  function cmsketch_out(bytea) does not exist, skipping
+CREATE FUNCTION cmsketch_out(counters bytea) 
+RETURNS bytea 
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS cmsketch_combine(bytea, bytea) CASCADE;
+psql:sketches.sql:48: NOTICE:  function cmsketch_combine(bytea,bytea) does not exist, skipping
+CREATE FUNCTION cmsketch_combine(bytea, bytea) 
+RETURNS bytea
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP AGGREGATE IF EXISTS cmsketch(int8);
+psql:sketches.sql:54: NOTICE:  aggregate cmsketch(int8) does not exist, skipping
+CREATE AGGREGATE cmsketch(int8)
+(
+    sfunc = cmsketch_trans,
+    stype = bytea, 
+    finalfunc = cmsketch_out,
+    initcond = ''
+--  UNCOMMENT THE NEXT LINE TO PARALLELIZE ON GREENPLUM
+--    , prefunc = cmsketch_combine
+);
+DROP FUNCTION IF EXISTS cmsketch_getcount(bytea, int8) CASCADE;
+psql:sketches.sql:65: NOTICE:  function cmsketch_getcount(bytea,int8) does not exist, skipping
+CREATE FUNCTION cmsketch_getcount(counters bytea, val int8) 
+RETURNS int8 
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS cmsketch_rangecount(bytea, int8, int8) CASCADE;
+psql:sketches.sql:71: NOTICE:  function cmsketch_rangecount(bytea,int8,int8) does not exist, skipping
+CREATE FUNCTION cmsketch_rangecount(bytea, int8, int8)
+RETURNS int8
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS cmsketch_centile(bytea, int4) CASCADE;
+psql:sketches.sql:77: NOTICE:  function cmsketch_centile(bytea,int4) does not exist, skipping
+CREATE FUNCTION cmsketch_centile(bytea, int4)
+RETURNS int8
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+DROP FUNCTION IF EXISTS cmsketch_histogram(bytea, int8, int8, int4) CASCADE;
+psql:sketches.sql:83: NOTICE:  function cmsketch_histogram(bytea,int8,int8,int4) does not exist, skipping
+CREATE FUNCTION cmsketch_histogram(bytea, int8, int8, int4)
+RETURNS int8[]
+AS '$libdir/sketches'
+LANGUAGE C STRICT;
+select fmcount(T.i)
+  from generate_series(1,100) AS R(i),
+       generate_series(1,10000,10) AS T(i);
+ fmcount 
+---------
+    1000
+(1 row)
+
+select fmcount(CAST('2010-10-10' As date) + CAST((T.i || ' days') As interval))
+  from generate_series(1,100) AS R(i),
+       generate_series(1,10000,10) AS T(i);
+ fmcount 
+---------
+    1000
+(1 row)
+
+select fmcount(T.i::float)
+  from generate_series(1,100) AS R(i),
+       generate_series(1,10000,10) AS T(i);
+ fmcount 
+---------
+    1000
+(1 row)
+
+select fmcount(T.i::text)
+  from generate_series(1,100) AS R(i),
+       generate_series(1,10000,10) AS T(i);
+ fmcount 
+---------
+    1000
+(1 row)
+
