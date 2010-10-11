@@ -1,6 +1,6 @@
 PG_CONFIG = pg_config
 MODULE_big = sketches
-DATA_built = sketches.sql sketch_support.sql
+DATA_built = sketches.sql
 PG_CPPFLAGS=-g
 SRCS = fm.c sketch_support.c sortasort.c countmin.c
 OBJS = $(SRCS:.c=.o)
