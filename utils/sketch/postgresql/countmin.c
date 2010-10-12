@@ -565,7 +565,8 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
     for (i=0, j=0; i < (VARSIZE(transblob) - VARHDRSZ)/sizeof(int64);
          i++) {
         if (counters[i] != 0)
-            j += sprintf(&newblob[j], "[%d:%ld], ", i, counters[i]);
+            j += sprintf(&newblob[j], "[%d:" INT64_FORMAT "], ",
+						 i, counters[i]);
         if (j > 10000) break;
     }
     newblob[j] = '\0';
@@ -596,7 +597,7 @@ int64 hash_counters_iterate(Datum hashval,
      */
     for (i = 0; i < DEPTH; i++) {
         memmove((void *)&twobytes,
-                (void *)((char *)VARDATA(hashval) + 2*i), 2);
+                (void *)((char *)VARDATA(DatumGetPointer(hashval)) + 2*i), 2);
         /* elog(WARNING, "twobytes at %d is %d", 2*i, twobytes); */
         col = twobytes % NUMCOUNTERS;
         retval = (*lambdaptr)(i, col, counters, retval);

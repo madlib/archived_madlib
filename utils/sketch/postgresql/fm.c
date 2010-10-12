@@ -224,7 +224,7 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
     int            rmost;
     Datum          result;
 
-    c = (unsigned char *)VARDATA(md5_datum(input));
+    c = (unsigned char *)VARDATA(DatumGetPointer(md5_datum(input)));
 
     /*
      * During the insertion we insert each element
