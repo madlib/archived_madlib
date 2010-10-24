@@ -53,10 +53,10 @@
 
 
 /* countmin is defined over postgres int8 type.  Should probably use the max of that type, not LONG_MAX */
-#define MAXVAL (LONG_MAX >> 1)
+#define MAXVAL (LONG_MAX>>1)
 /* Midpoint is 1/2 of MAX .. i.e. shift MAX right. */
 #define MIDVAL (MAXVAL >> 1)
-#define MINVAL (LONG_MIN >> 1)
+#define MINVAL (LONG_MIN>>1)
 
 /*
  * the transition value struct for the aggregate.  Holds the sketch counters
@@ -348,7 +348,6 @@ Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
         val = cmsketch_getcount_c(transval->outFuncOid,
                                   &(transval->counters[dyad][0][0]),
                                   (Datum) r.spans[i][0] >> dyad);
-        elog(NOTICE, "adding %ld for [%ld-%ld]", val, r.spans[i][0]>>dyad, ((r.spans[i][0])>>(dyad-1)) - 1);
         cursum += val;
     }
     PG_RETURN_DATUM(cursum);
@@ -375,7 +374,6 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     uint64 width;
 
 	/* Sanity check */
-    elog(NOTICE, "find_ranges_internal(%ld, %ld, %d)", bot, top, power);
     if (top < bot || power < 0)
         return;
 
@@ -391,7 +389,6 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
      * code below, so recurse to the left and right of 0 by hand
      */
     if (top >= 0 && bot < 0) {
-      elog(NOTICE, "top(%ld) >= 0 && bot(%ld) < 0", top, bot);
         find_ranges_internal(bot, -1, power-1, r);
         find_ranges_internal(0, top, power-1, r);
         return;
@@ -401,12 +398,21 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
      * if we get here, we have a range of size 2 or greater.
      * Find the largest dyadic range width in this range.
      */
-    dyad = trunc(log2(top - bot + 1));
+    dyad = trunc(log2(top - bot + (int64)1));
+
+    /* In some cases with large numbers, log2 rounds up incorrectly. */
+    while (pow(2,dyad) > (top - bot + (int64)1)) {
+      /*
+       * elog(NOTICE, 
+       *      "found log2(%ld-%ld+1) = %f, but pow(2,%d) = %f > (%ld-%ld+1) = %ld. decrementing dyad",
+       *      top, bot, log2(top-bot+1), dyad, pow(2,dyad), top, bot, top-bot+1);
+       */
+       dyad--;
+    }
+    
     width = (uint64) pow(2, dyad);
 
-	/* for symmetry with the next else, shouldn't this say "top == MINVAL || ..." */
-    if ((bot % width) == 0) {
-      elog(NOTICE, "bot(%ld) %c width(%ld) == 0", bot, '%', width);
+    if (bot == MINVAL || (bot % width) == 0) {
       
         /* our range is left-aligned on the dyad's min */
         r->spans[r->emptyoffset][0] = bot;
@@ -421,7 +427,6 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
          * our range is right-aligned on the dyad's max.
          * the +1 accounts for 0-indexing.
          */
-         elog(NOTICE, "top(%ld) == MAXVAL or width(%ld) == 0", top, width);
         r->spans[r->emptyoffset][0] = (top - width + 1);
         r->spans[r->emptyoffset][1] = top;
         r->emptyoffset++;
@@ -432,7 +437,6 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
         /* we straddle a power of 2 */
         int64 power_of_2 = width*(top/width);
         
-        elog(NOTICE, "bot(%ld), top(%ld) straddles a power of 2.  recursing (width=%ld, power_of_2 = %ld)...", bot, top, width, power_of_2);
         /* recurse on right at finer grain */
         find_ranges_internal(bot, power_of_2 - 1, power-1, r);
         /* recurse on left at finer grain */
