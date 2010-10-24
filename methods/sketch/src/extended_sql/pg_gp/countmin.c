@@ -63,7 +63,7 @@
  * and a cache of handy metadata that we'll reuse across calls
  */
 typedef struct {
-	Oid typOid;     /* oid of the data type we are sketching */
+    Oid typOid;     /* oid of the data type we are sketching */
     Oid outFuncOid; /* oid of the OutFunc for that data type */
     int64 counters[RANGES][DEPTH][NUMCOUNTERS];
 } cmtransval;
@@ -182,7 +182,7 @@ bytea *cmsketch_check_transval(bytea *transblob)
 
         /* set up outfunc for stringifying INT8's according to PG type rules */
         transval = (cmtransval *)VARDATA(transblob);
-		transval->typOid = INT8OID; /* as of now we only support INT8 */
+        transval->typOid = INT8OID; /* as of now we only support INT8 */
         getTypeOutputInfo(transval->typOid,
                           &(transval->outFuncOid),
                           &typIsVarlena);
@@ -246,16 +246,17 @@ Datum cmsketch_combine(PG_FUNCTION_ARGS)
 {
     bytea *counterblob1 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(0));
     bytea *counterblob2 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(1));
-    int64 *counters2 = (int64 *)VARDATA(counterblob2);
+    int64 *counters2 = (int64 *)
+           ((cmtransval *)(VARDATA(counterblob2)))->counters;
     bytea *newblob;
     int64 *newcounters;
     int    i;
-	int    sz = VARSIZE(counterblob1);
+    int    sz = VARSIZE(counterblob1);
 
 	/* allocate a new transval as a copy of counterblob1 */
     newblob = (bytea *)palloc(sz);
-	memcpy(newblob, counterblob1, sz);
-    newcounters = (int64 *)VARDATA(newblob);
+    memcpy(newblob, counterblob1, sz);
+    newcounters = (int64 *)((cmtransval *)(VARDATA(newblob)))->counters;
 
 	/* add in values from counterblob2 */
     for (i = 0;
