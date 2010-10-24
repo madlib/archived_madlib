@@ -145,7 +145,7 @@ Datum cmsketch_trans(PG_FUNCTION_ARGS)
              "destructive pass by reference outside agg");
 
     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
-    transval = (cmtransval *)VARDATA(DatumGetPointer(transblob));
+    transval = (cmtransval *)(VARDATA(transblob));
 
     counters = (int64 *)transval->counters;
 
