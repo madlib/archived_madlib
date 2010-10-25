@@ -41,9 +41,9 @@
 
 #define LONGBITS (sizeof(int64)*CHAR_BIT)
 #define RANGES LONGBITS
-#define DEPTH 8
+#define DEPTH 8 /* magic tuning value: number of hash functions */
 /* #define NUMCOUNTERS 65535 */
-#define NUMCOUNTERS 1024
+#define NUMCOUNTERS 1024  /* another magic tuning value: modulus of hash functions */
 
 #ifndef MIN
 #define MAX(x,y) ((x > y) ? x : y)
@@ -51,21 +51,41 @@
 #define ABS(a)   (((a) < 0) ? -(a) : (a))
 #endif
 
-#define MAXVAL (LONG_MAX >> 1)
+
+/* countmin is defined over postgres int8 type.  Should probably use the max of that type, not LONG_MAX */
+#define MAXVAL (LONG_MAX>>1)
 /* Midpoint is 1/2 of MAX .. i.e. shift MAX right. */
 #define MIDVAL (MAXVAL >> 1)
-#define MINVAL (LONG_MIN >> 1)
+#define MINVAL (LONG_MIN>>1)
 
+typedef int64 countmin[DEPTH][NUMCOUNTERS];
 
 /*
  * the transition value struct for the aggregate.  Holds the sketch counters
  * and a cache of handy metadata that we'll reuse across calls
  */
 typedef struct {
-    Oid outFuncOid; /* oid of the OutFunc for the data type we're supporting (int8) */
-    int64 counters[RANGES][DEPTH][NUMCOUNTERS];
+    Oid typOid;     /* oid of the data type we are sketching */
+    Oid outFuncOid; /* oid of the OutFunc for that data type */
+    countmin sketches[RANGES];
 } cmtransval;
+
+typedef struct {
+    int64 num;
+    int64 cnt;
+} numcnt;
+
+typedef struct {
+  int    num_mfvs;
+  int    next_mfv;
+  Oid    typOid;
+  Oid    outFuncOid;
+  countmin sketch;  /* a single countmin sketch */
+  numcnt mfvs[0]; /* array of frequent values, stored at end of next field */
+} mfvtransval;
+
 #define TRANSVAL_SZ (VARHDRSZ + sizeof(cmtransval))
+#define MFV_TRANSVAL_SZ(i) (VARHDRSZ + sizeof(mfvtransval) + i*sizeof(numcnt))
 
 /*
  * a data structure to hold the constituent power-of-two ranges corresponding to
@@ -77,38 +97,44 @@ typedef struct {
 } rangelist;
 
 
-void countmin_trans_c(int64 *, char * /* , int */);
+void countmin_trans_c(countmin, Datum, Oid);
+Datum cmsketch_mfv_trans_c(int64 *, char *);
 bytea *cmsketch_check_transval(bytea *);
-void countmin_dyadic_trans_c(int64 *, int64, cmtransval *);
-int64 cmsketch_getcount_c(Oid funcOid, int64 *counters, Datum arg);
+void countmin_dyadic_trans_c(cmtransval *, int64);
+int64 cmsketch_getcount_c(countmin, Datum, Oid);
 Datum cmsketch_rangecount_c(cmtransval *, Datum, Datum);
 Datum cmsketch_centile_c(cmtransval *, int, int64);
-Datum cmsketch_histogram_c(cmtransval *, int64, int64, int);
+Datum cmsketch_width_histogram_c(cmtransval *, int64, int64, int);
+Datum cmsketch_depth_histogram_c(cmtransval *, int);
+Datum mfvsketch_out_c(mfvtransval *);
+
 void find_ranges(int64, int64, rangelist *);
 void find_ranges_internal(int64, int64, int, rangelist *);
 Datum countmin_dump_c(int64 *);
-int64 increment_counter(unsigned int, unsigned int, int64 *, int64);
-int64 min_counter(unsigned int, unsigned int, int64 *, int64);
-int64 hash_counters_iterate(Datum, int64 *, int64, int64 (*lambdaptr)(
+int64 increment_counter(unsigned int, unsigned int, countmin, int64);
+int64 min_counter(unsigned int, unsigned int, countmin, int64);
+int64 hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
                                 unsigned int,
                                 unsigned int,
-                                int64 *,
+                                countmin,
                                 int64));
 bool gt(int64, int64);
 bool eq(int64, int64);
 bool false_fn(int64, int64);
-int64 cmsketch_count_search(cmtransval *, bool (*) (int64, int64), int64, bool (
-                                *) (int64, int64), int64);
+int64 cmsketch_count_search(cmtransval *, bool (*) (int64, int64), int64, 
+                            bool ( *) (int64, int64), int64);
 
 Datum cmsketch_trans(PG_FUNCTION_ARGS);
+Datum mfvsketch_trans(PG_FUNCTION_ARGS);
 Datum cmsketch_getcount(PG_FUNCTION_ARGS);
 Datum cmsketch_rangecount(PG_FUNCTION_ARGS);
 Datum cmsketch_centile(PG_FUNCTION_ARGS);
-Datum cmsketch_histogram(PG_FUNCTION_ARGS);
+Datum cmsketch_width_histogram(PG_FUNCTION_ARGS);
+Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS);
 Datum cmsketch_out(PG_FUNCTION_ARGS);
 Datum cmsketch_combine(PG_FUNCTION_ARGS);
 Datum cmsketch_dump(PG_FUNCTION_ARGS);
-
+Datum mfvsketch_out(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(cmsketch_trans);
 
@@ -120,12 +146,6 @@ Datum cmsketch_trans(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = NULL;
     cmtransval *transval;
-    int64 *     counters;
-    char *      string;
-    /*
-     * char           typcategory;
-     * bool           typispreferred;
-     */
 
     /*
      * This function makes destructive updates to its arguments.
@@ -141,16 +161,12 @@ Datum cmsketch_trans(PG_FUNCTION_ARGS)
              "destructive pass by reference outside agg");
 
     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
-    transval = (cmtransval *)VARDATA(transblob);
-
-    counters = (int64 *)transval->counters;
+    transval = (cmtransval *)(VARDATA(transblob));
 
     /* get the provided element, being careful in case it's NULL */
     if (!PG_ARGISNULL(1)) {
-        /* convert input to a cstring */
-        string = OidOutputFunctionCall(transval->outFuncOid,
-                                       PG_GETARG_INT64(1));
-        countmin_dyadic_trans_c(counters, PG_GETARG_INT64(1), transval);
+		/* the following line modifies the contents of transval, and hence transblob */
+        countmin_dyadic_trans_c(transval, PG_GETARG_INT64(1));
         PG_RETURN_DATUM(PointerGetDatum(transblob));
     }
     else PG_RETURN_DATUM(PointerGetDatum(transblob));
@@ -177,7 +193,8 @@ bytea *cmsketch_check_transval(bytea *transblob)
 
         /* set up outfunc for stringifying INT8's according to PG type rules */
         transval = (cmtransval *)VARDATA(transblob);
-        getTypeOutputInfo(INT8OID,
+        transval->typOid = INT8OID; /* as of now we only support INT8 */
+        getTypeOutputInfo(transval->typOid,
                           &(transval->outFuncOid),
                           &typIsVarlena);
     }
@@ -187,20 +204,12 @@ bytea *cmsketch_check_transval(bytea *transblob)
 /*
  * perform multiple sketch insertions, one for each dyadic range (from 0 up to RANGES-1).
  */
-void countmin_dyadic_trans_c(int64 *counters,
-                             int64 inputi,
-                             cmtransval *transval)
+void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
 {
-    char *newstring;
     int   j;
 
-    /*
-     *
-     */
     for (j = 0; j < RANGES; j++) {
-        /* stringify input for the md5 function */
-        newstring = OidOutputFunctionCall(transval->outFuncOid, inputi);
-        countmin_trans_c(&counters[j*DEPTH*NUMCOUNTERS], newstring /* , (inputi > 0) */);
+        countmin_trans_c(transval->sketches[j], Int64GetDatum(inputi), transval->outFuncOid);
         /* now divide by 2 for the next dyadic range */
         inputi >>= 1;
     }
@@ -212,9 +221,13 @@ void countmin_dyadic_trans_c(int64 *counters,
  * hash functions.  We do this by using a single md5 hash function, and taking
  * successive 16-bit runs of the result as independent hash outputs.
  */
-void countmin_trans_c(int64 *counters, char *input /* , int debug */)
+void countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
 {
     Datum nhash;
+    char *input;
+    
+    /* stringify input for the md5 function */
+    input = OidOutputFunctionCall(outFuncOid, dat);
 
     /* get the md5 hash of the input. */
     nhash = md5_datum(input);
@@ -223,7 +236,7 @@ void countmin_trans_c(int64 *counters, char *input /* , int debug */)
      * iterate through all sketches, incrementing the counters indicated by the hash
      * we don't care about return value here, so 3rd (initialization) argument is arbitrary.
      */
-    (void)hash_counters_iterate(nhash, counters, 0, &increment_counter);
+    (void)hash_counters_iterate(nhash, sketch, 0, &increment_counter);
 }
 
 
@@ -238,52 +251,144 @@ Datum cmsketch_out(PG_FUNCTION_ARGS)
 }
 
 PG_FUNCTION_INFO_V1(cmsketch_combine);
-/* UDF wrapper.  All the interesting stuff is in fmsketch_getcount_c */
 Datum cmsketch_combine(PG_FUNCTION_ARGS)
 {
     bytea *counterblob1 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(0));
     bytea *counterblob2 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(1));
-    int64 *counters2 = (int64 *)VARDATA(counterblob2);
+    countmin *sketches2 = (countmin *)
+           ((cmtransval *)(VARDATA(counterblob2)))->sketches;
     bytea *newblob;
-    int64 *newcounters;
-    int    i;
-	int    sz = VARSIZE(counterblob1);
+    countmin *newsketches;
+    int    i, j, k;
+    int    sz = VARSIZE(counterblob1);
 
 	/* allocate a new transval as a copy of counterblob1 */
     newblob = (bytea *)palloc(sz);
-	memcpy(newblob, counterblob1, sz);
-    newcounters = (int64 *)VARDATA(newblob);
+    memcpy(newblob, counterblob1, sz);
+    newsketches = (countmin *)((cmtransval *)(VARDATA(newblob)))->sketches;
 
 	/* add in values from counterblob2 */
-    for (i = 0;
-         i < RANGES*DEPTH*NUMCOUNTERS;
-         i++)
-        newcounters[i] += counters2[i];
+    for (i = 0; i < RANGES; i++)
+        for (j = 0; j < DEPTH; j++)
+            for (k = 0; k < NUMCOUNTERS; k++)
+                newsketches[i][j][k] += sketches2[i][j][k];
 
     PG_RETURN_DATUM(PointerGetDatum(newblob));
 }
 
 
-/****** SCALAR FUNCTIONS ON COUNTMIN SKETCHES *******/
+PG_FUNCTION_INFO_V1(mfvsketch_trans);
+
+/*
+ *  transition function to maintain a CountMin sketch with 
+ *  Most-Frequent Values
+ */
+Datum mfvsketch_trans(PG_FUNCTION_ARGS)
+{
+    bytea *      transblob = PG_GETARG_BYTEA_P(0);
+    int          num_mfvs  = PG_GETARG_INT32(2);
+    mfvtransval *transval;
+    int64        tmpcnt;
+    int          i;
+    bool        typIsVarlena;
+    
+
+   /*
+    * This function makes destructive updates to its arguments.
+    * Make sure it's being called in an agg context.
+    */
+   if (!(fcinfo->context &&
+         (IsA(fcinfo->context, AggState)
+   #ifdef NOTGP
+          || IsA(fcinfo->context, WindowAggState)
+   #endif
+         )))
+       elog(ERROR,
+            "destructive pass by reference outside agg");
+        
+    /* ignore NULL inputs */
+    if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
+      PG_RETURN_DATUM(PointerGetDatum(transblob));
+      
+    if (VARSIZE(transblob) < sizeof(TRANSVAL_SZ)) {
+        /* initialize mfvtransval, using palloc0 to zero it out */
+        transblob = (bytea *)palloc0(MFV_TRANSVAL_SZ(num_mfvs));
+        SET_VARSIZE(transblob, MFV_TRANSVAL_SZ(num_mfvs));
+        transval = (mfvtransval *)VARDATA(transblob);
+        transval->num_mfvs = num_mfvs;
+        transval->next_mfv = 0;
+        transval->typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
+        getTypeOutputInfo(transval->typOid,
+                           &(transval->outFuncOid),
+                           &typIsVarlena);
+    }
+
+    transval = (mfvtransval *)VARDATA(transblob);
+    /* insert into the countmin sketch */
+    countmin_trans_c(transval->sketch, PG_GETARG_DATUM(1), transval->outFuncOid);
+                            
+    /* look for an mfv with a lower count; if found, replace it. */                        
+    for (i = 0; i < transval->num_mfvs; i++) {
+        tmpcnt = cmsketch_getcount_c(transval->sketch,
+                                     PG_GETARG_DATUM(1),
+                                     transval->outFuncOid);
+        if ((i == transval->next_mfv && i < transval->num_mfvs)) {
+            /* room for new */
+            transval->mfvs[i].num = PG_GETARG_INT64(1);
+            transval->mfvs[i].cnt = tmpcnt;
+            transval->next_mfv = MIN(transval->next_mfv+1, 
+                                     transval->num_mfvs);
+            break;
+        }
+        else if (transval->mfvs[i].num == PG_GETARG_INT64(1)) {            
+            /* arg is an mfv */
+            transval->mfvs[i].cnt = tmpcnt;
+            break;
+        }
+        else if (transval->mfvs[i].cnt < tmpcnt) { 
+            /* arg beats this mfv */
+             transval->mfvs[i].num = PG_GETARG_INT64(1);
+             transval->mfvs[i].cnt = tmpcnt;
+             break;
+        }
+        /* else this is not a frequent value */
+    }
+    PG_RETURN_DATUM(PointerGetDatum(transblob));
+}
+
+/*
+ *******  Below are scalar methods to manipulate completed sketches.  ****** 
+ */
+
+/* match sketch type to scalar arg type */
+#define CM_CHECKARG(sketch, arg_offset) \
+ if (PG_ARGISNULL(arg_offset)) PG_RETURN_NULL(); \
+ if (sketch->typOid != get_fn_expr_argtype(fcinfo->flinfo, arg_offset)) { \
+     elog(ERROR, \
+         "sketch computed over type %Ld; argument %d over type %Ld.", \
+         (long long)sketch->typOid, arg_offset, \
+         (long long)get_fn_expr_argtype(fcinfo->flinfo, arg_offset)); \
+     PG_RETURN_NULL(); \
+ }
+
+
+
+
 PG_FUNCTION_INFO_V1(cmsketch_getcount);
 
-/* scalar function, takes a sketch and a value, produces approximate count of that value * / */
+/* scalar function, takes a sketch and a value, produces approximate count of that value */
 Datum cmsketch_getcount(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
     cmtransval *transval = (cmtransval *)VARDATA(transblob);
 
-    /* get the provided element, being careful in case it's NULL */
-    if (!PG_ARGISNULL(1)) {
-        PG_RETURN_INT64(cmsketch_getcount_c(transval->outFuncOid,
-                                            (int64 *)transval->counters,
-                                            PG_GETARG_INT64(1)));
-    }
-    else
-        PG_RETURN_NULL();
+	CM_CHECKARG(transval, 1);
+
+    PG_RETURN_INT64(cmsketch_getcount_c(transval->sketches[0],
+                                        PG_GETARG_DATUM(1), transval->outFuncOid));
 }
 
-int64 cmsketch_getcount_c(Oid funcOid, int64 *counters, Datum arg)
+int64 cmsketch_getcount_c(countmin sketch, Datum arg, Oid funcOid)
 {
     Datum nhash;
 
@@ -291,8 +396,7 @@ int64 cmsketch_getcount_c(Oid funcOid, int64 *counters, Datum arg)
     nhash = md5_datum(OidOutputFunctionCall(funcOid, arg));
 
     /* iterate through the sketches, finding the min counter associated with this hash */
-    PG_RETURN_INT64(hash_counters_iterate(nhash, counters, LONG_MAX,
-                                          &min_counter));
+    PG_RETURN_INT64(hash_counters_iterate(nhash, sketch, LONG_MAX, &min_counter));
 }
 
 PG_FUNCTION_INFO_V1(cmsketch_rangecount);
@@ -305,18 +409,9 @@ Datum cmsketch_rangecount(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
     cmtransval *transval = (cmtransval *)VARDATA(transblob);
-    Oid         element_type1 = get_fn_expr_argtype(fcinfo->flinfo, 1);
-    Oid         element_type2 = get_fn_expr_argtype(fcinfo->flinfo, 2);
 
-    if (element_type1 != INT8OID || element_type2 != INT8OID) {
-        /* XXX Clean up below to pull string of type names */
-        elog(
-            ERROR,
-            "sketch computed over int8 type; boundaries are %Ld and %Ld.  consider casting.",
-            (long long)element_type1,
-            (long long)element_type2);
-        PG_RETURN_NULL();
-    }
+	  CM_CHECKARG(transval, 1);
+	  CM_CHECKARG(transval, 2);
 
     return cmsketch_rangecount_c(transval, PG_GETARG_DATUM(1),
                                  PG_GETARG_DATUM(2));
@@ -337,9 +432,9 @@ Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
         /* What power of 2 is this range? */
         dyad = log2(r.spans[i][1] - r.spans[i][0] + 1);
         /* Divide min of range by 2^dyad and get count */
-        val = cmsketch_getcount_c(transval->outFuncOid,
-                                  &(transval->counters[dyad][0][0]),
-                                  (Datum) r.spans[i][0] >> dyad);
+        val = cmsketch_getcount_c(transval->sketches[dyad],
+                                  (Datum) r.spans[i][0] >> dyad,
+                                  transval->outFuncOid);
         cursum += val;
     }
     PG_RETURN_DATUM(cursum);
@@ -365,6 +460,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     short  dyad;  /* a number between 0 and 63 */
     uint64 width;
 
+	/* Sanity check */
     if (top < bot || power < 0)
         return;
 
@@ -376,12 +472,12 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     }
 
     /*
-     * full MIN-MAX range will overflow int64 variable "width" in the
-     * code below, so treat by hand
+     * a range that's too big will overflow int64 variable "width" in the
+     * code below, so recurse to the left and right of 0 by hand
      */
-    if (top == MAXVAL && bot == MINVAL) {
-        find_ranges_internal(MINVAL, -1, power-1, r);
-        find_ranges_internal(0, MAXVAL, power-1, r);
+    if (top >= 0 && bot < 0) {
+        find_ranges_internal(bot, -1, power-1, r);
+        find_ranges_internal(0, top, power-1, r);
         return;
     }
 
@@ -389,10 +485,16 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
      * if we get here, we have a range of size 2 or greater.
      * Find the largest dyadic range width in this range.
      */
-    dyad = trunc(log2(top - bot + 1));
+    dyad = trunc(log2(top - bot + (int64)1));
+
+    /* In some cases with large numbers, log2 rounds up incorrectly. */
+    while (pow(2,dyad) > (top - bot + (int64)1))
+       dyad--;
+    
     width = (uint64) pow(2, dyad);
 
-    if ((bot % width) == 0) {
+    if (bot == MINVAL || (bot % width) == 0) {
+      
         /* our range is left-aligned on the dyad's min */
         r->spans[r->emptyoffset][0] = bot;
         r->spans[r->emptyoffset][1] = bot + width - 1;
@@ -415,6 +517,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     else {
         /* we straddle a power of 2 */
         int64 power_of_2 = width*(top/width);
+        
         /* recurse on right at finer grain */
         find_ranges_internal(bot, power_of_2 - 1, power-1, r);
         /* recurse on left at finer grain */
@@ -432,8 +535,11 @@ Datum cmsketch_centile(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
     cmtransval *transval = (cmtransval *)VARDATA(transblob);
-    int         centile = PG_GETARG_INT32(1);
+	int         centile; 
     int64       total;
+
+ 	if (PG_ARGISNULL(1)) PG_RETURN_NULL();
+	else centile = PG_GETARG_INT32(1);
 
     total = cmsketch_rangecount_c(transval, MINVAL, MAXVAL);     /* count(*) */
     if (total == 0) PG_RETURN_NULL();
@@ -477,34 +583,30 @@ Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 
 
 
-PG_FUNCTION_INFO_V1(cmsketch_histogram);
+PG_FUNCTION_INFO_V1(cmsketch_width_histogram);
 /*
  * scalar function taking a sketch, min, max, and number of buckets.
  * produces an equi-width histogram of that many buckets
- * XXX NOTE would be easy to do an equi-depth histogram: just a bunch of centiles
  */
 /* UDF wrapper.  All the interesting stuff is in fmsketch_getcount_c */
-Datum cmsketch_histogram(PG_FUNCTION_ARGS)
+Datum cmsketch_width_histogram(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
     cmtransval *transval = (cmtransval *)VARDATA(transblob);
-    int         translen = VARSIZE(PG_GETARG_BYTEA_P(0));
     int64       min = PG_GETARG_INT64(1);
     int64       max = PG_GETARG_INT64(2);
     int         buckets = PG_GETARG_INT32(3);
     Datum       retval;
 
-    if (translen == sizeof(cmtransval) + DEPTH*NUMCOUNTERS*sizeof(int64) +
-        VARHDRSZ) {
-        elog(WARNING, "Cannot compute histogram for a non-integer type");
-        PG_RETURN_NULL();
-    }
+	CM_CHECKARG(transval, 1);
+	CM_CHECKARG(transval, 2);
+ 	if (PG_ARGISNULL(3)) PG_RETURN_NULL();
 
-    retval = cmsketch_histogram_c(transval, min, max, buckets);
+    retval = cmsketch_width_histogram_c(transval, min, max, buckets);
     PG_RETURN_DATUM(retval);
 }
 
-Datum cmsketch_histogram_c(cmtransval *transval,
+Datum cmsketch_width_histogram_c(cmtransval *transval,
                            int64 min,
                            int64 max,
                            int buckets)
@@ -548,8 +650,109 @@ Datum cmsketch_histogram_c(cmtransval *transval,
     PG_RETURN_ARRAYTYPE_P(retval);
 }
 
-/* XXX Missing: most frequent values */
+PG_FUNCTION_INFO_V1(cmsketch_depth_histogram);
+/*
+ * scalar function taking a number of buckets.  produces an equi-depth histogram 
+ * of that many buckets by finding equi-spaced centiles
+ */
+/* UDF wrapper.  All the interesting stuff is in fmsketch_getcount_c */
+Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS)
+{
+    bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
+    cmtransval *transval = (cmtransval *)VARDATA(transblob);
+    int         buckets = PG_GETARG_INT32(1);
+    Datum       retval;
 
+ 	if (PG_ARGISNULL(1)) PG_RETURN_NULL();
+
+    retval = cmsketch_depth_histogram_c(transval, buckets);
+    PG_RETURN_DATUM(retval);
+}
+
+Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
+{
+    int64      step;
+    int        i;
+    ArrayType *retval;
+    int64      binlo;
+    Datum      histo[buckets][3];
+    int        dims[2], lbs[2];
+	int64      total = cmsketch_rangecount_c(transval, MINVAL, MAXVAL);
+
+    step = MAX(trunc(100 / (float8)buckets), 1);
+    for (i = 0, binlo = MINVAL; i < buckets; i++) {
+        histo[i][0] = Int64GetDatum(binlo);
+        histo[i][1] = ((i == buckets - 1) ? MAXVAL :
+                       cmsketch_centile_c(transval, (i+1)*step, total));
+        histo[i][2] = cmsketch_rangecount_c(transval,
+                                  histo[i][0],
+                                  histo[i][1]);
+		binlo = histo[i][1] + 1;
+    }
+
+    dims[0] = i;     /* may be less than requested buckets if too few values */
+    dims[1] = 3;     /* lo, hi, and val */
+    lbs[0] = 0;
+    lbs[1] = 0;
+
+    retval = construct_md_array((Datum *)histo,
+                                NULL,
+                                2,
+                                dims,
+                                lbs,
+                                INT8OID,
+                                sizeof(int64),
+                                true,
+                                'd');
+    PG_RETURN_ARRAYTYPE_P(retval);
+}
+
+PG_FUNCTION_INFO_V1(mfvsketch_out);
+/*
+ * scalar function taking an mfv sketch, returning an array
+ * of its most frequent values
+ */
+/* UDF wrapper.  All the interesting stuff is in mfvsketch_out_c */
+Datum mfvsketch_out(PG_FUNCTION_ARGS)
+{
+    bytea *      transblob = PG_GETARG_BYTEA_P(0);
+    mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
+    Datum        retval;
+
+ 	if (PG_ARGISNULL(0)) PG_RETURN_NULL();
+    if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
+    
+
+    retval = mfvsketch_out_c(transval);
+    PG_RETURN_DATUM(retval);
+}
+
+Datum mfvsketch_out_c(mfvtransval *transval)
+{
+    int        dims[2], lbs[2];
+    int64      numcnts[transval->next_mfv][2];
+    ArrayType *retval;
+    int        i;
+    
+    for (i = 0; i < transval->next_mfv; i++) {
+        numcnts[i][0] = transval->mfvs[i].num;
+        numcnts[i][1] = transval->mfvs[i].cnt;
+    }
+    dims[0] = transval->next_mfv;
+    dims[1] = 2; /* num and cnt */
+    lbs[0] = 0;
+    lbs[1] = 0;
+    retval = construct_md_array((Datum *)numcnts, 
+                                NULL,
+                                2,
+                                dims,
+                                lbs,
+                                INT8OID,
+                                sizeof(int64),
+                                true,
+                                'd');
+    PG_RETURN_ARRAYTYPE_P(retval);
+}
 
 /****** SUPPORT ROUTINES *******/
 PG_FUNCTION_INFO_V1(cmsketch_dump);
@@ -557,19 +760,20 @@ PG_FUNCTION_INFO_V1(cmsketch_dump);
 Datum cmsketch_dump(PG_FUNCTION_ARGS)
 {
     bytea *transblob = (bytea *)PG_GETARG_BYTEA_P(0);
-    int64 *counters;
+    countmin *sketches;
     char * newblob = (char *)palloc(10240);
-    int    i, j;
+    int    i, j, k, c;
 
-    counters = (int64 *)((cmtransval *)VARDATA(transblob))->counters;
-    for (i=0, j=0; i < (VARSIZE(transblob) - VARHDRSZ)/sizeof(int64);
-         i++) {
-        if (counters[i] != 0)
-            j += sprintf(&newblob[j], "[%d:" INT64_FORMAT "], ",
-						 i, counters[i]);
-        if (j > 10000) break;
-    }
-    newblob[j] = '\0';
+    sketches = ((cmtransval *)VARDATA(transblob))->sketches;
+    for (i=0, c=0; i < RANGES; i++) 
+        for (j=0; j < DEPTH; j++) 
+            for(k=0; k < NUMCOUNTERS; k++) {
+                if (sketches[i][j][k] != 0)
+                    c += sprintf(&newblob[c], "[(%d,%d,%d):" INT64_FORMAT 
+								 "], ", i, j, k, sketches[i][j][k]);
+                if (c > 10000) break;
+            }
+    newblob[c] = '\0';
     PG_RETURN_NULL();
 }
 
@@ -579,11 +783,11 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
  * and invoke the lambda on those 16 bits (which may destructively modify counters).
  */
 int64 hash_counters_iterate(Datum hashval,
-                            int64 *counters,
+                            countmin sketch, // width is DEPTH*NUMCOUNTERS
                             int64 initial,
                             int64 (*lambdaptr)(unsigned int,
                                                unsigned int,
-                                               int64 *,
+                                               countmin,
                                                int64))
 {
     unsigned int   i, col;
@@ -600,7 +804,7 @@ int64 hash_counters_iterate(Datum hashval,
                 (void *)((char *)VARDATA(DatumGetPointer(hashval)) + 2*i), 2);
         /* elog(WARNING, "twobytes at %d is %d", 2*i, twobytes); */
         col = twobytes % NUMCOUNTERS;
-        retval = (*lambdaptr)(i, col, counters, retval);
+        retval = (*lambdaptr)(i, col, sketch, retval);
     }
     return retval;
 }
@@ -609,24 +813,26 @@ int64 hash_counters_iterate(Datum hashval,
 /* destructive increment lambda for hash_counters_iterate.  transval and return val not of particular interest here. */
 int64 increment_counter(unsigned int i,
                         unsigned int col,
-                        int64 *counters,
+                        countmin sketch,
                         int64 transval)
 {
-    int64 oldval = counters[i*NUMCOUNTERS + col];
+    int64 oldval = sketch[i][col];
     /* if (debug) elog(WARNING, "counters[%d][%d] = %ld, incrementing", i, col, oldval); */
-    if (counters[i*NUMCOUNTERS + col] == (LONG_MAX >> 1))
+	/* XXX Is it OK to go up to LONG_MAX?  Why LONG_MAX >> 1?? */
+    if (sketch[i][col] == (LONG_MAX >> 1))
         elog(ERROR, "maximum count exceeded in sketch");
-    counters[i*NUMCOUNTERS + col] = oldval + 1;
+    sketch[i][col] = oldval + 1;
 
+	/* return the incremented value, though unlikely anyone cares. */
     return oldval+1;
 }
 
 /* running minimum lambda for hash_counters_iterate */
 int64 min_counter(unsigned int i,
                   unsigned int col,
-                  int64 *counters,
+                  countmin sketch,
                   int64 transval)
 {
-    int64 thisval = counters[i*NUMCOUNTERS + col];
+    int64 thisval = sketch[i][col];
     return (thisval < transval) ? thisval : transval;
 }

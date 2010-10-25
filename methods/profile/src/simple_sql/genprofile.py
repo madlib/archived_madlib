@@ -1,6 +1,7 @@
 import sys
 import psycopg2
 import os
+import profiling
 from optparse import OptionParser
 
 
@@ -21,9 +22,11 @@ parser.add_option("-s", "--nonnumeric", dest="non_numericaggs", nargs = 1,
 
 dbnamestr = "dbname=" + options.database
 dbuserstr = "user=" + options.user
-(numcols, non_numcols) = catalog_columns(dbnamestr, dbuserstr, options.table)
-query = gen_profile_query(options.table, eval(options.numericaggs),
-                          eval(options.non_numericaggs), numcols, non_numcols)
+(numcols, non_numcols) = profiling.catalog_columns(dbnamestr, dbuserstr, options.table)
+query = profiling.gen_profile_query(options.table,
+                                    eval(options.numericaggs),
+                                    eval(options.non_numericaggs),
+                                    numcols, non_numcols)
 print query
 conn = psycopg2.connect(dbnamestr, dbuserstr)
 
