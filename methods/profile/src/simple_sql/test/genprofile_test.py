@@ -28,7 +28,7 @@ class ProfileTest(unittest.TestCase):
         cur = conn.cursor()
         
         # load the sketches DDL
-        f = open('../utils/sketch/postgresql/sketches.sql', 'r')
+        f = open('../../../sketch/src/extended_sql/pg_gp/sketches.sql', 'r')
         script = f.read()
         cur.execute(script)
 

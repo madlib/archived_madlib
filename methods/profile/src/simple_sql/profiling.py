@@ -12,8 +12,8 @@ def munge_agg(x):
     return x + "_%%"
 
 # helper routine to query the database catalog and get column names for table "table"
-# return value is a list of lists; the first list is the numeric columns, 
-# the second list is the non-numeric columns
+# return value is a list of lists; the first list is the integer columns, 
+# the second list is the non-integer columns
 def catalog_columns(dbnamestr, dbuserstr, table):
     # Connect to an existing database
     conn = psycopg2.connect(dbnamestr, dbuserstr)
