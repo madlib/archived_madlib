@@ -9,9 +9,8 @@ class ProfileTest(unittest.TestCase):
     testdb = "profile_regression"
     
     allcols = profiling.catalog_columns(dbnamestr, dbuserstr, table)
-    query = profiling.gen_profile_query(table, ["MIN", "MAX",
-                                        "cmsketch_centile(cmsketch(%%), 50)"],
-                                        ["fmcount"], allcols[0], allcols[1])
+    query = profiling.gen_profile_query(table, ["MIN", "MAX"],
+                                        ["COUNT(DISTINCT %%)"], allcols[0], allcols[1])
                             
     def testQuery(self):
         # Connect to an existing database
@@ -38,10 +37,10 @@ class ProfileTest(unittest.TestCase):
         out = cur.fetchall()
         cur.close()
         conn.close()
-        self.assertEqual(out, [(283L, -2, 64, 4L, 12L, -1, 2, 0L, 2L, 0, 0, 0L,
-                               1L, 283L, 3L, 1L, 2L, 4L, 13L, 2L, 1L, 2L, 150L,
-                               60L, 60L, 72L, 71L, 61L, 60L, 11L, 11L, 2L, 4L,
-                               3L, 1L, 4L, 1L, 1L)])
+        self.assertEqual(out, [(283L, -2, 64, 12L, -1, 2, 2L, 0, 0, 1L, 283L, 
+                                3L, 1L, 2L, 4L, 13L, 2L, 1L, 2L, 150L, 60L, 
+                                60L, 72L, 71L, 61L, 60L, 11L, 11L, 2L, 4L, 3L, 
+                                1L, 4L, 1L, 1L)])
         
         # Drop test database
         conn = psycopg2.connect(self.dbnamestr, self.dbuserstr)

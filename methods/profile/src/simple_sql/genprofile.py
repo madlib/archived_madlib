@@ -4,10 +4,8 @@ import os
 import profiling
 from optparse import OptionParser
 
-
-parser = OptionParser()
-parser.add_option("-t", "--table", dest="table", nargs=1,
-                  help="name of table or view")
+usage = "usage: %prog [options] tablename"
+parser = OptionParser(usage=usage)
 parser.add_option("-d", "--database", dest="database", nargs=1,
                   help="database name", default=os.environ['PGDATABASE'])
 parser.add_option("-u", "--user", dest="user", nargs=1,
@@ -20,10 +18,15 @@ parser.add_option("-s", "--nonnumeric", dest="non_numericaggs", nargs = 1,
                 default='["COUNT(DISTINCT %%)"]')
 (options, args) = parser.parse_args()
 
+try:
+  table = sys.argv[1]
+except:
+  parser.error("missing tablename")
+  sys.exit(2)
 dbnamestr = "dbname=" + options.database
 dbuserstr = "user=" + options.user
-(numcols, non_numcols) = profiling.catalog_columns(dbnamestr, dbuserstr, options.table)
-query = profiling.gen_profile_query(options.table,
+(numcols, non_numcols) = profiling.catalog_columns(dbnamestr, dbuserstr, table)
+query = profiling.gen_profile_query(table,
                                     eval(options.numericaggs),
                                     eval(options.non_numericaggs),
                                     numcols, non_numcols)
