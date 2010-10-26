@@ -1,4 +1,5 @@
 \i sketches.sql
+set search_path to "$user",public,madlib;
 
 -- tests for "little" tables using sortasorts
 select fmcount(R.i)

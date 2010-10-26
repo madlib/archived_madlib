@@ -1,4 +1,5 @@
 \i sketches.sql
+set search_path to "$user",public,madlib;
 -- Basic methods
 select cmsketch_getcount(cmsketch(i),5) from generate_series(1,10000) as T(i);
 select cmsketch_rangecount(cmsketch(i),1,1025) from generate_series(1,10000) as T(i);

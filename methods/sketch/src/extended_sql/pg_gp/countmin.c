@@ -36,105 +36,9 @@
 #include "fmgr.h"
 #include "sketch_support.h"
 #include "catalog/pg_type.h"
+#include "countmin.h"
 
 #include <ctype.h>
-
-#define LONGBITS (sizeof(int64)*CHAR_BIT)
-#define RANGES LONGBITS
-#define DEPTH 8 /* magic tuning value: number of hash functions */
-/* #define NUMCOUNTERS 65535 */
-#define NUMCOUNTERS 1024  /* another magic tuning value: modulus of hash functions */
-
-#ifndef MIN
-#define MAX(x,y) ((x > y) ? x : y)
-#define MIN(x,y) ((x < y) ? x : y)
-#define ABS(a)   (((a) < 0) ? -(a) : (a))
-#endif
-
-
-/* countmin is defined over postgres int8 type.  Should probably use the max of that type, not LONG_MAX */
-#define MAXVAL (LONG_MAX>>1)
-/* Midpoint is 1/2 of MAX .. i.e. shift MAX right. */
-#define MIDVAL (MAXVAL >> 1)
-#define MINVAL (LONG_MIN>>1)
-
-typedef int64 countmin[DEPTH][NUMCOUNTERS];
-
-/*
- * the transition value struct for the aggregate.  Holds the sketch counters
- * and a cache of handy metadata that we'll reuse across calls
- */
-typedef struct {
-    Oid typOid;     /* oid of the data type we are sketching */
-    Oid outFuncOid; /* oid of the OutFunc for that data type */
-    countmin sketches[RANGES];
-} cmtransval;
-
-typedef struct {
-    int64 num;
-    int64 cnt;
-} numcnt;
-
-typedef struct {
-  int    num_mfvs;
-  int    next_mfv;
-  Oid    typOid;
-  Oid    outFuncOid;
-  countmin sketch;  /* a single countmin sketch */
-  numcnt mfvs[0]; /* array of frequent values, stored at end of next field */
-} mfvtransval;
-
-#define TRANSVAL_SZ (VARHDRSZ + sizeof(cmtransval))
-#define MFV_TRANSVAL_SZ(i) (VARHDRSZ + sizeof(mfvtransval) + i*sizeof(numcnt))
-
-/*
- * a data structure to hold the constituent power-of-two ranges corresponding to
- * an arbitrary range.  E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
- */
-typedef struct {
-    int64 spans[LONGBITS][2]; /* the ranges */
-    int emptyoffset;        /* offset of next empty span */
-} rangelist;
-
-
-void countmin_trans_c(countmin, Datum, Oid);
-Datum cmsketch_mfv_trans_c(int64 *, char *);
-bytea *cmsketch_check_transval(bytea *);
-void countmin_dyadic_trans_c(cmtransval *, int64);
-int64 cmsketch_getcount_c(countmin, Datum, Oid);
-Datum cmsketch_rangecount_c(cmtransval *, Datum, Datum);
-Datum cmsketch_centile_c(cmtransval *, int, int64);
-Datum cmsketch_width_histogram_c(cmtransval *, int64, int64, int);
-Datum cmsketch_depth_histogram_c(cmtransval *, int);
-Datum mfvsketch_out_c(mfvtransval *);
-
-void find_ranges(int64, int64, rangelist *);
-void find_ranges_internal(int64, int64, int, rangelist *);
-Datum countmin_dump_c(int64 *);
-int64 increment_counter(unsigned int, unsigned int, countmin, int64);
-int64 min_counter(unsigned int, unsigned int, countmin, int64);
-int64 hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
-                                unsigned int,
-                                unsigned int,
-                                countmin,
-                                int64));
-bool gt(int64, int64);
-bool eq(int64, int64);
-bool false_fn(int64, int64);
-int64 cmsketch_count_search(cmtransval *, bool (*) (int64, int64), int64, 
-                            bool ( *) (int64, int64), int64);
-
-Datum cmsketch_trans(PG_FUNCTION_ARGS);
-Datum mfvsketch_trans(PG_FUNCTION_ARGS);
-Datum cmsketch_getcount(PG_FUNCTION_ARGS);
-Datum cmsketch_rangecount(PG_FUNCTION_ARGS);
-Datum cmsketch_centile(PG_FUNCTION_ARGS);
-Datum cmsketch_width_histogram(PG_FUNCTION_ARGS);
-Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS);
-Datum cmsketch_out(PG_FUNCTION_ARGS);
-Datum cmsketch_combine(PG_FUNCTION_ARGS);
-Datum cmsketch_dump(PG_FUNCTION_ARGS);
-Datum mfvsketch_out(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(cmsketch_trans);
 
@@ -184,14 +88,14 @@ bytea *cmsketch_check_transval(bytea *transblob)
      * an uninitialized transval should be a datum smaller than sizeof(cmtransval).
      * if this one is small, initialize it now, else return it.
      */
-    if (VARSIZE(transblob) < TRANSVAL_SZ) {
+    if (VARSIZE(transblob) < CM_TRANSVAL_SZ) {
         /* XXX would be nice to pfree the existing transblob, but pfree complains. */
 
         /* allocate and zero out a transval via palloc0 */
-        transblob = (bytea *)palloc0(TRANSVAL_SZ);
-        SET_VARSIZE(transblob, TRANSVAL_SZ);
+        transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
+        SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
 
-        /* set up outfunc for stringifying INT8's according to PG type rules */
+        /* set up  for stringifying INT8's according to PG type rules */
         transval = (cmtransval *)VARDATA(transblob);
         transval->typOid = INT8OID; /* as of now we only support INT8 */
         getTypeOutputInfo(transval->typOid,
@@ -221,7 +125,7 @@ void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
  * hash functions.  We do this by using a single md5 hash function, and taking
  * successive 16-bit runs of the result as independent hash outputs.
  */
-void countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
+char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
 {
     Datum nhash;
     char *input;
@@ -237,6 +141,7 @@ void countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
      * we don't care about return value here, so 3rd (initialization) argument is arbitrary.
      */
     (void)hash_counters_iterate(nhash, sketch, 0, &increment_counter);
+    return(input);
 }
 
 
@@ -277,84 +182,6 @@ Datum cmsketch_combine(PG_FUNCTION_ARGS)
 }
 
 
-PG_FUNCTION_INFO_V1(mfvsketch_trans);
-
-/*
- *  transition function to maintain a CountMin sketch with 
- *  Most-Frequent Values
- */
-Datum mfvsketch_trans(PG_FUNCTION_ARGS)
-{
-    bytea *      transblob = PG_GETARG_BYTEA_P(0);
-    int          num_mfvs  = PG_GETARG_INT32(2);
-    mfvtransval *transval;
-    int64        tmpcnt;
-    int          i;
-    bool        typIsVarlena;
-    
-
-   /*
-    * This function makes destructive updates to its arguments.
-    * Make sure it's being called in an agg context.
-    */
-   if (!(fcinfo->context &&
-         (IsA(fcinfo->context, AggState)
-   #ifdef NOTGP
-          || IsA(fcinfo->context, WindowAggState)
-   #endif
-         )))
-       elog(ERROR,
-            "destructive pass by reference outside agg");
-        
-    /* ignore NULL inputs */
-    if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
-      PG_RETURN_DATUM(PointerGetDatum(transblob));
-      
-    if (VARSIZE(transblob) < sizeof(TRANSVAL_SZ)) {
-        /* initialize mfvtransval, using palloc0 to zero it out */
-        transblob = (bytea *)palloc0(MFV_TRANSVAL_SZ(num_mfvs));
-        SET_VARSIZE(transblob, MFV_TRANSVAL_SZ(num_mfvs));
-        transval = (mfvtransval *)VARDATA(transblob);
-        transval->num_mfvs = num_mfvs;
-        transval->next_mfv = 0;
-        transval->typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
-        getTypeOutputInfo(transval->typOid,
-                           &(transval->outFuncOid),
-                           &typIsVarlena);
-    }
-
-    transval = (mfvtransval *)VARDATA(transblob);
-    /* insert into the countmin sketch */
-    countmin_trans_c(transval->sketch, PG_GETARG_DATUM(1), transval->outFuncOid);
-                            
-    /* look for an mfv with a lower count; if found, replace it. */                        
-    for (i = 0; i < transval->num_mfvs; i++) {
-        tmpcnt = cmsketch_getcount_c(transval->sketch,
-                                     PG_GETARG_DATUM(1),
-                                     transval->outFuncOid);
-        if ((i == transval->next_mfv && i < transval->num_mfvs)) {
-            /* room for new */
-            transval->mfvs[i].num = PG_GETARG_INT64(1);
-            transval->mfvs[i].cnt = tmpcnt;
-            transval->next_mfv = MIN(transval->next_mfv+1, 
-                                     transval->num_mfvs);
-            break;
-        }
-        else if (transval->mfvs[i].num == PG_GETARG_INT64(1)) {            
-            /* arg is an mfv */
-            transval->mfvs[i].cnt = tmpcnt;
-            break;
-        }
-        else if (transval->mfvs[i].cnt < tmpcnt) { 
-            /* arg beats this mfv */
-             transval->mfvs[i].num = PG_GETARG_INT64(1);
-             transval->mfvs[i].cnt = tmpcnt;
-             break;
-        }
-        /* else this is not a frequent value */
-    }
-    PG_RETURN_DATUM(PointerGetDatum(transblob));
-}
 
 /*
  *******  Below are scalar methods to manipulate completed sketches.  ****** 
@@ -696,53 +523,6 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
     lbs[1] = 0;
 
     retval = construct_md_array((Datum *)histo,
-                                NULL,
-                                2,
-                                dims,
-                                lbs,
-                                INT8OID,
-                                sizeof(int64),
-                                true,
-                                'd');
-    PG_RETURN_ARRAYTYPE_P(retval);
-}
-
-PG_FUNCTION_INFO_V1(mfvsketch_out);
-/*
- * scalar function taking an mfv sketch, returning an array
- * of its most frequent values
- */
-/* UDF wrapper.  All the interesting stuff is in mfvsketch_out_c */
-Datum mfvsketch_out(PG_FUNCTION_ARGS)
-{
-    bytea *      transblob = PG_GETARG_BYTEA_P(0);
-    mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    Datum        retval;
-
- 	if (PG_ARGISNULL(0)) PG_RETURN_NULL();
-    if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
-    
-
-    retval = mfvsketch_out_c(transval);
-    PG_RETURN_DATUM(retval);
-}
-
-Datum mfvsketch_out_c(mfvtransval *transval)
-{
-    int        dims[2], lbs[2];
-    int64      numcnts[transval->next_mfv][2];
-    ArrayType *retval;
-    int        i;
-    
-    for (i = 0; i < transval->next_mfv; i++) {
-        numcnts[i][0] = transval->mfvs[i].num;
-        numcnts[i][1] = transval->mfvs[i].cnt;
-    }
-    dims[0] = transval->next_mfv;
-    dims[1] = 2; /* num and cnt */
-    lbs[0] = 0;
-    lbs[1] = 0;
-    retval = construct_md_array((Datum *)numcnts, 
                                 NULL,
                                 2,
                                 dims,
