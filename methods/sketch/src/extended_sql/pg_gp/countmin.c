@@ -549,7 +549,8 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
         for (j=0; j < DEPTH; j++) 
             for(k=0; k < NUMCOUNTERS; k++) {
                 if (sketches[i][j][k] != 0)
-                    c += sprintf(&newblob[c], "[(%d,%d,%d):%ld], ", i, j, k, sketches[i][j][k]);
+                    c += sprintf(&newblob[c], "[(%d,%d,%d):" INT64_FORMAT 
+								 "], ", i, j, k, sketches[i][j][k]);
                 if (c > 10000) break;
             }
     newblob[c] = '\0';
@@ -580,7 +581,7 @@ int64 hash_counters_iterate(Datum hashval,
      */
     for (i = 0; i < DEPTH; i++) {
         memmove((void *)&twobytes,
-                (void *)((char *)VARDATA(hashval) + 2*i), 2);
+                (void *)((char *)VARDATA(DatumGetPointer(hashval)) + 2*i), 2);
         /* elog(WARNING, "twobytes at %d is %d", 2*i, twobytes); */
         col = twobytes % NUMCOUNTERS;
         retval = (*lambdaptr)(i, col, sketch, retval);
