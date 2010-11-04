@@ -1,0 +1,96 @@
+\i sql/createFuncsAndData.sql
+CREATE SCHEMA madlib;
+SET search_path TO "$user",public,madlib;
+SET dynamic_library_path TO '@libdir@';
+-- State transition function
+CREATE FUNCTION madlib.float8_mregr_accum(DOUBLE PRECISION[], DOUBLE PRECISION, DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'multLinRegression'
+LANGUAGE C
+IMMUTABLE STRICT;
+-- Function for merging two transition states: To be used by parallel databases
+-- like Greenplum
+CREATE FUNCTION madlib.float8_mregr_coef(DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'multLinRegression'
+LANGUAGE C STRICT;
+CREATE FUNCTION madlib.float8_mregr_r2(DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION
+AS 'multLinRegression'
+LANGUAGE C STRICT;
+CREATE FUNCTION madlib.float8_mregr_tstats(DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'multLinRegression'
+LANGUAGE C STRICT;
+CREATE FUNCTION madlib.float8_mregr_pvalues(DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'multLinRegression'
+LANGUAGE C STRICT;
+CREATE AGGREGATE madlib.mregr_coef(DOUBLE PRECISION, DOUBLE PRECISION[]) (
+	SFUNC=madlib.float8_mregr_accum,
+	STYPE=float8[],
+	FINALFUNC=madlib.float8_mregr_coef,
+	PREFUNC=madlib.float8_mregr_combine,
+	INITCOND='{0}'
+);
+CREATE AGGREGATE madlib.mregr_r2(DOUBLE PRECISION, DOUBLE PRECISION[]) (
+	SFUNC=madlib.float8_mregr_accum,
+	STYPE=float8[],
+	FINALFUNC=madlib.float8_mregr_r2,
+	PREFUNC=madlib.float8_mregr_combine,
+	INITCOND='{0}'
+);
+CREATE AGGREGATE madlib.mregr_tstats(DOUBLE PRECISION, DOUBLE PRECISION[]) (
+	SFUNC=madlib.float8_mregr_accum,
+	STYPE=float8[],
+	FINALFUNC=madlib.float8_mregr_tstats,
+	PREFUNC=madlib.float8_mregr_combine,
+	INITCOND='{0}'
+);
+CREATE AGGREGATE madlib.mregr_pvalues(DOUBLE PRECISION, DOUBLE PRECISION[]) (
+	SFUNC=madlib.float8_mregr_accum,
+	STYPE=float8[],
+	FINALFUNC=madlib.float8_mregr_pvalues,
+	PREFUNC=madlib.float8_mregr_combine,
+	INITCOND='{0}'
+);
+CREATE TABLE madlib.weibull
+(
+	id INTEGER NOT NULL,
+	x1 DOUBLE PRECISION,
+	x2 DOUBLE PRECISION,
+	y DOUBLE PRECISION,
+	CONSTRAINT pk_weibull PRIMARY KEY (id)
+);
+psql:sql/multLinRegression.sql:74: NOTICE:  CREATE TABLE / PRIMARY KEY will create implicit index "pk_weibull" for table "weibull"
+-- The following example is taken from:
+-- http://www.weibull.com/DOEWeb/estimating_regression_models_using_least_squares.htm#Example%205.1
+-- http://www.weibull.com/DOEWeb/hypothesis_tests_in_multiple_linear_regression.htm#Example%205.3
+COPY madlib.weibull (id, x1, x2, y) FROM stdin;
+-- We convert to real in order to round to fewer significant digits. Otherwise,
+-- different platform might produce slightly different results for the least
+-- significant digits, depending on their floating point arithmetic.
+select mregr_coef(y, array[1, x1, x2])::real[] from weibull;
+            mregr_coef            
+----------------------------------
+ {{-153.512},{1.23872},{12.0824}}
+(1 row)
+
+select mregr_r2(y, array[1, x1, x2])::real from weibull;
+ mregr_r2 
+----------
+ 0.968022
+(1 row)
+
+select mregr_tstats(y, array[1, x1, x2])::real[] from weibull;
+       mregr_tstats        
+---------------------------
+ {-1.52173,3.13926,3.0726}
+(1 row)
+
+select mregr_pvalues(y, array[1, x1, x2])::real[] from weibull;
+          mregr_pvalues          
+---------------------------------
+ {0.15034,0.00724458,0.00827039}
+(1 row)
+
