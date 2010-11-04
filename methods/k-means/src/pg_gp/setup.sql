@@ -1,20 +1,20 @@
 --------------------------------------------------------------------------------
 -- MADlib K-Means Clustering setup script
 --------------------------------------------------------------------------------
--- Author (plpgsql): Eugene Fratkin
--- Rewrite (python): Aleks Gorajek 
--- Created: 2010-Oct-26
+-- Author: 		Eugene Fratkin
+-- Co-author: 	Aleks Gorajek 
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
--- Call this script like this:
+-- Call method:
 -- psql -f setup.sql -v schema=<your_target_shema>
 --------------------------------------------------------------------------------
 
+BEGIN;
+
 --------------------------------------------------------------------------------
--- Sets target schema name for Prod Recommender objects
--- XXX for now it is static
--- XXX need to make it flexible
+-- Set target schema name
+-- XXX for now it is static, need to make it flexible
 --------------------------------------------------------------------------------
 \set target_schema madlib
 
@@ -22,101 +22,103 @@
 CREATE SCHEMA :target_schema;
 
 --------------------------------------------------------------------------------
--- UDA : distFromCenter : START
+-- @aggregate: 
+--        *._kmeans_distFromCenter
+--
+-- @doc:
+--        Determines if a table is an AOT; returns true if OID refers to an AOT,
+--        false if OID refers to a non-AOT relation; empty rowset if OID is invalid
+--        
 --------------------------------------------------------------------------------
 -- SFunc
-DROP FUNCTION IF EXISTS :target_schema.kmeans_UpdDistFromCenter(FLOAT, svec, svec) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_UpdDistFromCenter(FLOAT, svec, svec) RETURNS FLOAT AS $$
-declare
+DROP FUNCTION IF EXISTS :target_schema.kmeans_UpdDistFromCenter( FLOAT, SVEC, SVEC) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_UpdDistFromCenter( FLOAT, SVEC, SVEC) RETURNS FLOAT AS $$
+DECLARE
 	d FLOAT;
-	denom FLOAT;
-begin
+BEGIN
 	IF ($1 IS NULL) THEN
-		RETURN l2norm($3 - $2);
+		RETURN l2norm( $3 - $2);
 	ELSE
-		d = l2norm($3 - $2);
+		d = l2norm( $3 - $2);
 		IF (d < $1) THEN 
 			RETURN d;
 		ELSE
 			RETURN $1;
 		END IF;
 	END IF;
-end
+END
 $$ LANGUAGE plpgsql;
 
 -- PreFunc
-DROP FUNCTION IF EXISTS :target_schema.kmeans_AggrDistFromCenter(FLOAT, FLOAT) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_AggrDistFromCenter(FLOAT, FLOAT) RETURNS FLOAT AS $$
-declare
-begin
+DROP FUNCTION IF EXISTS :target_schema.kmeans_AggrDistFromCenter( FLOAT, FLOAT) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_AggrDistFromCenter( FLOAT, FLOAT) RETURNS FLOAT AS $$
+DECLARE
+BEGIN
 	IF ($1 < $2) THEN
 		RETURN $1;
 	ELSE
 		RETURN $2;
 	END IF;
-end
+END
 $$ LANGUAGE plpgsql;
 
 -- FinalFunc
-DROP FUNCTION IF EXISTS :target_schema.kmeans_FinalizeDistFromCenter(FLOAT) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_FinalizeDistFromCenter(FLOAT) RETURNS FLOAT AS $$
-declare
-begin
+DROP FUNCTION IF EXISTS :target_schema.kmeans_FinalizeDistFromCenter( FLOAT) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_FinalizeDistFromCenter( FLOAT) RETURNS FLOAT AS $$
+DECLARE
+BEGIN
 	RETURN $1*(random()^(1.0/5.0));
-end
+END
 $$ LANGUAGE plpgsql;
 
 -- UDA
-DROP AGGREGATE IF EXISTS :target_schema.kmeans_DistFromCenter(svec, svec);
-CREATE AGGREGATE :target_schema.kmeans_DistFromCenter(svec, svec) (
+DROP AGGREGATE IF EXISTS :target_schema.kmeans_DistFromCenter( SVEC, SVEC);
+CREATE AGGREGATE :target_schema.kmeans_DistFromCenter( SVEC, SVEC) (
   SFUNC = :target_schema.kmeans_UpdDistFromCenter,
   PREFUNC = :target_schema.kmeans_AggrDistFromCenter,
   FINALFUNC = :target_schema.kmeans_FinalizeDistFromCenter,
   STYPE = FLOAT
 );
---------------------------------------------------------------------------------
--- UDA : distFromCenter : END
---------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
 -- UDA : updateCentroids : START
 --------------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS :target_schema.kmeans_mean_finalize(svec) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_mean_finalize(svec) RETURNS svec AS $$
-declare
+DROP FUNCTION IF EXISTS :target_schema.kmeans_mean_finalize(SVEC) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_mean_finalize(SVEC) RETURNS SVEC AS $$
+DECLARE
 	new_location FLOAT[];
 	new_location2 FLOAT[];
 	sum FLOAT;
-begin
-	new_location = svec_return_array($1);
+BEGIN
+	new_location = SVEC_return_array($1);
 	sum = new_location[array_upper(new_location, 1)];
 	FOR i in 1..(array_upper(new_location, 1)-1) LOOP
 		new_location2[i] = new_location[i]/sum;
 	END LOOP;
-	RETURN svec_cast_float8arr(new_location2);
-end
+	RETURN SVEC_cast_float8arr(new_location2);
+END
 $$ LANGUAGE plpgsql;
 
-DROP FUNCTION IF EXISTS :target_schema.kmeans_mean_product(svec, svec) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_mean_product(svec, svec) RETURNS svec AS $$
-declare
-	new_location svec;
-begin
+DROP FUNCTION IF EXISTS :target_schema.kmeans_mean_product(SVEC, SVEC) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_mean_product(SVEC, SVEC) RETURNS SVEC AS $$
+DECLARE
+	new_location SVEC;
+BEGIN
 
-new_location = svec_concat($2,svec_cast_float8(1.0));
+new_location = SVEC_concat($2,SVEC_cast_float8(1.0));
 IF ($1 IS NOT NULL) THEN
 	new_location = $1 + new_location;
 END IF;
 
 RETURN new_location;
-end
+END
 $$ LANGUAGE plpgsql;
 
-DROP FUNCTION IF EXISTS :target_schema.kmeans_mean_aggr(svec, svec) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_mean_aggr(svec, svec) RETURNS svec AS $$
-declare
-begin
+DROP FUNCTION IF EXISTS :target_schema.kmeans_mean_aggr(SVEC, SVEC) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_mean_aggr(SVEC, SVEC) RETURNS SVEC AS $$
+DECLARE
+BEGIN
 
 IF (($1 IS NOT NULL) AND ($2 IS NOT NULL)) THEN
 	RETURN $1 + $2;
@@ -128,12 +130,12 @@ IF ($2 IS NOT NULL) THEN
 	RETURN $2;
 END IF;
 
-end
+END
 $$ LANGUAGE plpgsql;
 
-DROP AGGREGATE IF EXISTS :target_schema.kmeans_updateCentroids(svec);
-CREATE AGGREGATE :target_schema.kmeans_updateCentroids(svec) (
-  STYPE = svec,
+DROP AGGREGATE IF EXISTS :target_schema.kmeans_updateCentroids(SVEC);
+CREATE AGGREGATE :target_schema.kmeans_updateCentroids(SVEC) (
+  STYPE = SVEC,
   SFUNC = :target_schema.kmeans_mean_product,
   PREFUNC = :target_schema.kmeans_mean_aggr,
   FINALFUNC = :target_schema.kmeans_mean_finalize
@@ -148,17 +150,17 @@ CREATE AGGREGATE :target_schema.kmeans_updateCentroids(svec) (
 --------------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS :target_schema.kmeans_fit_finalize(FLOAT[]) CASCADE;
 CREATE OR REPLACE FUNCTION :target_schema.kmeans_fit_finalize(FLOAT[]) RETURNS FLOAT AS $$
-declare
-begin
+DECLARE
+BEGIN
 	RETURN $1[1]/$1[2];
-end
+END
 $$ LANGUAGE plpgsql;
 
-DROP FUNCTION IF EXISTS :target_schema.kmeans_fit_product(FLOAT[], svec, svec) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_fit_product(FLOAT[], svec, svec) RETURNS FLOAT[] AS $$
-declare
+DROP FUNCTION IF EXISTS :target_schema.kmeans_fit_product(FLOAT[], SVEC, SVEC) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_fit_product(FLOAT[], SVEC, SVEC) RETURNS FLOAT[] AS $$
+DECLARE
 	temp FLOAT[];
-begin
+BEGIN
 
 IF ($1[1] IS NULL) THEN
 	temp[1] = l2norm($2 - $3);
@@ -169,14 +171,14 @@ ELSE
 END IF;
 
 RETURN temp;
-end
+END
 $$ LANGUAGE plpgsql;
 
 DROP FUNCTION IF EXISTS :target_schema.kmeans_fit_aggr(FLOAT[], FLOAT[]) CASCADE;
 CREATE OR REPLACE FUNCTION :target_schema.kmeans_fit_aggr(FLOAT[], FLOAT[]) RETURNS FLOAT[] AS $$
-declare
+DECLARE
 	temp FLOAT[];
-begin
+BEGIN
 
 IF (($1[1] IS NOT NULL) AND ($2[1] IS NOT NULL)) THEN
 	temp[1] = $1[1] + $2[1];
@@ -190,11 +192,11 @@ IF ($2[1] IS NOT NULL) THEN
 END IF;
 
 RETURN temp;
-end
+END
 $$ LANGUAGE plpgsql;
 
-DROP AGGREGATE IF EXISTS :target_schema.kmeans_goodnessFitTest(svec, svec);
-CREATE AGGREGATE :target_schema.kmeans_goodnessFitTest(svec, svec) (
+DROP AGGREGATE IF EXISTS :target_schema.kmeans_goodnessFitTest(SVEC, SVEC);
+CREATE AGGREGATE :target_schema.kmeans_goodnessFitTest(SVEC, SVEC) (
   STYPE = FLOAT[],
   SFUNC = :target_schema.kmeans_fit_product,
   PREFUNC = :target_schema.kmeans_fit_aggr,
@@ -208,13 +210,13 @@ CREATE AGGREGATE :target_schema.kmeans_goodnessFitTest(svec, svec) (
 --------------------------------------------------------------------------------
 -- UDF : updateSubAssignment : START
 --------------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS :target_schema.kmeans_updateSubAssignment(svec, svec[]) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_updateSubAssignment(svec, svec[]) RETURNS INTEGER AS $$
-declare
+DROP FUNCTION IF EXISTS :target_schema.kmeans_updateSubAssignment(SVEC, SVEC[]) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_updateSubAssignment(SVEC, SVEC[]) RETURNS INTEGER AS $$
+DECLARE
 	min_ind INTEGER := 1;
 	min_val FLOAT;
 	temp_val FLOAT := 0;
-begin
+BEGIN
 	min_val = l2norm($1 - $2[1]);
 	FOR i IN 2..array_upper($2,1) LOOP
 		temp_val = l2norm($1 - $2[i]);
@@ -225,7 +227,7 @@ begin
 	END LOOP;
 	
 	RETURN min_ind;
-end
+END
 $$ LANGUAGE plpgsql;
 --------------------------------------------------------------------------------
 -- UDF : updateSubAssignment : END
@@ -235,13 +237,13 @@ $$ LANGUAGE plpgsql;
 --------------------------------------------------------------------------------
 -- UDF : updateSubAssignmentFinal : START
 --------------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS :target_schema.kmeans_updateSubAssignmentFinal(svec, svec[]) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_updateSubAssignmentFinal(svec, svec[]) RETURNS FLOAT[] AS $$
-declare
+DROP FUNCTION IF EXISTS :target_schema.kmeans_updateSubAssignmentFinal(SVEC, SVEC[]) CASCADE;
+CREATE OR REPLACE FUNCTION :target_schema.kmeans_updateSubAssignmentFinal(SVEC, SVEC[]) RETURNS FLOAT[] AS $$
+DECLARE
 	min_ind INTEGER := 1;
 	min_val FLOAT;
 	temp_val FLOAT := 0;
-begin
+BEGIN
 	min_val = l2norm($1 - $2[1]);
 	FOR i IN 2..array_upper($2,1) LOOP
 		temp_val = l2norm($1 - $2[i]);
@@ -252,7 +254,7 @@ begin
 	END LOOP;
 	
 	RETURN ARRAY[CAST(min_ind AS FLOAT), min_val];
-end
+END
 $$ LANGUAGE plpgsql;
 --------------------------------------------------------------------------------
 -- UDF : updateSubAssignmentFinal : END
@@ -265,14 +267,14 @@ $$ LANGUAGE plpgsql;
 --------------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS min(a FLOAT, b FLOAT);
 CREATE FUNCTION min(a FLOAT, b FLOAT) RETURNS FLOAT AS $$
-declare
-begin
+DECLARE
+BEGIN
 	IF (a > b) THEN
 		RETURN b;
 	ELSE
 		RETURN a;
 	END IF;
-end
+END
 $$ language plpgsql;
 --------------------------------------------------------------------------------
 -- UDF : min : END
@@ -287,13 +289,19 @@ $$ language plpgsql;
 -- table gpkms.Centroid is created and filled with values
 --------------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS :target_schema.kmeans_init( INTEGER);
-CREATE FUNCTION :target_schema.kmeans_init( k INTEGER) RETURNS void AS $$
-declare
+CREATE FUNCTION :target_schema.kmeans_init( k INTEGER) RETURNS TEXT AS $$
+DECLARE
 	pick INTEGER := 1;
 	estSize INTEGER := 1;
 	numCentroids INTEGER;
-begin
-
+	-- Basic variables
+	v_start_ts	TIMESTAMP;
+BEGIN
+	-- ----------------------------------------
+	-- Record the start time
+	-- ----------------------------------------
+	SELECT INTO v_start_ts date_trunc( 'sec', clock_timestamp()::timestamp);
+	
 	/* Find how many points we need to look though to be 99.9% sure that
 	we have seen a point from each cluster */ 
 	numCentroids = floor(-ln(1-(.999)^(1/CAST(k AS FLOAT)))*k);
@@ -302,14 +310,14 @@ begin
 	DROP TABLE IF EXISTS TempTable1 CASCADE;
 	CREATE TEMP TABLE TempTable1(
 		pid BIGINT, 
-		position svec, 
+		position SVEC, 
 		cid INTEGER
 	)DISTRIBUTED BY (pid);
 	
 	DROP TABLE IF EXISTS TempTable2 CASCADE;
 	CREATE TEMP TABLE TempTable2(
 		pid BIGINT, 
-		position svec, 
+		position SVEC, 
 		cid INTEGER
 	) DISTRIBUTED BY (pid);
 	
@@ -317,7 +325,7 @@ begin
 	EXECUTE 'DROP TABLE IF EXISTS madlib.kmeans_output_points';
 	EXECUTE 'CREATE TABLE madlib.kmeans_output_points (
 				pid BIGINT, 
-				position svec, 
+				position SVEC, 
 				cid FLOAT
 				--distance FLOAT
 			  ) DISTRIBUTED BY (pid)';
@@ -348,19 +356,23 @@ begin
 		FROM 
 			madlib.kmeans_input pt,
 			(
-				SELECT p.pid, madlib.kmeans_distFromCenter(p.position, c.position) AS distance 
+				-- Find a random point (that is furthest away from current Centroids)
+				SELECT p.pid, madlib.kmeans_DistFromCenter (p.position, c.position) AS distance 
 				FROM
-					(SELECT position, pid FROM madlib.kmeans_input ORDER BY random() LIMIT ' || numCentroids || ') AS p 
+					(SELECT position, pid FROM madlib.kmeans_input ORDER BY random() LIMIT ' || numCentroids || ') AS p -- K random points
 					CROSS JOIN 
-					(SELECT position FROM madlib.kmeans_output_centroids) AS c
+					(SELECT position FROM madlib.kmeans_output_centroids) AS c -- current centroids
 				GROUP BY p.pid ORDER BY distance DESC LIMIT 1
 			) AS pc 
 		WHERE pc.pid = pt.pid
 		';
 		RAISE INFO 'CENTROID % SEEDED', estSize;
 	END LOOP;
-	
-end
+
+	RETURN 'Finished seeding of ' || estSize || ' centroids.' ||
+   	   E'\nTime elapsed: ' || date_trunc( 'sec', clock_timestamp()::timestamp) - v_start_ts;
+   	   	
+END
 $$ language plpgsql;
 
 
@@ -375,7 +387,7 @@ $$ language plpgsql;
 --------------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS :target_schema.kmeans_run( INTEGER, INTEGER);
 CREATE FUNCTION :target_schema.kmeans_run( ksize INTEGER, goodness INTEGER) RETURNS FLOAT AS $$
-declare
+DECLARE
 	/* 
 	* These variables are used to determine when process should be terminated. 
 	* Variables that can be set for performance fine-tuning have a comment next to them.
@@ -403,11 +415,11 @@ declare
 	time  timestamp;
 	total_time timestamp;
 	
-	temp_centroids svec[];
-	temp_c svec;
+	temp_centroids SVEC[];
+	temp_c SVEC;
 	gof FLOAT := 0;
 	
-begin
+BEGIN
 
 	total_time = clock_timestamp();
 	
@@ -528,7 +540,7 @@ begin
 			(SELECT count(t1.pid) AS e, t1.cid FROM TempTable1 t1 GROUP BY t1.cid) AS t1 JOIN 
 			(SELECT count(t2.pid) AS e, t2.cid FROM TempTable2 t2 GROUP BY t2.cid) AS t2 ON t1.cid = t2.cid);
 			
-		/* look at trend of convergence */
+		/* look at trEND of convergence */
 			
 		derivative[1] = derivative[2];
 		derivative[2] = derivative[3];
@@ -577,21 +589,10 @@ begin
 	RAISE INFO 'TOTAL EXECUTION TIME := % SEC',  clock_timestamp() - total_time;
 	
 	RETURN gof;
-end
+END
 $$ language plpgsql;
 
-/*
-DROP FUNCTION IF EXISTS CreateFullTable();
-CREATE FUNCTION CreateFullTable() RETURNS void AS $$
-declare
-begin
-DROP TABLE IF EXISTS FullTable CASCADE;
-CREATE TEMP TABLE FullTable(
-	pid INTEGER, 
-	cid INTEGER, 
-	distance FLOAT
-)DISTRIBUTED BY (pid);
-INSERT INTO FullTable SELECT a.id, b.cid, l2norm(a.position - b.position) FROM FinalTable a CROSS JOIN gpkms.Centroid b;
-end
-$$ language plpgsql;
-*/
+-- Finalize
+COMMIT;
+
+-- EOF
