@@ -25,7 +25,12 @@
 	#ifndef WIN32
 		/* Includes from the clapack library */
 		#include <f2c.h>
-		#include <clapack.h>
+
+		/* copied from clapack.h */
+		int dgesdd_(char *jobz, integer *m, integer *n, doublereal *
+					a, integer *lda, doublereal *s, doublereal *u, integer *ldu, 
+					doublereal *vt, integer *ldvt, doublereal *work, integer *lwork, 
+					integer *iwork, integer *info);
 	#endif
 #endif
 
