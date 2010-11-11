@@ -1,7 +1,7 @@
 #include "regress.h"
 #include "pinv.h"
 #include "matrix.h"
-#include "cephes/cephes.h"
+#include "student.h"
 
 #include "funcapi.h"
 #include "catalog/pg_type.h"
@@ -408,7 +408,7 @@ float8_mregr_compute(MRegrState	*inState,
 	{
 		pvalues = (float8*) palloc(inState->len * sizeof(float8));
 		for (i = 0; i < inState->len; i++)
-			pvalues[i] = 2. * (1. - stdtr( inState->count - inState->len, fabs( tstats[i] ) ));
+			pvalues[i] = 2. * (1. - studentT_cdf( inState->count - inState->len, fabs( tstats[i] ) ));
 		
 		*outPValues = construct_array((Datum *) pvalues, inState->len, FLOAT8OID,
 									  sizeof(float8), true, 'd');
