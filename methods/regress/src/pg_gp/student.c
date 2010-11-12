@@ -39,11 +39,26 @@
  * [8] DiDonato, Morris, Jr., Algorithm 708: Significant Digit Computation of
  *     the Incomplete Beta Function Ratios, ACM Transactions on Mathematical
  *     Software, Vol. 18, No. 3, 1992
+ *
+ * Approximating the Student-T distribution function with the normal
+ * distribution:
+ *
+ * [9]  Gleason, A note on a proposed student t approximation, Computational
+ *      Statistics & Data Analysis, Vol. 34, No. 1, 2000
+ * [10] Gaver and Kafadar, A Retrievable Recipe for Inverse t, The American
+ *      Statistician, Vol. 38, No. 4, 1984
  */
  
 #include "student.h"
 
 #include <math.h>
+
+
+/* Prototypes of internal functions */
+
+static double normal_cdf(double t);
+static double studentT_cdf_approx(unsigned long nu, double t);
+
 
 /* 
  * double studentT_cdf(unsigned long nu, double t)
@@ -51,8 +66,16 @@
  *
  * Compute Pr[T <= t] for Student-t distributed T with nu degrees of freedom.
  *
- * We use the series expansions 26.7.3 and 26.7.4 from [1] and substitute
- * sin(theta) = t/sqrt(n * z), where z = 1 + t^2/nu.
+ * For nu >= 1000000, we just use the normal distribution as an approximation.
+ * For 1000000 >= nu >= 200, we use a simple approximation from [9].
+ * We are much more cautious than usual here (it is folklore that the normal
+ * distribution is a "good" estimate for Student-T if nu >= 30), but we can
+ * afford the extra work as this function is not designed to be called from
+ * inner loops. Performance should still be reasonably good, with at most ~100
+ * iterations in any case (just one if nu >= 200).
+ * 
+ * For nu < 200, we use the series expansions 26.7.3 and 26.7.4 from [1] and
+ * substitute sin(theta) = t/sqrt(n * z), where z = 1 + t^2/nu.
  *
  * This gives:
  *                          t
@@ -62,7 +85,7 @@
  *                                                    (nu-3)/2
  *             2   [            t              t         --    2 * 4 * ... * (2i)  ]
  *   A(t|nu) = - * [ arctan( -------- ) + ------------ * \  ---------------------- ]
- *			   π   [         sqrt(nu)     sqrt(nu) * z   /_ 3 * ... * (2i+1) * z^i ]
+ *             π   [         sqrt(nu)     sqrt(nu) * z   /_ 3 * ... * (2i+1) * z^i ]
  *                                                       i=0
  *           for odd nu > 1, and
  *
@@ -78,15 +101,27 @@
  * be acceptable for large nu (e.g., if nu >> 1000). But in this case,
  * approximating the Student-T distribution with the normal distribution should
  * be sufficient for all practical matters anyway. If needed, reference [8]
- * could be a valuable source for handling the case nu >> 1000.
+ * could be a valuable source for handling the case of large nu.
  */
 
 double studentT_cdf(unsigned long nu, double t) {
-	double		z = 1. + t * t / nu,
-				t_by_sqrt_nu = fabs(t) / sqrt(nu);
+	double		z,
+				t_by_sqrt_nu;
 	double		A, /* contains A(t|nu) */
 				prod = 1.,
 				sum = 1.;
+
+	/* Handle extreme cases. See above. */
+	 
+	if (nu >= 1000000)
+		return normal_cdf(t);
+	else if (nu >= 200)
+		return studentT_cdf_approx(nu, t);
+
+	/* Handle main case (nu < 200) in the rest of the function. */
+
+	z = 1. + t * t / nu;
+	t_by_sqrt_nu = fabs(t) / sqrt(nu);
 	
 	if (nu == 1)
 	{
@@ -123,4 +158,42 @@ double studentT_cdf(unsigned long nu, double t) {
 		return .5 * (1. - A);
 	else
 		return 1. - .5 * (1. - A);
+}
+
+/*
+ * double normal_cdf(double t)
+ * ---------------------------
+ *
+ * Compute the normal distribution function using the library error function.
+ * This approximation satisfies
+ * rel_error < 0.0001 || abs_error < 0.00000001
+ * for all nu >= 1000000. (Tested on Mac OS X 10.6, gcc-4.2.)
+ */
+
+static inline double normal_cdf(double t)
+{
+	return .5 + .5 * erf(t / sqrt(2.));
+}
+
+
+/* double studentT_cdf_approx(unsigned long nu, double t)
+ * ------------------------------------------------------
+ * 
+ * We approximate the the Studen-T distribution using a formula suggested in
+ * [9], which goes back to an approximation suggested in [10].
+ *
+ * Compared to the series expansion, this approximation satisfies
+ * rel_error < 0.0001 || abs_error < 0.00000001
+ * for all nu >= 200. (Tested on Mac OS X 10.6, gcc-4.2.)
+ */
+
+static double studentT_cdf_approx(unsigned long nu, double t)
+{
+	double	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
+			z = sqrt( log(1. + t * t / nu) / g );
+
+	if (t < 0)
+		z *= -1.;
+	
+	return normal_cdf(z);
 }
