@@ -1,60 +1,100 @@
--------------------
+About:
+------
+
+    This module implements "k-means clustering" method for a set of data points
+    accessed via a table or a view. Initial centroids are found according to  
+    k-means++ algorithm (http://en.wikipedia.org/wiki/K-means%2B%2B). 
+    Further adjustments are based either on a full data set or on a sample of 
+    points, such that there are at least 200 points from each cluster.
+
 To Do:
--------------------
-1) Comment, clean up and review setup.sql.
-2) Finish kmeans.py
-3) Write a regression test.
+------
 
--------------------
-General Info:
--------------------
+    - add support for dense arrays (now it's only SVEC)
+    - make install/usage transparent for Postgresql/Greenplum
+    - allow the method to start processing a source table w/o a "PointID" column 
+      (now it needs both ID and POSITION columns)
+    - fix the "goodness of fit" test to be scale, rotation and transition invariant
+    - rewrite the following plpgsql stored procedure into C:
+        - func: _kmeans_bestCentroid
+        - agg: _kmeans_meanPosition
 
-This module implements "k-means clustering" method for a set of data points stored in a table (kmeans_input_points).
-Centroids are found as described in k-means++ algorithm. Further adjustment/calculation is based on a sample of points 
-such that there are at least 200 points from each cluster.
+Prerequisites:
+--------------
 
-This module requires: Greenplum SVEC implementation.
+    Install Greenplum sparse vector SVEC datatype.
 
--------------------
+
 Installation:
--------------------
+-------------
 
-Execute "setup.sql". Example: psql -f setup.sql
+    1) Copy kmeans.py to $GPHOME/lib/python on all cluster nodes:
+    
+        * Single node
+        cp kmeans.py $GPHOME/lib/python
+        
+        * Multiple node cluster
+        gpscp -f all_host_file kmeans.py =:$GPHOME/lib/python
+    
+    2) Create database objects:
+    
+        psql -f setup.sql -d <database>
 
--------------------
-Usage:
--------------------
 
-1) Prepare the input table/view of the following name and structure:
+Preparation of the Input:
+-------------------------
 
-	CREATE TABLE madlib.kmeans_input(
-		pid 		INT,  	-- point ID
-		position 	SVEC	-- coordinates
-	);
+    1) Prepare the input table/view with the following structure:
+    
+        (
+    		pid 		INT,  	-- point ID
+    		position 	SVEC	-- point coordinates
+    	)
+    
+        Note!:  You can use "create_input.sql" script to create an input table 
+                and populate it with random data. See the script for details. 
+                By default it will create a table called madlib.kmeans_input
+                with 10,000 points (1,000 dimension each).
+    
 
-2) Run: psql -c "select madlib.kmeans_run( 'installation_schema', max_centroids, goodness_test);"
+Execution (in-database):
+------------------------
 
-	Where:
-	- installation_schema 	- schema name for the k-means method installation
-	- max_centroids			- max number of centroids that will be considered (integer)
-	- goodness_test			- goodness test flag (0,1)
+    1) Call the kmeans_run(...) stored procedure, e.g.:  
+    
+        SQL> psql -c "select madlib.kmeans_run( 'madlib.kmeans_input', 10, 1, 'run1', 'test');"
+        
+
+Execution (outside-database):
+-----------------------------
 	
--------------------
-Output:
--------------------
+    1) Call the provided sample script "kmeans_run.py" with the database connection details:
+    
+        kmeans_run.py -h <host> -p <port> -U <user> -d <database> 
+    
 
-1) Centroids table:
+Sample Output:
+--------------
 
-	TABLE madlib.kmeans_output_centroids (
-		cid 		INT,	-- Centroid ID
-		position 	SVEC	-- Centroid coordinates
-	);
-
-1) Points assignment table:
-
-	TABLE madlib.kmeans_output_centroids (
-		pid 		INT,	-- Point ID
-		position 	SVEC,	-- Point coordinates
-		cid 		INT		-- Assigned Centroid ID
-	);
-
+    INFO: 2010-11-19 11:10:23 : Parameters:
+    INFO: 2010-11-19 11:10:23 :  * k = 10 (number of centroids)
+    INFO: 2010-11-19 11:10:23 :  * input_table = madlib.kmeans_input
+    INFO: 2010-11-19 11:10:23 :  * goodness = 1 (GOF test on)
+    INFO: 2010-11-19 11:10:23 :  * run_id = testrun
+    INFO: 2010-11-19 11:10:23 :  * output_schema = madlib
+    INFO: 2010-11-19 11:10:23 : Seeding 10 centroids...
+    INFO: 2010-11-19 11:10:24 : Using sample data set for analysis... (9200 out of 10000 points)
+    INFO: 2010-11-19 11:10:24 : Iteration 1...
+    INFO: 2010-11-19 11:10:25 : Iteration 2...
+    INFO: 2010-11-19 11:10:26 : Exit reason: fraction of reassigned nodes is smaller than the limit: 0.001
+    INFO: 2010-11-19 11:10:26 : Expanding cluster assignment to all points...
+    INFO: 2010-11-19 11:10:27 : Calculating goodness of fit...
+    
+    Finished k-means clustering on "madlib"."kmeans_input" table. 
+    Results: 
+     * 10 centroids (goodness of fit = 2.9787570001).
+    Output:
+     * table : "madlib"."kmeans_out_centroids_testrun"
+     * table : "madlib"."kmeans_out_points_testrun"
+    Time elapsed: 0 minutes 4.335644 seconds.
+    
