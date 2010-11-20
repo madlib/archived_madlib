@@ -3,7 +3,7 @@
 # kmeans.py : k-means clustering
 # 
 # Usage:
-#   kmeans_run( input_table, k, goodness, run_id)
+#   kmeans_run( input_table, k, goodness, run_id, output_schema)
 #
 #   Parameters:
 #       - input_table:      table with the source data

@@ -26,7 +26,7 @@ except Exception, e:
 # ...
 # print kmeans.kmeans_run( 50, 1);
 # ----------
-def setcon ( dbname, host, port, user, passwd):
+def connect ( dbname, host, port, user, passwd):
     global db 
     db = pg.DB(  dbname=dbname
                , host=host 
@@ -34,6 +34,9 @@ def setcon ( dbname, host, port, user, passwd):
                , user=user
                , passwd=passwd
                );
+
+def close():             
+    db.close()
                               
 # The following functions should be used inside the user modules
 # in order to make their code uniform for both external python scripts 
