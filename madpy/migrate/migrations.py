@@ -198,7 +198,7 @@ class MadlibMigration:
        if cur == None or mignumber > cur:
            files = [f for f in self.fw_files() if int(f.split("_")[0]) <= mignumber]
            if len(files) > 0:
-               print "- migrating fowards to " + files[-1]
+               print "- migrating forwards to " + files[-1]
            # rolling fw
            for f in files:
                num = int(f.split("_")[0])

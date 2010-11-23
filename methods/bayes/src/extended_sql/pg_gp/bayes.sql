@@ -1,7 +1,3 @@
-DROP SCHEMA IF EXISTS madlib CASCADE;
-
-CREATE SCHEMA madlib;
-
 -- Create a simple product aggregate. Trust on the optimizer for good performance.
 
 CREATE FUNCTION madlib.product(DOUBLE PRECISION, DOUBLE PRECISION)
@@ -240,14 +236,12 @@ CREATE TABLE madlib.bayes
 
 -- The following is taken from the Greenplum Admin Guide
 
-COPY madlib.bayes (id, class, attributes) FROM stdin;
-1	1	{1, 2, 3}
-3	1	{1, 4, 3}
-5	2	{0, 2, 2}
-2	1	{1, 2, 1}
-4	2	{1, 2, 2}
-6	2	{0, 1, 3}
-\.
+INSERT INTO madlib.bayes VALUES(1,	1,	'{1, 2, 3}');
+INSERT INTO madlib.bayes VALUES(3,	1,	'{1, 4, 3}');
+INSERT INTO madlib.bayes VALUES(5,	2,	'{0, 2, 2}');
+INSERT INTO madlib.bayes VALUES(2,	1,	'{1, 2, 1}');
+INSERT INTO madlib.bayes VALUES(4,	2,	'{1, 2, 2}');
+INSERT INTO madlib.bayes VALUES(6,	2,	'{0, 1, 3}');
 
 CREATE TABLE madlib.toclassify
 (
@@ -256,7 +250,5 @@ CREATE TABLE madlib.toclassify
 	CONSTRAINT pk_toclassify PRIMARY KEY (id)
 );
 
-COPY madlib.toclassify (attributes) FROM stdin;
-{0, 2, 1}
-{1, 2, 3}
-\.
+INSERT INTO madlib.toclassify (attributes) VALUES ('{0, 2, 1}');
+INSERT INTO madlib.toclassify (attributes) VALUES ('{1, 2, 3}');
