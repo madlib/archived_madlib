@@ -14,6 +14,17 @@ def get_config():
     except:
         print "malformed Config.yml: no methods"
         exit(2)
+	try:
+		conf['connect_args']
+	except:
+		print "malformed Config.yml: no connect_args"
+		exit(2)
+	try:
+		conf['dbapi2']
+	except:
+		print "malformed Config.yml: no dbapi2"
+		exit(2)
+		
     return conf
 
 def get_version():
@@ -32,7 +43,7 @@ def get_version():
 def prep(targetdir):
     conf = get_config()
     version = get_version()
-    mig = MadlibMigration()
+    mig = MadlibMigration(conf['dbapi2'], conf['connect_args'])
     if not os.path.exists(targetdir):
         os.mkdir(targetdir)   
     else:
@@ -69,7 +80,8 @@ def prep(targetdir):
     fname = mig.generate(targetdir, get_version(), forwards, backwards)
     
 def install_number(migdir, num):
-    m = MadlibMigration()
+    conf = get_config()
+    m = MadlibMigration(conf['dbapi2'], conf['connect_args'])
     try:
         os.chdir(migdir)
     except OSError:
@@ -82,9 +94,9 @@ def install_number(migdir, num):
         exit(2)
         
     if num == None:
-        m.migrate()
+        m.migrate(conf['dbapi2'], conf['connect_args'])
     else:
-        m.migrate(num)
+        m.migrate(conf['dbapi2'], conf['connect_args'], num)
     
 def uninstall(migdir):
     install_number(migdir, -1)

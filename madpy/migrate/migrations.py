@@ -1,7 +1,6 @@
 import os
 import shutil
 import sqlparse
-import psycopg2
 import sys
 import imp
 import traceback
@@ -9,8 +8,8 @@ import hashlib
 
 mig_dir = "."
 default_prefix_len = 3
-dbnamestr = "dbname=" + os.environ['PGDATABASE']
-dbuserstr = "user=" + os.environ['PGUSER']
+# dbnamestr = "dbname=" + os.environ['PGDATABASE']
+# dbuserstr = "user=" + os.environ['PGUSER']
 
 mig_prolog = """#!/usr/bin/python
 import sys
@@ -26,9 +25,11 @@ class MadlibMigrationError(Exception):
     pass
     
 class MadlibMigration:
-    def __init__(self):
+    def __init__(self, api, connect_args):
+        dbapi2 = __import__(api, globals(), locals(), [], -1)
+        
         # Connect to DB
-        self.dbconn = psycopg2.connect(dbnamestr, dbuserstr)
+        self.dbconn = dbapi2.connect(*connect_args)
 
     def __del__(self):
         self.dbconn.close()
@@ -185,7 +186,7 @@ class MadlibMigration:
         return True
         
     # roll migrations fw/bw from current to mignumber
-    def migrate(self, mignumber=None):
+    def migrate(self, api, connect_args, mignumber=None):
        cur = self.current_mig_number()
        maxfile = self.max_file()
        if maxfile == None:
@@ -204,7 +205,7 @@ class MadlibMigration:
                num = int(f.split("_")[0])
                print "> " + f
                mod = self.__load_module(f)
-               m = mod.Migration()
+               m = mod.Migration(api, connect_args)
                m.forwards()
                m.record_migration(f)
                m.dbconn.commit()
@@ -217,7 +218,7 @@ class MadlibMigration:
                num = int(f.split("_")[0])
                print "> " + f
                mod = self.__load_module(f)
-               m = mod.Migration()
+               m = mod.Migration(api, connect_args)
                m.backwards()
                m.delete_migration(f)
                m.dbconn.commit()
