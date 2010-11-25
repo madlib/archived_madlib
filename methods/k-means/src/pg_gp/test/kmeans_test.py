@@ -16,7 +16,7 @@ except Exception, e:
     sys.exit(1)
     
 try:
-    from kmeans import * 
+    from madlib import kmeans
 except ImportError:
     sys.stderr.write("unable to import MADlib kmeans module. Please check your $PYTHONPATH\n")
     sys.exit(2)
@@ -94,9 +94,14 @@ if db_database == None:
     usage( 'database not defined');
 if db_pass == None:
     getpass.getpass()
-plpy.setcon ( db_database, db_host, db_port, db_user, db_pass)
+    
+plpy.connect ( db_database, db_host, db_port, db_user, db_pass)
 
 #
 # Main - Example (requires running "create_input.sql" before this)
 #
-print kmeans_run( 'madlib.kmeans_input', 10, 1, 'testrun', 'madlib');
+# For parameter definition see README.
+#
+print kmeans.kmeans_run( 'madlib.kmeans_input', 10, 1, 'testrun', 'madlib');
+
+plpy.close()

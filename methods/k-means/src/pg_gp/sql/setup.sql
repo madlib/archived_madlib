@@ -132,10 +132,10 @@ CREATE OR REPLACE FUNCTION :target_schema.kmeans_run( input_table text, k int, g
   RETURNS text
 AS $$
 
-  from kmeans import *
+  from madlib import kmeans
 
   plpy.execute( 'set client_min_messages=warning');
-  return kmeans_run( input_table, k, goodness, run_id, output_table);
+  return kmeans.kmeans_run( input_table, k, goodness, run_id, output_table);
  
 $$ LANGUAGE plpythonu;
 
