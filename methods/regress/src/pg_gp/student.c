@@ -4,6 +4,8 @@
  *
  * Evaluate the Student-T distribution function.
  *
+ * Copyright (c) 2010, EMC
+ * 
  * -----------------------------------------------------------------------------
  *
  * Author: Florian Schoppmann
@@ -48,7 +50,11 @@
  * [10] Gaver and Kafadar, A Retrievable Recipe for Inverse t, The American
  *      Statistician, Vol. 38, No. 4, 1984
  */
- 
+
+/* Type definitions for float8, uint32, ... occur in postgres.h.
+ * Postgres-specific code only begins after: -- POSTGRES -- */
+#include "postgres.h"
+
 #include "student.h"
 
 #include <math.h>
@@ -56,13 +62,13 @@
 
 /* Prototypes of internal functions */
 
-static double normal_cdf(double t);
-static double studentT_cdf_approx(unsigned long nu, double t);
+static float8 normal_cdf(float8 t);
+static float8 studentT_cdf_approx(uint32 nu, float8 t);
 
 
 /* 
- * double studentT_cdf(unsigned long nu, double t)
- * -----------------------------------------------
+ * float8 studentT_cdf(uint32 nu, float8 t)
+ * ----------------------------------------
  *
  * Compute Pr[T <= t] for Student-t distributed T with nu degrees of freedom.
  *
@@ -97,23 +103,23 @@ static double studentT_cdf_approx(unsigned long nu, double t);
  *
  * where A(t|nu) = Pr[|T| <= t].
  *
- * Note: The running time of this function is proportional to nu. This might not
- * be acceptable for large nu (e.g., if nu >> 1000). But in this case,
- * approximating the Student-T distribution with the normal distribution should
- * be sufficient for all practical matters anyway. If needed, reference [8]
- * could be a valuable source for handling the case of large nu.
+ * Note: The running time of calculating the series is proportional to nu. This
+ * We therefore use the normal distribution as an approximation for large nu.
+ * Another idea for handling this case can be found in reference [8].
  */
 
-double studentT_cdf(unsigned long nu, double t) {
-	double		z,
+float8 studentT_cdf(uint32 nu, float8 t) {
+	float8		z,
 				t_by_sqrt_nu;
-	double		A, /* contains A(t|nu) */
+	float8		A, /* contains A(t|nu) */
 				prod = 1.,
 				sum = 1.;
 
 	/* Handle extreme cases. See above. */
 	 
-	if (nu >= 1000000)
+	if (nu == 0)
+		return NAN;
+	else if (nu >= 1000000)
 		return normal_cdf(t);
 	else if (nu >= 200)
 		return studentT_cdf_approx(nu, t);
@@ -161,7 +167,7 @@ double studentT_cdf(unsigned long nu, double t) {
 }
 
 /*
- * double normal_cdf(double t)
+ * float8 normal_cdf(float8 t)
  * ---------------------------
  *
  * Compute the normal distribution function using the library error function.
@@ -170,14 +176,14 @@ double studentT_cdf(unsigned long nu, double t) {
  * for all nu >= 1000000. (Tested on Mac OS X 10.6, gcc-4.2.)
  */
 
-static inline double normal_cdf(double t)
+static inline float8 normal_cdf(float8 t)
 {
 	return .5 + .5 * erf(t / sqrt(2.));
 }
 
 
-/* double studentT_cdf_approx(unsigned long nu, double t)
- * ------------------------------------------------------
+/* float8 studentT_cdf_approx(uint32 nu, float8 t)
+ * -----------------------------------------------
  * 
  * We approximate the the Studen-T distribution using a formula suggested in
  * [9], which goes back to an approximation suggested in [10].
@@ -187,13 +193,50 @@ static inline double normal_cdf(double t)
  * for all nu >= 200. (Tested on Mac OS X 10.6, gcc-4.2.)
  */
 
-static double studentT_cdf_approx(unsigned long nu, double t)
+static float8 studentT_cdf_approx(uint32 nu, float8 t)
 {
-	double	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
+	uint32	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
 			z = sqrt( log(1. + t * t / nu) / g );
 
 	if (t < 0)
 		z *= -1.;
 	
 	return normal_cdf(z);
+}
+
+/* -- POSTGRES -- PostgreSQL-specific code begins here. */
+
+/* Datum studentT_cdf(PG_FUNCTION_ARGS)
+ * ------------------------------------
+ * 
+ * Expose the studentT_cdf as a user-defined function.
+ */
+
+PG_FUNCTION_INFO_V1(student_t_cdf);
+
+#include "utils/builtins.h"
+
+Datum student_t_cdf(PG_FUNCTION_ARGS)
+{
+	uint32		nu;
+	float8		t;
+	
+	/* 
+	 * Perform all the error checking needed to ensure that no one is
+	 * trying to call this in some sort of crazy way. 
+	 */
+	if (PG_NARGS() != 2)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("student_t_cdf called with %d arguments", 
+						PG_NARGS())));
+	}
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+		PG_RETURN_NULL();	
+	
+	nu = PG_GETARG_UINT32(0);
+	t = PG_GETARG_FLOAT8(1);
+	
+	PG_RETURN_FLOAT8(studentT_cdf(nu, t));
 }

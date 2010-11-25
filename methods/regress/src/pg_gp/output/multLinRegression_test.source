@@ -8,8 +8,7 @@ RETURNS DOUBLE PRECISION[]
 AS 'multLinRegression'
 LANGUAGE C
 IMMUTABLE STRICT;
--- Function for merging two transition states: To be used by parallel databases
--- like Greenplum
+-- Function for merging two transition states
 CREATE OR REPLACE FUNCTION madlib.float8_mregr_combine(DOUBLE PRECISION[], DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'multLinRegression'
@@ -32,6 +31,9 @@ CREATE FUNCTION madlib.float8_mregr_pvalues(DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'multLinRegression'
 LANGUAGE C STRICT;
+-- No warning message while creating aggregates. (PREFUNC is a Greenplum-only
+-- attribute)
+SET client_min_messages = error;
 CREATE AGGREGATE madlib.mregr_coef(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	SFUNC=madlib.float8_mregr_accum,
 	STYPE=float8[],
@@ -60,6 +62,14 @@ CREATE AGGREGATE madlib.mregr_pvalues(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	PREFUNC=madlib.float8_mregr_combine,
 	INITCOND='{0}'
 );
+RESET client_min_messages;
+CREATE FUNCTION madlib.student_t_cdf(INTEGER, DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION
+AS 'multLinRegression'
+LANGUAGE C
+IMMUTABLE STRICT;
+-- No notice message while creating table (creating implicit index).
+SET client_min_messages = error;
 CREATE TABLE madlib.weibull
 (
 	id INTEGER NOT NULL,
@@ -68,18 +78,19 @@ CREATE TABLE madlib.weibull
 	y DOUBLE PRECISION,
 	CONSTRAINT pk_weibull PRIMARY KEY (id)
 );
-psql:sql/createFuncsAndData.sql:81: NOTICE:  CREATE TABLE / PRIMARY KEY will create implicit index "pk_weibull" for table "weibull"
+RESET client_min_messages;
 -- The following example is taken from:
 -- http://www.weibull.com/DOEWeb/estimating_regression_models_using_least_squares.htm#Example%205.1
 -- http://www.weibull.com/DOEWeb/hypothesis_tests_in_multiple_linear_regression.htm#Example%205.3
 COPY madlib.weibull (id, x1, x2, y) FROM stdin;
 -- We convert to real in order to round to fewer significant digits. Otherwise,
 -- different platform might produce slightly different results for the least
--- significant digits, depending on their floating point arithmetic.
+-- significant digits, depending on the implementation of internal library
+-- functions.
 select mregr_coef(y, array[1, x1, x2])::real[] from weibull;
-            mregr_coef            
-----------------------------------
- {{-153.512},{1.23872},{12.0824}}
+         mregr_coef         
+----------------------------
+ {-153.512,1.23872,12.0824}
 (1 row)
 
 select mregr_r2(y, array[1, x1, x2])::real from weibull;
@@ -98,5 +109,11 @@ select mregr_pvalues(y, array[1, x1, x2])::real[] from weibull;
           mregr_pvalues          
 ---------------------------------
  {0.15034,0.00724458,0.00827039}
+(1 row)
+
+select student_t_cdf(10, 0.25)::real;
+ student_t_cdf 
+---------------
+      0.596176
 (1 row)
 
