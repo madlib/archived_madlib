@@ -10,6 +10,12 @@
 #ifndef STUDENT_H
 #define STUDENT_H
 
-extern double studentT_cdf(unsigned long /* nu */, double /* t */);
+#include "postgres.h"
+#include "fmgr.h"
+
+extern float8 studentT_cdf(uint32 /* nu */, float8 /* t */);
+
+extern Datum student_t_cdf(PG_FUNCTION_ARGS);
+
 
 #endif
