@@ -1,3 +1,16 @@
+/* -----------------------------------------------------------------------------
+ *
+ * pinv.c
+ *
+ * Compute the pseudoinverse of a matrix.
+ *
+ * Copyright (c) 2010, EMC
+ *
+ * -----------------------------------------------------------------------------
+ */
+
+#include "postgres.h"
+
 #include "pinv.h"
 
 #include "catalog/pg_type.h"

@@ -1,13 +1,21 @@
-#include "matrix.h"
+/* -----------------------------------------------------------------------------
+ *
+ * matrix.c
+ *
+ * Fundamental matrix operations.
+ *
+ * Copyright (c) 2010, EMC
+ *
+ * -----------------------------------------------------------------------------
+ */
+ 
+#include "postgres.h"
 #include "funcapi.h"
-
-#include <ctype.h>
-
-#include "access/tupmacs.h"
 #include "catalog/pg_type.h"
 #include "utils/array.h"
-#include "utils/builtins.h"
 #include "utils/lsyscache.h"
+
+#include "matrix.h"
 
 /* compatibility macros */
 

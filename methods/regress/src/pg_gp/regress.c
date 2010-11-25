@@ -1,3 +1,16 @@
+/* -----------------------------------------------------------------------------
+ *
+ * regress.c
+ *
+ * Multi-Linear Regression.
+ *
+ * Copyright (c) 2010, EMC
+ *
+ * -----------------------------------------------------------------------------
+ */
+
+#include "postgres.h"
+
 #include "regress.h"
 #include "pinv.h"
 #include "matrix.h"
@@ -356,7 +369,11 @@ float8_mregr_compute(MRegrState	*inState,
 	coef_array = DatumGetArrayTypeP(temp_datum);
 
 	if (outCoef)
-		*outCoef = coef_array;
+		/* Note that coef_array is still a (1 x inState->len) matrix (= a
+		 * two-dimensional array. We want to return a one-dimensional array. */
+		*outCoef = construct_array((Datum *) ARR_DATA_PTR(coef_array),
+								   inState->len, FLOAT8OID,
+								   sizeof(float8), true, 'd');
 	
 	/* 
 	 * Next, we compute the total sum of squares (tss) and the explained sumed
