@@ -218,7 +218,7 @@ PG_FUNCTION_INFO_V1(student_t_cdf);
 
 Datum student_t_cdf(PG_FUNCTION_ARGS)
 {
-	uint32		nu;
+	int32		nu;
 	float8		t;
 	
 	/* 
@@ -233,10 +233,14 @@ Datum student_t_cdf(PG_FUNCTION_ARGS)
 						PG_NARGS())));
 	}
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
-		PG_RETURN_NULL();	
+		PG_RETURN_NULL();
 	
-	nu = PG_GETARG_UINT32(0);
+	nu = PG_GETARG_INT32(0);
 	t = PG_GETARG_FLOAT8(1);
+	
+	/* We want to ensure nu > 0 */
+	if (nu <= 0)
+		PG_RETURN_NULL();
 	
 	PG_RETURN_FLOAT8(studentT_cdf(nu, t));
 }
