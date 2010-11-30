@@ -220,3 +220,47 @@ $$
 			else:
 				sys.path.append(path)
 $$ LANGUAGE plpythonu VOLATILE;
+
+-- In the following part, create the functionality inherited from Greenplum
+
+-- State type
+CREATE TYPE nb_classification AS
+   (classes TEXT[],
+    accum DOUBLE PRECISION[],
+    apriori BIGINT[]);
+
+-- State transition function
+CREATE FUNCTION madlib.nb_classify_accum(nb_classification, TEXT[], BIGINT,
+	BIGINT[], BIGINT[])
+RETURNS nb_classification
+AS 'bayes'
+LANGUAGE C
+IMMUTABLE;
+
+-- Function for merging two transition states
+CREATE OR REPLACE FUNCTION madlib.nb_classify_combine(nb_classification,
+	nb_classification)
+RETURNS nb_classification
+AS 'multLinRegression'
+LANGUAGE C
+IMMUTABLE;
+
+-- Final function
+CREATE FUNCTION madlib.nb_classify_final(nb_classification)
+RETURNS TEXT
+AS 'bayes'
+LANGUAGE C 
+IMMUTABLE STRICT;
+
+-- No warning message while creating aggregates. (PREFUNC is a Greenplum-only
+-- attribute)
+SET client_min_messages = error;
+
+CREATE AGGREGATE madlib.nb_classify(TEXT[], BIGINT, BIGINT[], BIGINT[]) (
+	SFUNC=madlib.nb_classify_accum,
+	STYPE=madlib.nb_classification,
+	FINALFUNC=madlib.nb_classify_final,
+	PREFUNC=madlib.nb_classify_combine
+);
+
+RESET client_min_messages;

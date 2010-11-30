@@ -1,3 +1,5 @@
+SOURCES = $(wildcard *.c)
+
 REGRESS = bayesRegression_test
 
 # commenting the next line out means that, for the regression tests, the shared
@@ -5,10 +7,19 @@ REGRESS = bayesRegression_test
 # the current directory
 REGRESS_OPTS := --dlpath=.
 
+# Changing the module name unfortunately also requires changing
+# multLinRegression.sql
+MODULE_big = bayes
+OBJS = $(SOURCES:%.c=%.o)
+
+# We want to include debugging symbols.
+# For release versions, comment out the next line.
+COPT = -g3 -O0 -std=c99
+
 PG_CONFIG = pg_config 
 PGXS := $(shell $(PG_CONFIG) --pgxs) 
 
 include $(PGXS)
 
-test:
-	echo $(PYTHONPATH)
+# do not delete .o files because we want them for debugging
+.PRECIOUS: %.o
