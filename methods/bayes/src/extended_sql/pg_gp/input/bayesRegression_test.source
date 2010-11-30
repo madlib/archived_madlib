@@ -1,0 +1,72 @@
+SET dynamic_library_path TO '@libdir@';
+
+-- Installation of all functions
+
+\i bayes.sql
+
+SELECT madlib.init_python_paths();
+
+
+-- Create examples
+
+\i sql/createExamples.sql
+
+SET search_path TO madlib_examples;
+
+
+-- Create database objects
+
+-- Preprocess training data: Precompute feature probabilities and class priors
+SELECT madlib.create_nb_prepared_data_tables('bayes', 'class', 'attributes', 3, 'nb_feature_probs', 'nb_class_priors');
+
+-- Classify the features in table 'toclassify' using preprocessed training data
+SELECT madlib.create_nb_classify_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_fast');
+
+-- Classify the features in table 'toclassify' without preprocessed training data
+SELECT madlib.create_nb_classify_view('bayes', 'class', 'attributes', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_slow');
+
+-- Compute all class probabilities for the features in table 'toclassify' using
+-- preprocessed training data
+SELECT madlib.create_nb_probs_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_fast');
+
+-- Compute all class probabilities for the features in table 'toclassify' without
+-- preprocessed training data
+SELECT madlib.create_nb_probs_view('bayes', 'class', 'attributes', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_slow');
+
+-- Create a classify function nb_classify_fast: Attributes -> Classes, using
+-- preprocessed training data
+SELECT madlib.create_nb_classify_fn('nb_feature_probs', 'nb_class_priors', 3, 'nb_classify_fast');
+
+-- Create a classify function nb_classify_slow: Attributes -> Classes, without
+-- preprocessed training data
+SELECT madlib.create_nb_classify_fn('bayes', 'class', 'attributes', 3, 'nb_classify_slow');
+
+-- Create a new table like toclassify but extended by a column 'classes'
+SET client_min_messages = error;
+CREATE TABLE classified (LIKE toclassify INCLUDING ALL, classification INTEGER[]);
+RESET client_min_messages;
+
+INSERT INTO classified (id, attributes)
+SELECT * FROM toclassify;
+
+SELECT madlib.update_nb_classification('nb_feature_probs', 'nb_class_priors', 3, 'classified', 'attributes', 'classification');
+
+-- Now test created objects
+
+SELECT * FROM nb_feature_probs ORDER BY class, attr, value;
+
+SELECT * FROM nb_class_priors ORDER BY class;
+
+SELECT * FROM nb_classify_view_fast ORDER BY key;
+
+SELECT * FROM nb_classify_view_slow ORDER BY key;
+
+SELECT * FROM nb_probs_view_fast ORDER BY key, class;
+
+SELECT * FROM nb_probs_view_slow ORDER BY key, class;
+
+SELECT *, nb_classify_fast(attributes) FROM toclassify ORDER BY id;
+
+SELECT *, nb_classify_slow(attributes) FROM toclassify ORDER BY id;
+
+SELECT * FROM classified ORDER BY id;

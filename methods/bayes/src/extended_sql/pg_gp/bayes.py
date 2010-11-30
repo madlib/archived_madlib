@@ -32,8 +32,6 @@ def get_feature_probs_sql(**kwargs):
 		classes.class,
 		triples.attr,
 		triples.value,
-		log(classes.class_cnt::DOUBLE PRECISION / classes.all_cnt)
-			AS log_class_prior,
 		log(triples.cnt) - log(classes.class_cnt) AS log_feature_prob
 	FROM
 	(
@@ -68,15 +66,16 @@ def get_keys_and_prob_values_sql(**kwargs):
 	return """
 	SELECT
 		classify.key,
-		training.class,
+		classPriors.class,
 		CASE WHEN count(*) < {numAttrs} THEN NULL
 			 ELSE
-				training.log_class_prior
-				+ sum(training.log_feature_prob)
+				log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
+				+ sum(featureProbs.log_feature_prob)
 			 END
 		AS log_prob
 	FROM
-		{preparedTrainingSource} AS training,
+		{featureProbsSource} AS featureProbs,
+		{classPriorsSource} AS classPriors,
 		(
 			SELECT
 				{classifyKeyColumn} AS key,
@@ -85,17 +84,19 @@ def get_keys_and_prob_values_sql(**kwargs):
 			FROM {classifySource}
 		) AS classify
 	WHERE
-		training.attr IS NULL OR (training.attr = classify.attr AND training.value = classify.value)
-	GROUP BY classify.key, training.class, training.log_class_prior
+		featureProbs.class = classPriors.class AND
+		featureProbs.attr = classify.attr AND featureProbs.value = classify.value
+	GROUP BY classify.key, classPriors.class, classPriors.class_cnt, classPriors.all_cnt
 	
 	UNION
 	
 	SELECT
 		classify.{classifyKeyColumn} AS key,
-		classes.class
+		classes.class,
+		NULL
 	FROM
-		{classifySource} AS classify
-		{classPriorsSource} classes
+		{classifySource} AS classify,
+		{classPriorsSource} AS classes
 	GROUP BY key, class
 	""".format(**kwargs)
 
@@ -103,32 +104,33 @@ def get_keys_and_prob_values_sql(**kwargs):
 def get_prob_values_sql(**kwargs):
 	return """
 	SELECT
-		training.class,
+		classPriors.class,
 		CASE WHEN count(*) < {numAttrs} THEN NULL
 			 ELSE
-				training.log_class_prior
-				+ sum(training.log_feature_prob)
+				log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
+				+ sum(featureProbs.log_feature_prob)
 			 END
 		AS log_prob
 	FROM
-		{preparedTrainingSource} AS training,
+		{featureProbsSource} AS featureProbs,
+		{classPriorsSource} AS classPriors,
 		(
 			SELECT
 				generate_series(1, {numAttrs}) AS attr,
 				unnest({classifyAttrColumn}) AS value
 		) AS classify
 	WHERE
-		training.attr IS NULL OR (training.attr = classify.attr AND training.value = classify.value)
-	GROUP BY training.class, training.log_class_prior
+		featureProbs.class = classPriors.class AND
+		featureProbs.attr = classify.attr AND featureProbs.value = classify.value
+	GROUP BY classPriors.class, classPriors.class_cnt, classPriors.all_cnt
 	
 	UNION
 	
 	SELECT
-		training.{trainingClassColumn} AS class,
+		classes.class,
 		NULL
 	FROM
-		{trainingSource} AS training
-	GROUP BY class
+		{classPriorsSource} AS classes
 	""".format(**kwargs)
 
 
@@ -138,7 +140,7 @@ def get_classification_sql(**kwargs):
 			key,
 			madlib.argmax(class, log_prob) AS nb_classification,
 			max(log_prob) AS nb_log_probability
-		FROM {keys_and_prob_values} AS key_and_nb_values
+		FROM {keys_and_prob_values} AS keys_and_nb_values
 		GROUP BY key
 		""".format(
 			keys_and_prob_values = "(" + get_keys_and_prob_values_sql(**kwargs) + ")"
@@ -156,43 +158,65 @@ def create_prepared_data(**kwargs):
 		)
 	
 	kwargs.update(dict(
-			sql = get_feature_probs_sql(**kwargs),
 			classPriorsSource = kwargs['classPriorsDestName']
 		))
+	kwargs.update(dict(
+			sql = get_feature_probs_sql(**kwargs)
+		))
 	plpy.execute("""
-		CREATE {whatToCreate} {featuresDestName} AS
+		CREATE {whatToCreate} {featureProbsDestName} AS
 		{sql}
 		""".format(**kwargs)
 		)
 
 
-def create_classification_view(**kwargs):
-	if not 'preparedTrainingSource' in kwargs:
-		kwargs.update(dict(
-				preparedTrainingSource = "(" + get_training_sql(**kwargs) + ")"
-			))
+def create_classification(**kwargs):
+	init_prepared_data(kwargs)
+	kwargs.update(dict(
+		keys_and_prob_values = "(" + get_keys_and_prob_values_sql(**kwargs) + ")"
+		))
 	plpy.execute("""
-		CREATE VIEW {viewName} AS
-		{sql}
-		""".format(
-				viewName = kwargs['viewName'],
-				sql = get_classification_sql(**kwargs)
-			)
-		)
+		CREATE {whatToCreate} {destName} AS
+		SELECT
+			key,
+			madlib.argmax(class, log_prob) AS nb_classification,
+			max(log_prob) AS nb_log_probability
+		FROM {keys_and_prob_values} AS keys_and_nb_values
+		GROUP BY key
+		""".format(**kwargs))
+
+
+def create_bayes_probabilities(**kwargs):
+	init_prepared_data(kwargs)
+	kwargs.update(dict(
+		keys_and_prob_values = "(" + get_keys_and_prob_values_sql(**kwargs) + ")"
+		))
+	plpy.execute("""
+		CREATE {whatToCreate} {destName} AS
+		SELECT
+			key,
+			class,
+			pow(10, max(log_prob)) /
+				sum(pow(10, max(log_prob))) OVER (PARTITION BY key) AS nb_prob
+		FROM
+			{keys_and_prob_values} AS keys_and_nb_values
+		GROUP BY
+			key, class
+		ORDER BY
+			key, class
+		""".format(**kwargs))
 
 
 def create_classification_function(**kwargs):
-	if not 'preparedTrainingSource' in kwargs:
-		kwargs.update(dict(
-				preparedTrainingSource = "(" + get_training_sql(**kwargs) + ")"
-			))
-	
+	init_prepared_data(kwargs)
 	kwargs.update(dict(
 		classifyAttrColumn = "$1"
 		))
-	
+	kwargs.update(dict(
+		keys_and_prob_values = "(" + get_prob_values_sql(**kwargs) + ")"
+		))
 	plpy.execute("""
-		CREATE FUNCTION {functionName}(inAttributes INTEGER[])
+		CREATE FUNCTION {destName} (inAttributes INTEGER[])
 		RETURNS INTEGER[] AS
 		$$
 			SELECT
@@ -200,9 +224,33 @@ def create_classification_function(**kwargs):
 			FROM {keys_and_prob_values} AS key_and_nb_values
 		$$
 		LANGUAGE sql STABLE
-		""".format(
-				functionName = kwargs['functionName'],
-				keys_and_prob_values = "(" + get_prob_values_sql(**kwargs) + ")"
-			)
-		)
+		""".format(**kwargs))
 
+
+def update_classification(**kwargs):
+	init_prepared_data(kwargs)
+	kwargs.update(dict(
+		classifyAttrColumn = "destTable.{classifyAttrColumn}".format(**kwargs)
+		))
+	kwargs.update(dict(
+		keys_and_prob_values = "(" + get_prob_values_sql(**kwargs) + ")"
+		))
+	plpy.execute("""
+		UPDATE {destName} AS destTable
+		SET {destColumn} = (
+			SELECT
+				madlib.argmax(class, log_prob)
+			FROM {keys_and_prob_values} AS key_and_nb_values
+		)
+		""".format(**kwargs))
+
+
+def init_prepared_data(kwargs):
+	if not 'classPriorsSource' in kwargs:
+		kwargs.update(dict(
+				classPriorsSource = "(" + get_class_priors_sql(**kwargs) + ")" 
+			))
+	if not 'featureProbsSource' in kwargs:
+		kwargs.update(dict(
+				featureProbsSource = "(" + get_feature_probs_sql(**kwargs) + ")"
+			))

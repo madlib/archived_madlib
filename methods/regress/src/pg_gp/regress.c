@@ -19,6 +19,7 @@
 #include "funcapi.h"
 #include "catalog/pg_type.h"
 #include "utils/array.h"
+#include "utils/builtins.h"
 
 #include <math.h>
 #include <string.h>
@@ -75,20 +76,19 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 	
 	/* Ensure that both arrays are single dimensional float8[] arrays */
 	if (ARR_NULLBITMAP(state) || ARR_NDIM(state) != 1 || 
-		ARR_ELEMTYPE(state) != FLOAT8OID)
+		ARR_ELEMTYPE(state) != FLOAT8OID ||
+		ARR_NDIM(newX) != 1 || ARR_ELEMTYPE(newX) != FLOAT8OID)
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid transition state")));
-	if (ARR_NDIM(newX) != 1 || ARR_ELEMTYPE(newX) != FLOAT8OID)
-		ereport(ERROR, 
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("data array must be a single dimensional float8[]")));
+				 errmsg("transition function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	
 	/* Only callable as a transition function */
 	if (!(fcinfo->context && IsA(fcinfo->context, AggState)))
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("float8_mregr_accum called from invalid context")));
+				 errmsg("transition function \"%s\" not called from aggregate",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	
 	/* newX with nulls will be ignored */
 	if (ARR_NULLBITMAP(newX))
@@ -135,7 +135,9 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("independent variable array not constant width")));
+				 errmsg("transition function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid)),
+				 errdetail("The independent-variable array is not of constant width.")));
 	}
 	
 	/* Something is seriously fishy if our state has the wrong length */
@@ -143,7 +145,8 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("float8_mregr_accum malformed state value")));
+				 errmsg("transition function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	}
 	
 	/* Okay... All's good now do the work */
@@ -193,7 +196,8 @@ float8_mregr_combine(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid transition state")));
+				 errmsg("preliminary segment-level calculation function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	}
 	
 	/* 
@@ -213,7 +217,9 @@ float8_mregr_combine(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("independent variable array not constant width")));
+				 errmsg("preliminary segment-level calculation function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid)),
+				 errdetail("The independent-variable array is not of constant width.")));
 	}
 	len = state1Data[0];
 	statelen = 4 + len + len*len;
@@ -221,7 +227,8 @@ float8_mregr_combine(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("mregr_combine: invalid state")));
+				 errmsg("preliminary segment-level calculation function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	}
 	
 	/* Validations pass, allocate memory for result and do work */
@@ -275,10 +282,10 @@ float8_mregr_get_state(PG_FUNCTION_ARGS,
 	
 	/* Input should be a single parameter, the aggregate state */
 	if (PG_NARGS() != 1)
-		ereport(ERROR,
+		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("float8_mregr_* called with %d arguments", 
-						PG_NARGS())));
+				 errmsg("final calculation function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	
 	if (PG_ARGISNULL(0))
 		return false;
@@ -286,9 +293,10 @@ float8_mregr_get_state(PG_FUNCTION_ARGS,
 	/* Validate array type */
 	in = PG_GETARG_ARRAYTYPE_P(0);
 	if (ARR_ELEMTYPE(in) != FLOAT8OID || ARR_NDIM(in) != 1 || ARR_NULLBITMAP(in))
-		ereport(ERROR,
+		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("float8_mregr_* called on invalid input array")));
+				 errmsg("final calculation function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	
 	/* Validate the correct size input */
 	if (ARR_DIMS(in)[0] < 2)
@@ -297,9 +305,10 @@ float8_mregr_get_state(PG_FUNCTION_ARGS,
 	data = (float8*) ARR_DATA_PTR(in);
 	outState->len    = (int) data[0];   /* scalar:           len(X[]) */
 	if (ARR_DIMS(in)[0] != 4 + outState->len + outState->len * outState->len) 
-		ereport(ERROR,
+		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("float8_mregr_* called on invalid input array")));
+				 errmsg("final calculation function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	
 	outState->count  = data[1];         /* scalar:           count(*) */
 	outState->sumy   = data[2];         /* scalar:           sum(y)   */

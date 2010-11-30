@@ -229,8 +229,8 @@ Datum student_t_cdf(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("student_t_cdf called with %d arguments", 
-						PG_NARGS())));
+				 errmsg("function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
 	}
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
