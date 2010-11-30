@@ -62,7 +62,7 @@
 
 /* Prototypes of internal functions */
 
-static float8 normal_cdf(float8 t);
+static inline float8 normal_cdf(float8 t);
 static float8 studentT_cdf_approx(uint32 nu, float8 t);
 
 

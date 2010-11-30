@@ -8,7 +8,7 @@ REGRESS = multLinRegression_test
 REGRESS_OPTS := --dlpath=.
 
 # Changing the module name unfortunately also requires changing
-# input/createFuncsAndData.source
+# multLinRegression.sql
 MODULE_big = multLinRegression
 OBJS = $(SOURCES:%.c=%.o)
 
