@@ -2,7 +2,7 @@ SOURCES = $(wildcard *.c)
 
 REGRESS = bayesRegression_test
 
-# commenting the next line out means that, for the regression tests, the shared
+# commenting the next line means that, for the regression tests, the shared
 # library will be looked for in the PostgreSQL library directory and not in
 # the current directory
 REGRESS_OPTS := --dlpath=.

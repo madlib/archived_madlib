@@ -25,6 +25,17 @@
 #include <string.h>
 
 
+/* Indicate "version 1" calling conventions for all exported functions. */
+
+PG_FUNCTION_INFO_V1(float8_mregr_accum);
+PG_FUNCTION_INFO_V1(float8_mregr_combine);
+PG_FUNCTION_INFO_V1(float8_mregr_coef);
+PG_FUNCTION_INFO_V1(float8_mregr_r2);
+PG_FUNCTION_INFO_V1(float8_mregr_tstats);
+PG_FUNCTION_INFO_V1(float8_mregr_pvalues);
+
+
+
 typedef struct {
 	int			len;		/* scalar:               len(X[]) */
 	float8		count;		/* scalar:               count(*) */
@@ -49,8 +60,6 @@ static void float8_mregr_compute(MRegrState	*inState,
 
 PG_MODULE_MAGIC;
 
-
-PG_FUNCTION_INFO_V1(float8_mregr_accum);
 
 Datum
 float8_mregr_accum(PG_FUNCTION_ARGS)
@@ -166,8 +175,6 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 }
 
 
-PG_FUNCTION_INFO_V1(float8_mregr_combine);
-
 Datum
 float8_mregr_combine(PG_FUNCTION_ARGS)
 {
@@ -268,8 +275,6 @@ float8_mregr_combine(PG_FUNCTION_ARGS)
  * PG_FUNCTION_ARGS expands to "FunctionCallInfo fcinfo". If we return
  * false, the calling function should return NULL.
  */
-
-PG_FUNCTION_INFO_V1(float8_mregr_get_state);
 
 static bool
 float8_mregr_get_state(PG_FUNCTION_ARGS,
@@ -449,8 +454,6 @@ float8_mregr_compute(MRegrState	*inState,
 }
 
 
-PG_FUNCTION_INFO_V1(float8_mregr_coef);
-
 Datum float8_mregr_coef(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -467,8 +470,6 @@ Datum float8_mregr_coef(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(coef);
 }
 
-
-PG_FUNCTION_INFO_V1(float8_mregr_r2);
 
 Datum float8_mregr_r2(PG_FUNCTION_ARGS)
 {
@@ -487,8 +488,6 @@ Datum float8_mregr_r2(PG_FUNCTION_ARGS)
 }
 
 
-PG_FUNCTION_INFO_V1(float8_mregr_tstats);
-
 Datum float8_mregr_tstats(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -505,8 +504,6 @@ Datum float8_mregr_tstats(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(tstats);
 }
 
-
-PG_FUNCTION_INFO_V1(float8_mregr_pvalues);
 
 Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 {

@@ -25,10 +25,14 @@
 	#define FLOAT8ARRAYOID		1022
 #endif
 
-/* Recent versions of PostgreSQL use att_align_nominal */
-#ifndef att_align_nominal
-	#define	att_align(x)	att_align_nominal(x)
-#endif
+
+/* Indicate "version 1" calling conventions for all exported functions. */
+
+PG_FUNCTION_INFO_V1(matrix_transpose);
+PG_FUNCTION_INFO_V1(matrix_multiply);
+PG_FUNCTION_INFO_V1(matrix_add);
+PG_FUNCTION_INFO_V1(int8_matrix_smultiply);
+PG_FUNCTION_INFO_V1(float8_matrix_smultiply);
 
 /*
  * matrix_transpose - transpose an array[x][y] into an array[y][x].
@@ -122,6 +126,7 @@ matrix_transpose(PG_FUNCTION_ARGS)
 	Assert(data_r - ARR_DATA_PTR(result) == databytes);
 	PG_RETURN_ARRAYTYPE_P(result);
 }
+
 
 /*
  * matrix_multipy - array multiplication of two input arrays
@@ -246,6 +251,7 @@ Datum matrix_multiply(PG_FUNCTION_ARGS)
 	}
 	PG_RETURN_ARRAYTYPE_P(result);
 }
+
 
 /*
  * matrix_add - array summation over two input arrays

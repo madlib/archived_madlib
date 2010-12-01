@@ -63,7 +63,7 @@
 /* Prototypes of internal functions */
 
 static inline float8 normal_cdf(float8 t);
-static float8 studentT_cdf_approx(uint32 nu, float8 t);
+static float8 studentT_cdf_approx(int64 nu, float8 t);
 
 
 /* 
@@ -108,7 +108,7 @@ static float8 studentT_cdf_approx(uint32 nu, float8 t);
  * Another idea for handling this case can be found in reference [8].
  */
 
-float8 studentT_cdf(uint32 nu, float8 t) {
+float8 studentT_cdf(int64 nu, float8 t) {
 	float8		z,
 				t_by_sqrt_nu;
 	float8		A, /* contains A(t|nu) */
@@ -117,7 +117,7 @@ float8 studentT_cdf(uint32 nu, float8 t) {
 
 	/* Handle extreme cases. See above. */
 	 
-	if (nu == 0)
+	if (nu <= 0)
 		return NAN;
 	else if (nu >= 1000000)
 		return normal_cdf(t);
@@ -193,7 +193,7 @@ static inline float8 normal_cdf(float8 t)
  * for all nu >= 200. (Tested on Mac OS X 10.6, gcc-4.2.)
  */
 
-static float8 studentT_cdf_approx(uint32 nu, float8 t)
+static float8 studentT_cdf_approx(int64 nu, float8 t)
 {
 	uint32	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
 			z = sqrt( log(1. + t * t / nu) / g );
@@ -211,6 +211,8 @@ static float8 studentT_cdf_approx(uint32 nu, float8 t)
  * 
  * Expose the studentT_cdf as a user-defined function.
  */
+
+/* Indicate "version 1" calling conventions for all exported functions. */
 
 PG_FUNCTION_INFO_V1(student_t_cdf);
 
