@@ -6,6 +6,8 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 
+#include "pivot.h"
+
 /* array primitives for looping that should have already existed */
 typedef struct _array_iter {
 	ArrayType  *array;
@@ -16,27 +18,41 @@ typedef struct _array_iter {
 	bool        typbyval;
 	char        typalign;
 } array_iter;
+
+
+/* FIXME: The following function are Greenplum internal functions. We should
+ * probably drop them in MADlib. */
+
 void array_loop(ArrayType *array, int32 start, array_iter *iter);
 bool array_next(array_iter *iter, Datum *value, bool *isna);
 
 
-/* Internal static helper functions */
+/* Prototypes for static functions */
+
 static Datum oid_pivot_accum(FunctionCallInfo fcinfo, Oid type);
 
 
 /*
  * External facing wrapper functions to allow for proper type extraction
  */
+PG_FUNCTION_INFO_V1(int4_pivot_accum);
+
 Datum 
 int4_pivot_accum(PG_FUNCTION_ARGS)
 {
 	return oid_pivot_accum(fcinfo, INT4OID);
 }
+
+PG_FUNCTION_INFO_V1(int8_pivot_accum);
+
 Datum 
 int8_pivot_accum(PG_FUNCTION_ARGS)
 {
 	return oid_pivot_accum(fcinfo, INT8OID);
 }
+
+PG_FUNCTION_INFO_V1(float8_pivot_accum);
+
 Datum 
 float8_pivot_accum(PG_FUNCTION_ARGS)
 {
@@ -140,7 +156,7 @@ bool array_next(array_iter *iter, Datum *value, bool *isna)
 		*value = PointerGetDatum(iter->ptr);
 		iter->ptr += VARSIZE(iter->ptr);
 	}
-	iter->ptr = (char*) att_align(iter->ptr, iter->typalign);
+	iter->ptr = (char*) att_align_nominal(iter->ptr, iter->typalign);
 	iter->index++;
 	return true;
 }
@@ -187,7 +203,7 @@ static int pivot_find(ArrayType *labels, text *attr)
 		if (asize == lsize && !memcmp(attr, labelsp, lsize))
 			return i;  /* Found */
 		labelsp  = labelsp + lsize;
-		labelsp  = (char*) att_align(labelsp, typalign); 
+		labelsp  = (char*) att_align_nominal(labelsp, typalign); 
 	}
 	return -1;  /* Not found */
 }
@@ -311,6 +327,9 @@ typedef struct {
 	array_iter label_iter;
 	array_iter data_iter;
 } unpivot_fctx;
+
+
+PG_FUNCTION_INFO_V1(text_unpivot);
 
 Datum 
 text_unpivot(PG_FUNCTION_ARGS)

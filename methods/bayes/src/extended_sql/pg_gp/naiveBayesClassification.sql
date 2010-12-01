@@ -224,31 +224,37 @@ $$ LANGUAGE plpythonu VOLATILE;
 -- In the following part, create the functionality inherited from Greenplum
 
 -- State type
-CREATE TYPE nb_classification AS
+CREATE TYPE madlib.nb_classification AS
    (classes TEXT[],
     accum DOUBLE PRECISION[],
     apriori BIGINT[]);
 
 -- State transition function
-CREATE FUNCTION madlib.nb_classify_accum(nb_classification, TEXT[], BIGINT,
+CREATE FUNCTION madlib.nb_classify_accum(madlib.nb_classification, TEXT[], BIGINT,
 	BIGINT[], BIGINT[])
-RETURNS nb_classification
-AS 'bayes'
+RETURNS madlib.nb_classification
+AS 'naiveBayesClassification'
 LANGUAGE C
 IMMUTABLE;
 
 -- Function for merging two transition states
-CREATE OR REPLACE FUNCTION madlib.nb_classify_combine(nb_classification,
-	nb_classification)
-RETURNS nb_classification
-AS 'multLinRegression'
+CREATE FUNCTION madlib.nb_classify_combine(madlib.nb_classification,
+	madlib.nb_classification)
+RETURNS madlib.nb_classification
+AS 'naiveBayesClassification'
 LANGUAGE C
 IMMUTABLE;
 
--- Final function
-CREATE FUNCTION madlib.nb_classify_final(nb_classification)
+-- Final functions
+CREATE FUNCTION madlib.nb_classify_final(madlib.nb_classification)
 RETURNS TEXT
-AS 'bayes'
+AS 'naiveBayesClassification'
+LANGUAGE C 
+IMMUTABLE STRICT;
+
+CREATE FUNCTION madlib.nb_probabilities_final(madlib.nb_classification)
+RETURNS DOUBLE PRECISION[]
+AS 'naiveBayesClassification'
 LANGUAGE C 
 IMMUTABLE STRICT;
 
@@ -263,4 +269,104 @@ CREATE AGGREGATE madlib.nb_classify(TEXT[], BIGINT, BIGINT[], BIGINT[]) (
 	PREFUNC=madlib.nb_classify_combine
 );
 
+CREATE AGGREGATE madlib.nb_probabilities(TEXT[], BIGINT, BIGINT[], BIGINT[]) (
+	SFUNC=madlib.nb_classify_accum,
+	STYPE=madlib.nb_classification,
+	FINALFUNC=madlib.nb_probabilities_final,
+	PREFUNC=madlib.nb_classify_combine
+);
+
 RESET client_min_messages;
+
+
+-- Create pivot_sum aggregate needed for the Naive Bayes classifier inherited
+-- from Greenplum
+
+CREATE FUNCTION madlib.float8_pivot_accum(DOUBLE PRECISION[], TEXT[], TEXT, DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[] AS
+'naiveBayesClassification'
+LANGUAGE C
+IMMUTABLE;
+
+CREATE FUNCTION madlib.int4_pivot_accum(INTEGER[], TEXT[], TEXT, INTEGER)
+RETURNS INTEGER[] AS
+'naiveBayesClassification'
+LANGUAGE C
+IMMUTABLE;
+
+CREATE FUNCTION madlib.int2_matrix_accum(BIGINT[], SMALLINT[])
+RETURNS BIGINT[] AS
+'naiveBayesClassification', 'matrix_add'
+LANGUAGE C
+IMMUTABLE;
+
+CREATE FUNCTION madlib.int4_matrix_accum(BIGINT[], INTEGER[])
+RETURNS BIGINT[] AS
+'naiveBayesClassification', 'matrix_add'
+LANGUAGE C
+IMMUTABLE;
+
+CREATE FUNCTION madlib.int8_matrix_accum(BIGINT[], BIGINT[])
+RETURNS BIGINT[] AS
+'naiveBayesClassification', 'matrix_add'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE FUNCTION madlib.float8_matrix_accum(DOUBLE PRECISION[], DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS
+'naiveBayesClassification', 'matrix_add'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE FUNCTION madlib.int8_pivot_accum(BIGINT[], TEXT[], TEXT, BIGINT)
+RETURNS BIGINT[] AS
+'naiveBayesClassification'
+LANGUAGE C
+IMMUTABLE;
+
+SET client_min_messages = error;
+
+CREATE AGGREGATE madlib.pivot_sum(TEXT[], TEXT, DOUBLE PRECISION) (
+  SFUNC=madlib.float8_pivot_accum,
+  STYPE=FLOAT8[],
+  PREFUNC=madlib.float8_matrix_accum
+);
+
+CREATE AGGREGATE madlib.pivot_sum(TEXT[], TEXT, BIGINT) (
+  SFUNC=madlib.int8_pivot_accum,
+  STYPE=INT8[],
+  PREFUNC=madlib.int8_matrix_accum
+);
+
+CREATE AGGREGATE madlib.pivot_sum(TEXT[], TEXT, INTEGER) (
+  SFUNC=madlib.int4_pivot_accum,
+  STYPE=INT4[],
+  PREFUNC=madlib.int8_matrix_accum
+);
+
+CREATE AGGREGATE madlib.sum(SMALLINT[]) (
+  SFUNC=madlib.int2_matrix_accum,
+  STYPE=INT8[],
+  PREFUNC=madlib.int8_matrix_accum
+);
+
+CREATE AGGREGATE madlib.sum(INTEGER[]) (
+  SFUNC=madlib.int4_matrix_accum,
+  STYPE=INT8[],
+  PREFUNC=madlib.int8_matrix_accum
+);
+
+CREATE AGGREGATE madlib.sum(BIGINT[]) (
+  SFUNC=madlib.int8_matrix_accum,
+  STYPE=int8[],
+  PREFUNC=madlib.int8_matrix_accum
+);
+
+CREATE AGGREGATE madlib.sum(DOUBLE PRECISION[]) (
+  SFUNC=madlib.float8_matrix_accum,
+  STYPE=float8[],
+  PREFUNC=madlib.float8_matrix_accum
+);
+
+RESET client_min_messages;
+

@@ -1,11 +1,33 @@
+/*-------------------------------------------------------------------------
+ *
+ * bayes.c
+ *
+ * Naive Bayes Classification.
+ *
+ *------------------------------------------------------------------------- 
+ */
+
 #include "postgres.h"
 #include "funcapi.h"
-
 #include "catalog/pg_type.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "executor/executor.h"  /* for GetAttributeByNum() */
+
+#include "bayes.h"
+
+
+PG_MODULE_MAGIC;
+
+
+/* Indicate "version 1" calling conventions for all exported functions. */
+
+PG_FUNCTION_INFO_V1(nb_classify_accum);
+PG_FUNCTION_INFO_V1(nb_classify_combine);
+PG_FUNCTION_INFO_V1(nb_classify_final);
+PG_FUNCTION_INFO_V1(nb_probabilities_final);
+
 
 
 /* What a nb_classify_type looks like */
@@ -16,10 +38,8 @@ typedef struct {
 } nb_classify_state;
 
 
-/* 
- * Helper function used to extract interesting information from
- * the state tuple.
- */
+/* Prototypes for static functions */
+
 static void get_nb_state(HeapTupleHeader tuple, 
 						 nb_classify_state *state,
 						 int nclasses);
@@ -243,6 +263,7 @@ nb_classify_accum(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));
 }
 
+
 Datum 
 nb_classify_combine(PG_FUNCTION_ARGS)
 {
@@ -300,6 +321,7 @@ nb_classify_combine(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));
 }
 
+
 Datum 
 nb_classify_final(PG_FUNCTION_ARGS)
 {
@@ -343,9 +365,58 @@ nb_classify_final(PG_FUNCTION_ARGS)
 	for (i = 0; i < maxi; i++)
 	{
 		class_data += VARSIZE(class_data);
-		class_data = (char*) att_align(class_data, 'i');
+		class_data = (char*) att_align_nominal(class_data, 'i');
 	}
 	PG_RETURN_TEXT_P(class_data);
+}
+
+
+Datum 
+nb_probabilities_final(PG_FUNCTION_ARGS)
+{
+	nb_classify_state	state;
+	int64				*total_data;
+	float8				*prior_data;
+	int					i, nclasses;
+	float8				*pvalues;
+	float8				denom = 0.;
+	ArrayType			*probabilities;
+
+	if (PG_NARGS() != 1)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("nb_probabilities_final called with %d arguments", 
+						PG_NARGS())));
+	}
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	get_nb_state(PG_GETARG_HEAPTUPLEHEADER(0), &state, 0);
+	
+	/* The the prior with maximum likelyhood */
+	prior_data = (float8*) ARR_DATA_PTR(state.accum);
+	total_data = (int64*) ARR_DATA_PTR(state.total);
+	nclasses = ARR_DIMS(state.classes)[0];
+	
+	
+	pvalues = (float8*) palloc(nclasses * sizeof(float8));
+	for (i = 0; i < nclasses; i++) {
+		pvalues[i] = total_data[i] * exp( prior_data[i] );
+		denom += pvalues[i];
+	}
+		
+	for (i = 0; i < nclasses; i++)
+		pvalues[i] /= denom;
+		
+	probabilities = construct_array((Datum *) pvalues, nclasses,
+											  FLOAT8OID,
+											  sizeof(float8), true, 'd');
+	
+	/* we clean up anything we allocated ourselves */
+	pfree(pvalues);
+
+	PG_RETURN_ARRAYTYPE_P(probabilities);
 }
 
 
