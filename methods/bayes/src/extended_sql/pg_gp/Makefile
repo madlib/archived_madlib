@@ -8,8 +8,8 @@ REGRESS = bayesRegression_test
 REGRESS_OPTS := --dlpath=.
 
 # Changing the module name unfortunately also requires changing
-# multLinRegression.sql
-MODULE_big = bayes
+# naiveBayesClassification.sql
+MODULE_big = naiveBayesClassification
 OBJS = $(SOURCES:%.c=%.o)
 
 # We want to include debugging symbols.
