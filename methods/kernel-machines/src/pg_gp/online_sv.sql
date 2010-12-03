@@ -1,26 +1,3 @@
--- This module implements the class of online learning with kernels algorithms described in
---  Jyrki Kivinen, Alexander J. Smola and Robert C. Williamson, Online Learning with Kernels,
---  IEEE Transactions on Signal Processing, 52(8), 2165-2176, 2004.
---
--- The implementation follows the original description in the Kivinen et al paper faithfully,
--- except that we only update the support vector model when we make a significant error.  
--- The original algorithms update the support vector model at every step, even when no error 
--- was made, in the name of regularisation. For practical purposes, and this is verified 
--- empirically to a certain degree, I think updating only when necessary is both faster and 
--- better from a learning point of view.
---
--- Usage:
--- create table train_data ( id int, ind float8[], label float8 ) distributed by (id);
--- create table results ( id text, model model_rec ) distributed by (id);
--- create table sv_model ( weight float8, sv float8[] ) distributed by (weight);
--- select generateData(1000, 5);
--- insert into results (select 'myexp', online_sv_reg_agg(ind, label) from train_data);
---  or
--- insert into results (select 'myexp' || gp_segment_id, online_sv_reg_agg(ind, label) from train_data group by gp_segment_id);
--- select storeModel('myexp');
--- select svs_predict('{1,2,10}');
-
-
 -- The following is the structure to record the results of a learning process.
 -- We work with arrays of float8 for now; we'll extend the code to work with sparse vectors next.
 DROP TYPE IF EXISTS model_rec CASCADE;
@@ -33,6 +10,16 @@ CREATE TYPE model_rec AS (
        weights float8[],       -- the weight of the support vectors
        individuals float8[][]  -- the array of support vectors
 );
+
+-- Create the necessary tables for storing training data and the learned support vector models
+DROP TABLE IF EXISTS svr_train_data;
+CREATE TABLE svr_train_data ( id int, ind float8[], label float8 ) DISTRIBUTED BY (id);
+
+DROP TABLE IF EXISTS svr_results;
+CREATE TABLE svr_results ( id text, model model_rec ) DISTRIBUTED BY (id);
+
+DROP TABLE IF EXISTS svr_model;
+CREATE TABLE svr_model ( weight float8, sv float8[] ) DISTRIBUTED BY (weight);
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
@@ -47,7 +34,8 @@ BEGIN
 	FOR i IN 1..len LOOP
 	    ind[i] := x[idx][i];
 	END LOOP;
-	RETURN dot_kernel(ind, y);
+	RETURN dot_kernel(ind, y); -- this doesn't require svecs
+--	RETURN dot(ind, y);  -- this does require svecs
 END
 $$ LANGUAGE plpgsql;
 
@@ -145,9 +133,9 @@ CREATE AGGREGATE online_sv_reg_agg(float8[], float8) (
        stype = model_rec
 );
 
--- CREATE OR REPLACE FUNCTION transform_rec(svs model_rec) RETURNS SETOF sv_model AS $$
+-- CREATE OR REPLACE FUNCTION transform_rec(svs model_rec) RETURNS SETOF svr_model AS $$
 -- DECLARE
--- 	sv sv_model;
+-- 	sv svr_model;
 -- BEGIN
 --         FOR i IN 1..svs.nsvs LOOP 
 --       	 sv.weight = svs.weights[i];
@@ -158,10 +146,10 @@ CREATE AGGREGATE online_sv_reg_agg(float8[], float8) (
 -- $$ LANGUAGE plpgsql;
 
 -- This function transforms a model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
-CREATE OR REPLACE FUNCTION transform_rec(ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF sv_model AS $$
+CREATE OR REPLACE FUNCTION transform_rec(ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF svr_model AS $$
 DECLARE
 	nsvs INT;
-	sv sv_model;
+	sv svr_model;
 BEGIN
 	nsvs = array_upper(weights,1);
 	FOR i IN 1..nsvs LOOP 
@@ -172,7 +160,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- This function stores a model_rec stored with modelname in the results table into the sv_model table.
+-- This function stores a model_rec stored with modelname in the svr_results table into the svr_model table.
 CREATE OR REPLACE FUNCTION storeModel(modelname TEXT) RETURNS VOID AS $$
 DECLARE
 	myind_dim INT;
@@ -180,19 +168,19 @@ DECLARE
 	myindividuals float8[][];
 --	mysvs model_rec;
 BEGIN
---	SELECT INTO mysvs model FROM results WHERE id = modelname; -- for some strange reason this line doesn't work....
-	SELECT INTO myind_dim (model).ind_dim FROM results WHERE id = modelname;
-	SELECT INTO myweights (model).weights FROM results WHERE id = modelname;
-	SELECT INTO myindividuals (model).individuals FROM results WHERE id = modelname;
-	DELETE FROM sv_model;
- 	INSERT INTO sv_model (SELECT * FROM transform_rec(myind_dim, myweights, myindividuals));
+--	SELECT INTO mysvs model FROM svr_results WHERE id = modelname; -- for some strange reason this line doesn't work....
+	SELECT INTO myind_dim (model).ind_dim FROM svr_results WHERE id = modelname;
+	SELECT INTO myweights (model).weights FROM svr_results WHERE id = modelname;
+	SELECT INTO myindividuals (model).individuals FROM svr_results WHERE id = modelname;
+	DELETE FROM svr_model;
+ 	INSERT INTO svr_model (SELECT * FROM transform_rec(myind_dim, myweights, myindividuals));
 END;
 $$ LANGUAGE plpgsql;
 
--- This function performs prediction using a support vector machine stored in the sv_model table.
+-- This function performs prediction using a support vector machine stored in the svr_model table.
 CREATE OR REPLACE FUNCTION svs_predict(ind float8[], OUT ret float8) RETURNS FLOAT8 AS $$
 BEGIN
-	SELECT INTO ret sum(weight * kernel(sv, ind)) FROM sv_model;
+	SELECT INTO ret sum(weight * kernel(sv, ind)) FROM svr_model;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -214,9 +202,9 @@ END
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION generateData(num int, dim int) RETURNS VOID AS $$
-    plpy.execute("DELETE FROM train_data")
-    plpy.execute("INSERT INTO train_data SELECT a.val, randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
-    plpy.execute("UPDATE train_data SET label = targetFunc(ind)")
+    plpy.execute("DELETE FROM svr_train_data")
+    plpy.execute("INSERT INTO svr_train_data SELECT a.val, randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
+    plpy.execute("UPDATE svr_train_data SET label = targetFunc(ind)")
 $$ LANGUAGE 'plpythonu';
 
 CREATE OR REPLACE FUNCTION targetFunc(ind float8[]) RETURNS float8 AS $$
@@ -229,6 +217,13 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+-- Timing test
+--   10,000,5  -    60833 ms    52632 ms
+--  100,000,5  -   692211 ms   500622 ms
+--  200,000,5  -  1647196 ms  1261711 ms
+--  300,000,5  -  3042300 ms  2160252 ms
+--  500,000,5  -        - ms  
+-- 1000,000,5  - 90423147 ms
 
 
 
