@@ -374,8 +374,22 @@ float8_mregr_compute(MRegrState	*inState,
 	/* 
 	 * First, we compute the regression coefficients, often called b or beta in
 	 * the literature.
-	 * Vector of coefficients b is found via the formula:  
-	 *      b = (X'X)^-1 * X' * y
+	 * Vector of coefficients b is found via the formula:
+	 *      b = (X'X)+ * X' * y = X+ * y
+	 *
+	 * The identity X+ = (X'X)+ * X' holds for all matrices X, a proof can be
+	 * found here:
+	 * http://en.wikipedia.org/wiki/Proofs_involving_the_Moore–Penrose_pseudoinverse
+	 *
+	 * Note that when the system X b = y is satisfiable (because X has rank at
+	 * most inState->len), then setting b = X+ * y means that |b|_2 <=
+	 * |c|_2 for all solutions c satisfying X c = y.
+	 * (See http://en.wikipedia.org/wiki/Moore–Penrose_pseudoinverse)
+	 *
+	 * Explicitly computing (X'X)+ can become a significant source of numerical
+	 * rounding erros (see, e.g., 
+	 * http://en.wikipedia.org/wiki/Moore–Penrose_pseudoinverse#Construction
+	 * or http://www.mathworks.com/moler/leastsquares.pdf p.16).
 	 */
 	
 	temp_datum = DirectFunctionCall2(matrix_multiply, PointerGetDatum(inState->_XtX_inv),
