@@ -1,15 +1,14 @@
+#!/usr/bin/python
 import yaml
 import os
-import argparse
 import subprocess
-import madpy.config.configyml
-import madlib
+import configyml
     
 def install_methods():
-    conf = madpy.config.configyml.get_config()
+    conf = configyml.get_config('..')
 
     for m in conf['methods']:
-        mdir = madlib.__path__[0] + '/' + m['name'] + '/src/' + m['port'] + '/'
+        mdir = '../../madlib/' + m['name'] + '/src/' + m['port'] + '/'
         print "changing directory to " + mdir
         curdir = os.getcwd()
         try:
@@ -28,6 +27,8 @@ def install_methods():
             print "method " + m['name'] + " misconfigured: Install.yml missing module"
             sys.exit(2)
         if install['module'] != None:
-            subprocess.check_call(['make'], stderr = subprocess.PIPE)
+            subprocess.call(['make','install'], stderr = subprocess.PIPE)
         os.chdir(curdir)
             
+if __name__ == "__main__":
+    install_methods()

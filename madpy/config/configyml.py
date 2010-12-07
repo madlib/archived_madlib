@@ -1,11 +1,9 @@
 import yaml
-import madpy
+# import madpy
 
-def madpy_dir():
-    return madpy.__path__[0]
-
-def get_config():
-    fname = madpy.config.configyml.madpy_dir() + '/Config.yml'
+def get_config(configdir):
+    # fname = madpy.__path__[0] + '/Config.yml'
+    fname = configdir + '/Config.yml'
     try:
         fd = open(fname)
     except:
@@ -34,9 +32,9 @@ def get_config():
 		
     return conf
 
-def get_version():
+def get_version(configdir):
     try:
-        conf = yaml.load(open(madpy_dir() + '/Version.yml'))
+        conf = yaml.load(open(configdir + '/Version.yml'))
     except:
         print "missing or malformed Version.yml"
         exit(2)

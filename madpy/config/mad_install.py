@@ -7,8 +7,8 @@ import madpy.config.configyml
 import madpy.migrate.migrations
 
 def prep(targetdir):
-    conf = madpy.config.configyml.get_config()
-    version = madpy.config.configyml.get_version()
+    conf = madpy.config.configyml.get_config(madpy.__path__[0])
+    version = madpy.config.configyml.get_version(madpy.__path__[0])
     mig = madpy.migrate.migrations.MadlibMigration(conf['dbapi2'], conf['connect_args'])
     if not os.path.exists(targetdir):
         os.mkdir(targetdir)   
@@ -43,10 +43,10 @@ def prep(targetdir):
             backwards.append(os.getcwd()+"/"+install['bw'])
         os.chdir(curdir)
         
-    fname = mig.generate(targetdir, madpy.config.configyml.get_version(), forwards, backwards)
+    fname = mig.generate(targetdir, madpy.config.configyml.get_version(madpy.__path__[0]), forwards, backwards)
     
 def install_number(migdir, num):
-    conf = madpy.config.configyml.get_config()
+    conf = madpy.config.configyml.get_config(madpy.__path__[0])
     m = madpy.migrate.migrations.MadlibMigration(conf['dbapi2'], conf['connect_args'])
     try:
         os.chdir(migdir)

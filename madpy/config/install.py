@@ -2,14 +2,14 @@
 import yaml
 import os
 import argparse
-import configyml
+import madpy
 from migrate.migrations import *
 
 
 
 def prep(targetdir):
-    conf = configyml.get_config()
-    version = configyml.get_version()
+    conf = configyml.get_config(madpy.__path__[0])
+    version = configyml.get_version(madpy.__path__[0])
     mig = MadlibMigration(conf['dbapi2'], conf['connect_args'])
     if not os.path.exists(targetdir):
         os.mkdir(targetdir)   
@@ -44,10 +44,10 @@ def prep(targetdir):
             backwards.append(os.getcwd()+"/"+install['bw'])
         os.chdir(curdir)
         
-    fname = mig.generate(targetdir, configyml.get_version(), forwards, backwards)
+    fname = mig.generate(targetdir, configyml.get_version(madpy.__path__[0]), forwards, backwards)
     
 def install_number(migdir, num):
-    conf = configyml.get_config()
+    conf = configyml.get_config(madpy.__path__[0])
     m = MadlibMigration(conf['dbapi2'], conf['connect_args'])
     try:
         os.chdir(migdir)

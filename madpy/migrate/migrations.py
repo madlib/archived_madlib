@@ -24,7 +24,7 @@ class MadlibMigrationError(Exception):
     
 class MadlibMigration:
     def __init__(self, api, connect_args):
-        dbapi2 = __import__(api, globals(), locals(), [], -1)
+        dbapi2 = __import__(api, globals(), locals(), [])
         
         # Connect to DB
         self.dbconn = dbapi2.connect(*connect_args)
