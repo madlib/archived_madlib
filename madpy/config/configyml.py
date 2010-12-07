@@ -1,20 +1,20 @@
 import yaml
 import madpy
-import madlib
 
 def madpy_dir():
     return madpy.__path__[0]
 
-def madlib_dir():
-    return madlib.__path__[0]
-
 def get_config():
-    fname = madpy.config.configyml.madpy_dir() + '/config/Config.yml'
+    fname = madpy.config.configyml.madpy_dir() + '/Config.yml'
     try:
         fd = open(fname)
+    except:
+        print "missing " + fname
+        exit(2)
+    try:
         conf = yaml.load(fd)
     except:
-        print "missing or malformed Config.yml"
+        print "yaml format error: Config.yml"
         exit(2)
     try:
         conf['methods']
@@ -36,7 +36,7 @@ def get_config():
 
 def get_version():
     try:
-        conf = yaml.load(open(madpy_dir() + '/config/Version.yml'))
+        conf = yaml.load(open(madpy_dir() + '/Version.yml'))
     except:
         print "missing or malformed Version.yml"
         exit(2)

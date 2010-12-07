@@ -1,15 +1,15 @@
 #!/usr/bin/python
 import yaml
 import os
+import sys
 import argparse
-import configyml
-from madpy.migrate.migrations import *
-from madpy.config import configyml
+import madpy.config.configyml
+import madpy.migrate.migrations
 
 def prep(targetdir):
-    conf = configyml.get_config()
-    version = configyml.get_version()
-    mig = MadlibMigration(conf['dbapi2'], conf['connect_args'])
+    conf = madpy.config.configyml.get_config()
+    version = madpy.config.configyml.get_version()
+    mig = madpy.migrate.migrations.MadlibMigration(conf['dbapi2'], conf['connect_args'])
     if not os.path.exists(targetdir):
         os.mkdir(targetdir)   
     else:
@@ -20,7 +20,7 @@ def prep(targetdir):
     backwards = []
 
     for m in conf['methods']:
-        mdir = '../methods/' + m['name'] + '/src/' + m['port'] + '/'
+        mdir = '../../madlib/' + m['name'] + '/src/' + m['port'] + '/'
         curdir = os.getcwd()
         try:
             os.chdir(mdir)
@@ -43,11 +43,11 @@ def prep(targetdir):
             backwards.append(os.getcwd()+"/"+install['bw'])
         os.chdir(curdir)
         
-    fname = mig.generate(targetdir, configyml.get_version(), forwards, backwards)
+    fname = mig.generate(targetdir, madpy.config.configyml.get_version(), forwards, backwards)
     
 def install_number(migdir, num):
-    conf = configyml.get_config()
-    m = MadlibMigration(conf['dbapi2'], conf['connect_args'])
+    conf = madpy.config.configyml.get_config()
+    m = madpy.migrate.migrations.MadlibMigration(conf['dbapi2'], conf['connect_args'])
     try:
         os.chdir(migdir)
     except OSError:
@@ -55,7 +55,7 @@ def install_number(migdir, num):
         exit(2)
     try:
         m.setup()
-    except MadlibMigrationNoSchemaError:
+    except madpy.migrate.migrations.MadlibMigrationNoSchemaError:
         print "no schema named 'madlib' in database"
         exit(2)
         

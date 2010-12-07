@@ -1,17 +1,21 @@
+import sys
+sys.path.append("../")
 import profiling
 import unittest
 import psycopg2
 
-class ProfileTest(unittest.TestCase):
+class ProfileTest(unittest.TestCase):            
     dbnamestr = "dbname=template1"
     dbuserstr = "user=joeh"
     table = "pg_type"
     testdb = "profile_regression"
-    
+    aggs = ["MIN", "MAX"]
+    numaggs = ["COUNT(DISTINCT %%)"]
+
     allcols = profiling.catalog_columns(dbnamestr, dbuserstr, table)
-    query = profiling.gen_profile_query(table, ["MIN", "MAX"],
-                                        ["COUNT(DISTINCT %%)"], allcols[0], allcols[1])
-                            
+    
+    query = profiling.gen_profile_query(table, aggs, numaggs, allcols[0], allcols[1])
+                    
     def testQuery(self):
         # Connect to an existing database
         conn = psycopg2.connect(self.dbnamestr, self.dbuserstr)
@@ -27,11 +31,6 @@ class ProfileTest(unittest.TestCase):
         conn = psycopg2.connect("dbname="+ self.testdb, self.dbuserstr)
         cur = conn.cursor()
         
-        # load the sketches DDL
-        f = open('../../../sketch/src/extended_sql/pg_gp/sketches.sql', 'r')
-        script = f.read()
-        cur.execute(script)
-
         # Run query
         cur.execute(self.query)
         out = cur.fetchall()
@@ -50,5 +49,6 @@ class ProfileTest(unittest.TestCase):
         cur.execute("DROP DATABASE " + self.testdb + ";")
         cur.close()
         conn.close()
+
 if __name__ == "__main__":
     unittest.main()

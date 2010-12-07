@@ -1,48 +1,15 @@
+#!/usr/bin/python
 import yaml
 import os
 import argparse
+import configyml
 from migrate.migrations import *
 
-def get_config():
-    try:
-        conf = yaml.load(open('Config.yml'))
-    except:
-        print "missing or malformed Config.yml"
-        exit(2)
-    try:
-        conf['methods']
-    except:
-        print "malformed Config.yml: no methods"
-        exit(2)
-	try:
-		conf['connect_args']
-	except:
-		print "malformed Config.yml: no connect_args"
-		exit(2)
-	try:
-		conf['dbapi2']
-	except:
-		print "malformed Config.yml: no dbapi2"
-		exit(2)
-		
-    return conf
 
-def get_version():
-    try:
-        conf = yaml.load(open('Version.yml'))
-    except:
-        print "missing or malformed Version.yml"
-        exit(2)
-    try:
-        conf['version']
-    except:
-        print "malformed Version.yml"
-        exit(2)
-    return str(conf['version'])
 
 def prep(targetdir):
-    conf = get_config()
-    version = get_version()
+    conf = configyml.get_config()
+    version = configyml.get_version()
     mig = MadlibMigration(conf['dbapi2'], conf['connect_args'])
     if not os.path.exists(targetdir):
         os.mkdir(targetdir)   
@@ -77,10 +44,10 @@ def prep(targetdir):
             backwards.append(os.getcwd()+"/"+install['bw'])
         os.chdir(curdir)
         
-    fname = mig.generate(targetdir, get_version(), forwards, backwards)
+    fname = mig.generate(targetdir, configyml.get_version(), forwards, backwards)
     
 def install_number(migdir, num):
-    conf = get_config()
+    conf = configyml.get_config()
     m = MadlibMigration(conf['dbapi2'], conf['connect_args'])
     try:
         os.chdir(migdir)

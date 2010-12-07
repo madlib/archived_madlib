@@ -8,12 +8,10 @@ import hashlib
 
 mig_dir = "."
 default_prefix_len = 3
-# dbnamestr = "dbname=" + os.environ['PGDATABASE']
-# dbuserstr = "user=" + os.environ['PGUSER']
 
 mig_prolog = """#!/usr/bin/python
 import sys
-from migrate.migrations import MadlibMigration
+from madpy.migrate.migrations import MadlibMigration
 
 class Migration(MadlibMigration):
 """
