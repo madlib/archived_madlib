@@ -2,7 +2,7 @@ SET dynamic_library_path TO '@libdir@';
 
 -- Installation of all functions
 
-\i bayes.sql
+\i naiveBayesClassification.sql
 
 SELECT madlib.init_python_paths();
 
@@ -17,7 +17,9 @@ SET search_path TO madlib_examples;
 -- Create database objects
 
 -- Preprocess training data: Precompute feature probabilities and class priors
+SET client_min_messages = error;
 SELECT madlib.create_nb_prepared_data_tables('bayes', 'class', 'attributes', 3, 'nb_feature_probs', 'nb_class_priors');
+RESET client_min_messages;
 
 -- Classify the features in table 'toclassify' using preprocessed training data
 SELECT madlib.create_nb_classify_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_fast');
@@ -51,6 +53,46 @@ SELECT * FROM toclassify;
 
 SELECT madlib.update_nb_classification('nb_feature_probs', 'nb_class_priors', 3, 'classified', 'attributes', 'classification');
 
+-- Create intermediate views as needed for Naive Bayes implementation inherited from Greenplum
+CREATE VIEW class_example_unpivot AS
+SELECT
+	id,
+	'C' || class AS class,
+	unnest(array['A1', 'A2', 'A3']) AS attr,
+	unnest(attributes) AS value
+FROM bayes;
+
+CREATE TABLE class_example_nb_training AS
+SELECT
+	attr,
+	value,
+	madlib.pivot_sum(array['C1', 'C2'], class, 1) AS class_count
+FROM
+	class_example_unpivot
+GROUP BY attr, value;
+--DISTRIBUTED by (attr);
+
+CREATE VIEW class_example_nb_classify AS
+SELECT
+	attr,
+	value,
+	class_count,
+	array['C1', 'C2'] AS classes,
+	madlib.sum(class_count) OVER (wa)::INTEGER[] AS class_total,
+	(
+		SELECT
+			count(DISTINCT value)
+		FROM class_example_nb_training AS sub
+		WHERE
+			sub.attr = training.attr
+	) AS attr_count
+--	PostgreSQL does not support DISTINCT to be used within the function argument list
+--	http://www.postgresql.org/docs/9/interactive/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
+--  so we cannot use the following (taken from the Greenplum Admin Guide)
+--	count(DISTINCT value) OVER (wa) AS attr_count
+FROM class_example_nb_training AS training
+WINDOW wa AS (PARTITION BY attr);
+
 -- Now test created objects
 
 SELECT * FROM nb_feature_probs ORDER BY class, attr, value;
@@ -65,8 +107,28 @@ SELECT * FROM nb_probs_view_fast ORDER BY key, class;
 
 SELECT * FROM nb_probs_view_slow ORDER BY key, class;
 
-SELECT *, nb_classify_fast(attributes) FROM toclassify ORDER BY id;
+SELECT *, nb_classify_fast(attributes, 1) FROM toclassify ORDER BY id;
 
-SELECT *, nb_classify_slow(attributes) FROM toclassify ORDER BY id;
+SELECT *, nb_classify_slow(attributes, 0) FROM toclassify ORDER BY id;
 
 SELECT * FROM classified ORDER BY id;
+
+SELECT
+	classify.id,
+	classify.attributes,
+	madlib.nb_classify(classes, attr_count, class_count, class_total) AS class,
+	madlib.nb_probabilities(classes, attr_count, class_count, class_total) AS probabilities
+FROM
+	class_example_nb_classify AS prep,
+	(
+		SELECT
+			id,
+			attributes,
+			'A' || generate_series(1, 3) AS attr,
+			unnest(attributes) AS value
+		FROM toclassify
+	) AS classify
+WHERE
+	prep.attr = classify.attr AND prep.value = classify.value
+GROUP BY
+	classify.id, classify.attributes;

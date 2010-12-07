@@ -22,6 +22,12 @@
 #include <stdlib.h>
 #include <math.h>
 
+
+/* Indicate "version 1" calling conventions for all exported functions. */
+
+PG_FUNCTION_INFO_V1(pseudoinverse);
+
+
 Datum 
 pseudoinverse(PG_FUNCTION_ARGS)
 {

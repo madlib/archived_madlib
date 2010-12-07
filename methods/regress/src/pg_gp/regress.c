@@ -25,6 +25,17 @@
 #include <string.h>
 
 
+/* Indicate "version 1" calling conventions for all exported functions. */
+
+PG_FUNCTION_INFO_V1(float8_mregr_accum);
+PG_FUNCTION_INFO_V1(float8_mregr_combine);
+PG_FUNCTION_INFO_V1(float8_mregr_coef);
+PG_FUNCTION_INFO_V1(float8_mregr_r2);
+PG_FUNCTION_INFO_V1(float8_mregr_tstats);
+PG_FUNCTION_INFO_V1(float8_mregr_pvalues);
+
+
+
 typedef struct {
 	int			len;		/* scalar:               len(X[]) */
 	float8		count;		/* scalar:               count(*) */
@@ -49,8 +60,6 @@ static void float8_mregr_compute(MRegrState	*inState,
 
 PG_MODULE_MAGIC;
 
-
-PG_FUNCTION_INFO_V1(float8_mregr_accum);
 
 Datum
 float8_mregr_accum(PG_FUNCTION_ARGS)
@@ -166,8 +175,6 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 }
 
 
-PG_FUNCTION_INFO_V1(float8_mregr_combine);
-
 Datum
 float8_mregr_combine(PG_FUNCTION_ARGS)
 {
@@ -269,8 +276,6 @@ float8_mregr_combine(PG_FUNCTION_ARGS)
  * false, the calling function should return NULL.
  */
 
-PG_FUNCTION_INFO_V1(float8_mregr_get_state);
-
 static bool
 float8_mregr_get_state(PG_FUNCTION_ARGS,
 					   MRegrState *outState)
@@ -369,8 +374,22 @@ float8_mregr_compute(MRegrState	*inState,
 	/* 
 	 * First, we compute the regression coefficients, often called b or beta in
 	 * the literature.
-	 * Vector of coefficients b is found via the formula:  
-	 *      b = (X'X)^-1 * X' * y
+	 * Vector of coefficients b is found via the formula:
+	 *      b = (X'X)+ * X' * y = X+ * y
+	 *
+	 * The identity X+ = (X'X)+ * X' holds for all matrices X, a proof can be
+	 * found here:
+	 * http://en.wikipedia.org/wiki/Proofs_involving_the_Moore–Penrose_pseudoinverse
+	 *
+	 * Note that when the system X b = y is satisfiable (because X has rank at
+	 * most inState->len), then setting b = X+ * y means that |b|_2 <=
+	 * |c|_2 for all solutions c satisfying X c = y.
+	 * (See http://en.wikipedia.org/wiki/Moore–Penrose_pseudoinverse)
+	 *
+	 * Explicitly computing (X'X)+ can become a significant source of numerical
+	 * rounding erros (see, e.g., 
+	 * http://en.wikipedia.org/wiki/Moore–Penrose_pseudoinverse#Construction
+	 * or http://www.mathworks.com/moler/leastsquares.pdf p.16).
 	 */
 	
 	temp_datum = DirectFunctionCall2(matrix_multiply, PointerGetDatum(inState->_XtX_inv),
@@ -449,8 +468,6 @@ float8_mregr_compute(MRegrState	*inState,
 }
 
 
-PG_FUNCTION_INFO_V1(float8_mregr_coef);
-
 Datum float8_mregr_coef(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -467,8 +484,6 @@ Datum float8_mregr_coef(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(coef);
 }
 
-
-PG_FUNCTION_INFO_V1(float8_mregr_r2);
 
 Datum float8_mregr_r2(PG_FUNCTION_ARGS)
 {
@@ -487,8 +502,6 @@ Datum float8_mregr_r2(PG_FUNCTION_ARGS)
 }
 
 
-PG_FUNCTION_INFO_V1(float8_mregr_tstats);
-
 Datum float8_mregr_tstats(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -505,8 +518,6 @@ Datum float8_mregr_tstats(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(tstats);
 }
 
-
-PG_FUNCTION_INFO_V1(float8_mregr_pvalues);
 
 Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 {
