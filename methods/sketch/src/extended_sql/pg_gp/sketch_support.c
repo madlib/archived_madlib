@@ -27,12 +27,12 @@ unsigned int rightmost_one(unsigned char *bits,
     int            i;
     unsigned int   c = 0;     /* output: c will count trailing zero bits, */
 
-    if (sketchsz_bits % (sizeof(unsigned int)*CHAR_BIT))
+    if (sketchsz_bits % (sizeof(unsigned int)*CHAR_BIT)) 
         elog(
             ERROR,
             "number of bits per sketch is %lu, must be a multiple of sizeof(unsigned int) = %lu",
-            sketchsz_bits,
-            (unsigned long)sizeof(unsigned int));
+            (unsigned long int)sketchsz_bits,
+            (unsigned long int)sizeof(unsigned int));
 
     /*
      * loop through the chunks of bits from right to left, counting zeros.
@@ -76,7 +76,7 @@ unsigned int leftmost_zero(unsigned char *bits,
         elog(
             ERROR,
             "number of bits per sketch is %lu, must be a multiple of sizeof(unsigned int) = %lu",
-            sketchsz_bits,
+            (unsigned long)sketchsz_bits,
             (unsigned long)sizeof(unsigned int));
 
     if (sketchsz_bits > numsketches*8)
