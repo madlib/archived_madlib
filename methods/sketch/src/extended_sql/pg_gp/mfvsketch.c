@@ -242,7 +242,8 @@ Datum mfvsketch_out(PG_FUNCTION_ARGS)
         memcpy(&(((char *)retval)[VARSIZE(retval)]), VARDATA(mfv_transval_getval(transval,i)),
                VARSIZE(mfv_transval_getval(transval,i)) - VARHDRSZ);
         SET_VARSIZE(retval, VARSIZE(retval) + VARSIZE(mfv_transval_getval(transval,i)) - VARHDRSZ);
-        sprintf(numbuf, ": %ld", transval->mfvs[i].cnt);
+        sprintf(numbuf, ": ");
+        sprintf(&(numbuf[2]), UINT64_FORMAT , transval->mfvs[i].cnt);
         memcpy(&(((char *)retval)[VARSIZE(retval)]), numbuf, strlen(numbuf));
         SET_VARSIZE(retval, VARSIZE(retval) + strlen(numbuf));
         ((char *)retval)[VARSIZE(retval)] = ']';
