@@ -186,19 +186,6 @@ RETURNS VOID AS $$
 $$ LANGUAGE plpythonu VOLATILE;
 
 
-CREATE FUNCTION madlib.update_nb_classification(
-	"featureProbsSource" VARCHAR,
-	"classPriorsSource" VARCHAR,
-	"numAttrs" INTEGER,
-	"destName" VARCHAR,
-	"classifyAttrColumn" VARCHAR,
-	"destColumn" VARCHAR)
-RETURNS VOID AS $$
-	import bayes
-	bayes.update_classification(**globals())
-$$ LANGUAGE plpythonu VOLATILE;
-
-
 CREATE FUNCTION madlib.init_python_paths()
 RETURNS VOID AS
 $$
@@ -222,6 +209,8 @@ $$
 $$ LANGUAGE plpythonu VOLATILE;
 
 -- In the following part, create the functionality inherited from Greenplum
+-- FIXME: Of course, having both the SQL implementation and the old one is
+-- redundant.
 
 -- State type
 CREATE TYPE madlib.nb_classification AS
@@ -335,12 +324,6 @@ CREATE AGGREGATE madlib.pivot_sum(TEXT[], TEXT, DOUBLE PRECISION) (
 CREATE AGGREGATE madlib.pivot_sum(TEXT[], TEXT, BIGINT) (
   SFUNC=madlib.int8_pivot_accum,
   STYPE=INT8[],
-  PREFUNC=madlib.int8_matrix_accum
-);
-
-CREATE AGGREGATE madlib.pivot_sum(TEXT[], TEXT, INTEGER) (
-  SFUNC=madlib.int4_pivot_accum,
-  STYPE=INT4[],
   PREFUNC=madlib.int8_matrix_accum
 );
 
