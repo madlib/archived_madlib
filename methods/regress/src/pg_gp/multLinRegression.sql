@@ -1,4 +1,4 @@
-CREATE SCHEMA madlib;
+-- CREATE SCHEMA madlib;
 
 -- State transition function
 CREATE FUNCTION madlib.float8_mregr_accum(DOUBLE PRECISION[], DOUBLE PRECISION, DOUBLE PRECISION[])

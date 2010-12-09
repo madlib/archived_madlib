@@ -1,6 +1,6 @@
-CREATE SCHEMA madlib;
+-- CREATE SCHEMA madlib;
 
-CREATE LANGUAGE plpythonu;
+-- CREATE LANGUAGE plpythonu;
 
 -- In the following, we implement an argmax function where the "index set" is
 -- INTEGER and we range over DOUBLE PRECISION values.

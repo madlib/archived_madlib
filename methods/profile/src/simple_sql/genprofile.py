@@ -11,7 +11,7 @@ parser.add_option("-d", "--database", dest="database", nargs=1,
 parser.add_option("-u", "--user", dest="user", nargs=1,
                   help="user name", default=os.environ['PGUSER'])
 parser.add_option("-n", "--numeric", dest="numericaggs", nargs = 1,
-                  help="array of aggs for numeric columns",
+                  help="array of aggs for integer columns",
                   default='["MIN", "MAX", "AVG"]')
 parser.add_option("-s", "--nonnumeric", dest="non_numericaggs", nargs = 1,
                 help="array of aggs for non-numeric columns",

@@ -8,12 +8,10 @@ import hashlib
 
 mig_dir = "."
 default_prefix_len = 3
-# dbnamestr = "dbname=" + os.environ['PGDATABASE']
-# dbuserstr = "user=" + os.environ['PGUSER']
 
 mig_prolog = """#!/usr/bin/python
 import sys
-from migrate.migrations import MadlibMigration
+from madpy.migrate.migrations import MadlibMigration
 
 class Migration(MadlibMigration):
 """
@@ -26,7 +24,7 @@ class MadlibMigrationError(Exception):
     
 class MadlibMigration:
     def __init__(self, api, connect_args):
-        dbapi2 = __import__(api, globals(), locals(), [], -1)
+        dbapi2 = __import__(api, globals(), locals(), [])
         
         # Connect to DB
         self.dbconn = dbapi2.connect(*connect_args)

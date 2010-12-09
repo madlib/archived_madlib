@@ -3,6 +3,8 @@ import sys
 import psycopg2
 
 # helper routine to munge the agg arguments
+# replaces the string "%%" with the column argument
+# and adds the suffix "_distinct" to the AS name of distinct aggs
 def munge_agg(x):
     if x.split("(")[0] == x:
         x += '(%%)'
@@ -12,7 +14,8 @@ def munge_agg(x):
     return x + "_%%"
 
 # helper routine to query the database catalog and get column names for
-# table "table" return value is a list of lists; the first list is the
+# table "table".
+# return value is a list of lists; the first list is the
 # integer columns, the second list is the non-integer columns
 def catalog_columns(dbnamestr, dbuserstr, table):
     # Connect to an existing database
@@ -21,7 +24,7 @@ def catalog_columns(dbnamestr, dbuserstr, table):
     # Open a cursor to perform database operations
     cur = conn.cursor()
 
-    # Fetch numeric columnnames from table
+    # Fetch integer columnnames from table
     cur.execute("""select column_name from information_schema.columns where
                    table_name = %s and numeric_scale = 0 order by
                    ordinal_position;""",
@@ -30,7 +33,7 @@ def catalog_columns(dbnamestr, dbuserstr, table):
     numcols = [c[0] for c in out]
     cur.close()
 
-    # Fetch non-numeric columnnames from table
+    # Fetch non-integer columnnames from table
     cur = conn.cursor()
     cur.execute("""select column_name from information_schema.columns where
                    table_name = %s and numeric_scale is null or

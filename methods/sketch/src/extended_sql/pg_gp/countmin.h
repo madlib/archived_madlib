@@ -152,3 +152,4 @@ Datum mfvsketch_array_out(PG_FUNCTION_ARGS);
 Datum mfvsketch_combine(PG_FUNCTION_ARGS);
 
 #endif /* _COUNTMIN_H_ */
+
