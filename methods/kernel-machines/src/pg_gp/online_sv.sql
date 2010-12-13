@@ -5,6 +5,8 @@ CREATE TYPE model_rec AS (
        inds int,        -- number of individuals processed 
        cum_err float8,  -- cumulative error
        epsilon float8,  -- the size of the epsilon tube around the hyperplane, adaptively adjusted by algorithm
+       rho float8,      -- classification margin
+       b   float8,      -- classifier offset
        nsvs int,        -- number of support vectors
        ind_dim int,     -- the dimension of the individuals
        weights float8[],       -- the weight of the support vectors
@@ -12,14 +14,14 @@ CREATE TYPE model_rec AS (
 );
 
 -- Create the necessary tables for storing training data and the learned support vector models
-DROP TABLE IF EXISTS svr_train_data CASCADE;
-CREATE TABLE svr_train_data ( id int, ind float8[], label float8 ) DISTRIBUTED BY (id);
+DROP TABLE IF EXISTS sv_train_data CASCADE;
+CREATE TABLE sv_train_data ( id int, ind float8[], label float8 ) DISTRIBUTED BY (id);
 
-DROP TABLE IF EXISTS svr_results CASCADE;
-CREATE TABLE svr_results ( id text, model model_rec ) DISTRIBUTED BY (id);
+DROP TABLE IF EXISTS sv_results CASCADE;
+CREATE TABLE sv_results ( id text, model model_rec ) DISTRIBUTED BY (id);
 
-DROP TABLE IF EXISTS svr_model CASCADE;
-CREATE TABLE svr_model ( id text, weight float8, sv float8[] ) DISTRIBUTED BY (weight);
+DROP TABLE IF EXISTS sv_model CASCADE;
+CREATE TABLE sv_model ( id text, weight float8, sv float8[] ) DISTRIBUTED BY (weight);
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
@@ -84,13 +86,13 @@ $$ LANGUAGE plpgsql;
 -- This is the main online support vector regression learning algorithm. 
 -- The function updates the support vector model as it processes each new training example.
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
--- The learning parameters (blambda, slambda, and nu) are hardcoded at the moment. 
+-- The learning parameters (eta, slambda, and nu) are hardcoded at the moment. 
 -- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
 -- of having to specify them. 
 CREATE OR REPLACE FUNCTION online_sv_reg_update(svs model_rec, ind float8[], label float8) 
 RETURNS model_rec AS $$
 DECLARE
-	blambda FLOAT8 := 0.05; -- learning rate
+	eta FLOAT8 := 0.05; -- learning rate
 	slambda FLOAT8 := 0.2;  -- regularisation parameter
 	nu FLOAT8 := 0.001;     -- compression parameter, a number between 0 and 1; the fraction of the training data that appear as support vectors
 	p FLOAT8;       -- prediction for the input individual
@@ -99,7 +101,7 @@ DECLARE
 	weight FLOAT8;  -- the weight of ind if it turns out to be a support vector
 BEGIN
 	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 1, array_upper(ind,1), '{0}', array[ind]);  -- we have to be careful to initialise a multi-dimensional array
+	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', array[ind]);  -- we have to be careful to initialise a multi-dimensional array
         END IF;
 
 	p := svs_predict(svs, ind);
@@ -110,17 +112,17 @@ BEGIN
 
 	IF (error > svs.epsilon) THEN
 	    FOR i IN 1..svs.nsvs LOOP -- Unlike the original algorithm, this rescaling is only done when we make a large enough error.
-	    	 svs.weights[i] := svs.weights[i] * (1 - blambda * slambda);
+	    	 svs.weights[i] := svs.weights[i] * (1 - eta * slambda);
             END LOOP;
 
-	    weight := blambda;
+	    weight := eta;
 	    IF (diff < 0) THEN weight := -1 * weight; END IF;
 	    svs.nsvs := svs.nsvs + 1;
 	    svs.weights[svs.nsvs] := weight;
 	    svs.individuals := array_cat(svs.individuals, ind);
-	    svs.epsilon := svs.epsilon + (1 - nu) * blambda;      
+	    svs.epsilon := svs.epsilon + (1 - nu) * eta;      
 	ELSE
-	    svs.epsilon := svs.epsilon - blambda * nu;
+	    svs.epsilon := svs.epsilon - eta * nu;
         END IF;
 
 	return svs;
@@ -133,11 +135,59 @@ CREATE AGGREGATE online_sv_reg_agg(float8[], float8) (
        stype = model_rec
 );
 
+-- This is the main online support vector classification algorithm. 
+-- The function updates the support vector model as it processes each new training example.
+-- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
+-- The learning parameters (eta and nu) are hardcoded at the moment. 
+-- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
+-- of having to specify them. 
+CREATE OR REPLACE FUNCTION online_sv_cl_update(svs model_rec, ind float8[], label float8) 
+RETURNS model_rec AS $$
+DECLARE
+	eta FLOAT8 := 0.05; -- learning rate
+	nu FLOAT8 := 0.2;     -- the fraction of the training data with margin error, a number between 0 and 1; small nu => large margin and more support vectors
+	p FLOAT8;       -- prediction for the input individual
+BEGIN
+	IF svs IS NULL THEN
+	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', array[ind]);  -- we have to be careful to initialise a multi-dimensional array
+        END IF;
+
+	p := label * (svs_predict(svs, ind) + svs.b);
+	svs.inds := svs.inds + 1;
+	IF p < 0 THEN
+	    svs.cum_err := svs.cum_err + 1;
+        END IF;
+
+	IF (p < svs.rho) THEN
+	    FOR i IN 1..svs.nsvs LOOP -- Unlike the original algorithm, this rescaling is only done when we make a margin error.
+	    	 svs.weights[i] := svs.weights[i] * (1 - eta);
+            END LOOP;
+
+	    svs.nsvs := svs.nsvs + 1;
+	    svs.weights[svs.nsvs] := label * eta;
+	    svs.individuals := array_cat(svs.individuals, ind);
+	    svs.b := svs.b + eta * label;
+	    svs.rho := svs.rho + eta * (1 - nu);
+	ELSE
+	    svs.rho := svs.rho - eta * nu;
+        END IF;
+
+	return svs;
+END
+$$ LANGUAGE plpgsql;
+
+DROP AGGREGATE IF EXISTS online_sv_cl_agg(float8[], float8);
+CREATE AGGREGATE online_sv_cl_agg(float8[], float8) (
+       sfunc = online_sv_cl_update,
+       stype = model_rec
+);
+
+
 -- This function transforms a model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
-CREATE OR REPLACE FUNCTION transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF svr_model AS $$
+CREATE OR REPLACE FUNCTION transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF sv_model AS $$
 DECLARE
 	nsvs INT;
-	sv svr_model;
+	sv sv_model;
 BEGIN
 	nsvs = array_upper(weights,1);
 	FOR i IN 1..nsvs LOOP 
@@ -149,7 +199,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- This function stores a model_rec stored with modelname in the svr_results table into the svr_model table.
+-- This function stores a model_rec stored with modelname in the sv_results table into the sv_model table.
 CREATE OR REPLACE FUNCTION storeModel(modelname TEXT) RETURNS VOID AS $$
 DECLARE
 	myind_dim INT;
@@ -157,15 +207,15 @@ DECLARE
 	myindividuals float8[][];
 --	mysvs model_rec;
 BEGIN
---	SELECT INTO mysvs model FROM svr_results WHERE id = modelname; -- for some strange reason this line doesn't work....
-	SELECT INTO myind_dim (model).ind_dim FROM svr_results WHERE id = modelname;
-	SELECT INTO myweights (model).weights FROM svr_results WHERE id = modelname;
-	SELECT INTO myindividuals (model).individuals FROM svr_results WHERE id = modelname;
- 	INSERT INTO svr_model (SELECT * FROM transform_rec(modelname, myind_dim, myweights, myindividuals));
+--	SELECT INTO mysvs model FROM sv_results WHERE id = modelname; -- for some strange reason this line doesn't work....
+	SELECT INTO myind_dim (model).ind_dim FROM sv_results WHERE id = modelname;
+	SELECT INTO myweights (model).weights FROM sv_results WHERE id = modelname;
+	SELECT INTO myindividuals (model).individuals FROM sv_results WHERE id = modelname;
+ 	INSERT INTO sv_model (SELECT * FROM transform_rec(modelname, myind_dim, myweights, myindividuals));
 END;
 $$ LANGUAGE plpgsql;
 
--- This function stores a collection of models learned in parallel into the svr_model table.
+-- This function stores a collection of models learned in parallel into the sv_model table.
 -- The different models are assumed to be named modelname1, modelname2, ....
 CREATE OR REPLACE FUNCTION storeModel(modelname TEXT, n INT) RETURNS VOID AS $$
 DECLARE
@@ -176,17 +226,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- This function performs prediction using a support vector machine stored in the svr_model table.
+-- This function performs prediction using a support vector machine stored in the sv_model table.
 CREATE OR REPLACE FUNCTION svs_predict(modelname text, ind float8[], OUT ret float8) RETURNS FLOAT8 AS $$
 BEGIN
-	SELECT INTO ret sum(weight * kernel(sv, ind)) FROM svr_model WHERE id = modelname;
+	SELECT INTO ret sum(weight * kernel(sv, ind)) FROM sv_model WHERE id = modelname;
 END;
 $$ LANGUAGE plpgsql;
 
 DROP TYPE IF EXISTS model_pr CASCADE;
 CREATE TYPE model_pr AS ( model text, prediction float8 );
 
--- This function performs prediction using the support vector machines stored in the svr_model table.
+-- This function performs prediction using the support vector machines stored in the sv_model table.
 -- The different models are assumed to be named modelname1, modelname2, ....
 -- An average prediction is given at the end.
 CREATE OR REPLACE FUNCTION svs_predict_combo(modelname text, n int, ind float8[]) RETURNS SETOF model_pr AS $$
@@ -223,13 +273,13 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION generateData(num int, dim int) RETURNS VOID AS $$
-    plpy.execute("DELETE FROM svr_train_data")
-    plpy.execute("INSERT INTO svr_train_data SELECT a.val, randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
-    plpy.execute("UPDATE svr_train_data SET label = targetFunc(ind)")
+CREATE OR REPLACE FUNCTION generateRegData(num int, dim int) RETURNS VOID AS $$
+    plpy.execute("DELETE FROM sv_train_data")
+    plpy.execute("INSERT INTO sv_train_data SELECT a.val, randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
+    plpy.execute("UPDATE sv_train_data SET label = targetRegFunc(ind)")
 $$ LANGUAGE 'plpythonu';
 
-CREATE OR REPLACE FUNCTION targetFunc(ind float8[]) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION targetRegFunc(ind float8[]) RETURNS float8 AS $$
 DECLARE
     dim int;
 BEGIN
@@ -239,6 +289,18 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION generateClData(num int, dim int) RETURNS VOID AS $$
+    plpy.execute("DELETE FROM sv_train_data")
+    plpy.execute("INSERT INTO sv_train_data SELECT a.val, randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
+    plpy.execute("UPDATE sv_train_data SET label = targetClFunc(ind)")
+$$ LANGUAGE 'plpythonu';
+
+CREATE OR REPLACE FUNCTION targetClFunc(ind float8[]) RETURNS float8 AS $$
+BEGIN
+    IF (ind[1] > 0 AND ind[2] < 0) THEN RETURN 1; END IF;
+    RETURN -1;
+END
+$$ LANGUAGE plpgsql;
 
 
 
