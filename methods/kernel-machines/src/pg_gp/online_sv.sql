@@ -12,14 +12,14 @@ CREATE TYPE model_rec AS (
 );
 
 -- Create the necessary tables for storing training data and the learned support vector models
-DROP TABLE IF EXISTS svr_train_data;
+DROP TABLE IF EXISTS svr_train_data CASCADE;
 CREATE TABLE svr_train_data ( id int, ind float8[], label float8 ) DISTRIBUTED BY (id);
 
-DROP TABLE IF EXISTS svr_results;
+DROP TABLE IF EXISTS svr_results CASCADE;
 CREATE TABLE svr_results ( id text, model model_rec ) DISTRIBUTED BY (id);
 
-DROP TABLE IF EXISTS svr_model;
-CREATE TABLE svr_model ( weight float8, sv float8[] ) DISTRIBUTED BY (weight);
+DROP TABLE IF EXISTS svr_model CASCADE;
+CREATE TABLE svr_model ( id text, weight float8, sv float8[] ) DISTRIBUTED BY (weight);
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
@@ -34,8 +34,8 @@ BEGIN
 	FOR i IN 1..len LOOP
 	    ind[i] := x[idx][i];
 	END LOOP;
-	RETURN dot_kernel(ind, y); -- this doesn't require svecs
---	RETURN dot(ind, y);  -- this does require svecs
+--	RETURN dot_kernel(ind, y); -- this doesn't require svecs
+	RETURN dot(ind, y);  -- this does require svecs
 END
 $$ LANGUAGE plpgsql;
 
@@ -127,32 +127,21 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-DROP AGGREGATE online_sv_reg_agg(float8[], float8);
+DROP AGGREGATE IF EXISTS online_sv_reg_agg(float8[], float8);
 CREATE AGGREGATE online_sv_reg_agg(float8[], float8) (
        sfunc = online_sv_reg_update,
        stype = model_rec
 );
 
--- CREATE OR REPLACE FUNCTION transform_rec(svs model_rec) RETURNS SETOF svr_model AS $$
--- DECLARE
--- 	sv svr_model;
--- BEGIN
---         FOR i IN 1..svs.nsvs LOOP 
---       	 sv.weight = svs.weights[i];
---	         FOR j IN 1..svs.ind_dim LOOP sv.sv[j] = svs.individuals[i][j]; END LOOP;
--- 	         RETURN NEXT sv;
---     	   END LOOP;
--- END;
--- $$ LANGUAGE plpgsql;
-
 -- This function transforms a model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
-CREATE OR REPLACE FUNCTION transform_rec(ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF svr_model AS $$
+CREATE OR REPLACE FUNCTION transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF svr_model AS $$
 DECLARE
 	nsvs INT;
 	sv svr_model;
 BEGIN
 	nsvs = array_upper(weights,1);
 	FOR i IN 1..nsvs LOOP 
+	    sv.id = modelname;
        	    sv.weight = weights[i];
 	    FOR j IN 1..ind_dim LOOP sv.sv[j] = individuals[i][j]; END LOOP; -- we copy the individual because we can't say sv.sv[j] = individuals[i]
 	    RETURN NEXT sv;
@@ -172,15 +161,48 @@ BEGIN
 	SELECT INTO myind_dim (model).ind_dim FROM svr_results WHERE id = modelname;
 	SELECT INTO myweights (model).weights FROM svr_results WHERE id = modelname;
 	SELECT INTO myindividuals (model).individuals FROM svr_results WHERE id = modelname;
-	DELETE FROM svr_model;
- 	INSERT INTO svr_model (SELECT * FROM transform_rec(myind_dim, myweights, myindividuals));
+ 	INSERT INTO svr_model (SELECT * FROM transform_rec(modelname, myind_dim, myweights, myindividuals));
+END;
+$$ LANGUAGE plpgsql;
+
+-- This function stores a collection of models learned in parallel into the svr_model table.
+-- The different models are assumed to be named modelname1, modelname2, ....
+CREATE OR REPLACE FUNCTION storeModel(modelname TEXT, n INT) RETURNS VOID AS $$
+DECLARE
+BEGIN
+	FOR i IN 0..n-1 LOOP
+	    PERFORM storeModel(modelname || i);
+        END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
 -- This function performs prediction using a support vector machine stored in the svr_model table.
-CREATE OR REPLACE FUNCTION svs_predict(ind float8[], OUT ret float8) RETURNS FLOAT8 AS $$
+CREATE OR REPLACE FUNCTION svs_predict(modelname text, ind float8[], OUT ret float8) RETURNS FLOAT8 AS $$
 BEGIN
-	SELECT INTO ret sum(weight * kernel(sv, ind)) FROM svr_model;
+	SELECT INTO ret sum(weight * kernel(sv, ind)) FROM svr_model WHERE id = modelname;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TYPE IF EXISTS model_pr CASCADE;
+CREATE TYPE model_pr AS ( model text, prediction float8 );
+
+-- This function performs prediction using the support vector machines stored in the svr_model table.
+-- The different models are assumed to be named modelname1, modelname2, ....
+-- An average prediction is given at the end.
+CREATE OR REPLACE FUNCTION svs_predict_combo(modelname text, n int, ind float8[]) RETURNS SETOF model_pr AS $$
+DECLARE
+	sumpr float8 := 0;
+	mpr model_pr;
+BEGIN
+	FOR i IN 0..n-1 LOOP
+	    mpr.model := modelname || i;
+	    mpr.prediction := svs_predict(mpr.model, ind);
+	    sumpr := sumpr + mpr.prediction;
+	    RETURN NEXT mpr;
+ 	END LOOP;
+	mpr.model := 'avg';
+	mpr.prediction := sumpr / n;
+	RETURN NEXT mpr;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -216,15 +238,6 @@ BEGIN
     RETURN -50;
 END
 $$ LANGUAGE plpgsql;
-
--- Timing test
---   10,000,5  -    60833 ms    52632 ms
---  100,000,5  -   692211 ms   500622 ms
---  200,000,5  -  1647196 ms  1261711 ms
---  300,000,5  -  3042300 ms  2160252 ms
---  500,000,5  -        - ms  
--- 1000,000,5  - 90423147 ms
-
 
 
 
