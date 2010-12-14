@@ -36,8 +36,9 @@ BEGIN
 	FOR i IN 1..len LOOP
 	    ind[i] := x[idx][i];
 	END LOOP;
---	RETURN dot_kernel(ind, y); -- this doesn't require svecs
-	RETURN dot(ind, y);  -- this does require svecs
+	RETURN dot_kernel(ind, y); -- this doesn't require svecs
+--	RETURN dot(ind, y);  -- this does require svecs
+--	RETURN polynomial_kernel(ind, y, 2);
 END
 $$ LANGUAGE plpgsql;
 
@@ -176,9 +177,54 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+-- This is the main online support vector novelty detection algorithm. 
+-- The function updates the support vector model as it processes each new training example.
+-- In contrast to classification and regression, the training data points have no labels.
+-- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
+-- The learning parameters (eta and nu) are hardcoded at the moment. 
+-- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
+-- of having to specify them. 
 DROP AGGREGATE IF EXISTS online_sv_cl_agg(float8[], float8);
 CREATE AGGREGATE online_sv_cl_agg(float8[], float8) (
        sfunc = online_sv_cl_update,
+       stype = model_rec
+);
+
+
+CREATE OR REPLACE FUNCTION online_sv_nd_update(svs model_rec, ind float8[]) 
+RETURNS model_rec AS $$
+DECLARE
+	eta FLOAT8 := 0.1; -- learning rate
+	nu FLOAT8 := 0.05;  -- the fraction of the training data with margin error, a number between 0 and 1
+	p FLOAT8;       -- prediction for the input individual
+BEGIN
+	IF svs IS NULL THEN
+	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', array[ind]);  -- we have to be careful to initialise a multi-dimensional array
+        END IF;
+
+	p := svs_predict(svs, ind);
+	svs.inds := svs.inds + 1;
+
+	IF (p < svs.rho) THEN
+	    FOR i IN 1..svs.nsvs LOOP -- Unlike the original algorithm, this rescaling is only done when we make a margin error.
+	    	 svs.weights[i] := svs.weights[i] * (1 - eta);
+            END LOOP;
+
+	    svs.nsvs := svs.nsvs + 1;
+	    svs.weights[svs.nsvs] := eta;
+	    svs.individuals := array_cat(svs.individuals, ind);
+	    svs.rho := svs.rho + eta * (1 - nu);
+	ELSE
+	    svs.rho := svs.rho - eta * nu;
+        END IF;
+
+	return svs;
+END
+$$ LANGUAGE plpgsql;
+
+DROP AGGREGATE IF EXISTS online_sv_nd_agg(float8[]);
+CREATE AGGREGATE online_sv_nd_agg(float8[]) (
+       sfunc = online_sv_nd_update,
        stype = model_rec
 );
 
@@ -273,6 +319,18 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION randomInd2(d INT) RETURNS float8[] AS $$
+DECLARE
+    ret float8[];
+BEGIN
+    FOR i IN 1..d LOOP
+        ret[i] = RANDOM() * 5 + 10;
+    END LOOP;
+    RETURN ret;
+END
+$$ LANGUAGE plpgsql;
+
+
 CREATE OR REPLACE FUNCTION generateRegData(num int, dim int) RETURNS VOID AS $$
     plpy.execute("DELETE FROM sv_train_data")
     plpy.execute("INSERT INTO sv_train_data SELECT a.val, randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
@@ -302,5 +360,9 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION generateNdData(num int, dim int) RETURNS VOID AS $$
+    plpy.execute("DELETE FROM sv_train_data")
+    plpy.execute("INSERT INTO sv_train_data SELECT a.val, randomInd2(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
+$$ LANGUAGE 'plpythonu';
 
 
