@@ -1,76 +1,118 @@
 import plpy
 
-# A Naive Bayes classifier computes the following formula:
-#                                              
-#                                               __n
-#   classify(a_1, ..., a_n) = argmax_c P(C = c) ||    P(A_i = a_i | C = c)
-#                                                 i=1
-#
-# where probabilites are estimated with relative frequencies from the training
-# set. See also: http://en.wikipedia.org/wiki/Naive_Bayes_classifier
-#
-# There are different ways to estimate the feature probabilities
-# p(A_i = a_i | C = c). The maximum likelihood exstimate takes the relative
-# frequencies. That is:
-#
-#                        #(c,i,a)
-#   P(A_a = v | C = c) = --------
-#                           #c
-#
-# where:
-# #(i,a,c) = # of training samples where attribute i is a and class is c
-# #c       = # of training samples where class is c
-#
-# Since the maximum likelihood sometimes results in estimates of 0, it might
-# be desirable to use a "smoothed" estimate. Intuitively, one adds a number of
-# "virtual" samples and assumes that these samples are evenly distributed
-# among the values attribute i can assume (i.e., the set of all values observed
-# for attribute a for any class):
-#
-#                        #(c,i,a) + s
-#   P(A_i = a | C = c) = ------------
-#                         #c + s * #i
-#
-# where:
-# #i       = # of distinct values for attribute i (for all classes)
-# s        = smoothing factor (>= 0).
-#
-# The case s = 1 is known as "Laplace smoothing" in the literature. The case
-# s = 0 trivially reduces to maximum likelihood estimates.
-#
-# For the Naive Bayes Classification, we need a product over probabilities.
-# However, multiplying lots of small numbers can lead to an exponent overflow.
-# E.g., multiplying more than 324 numbers at most 0.1 will yield a product of 0
-# in machine arithmetic. A safer way is therefore summing logarithms.
-#
-# By the IEEE 754 standard, the smallest number representable as
-# DOUBLE PRECISION (64bit) is 2^(-1022), i.e., approximately 2.225e-308.
-# See, e.g., http://en.wikipedia.org/wiki/Double_precision
-# Hence, log(x) = log_10(x) for any non-zero DOUBLE PRECISION x is >= -308.
-#
-# Note for theorists:
-# - Even adding infinitely many log_10(x) for 0 < x <= 1 will never cause
-#   an overflow because addition will have no effect once the sum reaches approx
-#   -308 * 2^53 (correspnding to the machine precision).
+"""@namespace bayes
+Naive Bayes classification with user-defined smoothing factor (default:
+Laplacian smoothing).
 
+A Naive Bayes classifier computes the following formula:
+@verbatim
+                                              __n
+  classify(a_1, ..., a_n) = argmax_c P(C = c) ||    P(A_i = a_i | C = c)
+                                                i=1
+@endverbatim
 
+FIXME: Doxygen also support MathJax.  Of course, in LaTeX source code is harder
+to read for humans than "ASCII art" formulas.  We should decide for one or the
+other.
+@f[
+	\mathrm{classify}(a_1, \dots, a_n) = \arg \max_c P(C = c) \prod_{i=1}^n P(A_i = a_i \mid C = c)
+@f]
 
-# Return query mapping triples (class c, attribute i, value a) to #(c,i,a) and
-# #a. For each class and for each pair (attribute, value) occuring in the
-# training data (for any class), the query will contain a row (so it contains
-# rows with where #(c,i,a) = 0).
+where probabilites are estimated with relative frequencies from the training
+set.  See also: http://en.wikipedia.org/wiki/Naive_Bayes_classifier
 
-def get_feature_probs_sql(**kwargs):
-	"""Return query mapping triples (class, attribute, value) to number of
-	occurrences in training data and number of distinct values for attribute."""
+There are different ways to estimate the feature probabilities
+$P(A_i = a_i | C = c)$.  The maximum likelihood exstimate takes the relative
+frequencies. That is:
+
+@verbatim
+
+                       #(c,i,a)
+  P(A_i = a | C = c) = --------
+                          #c
+
+where:
+#(c,i,a) = # of training samples where attribute i is a and class is c
+#c       = # of training samples where class is c
+@endverbatim
+
+Since the maximum likelihood sometimes results in estimates of 0, it might
+be desirable to use a "smoothed" estimate. Intuitively, one adds a number of
+"virtual" samples and assumes that these samples are evenly distributed
+among the values attribute i can assume (i.e., the set of all values observed
+for attribute a for any class):
+
+@verbatim
+                       #(c,i,a) + s
+  P(A_i = a | C = c) = ------------
+                        #c + s * #i
+
+where:
+#i       = # of distinct values for attribute i (for all classes)
+s        = smoothing factor (>= 0).
+@endverbatim
+
+The case $s = 1$ is known as "Laplace smoothing" in the literature. The case
+$s = 0$ trivially reduces to maximum likelihood estimates.
+
+For the Naive Bayes Classification, we need a product over probabilities.
+However, multiplying lots of small numbers can lead to an exponent overflow.
+E.g., multiplying more than 324 numbers at most 0.1 will yield a product of 0
+in machine arithmetic. A safer way is therefore summing logarithms.
+
+By the IEEE 754 standard, the smallest number representable as
+DOUBLE PRECISION (64bit) is $2^{-1022}$, i.e., approximately 2.225e-308.
+See, e.g., http://en.wikipedia.org/wiki/Double_precision
+Hence, log(x) = log_10(x) for any non-zero DOUBLE PRECISION @f$x \ge -308@f$.
+
+Note for theorists:
+- Even adding infinitely many @f$\log_{10}(x)@f$ for @f$0 < x \le 1@f$ will never cause
+  an overflow because addition will have no effect once the sum reaches approx
+  $308 * 2^{53}$ (correspnding to the machine precision).
+
+@anchor bayes_description
+All create_ functions can be called with two sets of arguments:
+
+@internal
+\par Implementation Notes:
+The functions __get_*_sql are private because we do not want to commit ourselves
+to a particular interface. We might want to be able to change implementation
+details should the need arise.
+@endinternal
+"""
+
+def __get_feature_probs_sql(**kwargs):
+	"""Return SQL query with columns (class, attr, value, cnt, attr_cnt).
+	
+	For class c, attr i, and value a, cnt is #(c,i,a) and attr_cnt is \#i.
+	
+	Note that the query will contain a row for every pair (class, value)
+	occuring in the training data (so it might also contain rows where
+	\#(c,i,a) = 0).
+
+	@param classPriorsSource Relation (class, class_cnt, all_cnt) where
+		   class is c, class_cnt is \#c, all_cnt is the number of rows in
+		   \em trainingSource
+	@param attrValuesSource Relation (attr, value) containing all distinct
+		   attribute, value pairs. If omitted, will use __get_attr_values_sql()
+	@param attrCountsSource Relation (attr, attr_cnt) where attr is i and
+		   attr_cnt is \#i. If omitted, will use __get_attr_counts_sql()
+	@param trainingSource name of relation containing training data
+	@param trainingClassColumn name of column with class
+	@param trainingAttrColumn name of column with attributes array
+	@param numAttrs Number of attributes to use for classification
+	
+	For meanings of \#(c,i,a), \#c, and \#i see the general description of
+	\ref bayes.
+	"""
 
 	if not 'attrValuesSource' in kwargs:
 		kwargs.update(dict(
-				attrValuesSource = "(" + get_attr_values_sql(**kwargs) + ")"
+				attrValuesSource = "(" + __get_attr_values_sql(**kwargs) + ")"
 			))
 	if not 'attrCountsSource' in kwargs:
 		kwargs.update(dict(
-				attrCountsSource = "(" + get_attr_counts_sql(**kwargs) + ")"
+				attrCountsSource = "(" + __get_attr_counts_sql(**kwargs) + ")"
 			))
 
 	return """
@@ -107,13 +149,27 @@ def get_feature_probs_sql(**kwargs):
 		""".format(**kwargs)
 
 
-# Return query listing all pairs (attribute, value) in the training data.
-#
-# Note: If PostgreSQL supported count(DISTINCT ...) for window functions, we could
-# consolidate this function with get_attr_counts_sql():
-# [...] count(DISTINCT value) OVER (PARTITION BY attr) [...]
+def __get_attr_values_sql(**kwargs):
+	"""
+	Return SQL query with columns (attr, value).
+	
+	The query contains a row for each pair that occurs in the training data.
 
-def get_attr_values_sql(**kwargs):
+	@param trainingSource Name of relation containing the training data
+	@param trainingAttrColumn Name of attributes-array column in training data	
+	@param numAttrs Number of attributes to use for classification
+
+	@internal
+	\par Implementation Notes:
+	If PostgreSQL supported count(DISTINCT ...) for window functions, we could
+	consolidate this function with __get_attr_counts_sql():
+	@verbatim
+	[...] count(DISTINCT value) OVER (PARTITION BY attr) [...]
+	@endverbatim
+	@endinternal
+	
+	"""
+
 	return """
 		SELECT DISTINCT
 			attr,
@@ -124,10 +180,18 @@ def get_attr_values_sql(**kwargs):
 		""".format(**kwargs)
 
 
-# Return query mapping all attributes to the number of distinct values each
-# attribute assumes in the training data.
+def __get_attr_counts_sql(**kwargs):
+	"""
+	Return SQL query with columns (attr, attr_cnt)
+	
+	For attr i, attr_cnt is \#i.
+	
+	@param trainingSource Name of relation containing the training data
+	@param trainingAttrColumn Name of attributes-array column in training data	
+	@param numAttrs Number of attributes to use for classification
+	
+	"""
 
-def get_attr_counts_sql(**kwargs):
 	return """
 		SELECT
 			attr,
@@ -139,11 +203,18 @@ def get_attr_counts_sql(**kwargs):
 		""".format(**kwargs)
 
 
-# Return query mapping all classes c to the number of records in the training
-# data classified as c. Moreover, the total number of record in the training
-# data is returned.
+def __get_class_priors_sql(**kwargs):
+	"""
+	Return SQL query with columns (class, class_cnt, all_cnt)
+	
+	For class c, class_cnt is \#c. all_cnt is the total number of records in the
+	training data.
 
-def get_class_priors_sql(**kwargs):
+	@param trainingSource Name of relation containing the training data
+	@param trainingClassColumn Name of class column in training data	
+	
+	"""
+
 	return """
 		SELECT
 			{trainingClassColumn} AS class,
@@ -154,12 +225,35 @@ def get_class_priors_sql(**kwargs):
 		""".format(**kwargs)
 
 
-# Return query that relates pairs (key of data to be classified k, class c)
-# to log( P(C = c) * P(A = a(k) | C = c) ). Moreover, each pair (k,c) is related
-# to NULL, which serves as a default value if there is insufficient training
-# data to compute a probability value.
+def __get_keys_and_prob_values_sql(**kwargs):
+	"""
+	Return SQL query with columns (key, class, log_prob).
+	
+	For class c and the attribute array identified by key k, log_prob is
+	log( P(C = c) * P(A = a(k)[] | C = c) ).
+	
+	For each key k and class c, the query also contains a row (k, c, NULL). This
+	is for technical reasons (we want every key-class pair to appear in the
+	query. NULL serves as a default value if there is insufficient training data
+	to compute a probability value).
 
-def get_keys_and_prob_values_sql(**kwargs):
+	@param numAttrs Number of attributes to use for classification
+	@param classifySource Name of the relation that contains data to be classified
+	@param classifyKeyColumn Name of column in \em classifySource that can
+		   serve as unique identifier
+	@param classifyAttrColumn Name of attributes-array column in \em classifySource
+	@param classPriorsSource
+		   Relation (class, class_cnt, all_cnt) where
+		   class is c, class_cnt is \#c, all_cnt is the number of training
+		   samples.
+	@param featureProbsSource
+		   Relation (class, attr, value, cnt, attr_cnt) where
+		   (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+	@param smoothingFactor Smoothing factor for computing feature
+		   feature probabilities. Default value: 1.0 (Laplacian Smoothing).
+
+	"""
+
 	return """
 	SELECT
 		classify.key,
@@ -167,8 +261,8 @@ def get_keys_and_prob_values_sql(**kwargs):
 		CASE WHEN count(*) < {numAttrs} THEN NULL
 			 ELSE
 				log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
-				+ sum( log((featureProbs.cnt::DOUBLE PRECISION + 1)
-					/ (classPriors.class_cnt + featureProbs.attr_cnt)) )
+				+ sum( log((featureProbs.cnt::DOUBLE PRECISION + {smoothingFactor})
+					/ (classPriors.class_cnt + {smoothingFactor} * featureProbs.attr_cnt)) )
 			 END
 		AS log_prob
 	FROM
@@ -186,7 +280,8 @@ def get_keys_and_prob_values_sql(**kwargs):
 	WHERE
 		featureProbs.class = classPriors.class AND
 		featureProbs.attr = classify.attr AND
-		featureProbs.value = classify.value
+		featureProbs.value = classify.value AND
+		({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
 	GROUP BY
 		classify.key, classPriors.class, classPriors.class_cnt, classPriors.all_cnt
 	
@@ -203,17 +298,32 @@ def get_keys_and_prob_values_sql(**kwargs):
 	""".format(**kwargs)
 
 
-# Return query mapping each class c to log( P(C = c) * P(A = a | C = c) ) where
-# A = (A_1, ..., A_n). Pass argument a in keyword parameter
-# 'classifyAttrColumn'. Note that unless 'classifyAttrColumn' is a literal,
-# the SQL is a correlated subquery and will not work in Greenplum.
-
-def get_prob_values_sql(**kwargs):
-	if not 'smoothingFactor' in kwargs:
-		kwargs.update(dict(
-			smoothingFactor = 1
-		))
+def __get_prob_values_sql(**kwargs):
+	"""
+	Return SQL query with columns (class, log_prob), given an array of
+	attributes.
 	
+	The query binds to an attribute array a[]. For every class c, log_prob
+	is log( P(C = c) * P(A = a[] | C = c) ).
+	
+	@param classifyAttrColumn Array of attributes to bind to. This can be
+		   a column name of an outer query or a literal.
+	@param smoothingFactor Smoothing factor to use for estimating the feature
+		   probabilities.
+	@param numAttrs Number of attributes to use for classification
+	@param classPriorsSource
+		   Relation (class, class_cnt, all_cnt) where
+		   class is c, class_cnt is \#c, all_cnt is the number of training
+		   samples.
+	@param featureProbsSource
+		   Relation (class, attr, value, cnt, attr_cnt) where
+		   (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+	
+	Note that unless \em classifyAttrColumn is a literal, the SQL query will
+	become a correlated subquery and will not work in Greenplum.
+
+	"""
+
 	return """
 	SELECT
 		classPriors.class,
@@ -237,7 +347,7 @@ def get_prob_values_sql(**kwargs):
 	WHERE
 		featureProbs.class = classPriors.class AND
 		featureProbs.attr = classify.attr AND featureProbs.value = classify.value AND
-		({smoothingFactor} > 0 OR featureProbs.cnt > 0)
+		({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
 	GROUP BY classPriors.class, classPriors.class_cnt, classPriors.all_cnt
 	
 	UNION
@@ -250,10 +360,14 @@ def get_prob_values_sql(**kwargs):
 	""".format(**kwargs)
 
 
-# Return query mapping each key of data to be classified to the Naive Bayes
-# classification.
+def __get_classification_sql(**kwargs):
+	"""
+	Return SQL query with columns (key, nb_classification, nb_log_probability)
+	
+	@param keys_and_prob_values Relation (key, class, log_prob)
+	
+	"""
 
-def get_classification_sql(**kwargs):
 	return """
 		SELECT
 			key,
@@ -262,13 +376,9 @@ def get_classification_sql(**kwargs):
 		FROM {keys_and_prob_values} AS keys_and_nb_values
 		GROUP BY key
 		""".format(
-			keys_and_prob_values = "(" + get_keys_and_prob_values_sql(**kwargs) + ")"
+			keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
 		)
 
-
-# Materialize the queries returned by `get_feature_probs_sql()` and
-# `get_class_priors_sql()`.
-# FIXME: ANALYZE is not portable.
 
 def create_prepared_data(**kwargs):
 	"""Precompute all class priors and feature probabilities.
@@ -278,9 +388,22 @@ def create_prepared_data(**kwargs):
 	Moreover, it runs ANALYZE on the new tables to allow for optimized query
 	plans.
 	
+	Class priors are stored in a relation with columns
+	(class, class_cnt, all_cnt).
+	
+	@param trainingSource Name of relation containing the training data
+	@param trainingClassColumn Name of class column in training data
+	@param trainingAttrColumn Name of attributes-array column in training data	
+	@param numAttrs Number of attributes to use for classification
+	
+	@param whatToCreate (Optional) Either \c 'TABLE' OR \c 'VIEW' (the default).
+	@param classPriorsDestName Name of class-priors relation to create
+	@param featureProbsDestName Name of feature-probabilities relation to create 
+		
 	"""
 	
 	if kwargs['whatToCreate'] == 'TABLE':
+		# FIXME: ANALYZE is not portable.
 		plpy.execute("""
 			CREATE TEMPORARY TABLE tmp_attr_counts
 			AS
@@ -294,8 +417,8 @@ def create_prepared_data(**kwargs):
 			ALTER TABLE tmp_attr_values ADD PRIMARY KEY (attr, value);
 			ANALYZE tmp_attr_values;
 			""".format(
-				attr_counts_sql = "(" + get_attr_counts_sql(**kwargs) + ")",
-				attr_values_sql = "(" + get_attr_values_sql(**kwargs) + ")"
+				attr_counts_sql = "(" + __get_attr_counts_sql(**kwargs) + ")",
+				attr_values_sql = "(" + __get_attr_values_sql(**kwargs) + ")"
 				)
 			)
 		kwargs.update(dict(
@@ -305,7 +428,7 @@ def create_prepared_data(**kwargs):
 
 
 	kwargs.update(dict(
-			sql = get_class_priors_sql(**kwargs)
+			sql = __get_class_priors_sql(**kwargs)
 		))
 	plpy.execute("""
 		CREATE {whatToCreate} {classPriorsDestName}
@@ -323,7 +446,7 @@ def create_prepared_data(**kwargs):
 			classPriorsSource = kwargs['classPriorsDestName']
 		))
 	kwargs.update(dict(
-			sql = get_feature_probs_sql(**kwargs)
+			sql = __get_feature_probs_sql(**kwargs)
 		))
 	plpy.execute("""
 		CREATE {whatToCreate} {featureProbsDestName} AS
@@ -339,17 +462,51 @@ def create_prepared_data(**kwargs):
 			""".format(**kwargs))
 
 
-# Create a relation that maps each key of the data to be classified to the
-# Naive Bayes classification.
-
 def create_classification(**kwargs):
 	"""
-	Create a view/table that maps primary keys to classification.
+	Create a view/table with columns (key, nb_classification).
+	
+	The created relation will be
+	
+	<tt>{TABLE|VIEW} <em>destName</em> (key, nb_classification)</tt>
+	
+	where \c nb_classification is an array containing the most likely
+	class(es) of the record in \em classifySource identified by \c key.
+
+	There are two sets of arguments this function can be called with. The
+	following parameters are always needed:
+	@param numAttrs Number of attributes to use for classification
+	@param destName Name of the table or view to create
+	@param whatToCreate (Optional) Either \c 'TABLE' OR \c 'VIEW' (the default).
+	@param smoothingFactor (Optional) Smoothing factor for computing feature
+		   feature probabilities. Default value: 1.0 (Laplacian Smoothing).
+	@param classifySource Name of the relation that contains data to be classified
+	@param classifyKeyColumn Name of column in \em classifySource that can
+		   serve as unique identifier
+	@param classifyAttrColumn Name of attributes-array column in \em classifySource
+
+	Furthermore, provide either:
+	@param classPriorsSource
+		   Relation (class, class_cnt, all_cnt) where
+		   class is c, class_cnt is \#c, all_cnt is the number of training
+		   samples.
+	@param featureProbsSource
+		   Relation (class, attr, value, cnt, attr_cnt) where
+		   (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+
+	Or have this function operate on the "raw" training data:
+	@param trainingSource
+		   Name of relation containing the training data
+	@param trainingClassColumn
+		   Name of class column in training data
+	@param trainingAttrColumn
+		   Name of attributes-array column in \em trainingSource	
+
 	"""
 	
-	init_prepared_data(kwargs)
+	__init_prepared_data(kwargs)
 	kwargs.update(dict(
-		keys_and_prob_values = "(" + get_keys_and_prob_values_sql(**kwargs) + ")"
+		keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
 		))
 	plpy.execute("""
 		CREATE {whatToCreate} {destName} AS
@@ -361,43 +518,76 @@ def create_classification(**kwargs):
 		""".format(**kwargs))
 
 
-# create_bayes_probabilities(**kwargs)
-# ====================================
-#
-# Creates a ralation that maps each pair
-# (key of data to be classified k, class c) to the Naive Bayes probability for
-# this class.
-#
-# We have two numerical problems when copmuting the probabilities
-# 
-#                 P(C = c) * P(A = a | C = c)
-#   P(C = c) = ---------------------------------    (*)
-#              --
-#              \   P(C = c') * P(A = a | C = c')
-#              /_ 
-#                c'
-#                          __
-# where P(A = a | C = c) = ||  P(A_i = a_i | C = c):
-#                            i
-# 1. P(A = a | C = c) could be a very small number not representable in
-#    double-precision floating-point arithmetic.
-#    -> Solution: We have log( P(C = c) * P(A = a | C = c) ) as indermediate
-#       results. We will add the maximum absolute value of these intermediate
-#       results to all of them. This corresponds to multiplying numerator and
-#       denominator of (*) with the same factor. The "normalization" ensures
-#       that the numerator of (*) can never be 0 (in FP arithmetic) for all c.
-# 2. PostgreSQL raises an error in case of underflows, even when 0 is the
-#    desirable outcome.
-#    -> Solution: if log( P(A = a | C = c) ) < -300, we interprete
-#       P(A = a | C = c) = 0. Note here that 1e-300 is about the order of
-#       magnitude of the smallest double precision FP number.
-
 def create_bayes_probabilities(**kwargs):
-	"""Create table/view that maps pairs (primary key, class) to probabilities."""
+	"""Create table/view with columns (key, class, nb_prob).
+	
+	The created relation will be
+	
+	<tt>{TABLE|VIEW} <em>destName</em> (key, class, nb_prob)</tt>
+	
+	where \c nb_prob is the Naive-Bayes probability that \c class is the true
+	class of the record in \em classifySource identified by \c key.
+	
+	There are two sets of arguments this function can be called with. The
+	following parameters are always needed:
+	@param numAttrs Number of attributes to use for classification
+	@param destName Name of the table or view to create
+	@param whatToCreate (Optional) Either \c 'TABLE' OR \c 'VIEW' (the default).
+	@param smoothingFactor (Optional) Smoothing factor for computing feature
+		   feature probabilities. Default value: 1.0 (Laplacian Smoothing).
 
-	init_prepared_data(kwargs)
+	Furthermore, provide either:
+	@param classPriorsSource
+		   Relation (class, class_cnt, all_cnt) where
+		   class is c, class_cnt is \#c, all_cnt is the number of training
+		   samples.
+	@param featureProbsSource
+		   Relation (class, attr, value, cnt, attr_cnt) where
+		   (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+
+	Or have this function operate on the "raw" training data:
+	@param trainingSource
+		   Name of relation containing the training data
+	@param trainingClassColumn
+		   Name of class column in training data
+	@param trainingAttrColumn
+		   Name of attributes-array column in training data	
+	
+	@internal
+	\par Implementation Notes:
+
+	We have two numerical problems when copmuting the probabilities
+	@verbatim
+               P(C = c) * P(A = a | C = c)
+ P(C = c) = ---------------------------------    (*)
+            --
+            \   P(C = c') * P(A = a | C = c')
+            /_ 
+              c'
+                         __
+where P(A = a | C = c) = ||  P(A_i = a_i | C = c).
+                           i
+	@endverbatim
+
+	1. P(A = a | C = c) could be a very small number not representable in
+	   double-precision floating-point arithmetic.
+	   - Solution: We have log( P(C = c) * P(A = a | C = c) ) as indermediate
+	     results. We will add the maximum absolute value of these intermediate
+	     results to all of them. This corresponds to multiplying numerator and
+	     denominator of (*) with the same factor. The "normalization" ensures
+	     that the numerator of (*) can never be 0 (in FP arithmetic) for all c.
+
+	2. PostgreSQL raises an error in case of underflows, even when 0 is the
+	   desirable outcome.
+	   - Solution: if log_10 ( P(A = a | C = c) ) < -300, we interprete
+         P(A = a | C = c) = 0. Note here that 1e-300 is roughly in the order of
+	     magnitude of the smallest double precision FP number.
+	@endinternal
+	"""
+
+	__init_prepared_data(kwargs)
 	kwargs.update(dict(
-		keys_and_prob_values = "(" + get_keys_and_prob_values_sql(**kwargs) + ")"
+		keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
 		))
 	plpy.execute("""
 		CREATE {whatToCreate} {destName} AS
@@ -423,24 +613,49 @@ def create_bayes_probabilities(**kwargs):
 		""".format(**kwargs))
 
 
-# create_classification_function(**kwargs)
-# ==========================================
-# 
-# Creates a SQL function that maps arrays of attribute values to the Naive Bayes
-# probability for this class.
-# Note: Greenplum does not support executing STABLE and VOLATILE functions on
-# segments. The created function can therefore only be called on the master.
-
 def create_classification_function(**kwargs):
-	"""Create a SQL function mapping arrays of attribute values to classification."""
+	"""Create a SQL function mapping arrays of attribute values to the Naive
+	Bayes classification.
 	
-	init_prepared_data(kwargs)
+	The created SQL function will be:
+	
+	<tt>
+	FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
+	RETURNS INTEGER[]</tt>
+	
+	There are two sets of arguments this function can be called with. The
+	following parameters are always needed:
+	@param classifyAttrColumn Array of attributes to bind to. This can be
+		   a column name of an outer query or a literal.
+	@param smoothingFactor Smoothing factor to use for estimating the feature
+		   probabilities.
+	@param numAttrs Number of attributes to use for classification
+
+	Furthermore, provide either:
+	@param classPriorsSource
+		   Relation (class, class_cnt, all_cnt) where
+		   class is c, class_cnt is \#c, all_cnt is the number of training
+		   samples.
+	@param featureProbsSource
+		   Relation (class, attr, value, cnt, attr_cnt) where
+		   (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+
+	Or have this function operate on the "raw" training data:
+	@param trainingSource Name of relation containing the training data
+	@param trainingClassColumn Name of class column in training data
+	@param trainingAttrColumn Name of attributes-array column in training data	
+	
+	Note: Greenplum does not support executing STABLE and VOLATILE functions on
+	segments. The created function can therefore only be called on the master.
+	"""
+	
 	kwargs.update(dict(
 		classifyAttrColumn = "$1",
 		smoothingFactor = "$2"
 		))
+	__init_prepared_data(kwargs)
 	kwargs.update(dict(
-		keys_and_prob_values = "(" + get_prob_values_sql(**kwargs) + ")"
+		keys_and_prob_values = "(" + __get_prob_values_sql(**kwargs) + ")"
 		))
 	plpy.execute("""
 		CREATE FUNCTION {destName} (inAttributes INTEGER[], inSmoothingFactor DOUBLE PRECISION)
@@ -454,16 +669,24 @@ def create_classification_function(**kwargs):
 		""".format(**kwargs))
 
 
-# When the names of relations with the preprocessed training data are not
-# given, we generate queries for these relations (to run them on the fly, i.e.,
-# as subqueries).
+def __init_prepared_data(kwargs):
+	"""
+	Fill in values for optional parameters: Create subqueries instead of using
+	a relation.
 
-def init_prepared_data(kwargs):
+	"""
+
 	if not 'classPriorsSource' in kwargs:
 		kwargs.update(dict(
-				classPriorsSource = "(" + get_class_priors_sql(**kwargs) + ")" 
+				classPriorsSource = "(" + __get_class_priors_sql(**kwargs) + ")" 
 			))
 	if not 'featureProbsSource' in kwargs:
 		kwargs.update(dict(
-				featureProbsSource = "(" + get_feature_probs_sql(**kwargs) + ")"
+				featureProbsSource = "(" + __get_feature_probs_sql(**kwargs) + ")"
 			))
+	if not 'smoothingFactor' in kwargs:
+		kwargs.update(dict(
+				smoothingFactor = 1
+			))
+	
+
