@@ -190,6 +190,8 @@ svec_out_internal(SvecType *svec)
 	return(result);
 }
 
+/* -- KS: Added several changes to svec_in to deal with incorrectly formatted 
+   input svecs and NULL values */
 PG_FUNCTION_INFO_V1(svec_in);
 Datum
 svec_in(PG_FUNCTION_ARGS)
@@ -214,9 +216,7 @@ svec_in(PG_FUNCTION_ARGS)
 	 * a colon, like this:
 	 * 	{1,10,1,5,1}:{4.3,0,0.2,0,7.4}
 	 */
-
-	if ((values=strchr(str,':'))==NULL)
-	{
+	if ((values=strchr(str,':'))==NULL) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
@@ -225,7 +225,7 @@ svec_in(PG_FUNCTION_ARGS)
 		*values = '\0';
 		values = values+1;
 	}
-	// -- KS: get the count and data arrays
+	/* Get the count and data arrays */
 	pgarray_ix = DatumGetArrayTypeP(
 			    OidFunctionCall3(F_ARRAY_IN,CStringGetDatum(str),
 			    ObjectIdGetDatum(INT8OID),Int32GetDatum(-1)));
@@ -238,15 +238,14 @@ svec_in(PG_FUNCTION_ARGS)
 	u_index = (int64 *)ARR_DATA_PTR(pgarray_ix);
 	vals = (double *)ARR_DATA_PTR(pgarray_vals);
 
-	// -- KS: check for input errors
-	if (num_values != *(ARR_DIMS(pgarray_vals))) {
+	/* Check for input errors */
+	if (num_values != *(ARR_DIMS(pgarray_vals)))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
 			 errmsg("Unique value count not equal to run length count")));
-	}
 
-	/* Count array shouldn't have NULLs */
+	/* Count array cannot have NULLs */
 	if (ARR_HASNULL(pgarray_ix))
 		ereport(ERROR,
 			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
@@ -254,7 +253,7 @@ svec_in(PG_FUNCTION_ARGS)
 			 errmsg("NULL value in the count array.")));
 
 	/* If the data array has NULLs, then we need to create an array to
-	   store the NULL values as NVP values defined in float_specials.h.*/
+	   store the NULL values as NVP values defined in float_specials.h. */
 	if (ARR_HASNULL(pgarray_vals)) {
 		vals_temp = vals;
 		vals = (double *)palloc(sizeof(float8) * num_values);
@@ -262,9 +261,9 @@ svec_in(PG_FUNCTION_ARGS)
 		bitmask = 1;
 		j = 0;
 		for (i=0; i<num_values; i++) {
-			if (bitmap && (*bitmap & bitmask) == 0) { // if NULL
+			if (bitmap && (*bitmap & bitmask) == 0) // if NULL
 				vals[i] = NVP;
-			} else { 
+			else { 
 				vals[i] = vals_temp[j];
 				j++;
 			}
@@ -281,9 +280,7 @@ svec_in(PG_FUNCTION_ARGS)
 	/* Make an empty StringInfo because we have the data array already */
 	index = makeStringInfo();
 	total_value_count = 0;
-	for (int i=0;i<num_values;i++)
-	{
-		// -- KS
+	for (int i=0;i<num_values;i++) {
 		if (u_index[i] <= 0) 
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -302,6 +299,7 @@ svec_in(PG_FUNCTION_ARGS)
 	result = svec_from_sparsedata(sdata,true);
 	if (total_value_count==1) result->dimension = -1; //Scalar
 
+	if (ARR_HASNULL(pgarray_vals)) pfree(vals);
 	pfree(str); /* str is allocated from a strdup */
 	pfree(pgarray_ix);
 	pfree(pgarray_vals);
