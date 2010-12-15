@@ -18,6 +18,7 @@
 #include "utils/fmgroids.h"
 #include "lib/stringinfo.h"
 #include "utils/memutils.h"
+#include "float_specials.h"
 
 /*
  * Sparse Vector Datatype
@@ -196,7 +197,7 @@ svec_in(PG_FUNCTION_ARGS)
 	char *str = pstrdup(PG_GETARG_CSTRING(0));
 	char *values;
 	ArrayType *pgarray_vals,*pgarray_ix;
-	double *vals;
+	double *vals, *vals_temp;
 	StringInfo index;
 	int64 *u_index;
 	int32_t num_values,total_value_count;
@@ -204,6 +205,7 @@ svec_in(PG_FUNCTION_ARGS)
 	SvecType *result;
 	bits8 *bitmap;
 	int bitmask;
+	int i,j;
 
 	/* Read in the two arrays defining the Sparse Vector, first is the array
 	 * of run lengths, the second is an array of the unique values.
@@ -223,40 +225,60 @@ svec_in(PG_FUNCTION_ARGS)
 		*values = '\0';
 		values = values+1;
 	}
-	// -- KS: get the second array of doubles
-	pgarray_vals = DatumGetArrayTypeP(OidFunctionCall3(F_ARRAY_IN,CStringGetDatum(values),
-				ObjectIdGetDatum(FLOAT8OID),Int32GetDatum(-1)));
+	// -- KS: get the count and data arrays
+	pgarray_ix = DatumGetArrayTypeP(
+			    OidFunctionCall3(F_ARRAY_IN,CStringGetDatum(str),
+			    ObjectIdGetDatum(INT8OID),Int32GetDatum(-1)));
 
-	// -- KS: check for NULL values
-	num_values = *(ARR_DIMS(pgarray_vals));
-	
-	if (ARR_HASNULL(pgarray_vals))
-		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-			 errOmitLocation(true),
-			 errmsg("NULL value in data array.")));
+	pgarray_vals = DatumGetArrayTypeP(
+			    OidFunctionCall3(F_ARRAY_IN,CStringGetDatum(values),
+			    ObjectIdGetDatum(FLOAT8OID),Int32GetDatum(-1)));
 
-	/* Make an empty StringInfo because we have the data array already */
+	num_values = *(ARR_DIMS(pgarray_ix));
+	u_index = (int64 *)ARR_DATA_PTR(pgarray_ix);
 	vals = (double *)ARR_DATA_PTR(pgarray_vals);
 
-	pgarray_ix = DatumGetArrayTypeP(OidFunctionCall3(F_ARRAY_IN,CStringGetDatum(str),
-				ObjectIdGetDatum(INT8OID),Int32GetDatum(-1)));
-
-	if (ARR_HASNULL(pgarray_ix))
-		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-			 errOmitLocation(true),
-			 errmsg("NULL value in the count array.")));
-
-	u_index = (int64 *)ARR_DATA_PTR(pgarray_ix);
-	if (num_values != *(ARR_DIMS(pgarray_ix)))
-	{
+	// -- KS: check for input errors
+	if (num_values != *(ARR_DIMS(pgarray_vals))) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
 			 errmsg("Unique value count not equal to run length count")));
 	}
 
+	/* Count array shouldn't have NULLs */
+	if (ARR_HASNULL(pgarray_ix))
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+			 errOmitLocation(true),
+			 errmsg("NULL value in the count array.")));
+
+	/* If the data array has NULLs, then we need to create an array to
+	   store the NULL values as NVP values defined in float_specials.h.*/
+	if (ARR_HASNULL(pgarray_vals)) {
+		vals_temp = vals;
+		vals = (double *)palloc(sizeof(float8) * num_values);
+		bitmap = ARR_NULLBITMAP(pgarray_vals);
+		bitmask = 1;
+		j = 0;
+		for (i=0; i<num_values; i++) {
+			if (bitmap && (*bitmap & bitmask) == 0) { // if NULL
+				vals[i] = NVP;
+			} else { 
+				vals[i] = vals_temp[j];
+				j++;
+			}
+			if (bitmap) { // advance bitmap pointer
+				bitmask <<= 1;
+				if (bitmask == 0x100) {
+					bitmap++;
+					bitmask = 1;
+				}
+			}
+		}
+	 }
+
+	/* Make an empty StringInfo because we have the data array already */
 	index = makeStringInfo();
 	total_value_count = 0;
 	for (int i=0;i<num_values;i++)
