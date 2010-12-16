@@ -369,8 +369,8 @@ static bool lapply_error_checking(Oid foid, List * func) {
 	return true;
 }
 
-/* This function projects onto an element of a sparse data. As usual, we 
- * start counting from zero. So idx = 0 gives the first element. 
+/* This function projects onto an element of a sparse data. As in 
+ * GP/PostgreSQL, we start counting from one. 
  */
 double sd_proj(SparseData sdata, int idx) {
 	char * ix = sdata->index->data;
@@ -379,14 +379,14 @@ double sd_proj(SparseData sdata, int idx) {
 	int read, i;
 
 	// error checking
-	if (0 > idx || idx >= sdata->total_value_count)
+	if (0 >= idx || idx > sdata->total_value_count)
 		ereport(ERROR, 
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
 			 errmsg("Index out of bounds.")));
 
 	// find desired block
-	read = compword_to_int8(ix) - 1;
+	read = compword_to_int8(ix);
 	i = 0;
 	while (read < idx) {
 		ix += int8compstoragesize(ix);
@@ -397,7 +397,7 @@ double sd_proj(SparseData sdata, int idx) {
 }
 
 /* This function extracts a sub array, indexed by start and end, of a sparse 
- * data. The indices begin at zero.
+ * data. The indices begin at one.
  */
 SparseData subarr(SparseData sdata, int start, int end) {
 	char * ix = sdata->index->data;
@@ -409,14 +409,14 @@ SparseData subarr(SparseData sdata, int start, int end) {
 		return reverse(subarr(sdata,end,start));
 
 	// error checking
-	if (0 > start || start > end || end >= sdata->total_value_count)
+	if (0 >= start || start > end || end > sdata->total_value_count)
 		ereport(ERROR, 
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
 			 errmsg("Array index out of bounds.")));
 
 	// find start block
-	int read = compword_to_int8(ix) - 1;
+	int read = compword_to_int8(ix);
 	int i = 0;
 	while (read < start) {
 		ix += int8compstoragesize(ix);
