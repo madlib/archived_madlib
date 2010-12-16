@@ -440,6 +440,7 @@ SparseData subarr(SparseData sdata, int start, int end) {
 		} 
 		add_run_to_sdata((char *)(&vals[j]), esize, wf8, ret);
 		read += esize;
+		if (read == end) break;
 	}
 	return ret;
 }
