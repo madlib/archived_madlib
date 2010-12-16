@@ -165,6 +165,20 @@ svec_subvec(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(subarr(in,start,end),true));
 }
 
+// -- KS
+Datum svec_reverse(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_reverse );
+Datum 
+svec_reverse(PG_FUNCTION_ARGS) 
+{
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	SvecType * sv = PG_GETARG_SVECTYPE_P(0);
+	SparseData in = sdata_from_svec(sv);
+	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(reverse(in),true));
+}
+
 Datum svec_eq(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_eq );
 Datum

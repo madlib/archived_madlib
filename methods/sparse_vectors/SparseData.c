@@ -404,13 +404,16 @@ SparseData subarr(SparseData sdata, int start, int end) {
 	double * vals = (double *)sdata->vals->data;
 	SparseData ret = makeSparseData();
 	size_t wf8 = sizeof(float8);
+	
+	if (start > end) 
+		return reverse(subarr(sdata,end,start));
 
 	// error checking
 	if (0 > start || start > end || end >= sdata->total_value_count)
 		ereport(ERROR, 
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
-			 errmsg("Index out of bounds.")));
+			 errmsg("Array index out of bounds.")));
 
 	// find start block
 	int read = compword_to_int8(ix) - 1;
@@ -437,6 +440,24 @@ SparseData subarr(SparseData sdata, int start, int end) {
 		} 
 		add_run_to_sdata((char *)(&vals[j]), esize, wf8, ret);
 		read += esize;
+	}
+	return ret;
+}
+
+SparseData reverse(SparseData sdata) {
+	char * ix = sdata->index->data;
+	double * vals = (double *)sdata->vals->data;
+	SparseData ret = makeSparseData();
+	size_t w = sizeof(float8);
+
+	// move to the last count array element
+	for (int j=0; j<sdata->unique_value_count-1; j++)
+		ix += int8compstoragesize(ix);
+
+	// copy from right to left
+	for (int j=sdata->unique_value_count-1; j!=-1; j--) {
+		add_run_to_sdata((char *)(&vals[j]),compword_to_int8(ix),w,ret);
+		ix -= int8compstoragesize(ix);
 	}
 	return ret;
 }
