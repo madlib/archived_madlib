@@ -182,6 +182,15 @@ svec_out_internal(SvecType *svec)
 
 	result = (char *)palloc(sizeof(char)*(vslen+ixlen+1+1));
 
+	/* -- KS: replace NaN with NVP */
+	for (int i=0; i!=vslen; i++) {
+		if (vals_string[i] == 'N') {
+			vals_string[i+1] = 'V';
+			vals_string[i+2] = 'P';
+			i = i+2;
+		}
+	}
+
 	sprintf(result,"%s:%s",ix_string,vals_string);
 	pfree(ix_string);
 	pfree(vals_string);
