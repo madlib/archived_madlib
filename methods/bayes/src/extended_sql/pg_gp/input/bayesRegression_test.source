@@ -1,5 +1,11 @@
 SET dynamic_library_path TO '@libdir@';
 
+-- create madlib schema for PGXS regression test
+
+CREATE SCHEMA madlib;
+
+CREATE LANGUAGE plpythonu;
+
 -- Installation of all functions
 
 \i naiveBayesClassification.sql
@@ -43,16 +49,6 @@ SELECT madlib.create_nb_classify_fn('nb_feature_probs', 'nb_class_priors', 3, 'n
 -- preprocessed training data
 SELECT madlib.create_nb_classify_fn('bayes', 'class', 'attributes', 3, 'nb_classify_slow');
 
--- Create a new table like toclassify but extended by a column 'classes'
-SET client_min_messages = error;
-CREATE TABLE classified (LIKE toclassify INCLUDING ALL, classification INTEGER[]);
-RESET client_min_messages;
-
-INSERT INTO classified (id, attributes)
-SELECT * FROM toclassify;
-
-SELECT madlib.update_nb_classification('nb_feature_probs', 'nb_class_priors', 3, 'classified', 'attributes', 'classification');
-
 -- Create intermediate views as needed for Naive Bayes implementation inherited from Greenplum
 CREATE VIEW class_example_unpivot AS
 SELECT
@@ -66,7 +62,7 @@ CREATE TABLE class_example_nb_training AS
 SELECT
 	attr,
 	value,
-	madlib.pivot_sum(array['C1', 'C2'], class, 1) AS class_count
+	madlib.pivot_sum(array['C1', 'C2'], class, 1::BIGINT) AS class_count
 FROM
 	class_example_unpivot
 GROUP BY attr, value;
@@ -79,18 +75,33 @@ SELECT
 	class_count,
 	array['C1', 'C2'] AS classes,
 	madlib.sum(class_count) OVER (wa)::INTEGER[] AS class_total,
+	attr_count
+
+	--	PostgreSQL does not support DISTINCT to be used within the function argument list
+	--	http://www.postgresql.org/docs/9/interactive/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
+	--  so we cannot use the following (taken from the Greenplum Admin Guide)
+	--	count(DISTINCT value) OVER (wa) AS attr_count
+	--
+	--  However, Greenplum does not support correlated subquery. So we cannot just use
+	--  a subquery like
+	--  ( SELECT count(DISTINCT value) FROM class_example_nb_training AS sub WHERE
+	--    sub.attr = training.attr FROM class_example_nb_training AS training )
+	--  either. We need to flatten the subquery manualy.
+
+FROM
+	class_example_nb_training AS training
+	
+	--  Self-join for the aforementioned resons...
+	INNER JOIN
 	(
 		SELECT
-			count(DISTINCT value)
+			attr,
+			count(DISTINCT value) as attr_count
 		FROM class_example_nb_training AS sub
-		WHERE
-			sub.attr = training.attr
+		GROUP BY attr
 	) AS attr_count
---	PostgreSQL does not support DISTINCT to be used within the function argument list
---	http://www.postgresql.org/docs/9/interactive/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
---  so we cannot use the following (taken from the Greenplum Admin Guide)
---	count(DISTINCT value) OVER (wa) AS attr_count
-FROM class_example_nb_training AS training
+	USING (attr)
+
 WINDOW wa AS (PARTITION BY attr);
 
 -- Now test created objects
@@ -111,24 +122,24 @@ SELECT *, nb_classify_fast(attributes, 1) FROM toclassify ORDER BY id;
 
 SELECT *, nb_classify_slow(attributes, 0) FROM toclassify ORDER BY id;
 
-SELECT * FROM classified ORDER BY id;
-
 SELECT
 	classify.id,
 	classify.attributes,
 	madlib.nb_classify(classes, attr_count, class_count, class_total) AS class,
 	madlib.nb_probabilities(classes, attr_count, class_count, class_total) AS probabilities
 FROM
-	class_example_nb_classify AS prep,
 	(
 		SELECT
 			id,
 			attributes,
-			'A' || generate_series(1, 3) AS attr,
-			unnest(attributes) AS value
-		FROM toclassify
+			'A' || attr AS attr,
+			attributes[attr] AS value
+		FROM
+			toclassify,
+			generate_series(1, 3) AS attr
 	) AS classify
-WHERE
-	prep.attr = classify.attr AND prep.value = classify.value
+	LEFT OUTER JOIN
+	class_example_nb_classify AS prep
+	USING (attr, value)
 GROUP BY
 	classify.id, classify.attributes;
