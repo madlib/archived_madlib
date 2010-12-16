@@ -107,6 +107,8 @@ CREATE OR REPLACE FUNCTION svec_append(svec,float8,int8) RETURNS svec AS 'gp_sve
 
 -- KS: Higher-order functions
 CREATE OR REPLACE FUNCTION svec_lapply(text,svec) RETURNS svec AS 'gp_svec.so', 'svec_lapply' LANGUAGE C IMMUTABLE;
+CREATE OR REPLACE FUNCTION svec_proj(svec,int4) RETURNS float8 AS 'gp_svec.so', 'svec_proj' LANGUAGE C IMMUTABLE;
+CREATE OR REPLACE FUNCTION svec_subvec(svec,int4,int4) RETURNS svec AS 'gp_svec.so', 'svec_subvec' LANGUAGE C IMMUTABLE;
 
 DROP OPERATOR IF EXISTS || ( svec, svec);
 DROP OPERATOR IF EXISTS - ( svec, svec);

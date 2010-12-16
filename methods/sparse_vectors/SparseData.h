@@ -153,7 +153,8 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count);
  * Some functions for accessing and changing elements of a SparseData
  */
 SparseData lapply(text * func, SparseData sdata);
-
+double sd_proj(SparseData sdata, int idx);
+SparseData subarr(SparseData sdata, int start, int end);
 
 static inline size_t
 size_of_type(Oid type)

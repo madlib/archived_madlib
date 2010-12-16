@@ -331,6 +331,9 @@ void printSparseData(SparseData sdata) {
 
 static bool lapply_error_checking(Oid foid, List * funcname);
 
+/* This function applies an input function on all elements of a sparse data. 
+ * The function is modelled after the corresponding function in R.
+ */
 SparseData lapply(text * func, SparseData sdata) {
 	Oid argtypes[1] = { FLOAT8OID };
 	List * funcname = textToQualifiedNameList(func);
@@ -364,6 +367,78 @@ static bool lapply_error_checking(Oid foid, List * func) {
 
 	ReleaseSysCache(ftup);
 	return true;
+}
+
+/* This function projects onto an element of a sparse data. As usual, we 
+ * start counting from zero. So idx = 0 gives the first element. 
+ */
+double sd_proj(SparseData sdata, int idx) {
+	char * ix = sdata->index->data;
+	double * vals = (double *)sdata->vals->data;
+	float8 ret;
+	int read, i;
+
+	// error checking
+	if (0 > idx || idx >= sdata->total_value_count)
+		ereport(ERROR, 
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errOmitLocation(true),
+			 errmsg("Index out of bounds.")));
+
+	// find desired block
+	read = compword_to_int8(ix) - 1;
+	i = 0;
+	while (read < idx) {
+		ix += int8compstoragesize(ix);
+		read += compword_to_int8(ix);
+		i++;
+	}
+	return vals[i];
+}
+
+/* This function extracts a sub array, indexed by start and end, of a sparse 
+ * data. The indices begin at zero.
+ */
+SparseData subarr(SparseData sdata, int start, int end) {
+	char * ix = sdata->index->data;
+	double * vals = (double *)sdata->vals->data;
+	SparseData ret = makeSparseData();
+	size_t wf8 = sizeof(float8);
+
+	// error checking
+	if (0 > start || start > end || end >= sdata->total_value_count)
+		ereport(ERROR, 
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errOmitLocation(true),
+			 errmsg("Index out of bounds.")));
+
+	// find start block
+	int read = compword_to_int8(ix) - 1;
+	int i = 0;
+	while (read < start) {
+		ix += int8compstoragesize(ix);
+		read += compword_to_int8(ix);
+		i++;
+	}
+	if (end <= read) {
+		// the whole subarray is in the first block, we are done
+		add_run_to_sdata((char *)(&vals[i]), end-start+1, wf8, ret);
+		return ret;
+	}
+	// else start building subarray
+	add_run_to_sdata((char *)(&vals[i]), read-start+1, wf8, ret);
+
+	for (int j=i+1; j<sdata->unique_value_count; j++) {
+		ix += int8compstoragesize(ix);
+		int esize = compword_to_int8(ix);
+		if (read + esize > end) {
+			add_run_to_sdata((char *)(&vals[j]), end-read, wf8,ret);
+			break;
+		} 
+		add_run_to_sdata((char *)(&vals[j]), esize, wf8, ret);
+		read += esize;
+	}
+	return ret;
 }
 
 /* -- KS: 

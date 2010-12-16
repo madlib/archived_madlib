@@ -132,6 +132,38 @@ svec_concat(PG_FUNCTION_ARGS)
 	}
 }
 
+// -- KS
+Datum svec_proj(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_proj );
+Datum
+svec_proj(PG_FUNCTION_ARGS) 
+{
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	SvecType * sv = PG_GETARG_SVECTYPE_P(0);
+	int idx = PG_GETARG_INT32(1);
+
+	SparseData in = sdata_from_svec(sv);
+	PG_RETURN_FLOAT8(sd_proj(in,idx));
+}
+
+// -- KS
+Datum svec_subvec(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_subvec );
+Datum
+svec_subvec(PG_FUNCTION_ARGS) 
+{
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	SvecType * sv = PG_GETARG_SVECTYPE_P(0);
+	int start = PG_GETARG_INT32(1);
+	int end   = PG_GETARG_INT32(2);
+
+	SparseData in = sdata_from_svec(sv);
+	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(subarr(in,start,end),true));
+}
 
 Datum svec_eq(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_eq );
