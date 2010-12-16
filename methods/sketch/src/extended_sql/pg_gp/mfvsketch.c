@@ -63,7 +63,7 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
     transval = (mfvtransval *)(VARDATA(transblob));
     // elog(NOTICE, "entered trans with transblob of size %d", VARSIZE(transblob));    
       
-    if (VARSIZE(transblob) < sizeof(MFV_TRANSVAL_SZ(0))) {
+    if (VARSIZE(transblob) <= sizeof(MFV_TRANSVAL_SZ(0))) {
         Oid typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
         int initial_size;
         /* 
@@ -90,6 +90,10 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
         getTypeOutputInfo(transval->typOid,
                            &(transval->outFuncOid),
                            &typIsVarlena);
+        if (!transval->outFuncOid) {
+            // no outFunc for this type!
+            elog(ERROR, "no outFunc for type %d", transval->typOid);
+        }
     }
     
     transval = (mfvtransval *)VARDATA(transblob);
