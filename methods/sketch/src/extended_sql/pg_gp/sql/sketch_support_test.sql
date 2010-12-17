@@ -1,4 +1,3 @@
-create schema madlib;
 CREATE FUNCTION madlib.sketch_rightmost_one(bytea, integer, integer) returns integer AS '$libdir/sketches'
 LANGUAGE C STRICT;
 CREATE FUNCTION madlib.sketch_leftmost_zero(bytea, integer, integer) returns integer AS '$libdir/sketches'

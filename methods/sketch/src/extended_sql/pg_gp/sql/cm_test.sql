@@ -1,6 +1,3 @@
-create schema madlib;
-\i sketches_drop.sql
-\i sketches.sql
 set search_path to "$user",public,madlib;
 -- Basic methods
 select cmsketch_getcount(cmsketch(i),5) from generate_series(1,10000) as T(i);
