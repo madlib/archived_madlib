@@ -1,15 +1,18 @@
 #!/usr/bin/python
+#
+# Script/module to call 'make install' for each MADlib method port
+# in the MADlib Config.yml file.
+
 import yaml
 import os
 import subprocess
-import configyml
+import madpy
+import madpy.madpack.configyml
     
-def install_methods():
-    conf = configyml.get_config('..')
-
+def install_methods(mkarg, conf):
     for m in conf['methods']:
-        mdir = '../../madlib/' + m['name'] + '/src/' + m['port'] + '/'
-        print "changing directory to " + mdir
+        mdir = madpy.__path__[0]+'/../madlib/' + m['name'] + '/src/' + m['port'] + '/'
+        # print "changing directory to " + mdir
         curdir = os.getcwd()
         try:
             os.chdir(mdir)
@@ -27,7 +30,7 @@ def install_methods():
             print "method " + m['name'] + " misconfigured: Install.yml missing module"
             sys.exit(2)
         if install['module'] != None:
-            subprocess.call(['make','install'], stderr = subprocess.PIPE)
+            subprocess.call(['make', mkarg], stderr = subprocess.PIPE)
         os.chdir(curdir)
             
 if __name__ == "__main__":
