@@ -14,7 +14,8 @@
 #       - output_schema:    target schema for output tables (points, centroids)
 #===============================================================================
 
-"""@namespace k-means
+"""@namespace kmeans
+
  Usage:
    kmeans_run( input_table, k, goodness, run_id, output_schema)
 
