@@ -102,14 +102,17 @@ CREATE OR REPLACE FUNCTION svec_concat(svec,svec) RETURNS svec AS 'gp_svec.so', 
 CREATE OR REPLACE FUNCTION svec_concat_replicate(int4,svec) RETURNS svec AS 'gp_svec.so', 'svec_concat_replicate' LANGUAGE C IMMUTABLE; 
 CREATE OR REPLACE FUNCTION dimension(svec) RETURNS integer AS 'gp_svec.so', 'svec_dimension' LANGUAGE C IMMUTABLE; 
 
--- KS
-CREATE OR REPLACE FUNCTION svec_append(svec,float8,int8) RETURNS svec AS 'gp_svec.so', 'svec_append' STRICT LANGUAGE C IMMUTABLE;
+
 
 -- KS: Higher-order functions
 CREATE OR REPLACE FUNCTION svec_lapply(text,svec) RETURNS svec AS 'gp_svec.so', 'svec_lapply' LANGUAGE C IMMUTABLE;
+
+-- KS: svec access and modification functions
+CREATE OR REPLACE FUNCTION svec_append(svec,float8,int8) RETURNS svec AS 'gp_svec.so', 'svec_append' STRICT LANGUAGE C IMMUTABLE;
 CREATE OR REPLACE FUNCTION svec_proj(svec,int4) RETURNS float8 AS 'gp_svec.so', 'svec_proj' LANGUAGE C IMMUTABLE;
 CREATE OR REPLACE FUNCTION svec_subvec(svec,int4,int4) RETURNS svec AS 'gp_svec.so', 'svec_subvec' LANGUAGE C IMMUTABLE;
 CREATE OR REPLACE FUNCTION svec_reverse(svec) RETURNS svec AS 'gp_svec.so', 'svec_reverse' LANGUAGE C IMMUTABLE;
+CREATE OR REPLACE FUNCTION svec_change(svec,int4,svec) RETURNS svec AS 'gp_svec.so', 'svec_change' LANGUAGE C IMMUTABLE;
 
 DROP OPERATOR IF EXISTS || ( svec, svec);
 DROP OPERATOR IF EXISTS - ( svec, svec);

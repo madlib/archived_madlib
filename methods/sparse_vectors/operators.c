@@ -75,61 +75,25 @@ svec_concat_replicate(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata,true));
 }
 
-/* -- KS: this suffers from the same problem.
-          for example, 
-              select svec_concat('{1,30}:{1,2}'::svec, '{100,1}:{2,5}'::svec)
-          results in
-              {1,30,100,1}:{1,2,2,1}
- */
-
 Datum svec_concat(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_concat );
 Datum
 svec_concat(PG_FUNCTION_ARGS)
 {
-	if (PG_ARGISNULL(0) && (!PG_ARGISNULL(1)))
-	{
-		PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P(1));
-	} else if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
-	{
-		PG_RETURN_NULL();
-	} else if (PG_ARGISNULL(1))
-	{
-		PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P(0));
-	} else
-	{
+	if (PG_ARGISNULL(0) && (!PG_ARGISNULL(1))) 
+                PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P(1));
+        else if (PG_ARGISNULL(0) && PG_ARGISNULL(1)) 
+                PG_RETURN_NULL();
+        else if (PG_ARGISNULL(1))
+                PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P(0));
 
-		SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
-		SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
-		SparseData left  = sdata_from_svec(svec1);
-		SparseData right = sdata_from_svec(svec2);
-		SparseData sdata = makeEmptySparseData();
-		char *vals,*index;
-		int l_val_len = left->vals->len;
-		int r_val_len = right->vals->len;
-		int l_ind_len = left->index->len;
-		int r_ind_len = right->index->len;
-		int val_len=l_val_len+r_val_len;
-		int ind_len=l_ind_len+r_ind_len;
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	SparseData sdata = concat(left, right);
 
-		vals = (char *)palloc(sizeof(char)*val_len);
-		index = (char *)palloc(sizeof(char)*ind_len);
-
-		memcpy(vals          ,left->vals->data,l_val_len);
-		memcpy(vals+l_val_len,right->vals->data,r_val_len);
-		memcpy(index,          left->index->data,l_ind_len);
-		memcpy(index+l_ind_len,right->index->data,r_ind_len);
-
-		sdata->vals  = makeStringInfoFromData(vals,val_len);
-		sdata->index = makeStringInfoFromData(index,ind_len);
-		sdata->type_of_data = left->type_of_data;
-		sdata->unique_value_count = left->unique_value_count+
-			right->unique_value_count;
-		sdata->total_value_count  = left->total_value_count+
-			right->total_value_count;
-
-		PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata,true));
-	}
+	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata,true));
 }
 
 // -- KS
@@ -178,6 +142,50 @@ svec_reverse(PG_FUNCTION_ARGS)
 	SparseData in = sdata_from_svec(sv);
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(reverse(in),true));
 }
+
+// -- KS
+Datum svec_change(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(svec_change);
+Datum 
+svec_change(PG_FUNCTION_ARGS) 
+{
+	SvecType * in = PG_GETARG_SVECTYPE_P(0);
+	int idx = PG_GETARG_INT32(1);
+	SvecType * changed = PG_GETARG_SVECTYPE_P(2);
+	SparseData indata = sdata_from_svec(in);
+	SparseData middle = sdata_from_svec(changed);
+	int inlen = indata->total_value_count;
+	int midlen = middle->total_value_count;
+	SparseData head = NULL, tail = NULL, ret = NULL;
+
+	if (idx < 1 || idx > inlen) 
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errOmitLocation(true),
+			 errmsg("Invalid start index")));
+	
+	if (idx+midlen-1 > inlen)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errOmitLocation(true),
+			 errmsg("Change vector is too long")));
+
+	if (idx >= 2) head = subarr(indata, 1, idx-1);
+	if (idx + midlen <= inlen) tail = subarr(indata,idx + midlen, inlen);
+
+	if (head == NULL && tail == NULL)
+		ret = makeSparseDataCopy(middle);
+	else if (head == NULL)
+		ret = concat(middle, tail);
+	else if (tail == NULL)
+		ret = concat(head, middle);
+	else {
+		ret = concat(head, middle);
+		ret = concat(ret, tail);
+	}
+	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(ret,true));
+}
+
 
 Datum svec_eq(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_eq );

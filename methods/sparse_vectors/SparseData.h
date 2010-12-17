@@ -156,6 +156,7 @@ SparseData lapply(text * func, SparseData sdata);
 double sd_proj(SparseData sdata, int idx);
 SparseData subarr(SparseData sdata, int start, int end);
 SparseData reverse(SparseData sdata);
+SparseData concat(SparseData left, SparseData right);
 
 static inline size_t
 size_of_type(Oid type)

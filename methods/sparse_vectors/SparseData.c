@@ -463,6 +463,41 @@ SparseData reverse(SparseData sdata) {
 	return ret;
 }
 
+SparseData concat(SparseData left, SparseData right) {
+	if (left == NULL && right == NULL) {
+		return NULL;
+	} else if (left == NULL && right != NULL) {
+		return makeSparseDataCopy(right);
+	} else if (left != NULL && right == NULL) {
+		return makeSparseDataCopy(left);
+	}
+	SparseData sdata = makeEmptySparseData();
+	char *vals,*index;
+	int l_val_len = left->vals->len;
+	int r_val_len = right->vals->len;
+	int l_ind_len = left->index->len;
+	int r_ind_len = right->index->len;
+	int val_len=l_val_len+r_val_len;
+	int ind_len=l_ind_len+r_ind_len;
+	
+	vals = (char *)palloc(sizeof(char)*val_len);
+	index = (char *)palloc(sizeof(char)*ind_len);
+	
+	memcpy(vals          ,left->vals->data,l_val_len);
+	memcpy(vals+l_val_len,right->vals->data,r_val_len);
+	memcpy(index,          left->index->data,l_ind_len);
+	memcpy(index+l_ind_len,right->index->data,r_ind_len);
+	
+	sdata->vals  = makeStringInfoFromData(vals,val_len);
+	sdata->index = makeStringInfoFromData(index,ind_len);
+	sdata->type_of_data = left->type_of_data;
+	sdata->unique_value_count = left->unique_value_count+
+		right->unique_value_count;
+	sdata->total_value_count  = left->total_value_count+
+		right->total_value_count;
+	return sdata;
+}
+
 /* -- KS: 
   general procedure
   - write function for SparseData
