@@ -14,6 +14,19 @@
 #       - output_schema:    target schema for output tables (points, centroids)
 #===============================================================================
 
+"""@namespace k-means
+ Usage:
+   kmeans_run( input_table, k, goodness, run_id, output_schema)
+
+   Parameters:
+       - input_table:      table with the source data
+       - k:                max number of clusters to consider 
+                       (must be smaller than number of input points)
+       - goodness:         goodness of fit test flag [0,1]
+       - run_id:           execution identifier
+       - output_schema:    target schema for output tables (points, centroids)
+"""
+
 import datetime
 import plpy
 from math import floor, log, pow
