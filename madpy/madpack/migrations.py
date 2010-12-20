@@ -33,7 +33,8 @@
 #    called migrationhistory that keeps track of the names of the scripts
 #    installed (in order), and the dates they were installed.
 # There may be migrations in the scripts directory that have not been 
-# installed (or that were uninstalled).
+# installed (or that were uninstalled).  The sanity() method below can be used
+# to compare the scriptfiles against the migrationhistory table.
 
 
 import os
@@ -50,7 +51,10 @@ from madpy.madpack import configyml
 # A Python exception class for our use
 class MadPackMigrationError(Exception):
     pass
-    
+
+# Constructor.  
+#    mig_dir is the directory to use for migration files
+#    conf_dir is the directory where Config.yml is to be found
 class MadPackMigration:
     def __init__(self, mig_dir, conf_dir):
         self.conf = configyml.get_config(conf_dir)        
@@ -79,16 +83,35 @@ class Migration(MadPackMigration):
         # the junk that goes before each method's backwards script
         self.mig_backwards_prolog = """\tdef backwards(self):\n\t\tcur = self.dbconn.cursor()\n"""
         
-        # Connect to DB
+        # Connect to DB and store inside this object for reuse
         self.dbconn = dbapi2.connect(*connect_args)
 
     def __del__(self):
+        # clean up the DB connection!
         self.dbconn.close()
         
+#### MIGRATION FILE UTILITIES
+
     # pad string "strng" on the left with "n" copies of character "prefixchar"
     def __pad_on_left_to_n(self,strng,prefixchar,n):
         return "".join([prefixchar for i in range(0,n - len(strng))]) + strng
 
+    # scan migration script names, and map versions to migration numbers
+    def __map_versions_to_nums(self):
+        vnmap = dict()
+        migfiles = glob.glob(self.mig_dir+"/"+"".join(["[0-9]" for i in range (0,self.mig_number_len)])+"_*.py")
+        for f in migfiles:
+            ver = f.split("_")[1].split(".py")[0]
+            mig = f.split("_")[0].split("/")[-1]
+            vnmap[ver]=mig
+        return vnmap
+
+    # map a specific version v to its migration number 
+    def __map_version_to_num(self, v, vnmap=None):
+        if vnmap == None:
+            vnmap = self.__map_versions_to_nums()
+        return int(vnmap[v])
+        
     # method to load migration code that we will generate.
     # from http://code.davidjanes.com/blog/2008/11/27/how-to-dynamically-load-python-code/
     def __load_module(self, code_path):
@@ -111,30 +134,7 @@ class Migration(MadPackMigration):
             traceback.print_exc(file = sys.stderr)
             raise
     
-    # scan migration script names, and map versions to migration numbers
-    def __map_versions_to_nums(self):
-        vnmap = dict()
-        migfiles = glob.glob(self.mig_dir+"/"+"".join(["[0-9]" for i in range (0,self.mig_number_len)])+"_*.py")
-        for f in migfiles:
-            ver = f.split("_")[1].split(".py")[0]
-            mig = f.split("_")[0].split("/")[-1]
-            vnmap[ver]=mig
-        return vnmap
-    
-    # map a specific version v to its migration number 
-    def __map_version_to_num(self, v, vnmap=None):
-        if vnmap == None:
-            vnmap = self.__map_versions_to_nums()
-        return int(vnmap[v])
-        
-    # find highest-numbered migration file. 
-    def max_file(self):
-        numlist = [int(i.split('_')[0]) for i in os.listdir(self.mig_dir) if i.split('_')[0].isdigit()]
-        if len(numlist) > 0:
-            return max(numlist)
-        else:
-            return 0
-
+#### DB MIGRATIONHISTORY UTILITIES       
     # find current migration in database
     def __current_mig(self):
         cur = self.dbconn.cursor()
@@ -166,6 +166,17 @@ class Migration(MadPackMigration):
             raise
         return [m[0] for m in cur.fetchall()]
         
+
+### PUBLIC UTILITY METHODS
+
+    # find highest-numbered migration file. 
+    def max_file(self):
+        numlist = [int(i.split('_')[0]) for i in os.listdir(self.mig_dir) if i.split('_')[0].isdigit()]
+        if len(numlist) > 0:
+            return max(numlist)
+        else:
+            return 0
+
     def current_mig_number(self):
         curmig = self.__current_mig()
         if curmig == None:
@@ -208,6 +219,8 @@ class Migration(MadPackMigration):
             name += ".py"
         return name 
 
+#### UTILITIES FOR GENERATING MIGRATION FILES
+
     # generate a new migration filename, with number one larger than max
     def __gen_filename(self, name):
         next_num = self.current_mig_number()+1
@@ -225,6 +238,8 @@ class Migration(MadPackMigration):
                 retval += "".join(["\t" for i in range(0,indent_width)]) + "cur.execute(\"\"\"" + s.strip() + "\"\"\")"
                 retval += "\n"
         return retval
+
+#### PUBLIC METHODS FOR GENERATING MIGRATION FILES
 
     # given the upfiles (fw) and downfiles (bw) for a set of methods,
     #  generate a new migration file and place in dir
@@ -300,7 +315,8 @@ class Migration(MadPackMigration):
             print sys.exc_info()[0]
             raise #MadPackMigrationError("Unexpected error recording into madlib.migrationhistory in database:")
         return True
-        
+
+    # remove entry for a migration matching filename
     def delete_migration(self, filename):
         cur = self.dbconn.cursor()
         try:
@@ -313,43 +329,6 @@ class Migration(MadPackMigration):
                   self.conf['target_schema']+".migrationhistory in database:"
             raise
         return True
-
-    # make sure script directory and migrationhistory match
-    def sanity(self):
-        okflag = True
-        migfiles = [f.split("/")[-1] for f in \
-                    glob.glob(self.mig_dir +"/" +
-                              "".join(["[0-9]" for i in \
-                                      range(0,self.mig_number_len)])+"_*.py")]
-        if not os.path.exists(self.mig_dir + "/Config.yml"):
-            print "Config.yml missing from script directory; exiting"
-            exit(2)
-        history = self.__mig_files_history()
-        if self.mig_dir != self.conf_dir:
-            testconf = configyml.get_config(self.mig_dir)
-            if testconf != self.conf:
-                print "cached " + self.mig_dir + \
-                      "/Config.yml does not match " + \
-                      self.conf_dir + "/Config.yml"
-                okflag = False
-            else:
-                print "cached Config.yml matches " +\
-                self.conf_dir + "/Config.yml"
-        for m in migfiles:
-            if m not in history:
-                print "< file " + m + " not reflected in migration history"
-                okflag = False
-        for h in history:
-            if h not in migfiles:
-                print "> file " + h + " of migration history missing from script directory"
-                okflag = False
-        if not okflag:
-            print "scripts: " + str(migfiles)
-            print "history: " + str(history)
-            exit(2)
-        else:
-            print "scriptdir matches migration history"
-                              
         
     # roll migrations fw/bw from current to desired.
     # desire can be expressed by migration number or by version 
@@ -397,3 +376,40 @@ class Migration(MadPackMigration):
                m.backwards()
                m.delete_migration(f)
                m.dbconn.commit()
+                   
+    # make sure script directory and migrationhistory match
+    def sanity(self):
+       okflag = True
+       migfiles = [f.split("/")[-1] for f in \
+                   glob.glob(self.mig_dir +"/" +
+                             "".join(["[0-9]" for i in \
+                                    range(0,self.mig_number_len)])+"_*.py")]
+       if not os.path.exists(self.mig_dir + "/Config.yml"):
+           print "Config.yml missing from script directory; exiting"
+           exit(2)
+       history = self.__mig_files_history()
+       if self.mig_dir != self.conf_dir:
+           testconf = configyml.get_config(self.mig_dir)
+           if testconf != self.conf:
+               print "cached " + self.mig_dir + \
+                     "/Config.yml does not match " + \
+                     self.conf_dir + "/Config.yml"
+               okflag = False
+           else:
+               print "cached Config.yml matches " +\
+               self.conf_dir + "/Config.yml"
+       for m in migfiles:
+           if m not in history:
+               print "< file " + m + " not reflected in migration history"
+               okflag = False
+       for h in history:
+           if h not in migfiles:
+               print "> file " + h + " of migration history missing from script directory"
+               okflag = False
+       if not okflag:
+           print "scripts: " + str(migfiles)
+           print "history: " + str(history)
+           exit(2)
+       else:
+           print "scriptdir matches migration history"
+

@@ -16,27 +16,40 @@ from madpy.madpack import configyml
 import madpy.madpack.mkmethods
 import madpy.madpack.migrations
 
+
+#### UTILITIES
 def __get_config(conf_dir):
     return madpy.madpack.configyml.get_config(conf_dir)
 def __get_mig(conf_dir, mig_dir):
     return madpy.madpack.migrations.MadPackMigration(mig_dir, conf_dir)
     
+    
+#### PUBLIC METHODS
+    
 # the prep() method does two things:
 # 1) if needed, create the "scripts" subdirectory to hold the 
-#    migration scripts
+#    migration scripts, and copy Config.yml in there
 # 2) generate a single MADPack migration script from the forward/backward
-#    scripts in each of the MADlib methods specified in Config.yml
+#    scripts in each of the MADlib methods specified in Config.yml, named
+#    with version number from Version.yml
 def prep(targetdir, conf_dir):
     version = configyml.get_version(madpy.__path__[0])
     if not os.path.exists(targetdir):
         # initialize scripts directory.
         os.mkdir(targetdir)
     if not os.path.exists(targetdir+"/Config.yml"):
-        # copy the Config.yml file in there for posterity
+        # copy the Config.yml file in there for subsequent use
         shutil.copyfile(configyml.get_configfile(conf_dir), 
                         targetdir+"/Config.yml")
     mig = __get_mig(conf_dir,targetdir)
     conf = __get_config(conf_dir)
+
+    # sanity check: is there an existing script matching current version?
+    version = configyml.get_version(madpy.__path__[0])
+    matches = glob.glob(targetdir+"/"+"".join(["[0-9]" for i in range (0,mig.mig_number_len)])+"_"+version+".py")
+    if len(matches) > 0:
+        print "migration files matching version " + version + " already exist: " + str(matches)
+        sys.exit(2)
         
     forwards = []
     backwards = []
@@ -60,12 +73,6 @@ def prep(targetdir, conf_dir):
         if install['bw'] != None:
             backwards.append(mdir+install['bw'])
     
-    # check if there's an existing script matching current version
-    version = configyml.get_version(madpy.__path__[0])
-    matches = glob.glob(targetdir+"/"+"".join(["[0-9]" for i in range (0,mig.mig_number_len)])+"_"+version+".py")
-    if len(matches) > 0:
-        print "migration files matching version " + version + " already exist: " + str(matches)
-        sys.exit(2)
     fname = mig.generate(targetdir, version, forwards, backwards)
 
 # internal function sanity checks and installs by num or version.  
@@ -82,12 +89,15 @@ def __install(scriptdir, num, version, conf_dir):
 
     m.migrate(mignumber=num, migversion=version)
 
+# install by migration number
 def install_number(scriptdir, n, conf_dir):
     __install(scriptdir,n,None,conf_dir)
-    
+
+# install by version number
 def install_version(scriptdir, v, conf_dir):
     __install(scriptdir,None,v,conf_dir)
-    
+
+# invoke migration sanity check    
 def __sanity(scriptdir, conf_dir):
     m = __get_mig(conf_dir,scriptdir)
     try:
@@ -108,11 +118,11 @@ def main(argv):
                                      argument_default=False,
                                      formatter_class=RawTextHelpFormatter,
                                      epilog="""Command quickref: 
-  install:   build methods and install into DB
-  uninstall: uninstall from DB
+  install:   'make install' methods, run sql scripts to load into DB
+  uninstall: run sql scripts to uninstall from DB, 'make uninstall' methods
   update:    migrate forward to latest script (same as '-e install')
-  build:     run 'make install' on methods but do not install into DB)
-  clean:     run 'make clean' on methods
+  build:     'make install' methods, but do run sql scripts to load into DB
+  clean:     'make clean' methods
   version:   print current version in DB
   sanity:    check if scriptdir files match migrationhistory in db""")
     parser.add_argument('command',
@@ -125,7 +135,7 @@ def main(argv):
     parser.add_argument('-p', '--prep-only', dest='preponly',
                         action="store_true",
                         help="prepare scripts but do not install")
-    parser.add_argument('-n', '--nobuild', dest='nobuild', 
+    parser.add_argument('-n', '--nomake', dest='nomake', 
                         action="store_true",
                         help="do not run 'make' on methods")
     parser.add_argument('-e', '--existing', dest='installonly', 
@@ -176,15 +186,18 @@ def main(argv):
         else:
             print v
     elif args.command == 'uninstall':
+        if not args.nomake:
+            madpy.madpack.mkmethods.make_methods('uninstall', conf)
         if not os.path.exists(args.scriptdir):
             print "scripts directory missing"
             sys.exit(2)
         uninstall(args.scriptdir, args.configdir[0])
     elif args.command == 'install':
-        # run make clean; install on methods unless preponly or nobuild
-        if not args.preponly and not args.nobuild:
-            madpy.madpack.mkmethods.install_methods('clean', conf)
-            madpy.madpack.mkmethods.install_methods('install', conf)
+        # run make clean_data_built and make install on methods 
+        # unless preponly or nomake
+        if not args.preponly and not args.nomake:
+            madpy.madpack.mkmethods.make_methods('clean_data_built', conf)
+            madpy.madpack.mkmethods.make_methods('install', conf)
         # prep script unless version given or installonly
         if not args.installonly and not args.install_version:        
             prep(args.scriptdir, args.configdir[0])
@@ -192,10 +205,10 @@ def main(argv):
         if not args.preponly:
             install_version(args.scriptdir, instv, args.configdir[0])
     elif args.command == 'build':
-        if not args.nobuild:
-            madpy.madpack.mkmethods.install_methods('install', conf)
-    elif args.command == 'clean':
-        madpy.madpack.mkmethods.install_methods('clean', conf)
+        if not args.nomake:
+            madpy.madpack.mkmethods.make_methods('install', conf)
+    elif args.command == 'clean' and not args.nomake:
+        madpy.madpack.mkmethods.make_methods('clean', conf)
     elif args.command == 'sanity':
         __sanity(args.scriptdir, args.configdir[0])
         

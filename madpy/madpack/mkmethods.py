@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #
-# Script/module to call 'make install' for each MADlib method port
+# Script/module to call 'make' for each MADlib method port
 # in the MADlib Config.yml file.
 
 import yaml
@@ -9,7 +9,10 @@ import re
 import subprocess
 import madpy
 import madpy.madpack.configyml
-    
+
+# customize the config.mk according to Config.yml and write into methdir
+# current customization is just to set the SCHEMA_PLACEHOLDER to the 
+# target_schema in Config.yml
 def __create_config_mk(conf, methdir):
     newfile = methdir + '/config.mk'
     if os.path.exists(newfile):
@@ -25,11 +28,13 @@ def __create_config_mk(conf, methdir):
         mkfd.write(re.sub('SCHEMA_PLACEHOLDER', conf['target_schema'], line))
 
     mkfd.close()
-    
+
+# clean up the config.mk    
 def __remove_config_mk(methdir):
     os.remove(methdir+'/config.mk')
-    
-def install_methods(mkarg, conf):
+
+# run 'make <mkarg>' for each method in the conf    
+def make_methods(mkarg, conf):
     for m in conf['methods']:
         mdir = madpy.__path__[0]+'/../madlib/' + m['name'] + '/src/' + m['port'] + '/'
         # print "changing directory to " + mdir
@@ -49,13 +54,10 @@ def install_methods(mkarg, conf):
         except:
             print "method " + m['name'] + " misconfigured: Install.yml missing module"
             sys.exit(2)
-        # first generate a Config.mk in the top of the madlib subdir
-        # containing the name of the target schema
+        # generate config.mk in the method directory
         __create_config_mk(conf, os.getcwd())    
         if install['module'] != None:
             subprocess.call(['make', mkarg], stderr = subprocess.PIPE)
+        # and remove config.mk
         __remove_config_mk(os.getcwd())
         os.chdir(curdir)
-            
-if __name__ == "__main__":
-    install_methods()
