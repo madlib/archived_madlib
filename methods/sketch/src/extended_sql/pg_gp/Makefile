@@ -10,3 +10,4 @@ REGRESS = setup fm_test cm_test sketch_support_test mfv_test
 
 PGXS := $(shell pg_config --pgxs)
 include $(PGXS)
+include config.mk

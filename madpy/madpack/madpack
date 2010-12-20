@@ -7,6 +7,7 @@ import yaml
 import os
 import sys
 import argparse
+from argparse import RawTextHelpFormatter
 import glob
 import madpy
 import madpy.madpack.configyml
@@ -68,7 +69,7 @@ def __install(scriptdir, num, version, conf_dir):
     m = __get_mig(conf_dir,scriptdir)
     try:
         m.setup()
-    except madpy.madpack.migrations.MadPackMigrationNoSchemaError:
+    except madpy.madpack.migrations.MadPackMigrationError:
         print "no schema named 'madlib' in database"
         exit(2)
 
@@ -88,36 +89,42 @@ def uninstall(scriptdir, conf_dir):
 # parse args and invoke appropriate code.
 # try running "-h" for usage info.       
 def main(argv):
-    parser = argparse.ArgumentParser(description='configure madlib installation', argument_default=False)
+    parser = argparse.ArgumentParser(description='Configure madlib package manager', 
+                                     argument_default=False,
+                                     formatter_class=RawTextHelpFormatter,
+                                     epilog="""Command quickref: 
+  install:   build methods and install into DB
+  uninstall: uninstall from DB
+  build:     run 'make install' on methods but do not install into DB)
+  clean:     run 'make clean' on methods
+  version:   print current version in DB)""")
     parser.add_argument('command',
-                        choices=['install','uninstall','clean','version'])
+                        choices=['install','uninstall','build','clean',
+                                 'version'], 
+                        help="choice of commands")
     parser.add_argument('-i', '--install_version', nargs=1, dest='install_version',
                         metavar='VERSION',
                         help="migrate to version VERSION")
     parser.add_argument('-p', '--prep-only', dest='preponly',
                         action="store_true",
                         help="prepare scripts but do not install")
-    parser.add_argument('-m', '--make-only', dest='makeonly', 
+    parser.add_argument('-n', '--nobuild', dest='nobuild', 
                         action="store_true",
-                        help="run make on methods but do not install")
-    parser.add_argument('-n', '--nomake', dest='nomake', 
-                        action="store_true",
-                        help="do not run make scripts on methods")
+                        help="do not run 'make' on methods")
     parser.add_argument('-e', '--existing', dest='installonly', 
                         action="store_true",
-                        help="use existing scripts, \
-                              do not generate new scripts")
+                        help="use existing scripts, do not generate new scripts")
     parser.add_argument('-c', '--configdir', nargs=1, dest='configdir',
                         default=[madpy.__path__[0]],
-                        help="directory holding Config.yml \
-                              (default "+
-                              madpy.__path__[0]+")")
+                        help="""directory holding Config.yml
+(default """
+                              + madpy.__path__[0]+")")
     parser.add_argument('-s', '--scriptdir', nargs=1, dest='scriptdir',
                         default=madpy.__path__[0] + "/config/scripts",
-                        help="directory holding scripts \
-                              (default "+
-                              madpy.__path__[0] + "/config/scripts"
-                              +")")
+                        help="""directory holding scripts 
+(default """
+                             + madpy.__path__[0] + "/config/scripts"
+                             +")")
 
     args = parser.parse_args()
     conf = madpy.madpack.configyml.get_config(args.configdir[0])
@@ -142,15 +149,19 @@ def main(argv):
             sys.exit(2)
         uninstall(args.scriptdir, args.configdir[0])
     elif args.command == 'install':
-        # run make on methods unless preponly or nomake
-        if not args.preponly and not args.nomake:
+        # run make clean; install on methods unless preponly or nobuild
+        if not args.preponly and not args.nobuild:
+            madpy.madpack.mkmethods.install_methods('clean', conf)
             madpy.madpack.mkmethods.install_methods('install', conf)
-        # prep script unless version given or installonly or makeonly
-        if not args.installonly and not args.makeonly and not args.install_version:        
+        # prep script unless version given or installonly
+        if not args.installonly and not args.install_version:        
             prep(args.scriptdir, args.configdir[0])
         # run install script unless preponly or makeonly
-        if not args.preponly and not args.makeonly:
+        if not args.preponly:
             install_version(args.scriptdir, instv, args.configdir[0])
+    elif args.command == 'build':
+        if not args.nobuild:
+            madpy.madpack.mkmethods.install_methods('install', conf)
     elif args.command == 'clean':
         madpy.madpack.mkmethods.install_methods('clean', conf)
         

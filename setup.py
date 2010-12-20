@@ -1,10 +1,10 @@
-import madpy.config.configyml
+import madpy.madpack.configyml
 from distutils.core import setup, Extension
-suffixes = ['c', 'h', 'py', 'in', 'yml', 'sh', 'sql']
+suffixes = ['c', 'h', 'py', 'in', 'yml', 'sh', 'sql', 'mk']
 additional_files = ['Makefile']
 
-conf = madpy.config.configyml.get_config('madpy')
-rev = madpy.config.configyml.get_version('madpy')
+conf = madpy.madpack.configyml.get_config('madpy')
+rev = madpy.madpack.configyml.get_version('madpy')
 
 pkg_data = {'madlib' : []}
 for mpair in conf['methods']:
@@ -14,6 +14,8 @@ for mpair in conf['methods']:
         # print "pkg_data['madlib'] += " + str([m+'/src/'+pport+'/*.'+s])
         pkg_data['madlib'] += [m+'/src/'+pport+'/*.'+s]
     pkg_data['madlib'] += [m+'/src/'+pport+'/'+ f for f in additional_files]
+    pkg_data['madlib'] += [m+'/src/'+pport+'/sql/*.sql']
+    pkg_data['madlib'] += [m+'/src/'+pport+'/expected/*.out']
 
 pkg_data['madpy'] = []
 for s in suffixes:
@@ -22,11 +24,14 @@ for s in suffixes:
     
 setup(name='madlib',
       version=rev,
+      author="The MADlib project",
+      author_email="support@madlibrary.org",
       description='MADlib library of SQL analytics',
       url='http://github.com/madlib',
-      packages=['madpy','madlib','madpy.config','madpy.migrate'],
+      packages=['madpy','madlib','madpy.config','madpy.madpack'],
       package_dir={'madpy': 'madpy', 'madlib': 'methods'},
       package_data=pkg_data,
+      scripts=['madpy/madpack/madpack'],
       requires=['yaml','argparse', 'shutil', 'sqlparse', 'imp', 'traceback', 'hashlib'],
       provides=['madpy','madlib']
       )
