@@ -1,4 +1,4 @@
-/*
+/*!
  * MFVSketch: Most Frequent Values variant of CountMin sketch.
  * This is basically a CountMin sketch (see discussion in cmsketch.c)
  * that keeps track of most frequent values as it goes.  
@@ -26,7 +26,7 @@
 
 PG_FUNCTION_INFO_V1(mfvsketch_trans);
 
-/*
+/*!
  *  transition function to maintain a CountMin sketch with 
  *  Most-Frequent Values
  */
@@ -145,7 +145,12 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
     // elog(NOTICE, "returning transblob at address %p to qp", transblob);
     PG_RETURN_DATUM(PointerGetDatum(transblob));
 }
-
+/*!
+ * insert a value at position i of the mfv sketch
+ * \param transblob the transition value packed into a bytea
+ * \param text the value to be inserted
+ * \param i the position to insert at
+ */
 bytea *mfv_transval_insert_at(bytea *transblob, bytea *text, int i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
@@ -188,6 +193,11 @@ bytea *mfv_transval_insert_at(bytea *transblob, bytea *text, int i)
     return(transblob);
 }
 
+/*!
+ * insert a value into the mfvsketch
+ * \param transblob the transition value packed into a bytea
+ * \param text the value to be inserted
+ */
 bytea *mfv_transval_insert(bytea *transblob, bytea *text)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
@@ -196,7 +206,12 @@ bytea *mfv_transval_insert(bytea *transblob, bytea *text)
     return(retval);
 }
 
-
+/*!
+ * replace the value at position i of the mfvsketch with text
+ * \param transblob the transition value packed into a bytea
+ * \param text the value to be inserted
+ * \param i the position to replace
+ */
 bytea *mfv_transval_replace(bytea *transblob, bytea *text, int i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
@@ -211,7 +226,7 @@ bytea *mfv_transval_replace(bytea *transblob, bytea *text, int i)
 }
 
 PG_FUNCTION_INFO_V1(mfvsketch_out);
-/*
+/*!
  * scalar function taking an mfv sketch, returning a string with
  * of its most frequent values
  */
@@ -257,7 +272,7 @@ Datum mfvsketch_out(PG_FUNCTION_ARGS)
 }
 
 PG_FUNCTION_INFO_V1(mfvsketch_array_out);
-/*
+/*!
  * scalar function taking an mfv sketch, returning an array of tuple types
  * for its most frequent values.  
  * XXX this code is under development and not working, should not be used.
@@ -310,6 +325,11 @@ Datum mfvsketch_array_out(PG_FUNCTION_ARGS)
     PG_RETURN_BYTEA_P(retval);
 }
 
+/*!
+ * support function to sort by count
+ * \param i an offsetcnt object cast to a (void *)
+ * \param j an offsetcnt object cast to a (void *)
+ */
 int cnt_cmp_desc(const void *i, const void *j)
 {
     offsetcnt *o = (offsetcnt *)i;

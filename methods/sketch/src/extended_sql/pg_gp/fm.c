@@ -1,4 +1,4 @@
-/*
+/*!
  * Flajolet-Martin JCSS 1985 distinct count estimation
  * implemented as a user-defined aggregate.
  * See http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
@@ -27,14 +27,14 @@ PG_MODULE_MAGIC;
 #define FMSKETCH_SZ (VARHDRSZ + NMAP*(MD5_HASHLEN_BITS)/CHAR_BIT)
 #define MINVALS 1024*12
 
-/*
+/*!
  * initial size for a sortasort: we'll guess at 8 bytes per string.
  * sortasort will grow dynamically if we guessed too low
  */
 #define SORTASORT_INITIAL_STORAGE  sizeof(sortasort) + MINVALS*sizeof(uint32) + \
     8*MINVALS
 
-/*
+/*!
  * because FM sketches work poorly on small numbers of values,
  * our transval can be in one of two modes.
  * for "SMALL" numbers of values (<=MINVALS), the storage array
@@ -57,7 +57,7 @@ bytea *fm_new(void);
 
 PG_FUNCTION_INFO_V1(fmsketch_trans);
 
-/* UDA transition function for the fmsketch aggregate. */
+/*! UDA transition function for the fmsketch aggregate. */
 Datum fmsketch_trans(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = (bytea *)PG_GETARG_BYTEA_P(0);
@@ -188,7 +188,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
     else PG_RETURN_NULL();
 }
 
-/*
+/*!
  * generate a bytea holding a transval in BIG mode, with the right amount of
  * zero bits for an empty FM sketch.
  */
@@ -207,13 +207,15 @@ bytea *fm_new()
     return(newblob);
 }
 
-/*
+/*!
  * Main logic of Flajolet and Martin's sketching algorithm.
  * For each call, we get an md5 hash of the value passed in.
  * First we use the hash as a random number to choose one of
  * the NMAP bitmaps at random to update.
  * Then we find the position "rmost" of the rightmost 1 bit in the hashed value.
  * We then turn on the "rmost"-th bit FROM THE LEFT in the chosen bitmap.
+ * \param transblob the transition value packed into a bytea
+ * \param input a textual representation of the value to hash
  */
 Datum fmsketch_trans_c(bytea *transblob, char *input)
 {
@@ -251,7 +253,7 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
 
 PG_FUNCTION_INFO_V1(fmsketch_getcount);
 
-/* UDA final function to get count(distinct) out of an FM sketch */
+/*! UDA final function to get count(distinct) out of an FM sketch */
 Datum fmsketch_getcount(PG_FUNCTION_ARGS)
 {
     fmtransval *transval = (fmtransval *)VARDATA((PG_GETARG_BYTEA_P(0)));
@@ -272,10 +274,11 @@ Datum fmsketch_getcount(PG_FUNCTION_ARGS)
         return fmsketch_getcount_c((bytea *)transval->storage);
 }
 
-/*
+/*!
  * Finish up the Flajolet-Martin approximation.
  * We sum up the number of leading 1 bits across all bitmaps in the sketch.
  * Then we use the FM magic formula to estimate the distinct count.
+ * \params bitmaps the FM Sketch
  */
 Datum fmsketch_getcount_c(bytea *bitmaps)
 {
@@ -302,7 +305,7 @@ Datum fmsketch_getcount_c(bytea *bitmaps)
 
 PG_FUNCTION_INFO_V1(fmsketch_merge);
 
-/*
+/*!
  * Greenplum "prefunc": a function to merge 2 transvals computed at different machines.
  * For simple FM, this is trivial: just OR together the two arrays of bitmaps.
  * But we have to deal with cases where one or both transval is SMALL: i.e. it
@@ -390,7 +393,7 @@ Datum fmsketch_merge(PG_FUNCTION_ARGS)
     PG_RETURN_DATUM(PointerGetDatum(tblob_big));
 }
 
-/* OR of two big bitmaps, for gathering sketches computed in parallel. */
+/*! OR of two big bitmaps, for gathering sketches computed in parallel. */
 Datum big_or(bytea *bitmap1, bytea *bitmap2)
 {
     bytea *      out;
@@ -413,6 +416,12 @@ Datum big_or(bytea *bitmap1, bytea *bitmap2)
     PG_RETURN_BYTEA_P(out);
 }
 
+/*!
+ * wrapper for insertion into a sortasort. calls sorasort_try_insert and if that fails it 
+ * makes more space for insertion (double or more the size) and tries again.
+ * \param transblob the current transition value packed into a bytea
+ * \param v the value to be inserted
+ */
 bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
 {
     sortasort *s_in =

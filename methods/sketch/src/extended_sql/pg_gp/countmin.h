@@ -11,20 +11,20 @@
 #define MIN(x,y) ((x < y) ? x : y)
 #endif
 
-/* countmin is defined over postgres int8 type.  Should probably use the max of that type, not LONG_MAX */
+/*! countmin is defined over postgres int8 type.  Should probably use the max of that type, not LONG_MAX */
 #define MAXVAL (LONG_MAX >> 1)
-/* Midpoint is 1/2 of MAX .. i.e. shift MAX right. */
+/*! Midpoint is 1/2 of MAX .. i.e. shift MAX right. */
 #define MIDVAL (MAXVAL >> 1)
 #define MINVAL (LONG_MIN >> 1)
 
-/* 
+/*! 
  * a CountMin sketch is a set of DEPTH arrays of NUMCOUNTERS each.
  * It's like a "counting Bloom Filter" where instead of just hashing to
  * DEPTH bitmaps, we count up hash-collisions in DEPTH counter arrays
  */
 typedef int64 countmin[DEPTH][NUMCOUNTERS];
 
-/*
+/*!
  * the transition value struct for the cmsketch aggregate.  Holds the sketch counters
  * and a cache of handy metadata that we'll reuse across calls
  */
@@ -34,10 +34,10 @@ typedef struct {
     countmin sketches[RANGES];
 } cmtransval;
 
-/* base size of a cmtransval */
+/*! base size of a cmtransval */
 #define CM_TRANSVAL_SZ (VARHDRSZ + sizeof(cmtransval))
 
-/*
+/*!
  * a data structure to hold the constituent dyadic (power-of-two) ranges 
  * corresponding to an arbitrary range.  
  * E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
@@ -48,7 +48,7 @@ typedef struct {
 } rangelist;
 
 
-/*
+/*!
  * offset/count pairs for MFV sketches
  */
 typedef struct {
@@ -57,7 +57,7 @@ typedef struct {
 } offsetcnt;
 
 
-/*
+/*!
  * the transition value struct for the mfvsketch aggregate.  Holds a single
  * countmin sketch (no dyadic ranges) and an array of Most Frequent Values.
  * We are flexible with the number of mfvs, as well as the type.
@@ -75,7 +75,7 @@ typedef struct {
   Oid    typOid;
   Oid    outFuncOid;
   countmin sketch;  /* a single countmin sketch */
-  /* 
+  /*! 
    * type-independent collection of Most Frequent Values
    * Holds an array of (counter,offset) pairs, which by
    * convention is followed by the values themselves as text Datums, 
@@ -84,13 +84,13 @@ typedef struct {
   offsetcnt mfvs[0];
 } mfvtransval;
 
-/* base size of an MFV transval */
+/*! base size of an MFV transval */
 #define MFV_TRANSVAL_SZ(i) (VARHDRSZ + sizeof(mfvtransval) + i*sizeof(offsetcnt))
 
-/* free space remaining for text values */
+/*! free space remaining for text values */
 #define MFV_TRANSVAL_CAPACITY(transblob) (VARSIZE(transblob) - VARHDRSZ - ((mfvtransval *)VARDATA(transblob))->next_offset)
 
-/* macro to get the text value associated with the i'th mfv */
+/*! macro to get the text value associated with the i'th mfv */
 #define mfv_transval_getval(tvp, i) ((bytea *)(((char*)tvp) + tvp->mfvs[i].offset))
 
 
