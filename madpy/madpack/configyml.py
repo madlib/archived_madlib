@@ -1,10 +1,26 @@
 # routines to pull information out of the Config.yml and Version.yml files.
-
 import yaml
 
+def get_configfile(configdir):
+    return configdir + '/Config.yml'
+    
+# typical Config.yml file:
+        #  dbapi2:
+        #     psycopg2
+        #     
+        # connect_args:
+        #     - dbname=joeh
+        #     - dbuser=joeh
+        #     
+        # target_schema:
+        #     madlib
+        # 
+        # methods:
+        #     - name: sketch
+        #       port: extended_sql/pg_gp
 def get_config(configdir):
     # fname = madpy.__path__[0] + '/Config.yml'
-    fname = configdir + '/Config.yml'
+    fname = get_configfile(configdir)
     try:
         fd = open(fname)
     except:
@@ -42,6 +58,8 @@ def get_config(configdir):
 		
     return conf
 
+# typical Version.yml file:
+        # version: 0.01
 def get_version(configdir):
     try:
         conf = yaml.load(open(configdir + '/Version.yml'))

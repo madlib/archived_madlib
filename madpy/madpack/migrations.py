@@ -1,8 +1,3 @@
-# XXXX TODO: copy Config.yml to scripts when synthesizing script!
-# XXXX TODO: sanity() method to compare scripts and DB.
-# XXXX TODO: remove explicit use of "madlib" schema from method scripts
-# XXXX TODO: multiple migrations for single version?
-
 # MADPack Migrations are modeled on Django South and Rails Migrations.
 # It allows rolling forward/backward across multiple versions of MADlib.
 
@@ -50,6 +45,7 @@ import imp
 import traceback
 import hashlib
 import madpy
+from madpy.madpack import configyml
 
 # A Python exception class for our use
 class MadPackMigrationError(Exception):
@@ -57,7 +53,7 @@ class MadPackMigrationError(Exception):
     
 class MadPackMigration:
     def __init__(self, mig_dir, conf_dir):
-        self.conf = madpy.madpack.configyml.get_config(conf_dir)        
+        self.conf = configyml.get_config(conf_dir)        
         connect_args = self.conf['connect_args']
         api = self.conf['dbapi2']
         dbapi2 = __import__(api, globals(), locals(), [])
@@ -156,6 +152,19 @@ class Migration(MadPackMigration):
             return None
         filename = row[0]
         return filename
+
+    def __mig_files_history(self):
+        cur = self.dbconn.cursor()
+        try:
+            cur.execute("SELECT migration FROM "
+                        + self.conf['target_schema'] + 
+                        ".migrationhistory ORDER BY migration;")
+        except:
+            print sys.exc_info()[0]
+            print "Unexpected error creating " \
+                  + self.conf['target_schema'] + ".migrationhistory in database:"
+            raise
+        return [m[0] for m in cur.fetchall()]
         
     def current_mig_number(self):
         curmig = self.__current_mig()
@@ -172,24 +181,37 @@ class Migration(MadPackMigration):
             return self.__current_mig().split("_")[1].split(".py")[0]
 
     # list migration files (lo to hi) whose number is > what's in the DB
-    def fw_files(self):
-        files = [i for i in os.listdir(self.mig_dir) if i.split('_')[0].isdigit() and int(i.split('_')[0]) > self.current_mig_number() and i.split(".")[-1] == "py"]
+    def fw_files(self, start = None):
+        if not start:
+            start = self.current_mig_number()
+        files = [i for i in os.listdir(self.mig_dir) if i.split('_')[0].isdigit() and int(i.split('_')[0]) > start and i.split(".")[-1] == "py"]
         files.sort()
         return files
 
     # list migration files (hi to lo) whose number is <= what's in the DB
-    def bw_files(self):
-        files = [i for i in os.listdir(self.mig_dir) if i.split('_')[0].isdigit() and int(i.split('_')[0]) <= self.current_mig_number() and i.split(".")[-1] == "py"]
+    def bw_files(self, start = None):
+        if not start:
+            start = self.current_mig_number()
+        files = [i for i in os.listdir(self.mig_dir) if i.split('_')[0].isdigit() and int(i.split('_')[0]) <= start and i.split(".")[-1] == "py"]
         files.sort(reverse=True)
         return files
+
+    def version(self, fname):
+        return fname.split("_")[1].split(".py")[0]
+
+    def mig_num(self, fname):
+        return fname.split("_")[0]
+
+    def migfile(self, version, mig_num):
+        name = self.__pad_on_left_to_n(str(mig_num), "0", self.mig_number_len) + "_" + version
+        if name.split('.')[-1] != "py":
+            name += ".py"
+        return name 
 
     # generate a new migration filename, with number one larger than max
     def __gen_filename(self, name):
         next_num = self.current_mig_number()+1
-        name = self.__pad_on_left_to_n(str(next_num),'0',self.mig_number_len)+"_"+name
-        if name.split('.')[-1] != "py":
-            name += ".py"
-        return name
+        return self.migfile(name, next_num)
 
     # do a shallow parse of an SQL file, and wrap each stmt with 
     # Python dbapi2 call syntax.
@@ -291,6 +313,43 @@ class Migration(MadPackMigration):
                   self.conf['target_schema']+".migrationhistory in database:"
             raise
         return True
+
+    # make sure script directory and migrationhistory match
+    def sanity(self):
+        okflag = True
+        migfiles = [f.split("/")[-1] for f in \
+                    glob.glob(self.mig_dir +"/" +
+                              "".join(["[0-9]" for i in \
+                                      range(0,self.mig_number_len)])+"_*.py")]
+        if not os.path.exists(self.mig_dir + "/Config.yml"):
+            print "Config.yml missing from script directory; exiting"
+            exit(2)
+        history = self.__mig_files_history()
+        if self.mig_dir != self.conf_dir:
+            testconf = configyml.get_config(self.mig_dir)
+            if testconf != self.conf:
+                print "cached " + self.mig_dir + \
+                      "/Config.yml does not match " + \
+                      self.conf_dir + "/Config.yml"
+                okflag = False
+            else:
+                print "cached Config.yml matches " +\
+                self.conf_dir + "/Config.yml"
+        for m in migfiles:
+            if m not in history:
+                print "< file " + m + " not reflected in migration history"
+                okflag = False
+        for h in history:
+            if h not in migfiles:
+                print "> file " + h + " of migration history missing from script directory"
+                okflag = False
+        if not okflag:
+            print "scripts: " + str(migfiles)
+            print "history: " + str(history)
+            exit(2)
+        else:
+            print "scriptdir matches migration history"
+                              
         
     # roll migrations fw/bw from current to desired.
     # desire can be expressed by migration number or by version 

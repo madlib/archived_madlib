@@ -9,8 +9,10 @@ import sys
 import argparse
 from argparse import RawTextHelpFormatter
 import glob
+import shutil
 import madpy
-import madpy.madpack.configyml
+from madpy.madpack import configyml
+# import madpy.madpack.configyml
 import madpy.madpack.mkmethods
 import madpy.madpack.migrations
 
@@ -25,9 +27,14 @@ def __get_mig(conf_dir, mig_dir):
 # 2) generate a single MADPack migration script from the forward/backward
 #    scripts in each of the MADlib methods specified in Config.yml
 def prep(targetdir, conf_dir):
-    version = madpy.madpack.configyml.get_version(madpy.__path__[0])
+    version = configyml.get_version(madpy.__path__[0])
     if not os.path.exists(targetdir):
+        # initialize scripts directory.
         os.mkdir(targetdir)
+    if not os.path.exists(targetdir+"/Config.yml"):
+        # copy the Config.yml file in there for posterity
+        shutil.copyfile(configyml.get_configfile(conf_dir), 
+                        targetdir+"/Config.yml")
     mig = __get_mig(conf_dir,targetdir)
     conf = __get_config(conf_dir)
         
@@ -54,8 +61,8 @@ def prep(targetdir, conf_dir):
             backwards.append(mdir+install['bw'])
     
     # check if there's an existing script matching current version
-    version = madpy.madpack.configyml.get_version(madpy.__path__[0])
-    matches = glob.glob(targetdir+"/"+"".join(["[0-9]" for i in range (0,mig.mig_number_len)])+version+".py")
+    version = configyml.get_version(madpy.__path__[0])
+    matches = glob.glob(targetdir+"/"+"".join(["[0-9]" for i in range (0,mig.mig_number_len)])+"_"+version+".py")
     if len(matches) > 0:
         print "migration files matching version " + version + " already exist: " + str(matches)
         sys.exit(2)
@@ -81,6 +88,14 @@ def install_number(scriptdir, n, conf_dir):
 def install_version(scriptdir, v, conf_dir):
     __install(scriptdir,None,v,conf_dir)
     
+def __sanity(scriptdir, conf_dir):
+    m = __get_mig(conf_dir,scriptdir)
+    try:
+        m.sanity()
+    except madpy.madpack.migrations.MadPackMigrationError:
+        print "sanity check failure"
+        exit(2)
+
     
 # uninstall is the same as install version <0
 def uninstall(scriptdir, conf_dir):
@@ -95,12 +110,14 @@ def main(argv):
                                      epilog="""Command quickref: 
   install:   build methods and install into DB
   uninstall: uninstall from DB
+  update:    migrate forward to latest script (same as '-e install')
   build:     run 'make install' on methods but do not install into DB)
   clean:     run 'make clean' on methods
-  version:   print current version in DB)""")
+  version:   print current version in DB
+  sanity:    check if scriptdir files match migrationhistory in db""")
     parser.add_argument('command',
-                        choices=['install','uninstall','build','clean',
-                                 'version'], 
+                        choices=['install','uninstall','update','build',
+                                 'clean','version', 'sanity'], 
                         help="choice of commands")
     parser.add_argument('-i', '--install_version', nargs=1, dest='install_version',
                         metavar='VERSION',
@@ -115,9 +132,10 @@ def main(argv):
                         action="store_true",
                         help="use existing scripts, do not generate new scripts")
     parser.add_argument('-c', '--configdir', nargs=1, dest='configdir',
-                        default=[madpy.__path__[0]],
+                        default=None,
                         help="""directory holding Config.yml
-(default """
+(default SCRIPTDIR if already initialized, else
+"""
                               + madpy.__path__[0]+")")
     parser.add_argument('-s', '--scriptdir', nargs=1, dest='scriptdir',
                         default=madpy.__path__[0] + "/config/scripts",
@@ -127,7 +145,21 @@ def main(argv):
                              +")")
 
     args = parser.parse_args()
-    conf = madpy.madpack.configyml.get_config(args.configdir[0])
+    
+    # if config file left unspecified, first check scriptdir.
+    # if nothing there, take the installed version: madpy/Config.yml
+    if not args.configdir:
+       if os.path.exists(args.scriptdir+"/Config.yml"):
+           args.configdir = [args.scriptdir]
+       else:
+           args.configdir = madpy.__path__
+    
+    conf = configyml.get_config(args.configdir[0])
+    
+    # command 'update' a synonym for "-e install"
+    if args.command == 'update':
+        args.command = 'install'
+        args.installonly = True
     
     if args.install_version and args.command != 'install':
         print "-i or --install_version flag only compatible with 'install' command"
@@ -164,6 +196,8 @@ def main(argv):
             madpy.madpack.mkmethods.install_methods('install', conf)
     elif args.command == 'clean':
         madpy.madpack.mkmethods.install_methods('clean', conf)
+    elif args.command == 'sanity':
+        __sanity(args.scriptdir, args.configdir[0])
         
 if __name__ == "__main__":
     main(sys.argv[1:])
