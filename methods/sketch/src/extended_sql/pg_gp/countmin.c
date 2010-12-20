@@ -76,8 +76,9 @@ Datum cmsketch_trans(PG_FUNCTION_ARGS)
     else PG_RETURN_DATUM(PointerGetDatum(transblob));
 }
 
-/*
- * if the transblob is not initialized, do so now
+/*!
+ * check if the transblob is not initialized, and do so if not
+ * \param transblob a cmsketch transval packed in a bytea
  */
 bytea *cmsketch_check_transval(bytea *transblob)
 {
@@ -105,8 +106,10 @@ bytea *cmsketch_check_transval(bytea *transblob)
     return(transblob);
 }
 
-/*
+/*!
  * perform multiple sketch insertions, one for each dyadic range (from 0 up to RANGES-1).
+ * * \param transval the cmsketch transval
+ * * \param inputi the value to be inserted
  */
 void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
 {
@@ -119,11 +122,14 @@ void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
     }
 }
 
-/*
+/*!
  * Main loop of Cormode and Muthukrishnan's sketching algorithm, for setting counters in
  * sketches at a single "dyadic range". For each call, we want to use DEPTH independent
  * hash functions.  We do this by using a single md5 hash function, and taking
  * successive 16-bit runs of the result as independent hash outputs.
+ * \param sketch the current countmin sketch
+ * \param dat the datum to be inserted
+ * \param outFuncOid Oid of the PostgreSQL function to convert dat to a string
  */
 char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
 {
@@ -145,7 +151,7 @@ char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
 }
 
 
-/*
+/*!
  * simply returns its input
  * for use as a finalizer in an agg returning the whole sketch
  */
@@ -155,6 +161,9 @@ Datum cmsketch_out(PG_FUNCTION_ARGS)
     PG_RETURN_BYTEA_P(PG_GETARG_BYTEA_P(0));
 }
 
+/*!
+ * Greenplum "prefunc" to combine sketches from multiple machines
+ */
 PG_FUNCTION_INFO_V1(cmsketch_combine);
 Datum cmsketch_combine(PG_FUNCTION_ARGS)
 {
@@ -187,7 +196,9 @@ Datum cmsketch_combine(PG_FUNCTION_ARGS)
  *******  Below are scalar methods to manipulate completed sketches.  ****** 
  */
 
-/* match sketch type to scalar arg type */
+/*!
+ * match sketch type to scalar arg type 
+ */
 #define CM_CHECKARG(sketch, arg_offset) \
  if (PG_ARGISNULL(arg_offset)) PG_RETURN_NULL(); \
  if (sketch->typOid != get_fn_expr_argtype(fcinfo->flinfo, arg_offset)) { \
@@ -203,7 +214,9 @@ Datum cmsketch_combine(PG_FUNCTION_ARGS)
 
 PG_FUNCTION_INFO_V1(cmsketch_getcount);
 
-/* scalar function, takes a sketch and a value, produces approximate count of that value */
+/*!
+ * scalar function, takes a sketch and a value, produces approximate count of that value 
+ */
 Datum cmsketch_getcount(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
@@ -215,6 +228,12 @@ Datum cmsketch_getcount(PG_FUNCTION_ARGS)
                                         PG_GETARG_DATUM(1), transval->outFuncOid));
 }
 
+/*!
+ * get the approximate count of objects with value arg
+ * \param sketch a countmin sketch
+ * \param arg the Datum we want to find the count of
+ * \param funcOid the Postgres function that converts arg to a string
+ */
 int64 cmsketch_getcount_c(countmin sketch, Datum arg, Oid funcOid)
 {
     Datum nhash;
@@ -227,7 +246,7 @@ int64 cmsketch_getcount_c(countmin sketch, Datum arg, Oid funcOid)
 }
 
 PG_FUNCTION_INFO_V1(cmsketch_rangecount);
-/*
+/*!
  * scalar function, takes a sketch, a min and a max, and produces count of that
  * [min-max] range.
  * This is the UDF wrapper.  All the interesting stuff is in fmsketch_rangecount_c
@@ -244,7 +263,12 @@ Datum cmsketch_rangecount(PG_FUNCTION_ARGS)
                                  PG_GETARG_DATUM(2));
 }
 
-/* Compute count of a range by summing counts of its dyadic ranges */
+/*!
+ * Compute count of a range by summing counts of its dyadic ranges 
+ * \param transval a countmin transition value
+ * \param bot the bottom of the range (inclusive)
+ * \param top the top of the range (inclusive)
+ */
 Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
 {
     int64     cursum = 0;
@@ -268,9 +292,12 @@ Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
 }
 
 
-/*
+/*!
  * convert an arbitrary range [bot-top] into a rangelist of dyadic ranges.
  * E.g. convert 14-48 into [[14-15], [16-31], [32-47], [48-48]]
+ * \param bot the bottom of the range (inclusive)
+ * \param top the top of the range (inclusive)
+ * \param r the list of reanges to be returned
  */
 void find_ranges(int64 bot, int64 top, rangelist *r)
 {
@@ -278,9 +305,13 @@ void find_ranges(int64 bot, int64 top, rangelist *r)
     find_ranges_internal(bot, top, RANGES-1, r);
 }
 
-/*
+/*!
  * find the ranges via recursive calls to this routine, pulling out smaller and
  * smaller powers of 2
+ * \param bot the bottom of the range (inclusive)
+ * \param top the top of the range (inclusive)
+ * \param power the highest power to start with
+ * \param r the rangelist to be returned
  */
 void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
 {
@@ -353,7 +384,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
 }
 
 PG_FUNCTION_INFO_V1(cmsketch_centile);
-/*
+/*!
  * Scalar function taking a sketch and centile, produces approximate value for
  * that centile.
  * This is the UDF wrapper.  All the interesting stuff is in cmsketch_centile_c
@@ -374,7 +405,12 @@ Datum cmsketch_centile(PG_FUNCTION_ARGS)
     return cmsketch_centile_c(transval, centile, total);
 }
 
-/* find the centile by binary search in the domain of values */
+/*!
+ * find the centile by binary search in the domain of values 
+ * \param transval the current transition value
+ * \param intcentile the centile to return
+ * \param total the total count of items
+ */
 Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 {
     int   i;
@@ -411,7 +447,7 @@ Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 
 
 PG_FUNCTION_INFO_V1(cmsketch_width_histogram);
-/*
+/*!
  * scalar function taking a sketch, min, max, and number of buckets.
  * produces an equi-width histogram of that many buckets
  */
@@ -433,6 +469,13 @@ Datum cmsketch_width_histogram(PG_FUNCTION_ARGS)
     PG_RETURN_DATUM(retval);
 }
 
+/*!
+ * produces an equi-width histogram
+ * \param transval the transition value of the agg
+ * \param min minimum value in the sketch
+ * \param max maximum value in the sketch
+ * \param buckets the number of buckets in the histogram
+ */
 Datum cmsketch_width_histogram_c(cmtransval *transval,
                            int64 min,
                            int64 max,
@@ -478,7 +521,7 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
 }
 
 PG_FUNCTION_INFO_V1(cmsketch_depth_histogram);
-/*
+/*!
  * scalar function taking a number of buckets.  produces an equi-depth histogram 
  * of that many buckets by finding equi-spaced centiles
  */
@@ -495,7 +538,11 @@ Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS)
     retval = cmsketch_depth_histogram_c(transval, buckets);
     PG_RETURN_DATUM(retval);
 }
-
+/*!
+ * produces an equi-width histogram
+ * \param transval the transition value of the agg
+ * \param buckets the number of buckets in the histogram
+ */
 Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
 {
     int64      step;
@@ -537,6 +584,9 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
 /****** SUPPORT ROUTINES *******/
 PG_FUNCTION_INFO_V1(cmsketch_dump);
 
+/*!
+ * dump sketch contents
+ */
 Datum cmsketch_dump(PG_FUNCTION_ARGS)
 {
     bytea *transblob = (bytea *)PG_GETARG_BYTEA_P(0);
@@ -558,9 +608,13 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
 }
 
 
-/*
+/*!
  * for each row of the sketch, use the 16 bits starting at 2^i mod NUMCOUNTERS,
  * and invoke the lambda on those 16 bits (which may destructively modify counters).
+ * \param hashval the MD5 hashe value that we take 16 bits at a time
+ * \param sketch the cmsketch
+ * \param initial the initialized return value
+ * \param lambdaptr the function to invoke on each 16 bits
  */
 int64 hash_counters_iterate(Datum hashval,
                             countmin sketch, // width is DEPTH*NUMCOUNTERS
@@ -589,8 +643,16 @@ int64 hash_counters_iterate(Datum hashval,
     return retval;
 }
 
+/*!
+ * destructive increment lambda for hash_counters_iterate.  
+ * transval and return val not of particular interest here.
+ * \param i which row to update
+ * \param col which column to update
+ * \param sketch the sketch
+ * \param transval we don't need transval here, but its part of the 
+ * lambda interface for hash_counters_iterate
+ */
 
-/* destructive increment lambda for hash_counters_iterate.  transval and return val not of particular interest here. */
 int64 increment_counter(unsigned int i,
                         unsigned int col,
                         countmin sketch,
@@ -607,7 +669,14 @@ int64 increment_counter(unsigned int i,
     return oldval+1;
 }
 
-/* running minimum lambda for hash_counters_iterate */
+/*!
+ * running minimum lambda for hash_counters_iterate 
+ * \param i which row to examine
+ * \param col which column to examine
+ * \param sketch the sketch
+ * \param transval smallest counter so far
+ * lambda interface for hash_counters_iterate
+ */
 int64 min_counter(unsigned int i,
                   unsigned int col,
                   countmin sketch,

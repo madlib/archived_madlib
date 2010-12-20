@@ -10,9 +10,11 @@ import subprocess
 import madpy
 import madpy.madpack.configyml
 
-# customize the config.mk according to Config.yml and write into methdir
+## customize the config.mk according to Config.yml and write into methdir
 # current customization is just to set the SCHEMA_PLACEHOLDER to the 
 # target_schema in Config.yml
+# @param conf parsed Config.yml object
+# @param methdir directory where method is being built
 def __create_config_mk(conf, methdir):
     newfile = methdir + '/config.mk'
     if os.path.exists(newfile):
@@ -29,11 +31,14 @@ def __create_config_mk(conf, methdir):
 
     mkfd.close()
 
-# clean up the config.mk    
+## clean up the config.mk file
+# @param methdir the directory to delete from   
 def __remove_config_mk(methdir):
     os.remove(methdir+'/config.mk')
 
-# run 'make <mkarg>' for each method in the conf    
+## run 'make <mkarg>' for each method in the conf    
+# @param mkarg the argument to the make command (install, clean, etc.)
+# @param conf the parsed Config.yml object
 def make_methods(mkarg, conf):
     for m in conf['methods']:
         mdir = madpy.__path__[0]+'/../madlib/' + m['name'] + '/src/' + m['port'] + '/'
