@@ -1,4 +1,4 @@
-/*
+/*!
  * A "sortasort" is a smallish array of strings, intended for append-only
  * modification, and network transmission as a single byte-string.  It is
  * structured as a header followed by an array of offsets (directory) that
@@ -6,18 +6,11 @@
  * at the end of the structure.
  */
 
-/*
+/*!
  * The directory is mostly sorted in ascending order of the vals it points
- * to, but the last < SORTA_SLOP entries are left unsorted.  Binary Search is used
- * on all but those last entries, which must be scanned. At every k*SORTA_SLOP'th
- * insert, the full directory is sorted.
- */
-
-
-/*
- * Might be nicer to set MINVALS from the caller in sortasort_init, but would complicate
- * expressions to get offsets in dir and vals.
- * For FM, empirically, estimates seem to fall below 1% error around 12k distinct vals
+ * to, but the last < SORTA_SLOP entries are left unsorted.  Binary Search 
+ * is used on all but those last entries, which must be scanned. At every
+ * k*SORTA_SLOP'th insert, the full directory is sorted.
  */
 #define SORTA_SLOP 100
 

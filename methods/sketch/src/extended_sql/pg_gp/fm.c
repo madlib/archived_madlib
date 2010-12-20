@@ -25,6 +25,11 @@ PG_MODULE_MAGIC;
 
 #define NMAP 256
 #define FMSKETCH_SZ (VARHDRSZ + NMAP*(MD5_HASHLEN_BITS)/CHAR_BIT)
+
+/*!
+ * For FM, empirically, estimates seem to fall below 1% error around 12k
+ * distinct vals
+ */
 #define MINVALS 1024*12
 
 /*!

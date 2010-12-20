@@ -13,9 +13,13 @@
 #include "sketch_support.h"
 #include "utils/builtins.h"
 
-/*
+/*!
  * Simple linear function to find the rightmost bit that's set to one
  * (i.e. the # of trailing zeros to the right).
+ * \param bits a bitmap containing many fm sketches
+ * \param numsketches the number of sketches in the bits variable
+ * \param the size of each sketch in bits
+ * \param the sketch number in which we want to find the rightmost one
  */
 unsigned int rightmost_one(unsigned char *bits,
                            size_t numsketches,
@@ -56,10 +60,14 @@ unsigned int rightmost_one(unsigned char *bits,
     return c;
 }
 
-/*
+/*!
  * Simple linear function to find the leftmost zero (# leading 1's)
  * Would be nice to unify with the previous -- e.g. a foomost_bar function
  * where foo would be left or right, and bar would be 0 or 1.
+ * \param bits a bitmap containing many fm sketches
+ * \param numsketches the number of sketches in the bits variable
+ * \param the size of each sketch in bits
+ * \param the sketch number in which we want to find the rightmost one
  */
 unsigned int leftmost_zero(unsigned char *bits,
                            size_t numsketches,
@@ -123,12 +131,17 @@ unsigned int leftmost_zero(unsigned char *bits,
  *
  * This function makes destructive updates; the caller should make sure to check
  * that we're being called in an agg context!
+ * \param bitmap an array of FM sketches 
+ * \param numsketches # of sketches in the array
+ * \param sketchsz_bits # of BITS per sketch
+ * \param sketchnum index of the sketch to modify (from left, zero-indexed)
+ * \param bitnum bit offset (from right, zero-indexed) in that sketch
  */
-Datum array_set_bit_in_place(bytea *bitmap,      /* an array of FM sketches */
-                             int4 numsketches,   /* # of sketches in the array */
-                             int4 sketchsz_bits, /* # of BITS per sketch */
-                             int4 sketchnum,     /* index of the sketch to modify (from left, zero-indexed) */
-                             int4 bitnum)        /* bit offset (from right, zero-indexed) in that sketch */
+Datum array_set_bit_in_place(bytea *bitmap,     
+                             int4 numsketches,  
+                             int4 sketchsz_bits,
+                             int4 sketchnum,    
+                             int4 bitnum)       
 {
     char mask;
     char bytes_per_sketch = sketchsz_bits/CHAR_BIT;
@@ -158,11 +171,12 @@ Datum array_set_bit_in_place(bytea *bitmap,      /* an array of FM sketches */
     PG_RETURN_BYTEA_P(bitmap);
 }
 
-/*
+/*!
  * Simple linear function to find the rightmost one (# trailing zeros) in an unsigned int.
  * Based on
  * http://graphics.stanford.edu/~seander/bithacks.html#ZerosOnRightLinear
  * Look there for fancier ways to do this.
+ * \param v an integer
  */
 unsigned int ui_rightmost_one(unsigned int v)
 {
@@ -178,11 +192,14 @@ unsigned int ui_rightmost_one(unsigned int v)
     return c;
 }
 
-/*
- * postgres internal md5 routine only provides public access to text output
+/*!
+ * the postgres internal md5 routine only provides public access to text output
  * here we convert that text (in hex notation) back into bytes.
  * postgres hex output has two hex characters for each 8-bit byte.
  * so the output of this will be exactly half as many bytes as the input.
+ * \param hex a string encoding bytes in hex
+ * \param bytes out-value that will hold binary version of hex
+ * \param hexlen the length of the hex string
  */
 void hex_to_bytes(char *hex, unsigned char *bytes, size_t hexlen)
 {
@@ -208,7 +225,7 @@ void hex_to_bytes(char *hex, unsigned char *bytes, size_t hexlen)
 }
 
 
-/* debugging utility to output strings in binary */
+/*! debugging utility to output strings in binary */
 void
 bit_print(unsigned char *c, int numbytes)
 {
@@ -231,7 +248,7 @@ bit_print(unsigned char *c, int numbytes)
     elog(NOTICE, "bitmap: %s", p);
 }
 
-/*
+/*!
  * The POSTGRES code for md5 returns a bytea with a textual representation of the
  * md5 result.  We then convert it back into binary.
  * XXX The internal POSTGRES source code is actually converting from binary to the bytea
