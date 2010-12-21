@@ -29,8 +29,8 @@ typedef int64 countmin[DEPTH][NUMCOUNTERS];
  * and a cache of handy metadata that we'll reuse across calls
  */
 typedef struct {
-    Oid typOid;     /* oid of the data type we are sketching */
-    Oid outFuncOid; /* oid of the OutFunc for that data type */
+    Oid typOid;     /*! oid of the data type we are sketching */
+    Oid outFuncOid; /*! oid of the OutFunc for that data type */
     countmin sketches[RANGES];
 } cmtransval;
 
@@ -43,8 +43,8 @@ typedef struct {
  * E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
  */
 typedef struct {
-    int64 spans[LONGBITS][2]; /* the ranges */
-    int emptyoffset;        /* offset of next empty span */
+    int64 spans[LONGBITS][2]; /*! the ranges */
+    int emptyoffset;        /*! offset of next empty span */
 } rangelist;
 
 
@@ -52,8 +52,8 @@ typedef struct {
  * offset/count pairs for MFV sketches
  */
 typedef struct {
-    int offset;  /* memory offset to the value */
-    int64 cnt;   /* counter */
+    int offset;  /*! memory offset to the value */
+    int64 cnt;   /*! counter */
 } offsetcnt;
 
 
@@ -74,7 +74,7 @@ typedef struct {
   int    next_offset;
   Oid    typOid;
   Oid    outFuncOid;
-  countmin sketch;  /* a single countmin sketch */
+  countmin sketch;  /*! a single countmin sketch */
   /*! 
    * type-independent collection of Most Frequent Values
    * Holds an array of (counter,offset) pairs, which by

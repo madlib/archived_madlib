@@ -18,16 +18,18 @@ import madpy.madpack.configyml
 def __create_config_mk(conf, methdir):
     newfile = methdir + '/config.mk'
     if os.path.exists(newfile):
-        print "old " + newfile + " found; must be deleted"
+        print "old " + newfile + " found; must be manually deleted"
         exit(2)
     try:
         mkfd = open(newfile, 'w')
     except IOError:
         print "cannot create " + newfile
         exit(2)
-
+        
     for line in open(madpy.__path__[0]+'/config/config.mk').readlines():
-        mkfd.write(re.sub('SCHEMA_PLACEHOLDER', conf['target_schema'], line))
+        line2 = re.sub('SCHEMA_PLACEHOLDER', conf['target_schema'], line)
+        line3 = re.sub('CONFDEFS', conf['prep_flags'], line2)
+        mkfd.write(line3)
 
     mkfd.close()
 

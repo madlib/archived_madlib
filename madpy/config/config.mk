@@ -1,7 +1,8 @@
 madlib_schema = SCHEMA_PLACEHOLDER
+conf_defines = CONFDEFS
 
 %.sql: %.sql.in
-	sed 's,MODULE_PATHNAME,$$libdir/$*,g' $< | sed 's,MADLIB_SCHEMA,$(madlib_schema),g'  >$@
+	m4 -DMODULE_PATHNAME='$$libdir/$*' -DMADLIB_SCHEMA=$(madlib_schema) -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
 	
 clean_data_built: 
 	rm $(DATA_built)

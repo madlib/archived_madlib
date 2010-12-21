@@ -1,5 +1,6 @@
 # routines to pull information out of the Config.yml and Version.yml files.
 import yaml
+import re
 
 ## return name of configuration file
 # @param configdir directory where we can find Config file
@@ -41,25 +42,31 @@ def get_config(configdir):
     except:
         print "malformed Config.yml: no methods"
         exit(2)
-	try:
-		conf['connect_args']
-	except:
-		print "malformed Config.yml: no connect_args"
-		exit(2)
-	try:
-		conf['dbapi2']
-	except:
-		print "malformed Config.yml: no dbapi2"
-		exit(2)
-	try:
-	    # sanitize schema names to avoid SQL injection!  only alphanumerics
-	    if not re.match(conf['target_schema'], '[A-Za-z0-9\.]+'):
-	        print 'illegal character in target_schema of Config.yml'
-	        exit(2)
-	except:
-		print "malformed Config.yml: no target_schema"
-		exit(2)
-		
+    try:
+        conf['connect_args']
+    except:
+        print "malformed Config.yml: no connect_args"
+        exit(2)
+    try:
+        conf['dbapi2']
+    except:
+        print "malformed Config.yml: no dbapi2"
+        exit(2)
+    try:
+        conf['prep_flags']
+    except:
+        print "malformed Config.yml: no prep_flags"
+        exit(2)
+    try:
+        # sanitize schema names to avoid SQL injection!  only alphanumerics and a few special chars
+        m = re.match('[\w0-9\.\_\-]+', conf['target_schema'])
+        if not m or m.group() != conf['target_schema']:
+            print 'target_schema ' + \
+                  conf['target_schema'] + " not allowed; must use alphanumerics, '.', '_' and '-'"
+            exit(2)
+    except:
+        print "malformed Config.yml: no target_schema"
+        exit(2)
     return conf
 
     ## load version string from Version.yml file
