@@ -11,14 +11,12 @@
 #include "catalog/pg_type.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
-
-#include "sparse_vector.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/fmgroids.h"
 #include "lib/stringinfo.h"
 #include "utils/memutils.h"
-#include "float_specials.h"
+#include "sparse_vector.h"
 
 /*
  * Sparse Vector Datatype
@@ -28,49 +26,47 @@
  *   of one document intersects another.
  *
  */
+
 /*
  * Input and Output routines
  */
-
 ArrayType *svec_return_array_internal(SvecType *svec)
 {
-	ArrayType *pgarray;
-	SparseData sdata=sdata_from_svec(svec);
-	double *array=sdata_to_float8arr(sdata);
+	SparseData sdata = sdata_from_svec(svec);
+	double *array = sdata_to_float8arr(sdata);
 
-	pgarray = construct_array((Datum *)array,
-		sdata->total_value_count,FLOAT8OID,
-		sizeof(float8),true,'d');
+	ArrayType *pgarray = construct_array((Datum *)array,
+					     sdata->total_value_count,FLOAT8OID,
+					     sizeof(float8),true,'d');
 
 	pfree(array);
 	return(pgarray);
 }
 
 /* 
- * Must serialize for binary communication with libpq via
+ * Must serialize for binary communication with libpq by
  * creating a StringInfo and sending individual data items like:
- *	(from backend/libpq/pqformat.c):
- *              pq_beginmessage - initialize StringInfo buffer
- *              pq_sendbyte     - append a raw byte to a StringInfo buffer
- *              pq_sendint      - append a binary integer to a StringInfo buffer
- *              pq_sendint64    - append a binary 8-byte int to a StringInfo buffer
- *              pq_sendfloat4   - append a float4 to a StringInfo buffer
- *              pq_sendfloat8   - append a float8 to a StringInfo buffer
- *              pq_sendbytes    - append raw data to a StringInfo buffer
- *              pq_sendcountedtext - append a counted text string (with character set conversion)
- *              pq_sendtext     - append a text string (with conversion)
- *              pq_sendstring   - append a null-terminated text string (with conversion)
- *              pq_send_ascii_string - append a null-terminated text string (without conversion)
- *              pq_endmessage   - send the completed message to the frontend
+ *   (from backend/libpq/pqformat.c):
+ *      pq_beginmessage - initialize StringInfo buffer
+ *      pq_sendbyte     - append a raw byte to a StringInfo buffer
+ *      pq_sendint      - append a binary integer to a StringInfo buffer
+ *      pq_sendint64    - append a binary 8-byte int to a StringInfo buffer
+ *      pq_sendfloat4   - append a float4 to a StringInfo buffer
+ *      pq_sendfloat8   - append a float8 to a StringInfo buffer
+ *      pq_sendbytes    - append raw data to a StringInfo buffer
+ *      pq_sendcountedtext - append a counted text string (with character set conversion)
+ *      pq_sendtext     - append a text string (with conversion)
+ *      pq_sendstring   - append a null-terminated text string (with conversion)
+ *      pq_send_ascii_string - append a null-terminated text string (without conversion)
+ *      pq_endmessage   - send the completed message to the frontend
  *
  */
 
 /*
- *        svec_send            - converts text to binary format
+ *  svec_send - converts text to binary format
  */
 PG_FUNCTION_INFO_V1(svec_send);
-Datum
-svec_send(PG_FUNCTION_ARGS)
+Datum svec_send(PG_FUNCTION_ARGS)
 {
 	StringInfoData buf;
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
@@ -88,11 +84,10 @@ svec_send(PG_FUNCTION_ARGS)
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
 /*
- *        svec_recv            - converts external binary format to text
+ *  svec_recv - converts external binary format to text
  */
 PG_FUNCTION_INFO_V1(svec_recv);
-Datum
-svec_recv(PG_FUNCTION_ARGS)
+Datum svec_recv(PG_FUNCTION_ARGS)
 {
 	StringInfo buf = (StringInfo) PG_GETARG_POINTER(0);
 	SvecType *svec;
@@ -105,7 +100,7 @@ svec_recv(PG_FUNCTION_ARGS)
 	sdata->index->len         = pq_getmsgint(buf, sizeof(int));
 	sdata->vals->data         = (char *)pq_getmsgbytes(buf,sdata->vals->len);
 	sdata->index->data        = (char *)pq_getmsgbytes(buf,sdata->index->len);
-	svec = svec_from_sparsedata(sdata,true); //Note that this copies the data
+	svec = svec_from_sparsedata(sdata,true); //Note this copies the data
 //	freeSparseDataAndData(sdata);
 	pfree(sdata);
 
@@ -117,8 +112,7 @@ svec_recv(PG_FUNCTION_ARGS)
  */
 PG_FUNCTION_INFO_V1( float8_min );
 Datum float8_min(PG_FUNCTION_ARGS);
-Datum
-float8_min(PG_FUNCTION_ARGS)
+Datum float8_min(PG_FUNCTION_ARGS)
 {
 	float8 left = PG_GETARG_FLOAT8(0);
 	float8 right = PG_GETARG_FLOAT8(1);
@@ -127,8 +121,7 @@ float8_min(PG_FUNCTION_ARGS)
 
 PG_FUNCTION_INFO_V1( float8_max );
 Datum float8_max(PG_FUNCTION_ARGS);
-Datum
-float8_max(PG_FUNCTION_ARGS)
+Datum float8_max(PG_FUNCTION_ARGS)
 {
 	float8 left = PG_GETARG_FLOAT8(0);
 	float8 right = PG_GETARG_FLOAT8(1);
@@ -136,28 +129,28 @@ float8_max(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns an uncompressed Array
+ *  svec_return_array - returns an uncompressed Array
  */
 PG_FUNCTION_INFO_V1( svec_return_array );
-Datum
-svec_return_array(PG_FUNCTION_ARGS)
+Datum svec_return_array(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
 	ArrayType *pgarray = svec_return_array_internal(svec);
 	PG_RETURN_ARRAYTYPE_P(pgarray);
 }
 
+/*
+ *  svec_out - outputs a sparse vector as a C string
+ */
 PG_FUNCTION_INFO_V1(svec_out);
-Datum
-svec_out(PG_FUNCTION_ARGS)
+Datum svec_out(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
 	char *result = svec_out_internal(svec);
 	PG_RETURN_CSTRING(result);
 }
 
-char *
-svec_out_internal(SvecType *svec)
+char * svec_out_internal(SvecType *svec)
 {
 	char *ix_string,*vals_string,*result;
 	int ixlen,vslen;
@@ -166,30 +159,32 @@ svec_out_internal(SvecType *svec)
 	ArrayType *pgarray_ix,*pgarray_vals;
 
 	pgarray_ix = construct_array((Datum *)array_ix,
-		sdata->unique_value_count,INT8OID,
-		sizeof(int64),true,'d');
+				     sdata->unique_value_count,INT8OID,
+				     sizeof(int64),true,'d');
 
-	ix_string=DatumGetPointer(OidFunctionCall1(F_ARRAY_OUT,
-				PointerGetDatum(pgarray_ix)));
+	ix_string = DatumGetPointer(OidFunctionCall1(F_ARRAY_OUT,
+					 PointerGetDatum(pgarray_ix)));
 	ixlen = strlen(ix_string);
 
 	pgarray_vals = construct_array((Datum *)sdata->vals->data,
-		sdata->unique_value_count,FLOAT8OID,
-		sizeof(float8),true,'d');
-	vals_string=DatumGetPointer(OidFunctionCall1(F_ARRAY_OUT,
-				PointerGetDatum(pgarray_vals)));
+				       sdata->unique_value_count,FLOAT8OID,
+				       sizeof(float8),true,'d');
+
+	vals_string = DatumGetPointer(OidFunctionCall1(F_ARRAY_OUT,
+					 PointerGetDatum(pgarray_vals)));
 	vslen = strlen(vals_string);
 
 	result = (char *)palloc(sizeof(char)*(vslen+ixlen+1+1));
 
-	/* -- KS: replace NaN with NVP */
-	for (int i=0; i!=vslen; i++) {
-		if (vals_string[i] == 'N') {
+	/* NULLs are represented as NaN internally; see svec_in();
+	 * Here we print each NaN as an NVP. */
+	for (int i=0; i!=vslen; i++) 
+		if (vals_string[i] == 'N') 
+		{
 			vals_string[i+1] = 'V';
 			vals_string[i+2] = 'P';
 			i = i+2;
 		}
-	}
 
 	sprintf(result,"%s:%s",ix_string,vals_string);
 	pfree(ix_string);
@@ -199,11 +194,11 @@ svec_out_internal(SvecType *svec)
 	return(result);
 }
 
-/* -- KS: Added several changes to svec_in to deal with incorrectly formatted 
-   input svecs and NULL values */
+/*
+ *  svec_in - reads in a string and convert that to an svec
+ */
 PG_FUNCTION_INFO_V1(svec_in);
-Datum
-svec_in(PG_FUNCTION_ARGS)
+Datum svec_in(PG_FUNCTION_ARGS)
 {
 	char *str = pstrdup(PG_GETARG_CSTRING(0));
 	char *values;
@@ -219,13 +214,16 @@ svec_in(PG_FUNCTION_ARGS)
 	int i,j;
 
 	/* Read in the two arrays defining the Sparse Vector, first is the array
-	 * of run lengths, the second is an array of the unique values.
+	 * of run lengths (the count array), the second is an array of the 
+	 * unique values (the data array).
 	 *
 	 * The input format is a pair of standard Postgres arrays separated by 
 	 * a colon, like this:
 	 * 	{1,10,1,5,1}:{4.3,0,0.2,0,7.4}
+	 *
+	 * For now, the data array must only have float8 elements.
 	 */
-	if ((values=strchr(str,':'))==NULL) {
+	if ((values=strchr(str,':')) == NULL) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
@@ -262,7 +260,8 @@ svec_in(PG_FUNCTION_ARGS)
 			 errmsg("NULL value in the count array.")));
 
 	/* If the data array has NULLs, then we need to create an array to
-	   store the NULL values as NVP values defined in float_specials.h. */
+	 * store the NULL values as NVP values defined in float_specials.h. 
+	 */
 	if (ARR_HASNULL(pgarray_vals)) {
 		vals_temp = vals;
 		vals = (double *)palloc(sizeof(float8) * num_values);
@@ -306,7 +305,7 @@ svec_in(PG_FUNCTION_ARGS)
 	sdata->type_of_data = FLOAT8OID;
 
 	result = svec_from_sparsedata(sdata,true);
-	if (total_value_count==1) result->dimension = -1; //Scalar
+	if (total_value_count == 1) result->dimension = -1; //Scalar
 
 	if (ARR_HASNULL(pgarray_vals)) pfree(vals);
 	pfree(str); /* str is allocated from a strdup */
@@ -316,30 +315,35 @@ svec_in(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(result);
 }
 
-SvecType *svec_from_sparsedata(SparseData sdata,bool trim)
+/*
+ * Produce an svec from a SparseData
+ */
+SvecType *svec_from_sparsedata(SparseData sdata, bool trim)
 {
 	int size;
 
 	if (trim)
 	{
-		/*
-		 * Trim the extra space off of the StringInfo dynamic strings
+		/* Trim the extra space off of the StringInfo dynamic strings
 		 * before serializing the SparseData
 		 */
 		sdata->vals->maxlen=sdata->vals->len;
 		sdata->index->maxlen=sdata->index->len;
 	}
 
-	size=SVECHDRSIZE + SIZEOF_SPARSEDATASERIAL(sdata);
+	size = SVECHDRSIZE + SIZEOF_SPARSEDATASERIAL(sdata);
 
 	SvecType *result = (SvecType *)palloc(size);
 	SET_VARSIZE(result,size);
 	serializeSparseData(SVEC_SDATAPTR(result),sdata);
 	result->dimension = sdata->total_value_count;
-	if (result->dimension==1) result->dimension=-1; //Scalar
+	if (result->dimension == 1) result->dimension=-1; //Scalar
 	return (result);
 }
 
+/*
+ * Produce an svec from an array
+ */
 SvecType *svec_from_float8arr(float8 *array, int dimension)
 {
 	SparseData sdata = float8arr_to_sdata(array,dimension);
@@ -347,6 +351,9 @@ SvecType *svec_from_float8arr(float8 *array, int dimension)
 	return result;
 }
 
+/*
+ * Make an empty svec with sufficient memory allocated for the input number
+ */
 SvecType *makeEmptySvec(int allocation)
 {
 	int val_len = sizeof(float8)*allocation+1;
@@ -364,6 +371,9 @@ SvecType *makeEmptySvec(int allocation)
 	return(svec);
 }
 
+/*
+ * Allocate more space for the count and data arrays of an svec
+ */
 SvecType *reallocSvec(SvecType *source)
 {
 	SvecType *svec;
@@ -388,20 +398,6 @@ SvecType *reallocSvec(SvecType *source)
 	return(svec);
 }
 
-// -- KS
-// We must make a copy of the input sparse vector before we can change it.
-PG_FUNCTION_INFO_V1(svec_append);
-Datum svec_append(PG_FUNCTION_ARGS) 
-{
-	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
-	float8 newele = PG_GETARG_FLOAT8(1);
-	int64 run_len = PG_GETARG_INT64(2);
-	SparseData sdata = makeSparseDataCopy(sdata_from_svec(svec));
-	
-	add_run_to_sdata((char *)(&newele), run_len, sizeof(float8), sdata);
-	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata, true));
-}
-
 typedef struct
 {
 	SvecType *svec;
@@ -414,8 +410,7 @@ typedef struct
 }	svec_unnest_fctx;
 
 PG_FUNCTION_INFO_V1(svec_unnest);
-Datum
-svec_unnest(PG_FUNCTION_ARGS)
+Datum svec_unnest(PG_FUNCTION_ARGS)
 {
         FuncCallContext *funcctx;
         svec_unnest_fctx *fctx;
@@ -430,8 +425,8 @@ svec_unnest(PG_FUNCTION_ARGS)
                 /* create a function context for cross-call persistence */
                 funcctx = SRF_FIRSTCALL_INIT();
 
-                /*
-                 * switch to memory context appropriate for multiple function calls
+                /* switch to memory context appropriate for multiple 
+		 * function calls
                  */
                 oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
@@ -487,37 +482,5 @@ svec_unnest(PG_FUNCTION_ARGS)
 }
 
 
-
-
-/*
- * TODO
- *
- * "R" basic matrix routines
- * 	From: file:///opt/local/var/macports/software/R/2.6.2_0/opt/local/lib/R/doc/manual/R-intro.html
- * 		The function crossprod() forms “crossproducts”, meaning that crossprod(X, y) is the
- * 		same as t(X) %*% y but the operation is more efficient. If the second argument to
- * 		crossprod() is omitted it is taken to be the same as the first.
- *
- * 		The meaning of diag() depends on its argument. diag(v), where v is a vector, gives
- * 		a diagonal matrix with elements of the vector as the diagonal entries. On the other
- * 		hand diag(M), where M is a matrix, gives the vector of main diagonal entries of M.
- * 		This is the same convention as that used for diag() in Matlab. Also, somewhat
- * 		confusingly, if k is a single numeric value then diag(k) is the k by k identity matrix!
- *
- * 		5.7.2 Linear equations and inversion
- *
- * 		Solving linear equations is the inverse of matrix multiplication. When after
- *      		> b <- A %*% x
- *      	only A and b are given, the vector x is the solution of that linear equation system. In R,
- *           		> solve(A,b)
- *           	solves the system, returning x (up to some accuracy loss). Note that in linear algebra,
- *           	formally x = A^{-1} %*% b where A^{-1} denotes the inverse of A, which can be computed by
- *              solve(A) but rarely is needed. Numerically, it is both inefficient and potentially unstable
- *              to compute x <- solve(A) %*% b instead of solve(A,b).
- *
- *              The quadratic form x %*% A^{-1} %*% x which is used in multivariate computations, should
- *              be computed by something like16 x %*% solve(A,x), rather than computing the inverse of A.
- *
- */
 
 

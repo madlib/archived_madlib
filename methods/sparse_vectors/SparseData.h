@@ -17,16 +17,11 @@
  * to the VARLENA.
  * ***NOTE***
  *
- * Copyright (c) 2010, Greenplum Software
- *
- * $$
- *
  *------------------------------------------------------------------------------
  */
 
 #include <math.h>
 #include <string.h>
-#include <assert.h>
 #include "postgres.h"
 #include "lib/stringinfo.h"
 #include "utils/array.h"
@@ -124,7 +119,6 @@ static inline void int8_to_compword(int64 num, char entry[9]);
 
 /* Serialization functions */
 void serializeSparseData(char *target, SparseData source);
-SparseData deserializeSparseData(char *source);
 
 /* Constructors and destructors */
 SparseData makeEmptySparseData(void);
@@ -149,9 +143,7 @@ int64 *sdata_index_to_int64arr(SparseData sdata);
 SparseData float8arr_to_sdata(double *array, int count);
 SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count);
 
-/* -- KS
- * Some functions for accessing and changing elements of a SparseData
- */
+/* Some functions for accessing and changing elements of a SparseData */
 SparseData lapply(text * func, SparseData sdata);
 double sd_proj(SparseData sdata, int idx);
 SparseData subarr(SparseData sdata, int start, int end);
@@ -222,8 +214,8 @@ static inline void int8_to_compword(int64 num, char entry[9])
 	int32_t num_4;
 
 	if (num < 128) {
-		// -- KS: the reason this is negative is because entry[0] is
-	        //        used to record sizes in the other cases
+		/* The reason this is negative is because entry[0] is
+	           used to record sizes in the other cases. */
 		entry[0] = -(char)num;
 	} else if (num < 32768) {
 		entry[0] = 2;
@@ -265,7 +257,7 @@ static inline int64 compword_to_int8(const char *entry)
 	char *numptr8 = (char *)(&num);
 
 	switch(size) {
-		case 0: //Null entry, return a run length of 1
+	case 0: /* Null entry, return a run length of 1 */
 			return(1);
 			break;
 		case 1:
@@ -294,7 +286,6 @@ static inline int64 compword_to_int8(const char *entry)
 			numptr8[7] = entry[8];
 			break;
 	}
-
 	return num;
 }
 
@@ -354,26 +345,6 @@ static inline void printout_sdata(SparseData sdata, char *msg, int stop)
  */
 #define typref(type,ptr) (*((type *)(ptr)))
 #define valref(type,val,i) (((type *)(val)->vals->data)[(i)])
-
-/*
-#define typref2(toid,ptr) \
-	((toid == FLOAT4OID) ? (*((float *)(ptr))) :	  \
-	 (toid == FLOAT8OID) ? (*((float8 *)(ptr))) :	  \
-	 (toid == CHAROID) ? (*((char *)(ptr))) :	  \
-	 (toid == INT2OID) ? (*((int16 *)(ptr))) :	  \
-	 (toid == INT4OID) ? (*((int32 *)(ptr))) :	  \
-	 (toid == INT8OID) ? (*((int64 *)(ptr))) :	  \
-	 (*((float8 *)(ptr))))
-
-#define valref2(type,val,i) \
-	((type == FLOAT4OID) ? (((float *)(val)->vals->data)[(i)]) :   \
-	 (type == FLOAT8OID) ?  (((float8 *)(val)->vals->data)[(i)]) : \
-	 (type == CHAROID) ?  (((char *)(val)->vals->data)[(i)]) :  \
-         (type == INT2OID) ?  (((int16 *)(val)->vals->data)[(i)]) : \
-         (type == INT4OID) ?  (((int32 *)(val)->vals->data)[(i)]) : \
-	 (type == INT8OID) ?  (((int64 *)(val)->vals->data)[(i)]) : \
-         (((float8 *)(val)->vals->data)[(i)]))
-*/
 
 #define valsquare(val)	(val*val)
 #define valcube(val)	(val*valsquare(val))
@@ -688,32 +659,12 @@ static inline SparseData quad_sdata(SparseData sdata)
 
 	return(result);
 }
-/*
-static inline bool sparsedata_eq(SparseData left, SparseData right)
-{
-	if ((left->total_value_count  != right->total_value_count)   ||
-	    (left->unique_value_count != right->unique_value_count))
-		return(0);
-	
-	// We'll take a two phase approach to enhance speed:
-	// Check the unique values for equivalence, then check the run lengths
-	 
-	if (memcmp(left->vals->data,right->vals->data,left->vals->len))
-	{
-		return(0);
-	}
-	if (memcmp(left->index->data,right->index->data,left->index->len))
-	{
-		return(0);
-	}
 
-	return(1);
-}
-*/
-
-// -- KS: the previous version assumes the input sparse data arrays are
-//        in canonical form, which is not always correct
-/* The algorithm is simple: we traverse the left SparseData element by 
+/* 
+ * Checks the equality of two SparseData. We can't assume that two 
+ * SparseData are in canonical form.
+ *
+ * The algorithm is simple: we traverse the left SparseData element by 
  * element, and for each such element x, we traverse all the elements of 
  * the right SparseData that overlaps with x and check that they are equal.
  */   
@@ -738,14 +689,18 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
 		while (true) {
 			if (vals[i] != rvals[rvid]) return 0;
 			
-			// we never move the right element pointer 
-			// beyond the current left element
+			/* 
+			 * We never move the right element pointer beyond
+			 * the current left element 
+			 */
 			rrun_length = compword_to_int8(rix);
 			if (rread + rrun_length > read) break;
 
-			// increase counters if there are more elements in 
-			// the right SparseData that overlaps with current
-			// left element 
+			/* 
+			 * Increase counters if there are more elements in 
+			 * the right SparseData that overlaps with current
+			 * left element 
+			 */ 
 			rread += rrun_length;
 			if (rvid < right->unique_value_count) {
 				rix += int8compstoragesize(rix);
@@ -754,7 +709,7 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
 			if (rread == read) break;
 		}
 	}
-	assert(rread == read);
+	Assert(rread == read);
 	return 1;
 }
 
@@ -762,7 +717,7 @@ static inline double id(double x) { return x; }
 static inline double square(double x) { return x*x; }
 static inline double myabs(double x) { return (x < 0) ? -(x) : x ; }
 
-/* -- KS
+/* 
  * The following function is introduced to capture a common routine for 
  * traversing a SparseData, transforming each element as we go along and 
  * summing up the transformed elements. The method is non-destructive to 
@@ -785,7 +740,7 @@ accum_sdata_values_double(SparseData sdata, double (*func)(double))
 	return (accum);
 }
 
-/* -- KS
+/* 
  * The following three functions replace the three that follow.
  */
 static inline double sum_sdata_values_double(SparseData sdata) {
@@ -799,56 +754,6 @@ static inline double l2norm_sdata_values_double(SparseData sdata) {
 static inline double l1norm_sdata_values_double(SparseData sdata) {
 	return accum_sdata_values_double(sdata, myabs);
 }
-/*
-static inline double sum_sdata_values_double(SparseData sdata)
-{
-	double accum=0.;
-	char *ix = sdata->index->data;
-	double *vals = (double *)sdata->vals->data;
-	int64 run_length;
-
-	for (int i=0;i<sdata->unique_value_count;i++)
-	{
-		run_length = compword_to_int8(ix);
-		accum += vals[i]*run_length;
-		ix+=int8compstoragesize(ix);
-	}
-	return (accum);
-}
-
-static inline double l2norm_sdata_values_double(SparseData sdata)
-{
-	double accum=0.;
-	char *ix = sdata->index->data;
-	double *vals = (double *)sdata->vals->data;
-	int64 run_length;
-
-	for (int i=0;i<sdata->unique_value_count;i++)
-	{
-		run_length = compword_to_int8(ix);
-		accum += (vals[i]*vals[i])*run_length;
-		ix+=int8compstoragesize(ix);
-	}
-	accum = sqrt(accum);
-	return (accum);
-}
-
-static inline double l1norm_sdata_values_double(SparseData sdata)
-{
-	double accum=0.;
-	char *ix = sdata->index->data;
-	double *vals = (double *)sdata->vals->data;
-	int64 run_length;
-
-	for (int i=0;i<sdata->unique_value_count;i++)
-	{
-		run_length = compword_to_int8(ix);
-		accum += ABS(vals[i])*run_length;
-		ix+=int8compstoragesize(ix);
-	}
-	return (accum);
-}
-*/
 
 /*------------------------------------------------------------------------------
  * Addition, Scalar Product, Division between SparseData arrays
@@ -899,7 +804,6 @@ static inline SparseData op_sdata_by_sdata(int operation,SparseData left,
 
 	while (1)
 	{
-//		printf("i,j,left_nxt,right_nxt,nextpos=%d,%d,%d,%d,%d\n",i,j,nextpos,left_nxt,right_nxt);
 		switch (operation)
 		{
 			case 0:
@@ -935,9 +839,8 @@ static inline SparseData op_sdata_by_sdata(int operation,SparseData left,
 			memcpy(last_new_value,new_value,width);
 		}
 		tot_run_length += (nextpos-lastpos);
-//		printf("New_value,runlength = %f,%d\n",new_value,nextpos-lastpos);
+
 		if ((left_nxt==right_nxt)&&(left_nxt==(left->total_value_count))) {
-//			printf("STOPPING: i,j,left_nxt,right_nxt,nextpos=%d,%d,%d,%d,%d\n",i,j,nextpos,left_nxt,right_nxt);
 			break;
 		} else if (left_nxt==right_nxt) {
 			i++;j++;

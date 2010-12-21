@@ -4,6 +4,11 @@
 #include <string.h>
 #include <float.h>
 #include "SparseData.h"
+#include "utils/builtins.h"
+#include "utils/syscache.h"
+#include "parser/parse_func.h"
+#include "access/htup.h"
+#include "catalog/pg_proc.h"
 
 /**---------------------------------------------------------------------------
  * Constructors for a SparseData structure
@@ -125,8 +130,8 @@ StringInfo copyStringInfo(StringInfo sinfo) {
 	return result;
 }
 
-/**
- * make a StringInfo from a data pointer and length
+/**----------------------------------------------------------------------------
+ * Make a StringInfo from a data pointer and length
  */
 StringInfo makeStringInfoFromData(char *data,int len) {
 	StringInfo sinfo;
@@ -239,6 +244,10 @@ int64 *sdata_index_to_int64arr(SparseData sdata) {
 	return(array_ix);
 }
 
+/**----------------------------------------------------------------------------
+ * Serialize a SparseData compressed structure
+ *-----------------------------------------------------------------------------
+ */
 void serializeSparseData(char *target, SparseData source)
 {
 	/* SparseDataStruct header */
@@ -267,38 +276,6 @@ void serializeSparseData(char *target, SparseData source)
 	}
 }
 
-#ifdef NOT
-//TODO
-SparseData deserializeSparseData(char *source)
-{
-	SparseData sdata = makeEmptySparseData();
-	char *target = (char *)sdata;
-	int index_size,vals_size;
-	/* Unpack into an empty SparseDataStructure and fill the empty 
-	 * StringInfo structures with data
-	 */
-	/* SparseDataStruct header */
-	memcpy(target,source,SIZEOF_SPARSEDATAHDR);
-	target+=SIZEOF_SPARSEDATAHDR;
-
-	index_size = SDATA_INDEX_SIZE(source);
-	vals_size = SDATA_DATA_SIZE(source);
-
-	sdata->vals->data  = (char *)palloc(vals_size);
-	sdata->index->data = (char *)palloc(index_size);
-
-	sdata->vals->len = sdata->unique_value_count;
-	sdata->vals->maxlen = sdata->unique_value_count;
-	memcpy(sdata->vals->data,SDATA_VALS_PTR(source),vals_size);
-
-	sdata->index->len = index_size;
-	sdata->index->maxlen = sdata->index->len;
-	memcpy(sdata->index->data,SDATA_INDEX_PTR(source),index_size);
-
-	return(sdata);
-}
-#endif
-
 void printSparseData(SparseData sdata);
 void printSparseData(SparseData sdata) {
 	int value_count = sdata->unique_value_count;
@@ -313,9 +290,9 @@ void printSparseData(SparseData sdata) {
 	}
 }
 
-/** 
- * This function projects onto an element of a sparse data. As in normal 
- * in SQL, we start counting from one. 
+/**--------------------------------------------------------------------------- 
+ * This function projects onto an element of a SparseData. As in normal in 
+ * SQL, we start counting from one. 
  */
 double sd_proj(SparseData sdata, int idx) {
 	char * ix = sdata->index->data;
@@ -341,9 +318,9 @@ double sd_proj(SparseData sdata, int idx) {
 	return vals[i];
 }
 
-/**
- * This function extracts a sub-array, indexed by start and end, of a sparse 
- * data. The indices begin at one.
+/**--------------------------------------------------------------------------
+ * This function extracts a sub-array, indexed by start and end, of a 
+ * SparseData. The indices begin at one.
  */
 SparseData subarr(SparseData sdata, int start, int end) {
 	char * ix = sdata->index->data;
@@ -391,9 +368,9 @@ SparseData subarr(SparseData sdata, int start, int end) {
 	return ret;
 }
 
-/**
- * This function returns a copy of the input sparse data, with the order of
- * the elements reversed.
+/**-------------------------------------------------------------------------
+ * This function returns a copy of the input SparseData, with the order of the
+ * elements reversed. The function is non-destructive to the input SparseData.
  */
 SparseData reverse(SparseData sdata) {
 	char * ix = sdata->index->data;
@@ -401,11 +378,11 @@ SparseData reverse(SparseData sdata) {
 	SparseData ret = makeSparseData();
 	size_t w = sizeof(float8);
 
-	// move to the last count array element
+	/* move to the last count array element */
 	for (int j=0; j<sdata->unique_value_count-1; j++)
 		ix += int8compstoragesize(ix);
 
-	// copy from right to left
+	/* copy from right to left */
 	for (int j=sdata->unique_value_count-1; j!=-1; j--) {
 		add_run_to_sdata((char *)(&vals[j]),compword_to_int8(ix),w,ret);
 		ix -= int8compstoragesize(ix);
@@ -413,7 +390,7 @@ SparseData reverse(SparseData sdata) {
 	return ret;
 }
 
-/**
+/**--------------------------------------------------------------------------
  * This function returns the concatenation of two input sparse data.
  * Copies of the input sparse data are made.
  */
@@ -452,15 +429,9 @@ SparseData concat(SparseData left, SparseData right) {
 	return sdata;
 }
 
-#include "utils/builtins.h"
-#include "utils/syscache.h"
-#include "parser/parse_func.h"
-#include "access/htup.h"
-#include "catalog/pg_proc.h"
-
 static bool lapply_error_checking(Oid foid, List * funcname);
 
-/** 
+/**--------------------------------------------------------------------------
  * This function applies an input function on all elements of a sparse data. 
  * The function is modelled after the corresponding function in R.
  */
@@ -499,13 +470,11 @@ static bool lapply_error_checking(Oid foid, List * func) {
 	return true;
 }
 
-
-
-/* -- KS: 
-  general procedure
-  - write function for SparseData
-  - wrap it up for svecs in operators.c or sparse_vectors.c
-  - make it available in gp_svec.sql
-*/
+/* 
+ * General procedure for adding functionalities:
+ *  - write function for SparseData
+ *  - wrap it up for svecs in operators.c or sparse_vectors.c
+ *  - make it available in gp_svec.sql
+ */
 
 
