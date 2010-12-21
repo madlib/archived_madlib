@@ -1,5 +1,5 @@
--- DROP TYPE IF EXISTS svec CASCADE;
--- CREATE TYPE svec;
+DROP TYPE IF EXISTS svec CASCADE;
+CREATE TYPE svec;
 
 CREATE OR REPLACE FUNCTION svec_in(cstring)
     RETURNS svec
@@ -21,15 +21,15 @@ CREATE OR REPLACE FUNCTION svec_send(svec)
     AS 'gp_svec.so'
     LANGUAGE C IMMUTABLE STRICT;
 
--- CREATE TYPE svec (
---	   internallength = VARIABLE, 
---	   input = svec_in,
---	   output = svec_out,
---	   send = svec_send,
---	   receive = svec_recv,
---	   storage=EXTENDED,
---	   alignment = double
--- );
+CREATE TYPE svec (
+       internallength = VARIABLE, 
+       input = svec_in,
+       output = svec_out,
+       send = svec_send,
+       receive = svec_recv,
+       storage=EXTENDED,
+       alignment = double
+);
 
 -- Sparse Feature Vector (text processing) related functions
 CREATE OR REPLACE FUNCTION gp_extract_feature_histogram(text[], text[]) RETURNS svec AS 'gp_svec.so', 'gp_extract_feature_histogram' LANGUAGE C IMMUTABLE; 
