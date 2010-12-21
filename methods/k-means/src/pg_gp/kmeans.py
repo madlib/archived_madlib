@@ -148,16 +148,15 @@ def quote_literal(val):
 # ----------------------------------------
 def __kmeans_init( input_table, k):
 
-	"""	
-	Creates the initial set of centroids.
-	
-	@param input_table Name of relation containing the input data points
-	@param k Number of centroids to generate
+    """	
+    Creates the initial set of centroids.
 
-	@internal
-	@endinternal
-	
-	"""
+    @param input_table Name of relation containing the input data points
+    @param k Number of centroids to generate
+
+    @internal
+    @endinternal
+    """
 	
     # Record the time
     start = datetime.datetime.now();
@@ -246,21 +245,20 @@ Time elapsed: %d minutes %d.%d seconds.
 # Function to run the k-means algorithm
 # ----------------------------------------
 def kmeans_run( input_table, k, goodness, run_id, output_schema):
+    """
+    Executes the k-means clustering algorithm.
 
-	"""
-	Executes the k-means clustering algorithm.
-	
-	@param input_table Name of relation containing the input data points
-	@param k Number of centroids to generate
-	@param goodness Goodness of fit test flag (allowed values: 0,1)
-	@param run_id Name/ID of the execution
-	@param output_schema Target schema for the output tables.
-	
-	@internal
-	@endinternal
-	
-	"""
-	
+    @param input_table Name of relation containing the input data points
+    @param k Number of centroids to generate
+    @param goodness Goodness of fit test flag (allowed values: 0,1)
+    @param run_id Name/ID of the execution
+    @param output_schema Target schema for the output tables.
+
+    @internal
+    @endinternal
+
+    """
+
     # Record the time
     start = datetime.datetime.now();
 
