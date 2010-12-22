@@ -44,13 +44,14 @@ typedef struct SparseDataStruct
 {
 	/* The native type of the data entries */
 	Oid type_of_data;
-	int unique_value_count; /* The number of unique values in the data
-				   array */
-	int total_value_count;  /* The total number of values, including
-				   duplicates */
-	StringInfo vals;  /* The unique number values are stored here as a
-			     stream of bytes */
-	StringInfo index; /* A count of each value is stored in the index */
+	/* The number of unique values in the data array */
+	int unique_value_count; 
+	/* The total number of values, including duplicates */
+	int total_value_count;
+	/* The unique number values are stored here as a stream of bytes */
+	StringInfo vals;  
+	/* A count of each value is stored in the index */
+	StringInfo index; 
 } SparseDataStruct;
 
 typedef SparseDataStruct *SparseData;

@@ -515,8 +515,8 @@ Datum svec_count(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
-			 errmsg("Array dimension of inputs are not the same: dim1=%d, dim2=%d\n left[0] = %d",
-				left->total_value_count, right->total_value_count, left[0])));
+			 errmsg("Array dimension of inputs are not the same: dim1=%d, dim2=%d\n",
+				left->total_value_count, right->total_value_count)));
 	
 	/* Create an array of values either 1 or 0 depending on whether
 	 * the right vector has a non-zero value in it
