@@ -1,3 +1,19 @@
+\timing
+select dmin(1000,1000.1);
+select dmin(1000,NULL);
+select dmin(NULL,1000);
+select dmin(NULL,NULL);
+select dmax(1000,1000.1);
+select dmax(1000,NULL);
+select dmax(NULL,1000);
+select dmax(NULL,NULL);
+
+select svec_count('{1}:{0}', '{1}:{1}');
+select svec_count('{1}:{0}', '{1}:{NULL}');
+select svec_count('{1,2,1}:{2,4,2}', '{2,1,1}:{0,3,5}');
+select svec_count('{1,2,1}:{2,4,2}', '{2,1,1}:{NULL,3,5}');
+select svec_count('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
+
 drop table if exists test;
 create table test (a int, b svec) DISTRIBUTED BY (a);
 
