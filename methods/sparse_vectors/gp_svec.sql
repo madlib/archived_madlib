@@ -315,13 +315,6 @@ CREATE AGGREGATE sum (svec) (
 );
 
 -- Aggregate that provides a tally of nonzero entries in a list of vectors
-DROP AGGREGATE IF EXISTS count_vec(svec); -- Legacy name for vec_count_nonzero
-CREATE AGGREGATE count_vec (svec) ( -- Legacy name for vec_count_nonzero
-	SFUNC = svec_count, -- Legacy name for vec_count_nonzero
-	PREFUNC = svec_plus, -- Legacy name for vec_count_nonzero
- 	INITCOND = '{1}:{0.}', -- Zero -- Legacy name for vec_count_nonzero
-	STYPE = svec -- Legacy name for vec_count_nonzero
-);
 DROP AGGREGATE IF EXISTS vec_count_nonzero(svec);
 CREATE AGGREGATE vec_count_nonzero (svec) (
 	SFUNC = svec_count,

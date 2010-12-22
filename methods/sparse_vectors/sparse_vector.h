@@ -52,6 +52,8 @@ typedef struct {
 /* If the dimension is -1, this is a scalar */
 #define IS_SCALAR(x)	(((x)->dimension) < 0 ? 1 : 0 )
 
+#define IS_NVP(x)  (memcmp(&(x),&(NVP),sizeof(double)) == 0)
+
 static inline int check_scalar(int i1, int i2)
 {
 	if ((!i1) && (!i2)) return(0);

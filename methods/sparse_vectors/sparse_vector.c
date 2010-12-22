@@ -114,6 +114,12 @@ PG_FUNCTION_INFO_V1( float8_min );
 Datum float8_min(PG_FUNCTION_ARGS);
 Datum float8_min(PG_FUNCTION_ARGS)
 {
+	if (PG_ARGISNULL(0)) {
+		if (PG_ARGISNULL(1)) PG_RETURN_NULL();
+		else PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(1));
+	} else if (PG_ARGISNULL(1))
+		PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(0));
+
 	float8 left = PG_GETARG_FLOAT8(0);
 	float8 right = PG_GETARG_FLOAT8(1);
 	PG_RETURN_FLOAT8(MIN(left,right));
@@ -123,6 +129,12 @@ PG_FUNCTION_INFO_V1( float8_max );
 Datum float8_max(PG_FUNCTION_ARGS);
 Datum float8_max(PG_FUNCTION_ARGS)
 {
+	if (PG_ARGISNULL(0)) {
+		if (PG_ARGISNULL(1)) PG_RETURN_NULL();
+		else PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(1));
+	} else if (PG_ARGISNULL(1))
+		PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(0));
+
 	float8 left = PG_GETARG_FLOAT8(0);
 	float8 right = PG_GETARG_FLOAT8(1);
 	PG_RETURN_FLOAT8(MAX(left,right));

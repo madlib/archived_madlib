@@ -491,66 +491,58 @@ Datum svec_div(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1( svec_count );
 Datum svec_count(PG_FUNCTION_ARGS)
 {
-	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
-	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
-	SparseData left  = sdata_from_svec(svec1);
+	SvecType * svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType * svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
+
+	if (IS_SCALAR(svec1)) {
+		/*
+		 * If the left argument is {1}:{0}, this is the first call to 
+		 * the routine, and we need a zero vector for the beginning 
+		 * of the accumulation of the correct dimension.
+		 */
+		double * left_vals = (double *)(left->vals->data);
+		if (left_vals[0] == 0)
+			left = makeSparseDataFromDouble(0.,right->total_value_count);
+	} 
 	double *right_vals=(double *)(right->vals->data);
 	SvecType *result;
 	double *clamped_vals;
 	SparseData right_clamped,sdata_result;
 
-	int scalar_args=check_scalar(IS_SCALAR(svec1),IS_SCALAR(svec2));
-	check_dimension(svec1,svec2,"svec_count");
-
-	/* Clamp the right vector values to 1 */
-	switch (scalar_args) {
-	case 1:			//left arg is scalar
-		/*
-		 * If the left argument is a scalar, this is almost certainly 
-		 * the first call to the routine, and we need a zero vector 
-		 * for the beginning of the accumulation of the correct 
-		 * dimension.
-		 */
-		left = makeSparseDataFromDouble(0.,right->total_value_count);
-		
-	case 0: 		//neither arg is scalar
-	case 2:			//right arg is scalar
-		
-		/* Create an array of values either 1 or 0 depending on whether
-		 * the right vector has a non-zero value in it
-		 */
-		clamped_vals =
-		  (double *)palloc0(sizeof(double)*(right->unique_value_count));
-		
-		for (int i=0;i<(right->unique_value_count);i++)
-		{
-			if (right_vals[i]!=0.) clamped_vals[i]=1.;
-		}
-		right_clamped = makeInplaceSparseData(
-				   (char *)clamped_vals,right->index->data,
-				   right->vals->len,right->index->len,FLOAT8OID,
-				   right->unique_value_count,
-				   right->total_value_count);
-
-		/* Create the output SVEC */
-		sdata_result = op_sdata_by_sdata(1,left,right_clamped);
-		result = svec_from_sparsedata(sdata_result,true);
-		
-		pfree(clamped_vals);
-		pfree(right_clamped);
-		
-		PG_RETURN_SVECTYPE_P(result);
-		break;
-	case 3:			//both args are scalar
-	default:
+	if (left->total_value_count != right->total_value_count)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
-			 errmsg("Svec count is undefined when both arguments are scalar")));
-		PG_RETURN_SVECTYPE_P(svec1);
-		break;
+			 errmsg("Array dimension of inputs are not the same: dim1=%d, dim2=%d\n left[0] = %d",
+				left->total_value_count, right->total_value_count, left[0])));
+	
+	/* Create an array of values either 1 or 0 depending on whether
+	 * the right vector has a non-zero value in it
+	 */
+	clamped_vals =
+		(double *)palloc0(sizeof(double)*(right->unique_value_count));
+		
+	for (int i=0;i<(right->unique_value_count);i++)
+	{
+		if (right_vals[i] != 0. && !IS_NVP(right_vals[i])) 
+			clamped_vals[i] = 1.;
 	}
+	right_clamped = makeInplaceSparseData(
+			     (char *)clamped_vals,right->index->data,
+			     right->vals->len,right->index->len,FLOAT8OID,
+			     right->unique_value_count,
+			     right->total_value_count);
+
+	/* Create the output SVEC */
+	sdata_result = op_sdata_by_sdata(1,left,right_clamped);
+	result = svec_from_sparsedata(sdata_result,true);
+		
+	pfree(clamped_vals);
+	pfree(right_clamped);
+		
+	PG_RETURN_SVECTYPE_P(result);
 }
 
 /*
