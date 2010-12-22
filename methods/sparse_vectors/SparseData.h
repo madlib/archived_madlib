@@ -20,15 +20,15 @@
  *------------------------------------------------------------------------------
  */
 
+#ifndef SPARSEDATA_H
+#define SPARSEDATA_H
+
 #include <math.h>
 #include <string.h>
 #include "postgres.h"
 #include "lib/stringinfo.h"
 #include "utils/array.h"
 #include "catalog/pg_type.h"
-
-#ifndef SPARSEDATA_H
-#define SPARSEDATA_H
 
 #define ABS(a)   (((a) < 0) ? -(a) : (a))
 #define MIN(a,b) (((a) < (b)) ? (a) : (b))
@@ -618,7 +618,8 @@ static inline void op_sdata_by_scalar_inplace(int operation,
 
 }
 static inline SparseData op_sdata_by_scalar_copy(int operation,
-		char *scalar, SparseData source_sdata, int direction) {
+		char *scalar, SparseData source_sdata, int direction) 
+{
 	SparseData sdata = makeSparseDataCopy(source_sdata);
 	op_sdata_by_scalar_inplace(operation,scalar,sdata,direction);
 	return sdata;
@@ -672,7 +673,7 @@ static inline SparseData quad_sdata(SparseData sdata)
 static inline bool sparsedata_eq(SparseData left, SparseData right)
 {
 	if (left->total_value_count != right->total_value_count)
-		return 0;
+		return false;
 
 	char * ix = left->index->data;	
 	double * vals = (double *)left->vals->data;
@@ -688,7 +689,7 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
 		read += compword_to_int8(ix);
 
 		while (true) {
-			if (vals[i] != rvals[rvid]) return 0;
+			if (vals[i] != rvals[rvid]) return false;
 			
 			/* 
 			 * We never move the right element pointer beyond
@@ -711,7 +712,7 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
 		}
 	}
 	Assert(rread == read);
-	return 1;
+	return true;
 }
 
 static inline double id(double x) { return x; }
