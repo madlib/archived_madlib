@@ -821,19 +821,21 @@ static SparseData sdata_uncompressed_from_float8arr_internal(ArrayType *array)
         double *vals =(double *)ARR_DATA_PTR(array);
         bits8 *bitmap = ARR_NULLBITMAP(array);
         int   bitmask=1;
-	SparseData result = makeInplaceSparseData(
-				 (char *)vals,NULL,
-				 num*sizeof(float8),0,FLOAT8OID,num,num);
-
-	/*
-	 * Convert null items into zeros
-	 */
+	
+	/* Convert null items into NVPs */
 	if (bitmap)
 	{
+		int j = 0;
+		double *vals_temp = vals;
+		vals = (double *)palloc(sizeof(float8) * num);
         	for (int i=0; i<num; i++)
 		{
-                	if ((*bitmap& bitmask) == 0)
-				vals[i] = 0.;
+                	if ((*bitmap & bitmask) == 0) // if NULL
+				vals[i] = NVP;
+			else {
+				vals[i] = vals_temp[j];
+				j++;
+			}
                         bitmask <<= 1;
                         if (bitmask == 0x100)
                         {
@@ -842,6 +844,14 @@ static SparseData sdata_uncompressed_from_float8arr_internal(ArrayType *array)
                         }
 		}
 	}
+	/* Makes the SparseData; this relies on using NULL to represent a
+	 * count array of ones, as described in SparseData.h, after definition
+	 * of SparseDataStruct.
+	 */
+	SparseData result = makeInplaceSparseData(
+				 (char *)vals,NULL,
+				 num*sizeof(float8),0,FLOAT8OID,num,num);
+
 	return(result);
 }
 

@@ -54,6 +54,13 @@ typedef struct SparseDataStruct
 	StringInfo index; 
 } SparseDataStruct;
 
+/*
+ * Sometimes we wish to store an uncompressed array inside a SparseDataStruct;
+ * instead of storing an array of ones [1,1,..,1,1] in the index field, which
+ * is wasteful, we choose to use index->data == NULL to represent this special 
+ * case. 
+ */
+
 typedef SparseDataStruct *SparseData;
 
 /* Calculate the size of a serialized SparseData based on the actual consumed
@@ -253,15 +260,11 @@ static inline int64 compword_to_int8(const char *entry)
 	int64 num;
 	char *numptr8 = (char *)(&num);
 
-	/*
-	if (size == 0) 
-		ereport(ERROR, 
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
-			 errmsg("a compressed int64 value can't have size 0")));
-	*/
 	switch(size) {
-	        case 0: return 1; break;
+	        case 0: /* entry == NULL represents an array of ones; see 
+			 * comment after definition of SparseDataStruct above
+			 */
+			return 1; break;
 		case 1:
 			num = -(entry[0]);
 			break;
