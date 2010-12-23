@@ -88,7 +88,7 @@ typedef SparseDataStruct *SparseData;
  * Takes a SparseData argument 
  */
 #define SIZEOF_SPARSEDATASERIAL(x) (SIZEOF_SPARSEDATAHDR + \
-		(2*sizeof(StringInfoData))+ \
+		(2*sizeof(StringInfoData)) + \
 		(x)->vals->maxlen + (x)->index->maxlen)
 
 /*
@@ -110,6 +110,9 @@ typedef SparseDataStruct *SparseData;
 /*
  * Calculate the size of the integer count in an RLE index provided the pointer
  * to the start of the count entry
+ *
+ * The size of a compressed int8 is stored in the first element of the ptr 
+ * array; see the explanation at the int8_to_compword() function below.
  *
  * Note that if the ptr is NULL, a zero size is returned
  */
@@ -211,36 +214,29 @@ static inline void add_run_to_sdata(char *run_val, int64 run_len, size_t width,
  */
 static inline void int8_to_compword(int64 num, char entry[9])
 {
-	int16_t num_2;
-	int32_t num_4;
-
 	if (num < 128) {
 		/* The reason this is negative is because entry[0] is
 	           used to record sizes in the other cases. */
 		entry[0] = -(char)num;
-	} else if (num < 32768) {
-		entry[0] = 2;
-		num_2 = (int16_t)num;
-		entry[1] = *( char *)(&num_2)   ;
-		entry[2] = *((char *)(&num_2)+1);
-	} else if (num < 2147483648) {
-		entry[0] = 4;
-		num_4 = (int32_t)num;
-		entry[1] = *( char *)(&num_4)   ;
-		entry[2] = *((char *)(&num_4)+1);
-		entry[3] = *((char *)(&num_4)+2);
-		entry[4] = *((char *)(&num_4)+3);
-	} else {
-		entry[0] = 8;
-		entry[1] = *( char *)(&num)   ;
-		entry[2] = *((char *)(&num)+1);
-		entry[3] = *((char *)(&num)+2);
-		entry[4] = *((char *)(&num)+3);
-		entry[5] = *((char *)(&num)+4);
-		entry[6] = *((char *)(&num)+5);
-		entry[7] = *((char *)(&num)+6);
-		entry[8] = *((char *)(&num)+7);
-	}
+		return;
+	} 
+
+	entry[1] = (char)(num & 0xFF);
+	entry[2] = (char)((num & 0xFF00) >> 8);
+
+	if (num < 32768) { entry[0] = 2; return; }
+
+	entry[3] = (char)((num & 0xFF0000) >> 16);
+	entry[4] = (char)((num & 0xFF000000) >> 24);
+
+	if (num < 2147483648) { entry[0] = 4; return; }
+
+	entry[5] = (char)((num & 0xFF00000000) >> 32);
+	entry[6] = (char)((num & 0xFF0000000000) >> 40);
+	entry[7] = (char)((num & 0xFF000000000000) >> 48);
+	entry[8] = (char)((num & 0xFF00000000000000) >> 56);
+
+	entry[0] = 8;
 }
 
 /*
@@ -257,10 +253,15 @@ static inline int64 compword_to_int8(const char *entry)
 	int64 num;
 	char *numptr8 = (char *)(&num);
 
+	/*
+	if (size == 0) 
+		ereport(ERROR, 
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errOmitLocation(true),
+			 errmsg("a compressed int64 value can't have size 0")));
+	*/
 	switch(size) {
-	case 0: /* Null entry, return a run length of 1 */
-			return(1);
-			break;
+	        case 0: return 1; break;
 		case 1:
 			num = -(entry[0]);
 			break;
@@ -561,7 +562,7 @@ check_sdata_dimensions(SparseData left, SparseData right)
 		ereport(ERROR, 
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
-			 errmsg("Operation undefined when dimension of left and right vectors are not the same")));
+			 errmsg("dimensions of vectors must be the same")));
 	}
 }
 
