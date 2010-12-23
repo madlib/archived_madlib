@@ -65,7 +65,8 @@ class MadPackMigration:
         self.conf = configyml.get_config(conf_dir)        
         api = self.conf['dbapi2']
         connect_args = self.conf['connect_args']
-        dbapi2 = __import__(api, globals(), locals(), [])
+        dbapi2 = __import__(api, globals(), locals(), [''])
+
         ## @var mig_dir the directory with the migration files
         self.mig_dir = mig_dir
         ## @var mig_dir the directory with the Config.yml file
@@ -90,7 +91,18 @@ class Migration(MadPackMigration):
         ## @var mig_backwards_prolog the junk that goes before each method's backwards script
         self.mig_backwards_prolog = """\tdef backwards(self):\n\t\tcur = self.dbconn.cursor()\n"""
         ## @var dbconn live database connection
-        self.dbconn = dbapi2.connect(*connect_args)
+        con_args={};
+        for arg in connect_args:
+            if arg.find("=") == -1:
+                print sys.exc_info()[0]
+                print "Missing '=' character in the connect_args parameter: " + arg
+                raise
+            # cleanup the string
+            arg = ((arg.replace( "'", "")).replace( '"', '')).replace( ' ', '')            
+            equal_sign = arg.find('=')
+            # create a proper dictionary of connection parameters
+            con_args[ arg[:equal_sign]] = arg[equal_sign+1:]
+        self.dbconn = dbapi2.connect( **con_args)
 
     ## Destructor: clean up the DB connection!
     def __del__(self):
