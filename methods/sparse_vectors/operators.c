@@ -263,6 +263,12 @@ static int32_t svec_l2_cmp_internal(SvecType *svec1, SvecType *svec2)
 	double magleft  = l2norm_sdata_values_double(left);
 	double magright = l2norm_sdata_values_double(right);
 	int result;
+
+	if (IS_NVP(magleft) || IS_NVP(magright)) {
+		result = -5;
+		PG_RETURN_INT32(result);
+	}
+
 	if (magleft < magright) result = -1;
 	else if (magleft > magright) result = 1;
 	else result = 0;
@@ -275,7 +281,11 @@ Datum svec_l2_cmp(PG_FUNCTION_ARGS)
 {
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
-	PG_RETURN_INT32(svec_l2_cmp_internal(svec1,svec2));
+	int result = svec_l2_cmp_internal(svec1,svec2);
+
+	if (result == -5) PG_RETURN_NULL();
+
+	PG_RETURN_INT32(result);
 }
 Datum svec_l2_lt(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_l2_lt );
@@ -284,6 +294,9 @@ Datum svec_l2_lt(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	int result = svec_l2_cmp_internal(svec1,svec2);
+
+	if (result == -5) PG_RETURN_NULL();
+
 	PG_RETURN_BOOL((result == -1) ? 1 : 0);
 }
 Datum svec_l2_le(PG_FUNCTION_ARGS);
@@ -293,6 +306,9 @@ Datum svec_l2_le(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	int result = svec_l2_cmp_internal(svec1,svec2);
+
+	if (result == -5) PG_RETURN_NULL();
+
 	PG_RETURN_BOOL(((result == -1)||(result == 0)) ? 1 : 0);
 }
 Datum svec_l2_eq(PG_FUNCTION_ARGS);
@@ -302,6 +318,9 @@ Datum svec_l2_eq(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	int result = svec_l2_cmp_internal(svec1,svec2);
+
+	if (result == -5) PG_RETURN_NULL();
+
 	PG_RETURN_BOOL((result == 0) ? 1 : 0);
 }
 Datum svec_l2_ne(PG_FUNCTION_ARGS);
@@ -311,6 +330,9 @@ Datum svec_l2_ne(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	int result = svec_l2_cmp_internal(svec1,svec2);
+
+	if (result == -5) PG_RETURN_NULL();
+
 	PG_RETURN_BOOL((result != 0) ? 1 : 0);
 }
 Datum svec_l2_gt(PG_FUNCTION_ARGS);
@@ -320,6 +342,9 @@ Datum svec_l2_gt(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	int result = svec_l2_cmp_internal(svec1,svec2);
+
+	if (result == -5) PG_RETURN_NULL();
+
 	PG_RETURN_BOOL((result == 1) ? 1 : 0);
 }
 Datum svec_l2_ge(PG_FUNCTION_ARGS);
@@ -329,6 +354,9 @@ Datum svec_l2_ge(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	int result = svec_l2_cmp_internal(svec1,svec2);
+
+	if (result == -5) PG_RETURN_NULL();
+
 	PG_RETURN_BOOL(((result == 0) || (result == 1)) ? 1 : 0);
 }
 
