@@ -151,6 +151,10 @@ Datum svec_proj(PG_FUNCTION_ARGS)
 	int idx = PG_GETARG_INT32(1);
 
 	SparseData in = sdata_from_svec(sv);
+	double ret = sd_proj(in,idx);
+
+	if (IS_NVP(ret)) PG_RETURN_NULL();
+
 	PG_RETURN_FLOAT8(sd_proj(in,idx));
 }
 
@@ -558,6 +562,8 @@ Datum svec_dot(PG_FUNCTION_ARGS)
 	accum = sum_sdata_values_double(mult_result);
 	freeSparseDataAndData(mult_result);
 
+	if (IS_NVP(accum)) PG_RETURN_NULL();
+
 	PG_RETURN_FLOAT8(accum);
 }
 
@@ -571,6 +577,8 @@ Datum svec_l2norm(PG_FUNCTION_ARGS)
 	SparseData sdata  = sdata_from_svec(svec);
 	double accum;
 	accum = l2norm_sdata_values_double(sdata);
+
+	if (IS_NVP(accum)) PG_RETURN_NULL();
 
 	PG_RETURN_FLOAT8(accum);
 }
@@ -586,6 +594,8 @@ Datum svec_l1norm(PG_FUNCTION_ARGS)
 	double accum;
 	accum = l1norm_sdata_values_double(sdata);
 
+	if (IS_NVP(accum)) PG_RETURN_NULL();
+
 	PG_RETURN_FLOAT8(accum);
 }
 
@@ -599,6 +609,8 @@ Datum svec_summate(PG_FUNCTION_ARGS)
 	SparseData sdata  = sdata_from_svec(svec);
 	double accum;
 	accum = sum_sdata_values_double(sdata);
+
+	if (IS_NVP(accum)) PG_RETURN_NULL();
 
 	PG_RETURN_FLOAT8(accum);
 }
@@ -860,6 +872,9 @@ Datum float8arr_l1norm(PG_FUNCTION_ARGS) {
 	SparseData sdata = sdata_uncompressed_from_float8arr_internal(array);
 	double result = l1norm_sdata_values_double(sdata);
 	pfree(sdata);
+
+	if (IS_NVP(result)) PG_RETURN_NULL();
+
 	PG_RETURN_FLOAT8(result);
 }
 
@@ -873,6 +888,9 @@ Datum float8arr_summate(PG_FUNCTION_ARGS) {
 	SparseData sdata = sdata_uncompressed_from_float8arr_internal(array);
 	double result = sum_sdata_values_double(sdata);
 	pfree(sdata);
+
+	if (IS_NVP(result)) PG_RETURN_NULL();
+
 	PG_RETURN_FLOAT8(result);
 }
 
@@ -887,6 +905,9 @@ Datum float8arr_l2norm(PG_FUNCTION_ARGS) {
 	SparseData sdata = sdata_uncompressed_from_float8arr_internal(array);
 	double result = l2norm_sdata_values_double(sdata);
 	pfree(sdata);
+
+	if (IS_NVP(result)) PG_RETURN_NULL();
+
 	PG_RETURN_FLOAT8(result);
 }
 
@@ -908,6 +929,8 @@ Datum float8arr_dot(PG_FUNCTION_ARGS) {
 	freeSparseData(left);
 	freeSparseData(right);
 	freeSparseDataAndData(mult_result);
+
+	if (IS_NVP(accum)) PG_RETURN_NULL();
 
 	PG_RETURN_FLOAT8(accum);
 }

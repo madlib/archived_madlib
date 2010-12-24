@@ -672,6 +672,8 @@ static inline SparseData quad_sdata(SparseData sdata)
  * The algorithm is simple: we traverse the left SparseData element by 
  * element, and for each such element x, we traverse all the elements of 
  * the right SparseData that overlaps with x and check that they are equal.
+ *
+ * Note: This function only works on SparseData of float8s at present.
  */   
 static inline bool sparsedata_eq(SparseData left, SparseData right)
 {
@@ -692,8 +694,13 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
 		read += compword_to_int8(ix);
 
 		while (true) {
-			if (vals[i] != rvals[rvid]) return false;
-			
+			/* 
+			 * We need to use memcmp to handle NULLs (represented
+			 * as NaNs) properly
+			 */
+			if (memcmp(&(vals[i]),&(rvals[rvid]),sizeof(float8))!=0)
+				return false;
+	
 			/* 
 			 * We never move the right element pointer beyond
 			 * the current left element 
