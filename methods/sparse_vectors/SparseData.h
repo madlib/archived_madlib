@@ -571,32 +571,31 @@ check_sdata_dimensions(SparseData left, SparseData right)
 
 /*
  * Do one of subtract, add, multiply, or divide depending on
- * the value of operation one of (0,1,2,3).
- *
- * The "direction" argument is either 1 or 2 depending on
- * whether the scalar is on the left (1) or right (2)
+ * the value of operation.
  */
-static inline void op_sdata_by_scalar_inplace(int operation,
-		char *scalar, SparseData sdata, int direction)
+enum operation_t { subtract, add, multiply, divide };
+
+static inline void op_sdata_by_scalar_inplace(enum operation_t operation,
+		char *scalar, SparseData sdata, bool scalar_is_right)
 {
-	if (direction == 2) //scalar is on the right
+	if (scalar_is_right) //scalar is on the right
 	{
 		for(int i=0; i<sdata->unique_value_count; i++)
 		{
 			switch(operation)
 			{
-				case 0:
-			apply_const_to_sdata(sdata,i,-=,scalar)
-					break;
-				case 1:
-			apply_const_to_sdata(sdata,i,+=,scalar)
-					break;
-				case 2:
-			apply_const_to_sdata(sdata,i,*=,scalar)
-					break;
-				case 3:
-			apply_const_to_sdata(sdata,i,/=,scalar)
-					break;
+			case subtract:
+				apply_const_to_sdata(sdata,i,-=,scalar)
+				break;
+			case add:
+				apply_const_to_sdata(sdata,i,+=,scalar)
+				break;
+			case multiply:
+				apply_const_to_sdata(sdata,i,*=,scalar)
+				break;
+			case divide:
+				apply_const_to_sdata(sdata,i,/=,scalar)
+				break;
 			}
 		}
 	} else { //scalar is on the left
@@ -604,28 +603,28 @@ static inline void op_sdata_by_scalar_inplace(int operation,
 		{
 			switch(operation)
 			{
-				case 0:
-			apply_scalar_left_to_sdata(sdata,i,-,scalar)
-					break;
-				case 1:
-			apply_scalar_left_to_sdata(sdata,i,+,scalar)
-					break;
-				case 2:
-			apply_scalar_left_to_sdata(sdata,i,*,scalar)
-					break;
-				case 3:
-			apply_scalar_left_to_sdata(sdata,i,/,scalar)
-					break;
+			case subtract:
+				apply_scalar_left_to_sdata(sdata,i,-,scalar)
+				break;
+			case add:
+				apply_scalar_left_to_sdata(sdata,i,+,scalar)
+				break;
+			case multiply:
+				apply_scalar_left_to_sdata(sdata,i,*,scalar)
+				break;
+			case divide:
+				apply_scalar_left_to_sdata(sdata,i,/,scalar)
+				break;
 			}
 		}
 	}
 
 }
-static inline SparseData op_sdata_by_scalar_copy(int operation,
-		char *scalar, SparseData source_sdata, int direction) 
+static inline SparseData op_sdata_by_scalar_copy(enum operation_t operation,
+		char *scalar, SparseData source_sdata, bool scalar_is_right) 
 {
 	SparseData sdata = makeSparseDataCopy(source_sdata);
-	op_sdata_by_scalar_inplace(operation,scalar,sdata,direction);
+	op_sdata_by_scalar_inplace(operation,scalar,sdata,scalar_is_right);
 	return sdata;
 }
 
@@ -746,9 +745,6 @@ accum_sdata_values_double(SparseData sdata, double (*func)(double))
 	return (accum);
 }
 
-/* 
- * The following three functions replace the three that follow.
- */
 static inline double sum_sdata_values_double(SparseData sdata) {
 	return accum_sdata_values_double(sdata, id);
 }
@@ -768,12 +764,10 @@ static inline double l1norm_sdata_values_double(SparseData sdata) {
  * - The dimension of the left and right arguments must be the same
  * - We employ an algorithm that does the computation on the compressed contents
  *   which creates a new SparseData array
- * - "operation" is one of 0,1,2,3 for subtraction, addition, multiplication or
- *   division
  *------------------------------------------------------------------------------
  */
-static inline SparseData op_sdata_by_sdata(int operation,SparseData left,
-		SparseData right)
+static inline SparseData op_sdata_by_sdata(enum operation_t operation,
+					   SparseData left, SparseData right)
 {
 	SparseData sdata = makeSparseData();
 
@@ -802,27 +796,21 @@ static inline SparseData op_sdata_by_sdata(int operation,SparseData left,
 	new_value      = (char *)palloc(width);
 	last_new_value = (char *)palloc(width);
 
-	if ((operation > 3)|| (operation < 0))
-		ereport(ERROR, 
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
-			 errmsg("Operation not in range 0-3")));
-
 	while (1)
 	{
 		switch (operation)
 		{
-			case 0:
+			case subtract:
 				accum_sdata_result(new_value,left,i,-,right,j)
 				break;
-			case 1:
+			case add:
 			default:
 				accum_sdata_result(new_value,left,i,+,right,j)
 				break;
-			case 2:
+			case multiply:
 				accum_sdata_result(new_value,left,i,*,right,j)
 				break;
-			case 3:
+			case divide:
 				accum_sdata_result(new_value,left,i,/,right,j)
 				break;
 		}
@@ -868,7 +856,6 @@ static inline SparseData op_sdata_by_sdata(int operation,SparseData left,
 		right_nxt=right_run_length+right_lst;
 		lastpos=nextpos;
 		nextpos = MIN(left_nxt,right_nxt);
-//		printf("nextpos,leftmax = %d,%d\n",nextpos,left->total_value_count);
 	}
 
 	/*

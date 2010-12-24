@@ -99,8 +99,8 @@ ArrayType *svec_return_array_internal(SvecType *svec);
 char *svec_out_internal(SvecType *svec);
 SvecType *svec_make_scalar(float8 value);
 SvecType *svec_from_float8arr(float8 *array, int dimension);
-SvecType *op_svec_by_svec_internal(int operation, SvecType *svec1, SvecType *svec2);
-SvecType *svec_operate_on_sdata_pair(int scalar_args,int operation,SparseData left,SparseData right);
+SvecType *op_svec_by_svec_internal(enum operation_t operation, SvecType *svec1, SvecType *svec2);
+SvecType *svec_operate_on_sdata_pair(int scalar_args,enum operation_t operation,SparseData left,SparseData right);
 SvecType *makeEmptySvec(int allocation);
 SvecType *reallocSvec(SvecType *source);
 

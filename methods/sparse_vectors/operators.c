@@ -329,10 +329,10 @@ Datum svec_l2_ge(PG_FUNCTION_ARGS)
 }
 
 /*
- * Do one of subtract, add, multiply, divide or modulo depending on value
- * of operation(0,1,2,3,4)
+ * Do one of subtract, add, multiply, or divide depending on value
+ * of operation.
  */
-SvecType * svec_operate_on_sdata_pair(int scalar_args, int operation,
+SvecType * svec_operate_on_sdata_pair(int scalar_args, enum operation_t op,
 				      SparseData left, SparseData right)
 {
 	SparseData sdata = NULL;
@@ -342,33 +342,28 @@ SvecType * svec_operate_on_sdata_pair(int scalar_args, int operation,
 
 	switch (scalar_args) {
 	case 0: 		//neither arg is scalar
-		sdata = op_sdata_by_sdata(operation,left,right);
+		sdata = op_sdata_by_sdata(op,left,right);
 		break;
 	case 1:			//left arg is scalar
-		sdata = op_sdata_by_scalar_copy(operation,(char *)left_vals,
-						right,1);
+		sdata=op_sdata_by_scalar_copy(op,(char *)left_vals,right,false);
 		break;
 	case 2:			//right arg is scalar
-		sdata = op_sdata_by_scalar_copy(operation,(char *)right_vals,
-						left,2);
+		sdata=op_sdata_by_scalar_copy(op,(char *)right_vals,left,true);
 		break;
 	case 3:			//both args are scalar
-		switch (operation) {
-		case 0: 
+		switch (op) {
+		case subtract: 
 			data_result = left_vals[0] - right_vals[0];
 			break;
-		case 1:
+		case add:
 		default:
 			data_result = left_vals[0] + right_vals[0];
 			break;
-		case 2:
+		case multiply:
 			data_result = left_vals[0] * right_vals[0];
 			break;
-		case 3:
+		case divide:
 			data_result = left_vals[0] / right_vals[0];
-			break;
-		case 4:
-			data_result = ((int)left_vals[0])%((int)right_vals[0]);
 			break;
 		}
 		return svec_make_scalar(data_result);
@@ -378,7 +373,7 @@ SvecType * svec_operate_on_sdata_pair(int scalar_args, int operation,
 }
 
 
-SvecType * op_svec_by_svec_internal(int op, SvecType *svec1, SvecType *svec2)
+SvecType * op_svec_by_svec_internal(enum operation_t op, SvecType *svec1, SvecType *svec2)
 {
 	SparseData left  = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
@@ -450,7 +445,7 @@ Datum svec_minus(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	check_dimension(svec1,svec2,"svec_minus");
-	SvecType *result = op_svec_by_svec_internal(0,svec1,svec2);
+	SvecType *result = op_svec_by_svec_internal(subtract,svec1,svec2);
 	PG_RETURN_SVECTYPE_P(result);
 }
 
@@ -460,7 +455,7 @@ Datum svec_plus(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	check_dimension(svec1,svec2,"svec_plus");
-	SvecType *result = op_svec_by_svec_internal(1,svec1,svec2);
+	SvecType *result = op_svec_by_svec_internal(add,svec1,svec2);
 	PG_RETURN_SVECTYPE_P(result);
 }
 
@@ -470,7 +465,7 @@ Datum svec_mult(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	check_dimension(svec1,svec2,"svec_mult");
-	SvecType *result = op_svec_by_svec_internal(2,svec1,svec2);
+	SvecType *result = op_svec_by_svec_internal(multiply,svec1,svec2);
 	PG_RETURN_SVECTYPE_P(result);
 }
 
@@ -480,7 +475,7 @@ Datum svec_div(PG_FUNCTION_ARGS)
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	check_dimension(svec1,svec2,"svec_div");
-	SvecType *result = op_svec_by_svec_internal(3,svec1,svec2);
+	SvecType *result = op_svec_by_svec_internal(divide,svec1,svec2);
 	PG_RETURN_SVECTYPE_P(result);
 }
 
@@ -536,7 +531,7 @@ Datum svec_count(PG_FUNCTION_ARGS)
 			     right->total_value_count);
 
 	/* Create the output SVEC */
-	sdata_result = op_sdata_by_sdata(1,left,right_clamped);
+	sdata_result = op_sdata_by_sdata(add,left,right_clamped);
 	result = svec_from_sparsedata(sdata_result,true);
 		
 	pfree(clamped_vals);
@@ -559,7 +554,7 @@ Datum svec_dot(PG_FUNCTION_ARGS)
 	double accum;
 	check_dimension(svec1,svec2,"svec_dot");
 
-	mult_result = op_sdata_by_sdata(2,left,right);
+	mult_result = op_sdata_by_sdata(multiply,left,right);
 	accum = sum_sdata_values_double(mult_result);
 	freeSparseDataAndData(mult_result);
 
@@ -908,7 +903,7 @@ Datum float8arr_dot(PG_FUNCTION_ARGS) {
 	SparseData mult_result;
 	double accum;
 
-	mult_result = op_sdata_by_sdata(2,left,right);
+	mult_result = op_sdata_by_sdata(multiply,left,right);
 	accum = sum_sdata_values_double(mult_result);
 	freeSparseData(left);
 	freeSparseData(right);
@@ -933,7 +928,7 @@ float8arr_minus_float8arr(PG_FUNCTION_ARGS)
 	SparseData left  = sdata_uncompressed_from_float8arr_internal(arr1);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr2);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,0,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,subtract,left,right));
 }
 PG_FUNCTION_INFO_V1( svec_minus_float8arr );
 Datum
@@ -944,7 +939,7 @@ svec_minus_float8arr(PG_FUNCTION_ARGS)
 	SparseData left = sdata_from_svec(svec);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,0,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,subtract,left,right));
 }
 PG_FUNCTION_INFO_V1( float8arr_minus_svec );
 Datum
@@ -955,7 +950,7 @@ float8arr_minus_svec(PG_FUNCTION_ARGS)
 	SparseData left = sdata_uncompressed_from_float8arr_internal(arr);
 	SparseData right = sdata_from_svec(svec);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,0,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,subtract,left,right));
 }
 
 PG_FUNCTION_INFO_V1( float8arr_plus_float8arr );
@@ -967,7 +962,7 @@ float8arr_plus_float8arr(PG_FUNCTION_ARGS)
 	SparseData left  = sdata_uncompressed_from_float8arr_internal(arr1);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr2);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,1,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,add,left,right));
 }
 PG_FUNCTION_INFO_V1( svec_plus_float8arr );
 Datum
@@ -978,7 +973,7 @@ svec_plus_float8arr(PG_FUNCTION_ARGS)
 	SparseData left = sdata_from_svec(svec);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,1,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,add,left,right));
 }
 PG_FUNCTION_INFO_V1( float8arr_plus_svec );
 Datum
@@ -989,7 +984,7 @@ float8arr_plus_svec(PG_FUNCTION_ARGS)
 	SparseData left = sdata_uncompressed_from_float8arr_internal(arr);
 	SparseData right = sdata_from_svec(svec);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,1,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,add,left,right));
 }
 PG_FUNCTION_INFO_V1( float8arr_mult_float8arr );
 Datum
@@ -1000,7 +995,7 @@ float8arr_mult_float8arr(PG_FUNCTION_ARGS)
 	SparseData left  = sdata_uncompressed_from_float8arr_internal(arr1);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr2);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	SvecType *svec = svec_operate_on_sdata_pair(scalar_args,2,left,right);
+	SvecType *svec = svec_operate_on_sdata_pair(scalar_args,multiply,left,right);
 	PG_RETURN_SVECTYPE_P(svec);
 }
 PG_FUNCTION_INFO_V1( svec_mult_float8arr );
@@ -1012,7 +1007,7 @@ svec_mult_float8arr(PG_FUNCTION_ARGS)
 	SparseData left = sdata_from_svec(svec);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	SvecType *result = svec_operate_on_sdata_pair(scalar_args,2,left,right);
+	SvecType *result = svec_operate_on_sdata_pair(scalar_args,multiply,left,right);
 	PG_RETURN_SVECTYPE_P(result);
 }
 PG_FUNCTION_INFO_V1( float8arr_mult_svec );
@@ -1024,7 +1019,7 @@ float8arr_mult_svec(PG_FUNCTION_ARGS)
 	SparseData left = sdata_uncompressed_from_float8arr_internal(arr);
 	SparseData right = sdata_from_svec(svec);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,2,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,multiply,left,right));
 }
 PG_FUNCTION_INFO_V1( float8arr_div_float8arr );
 Datum
@@ -1035,7 +1030,7 @@ float8arr_div_float8arr(PG_FUNCTION_ARGS)
 	SparseData left  = sdata_uncompressed_from_float8arr_internal(arr1);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr2);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,3,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,divide,left,right));
 }
 PG_FUNCTION_INFO_V1( svec_div_float8arr );
 Datum
@@ -1046,7 +1041,7 @@ svec_div_float8arr(PG_FUNCTION_ARGS)
 	SparseData left = sdata_from_svec(svec);
 	SparseData right = sdata_uncompressed_from_float8arr_internal(arr);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,3,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,divide,left,right));
 }
 PG_FUNCTION_INFO_V1( float8arr_div_svec );
 Datum
@@ -1057,7 +1052,7 @@ float8arr_div_svec(PG_FUNCTION_ARGS)
 	SparseData left = sdata_uncompressed_from_float8arr_internal(arr);
 	SparseData right = sdata_from_svec(svec);
 	int scalar_args = check_scalar(SDATA_IS_SCALAR(left),SDATA_IS_SCALAR(right));
-	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,3,left,right));
+	PG_RETURN_SVECTYPE_P(svec_operate_on_sdata_pair(scalar_args,divide,left,right));
 }
 PG_FUNCTION_INFO_V1( svec_dot_float8arr );
 Datum
@@ -1069,7 +1064,7 @@ svec_dot_float8arr(PG_FUNCTION_ARGS)
 	SparseData left = sdata_from_svec(svec);
 	SparseData mult_result;
 	double accum;
-	mult_result = op_sdata_by_sdata(2,left,right);
+	mult_result = op_sdata_by_sdata(multiply,left,right);
 	accum = sum_sdata_values_double(mult_result);
 	freeSparseData(right);
 	freeSparseDataAndData(mult_result);
@@ -1086,7 +1081,7 @@ float8arr_dot_svec(PG_FUNCTION_ARGS)
 	SparseData right = sdata_from_svec(svec);
 	SparseData mult_result;
 	double accum;
-	mult_result = op_sdata_by_sdata(2,left,right);
+	mult_result = op_sdata_by_sdata(multiply,left,right);
 	accum = sum_sdata_values_double(mult_result);
 	freeSparseData(left);
 	freeSparseDataAndData(mult_result);
