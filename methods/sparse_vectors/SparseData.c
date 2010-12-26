@@ -1,3 +1,10 @@
+/**
+ * @file
+ * This file implements different operations on the SparseData structure.
+ * Most functions on sparse vectors are first defined on SparseData, and
+ * then packaged up as functions on sparse vectors using wrappers. 
+ */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -9,13 +16,6 @@
 #include "parser/parse_func.h"
 #include "access/htup.h"
 #include "catalog/pg_proc.h"
-
-/**
- * @file
- * This file implements different operations on the SparseData structure.
- * Most functions on sparse vectors are first defined on SparseData, and
- * then packaged up as functions on sparse vectors using wrappers. 
- */
 
 /**
  * Constructors for a SparseData structure
@@ -441,6 +441,10 @@ static bool lapply_error_checking(Oid foid, List * funcname);
 /**
  * This function applies an input function on all elements of a sparse data. 
  * The function is modelled after the corresponding function in R.
+ *
+ * @param func the name of the function to apply
+ * @param sdata the input sparse data to be modified
+ * @see lapply_error_checking()
  */
 SparseData lapply(text * func, SparseData sdata) {
 	Oid argtypes[1] = { FLOAT8OID };
