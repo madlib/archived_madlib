@@ -393,9 +393,8 @@ SparseData reverse(SparseData sdata) {
 	return ret;
 }
 
-/**
- * This function returns the concatenation of two input sparse data.
- * Copies of the input sparse data are made.
+/** Blah This function returns the concatenation of two input sparse data.
+ *  Copies of the input sparse data are made.
  */
 SparseData concat(SparseData left, SparseData right) {
 	if (left == NULL && right == NULL) {
