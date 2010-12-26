@@ -8,11 +8,34 @@ select dmax(1000,NULL);
 select dmax(NULL,1000);
 select dmax(NULL,NULL);
 
-select svec_count('{1}:{0}', '{1}:{1}');
-select svec_count('{1}:{0}', '{1}:{NULL}');
-select svec_count('{1,2,1}:{2,4,2}', '{2,1,1}:{0,3,5}');
-select svec_count('{1,2,1}:{2,4,2}', '{2,1,1}:{NULL,3,5}');
+drop table if exists test_pairs;
+create table test_pairs( id int, a svec, b svec ) distributed by (id);
+insert into test_pairs values (0, '{1,100,1}:{5,0,5}', '{50,50,2}:{1,2,10}');
+insert into test_pairs values 
+       (1, '{1}:{0}'::svec, '{1}:{1}'::svec),
+       (2, '{1}:{0}'::svec, '{1}:{NULL}'::svec),
+       (3, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{0,3,5}'::svec),
+       (4, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{NULL,3,5}'::svec);
+
+select svec_count(a,b) from test_pairs;
+select svec_plus(a,b) from test_pairs;
+select svec_plus(a,b) = svec_plus(b,a) from test_pairs;
+select svec_mult(a,b) from test_pairs;
+select svec_mult(a,b) = svec_mult(b,a) from test_pairs;
+select svec_div(a,b) = svec_mult(a, svec_pow(b,-1)) from test_pairs;
+select svec_minus(a, b) = svec_plus(svec_mult(-1,b), a) from test_pairs;
+select svec_pow(a,2) = svec_mult(a,a) from test_pairs;
+
+select svec_plus('{1,2,3}:{4,5,6}', 5);
+select svec_plus(5, '{1,2,3}:{4,5,6}');
+
+-- these should produce error messages 
+select '{10000000000000000000}:{1}'::svec ;
 select svec_count('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
+select svec_plus('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
+select svec_minus('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
+select svec_mult('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
+select svec_div('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 
 drop table if exists test;
 create table test (a int, b svec) DISTRIBUTED BY (a);
