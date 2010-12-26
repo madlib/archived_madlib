@@ -10,7 +10,7 @@
 #include "access/htup.h"
 #include "catalog/pg_proc.h"
 
-/**---------------------------------------------------------------------------
+/**
  * @file
  * Constructors for a SparseData structure
  *
@@ -68,7 +68,8 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 	return sdata;
 }
 
-/**----------------------------------------------------------------------------
+/**
+ * @file
  * Copy a SparseData structure including its data and index
  */
 SparseData makeSparseDataCopy(SparseData source_sdata) {
@@ -82,7 +83,8 @@ SparseData makeSparseDataCopy(SparseData source_sdata) {
 	sdata->total_value_count  = source_sdata->total_value_count;
 	return sdata;
 }
-/**---------------------------------------------------------------------------
+/**
+ * @file
  * Create a SparseData of size dimension from a constant
  */
 SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
@@ -114,7 +116,7 @@ void freeSparseDataAndData(SparseData sdata) {
 	freeSparseData(sdata);
 }
 
-/**----------------------------------------------------------------------------
+/**
  * Copy a StringInfo structure
  */
 StringInfo copyStringInfo(StringInfo sinfo) {
@@ -131,7 +133,7 @@ StringInfo copyStringInfo(StringInfo sinfo) {
 	return result;
 }
 
-/**----------------------------------------------------------------------------
+/**
  * Make a StringInfo from a data pointer and length
  */
 StringInfo makeStringInfoFromData(char *data,int len) {
@@ -144,13 +146,13 @@ StringInfo makeStringInfoFromData(char *data,int len) {
 	return sinfo;
 }
 
-/**----------------------------------------------------------------------------
+/**
  * Convert a double[] to a SparseData compressed format, representing duplicate
  * values in the double[] by a count and a single value.
  * Note that special double values like denormalized numbers and exceptions
  * like NaN are treated like any other value - if there are duplicates, the
  * value of the special number is preserved and they are counted.
- *-----------------------------------------------------------------------------
+ *
  */
 SparseData float8arr_to_sdata(double *array, int count) {
 	return arr_to_sdata((char *)array, sizeof(float8), FLOAT8OID, count);
@@ -186,9 +188,9 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	return sdata;
 }
 
-/**----------------------------------------------------------------------------
+/**
  * Convert a SparseData compressed structure to a float8[]
- *-----------------------------------------------------------------------------
+ *
  */
 double *sdata_to_float8arr(SparseData sdata) {
 	double *array;
@@ -245,9 +247,9 @@ int64 *sdata_index_to_int64arr(SparseData sdata) {
 	return(array_ix);
 }
 
-/**----------------------------------------------------------------------------
+/**
  * Serialize a SparseData compressed structure
- *-----------------------------------------------------------------------------
+ *
  */
 void serializeSparseData(char *target, SparseData source)
 {
@@ -291,7 +293,7 @@ void printSparseData(SparseData sdata) {
 	}
 }
 
-/**--------------------------------------------------------------------------- 
+/**
  * This function projects onto an element of a SparseData. As in normal in 
  * SQL, we start counting from one. 
  */
@@ -319,7 +321,7 @@ double sd_proj(SparseData sdata, int idx) {
 	return vals[i];
 }
 
-/**--------------------------------------------------------------------------
+/**
  * This function extracts a sub-array, indexed by start and end, of a 
  * SparseData. The indices begin at one.
  */
@@ -369,7 +371,7 @@ SparseData subarr(SparseData sdata, int start, int end) {
 	return ret;
 }
 
-/**-------------------------------------------------------------------------
+/**
  * This function returns a copy of the input SparseData, with the order of the
  * elements reversed. The function is non-destructive to the input SparseData.
  */
@@ -391,9 +393,8 @@ SparseData reverse(SparseData sdata) {
 	return ret;
 }
 
-/**--------------------------------------------------------------------------
- * This function returns the concatenation of two input sparse data.
- * Copies of the input sparse data are made.
+/** Blah This function returns the concatenation of two input sparse data.
+ *  Copies of the input sparse data are made.
  */
 SparseData concat(SparseData left, SparseData right) {
 	if (left == NULL && right == NULL) {
@@ -432,7 +433,7 @@ SparseData concat(SparseData left, SparseData right) {
 
 static bool lapply_error_checking(Oid foid, List * funcname);
 
-/**--------------------------------------------------------------------------
+/**
  * This function applies an input function on all elements of a sparse data. 
  * The function is modelled after the corresponding function in R.
  */
