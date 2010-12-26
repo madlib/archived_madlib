@@ -12,6 +12,12 @@
 
 /**
  * @file
+ * This file implements different operations on the SparseData structure.
+ * Most functions on sparse vectors are first defined on SparseData, and
+ * then packaged up as functions on sparse vectors using wrappers. 
+ */
+
+/**
  * Constructors for a SparseData structure
  *
  * There are different ways to do this:
@@ -69,7 +75,6 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 }
 
 /**
- * @file
  * Copy a SparseData structure including its data and index
  */
 SparseData makeSparseDataCopy(SparseData source_sdata) {
@@ -84,7 +89,6 @@ SparseData makeSparseDataCopy(SparseData source_sdata) {
 	return sdata;
 }
 /**
- * @file
  * Create a SparseData of size dimension from a constant
  */
 SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
@@ -393,7 +397,8 @@ SparseData reverse(SparseData sdata) {
 	return ret;
 }
 
-/** Blah This function returns the concatenation of two input sparse data.
+/** 
+ * This function returns the concatenation of two input sparse data.
  *  Copies of the input sparse data are made.
  */
 SparseData concat(SparseData left, SparseData right) {
