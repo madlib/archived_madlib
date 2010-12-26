@@ -89,6 +89,7 @@ typedef SparseDataStruct *SparseData;
  * 		int maxlen;
  * 		int cursor;
  */ 
+/* The extra 4 bytes in SIZEOF_SPARSEDATAHDR is for 8 byte alignment. */
 #define SIZEOF_SPARSEDATAHDR	(sizeof(SparseDataStruct)+4)
 /* Size of the sparse data structure minus the dynamic variables, plus two 
  * integers describing the length of the data area and index

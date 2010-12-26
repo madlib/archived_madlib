@@ -11,6 +11,7 @@
 #include "catalog/pg_proc.h"
 
 /**---------------------------------------------------------------------------
+ * @file
  * Constructors for a SparseData structure
  *
  * There are different ways to do this:
