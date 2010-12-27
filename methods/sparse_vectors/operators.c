@@ -1380,7 +1380,7 @@ partition_select (char **lists, size_t nlists, size_t *widths,
 					tmp,pvalue);
 		realIndex = realIndexCalc(pivotNewIndex,
 				(const char **)lists,nlists,widths);
-		int nextRealIndex = realIndexCalc(MIN(maxlen,pivotNewIndex+1),
+		int nextRealIndex = realIndexCalc(Min(maxlen,pivotNewIndex+1),
 	                                (const char **)lists,nlists,widths);
 
 		if ((realIndex <= k) && (k < nextRealIndex ))

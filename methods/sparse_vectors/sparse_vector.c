@@ -122,7 +122,7 @@ Datum float8_min(PG_FUNCTION_ARGS)
 
 	float8 left = PG_GETARG_FLOAT8(0);
 	float8 right = PG_GETARG_FLOAT8(1);
-	PG_RETURN_FLOAT8(MIN(left,right));
+	PG_RETURN_FLOAT8(Min(left,right));
 }
 
 PG_FUNCTION_INFO_V1( float8_max );
@@ -137,7 +137,7 @@ Datum float8_max(PG_FUNCTION_ARGS)
 
 	float8 left = PG_GETARG_FLOAT8(0);
 	float8 right = PG_GETARG_FLOAT8(1);
-	PG_RETURN_FLOAT8(MAX(left,right));
+	PG_RETURN_FLOAT8(Max(left,right));
 }
 
 /*
@@ -390,9 +390,9 @@ SvecType *reallocSvec(SvecType *source)
 {
 	SvecType *svec;
 	SparseData sdata = sdata_from_svec(source);
-	int val_newmaxlen = MAX(9,2*(sdata->vals->maxlen));
+	int val_newmaxlen = Max(9,2*(sdata->vals->maxlen));
 	char *newvals = (char *)palloc(val_newmaxlen);
-	int ind_newmaxlen = MAX(10,2*(sdata->index->maxlen));
+	int ind_newmaxlen = Max(10,2*(sdata->index->maxlen));
 	char *newindex = (char *)palloc(ind_newmaxlen);
 	/*
 	 * This space was never allocated with palloc, so we can't repalloc it!

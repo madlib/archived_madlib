@@ -30,9 +30,6 @@
 #include "utils/array.h"
 #include "catalog/pg_type.h"
 
-#define ABS(a)   (((a) < 0) ? -(a) : (a))
-#define MIN(a,b) (((a) < (b)) ? (a) : (b))
-#define MAX(a,b) (((a) > (b)) ? (a) : (b))
 #define CEIL(a,b) ( ((a)+(b)-1) / (b) )
 #define BCAP(a)  ( ((a) != 0) ? 1 : 0 )
 
@@ -89,8 +86,7 @@ typedef SparseDataStruct *SparseData;
  * 		int maxlen;
  * 		int cursor;
  */ 
-/* The extra 4 bytes in SIZEOF_SPARSEDATAHDR is for 8 byte alignment. */
-#define SIZEOF_SPARSEDATAHDR	(sizeof(SparseDataStruct)+4)
+#define SIZEOF_SPARSEDATAHDR	MAXALIGN(sizeof(SparseDataStruct))
 /* Size of the sparse data structure minus the dynamic variables, plus two 
  * integers describing the length of the data area and index
  * Takes a SparseData argument 
@@ -795,7 +791,7 @@ static inline SparseData op_sdata_by_sdata(enum operation_t operation,
 	right_run_length = compword_to_int8(riptr);
 	int left_lst=0,right_lst=0;
 	int left_nxt=left_run_length,right_nxt=right_run_length;
-	int nextpos = MIN(left_nxt,right_nxt),lastpos=0;
+	int nextpos = Min(left_nxt,right_nxt),lastpos=0;
 	int i=0,j=0;
 	size_t width = size_of_type(left->type_of_data);
 
@@ -863,7 +859,7 @@ static inline SparseData op_sdata_by_sdata(enum operation_t operation,
 		left_nxt=left_run_length+left_lst;
 		right_nxt=right_run_length+right_lst;
 		lastpos=nextpos;
-		nextpos = MIN(left_nxt,right_nxt);
+		nextpos = Min(left_nxt,right_nxt);
 	}
 
 	/*
