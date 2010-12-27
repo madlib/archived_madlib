@@ -1,8 +1,14 @@
 /**
  * @file
- * This file implements different operations on the SparseData structure.
+ * \brief This file implements different operations on the SparseData structure.
+ *
  * Most functions on sparse vectors are first defined on SparseData, and
  * then packaged up as functions on sparse vectors using wrappers. 
+ *
+ * This is the general procedure for adding functionalities to sparse vectors:
+ *  1. Write the function for SparseData.
+ *  2. Wrap it up for SvecType in operators.c or sparse_vectors.c.
+ *  3. Make the function available in gp_svec.sql.
  */
 
 #include <stdio.h>
@@ -18,14 +24,8 @@
 #include "catalog/pg_proc.h"
 
 /**
- * Constructors for a SparseData structure
- *
- * There are different ways to do this:
- *  - First way allocates empty dynamic StringInfo of unknown initial sizes.
- *  - Second way creates a copy of an existing SparseData.
- *  - Third way creates a SparseData with zero storage in its StringInfos.
- *  - Fourth way creates a SparseData in place using pointers to the vals and
- *    index data
+ * Constructors for a SparseData structure - Allocates empty dynamic 
+ * StringInfo of unknown initial sizes.
  */
 SparseData makeSparseData(void) {
 	/* Allocate the struct */
@@ -44,6 +44,10 @@ SparseData makeSparseData(void) {
 	return sdata;
 }
 
+/** 
+ * Constructor for a SparseData structure - Creates a SparseData with 
+ * zero storage in its StringInfos.
+ */
 SparseData makeEmptySparseData(void) {
 	/* Allocate the struct */
 	SparseData sdata = makeSparseData();
@@ -58,6 +62,10 @@ SparseData makeEmptySparseData(void) {
 	return sdata;
 }
 
+/**
+ * Constructor for a SparseData structure - Creates a SparseData in place 
+ * using pointers to the vals and index data
+ */
 SparseData makeInplaceSparseData(char *vals, char *index,
 		int datasize, int indexsize, Oid datatype,
 		int unique_value_count, int total_value_count) {
@@ -75,7 +83,8 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 }
 
 /**
- * Copy a SparseData structure including its data and index
+ * Constructor for a SparseData structure - Creates a copy of an existing 
+ * SparseData. 
  */
 SparseData makeSparseDataCopy(SparseData source_sdata) {
 	/* Allocate the struct */
@@ -108,12 +117,18 @@ SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 	return sdata;
 }
 
+/**
+ * Destructor for SparseData
+ */
 void freeSparseData(SparseData sdata) {
 	pfree(sdata->vals);
 	pfree(sdata->index);
 	pfree(sdata);
 }
 
+/** 
+ * Destructor for SparseData
+ */
 void freeSparseDataAndData(SparseData sdata) {
 	pfree(sdata->vals->data);
 	pfree(sdata->index->data);
@@ -194,7 +209,6 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 
 /**
  * Convert a SparseData compressed structure to a float8[]
- *
  */
 double *sdata_to_float8arr(SparseData sdata) {
 	double *array;
@@ -283,7 +297,9 @@ void serializeSparseData(char *target, SparseData source)
 	}
 }
 
-void printSparseData(SparseData sdata);
+/**
+ * Print a SparseData
+ */
 void printSparseData(SparseData sdata) {
 	int value_count = sdata->unique_value_count;
 	{
@@ -442,8 +458,8 @@ static bool lapply_error_checking(Oid foid, List * funcname);
  * This function applies an input function on all elements of a sparse data. 
  * The function is modelled after the corresponding function in R.
  *
- * @param func the name of the function to apply
- * @param sdata the input sparse data to be modified
+ * @param func The name of the function to apply
+ * @param sdata The input sparse data to be modified
  * @see lapply_error_checking()
  */
 SparseData lapply(text * func, SparseData sdata) {
@@ -462,6 +478,11 @@ SparseData lapply(text * func, SparseData sdata) {
 	return result;
 }
 
+/**
+ * This function checks for error conditions in lapply() function calls.
+ * @param foid The object ID of the function to apply
+ * @param func The internal name-list representation of the function to apply
+ */
 static bool lapply_error_checking(Oid foid, List * func) {
 	/* foid != InvalidOid; otherwise LookupFuncName would raise error.
 	   Here we check that the return type of foid is float8. */
@@ -481,11 +502,6 @@ static bool lapply_error_checking(Oid foid, List * func) {
 	return true;
 }
 
-/* 
- * General procedure for adding functionalities:
- *  - write function for SparseData
- *  - wrap it up for svecs in operators.c or sparse_vectors.c
- *  - make it available in gp_svec.sql
- */
+
 
 
