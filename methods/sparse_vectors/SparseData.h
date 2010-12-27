@@ -9,7 +9,7 @@
  * is duplicated.
  * All storage is allocated with palloc().
  *
- * NOTE
+ * NOTE:
  * The SparseData structure is an in-memory structure and so must be
  * serialized into a persisted structure like a VARLENA when leaving
  * a GP / Postgres function.  This implies a COPY from the SparseData
@@ -55,7 +55,7 @@ typedef struct SparseDataStruct
 
 typedef SparseDataStruct *SparseData;
 
-/** Calculate the size of a serialized SparseData based on the actual consumed
+/** Calculates the size of a serialized SparseData based on the actual consumed
  * length of the StringInfo data and StringInfoData structures.
  */
 /*------------------------------------------------------------------------------
@@ -104,6 +104,7 @@ typedef SparseDataStruct *SparseData;
 #define SDATA_UNIQUE_VALCNT(x)	(((SparseData)(x))->unique_value_count)
 #define SDATA_TOTAL_VALCNT(x)	(((SparseData)(x))->total_value_count)
 
+/** Returns whether a SparseData is a scalar */
 #define SDATA_IS_SCALAR(x)	(((((x)->unique_value_count)==((x)->total_value_count))&&((x)->total_value_count==1)) ? 1 : 0)
 
 /** Calculate the size of the integer count in an RLE index provided the pointer
@@ -117,6 +118,9 @@ typedef SparseDataStruct *SparseData;
 #define	int8compstoragesize(ptr) \
  (((ptr) == NULL) ? 0 : (((*((char *)(ptr)) < 0) ? 1 : (1 + *((char *)(ptr))))))
 
+/** Transforms an int64 value to an RLE entry.  The entry is placed in the
+ * provided entry[] array and will have a variable size depending on the value.
+ */
 static inline void int8_to_compword(int64 num, char entry[9]);
 
 /** Serialization function */
