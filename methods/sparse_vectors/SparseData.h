@@ -1,7 +1,6 @@
-/*------------------------------------------------------------------------------
- *
- * SparseData.h
- *        Declarations/definitions for "SparseData" functions.
+/**
+ * @file
+ * \brief SparseData.h -- Declarations/definitions for "SparseData" functions.
  *
  * SparseData provides array storage for repetitive data as commonly found
  * in numerical analysis of sparse arrays and matrices.
@@ -10,14 +9,11 @@
  * is duplicated.
  * All storage is allocated with palloc().
  *
- * ***NOTE***
+ * NOTE
  * The SparseData structure is an in-memory structure and so must be
  * serialized into a persisted structure like a VARLENA when leaving
  * a GP / Postgres function.  This implies a COPY from the SparseData
  * to the VARLENA.
- * ***NOTE***
- *
- *------------------------------------------------------------------------------
  */
 
 #ifndef SPARSEDATA_H
@@ -33,9 +29,8 @@
 #define CEIL(a,b) ( ((a)+(b)-1) / (b) )
 #define BCAP(a)  ( ((a) != 0) ? 1 : 0 )
 
-/*------------------------------------------------------------------------------
+/**
  * SparseData holds information about a sparse array of values
- *------------------------------------------------------------------------------
  */
 typedef struct SparseDataStruct
 {
@@ -60,7 +55,7 @@ typedef struct SparseDataStruct
 
 typedef SparseDataStruct *SparseData;
 
-/* Calculate the size of a serialized SparseData based on the actual consumed
+/** Calculate the size of a serialized SparseData based on the actual consumed
  * length of the StringInfo data and StringInfoData structures.
  */
 /*------------------------------------------------------------------------------
@@ -87,7 +82,7 @@ typedef SparseDataStruct *SparseData;
  * 		int cursor;
  */ 
 #define SIZEOF_SPARSEDATAHDR	MAXALIGN(sizeof(SparseDataStruct))
-/* Size of the sparse data structure minus the dynamic variables, plus two 
+/** Size of the sparse data structure minus the dynamic variables, plus two 
  * integers describing the length of the data area and index
  * Takes a SparseData argument 
  */
@@ -111,8 +106,7 @@ typedef SparseDataStruct *SparseData;
 
 #define SDATA_IS_SCALAR(x)	(((((x)->unique_value_count)==((x)->total_value_count))&&((x)->total_value_count==1)) ? 1 : 0)
 
-/*
- * Calculate the size of the integer count in an RLE index provided the pointer
+/** Calculate the size of the integer count in an RLE index provided the pointer
  * to the start of the count entry
  *
  * The size of a compressed int8 is stored in the first element of the ptr 
@@ -125,7 +119,7 @@ typedef SparseDataStruct *SparseData;
 
 static inline void int8_to_compword(int64 num, char entry[9]);
 
-/* Serialization functions */
+/** Serialization function */
 void serializeSparseData(char *target, SparseData source);
 
 /* Constructors and destructors */
@@ -158,6 +152,7 @@ SparseData subarr(SparseData sdata, int start, int end);
 SparseData reverse(SparseData sdata);
 SparseData concat(SparseData left, SparseData right);
 
+/** Returns the size of each basic type */
 static inline size_t
 size_of_type(Oid type)
 {
@@ -173,6 +168,10 @@ size_of_type(Oid type)
 	return(1);
 }
 
+/** Appends a count to the count array 
+ * @param index The count array
+ * @param run_len The new count to be added to the count array
+ */
 static inline void append_to_rle_index(StringInfo index, int64 run_len)
 {
 	char bytes[]={0,0,0,0,0,0,0,0,0}; /* 9 bytes into which the compressed
@@ -182,6 +181,12 @@ static inline void append_to_rle_index(StringInfo index, int64 run_len)
 	appendBinaryStringInfo(index,bytes,int8compstoragesize(bytes));
 }
 
+/** Adds a new block to a SparseData
+ * @param run_val The value of the block
+ * @param run_len The length of the block
+ * @param width The size of each data element
+ * @param sdata The SparseData to which the new block is to be added
+ */
 static inline void add_run_to_sdata(char *run_val, int64 run_len, size_t width,
 		SparseData sdata)
 {
@@ -212,8 +217,7 @@ static inline void add_run_to_sdata(char *run_val, int64 run_len, size_t width,
  * 	2147483648 - max	count word is 8 bytes, signed int64
  *------------------------------------------------------------------------------
  */
-/*
- * Transform an int64 value to an RLE entry.  The entry is placed in the
+/** Transforms an int64 value to an RLE entry.  The entry is placed in the
  * provided entry[] array and will have a variable size depending on the value.
  */
 static inline void int8_to_compword(int64 num, char entry[9])
@@ -243,8 +247,7 @@ static inline void int8_to_compword(int64 num, char entry[9])
 	entry[0] = 8;
 }
 
-/*
- * Transform a count entry into an int64 value when provided with a pointer
+/** Transforms a count entry into an int64 value when provided with a pointer
  * to an entry.
  */
 static inline int64 compword_to_int8(const char *entry)
@@ -554,6 +557,8 @@ static inline void printout_sdata(SparseData sdata, char *msg, int stop)
 		break; \
 }
 
+/** Checks that two SparseData have the same dimension
+ */
 static inline void
 check_sdata_dimensions(SparseData left, SparseData right)
 {
@@ -566,12 +571,11 @@ check_sdata_dimensions(SparseData left, SparseData right)
 	}
 }
 
-/*
- * Do one of subtract, add, multiply, or divide depending on
- * the value of operation.
- */
 enum operation_t { subtract, add, multiply, divide };
 
+/** Do one of subtract, add, multiply, or divide depending on
+ * the value of operation.
+ */
 static inline void op_sdata_by_scalar_inplace(enum operation_t operation,
 		char *scalar, SparseData sdata, bool scalar_is_right)
 {
@@ -625,8 +629,7 @@ static inline SparseData op_sdata_by_scalar_copy(enum operation_t operation,
 	return sdata;
 }
 
-/*
- * Exponentiate an sdata left argument with a right scalar
+/** Exponentiates an sdata left argument with a right scalar
  */
 static inline SparseData pow_sdata_by_scalar(SparseData sdata,
 		char *scalar)
@@ -662,8 +665,7 @@ static inline SparseData quad_sdata(SparseData sdata)
 	return(result);
 }
 
-/* 
- * Checks the equality of two SparseData. We can't assume that two 
+/** Checks the equality of two SparseData. We can't assume that two 
  * SparseData are in canonical form.
  *
  * The algorithm is simple: we traverse the left SparseData element by 
@@ -726,8 +728,7 @@ static inline double id(double x) { return x; }
 static inline double square(double x) { return x*x; }
 static inline double myabs(double x) { return (x < 0) ? -(x) : x ; }
 
-/* 
- * The following function is introduced to capture a common routine for 
+/** This function is introduced to capture a common routine for 
  * traversing a SparseData, transforming each element as we go along and 
  * summing up the transformed elements. The method is non-destructive to 
  * the input SparseData.
@@ -761,8 +762,7 @@ static inline double l1norm_sdata_values_double(SparseData sdata) {
 	return accum_sdata_values_double(sdata, myabs);
 }
 
-/*------------------------------------------------------------------------------
- * Addition, Scalar Product, Division between SparseData arrays
+/** Addition, Scalar Product, Division between SparseData arrays
  *
  * There are a few factors to consider:
  * - The dimension of the left and right arguments must be the same
