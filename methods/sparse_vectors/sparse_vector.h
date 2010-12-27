@@ -1,11 +1,7 @@
-/*------------------------------------------------------------------------------
+/**
+ * @file
+ * \brief Persistent storage for the Sparse Vector Datatype
  *
- * Persistent storage for the Sparse Vector Datatype
- *
- * Consists of the dimension of the vector (how many elements) and a SparseData
- * structure that stores the data in a compressed format.
- *
- *------------------------------------------------------------------------------
  */
 
 #ifndef SPARSEVECTOR_H
@@ -14,6 +10,10 @@
 #include "SparseData.h"
 #include "float_specials.h"
 
+/**
+ * Consists of the dimension of the vector (how many elements) and a SparseData
+ * structure that stores the data in a compressed format.
+ */
 typedef struct {
 	int4 vl_len_;
 	int4 dimension; /* Number of elements in this vector, special case is
@@ -49,9 +49,10 @@ typedef struct {
 #define SVEC_INDEX_SIZE(x) 	(SDATA_INDEX_SIZE(SVEC_SDATAPTR(x)))
 #define SVEC_INDEX_PTR(x) 	(SDATA_INDEX_PTR(SVEC_SDATAPTR(x)))
 
-/* If the dimension is -1, this is a scalar */
+/** If the dimension is -1, this is a scalar */
 #define IS_SCALAR(x)	(((x)->dimension) < 0 ? 1 : 0 )
 
+/** Checks whether a value is a NULL, represented internally as a NVP */
 #define IS_NVP(x)  (memcmp(&(x),&(NVP),sizeof(double)) == 0)
 
 static inline int check_scalar(int i1, int i2)

@@ -1,3 +1,12 @@
+/*
+ * @file
+ * Sparse Vector Datatype
+ *   We would like to store sparse arrays in a terse representation that fits 
+ *   in a small amount of memory.
+ *   We also want to be able to compare the number of instances where the svec 
+ *   of one document intersects another.
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <search.h>
@@ -18,17 +27,8 @@
 #include "utils/memutils.h"
 #include "sparse_vector.h"
 
-/*
- * Sparse Vector Datatype
- *   We would like to store sparse arrays in a terse representation that fits 
- *   in a small amount of memory.
- *   We also want to be able to compare the number of instances where the svec 
- *   of one document intersects another.
- *
- */
-
-/*
- * Input and Output routines
+/**
+ * Converts an sparse vector into an array of float8s
  */
 ArrayType *svec_return_array_internal(SvecType *svec)
 {
@@ -62,7 +62,7 @@ ArrayType *svec_return_array_internal(SvecType *svec)
  *
  */
 
-/*
+/**
  *  svec_send - converts text to binary format
  */
 PG_FUNCTION_INFO_V1(svec_send);
@@ -83,7 +83,7 @@ Datum svec_send(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
-/*
+/**
  *  svec_recv - converts external binary format to text
  */
 PG_FUNCTION_INFO_V1(svec_recv);
@@ -140,7 +140,7 @@ Datum float8_max(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(Max(left,right));
 }
 
-/*
+/**
  *  svec_return_array - returns an uncompressed Array
  */
 PG_FUNCTION_INFO_V1( svec_return_array );
@@ -151,7 +151,7 @@ Datum svec_return_array(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(pgarray);
 }
 
-/*
+/**
  *  svec_out - outputs a sparse vector as a C string
  */
 PG_FUNCTION_INFO_V1(svec_out);
@@ -206,7 +206,7 @@ char * svec_out_internal(SvecType *svec)
 	return(result);
 }
 
-/*
+/**
  *  svec_in - reads in a string and convert that to an svec
  */
 PG_FUNCTION_INFO_V1(svec_in);
@@ -327,8 +327,8 @@ Datum svec_in(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(result);
 }
 
-/*
- * Produce an svec from a SparseData
+/**
+ * Produces an svec from a SparseData
  */
 SvecType *svec_from_sparsedata(SparseData sdata, bool trim)
 {
@@ -353,8 +353,8 @@ SvecType *svec_from_sparsedata(SparseData sdata, bool trim)
 	return (result);
 }
 
-/*
- * Produce an svec from an array
+/**
+ * Produces an svec from an array
  */
 SvecType *svec_from_float8arr(float8 *array, int dimension)
 {
@@ -363,8 +363,8 @@ SvecType *svec_from_float8arr(float8 *array, int dimension)
 	return result;
 }
 
-/*
- * Make an empty svec with sufficient memory allocated for the input number
+/**
+ * Makes an empty svec with sufficient memory allocated for the input number
  */
 SvecType *makeEmptySvec(int allocation)
 {
@@ -383,8 +383,8 @@ SvecType *makeEmptySvec(int allocation)
 	return(svec);
 }
 
-/*
- * Allocate more space for the count and data arrays of an svec
+/**
+ * Allocates more space for the count and data arrays of an svec
  */
 SvecType *reallocSvec(SvecType *source)
 {
