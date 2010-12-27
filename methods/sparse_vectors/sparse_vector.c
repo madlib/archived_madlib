@@ -62,10 +62,10 @@ ArrayType *svec_return_array_internal(SvecType *svec)
  *
  */
 
+PG_FUNCTION_INFO_V1(svec_send);
 /**
  *  svec_send - converts text to binary format
  */
-PG_FUNCTION_INFO_V1(svec_send);
 Datum svec_send(PG_FUNCTION_ARGS)
 {
 	StringInfoData buf;
@@ -83,10 +83,11 @@ Datum svec_send(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
+
+PG_FUNCTION_INFO_V1(svec_recv);
 /**
  *  svec_recv - converts external binary format to text
  */
-PG_FUNCTION_INFO_V1(svec_recv);
 Datum svec_recv(PG_FUNCTION_ARGS)
 {
 	StringInfo buf = (StringInfo) PG_GETARG_POINTER(0);
@@ -140,10 +141,10 @@ Datum float8_max(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(Max(left,right));
 }
 
+PG_FUNCTION_INFO_V1( svec_return_array );
 /**
  *  svec_return_array - returns an uncompressed Array
  */
-PG_FUNCTION_INFO_V1( svec_return_array );
 Datum svec_return_array(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
@@ -151,10 +152,10 @@ Datum svec_return_array(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(pgarray);
 }
 
+PG_FUNCTION_INFO_V1(svec_out);
 /**
  *  svec_out - outputs a sparse vector as a C string
  */
-PG_FUNCTION_INFO_V1(svec_out);
 Datum svec_out(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
@@ -206,10 +207,10 @@ char * svec_out_internal(SvecType *svec)
 	return(result);
 }
 
+PG_FUNCTION_INFO_V1(svec_in);
 /**
  *  svec_in - reads in a string and convert that to an svec
  */
-PG_FUNCTION_INFO_V1(svec_in);
 Datum svec_in(PG_FUNCTION_ARGS)
 {
 	char *str = pstrdup(PG_GETARG_CSTRING(0));
