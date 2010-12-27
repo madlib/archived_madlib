@@ -1,8 +1,9 @@
-/*************************************************************************
+/*
+ * @file
  * This module defines a collection of operators for svecs. The functions 
  * are usually wrappers that call the corresponding operators defined for
  * SparseData.
- *************************************************************************/
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,10 +19,10 @@
 
 #include "sparse_vector.h"
 
-/* 
- * For many functions defined below, the operation has no meaning if the 
- * array dimensions aren't the same, unless one of the inputs is a scalar.
- * This routine checks that condition.
+/** 
+ * For many functions defined in this module, the operation has no meaning 
+ * if the array dimensions aren't the same, unless one of the inputs is a 
+ * scalar. This routine checks that condition.
  */ 
 void check_dimension(SvecType *svec1, SvecType *svec2, char *msg) {
 	if ((!IS_SCALAR(svec1)) &&
@@ -35,7 +36,7 @@ void check_dimension(SvecType *svec1, SvecType *svec2, char *msg) {
 	}
 }
 
-/*
+/**
  *  svec_dimension - returns the number of elements in an svec
  */
 Datum svec_dimension(PG_FUNCTION_ARGS);
@@ -47,7 +48,7 @@ Datum svec_dimension(PG_FUNCTION_ARGS)
 	PG_RETURN_INT32(svec->dimension);
 }
 
-/*
+/**
  *  svec_lapply - applies a function to every element of an svec
  */
 Datum svec_lapply(PG_FUNCTION_ARGS);
@@ -61,7 +62,7 @@ Datum svec_lapply(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(lapply(func,in),true));
 }
 
-/*
+/**
  *  svec_concat_replicate - replicates an svec multiple times
  */
 Datum svec_concat_replicate(PG_FUNCTION_ARGS);
@@ -97,7 +98,7 @@ Datum svec_concat_replicate(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata,true));
 }
 
-/*
+/**
  *  svec_concat - concatenates two svecs
  */
 Datum svec_concat(PG_FUNCTION_ARGS);
@@ -120,7 +121,7 @@ Datum svec_concat(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata,true));
 }
 
-/*
+/**
  *  svec_append - appends a block (count,value) to the end of an svec
  */
 Datum svec_append(PG_FUNCTION_ARGS);
@@ -137,7 +138,7 @@ Datum svec_append(PG_FUNCTION_ARGS)
 }
 
 
-/*
+/**
  *  svec_proj - projects onto an element of an svec
  */
 Datum svec_proj(PG_FUNCTION_ARGS);
@@ -158,7 +159,7 @@ Datum svec_proj(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(sd_proj(in,idx));
 }
 
-/*
+/**
  *  svec_subvec - computes a subvector of an svec
  */
 Datum svec_subvec(PG_FUNCTION_ARGS);
@@ -176,7 +177,7 @@ Datum svec_subvec(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(subarr(in,start,end),true));
 }
 
-/*
+/**
  *  svec_reverse - makes a copy of the input svec, with the order of 
  *                 the elements reversed
  */
@@ -192,7 +193,7 @@ Datum svec_reverse(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(reverse(in),true));
 }
 
-/*
+/**
  *  svec_change - makes a copy of the input svec, with the subvector 
  *                starting at a given location changed to another input svec.
  */
@@ -239,7 +240,7 @@ Datum svec_change(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(ret,true));
 }
 
-/*
+/**
  *  svec_eq - returns the equality of two svecs
  */
 Datum svec_eq(PG_FUNCTION_ARGS);
@@ -360,8 +361,8 @@ Datum svec_l2_ge(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(((result == 0) || (result == 1)) ? 1 : 0);
 }
 
-/*
- * Do one of subtract, add, multiply, or divide depending on value
+/**
+ * Performs one of subtract, add, multiply, or divide depending on value
  * of operation.
  */
 SvecType * svec_operate_on_sdata_pair(int scalar_args, enum operation_t op,
@@ -511,11 +512,11 @@ Datum svec_div(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(result);
 }
 
-/*
+PG_FUNCTION_INFO_V1( svec_count );
+/**
  *  svec_count - Count the number of non-zero entries in the input vector
  *               Right argument is capped at 1, then added to the left
  */
-PG_FUNCTION_INFO_V1( svec_count );
 Datum svec_count(PG_FUNCTION_ARGS)
 {
 	SvecType * svec1 = PG_GETARG_SVECTYPE_P(0);
@@ -572,10 +573,10 @@ Datum svec_count(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(result);
 }
 
-/*
+PG_FUNCTION_INFO_V1( svec_dot );
+/**
  *  svec_dot - computes the dot product of two svecs
  */
-PG_FUNCTION_INFO_V1( svec_dot );
 Datum svec_dot(PG_FUNCTION_ARGS)
 {
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
@@ -595,10 +596,10 @@ Datum svec_dot(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(accum);
 }
 
-/*
+PG_FUNCTION_INFO_V1( svec_l2norm );
+/**
  *  svec_l2norm - computes the l2 norm of an svec
  */
-PG_FUNCTION_INFO_V1( svec_l2norm );
 Datum svec_l2norm(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
@@ -611,10 +612,10 @@ Datum svec_l2norm(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(accum);
 }
 
-/*
+PG_FUNCTION_INFO_V1( svec_l1norm );
+/**
  *  svec_l1norm - computes the l1 norm of an svec
  */
-PG_FUNCTION_INFO_V1( svec_l1norm );
 Datum svec_l1norm(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
@@ -627,10 +628,10 @@ Datum svec_l1norm(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(accum);
 }
 
-/*
+PG_FUNCTION_INFO_V1( svec_summate );
+/**
  *  svec_summate - computes the sum of all the elements in an svec
  */
-PG_FUNCTION_INFO_V1( svec_summate );
 Datum svec_summate(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
@@ -643,10 +644,10 @@ Datum svec_summate(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(accum);
 }
 
-/*
+PG_FUNCTION_INFO_V1( svec_log );
+/**
  *  svec_log - computes the log of each element in an svec
  */
-PG_FUNCTION_INFO_V1( svec_log );
 Datum svec_log(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P_COPY(0);
@@ -730,7 +731,7 @@ Datum float8arr_cast_numeric(PG_FUNCTION_ARGS) {
 	PG_RETURN_ARRAYTYPE_P(svec_return_array_internal(svec_make_scalar(value)));
 }
 
-/* Constructs an 1-dimensional svec given a float8 */
+/** Constructs an 1-dimensional svec given a float8 */
 SvecType *svec_make_scalar(float8 value) {
 	SparseData sdata = float8arr_to_sdata(&value,1);
 	SvecType *result = svec_from_sparsedata(sdata,true);
@@ -738,10 +739,11 @@ SvecType *svec_make_scalar(float8 value) {
 	return result;
 }
 
-/*
+
+PG_FUNCTION_INFO_V1( svec_cast_float8arr );
+/**
  *  svec_cast_float8arr - turns a float8 array into an svec
  */
-PG_FUNCTION_INFO_V1( svec_cast_float8arr );
 Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 	ArrayType *A_PG = PG_GETARG_ARRAYTYPE_P(0);
 	SvecType *output_svec;
@@ -831,7 +833,7 @@ static bool float8arr_equals_internal(ArrayType *left, ArrayType *right)
         return true;
 }
 
-/* 
+/** 
  *  float8arr_equals - checks whether two float8 arrays are identical
  */
 Datum float8arr_equals(PG_FUNCTION_ARGS);
@@ -890,7 +892,7 @@ static SparseData sdata_uncompressed_from_float8arr_internal(ArrayType *array)
 	return(result);
 }
 
-/*
+/**
  *  float8arr_l1norm - computes the l1 norm of a float8 array
  */
 Datum float8arr_l1norm(PG_FUNCTION_ARGS);
@@ -906,7 +908,7 @@ Datum float8arr_l1norm(PG_FUNCTION_ARGS) {
 	PG_RETURN_FLOAT8(result);
 }
 
-/*
+/**
  *  float8arr_summate - sums up all the elements of a float8 array
  */
 Datum float8arr_summate(PG_FUNCTION_ARGS);
@@ -923,7 +925,7 @@ Datum float8arr_summate(PG_FUNCTION_ARGS) {
 }
 
 
-/*
+/**
  *  float8arr_l2norm - computes the l2 norm of a float8 array
  */
 Datum float8arr_l2norm(PG_FUNCTION_ARGS);
@@ -939,7 +941,7 @@ Datum float8arr_l2norm(PG_FUNCTION_ARGS) {
 	PG_RETURN_FLOAT8(result);
 }
 
-/*
+/**
  *  float8arr_dot - computes the dot product of two float8 arrays
  */
 Datum float8arr_dot(PG_FUNCTION_ARGS);
@@ -1163,7 +1165,8 @@ float8arr_hash(PG_FUNCTION_ARGS) {
 	PG_RETURN_INT32(float8arr_hash_internal(array));
 }
 
-/*
+PG_FUNCTION_INFO_V1( svec_pivot );
+/**
  * Aggregate function svec_pivot takes its float8 argument and appends it
  * to the state variable (an svec) to produce the concatenated return variable.
  * The StringInfo variables within the state variable svec are used in a way
@@ -1171,9 +1174,7 @@ float8arr_hash(PG_FUNCTION_ARGS) {
  *
  * Note that the first time this is called, the state variable should be null.
  */
-PG_FUNCTION_INFO_V1( svec_pivot );
-Datum
-svec_pivot(PG_FUNCTION_ARGS)
+Datum svec_pivot(PG_FUNCTION_ARGS)
 {
 	SvecType *svec;
 	SparseData sdata;
@@ -1448,6 +1449,9 @@ float8arr_partition_internal(float8 *array,int len,int k)
 	return (index);
 }
 
+/**
+ * Computes the median of an array of float8s
+ */
 Datum float8arr_median(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1( float8arr_median);
@@ -1465,6 +1469,9 @@ float8arr_median(PG_FUNCTION_ARGS) {
 	PG_RETURN_FLOAT8(((float8 *)(sdata->vals->data))[index]);
 }
 
+/**
+ * Computes the median of a sparse vector
+ */
 Datum svec_median(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1( svec_median);
