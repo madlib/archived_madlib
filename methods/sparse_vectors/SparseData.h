@@ -26,9 +26,6 @@
 #include "utils/array.h"
 #include "catalog/pg_type.h"
 
-#define CEIL(a,b) ( ((a)+(b)-1) / (b) )
-#define BCAP(a)  ( ((a) != 0) ? 1 : 0 )
-
 /**
  * SparseData holds information about a sparse array of values
  */
@@ -53,6 +50,9 @@ typedef struct SparseDataStruct
  * case. 
  */
 
+/** 
+ * Pointer to a SparseDataStruct
+ */
 typedef SparseDataStruct *SparseData;
 
 /** Calculates the size of a serialized SparseData based on the actual consumed
@@ -118,9 +118,6 @@ typedef SparseDataStruct *SparseData;
 #define	int8compstoragesize(ptr) \
  (((ptr) == NULL) ? 0 : (((*((char *)(ptr)) < 0) ? 1 : (1 + *((char *)(ptr))))))
 
-/** Transforms an int64 value to an RLE entry.  The entry is placed in the
- * provided entry[] array and will have a variable size depending on the value.
- */
 static inline void int8_to_compword(int64 num, char entry[9]);
 
 /** Serialization function */
@@ -156,7 +153,8 @@ SparseData subarr(SparseData sdata, int start, int end);
 SparseData reverse(SparseData sdata);
 SparseData concat(SparseData left, SparseData right);
 
-/** Returns the size of each basic type */
+/* Returns the size of each basic type 
+ */
 static inline size_t
 size_of_type(Oid type)
 {
@@ -172,9 +170,7 @@ size_of_type(Oid type)
 	return(1);
 }
 
-/** Appends a count to the count array 
- * @param index The count array
- * @param run_len The new count to be added to the count array
+/* Appends a count to the count array 
  */
 static inline void append_to_rle_index(StringInfo index, int64 run_len)
 {
@@ -185,11 +181,7 @@ static inline void append_to_rle_index(StringInfo index, int64 run_len)
 	appendBinaryStringInfo(index,bytes,int8compstoragesize(bytes));
 }
 
-/** Adds a new block to a SparseData
- * @param run_val The value of the block
- * @param run_len The length of the block
- * @param width The size of each data element
- * @param sdata The SparseData to which the new block is to be added
+/* Adds a new block to a SparseData
  */
 static inline void add_run_to_sdata(char *run_val, int64 run_len, size_t width,
 		SparseData sdata)
@@ -221,7 +213,7 @@ static inline void add_run_to_sdata(char *run_val, int64 run_len, size_t width,
  * 	2147483648 - max	count word is 8 bytes, signed int64
  *------------------------------------------------------------------------------
  */
-/** Transforms an int64 value to an RLE entry.  The entry is placed in the
+/* Transforms an int64 value to an RLE entry.  The entry is placed in the
  * provided entry[] array and will have a variable size depending on the value.
  */
 static inline void int8_to_compword(int64 num, char entry[9])
@@ -251,7 +243,7 @@ static inline void int8_to_compword(int64 num, char entry[9])
 	entry[0] = 8;
 }
 
-/** Transforms a count entry into an int64 value when provided with a pointer
+/* Transforms a count entry into an int64 value when provided with a pointer
  * to an entry.
  */
 static inline int64 compword_to_int8(const char *entry)
@@ -561,7 +553,7 @@ static inline void printout_sdata(SparseData sdata, char *msg, int stop)
 		break; \
 }
 
-/** Checks that two SparseData have the same dimension
+/* Checks that two SparseData have the same dimension
  */
 static inline void
 check_sdata_dimensions(SparseData left, SparseData right)
@@ -577,7 +569,7 @@ check_sdata_dimensions(SparseData left, SparseData right)
 
 enum operation_t { subtract, add, multiply, divide };
 
-/** Do one of subtract, add, multiply, or divide depending on
+/* Do one of subtract, add, multiply, or divide depending on
  * the value of operation.
  */
 static inline void op_sdata_by_scalar_inplace(enum operation_t operation,
@@ -633,7 +625,7 @@ static inline SparseData op_sdata_by_scalar_copy(enum operation_t operation,
 	return sdata;
 }
 
-/** Exponentiates an sdata left argument with a right scalar
+/* Exponentiates an sdata left argument with a right scalar
  */
 static inline SparseData pow_sdata_by_scalar(SparseData sdata,
 		char *scalar)
@@ -669,7 +661,7 @@ static inline SparseData quad_sdata(SparseData sdata)
 	return(result);
 }
 
-/** Checks the equality of two SparseData. We can't assume that two 
+/* Checks the equality of two SparseData. We can't assume that two 
  * SparseData are in canonical form.
  *
  * The algorithm is simple: we traverse the left SparseData element by 
@@ -732,7 +724,7 @@ static inline double id(double x) { return x; }
 static inline double square(double x) { return x*x; }
 static inline double myabs(double x) { return (x < 0) ? -(x) : x ; }
 
-/** This function is introduced to capture a common routine for 
+/* This function is introduced to capture a common routine for 
  * traversing a SparseData, transforming each element as we go along and 
  * summing up the transformed elements. The method is non-destructive to 
  * the input SparseData.
@@ -754,19 +746,23 @@ accum_sdata_values_double(SparseData sdata, double (*func)(double))
 	return (accum);
 }
 
+/* Computes the running sum of the elements of a SparseData */
 static inline double sum_sdata_values_double(SparseData sdata) {
 	return accum_sdata_values_double(sdata, id);
 }
 
+/* Computes the l2 norm of a SparseData */
 static inline double l2norm_sdata_values_double(SparseData sdata) {
 	return sqrt(accum_sdata_values_double(sdata, square));
 }
 
+/* Computes the l1 norm of a SparseData */
 static inline double l1norm_sdata_values_double(SparseData sdata) {
 	return accum_sdata_values_double(sdata, myabs);
 }
 
-/** Addition, Scalar Product, Division between SparseData arrays
+/* 
+ * Addition, Scalar Product, Division between SparseData arrays
  *
  * There are a few factors to consider:
  * - The dimension of the left and right arguments must be the same

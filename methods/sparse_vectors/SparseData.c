@@ -7,7 +7,7 @@
  *
  * This is the general procedure for adding functionalities to sparse vectors:
  *  1. Write the function for SparseData.
- *  2. Wrap it up for SvecType in operators.c or sparse_vectors.c.
+ *  2. Wrap it up for SvecType in operators.c or sparse_vector.c.
  *  3. Make the function available in gp_svec.sql.
  */
 
@@ -23,8 +23,8 @@
 #include "access/htup.h"
 #include "catalog/pg_proc.h"
 
-/**
- * Constructors for a SparseData structure - Allocates empty dynamic 
+/** 
+ * Constructor for a SparseData structure - Allocates empty dynamic 
  * StringInfo of unknown initial sizes.
  */
 SparseData makeSparseData(void) {
@@ -98,7 +98,7 @@ SparseData makeSparseDataCopy(SparseData source_sdata) {
 	return sdata;
 }
 /**
- * Create a SparseData of size dimension from a constant
+ * Creates a SparseData of size dimension from a constant
  */
 SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 	char *bytestore=(char *)palloc(sizeof(char)*9);
@@ -136,7 +136,7 @@ void freeSparseDataAndData(SparseData sdata) {
 }
 
 /**
- * Copy a StringInfo structure
+ * Copies a StringInfo structure
  */
 StringInfo copyStringInfo(StringInfo sinfo) {
 	StringInfo result;
@@ -153,7 +153,7 @@ StringInfo copyStringInfo(StringInfo sinfo) {
 }
 
 /**
- * Make a StringInfo from a data pointer and length
+ * Makes a StringInfo from a data pointer and length
  */
 StringInfo makeStringInfoFromData(char *data,int len) {
 	StringInfo sinfo;
@@ -166,7 +166,7 @@ StringInfo makeStringInfoFromData(char *data,int len) {
 }
 
 /**
- * Convert a double[] to a SparseData compressed format, representing duplicate
+ * Converts a double[] to a SparseData compressed format, representing duplicate
  * values in the double[] by a count and a single value.
  * Note that special double values like denormalized numbers and exceptions
  * like NaN are treated like any other value - if there are duplicates, the
@@ -177,6 +177,9 @@ SparseData float8arr_to_sdata(double *array, int count) {
 	return arr_to_sdata((char *)array, sizeof(float8), FLOAT8OID, count);
 }
 
+/**
+ * Converts an array (of arbitrary base type) to a compressed SparseData.
+ */
 SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	char *run_val=array;
 	int64 run_len=1;
@@ -208,7 +211,7 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 }
 
 /**
- * Convert a SparseData compressed structure to a float8[]
+ * Converts a SparseData compressed structure to a float8[]
  */
 double *sdata_to_float8arr(SparseData sdata) {
 	double *array;
@@ -252,6 +255,9 @@ double *sdata_to_float8arr(SparseData sdata) {
 	return array;
 }
 
+/**
+ * Converts the count array of a SparseData into an array of integers
+ */
 int64 *sdata_index_to_int64arr(SparseData sdata) {
 	char *iptr;
 	int64 *array_ix = (int64 *)palloc(
@@ -266,8 +272,7 @@ int64 *sdata_index_to_int64arr(SparseData sdata) {
 }
 
 /**
- * Serialize a SparseData compressed structure
- *
+ * Serializes a SparseData compressed structure
  */
 void serializeSparseData(char *target, SparseData source)
 {
@@ -298,7 +303,7 @@ void serializeSparseData(char *target, SparseData source)
 }
 
 /**
- * Print a SparseData
+ * Prints a SparseData
  */
 void printSparseData(SparseData sdata) {
 	int value_count = sdata->unique_value_count;
@@ -314,7 +319,7 @@ void printSparseData(SparseData sdata) {
 }
 
 /**
- * This function projects onto an element of a SparseData. As in normal in 
+ * Projects onto an element of a SparseData. As is normal in 
  * SQL, we start counting from one. 
  */
 double sd_proj(SparseData sdata, int idx) {
@@ -342,8 +347,7 @@ double sd_proj(SparseData sdata, int idx) {
 }
 
 /**
- * This function extracts a sub-array, indexed by start and end, of a 
- * SparseData. The indices begin at one.
+ * Extracts a sub-array, indexed by start and end, of a SparseData. 
  */
 SparseData subarr(SparseData sdata, int start, int end) {
 	char * ix = sdata->index->data;
@@ -392,7 +396,7 @@ SparseData subarr(SparseData sdata, int start, int end) {
 }
 
 /**
- * This function returns a copy of the input SparseData, with the order of the
+ * Returns a copy of a SparseData, with the order of the
  * elements reversed. The function is non-destructive to the input SparseData.
  */
 SparseData reverse(SparseData sdata) {
@@ -414,7 +418,7 @@ SparseData reverse(SparseData sdata) {
 }
 
 /** 
- * This function returns the concatenation of two input sparse data.
+ * Returns the concatenation of two input SparseData.
  *  Copies of the input sparse data are made.
  */
 SparseData concat(SparseData left, SparseData right) {
@@ -478,10 +482,7 @@ SparseData lapply(text * func, SparseData sdata) {
 	return result;
 }
 
-/**
- * This function checks for error conditions in lapply() function calls.
- * @param foid The object ID of the function to apply
- * @param func The internal name-list representation of the function to apply
+/* This function checks for error conditions in lapply() function calls.
  */
 static bool lapply_error_checking(Oid foid, List * func) {
 	/* foid != InvalidOid; otherwise LookupFuncName would raise error.
