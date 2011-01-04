@@ -1,4 +1,6 @@
 /*!
+ * \defgroup fmsketch FM Sketch
+ * \ingroup sketch
  * Flajolet-Martin JCSS 1985 distinct count estimation
  * implemented as a user-defined aggregate.
  * See http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
@@ -107,7 +109,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
 
         /*
          * convert input to a cstring
-         * we'll pfree it before we exist
+         * we'll pfree it before we exit
          */
         string = OidOutputFunctionCall(funcOid, PG_GETARG_DATUM(1));
 
@@ -183,7 +185,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
         if (transval->status != BIG)
             elog(
                 ERROR,
-                "FM sketch with more than min vals marked as SMALL");
+                "FM sketch failed internal sanity check");
 
         /* Apply FM algorithm to this string */
         retval = fmsketch_trans_c(transblob, string);
@@ -227,11 +229,11 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
     fmtransval *   transval = (fmtransval *) VARDATA(transblob);
     bytea *        bitmaps = (bytea *)transval->storage;
     uint64         index;
-    unsigned char *c;
+    uint8 *c;
     int            rmost;
     Datum          result;
 
-    c = (unsigned char *)VARDATA(DatumGetPointer(md5_datum(input)));
+    c = (uint8 *)VARDATA(DatumGetPointer(md5_datum(input)));
 
     /*
      * During the insertion we insert each element
@@ -288,17 +290,17 @@ Datum fmsketch_getcount(PG_FUNCTION_ARGS)
 Datum fmsketch_getcount_c(bytea *bitmaps)
 {
 /*  int R = 0; // Flajolet/Martin's R is handled by leftmost_zero */
-    unsigned int  S = 0;
+    uint32  S = 0;
     static double phi = 0.77351;     /*
                                       * the magic constant 
                                       * char out[NMAP*MD5_HASHLEN_BITS]; 
                                       */
     int           i;
-    unsigned int  lz;
+    uint32  lz;
 
     for (i = 0; i < NMAP; i++)
     {
-        lz = leftmost_zero((unsigned char *)VARDATA(
+        lz = leftmost_zero((uint8 *)VARDATA(
                                bitmaps), NMAP, MD5_HASHLEN_BITS, i);
         S = S + lz;
     }
@@ -402,7 +404,7 @@ Datum fmsketch_merge(PG_FUNCTION_ARGS)
 Datum big_or(bytea *bitmap1, bytea *bitmap2)
 {
     bytea *      out;
-    unsigned int i;
+    uint32 i;
 
     if (VARSIZE(bitmap1) != VARSIZE(bitmap2))
         elog(ERROR,

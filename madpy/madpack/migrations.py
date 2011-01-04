@@ -1,4 +1,12 @@
-## @package MadPackMigration
+## \defgroup madpack MadPack
+# Package manager for managing MADlib installations.
+# Provides madpack command-line tool and python modules to manage multiple 
+# tasks:
+#   - install and build libraries in the filesystem
+#   - roll forward/back database DDL to register code with database
+#   - check sanity of the DB metadata vis-a-vis what the filesystem has
+# Run <c>madpack -h</c> to see usage.
+#
 # MADPack Migrations is modeled on Django South and Rails Migrations.
 # It allows rolling forward/backward across multiple versions of MADlib.
 # Like those tools, we use a directory of migration scripts that provide
@@ -7,7 +15,7 @@
 # from individual scripts stored registered in the Install.yml for each
 # method/port.  The MADlib Config.yml file specifies the relevant method/ports
 # to install.
-
+#
 # We use two separate numbering schemes:
 #  - the Migration number is a sequence number for 
 #    roll-forward/rollback history on a particular DB/schema.  These 
@@ -62,7 +70,7 @@ class MadPackMigration:
     #  @param conf_dir the directory where Config.yml is to be found
     def __init__(self, mig_dir, conf_dir):
         ## @var conf the configuration
-        self.conf = configyml.get_config(conf_dir)        
+        self.conf = configyml.get_config(conf_dir, False)        
         api = self.conf['dbapi2']
         connect_args = self.conf['connect_args']
         dbapi2 = __import__(api, globals(), locals(), [''])
@@ -430,7 +438,7 @@ class Migration(MadPackMigration):
            exit(2)
        history = self.__mig_files_history()
        if self.mig_dir != self.conf_dir:
-           testconf = configyml.get_config(self.mig_dir)
+           testconf = configyml.get_config(self.mig_dir, False)
            if testconf != self.conf:
                print "cached " + self.mig_dir + \
                      "/Config.yml does not match " + \

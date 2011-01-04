@@ -3,7 +3,7 @@ from distutils.core import setup, Extension
 suffixes = ['c', 'h', 'py', 'in', 'yml', 'sh', 'sql', 'mk']
 additional_files = ['Makefile']
 
-conf = madpy.madpack.configyml.get_config('madpy')
+conf = madpy.madpack.configyml.get_config('madpy', True)
 rev = madpy.madpack.configyml.get_version('madpy')
 
 pkg_data = {'madlib' : []}

@@ -111,13 +111,13 @@ void find_ranges_internal(int64, int64, int, rangelist *);
 
 /* hash_counters_iterate and its lambdas */
 int64 hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
-                                unsigned int,
-                                unsigned int,
+                                uint32,
+                                uint32,
                                 countmin,
                                 int64));
 
-int64 increment_counter(unsigned int, unsigned int, countmin, int64);
-int64 min_counter(unsigned int, unsigned int, countmin, int64);
+int64 increment_counter(uint32, uint32, countmin, int64);
+int64 min_counter(uint32, uint32, countmin, int64);
 
 // bool gt(int64, int64);
 // bool eq(int64, int64);

@@ -2,7 +2,9 @@
  * Cormode-Muthukrishnan CountMin sketch
  * implemented as a user-defined aggregate.
  */
-/*
+
+/*! \defgroup countmin CountMin Sketch 
+ * \ingroup sketch
  * The basic CountMin sketch is a set of DEPTH arrays, each with NUMCOUNTERS counters.
  * The idea is that each of those arrays is used as an independent random trial of the
  * same process: each holds counts h_i(x) from a different random hash function h_i.
@@ -19,9 +21,7 @@
  * This allows us to count up ranges (like 14-48) by doing CountMin lookups up constituent
  * dyadic ranges (like {[14-15], [16-31], [32-47], [48-48]}).  Dyadic ranges are also useful
  * for histogramming, frequent values, etc.
- */
-
-/*
+ *
  * See http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf
  * for further explanation
  */
@@ -203,9 +203,9 @@ Datum cmsketch_combine(PG_FUNCTION_ARGS)
  if (PG_ARGISNULL(arg_offset)) PG_RETURN_NULL(); \
  if (sketch->typOid != get_fn_expr_argtype(fcinfo->flinfo, arg_offset)) { \
      elog(ERROR, \
-         "sketch computed over type %Ld; argument %d over type %Ld.", \
-         (long long)sketch->typOid, arg_offset, \
-         (long long)get_fn_expr_argtype(fcinfo->flinfo, arg_offset)); \
+         "sketch computed over type " INT64_FORMAT "; argument %d over type " INT64_FORMAT ".", \
+         (int64)sketch->typOid, arg_offset, \
+         (int64)get_fn_expr_argtype(fcinfo->flinfo, arg_offset)); \
      PG_RETURN_NULL(); \
  }
 
@@ -539,7 +539,7 @@ Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS)
     PG_RETURN_DATUM(retval);
 }
 /*!
- * produces an equi-width histogram
+ * produces an equi-depth histogram
  * \param transval the transition value of the agg
  * \param buckets the number of buckets in the histogram
  */
@@ -619,12 +619,12 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
 int64 hash_counters_iterate(Datum hashval,
                             countmin sketch, // width is DEPTH*NUMCOUNTERS
                             int64 initial,
-                            int64 (*lambdaptr)(unsigned int,
-                                               unsigned int,
+                            int64 (*lambdaptr)(uint32,
+                                               uint32,
                                                countmin,
                                                int64))
 {
-    unsigned int   i, col;
+    uint32   i, col;
     unsigned short twobytes;
     int64          retval = initial;
 
@@ -636,7 +636,6 @@ int64 hash_counters_iterate(Datum hashval,
     for (i = 0; i < DEPTH; i++) {
         memmove((void *)&twobytes,
                 (void *)((char *)VARDATA(DatumGetPointer(hashval)) + 2*i), 2);
-        /* elog(WARNING, "twobytes at %d is %d", 2*i, twobytes); */
         col = twobytes % NUMCOUNTERS;
         retval = (*lambdaptr)(i, col, sketch, retval);
     }
@@ -653,13 +652,12 @@ int64 hash_counters_iterate(Datum hashval,
  * lambda interface for hash_counters_iterate
  */
 
-int64 increment_counter(unsigned int i,
-                        unsigned int col,
+int64 increment_counter(uint32 i,
+                        uint32 col,
                         countmin sketch,
                         int64 transval)
 {
     int64 oldval = sketch[i][col];
-    /* if (debug) elog(WARNING, "counters[%d][%d] = %ld, incrementing", i, col, oldval); */
 	/* XXX Is it OK to go up to LONG_MAX?  Why LONG_MAX >> 1?? */
     if (sketch[i][col] == (LONG_MAX >> 1))
         elog(ERROR, "maximum count exceeded in sketch");
@@ -677,8 +675,8 @@ int64 increment_counter(unsigned int i,
  * \param transval smallest counter so far
  * lambda interface for hash_counters_iterate
  */
-int64 min_counter(unsigned int i,
-                  unsigned int col,
+int64 min_counter(uint32 i,
+                  uint32 col,
                   countmin sketch,
                   int64 transval)
 {
