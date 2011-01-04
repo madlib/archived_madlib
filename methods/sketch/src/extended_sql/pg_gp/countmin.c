@@ -12,7 +12,7 @@
  * the DEPTH arrays (hence the name CountMin.)
  * 
  * Let's call the process described above "sketching" the x's.
- * We're going to repeat this process LONGBITS times; this is the "dyadic range" trick
+ * We're going to repeat this process INT64BITS times; this is the "dyadic range" trick
  * mentioned in Cormode/Muthu, which repeats the basic CountMin idea log_2(n) times as follows.
  * Every value x/(2^i) is "sketched"
  * at a different power-of-2 (dyadic) "range" i.  So we sketch x in range 0, then sketch x/2
@@ -242,7 +242,7 @@ int64 cmsketch_getcount_c(countmin sketch, Datum arg, Oid funcOid)
     nhash = md5_datum(OidOutputFunctionCall(funcOid, arg));
 
     /* iterate through the sketches, finding the min counter associated with this hash */
-    PG_RETURN_INT64(hash_counters_iterate(nhash, sketch, LONG_MAX, &min_counter));
+    PG_RETURN_INT64(hash_counters_iterate(nhash, sketch, INT64_MAX, &min_counter));
 }
 
 PG_FUNCTION_INFO_V1(cmsketch_rangecount);
@@ -351,7 +351,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     
     width = (uint64) pow(2, dyad);
 
-    if (bot == MINVAL || (bot % width) == 0) {
+    if (bot == MIN_INT64 || (bot % width) == 0) {
       
         /* our range is left-aligned on the dyad's min */
         r->spans[r->emptyoffset][0] = bot;
@@ -361,7 +361,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
         find_ranges_internal(bot + width, top, power-1, r);
     }
 
-    else if (top == MAXVAL || ((top+1) % width) == 0) {
+    else if (top == MAX_INT64 || ((top+1) % width) == 0) {
         /*
          * our range is right-aligned on the dyad's max.
          * the +1 accounts for 0-indexing.
@@ -399,7 +399,7 @@ Datum cmsketch_centile(PG_FUNCTION_ARGS)
  	if (PG_ARGISNULL(1)) PG_RETURN_NULL();
 	else centile = PG_GETARG_INT32(1);
 
-    total = cmsketch_rangecount_c(transval, MINVAL, MAXVAL);     /* count(*) */
+    total = cmsketch_rangecount_c(transval, MIN_INT64, MAX_INT64);     /* count(*) */
     if (total == 0) PG_RETURN_NULL();
 
     return cmsketch_centile_c(transval, centile, total);
@@ -424,10 +424,10 @@ Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 
     centile_cnt = (int64)(total * (float8)intcentile/100.0);
 
-    for (i = 0, loguess = MINVAL, higuess = MAXVAL, curguess = 0;
-         (i < LONGBITS - 1) && (higuess-loguess > 1);
+    for (i = 0, loguess = MIN_INT64, higuess = MAX_INT64, curguess = 0;
+         (i < INT64BITS - 1) && (higuess-loguess > 1);
          i++) {
-        curcount = cmsketch_rangecount_c(transval, MINVAL, curguess);
+        curcount = cmsketch_rangecount_c(transval, MIN_INT64, curguess);
         if (curcount == centile_cnt)
             break;
         if (curcount > centile_cnt) {
@@ -488,7 +488,7 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
     Datum      histo[buckets][3];
     int        dims[2], lbs[2];
 
-    step = MAX(trunc((float8)(max-min+1) / (float8)buckets), 1);
+    step = Max(trunc((float8)(max-min+1) / (float8)buckets), 1);
     for (i = 0; i < buckets; i++) {
         binlo = min + i*step;
         if (binlo > max) break;
@@ -551,12 +551,12 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
     int64      binlo;
     Datum      histo[buckets][3];
     int        dims[2], lbs[2];
-	int64      total = cmsketch_rangecount_c(transval, MINVAL, MAXVAL);
+	int64      total = cmsketch_rangecount_c(transval, MIN_INT64, MAX_INT64);
 
-    step = MAX(trunc(100 / (float8)buckets), 1);
-    for (i = 0, binlo = MINVAL; i < buckets; i++) {
+    step = Max(trunc(100 / (float8)buckets), 1);
+    for (i = 0, binlo = MIN_INT64; i < buckets; i++) {
         histo[i][0] = Int64GetDatum(binlo);
-        histo[i][1] = ((i == buckets - 1) ? MAXVAL :
+        histo[i][1] = ((i == buckets - 1) ? MAX_INT64 :
                        cmsketch_centile_c(transval, (i+1)*step, total));
         histo[i][2] = cmsketch_rangecount_c(transval,
                                   histo[i][0],
@@ -658,8 +658,7 @@ int64 increment_counter(uint32 i,
                         int64 transval)
 {
     int64 oldval = sketch[i][col];
-	/* XXX Is it OK to go up to LONG_MAX?  Why LONG_MAX >> 1?? */
-    if (sketch[i][col] == (LONG_MAX >> 1))
+    if (sketch[i][col] == (INT64_MAX))
         elog(ERROR, "maximum count exceeded in sketch");
     sketch[i][col] = oldval + 1;
 

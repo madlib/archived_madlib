@@ -37,6 +37,11 @@ See unit tests in the sql subdirectory.
 
 #define MD5_HASHLEN_BITS 16*8 /*! md5 hash length in bits */
 
+#ifndef MAXINT8LEN
+#define MAXINT8LEN		25 /*! number of chars to hold an int8 */
+#endif
+
+
 Datum        array_set_bit_in_place(bytea *, int4, int4, int4, int4);
 uint32 rightmost_one(uint8 *, size_t, size_t, size_t);
 uint32 leftmost_zero(uint8 *, size_t, size_t, size_t);

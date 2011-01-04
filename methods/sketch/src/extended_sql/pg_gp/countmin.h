@@ -1,28 +1,24 @@
 #ifndef _COUNTMIN_H_
 #define _COUNTMIN_H_
-#define LONGBITS (sizeof(int64)*CHAR_BIT)
-#define RANGES LONGBITS
+#define INT64BITS (sizeof(int64)*CHAR_BIT)
+#define RANGES INT64BITS
 #define DEPTH 8 /* magic tuning value: number of hash functions */
 /* #define NUMCOUNTERS 65535 */
 #define NUMCOUNTERS 1024  /* another magic tuning value: modulus of hash functions */
 
-#ifndef MIN
-#define MAX(x,y) ((x > y) ? x : y)
-#define MIN(x,y) ((x < y) ? x : y)
-#endif
-
-/*! countmin is defined over postgres int8 type.  Should probably use the max of that type, not LONG_MAX */
-#define MAXVAL (LONG_MAX >> 1)
-/*! Midpoint is 1/2 of MAX .. i.e. shift MAX right. */
-#define MIDVAL (MAXVAL >> 1)
-#define MINVAL (LONG_MIN >> 1)
+#define MAX_INT64 (INT64CONST(1) << (sizeof(int64) * 8 - 1))
+#define MID_INT64 (0)
+#define MIN_INT64 -((INT64CONST(1) << (sizeof(int64) * 8 - 1)) + 1)
+#define MAX_UINT64 (UINT64CONST(1) << (sizeof(uint64) * 8 - 1))
+#define MID_UINT64 (MAX_UINT64 >> 2)
+#define MIN_UINT64 (0)
 
 /*! 
  * a CountMin sketch is a set of DEPTH arrays of NUMCOUNTERS each.
  * It's like a "counting Bloom Filter" where instead of just hashing to
  * DEPTH bitmaps, we count up hash-collisions in DEPTH counter arrays
  */
-typedef int64 countmin[DEPTH][NUMCOUNTERS];
+typedef uint64 countmin[DEPTH][NUMCOUNTERS];
 
 /*!
  * the transition value struct for the cmsketch aggregate.  Holds the sketch counters
@@ -43,7 +39,7 @@ typedef struct {
  * E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
  */
 typedef struct {
-    int64 spans[LONGBITS][2]; /*! the ranges */
+    int64 spans[INT64BITS][2]; /*! the ranges */
     int emptyoffset;        /*! offset of next empty span */
 } rangelist;
 
