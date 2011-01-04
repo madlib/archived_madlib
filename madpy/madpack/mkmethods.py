@@ -1,5 +1,8 @@
 #!/usr/bin/python
 #
+## \defgroup mkmethods
+# \ingroup madpack
+#
 # Script/module to call 'make' for each MADlib method port
 # in the MADlib Config.yml file.
 
@@ -10,7 +13,8 @@ import subprocess
 import madpy
 import madpy.madpack.configyml
 
-## customize the config.mk according to Config.yml and write into methdir
+## 
+# customize the config.mk according to Config.yml and write into methdir
 # current customization is just to set the SCHEMA_PLACEHOLDER to the 
 # target_schema in Config.yml
 # @param conf parsed Config.yml object
@@ -33,12 +37,14 @@ def __create_config_mk(conf, methdir):
 
     mkfd.close()
 
-## clean up the config.mk file
+## 
+# clean up the config.mk file
 # @param methdir the directory to delete from   
 def __remove_config_mk(methdir):
     os.remove(methdir+'/config.mk')
 
-## run 'make <mkarg>' for each method in the conf    
+## 
+# run 'make <mkarg>' for each method in the conf    
 # @param mkarg the argument to the make command (install, clean, etc.)
 # @param conf the parsed Config.yml object
 def make_methods(mkarg, conf):
