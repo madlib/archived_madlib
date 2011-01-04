@@ -535,3 +535,354 @@ Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(pvalues);
 }
 
+
+Datum float8_cg_update_accum(PG_FUNCTION_ARGS);
+Datum float8_cg_update_final(PG_FUNCTION_ARGS);
+
+
+typedef struct {
+	ArrayType	*coef;		/* coefficients */
+	ArrayType	*dir;		/* direction */
+	ArrayType	*grad;		/* gradient */
+	float8		beta;		/* scale factor */
+
+	int32		len;		/* number of coefficients */
+	int64		count;		/* number of rows */
+	ArrayType	*gradNew;	/* intermediate value for gradient */
+	float8		dTHd;		/* intermediate value for d^T * H * d */	
+} LogRegrState;
+
+typedef struct {
+	int32		len;		/* number of coefficients */
+	int64		count;		/* number of rows */
+	ArrayType	*gradNew;	/* intermediate value for gradient */
+	float8		dTHd;		/* intermediate value for d^T * H * d */	
+} LogRegrSubstate;
+
+
+static inline float8 sigma(float8 x)
+{
+	return 1 / (1 + exp(x));
+}
+
+static ArrayType *construct_uninitialized_array(int inNumElements,
+	Oid inElementType, int inElementSize)
+{
+	int64		size = inElementSize * inNumElements + ARR_OVERHEAD_NONULLS(1);
+	ArrayType	*array;
+	void		*arrayData;
+	
+	array = (ArrayType *) palloc(size);
+	SET_VARSIZE(array, size);
+	array->ndim = 1;
+	array->dataoffset = 0;
+	array->elemtype = FLOAT8OID;
+	ARR_DIMS(array)[0] = inNumElements;
+	ARR_LBOUND(array)[0] = 1;
+	arrayData = (float8 *) ARR_DATA_PTR(array);
+	memset(arrayData, 0, inNumElements * inElementSize);
+	return array;
+}
+
+/**
+ * @internal There are aggregation states and iteration states: Aggregation
+ * states contain the previous iteration state. 
+ */
+
+#define StartCopyFromTuple(tuple, nullArr) { \
+	HeapTupleHeader __tuple = tuple; int __tupleItem = 0; bool *__nullArr = nullArr
+#define CopyFromTuple(dest, DatumGet) \
+	{ \
+		Datum tempDatum = \
+			GetAttributeByNum(__tuple, __tupleItem + 1, &__nullArr[__tupleItem]); \
+		if (__nullArr[__tupleItem++] == false) \
+			dest = DatumGet(tempDatum); \
+	}
+#define CopyFloatArrayFromTuple(dest) \
+	{ \
+		Datum tempDatum = \
+			GetAttributeByNum(__tuple, __tupleItem + 1, &__nullArr[__tupleItem]); \
+		if (__nullArr[__tupleItem++] == false) { \
+			ArrayType *array = DatumGetArrayTypeP(tempDatum); \
+			dest = construct_array((Datum *) ARR_DATA_PTR(array), \
+				outState->len, sizeof(float8), FLOAT8OID, true, 'd'); \
+		} \
+	}
+#define EndCopyFromTuple }
+static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
+									   LogRegrState *outState)
+{
+	ArrayType		*newX;
+	HeapTupleHeader	aggregateStateTuple = NULL;
+	bool			isNull[8];
+
+	if (PG_ARGISNULL(0)) {
+		newX = PG_GETARG_ARRAYTYPE_P(3);
+		outState->len = ARR_DIMS(newX)[0];
+		outState->count = 1;
+		outState->gradNew = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+		outState->dTHd = 0;
+		
+		if (PG_ARGISNULL(1)) {
+			outState->coef = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+			outState->dir = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+			outState->grad = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+			outState->beta = 0;			
+		} else {
+			StartCopyFromTuple(aggregateStateTuple, isNull);
+			CopyFloatArrayFromTuple(outState->coef);
+			CopyFloatArrayFromTuple(outState->dir);
+			CopyFloatArrayFromTuple(outState->grad);
+			CopyFromTuple(outState->beta, DatumGetFloat8);
+			EndCopyFromTuple;
+			
+			for (int i = 0; i < 4; i++)
+				if (isNull[i]) return false;
+		}
+	} else {
+		aggregateStateTuple = PG_GETARG_HEAPTUPLEHEADER(1);
+	
+		StartCopyFromTuple(aggregateStateTuple, isNull);
+		CopyFromTuple(outState->coef, DatumGetArrayTypeP);
+		CopyFromTuple(outState->dir, DatumGetArrayTypeP);
+		CopyFromTuple(outState->grad, DatumGetArrayTypeP);
+		CopyFromTuple(outState->beta, DatumGetFloat8);
+
+		CopyFromTuple(outState->len, DatumGetInt32);
+		CopyFromTuple(outState->count, DatumGetInt64);
+		CopyFromTuple(outState->gradNew, DatumGetArrayTypeP);
+		CopyFromTuple(outState->dTHd, DatumGetFloat8);
+		EndCopyFromTuple;
+
+		for (int i = 0; i < 8; i++)
+			if (isNull[i]) return false;
+	}
+		
+	return true;
+}
+#undef StartCopyFromTuple
+#undef CopyFromTuple
+
+Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
+{
+	bool			goodArguments;
+	TypeFuncClass	funcClass;
+	Oid				resultType;
+	TupleDesc		resultDesc;
+	Datum			resultDatum[8];
+	bool			resultNull[8];
+	HeapTuple		result;
+	
+	LogRegrState	state;
+	ArrayType		*newX;
+	bool			newY;
+	float8			*newXData;
+	float8			wTx, dTx;
+	
+	/* Input should be 4 parameters */
+	if (PG_NARGS() != 4)
+		ereport(ERROR, 
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("transition function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
+
+	for (int i = 2; i < 4; i++) {
+		if (PG_ARGISNULL(i)) {
+			PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+		}
+	}
+
+	/* Only callable as a transition function */
+	if (!(fcinfo->context && IsA(fcinfo->context, AggState)))
+		ereport(ERROR, 
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("transition function \"%s\" not called from aggregate",
+					format_procedure(fcinfo->flinfo->fn_oid))));
+	
+	newY  = PG_GETARG_BOOL(2);
+    newX  = PG_GETARG_ARRAYTYPE_P(3);
+		
+	/* Ensure that all arrays are single dimensional float8[] arrays without NULLs */
+	if (ARR_NULLBITMAP(newX) || ARR_NDIM(newX) != 1 || ARR_ELEMTYPE(newX) != FLOAT8OID)
+		ereport(ERROR, 
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("transition function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
+
+	goodArguments = float8_cg_update_get_state(fcinfo, &state);
+	if (!goodArguments)
+		PG_RETURN_NULL();
+
+	/* Something is seriously fishy if our state has the wrong form */
+	if (state.len != ARR_DIMS(newX)[0] ||
+		ARR_DIMS(state.coef)[0] != state.len ||
+		ARR_DIMS(state.dir)[0] != state.len ||
+		ARR_DIMS(state.grad)[0] != state.len ||
+		ARR_DIMS(state.gradNew)[0] != state.len)
+	{
+		ereport(ERROR, 
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("transition function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
+	}
+	
+	/* Okay... All's good now do the work */
+	state.count++;
+
+	for (int i = 0, wTx = dTx = 0.; i < state.len; i++) {
+		wTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.coef))[i];
+		dTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.dir))[i];
+	}
+	
+	state.dTHd += sigma(wTx) * (1 - sigma(wTx)) * dTx * dTx;
+	
+	for (int i = 0; i < state.len; i++) {
+		((float8*) ARR_DATA_PTR(state.gradNew))[i] +=
+			(1 - sigma(wTx)) * (newY ? 1 : -1) * newXData[i];
+	}
+	
+	/* Construct the return tuple */
+	funcClass = get_call_result_type(fcinfo, &resultType, &resultDesc);
+	BlessTupleDesc(resultDesc);
+	
+	resultDatum[0] = PointerGetDatum(state.coef);
+	resultDatum[1] = PointerGetDatum(state.dir);
+	resultDatum[2] = PointerGetDatum(state.grad);
+	resultDatum[3] = Float8GetDatum(state.beta);
+
+	resultDatum[4] = Int32GetDatum(state.len);
+	resultDatum[5] = Int64GetDatum(state.count);
+	resultDatum[6] = PointerGetDatum(state.gradNew);
+	resultDatum[7] = Float8GetDatum(state.dTHd);
+	memset(resultNull, 0, sizeof(resultNull));
+	
+	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
+	PG_RETURN_DATUM(HeapTupleGetDatum(result));
+}
+
+static inline float8 float8_dotProduct(ArrayType *inVec1, ArrayType *inVec2)
+{
+	float8	returnValue = 0.;
+	float8	*arr1, *arr2;
+	int		size;
+	
+	if (ARR_ELEMTYPE(inVec1) != FLOAT8OID || ARR_ELEMTYPE(inVec2) != FLOAT8OID ||
+		ARR_NDIM(inVec1) != 1 || ARR_NDIM(inVec2) != 1 ||
+		ARR_DIMS(inVec1)[0] != ARR_DIMS(inVec2)[0])
+	{
+		ereport(ERROR, 
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("internal function float8_dotProduct called with invalid parameters")));
+	}
+	
+	size = ARR_DIMS(inVec1)[0];
+	arr1 = (float8 *) ARR_DATA_PTR(inVec1);
+	arr2 = (float8 *) ARR_DATA_PTR(inVec2);
+	for (int i = 0; i < ARR_DIMS(inVec1)[0]; i++)
+		returnValue += arr1[i] * arr2[i];
+	
+	return returnValue;
+}
+
+static inline ArrayType *float8_vectorMinus(ArrayType *inVec1, ArrayType *inVec2)
+{
+	float8		*arr1, *arr2, *returnData;
+	ArrayType	*returnVec;
+	int			size;
+	
+	if (ARR_ELEMTYPE(inVec1) != FLOAT8OID || ARR_ELEMTYPE(inVec2) != FLOAT8OID ||
+		ARR_NDIM(inVec1) != 1 || ARR_NDIM(inVec2) != 1 ||
+		ARR_DIMS(inVec1)[0] != ARR_DIMS(inVec2)[0])
+	{
+		ereport(ERROR, 
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("internal function float8_vectorMinus called with invalid parameters")));
+	}
+	
+	size = ARR_DIMS(inVec1)[0];
+	returnVec = construct_uninitialized_array(size, FLOAT8OID, 8);
+	returnData = (float8 *) ARR_DATA_PTR(returnVec);
+	
+	for (int i = 0; i < size; i++)
+		returnData[i] = arr1[i] - arr2[i];
+	
+	return returnVec;
+}
+
+Datum float8_cg_update_final(PG_FUNCTION_ARGS)
+{
+	bool			goodArguments;
+	TypeFuncClass	funcClass;
+	Oid				resultType;
+	TupleDesc		resultDesc;
+	Datum			resultDatum[8];
+	bool			resultNull[8];
+	HeapTuple		result;
+
+	LogRegrState	state;
+	ArrayType		*gradMinusGradOld;
+	float8			alpha;
+	ArrayType		*betaDir;
+
+	if (PG_NARGS() != 1)
+		ereport(ERROR, 
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("final calculation function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
+
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	goodArguments = float8_cg_update_get_state(fcinfo, &state);
+	if (!goodArguments)
+		PG_RETURN_NULL();
+	
+	//            g_k^T d_k
+	// alpha_k = -----------
+	//           d_k^T H d_k
+	alpha = float8_dotProduct(state.grad, state.dir) /
+		state.dTHd;
+			
+	// c_{k+1} = c_k + alpha_k * d_k
+	state.coef = DatumGetArrayTypeP(
+		DirectFunctionCall2(matrix_add, PointerGetDatum(state.coef),
+		
+		// alpha_k * d_k
+		DirectFunctionCall2(float8_matrix_smultiply, Float8GetDatum(alpha),
+			PointerGetDatum(state.dir))));
+	
+	
+	// d_{k+1} = g_k - beta * d_k
+	betaDir = DatumGetArrayTypeP(
+		DirectFunctionCall2(float8_matrix_smultiply, Float8GetDatum(state.beta),
+			PointerGetDatum(state.dir)));
+	state.dir = float8_vectorMinus(state.grad, betaDir);
+
+	//              g_{k+1}^T (g_{k+1} - g_k)
+	// beta_{k+1} = -------------------------
+	//                d_k^T (g_{k+1} - g_k)
+	gradMinusGradOld = float8_vectorMinus(state.gradNew, state.grad);
+	state.beta = float8_dotProduct(state.gradNew, gradMinusGradOld) /
+		float8_dotProduct(state.dir, gradMinusGradOld);
+	pfree(gradMinusGradOld);
+
+	/* Construct the return tuple */
+	funcClass = get_call_result_type(fcinfo, &resultType, &resultDesc);
+	BlessTupleDesc(resultDesc);
+	
+	resultDatum[0] = PointerGetDatum(state.coef);
+	resultDatum[1] = PointerGetDatum(state.dir);
+	resultDatum[2] = PointerGetDatum(state.gradNew);
+	resultDatum[3] = Float8GetDatum(state.beta);
+
+	resultDatum[4] = Int32GetDatum(state.len);
+	resultDatum[5] = Int64GetDatum(state.count);
+	resultDatum[6] = PointerGetDatum(state.gradNew);
+	resultDatum[7] = Float8GetDatum(state.dTHd);
+	
+	resultNull[0] = resultNull[1] = resultNull[2] = resultNull[3] = false;
+	resultNull[4] = resultNull[5] = resultNull[6] = resultNull[7] = true;
+	
+	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
+	PG_RETURN_DATUM(HeapTupleGetDatum(result));	
+}

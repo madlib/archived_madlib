@@ -1,5 +1,3 @@
--- CREATE SCHEMA madlib;
-
 -- State transition function
 CREATE FUNCTION madlib.float8_mregr_accum(DOUBLE PRECISION[], DOUBLE PRECISION, DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
@@ -78,3 +76,30 @@ RETURNS DOUBLE PRECISION
 AS 'multLinRegression'
 LANGUAGE C
 IMMUTABLE STRICT;
+
+CREATE TYPE madlib.LRegrState AS (
+	len		INTEGER,
+	count	BIGINT,
+	coef	DOUBLE PRECISION[],
+	dir		DOUBLE PRECISION[],
+	grad	DOUBLE PRECISION[],
+	beta	DOUBLE PRECISION,
+	gradNew	DOUBLE PRECISION[],
+	dTHd	DOUBLE PRECISION
+);
+
+CREATE FUNCTION madlib.float8_cg_update_accum(madlib.LRegrState, BOOLEAN, DOUBLE PRECISION[])
+RETURNS madlib.LRegrState
+AS 'multLinRegression'
+LANGUAGE C;
+
+CREATE FUNCTION madlib.float8_cg_update_final(madlib.LRegrState)
+RETURNS madlib.LRegrState
+AS 'multLinRegression'
+LANGUAGE C STRICT;
+
+CREATE AGGREGATE madlib.logregr_coef(BOOLEAN, DOUBLE PRECISION[]) (
+	SFUNC=madlib.float8_cg_update_accum,
+	STYPE=madlib.LRegrState,
+	FINALFUNC=madlib.float8_cg_update_final
+);
