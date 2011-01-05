@@ -26,4 +26,5 @@ ifdef USE_ICC
 	override CFLAGS=-O3 -Werror -std=c99 -vec-report2 -vec-threshold0
 endif
 
+include config.mk
 

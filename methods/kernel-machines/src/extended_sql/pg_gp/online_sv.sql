@@ -1,11 +1,11 @@
-CREATE SCHEMA madlib;
+CREATE SCHEMA MADLIB_SCHEMA;
 CREATE LANGUAGE plpgsql;
 CREATE LANGUAGE plpythonu;
 
 -- The following is the structure to record the results of a learning process.
 -- We work with arrays of float8 for now; we'll extend the code to work with sparse vectors next.
-DROP TYPE IF EXISTS madlib.model_rec CASCADE;
-CREATE TYPE madlib.model_rec AS (
+DROP TYPE IF EXISTS MADLIB_SCHEMA.model_rec CASCADE;
+CREATE TYPE MADLIB_SCHEMA.model_rec AS (
        inds int,        -- number of individuals processed 
        cum_err float8,  -- cumulative error
        epsilon float8,  -- the size of the epsilon tube around the hyperplane, adaptively adjusted by algorithm
@@ -18,20 +18,20 @@ CREATE TYPE madlib.model_rec AS (
 );
 
 -- Create the necessary tables for storing training data and the learned support vector models
-DROP TABLE IF EXISTS madlib.sv_train_data CASCADE;
-CREATE TABLE madlib.sv_train_data ( id int, ind float8[], label float8 ) DISTRIBUTED BY (id);
+DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_train_data CASCADE;
+CREATE TABLE MADLIB_SCHEMA.sv_train_data ( id int, ind float8[], label float8 ) DISTRIBUTED BY (id);
 
-DROP TABLE IF EXISTS madlib.sv_results CASCADE;
-CREATE TABLE madlib.sv_results ( id text, model madlib.model_rec ) DISTRIBUTED BY (id);
+DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_results CASCADE;
+CREATE TABLE MADLIB_SCHEMA.sv_results ( id text, model MADLIB_SCHEMA.model_rec ) DISTRIBUTED BY (id);
 
-DROP TABLE IF EXISTS madlib.sv_model CASCADE;
-CREATE TABLE madlib.sv_model ( id text, weight float8, sv float8[] ) DISTRIBUTED BY (weight);
+DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_model CASCADE;
+CREATE TABLE MADLIB_SCHEMA.sv_model ( id text, weight float8, sv float8[] ) DISTRIBUTED BY (weight);
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
 -- Here we specify the dot product as the kernel; it can be replace with any other kernel, including the polynomial
 -- and Gaussian kernels defined below.
-CREATE OR REPLACE FUNCTION madlib.kernel(x float8[][], idx int, y float8[]) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kernel(x float8[][], idx int, y float8[]) RETURNS float8 AS $$
 DECLARE
 	len INT;
 	ind float8[];
@@ -40,24 +40,24 @@ BEGIN
 	FOR i IN 1..len LOOP
 	    ind[i] := x[idx][i];
 	END LOOP;
-	RETURN madlib.kernel(ind, y);
+	RETURN MADLIB_SCHEMA.kernel(ind, y);
 END
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION madlib.kernel(x float8[], y float8[]) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kernel(x float8[], y float8[]) RETURNS float8 AS $$
 DECLARE
 	len INT;
 BEGIN
-	RETURN madlib.dot_kernel(x, y); -- this doesn't require svecs
+	RETURN MADLIB_SCHEMA.dot_kernel(x, y); -- this doesn't require svecs
 --	RETURN dot(ind, y);  -- this does require svecs
---	RETURN madlib.polynomial_kernel(ind, y, 2);
+--	RETURN MADLIB_SCHEMA.polynomial_kernel(ind, y, 2);
 END
 $$ LANGUAGE plpgsql;
 
 
 -- This is just inner product. For efficiency, this can be implemented as a C UDF. In fact, if the sparse vector library
 -- is installed, one can just define the body of the function to be RETURN dot(x,y);.
-CREATE OR REPLACE FUNCTION madlib.dot_kernel(x float8[], y float8[]) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.dot_kernel(x float8[], y float8[]) RETURNS float8 AS $$
 DECLARE 
 	len int;
 	ret float8 := 0;
@@ -71,27 +71,27 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Here are two other standard kernels.
-CREATE OR REPLACE FUNCTION madlib.polynomial_kernel(x float8[], y float8[], degree int) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.polynomial_kernel(x float8[], y float8[], degree int) RETURNS float8 AS $$
 BEGIN
-	RETURN madlib.dot_kernel(x,y) ^ degree;
+	RETURN MADLIB_SCHEMA.dot_kernel(x,y) ^ degree;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION madlib.gaussian_kernel(x float8[], y float8[], gamma float) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.gaussian_kernel(x float8[], y float8[], gamma float) RETURNS float8 AS $$
 BEGIN
-	RETURN exp(-1.0 * gamma * madlib.dot_kernel(x-y,x-y));
+	RETURN exp(-1.0 * gamma * MADLIB_SCHEMA.dot_kernel(x-y,x-y));
 END;
 $$ LANGUAGE plpgsql;
 
--- This implements the prediction function: f(x) = sum_i weight[i] * madlib.kernel(suppor_vector[i], x).
+-- This implements the prediction function: f(x) = sum_i weight[i] * MADLIB_SCHEMA.kernel(suppor_vector[i], x).
 CREATE OR REPLACE FUNCTION
-svs_predict(svs madlib.model_rec, ind float8[]) 
+svs_predict(svs MADLIB_SCHEMA.model_rec, ind float8[]) 
 RETURNS float8 AS $$
 DECLARE
 	ret FLOAT8 := 0;
 BEGIN
 	FOR i IN 1..svs.nsvs LOOP
-	    ret := ret + svs.weights[i] * madlib.kernel(svs.individuals, i, ind);
+	    ret := ret + svs.weights[i] * MADLIB_SCHEMA.kernel(svs.individuals, i, ind);
         END LOOP;
 	RETURN ret;
 END;
@@ -103,8 +103,8 @@ $$ LANGUAGE plpgsql;
 -- The learning parameters (eta, slambda, and nu) are hardcoded at the moment. 
 -- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
 -- of having to specify them. 
-CREATE OR REPLACE FUNCTION madlib.online_sv_reg_update(svs madlib.model_rec, ind float8[], label float8) 
-RETURNS madlib.model_rec AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.online_sv_reg_update(svs MADLIB_SCHEMA.model_rec, ind float8[], label float8) 
+RETURNS MADLIB_SCHEMA.model_rec AS $$
 DECLARE
 	eta FLOAT8 := 0.05; -- learning rate
 	slambda FLOAT8 := 0.2;  -- regularisation parameter
@@ -143,10 +143,10 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-DROP AGGREGATE IF EXISTS madlib.online_sv_reg_agg(float8[], float8);
-CREATE AGGREGATE madlib.online_sv_reg_agg(float8[], float8) (
-       sfunc = madlib.online_sv_reg_update,
-       stype = madlib.model_rec
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_reg_agg(float8[], float8);
+CREATE AGGREGATE MADLIB_SCHEMA.online_sv_reg_agg(float8[], float8) (
+       sfunc = MADLIB_SCHEMA.online_sv_reg_update,
+       stype = MADLIB_SCHEMA.model_rec
 );
 
 -- This is the main online support vector classification algorithm. 
@@ -155,8 +155,8 @@ CREATE AGGREGATE madlib.online_sv_reg_agg(float8[], float8) (
 -- The learning parameters (eta and nu) are hardcoded at the moment. 
 -- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
 -- of having to specify them. 
-CREATE OR REPLACE FUNCTION madlib.online_sv_cl_update(svs madlib.model_rec, ind float8[], label float8) 
-RETURNS madlib.model_rec AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.online_sv_cl_update(svs MADLIB_SCHEMA.model_rec, ind float8[], label float8) 
+RETURNS MADLIB_SCHEMA.model_rec AS $$
 DECLARE
 	eta FLOAT8 := 0.05; -- learning rate
 	nu FLOAT8 := 0.2;     -- the fraction of the training data with margin error, a number between 0 and 1; small nu => large margin and more support vectors
@@ -197,15 +197,15 @@ $$ LANGUAGE plpgsql;
 -- The learning parameters (eta and nu) are hardcoded at the moment. 
 -- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
 -- of having to specify them. 
-DROP AGGREGATE IF EXISTS madlib.online_sv_cl_agg(float8[], float8);
-CREATE AGGREGATE madlib.online_sv_cl_agg(float8[], float8) (
-       sfunc = madlib.online_sv_cl_update,
-       stype = madlib.model_rec
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_cl_agg(float8[], float8);
+CREATE AGGREGATE MADLIB_SCHEMA.online_sv_cl_agg(float8[], float8) (
+       sfunc = MADLIB_SCHEMA.online_sv_cl_update,
+       stype = MADLIB_SCHEMA.model_rec
 );
 
 
-CREATE OR REPLACE FUNCTION madlib.online_sv_nd_update(svs madlib.model_rec, ind float8[]) 
-RETURNS madlib.model_rec AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.online_sv_nd_update(svs MADLIB_SCHEMA.model_rec, ind float8[]) 
+RETURNS MADLIB_SCHEMA.model_rec AS $$
 DECLARE
 	eta FLOAT8 := 0.1; -- learning rate
 	nu FLOAT8 := 0.05;  -- the fraction of the training data with margin error, a number between 0 and 1
@@ -235,18 +235,18 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-DROP AGGREGATE IF EXISTS madlib.online_sv_nd_agg(float8[]);
-CREATE AGGREGATE madlib.online_sv_nd_agg(float8[]) (
-       sfunc = madlib.online_sv_nd_update,
-       stype = madlib.model_rec
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_nd_agg(float8[]);
+CREATE AGGREGATE MADLIB_SCHEMA.online_sv_nd_agg(float8[]) (
+       sfunc = MADLIB_SCHEMA.online_sv_nd_update,
+       stype = MADLIB_SCHEMA.model_rec
 );
 
 
--- This function transforms a madlib.model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
-CREATE OR REPLACE FUNCTION madlib.transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF madlib.sv_model AS $$
+-- This function transforms a MADLIB_SCHEMA.model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF MADLIB_SCHEMA.sv_model AS $$
 DECLARE
 	nsvs INT;
-	sv madlib.sv_model;
+	sv MADLIB_SCHEMA.sv_model;
 BEGIN
 	nsvs = array_upper(weights,1);
 	FOR i IN 1..nsvs LOOP 
@@ -258,54 +258,54 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- This function stores a madlib.model_rec stored with modelname in the madlib.sv_results table into the madlib.sv_model table.
-CREATE OR REPLACE FUNCTION madlib.storeModel(modelname TEXT) RETURNS VOID AS $$
+-- This function stores a MADLIB_SCHEMA.model_rec stored with modelname in the MADLIB_SCHEMA.sv_results table into the MADLIB_SCHEMA.sv_model table.
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.storeModel(modelname TEXT) RETURNS VOID AS $$
 DECLARE
 	myind_dim INT;
 	myweights float8[];
 	myindividuals float8[][];
---	mysvs madlib.model_rec;
+--	mysvs MADLIB_SCHEMA.model_rec;
 BEGIN
---	SELECT INTO mysvs model FROM madlib.sv_results WHERE id = modelname; -- for some strange reason this line doesn't work....
-	SELECT INTO myind_dim (model).ind_dim FROM madlib.sv_results WHERE id = modelname;
-	SELECT INTO myweights (model).weights FROM madlib.sv_results WHERE id = modelname;
-	SELECT INTO myindividuals (model).individuals FROM madlib.sv_results WHERE id = modelname;
- 	INSERT INTO madlib.sv_model (SELECT * FROM madlib.transform_rec(modelname, myind_dim, myweights, myindividuals));
+--	SELECT INTO mysvs model FROM MADLIB_SCHEMA.sv_results WHERE id = modelname; -- for some strange reason this line doesn't work....
+	SELECT INTO myind_dim (model).ind_dim FROM MADLIB_SCHEMA.sv_results WHERE id = modelname;
+	SELECT INTO myweights (model).weights FROM MADLIB_SCHEMA.sv_results WHERE id = modelname;
+	SELECT INTO myindividuals (model).individuals FROM MADLIB_SCHEMA.sv_results WHERE id = modelname;
+ 	INSERT INTO MADLIB_SCHEMA.sv_model (SELECT * FROM MADLIB_SCHEMA.transform_rec(modelname, myind_dim, myweights, myindividuals));
 END;
 $$ LANGUAGE plpgsql;
 
--- This function stores a collection of models learned in parallel into the madlib.sv_model table.
+-- This function stores a collection of models learned in parallel into the MADLIB_SCHEMA.sv_model table.
 -- The different models are assumed to be named modelname1, modelname2, ....
-CREATE OR REPLACE FUNCTION madlib.storeModel(modelname TEXT, n INT) RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.storeModel(modelname TEXT, n INT) RETURNS VOID AS $$
 DECLARE
 BEGIN
 	FOR i IN 0..n-1 LOOP
-	    PERFORM madlib.storeModel(modelname || i);
+	    PERFORM MADLIB_SCHEMA.storeModel(modelname || i);
         END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
--- This function performs prediction using a support vector machine stored in the madlib.sv_model table.
-CREATE OR REPLACE FUNCTION madlib.svs_predict(modelname text, ind float8[], OUT ret float8) RETURNS FLOAT8 AS $$
+-- This function performs prediction using a support vector machine stored in the MADLIB_SCHEMA.sv_model table.
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svs_predict(modelname text, ind float8[], OUT ret float8) RETURNS FLOAT8 AS $$
 BEGIN
-	SELECT INTO ret sum(weight * madlib.kernel(sv, ind)) FROM madlib.sv_model WHERE id = modelname;
+	SELECT INTO ret sum(weight * MADLIB_SCHEMA.kernel(sv, ind)) FROM MADLIB_SCHEMA.sv_model WHERE id = modelname;
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TYPE IF EXISTS madlib.model_pr CASCADE;
-CREATE TYPE madlib.model_pr AS ( model text, prediction float8 );
+DROP TYPE IF EXISTS MADLIB_SCHEMA.model_pr CASCADE;
+CREATE TYPE MADLIB_SCHEMA.model_pr AS ( model text, prediction float8 );
 
--- This function performs prediction using the support vector machines stored in the madlib.sv_model table.
+-- This function performs prediction using the support vector machines stored in the MADLIB_SCHEMA.sv_model table.
 -- The different models are assumed to be named modelname1, modelname2, ....
 -- An average prediction is given at the end.
-CREATE OR REPLACE FUNCTION madlib.svs_predict_combo(modelname text, n int, ind float8[]) RETURNS SETOF madlib.model_pr AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svs_predict_combo(modelname text, n int, ind float8[]) RETURNS SETOF MADLIB_SCHEMA.model_pr AS $$
 DECLARE
 	sumpr float8 := 0;
-	mpr madlib.model_pr;
+	mpr MADLIB_SCHEMA.model_pr;
 BEGIN
 	FOR i IN 0..n-1 LOOP
 	    mpr.model := modelname || i;
-	    mpr.prediction := madlib.svs_predict(mpr.model, ind);
+	    mpr.prediction := MADLIB_SCHEMA.svs_predict(mpr.model, ind);
 	    sumpr := sumpr + mpr.prediction;
 	    RETURN NEXT mpr;
  	END LOOP;
@@ -316,7 +316,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Generate artificial training data 
-CREATE OR REPLACE FUNCTION madlib.randomInd(d INT) RETURNS float8[] AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.randomInd(d INT) RETURNS float8[] AS $$
 DECLARE
     ret float8[];
 BEGIN
@@ -332,7 +332,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION madlib.randomInd2(d INT) RETURNS float8[] AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.randomInd2(d INT) RETURNS float8[] AS $$
 DECLARE
     ret float8[];
 BEGIN
@@ -344,13 +344,13 @@ END
 $$ LANGUAGE plpgsql;
 
 
-CREATE OR REPLACE FUNCTION madlib.generateRegData(num int, dim int) RETURNS VOID AS $$
-    plpy.execute("DELETE FROM madlib.sv_train_data")
-    plpy.execute("INSERT INTO madlib.sv_train_data SELECT a.val, madlib.randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
-    plpy.execute("UPDATE madlib.sv_train_data SET label = madlib.targetRegFunc(ind)")
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.generateRegData(num int, dim int) RETURNS VOID AS $$
+    plpy.execute("DELETE FROM MADLIB_SCHEMA.sv_train_data")
+    plpy.execute("INSERT INTO MADLIB_SCHEMA.sv_train_data SELECT a.val, MADLIB_SCHEMA.randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
+    plpy.execute("UPDATE MADLIB_SCHEMA.sv_train_data SET label = MADLIB_SCHEMA.targetRegFunc(ind)")
 $$ LANGUAGE 'plpythonu';
 
-CREATE OR REPLACE FUNCTION madlib.targetRegFunc(ind float8[]) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.targetRegFunc(ind float8[]) RETURNS float8 AS $$
 DECLARE
     dim int;
 BEGIN
@@ -360,22 +360,22 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION madlib.generateClData(num int, dim int) RETURNS VOID AS $$
-    plpy.execute("DELETE FROM madlib.sv_train_data")
-    plpy.execute("INSERT INTO madlib.sv_train_data SELECT a.val, madlib.randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
-    plpy.execute("UPDATE madlib.sv_train_data SET label = madlib.targetClFunc(ind)")
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.generateClData(num int, dim int) RETURNS VOID AS $$
+    plpy.execute("DELETE FROM MADLIB_SCHEMA.sv_train_data")
+    plpy.execute("INSERT INTO MADLIB_SCHEMA.sv_train_data SELECT a.val, MADLIB_SCHEMA.randomInd(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
+    plpy.execute("UPDATE MADLIB_SCHEMA.sv_train_data SET label = MADLIB_SCHEMA.targetClFunc(ind)")
 $$ LANGUAGE 'plpythonu';
 
-CREATE OR REPLACE FUNCTION madlib.targetClFunc(ind float8[]) RETURNS float8 AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.targetClFunc(ind float8[]) RETURNS float8 AS $$
 BEGIN
     IF (ind[1] > 0 AND ind[2] < 0) THEN RETURN 1; END IF;
     RETURN -1;
 END
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION madlib.generateNdData(num int, dim int) RETURNS VOID AS $$
-    plpy.execute("DELETE FROM madlib.sv_train_data")
-    plpy.execute("INSERT INTO madlib.sv_train_data SELECT a.val, madlib.randomInd2(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.generateNdData(num int, dim int) RETURNS VOID AS $$
+    plpy.execute("DELETE FROM MADLIB_SCHEMA.sv_train_data")
+    plpy.execute("INSERT INTO MADLIB_SCHEMA.sv_train_data SELECT a.val, MADLIB_SCHEMA.randomInd2(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
 $$ LANGUAGE 'plpythonu';
 
 
