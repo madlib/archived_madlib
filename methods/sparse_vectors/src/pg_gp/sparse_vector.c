@@ -484,7 +484,18 @@ Datum svec_unnest(PG_FUNCTION_ARGS)
 		}
 
                 /* send the result */
-                SRF_RETURN_NEXT(funcctx, Float8GetDatum(result));
+		if (IS_NVP(result)) {
+			/* Here we simply copied the SRF_RETURN_NEXT macro, but 
+			   return null in the last line */
+			do {
+				ReturnSetInfo * rsi;
+				funcctx->call_cntr++;
+				rsi = (ReturnSetInfo *) fcinfo->resultinfo;
+				rsi->isDone = ExprMultipleResult;
+				PG_RETURN_NULL();
+			} while (0);
+		}
+                else SRF_RETURN_NEXT(funcctx, Float8GetDatum(result));
         }
         else
 	{
@@ -496,4 +507,5 @@ Datum svec_unnest(PG_FUNCTION_ARGS)
 
 
 
+			// 
 

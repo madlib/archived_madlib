@@ -1122,6 +1122,8 @@ svec_dot_float8arr(PG_FUNCTION_ARGS)
 	freeSparseData(right);
 	freeSparseDataAndData(mult_result);
 
+	if (IS_NVP(accum)) PG_RETURN_NULL();
+
 	PG_RETURN_FLOAT8(accum);
 }
 PG_FUNCTION_INFO_V1( float8arr_dot_svec);
@@ -1138,6 +1140,8 @@ float8arr_dot_svec(PG_FUNCTION_ARGS)
 	accum = sum_sdata_values_double(mult_result);
 	freeSparseData(left);
 	freeSparseDataAndData(mult_result);
+
+	if (IS_NVP(accum)) PG_RETURN_NULL();
 
 	PG_RETURN_FLOAT8(accum);
 }
