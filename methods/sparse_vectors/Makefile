@@ -13,7 +13,7 @@ MODULE_big = gp_svec
 #Removed the installation SQL file from normal installation
 #DATA = gp_svec.sql gp_sfv_test.sql gp_svec_test.sql
 DATA = gp_sfv_test.sql gp_svec_test.sql
-REGRESS = gp_svec_test.sql
+REGRESS = gp_svec_test
 OBJS = gp_sfv.o sparse_vector.o operators.o SparseData.o
 
 PGXS := $(shell pg_config --pgxs)
