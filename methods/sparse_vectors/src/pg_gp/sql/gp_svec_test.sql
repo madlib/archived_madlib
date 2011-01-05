@@ -10,32 +10,82 @@ select dmax(NULL,NULL);
 
 drop table if exists test_pairs;
 create table test_pairs( id int, a svec, b svec ) distributed by (id);
-insert into test_pairs values (0, '{1,100,1}:{5,0,5}', '{50,50,2}:{1,2,10}');
 insert into test_pairs values 
-       (1, '{1}:{0}'::svec, '{1}:{1}'::svec),
-       (2, '{1}:{0}'::svec, '{1}:{NULL}'::svec),
-       (3, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{0,3,5}'::svec),
-       (4, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{NULL,3,5}'::svec);
+       (0, '{1,100,1}:{5,0,5}', '{50,50,2}:{1,2,10}'),
+       (1, '{1,100,1}:{-5,0,-5}', '{50,50,2}:{-1,-2,-10}');
+insert into test_pairs values 
+       (11, '{1}:{0}'::svec, '{1}:{1}'::svec),
+       (12, '{1}:{0}'::svec, '{1}:{NULL}'::svec),
+       (13, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{0,3,5}'::svec),
+       (14, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{NULL,3,5}'::svec);
 
-select svec_count(a,b) from test_pairs;
-select svec_plus(a,b) from test_pairs;
-select svec_plus(a,b) = svec_plus(b,a) from test_pairs;
-select svec_mult(a,b) from test_pairs;
-select svec_mult(a,b) = svec_mult(b,a) from test_pairs;
-select svec_div(a,b) = svec_mult(a, svec_pow(b,-1)) from test_pairs;
-select svec_minus(a, b) = svec_plus(svec_mult(-1,b), a) from test_pairs;
-select svec_pow(a,2) = svec_mult(a,a) from test_pairs;
+select id, svec_count(a,b) from test_pairs order by id;
+select id, svec_plus(a,b) from test_pairs order by id;
+select id, svec_plus(a,b) = svec_plus(b,a) from test_pairs order by id;
+select id, svec_mult(a,b) from test_pairs order by id;
+select id, svec_mult(a,b) = svec_mult(b,a) from test_pairs order by id;
+select id, svec_div(a,b) = svec_mult(a, svec_pow(b,-1)) from test_pairs order by id;
+select id, svec_minus(a, b) = svec_plus(svec_mult(-1,b), a) from test_pairs order by id;
+select id, svec_pow(a,2) = svec_mult(a,a) from test_pairs order by id;
+
+select id, svec_count(a,b::float8[]) from test_pairs order by id;
+select id, svec_plus(a,b::float8[]) from test_pairs order by id;
+select id, svec_plus(a,b::float8[]) = svec_plus(b,a::float8[]) from test_pairs order by id;
+select id, svec_mult(a,b::float8[]) from test_pairs order by id;
+select id, svec_mult(a,b::float8[]) = svec_mult(b,a::float8[]) from test_pairs order by id;
+select id, svec_div(a,b::float8[]) = svec_mult(a, svec_pow(b,-1)::float8[]) from test_pairs order by id;
+select id, svec_minus(a, b::float8[]) = svec_plus(svec_mult(-1,b), a::float8[]) from test_pairs order by id;
+select id, svec_pow(a,2) = svec_mult(a,a::float8[]) from test_pairs order by id;
+
+select id, svec_count(a::float8[],b) from test_pairs order by id;
+select id, svec_plus(a::float8[],b) from test_pairs order by id;
+select id, svec_plus(a::float8[],b) = svec_plus(b::float8[],a) from test_pairs order by id;
+select id, svec_mult(a::float8[],b) from test_pairs order by id;
+select id, svec_mult(a::float8[],b) = svec_mult(b::float8[],a) from test_pairs order by id;
+select id, svec_div(a::float8[],b) = svec_mult(a::float8[], svec_pow(b,-1)) from test_pairs order by id;
+select id, svec_minus(a::float8[], b) = svec_plus(svec_mult(-1,b)::float8[], a) from test_pairs order by id;
+select id, svec_pow(a::float8[],2) = svec_mult(a::float8[],a) from test_pairs order by id;
+
+select id, dot(a,b) from test_pairs order by id;
+select id, dot(a,b) = dot(b,a) from test_pairs order by id;
+select id, dot(a,b::float8[]) = dot(b,a::float8[]) from test_pairs order by id;
+select id, dot(a::float8[],b) = dot(b::float8[],a) from test_pairs order by id;
+select id, dot(a::float8[],b::float8[]) = dot(b::float8[],a::float8[]) from test_pairs order by id;
+
+select id, l2norm(a), l2norm(a::float[]), l2norm(b), l2norm(b::float8[]) from test_pairs order by id;
+select id, l1norm(a), l1norm(a::float[]), l1norm(b), l1norm(b::float8[]) from test_pairs order by id;
 
 select svec_plus('{1,2,3}:{4,5,6}', 5);
 select svec_plus(5, '{1,2,3}:{4,5,6}');
+select svec_plus(500, '{1,2,3}:{4,null,6}');
+select svec_div(500, '{1,2,3}:{4,null,6}');
+select svec_div('{1,2,3}:{4,null,6}', 500);
+
+-- Test operators between svec and float8[]
+select ('{1,2,3,4}:{3,4,5,6}'::svec)           %*% ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
+select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[] %*% ('{1,2,3,4}:{3,4,5,6}'::svec);
+select ('{1,2,3,4}:{3,4,5,6}'::svec)            /  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
+select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  /  ('{1,2,3,4}:{3,4,5,6}'::svec);
+select ('{1,2,3,4}:{3,4,5,6}'::svec)            *  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
+select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  *  ('{1,2,3,4}:{3,4,5,6}'::svec);
+select ('{1,2,3,4}:{3,4,5,6}'::svec)            +  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
+select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  +  ('{1,2,3,4}:{3,4,5,6}'::svec);
+select ('{1,2,3,4}:{3,4,5,6}'::svec)            -  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
+select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  -  ('{1,2,3,4}:{3,4,5,6}'::svec);
 
 -- these should produce error messages 
 select '{10000000000000000000}:{1}'::svec ;
+select '{1,null,2}:{2,3,4}'::svec;
 select svec_count('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 select svec_plus('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 select svec_minus('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 select svec_mult('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 select svec_div('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
+
+select unnest('{1,2,3,4}:{5,6,7,8}'::svec);
+select unnest('{1,2,3,4}:{5,6,null,8}'::svec);
+
+select vec_pivot('{1,2,3,4}:{5,6,7,8}'::svec, 2);
 
 drop table if exists test;
 create table test (a int, b svec) DISTRIBUTED BY (a);
@@ -91,17 +141,6 @@ drop table corpus_proj_array;
 drop table test;
 drop table test2;
 
--- Test operators between svec and float8[]
-select ('{1,2,3,4}:{3,4,5,6}'::svec)           %*% ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
-select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[] %*% ('{1,2,3,4}:{3,4,5,6}'::svec);
-select ('{1,2,3,4}:{3,4,5,6}'::svec)            /  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
-select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  /  ('{1,2,3,4}:{3,4,5,6}'::svec);
-select ('{1,2,3,4}:{3,4,5,6}'::svec)            *  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
-select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  *  ('{1,2,3,4}:{3,4,5,6}'::svec);
-select ('{1,2,3,4}:{3,4,5,6}'::svec)            +  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
-select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  +  ('{1,2,3,4}:{3,4,5,6}'::svec);
-select ('{1,2,3,4}:{3,4,5,6}'::svec)            -  ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[];
-select ('{1,2,3,4}:{3,4,5,6}'::svec)::float8[]  -  ('{1,2,3,4}:{3,4,5,6}'::svec);
 
 -- Test the pivot operator in the presence of NULL values
 drop table if exists pivot_test;
