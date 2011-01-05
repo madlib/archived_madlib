@@ -9,8 +9,6 @@ SparseData.o : SparseData.c SparseData.h
 sparse_vector.o : sparse_vector.c sparse_vector.h SparseData.h
 operators.o : operators.c sparse_vector.h SparseData.h
 
-PG_CONFIG = pg_config
-
 MODULE_big = gp_svec
 #Removed the installation SQL file from normal installation
 #DATA = gp_svec.sql gp_sfv_test.sql gp_svec_test.sql
