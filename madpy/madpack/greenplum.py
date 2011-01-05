@@ -6,17 +6,17 @@
 import os, sys
 import subprocess
 
-print "Deploying object code libraries to Greenplum segment nodes."
+print "> deploying object code libraries to Greenplum segment nodes"
 
 # get & check host_file
-hostfile = raw_input("Enter full path to the host file: ")
+hostfile = raw_input("> enter full path to the host file: ")
 while (not os.path.isfile( hostfile)):    
-    hostfile = raw_input("File does not exist. Try again: ")
+    hostfile = raw_input("> file does not exist. Try again: ")
 
 # check and get GPHOME 
 gphome = os.getenv('GPHOME')
 while (not os.path.isdir( gphome)):    
-    gphome = raw_input("GPHOME not found. Enter full path to your Greenplum installation: ")
+    gphome = raw_input("> GPHOME not found. Enter full path to your Greenplum installation: ")
 
 # use SCP to push the SO files
 n=0
@@ -38,4 +38,4 @@ except:
     print "Unexpected error during file copy (scp) to " + line
 
 # done
-print "Libraries copied to " + str(n) + " segment node(s)."
+print "> libraries copied to " + str(n) + " segment node(s)"

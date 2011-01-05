@@ -384,6 +384,7 @@ class Migration(MadPackMigration):
     # @param mignumber migration number to roll to
     # @param migversion version number to roll to
     def migrate(self, mignumber=None, migversion=None):
+       print "Running DB migartion:"
        connect_args=self.conf['connect_args'], 
        api = self.conf['dbapi2']
        if mignumber and migversion:
