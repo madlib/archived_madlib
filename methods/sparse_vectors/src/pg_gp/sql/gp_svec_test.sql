@@ -1,3 +1,12 @@
+-- Unit-Testing checklist
+-- 1. Make sure the function does the right thing on normal input(s).
+-- 2. Make sure the function is non-destructive to the input(s).
+-- 3. Make sure the function handles null values in svecs correctly.
+-- 4. Make sure the function handles length-1 svecs correctly.
+-- 5. Make sure the function handles null svecs properly.
+-- 6. For functions that handle float8[] input(s), make sure the two
+--    representations of null values are handled properly.
+
 \timing
 select dmin(1000,1000.1);
 select dmin(1000,NULL);
@@ -14,10 +23,13 @@ insert into test_pairs values
        (0, '{1,100,1}:{5,0,5}', '{50,50,2}:{1,2,10}'),
        (1, '{1,100,1}:{-5,0,-5}', '{50,50,2}:{-1,-2,-10}');
 insert into test_pairs values 
+--       (10, null, null),
        (11, '{1}:{0}'::svec, '{1}:{1}'::svec),
-       (12, '{1}:{0}'::svec, '{1}:{NULL}'::svec),
-       (13, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{0,3,5}'::svec),
-       (14, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{NULL,3,5}'::svec);
+       (12, '{1}:{5}'::svec, '{3}:{-8}'::svec),
+       (13, '{1}:{0}'::svec, '{1}:{NULL}'::svec),
+       (14, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{0,3,5}'::svec),
+       (15, '{1,2,1}:{2,4,2}'::svec, '{2,1,1}:{NULL,3,5}'::svec);
+
 
 select id, svec_count(a,b) from test_pairs order by id;
 select id, svec_plus(a,b) from test_pairs order by id;
@@ -82,10 +94,48 @@ select svec_minus('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 select svec_mult('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 select svec_div('{1,1,1}:{3,4,5}', '{2,2}:{1,3}');
 
+select unnest('{1}:{5}'::svec);
 select unnest('{1,2,3,4}:{5,6,7,8}'::svec);
 select unnest('{1,2,3,4}:{5,6,null,8}'::svec);
+select id, unnest(a),a from test_pairs where id >= 10 order by id;
 
+select vec_pivot('{1}:{5}', 2);
+select vec_pivot('{1}:{5}', 5);
+select vec_pivot('{1}:{5}', null);
+select vec_pivot('{1}:{null}', 5);
+select vec_pivot('{1}:{null}', null);
 select vec_pivot('{1,2,3,4}:{5,6,7,8}'::svec, 2);
+select id, vec_pivot(a, 5), a, vec_pivot(a,6), a, vec_pivot(a,2) from test_pairs order by id;
+select id, vec_pivot(b, 5), b, vec_pivot(b,6), b, vec_pivot(b,null) from test_pairs order by id;
+
+select vec_sum('{1}:{-5}'::svec);
+select id, a, vec_sum(a), a, b, vec_sum(b), b from test_pairs order by id;
+select id, vec_sum(a) = vec_sum(a::float8[]) from test_pairs order by id;
+select id, vec_sum(b) = vec_sum(b::float8[]) from test_pairs order by id;
+
+select id, a, vec_median(a), a from test_pairs order by id;
+select id, b, vec_median(b), b from test_pairs order by id;
+select id, vec_median(a) = vec_median(a::float8[]),
+           vec_median(b) = vec_median(b::float8[]) from test_pairs order by id;
+
+select id, a, b, svec_concat(a,b), a, b from test_pairs order by id;
+
+select id, svec_concat_replicate(0, b), b from test_pairs order by id;
+select id, svec_concat_replicate(1, b) = b from test_pairs order by id;
+select id, svec_concat_replicate(3, b), b from test_pairs order by id;
+select id, svec_concat_replicate(-2, b), b from test_pairs order by id;
+
+select id, dimension(a), a, dimension(b), b from test_pairs order by id;
+
+select svec_lapply('sqrt', null); 
+select id, svec_lapply('sqrt', svec_lapply('abs', a)), a from test_pairs order by id;
+select id, svec_lapply('sqrt', svec_lapply('abs', b)), b from test_pairs order by id;
+
+select svec_append(null, 220, 20); -- FIX ME
+select id, svec_append(a, 50, 100), a, svec_append(b, null, 50), b from test_pairs order by id;
+
+select svec_proj(a,1), a, svec_proj(b,1), b from test_pairs order by id;
+select svec_proj(a,2), a, svec_proj(b,2), b from test_pairs order by id; -- FIX ME
 
 drop table if exists test;
 create table test (a int, b svec) DISTRIBUTED BY (a);
