@@ -45,7 +45,8 @@ PG_FUNCTION_INFO_V1( svec_dimension );
 Datum svec_dimension(PG_FUNCTION_ARGS)
 {
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
-	PG_RETURN_INT32(svec->dimension);
+	if (svec->dimension == -1) PG_RETURN_INT32(1);
+	else PG_RETURN_INT32(svec->dimension);
 }
 
 /**
@@ -56,6 +57,9 @@ PG_FUNCTION_INFO_V1(svec_lapply);
 
 Datum svec_lapply(PG_FUNCTION_ARGS) 
 {
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+		PG_RETURN_NULL();
+
 	text *func = PG_GETARG_TEXT_P(0);
 	SvecType *svec = PG_GETARG_SVECTYPE_P(1);
 	SparseData in = sdata_from_svec(svec);
@@ -71,6 +75,12 @@ PG_FUNCTION_INFO_V1( svec_concat_replicate);
 Datum svec_concat_replicate(PG_FUNCTION_ARGS)
 {
 	int multiplier = PG_GETARG_INT32(0);
+	if (multiplier < 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errOmitLocation(true),
+			 errmsg("multiplier cannot be negative")));
+
 	SvecType *svec = PG_GETARG_SVECTYPE_P(1);
 	SparseData left  = sdata_from_svec(svec);
 	SparseData sdata = makeEmptySparseData();
@@ -128,10 +138,26 @@ Datum svec_append(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(svec_append);
 Datum svec_append(PG_FUNCTION_ARGS) 
 {
-	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
-	float8 newele = PG_GETARG_FLOAT8(1);
-	int64 run_len = PG_GETARG_INT64(2);
-	SparseData sdata = makeSparseDataCopy(sdata_from_svec(svec));
+	float8 newele;
+	int64 run_len;
+	SvecType *svec;
+	SparseData sdata;
+
+	if (PG_ARGISNULL(2))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errOmitLocation(true),
+			 errmsg("count argument cannot be null")));
+
+	if (PG_ARGISNULL(1))
+		newele = NVP;
+	else newele = PG_GETARG_FLOAT8(1);
+
+	// FIX ME -- handle the case when input svec is null
+
+	svec = PG_GETARG_SVECTYPE_P(0);
+	run_len = PG_GETARG_INT64(2);
+	sdata = makeSparseDataCopy(sdata_from_svec(svec));
 	
 	add_run_to_sdata((char *)(&newele), run_len, sizeof(float8), sdata);
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata, true));
@@ -147,6 +173,8 @@ Datum svec_proj(PG_FUNCTION_ARGS)
 {
 	if (PG_ARGISNULL(0))
 		PG_RETURN_NULL();
+
+	// FIX ME -- handle the case when index is out of bounds
 
 	SvecType * sv = PG_GETARG_SVECTYPE_P(0);
 	int idx = PG_GETARG_INT32(1);
@@ -1184,12 +1212,12 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 	SparseData sdata;
 	float8 value;
 
-	if (PG_ARGISNULL(1)) value = 0.;
+	if (PG_ARGISNULL(1)) value = NVP;
 	else value = PG_GETARG_FLOAT8(1);
 
 	if (! PG_ARGISNULL(0))
 	{
-		svec = PG_GETARG_SVECTYPE_P(0);
+		svec = PG_GETARG_SVECTYPE_P_COPY(0);
 	} else {	//first call, construct a new svec
 		/*
 		 * Allocate space for the unique values and index
@@ -1217,6 +1245,7 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 		svec = reallocSvec(svec);
 		sdata = sdata_from_svec(svec);
 	}
+
 	/*
 	 * Now let's check to see if we're adding a new value or appending to 
 	 * the last run.  If the incoming value is the same as the last value, 
@@ -1238,12 +1267,26 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 			run_count = 0;
 		} else
 		{
+			// initialise index cursor if we need to
+			if (sdata->index->cursor == 0) {
+				char *i_ptr=sdata->index->data;
+				int len=0;
+				for (int j=0;j<sdata->unique_value_count-1;j++)
+				{
+					len+=int8compstoragesize(i_ptr);
+					i_ptr+=int8compstoragesize(i_ptr);
+				}
+				sdata->index->cursor = len;
+			}
+
 			index_location = sdata->index->data + sdata->index->cursor;
 			old_index_storage_size = int8compstoragesize(index_location);
 			run_count = compword_to_int8(index_location);
 			last_value = *((float8 *)(sdata->vals->data+(sdata->vals->len-sizeof(float8))));
 
-			if (last_value == value) new_run = false;
+			if (last_value == value || 
+			    (IS_NVP(last_value) && IS_NVP(value))) 
+				new_run = false;
 			else new_run = true;
 		}
 		if (!new_run)
@@ -1254,7 +1297,7 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 					- old_index_storage_size);
 			sdata->total_value_count++;
 		} else {
-			add_run_to_sdata((char *)&value,1,sizeof(float8),sdata);
+			add_run_to_sdata((char *)(&value),1,sizeof(float8),sdata);
 			char *i_ptr=sdata->index->data;
 			int len=0;
 			for (int j=0;j<sdata->unique_value_count-1;j++)
@@ -1462,15 +1505,23 @@ PG_FUNCTION_INFO_V1( float8arr_median);
 
 Datum
 float8arr_median(PG_FUNCTION_ARGS) {
-	ArrayType *array  = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType *array  = PG_GETARG_ARRAYTYPE_P_COPY(0);
 	SparseData sdata = sdata_uncompressed_from_float8arr_internal(array);
 	int index,median_index = (sdata->total_value_count-1)/2;
+	float8 ret;
+
+	double * vals = (double *)(sdata->vals->data); 
+	for (int i=0; i<sdata->unique_value_count; i++)
+		if (IS_NVP(vals[i])) 
+			PG_RETURN_NULL();
 
 	index = float8arr_partition_internal((double *)(sdata->vals->data),
 					     sdata->total_value_count,
 					     median_index);
 
-	PG_RETURN_FLOAT8(((float8 *)(sdata->vals->data))[index]);
+	ret = ((float8 *)(sdata->vals->data))[index];
+	if (IS_NVP(ret)) PG_RETURN_NULL();
+	PG_RETURN_FLOAT8(ret);
 }
 
 /**
@@ -1482,11 +1533,12 @@ PG_FUNCTION_INFO_V1( svec_median);
 
 Datum
 svec_median(PG_FUNCTION_ARGS) {
-	SvecType *svec  = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec  = PG_GETARG_SVECTYPE_P_COPY(0);
 	SparseData sdata = sdata_from_svec(svec);
 	int index,median_index = (sdata->total_value_count-1)/2;
 	char *i_ptr;
 	int64 *rle_index;
+	float8 ret;
 
 	if (sdata->index->data != NULL) //Sparse vector
 	{
@@ -1532,6 +1584,9 @@ svec_median(PG_FUNCTION_ARGS) {
 				median_index);
 	}
 
-	PG_RETURN_FLOAT8(((float8 *)(sdata->vals->data))[index]);
+	ret = ((float8 *)(sdata->vals->data))[index];
+
+	if (IS_NVP(ret)) PG_RETURN_NULL();
+	PG_RETURN_FLOAT8(ret);
 }
 
