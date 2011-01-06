@@ -391,9 +391,9 @@ SvecType *reallocSvec(SvecType *source)
 {
 	SvecType *svec;
 	SparseData sdata = sdata_from_svec(source);
-	int val_newmaxlen = Max(9,2*(sdata->vals->maxlen));
+	int val_newmaxlen = Max(2*sizeof(float8)+1,2*(sdata->vals->maxlen));
 	char *newvals = (char *)palloc(val_newmaxlen);
-	int ind_newmaxlen = Max(10,2*(sdata->index->maxlen));
+	int ind_newmaxlen = Max(2*sizeof(int8)+1,2*(sdata->index->maxlen));
 	char *newindex = (char *)palloc(ind_newmaxlen);
 	/*
 	 * This space was never allocated with palloc, so we can't repalloc it!
@@ -422,6 +422,9 @@ typedef struct
 	char *index_position;
 }	svec_unnest_fctx;
 
+/**
+ * Turns an svec into a table of values
+ */
 PG_FUNCTION_INFO_V1(svec_unnest);
 Datum svec_unnest(PG_FUNCTION_ARGS)
 {
@@ -452,6 +455,7 @@ Datum svec_unnest(PG_FUNCTION_ARGS)
 
 		/* set initial index into the sparse vector argument */
 		fctx->dimension               = svec->dimension;
+		if (fctx->dimension == -1) fctx->dimension = 1;
 		fctx->absolute_value_position = 0;
 		fctx->unique_value_position   = 0;
 		fctx->index_position          = fctx->sdata->index->data;
