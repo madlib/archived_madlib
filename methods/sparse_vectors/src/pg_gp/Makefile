@@ -26,5 +26,8 @@ ifdef USE_ICC
 	override CFLAGS=-O3 -Werror -std=c99 -vec-report2 -vec-threshold0
 endif
 
+test_output :
+	psql -d regression_test -aqf sql/gp_svec_test.sql &> expected/gp_svec_test.out
+
 include config.mk
 

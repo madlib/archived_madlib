@@ -142,23 +142,26 @@ Datum svec_append(PG_FUNCTION_ARGS)
 	int64 run_len;
 	SvecType *svec;
 	SparseData sdata;
-
+	
 	if (PG_ARGISNULL(2))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errOmitLocation(true),
 			 errmsg("count argument cannot be null")));
 
+	run_len = PG_GETARG_INT64(2);
+
 	if (PG_ARGISNULL(1))
 		newele = NVP;
 	else newele = PG_GETARG_FLOAT8(1);
 
-	// FIX ME -- handle the case when input svec is null
+	if (PG_ARGISNULL(0))
+		sdata = makeSparseData();
+	else {
+		svec = PG_GETARG_SVECTYPE_P(0);
+		sdata = makeSparseDataCopy(sdata_from_svec(svec));
+	}
 
-	svec = PG_GETARG_SVECTYPE_P(0);
-	run_len = PG_GETARG_INT64(2);
-	sdata = makeSparseDataCopy(sdata_from_svec(svec));
-	
 	add_run_to_sdata((char *)(&newele), run_len, sizeof(float8), sdata);
 	PG_RETURN_SVECTYPE_P(svec_from_sparsedata(sdata, true));
 }
@@ -173,8 +176,6 @@ Datum svec_proj(PG_FUNCTION_ARGS)
 {
 	if (PG_ARGISNULL(0))
 		PG_RETURN_NULL();
-
-	// FIX ME -- handle the case when index is out of bounds
 
 	SvecType * sv = PG_GETARG_SVECTYPE_P(0);
 	int idx = PG_GETARG_INT32(1);
