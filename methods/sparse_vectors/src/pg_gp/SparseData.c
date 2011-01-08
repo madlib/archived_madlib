@@ -24,7 +24,7 @@
 #include "catalog/pg_proc.h"
 
 /** 
- * Constructor for a SparseData structure - Allocates empty dynamic 
+ * @return A SparseData structure with allocated empty dynamic 
  * StringInfo of unknown initial sizes.
  */
 SparseData makeSparseData(void) {
@@ -337,8 +337,9 @@ void printSparseData(SparseData sdata) {
 }
 
 /**
- * Projects onto an element of a SparseData. As is normal in 
- * SQL, we start counting from one. 
+ * @param sdata The SparseData to be projected on
+ * @param idx The index to be projected
+ * @return The element of a SparseData at location idx. 
  */
 double sd_proj(SparseData sdata, int idx) {
 	char * ix = sdata->index->data;
@@ -353,7 +354,7 @@ double sd_proj(SparseData sdata, int idx) {
 			 errOmitLocation(true),
 			 errmsg("Index out of bounds.")));
 
-	/* find desired block */
+	/* find desired block; as is normal in SQL, we start counting from one */
 	read = compword_to_int8(ix);
 	i = 0;
 	while (read < idx) {
@@ -365,7 +366,10 @@ double sd_proj(SparseData sdata, int idx) {
 }
 
 /**
- * Extracts a sub-array, indexed by start and end, of a SparseData. 
+ * @param sdata The SparseData from which to extract a subarray
+ * @param start The start index of the desired subarray
+ * @param end The end index of the desired subarray
+ * @return The sub-array, indexed by start and end, of a SparseData. 
  */
 SparseData subarr(SparseData sdata, int start, int end) {
 	char * ix = sdata->index->data;
@@ -414,8 +418,8 @@ SparseData subarr(SparseData sdata, int start, int end) {
 }
 
 /**
- * Returns a copy of a SparseData, with the order of the
- * elements reversed. The function is non-destructive to the input SparseData.
+ * @param sdata The SparseData to be reversed
+ * @return A copy of the input SparseData, with the order of the elements reversed. 
  */
 SparseData reverse(SparseData sdata) {
 	char * ix = sdata->index->data;
