@@ -45,8 +45,7 @@ SparseData makeSparseData(void) {
 }
 
 /** 
- * Constructor for a SparseData structure - Creates a SparseData with 
- * zero storage in its StringInfos.
+ * @return A SparseData with zero storage in its StringInfos.
  */
 SparseData makeEmptySparseData(void) {
 	/* Allocate the struct */
@@ -63,8 +62,14 @@ SparseData makeEmptySparseData(void) {
 }
 
 /**
- * Constructor for a SparseData structure - Creates a SparseData in place 
- * using pointers to the vals and index data
+ * @param vals An array of data values
+ * @param index An array of run-lengths
+ * @param datasize The length of the vals array
+ * @param indexsize The length of the index array
+ * @param datatype The object ID of the elements represented in the vals array
+ * @param unique_value_count The number of RLE blocks in the vals array
+ * @param total_value_count The total number of individual elements represented in the vals and index arrays
+ * @return A SparseData created in place using pointers to the vals and index data
  */
 SparseData makeInplaceSparseData(char *vals, char *index,
 		int datasize, int indexsize, Oid datatype,
@@ -83,8 +88,7 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 }
 
 /**
- * Constructor for a SparseData structure - Creates a copy of an existing 
- * SparseData. 
+ * @return A copy of an existing SparseData. 
  */
 SparseData makeSparseDataCopy(SparseData source_sdata) {
 	/* Allocate the struct */
@@ -98,7 +102,9 @@ SparseData makeSparseDataCopy(SparseData source_sdata) {
 	return sdata;
 }
 /**
- * Creates a SparseData of size dimension from a constant
+ * @param constant The value of an RLE block
+ * @param dimension The size of an RLE block
+ * @return A SparseData with a single RLE block of size dimension having value constant
  */
 SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 	char *bytestore=(char *)palloc(sizeof(char)*9);
@@ -154,7 +160,9 @@ StringInfo copyStringInfo(StringInfo sinfo) {
 }
 
 /**
- * Makes a StringInfo from a data pointer and length
+ * @param data Pointer to an array of elements
+ * @param len The size of the data array
+ * @return A StringInfo from a data pointer and length
  */
 StringInfo makeStringInfoFromData(char *data,int len) {
 	StringInfo sinfo;
