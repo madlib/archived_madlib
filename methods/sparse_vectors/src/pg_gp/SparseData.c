@@ -118,7 +118,7 @@ SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 }
 
 /**
- * Destructor for SparseData
+ * Frees up the memory occupied by sdata
  */
 void freeSparseData(SparseData sdata) {
 	pfree(sdata->vals);
@@ -127,7 +127,7 @@ void freeSparseData(SparseData sdata) {
 }
 
 /** 
- * Destructor for SparseData
+ * Frees up the memory occupied by sdata, including the data elements of vals and index.
  */
 void freeSparseDataAndData(SparseData sdata) {
 	pfree(sdata->vals->data);
@@ -136,7 +136,8 @@ void freeSparseDataAndData(SparseData sdata) {
 }
 
 /**
- * Copies a StringInfo structure
+ * @param sinfo The StringInfo structure to be copied
+ * @return A copy of sinfo
  */
 StringInfo copyStringInfo(StringInfo sinfo) {
 	StringInfo result;
@@ -474,7 +475,7 @@ static bool lapply_error_checking(Oid foid, List * funcname);
  *
  * @param func The name of the function to apply
  * @param sdata The input sparse data to be modified
- * @see lapply_error_checking()
+ * @return A SparseData with the same dimension as sdata but with each element sdata[i] replaced by func(sdata[i]) 
  */
 SparseData lapply(text * func, SparseData sdata) {
 	Oid argtypes[1] = { FLOAT8OID };
