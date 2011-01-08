@@ -33,11 +33,13 @@
  */
 typedef struct 
 {
+	/*@{*/
 	Oid type_of_data; 	/*!< The native type of the data entries */
 	int unique_value_count; /*!< The number of unique values in the data array */
 	int total_value_count;  /*!< The total number of values, including duplicates */
 	StringInfo vals;        /*!< The unique number values are stored here as a stream of bytes */
 	StringInfo index; 	/*!< A count of each value is stored in the index */
+	/*@}*/
 } SparseDataStruct;
 
 /*
