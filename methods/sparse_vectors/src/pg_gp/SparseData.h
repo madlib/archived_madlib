@@ -1,9 +1,11 @@
 /**
  * @file
- * \brief SparseData.h -- Declarations/definitions for "SparseData" functions.
+ * \brief This file defines the SparseData structure and some basic 
+ * functions on SparseData.
  *
  * SparseData provides array storage for repetitive data as commonly found
- * in numerical analysis of sparse arrays and matrices.
+ * in numerical analysis of sparse arrays and matrices. 
+ * A general run-length encoding scheme is adopted.
  * Sequential duplicate values in the array are represented in an index
  * structure that stores the count of the number of times a given value
  * is duplicated.
@@ -31,16 +33,11 @@
  */
 typedef struct SparseDataStruct
 {
-	/* The native type of the data entries */
-	Oid type_of_data;
-	/* The number of unique values in the data array */
-	int unique_value_count; 
-	/* The total number of values, including duplicates */
-	int total_value_count;
-	/* The unique number values are stored here as a stream of bytes */
-	StringInfo vals;  
-	/* A count of each value is stored in the index */
-	StringInfo index; 
+	Oid type_of_data; 	/**< The native type of the data entries */
+	int unique_value_count; /**< The number of unique values in the data array */
+	int total_value_count;  /**< The total number of values, including duplicates */
+	StringInfo vals;        /**< The unique number values are stored here as a stream of bytes */
+	StringInfo index; 	/**< A count of each value is stored in the index */
 } SparseDataStruct;
 
 /*
@@ -104,7 +101,9 @@ typedef SparseDataStruct *SparseData;
 #define SDATA_UNIQUE_VALCNT(x)	(((SparseData)(x))->unique_value_count)
 #define SDATA_TOTAL_VALCNT(x)	(((SparseData)(x))->total_value_count)
 
-/** Returns whether a SparseData is a scalar */
+/** 
+ * @param x a SparseData
+ * @return True if x is a scalar */
 #define SDATA_IS_SCALAR(x)	(((((x)->unique_value_count)==((x)->total_value_count))&&((x)->total_value_count==1)) ? 1 : 0)
 
 /** Calculate the size of the integer count in an RLE index provided the pointer
