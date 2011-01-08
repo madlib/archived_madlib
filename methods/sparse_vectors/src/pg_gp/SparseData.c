@@ -166,26 +166,20 @@ StringInfo makeStringInfoFromData(char *data,int len) {
 }
 
 /**
- * Converts a double[] to a SparseData compressed format, representing duplicate
- * values in the double[] by a count and a single value.
- * Note that special double values like denormalized numbers and exceptions
- * like NaN are treated like any other value - if there are duplicates, the
- * value of the special number is preserved and they are counted.
- *
  * @param array The array of doubles to be converted to a SparseData
  * @param count The size of array
+ * @return A SparseData representation of an input array of doubles
  */
 SparseData float8arr_to_sdata(double *array, int count) {
 	return arr_to_sdata((char *)array, sizeof(float8), FLOAT8OID, count);
 }
 
 /**
- * Converts an array (of arbitrary base type) to a compressed SparseData.
- *
  * @param array The array of elements to be converted to a SparseData
  * @param width The size of the elements in array
  * @param type_of_data The object ID of the elements in array
  * @param count The size of array
+ * @return A SparseData representation of an input array
  */
 SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	char *run_val=array;
@@ -196,17 +190,23 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 
 	for (int i=1; i<count; i++) {
 		char *curr_val=array+ (i*size_of_type(type_of_data));
-			if (memcmp(curr_val,run_val,width))
-			{ /*run is interrupted, initiate new run */
-				/* package up the finished run */
-				add_run_to_sdata(run_val,run_len,width,sdata);
-				/* mark beginning of new run */
-				run_val=curr_val;
-				run_len=1;
-			} else 
-			{ /* we're still in the same run */
-				run_len++;
-			}
+
+		/*
+		 * Note that special double values like denormalized numbers and exceptions
+		 * like NaN are treated like any other value - if there are duplicates, the
+		 * value of the special number is preserved and they are counted.
+		 */
+		if (memcmp(curr_val,run_val,width))
+		{       /*run is interrupted, initiate new run */
+			/* package up the finished run */
+			add_run_to_sdata(run_val,run_len,width,sdata);
+			/* mark beginning of new run */
+			run_val=curr_val;
+			run_len=1;
+		} else 
+		{ /* we're still in the same run */
+			run_len++;
+		}
 	}
 	add_run_to_sdata(run_val, run_len, width, sdata); /* package up the last run */
 
@@ -217,8 +217,10 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	return sdata;
 }
 
+
 /**
- * Converts a SparseData compressed structure to a float8[]
+ * @param sdata The SparseData to be converted to an array of float8s
+ * @return A float8[] representation of a SparseData
  */
 double *sdata_to_float8arr(SparseData sdata) {
 	double *array;
@@ -425,11 +427,9 @@ SparseData reverse(SparseData sdata) {
 }
 
 /** 
- * Returns the concatenation of two input SparseData.
- *  Copies of the input sparse data are made.
- *
  * @param left The SparseData that comes first in the resulting concatenation
  * @param right The SparseData that comes second in the resulting concatenation
+ * @return The concatenation of two input SparseData.
  */
 SparseData concat(SparseData left, SparseData right) {
 	if (left == NULL && right == NULL) {
