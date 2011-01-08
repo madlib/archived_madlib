@@ -181,6 +181,11 @@ SparseData float8arr_to_sdata(double *array, int count) {
 
 /**
  * Converts an array (of arbitrary base type) to a compressed SparseData.
+ *
+ * @param array The array of elements to be converted to a SparseData
+ * @param width The size of the elements in array
+ * @param type_of_data The object ID of the elements in array
+ * @param count The size of array
  */
 SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	char *run_val=array;
@@ -422,6 +427,9 @@ SparseData reverse(SparseData sdata) {
 /** 
  * Returns the concatenation of two input SparseData.
  *  Copies of the input sparse data are made.
+ *
+ * @param left The SparseData that comes first in the resulting concatenation
+ * @param right The SparseData that comes second in the resulting concatenation
  */
 SparseData concat(SparseData left, SparseData right) {
 	if (left == NULL && right == NULL) {
