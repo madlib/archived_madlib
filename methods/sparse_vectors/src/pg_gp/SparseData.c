@@ -274,7 +274,7 @@ double *sdata_to_float8arr(SparseData sdata) {
 }
 
 /**
- * Converts the count array of a SparseData into an array of integers
+ * @return An array of integers given the (compressed) count array of a SparseData
  */
 int64 *sdata_index_to_int64arr(SparseData sdata) {
 	char *iptr;
@@ -290,7 +290,9 @@ int64 *sdata_index_to_int64arr(SparseData sdata) {
 }
 
 /**
- * Serializes a SparseData compressed structure
+ * @param target The memory area to store the serialised SparseData
+ * @para source The SparseData to be serialised
+ * @return The serialisation of a SparseData structure
  */
 void serializeSparseData(char *target, SparseData source)
 {
