@@ -1,3 +1,7 @@
+/**
+ * @file
+ * \brief Special floating-point numbers
+ */
 #ifndef FLOATSPECIALS_H
 #define FLOATSPECIALS_H
 

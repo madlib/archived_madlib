@@ -1,4 +1,4 @@
-/*
+/**
  * @file
  * This module defines a collection of operators for svecs. The functions 
  * are usually wrappers that call the corresponding operators defined for

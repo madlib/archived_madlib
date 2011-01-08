@@ -1,4 +1,4 @@
-/*
+/**
  * @file
  * Sparse Vector Datatype
  *   We would like to store sparse arrays in a terse representation that fits 
