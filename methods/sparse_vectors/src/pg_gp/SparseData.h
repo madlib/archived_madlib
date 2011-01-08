@@ -31,7 +31,7 @@
 /**
  * SparseData holds information about a sparse array of values
  */
-typedef struct SparseDataStruct
+typedef struct 
 {
 	Oid type_of_data; 	/*!< The native type of the data entries */
 	int unique_value_count; /*!< The number of unique values in the data array */
