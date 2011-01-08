@@ -172,6 +172,8 @@ StringInfo makeStringInfoFromData(char *data,int len) {
  * like NaN are treated like any other value - if there are duplicates, the
  * value of the special number is preserved and they are counted.
  *
+ * @param array The array of doubles to be converted to a SparseData
+ * @param count The size of array
  */
 SparseData float8arr_to_sdata(double *array, int count) {
 	return arr_to_sdata((char *)array, sizeof(float8), FLOAT8OID, count);

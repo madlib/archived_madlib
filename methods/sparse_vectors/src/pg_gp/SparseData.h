@@ -82,7 +82,7 @@ typedef SparseDataStruct *SparseData;
 #define SIZEOF_SPARSEDATAHDR	MAXALIGN(sizeof(SparseDataStruct))
 /** 
  * @param x a SparseData
- * @ return The size of x minus the dynamic variables, plus two 
+ * @return The size of x minus the dynamic variables, plus two 
  * integers describing the length of the data area and index
  */
 #define SIZEOF_SPARSEDATASERIAL(x) (SIZEOF_SPARSEDATAHDR + \
