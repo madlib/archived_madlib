@@ -1,9 +1,10 @@
-"""@namespace sparse_vectors
+import plpy
 
-About:
-------
-	
-    This module implements a sparse vector data type.
+"""@namespace svecs
+
+This module implements a sparse vector data type.
+
+\par About:
 
     When we use arrays of floating point numbers for various calculations, 
     we will sometimes have long runs of zeros or some other default value. 
@@ -43,14 +44,12 @@ About:
     store and manipulate sparse vectors. This module implements such a 
     data type.
 
-Prerequisites:
---------------
+\par Prerequisites:
 
     1. Greenplum Database 3.3 or higher
     2. A C compiler
 
-Installation:
--------------
+\par Installation:
 
     1. Make sure the Greenplum binary distribution is in the path.
     2. On a command line, execute the following to compile the library.
@@ -65,8 +64,7 @@ Installation:
 
            psql -d <your_db_name> -af gp_svec_test.sql | diff - test_output
 
-To Do:
------
+\par To Do:
 
     - The current implementation only supports sparse vectors of float8
       values. We need to extending the implementation to support other 
@@ -75,8 +73,7 @@ To Do:
     - Indexing on svecs. This requires indexing capability on arrays,
       which is currently unsupported in GP.  
 	
-Usage:
-------
+\par Usage:
 
     The "Sparse Vector Datatype" is named "svec" and implements a vector 
     with compressed storage of duplicate elements. We can cast an array 
@@ -190,8 +187,7 @@ Usage:
     in gp_svec.sql.
 
 
-A More Extensive Example
-------------------------
+\par A More Extensive Example
 
     For a text classification example, let's assume we have a dictionary 
     composed of words in a text array:
