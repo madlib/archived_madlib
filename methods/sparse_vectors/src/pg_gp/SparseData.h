@@ -33,13 +33,11 @@
  */
 typedef struct 
 {
-	/*@{*/
 	Oid type_of_data; 	/**< The native type of the data entries */
 	int unique_value_count; /**< The number of unique values in the data array */
 	int total_value_count;  /**< The total number of values, including duplicates */
 	StringInfo vals;        /**< The unique number values are stored here as a stream of bytes */
 	StringInfo index; 	/**< A count of each value is stored in the index */
-	/*@}*/
 } SparseDataStruct;
 
 /*
@@ -54,9 +52,6 @@ typedef struct
  */
 typedef SparseDataStruct *SparseData;
 
-/** Calculates the size of a serialized SparseData based on the actual consumed
- * length of the StringInfo data and StringInfoData structures.
- */
 /*------------------------------------------------------------------------------
  * Serialized SparseData
  *------------------------------------------------------------------------------
@@ -80,10 +75,15 @@ typedef SparseDataStruct *SparseData;
  * 		int maxlen;
  * 		int cursor;
  */ 
+/** 
+ * @return The size of a serialized SparseData based on the actual consumed
+ * length of the StringInfo data and StringInfoData structures.
+ */
 #define SIZEOF_SPARSEDATAHDR	MAXALIGN(sizeof(SparseDataStruct))
-/** Size of the sparse data structure minus the dynamic variables, plus two 
+/** 
+ * @param x a SparseData
+ * @ return The size of x minus the dynamic variables, plus two 
  * integers describing the length of the data area and index
- * Takes a SparseData argument 
  */
 #define SIZEOF_SPARSEDATASERIAL(x) (SIZEOF_SPARSEDATAHDR + \
 		(2*sizeof(StringInfoData)) + \
@@ -108,16 +108,17 @@ typedef SparseDataStruct *SparseData;
  * @return True if x is a scalar */
 #define SDATA_IS_SCALAR(x)	(((((x)->unique_value_count)==((x)->total_value_count))&&((x)->total_value_count==1)) ? 1 : 0)
 
-/** Calculate the size of the integer count in an RLE index provided the pointer
- * to the start of the count entry
- *
- * The size of a compressed int8 is stored in the first element of the ptr 
+/** 
+ * @param ptr Pointer to the start of the count entry of a SparseData
+ * @return The size of the integer count in an RLE index pointed to by ptr 
+ */
+#define	int8compstoragesize(ptr) \
+ (((ptr) == NULL) ? 0 : (((*((char *)(ptr)) < 0) ? 1 : (1 + *((char *)(ptr))))))
+/* The size of a compressed int8 is stored in the first element of the ptr 
  * array; see the explanation at the int8_to_compword() function below.
  *
  * Note that if the ptr is NULL, a zero size is returned
  */
-#define	int8compstoragesize(ptr) \
- (((ptr) == NULL) ? 0 : (((*((char *)(ptr)) < 0) ? 1 : (1 + *((char *)(ptr))))))
 
 static inline void int8_to_compword(int64 num, char entry[9]);
 
