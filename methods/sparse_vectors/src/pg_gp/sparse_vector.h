@@ -4,9 +4,9 @@
  *
  */
 
-/*! \defgroup sparse_vectors
+/*! \defgroup Sparse Vectors
 
-\par About:
+\par About
 
 This module implements a sparse vector data type named "svec", which 
 gives compressed storage of sparse vectors with many duplicate elements.
