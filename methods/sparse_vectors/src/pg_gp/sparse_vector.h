@@ -6,37 +6,40 @@
 
 /*! \defgroup sparse_vectors
 
-This module implements a sparse vector data type named "svec", which 
-gives compressed storage of duplicate elements.
-
 \par About:
+
+This module implements a sparse vector data type named "svec", which 
+gives compressed storage of sparse vectors with many duplicate elements.
 
 When we use arrays of floating point numbers for various calculations, 
     we will sometimes have long runs of zeros (or some other default value). 
-    This is common in many kinds of applications such as scientific computing, 
+    This is common in applications like scientific computing, 
     retail optimization, and text processing. Each floating point number takes 
     8 bytes of storage in memory and/or disk, so saving those zeros is often 
     worthwhile. There are also many computations that can benefit from skipping
     over the zeros.
 
-    To make the discussion more concrete, consider, for example, the following 
+    To focus the discussion, consider, for example, the following 
     array of doubles stored as a Postgres/GP "float8[]" data type:
 
+\code
       '{0, 33,...40,000 zeros..., 12, 22 }'::float8[].
+\endcode
 
     This array would occupy slightly more than 320KB of memory/disk, most of 
-    it zeros. Even if we store the zeros as nulls, we would still end up with
-    a 5KB null bitmap, which is still not nearly as memory efficient as we'd 
-    like. Also, as we perform various operations on the array, we'll often be 
-    doing work on 40,000 fields that turn out not to be important. 
+    it zeros. Even if we were to exploit the null bitmap and store the zeros 
+    as nulls, we would still end up with a 5KB null bitmap, which is still 
+    not nearly as memory efficient as we'd like. Also, as we perform various 
+    operations on the array, we'll often be doing work on 40,000 fields that 
+    would turn out not to be important. 
 
-    To solve the problems associated with the processing of sparse arrays, we 
-    adopt a simple Run Length Encoding (RLE) scheme to represent sparse arrays 
-    as pairs of count-value arrays. So, for example, the array above would be 
-    represented as follows
-
+    To solve the problems associated with the processing of sparse arrays 
+    discussed above, we adopt a simple Run Length Encoding (RLE) scheme to 
+    represent sparse arrays as pairs of count-value arrays. So, for example, 
+    the array above would be represented as follows
+\code
         '{1,1,40000,1,1}:{0,33,0,12,22}'::svec,
-
+\endcode
     which says there is 1 occurrence of 0, followed by 1 occurrence of 33, 
     followed by 40,000 occurrences of 0, etc. In contrast to the naive 
     representations, we only need 5 integers and 5 floating point numbers
@@ -46,21 +49,21 @@ When we use arrays of floating point numbers for various calculations,
 
 \par Prerequisites
 
-    1. Greenplum Database 3.3 or higher
-    2. A C compiler
+    -# Greenplum Database 3.3 or higher
+    -# A C compiler
 
 \par Installation
 
-    1. Make sure the Greenplum binary distribution is in the path.
-    2. On a command line, execute the following to compile the library.
+    -# Make sure the Greenplum binary distribution is in the path.
+    -# On a command line, execute the following to compile the library.
 
        	   make install
 
-    3. Install the function and type definitions with 
+    -# Install the function and type definitions with 
 
            psql -d <your_db_name> -f gp_svec.sql
 
-    4. <Optional> Run tests with 
+    -# <Optional> Run tests with 
 
            psql -d <your_db_name> -af gp_svec_test.sql | diff - test_output
 
