@@ -39,7 +39,7 @@ When we use arrays of floating point numbers for various calculations,
     the array above would be represented as follows
 
 \code
-      '{1, 1, 40000, 1, 1}:{0, 33, 0, 12, 22}'::svec,
+      '{1,1,40000,1,1}:{0,33,0,12,22}'::svec,
 \endcode
 
     which says there is 1 occurrence of 0, followed by 1 occurrence of 33, 
@@ -146,13 +146,13 @@ When we use arrays of floating point numbers for various calculations,
     testdb=# select '{1,2,3}:{4,null,5}'::svec;
           svec        
     -------------------
-      {1,2,3}:{4,NVP,5}
+     {1,2,3}:{4,NVP,5}
 
     testdb=# select '{1,2,3}:{4,null,5}'::svec + '{2,2,2}:{8,9,10}'::svec; 
              ?column?         
      --------------------------
       {1,2,1,2}:{12,NVP,14,15}
-\enddcode
+\endcode
 
     An element of an svec can be accessed using the svec_proj() function,
     which takes an svec and the index of the element desired.
@@ -200,21 +200,21 @@ When we use arrays of floating point numbers for various calculations,
 
     For a text classification example, let's assume we have a dictionary 
     composed of words in a text array:
-
-        testdb=# create table features (a text[][]) distributed randomly;
+\code
+    testdb=# create table features (a text[][]) distributed randomly;
     testdb=# insert into features values 
             ('{am,before,being,bothered,corpus,document,i,in,is,me,
                never,now,one,really,second,the,third,this,until}');
-
+\endcode
     We have a set of documents, each represented as an array of words:
-
+\code
     testdb=# create table documents(a int,b text[]);
-    CREATE TABLE
     testdb=# insert into documents values
-             (1,'{this,is,one,document,in,the,corpus}'),
+                (1,'{this,is,one,document,in,the,corpus}'),
                 (2,'{i,am,the,second,document,in,the,corpus}'),
                 (3,'{being,third,never,really,bothered,me,until,now}'),
                 (4,'{the,document,before,me,is,the,third,document}');
+\endcode
 
     Now we have a dictionary and some documents, we would like to do some 
     document categorization using vector arithmetic on word counts and 
@@ -228,29 +228,38 @@ When we use arrays of floating point numbers for various calculations,
 
     Inside the sparse vector library, we have a function that will create 
     an SFV from a document, so we can just do this:
-
-    testdb=# select gp_extract_feature_histogram(
-                    (select a from features limit 1),b)::float8[] 
+\code
+    testdb=# select gp_extract_feature_histogram((select a from features limit 1),b)::float8[] 
              from documents;
 
-                 gp_extract_feature_histogram             
+          gp_extract_feature_histogram             
     -----------------------------------------
      {0,0,0,0,1,1,0,1,1,0,0,0,1,0,0,1,0,1,0}
      {0,0,1,1,0,0,0,0,0,1,1,1,0,1,0,0,1,0,1}
      {1,0,0,0,1,1,1,1,0,0,0,0,0,0,1,2,0,0,0}
      {0,1,0,0,0,2,0,0,1,1,0,0,0,0,0,2,1,0,0}
-
+\endcode
     Note that the output of gp_extract_feature_histogram() is an svec for each 
     document containing the count of each of the dictionary words in the 
     ordinal positions of the dictionary. This can more easily be understood 
     by lining up the feature vector and text like this:
-
-    testdb=# select gp_extract_feature_histogram(
-                (select a from features limit 1),b)::float8[]
-                        , b 
+\code
+    testdb=# select gp_extract_feature_histogram((select a from features limit 1),b)::float8[]
+                    , b 
                  from documents;
 
+    gp_extract_feature_histogram             |                        b                         
+    -----------------------------------------+--------------------------------------------------
+     {1,0,0,0,1,1,1,1,0,0,0,0,0,0,1,2,0,0,0} | {i,am,the,second,document,in,the,corpus}
+     {0,1,0,0,0,2,0,0,1,1,0,0,0,0,0,2,1,0,0} | {the,document,before,me,is,the,third,document}
+     {0,0,0,0,1,1,0,1,1,0,0,0,1,0,0,1,0,1,0} | {this,is,one,document,in,the,corpus}
+     {0,0,1,1,0,0,0,0,0,1,1,1,0,1,0,0,1,0,1} | {being,third,never,really,bothered,me,until,now}
+
     testdb=# select * from features;
+                                                   	a                                                    
+    --------------------------------------------------------------------------------------------------------
+    {am,before,being,bothered,corpus,document,i,in,is,me,never,now,one,really,second,the,third,this,until}
+\endcode
 
     Now when we look at the document "i am the second document in the corpus", 
     its SFV is {1,3*0,1,1,1,1,6*0,1,2}. The word "am" is the first ordinate in 
@@ -265,9 +274,9 @@ When we use arrays of floating point numbers for various calculations,
     count is hardly ever used.  Instead, it's turned into a weight. The most 
     common weight is called tf/idf for Term Frequency / Inverse Document 
     Frequency. The calculation for a given term in a given document is 
-
+\code
       {#Times in document} * log {#Documents / #Documents the term appears in}.
-
+\endcode
     For instance, the term "document" in document A would have weight 
     1 * log (4/3). In document D, it would have weight 2 * log (4/3).
     Terms that appear in every document would have tf/idf weight 0, since 
@@ -276,9 +285,9 @@ When we use arrays of floating point numbers for various calculations,
 
     For this part of the processing, we'll need to have a sparse vector of 
     the dictionary dimension (19) with the values 
-
+\code
         (log(#documents/#Documents each term appears in). 
-
+\endcode
     There will be one such vector for the whole list of documents (aka the 
     "corpus"). The #documents is just a count of all of the documents, in 
     this case 4, but there is one divisor for each dictionary word and its 
@@ -288,7 +297,7 @@ When we use arrays of floating point numbers for various calculations,
     Document Frequency.
 
     This can be done as follows:
-
+\code
     testdb=# create table corpus as 
            (select a,gp_extract_feature_histogram(
               (select a from features limit 1),b) sfv from documents);
@@ -302,30 +311,31 @@ When we use arrays of floating point numbers for various calculations,
        2 | {1,3,1,1,1,1,6,1,1,3}:{1.38,0,0.69,0.28,1.38,0.69,0,1.38,0.57,0}
        3 | {2,2,5,1,2,1,1,2,1,1,1}:{0,1.38,0,0.69,1.38,0,1.38,0,0.69,0,1.38}
        4 | {1,1,3,1,2,2,5,1,1,2}:{0,1.38,0,0.57,0,0.69,0,0.57,0.69,0}
+\endcode
 
     We can now get the "angular distance" between one document and the rest 
     of the documents using the ACOS of the dot product of the document vectors:
-
+\code
     testdb=# create table weights as 
             (select a docnum, (sfv * logidf) tf_idf 
              from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
                     from corpus) foo, corpus order by docnum) 
              distributed randomly ;
-
+\endcode
     The following calculates the angular distance between the first document 
     and each of the other documents:
-
+\code
     testdb=# select docnum,180.*(ACOS(dmin(1.,(tf_idf%*%testdoc)/(l2norm(tf_idf)*l2norm(testdoc))))/3.141592654) angular_distance 
          from weights,(select tf_idf testdoc from weights where docnum = 1 LIMIT 1) foo 
          order by 1;
 
     docnum | angular_distance 
-       --------+------------------
-             1 |                0
-             2 | 78.8235846096986
-             3 | 89.9999999882484
-             4 | 80.0232034288617
-
+   --------+------------------
+         1 |                0
+         2 | 78.8235846096986
+         3 | 89.9999999882484
+         4 | 80.0232034288617
+\endcode
     We can see that the angular distance between document 1 and itself 
     is 0 degrees and between document 1 and 3 is 90 degrees because they 
     share no features at all. The angular distance can now be plugged into
@@ -334,7 +344,6 @@ When we use arrays of floating point numbers for various calculations,
 
     Other extensive examples of svecs usage can be found in the k-means
     module.
-
 
 */
 
