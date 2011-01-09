@@ -5,14 +5,13 @@
     This module implements the class of online learning with kernels 
     algorithms described in \n
 
-      Jyrki Kivinen, Alexander J. Smola and Robert C. Williamson, \n
-      Online Learning with Kernels, IEEE Transactions on Signal Processing, \n
-      52(8), 2165-2176, 2004.\n
+      \t Jyrki Kivinen, Alexander J. Smola and Robert C. Williamson, \n
+      \t Online Learning with Kernels, IEEE Transactions on Signal Processing, 52(8), 2165-2176, 2004.\n
 
     See also the book \n
   
-      Bernhard Scholkopf and Alexander J. Smola, Learning with Kernels: \n
-      Support Vector Machines, Regularization, Optimization, and Beyond, 
+      \t Bernhard Scholkopf and Alexander J. Smola, Learning with Kernels: \n
+      \t Support Vector Machines, Regularization, Optimization, and Beyond, 
       MIT Press, 2002 \n
  
     for much more details.
@@ -23,7 +22,8 @@
     support vector model at every step, even when no error was made, in the 
     name of regularisation. For practical purposes, and this is verified 
     empirically to a certain degree, updating only when necessary is both 
-    faster and better from a learning point of view.
+    faster and better from a learning-theoretic point of view, at least in 
+    the i.i.d. setting.
 
     Methods for classification, regression and novelty detection are 
     available. Multiple instances of the algorithms can be executed 
@@ -40,7 +40,7 @@
 
 \par Prerequisites
 
-    None at this point. Will need to install the Greenplum sparse vector 
+    - None at this point. Will need to install the Greenplum sparse vector 
     SVEC datatype eventually.
 
 
@@ -56,10 +56,9 @@
     - Insert the training data into the table sv_train_data, which has
        the following structure:
 \code    
-        (
-    		id 		INT,  	    -- point ID
-    		ind		FLOAT8[],   -- data point
-		label		FLOAT8	    -- label of data point
+        (       id 		INT,  	    -- point ID
+                ind		FLOAT8[],   -- data point
+                label		FLOAT8	    -- label of data point
     	)
 \endcode    
         Note: The label field is not required for novelty detection.
@@ -74,10 +73,10 @@
        testdb=# select MADLIB_SCHEMA.storeModel('myexp');
        testdb=# select MADLIB_SCHEMA.svs_predict('myexp', '{1,2,4,20,10}');
 \endcode
-   
      To learn multiple support vector models, replace the above by 
 \code
-       testdb=# insert into MADLIB_SCHEMA.sv_results (select 'myexp' || gp_segment_id, MADLIB_SCHEMA.online_sv_reg_agg(ind, label) from MADLIB_SCHEMA.sv_train_data group by gp_segment_id);
+       testdb=# insert into MADLIB_SCHEMA.sv_results 
+                   (select 'myexp' || gp_segment_id, MADLIB_SCHEMA.online_sv_reg_agg(ind, label) from MADLIB_SCHEMA.sv_train_data group by gp_segment_id);
        testdb=# select MADLIB_SCHEMA.storeModel('myexp', n); -- n is the number of segments
        testdb=# select * from MADLIB_SCHEMA.svs_predict_combo('myexp', n, '{1,2,4,20,10}');
 \endcode
@@ -91,7 +90,8 @@
 \endcode   
      To learn multiple support vector models, replace the above by 
 \code
-       testdb=# insert into MADLIB_SCHEMA.sv_results (select 'myexpc' || gp_segment_id, MADLIB_SCHEMA.online_sv_cl_agg(ind, label) from MADLIB_SCHEMA.sv_train_data group by gp_segment_id);
+       testdb=# insert into MADLIB_SCHEMA.sv_results 
+                   (select 'myexpc' || gp_segment_id, MADLIB_SCHEMA.online_sv_cl_agg(ind, label) from MADLIB_SCHEMA.sv_train_data group by gp_segment_id);
        testdb=# select MADLIB_SCHEMA.storeModel('myexpc', n); -- n is the number of segments
        testdb=# select * from MADLIB_SCHEMA.svs_predict_combo('myexpc', n, '{10,-2,4,20,10}');
 \endcode
