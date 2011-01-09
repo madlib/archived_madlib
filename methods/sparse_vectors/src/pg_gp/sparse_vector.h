@@ -87,39 +87,39 @@ When we use arrays of floating point numbers for various calculations,
 
     We can input an array directly as an svec as follows: 
 \code   
-        testdb=# select '{1,1,40000,1,1}:{0,33,0,12,22}'::svec.
+    testdb=# select '{1,1,40000,1,1}:{0,33,0,12,22}'::svec.
 \endcode
     We can also cast an array into an svec:
 \code
-	testdb=# select ('{0,33,...40,000 zeros...,12,22}'::float8[])::svec.
+    testdb=# select ('{0,33,...40,000 zeros...,12,22}'::float8[])::svec.
 \endcode
     We can use operations with svec type like <, >, *, **, /, =, +, SUM, etc, 
     and they have meanings associated with typical vector operations. For 
     example, the plus (+) operator adds each of the terms of two vectors having
     the same dimension together. 
 \code
-	testdb=# select ('{0,1,5}'::float8[]::svec + 
-		 	 '{4,3,2}'::float8[]::svec)::float8[];
- 	float8  
-	---------
- 	{4,4,7}
+    testdb=# select ('{0,1,5}'::float8[]::svec + '{4,3,2}'::float8[]::svec)::float8[];
+     float8  
+    ---------
+     {4,4,7}
 \endcode
 
     Without the casting into float8[] at the end, we get:
 \code
-        testdb=# select '{0,1,5}'::float8[]::svec + '{4,3,2}'::float8[]::svec;
- 	?column?  
-	----------
- 	{2,1}:{4,7}    	    	
+    testdb=# select '{0,1,5}'::float8[]::svec + '{4,3,2}'::float8[]::svec;
+     ?column?  
+    ----------
+    {2,1}:{4,7}    	    	
 \endcode
+
     A dot product (%*%) between the two vectors will result in a scalar 
     result of type float8. The dot product should be (0*4 + 1*3 + 5*2) = 13, 
     like this:
 \code
-	testdb=# select '{0,1,5}'::float8[]::svec %*% '{4,3,2}'::float8[]::svec;
- 	?column? 
-	----------
-       	13
+    testdb=# select '{0,1,5}'::float8[]::svec %*% '{4,3,2}'::float8[]::svec;
+     ?column? 
+    ----------
+        13
 \endcode
 
     Special vector aggregate functions are also available. SUM is self 
@@ -129,66 +129,69 @@ When we use arrays of floating point numbers for various calculations,
     {10,0,3},{0,0,3},{0,1,0}, then executing the VEC_COUNT_NONZERO() aggregate
     function would result in {1,2,3}:
 
-	testdb=# create table list (a svec);
-	CREATE TABLE
-	testdb=# insert into list values 
-		 	('{0,1,5}'::float8[]), ('{10,0,3}'::float8[]),
-			('{0,0,3}'::float8[]),('{0,1,0}'::float8[]);
-	INSERT 0 4
-	testdb=# select VEC_COUNT_NONZERO(a)::float8[] from list;
- 	vec_count_nonzero 
-	-----------------
- 	{1,2,3}
+\code
+    testdb=# create table list (a svec);
+    testdb=# insert into list values ('{0,1,5}'::float8[]), ('{10,0,3}'::float8[]), ('{0,0,3}'::float8[]),('{0,1,0}'::float8[]);
+ 
+    testdb=# select VEC_COUNT_NONZERO(a)::float8[] from list;
+    vec_count_nonzero 
+    -----------------
+        {1,2,3}
+\endcode
 
     We do not use null bitmaps in the svec data type. A null value in an svec 
     is represented explicitly as an NVP (No Value Present) value. For example, 
     we have:
+\code
+    testdb=# select '{1,2,3}:{4,null,5}'::svec;
+          svec        
+    -------------------
+      {1,2,3}:{4,NVP,5}
 
-    	testdb=# select '{1,2,3}:{4,null,5}'::svec;
-	      svec        
-	-------------------
- 	 {1,2,3}:{4,NVP,5}
-
-	testdb=# select '{1,2,3}:{4,null,5}'::svec + '{2,2,2}:{8,9,10}'::svec; 
-	         ?column?         
- 	--------------------------
- 	 {1,2,1,2}:{12,NVP,14,15}
+    testdb=# select '{1,2,3}:{4,null,5}'::svec + '{2,2,2}:{8,9,10}'::svec; 
+             ?column?         
+     --------------------------
+      {1,2,1,2}:{12,NVP,14,15}
+\enddcode
 
     An element of an svec can be accessed using the svec_proj() function,
     which takes an svec and the index of the element desired.
-
-        testdb=# select svec_proj('{1,2,3}:{4,5,6}'::svec, 1) + 
-		 	svec_proj('{4,5,6}:{1,2,3}'::svec, 15);	 
-         ?column? 
-	----------
-                7
+\code
+    testdb=# select svec_proj('{1,2,3}:{4,5,6}'::svec, 1) + svec_proj('{4,5,6}:{1,2,3}'::svec, 15);     
+     ?column? 
+    ----------
+        7
+\endcode
 
     A subvector of an svec can be accessed using the svec_subvec() function,
     which takes an svec and the start and end index of the subvector desired.
-
-        testdb=# select svec_subvec('{2,4,6}:{1,3,5}'::svec, 2, 11);
-	   svec_subvec   
-	----------------- 
-	 {1,4,5}:{1,3,5}
+\code
+    testdb=# select svec_subvec('{2,4,6}:{1,3,5}'::svec, 2, 11);
+       svec_subvec   
+    ----------------- 
+     {1,4,5}:{1,3,5}
+\endcode
 
     The elements/subvector of an svec can be changed using the function 
     svec_change(). It takes three arguments: an m-dimensional svec sv1, a
     start index j, and an n-dimensional svec sv2 such that j + n - 1 <= m,
     and returns an svec like sv1 but with the subvector sv1[j:j+n-1] 
     replaced by sv2. An example follows:
-
-        testdb=# select svec_change('{1,2,3}:{4,5,6}'::svec,3,'{2}:{3}'::svec);
-	     svec_change     
-	---------------------
-	 {1,1,2,2}:{4,5,3,6}
+\code
+    testdb=# select svec_change('{1,2,3}:{4,5,6}'::svec,3,'{2}:{3}'::svec);
+         svec_change     
+    ---------------------
+     {1,1,2,2}:{4,5,3,6}
+\endcode
 
     There are also higher-order functions for processing svecs. For example,
     the following is the corresponding function for lapply() in R.
-
-        testdb=# select svec_lapply('sqrt', '{1,2,3}:{4,5,6}'::svec);
-	                  svec_lapply                  
-	-----------------------------------------------
-	 {1,2,3}:{2,2.23606797749979,2.44948974278318}
+\code
+    testdb=# select svec_lapply('sqrt', '{1,2,3}:{4,5,6}'::svec);
+                      svec_lapply                  
+    -----------------------------------------------
+     {1,2,3}:{2,2.23606797749979,2.44948974278318}
+\endcode
 
     The full list of functions available for operating on svecs are available
     in gp_svec.sql.
@@ -199,19 +202,19 @@ When we use arrays of floating point numbers for various calculations,
     composed of words in a text array:
 
         testdb=# create table features (a text[][]) distributed randomly;
-	testdb=# insert into features values 
-		    ('{am,before,being,bothered,corpus,document,i,in,is,me,
-		       never,now,one,really,second,the,third,this,until}');
+    testdb=# insert into features values 
+            ('{am,before,being,bothered,corpus,document,i,in,is,me,
+               never,now,one,really,second,the,third,this,until}');
 
     We have a set of documents, each represented as an array of words:
 
-	testdb=# create table documents(a int,b text[]);
-	CREATE TABLE
-	testdb=# insert into documents values
-		 	(1,'{this,is,one,document,in,the,corpus}'),
-		        (2,'{i,am,the,second,document,in,the,corpus}'),
-		        (3,'{being,third,never,really,bothered,me,until,now}'),
-		        (4,'{the,document,before,me,is,the,third,document}');
+    testdb=# create table documents(a int,b text[]);
+    CREATE TABLE
+    testdb=# insert into documents values
+             (1,'{this,is,one,document,in,the,corpus}'),
+                (2,'{i,am,the,second,document,in,the,corpus}'),
+                (3,'{being,third,never,really,bothered,me,until,now}'),
+                (4,'{the,document,before,me,is,the,third,document}');
 
     Now we have a dictionary and some documents, we would like to do some 
     document categorization using vector arithmetic on word counts and 
@@ -226,28 +229,28 @@ When we use arrays of floating point numbers for various calculations,
     Inside the sparse vector library, we have a function that will create 
     an SFV from a document, so we can just do this:
 
-	testdb=# select gp_extract_feature_histogram(
-		  	      (select a from features limit 1),b)::float8[] 
-	         from documents;
+    testdb=# select gp_extract_feature_histogram(
+                    (select a from features limit 1),b)::float8[] 
+             from documents;
 
-             	gp_extract_feature_histogram             
-	-----------------------------------------
- 	{0,0,0,0,1,1,0,1,1,0,0,0,1,0,0,1,0,1,0}
- 	{0,0,1,1,0,0,0,0,0,1,1,1,0,1,0,0,1,0,1}
- 	{1,0,0,0,1,1,1,1,0,0,0,0,0,0,1,2,0,0,0}
- 	{0,1,0,0,0,2,0,0,1,1,0,0,0,0,0,2,1,0,0}
+                 gp_extract_feature_histogram             
+    -----------------------------------------
+     {0,0,0,0,1,1,0,1,1,0,0,0,1,0,0,1,0,1,0}
+     {0,0,1,1,0,0,0,0,0,1,1,1,0,1,0,0,1,0,1}
+     {1,0,0,0,1,1,1,1,0,0,0,0,0,0,1,2,0,0,0}
+     {0,1,0,0,0,2,0,0,1,1,0,0,0,0,0,2,1,0,0}
 
     Note that the output of gp_extract_feature_histogram() is an svec for each 
     document containing the count of each of the dictionary words in the 
     ordinal positions of the dictionary. This can more easily be understood 
     by lining up the feature vector and text like this:
 
-	testdb=# select gp_extract_feature_histogram(
-				(select a from features limit 1),b)::float8[]
+    testdb=# select gp_extract_feature_histogram(
+                (select a from features limit 1),b)::float8[]
                         , b 
                  from documents;
 
-	testdb=# select * from features;
+    testdb=# select * from features;
 
     Now when we look at the document "i am the second document in the corpus", 
     its SFV is {1,3*0,1,1,1,1,6*0,1,2}. The word "am" is the first ordinate in 
@@ -274,7 +277,7 @@ When we use arrays of floating point numbers for various calculations,
     For this part of the processing, we'll need to have a sparse vector of 
     the dictionary dimension (19) with the values 
 
-    	(log(#documents/#Documents each term appears in). 
+        (log(#documents/#Documents each term appears in). 
 
     There will be one such vector for the whole list of documents (aka the 
     "corpus"). The #documents is just a count of all of the documents, in 
@@ -286,12 +289,12 @@ When we use arrays of floating point numbers for various calculations,
 
     This can be done as follows:
 
-	testdb=# create table corpus as 
-		   (select a,gp_extract_feature_histogram(
-		      (select a from features limit 1),b) sfv from documents);
-	testdb=# select a docnum, (sfv * logidf) tf_idf 
-		 from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
-		       from corpus) foo, corpus order by docnum;
+    testdb=# create table corpus as 
+           (select a,gp_extract_feature_histogram(
+              (select a from features limit 1),b) sfv from documents);
+    testdb=# select a docnum, (sfv * logidf) tf_idf 
+         from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
+               from corpus) foo, corpus order by docnum;
 
   docnum |                tf_idf                                     
   -------+---------------------------------------------------------------
@@ -303,20 +306,20 @@ When we use arrays of floating point numbers for various calculations,
     We can now get the "angular distance" between one document and the rest 
     of the documents using the ACOS of the dot product of the document vectors:
 
-	testdb=# create table weights as 
-		    (select a docnum, (sfv * logidf) tf_idf 
-		     from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
-		     	   from corpus) foo, corpus order by docnum) 
-	         distributed randomly ;
+    testdb=# create table weights as 
+            (select a docnum, (sfv * logidf) tf_idf 
+             from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
+                    from corpus) foo, corpus order by docnum) 
+             distributed randomly ;
 
     The following calculates the angular distance between the first document 
     and each of the other documents:
 
-	testdb=# select docnum,180.*(ACOS(dmin(1.,(tf_idf%*%testdoc)/(l2norm(tf_idf)*l2norm(testdoc))))/3.141592654) angular_distance 
-		 from weights,(select tf_idf testdoc from weights where docnum = 1 LIMIT 1) foo 
-		 order by 1;
+    testdb=# select docnum,180.*(ACOS(dmin(1.,(tf_idf%*%testdoc)/(l2norm(tf_idf)*l2norm(testdoc))))/3.141592654) angular_distance 
+         from weights,(select tf_idf testdoc from weights where docnum = 1 LIMIT 1) foo 
+         order by 1;
 
- 	docnum | angular_distance 
+    docnum | angular_distance 
        --------+------------------
              1 |                0
              2 | 78.8235846096986
