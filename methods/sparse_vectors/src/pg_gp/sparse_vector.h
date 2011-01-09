@@ -33,19 +33,21 @@ When we use arrays of floating point numbers for various calculations,
     operations on the array, we'll often be doing work on 40,000 fields that 
     would turn out not to be important. 
 
-    To solve the problems associated with the processing of sparse arrays 
+    To solve the problems associated with the processing of sparse vectors 
     discussed above, we adopt a simple Run Length Encoding (RLE) scheme to 
-    represent sparse arrays as pairs of count-value arrays. So, for example, 
+    represent sparse vectors as pairs of count-value arrays. So, for example, 
     the array above would be represented as follows
+
 \code
-        '{1,1,40000,1,1}:{0,33,0,12,22}'::svec,
+      '{1, 1, 40000, 1, 1}:{0, 33, 0, 12, 22}'::svec,
 \endcode
+
     which says there is 1 occurrence of 0, followed by 1 occurrence of 33, 
     followed by 40,000 occurrences of 0, etc. In contrast to the naive 
     representations, we only need 5 integers and 5 floating point numbers
-    to store the array. It is also easy to implement vector operations 
+    to store the array. Further, it is easy to implement vector operations 
     that can take advantage of the RLE representation to make computations 
-    faster.
+    faster. The module provides a library of such functions.
 
 \par Prerequisites
 
@@ -57,15 +59,21 @@ When we use arrays of floating point numbers for various calculations,
     -# Make sure the Greenplum binary distribution is in the path.
     -# On a command line, execute the following to compile the library.
 
+\code
        	   make install
+\endcode
 
     -# Install the function and type definitions with 
 
+\code
            psql -d <your_db_name> -f gp_svec.sql
+\endcode
 
     -# <Optional> Run tests with 
 
+\code
            psql -d <your_db_name> -af gp_svec_test.sql | diff - test_output
+\endcode
 
 \par Todo
 
@@ -78,39 +86,41 @@ When we use arrays of floating point numbers for various calculations,
 \par Usage
 
     We can input an array directly as an svec as follows: 
-   
+\code   
         testdb=# select '{1,1,40000,1,1}:{0,33,0,12,22}'::svec.
-
+\endcode
     We can also cast an array into an svec:
-
+\code
 	testdb=# select ('{0,33,...40,000 zeros...,12,22}'::float8[])::svec.
-
+\endcode
     We can use operations with svec type like <, >, *, **, /, =, +, SUM, etc, 
     and they have meanings associated with typical vector operations. For 
     example, the plus (+) operator adds each of the terms of two vectors having
     the same dimension together. 
-
+\code
 	testdb=# select ('{0,1,5}'::float8[]::svec + 
 		 	 '{4,3,2}'::float8[]::svec)::float8[];
  	float8  
 	---------
  	{4,4,7}
+\endcode
 
     Without the casting into float8[] at the end, we get:
-
+\code
         testdb=# select '{0,1,5}'::float8[]::svec + '{4,3,2}'::float8[]::svec;
  	?column?  
 	----------
  	{2,1}:{4,7}    	    	
-
+\endcode
     A dot product (%*%) between the two vectors will result in a scalar 
     result of type float8. The dot product should be (0*4 + 1*3 + 5*2) = 13, 
     like this:
-
+\code
 	testdb=# select '{0,1,5}'::float8[]::svec %*% '{4,3,2}'::float8[]::svec;
  	?column? 
 	----------
        	13
+\endcode
 
     Special vector aggregate functions are also available. SUM is self 
     explanatory. VEC_COUNT_NONZERO evaluates the count of non-zero terms 
