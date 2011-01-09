@@ -4,7 +4,7 @@
  *
  */
 
-/*! \defgroup Sparse Vectors
+/*! \defgroup sparse_vectors
 
 \par About
 
