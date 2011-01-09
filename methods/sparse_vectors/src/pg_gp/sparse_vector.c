@@ -28,7 +28,7 @@
 #include "sparse_vector.h"
 
 /**
- * Converts an sparse vector into an array of float8s
+ * @return An array of float8s obtained by converting a given sparse vector
  */
 ArrayType *svec_return_array_internal(SvecType *svec)
 {
