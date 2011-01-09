@@ -1,4 +1,4 @@
-DATA_built = kmeans.sql kmeans_drop.sql kmeans.py
+DATA_built = kmeans_create.sql kmeans_drop.sql kmeans.py
 PYTHON_built = kmeans.py
 REGRESS = setup test cleanup      
       
