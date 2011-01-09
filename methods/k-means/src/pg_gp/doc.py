@@ -15,6 +15,7 @@ points, such that there are at least 200 points from each cluster.
 
 \par To Do:
 
+- doc / unit test
 - add support for dense arrays (now it's only SVEC)
 - allow the method to start processing a source table w/o a "PointID" column 
     (now it needs both ID and POSITION columns)
@@ -65,7 +66,7 @@ Parameters:
 Call the provided sample script "kmeans_test.py" with the database connection details:
 
 @verbatim
-kmeans_run.py -h <host> -p <port> -U <user> -d <database> @endverbatim
+kmeans_test.py -h <host> -p <port> -U <user> -d <database> @endverbatim
     
 
 \par Sample Output:

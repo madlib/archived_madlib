@@ -68,7 +68,7 @@ while argv:
                 db_database = argv[1]
                 argv = argv[2:]
             elif argv[0]=='--version':
-                sys.stderr.write("kmeans version 0.9 1\n")
+                sys.stderr.write("kmeans version 0.1 1\n")
                 sys.exit(0)
             elif argv[0]=='--help':
                 usage()
