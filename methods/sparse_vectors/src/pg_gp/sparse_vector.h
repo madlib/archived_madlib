@@ -203,8 +203,8 @@ When we use arrays of floating point numbers for various calculations,
 \code
     testdb=# create table features (a text[][]) distributed randomly;
     testdb=# insert into features values 
-            ('{am,before,being,bothered,corpus,document,i,in,is,me,
-               never,now,one,really,second,the,third,this,until}');
+                ('{am,before,being,bothered,corpus,document,i,in,is,me,
+                   never,now,one,really,second,the,third,this,until}');
 \endcode
     We have a set of documents, each represented as an array of words:
 \code
@@ -246,9 +246,9 @@ When we use arrays of floating point numbers for various calculations,
 \code
     testdb=# select gp_extract_feature_histogram((select a from features limit 1),b)::float8[]
                     , b 
-                 from documents;
+             from documents;
 
-    gp_extract_feature_histogram             |                        b                         
+          gp_extract_feature_histogram       |                        b                         
     -----------------------------------------+--------------------------------------------------
      {1,0,0,0,1,1,1,1,0,0,0,0,0,0,1,2,0,0,0} | {i,am,the,second,document,in,the,corpus}
      {0,1,0,0,0,2,0,0,1,1,0,0,0,0,0,2,1,0,0} | {the,document,before,me,is,the,third,document}
@@ -267,7 +267,7 @@ When we use arrays of floating point numbers for various calculations,
     has no instances in the document, so its value is "0" and so on.
 
     The function gp_extract_feature_histogram() is optimized for speed -- in 
-    essence a single routine version of a hash join, and can process large 
+    essence a single routine version of a hash join -- and can process large 
     numbers of documents into their SFVs in parallel at high speed.
 
     The rest of the categorization process is all vector math. The actual 
@@ -286,7 +286,7 @@ When we use arrays of floating point numbers for various calculations,
     For this part of the processing, we'll need to have a sparse vector of 
     the dictionary dimension (19) with the values 
 \code
-        (log(#documents/#Documents each term appears in). 
+        log(#documents/#Documents each term appears in). 
 \endcode
     There will be one such vector for the whole list of documents (aka the 
     "corpus"). The #documents is just a count of all of the documents, in 
@@ -294,40 +294,40 @@ When we use arrays of floating point numbers for various calculations,
     value is the count of all the times that word appears in the document. 
     This single vector for the whole corpus can then be scalar product 
     multiplied by each document SFV to produce the Term Frequency/Inverse 
-    Document Frequency.
+    Document Frequency weights.
 
     This can be done as follows:
 \code
     testdb=# create table corpus as 
-           (select a,gp_extract_feature_histogram(
-              (select a from features limit 1),b) sfv from documents);
+                (select a,gp_extract_feature_histogram((select a from features limit 1),b) sfv 
+		 from documents);
     testdb=# select a docnum, (sfv * logidf) tf_idf 
-         from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
-               from corpus) foo, corpus order by docnum;
+             from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
+                   from corpus) foo, corpus order by docnum;
 
-  docnum |                tf_idf                                     
-  -------+---------------------------------------------------------------
-       1 | {4,1,1,1,2,3,1,2,1,1,1,1}:{0,0.69,0.28,0,0.69,0,1.38,0,0.28,0,1.38,0}
-       2 | {1,3,1,1,1,1,6,1,1,3}:{1.38,0,0.69,0.28,1.38,0.69,0,1.38,0.57,0}
-       3 | {2,2,5,1,2,1,1,2,1,1,1}:{0,1.38,0,0.69,1.38,0,1.38,0,0.69,0,1.38}
-       4 | {1,1,3,1,2,2,5,1,1,2}:{0,1.38,0,0.57,0,0.69,0,0.57,0.69,0}
+    docnum |                tf_idf                                     
+    -------+----------------------------------------------------------------------
+         1 | {4,1,1,1,2,3,1,2,1,1,1,1}:{0,0.69,0.28,0,0.69,0,1.38,0,0.28,0,1.38,0}
+         2 | {1,3,1,1,1,1,6,1,1,3}:{1.38,0,0.69,0.28,1.38,0.69,0,1.38,0.57,0}
+         3 | {2,2,5,1,2,1,1,2,1,1,1}:{0,1.38,0,0.69,1.38,0,1.38,0,0.69,0,1.38}
+         4 | {1,1,3,1,2,2,5,1,1,2}:{0,1.38,0,0.57,0,0.69,0,0.57,0.69,0}
 \endcode
 
     We can now get the "angular distance" between one document and the rest 
     of the documents using the ACOS of the dot product of the document vectors:
 \code
     testdb=# create table weights as 
-            (select a docnum, (sfv * logidf) tf_idf 
-             from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
-                    from corpus) foo, corpus order by docnum) 
+                (select a docnum, (sfv * logidf) tf_idf 
+                 from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
+                       from corpus) foo, corpus order by docnum) 
              distributed randomly ;
 \endcode
     The following calculates the angular distance between the first document 
     and each of the other documents:
 \code
     testdb=# select docnum,180.*(ACOS(dmin(1.,(tf_idf%*%testdoc)/(l2norm(tf_idf)*l2norm(testdoc))))/3.141592654) angular_distance 
-         from weights,(select tf_idf testdoc from weights where docnum = 1 LIMIT 1) foo 
-         order by 1;
+             from weights,(select tf_idf testdoc from weights where docnum = 1 LIMIT 1) foo 
+             order by 1;
 
     docnum | angular_distance 
    --------+------------------
@@ -340,7 +340,7 @@ When we use arrays of floating point numbers for various calculations,
     is 0 degrees and between document 1 and 3 is 90 degrees because they 
     share no features at all. The angular distance can now be plugged into
     machine learning algorithms that rely on a distance measure between
-    points.
+    data points.
 
     Other extensive examples of svecs usage can be found in the k-means
     module.
