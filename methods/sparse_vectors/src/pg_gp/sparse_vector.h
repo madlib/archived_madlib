@@ -275,7 +275,7 @@ When we use arrays of floating point numbers for various calculations,
     common weight is called tf/idf for Term Frequency / Inverse Document 
     Frequency. The calculation for a given term in a given document is 
 \code
-      {#Times in document} * log {#Documents / #Documents the term appears in}.
+    {#Times in document} * log {#Documents / #Documents the term appears in}.
 \endcode
     For instance, the term "document" in document A would have weight 
     1 * log (4/3). In document D, it would have weight 2 * log (4/3).
@@ -286,7 +286,7 @@ When we use arrays of floating point numbers for various calculations,
     For this part of the processing, we'll need to have a sparse vector of 
     the dictionary dimension (19) with the values 
 \code
-        log(#documents/#Documents each term appears in). 
+    log(#documents/#Documents each term appears in). 
 \endcode
     There will be one such vector for the whole list of documents (aka the 
     "corpus"). The #documents is just a count of all of the documents, in 
@@ -300,7 +300,7 @@ When we use arrays of floating point numbers for various calculations,
 \code
     testdb=# create table corpus as 
                 (select a,gp_extract_feature_histogram((select a from features limit 1),b) sfv 
-		 from documents);
+             from documents);
     testdb=# select a docnum, (sfv * logidf) tf_idf 
              from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
                    from corpus) foo, corpus order by docnum;
@@ -325,7 +325,8 @@ When we use arrays of floating point numbers for various calculations,
     The following calculates the angular distance between the first document 
     and each of the other documents:
 \code
-    testdb=# select docnum,180.*(ACOS(dmin(1.,(tf_idf%*%testdoc)/(l2norm(tf_idf)*l2norm(testdoc))))/3.141592654) angular_distance 
+    testdb=# select docnum,
+                    180.*(ACOS(dmin(1.,(tf_idf%*%testdoc)/(l2norm(tf_idf)*l2norm(testdoc))))/3.141592654) angular_distance 
              from weights,(select tf_idf testdoc from weights where docnum = 1 LIMIT 1) foo 
              order by 1;
 
