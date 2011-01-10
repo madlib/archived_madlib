@@ -1,5 +1,9 @@
 """@mainpage
-Many database systems already support some statistical functions. MADlib is an open source project which provides a common set of advanced mathematical, statistical and machine learning functions to several data processing systems. The platform choice for the initial version is PostgreSQL and Greenplum, but the plan is to add support for other RDBMS and data processing systems as community interest expands.
+MADlib is an open-source library for scalable in-database analytics. It provides data-parallel implementations of mathematical, statistical and machine learning methods for structured and unstructured data.
+
+The MADlib mission: to foster widespread development of scalable analytic skills, by harnessing efforts from commercial practice, academic research, and open-source development.
+
+MADlib front page: http://madlib.net/
 
 """
 
