@@ -1,5 +1,5 @@
 DATA_built = online_sv.sql.in
-DOCS = README
+# DOCS = README
 
 PG_CONFIG = pg_config
 PGXS := $(shell pg_config --pgxs)
