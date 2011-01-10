@@ -49,39 +49,9 @@ When we use arrays of floating point numbers for various calculations,
     that can take advantage of the RLE representation to make computations 
     faster. The module provides a library of such functions.
 
-\par Prerequisites
+    The current version only supports sparse vectors of float8
+    values. Future versions will support other base types.
 
-    -# Greenplum Database 3.3 or higher
-    -# A C compiler
-
-\par Installation
-
-    -# Make sure the Greenplum binary distribution is in the path.
-    -# On a command line, execute the following to compile the library.
-
-\code
-       	   make install
-\endcode
-
-    -# Install the function and type definitions with 
-
-\code
-           psql -d <your_db_name> -f gp_svec.sql
-\endcode
-
-    -# <Optional> Run tests with 
-
-\code
-           psql -d <your_db_name> -af gp_svec_test.sql | diff - test_output
-\endcode
-
-\par Todo
-
-    - The current implementation only supports sparse vectors of float8
-      values. Future versions will support other base types.
-
-    - Indexing on svecs. This requires indexing capability on arrays,
-      which is currently unsupported in GP.  
 
 \par Usage
 
@@ -345,6 +315,14 @@ When we use arrays of floating point numbers for various calculations,
 
     Other extensive examples of svecs usage can be found in the k-means
     module.
+
+\par Todo
+
+    - Support for other base types.
+
+    - Indexing on svecs. This requires indexing capability on arrays,
+      which is currently unsupported in GP.  
+
 
 */
 
