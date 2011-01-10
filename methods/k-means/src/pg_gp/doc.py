@@ -13,24 +13,12 @@ Further adjustments are based either on a full data set or on a sample of
 points, such that there are at least 200 points from each cluster.
 
 
-\par To Do:
-
-- doc / unit test
-- add support for dense arrays (now it's only SVEC)
-- allow the method to start processing a source table w/o a "PointID" column 
-    (now it needs both ID and POSITION columns)
-- fix the "goodness of fit" test to be scale, rotation and transition invariant
-- rewrite the following plpgsql stored procedure into C:
-    - func: _kmeans_bestCentroid
-    - agg: _kmeans_meanPosition
-
-
 \par Prerequisites:
 
 Sparse vector data type (svec).
 
 
-\par Input Preparation:
+\par Example:
 
 1) Prepare the input table/view with the following structure:
 
@@ -45,7 +33,7 @@ Note!:  You can use "create_input.sql" script to create an input table
         with 10,000 points (1,000 dimension each).
     
 
-\par Example Execution (in-database):
+2) Execute the function (in-database): (in-database):
 
 Call the kmeans_run(...) stored procedure, e.g.:  
 
@@ -61,7 +49,7 @@ Parameters:
     - output_schema:    target schema for output tables (points, centroids)
         
 
-\par Example Execution (outside-database):
+2) Execute the function (in-database): (outside-database):
 
 Call the provided sample script "kmeans_test.py" with the database connection details:
 
@@ -93,5 +81,15 @@ Output:
     * table : "madlib"."kmeans_out_centroids_testrun"
     * table : "madlib"."kmeans_out_points_testrun"
 Time elapsed: 0 minutes 4.335644 seconds.@endverbatim
+
+\par To Do:
+
+- add support for dense arrays (now it's only SVEC)
+- allow the method to start processing a source table w/o a "PointID" column 
+    (now it needs both ID and POSITION columns)
+- fix the "goodness of fit" test to be scale, rotation and transition invariant
+- rewrite the following plpgsql stored procedure into C:
+    - func: _kmeans_bestCentroid
+    - agg: _kmeans_meanPosition
 
 """
