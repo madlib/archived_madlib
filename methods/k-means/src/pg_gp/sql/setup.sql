@@ -48,7 +48,7 @@ declare
 begin
 	FOR i IN 1..array_upper(center,1) LOOP
 		IF (center[i] > 0) THEN 
-			g[i] = madlib_kmeans_test.min( CAST(1.0 AS FLOAT), madlib_kmeans_test.RNorm(center[i], sd) ) + 1;
+			g[i] = madlib_kmeans_test.RNorm(center[i], sd);
 		ELSE
 			g[i] = 0;
 		END IF;
