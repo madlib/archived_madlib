@@ -2,6 +2,37 @@
 
 \par About
 
+    Support vector machines (SVMs) and related kernel methods have been one of 
+    the most popular and well-studied machine learning techniques of the 
+    past 15 years, with an amazing number of innovations and applications.
+
+    In a nutshell, an SVM model f(x) takes the form of
+\code
+        f(x) = sum_i alpha_i k(x_i,x),
+\endcode
+    where each alpha_i is a real number, each x_i is a data point from the
+    training set, and k(.,.) is a kernel function that measures how `similar'
+    two objects are. In regression, f(x) is the regression function we seek.
+    In classification, f(x) serves as the decision boundary; so for example
+    in binary classification, the predictor can output class 1 for object x
+    if f(x) >= 0, and class 2 otherwise.
+
+    In the case when the kernel function k(.,.) is the standard inner product 
+    on vectors, f(x) is just an alternative way of writing a linear function
+\code
+        f'(x) = <w,x>,
+\endcode
+    where w is a weight vector having the same dimension as x. One of the 
+    key points of SVMs is that we can use more fancy kernel functions to 
+    efficiently learn linear models in high-dimensional feature spaces, 
+    since k(x_i,x_j) can be understood as an inner product in the feature
+    space:
+\code
+        k(x_i,x_j) = <phi(x_i),phi(x_j)>,
+\endcode
+    where phi(x) projects x into a (possibly infinite-dimensional) feature
+    space.
+
     This module implements the class of online learning with kernels 
     algorithms described in \n
 
@@ -34,24 +65,15 @@
     Training data points are accessed via a table or a view. The support
     vector models can also be stored in tables for fast execution.
 
-\par To Do
-
-    - Add support for sparse vectors (now it's only array of float8s).
 
 \par Prerequisites
 
     - None at this point. Will need to install the Greenplum sparse vector 
     SVEC datatype eventually.
 
+\par Usage
 
-\par Installation
-
-    -# Create database objects:
-\code    
-        psql -f online_sv.sql -d <database>
-\endcode
-
-\par Preparation of the Input
+   - Preparation of the Input
 
     - Insert the training data into the table sv_train_data, which has
        the following structure:
@@ -64,7 +86,7 @@
         Note: The label field is not required for novelty detection.
     
 
-\par Execution (in-database)
+
 
    - Example usage for regression:
 \code
@@ -104,6 +126,11 @@
        testdb=# select MADLIB_SCHEMA.svs_predict('myexpnd', '{10,-10}');  
        testdb=# select MADLIB_SCHEMA.svs_predict('myexpnd', '{-1,-1}');  
 \endcode
+
+
+\par To Do
+
+    - Add support for sparse vectors (now it's only array of float8s).
 
 */
 
