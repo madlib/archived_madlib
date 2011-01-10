@@ -33,8 +33,9 @@
     where phi(x) projects x into a (possibly infinite-dimensional) feature
     space.
 
-    This module implements the class of online learning with kernels 
-    algorithms described in \n
+    There are many algorithms for learning kernel machines. This module 
+    implements the class of online learning with kernels algorithms 
+    described in \n
 
       \t Jyrki Kivinen, Alexander J. Smola and Robert C. Williamson, \n
       \t Online Learning with Kernels, IEEE Transactions on Signal Processing, 52(8), 2165-2176, 2004.\n
