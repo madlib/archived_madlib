@@ -11,11 +11,11 @@
         f(x) = sum_i alpha_i k(x_i,x),
 \endcode
     where each alpha_i is a real number, each x_i is a data point from the
-    training set, and k(.,.) is a kernel function that measures how `similar'
-    two objects are. In regression, f(x) is the regression function we seek.
-    In classification, f(x) serves as the decision boundary; so for example
-    in binary classification, the predictor can output class 1 for object x
-    if f(x) >= 0, and class 2 otherwise.
+    training set (called a support vector), and k(.,.) is a kernel function 
+    that measures how `similar' two objects are. In regression, f(x) is the 
+    regression function we seek. In classification, f(x) serves as the 
+    decision boundary; so for example in binary classification, the predictor 
+    can output class 1 for object x if f(x) >= 0, and class 2 otherwise.
 
     In the case when the kernel function k(.,.) is the standard inner product 
     on vectors, f(x) is just an alternative way of writing a linear function
@@ -70,24 +70,72 @@
 \par Prerequisites
 
     - None at this point. Will need to install the Greenplum sparse vector 
-    SVEC datatype eventually.
+      SVEC datatype eventually.
 
-\par Usage
+\par Usage/API
 
-   - Preparation of the Input
-
-    - Insert the training data into the table sv_train_data, which has
+   - Preparation of the input
+       Insert the training data into the table sv_train_data, which has
        the following structure:
 \code    
-        (       id 		INT,  	    -- point ID
-                ind		FLOAT8[],   -- data point
-                label		FLOAT8	    -- label of data point
+        (       id    INT,       -- point ID
+                ind   FLOAT8[],  -- data point
+                label FLOAT8     -- label of data point
     	)
 \endcode    
         Note: The label field is not required for novelty detection.
     
+   - The main learning functions
+     -  Online regression learning is achieved through the following aggregate
+        function
+        \code
+	MADLIB_SCHEMA.online_sv_reg_agg(x float8[], y float8),
+        \endcode
+	where x is a data point and y its regression value. The function
+	returns a model_rec data type. (More on that later.) 
+     -  Online classification learning is achieved through the following
+        aggregate function
+        \code
+        MADLIB_SCHEMA.online_sv_cl_agg(x float8[], y float8),
+        \endcode
+        where x is a data point and y its class (usually +1 or -1). The 
+	function returns a model_rec data type.
+     -  Online novelty detection is achieved through the following 
+        aggregate function
+        \code
+        MADLIB_SCHEMA.online_sv_nd_agg(x float8[]),
+        \endcode
+        where x is a data point. Note that novelty detection is an unsupervised
+        learning technique, so no label is required. The function returns a
+        model_rec data type.
+     In each case, learning is done by running the corresponding aggregate 
+     function through a training set stored in a table/view.
 
+     The model_rec data type contains the following two fields
+\code
+        weights     FLOAT8[],   -- the weight of the support vectors
+        individuals FLOAT8[][]  -- the array of support vectors
+\endcode
+     as well as other information obtained through the learning process
+     like cumulative error, margin achieved, etc.
 
+  - Subsidiary functions
+     - We can unnest the support vectors in a model_rec and store them in
+       the sv_model table using the function
+       \code
+       MADLIB_SCHEMA.storeModel(model_name text),
+       \endcode 
+       where model_name is the name of the model stored temporarily in the
+       sv_results table. (FIX ME: Make storeModel() take a model_rec as 
+       input.)
+     - Having stored a model, we can use the following function to make
+       predictions on new test data points:
+       \code
+       MADLIB_SCHEMA.svs_predict(model_name text, x float8[]),
+       \endcode
+       where model_name is the name of the model stored and x is a data point.
+
+\par Examples
 
    - Example usage for regression:
 \code
