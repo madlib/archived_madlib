@@ -37,14 +37,14 @@
     implements the class of online learning with kernels algorithms 
     described in \n
 
-      \t Jyrki Kivinen, Alexander J. Smola and Robert C. Williamson, \n
-      \t Online Learning with Kernels, IEEE Transactions on Signal Processing, 52(8), 2165-2176, 2004.\n
+      - Jyrki Kivinen, Alexander J. Smola and Robert C. Williamson, \n
+        Online Learning with Kernels, IEEE Transactions on Signal Processing, 52(8), 2165-2176, 2004.\n
 
     See also the book \n
   
-      \t Bernhard Scholkopf and Alexander J. Smola, Learning with Kernels: \n
-      \t Support Vector Machines, Regularization, Optimization, and Beyond, 
-      MIT Press, 2002 \n
+      - Bernhard Scholkopf and Alexander J. Smola, Learning with Kernels: \n
+        Support Vector Machines, Regularization, Optimization, and Beyond, 
+        MIT Press, 2002 \n
  
     for much more details.
 
@@ -74,32 +74,33 @@
 
 \par Usage/API
 
-   - Preparation of the input
-       Insert the training data into the table sv_train_data, which has
-       the following structure:
+   - Input preparation: Insert the training data into a table that has 
+     the following fields:
 \code    
         (       id    INT,       -- point ID
                 ind   FLOAT8[],  -- data point
                 label FLOAT8     -- label of data point
     	)
 \endcode    
-        Note: The label field is not required for novelty detection.
+     Learning is done by running an aggregate function (see below) through 
+     the training data stored in the created table/view.
+     Note: The label field is not required for novelty detection.
     
-   - The main learning functions
+   - Here are the main learning functions\n
      -  Online regression learning is achieved through the following aggregate
         function
         \code
-	MADLIB_SCHEMA.online_sv_reg_agg(x float8[], y float8),
+        MADLIB_SCHEMA.online_sv_reg_agg(x float8[], y float8),
         \endcode
 	where x is a data point and y its regression value. The function
-	returns a model_rec data type. (More on that later.) 
+	returns a model_rec data type. (More on that later.) \n
      -  Online classification learning is achieved through the following
         aggregate function
         \code
         MADLIB_SCHEMA.online_sv_cl_agg(x float8[], y float8),
         \endcode
         where x is a data point and y its class (usually +1 or -1). The 
-	function returns a model_rec data type.
+	function returns a model_rec data type.\n
      -  Online novelty detection is achieved through the following 
         aggregate function
         \code
@@ -108,10 +109,9 @@
         where x is a data point. Note that novelty detection is an unsupervised
         learning technique, so no label is required. The function returns a
         model_rec data type.
-     In each case, learning is done by running the corresponding aggregate 
-     function through a training set stored in a table/view.
 
-     The model_rec data type contains the following two fields
+     
+  - The model_rec data type contains the following two fields
 \code
         weights     FLOAT8[],   -- the weight of the support vectors
         individuals FLOAT8[][]  -- the array of support vectors
@@ -119,7 +119,7 @@
      as well as other information obtained through the learning process
      like cumulative error, margin achieved, etc.
 
-  - Subsidiary functions
+  - Here are some subsidiary functions
      - We can unnest the support vectors in a model_rec and store them in
        the sv_model table using the function
        \code
@@ -127,27 +127,55 @@
        \endcode 
        where model_name is the name of the model stored temporarily in the
        sv_results table. (FIX ME: Make storeModel() take a model_rec as 
-       input.)
+       input.)\n
      - Having stored a model, we can use the following function to make
        predictions on new test data points:
        \code
        MADLIB_SCHEMA.svs_predict(model_name text, x float8[]),
        \endcode
-       where model_name is the name of the model stored and x is a data point.
+       where model_name is the name of the model stored and x is a data point.\n
+     - The following function
+       \code
+       MADLIB_SCHEMA.svs_predict(model_name text, n int, x float8[])
+       \endcode
+       is used to combine the results of multiple support vector models
+       learned in parallel.
 
 \par Examples
 
-   - Example usage for regression:
+   - Example usage for regression:\n
+     We can randomly generate 1000 5-dimensional data labelled by the simple
+     target function 
+\code
+     t(x) = if x[5] = 10 then 50 else if x[5] = -10 then 50 else 0;
+\endcode
+     and store that in the MADLIB_SCHEMA.sv_train_data table as follows:
 \code
        testdb=# select MADLIB_SCHEMA.generateRegData(1000, 5);
-       testdb=# insert into MADLIB_SCHEMA.sv_results (select 'myexp', MADLIB_SCHEMA.online_sv_reg_agg(ind, label) from MADLIB_SCHEMA.sv_train_data);
+\endcode
+     We can now learn a regression model and store the result into the 
+     MADLIB_SCHEMA.sv_results table by executing the following ('myexp' 
+     is the name under which we store the model).
+\code
+       testdb=# insert into MADLIB_SCHEMA.sv_results 
+                   (select 'myexp', MADLIB_SCHEMA.online_sv_reg_agg(ind, label) from MADLIB_SCHEMA.sv_train_data);
+\endcode
+     For convenience, we can store the 'myexp' model in the table 
+     MADLIB_SCHEMA.sv_model and start using it to predict the labels of
+     new data points like as follows:
+\code
        testdb=# select MADLIB_SCHEMA.storeModel('myexp');
        testdb=# select MADLIB_SCHEMA.svs_predict('myexp', '{1,2,4,20,10}');
+       testdb=# select MADLIB_SCHEMA.svs_predict('myexp', '{1,2,4,20,-10}');
 \endcode
-     To learn multiple support vector models, replace the above by 
+     To learn multiple support vector models, replace the learning step above by 
 \code
        testdb=# insert into MADLIB_SCHEMA.sv_results 
                    (select 'myexp' || gp_segment_id, MADLIB_SCHEMA.online_sv_reg_agg(ind, label) from MADLIB_SCHEMA.sv_train_data group by gp_segment_id);
+\endcode
+     The resultant models can be stored in a table and used for prediction as
+     follows:
+\code
        testdb=# select MADLIB_SCHEMA.storeModel('myexp', n); -- n is the number of segments
        testdb=# select * from MADLIB_SCHEMA.svs_predict_combo('myexp', n, '{1,2,4,20,10}');
 \endcode
@@ -155,7 +183,8 @@
    - Example usage for classification:
 \code 
        testdb=# select MADLIB_SCHEMA.generateClData(2000, 5);
-       testdb=# insert into MADLIB_SCHEMA.sv_results (select 'myexpc', MADLIB_SCHEMA.online_sv_cl_agg(ind, label) from MADLIB_SCHEMA.sv_train_data);
+       testdb=# insert into MADLIB_SCHEMA.sv_results 
+                   (select 'myexpc', MADLIB_SCHEMA.online_sv_cl_agg(ind, label) from MADLIB_SCHEMA.sv_train_data);
        testdb=# select MADLIB_SCHEMA.storeModel('myexpc');
        testdb=# select MADLIB_SCHEMA.svs_predict('myexpc', '{10,-2,4,20,10}');
 \endcode   
