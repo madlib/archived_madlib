@@ -1,7 +1,6 @@
 #!/usr/bin/python
 #
-# Driver script/module for rolling MadPack migrations forward or backward.
-# Run with -h flag to see usage.
+# 
 
 import yaml
 import os
@@ -11,27 +10,27 @@ from argparse import RawTextHelpFormatter
 import glob
 import shutil
 import madpy
+import subprocess
 from madpy.madpack import configyml
 # import madpy.madpack.configyml
 import madpy.madpack.mkmethods
 import madpy.madpack.migrations
 
 
-#### UTILITIES
 def __get_config(conf_dir):
-    return madpy.madpack.configyml.get_config(conf_dir)
+    return madpy.madpack.configyml.get_config(conf_dir, False)
 def __get_mig(conf_dir, mig_dir):
     return madpy.madpack.migrations.MadPackMigration(mig_dir, conf_dir)
     
     
-#### PUBLIC METHODS
-    
-# the prep() method does two things:
+## the prep() method does two things:
 # 1) if needed, create the "scripts" subdirectory to hold the 
 #    migration scripts, and copy Config.yml in there
 # 2) generate a single MADPack migration script from the forward/backward
 #    scripts in each of the MADlib methods specified in Config.yml, named
 #    with version number from Version.yml
+# @param targetdir directory to place migration script files
+# @param conf_dir directory where we can find Config.yml
 def prep(targetdir, conf_dir):
     version = configyml.get_version(madpy.__path__[0])
     if not os.path.exists(targetdir):
@@ -75,7 +74,11 @@ def prep(targetdir, conf_dir):
     
     fname = mig.generate(targetdir, version, forwards, backwards)
 
-# internal function sanity checks and installs by num or version.  
+## internal function sanity checks and installs by num or version.  
+# @param scriptdir directory with migration script files
+# @param num MADpack migration number
+# @param version MADlib version number
+# @param conf_dir directory where we can find Config.yml
 def __install(scriptdir, num, version, conf_dir):
     if not os.path.isdir(scriptdir):
         print "directory " + scriptdir + " does not exist"
@@ -89,15 +92,23 @@ def __install(scriptdir, num, version, conf_dir):
 
     m.migrate(mignumber=num, migversion=version)
 
-# install by migration number
+## roll scripts fw/bw by MADpack migration number
+# @param scriptdir where we can find migration scripts
+# @param n migration number to roll to
+# @param conf_dir directory where we can find Config.yml
 def install_number(scriptdir, n, conf_dir):
     __install(scriptdir,n,None,conf_dir)
 
-# install by version number
+## roll scripts fw/bw by MADlib version number
+# @param scriptdir where we can find migration scripts
+# @param v MADlib version to roll to
+# @param conf_dir directory where we can find Config.yml
 def install_version(scriptdir, v, conf_dir):
     __install(scriptdir,None,v,conf_dir)
 
-# invoke migration sanity check    
+## invoke migration sanity check    
+# @param scriptdir where we can find migration scripts
+# @param conf_dir directory where we can find Config.yml
 def __sanity(scriptdir, conf_dir):
     m = __get_mig(conf_dir,scriptdir)
     try:
@@ -107,7 +118,9 @@ def __sanity(scriptdir, conf_dir):
         exit(2)
 
     
-# uninstall is the same as install version <0
+## uninstall is the same as install version <0
+# @param scriptdir where we can find migration scripts
+# @param conf_dir directory where we can find Config.yml
 def uninstall(scriptdir, conf_dir):
     install_number(scriptdir, -1, conf_dir)
  
@@ -164,7 +177,7 @@ def main(argv):
        else:
            args.configdir = madpy.__path__
     
-    conf = configyml.get_config(args.configdir[0])
+    conf = configyml.get_config(args.configdir[0], False)
     
     # command 'update' a synonym for "-e install"
     if args.command == 'update':
@@ -186,13 +199,16 @@ def main(argv):
         else:
             print v
     elif args.command == 'uninstall':
+        print "Uninstalling MADlib..."
         if not args.nomake:
             madpy.madpack.mkmethods.make_methods('uninstall', conf)
         if not os.path.exists(args.scriptdir):
             print "scripts directory missing"
             sys.exit(2)
         uninstall(args.scriptdir, args.configdir[0])
+        print "MADlib uninstalled OK."
     elif args.command == 'install':
+        print "Installing MADlib..."
         # run make clean_data_built and make install on methods 
         # unless preponly or nomake
         if not args.preponly and not args.nomake:
@@ -204,6 +220,19 @@ def main(argv):
         # run install script unless preponly or makeonly
         if not args.preponly:
             install_version(args.scriptdir, instv, args.configdir[0])
+        # run a specific post install extension
+        if conf['post_hook']:
+            post_hook = args.configdir[0] + '/ext/' + conf['post_hook']
+            if not os.path.isfile( post_hook):
+                print "post install hook script missing"
+                sys.exit(2)                
+            print "Running post installation script: " + conf['post_hook']
+            try:
+                subprocess.call(['python ' + post_hook], shell=True)
+            except madpy.madpack.migrations.MadPackMigrationError:
+                print "error while running post installation script: " + conf['post_hook']
+                sys.exit(2)   
+        print "MADlib installation finished OK."
     elif args.command == 'build':
         if not args.nomake:
             madpy.madpack.mkmethods.make_methods('install', conf)

@@ -1,7 +1,9 @@
-/*
+/*!
+ * \defgroup mfvsketch MFV Sketch
+ * \ingroup countmin
  * MFVSketch: Most Frequent Values variant of CountMin sketch.
- * This is basically a CountMin sketch (see discussion in cmsketch.c)
- * that keeps track of most frequent values as it goes.  
+ * This is basically a CountMin sketch that keeps track of most frequent values 
+ * as it goes.  
  *
  * It only needs to do cmsketch_getcount, doesn't need the "dyadic" range trick.
  * As a result it's not limited to integers, and the implementation works
@@ -26,7 +28,7 @@
 
 PG_FUNCTION_INFO_V1(mfvsketch_trans);
 
-/*
+/*!
  *  transition function to maintain a CountMin sketch with 
  *  Most-Frequent Values
  */
@@ -59,9 +61,7 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
     if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
       PG_RETURN_DATUM(PointerGetDatum(transblob));
     
-    // elog(NOTICE, "got transblob at address %p from qp", transblob);
     transval = (mfvtransval *)(VARDATA(transblob));
-    // elog(NOTICE, "entered trans with transblob of size %d", VARSIZE(transblob));    
       
     if (VARSIZE(transblob) <= sizeof(MFV_TRANSVAL_SZ(0))) {
         Oid typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
@@ -78,10 +78,8 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
             initial_size = num_mfvs*24;
         
         transblob = (bytea *)palloc0(MFV_TRANSVAL_SZ(num_mfvs) + initial_size);
-        // elog(NOTICE, "transblob moved to address %p", transblob);
         
         SET_VARSIZE(transblob, MFV_TRANSVAL_SZ(num_mfvs) + initial_size);
-        // elog(NOTICE, "VARSIZE of transblob set to %u", VARSIZE(transblob));
         transval = (mfvtransval *)VARDATA(transblob);
         transval->num_mfvs = num_mfvs;
         transval->next_mfv = 0;
@@ -111,7 +109,6 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
         if (VARSIZE(iText) == VARSIZE(outText)
             && !strncmp(VARDATA(iText), VARDATA(outText), VARSIZE(iText)-VARHDRSZ)) {
             /* arg is an mfv */
-                // elog(NOTICE, "-- SAME!");
             transval->mfvs[i].cnt = tmpcnt;
             found = true;
             break;
@@ -123,12 +120,7 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
             if ((i == transval->next_mfv)) {
                 /* room for new */
                 transblob = mfv_transval_insert(transblob, outText);
-                transval = (mfvtransval *)VARDATA(transblob);
-                // elog(NOTICE, "trans validating string \"%s\" of length %u from position %d",
-                //              VARDATA((char *)transblob + (transval->mfvs[i].offset)),
-                //              VARSIZE((char *)transblob + (transval->mfvs[i].offset)),
-                //              i);
-                             
+                transval = (mfvtransval *)VARDATA(transblob);                             
                 transval->mfvs[i].cnt = tmpcnt;
                 break;
             }
@@ -142,20 +134,22 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
             /* else this is not a frequent value */
         }
     pfree(outText);
-    // elog(NOTICE, "returning transblob at address %p to qp", transblob);
     PG_RETURN_DATUM(PointerGetDatum(transblob));
 }
-
+/*!
+ * insert a value at position i of the mfv sketch
+ * \param transblob the transition value packed into a bytea
+ * \param text the value to be inserted
+ * \param i the position to insert at
+ */
 bytea *mfv_transval_insert_at(bytea *transblob, bytea *text, int i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     bytea *tmpblob;
     
-    // elog(NOTICE, "capacity is %d, text size is %d", MFV_TRANSVAL_CAPACITY(transblob), VARSIZE(text));
     if (MFV_TRANSVAL_CAPACITY(transblob) < VARSIZE(text)) {
         /* allocate a copy with double the current space for values */
         size_t curspace = transval->next_offset - transval->mfvs[0].offset;
-        // elog(NOTICE, "out of capacity, doubling from %d to %d!", curspace, curspace*2);
         tmpblob = palloc0(VARSIZE(transblob) + curspace);
         memcpy(tmpblob, transblob, VARSIZE(transblob));
         SET_VARSIZE(tmpblob, VARSIZE(transblob) + curspace);
@@ -167,27 +161,19 @@ bytea *mfv_transval_insert_at(bytea *transblob, bytea *text, int i)
         transval = (mfvtransval *)VARDATA(transblob);
     }
     transval->mfvs[i].offset = transval->next_offset;
-    // elog(NOTICE, "transblob at address %p", transblob);
-    // elog(NOTICE, "got transblob with VARSIZE set to %u", VARSIZE(transblob));
-    // elog(NOTICE, "inserting text \"%s\" of length %u at position %d (offset %d, address %p)", VARDATA(text), VARSIZE(text), i,
-    //      transval->mfvs[i].offset, mfv_transval_getval(transval,i));
     memcpy(mfv_transval_getval(transval,i), (char *)text, VARSIZE(text));
-    // elog(NOTICE, "validating string \"%s\" of length %u from position %d (offset %d, addr %p)",
-    //       VARDATA(mfv_transval_getval(transval,0)),
-    //       VARSIZE(mfv_transval_getval(transval,0)) - VARHDRSZ,
-    //       0, transval->mfvs[0].offset, mfv_transval_getval(transval,0)); 
     transval->next_offset += VARSIZE(text);    
     if (i == transval->next_mfv) 
       (transval->next_mfv)++;
 
-    // elog(NOTICE, "post-validating string \"%s\" of length %u from position %d (offset %d, addr %p)",
-    //        VARDATA(mfv_transval_getval(transval,0)),
-    //        VARSIZE(mfv_transval_getval(transval,0)) - VARHDRSZ,
-    //        0, transval->mfvs[0].offset, mfv_transval_getval(transval,0));     
-        
     return(transblob);
 }
 
+/*!
+ * insert a value into the mfvsketch
+ * \param transblob the transition value packed into a bytea
+ * \param text the value to be inserted
+ */
 bytea *mfv_transval_insert(bytea *transblob, bytea *text)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
@@ -196,13 +182,17 @@ bytea *mfv_transval_insert(bytea *transblob, bytea *text)
     return(retval);
 }
 
-
+/*!
+ * replace the value at position i of the mfvsketch with text
+ * \param transblob the transition value packed into a bytea
+ * \param text the value to be inserted
+ * \param i the position to replace
+ */
 bytea *mfv_transval_replace(bytea *transblob, bytea *text, int i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     // bytea *tmpblob;
     
-    // elog(NOTICE, "replacing %d", i);
     if (VARSIZE(text) < VARSIZE((bytea *)mfv_transval_getval(transval,i))) {
         memcpy(mfv_transval_getval(transval, i), (char *)text, VARSIZE(text));
         return transblob;
@@ -211,7 +201,7 @@ bytea *mfv_transval_replace(bytea *transblob, bytea *text, int i)
 }
 
 PG_FUNCTION_INFO_V1(mfvsketch_out);
-/*
+/*!
  * scalar function taking an mfv sketch, returning a string with
  * of its most frequent values
  */
@@ -257,7 +247,7 @@ Datum mfvsketch_out(PG_FUNCTION_ARGS)
 }
 
 PG_FUNCTION_INFO_V1(mfvsketch_array_out);
-/*
+/*!
  * scalar function taking an mfv sketch, returning an array of tuple types
  * for its most frequent values.  
  * XXX this code is under development and not working, should not be used.
@@ -284,9 +274,7 @@ Datum mfvsketch_array_out(PG_FUNCTION_ARGS)
      * elements of this array.
      */
     get_call_result_type(fcinfo, &resultTypeId, &resultTupleDesc);
-    elog(NOTICE, "looking up type oid %d", resultTypeId);
     elemTypeId = get_element_type(resultTypeId);
-    elog(NOTICE, "found type oid %d", elemTypeId);
     resultTupleDesc = lookup_rowtype_tupdesc_copy(elemTypeId, -1);
     BlessTupleDesc(resultTupleDesc);
     
@@ -298,18 +286,21 @@ Datum mfvsketch_array_out(PG_FUNCTION_ARGS)
         
         result_data[i] = HeapTupleGetDatum(heap_form_tuple(resultTupleDesc, pair, &isNull));
     }
-    elog(NOTICE, "constructing array");
     retval = construct_array((Datum *)result_data,
                              transval->next_mfv,
                              elemTypeId,
                              sizeof(Datum),
                              false,
                              'd');
-    elog(NOTICE, "constructed");
     
     PG_RETURN_BYTEA_P(retval);
 }
 
+/*!
+ * support function to sort by count
+ * \param i an offsetcnt object cast to a (void *)
+ * \param j an offsetcnt object cast to a (void *)
+ */
 int cnt_cmp_desc(const void *i, const void *j)
 {
     offsetcnt *o = (offsetcnt *)i;

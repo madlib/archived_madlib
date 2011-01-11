@@ -1,4 +1,4 @@
-/*
+/*!
  * A "sortasort" is a pre-marshalled *set* (no dups) of values intended for
  * append and query operations only (no deletion).  It's not a
  * particularly smart data structure.  Cuckoo hashing would be a
@@ -20,14 +20,17 @@
 #include "fmgr.h"
 #include "sortasort.h"
 
-/*
+/*!
  * given a pre-allocated sortasort, set up its metadata
  * first argument s is the
+ * \param s a pre-allocated sortasort
+ * \param capacity size of the sortasort directory
+ * \param s_sz size of s
  */
 sortasort *
-sortasort_init(sortasort *s,    /* the space allocated for the sortasort */
-               size_t capacity, /* size of the sortasort directory */
-               size_t s_sz)     /* size of s */
+sortasort_init(sortasort *s,    
+               size_t capacity, 
+               size_t s_sz)     
 {
     /* capacity is the size of the directory: i.e. max number of strings it can hold */
     s->capacity = capacity;
@@ -47,7 +50,7 @@ sortasort_init(sortasort *s,    /* the space allocated for the sortasort */
     return(s);
 }
 
-/* comparison function for qsort_arg */
+/*! comparison function for qsort_arg */
 int sorta_cmp(const void *i, const void *j, void *thunk)
 {
     /* the "thunk" in this case is the sortasort being sorted */
@@ -58,9 +61,11 @@ int sorta_cmp(const void *i, const void *j, void *thunk)
 }
 
 
-/*
+/*!
  * insert a new element into s_in if there's room and return TRUE
  * if not enough room, return FALSE
+ * \param s_in a sortasort
+ * \param v an element to insert
  */
 int sortasort_try_insert(sortasort *s_in, char *v)
 {
@@ -108,13 +113,15 @@ int sortasort_try_insert(sortasort *s_in, char *v)
     return TRUE;
 }
 
-/*
- * finding items in a sortasort involves binary search in the sorted prefix,
+/*!
+ * find items in a sortasort.  this involves binary search in the sorted prefix,
  * and linear search in the <SORTA_SLOP-sized suffix.
  * We assume that the sorted prefix is the
  * highest multiple of SORTA_SLOP less than s->num_vals
  *
- * Returns position in directory where item found, or -1 if not found.
+ * \param s a sortasort
+ * \param v a value to find
+ * \return position in directory where item found, or -1 if not found.
  * NOTE: return value 0 does not mean false!!  It means it *found* the item
  *       at position 0
  */

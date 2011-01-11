@@ -1,145 +1,128 @@
---------------------------------------------------------------------------------
--- MADlib K-Means Clustering setup script
---------------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- K-means unit test : setup
+---------------------------------------------------------------------------
+SET client_min_messages=warning;
 
---------------------------------------------------------------------------------
--- Set target schema name
--- XXX for now it is static, we need to make it flexible
---------------------------------------------------------------------------------
-\set target_schema madlib
+CREATE SCHEMA madlib_kmeans_test;
 
-CREATE SCHEMA :target_schema;
-CREATE LANGUAGE plpythonu;
-CREATE LANGUAGE plpgsql;
+---------------------------------------------------------------------------
+-- Random_Array: Generates random array
+---------------------------------------------------------------------------
+CREATE FUNCTION madlib_kmeans_test.random_array ( 
+    size INTEGER, class INTEGER, total_classes INTEGER, sparsity FLOAT
+) RETURNS FLOAT[] AS $$
+declare
+	g FLOAT[];
+begin
+	FOR i IN 1..size LOOP
+		g[i] = 0;
+	END LOOP;
+	
+	FOR i IN (1+(size*class/total_classes))..((size*class/total_classes)+(size/total_classes)) LOOP
+		IF (sparsity > random()) THEN 
+			g[i] = random();
+		END IF;
+	END LOOP;
+	
+	RETURN g;
+end
+$$ language plpgsql;
 
-BEGIN;
+---------------------------------------------------------------------------
+-- RNorm: Generates random number from normal distribution of (mean, sd)
+---------------------------------------------------------------------------
+CREATE FUNCTION madlib_kmeans_test.rnorm( mean FLOAT, sd FLOAT) RETURNS FLOAT AS $$
+declare
+begin
+	RETURN (|/abs(-log(random()*(|/ (2*pi()*sd*sd)))*2*sd*sd))*(sign(random()-.5)) + mean;
+end
+$$ language plpgsql;
 
---------------------------------------------------------------------------------
--- @function: 
---        *._kmeans_closestID ( SVEC, SVEC[])
---
--- @doc:
---        This function takes single SVEC (a) and an array of SVEC (b)
---        and returns the index of (b) for which the smallest distance 
---        between vectors a and b[i].
---        
---------------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS :target_schema._kmeans_closestID( SVEC, SVEC[]);
-CREATE OR REPLACE FUNCTION :target_schema._kmeans_closestID( p_point SVEC, p_centroids SVEC[]) RETURNS INTEGER
-AS $$
-DECLARE
-    minCID      INTEGER := 1;
-    min_val     FLOAT;
-    temp_val    FLOAT;
-BEGIN
+---------------------------------------------------------------------------
+-- Gaussian_Sparse_Array: Generates an SVEC of ...
+---------------------------------------------------------------------------
+CREATE FUNCTION madlib_kmeans_test.gaussian_sparse_array( center FLOAT[], sparsity FLOAT) RETURNS svec AS $$
+declare
+	g FLOAT[];
+	sd FLOAT := 1;
+begin
+	FOR i IN 1..array_upper(center,1) LOOP
+		IF (center[i] > 0) THEN 
+			g[i] = madlib_kmeans_test.RNorm(center[i], sd);
+		ELSE
+			g[i] = 0;
+		END IF;
+	END LOOP;
+	RETURN svec_cast_float8arr(g);
+end
+$$ language plpgsql;
 
-    -- Check the arguments
-    IF p_point is NULL or p_centroids is NULL THEN
-        RETURN null;
-    END IF;
-
-    min_val = l2norm( p_point - p_centroids[1]);
-
-    FOR i IN 2..array_upper( p_centroids, 1) 
-    LOOP
-        temp_val = l2norm( p_point - p_centroids[i]);
-        IF ( temp_val < coalesce( min_val, temp_val + 1) ) THEN
-            min_val = temp_val;
-            minCID = i;
-        END IF;
-    END LOOP;
-    
-    RETURN minCID;
-END
-$$ LANGUAGE plpgsql;
-
-
---------------------------------------------------------------------------------
--- @aggregate: 
---        *._kmeans_meanPosition( SVEC)
---
--- @doc:
---        Finds the mean value for a set of SVECs
---        
---------------------------------------------------------------------------------
--- FINALFUNC
-DROP FUNCTION IF EXISTS :target_schema._kmeans_mean_finalize( SVEC) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema._kmeans_mean_finalize( SVEC) RETURNS SVEC AS $$
-DECLARE
-    new_location FLOAT[];
-    new_location2 FLOAT[];
-    sum FLOAT;
-BEGIN
-    new_location = SVEC_return_array($1);
-    sum = new_location[array_upper(new_location, 1)];
-    FOR i in 1..(array_upper(new_location, 1)-1) LOOP
-        new_location2[i] = new_location[i]/sum;
-    END LOOP;
-    RETURN SVEC_cast_float8arr(new_location2);
-END
-$$ LANGUAGE plpgsql;
-
--- SFUNC
-DROP FUNCTION IF EXISTS :target_schema._kmeans_mean_product(SVEC, SVEC) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema._kmeans_mean_product(SVEC, SVEC) RETURNS SVEC AS $$
-DECLARE
-    new_location SVEC;
-BEGIN
-    new_location = SVEC_concat($2,SVEC_cast_float8(1.0));
-    IF ($1 IS NOT NULL) THEN
-        new_location = $1 + new_location;
-    END IF;
-    RETURN new_location;
-END
-$$ LANGUAGE plpgsql;
-
--- PREFUNC
-DROP FUNCTION IF EXISTS :target_schema._kmeans_mean_aggr(SVEC, SVEC) CASCADE;
-CREATE OR REPLACE FUNCTION :target_schema._kmeans_mean_aggr(SVEC, SVEC) RETURNS SVEC AS $$
-DECLARE
-BEGIN
-    IF (($1 IS NOT NULL) AND ($2 IS NOT NULL)) THEN
-        RETURN $1 + $2;
-    END IF;
-    IF ($1 IS NOT NULL) THEN
-        RETURN $1;
-    END IF;
-    IF ($2 IS NOT NULL) THEN
+---------------------------------------------------------------------------
+-- min: minimum of two FLOATs
+---------------------------------------------------------------------------
+-- DROP FUNCTION IF EXISTS madlib_kmeans_test.min( FLOAT, FLOAT);
+CREATE FUNCTION madlib_kmeans_test.min( FLOAT, FLOAT) RETURNS FLOAT AS $$
+declare
+begin
+    IF ($1 > $2) THEN
         RETURN $2;
+    ELSIF ($2 > $1) THEN
+        RETURN $1;
+    ELSIF ($1 = $2) THEN
+        RETURN $1;
+    ELSE
+        RETURN NULL;
     END IF;
-END
-$$ LANGUAGE plpgsql;
+end;
+$$ language plpgsql;
 
--- Aggregate
-DROP AGGREGATE IF EXISTS :target_schema._kmeans_meanPosition(SVEC);
-CREATE AGGREGATE :target_schema._kmeans_meanPosition(SVEC) (
-  STYPE = SVEC,
-  SFUNC = :target_schema._kmeans_mean_product,
-  PREFUNC = :target_schema._kmeans_mean_aggr,
-  FINALFUNC = :target_schema._kmeans_mean_finalize
-);
+---------------------------------------------------------------------------
+-- CreateTestTable: 
+--   Creates a table and populates it with random points for k-means testing.
+--   Table structure: (pid BIGINT, position SVEC)
+---------------------------------------------------------------------------
+-- DROP FUNCTION IF EXISTS madlib_kmeans_test.create_test_table( 
+--   p_table TEXT, p_num int, p_dim int, p_nr_of_clusters int, p_sparsity float
+-- );
+CREATE FUNCTION madlib_kmeans_test.create_test_table( 
+    p_table TEXT, p_num int, p_dim int, p_nr_of_clusters int, p_sparsity float
+) RETURNS TEXT AS $$
+declare
+	vector FLOAT[];
+	sparsity FLOAT;
+	check BIGINT; 
+begin
 
---------------------------------------------------------------------------------
--- @aggregate: 
---        *.kmeans_run( k int, goodness int);
---
--- @doc:
---        Runs the k-means algorythm (imported from kmeans.py)
---        
---------------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS :target_schema.kmeans_run( input_table text, k int, goodness int, run_id text, output_table text);
-CREATE OR REPLACE FUNCTION :target_schema.kmeans_run( input_table text, k int, goodness int, run_id text, output_table text)
-  RETURNS text
-AS $$
+    -- Create the Target table
+    EXECUTE 'CREATE TABLE ' || p_table || '(
+    	pid BIGINT,
+    	position SVEC
+    )';
 
-  from madlib import kmeans
+    -- Create Temp table
+    CREATE TEMP TABLE temp_kmeans_input(
+    	pid BIGINT,
+    	position SVEC
+    );
 
-  plpy.execute( 'set client_min_messages=warning');
-  return kmeans.kmeans_run( input_table, k, goodness, run_id, output_table);
- 
-$$ LANGUAGE plpythonu;
+	sparsity = p_sparsity * p_nr_of_clusters;
 
--- Finalize
-COMMIT;
+    -- Load some data
+	FOR i in 1..p_num LOOP
+		IF (i % 1000 = 1) THEN
+			RAISE INFO '[ % ]', i;
+		END IF; 
+		IF (i % (p_num/p_nr_of_clusters) < 2) THEN
+			vector = madlib_kmeans_test.Random_Array( p_dim, CAST(floor((i-1)/(p_num/p_nr_of_clusters)) AS INTEGER), p_nr_of_clusters, sparsity);
+		END IF;
+		INSERT INTO temp_kmeans_input VALUES(i,  madlib_kmeans_test.Gaussian_Sparse_Array(vector, sparsity));
+	END LOOP;
+	
+	-- Move data from Temp to Target table
+	EXECUTE 'INSERT INTO ' || p_table || ' SELECT * FROM temp_kmeans_input';
+	
+	RETURN 'Test table populated with ' || p_num || ' points (' || p_table || ').';
+	
+end
+$$ language plpgsql;
 
--- EOF

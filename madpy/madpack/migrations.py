@@ -1,13 +1,21 @@
-# MADPack Migrations are modeled on Django South and Rails Migrations.
+## \defgroup madpack MadPack
+# Package manager for managing MADlib installations.
+# Provides madpack command-line tool and python modules to manage multiple 
+# tasks:
+#   - install and build libraries in the filesystem
+#   - roll forward/back database DDL to register code with database
+#   - check sanity of the DB metadata vis-a-vis what the filesystem has
+# Run <c>madpack -h</c> to see usage.
+#
+# MADPack Migrations is modeled on Django South and Rails Migrations.
 # It allows rolling forward/backward across multiple versions of MADlib.
-
 # Like those tools, we use a directory of migration scripts that provide
 # code for rolling forward and backward across versions of the DB.
 # But because MADlib is made up of many methods, we synthesize those scripts
 # from individual scripts stored registered in the Install.yml for each
 # method/port.  The MADlib Config.yml file specifies the relevant method/ports
 # to install.
-
+#
 # We use two separate numbering schemes:
 #  - the Migration number is a sequence number for 
 #    roll-forward/rollback history on a particular DB/schema.  These 
@@ -48,28 +56,36 @@ import hashlib
 import madpy
 from madpy.madpack import configyml
 
+##
 # A Python exception class for our use
 class MadPackMigrationError(Exception):
     pass
 
-# Constructor.  
-#    mig_dir is the directory to use for migration files
-#    conf_dir is the directory where Config.yml is to be found
+##
+# Main class for MadPackMigrations package
 class MadPackMigration:
+    ## The constructor. 
+    #  @param self the object pointer 
+    #  @param mig_dir the directory to use for migration files
+    #  @param conf_dir the directory where Config.yml is to be found
     def __init__(self, mig_dir, conf_dir):
-        self.conf = configyml.get_config(conf_dir)        
-        connect_args = self.conf['connect_args']
+        ## @var conf the configuration
+        self.conf = configyml.get_config(conf_dir, False)        
         api = self.conf['dbapi2']
-        dbapi2 = __import__(api, globals(), locals(), [])
+        connect_args = self.conf['connect_args']
+        dbapi2 = __import__(api, globals(), locals(), [''])
+
+        ## @var mig_dir the directory with the migration files
         self.mig_dir = mig_dir
+        ## @var mig_dir the directory with the Config.yml file
         self.conf_dir = conf_dir
 
-        # migration files have names of the form
+        ## @var mig_number_len migration files have names of the form
         #    <mig_number>_<version_name>.py        
         # where mig_number is mig_number_len digits long
         self.mig_number_len = 3
         
-        # the junk that goes at the top of each migration file
+        # @var mig_prolog the junk that goes at the top of each migration file
         self.mig_prolog = """#!/usr/bin/python
 import sys
 from madpy.madpack.migrations import MadPackMigration
@@ -77,26 +93,40 @@ from madpy.madpack.migrations import MadPackMigration
 class Migration(MadPackMigration):
 """
 
-        # the junk that goes before each method's forwards script
+        ## @var mig_forwards_prolog the junk that goes before each method's forwards script
         self.mig_forwards_prolog = """\tdef forwards(self):\n\t\tcur = self.dbconn.cursor()\n"""
 
-        # the junk that goes before each method's backwards script
+        ## @var mig_backwards_prolog the junk that goes before each method's backwards script
         self.mig_backwards_prolog = """\tdef backwards(self):\n\t\tcur = self.dbconn.cursor()\n"""
-        
-        # Connect to DB and store inside this object for reuse
-        self.dbconn = dbapi2.connect(*connect_args)
+        ## @var dbconn live database connection
+        con_args={};
+        for arg in connect_args:
+            if arg.find("=") == -1:
+                print sys.exc_info()[0]
+                print "Missing '=' character in the connect_args parameter: " + arg
+                raise
+            # cleanup the string
+            arg = ((arg.replace( "'", "")).replace( '"', '')).replace( ' ', '')            
+            equal_sign = arg.find('=')
+            # create a proper dictionary of connection parameters
+            con_args[ arg[:equal_sign]] = arg[equal_sign+1:]
+        self.dbconn = dbapi2.connect( **con_args)
 
+    ## Destructor: clean up the DB connection!
     def __del__(self):
-        # clean up the DB connection!
         self.dbconn.close()
         
-#### MIGRATION FILE UTILITIES
+# MIGRATION FILE UTILITIES
 
-    # pad string "strng" on the left with "n" copies of character "prefixchar"
+    ## pad string with characters on the left
+    # @param self the object
+    # @param strng string to be padded
+    # @param prefixchar character to pad with
+    # @param number of copies
     def __pad_on_left_to_n(self,strng,prefixchar,n):
         return "".join([prefixchar for i in range(0,n - len(strng))]) + strng
 
-    # scan migration script names, and map versions to migration numbers
+    ## scan migration script names, and map versions to migration numbers
     def __map_versions_to_nums(self):
         vnmap = dict()
         migfiles = glob.glob(self.mig_dir+"/"+"".join(["[0-9]" for i in range (0,self.mig_number_len)])+"_*.py")
@@ -134,7 +164,7 @@ class Migration(MadPackMigration):
             traceback.print_exc(file = sys.stderr)
             raise
     
-#### DB MIGRATIONHISTORY UTILITIES       
+# DB MIGRATIONHISTORY UTILITIES       
     # find current migration in database
     def __current_mig(self):
         cur = self.dbconn.cursor()
@@ -167,9 +197,7 @@ class Migration(MadPackMigration):
         return [m[0] for m in cur.fetchall()]
         
 
-### PUBLIC UTILITY METHODS
-
-    # find highest-numbered migration file. 
+    ## find highest-numbered migration file
     def max_file(self):
         numlist = [int(i.split('_')[0]) for i in os.listdir(self.mig_dir) if i.split('_')[0].isdigit()]
         if len(numlist) > 0:
@@ -177,6 +205,7 @@ class Migration(MadPackMigration):
         else:
             return 0
 
+    ## find current migration number registered in DB. 
     def current_mig_number(self):
         curmig = self.__current_mig()
         if curmig == None:
@@ -184,6 +213,7 @@ class Migration(MadPackMigration):
         else:
             return int(curmig.split("_")[0])
 
+    ## find current version registered in DB. 
     def current_version(self):
         curmig = self.__current_mig()
         if curmig == None:
@@ -191,7 +221,8 @@ class Migration(MadPackMigration):
         else:
             return self.__current_mig().split("_")[1].split(".py")[0]
 
-    # list migration files (lo to hi) whose number is > what's in the DB
+    ## list migration files (lo to hi) whose number is > start
+    # @param start lower-bound (non-inclusive) defaults to current DB-installed migration number
     def fw_files(self, start = None):
         if not start:
             start = self.current_mig_number()
@@ -199,7 +230,8 @@ class Migration(MadPackMigration):
         files.sort()
         return files
 
-    # list migration files (hi to lo) whose number is <= what's in the DB
+    ## list migration files (hi to lo) whose number is <= start
+    # @param start upper-bound (inclusive) defaults to current DB-installed migration number
     def bw_files(self, start = None):
         if not start:
             start = self.current_mig_number()
@@ -207,27 +239,40 @@ class Migration(MadPackMigration):
         files.sort(reverse=True)
         return files
 
+    ## extract version from migration filename
+    # @param self the object
+    # @param fname a migration file name
     def version(self, fname):
         return fname.split("_")[1].split(".py")[0]
 
+    ## extract migration number from migration filename
+    # @param self the object
+    # @param fname a migration file name
     def mig_num(self, fname):
         return fname.split("_")[0]
 
+    ## generate migration filename from version and migration number
+    # @param self the object
+    # @param version a MADlib version string
+    # @param mig_num a MADpack migration number
     def migfile(self, version, mig_num):
         name = self.__pad_on_left_to_n(str(mig_num), "0", self.mig_number_len) + "_" + version
         if name.split('.')[-1] != "py":
             name += ".py"
         return name 
 
-#### UTILITIES FOR GENERATING MIGRATION FILES
-
-    # generate a new migration filename, with number one larger than max
+    ## generate a new migration filename, with number one larger than max
+    # @param self the object
+    # @param name a string for a filename; typically a version string
     def __gen_filename(self, name):
         next_num = self.current_mig_number()+1
         return self.migfile(name, next_num)
 
-    # do a shallow parse of an SQL file, and wrap each stmt with 
-    # Python dbapi2 call syntax.
+    ## do a shallow parse of an SQL file, and wrap each stmt with 
+    ## Python dbapi2 call syntax.
+    # @param self the object
+    # @param sqlfile filename containing SQL commands
+    # @param indent_width Python indentation width
     def __wrap_sql(self,sqlfile,indent_width):
         fd = open(sqlfile)
         sqltext = "".join(fd.readlines())
@@ -239,10 +284,12 @@ class Migration(MadPackMigration):
                 retval += "\n"
         return retval
 
-#### PUBLIC METHODS FOR GENERATING MIGRATION FILES
-
-    # given the upfiles (fw) and downfiles (bw) for a set of methods,
-    #  generate a new migration file and place in dir
+    ## generate a new migration file and place in dir
+    # @param self the object
+    # @param dir directory to place the output file
+    # @param name version string to be used in file name
+    # @param upfiles list of SQL files for roll-forward migration
+    # @param downfiles list of SQL files for roll-back migration
     def generate(self, dir, name, upfiles, downfiles):
         self.setup()
         filename = self.__gen_filename(name)
@@ -258,7 +305,7 @@ class Migration(MadPackMigration):
             fd.write(self.__wrap_sql(f,2))
         return filename
         
-    # create migrations directory and metadata in DB.
+    ## create migrations directory and metadata in DB.
     # schema is:
     #    id:          serial
     #    migration:   varchar(255)
@@ -305,7 +352,7 @@ class Migration(MadPackMigration):
             cur.close()
             self.dbconn.commit()
 
-    # record the application of a forward migration in migrationhistory table
+    ## record the application of a forward migration in migrationhistory table
     def record_migration(self, filename):
         cur = self.dbconn.cursor()
         try:
@@ -316,7 +363,7 @@ class Migration(MadPackMigration):
             raise #MadPackMigrationError("Unexpected error recording into madlib.migrationhistory in database:")
         return True
 
-    # remove entry for a migration matching filename
+    ## remove entry for a migration matching filename
     def delete_migration(self, filename):
         cur = self.dbconn.cursor()
         try:
@@ -330,11 +377,14 @@ class Migration(MadPackMigration):
             raise
         return True
         
-    # roll migrations fw/bw from current to desired.
+    ## roll migrations fw/bw from current to desired.
     # desire can be expressed by migration number or by version 
     # (but not both.)
     # there has to be a pre-existing migration script that matches.
+    # @param mignumber migration number to roll to
+    # @param migversion version number to roll to
     def migrate(self, mignumber=None, migversion=None):
+       print "Running DB migartion:"
        connect_args=self.conf['connect_args'], 
        api = self.conf['dbapi2']
        if mignumber and migversion:
@@ -377,7 +427,7 @@ class Migration(MadPackMigration):
                m.delete_migration(f)
                m.dbconn.commit()
                    
-    # make sure script directory and migrationhistory match
+    ## make sure script directory and migrationhistory match
     def sanity(self):
        okflag = True
        migfiles = [f.split("/")[-1] for f in \
@@ -389,7 +439,7 @@ class Migration(MadPackMigration):
            exit(2)
        history = self.__mig_files_history()
        if self.mig_dir != self.conf_dir:
-           testconf = configyml.get_config(self.mig_dir)
+           testconf = configyml.get_config(self.mig_dir, False)
            if testconf != self.conf:
                print "cached " + self.mig_dir + \
                      "/Config.yml does not match " + \
