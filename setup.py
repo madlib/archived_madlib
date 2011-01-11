@@ -1,7 +1,7 @@
 import madpy.madpack.configyml
 from distutils.core import setup, Extension
 
-suffixes = ['c', 'h', 'py', 'in', 'yml', 'sh', 'sql', 'mk']
+suffixes = ['c', 'h', 'py', 'in', 'yml', 'sh', 'sql', 'mk', 'py-in', 'sql-in']
 additional_files = ['Makefile']
 
 conf = madpy.madpack.configyml.get_config('madpy', True)
