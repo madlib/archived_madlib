@@ -72,11 +72,11 @@
     - None at this point. Will need to install the Greenplum sparse vector 
     SVEC datatype eventually.
 
-\par Usage
+\par Usage/API
 
-   - Preparation of the Input
+   - Preparation of the input
 
-    - Insert the training data into the table sv_train_data, which has
+       Insert the training data into the table sv_train_data, which has
        the following structure:
 \code    
         (       id 		INT,  	    -- point ID
@@ -86,8 +86,37 @@
 \endcode    
         Note: The label field is not required for novelty detection.
     
+   - The main learning functions
 
+     -# Online regression learning is achieved through the following aggregate
+        function
+        \code
+	online_sv_reg_agg(x float8[], y float8),
+        \endcode
+	where x is a data point and y its regression value. The function
+	returns a model_rec data type. (More on that later.) 
 
+     -# Online classification learning is achieved through the following
+        aggregate function
+        \code
+        online_sv_cl_agg(x float8[], y float8),
+        \endcode
+        where x is a data point and y its class (usually +1 or -1). The 
+	function returns a model_rec data type.
+
+     -# Online novelty detection is achieved through the following 
+        aggregate function
+        \code
+        online_sv_nd_agg(x float8[]),
+        \endcode
+        where x is a data point. Note that novelty detection is an unsupervised
+        learning technique, so no label is required. The function returns a
+        model_rec data type.
+
+     In each case, learning is done by running the corresponding aggregate 
+     function through a training set stored in a table/view.
+
+\par Examples
 
    - Example usage for regression:
 \code
