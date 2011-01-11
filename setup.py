@@ -12,8 +12,8 @@ for mpair in conf['methods']:
     m = mpair['name']
     pport = mpair['port']
     for s in suffixes:
-        # print "pkg_data['madlib'] += " + str([m+'/src/'+pport+'/*.'+s])
         pkg_data['madlib'] += [m+'/src/'+pport+'/*.'+s]
+        pkg_data['madlib'] += [m+'/src/'+pport+'/sql/*.'+s]
     pkg_data['madlib'] += [m+'/src/'+pport+'/'+ f for f in additional_files]
     pkg_data['madlib'] += [m+'/src/'+pport+'/sql/*.sql']
     pkg_data['madlib'] += [m+'/src/'+pport+'/expected/*.out']

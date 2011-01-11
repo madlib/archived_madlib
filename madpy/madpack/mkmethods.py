@@ -72,8 +72,8 @@ def make_methods(mkarg, conf):
         __create_config_mk(conf, os.getcwd())    
         if install['module'] != None:
             print "- " + install['module']
-            subprocess.call(['make', mkarg], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
-            #subprocess.call(['make', mkarg])
+            #subprocess.call(['make', mkarg], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+            subprocess.call(['make', mkarg])
         # and remove config.mk
         __remove_config_mk(os.getcwd())
         os.chdir(curdir)
