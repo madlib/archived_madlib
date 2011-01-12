@@ -6,10 +6,14 @@ doc/bin/sql_filter: doc/etc/sql.tab.c doc/etc/sql.yy.c Makefile
 	gcc -o $@ -lfl $(filter %.c,$^)
 
 %.tab.c %.tab.h: %.y
+	# -d means: Write an extra output file containing macro definitions for the
+	# token type names defined in the grammar and the semantic value type
+	# YYSTYPE, as well as a few extern variable declarations
 	cd $(dir $@) && bison ${BISON_FLAGS} -d $(notdir $<)
 
 %.yy.c: %.l %.tab.h
-	flex ${FLEX_FLAGS} --case-insensitive --stdout $< > $@
+	# -i means case-insensitive, -t means write to stdout
+	flex ${FLEX_FLAGS} -i -t $< > $@
 
 .INTERMEDIATE: doc/etc/sql.tab.c doc/etc/sql.tab.h doc/etc/sql.yy.c
 
