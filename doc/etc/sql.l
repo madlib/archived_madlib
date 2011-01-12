@@ -11,9 +11,11 @@
 
 /* Definitions */
 
+%option noyywrap
+
 /* C Code */
 %{
-	#include <stdlib.h>
+	#include <string.h>
 	
 	#define YYSTYPE char *
 

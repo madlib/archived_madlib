@@ -3,7 +3,7 @@
 MATHJAX_DIR=doc/var/mathjax
 
 doc/bin/sql_filter: doc/etc/sql.tab.c doc/etc/sql.yy.c Makefile
-	gcc -o $@ -lfl $(filter %.c,$^)
+	gcc -o $@ $(filter %.c,$^)
 
 %.tab.c %.tab.h: %.y
 	# -d means: Write an extra output file containing macro definitions for the
