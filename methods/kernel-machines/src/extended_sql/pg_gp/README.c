@@ -1,4 +1,4 @@
-/*! \defgroup kernel-machines
+/*! \defgroup kernel machines
 
 \par About
 
@@ -25,8 +25,8 @@
     where w is a weight vector having the same dimension as x. One of the 
     key points of SVMs is that we can use more fancy kernel functions to 
     efficiently learn linear models in high-dimensional feature spaces, 
-    since k(x_i,x_j) can be understood as an inner product in the feature
-    space:
+    since k(x_i,x_j) can be understood as an efficient way of computing an 
+    inner product in the feature space:
 \code
         k(x_i,x_j) = <phi(x_i),phi(x_j)>,
 \endcode
