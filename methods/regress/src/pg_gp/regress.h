@@ -1,10 +1,19 @@
-/*-------------------------------------------------------------------------
+/* ----------------------------------------------------------------------- *//**
  *
- * regress.h
+ * @file regress.h
  *
- * Multilinear regression.
+ * @brief Header file for regression functions
  *
- *------------------------------------------------------------------------- 
+ *//* ----------------------------------------------------------------------- */
+
+/**
+ * @defgroup regression Regression
+ *
+ * @about
+ *
+ * Implementation of a variety of regression techniques, i.e., techniques for 
+ * modeling and analyzing the relationship between a dependent variable and one
+ * or more independent variables.
  */
 
 #ifndef MADLIB_REGRESS_H
