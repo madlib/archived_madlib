@@ -1,17 +1,18 @@
-/* -----------------------------------------------------------------------------
+/* ----------------------------------------------------------------------- *//** 
  *
- * student.c
+ * @file student.c
  *
- * Evaluate the Student-T distribution function.
+ * @brief Evaluate the Student-T distribution function.
+ * @author Florian Schoppmann
+ * @date   November 2010
  *
- * Copyright (c) 2010, EMC
- * 
- * -----------------------------------------------------------------------------
+ *//* -------------------------------------------------------------------------- 
  *
- * Author: Florian Schoppmann
- * Date:   November 2010
- * 
  * This file is compliant with the C99 standard (Compile with "-std=c99").
+ */
+
+/**
+ * @file student.c
  *
  * Emprirical results indicate that the numerical quality of the series
  * expansion from [1] (see notes below) is vastly superior to using continued
@@ -29,15 +30,21 @@
  * [2] NIST Digital Library of Mathematical Functions, Ch. 8,
  *     Incomplete Gamma and Related Functions,
  *     http://dlmf.nist.gov/8.17
+ *
  * [3] Lentz, Generating Bessel functions in Mie scattering calculations using
  *     continued fractions, Applied Optics, Vol. 15, No. 3, 1976
+ *
  * [4] Thompson and Barnett, Coulomb and Bessel Functions of Complex Arguments
  *     and Order, Journal of Computational Physics, Vol. 64, 1986
+ *
  * [5] Cuyt et al., Handbook of Continued Fractions for Special Functions,
  *     Springer, 2008
+ *
  * [6] Gil et al., Numerical Methods for Special Functions, SIAM, 2008
+ *
  * [7] Press et al., Numerical Recipes in C++, 3rd edition,
  *     Cambridge Univ. Press, 2007
+ *
  * [8] DiDonato, Morris, Jr., Algorithm 708: Significant Digit Computation of
  *     the Incomplete Beta Function Ratios, ACM Transactions on Mathematical
  *     Software, Vol. 18, No. 3, 1992
@@ -47,6 +54,7 @@
  *
  * [9]  Gleason, A note on a proposed student t approximation, Computational
  *      Statistics & Data Analysis, Vol. 34, No. 1, 2000
+ *
  * [10] Gaver and Kafadar, A Retrievable Recipe for Inverse t, The American
  *      Statistician, Vol. 38, No. 4, 1984
  */
@@ -66,10 +74,7 @@ static inline float8 normal_cdf(float8 t);
 static float8 studentT_cdf_approx(int64 nu, float8 t);
 
 
-/* 
- * float8 studentT_cdf(uint32 nu, float8 t)
- * ----------------------------------------
- *
+/**
  * Compute Pr[T <= t] for Student-t distributed T with nu degrees of freedom.
  *
  * For nu >= 1000000, we just use the normal distribution as an approximation.
@@ -84,6 +89,7 @@ static float8 studentT_cdf_approx(int64 nu, float8 t);
  * substitute sin(theta) = t/sqrt(n * z), where z = 1 + t^2/nu.
  *
  * This gives:
+ * @verbatim
  *                          t
  *   A(t|1)  = 2 arctan( -------- ) ,
  *                       sqrt(nu)
@@ -102,6 +108,10 @@ static float8 studentT_cdf_approx(int64 nu, float8 t);
  *                            i=0
  *
  * where A(t|nu) = Pr[|T| <= t].
+ * @endverbatim
+ *
+ * @param nu Degree of freedom (>= 1)
+ * @param t Argument to cdf.
  *
  * Note: The running time of calculating the series is proportional to nu. This
  * We therefore use the normal distribution as an approximation for large nu.
@@ -166,11 +176,9 @@ float8 studentT_cdf(int64 nu, float8 t) {
 		return 1. - .5 * (1. - A);
 }
 
-/*
- * float8 normal_cdf(float8 t)
- * ---------------------------
- *
+/**
  * Compute the normal distribution function using the library error function.
+ *
  * This approximation satisfies
  * rel_error < 0.0001 || abs_error < 0.00000001
  * for all nu >= 1000000. (Tested on Mac OS X 10.6, gcc-4.2.)
@@ -182,10 +190,8 @@ static inline float8 normal_cdf(float8 t)
 }
 
 
-/* float8 studentT_cdf_approx(uint32 nu, float8 t)
- * -----------------------------------------------
- * 
- * We approximate the the Studen-T distribution using a formula suggested in
+/**
+ * Approximate Student-T distribution using a formula suggested in
  * [9], which goes back to an approximation suggested in [10].
  *
  * Compared to the series expansion, this approximation satisfies
@@ -206,17 +212,15 @@ static float8 studentT_cdf_approx(int64 nu, float8 t)
 
 /* -- POSTGRES -- PostgreSQL-specific code begins here. */
 
-/* Datum studentT_cdf(PG_FUNCTION_ARGS)
- * ------------------------------------
- * 
- * Expose the studentT_cdf as a user-defined function.
- */
-
 /* Indicate "version 1" calling conventions for all exported functions. */
 
 PG_FUNCTION_INFO_V1(student_t_cdf);
 
 #include "utils/builtins.h"
+
+/**
+ * Expose the studentT_cdf as a user-defined function.
+ */
 
 Datum student_t_cdf(PG_FUNCTION_ARGS)
 {

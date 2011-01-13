@@ -539,25 +539,21 @@ Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 Datum float8_cg_update_accum(PG_FUNCTION_ARGS);
 Datum float8_cg_update_final(PG_FUNCTION_ARGS);
 
+PG_FUNCTION_INFO_V1(float8_cg_update_accum);
+PG_FUNCTION_INFO_V1(float8_cg_update_final);
 
 typedef struct {
+	int32		iteration;	/* current iteration */
+	int32		len;		/* number of coefficients */
 	ArrayType	*coef;		/* coefficients */
 	ArrayType	*dir;		/* direction */
 	ArrayType	*grad;		/* gradient */
 	float8		beta;		/* scale factor */
 
-	int32		len;		/* number of coefficients */
 	int64		count;		/* number of rows */
 	ArrayType	*gradNew;	/* intermediate value for gradient */
 	float8		dTHd;		/* intermediate value for d^T * H * d */	
 } LogRegrState;
-
-typedef struct {
-	int32		len;		/* number of coefficients */
-	int64		count;		/* number of rows */
-	ArrayType	*gradNew;	/* intermediate value for gradient */
-	float8		dTHd;		/* intermediate value for d^T * H * d */	
-} LogRegrSubstate;
 
 
 static inline float8 sigma(float8 x)
@@ -584,11 +580,15 @@ static ArrayType *construct_uninitialized_array(int inNumElements,
 	return array;
 }
 
+
 /**
  * @internal There are aggregation states and iteration states: Aggregation
- * states contain the previous iteration state. 
+ * states contain the previous iteration state.
+ * In the first iteration, we need to compute (only) the gradient.
  */
 
+#define HeapTupleHeaderHasNulls(tuple) \
+	((tuple->t_infomask & HEAP_HASNULL) != 0)
 #define StartCopyFromTuple(tuple, nullArr) { \
 	HeapTupleHeader __tuple = tuple; int __tupleItem = 0; bool *__nullArr = nullArr
 #define CopyFromTuple(dest, DatumGet) \
@@ -597,6 +597,8 @@ static ArrayType *construct_uninitialized_array(int inNumElements,
 			GetAttributeByNum(__tuple, __tupleItem + 1, &__nullArr[__tupleItem]); \
 		if (__nullArr[__tupleItem++] == false) \
 			dest = DatumGet(tempDatum); \
+		else \
+			dest = 0; \
 	}
 #define CopyFloatArrayFromTuple(dest) \
 	{ \
@@ -605,59 +607,75 @@ static ArrayType *construct_uninitialized_array(int inNumElements,
 		if (__nullArr[__tupleItem++] == false) { \
 			ArrayType *array = DatumGetArrayTypeP(tempDatum); \
 			dest = construct_array((Datum *) ARR_DATA_PTR(array), \
-				outState->len, sizeof(float8), FLOAT8OID, true, 'd'); \
-		} \
+				outState->len, FLOAT8OID, sizeof(float8), true, 'd'); \
+		} else \
+			dest = 0; \
 	}
 #define EndCopyFromTuple }
 static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 									   LogRegrState *outState)
 {
 	ArrayType		*newX;
-	HeapTupleHeader	aggregateStateTuple = NULL;
-	bool			isNull[8];
+	HeapTupleHeader	iterationStateTuple = PG_ARGISNULL(1) ?
+						NULL : PG_GETARG_HEAPTUPLEHEADER(1),
+					aggregateStateTuple = PG_ARGISNULL(0) ?
+						NULL : PG_GETARG_HEAPTUPLEHEADER(0);
+	bool			isNull[9];
 
-	if (PG_ARGISNULL(0)) {
-		newX = PG_GETARG_ARRAYTYPE_P(3);
-		outState->len = ARR_DIMS(newX)[0];
-		outState->count = 1;
-		outState->gradNew = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
-		outState->dTHd = 0;
-		
-		if (PG_ARGISNULL(1)) {
-			outState->coef = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
-			outState->dir = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
-			outState->grad = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
-			outState->beta = 0;			
-		} else {
-			StartCopyFromTuple(aggregateStateTuple, isNull);
+	memset(isNull, 0, sizeof(isNull));
+	if (aggregateStateTuple == NULL) {
+		/* This means: State transition function was called for first row */
+	
+		if (iterationStateTuple != NULL) {
+			StartCopyFromTuple(iterationStateTuple, isNull);
+			CopyFromTuple(outState->iteration, DatumGetInt32);
+			CopyFromTuple(outState->len, DatumGetInt32);
 			CopyFloatArrayFromTuple(outState->coef);
 			CopyFloatArrayFromTuple(outState->dir);
 			CopyFloatArrayFromTuple(outState->grad);
 			CopyFromTuple(outState->beta, DatumGetFloat8);
 			EndCopyFromTuple;
-			
-			for (int i = 0; i < 4; i++)
-				if (isNull[i]) return false;
 		}
+		
+		if (iterationStateTuple == NULL || outState->iteration == 0) {
+			/* This means: We are in the first iteration. We need to initialize the state. */
+
+			/* The length will only be set once: Here. */
+			newX = PG_GETARG_ARRAYTYPE_P(3);
+			outState->len = ARR_DIMS(newX)[0];		
+			outState->coef = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+			outState->dir = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+			outState->grad = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+			outState->beta = 0;
+			
+			isNull[0] = isNull[1] = isNull[2] = isNull[3] = isNull[4] = isNull[5] = false;
+		}
+
+		outState->count = 0;
+		outState->gradNew = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
+		outState->dTHd = 0.;
 	} else {
-		aggregateStateTuple = PG_GETARG_HEAPTUPLEHEADER(1);
-	
 		StartCopyFromTuple(aggregateStateTuple, isNull);
+		CopyFromTuple(outState->iteration, DatumGetInt32);
+		CopyFromTuple(outState->len, DatumGetInt32);
 		CopyFromTuple(outState->coef, DatumGetArrayTypeP);
 		CopyFromTuple(outState->dir, DatumGetArrayTypeP);
 		CopyFromTuple(outState->grad, DatumGetArrayTypeP);
 		CopyFromTuple(outState->beta, DatumGetFloat8);
-
-		CopyFromTuple(outState->len, DatumGetInt32);
+		
 		CopyFromTuple(outState->count, DatumGetInt64);
 		CopyFromTuple(outState->gradNew, DatumGetArrayTypeP);
 		CopyFromTuple(outState->dTHd, DatumGetFloat8);
 		EndCopyFromTuple;
-
-		for (int i = 0; i < 8; i++)
-			if (isNull[i]) return false;
-	}
 		
+//		if (outState->iteration == 0) {
+//			isNull[3] = isNull[4] = false;
+//		}
+	}
+			
+	for (int i = 0; i < 9; i++)
+		if (isNull[i]) return false;
+
 	return true;
 }
 #undef StartCopyFromTuple
@@ -669,13 +687,13 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	TypeFuncClass	funcClass;
 	Oid				resultType;
 	TupleDesc		resultDesc;
-	Datum			resultDatum[8];
-	bool			resultNull[8];
+	Datum			resultDatum[9];
+	bool			resultNull[9];
 	HeapTuple		result;
 	
 	LogRegrState	state;
 	ArrayType		*newX;
-	bool			newY;
+	int32			newY;
 	float8			*newXData;
 	float8			wTx, dTx;
 	
@@ -699,8 +717,9 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 				 errmsg("transition function \"%s\" not called from aggregate",
 					format_procedure(fcinfo->flinfo->fn_oid))));
 	
-	newY  = PG_GETARG_BOOL(2);
+	newY  = PG_GETARG_BOOL(2) ? 1 : -1;
     newX  = PG_GETARG_ARRAYTYPE_P(3);
+	newXData = (float8 *) ARR_DATA_PTR(newX);
 		
 	/* Ensure that all arrays are single dimensional float8[] arrays without NULLs */
 	if (ARR_NULLBITMAP(newX) || ARR_NDIM(newX) != 1 || ARR_ELEMTYPE(newX) != FLOAT8OID)
@@ -716,8 +735,8 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	/* Something is seriously fishy if our state has the wrong form */
 	if (state.len != ARR_DIMS(newX)[0] ||
 		ARR_DIMS(state.coef)[0] != state.len ||
-		ARR_DIMS(state.dir)[0] != state.len ||
-		ARR_DIMS(state.grad)[0] != state.len ||
+		(state.dir && ARR_DIMS(state.dir)[0] != state.len) ||
+		(state.grad && ARR_DIMS(state.grad)[0] != state.len) ||
 		ARR_DIMS(state.gradNew)[0] != state.len)
 	{
 		ereport(ERROR, 
@@ -729,32 +748,44 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	/* Okay... All's good now do the work */
 	state.count++;
 
-	for (int i = 0, wTx = dTx = 0.; i < state.len; i++) {
-		wTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.coef))[i];
-		dTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.dir))[i];
+	wTx = 0.;
+	dTx = 0.;
+	
+	if (state.iteration > 0) {
+		/* if state.iteration = 0 then wTx and dTx will remain 0 anyway. */
+	
+		for (int i = 0; i < state.len; i++) {
+			wTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.coef))[i];
+			dTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.dir))[i];
+		}
 	}
 	
-	state.dTHd += sigma(wTx) * (1 - sigma(wTx)) * dTx * dTx;
-	
-	for (int i = 0; i < state.len; i++) {
-		((float8*) ARR_DATA_PTR(state.gradNew))[i] +=
-			(1 - sigma(wTx)) * (newY ? 1 : -1) * newXData[i];
+	if (state.iteration % 2 == 0) {		
+		for (int i = 0; i < state.len; i++) {
+			((float8*) ARR_DATA_PTR(state.gradNew))[i] +=
+				(1 - sigma(newY * wTx)) * newY * newXData[i];
+		}
+	} else {
+		state.dTHd += sigma(wTx) * (1 - sigma(wTx)) * dTx * dTx;
 	}
 	
 	/* Construct the return tuple */
 	funcClass = get_call_result_type(fcinfo, &resultType, &resultDesc);
 	BlessTupleDesc(resultDesc);
 	
-	resultDatum[0] = PointerGetDatum(state.coef);
-	resultDatum[1] = PointerGetDatum(state.dir);
-	resultDatum[2] = PointerGetDatum(state.grad);
-	resultDatum[3] = Float8GetDatum(state.beta);
-
-	resultDatum[4] = Int32GetDatum(state.len);
-	resultDatum[5] = Int64GetDatum(state.count);
-	resultDatum[6] = PointerGetDatum(state.gradNew);
-	resultDatum[7] = Float8GetDatum(state.dTHd);
+	resultDatum[0] = Int32GetDatum(state.iteration);
+	resultDatum[1] = Int32GetDatum(state.len);
+	resultDatum[2] = PointerGetDatum(state.coef);
+	resultDatum[3] = PointerGetDatum(state.dir);
+	resultDatum[4] = PointerGetDatum(state.grad);
+	resultDatum[5] = Float8GetDatum(state.beta);
+	
+	resultDatum[6] = Int64GetDatum(state.count);
+	resultDatum[7] = PointerGetDatum(state.gradNew);
+	resultDatum[8] = Float8GetDatum(state.dTHd);
 	memset(resultNull, 0, sizeof(resultNull));
+	resultNull[3] = state.dir == NULL;
+	resultNull[4] = state.grad == NULL;
 	
 	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));
@@ -800,6 +831,8 @@ static inline ArrayType *float8_vectorMinus(ArrayType *inVec1, ArrayType *inVec2
 	}
 	
 	size = ARR_DIMS(inVec1)[0];
+	arr1 = (float8 *) ARR_DATA_PTR(inVec1);
+	arr2 = (float8 *) ARR_DATA_PTR(inVec2);
 	returnVec = construct_uninitialized_array(size, FLOAT8OID, 8);
 	returnData = (float8 *) ARR_DATA_PTR(returnVec);
 	
@@ -815,8 +848,8 @@ Datum float8_cg_update_final(PG_FUNCTION_ARGS)
 	TypeFuncClass	funcClass;
 	Oid				resultType;
 	TupleDesc		resultDesc;
-	Datum			resultDatum[8];
-	bool			resultNull[8];
+	Datum			resultDatum[9];
+	bool			resultNull[9];
 	HeapTuple		result;
 
 	LogRegrState	state;
@@ -837,51 +870,69 @@ Datum float8_cg_update_final(PG_FUNCTION_ARGS)
 	if (!goodArguments)
 		PG_RETURN_NULL();
 	
-	//            g_k^T d_k
-	// alpha_k = -----------
-	//           d_k^T H d_k
-	alpha = float8_dotProduct(state.grad, state.dir) /
-		state.dTHd;
-			
-	// c_{k+1} = c_k + alpha_k * d_k
-	state.coef = DatumGetArrayTypeP(
-		DirectFunctionCall2(matrix_add, PointerGetDatum(state.coef),
+	
+	// k = iteration / 2
+	if (state.iteration == 0) {
+		// Iteration computes the gradient
+	
+		state.grad = state.gradNew;
+		state.dir = state.gradNew;
+	} else if (state.iteration % 2 == 0) {
+		// Even iterations compute the gradient (during the accumulation phase)
+		// and the new direction (during the final phase).  Note that
+		// state.gradNew != state.grad starting from iteration 2
 		
-		// alpha_k * d_k
-		DirectFunctionCall2(float8_matrix_smultiply, Float8GetDatum(alpha),
-			PointerGetDatum(state.dir))));
-	
-	
-	// d_{k+1} = g_k - beta * d_k
-	betaDir = DatumGetArrayTypeP(
-		DirectFunctionCall2(float8_matrix_smultiply, Float8GetDatum(state.beta),
-			PointerGetDatum(state.dir)));
-	state.dir = float8_vectorMinus(state.grad, betaDir);
+		//            g_k^T (g_k - g_{k-1})
+		// beta_k = -------------------------
+		//          d_{k-1}^T (g_k - g_{k-1})
+		gradMinusGradOld = float8_vectorMinus(state.gradNew, state.grad);
+		state.beta = float8_dotProduct(state.gradNew, gradMinusGradOld) /
+			float8_dotProduct(state.dir, gradMinusGradOld);
+		pfree(gradMinusGradOld);
 
-	//              g_{k+1}^T (g_{k+1} - g_k)
-	// beta_{k+1} = -------------------------
-	//                d_k^T (g_{k+1} - g_k)
-	gradMinusGradOld = float8_vectorMinus(state.gradNew, state.grad);
-	state.beta = float8_dotProduct(state.gradNew, gradMinusGradOld) /
-		float8_dotProduct(state.dir, gradMinusGradOld);
-	pfree(gradMinusGradOld);
+		// d_k = g_k - beta_k * d_{k-1}
+		betaDir = DatumGetArrayTypeP(
+			DirectFunctionCall2(float8_matrix_smultiply,
+				PointerGetDatum(state.dir), Float8GetDatum(state.beta)));
+		state.dir = float8_vectorMinus(state.gradNew, betaDir);
+		
+		state.grad = state.gradNew;
+	} else {
+		// Odd iteration compute -d^T H d (during the accumulation phase) and
+		// and the new coefficients (during the final phase).
+
+		//              g_k^T d_k
+		// alpha_k = - -----------
+		//             d_k^T H d_k
+		alpha = float8_dotProduct(state.grad, state.dir) /
+			state.dTHd;
+		
+		// c_k = c_{k-1} - alpha_k * d_k
+		state.coef = DatumGetArrayTypeP(
+			DirectFunctionCall2(matrix_add, PointerGetDatum(state.coef),
+			
+			// alpha_k * d_k
+			DirectFunctionCall2(float8_matrix_smultiply,
+				PointerGetDatum(state.dir), Float8GetDatum(-alpha))));
+	}
 
 	/* Construct the return tuple */
 	funcClass = get_call_result_type(fcinfo, &resultType, &resultDesc);
 	BlessTupleDesc(resultDesc);
 	
-	resultDatum[0] = PointerGetDatum(state.coef);
-	resultDatum[1] = PointerGetDatum(state.dir);
-	resultDatum[2] = PointerGetDatum(state.gradNew);
-	resultDatum[3] = Float8GetDatum(state.beta);
-
-	resultDatum[4] = Int32GetDatum(state.len);
-	resultDatum[5] = Int64GetDatum(state.count);
-	resultDatum[6] = PointerGetDatum(state.gradNew);
-	resultDatum[7] = Float8GetDatum(state.dTHd);
+	resultDatum[0] = Int32GetDatum(state.iteration + 1);
+	resultDatum[1] = Int32GetDatum(state.len);
+	resultDatum[2] = PointerGetDatum(state.coef);
+	resultDatum[3] = PointerGetDatum(state.dir);
+	resultDatum[4] = PointerGetDatum(state.grad);
+	resultDatum[5] = Float8GetDatum(state.beta);
 	
-	resultNull[0] = resultNull[1] = resultNull[2] = resultNull[3] = false;
-	resultNull[4] = resultNull[5] = resultNull[6] = resultNull[7] = true;
+	resultDatum[6] = Int64GetDatum(state.count);
+	resultDatum[7] = PointerGetDatum(state.gradNew);
+	resultDatum[8] = Float8GetDatum(state.dTHd);
+	
+	resultNull[0] = resultNull[1] = resultNull[2] = resultNull[3] = resultNull[4] = resultNull[5] = false;
+	resultNull[6] = resultNull[7] = resultNull[8] = true;
 	
 	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));	
