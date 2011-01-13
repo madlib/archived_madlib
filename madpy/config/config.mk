@@ -20,6 +20,10 @@ clean_data_built:
 #	done
 #endif # 
 
+# Put C shared objects under $(pkglibdir)/madlib
+override pkglibdir := $(pkglibdir)/madlib
+
+# Put Python modules under $(PYTHONPATH)/madlib
 install-python:
 ifneq (,$(PYTHON_built))
 	if [ ! -d $(PYTHONPATH)/madlib ]; then mkdir $(PYTHONPATH)/madlib; fi;
