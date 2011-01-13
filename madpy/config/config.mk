@@ -2,10 +2,10 @@ madlib_schema = SCHEMA_PLACEHOLDER
 conf_defines = CONFDEFS
 python_target = PYTHON_TARGET_DIR
 
-%.sql: %.sql-in
+%.sql: %.sql_in
 	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
 	
-%.py: %.py-in
+%.py: %.py_in
 	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
 
 clean_data_built: 
