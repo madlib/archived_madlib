@@ -1,4 +1,4 @@
-/*! \defgroup kernel machines
+/*! \defgroup kernel-machines
 
 \par About
 
@@ -95,7 +95,7 @@
   data, model_name is the name under which we want to store the resultant 
   learned model, and parallel is a flag indicating whether the system
   should learn multiple models in parallel. (The multiple models can be
-  combined to make predictions; more on this shortly.)
+  combined to make predictions; more on that shortly.)
 
   Here are the functions that can be used to make predictions on new
   data points.
@@ -110,20 +110,20 @@
      - To make predictions on new data points using multiple models
        learned in parallel, we use the function
        \code
-       madlib.svs_predict_combo(model_name text, x float8[])
+       madlib.svs_predict_combo(model_name text, x float8[]),
        \endcode
        where model_name is the name under which the models are stored, and x 
        is a data point.
 
   Models that have been stored can be deleted using the function
   \code
-  madlib.drop_sv_model(modelname text).
+       madlib.drop_sv_model(modelname text).
   \endcode
 
 \par Examples
 
-   - As a general first step, we need to prepare and populate an input 
-     table/view with the following structure:
+As a general first step, we need to prepare and populate an input 
+table/view with the following structure:
 \code   
         CREATE TABLE my_schema.my_input_table 
         (       
@@ -135,88 +135,81 @@
      Note: The label field is not required for novelty detection.
     
 
-   - Example usage for regression:\n
-     -# We can randomly generate 1000 5-dimensional data labelled by the simple
-     target function 
-\code
-     t(x) = if x[5] = 10 then 50 else if x[5] = -10 then 50 else 0;
-\endcode
-     and store that in the madlib.sv_train_data table as follows:
-\code
-       testdb=# select madlib.generateRegData(1000, 5);
-\endcode
-
+Example usage for regression:
+     -# We can randomly generate 1000 5-dimensional data labelled by the simple target function 
+        \code
+            t(x) = if x[5] = 10 then 50 else if x[5] = -10 then 50 else 0;
+        \endcode
+        and store that in the madlib.sv_train_data table as follows:
+        \code
+            testdb=# select madlib.generateRegData(1000, 5);
+        \endcode
      -# We can now learn a regression model and store the resultant model
         under the name  'myexp'.
-\code
-       testdb=# select sv_regression('madlib.sv_train_data', 'myexp', false);
-\endcode
-
+        \code
+            testdb=# select sv_regression('madlib.sv_train_data', 'myexp', false);
+        \endcode
      -# We can now start using it to predict the labels of new data points 
         like as follows:
-\code
-       testdb=# select madlib.svs_predict('myexp', '{1,2,4,20,10}');
-       testdb=# select madlib.svs_predict('myexp', '{1,2,4,20,-10}');
-\endcode
-
+        \code
+            testdb=# select madlib.svs_predict('myexp', '{1,2,4,20,10}');
+            testdb=# select madlib.svs_predict('myexp', '{1,2,4,20,-10}');
+        \endcode
      -# To learn multiple support vector models, we replace the learning step above by 
-\code
-       testdb=# select sv_regression('madlib.sv_train_data', 'myexp', true);
-\endcode
+        \code
+            testdb=# select sv_regression('madlib.sv_train_data', 'myexp', true);
+        \endcode
        The resultant models can be used for prediction as follows:
-\code
-       testdb=# select * from madlib.svs_predict_combo('myexp', '{1,2,4,20,10}');
-\endcode
+       \code
+           testdb=# select * from madlib.svs_predict_combo('myexp', '{1,2,4,20,10}');
+       \endcode
 
-   - Example usage for classification:\n
+Example usage for classification:
      -# We can randomly generate 2000 5-dimensional data labelled by the simple
         target function 
-\code
-     t(x) = if x[1] > 0 and  x[2] < 0 then 1 else -1;
-\endcode
-     and store that in the madlib.sv_train_data table as follows:
-\code 
-       testdb=# select madlib.generateClData(2000, 5);
-\endcode
-
+        \code
+            t(x) = if x[1] > 0 and  x[2] < 0 then 1 else -1;
+        \endcode
+        and store that in the madlib.sv_train_data table as follows:
+        \code 
+            testdb=# select madlib.generateClData(2000, 5);
+        \endcode
      -# We can now learn a classification model and store the resultant model
         under the name  'myexpc'.
-\code
-       testdb=# select sv_classification('madlib.sv_train_data', 'myexpc', false);
-\endcode
-
+        \code
+            testdb=# select sv_classification('madlib.sv_train_data', 'myexpc', false);
+        \endcode
      -# We can now start using it to predict the labels of new data points 
         like as follows:
-\code
-       testdb=# select madlib.svs_predict('myexpc', '{10,-2,4,20,10}');
-\endcode 
-  
+        \code
+            testdb=# select madlib.svs_predict('myexpc', '{10,-2,4,20,10}');
+        \endcode 
      -# To learn multiple support vector models, replace the model-building and prediction steps above by 
-\code
-       testdb=# select sv_classification('madlib.sv_train_data', 'myexpc', true);
-       testdb=# select * from madlib.svs_predict_combo('myexpc', '{10,-2,4,20,10}');
-\endcode
+        \code
+            testdb=# select sv_classification('madlib.sv_train_data', 'myexpc', true);
+            testdb=# select * from madlib.svs_predict_combo('myexpc', '{10,-2,4,20,10}');
+        \endcode
 
    - Example usage for novelty detection:\n
      -# We can randomly generate 100 2-dimensional data (the normal cases)
         and store that in the madlib.sv_train_data table as follows:
-\code
-       testdb=# select madlib.generateNdData(100, 2);
-\endcode
+        \code
+            testdb=# select madlib.generateNdData(100, 2);
+        \endcode
 
      -# Learning and predicting using a single novelty detection model can be done as follows:
-\code
-       testdb=# select sv_novelty_detection('madlib.sv_train_data', 'myexpnd', false);
-       testdb=# select madlib.svs_predict('myexpnd', '{10,-10}');  
-       testdb=# select madlib.svs_predict('myexpnd', '{-1,-1}');  
-\endcode
+        \code
+            testdb=# select sv_novelty_detection('madlib.sv_train_data', 'myexpnd', false);
+            testdb=# select madlib.svs_predict('myexpnd', '{10,-10}');  
+            testdb=# select madlib.svs_predict('myexpnd', '{-1,-1}');  
+        \endcode
 
      -# Learning and predicting using multiple models can be done as follows:
-\code
-       testdb=# select sv_novelty_detection('madlib.sv_train_data', 'myexpnd', true);
-       testdb=# select * from madlib.svs_predict_combo('myexpnd', '{10,-10}');  
-       testdb=# select * from madlib.svs_predict_combo('myexpnd', '{-1,-1}');  
-\endcode
+        \code
+            testdb=# select sv_novelty_detection('madlib.sv_train_data', 'myexpnd', true);
+            testdb=# select * from madlib.svs_predict_combo('myexpnd', '{10,-10}');  
+            testdb=# select * from madlib.svs_predict_combo('myexpnd', '{-1,-1}');  
+        \endcode
 
 \par To Do
 
