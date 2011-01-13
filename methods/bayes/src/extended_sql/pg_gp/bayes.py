@@ -1,6 +1,12 @@
 import plpy
 
-"""@namespace bayes
+"""@file bayes.py
+
+@brief Naive Bayes classification with user-defined smoothing factor (default:
+Laplacian smoothing).
+
+@namespace bayes
+
 Naive Bayes classification with user-defined smoothing factor (default:
 Laplacian smoothing).
 
@@ -10,21 +16,12 @@ A Naive Bayes classifier computes the following formula:
   classify(a_1, ..., a_n) = argmax_c P(C = c) ||    P(A_i = a_i | C = c)
                                                 i=1
 @endverbatim
-
-FIXME: Doxygen also support MathJax.  Of course, in LaTeX source code is harder
-to read for humans than "ASCII art" formulas.  We should decide for one or the
-other.
-@f[
-	\mathrm{classify}(a_1, \dots, a_n) = \arg \max_c P(C = c) \prod_{i=1}^n P(A_i = a_i \mid C = c)
-@f]
-
 where probabilites are estimated with relative frequencies from the training
 set.  See also: http://en.wikipedia.org/wiki/Naive_Bayes_classifier
 
 There are different ways to estimate the feature probabilities
 $P(A_i = a_i | C = c)$.  The maximum likelihood exstimate takes the relative
 frequencies. That is:
-
 @verbatim
 
                        #(c,i,a)
@@ -74,10 +71,13 @@ Note for theorists:
 All create_ functions can be called with two sets of arguments:
 
 @internal
-\par Implementation Notes:
-The functions __get_*_sql are private because we do not want to commit ourselves
-to a particular interface. We might want to be able to change implementation
-details should the need arise.
+
+	@implementation
+	
+	The functions __get_*_sql are private because we do not want to commit ourselves
+	to a particular interface. We might want to be able to change implementation
+	details should the need arise.
+
 @endinternal
 """
 
