@@ -10,15 +10,20 @@ conf_defines = CONFDEFS
 clean_data_built: 
 	rm $(DATA_built)
 
-install:
-ifneq (,$(DATA_built))
-	if [ ! -d $(datadir)/contrib/madlib ]; then mkdir $(datadir)/contrib/madlib; fi;
-	@for file in $(DATA_built); do \
-		echo "$(INSTALL_DATA) $$file '$(datadir)/contrib/madlib'"; \
-		$(INSTALL_DATA) $$file '$(datadir)/contrib/madlib'; \
-	done
-endif # 
+# Commented out the DATA_built redirection for now
+#install:
+#ifneq (,$(DATA_built))
+#	if [ ! -d $(datadir)/contrib/madlib ]; then mkdir $(datadir)/contrib/madlib; fi;
+#	@for file in $(DATA_built); do \
+#		echo "$(INSTALL_DATA) $$file '$(datadir)/contrib/madlib'"; \
+#		$(INSTALL_DATA) $$file '$(datadir)/contrib/madlib'; \
+#	done
+#endif # 
 
+# Put C shared objects under $(pkglibdir)/madlib
+override pkglibdir := $(pkglibdir)/madlib
+
+# Put Python modules under $(PYTHONPATH)/madlib
 install-python:
 ifneq (,$(PYTHON_built))
 	if [ ! -d $(PYTHONPATH)/madlib ]; then mkdir $(PYTHONPATH)/madlib; fi;
