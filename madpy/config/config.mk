@@ -1,11 +1,12 @@
 madlib_schema = SCHEMA_PLACEHOLDER
 conf_defines = CONFDEFS
+python_target = PYTHON_TARGET_DIR
 
 %.sql: %.sql-in
-	m4 -DMODULE_PATHNAME='$$libdir/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
+	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
 	
 %.py: %.py-in
-	m4 -DMODULE_PATHNAME='$$libdir/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
+	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
 
 clean_data_built: 
 	rm $(DATA_built)
@@ -23,14 +24,14 @@ clean_data_built:
 # Put C shared objects under $(pkglibdir)/madlib
 override pkglibdir := $(pkglibdir)/madlib
 
-# Put Python modules under $(PYTHONPATH)/madlib
+# Put Python modules under $(python_target)
 install-python:
 ifneq (,$(PYTHON_built))
-	if [ ! -d $(PYTHONPATH)/madlib ]; then mkdir $(PYTHONPATH)/madlib; fi;
-	if [ ! -f $(PYTHONPATH)/madlib/__init__.py ]; then touch $(PYTHONPATH)/madlib/__init__.py; fi; 
+	if [ ! -d $(python_target) ]; then mkdir $(python_target); fi;
+	if [ ! -f $(python_target)/__init__.py ]; then touch $(python_target)/__init__.py; fi; 
 	@for file in $(PYTHON_built); do \
-		echo "$(INSTALL_DATA) $$file '$(PYTHONPATH)/madlib'"; \
-		$(INSTALL_DATA) $$file '$(PYTHONPATH)/madlib'; \
+		echo "$(INSTALL_DATA) $$file '$(python_target)'"; \
+		$(INSTALL_DATA) $$file '$(python_target)'; \
 	done
 endif # 
 

@@ -33,7 +33,8 @@ def __create_config_mk(conf, methdir):
     for line in open(madpy.__path__[0]+'/config/config.mk').readlines():
         line2 = re.sub('SCHEMA_PLACEHOLDER', conf['target_schema'], line)
         line3 = re.sub('CONFDEFS', conf['prep_flags'], line2)
-        mkfd.write(line3)
+        line4 = re.sub('PYTHON_TARGET_DIR', conf['python_modules_dir'], line3)
+        mkfd.write(line4)
 
     mkfd.close()
 
