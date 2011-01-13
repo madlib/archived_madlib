@@ -1,7 +1,7 @@
 import madpy.madpack.configyml
 from distutils.core import setup, Extension
 
-suffixes = ['c', 'h', 'py', 'in', 'yml', 'sh', 'sql', 'mk', 'py-in', 'sql-in']
+suffixes = ['c', 'h', 'py', 'in', 'yml', 'sh', 'sql', 'mk', 'py-in', 'sql-in', 'pl']
 additional_files = ['Makefile']
 
 conf = madpy.madpack.configyml.get_config('madpy', True)
@@ -15,7 +15,6 @@ for mpair in conf['methods']:
         pkg_data['madlib'] += [m+'/src/'+pport+'/*.'+s]
         pkg_data['madlib'] += [m+'/src/'+pport+'/sql/*.'+s]
     pkg_data['madlib'] += [m+'/src/'+pport+'/'+ f for f in additional_files]
-    pkg_data['madlib'] += [m+'/src/'+pport+'/sql/*.sql']
     pkg_data['madlib'] += [m+'/src/'+pport+'/expected/*.out']
 
 pkg_data['madpy'] = []
