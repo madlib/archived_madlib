@@ -1544,7 +1544,7 @@ svec_median(PG_FUNCTION_ARGS) {
 	float8 * vals = (float8 *)sdata->vals->data;
 	for (int i=0; i<sdata->unique_value_count; i++)
 		if (IS_NVP(vals[i]))
-			PG_RETURN_NULL;
+			PG_RETURN_NULL();
 
 	if (sdata->index->data != NULL) //Sparse vector
 	{

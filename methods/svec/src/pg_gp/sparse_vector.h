@@ -4,7 +4,7 @@
  *
  */
 
-/*! \defgroup sparse_vectors
+/*! \defgroup svec Sparse Vectors
 
 \par About
 
@@ -39,7 +39,7 @@ When we use arrays of floating point numbers for various calculations,
     the array above would be represented as follows
 
 \code
-      '{1,1,40000,1,1}:{0,33,0,12,22}'::svec,
+      '{1,1,40000,1,1}:{0,33,0,12,22}'::madlib.svec,
 \endcode
 
     which says there is 1 occurrence of 0, followed by 1 occurrence of 33, 
@@ -57,18 +57,18 @@ When we use arrays of floating point numbers for various calculations,
 
     We can input an array directly as an svec as follows: 
 \code   
-    testdb=# select '{1,1,40000,1,1}:{0,33,0,12,22}'::svec.
+    testdb=# select '{1,1,40000,1,1}:{0,33,0,12,22}'::madlib.svec;
 \endcode
     We can also cast an array into an svec:
 \code
-    testdb=# select ('{0,33,...40,000 zeros...,12,22}'::float8[])::svec.
+    testdb=# select ('{0,33,...40,000 zeros...,12,22}'::float8[])::madlib.svec;
 \endcode
     We can use operations with svec type like <, >, *, **, /, =, +, SUM, etc, 
     and they have meanings associated with typical vector operations. For 
     example, the plus (+) operator adds each of the terms of two vectors having
     the same dimension together. 
 \code
-    testdb=# select ('{0,1,5}'::float8[]::svec + '{4,3,2}'::float8[]::svec)::float8[];
+    testdb=# select ('{0,1,5}'::float8[]::madlib.svec + '{4,3,2}'::float8[]::madlib.svec)::float8[];
      float8  
     ---------
      {4,4,7}
@@ -76,7 +76,7 @@ When we use arrays of floating point numbers for various calculations,
 
     Without the casting into float8[] at the end, we get:
 \code
-    testdb=# select '{0,1,5}'::float8[]::svec + '{4,3,2}'::float8[]::svec;
+    testdb=# select '{0,1,5}'::float8[]::madlib.svec + '{4,3,2}'::float8[]::madlib.svec;
      ?column?  
     ----------
     {2,1}:{4,7}    	    	
@@ -86,7 +86,7 @@ When we use arrays of floating point numbers for various calculations,
     result of type float8. The dot product should be (0*4 + 1*3 + 5*2) = 13, 
     like this:
 \code
-    testdb=# select '{0,1,5}'::float8[]::svec %*% '{4,3,2}'::float8[]::svec;
+    testdb=# select '{0,1,5}'::float8[]::madlib.svec %*% '{4,3,2}'::float8[]::madlib.svec;
      ?column? 
     ----------
         13
@@ -100,10 +100,10 @@ When we use arrays of floating point numbers for various calculations,
     function would result in {1,2,3}:
 
 \code
-    testdb=# create table list (a svec);
+    testdb=# create table list (a madlib.svec);
     testdb=# insert into list values ('{0,1,5}'::float8[]), ('{10,0,3}'::float8[]), ('{0,0,3}'::float8[]),('{0,1,0}'::float8[]);
  
-    testdb=# select VEC_COUNT_NONZERO(a)::float8[] from list;
+    testdb=# select madlib.vec_count_nonzero(a)::float8[] from list;
     vec_count_nonzero 
     -----------------
         {1,2,3}
@@ -113,12 +113,12 @@ When we use arrays of floating point numbers for various calculations,
     is represented explicitly as an NVP (No Value Present) value. For example, 
     we have:
 \code
-    testdb=# select '{1,2,3}:{4,null,5}'::svec;
+    testdb=# select '{1,2,3}:{4,null,5}'::madlib.svec;
           svec        
     -------------------
      {1,2,3}:{4,NVP,5}
 
-    testdb=# select '{1,2,3}:{4,null,5}'::svec + '{2,2,2}:{8,9,10}'::svec; 
+    testdb=# select '{1,2,3}:{4,null,5}'::madlib.svec + '{2,2,2}:{8,9,10}'::madlib.svec; 
              ?column?         
      --------------------------
       {1,2,1,2}:{12,NVP,14,15}
@@ -127,7 +127,7 @@ When we use arrays of floating point numbers for various calculations,
     An element of an svec can be accessed using the svec_proj() function,
     which takes an svec and the index of the element desired.
 \code
-    testdb=# select svec_proj('{1,2,3}:{4,5,6}'::svec, 1) + svec_proj('{4,5,6}:{1,2,3}'::svec, 15);     
+    testdb=# select madlib.svec_proj('{1,2,3}:{4,5,6}'::madlib.svec, 1) + madlib.svec_proj('{4,5,6}:{1,2,3}'::madlib.svec, 15);     
      ?column? 
     ----------
         7
@@ -136,7 +136,7 @@ When we use arrays of floating point numbers for various calculations,
     A subvector of an svec can be accessed using the svec_subvec() function,
     which takes an svec and the start and end index of the subvector desired.
 \code
-    testdb=# select svec_subvec('{2,4,6}:{1,3,5}'::svec, 2, 11);
+    testdb=# select madlib.svec_subvec('{2,4,6}:{1,3,5}'::madlib.svec, 2, 11);
        svec_subvec   
     ----------------- 
      {1,4,5}:{1,3,5}
@@ -148,7 +148,7 @@ When we use arrays of floating point numbers for various calculations,
     and returns an svec like sv1 but with the subvector sv1[j:j+n-1] 
     replaced by sv2. An example follows:
 \code
-    testdb=# select svec_change('{1,2,3}:{4,5,6}'::svec,3,'{2}:{3}'::svec);
+    testdb=# select madlib.svec_change('{1,2,3}:{4,5,6}'::madlib.svec,3,'{2}:{3}'::madlib.svec);
          svec_change     
     ---------------------
      {1,1,2,2}:{4,5,3,6}
@@ -157,7 +157,7 @@ When we use arrays of floating point numbers for various calculations,
     There are also higher-order functions for processing svecs. For example,
     the following is the corresponding function for lapply() in R.
 \code
-    testdb=# select svec_lapply('sqrt', '{1,2,3}:{4,5,6}'::svec);
+    testdb=# select madlib.svec_lapply('sqrt', '{1,2,3}:{4,5,6}'::madlib.svec);
                       svec_lapply                  
     -----------------------------------------------
      {1,2,3}:{2,2.23606797749979,2.44948974278318}
@@ -199,7 +199,7 @@ When we use arrays of floating point numbers for various calculations,
     Inside the sparse vector library, we have a function that will create 
     an SFV from a document, so we can just do this:
 \code
-    testdb=# select gp_extract_feature_histogram((select a from features limit 1),b)::float8[] 
+    testdb=# select madlib.gp_extract_feature_histogram((select a from features limit 1),b)::float8[] 
              from documents;
 
           gp_extract_feature_histogram             
@@ -214,7 +214,7 @@ When we use arrays of floating point numbers for various calculations,
     ordinal positions of the dictionary. This can more easily be understood 
     by lining up the feature vector and text like this:
 \code
-    testdb=# select gp_extract_feature_histogram((select a from features limit 1),b)::float8[]
+    testdb=# select madlib.gp_extract_feature_histogram((select a from features limit 1),b)::float8[]
                     , b 
              from documents;
 
@@ -269,10 +269,10 @@ When we use arrays of floating point numbers for various calculations,
     This can be done as follows:
 \code
     testdb=# create table corpus as 
-                (select a,gp_extract_feature_histogram((select a from features limit 1),b) sfv 
+                (select a, madlib.gp_extract_feature_histogram((select a from features limit 1),b) sfv 
              from documents);
     testdb=# select a docnum, (sfv * logidf) tf_idf 
-             from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
+             from (select madlib.log(count(sfv)/madlib.vec_count_nonzero(sfv)) logidf 
                    from corpus) foo, corpus order by docnum;
 
     docnum |                tf_idf                                     
@@ -288,7 +288,7 @@ When we use arrays of floating point numbers for various calculations,
 \code
     testdb=# create table weights as 
                 (select a docnum, (sfv * logidf) tf_idf 
-                 from (select log(count(sfv)/vec_count_nonzero(sfv)) logidf 
+                 from (select madlib.log(count(sfv)/madlib.vec_count_nonzero(sfv)) logidf 
                        from corpus) foo, corpus order by docnum) 
              distributed randomly ;
 \endcode
@@ -296,7 +296,8 @@ When we use arrays of floating point numbers for various calculations,
     and each of the other documents:
 \code
     testdb=# select docnum,
-                    180.*(ACOS(dmin(1.,(tf_idf%*%testdoc)/(l2norm(tf_idf)*l2norm(testdoc))))/3.141592654) angular_distance 
+                    180. * ( ACOS( madlib.dmin( 1., (tf_idf%*%testdoc) 
+                        / (madlib.l2norm(tf_idf)*madlib.l2norm(testdoc))))/3.141592654) angular_distance 
              from weights,(select tf_idf testdoc from weights where docnum = 1 LIMIT 1) foo 
              order by 1;
 
@@ -315,6 +316,10 @@ When we use arrays of floating point numbers for various calculations,
 
     Other extensive examples of svecs usage can be found in the k-means
     module.
+
+\par Reference:
+
+    Syntax reference can be found in gp_svec.sql_in.
 
 \par Todo
 
