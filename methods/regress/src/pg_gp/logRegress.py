@@ -1,17 +1,20 @@
 """
 @file logRegress.py
 
-@brief Logistic Regression using conjugate gradient ascent
+@brief Logistic Regression: Driver functions
 
+@namespace logRegress
+
+Logistic Regression: Driver functions
 
 @defgroup logRegress Logistic Regression
 @ingroup regression
 
 @about
 
-Logistic regression is used to estimate probabilities of a binary variable, by
-fitting a stochastic model. It is one of the most commonly used tools for
-applied statistics and data mining [1].
+Logistic regression is used to estimate probabilities of a dependent binary
+variable, by fitting a stochastic model. It is one of the most commonly used
+tools for applied statistics and data mining [1].
 
 Logistic regression assumes a generalized linear model:
 \f[
@@ -71,72 +74,137 @@ Implemented in C for PostgreSQL/Greenplum.
 [2] Thomas P. Minka, A comparison of numerical optimizers for logistic
     regression, 2003 (revised Mar 26, 2007),
     http://research.microsoft.com/en-us/um/people/minka/papers/logreg/minka-logreg.pdf
-
-@namespace logRegress
-
-Logistic Regression using conjugate gradient ascent
-
-\par Maximizing the objective with the conjugate gradient method
-
-The method we are using is known as Fletcher–Reeves method in the literature,
-where we use the Hestenes-Stiefel rule for calculating the step size.
-
-The gradient of \f$l(\boldsymbol c)\f$ is
-@verbatim
-              n
-             --  
-  ∇_c l(c) = \  (1 - σ(z_i c^T x_i)) z_i x_i
-             /_ 
-             i=1
-@endverbatim
-
-We compute
-@verbatim
-For k = 0, 1, 2, ...:
-
-                    n
-                   --  
-  g_0 = ∇_c l(0) = \  (1 - σ(z_i c^T x_i)) z_i x_i
-                   /_ 
-                   i=1
-  
-  d_0 = g_0
-  
-         g_0^T d_0
-  c_0 = ----------- d_0
-        d_0^T H d_0
-    
-For k = 1, 2, ...:
-
-  g_k = ∇_c l(c_{k-1})
-  
-         g_k^T (g_k - g_{k-1})
-  β_k = -----------------------
-        d_{k-1} (g_k - g_{k-1})
-
-  d_k = g_k - β_k d_{k-1}
-  
-                   g_k^T d_k
-  c_k = c_{k-1} + ----------- d_k
-                  d_k^T H d_k
-
-where:
-                   n
-                  --
-  d_k^T H d_k = - \  σ(c^T x_i) (1 - σ(c^T x_i)) (d^T x_i)^2 
-                  /_
-                  i=1
-
-and
-
-H = the Hessian of the objective
-@endverbatim
 """
 
 import plpy
 
+def __cg_logreg_coef(**kwargs):
+    """
+    Use conjugate-gradient approach to compute logistic regression coefficients.
+    
+    The method we are using is known as Fletcher–Reeves method in the
+    literature, where we use the Hestenes-Stiefel rule for calculating the step
+    size.
+
+    The gradient of \f$l(\boldsymbol c)\f$ is
+    @verbatim
+                  n
+                 --  
+      ∇_c l(c) = \  (1 - σ(z_i c^T x_i)) z_i x_i
+                 /_ 
+                 i=1
+    @endverbatim
+
+    We compute
+    @verbatim
+    For k = 0, 1, 2, ...:
+
+                        n
+                       --  
+      g_0 = ∇_c l(0) = \  (1 - σ(z_i c^T x_i)) z_i x_i
+                       /_ 
+                       i=1
+      
+      d_0 = g_0
+      
+             g_0^T d_0
+      c_0 = ----------- d_0
+            d_0^T H d_0
+        
+    For k = 1, 2, ...:
+
+      g_k = ∇_c l(c_{k-1})
+      
+             g_k^T (g_k - g_{k-1})
+      β_k = -----------------------
+            d_{k-1} (g_k - g_{k-1})
+
+      d_k = g_k - β_k d_{k-1}
+      
+                       g_k^T d_k
+      c_k = c_{k-1} + ----------- d_k
+                      d_k^T H d_k
+
+    where:
+                       n
+                      --
+      d_k^T H d_k = - \  σ(c^T x_i) (1 - σ(c^T x_i)) (d^T x_i)^2 
+                      /_
+                      i=1
+
+    and
+
+    H = the Hessian of the objective
+    @endverbatim
+    """
+    
+    plpy.execute("""
+        CREATE TEMPORARY TABLE _madlib_logregr_state (
+            iteration INTEGER PRIMARY KEY,
+            state MADLIB_SCHEMA.LRegrState
+        )
+        """
+    plpy.execute("""
+        INSERT INTO _madlib_logregr_state VALUES (0, NULL)
+        """)
+    updateStateSQL = """
+        INSERT INTO _madlib_logregr_state
+        SELECT
+            st.iteration + 1,
+            MADLIB_SCHEMA.logregr_coef(
+                st.state,
+                src.{depColumn},
+                src.{indepColumn}
+            )
+        FROM
+            _madlib_logregr_state AS st,
+            {source} AS src,
+            (SELECT max(iteration) FROM _madlib_logregr_state) AS lastIter
+        WHERE
+            st.iteration = lastIter
+        """
+    
+    error = kwargs['precision'] + 1
+    coefficients = plpy.execute(updateStateSQL.format(**kwargs))
+    while error > kwargs['precision']:
+        newState = plpy.execute()
+    
+    return None
+    
+
 def compute_logreg_coef(**kwargs):
     """
+    Compute logistic regression coefficients.
     
+    This method serves as an interface to different optimization algorithms.
+    
+    @todo
+    - It would be great if this method automatically chose the algorithm
+      that is expected to work best.
+    
+	@param source Name of relation containing the training data
+	@param depColumn Name of dependent column in training data (of type BOOLEAN)
+	@param indepColumn Name of independent column in training data (of type
+           DOUBLE PRECISION[])
+    
+    Optionally also provide the following:
+    @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively reweighted least squares,
+           'cg': conjugate gradient (default = 'cg')
+    @param numIterations Maximum number of iterations (default = 20)
+    @param precision Terminate if two consecutive iterations have a difference 
+           of coefficients with \f$\ell^2\f$-norm less than <tt>precision</tt>.
+    
+    @return array with coefficients in case of convergence, otherwise None
     
     """
+    if not 'optimizer' in kwargs
+		kwargs.update(dict(optimizer = 'cg'))
+    if not 'numIterations' in kwargs
+        kwargs.update(dict(numIterations = 20))
+    if not 'precision' in kwargs
+        kwargs.update(dict(precision = 0.0001))
+        
+    if kwargs['optimizer'] == 'cg'
+        return __cg_logreg_coef(**kwargs);
+    
+    return None
