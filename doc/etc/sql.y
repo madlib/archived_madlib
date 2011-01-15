@@ -27,6 +27,7 @@
 %token COMMENT
 
 %token CREATE_FUNCTION
+%token CREATE_AGG
 
 %token IN
 %token OUT
@@ -44,6 +45,14 @@
 %token RETURNS_NULL_ON_NULL_INPUT
 %token SECURITY_INVOKER
 %token SECURITY_DEFINER
+
+%token SFUNC
+%token PREFUNC
+%token FINALFUNC
+%token SORTOP
+%token BASETYPE
+%token STYPE
+%token INITCOND
 
 /* types with more than 1 word */
 %token BIT
@@ -71,11 +80,51 @@ input:
 stmt:
 	  ';'
 	| createFnStmt ';' { printf(";\n\n"); }
+	| createAggStmt ';' { printf(";\n\n"); }
 ;
 
 createFnStmt:
 	  CREATE_FUNCTION qualifiedIdent '(' optArgList ')' returnDecl fnOptions {
 		printf("%s %s(%s) { }", $6, $2, $4);
+	}
+;
+
+createAggStmt:
+	  CREATE_AGG qualifiedIdent '(' optArgList ')' '(' aggOptList ')' {
+		printf("%s (%s) { }", $2, $4);
+	}
+;
+
+aggOptList:
+	  aggArgument 
+	| aggOptList ',' aggArgument {
+		asprintf(&($$), "%s, %s", $1, $3);
+	}
+;
+
+aggArgument:
+	  aggArgIdentFunc '=' qualifiedIdent {
+		asprintf(&($$), "\n\t%s = %s", $1, $3);
+	}
+	| aggArgTypeFunc '=' type {
+		asprintf(&($$), "\n\t%s = %s", $1, $3);
+	}
+;
+
+aggArgIdentFunc:
+	  SFUNC
+	| FINALFUNC
+	| PREFUNC
+	| SORTOP
+	| INITCOND
+;
+
+aggArgTypeFunc:
+	  BASETYPE {
+		asprintf(&($$), "BASETYPE");
+	}
+	| STYPE {
+		asprintf(&($$), "STYPE");
 	}
 ;
 
