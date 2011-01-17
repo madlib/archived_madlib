@@ -1,14 +1,14 @@
 # Generate developer documentation
-devdoc: doc/bin/sql_filter mathjax
+devdoc: doc/bin/doxysql mathjax
 	doxygen doc/etc/developer.doxyfile
 
 # Generate user documentation
-doc: doc/bin/sql_filter mathjax
+doc: doc/bin/doxysql mathjax
 	doxygen doc/etc/user.doxyfile
 
-# sql_filter for converting .sql files to a file with C++ declarations, for
+# doxysql for converting .sql files to a file with C++ declarations, for
 # use with doxygen
-doc/bin/sql_filter: doc/etc/sql.parser.cc doc/etc/sql.scanner.cc
+doc/bin/doxysql: doc/etc/sql.parser.cc doc/etc/sql.scanner.cc
 	g++ -o $@ $(filter %.cc,$^)
 	rm doc/etc/location.hh doc/etc/position.hh doc/etc/stack.hh
 

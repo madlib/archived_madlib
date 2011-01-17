@@ -328,12 +328,19 @@ int SQLFlexLexer::yylex()
 
 int	main(int argc, char **argv)
 {
-	std::ifstream		inStream(argv[1]);
+	std::istream		*inStream = 0;
+	
+	if (argc > 1)
+		inStream = new std::ifstream(argv[1]);
+	
 	bison::SQLDriver	driver;
-	bison::SQLScanner	scanner(&inStream); driver.scanner = &scanner;
+	bison::SQLScanner	scanner(inStream); driver.scanner = &scanner;
 	bison::SQLParser	parser(&driver);
 
 	int result = parser.parse();
+	
+	if (argc > 1)
+		delete inStream;
 
 	if (result != 0)
 		return result;
