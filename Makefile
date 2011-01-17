@@ -8,23 +8,24 @@ doc: doc/bin/sql_filter mathjax
 
 # sql_filter for converting .sql files to a file with C++ declarations, for
 # use with doxygen
-doc/bin/sql_filter: doc/etc/sql.tab.c doc/etc/sql.yy.c Makefile
-	gcc -o $@ $(filter %.c,$^)
+doc/bin/sql_filter: doc/etc/sql.parser.cc doc/etc/sql.scanner.cc
+	g++ -o $@ $(filter %.cc,$^)
+	rm doc/etc/location.hh doc/etc/position.hh doc/etc/stack.hh
 
 #BISON_FLAGS = -v --debug
 #FLEX_FLAGS = -d
 
-%.tab.c %.tab.h: %.y
-	# -d means: Write an extra output file containing macro definitions for the
-	# token type names defined in the grammar and the semantic value type
-	# YYSTYPE, as well as a few extern variable declarations
-	cd $(dir $@) && bison ${BISON_FLAGS} -d $(notdir $<)
+%.parser.cc %.parser.hh: %.yy Makefile
+	bison ${BISON_FLAGS} -o $(@:.hh=.cc) $<
 
-%.yy.c: %.l %.tab.h
-	# -i means case-insensitive, -t means write to stdout
-	flex ${FLEX_FLAGS} -i -t $< > $@
+# Empty recipe. Note: If ";" was missing, the following would cancel implicit rules
+# (see 10.5.6 in the make manual)
+# %.parser.hh: %.parser.cc ;
 
-.INTERMEDIATE: doc/etc/sql.tab.c doc/etc/sql.tab.h doc/etc/sql.yy.c
+%.scanner.cc: %.ll %.parser.hh Makefile
+	flex ${FLEX_FLAGS} $< > $@
+
+.INTERMEDIATE: doc/etc/sql.parser.cc doc/etc/sql.parser.hh doc/etc/sql.scanner.cc
 
 # MathJax is used by doxygen to display formulas in HTML
 MATHJAX_DIR = doc/var/mathjax
