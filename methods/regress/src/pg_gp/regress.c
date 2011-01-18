@@ -538,9 +538,11 @@ Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 
 Datum float8_cg_update_accum(PG_FUNCTION_ARGS);
 Datum float8_cg_update_final(PG_FUNCTION_ARGS);
+Datum logreg_should_terminate(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(float8_cg_update_accum);
 PG_FUNCTION_INFO_V1(float8_cg_update_final);
+PG_FUNCTION_INFO_V1(logreg_should_terminate);
 
 typedef struct {
 	int32		iteration;	/* current iteration */
@@ -616,7 +618,7 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 									   LogRegrState *outState)
 {
 	ArrayType		*newX;
-	HeapTupleHeader	iterationStateTuple = PG_ARGISNULL(1) ?
+	HeapTupleHeader	iterationStateTuple = PG_NARGS() == 1 || PG_ARGISNULL(1) ?
 						NULL : PG_GETARG_HEAPTUPLEHEADER(1),
 					aggregateStateTuple = PG_ARGISNULL(0) ?
 						NULL : PG_GETARG_HEAPTUPLEHEADER(0);
@@ -638,10 +640,16 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 		}
 		
 		if (iterationStateTuple == NULL || outState->iteration == 0) {
+			/* Note: In PL/pgSQL assinging a tuple variable NULL sets all
+			 * components to NULL. However, the tuple itself is not NULL and
+			 * iterationStateTuple would *not* be NULL. We therefore also
+			 * have the test outState->iteration == 0. */
+			 
 			/* This means: We are in the first iteration. We need to initialize the state. */
 
 			/* The length will only be set once: Here. */
 			newX = PG_GETARG_ARRAYTYPE_P(3);
+			outState->iteration = 0;
 			outState->len = ARR_DIMS(newX)[0];		
 			outState->coef = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
 			outState->dir = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
@@ -936,4 +944,32 @@ Datum float8_cg_update_final(PG_FUNCTION_ARGS)
 	
 	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));	
+}
+
+
+Datum logreg_should_terminate(PG_FUNCTION_ARGS)
+{
+	ArrayType	*oldCoef;
+	ArrayType	*newCoef;	
+	float8		precision;
+	ArrayType	*lastChange;
+	float8		l2LastChange;
+	
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(3))
+		ereport(ERROR, 
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("termination check for logistic regression \"%s\" called with invalid parameters",
+				format_procedure(fcinfo->flinfo->fn_oid))));
+	
+	oldCoef = PG_GETARG_ARRAYTYPE_P(0);
+	newCoef = PG_GETARG_ARRAYTYPE_P(1);
+	precision = PG_GETARG_FLOAT8(3);
+	
+	lastChange = float8_vectorMinus(oldCoef, newCoef);
+	l2LastChange = float8_dotProduct(lastChange, lastChange);
+	
+	if (l2LastChange <= precision * precision)
+		PG_RETURN_DATUM(BoolGetDatum(true));
+	
+	PG_RETURN_DATUM(BoolGetDatum(false));
 }
