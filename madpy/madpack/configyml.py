@@ -79,6 +79,10 @@ def get_config(configdir, first_install):
         print "malformed Config.yml: no python_modules_dir"
         exit(2)
     try:
+        conf['post_hook']
+    except:
+        conf['post_hook'] = 'undefined'
+    try:
         # sanitize schema names to avoid SQL injection!  only alphanumerics and a few special chars
         m = re.match('[\w0-9\.\_\-]+', conf['target_schema'])
         if not m or m.group() != conf['target_schema']:

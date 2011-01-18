@@ -48,7 +48,7 @@ def __remove_config_mk(methdir):
 # run 'make <mkarg>' for each method in the conf    
 # @param mkarg the argument to the make command (install, clean, etc.)
 # @param conf the parsed Config.yml object
-def make_methods(mkarg, conf):
+def make_methods(mkarg, conf, verbose):
     print "Processing MADlib methods: " + mkarg
     for m in conf['methods']:
         mdir = madpy.__path__[0]+'/../madlib/' + m['name'] + '/src/' + m['port'] + '/'
@@ -73,8 +73,10 @@ def make_methods(mkarg, conf):
         __create_config_mk(conf, os.getcwd())    
         if install['module'] != None:
             print "- " + install['module']
-            #subprocess.call(['make', mkarg], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
-            subprocess.call(['make', mkarg])
+            if verbose:
+                subprocess.call(['make', mkarg])
+            else:
+                subprocess.call(['make', mkarg], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
         # and remove config.mk
         __remove_config_mk(os.getcwd())
         os.chdir(curdir)
