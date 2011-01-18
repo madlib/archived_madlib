@@ -1,4 +1,4 @@
-/*! \defgroup kernel-machines
+/*! \defgroup kernel-machines Support Vector Machines
 
 \par About
 
@@ -147,7 +147,7 @@ Example usage for regression:
      -# We can now learn a regression model and store the resultant model
         under the name  'myexp'.
         \code
-        testdb=# select sv_regression('madlib.sv_train_data', 'myexp', false);
+        testdb=# select madlib.sv_regression('madlib.sv_train_data', 'myexp', false);
         \endcode
      -# We can now start using it to predict the labels of new data points 
         like as follows:
@@ -157,7 +157,7 @@ Example usage for regression:
         \endcode
      -# To learn multiple support vector models, we replace the learning step above by 
         \code
-        testdb=# select sv_regression('madlib.sv_train_data', 'myexp', true);
+        testdb=# select madlib.sv_regression('madlib.sv_train_data', 'myexp', true);
         \endcode
        The resultant models can be used for prediction as follows:
        \code
@@ -177,7 +177,7 @@ Example usage for classification:
      -# We can now learn a classification model and store the resultant model
         under the name  'myexpc'.
         \code
-        testdb=# select sv_classification('madlib.sv_train_data', 'myexpc', false);
+        testdb=# select madlib.sv_classification('madlib.sv_train_data', 'myexpc', false);
         \endcode
      -# We can now start using it to predict the labels of new data points 
         like as follows:
@@ -186,7 +186,7 @@ Example usage for classification:
         \endcode 
      -# To learn multiple support vector models, replace the model-building and prediction steps above by 
         \code
-        testdb=# select sv_classification('madlib.sv_train_data', 'myexpc', true);
+        testdb=# select madlib.sv_classification('madlib.sv_train_data', 'myexpc', true);
         testdb=# select * from madlib.svs_predict_combo('myexpc', '{10,-2,4,20,10}');
         \endcode
 
@@ -198,13 +198,13 @@ Example usage for novelty detection:
         \endcode
      -# Learning and predicting using a single novelty detection model can be done as follows:
         \code
-        testdb=# select sv_novelty_detection('madlib.sv_train_data', 'myexpnd', false);
+        testdb=# select madlib.sv_novelty_detection('madlib.sv_train_data', 'myexpnd', false);
         testdb=# select madlib.svs_predict('myexpnd', '{10,-10}');  
         testdb=# select madlib.svs_predict('myexpnd', '{-1,-1}');  
         \endcode
      -# Learning and predicting using multiple models can be done as follows:
         \code
-        testdb=# select sv_novelty_detection('madlib.sv_train_data', 'myexpnd', true);
+        testdb=# select madlib.sv_novelty_detection('madlib.sv_train_data', 'myexpnd', true);
         testdb=# select * from madlib.svs_predict_combo('myexpnd', '{10,-10}');  
         testdb=# select * from madlib.svs_predict_combo('myexpnd', '{-1,-1}');  
         \endcode

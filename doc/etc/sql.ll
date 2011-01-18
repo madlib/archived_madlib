@@ -50,9 +50,10 @@
 	int		stringCaller;
 	char	*stringLiteralQuotation = NULL;
 
-	/* yylloc is declared by macro YY_DECL */
+	/* YY_USER_ACTION is called from the lex() function, which has the signature
+	 * and name as defined by macro YY_DECL. yylval, yylloc, and driver are
+	 * arguments. */
 	#define YY_USER_ACTION preScannerAction(yylval, yylloc, driver);
-
 %}
 
 /* Definitions */
