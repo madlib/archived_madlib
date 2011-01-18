@@ -278,7 +278,8 @@ Datum matrix_add(PG_FUNCTION_ARGS)
 	 * This function is sometimes strict, and sometimes not in order to deal
 	 * with needing to upconvert datatypes in an aggregate function.
 	 */
-	if (fcinfo->flinfo->fn_strict && (PG_ARGISNULL(0) || PG_ARGISNULL(1)))
+	if (fcinfo->flinfo != NULL && fcinfo->flinfo->fn_strict &&
+		(PG_ARGISNULL(0) || PG_ARGISNULL(1)))
 		PG_RETURN_NULL();
 
 	/*

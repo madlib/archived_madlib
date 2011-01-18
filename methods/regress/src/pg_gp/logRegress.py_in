@@ -1,3 +1,10 @@
+# coding=utf-8
+
+# This file is preprocessed with m4. Since we only want macro expansion at 
+# very few places, most of the file is quoted. Macros can be used by enclosing
+# them in <m4> and </m4>.
+changequote(`</m4>', `<m4>') </m4>
+
 """
 @file logRegress.py
 
@@ -138,39 +145,76 @@ def __cg_logreg_coef(**kwargs):
     @endverbatim
     """
     
+    kwargs.update(iteration = 0,
+        oldMsgLevel = plpy.execute("SHOW client_min_messages")[0]['client_min_messages'])
     plpy.execute("""
+        SET client_min_messages = error;
         CREATE TEMPORARY TABLE _madlib_logregr_state (
             iteration INTEGER PRIMARY KEY,
-            state MADLIB_SCHEMA.LRegrState
-        )
-        """
+            state <m4>MADLIB_SCHEMA</m4>.LRegrState
+        );
+        SET client_min_messages = {oldMsgLevel};
+        """.format(**kwargs))
     plpy.execute("""
-        INSERT INTO _madlib_logregr_state VALUES (0, NULL)
-        """)
+        INSERT INTO _madlib_logregr_state VALUES ({iteration}, NULL)
+        """.format(**kwargs))
     updateStateSQL = """
         INSERT INTO _madlib_logregr_state
         SELECT
-            st.iteration + 1,
-            MADLIB_SCHEMA.logregr_coef(
+            {iteration},
+            <m4>MADLIB_SCHEMA</m4>.logregr_coef(
                 st.state,
                 src.{depColumn},
                 src.{indepColumn}
             )
         FROM
             _madlib_logregr_state AS st,
-            {source} AS src,
-            (SELECT max(iteration) FROM _madlib_logregr_state) AS lastIter
+            {source} AS src
         WHERE
-            st.iteration = lastIter
+            st.iteration = {iteration} - 1
         """
-    
+    shouldTerminate = """
+        SELECT
+            <m4>MADLIB_SCHEMA</m4>.logreg_should_terminate(
+                (old.state).coef, (new.state).coef,
+                '{optimizer}', {precision})
+        FROM    
+            (
+                SELECT state
+                FROM _madlib_logregr_state
+                WHERE iteration = {iteration} - 1
+            ) AS old,
+            (
+                SELECT state
+                FROM _madlib_logregr_state
+                WHERE iteration = {iteration}
+            ) AS new
+        """
+
     error = kwargs['precision'] + 1
-    coefficients = plpy.execute(updateStateSQL.format(**kwargs))
-    while error > kwargs['precision']:
-        newState = plpy.execute()
     
-    return None
+    while True:
+        kwargs.update(iteration = kwargs['iteration'] + 1)
+        plpy.execute(updateStateSQL.format(**kwargs))
+        if (kwargs['iteration'] >= kwargs['numIterations'] or
+            plpy.execute(shouldTerminate.format(**kwargs)) == True):
+            break
     
+    # FIXME: Returning the result set from Python code means that values
+    # pass through Python (and there is a potential loss of precision by
+    # conversion)
+    coef = plpy.execute("""
+        SELECT
+            (st.state).coef
+        FROM
+            _madlib_logregr_state st
+        WHERE
+            st.iteration = {iteration}
+        """.format(**kwargs))[0]['coef']
+    
+    plpy.execute("DROP TABLE _madlib_logregr_state")
+    return coef
+
 
 def compute_logreg_coef(**kwargs):
     """
@@ -182,9 +226,9 @@ def compute_logreg_coef(**kwargs):
     - It would be great if this method automatically chose the algorithm
       that is expected to work best.
     
-	@param source Name of relation containing the training data
-	@param depColumn Name of dependent column in training data (of type BOOLEAN)
-	@param indepColumn Name of independent column in training data (of type
+    @param source Name of relation containing the training data
+    @param depColumn Name of dependent column in training data (of type BOOLEAN)
+    @param indepColumn Name of independent column in training data (of type
            DOUBLE PRECISION[])
     
     Optionally also provide the following:
@@ -197,14 +241,17 @@ def compute_logreg_coef(**kwargs):
     @return array with coefficients in case of convergence, otherwise None
     
     """
-    if not 'optimizer' in kwargs
-		kwargs.update(dict(optimizer = 'cg'))
-    if not 'numIterations' in kwargs
-        kwargs.update(dict(numIterations = 20))
-    if not 'precision' in kwargs
-        kwargs.update(dict(precision = 0.0001))
+    if not 'optimizer' in kwargs:
+        kwargs.update(optimizer = 'cg')
+    if not 'numIterations' in kwargs:
+        kwargs.update(numIterations = 20)
+    if not 'precision' in kwargs:
+        kwargs.update(precision = 0.0001)
         
-    if kwargs['optimizer'] == 'cg'
+    if kwargs['optimizer'] == 'cg':
         return __cg_logreg_coef(**kwargs);
     
     return None
+
+# The m4 preprocessor complains if eof is reach in quoted mode.
+<m4>
