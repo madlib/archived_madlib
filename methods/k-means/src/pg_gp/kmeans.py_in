@@ -10,13 +10,21 @@ k-Means Clustering with k-means++ centroid seeding.
 
 \par About:
 
-Implementation of k-means clustering algorithm (currently works on SVEC data type only). 
+K-means clustering algorithm helps in splitting a list of objects 
+into K groups based on the distance between objects (points) and the 
+group centers (centroids). Both objects and groups are represented as 
+points in n-dimensional space. Objects are assigned to the group with 
+the nearest centroid. Currently the distance is measured using l2-norm, 
+also know as Euclidean distance 
+(http://en.wikipedia.org/wiki/Norm_(mathematics)#Euclidean_norm).
 
-This module implements <b>k-means clustering</b> method for a set of data points
-accessed via a table or a view. Initial centroids are found according to  
+This method can work on a set of data points (SVEC type)
+accessible in a table or through a view. 
+Initial centroids are found according to  
 k-means++ algorithm (http://en.wikipedia.org/wiki/K-means%2B%2B). 
-Further adjustments are based either on a full data set or on a sample of 
-points, such that there are at least 200 points from each cluster.
+Further adjustments are based on the Euclidean distance between 
+the current centroids and all available data points or a random subset of them
+, such that there are at least 200 points from each initial cluster.
 
 The algorithm stops when one of the following conditions is met:
 - fraction of reassigned nodes is not growing
@@ -25,9 +33,9 @@ The algorithm stops when one of the following conditions is met:
 
 \par Prerequisites:
 
-Currently works only on sparse vector data type (svec), so you need MADlib Sparse Vector.
+Currently works only on sparse vector data type (SVEC), so you need MADlib Sparse Vector.
 
-\par Synopsis: 
+\par Usage: 
 
 Function: <tt>kmeans_run( '<em>input_table</em>', <em>k</em>,
    '<em>goodness</em>', '<em>run_id</em>', '<em>output_schema</em>')</tt>
@@ -47,8 +55,8 @@ Parameters:
 \code
 {TABLE|VIEW} some_schema.input_name
 (
-	pid 		INTEGER,  	-- point ID
-	position 	SVEC	    -- point coordinates
+	pid 		INTEGER,  	            -- point ID
+	position 	MADLIB_SCHEMA.SVEC	    -- point coordinates
 )
 \endcode
  
@@ -57,7 +65,7 @@ Parameters:
 3) Call kmeans_run() stored procedure, e.g.:  
 
 \code
-SQL> select madlib.kmeans_run( 'some_schema.input_name', 10, 1, 'my_test_run', 'output_schema');"
+SQL> select madlib.kmeans_run( 'some_schema.source_table', 10, 1, 'my_test_run', 'my_schema');"
 \endcode
   
 4) Sample output:
@@ -65,7 +73,7 @@ SQL> select madlib.kmeans_run( 'some_schema.input_name', 10, 1, 'my_test_run', '
 \code
 INFO: Parameters:
 INFO:  * k = 10 (number of centroids)
-INFO:  * input_table = my_schema.kmeans_input_table
+INFO:  * input_table = some_schema.source_table
 INFO:  * goodness = 1 (GOF test on)
 INFO:  * run_id = my_test_run
 INFO:  * output_schema = my_schema
@@ -86,17 +94,6 @@ Output:
 Time elapsed: 0 minutes 4.335644 seconds.
 \endcode
   
-\par To Do:
-
-- Add support for dense arrays (now it's only SVEC)
-- Allow the method to start processing a source table w/o a "PointID" column 
-    (now it needs both PID and POSITION columns)
-- Fix the "goodness of fit" test to be scale, rotation and transition invariant
-- Rewrite the following plpgsql stored procedure into C:
-    - func: _kmeans_bestCentroid
-    - agg: _kmeans_meanPosition
-- Implement other distance measures for k-means. Also in the document indicate which distance is being used (Euclidean)
-
 """
 
 import datetime
@@ -151,8 +148,8 @@ def __kmeans_init( input_table, k):
     sql = '''
         CREATE TABLE ''' + output_points + ''' (
             pid BIGINT, 
-            position SVEC, 
-            cid FLOAT
+            position MADLIB_SCHEMA.SVEC, 
+            cid BIGINT
         ) 
     ''';
     plpy.execute( sql);
@@ -162,7 +159,7 @@ def __kmeans_init( input_table, k):
     sql = '''
         CREATE TABLE ''' + output_centroids + ''' (
             cid INT, 
-            position SVEC
+            position MADLIB_SCHEMA.SVEC
         ) 
     ''';
     plpy.execute( sql);
@@ -171,7 +168,7 @@ def __kmeans_init( input_table, k):
     info( 'Seeding ' + str(k) + ' centroids...');
     sql = '''    
         INSERT INTO ''' + output_centroids + ''' (cid, position) 
-        SELECT 1, position 
+        SELECT 1, position::MADLIB_SCHEMA.SVEC 
         FROM ''' + input_table + '''
         ORDER BY random() DESC 
         LIMIT 1
@@ -191,7 +188,7 @@ def __kmeans_init( input_table, k):
                 -- Q1: Find a random point 
                 -- (that is furthest away from current Centroids)
                 --
-                SELECT p.pid, min( l2norm (p.position - c.position)) * (random()^(0.2)) AS distance 
+                SELECT p.pid, min( MADLIB_SCHEMA.l2norm (p.position - c.position)) * (random()^(0.2)) AS distance 
                 FROM
                     (SELECT position, pid FROM ''' + input_table + ''' ORDER BY random() LIMIT ''' + str(numCentroids) + ''') AS p -- K random points
                     CROSS JOIN 
@@ -359,7 +356,7 @@ def kmeans_run( input_table, k, goodness, run_id, output_schema):
     sql = '''
         CREATE TEMP TABLE TempTable0(
             pid BIGINT, 
-            position SVEC, 
+            position MADLIB_SCHEMA.SVEC, 
             cid INTEGER
         )
     ''';
@@ -487,12 +484,12 @@ def kmeans_run( input_table, k, goodness, run_id, output_schema):
     plpy.execute( sql);	  
             
     # Calculate Goodness of fit
-    # This version uses sum(l2norm())/count(*)
-    # It would be better to do sum(l2norm(p,c)) / max( avg(points) - point)
+    # This version uses sum( l2norm())/count(*)
+    # It would be better to do sum( l2norm(p,c)) / max( avg(points) - point)
     if (goodness==1):
         info( 'Calculating goodness of fit...');
         sql = '''
-            SELECT sum( l2norm (p.position - c.position)) / count(*) as gfit
+            SELECT sum( MADLIB_SCHEMA.l2norm (p.position - c.position)) / count(*) as gfit
             FROM ''' + output_points + ''' p, ''' + output_centroids + ''' c
             WHERE p.cid = c.cid
         ''';
