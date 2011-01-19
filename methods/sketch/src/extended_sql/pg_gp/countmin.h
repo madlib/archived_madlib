@@ -7,11 +7,11 @@
 #define NUMCOUNTERS 1024  /* another magic tuning value: modulus of hash functions */
 
 #ifdef INT64_IS_BUSTED
-#define MAX_INT64 (INT64CONST(0x7FFFFFFF - 1))
+#define MAX_INT64 (INT64CONST(0x7FFFFFFF) - 1)
 #define MAX_UINT64 (UINT64CONST(0xFFFFFFFF))
 #else
-#define MAX_INT64 (INT64CONST(0x7FFFFFFFFFFFFFFF - 1))
-#define MAX_UINT64 (UINT64CONST(0xffffffffffffffff))
+#define MAX_INT64 (INT64CONST(0x7FFFFFFFFFFFFFFF) - 1)
+#define MAX_UINT64 (UINT64CONST(0xFFFFFFFFFFFFFFFF))
 #endif // INT64_IS_BUSTED
 
 #define MID_INT64 (0)
@@ -54,7 +54,7 @@ typedef struct {
 if ((r).emptyoffset == 2*INT64BITS) { \
     int i; \
     for (i = 0; i < 2*INT64BITS; i++)\
-        elog(NOTICE, "[%ld, %ld]", (r).spans[i][0], (r).spans[i][1]);\
+        elog(NOTICE, "[" INT64_FORMAT ", " INT64_FORMAT "]", (r).spans[i][0], (r).spans[i][1]);\
     elog(ERROR, "countmin error: rangelist overflow"); \
 }\
 else ((r).emptyoffset++);
