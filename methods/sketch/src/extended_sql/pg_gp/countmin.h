@@ -6,12 +6,19 @@
 /* #define NUMCOUNTERS 65535 */
 #define NUMCOUNTERS 1024  /* another magic tuning value: modulus of hash functions */
 
-#define MAX_INT64 (INT64CONST(1) << (sizeof(int64) * 8 - 1))
+#ifdef INT64_IS_BUSTED
+#define MAX_INT64 (INT64CONST(0x7FFFFFFF - 1))
+#define MAX_UINT64 (UINT64CONST(0xFFFFFFFF))
+#else
+#define MAX_INT64 (INT64CONST(0x7FFFFFFFFFFFFFFF - 1))
+#define MAX_UINT64 (UINT64CONST(0xffffffffffffffff))
+#endif // INT64_IS_BUSTED
+
 #define MID_INT64 (0)
-#define MIN_INT64 -((INT64CONST(1) << (sizeof(int64) * 8 - 1)) + 1)
-#define MAX_UINT64 (UINT64CONST(1) << (sizeof(uint64) * 8 - 1))
-#define MID_UINT64 (MAX_UINT64 >> 2)
+#define MIN_INT64 (~MAX_INT64)
+#define MID_UINT64 (MAX_UINT64 >> 1)
 #define MIN_UINT64 (0)
+
 
 /*! 
  * a CountMin sketch is a set of DEPTH arrays of NUMCOUNTERS each.
@@ -39,10 +46,18 @@ typedef struct {
  * E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
  */
 typedef struct {
-    int64 spans[INT64BITS][2]; /*! the ranges */
+    int64 spans[2*INT64BITS][2]; /*! the ranges */
     int emptyoffset;        /*! offset of next empty span */
 } rangelist;
 
+#define ADVANCE_OFFSET(r)  \
+if ((r).emptyoffset == 2*INT64BITS) { \
+    int i; \
+    for (i = 0; i < 2*INT64BITS; i++)\
+        elog(NOTICE, "[%ld, %ld]", (r).spans[i][0], (r).spans[i][1]);\
+    elog(ERROR, "countmin error: rangelist overflow"); \
+}\
+else ((r).emptyoffset++);
 
 /*!
  * offset/count pairs for MFV sketches
@@ -96,8 +111,8 @@ bytea *cmsketch_check_transval(bytea *);
 void countmin_dyadic_trans_c(cmtransval *, int64);
 
 /* countmin scalar function protos */
-int64 cmsketch_getcount_c(countmin, Datum, Oid);
-Datum cmsketch_rangecount_c(cmtransval *, Datum, Datum);
+int64 cmsketch_count_c(countmin, Datum, Oid);
+Datum cmsketch_rangecount_c(cmtransval *, int64, int64);
 Datum cmsketch_centile_c(cmtransval *, int, int64);
 Datum cmsketch_width_histogram_c(cmtransval *, int64, int64, int);
 Datum cmsketch_depth_histogram_c(cmtransval *, int);
@@ -127,23 +142,23 @@ int64 min_counter(uint32, uint32, countmin, int64);
 bytea *mfv_transval_insert(bytea *, bytea *);
 bytea *mfv_transval_replace(bytea *, bytea *, int);
 bytea *mfv_transval_insert_at(bytea *, bytea *, int);
-// Datum mfvsketch_out_c(mfvtransval *);
+// Datum __mfvsketch_final_c(mfvtransval *);
 int cnt_cmp_desc(const void *i, const void *j);
 
                             
 /* UDF protos */
-Datum cmsketch_trans(PG_FUNCTION_ARGS);
-Datum cmsketch_getcount(PG_FUNCTION_ARGS);
+Datum __cmsketch_trans(PG_FUNCTION_ARGS);
+Datum cmsketch_count(PG_FUNCTION_ARGS);
 Datum cmsketch_rangecount(PG_FUNCTION_ARGS);
 Datum cmsketch_centile(PG_FUNCTION_ARGS);
 Datum cmsketch_width_histogram(PG_FUNCTION_ARGS);
 Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS);
-Datum cmsketch_out(PG_FUNCTION_ARGS);
-Datum cmsketch_combine(PG_FUNCTION_ARGS);
+Datum __cmsketch_final(PG_FUNCTION_ARGS);
+Datum __cmsketch_merge(PG_FUNCTION_ARGS);
 Datum cmsketch_dump(PG_FUNCTION_ARGS);
 
-Datum mfvsketch_trans(PG_FUNCTION_ARGS);
-Datum mfvsketch_out(PG_FUNCTION_ARGS);
+Datum __mfvsketch_trans(PG_FUNCTION_ARGS);
+Datum __mfvsketch_final(PG_FUNCTION_ARGS);
 Datum mfvsketch_array_out(PG_FUNCTION_ARGS);
 Datum mfvsketch_combine(PG_FUNCTION_ARGS);
 

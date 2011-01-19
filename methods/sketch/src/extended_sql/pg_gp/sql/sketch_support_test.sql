@@ -1,8 +1,8 @@
-CREATE FUNCTION madlib.sketch_rightmost_one(bytea, integer, integer) returns integer AS '$libdir/sketches'
+CREATE FUNCTION madlib.sketch_rightmost_one(bytea, integer, integer) returns integer AS '$libdir/madlib/sketches'
 LANGUAGE C STRICT;
-CREATE FUNCTION madlib.sketch_leftmost_zero(bytea, integer, integer) returns integer AS '$libdir/sketches'
+CREATE FUNCTION madlib.sketch_leftmost_zero(bytea, integer, integer) returns integer AS '$libdir/madlib/sketches'
 LANGUAGE C STRICT;
-CREATE FUNCTION madlib.sketch_array_set_bit_in_place(bytea, integer, integer, integer, integer) returns bytea AS '$libdir/sketches'
+CREATE FUNCTION madlib.sketch_array_set_bit_in_place(bytea, integer, integer, integer, integer) returns bytea AS '$libdir/madlib/sketches'
 LANGUAGE C STRICT;
 
 set search_path to "$user",public,madlib;

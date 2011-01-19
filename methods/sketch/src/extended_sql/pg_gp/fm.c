@@ -53,19 +53,19 @@ typedef struct {
     char storage[0];
 } fmtransval;
 
-Datum fmsketch_trans_c(bytea *, char *);
-Datum fmsketch_getcount_c(bytea *);
-Datum fmsketch_trans(PG_FUNCTION_ARGS);
-Datum fmsketch_getcount(PG_FUNCTION_ARGS);
-Datum fmsketch_merge(PG_FUNCTION_ARGS);
+Datum __fmsketch_trans_c(bytea *, char *);
+Datum __fmsketch_count_distinct_c(bytea *);
+Datum __fmsketch_trans(PG_FUNCTION_ARGS);
+Datum __fmsketch_count_distinct(PG_FUNCTION_ARGS);
+Datum __fmsketch_merge(PG_FUNCTION_ARGS);
 Datum big_or(bytea *bitmap1, bytea *bitmap2);
 bytea *fmsketch_sortasort_insert(bytea *, char *);
 bytea *fm_new(void);
 
-PG_FUNCTION_INFO_V1(fmsketch_trans);
+PG_FUNCTION_INFO_V1(__fmsketch_trans);
 
 /*! UDA transition function for the fmsketch aggregate. */
-Datum fmsketch_trans(PG_FUNCTION_ARGS)
+Datum __fmsketch_trans(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = (bytea *)PG_GETARG_BYTEA_P(0);
     fmtransval *transval;
@@ -96,14 +96,6 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
 
     /* get the provided element, being careful in case it's NULL */
     if (!PG_ARGISNULL(1)) {
-        /*
-         * XXX POTENTIAL BUG HERE
-         * We are hashing based on the string produced by the type's outfunc.
-         *      This may not produce the right answer, if the outfunc doesn't produce
-         *      a distinct string for every distinct value.
-         * XXX CHECK HOW HASH JOIN DOES THIS.
-         */
-
         /* figure out the outfunc for this type */
         getTypeOutputInfo(element_type, &funcOid, &typIsVarlena);
 
@@ -116,7 +108,6 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
         /*
          * if this is the first call, initialize transval to hold a sortasort
          * on the first call, we should have the empty string (if the agg was declared properly!)
-         * XXX is it better form to have the initial value be NULL??
          */
         if (VARSIZE(transblob) <= VARHDRSZ) {
             size_t blobsz = VARHDRSZ + sizeof(fmtransval) +
@@ -162,18 +153,17 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
             transval = (fmtransval *)VARDATA(newblob);
 
             /*
-             * XXXX would like to pfree the old transblob, but the memory allocator doesn't like it
-             * XXXX Meanwhile we know that this memory "leak" is of fixed size and will get
-             * XXXX deallocated "soon" when the memory context is destroyed.
-             */
-
-            /*
              * "catch up" on the past as if we were doing FM from the beginning:
              * apply the FM sketching algorithm to each value previously stored in the sortasort
              */
             for (i = 0; i < MINVALS; i++)
-                fmsketch_trans_c(newblob, SORTASORT_GETVAL(s,i));
+                __fmsketch_trans_c(newblob, SORTASORT_GETVAL(s,i));
 
+            /*
+             * XXXX would like to pfree the old transblob, but the memory allocator doesn't like it
+             * XXXX Meanwhile we know that this memory "leak" is of fixed size and will get
+             * XXXX deallocated "soon" when the memory context is destroyed.
+             */
             /* drop through to insert the current string in "BIG" mode */
             transblob = newblob;
         }
@@ -188,7 +178,7 @@ Datum fmsketch_trans(PG_FUNCTION_ARGS)
                 "FM sketch failed internal sanity check");
 
         /* Apply FM algorithm to this string */
-        retval = fmsketch_trans_c(transblob, string);
+        retval = __fmsketch_trans_c(transblob, string);
         pfree(string);
         PG_RETURN_DATUM(retval);
     }
@@ -224,7 +214,7 @@ bytea *fm_new()
  * \param transblob the transition value packed into a bytea
  * \param input a textual representation of the value to hash
  */
-Datum fmsketch_trans_c(bytea *transblob, char *input)
+Datum __fmsketch_trans_c(bytea *transblob, char *input)
 {
     fmtransval *   transval = (fmtransval *) VARDATA(transblob);
     bytea *        bitmaps = (bytea *)transval->storage;
@@ -233,7 +223,7 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
     int            rmost;
     Datum          result;
 
-    c = (uint8 *)VARDATA(DatumGetPointer(md5_datum(input)));
+    c = (uint8 *)VARDATA(DatumGetByteaP(md5_datum(input)));
 
     /*
      * During the insertion we insert each element
@@ -258,10 +248,10 @@ Datum fmsketch_trans_c(bytea *transblob, char *input)
     return PointerGetDatum(transblob);
 }
 
-PG_FUNCTION_INFO_V1(fmsketch_getcount);
+PG_FUNCTION_INFO_V1(__fmsketch_count_distinct);
 
 /*! UDA final function to get count(distinct) out of an FM sketch */
-Datum fmsketch_getcount(PG_FUNCTION_ARGS)
+Datum __fmsketch_count_distinct(PG_FUNCTION_ARGS)
 {
     fmtransval *transval = (fmtransval *)VARDATA((PG_GETARG_BYTEA_P(0)));
 
@@ -278,7 +268,7 @@ Datum fmsketch_getcount(PG_FUNCTION_ARGS)
         return(0);
     }
     else     /* transval->status == BIG */
-        return fmsketch_getcount_c((bytea *)transval->storage);
+        return __fmsketch_count_distinct_c((bytea *)transval->storage);
 }
 
 /*!
@@ -287,7 +277,7 @@ Datum fmsketch_getcount(PG_FUNCTION_ARGS)
  * Then we use the FM magic formula to estimate the distinct count.
  * \params bitmaps the FM Sketch
  */
-Datum fmsketch_getcount_c(bytea *bitmaps)
+Datum __fmsketch_count_distinct_c(bytea *bitmaps)
 {
 /*  int R = 0; // Flajolet/Martin's R is handled by leftmost_zero */
     uint32  S = 0;
@@ -310,7 +300,7 @@ Datum fmsketch_getcount_c(bytea *bitmaps)
 }
 
 
-PG_FUNCTION_INFO_V1(fmsketch_merge);
+PG_FUNCTION_INFO_V1(__fmsketch_merge);
 
 /*!
  * Greenplum "prefunc": a function to merge 2 transvals computed at different machines.
@@ -320,7 +310,7 @@ PG_FUNCTION_INFO_V1(fmsketch_merge);
  *
  * XXX  TESTING: Ensure we exercise all branches!
  */
-Datum fmsketch_merge(PG_FUNCTION_ARGS)
+Datum __fmsketch_merge(PG_FUNCTION_ARGS)
 {
     bytea *     transblob1 = (bytea *)PG_GETARG_BYTEA_P(0);
     bytea *     transblob2 = (bytea *)PG_GETARG_BYTEA_P(1);
@@ -332,11 +322,9 @@ Datum fmsketch_merge(PG_FUNCTION_ARGS)
 
     /* deal with the case where one or both items is the initial value of '' */
     if (VARSIZE(transblob1) == VARHDRSZ) {
-        /* elog(NOTICE, "transblob1 is empty"); */
         PG_RETURN_DATUM(PointerGetDatum(transblob2));
     }
     if (VARSIZE(transblob2) == VARHDRSZ) {
-        /* elog(NOTICE, "transblob1 is empty"); */
         PG_RETURN_DATUM(PointerGetDatum(transblob1));
     }
 
@@ -388,13 +376,13 @@ Datum fmsketch_merge(PG_FUNCTION_ARGS)
     if (transval1->status == SMALL) {
         s1 = (sortasort *)(transval1->storage);
         for(i = 0; i < s1->num_vals; i++) {
-            fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s1,i));
+            __fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s1,i));
         }
     }
     if (transval2->status == SMALL) {
         s2 = (sortasort *)(transval2->storage);
         for(i = 0; i < s2->num_vals; i++) {
-            fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s2,i));
+            __fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s2,i));
         }
     }
     PG_RETURN_DATUM(PointerGetDatum(tblob_big));
@@ -416,7 +404,7 @@ Datum big_or(bytea *bitmap1, bytea *bitmap2)
     SET_VARSIZE(out, VARSIZE(bitmap1));
 
     /* could probably be more efficient doing this 32 or 64 bits at a time */
-    for (i=0; i < VARSIZE(bitmap1) - VARHDRSZ; i++)
+    for (i=0; i < VARSIZE(bitmap1) - VARHDRSZ; i+=8)
         ((char *)(VARDATA(out)))[i] = ((char *)(VARDATA(bitmap1)))[i] |
                                       ((char *)(VARDATA(bitmap2)))[i];
 

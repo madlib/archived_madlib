@@ -31,6 +31,20 @@ Implemented in C for PostgreSQL/Greenplum.
 
 See unit tests in the sql subdirectory.
         
+\bug Equality-Testing Issue
+We do a lot of hashing in the sketch methods.  To provide canonical input to the
+outfunc.  In some corner cases the ascii output may not respect the 
+equality/inequality that SQL intends.
+
+The proper way to do this is not to use the outfunc, but rather to look up the 
+type-specific hash function as is done internally for hashjoin, hash indexes, 
+etc.  The basic pattern for looking up the hash function in Postgres 
+internals is something like the following:
+<c>
+get_sort_group_operators(dtype, false, true, false, &ltOpr, &eqOpr, &gtOpr);
+success = get_op_hash_functions(eqOpr, result, NULL));
+</c>
+
 
 */
 

@@ -1,6 +1,6 @@
 set search_path to "$user",public,madlib;
 -- Basic methods
-select cmsketch_getcount(cmsketch(i),5) from generate_series(1,10000) as T(i);
+select cmsketch_count(cmsketch(i),5) from generate_series(1,10000) as T(i);
 select cmsketch_rangecount(cmsketch(i),1,1025) from generate_series(1,10000) as T(i);
 select cmsketch_rangecount(cmsketch(i), 1,200) from generate_series(1,10000) as R(i);
 select cmsketch_width_histogram(cmsketch(i), min(i), max(i), 4) from generate_series(1,10000) as R(i);

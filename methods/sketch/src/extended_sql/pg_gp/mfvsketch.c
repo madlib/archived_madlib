@@ -5,7 +5,7 @@
  * This is basically a CountMin sketch that keeps track of most frequent values 
  * as it goes.  
  *
- * It only needs to do cmsketch_getcount, doesn't need the "dyadic" range trick.
+ * It only needs to do cmsketch_count, doesn't need the "dyadic" range trick.
  * As a result it's not limited to integers, and the implementation works
  * for the Postgres "anyelement".
  */
@@ -26,13 +26,13 @@
 
 #include <ctype.h>
 
-PG_FUNCTION_INFO_V1(mfvsketch_trans);
+PG_FUNCTION_INFO_V1(__mfvsketch_trans);
 
 /*!
  *  transition function to maintain a CountMin sketch with 
  *  Most-Frequent Values
  */
-Datum mfvsketch_trans(PG_FUNCTION_ARGS)
+Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
 {
     bytea *      transblob = PG_GETARG_BYTEA_P(0);
     int          num_mfvs  = PG_GETARG_INT32(2);
@@ -99,7 +99,7 @@ Datum mfvsketch_trans(PG_FUNCTION_ARGS)
     outString = countmin_trans_c(transval->sketch, PG_GETARG_DATUM(1), transval->outFuncOid);
     outText = cstring_to_text(outString);
                             
-    tmpcnt = cmsketch_getcount_c(transval->sketch,
+    tmpcnt = cmsketch_count_c(transval->sketch,
                                  PG_GETARG_DATUM(1),
                                  transval->outFuncOid);
     /* look for existing entry for this value */                        
@@ -200,28 +200,30 @@ bytea *mfv_transval_replace(bytea *transblob, bytea *text, int i)
     else return(mfv_transval_insert_at(transblob, text, i));
 }
 
-PG_FUNCTION_INFO_V1(mfvsketch_out);
+PG_FUNCTION_INFO_V1(__mfvsketch_final);
 /*!
  * scalar function taking an mfv sketch, returning a string with
- * of its most frequent values
+ * its most frequent values
  */
-Datum mfvsketch_out(PG_FUNCTION_ARGS)
+Datum __mfvsketch_final(PG_FUNCTION_ARGS)
 {
     bytea *      transblob = PG_GETARG_BYTEA_P(0);
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     bytea     *retval;
     int        i;
-    char       numbuf[64];
+    /* longest number takes MAXINT8LEN characters, plus two for punctuation, 
+       plus 1 for comfort */
+    char       numbuf[MAXINT8LEN+3];
 
  	if (PG_ARGISNULL(0)) PG_RETURN_NULL();
     if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
 
     /* 
-     * 2^64 ~ 1.84e+19, so 20 chars per counter should be enough,
-     * and we need padding for punctuation, so to be safe we'll round
-     * up to 32.
+     * we need MAXINT8LEN characters per counter and value,
+     * and we need padding for 5 punctuation per counter
+     * plus 1 for comfort
      */
-    retval = palloc(VARSIZE(transblob) + transval->num_mfvs*32);
+    retval = palloc(VARSIZE(transblob) + transval->num_mfvs*(2*MAXINT8LEN+5) + 1);
     SET_VARSIZE(retval, VARHDRSZ);
     
     qsort(transval->mfvs, transval->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);

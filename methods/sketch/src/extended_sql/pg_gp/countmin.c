@@ -40,13 +40,13 @@
 
 #include <ctype.h>
 
-PG_FUNCTION_INFO_V1(cmsketch_trans);
+PG_FUNCTION_INFO_V1(__cmsketch_trans);
 
 /*
  * This is the UDF interface.  It does sanity checks and preps values
  * for the interesting logic in countmin_dyadic_trans_c
  */
-Datum cmsketch_trans(PG_FUNCTION_ARGS)
+Datum __cmsketch_trans(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = NULL;
     cmtransval *transval;
@@ -155,8 +155,8 @@ char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
  * simply returns its input
  * for use as a finalizer in an agg returning the whole sketch
  */
-PG_FUNCTION_INFO_V1(cmsketch_out);
-Datum cmsketch_out(PG_FUNCTION_ARGS)
+PG_FUNCTION_INFO_V1(__cmsketch_final);
+Datum __cmsketch_final(PG_FUNCTION_ARGS)
 {
     PG_RETURN_BYTEA_P(PG_GETARG_BYTEA_P(0));
 }
@@ -164,8 +164,8 @@ Datum cmsketch_out(PG_FUNCTION_ARGS)
 /*!
  * Greenplum "prefunc" to combine sketches from multiple machines
  */
-PG_FUNCTION_INFO_V1(cmsketch_combine);
-Datum cmsketch_combine(PG_FUNCTION_ARGS)
+PG_FUNCTION_INFO_V1(__cmsketch_merge);
+Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 {
     bytea *counterblob1 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(0));
     bytea *counterblob2 = cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(1));
@@ -212,19 +212,19 @@ Datum cmsketch_combine(PG_FUNCTION_ARGS)
 
 
 
-PG_FUNCTION_INFO_V1(cmsketch_getcount);
+PG_FUNCTION_INFO_V1(cmsketch_count);
 
 /*!
  * scalar function, takes a sketch and a value, produces approximate count of that value 
  */
-Datum cmsketch_getcount(PG_FUNCTION_ARGS)
+Datum cmsketch_count(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
     cmtransval *transval = (cmtransval *)VARDATA(transblob);
 
 	CM_CHECKARG(transval, 1);
 
-    PG_RETURN_INT64(cmsketch_getcount_c(transval->sketches[0],
+    PG_RETURN_INT64(cmsketch_count_c(transval->sketches[0],
                                         PG_GETARG_DATUM(1), transval->outFuncOid));
 }
 
@@ -234,7 +234,7 @@ Datum cmsketch_getcount(PG_FUNCTION_ARGS)
  * \param arg the Datum we want to find the count of
  * \param funcOid the Postgres function that converts arg to a string
  */
-int64 cmsketch_getcount_c(countmin sketch, Datum arg, Oid funcOid)
+int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
 {
     Datum nhash;
 
@@ -259,8 +259,8 @@ Datum cmsketch_rangecount(PG_FUNCTION_ARGS)
 	  CM_CHECKARG(transval, 1);
 	  CM_CHECKARG(transval, 2);
 
-    return cmsketch_rangecount_c(transval, PG_GETARG_DATUM(1),
-                                 PG_GETARG_DATUM(2));
+    return cmsketch_rangecount_c(transval, PG_GETARG_INT64(1),
+                                 PG_GETARG_INT64(2));
 }
 
 /*!
@@ -269,22 +269,41 @@ Datum cmsketch_rangecount(PG_FUNCTION_ARGS)
  * \param bot the bottom of the range (inclusive)
  * \param top the top of the range (inclusive)
  */
-Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
+Datum cmsketch_rangecount_c(cmtransval *transval, int64 bot, int64 top)
 {
     int64     cursum = 0;
     int       i;
     rangelist r;
     int64     dyad;
     int64     val;
+    int64     countval;
 
     r.emptyoffset = 0;
     find_ranges(bot, top, &r);
-    for (i = 0; i < r.emptyoffset; i++) {
+    
+    /* 
+     * find_ranges will not generate a span larger than 2^63-1, so
+     * we only need to consider 2^63 or less.
+     */
+    for (i = 0; i < r.emptyoffset; i++) {        
         /* What power of 2 is this range? */
-        dyad = log2(r.spans[i][1] - r.spans[i][0] + 1);
-        /* Divide min of range by 2^dyad and get count */
-        val = cmsketch_getcount_c(transval->sketches[dyad],
-                                  (Datum) r.spans[i][0] >> dyad,
+        if (r.spans[i][0] == MIN_INT64 && r.spans[i][1] == -1) {
+            /* special case to avoid overflow: full range left of 0 */
+            dyad = 63;
+            countval = -1;
+        }
+        else if (r.spans[i][0] == 0 && r.spans[i][1] == MAX_INT64) {
+            /* special case to avoid overflow: full range right of 0 */
+            dyad = 63;
+            countval = 0;
+        }
+        else {
+            /* Divide min of range by 2^dyad and get count */
+            dyad = log2(r.spans[i][1] - r.spans[i][0] + 1);
+            countval = r.spans[i][0] >> dyad;
+        }
+        val = cmsketch_count_c(transval->sketches[dyad],
+                                  (Datum) countval,
                                   transval->outFuncOid);
         cursum += val;
     }
@@ -295,19 +314,21 @@ Datum cmsketch_rangecount_c(cmtransval *transval, Datum bot, Datum top)
 /*!
  * convert an arbitrary range [bot-top] into a rangelist of dyadic ranges.
  * E.g. convert 14-48 into [[14-15], [16-31], [32-47], [48-48]]
+ * To manage overflow issues, do not generate a range larger than 2^63-1!
  * \param bot the bottom of the range (inclusive)
  * \param top the top of the range (inclusive)
- * \param r the list of reanges to be returned
+ * \param r the list of ranges to be returned
  */
 void find_ranges(int64 bot, int64 top, rangelist *r)
 {
     /* kick off the recursion at power RANGES-1 */
-    find_ranges_internal(bot, top, RANGES-1, r);
+    find_ranges_internal(bot, top, RANGES-1, r);  
 }
 
 /*!
  * find the ranges via recursive calls to this routine, pulling out smaller and
  * smaller powers of 2
+ * To manage overflow issues, do not generate a range larger than 2^63-1!
  * \param bot the bottom of the range (inclusive)
  * \param top the top of the range (inclusive)
  * \param power the highest power to start with
@@ -325,17 +346,25 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     if (top == bot) {
         /* base case of recursion, a range of the form [x-x]. */
         r->spans[r->emptyoffset][0] = r->spans[r->emptyoffset][1] = bot;
-        r->emptyoffset++;
+        ADVANCE_OFFSET(*r);       
         return;
     }
 
     /*
-     * a range that's too big will overflow int64 variable "width" in the
-     * code below, so recurse to the left and right of 0 by hand
-     */
+    * a range that's 2^63 or larger will overflow int64's in the
+    * code below, so recurse to the left and right by hand
+    */
     if (top >= 0 && bot < 0) {
-        find_ranges_internal(bot, -1, power-1, r);
-        find_ranges_internal(0, top, power-1, r);
+       /* don't even try to figure out how wide this range is, just split */
+       find_ranges_internal(bot, -1, power-1, r);
+       find_ranges_internal(0, top, power-1, r);
+       return;
+    }
+    else if ((dyad = trunc(log2(top - bot + (int64)1))) > 62) {
+        /* dangerously big, so split.  we know that we don't span 0. */
+        int sign = (top < 0) ? -1 : 1;
+        find_ranges_internal(bot, (((int64)1) << 62)*sign - 1, 62, r);
+        find_ranges_internal((((int64)1) << 62)*sign, top, 62, r);
         return;
     }
 
@@ -343,34 +372,64 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
      * if we get here, we have a range of size 2 or greater.
      * Find the largest dyadic range width in this range.
      */
-    dyad = trunc(log2(top - bot + (int64)1));
-
     /* In some cases with large numbers, log2 rounds up incorrectly. */
-    while (pow(2,dyad) > (top - bot + (int64)1))
+    while ((((int64)1) << dyad) > (top - bot + (int64)1))
        dyad--;
-    
-    width = (uint64) pow(2, dyad);
+             
+    width = ((uint64)1) << dyad;
 
-    if (bot == MIN_INT64 || (bot % width) == 0) {
-      
+    if ((bot == MIN_INT64) || (bot % width == 0)) {
         /* our range is left-aligned on the dyad's min */
         r->spans[r->emptyoffset][0] = bot;
-        r->spans[r->emptyoffset][1] = bot + width - 1;
-        r->emptyoffset++;
-        /* recurse on right at finer grain */
-        find_ranges_internal(bot + width, top, power-1, r);
+        if (top == MAX_INT64) {
+            /* 
+             * special case: no need to recurse on right, and doing so
+             * could overflow, so handle by hand 
+             */
+            r->spans[r->emptyoffset][1] = MAX_INT64;
+            ADVANCE_OFFSET(*r);
+        }
+        else {
+            int64 newbot;
+            /* 
+             * -1 on the next line because range to the right will 
+             * start at the power-of-2 boundary.
+             */
+            r->spans[r->emptyoffset][1] = (bot + width - 1);
+            if (bot == MIN_INT64) {
+                /* account for fact that MIN_INT64 is 1 bigger than -2^63 */
+                r->spans[r->emptyoffset][1]--;
+            }
+            newbot = r->spans[r->emptyoffset][1] + 1;
+            ADVANCE_OFFSET(*r);
+            /* recurse on right at finer grain */
+            find_ranges_internal(newbot, top, power-1, r);
+        }
     }
 
     else if (top == MAX_INT64 || ((top+1) % width) == 0) {
-        /*
-         * our range is right-aligned on the dyad's max.
-         * the +1 accounts for 0-indexing.
-         */
-        r->spans[r->emptyoffset][0] = (top - width + 1);
+        /* our range is right-aligned on the dyad's max. */
         r->spans[r->emptyoffset][1] = top;
-        r->emptyoffset++;
-        /* recurse on left at finer grain */
-        find_ranges_internal(bot, top - width, power-1, r);
+        if (bot == MIN_INT64) {
+            /* 
+             * special case: no need to recurse on left, and doing so
+             * could overflow, so handle by hand 
+             */
+            r->spans[r->emptyoffset][0] = MIN_INT64;
+            ADVANCE_OFFSET(*r);
+        }
+        else {
+            int64 newtop;
+            r->spans[r->emptyoffset][0] = (top - width + 1);
+            if (top == MAX_INT64) {
+                /* account for fact that MAX_INT64 is 1 smaller than 2^63 */
+                r->spans[r->emptyoffset][0]--;
+            }
+            newtop = r->spans[r->emptyoffset][0] - 1;
+            ADVANCE_OFFSET(*r);
+            /* recurse on left at finer grain. */
+            find_ranges_internal(bot, newtop, power-1, r);
+        }
     }
     else {
         /* we straddle a power of 2 */
@@ -400,7 +459,9 @@ Datum cmsketch_centile(PG_FUNCTION_ARGS)
 	else centile = PG_GETARG_INT32(1);
 
     total = cmsketch_rangecount_c(transval, MIN_INT64, MAX_INT64);     /* count(*) */
-    if (total == 0) PG_RETURN_NULL();
+    if (total == 0) {
+        PG_RETURN_NULL();
+    }
 
     return cmsketch_centile_c(transval, centile, total);
 }
@@ -425,7 +486,7 @@ Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
     centile_cnt = (int64)(total * (float8)intcentile/100.0);
 
     for (i = 0, loguess = MIN_INT64, higuess = MAX_INT64, curguess = 0;
-         (i < INT64BITS - 1) && (higuess-loguess > 1);
+         (i < INT64BITS - 1) && ((uint64)higuess-(uint64)loguess > 1);
          i++) {
         curcount = cmsketch_rangecount_c(transval, MIN_INT64, curguess);
         if (curcount == centile_cnt)
@@ -451,7 +512,7 @@ PG_FUNCTION_INFO_V1(cmsketch_width_histogram);
  * scalar function taking a sketch, min, max, and number of buckets.
  * produces an equi-width histogram of that many buckets
  */
-/* UDF wrapper.  All the interesting stuff is in fmsketch_getcount_c */
+/* UDF wrapper.  All the interesting stuff is in __fmsketch_count_distinct_c */
 Datum cmsketch_width_histogram(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
@@ -497,8 +558,8 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
         histo[i][1] = Int64GetDatum(binhi);
         binval =
             cmsketch_rangecount_c(transval,
-                                  histo[i][0],
-                                  histo[i][1]);
+                                  DatumGetInt64(histo[i][0]),
+                                  DatumGetInt64(histo[i][1]));
         histo[i][2] = Int64GetDatum(binval);
     }
 
@@ -525,7 +586,7 @@ PG_FUNCTION_INFO_V1(cmsketch_depth_histogram);
  * scalar function taking a number of buckets.  produces an equi-depth histogram 
  * of that many buckets by finding equi-spaced centiles
  */
-/* UDF wrapper.  All the interesting stuff is in fmsketch_getcount_c */
+/* UDF wrapper.  All the interesting stuff is in __fmsketch_count_distinct_c */
 Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
@@ -559,8 +620,8 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
         histo[i][1] = ((i == buckets - 1) ? MAX_INT64 :
                        cmsketch_centile_c(transval, (i+1)*step, total));
         histo[i][2] = cmsketch_rangecount_c(transval,
-                                  histo[i][0],
-                                  histo[i][1]);
+                                  DatumGetInt64(histo[i][0]),
+                                  DatumGetInt64(histo[i][1]));
 		binlo = histo[i][1] + 1;
     }
 
@@ -635,7 +696,7 @@ int64 hash_counters_iterate(Datum hashval,
      */
     for (i = 0; i < DEPTH; i++) {
         memmove((void *)&twobytes,
-                (void *)((char *)VARDATA(DatumGetPointer(hashval)) + 2*i), 2);
+                (void *)((char *)VARDATA(DatumGetByteaP(hashval)) + 2*i), 2);
         col = twobytes % NUMCOUNTERS;
         retval = (*lambdaptr)(i, col, sketch, retval);
     }
