@@ -4,7 +4,12 @@
  *
  */
 
-/*! \defgroup svec Sparse Vectors
+/*! 
+
+@defgroup support Support Modules
+
+@defgroup svec Sparse Vectors
+@ingroup support
 
 @about
 
