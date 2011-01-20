@@ -1,3 +1,9 @@
+/*! 
+ * \file countmin.h
+ *
+ * \brief header file for CM and MFV sketches
+ */
+
 #ifndef _COUNTMIN_H_
 #define _COUNTMIN_H_
 #define INT64BITS (sizeof(int64)*CHAR_BIT)
@@ -21,14 +27,18 @@
 
 
 /*!
+ * \brief the CountMin sketch array
+ * 
  * a CountMin sketch is a set of DEPTH arrays of NUMCOUNTERS each.
  * It's like a "counting Bloom Filter" where instead of just hashing to
  * DEPTH bitmaps, we count up hash-collisions in DEPTH counter arrays
  */
 typedef uint64 countmin[DEPTH][NUMCOUNTERS];
 
-/*!
- * the transition value struct for the cmsketch aggregate.  Holds the sketch counters
+/*! 
+ * \brief the transition value struct for the cmsketch aggregate.
+ *  
+ * Holds the sketch counters
  * and a cache of handy metadata that we'll reuse across calls
  */
 typedef struct {
@@ -41,6 +51,8 @@ typedef struct {
 #define CM_TRANSVAL_SZ (VARHDRSZ + sizeof(cmtransval))
 
 /*!
+ * \brief array of ranges
+ *
  * a data structure to hold the constituent dyadic (power-of-two) ranges
  * corresponding to an arbitrary range.
  * E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
@@ -63,7 +75,7 @@ typedef struct {
     else ((r).emptyoffset++);
 
 /*!
- * offset/count pairs for MFV sketches
+ * \brief offset/count pairs for MFV sketches
  */
 typedef struct {
     int offset;  /*! memory offset to the value */
@@ -72,7 +84,9 @@ typedef struct {
 
 
 /*!
- * the transition value struct for the mfvsketch aggregate.  Holds a single
+ * \brief the transition value struct for the mfvsketch aggregate.  
+ *
+ * Holds a single
  * countmin sketch (no dyadic ranges) and an array of Most Frequent Values.
  * We are flexible with the number of mfvs, as well as the type.
  * Hence at the end of this struct is an array mfv[num_mfvs] of offsetcnt entries,
@@ -83,11 +97,11 @@ typedef struct {
  * frequent value.
  */
 typedef struct {
-    int num_mfvs;
-    int next_mfv;
-    int next_offset;
-    Oid typOid;
-    Oid outFuncOid;
+    int num_mfvs;    /*! number of frequent values */
+    int next_mfv;    /*! index of next mfv to insert into */
+    int next_offset; /*! next memory offset to insert into */
+    Oid typOid;      /*! Oid of the type being counted */
+    Oid outFuncOid;  /*! Oid of the outfunc for this type */
     countmin sketch; /*! a single countmin sketch */
     /*!
      * type-independent collection of Most Frequent Values
@@ -135,15 +149,6 @@ int64 hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
 
 int64 increment_counter(uint32, uint32, countmin, int64);
 int64 min_counter(uint32, uint32, countmin, int64);
-
-/*
- * bool gt(int64, int64);
- * bool eq(int64, int64);
- * bool false_fn(int64, int64);
- * int64 cmsketch_count_search(cmtransval *, bool (*) (int64, int64), int64,
- * bool ( *) (int64, int64), int64);
- */
-
 
 /* MFV protos */
 /* Datum cmsketch_mfv_trans_c(int64 *, char *); */

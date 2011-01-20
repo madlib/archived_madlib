@@ -1,4 +1,10 @@
-/*! \defgroup countmin CountMin Sketch
+/*! 
+ * \file countmin.c
+ *
+ * \brief CountMin sketch implementation
+ */
+ 
+ /*! \defgroup countmin CountMin Sketch
  * \ingroup sketch
  * \par About
  * Cormode-Muthukrishnan CountMin sketch

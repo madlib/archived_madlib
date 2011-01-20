@@ -1,4 +1,10 @@
-/*!
+/*! 
+ * \file fm.c
+ *
+ * \brief Flajolet-Martin sketch implementation
+ */
+ 
+ /*!
  * \defgroup fmsketch FM Sketch
  * \ingroup sketch
  * \par About
@@ -50,6 +56,8 @@ PG_MODULE_MAGIC;
     8*MINVALS
 
 /*!
+ * \brief transition value struct for FM sketches
+ *
  * because FM sketches work poorly on small numbers of values,
  * our transval can be in one of two modes.
  * for "SMALL" numbers of values (<=MINVALS), the storage array

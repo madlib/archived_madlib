@@ -1,4 +1,10 @@
-/*!
+/*! 
+ * \file sortasort.c
+ *
+ * \brief sortasort dictionary implementation
+ */
+ 
+ /*!
  * A "sortasort" is a pre-marshalled *set* (no dups) of values intended for
  * append and query operations only (no deletion).  It's not a
  * particularly smart data structure.  Cuckoo hashing would be a

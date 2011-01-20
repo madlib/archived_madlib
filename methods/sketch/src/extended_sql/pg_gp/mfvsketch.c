@@ -1,4 +1,10 @@
-/*!
+/*! 
+ * \file mfvsketch.c
+ *
+ * \brief CountMin sketch for Most Frequent Value estimation
+ */
+ 
+ /*!
  * \defgroup mfvsketch MFV Sketch
  * \ingroup countmin
  * \par About

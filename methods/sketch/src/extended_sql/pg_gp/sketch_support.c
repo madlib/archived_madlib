@@ -1,6 +1,7 @@
-/*
- * Support routines for managing bitmaps used in "sketching"
- * algorithms for approximating aggregates.
+/*! 
+ * \file sketch_support.c
+ *
+ * \brief Support routines for managing bitmaps used in sketches
  */
 
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */

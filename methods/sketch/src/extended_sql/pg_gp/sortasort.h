@@ -1,25 +1,30 @@
-/*!
- * A "sortasort" is a smallish array of strings, intended for append-only
+/*! 
+ * \file sortasort.h
+ *
+ * \brief header file for the sortasort directory data structure
+ */
+#define SORTA_SLOP 100
+
+/*! 
+ * \brief a pre-marshalled directory data structure to hold strings
+ * 
+ * A sortasort is a smallish array of strings, intended for append-only
  * modification, and network transmission as a single byte-string.  It is
  * structured as a header followed by an array of offsets (directory) that
  * point to the actual null-terminated strings stored in the "vals" array
  * at the end of the structure.
- */
-
-/*!
+ *
  * The directory is mostly sorted in ascending order of the vals it points
  * to, but the last < SORTA_SLOP entries are left unsorted.  Binary Search
  * is used on all but those last entries, which must be scanned. At every
  * k*SORTA_SLOP'th insert, the full directory is sorted.
  */
-#define SORTA_SLOP 100
-
 typedef struct {
-    short num_vals;
-    size_t storage_sz;
-    size_t capacity;
-    unsigned storage_cur;
-    unsigned dir[0];
+    short num_vals;        /*! number of values so far */
+    size_t storage_sz;     /*! the number of bytes available for strings at the end */
+    size_t capacity;       /*! size of the sortasort directory */
+    unsigned storage_cur;  /*! offset after the directory to do the next insertion */
+    unsigned dir[0];       /*! storage of the strings */
 } sortasort;
 
 #define SORTASORT_DATA(s)  ((char *)(s->dir)) + \

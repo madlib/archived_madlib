@@ -1,3 +1,8 @@
+/*! 
+ * \file sketch_support.h
+ *
+ * \brief header file for sketch support routines
+ */
 #ifndef SKETCH_SUPPORT_H
 #define SKETCH_SUPPORT_H
 
