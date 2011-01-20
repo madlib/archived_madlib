@@ -439,18 +439,21 @@ float8_mregr_compute(MRegrState	*inState,
 								   inState->len, FLOAT8OID,
 								   sizeof(float8), true, 'd');
 	
-	/* 
-	 * Next, we compute the total sum of squares (tss) and the explained sumed
-	 * of squares (ssr).
-	 *     ssr = y'X * b - sum(y)^2/c
-	 *     tss = sum(y^2) - sum(y)^2/c
-     *     R^2 = ssr/tss
-	 */
-	temp_datum = DirectFunctionCall2(matrix_multiply, PointerGetDatum(inState->_Xty_t),
-									 PointerGetDatum(coef_array));
-	temp_array = DatumGetArrayTypeP(temp_datum);
-	ssr = ((float8 *)ARR_DATA_PTR(temp_array))[0] - inState->sumy*inState->sumy/inState->count;
-	tss = inState->sumy2 - inState->sumy * inState->sumy / inState->count;
+    if (outR2 || outTStats || outPValues)
+    {    
+        /* 
+         * Next, we compute the total sum of squares (tss) and the explained sumed
+         * of squares (ssr).
+         *     ssr = y'X * b - sum(y)^2/c
+         *     tss = sum(y^2) - sum(y)^2/c
+         *     R^2 = ssr/tss
+         */
+        temp_datum = DirectFunctionCall2(matrix_multiply, PointerGetDatum(inState->_Xty_t),
+                                         PointerGetDatum(coef_array));
+        temp_array = DatumGetArrayTypeP(temp_datum);
+        ssr = ((float8 *)ARR_DATA_PTR(temp_array))[0] - inState->sumy*inState->sumy/inState->count;
+        tss = inState->sumy2 - inState->sumy * inState->sumy / inState->count;
+    }
 	
 	if (outR2)
 	{
@@ -573,26 +576,37 @@ Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 
 
 Datum float8_cg_update_accum(PG_FUNCTION_ARGS);
+Datum float8_cg_update_combine(PG_FUNCTION_ARGS);
 Datum float8_irls_update_accum(PG_FUNCTION_ARGS);
 Datum float8_cg_update_final(PG_FUNCTION_ARGS);
+Datum float8_irls_update_final(PG_FUNCTION_ARGS);
 Datum logreg_should_terminate(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(float8_cg_update_accum);
+PG_FUNCTION_INFO_V1(float8_cg_update_combine);
 PG_FUNCTION_INFO_V1(float8_irls_update_accum);
 PG_FUNCTION_INFO_V1(float8_cg_update_final);
+PG_FUNCTION_INFO_V1(float8_irls_update_final);
 PG_FUNCTION_INFO_V1(logreg_should_terminate);
 
+/**
+ * Note the order of computation:
+ * 
+ * FIXME: Several assumptions about this struct are hard coded (e.g., number of
+ * elements)
+ */
 typedef struct {
 	int32		iteration;	/* current iteration */
 	int32		len;		/* number of coefficients */
-	ArrayType	*coef;		/* coefficients */
+	ArrayType	*coef;		/* vector of coefficients c */
 	ArrayType	*dir;		/* direction */
 	ArrayType	*grad;		/* gradient */
 	float8		beta;		/* scale factor */
 
 	int64		count;		/* number of rows */
 	ArrayType	*gradNew;	/* intermediate value for gradient */
-	float8		dTHd;		/* intermediate value for d^T * H * d */	
+	float8		dTHd;		/* intermediate value for d^T * H * d */
+    float8      logLikelihood; /* ln(l(c))  */
 } LogRegrState;
 
 
@@ -632,16 +646,16 @@ static ArrayType *construct_uninitialized_array(int inNumElements,
 #define StartCopyFromTuple(tuple, nullArr) { \
 	HeapTupleHeader __tuple = tuple; int __tupleItem = 0; bool *__nullArr = nullArr
 #define CopyFromTuple(dest, DatumGet) \
-	{ \
+	do { \
 		Datum tempDatum = \
 			GetAttributeByNum(__tuple, __tupleItem + 1, &__nullArr[__tupleItem]); \
 		if (__nullArr[__tupleItem++] == false) \
 			dest = DatumGet(tempDatum); \
 		else \
 			dest = 0; \
-	}
+	} while (0)
 #define CopyFloatArrayFromTuple(dest) \
-	{ \
+	do { \
 		Datum tempDatum = \
 			GetAttributeByNum(__tuple, __tupleItem + 1, &__nullArr[__tupleItem]); \
 		if (__nullArr[__tupleItem++] == false) { \
@@ -650,8 +664,74 @@ static ArrayType *construct_uninitialized_array(int inNumElements,
 				outState->len, FLOAT8OID, sizeof(float8), true, 'd'); \
 		} else \
 			dest = 0; \
-	}
+	} while(0)
 #define EndCopyFromTuple }
+static void copy_tuple_to_logreg_state(HeapTupleHeader inTuple,
+                                       LogRegrState *outState,
+                                       bool *outIsNull,
+                                       bool copyIntraIterationState)
+{
+	StartCopyFromTuple(inTuple, outIsNull);
+    /* copy inter-iteration state information*/
+	CopyFromTuple(outState->iteration, DatumGetInt32);
+	CopyFromTuple(outState->len, DatumGetInt32);
+	CopyFloatArrayFromTuple(outState->coef);
+	CopyFloatArrayFromTuple(outState->dir);
+	CopyFloatArrayFromTuple(outState->grad);
+	CopyFromTuple(outState->beta, DatumGetFloat8);
+    if (copyIntraIterationState) {
+        /* copy also intra-iteration (single aggregate) state information */
+		CopyFromTuple(outState->count, DatumGetInt64);
+		CopyFromTuple(outState->gradNew, DatumGetArrayTypeP);
+		CopyFromTuple(outState->dTHd, DatumGetFloat8);
+        CopyFromTuple(outState->logLikelihood, DatumGetFloat8);
+    }
+	EndCopyFromTuple;    
+}
+#undef StartCopyFromTuple
+#undef CopyFromTuple
+
+#define StartCopyToHeapTuple(datumArr, nullArr) { \
+	Datum *__datumArr = datumArr; int __tupleItem = 0; bool *__nullArr = nullArr
+#define CopyToHeapTuple(src, GetDatum) \
+    do { \
+        if (__nullArr[__tupleItem] == false) \
+            __datumArr[__tupleItem++] = GetDatum(src); \
+        else \
+            __datumArr[__tupleItem++] = PointerGetDatum(NULL); \
+    } while (0)
+#define EndCopyToDatum }
+static HeapTuple logreg_state_to_heap_tuple(LogRegrState *inState,
+                                            bool *inIsNull,
+                                            PG_FUNCTION_ARGS)
+{
+	TypeFuncClass	funcClass;
+	Oid				resultType;
+	TupleDesc		resultDesc;
+	Datum			resultDatum[10];
+
+	funcClass = get_call_result_type(fcinfo, &resultType, &resultDesc);
+	BlessTupleDesc(resultDesc);
+
+    StartCopyToHeapTuple(resultDatum, inIsNull);
+    CopyToHeapTuple(inState->iteration, Int32GetDatum);
+    CopyToHeapTuple(inState->len, Int32GetDatum);
+    CopyToHeapTuple(inState->coef, PointerGetDatum);
+    CopyToHeapTuple(inState->dir, PointerGetDatum);
+    CopyToHeapTuple(inState->grad, PointerGetDatum);
+    CopyToHeapTuple(inState->beta, Float8GetDatum);
+    
+    CopyToHeapTuple(inState->count, Int64GetDatum);
+    CopyToHeapTuple(inState->gradNew, PointerGetDatum);
+    CopyToHeapTuple(inState->dTHd, Float8GetDatum);
+    CopyToHeapTuple(inState->logLikelihood, Float8GetDatum);
+    EndCopyToDatum;
+
+	return heap_form_tuple(resultDesc, resultDatum, inIsNull);
+}
+#undef StartCopyToHeapTuple
+#undef EndCopyToDatum
+
 static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 									   LogRegrState *outState)
 {
@@ -660,22 +740,15 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 						NULL : PG_GETARG_HEAPTUPLEHEADER(3),
 					aggregateStateTuple = PG_ARGISNULL(0) ?
 						NULL : PG_GETARG_HEAPTUPLEHEADER(0);
-	bool			isNull[9];
+	bool			isNull[10];
 
 	memset(isNull, 0, sizeof(isNull));
 	if (aggregateStateTuple == NULL) {
 		/* This means: State transition function was called for first row */
 	
-		if (iterationStateTuple != NULL) {
-			StartCopyFromTuple(iterationStateTuple, isNull);
-			CopyFromTuple(outState->iteration, DatumGetInt32);
-			CopyFromTuple(outState->len, DatumGetInt32);
-			CopyFloatArrayFromTuple(outState->coef);
-			CopyFloatArrayFromTuple(outState->dir);
-			CopyFloatArrayFromTuple(outState->grad);
-			CopyFromTuple(outState->beta, DatumGetFloat8);
-			EndCopyFromTuple;
-		}
+		if (iterationStateTuple != NULL)
+            copy_tuple_to_logreg_state(iterationStateTuple, outState,
+                isNull, /* copyIntraIterationState */ false);
 		
 		if (iterationStateTuple == NULL || outState->iteration == 0) {
 			/* Note: In PL/pgSQL assinging a tuple variable NULL sets all
@@ -700,23 +773,10 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 		outState->count = 0;
 		outState->gradNew = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
 		outState->dTHd = 0.;
+        outState->logLikelihood = 0.;
 	} else {
-		StartCopyFromTuple(aggregateStateTuple, isNull);
-		CopyFromTuple(outState->iteration, DatumGetInt32);
-		CopyFromTuple(outState->len, DatumGetInt32);
-		CopyFromTuple(outState->coef, DatumGetArrayTypeP);
-		CopyFromTuple(outState->dir, DatumGetArrayTypeP);
-		CopyFromTuple(outState->grad, DatumGetArrayTypeP);
-		CopyFromTuple(outState->beta, DatumGetFloat8);
-		
-		CopyFromTuple(outState->count, DatumGetInt64);
-		CopyFromTuple(outState->gradNew, DatumGetArrayTypeP);
-		CopyFromTuple(outState->dTHd, DatumGetFloat8);
-		EndCopyFromTuple;
-		
-//		if (outState->iteration == 0) {
-//			isNull[3] = isNull[4] = false;
-//		}
+        copy_tuple_to_logreg_state(aggregateStateTuple, outState, isNull,
+            /* copyIntraIterationState */ true);
 	}
 			
 	for (int i = 0; i < 9; i++)
@@ -724,17 +784,11 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 
 	return true;
 }
-#undef StartCopyFromTuple
-#undef CopyFromTuple
 
 Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 {
 	bool			goodArguments;
-	TypeFuncClass	funcClass;
-	Oid				resultType;
-	TupleDesc		resultDesc;
-	Datum			resultDatum[9];
-	bool			resultNull[9];
+	bool			resultNull[10];
 	HeapTuple		result;
 	
 	LogRegrState	state;
@@ -816,27 +870,71 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	} else {
 		state.dTHd += sigma(cTx) * (1 - sigma(cTx)) * dTx * dTx;
 	}
+
+    //          n
+    //         --
+    // l(c) = -\  ln(1 + exp(-y_i * c^T x_i))
+    //         /_
+    //         i=1
+    state.logLikelihood -= log( 1. + exp(-newY * cTx) );
 	
 	/* Construct the return tuple */
-	funcClass = get_call_result_type(fcinfo, &resultType, &resultDesc);
-	BlessTupleDesc(resultDesc);
-	
-	resultDatum[0] = Int32GetDatum(state.iteration);
-	resultDatum[1] = Int32GetDatum(state.len);
-	resultDatum[2] = PointerGetDatum(state.coef);
-	resultDatum[3] = PointerGetDatum(state.dir);
-	resultDatum[4] = PointerGetDatum(state.grad);
-	resultDatum[5] = Float8GetDatum(state.beta);
-	
-	resultDatum[6] = Int64GetDatum(state.count);
-	resultDatum[7] = PointerGetDatum(state.gradNew);
-	resultDatum[8] = Float8GetDatum(state.dTHd);
 	memset(resultNull, 0, sizeof(resultNull));
 	resultNull[3] = state.dir == NULL;
 	resultNull[4] = state.grad == NULL;
-	
-	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
+    result = logreg_state_to_heap_tuple(&state, resultNull, fcinfo);
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));
+}
+
+Datum float8_cg_update_combine(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader	tuple1 = PG_ARGISNULL(0) ?
+						NULL : PG_GETARG_HEAPTUPLEHEADER(0),
+                    tuple2 = PG_ARGISNULL(1) ?
+						NULL : PG_GETARG_HEAPTUPLEHEADER(1);
+    LogRegrState    state1, state2, returnState;
+    int             numNulls1 = 0, numNulls2 = 0;
+	bool			isNull[10];
+    
+    copy_tuple_to_logreg_state(tuple1, &state1, isNull,
+        /* copyIntraIterationState */ true);
+    for (int i = 0; i < sizeof(isNull); i++)
+        numNulls1 += (int) isNull[i];
+
+    copy_tuple_to_logreg_state(tuple2, &state2, isNull,
+        /* copyIntraIterationState */ true);
+    for (int i = 0; i < sizeof(isNull); i++)
+        numNulls2 += (int) isNull[i];
+    
+    // FIXME: This only partially checks the input for correctness
+    // (Of course, unless of bugs in the code, these conditions should never be
+    // true.)
+   	if (numNulls1 + numNulls2 > 0 ||
+        state1.iteration != state2.iteration ||
+        state1.len != state2.len ||
+        state1.beta != state2.beta)
+		ereport(ERROR, 
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+             errmsg("preliminary segment-level calculation function \"%s\" called with invalid parameters",
+                format_procedure(fcinfo->flinfo->fn_oid))));
+                
+    memset(&returnState, 0, sizeof(returnState));
+    copy_tuple_to_logreg_state(tuple1, &returnState, isNull, false);
+    
+    returnState.count = state1.count + state2.count;
+    returnState.dTHd = state1.dTHd + state2.dTHd;
+    for (int i = 0; i < state1.len; i++) {
+        ((float8*) ARR_DATA_PTR(returnState.gradNew))[i] =
+            ((float8*) ARR_DATA_PTR(state1.gradNew))[i] +
+            ((float8*) ARR_DATA_PTR(state2.gradNew))[i];
+    }
+    returnState.logLikelihood = state1.logLikelihood + state2.logLikelihood;
+    
+	/* Construct the return tuple */
+	memset(isNull, 0, sizeof(isNull));
+    PG_RETURN_DATUM(HeapTupleGetDatum(
+        logreg_state_to_heap_tuple(&returnState, isNull, fcinfo)
+    ));
 }
 
 Datum
@@ -844,10 +942,12 @@ float8_irls_update_accum(PG_FUNCTION_ARGS)
 {
     bool            goodArguments;
     MRegrAccumState state;
+	HeapTupleHeader	iterationStateTuple = PG_NARGS() < 3 || PG_ARGISNULL(3) ?
+						NULL : PG_GETARG_HEAPTUPLEHEADER(3);
     int32           newY;
 	int             len, i, j;
     float8          cTx, a, z;
-    ArrayType       *coef;
+    ArrayType       *coef = NULL;
     float8          *coefData;
 
 	goodArguments = float8_mregr_accum_get_state(fcinfo, &state);
@@ -861,10 +961,16 @@ float8_irls_update_accum(PG_FUNCTION_ARGS)
 
     len = *state.len;
 
+    if (iterationStateTuple != NULL) {
+        bool  coefIsNull;
+        Datum coefDatum = GetAttributeByNum(iterationStateTuple, 1, &coefIsNull);
+    
+		coef = coefIsNull ? NULL : DatumGetArrayTypeP(coefDatum);
+    }
+
     // If the array with coefficients is NULL or contains NULLs, assume
     // that we are in the initial iteration. In that case initialize the vector
     // of coefficients: c_0 = 0
-    coef = PG_ARGISNULL(3) ? NULL : PG_GETARG_ARRAYTYPE_P(3);
     if (coef != NULL) {
         if (ARR_NDIM(coef) != 1 || ARR_DIMS(coef)[0] != len ||
             ARR_ELEMTYPE(coef) != FLOAT8OID)
@@ -916,6 +1022,14 @@ float8_irls_update_accum(PG_FUNCTION_ARGS)
     if (coef == NULL)
         pfree(coefData);
     
+    // We use state.sumy to store the log likelihood.
+    //          n
+    //         --
+    // l(c) = -\  ln(1 + exp(-y_i * c^T x_i))
+    //         /_
+    //         i=1
+    *state.sumy -= log( 1. + exp(-newY * cTx) );
+
 	PG_RETURN_ARRAYTYPE_P(state.stateAsArray);
 }
 
@@ -1033,11 +1147,7 @@ static inline ArrayType *float8_vectorMinus(ArrayType *inVec1, ArrayType *inVec2
 Datum float8_cg_update_final(PG_FUNCTION_ARGS)
 {
 	bool			goodArguments;
-	TypeFuncClass	funcClass;
-	Oid				resultType;
-	TupleDesc		resultDesc;
-	Datum			resultDatum[9];
-	bool			resultNull[9];
+	bool			resultNull[10];
 	HeapTuple		result;
 
 	LogRegrState	state;
@@ -1108,25 +1218,44 @@ Datum float8_cg_update_final(PG_FUNCTION_ARGS)
 	}
 
 	/* Construct the return tuple */
+    state.iteration++;
+	memset(resultNull, 0, sizeof(resultNull));
+	resultNull[6] = resultNull[7] = resultNull[8] = true;
+    result = logreg_state_to_heap_tuple(&state, resultNull, fcinfo);
+	PG_RETURN_DATUM(HeapTupleGetDatum(result));	
+}
+
+Datum float8_irls_update_final(PG_FUNCTION_ARGS)
+{
+	bool            goodArguments;
+	MRegrState      state;
+	ArrayType       *coef;
+
+	TypeFuncClass	funcClass;
+	Oid				resultType;
+	TupleDesc		resultDesc;
+	Datum			resultDatum[2];
+	bool			resultNull[2];
+	HeapTuple		result;
+	
+	goodArguments = float8_mregr_get_state(fcinfo, &state);
+	if (!goodArguments)
+		PG_RETURN_NULL();
+	
+	float8_mregr_compute(&state, &coef /* coefficients */, NULL /* R2 */,
+						 NULL /* t-statistics */, NULL /* p-values */);
+
+    /* Construct the return tuple */
 	funcClass = get_call_result_type(fcinfo, &resultType, &resultDesc);
 	BlessTupleDesc(resultDesc);
 	
-	resultDatum[0] = Int32GetDatum(state.iteration + 1);
-	resultDatum[1] = Int32GetDatum(state.len);
-	resultDatum[2] = PointerGetDatum(state.coef);
-	resultDatum[3] = PointerGetDatum(state.dir);
-	resultDatum[4] = PointerGetDatum(state.grad);
-	resultDatum[5] = Float8GetDatum(state.beta);
-	
-	resultDatum[6] = Int64GetDatum(state.count);
-	resultDatum[7] = PointerGetDatum(state.gradNew);
-	resultDatum[8] = Float8GetDatum(state.dTHd);
-	
-	resultNull[0] = resultNull[1] = resultNull[2] = resultNull[3] = resultNull[4] = resultNull[5] = false;
-	resultNull[6] = resultNull[7] = resultNull[8] = true;
+	resultDatum[0] = PointerGetDatum(coef);
+    /* We used sumy in MRegrState to store the log-likelihood */
+	resultDatum[1] = Float8GetDatum(state.sumy);
+	memset(resultNull, 0, sizeof(resultNull));
 	
 	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
-	PG_RETURN_DATUM(HeapTupleGetDatum(result));	
+	PG_RETURN_DATUM(HeapTupleGetDatum(result));
 }
 
 

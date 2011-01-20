@@ -86,7 +86,8 @@ Implemented in C for PostgreSQL/Greenplum.
 import plpy
 
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
-    terminateExpr, numIterations, returnExpr = "st.state"):
+    terminateExpr, cyclesPerIteration, maxNumIterations,
+    returnExpr = "st.state"):
     """
     Driver for an iterative algorithm
     
@@ -106,10 +107,11 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         <tt>"{state}"</tt>, <tt>"{iteration}"</tt>, and
         <tt>"{sourceAlias}"</tt>. Source alias is an alias for the source
         relation <tt><em>source</em></tt>.
-    @param terminateExpr SQL expression that returns whether the algorithm
-        should terminate. The expression may use the replacement fields
+    @param terminateSQL SQL expression that returns whether the algorithm should
+        terminate. The expression may use the replacement fields
         <tt>"{oldState}"</tt>, <tt>"{newState}"</tt>, and
         <tt>"{iteration}"</tt>. It must return a BOOLEAN value.
+    @param cyclesPerIteration Number of aggregate function calls per iteration.
     @param numIterations Maximum number of iterations. Algorithm will then
         terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
     @param returnExpr An optional transformation of the final state. If omitted,
@@ -143,12 +145,12 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         """    
     terminateSQL = """
         SELECT
-            {terminateExpr}
+            {terminateExpr} AS should_terminate
         FROM    
         (
             SELECT state
             FROM _madlib_iterative_alg
-            WHERE iteration = {iteration} - 1
+            WHERE iteration = {iteration} - {cyclesPerIteration}
         ) AS old,
         (
             SELECT state
@@ -184,8 +186,10 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
     while True:
         iteration = iteration + 1
         plpy.execute(updateSQL.format(**locals()))
-        if (iteration >= numIterations or
-            plpy.execute(terminateSQL.format(**locals())) == True):
+        if iteration > cyclesPerIteration and (
+            iteration >= cyclesPerIteration * maxNumIterations or
+            plpy.execute(terminateSQL.format(**locals()))[0]['should_terminate']
+                == True):
             break
     
     # FIXME: Returning the result set from Python code means that values
@@ -207,7 +211,7 @@ def __cg_logreg_coef(**kwargs):
     __runIterativeAlg().
     """
     
-    stateType = "<m4>MADLIB_SCHEMA</m4>.LRegrState"
+    stateType = "<m4>MADLIB_SCHEMA</m4>.logregr_cg_state"
     initialState = "NULL"
     source = kwargs['source']
     
@@ -221,18 +225,20 @@ def __cg_logreg_coef(**kwargs):
             {{state}}
         )
         """.format(**kwargs)
-    terminateExpr = """
-        <m4>MADLIB_SCHEMA</m4>.logreg_should_terminate(
-            {{oldState}}.coef, {{newState}}.coef,
-            '{optimizer}', {precision})
-        """.format(**kwargs)
+    if kwargs['precision'] == 0.:
+        terminateExpr = "FALSE"
+    else:
+        terminateExpr = """
+            {{newState}}.loglikelihood - {{oldState}}.loglikelihood < {precision}
+            """.format(**kwargs)
 	
 	# One iteration consists of two calls of the aggregate function
 	# See float8_cg_update_final().
-    numIterations = 2 * kwargs['numIterations']
+    cyclesPerIteration = 2
+    maxNumIterations = kwargs['numIterations']
     returnExpr = "{state}.coef"
     return __runIterativeAlg(stateType, initialState, source, updateExpr,
-        terminateExpr, numIterations, returnExpr)
+        terminateExpr, cyclesPerIteration, maxNumIterations, returnExpr)
 
 
 def __irls__logreg_coef(**kwargs):
@@ -245,7 +251,7 @@ def __irls__logreg_coef(**kwargs):
     then calls __runIterativeAlg().
     """
     
-    stateType = "DOUBLE PRECISION[]"
+    stateType = "<m4>MADLIB_SCHEMA</m4>.logregr_irls_state"
     initialState = "NULL"
     source = kwargs['source']
     updateExpr = """
@@ -255,15 +261,18 @@ def __irls__logreg_coef(**kwargs):
             {{state}}
         )
         """.format(**kwargs)
-    terminateExpr = """
-        <m4>MADLIB_SCHEMA</m4>.logreg_should_terminate(
-            {{oldState}}, {{newState}},
-            '{optimizer}', {precision})
-        """.format(**kwargs)
-    numIterations = kwargs['numIterations']
-    returnExpr = "{state}"
+    if kwargs['precision'] == 0.:
+        terminateExpr = "FALSE"
+    else:
+        terminateExpr = """
+            {{newState}}.loglikelihood - {{oldState}}.loglikelihood < {precision}
+            """.format(**kwargs)
+
+    cyclesPerIteration = 1
+    maxNumIterations = kwargs['numIterations']
+    returnExpr = "{state}.coef"
     return __runIterativeAlg(stateType, initialState, source, updateExpr,
-        terminateExpr, numIterations, returnExpr)
+        terminateExpr, cyclesPerIteration, maxNumIterations, returnExpr)
     
 
 def compute_logreg_coef(**kwargs):
@@ -286,7 +295,11 @@ def compute_logreg_coef(**kwargs):
            'cg': conjugate gradient (default = 'cg')
     @param numIterations Maximum number of iterations (default = 20)
     @param precision Terminate if two consecutive iterations have a difference 
-           of coefficients with \f$\ell^2\f$-norm less than <tt>precision</tt>.
+           in the log-likelihood of less than <tt>precision</tt>. In other
+           words, we terminate if the objective function value has converged.
+           If this parameter is 0.0, then the algorithm will not check for
+           convergence and only terminate after <tt><em>numIterations</em></tt>
+           iterations.
     
     @return array with coefficients in case of convergence, otherwise None
     
