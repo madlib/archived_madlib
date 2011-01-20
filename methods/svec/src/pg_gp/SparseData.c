@@ -117,7 +117,6 @@ SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 	sdata->total_value_count=dimension;
 	if (sdata->index->maxlen < int8compstoragesize(bytestore)) {
 		ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			       errOmitLocation(true),
 			       errmsg("Internal error")));
 	}
 	return sdata;
@@ -238,7 +237,6 @@ double *sdata_to_float8arr(SparseData sdata) {
 
 	if (sdata->type_of_data != FLOAT8OID) {
 		ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errOmitLocation(true),
 			errmsg("Data type of SparseData is not FLOAT64\n")));
 	}
 
@@ -246,7 +244,6 @@ double *sdata_to_float8arr(SparseData sdata) {
 	      == NULL)
 	{
 		ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			       errOmitLocation(true),
 			       errmsg("Error allocating memory for array\n")));
 	}
 
@@ -262,7 +259,6 @@ double *sdata_to_float8arr(SparseData sdata) {
 	if ((aptr) != sdata->total_value_count) 
 	{
 		ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-		  errOmitLocation(true),
 		  errmsg("Array size is incorrect, is: %d and should be %d\n",
 				aptr,sdata->total_value_count)));
 
@@ -353,7 +349,6 @@ double sd_proj(SparseData sdata, int idx) {
 	if (0 >= idx || idx > sdata->total_value_count)
 		ereport(ERROR, 
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Index out of bounds.")));
 
 	/* find desired block; as is normal in SQL, we start counting from one */
@@ -386,7 +381,6 @@ SparseData subarr(SparseData sdata, int start, int end) {
 	if (0 >= start || start > end || end > sdata->total_value_count)
 		ereport(ERROR, 
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Array index out of bounds.")));
 
 	/* find start block */

@@ -1,6 +1,7 @@
-/*
- * Support routines for managing bitmaps used in "sketching"
- * algorithms for approximating aggregates.
+/*! 
+ * \file sketch_support.c
+ *
+ * \brief Support routines for managing bitmaps used in sketches
  */
 
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
@@ -22,16 +23,16 @@
  * \param the sketch number in which we want to find the rightmost one
  */
 uint32 rightmost_one(uint8 *bits,
-                           size_t numsketches,
-                           size_t sketchsz_bits,
-                           size_t sketchnum)
+                     size_t numsketches,
+                     size_t sketchsz_bits,
+                     size_t sketchnum)
 {
     uint8 *s =
         &(((uint8 *)(bits))[sketchnum*sketchsz_bits/8]);
-    int            i;
-    uint32   c = 0;     /* output: c will count trailing zero bits, */
+    int    i;
+    uint32 c = 0;       /* output: c will count trailing zero bits, */
 
-    if (sketchsz_bits % (sizeof(uint32)*CHAR_BIT)) 
+    if (sketchsz_bits % (sizeof(uint32)*CHAR_BIT))
         elog(
             ERROR,
             "number of bits per sketch is %u, must be a multiple of sizeof(uint32) = %u",
@@ -70,15 +71,15 @@ uint32 rightmost_one(uint8 *bits,
  * \param the sketch number in which we want to find the rightmost one
  */
 uint32 leftmost_zero(uint8 *bits,
-                           size_t numsketches,
-                           size_t sketchsz_bits,
-                           size_t sketchnum)
+                     size_t numsketches,
+                     size_t sketchsz_bits,
+                     size_t sketchnum)
 {
     uint8 *s = &(((uint8 *)bits)[sketchnum*sketchsz_bits/8]);
 
-    int            i;
-    uint32   c = 0;     /* output: c will count trailing zero bits, */
-    int            maxbyte = pow(2,8) - 1;
+    int    i;
+    uint32 c = 0;       /* output: c will count trailing zero bits, */
+    int    maxbyte = pow(2,8) - 1;
 
     if (sketchsz_bits % (sizeof(uint32)*8))
         elog(
@@ -131,17 +132,17 @@ uint32 leftmost_zero(uint8 *bits,
  *
  * This function makes destructive updates; the caller should make sure to check
  * that we're being called in an agg context!
- * \param bitmap an array of FM sketches 
+ * \param bitmap an array of FM sketches
  * \param numsketches # of sketches in the array
  * \param sketchsz_bits # of BITS per sketch
  * \param sketchnum index of the sketch to modify (from left, zero-indexed)
  * \param bitnum bit offset (from right, zero-indexed) in that sketch
  */
-Datum array_set_bit_in_place(bytea *bitmap,     
-                             int4 numsketches,  
+Datum array_set_bit_in_place(bytea *bitmap,
+                             int4 numsketches,
                              int4 sketchsz_bits,
-                             int4 sketchnum,    
-                             int4 bitnum)       
+                             int4 sketchnum,
+                             int4 bitnum)
 {
     char mask;
     char bytes_per_sketch = sketchsz_bits/CHAR_BIT;
@@ -229,8 +230,8 @@ void hex_to_bytes(char *hex, uint8 *bytes, size_t hexlen)
 void
 bit_print(uint8 *c, int numbytes)
 {
-    int          j, i, l;
-    char         p[MD5_HASHLEN_BITS+2];
+    int    j, i, l;
+    char   p[MD5_HASHLEN_BITS+2];
     uint32 n;
 
     for (j = 0, l=0; j < numbytes; j++) {
@@ -314,4 +315,14 @@ Datum sketch_array_set_bit_in_place(PG_FUNCTION_ARGS)
                                   sketchsz,
                                   sketchnum,
                                   bitnum);
+}
+
+/* In some cases with large numbers, log2 seems to round up incorrectly. */
+int4 safe_log2(int64 x)
+{
+    int4 out = trunc(log2(x));
+
+    while ((((int64)1) << out) > x)
+        out--;
+    return out;
 }

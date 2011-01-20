@@ -1,4 +1,10 @@
-/*!
+/*! 
+ * \file sortasort.c
+ *
+ * \brief sortasort dictionary implementation
+ */
+ 
+ /*!
  * A "sortasort" is a pre-marshalled *set* (no dups) of values intended for
  * append and query operations only (no deletion).  It's not a
  * particularly smart data structure.  Cuckoo hashing would be a
@@ -28,9 +34,9 @@
  * \param s_sz size of s
  */
 sortasort *
-sortasort_init(sortasort *s,    
-               size_t capacity, 
-               size_t s_sz)     
+sortasort_init(sortasort *s,
+               size_t capacity,
+               size_t s_sz)
 {
     /* capacity is the size of the directory: i.e. max number of strings it can hold */
     s->capacity = capacity;

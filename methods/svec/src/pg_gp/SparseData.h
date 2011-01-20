@@ -338,7 +338,6 @@ static inline void printout_sdata(SparseData sdata, char *msg, int stop)
 	if (stop)
 	  ereport(ERROR, 
 			  (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			   errOmitLocation(true),
 			   errmsg("LAL STOP")));
 }
 
@@ -564,7 +563,6 @@ check_sdata_dimensions(SparseData left, SparseData right)
 	{
 		ereport(ERROR, 
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("dimensions of vectors must be the same")));
 	}
 }
