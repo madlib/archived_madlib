@@ -99,8 +99,21 @@ CREATE TYPE madlib.LRegrState AS (
 	dTHd	DOUBLE PRECISION
 );
 
-CREATE FUNCTION madlib.float8_cg_update_accum(madlib.LRegrState, madlib.LRegrState, BOOLEAN, DOUBLE PRECISION[])
+CREATE FUNCTION madlib.float8_cg_update_accum(
+	madlib.LRegrState,
+	BOOLEAN,
+	DOUBLE PRECISION[],
+	madlib.LRegrState)
 RETURNS madlib.LRegrState
+AS 'multLinRegression'
+LANGUAGE C;
+
+CREATE FUNCTION madlib.float8_irls_update_accum(
+	DOUBLE PRECISION[],
+	BOOLEAN,
+	DOUBLE PRECISION[],
+	DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
 AS 'multLinRegression'
 LANGUAGE C;
 
@@ -109,10 +122,18 @@ RETURNS madlib.LRegrState
 AS 'multLinRegression'
 LANGUAGE C STRICT;
 
-CREATE AGGREGATE madlib.logregr_coef(madlib.LRegrState, BOOLEAN, DOUBLE PRECISION[]) (
+CREATE AGGREGATE madlib.logreg_cg_step(BOOLEAN, DOUBLE PRECISION[], madlib.LRegrState) (
 	SFUNC=madlib.float8_cg_update_accum,
 	STYPE=madlib.LRegrState,
 	FINALFUNC=madlib.float8_cg_update_final
+);
+
+CREATE AGGREGATE madlib.logreg_irls_step(BOOLEAN, DOUBLE PRECISION[], DOUBLE PRECISION[]) (
+	SFUNC=madlib.float8_irls_update_accum,
+	STYPE=float8[],
+	PREFUNC=madlib.float8_mregr_combine,
+	FINALFUNC=madlib.float8_mregr_coef,
+	INITCOND='{0}'
 );
 
 CREATE FUNCTION madlib.logreg_should_terminate(
@@ -124,7 +145,7 @@ RETURNS BOOLEAN
 AS 'multLinRegression'
 LANGUAGE C STRICT;
 
-CREATE FUNCTION madlib.logregr_coef(
+CREATE FUNCTION madlib.logreg_coef(
 	"source" VARCHAR,
 	"depColumn" VARCHAR,
 	"indepColumn" VARCHAR)
@@ -133,6 +154,48 @@ RETURNS DOUBLE PRECISION[] AS $$
 	return logRegress.compute_logreg_coef(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
 
+CREATE FUNCTION madlib.logreg_coef(
+	"source" VARCHAR,
+	"depColumn" VARCHAR,
+	"indepColumn" VARCHAR,
+	"numIterations" INTEGER)
+RETURNS DOUBLE PRECISION[] AS $$
+	import logRegress
+	return logRegress.compute_logreg_coef(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+CREATE FUNCTION madlib.logreg_coef(
+	"source" VARCHAR,
+	"depColumn" VARCHAR,
+	"indepColumn" VARCHAR,
+	"numIterations" INTEGER,
+	"optimizer" VARCHAR)
+RETURNS DOUBLE PRECISION[] AS $$
+	import logRegress
+	return logRegress.compute_logreg_coef(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+--! Logistic regression
+--! 
+--! @param source Name of the source relation containing the training data
+--! @param depColumn Name of the dependent column (of type BOOLEAN)
+--! @param indepColumn Name of the independent column (of type DOUBLE
+--!		PRECISION[])
+--! @param numIterations The maximum number of iterations
+--! @param optimizer The optimizer to use (either 'ilrs'/'newton' for
+--!		iteratively reweighted least squares or 'cg' for conjugent gradient)
+--! @param precision 
+CREATE FUNCTION madlib.logreg_coef(
+	"source" VARCHAR,
+	"depColumn" VARCHAR,
+	"indepColumn" VARCHAR,
+	"numIterations" INTEGER,
+	"optimizer" VARCHAR,
+	"precision" DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[] AS $$
+	import logRegress
+	return logRegress.compute_logreg_coef(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
 
 CREATE FUNCTION madlib.logr_coef(iterations INTEGER)
 RETURNS madlib.LRegrState
