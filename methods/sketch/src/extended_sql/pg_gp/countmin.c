@@ -1,16 +1,16 @@
-/*
- * Cormode-Muthukrishnan CountMin sketch
- * implemented as a user-defined aggregate.
- */
-
 /*! \defgroup countmin CountMin Sketch 
  * \ingroup sketch
+ * \par About
+ * Cormode-Muthukrishnan CountMin sketch
+ * implemented as a user-defined aggregate, with user-defined functions to make estimations using it.
+ * \par
  * The basic CountMin sketch is a set of DEPTH arrays, each with NUMCOUNTERS counters.
  * The idea is that each of those arrays is used as an independent random trial of the
  * same process: each holds counts h_i(x) from a different random hash function h_i.
  * Estimates of the count of some value x are based on the minimum counter h_i(x) across
  * the DEPTH arrays (hence the name CountMin.)
  * 
+ * \par
  * Let's call the process described above "sketching" the x's.
  * We're going to repeat this process INT64BITS times; this is the "dyadic range" trick
  * mentioned in Cormode/Muthu, which repeats the basic CountMin idea log_2(n) times as follows.
@@ -18,12 +18,45 @@
  * at a different power-of-2 (dyadic) "range" i.  So we sketch x in range 0, then sketch x/2
  * in range 1, then sketch x/4 in range 2, etc.
  * 
+ * \par
  * This allows us to count up ranges (like 14-48) by doing CountMin lookups up constituent
  * dyadic ranges (like {[14-15], [16-31], [32-47], [48-48]}).  Dyadic ranges are also useful
  * for histogramming, frequent values, etc.
  *
+ * \par
  * See http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf
  * for further explanation
+ *
+ * \par Usage/API
+ *  - <c>cmsketch(int8)</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a CountMin sketch: a large array of counters that is intended to be passed into one of a number of UDFs described below.  
+ *  - <c>cmsketch_count(cmsketch(col anytype), v int8)</c> is a UDF that takes a cmsketch over a column <c>col</c> and a value <c>v</c>, and reports the approximate number of occurrences of <c>v</c> in <c>col</c>.  Example:\code
+ *   SELECT pronamespace, madlib.cmsketch_count(madlib.cmsketch(pronargs), 3)
+ *     FROM pg_proc
+ * GROUP BY pronamespace;
+ * \endcode
+ *  - <c>cmsketch_rangecount(cmsketch(intcol int8), low int8, hi int8)</c> is a UDF that takes a cmsketch over a column <c>col</c> and a range <c>[low, hi]</c>, and  reports the approximate number of values in <c>col</c> that fall between <c>low</c> and <c>hi</c> inclusive.
+ *  Example:\code
+ *   SELECT pronamespace, madlib.cmsketch_rangecount(madlib.cmsketch(pronargs), 3, 5)
+ *     FROM pg_proc
+ * GROUP BY pronamespace;    
+ *  \endcode
+ *  - <c>cmsketch_centile(cmsketch(intcol int8), pct int4)</c> is a UDF that takes a cmsketch over a column <c>col</c> and a percentage value <c>pct</c> between 1 and 99, and reports a value in <c>col</c> that is approximately at the <c>pct</c> centile in sorted order.  Example:\code
+ *   SELECT relnamespace, madlib.cmsketch_centile(madlib.cmsketch(oid::int8), 75)
+ *     FROM pg_class
+ * GROUP BY relnamespace;
+ *  \endcode    
+ *  - <c>cmsketch_width_histogram(cmsketch(intcol int8), min(intcol int8), max(intcol int8), nbuckets int4)</c>  is a UDF that takes three aggregates of a column <c>col</c> -- cmsketch, min and max-- as well as a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
+ *   SELECT relnamespace, 
+ *          madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), min(oid::int8), max(oid::int8), 10)
+ *     FROM pg_class
+ * GROUP BY relnamespace;
+ *  \endcode
+ *  - <c>cmsketch_depth_histogram(cmsketch(intcol int8), nbuckets int4)</c>    is a UDF that takes a cmsketch over column <c>col</c> and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
+ *   SELECT relnamespace,
+ *          madlib.cmsketch_depth_histogram(madlib.cmsketch(oid::int8), 10)
+ *     FROM pg_class
+ * GROUP BY relnamespace;
+ *  \endcode
  */
 
 #include "postgres.h"

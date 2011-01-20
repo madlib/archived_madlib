@@ -3,39 +3,36 @@
 
 /*! \defgroup sketch
 
-Implementation of a variety of small-space "sketch" techniques for approximating properties of large sets in a single pass.
-
 \par About:
+  There is a large body of research on small-space "sketch" techniques (sometimes called "synopsis data structures") for approximating properties of large data sets in a single pass.  Some of that work was targeted at stream or network processing, but it's equally applicable to large stored datasets.  Sketches are particularly useful for profiling multiple columns of a large table in a single pass.  This module currently implements user-defined aggregates for three main sketch methods:
+    - <i>Flajolet-Martin (FM)</i> sketches (http://algo.inria.fr/flajolet/Publications/FlMa85.pdf) for approximately counting the number of distinct values in a set.  
+    - <i>Count-Min (CM)</i> sketches (http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf), which can be layered with scalar functions to approximate a number of descriptive statistics including
+      - number of occurrences of a given value in a set
+      - number of occurrences in a set that fall in a range of values (*)
+      - order statistics including median and centiles (*)
+      - histograms: both equi-width and equi-depth (*)
+    - <i>Most Frequent Value (MFV)</i> sketches are basically a variant of Count-Min sketches that can generate a histogram for the most frequent values in a set. (**)
 
-This module currently implements user-defined aggregates for two main sketch methods:
-- Flajolet-Martin (FM) sketches (http://algo.inria.fr/flajolet/Publications/FlMa85.pdf) for approximately counting the number of distinct values in a set (i.e. SQL's COUNT(DISTINCT x)).  
-- Count-Min sketches (http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf), which can be layered with scalar functions to approximating a number of descriptive statistics including
-    - number of occurrences of a given value
-    - number of occurrences in a range of values (*)
-    - order statistics including median and centiles (*)
-    - histograms: both equi-width and equi-depth (*)
-    - most frequently occurring values ("MFV" sketches) (**)
-
-Features marked with a single star (*) only work for discrete types that can be cast to int8.  Features marked with a double star (**) do not perform aggregation in parallel.
+\par
+    <i>Note:</i> Features marked with a single star (*) only work for discrete types that can be cast to int8.  Features marked with a double star (**) do not perform aggregation in parallel.
 
 
 \par Prerequisites:
-
-Implemented in C for PostgreSQL/Greenplum.
-
+  None.  Because sketches are essentially a high-performance compression technique, they were custom-coded for efficiency in C for PostgreSQL/Greenplum.
+    
+\par Usage/API
+  The sketch method consists of a number of SQL user-defined functions (UDFs) and user-defined aggregates (UDAs), documented within each individual method.  
+ 
 \par Todo:
-- Provide a relatively portable SQL-only implementation of CountMin.  (FM bit manipulation won't port well regardless).
-- Provide a python wrapper to the CountMin sketch output, and write scalar functions in python.
+  - Provide a relatively portable SQL-only implementation of CountMin.  (FM bit manipulation won't port well regardless).
+  - Provide a python wrapper to the CountMin sketch output, and write scalar functions in python.
 
-\par Example Execution (in-database):
-
-See unit tests in the sql subdirectory.
         
-\bug Equality-Testing Issue
+\bug 
+  - <i>Equality-Testing Issue:</i>
 We do a lot of hashing in the sketch methods.  To provide canonical input to the
 outfunc.  In some corner cases the ascii output may not respect the 
 equality/inequality that SQL intends.
-
 The proper way to do this is not to use the outfunc, but rather to look up the 
 type-specific hash function as is done internally for hashjoin, hash indexes, 
 etc.  The basic pattern for looking up the hash function in Postgres 
@@ -44,8 +41,6 @@ internals is something like the following:
 get_sort_group_operators(dtype, false, true, false, &ltOpr, &eqOpr, &gtOpr);
 success = get_op_hash_functions(eqOpr, result, NULL));
 </c>
-
-
 */
 
 
