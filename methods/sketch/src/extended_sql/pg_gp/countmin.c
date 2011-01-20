@@ -320,7 +320,7 @@ Datum cmsketch_rangecount_c(cmtransval *transval, int64 bot, int64 top)
     int64     cursum = 0;
     int       i;
     rangelist r;
-    int64     dyad;
+    int4     dyad;
     int64     val;
     int64     countval;
 
@@ -344,8 +344,14 @@ Datum cmsketch_rangecount_c(cmtransval *transval, int64 bot, int64 top)
             countval = 0;
         }
         else {
+            int64 width = r.spans[i][1] - r.spans[i][0] + (int64)1;
+            if (r.spans[i][0] == MIN_INT64)
+                width++;
+            if (r.spans[i][1] == MAX_INT64) {
+                width++;
+            }
             /* Divide min of range by 2^dyad and get count */
-            dyad = log2(r.spans[i][1] - r.spans[i][0] + 1);
+            dyad = safe_log2(width);
             countval = r.spans[i][0] >> dyad;
         }
         val = cmsketch_count_c(transval->sketches[dyad],
@@ -383,6 +389,7 @@ void find_ranges(int64 bot, int64 top, rangelist *r)
 void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
 {
     short  dyad;  /* a number between 0 and 63 */
+    uint64 pow_dyad;
     uint64 width;
 
     /* Sanity check */
@@ -406,7 +413,13 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
         find_ranges_internal(0, top, power-1, r);
         return;
     }
-    else if ((dyad = trunc(log2(top - bot + (int64)1))) > 62) {
+    
+    width = top - bot + (int64)1;
+    if (top == MAX_INT64 || bot == MIN_INT64)
+        width++;
+    
+    dyad = safe_log2(width);
+    if (dyad > 62) {
         /* dangerously big, so split.  we know that we don't span 0. */
         int sign = (top < 0) ? -1 : 1;
         find_ranges_internal(bot, (((int64)1) << 62)*sign - 1, 62, r);
@@ -418,13 +431,9 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
      * if we get here, we have a range of size 2 or greater.
      * Find the largest dyadic range width in this range.
      */
-    /* In some cases with large numbers, log2 rounds up incorrectly. */
-    while ((((int64)1) << dyad) > (top - bot + (int64)1))
-        dyad--;
+    pow_dyad = ((uint64)1) << dyad;
 
-    width = ((uint64)1) << dyad;
-
-    if ((bot == MIN_INT64) || (bot % width == 0)) {
+    if ((bot == MIN_INT64) || (bot % pow_dyad == 0)) {
         /* our range is left-aligned on the dyad's min */
         r->spans[r->emptyoffset][0] = bot;
         if (top == MAX_INT64) {
@@ -441,7 +450,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
              * -1 on the next line because range to the right will
              * start at the power-of-2 boundary.
              */
-            r->spans[r->emptyoffset][1] = (bot + width - 1);
+            r->spans[r->emptyoffset][1] = (bot + pow_dyad - 1);
             if (bot == MIN_INT64) {
                 /* account for fact that MIN_INT64 is 1 bigger than -2^63 */
                 r->spans[r->emptyoffset][1]--;
@@ -453,7 +462,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
         }
     }
 
-    else if (top == MAX_INT64 || ((top+1) % width) == 0) {
+    else if (top == MAX_INT64 || ((top+1) % pow_dyad) == 0) {
         /* our range is right-aligned on the dyad's max. */
         r->spans[r->emptyoffset][1] = top;
         if (bot == MIN_INT64) {
@@ -466,10 +475,10 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
         }
         else {
             int64 newtop;
-            r->spans[r->emptyoffset][0] = (top - width + 1);
+            r->spans[r->emptyoffset][0] = (top - pow_dyad + 1);
             if (top == MAX_INT64) {
                 /* account for fact that MAX_INT64 is 1 smaller than 2^63 */
-                r->spans[r->emptyoffset][0]--;
+                r->spans[r->emptyoffset][0]++;
             }
             newtop = r->spans[r->emptyoffset][0] - 1;
             ADVANCE_OFFSET(*r);
@@ -479,7 +488,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     }
     else {
         /* we straddle a power of 2 */
-        int64 power_of_2 = width*(top/width);
+        int64 power_of_2 = pow_dyad*(top/pow_dyad);
 
         /* recurse on right at finer grain */
         find_ranges_internal(bot, power_of_2 - 1, power-1, r);

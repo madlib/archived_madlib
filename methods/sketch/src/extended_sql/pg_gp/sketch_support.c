@@ -316,3 +316,13 @@ Datum sketch_array_set_bit_in_place(PG_FUNCTION_ARGS)
                                   sketchnum,
                                   bitnum);
 }
+
+/* In some cases with large numbers, log2 seems to round up incorrectly. */
+int4 safe_log2(int64 x)
+{
+    int4 out = trunc(log2(x));
+
+    while ((((int64)1) << out) > x)
+        out--;
+    return out;
+}
