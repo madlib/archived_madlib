@@ -7,6 +7,19 @@ Laplacian smoothing).
 
 @namespace bayes
 
+@defgroup modeling Modeling
+
+@defgroup suplearn Supervised Learning
+@ingroup modeling
+
+@defgroup suplearn-categorization Categorization
+@ingroup suplearn
+
+@defgroup bayes Naive Bayes classification
+@ingroup suplearn-categorization
+
+@about
+
 Naive Bayes classification with user-defined smoothing factor (default:
 Laplacian smoothing).
 
