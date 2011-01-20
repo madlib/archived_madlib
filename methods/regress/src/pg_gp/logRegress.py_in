@@ -85,140 +85,190 @@ Implemented in C for PostgreSQL/Greenplum.
 
 import plpy
 
-def __cg_logreg_coef(**kwargs):
+def __runIterativeAlg(stateType, initialState, source, updateExpr,
+    terminateExpr, numIterations, returnExpr = "st.state"):
     """
-    Use conjugate-gradient approach to compute logistic regression coefficients.
+    Driver for an iterative algorithm
     
-    The method we are using is known as Fletcher–Reeves method in the
-    literature, where we use the Hestenes-Stiefel rule for calculating the step
-    size.
-
-    The gradient of \f$l(\boldsymbol c)\f$ is
-    @verbatim
-                  n
-                 --  
-      ∇_c l(c) = \  (1 - σ(z_i c^T x_i)) z_i x_i
-                 /_ 
-                 i=1
-    @endverbatim
-
-    We compute
-    @verbatim
-    For k = 0, 1, 2, ...:
-
-                        n
-                       --  
-      g_0 = ∇_c l(0) = \  (1 - σ(z_i c^T x_i)) z_i x_i
-                       /_ 
-                       i=1
-      
-      d_0 = g_0
-      
-             g_0^T d_0
-      c_0 = ----------- d_0
-            d_0^T H d_0
-        
-    For k = 1, 2, ...:
-
-      g_k = ∇_c l(c_{k-1})
-      
-             g_k^T (g_k - g_{k-1})
-      β_k = -----------------------
-            d_{k-1} (g_k - g_{k-1})
-
-      d_k = g_k - β_k d_{k-1}
-      
-                       g_k^T d_k
-      c_k = c_{k-1} + ----------- d_k
-                      d_k^T H d_k
-
-    where:
-                       n
-                      --
-      d_k^T H d_k = - \  σ(c^T x_i) (1 - σ(c^T x_i)) (d^T x_i)^2 
-                      /_
-                      i=1
-
-    and
-
-    H = the Hessian of the objective
-    @endverbatim
+    A general driver function for most iterative algorithms: The state between
+    iterations is kept in a variable of type <tt>stateType</tt>, which is
+    initialized with <tt><em>initialState</em></tt>. During each iteration, the
+    SQL statement <tt>updateSQL</tt> is executed in the database. Afterwards,
+    the SQL query <tt>updateSQL</tt> decides whether the algorithm terminates.
+    At the end of the algorithm, the last state (or an arbitrary transformation
+    as given by <tt>returnExpr</tt>) will be returned.
+    
+    @param stateType SQL type of the state between iterations
+    @param initialState The initial value of the SQL state variable
+    @param source The source relation
+    @param updateExpr SQL expression that returns the new state of type
+        <tt>stateType</tt>. The expression may use the replacement fields
+        <tt>"{state}"</tt>, <tt>"{iteration}"</tt>, and
+        <tt>"{sourceAlias}"</tt>. Source alias is an alias for the source
+        relation <tt><em>source</em></tt>.
+    @param terminateExpr SQL expression that returns whether the algorithm
+        should terminate. The expression may use the replacement fields
+        <tt>"{oldState}"</tt>, <tt>"{newState}"</tt>, and
+        <tt>"{iteration}"</tt>. It must return a BOOLEAN value.
+    @param numIterations Maximum number of iterations. Algorithm will then
+        terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
+    @param returnExpr An optional transformation of the final state. If omitted,
+        the final state will be returned. <tt>returnExpr</tt> can be, e.g., a
+        function call or access to a tuple element. Use "{state}" to refer
+        to the state variable. E.g., if <tt>stateType</tt> is a tuple containing
+        a field <tt>coefficients</tt>, and this should be returned as the result
+        of the algorithm, pass <tt>"{state}.coefficients"</tt> here. The
+        replacement field <tt>"{iteration}"</tt> can also be used.
     """
+
+    state = "(st.state)"
+    sourceAlias = "src"
+    oldState = "(old.state)"
+    newState = "(new.state)"
     
-    kwargs.update(iteration = 0,
-        oldMsgLevel = plpy.execute("SHOW client_min_messages")[0]['client_min_messages'])
-    plpy.execute("""
-        SET client_min_messages = error;
-        CREATE TEMPORARY TABLE _madlib_logregr_state (
-            iteration INTEGER PRIMARY KEY,
-            state <m4>MADLIB_SCHEMA</m4>.LRegrState
-        );
-        SET client_min_messages = {oldMsgLevel};
-        """.format(**kwargs))
-    plpy.execute("""
-        INSERT INTO _madlib_logregr_state VALUES ({iteration}, NULL)
-        """.format(**kwargs))
-    updateStateSQL = """
-        INSERT INTO _madlib_logregr_state
+    updateExpr = updateExpr.format(**locals())
+    terminateExpr = terminateExpr.format(**locals())
+    returnExpr = returnExpr.format(**locals())
+
+    updateSQL = """
+        INSERT INTO _madlib_iterative_alg
         SELECT
             {iteration},
-            <m4>MADLIB_SCHEMA</m4>.logregr_coef(
-                st.state,
-                src.{depColumn},
-                src.{indepColumn}
-            )
+            {updateExpr}
         FROM
-            _madlib_logregr_state AS st,
+            _madlib_iterative_alg AS st,
             {source} AS src
         WHERE
             st.iteration = {iteration} - 1
-        """
-    shouldTerminate = """
+        """    
+    terminateSQL = """
         SELECT
-            <m4>MADLIB_SCHEMA</m4>.logreg_should_terminate(
-                (old.state).coef, (new.state).coef,
-                '{optimizer}', {precision})
+            {terminateExpr}
         FROM    
-            (
-                SELECT state
-                FROM _madlib_logregr_state
-                WHERE iteration = {iteration} - 1
-            ) AS old,
-            (
-                SELECT state
-                FROM _madlib_logregr_state
-                WHERE iteration = {iteration}
-            ) AS new
+        (
+            SELECT state
+            FROM _madlib_iterative_alg
+            WHERE iteration = {iteration} - 1
+        ) AS old,
+        (
+            SELECT state
+            FROM _madlib_iterative_alg
+            WHERE iteration = {iteration}
+        ) AS new
+        """
+    returnSQL = """
+        SELECT
+            {returnExpr} AS return_value
+        FROM
+            _madlib_iterative_alg AS st
+        WHERE
+            st.iteration = {iteration}
         """
 
-    error = kwargs['precision'] + 1
+    oldMsgLevel = plpy.execute("SHOW client_min_messages")[0]['client_min_messages']
+    plpy.execute("""
+        SET client_min_messages = error;
+        DROP TABLE IF EXISTS _madlib_iterative_alg;
+		CREATE TABLE _madlib_iterative_alg (
+        --CREATE TEMPORARY TABLE _madlib_iterative_alg (
+            iteration INTEGER PRIMARY KEY,
+            state {stateType}
+        );
+        SET client_min_messages = {oldMsgLevel};
+        """.format(**locals()))
     
+    iteration = 0
+    plpy.execute("""
+        INSERT INTO _madlib_iterative_alg VALUES ({iteration}, {initialState})
+        """.format(**locals()))
     while True:
-        kwargs.update(iteration = kwargs['iteration'] + 1)
-        plpy.execute(updateStateSQL.format(**kwargs))
-        if (kwargs['iteration'] >= kwargs['numIterations'] or
-            plpy.execute(shouldTerminate.format(**kwargs)) == True):
+        iteration = iteration + 1
+        plpy.execute(updateSQL.format(**locals()))
+        if (iteration >= numIterations or
+            plpy.execute(terminateSQL.format(**locals())) == True):
             break
     
     # FIXME: Returning the result set from Python code means that values
     # pass through Python (and there is a potential loss of precision by
     # conversion)
-    coef = plpy.execute("""
-        SELECT
-            (st.state).coef
-        FROM
-            _madlib_logregr_state st
-        WHERE
-            st.iteration = {iteration}
-        """.format(**kwargs))[0]['coef']
     
-    plpy.execute("DROP TABLE _madlib_logregr_state")
-    return coef
+    returnValue = plpy.execute(returnSQL.format(**locals()))[0]['return_value']
+#    plpy.execute("DROP TABLE _madlib_iterative_alg")
+    return returnValue
 
+
+def __cg_logreg_coef(**kwargs):
+    """
+    Logistic regression algorithm with the conjugate-gradient method
+    
+    The parameters are the same as for compute_logreg_coef(), except that
+    <tt>optimizer</tt> should not be set. This function sets up all SQL
+    expression as needed for the conjugate-gradient method and then calls
+    __runIterativeAlg().
+    """
+    
+    stateType = "<m4>MADLIB_SCHEMA</m4>.LRegrState"
+    initialState = "NULL"
+    source = kwargs['source']
+    
+    # "{state}", "{sourceAlias}", "{oldState}", and "{newState}" will not be
+    # substituted here but will be passed on to __runIterativeAlg and
+    # substituted there
+    updateExpr = """
+        <m4>MADLIB_SCHEMA</m4>.logreg_cg_step(
+            {{sourceAlias}}.{depColumn},
+            {{sourceAlias}}.{indepColumn},
+            {{state}}
+        )
+        """.format(**kwargs)
+    terminateExpr = """
+        <m4>MADLIB_SCHEMA</m4>.logreg_should_terminate(
+            {{oldState}}.coef, {{newState}}.coef,
+            '{optimizer}', {precision})
+        """.format(**kwargs)
+	
+	# One iteration consists of two calls of the aggregate function
+	# See float8_cg_update_final().
+    numIterations = 2 * kwargs['numIterations']
+    returnExpr = "{state}.coef"
+    return __runIterativeAlg(stateType, initialState, source, updateExpr,
+        terminateExpr, numIterations, returnExpr)
+
+
+def __irls__logreg_coef(**kwargs):
+    """
+    Logistic regression algorithm with the iteratively-reweighted-least-squares method
+    
+    The parameters are the same as for compute_logreg_coef(), except that
+    <tt>optimizer</tt> should not be set. This function sets up all SQL
+    expression as needed for the iteratively-reweighted-least-squares method and
+    then calls __runIterativeAlg().
+    """
+    
+    stateType = "DOUBLE PRECISION[]"
+    initialState = "NULL"
+    source = kwargs['source']
+    updateExpr = """
+        <m4>MADLIB_SCHEMA</m4>.logreg_irls_step(
+            {{sourceAlias}}.{depColumn},
+            {{sourceAlias}}.{indepColumn},
+            {{state}}
+        )
+        """.format(**kwargs)
+    terminateExpr = """
+        <m4>MADLIB_SCHEMA</m4>.logreg_should_terminate(
+            {{oldState}}, {{newState}},
+            '{optimizer}', {precision})
+        """.format(**kwargs)
+    numIterations = kwargs['numIterations']
+    returnExpr = "{state}"
+    return __runIterativeAlg(stateType, initialState, source, updateExpr,
+        terminateExpr, numIterations, returnExpr)
+    
 
 def compute_logreg_coef(**kwargs):
     """
-    Compute logistic regression coefficients.
+    Compute logistic regression coefficients
     
     This method serves as an interface to different optimization algorithms.
     
@@ -249,7 +299,11 @@ def compute_logreg_coef(**kwargs):
         kwargs.update(precision = 0.0001)
         
     if kwargs['optimizer'] == 'cg':
-        return __cg_logreg_coef(**kwargs);
+        return __cg_logreg_coef(**kwargs)
+    elif kwargs['optimizer'] in ['irls', 'newton']:
+        return __irls__logreg_coef(**kwargs)
+    else:
+        plpy.error("Unknown optimizer requested. Must be 'newton'/'irls' or 'cg'")
     
     return None
 

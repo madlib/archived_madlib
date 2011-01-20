@@ -35,6 +35,18 @@ PG_FUNCTION_INFO_V1(float8_mregr_tstats);
 PG_FUNCTION_INFO_V1(float8_mregr_pvalues);
 
 
+typedef struct {
+    ArrayType   *stateAsArray;
+    float8      *len;
+    float8      *count;
+    float8      *sumy;
+    float8      *sumy2;
+    float8      *Xty;
+    float8      *XtX;
+
+    ArrayType   *newX;
+    float8      *newXData;
+} MRegrAccumState;
 
 typedef struct {
 	int			len;		/* scalar:               len(X[]) */
@@ -50,6 +62,8 @@ typedef struct {
 
 /* Prototypes for static functions */
 
+static bool float8_mregr_accum_get_state(PG_FUNCTION_ARGS,
+                                         MRegrAccumState *outState);
 static bool float8_mregr_get_state(PG_FUNCTION_ARGS,
 								   MRegrState *outState);
 static void float8_mregr_compute(MRegrState	*inState,
@@ -61,32 +75,27 @@ static void float8_mregr_compute(MRegrState	*inState,
 PG_MODULE_MAGIC;
 
 
-Datum
-float8_mregr_accum(PG_FUNCTION_ARGS)
+
+static bool
+float8_mregr_accum_get_state(PG_FUNCTION_ARGS,
+                             MRegrAccumState *outState)
 {
-	ArrayType  *state;
-	float8     *stateData, *newData, *matrix;
-	float8      newY;
-	ArrayType  *newX;
+    float8      *stateData;
 	int         len, statelen;	
-	int         i,j;
 	
 	/* We should be strict, but it doesn't hurt to be paranoid */
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-		PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(0));
-	}
+        return false;
 	
-	state = PG_GETARG_ARRAYTYPE_P(0);	
-	newY  = PG_GETARG_FLOAT8(1);
-    newX  = PG_GETARG_ARRAYTYPE_P(2);
+	outState->stateAsArray = PG_GETARG_ARRAYTYPE_P(0);	
+    outState->newX = PG_GETARG_ARRAYTYPE_P(2);
 	
 	/* Ensure that both arrays are single dimensional float8[] arrays */
-	if (ARR_NULLBITMAP(state) || ARR_NDIM(state) != 1 || 
-		ARR_ELEMTYPE(state) != FLOAT8OID ||
-		ARR_NDIM(newX) != 1 || ARR_ELEMTYPE(newX) != FLOAT8OID)
+	if (ARR_NULLBITMAP(outState->stateAsArray) ||
+        ARR_NDIM(outState->stateAsArray) != 1 || 
+		ARR_ELEMTYPE(outState->stateAsArray) != FLOAT8OID ||
+		ARR_NDIM(outState->newX) != 1 ||
+        ARR_ELEMTYPE(outState->newX) != FLOAT8OID)
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("transition function \"%s\" called with invalid parameters",
@@ -100,28 +109,28 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 					format_procedure(fcinfo->flinfo->fn_oid))));
 	
 	/* newX with nulls will be ignored */
-	if (ARR_NULLBITMAP(newX))
-		PG_RETURN_ARRAYTYPE_P(state);
+	if (ARR_NULLBITMAP(outState->newX))
+		return false;
 	
 	/*
 	 * If length(state) == 1 then it is an unitialized state, extend as
 	 * needed, we use this instead of NULL so that we can declare the
 	 * function as strict.
 	 */
-	len = ARR_DIMS(newX)[0];
+	len = ARR_DIMS(outState->newX)[0];
 	statelen = 4 + len + len*len;
-	if (ARR_DIMS(state)[0] == 1)
+	if (ARR_DIMS(outState->stateAsArray)[0] == 1)
 	{
-		int size = statelen * sizeof(int64) + ARR_OVERHEAD_NONULLS(1);
-		state = (ArrayType *) palloc(size);
-		SET_VARSIZE(state, size);
-		state->ndim = 1;
-		state->dataoffset = 0;
-		state->elemtype = FLOAT8OID;
-		ARR_DIMS(state)[0] = statelen;
-		ARR_LBOUND(state)[0] = 1;
-		stateData = (float8*) ARR_DATA_PTR(state);
-		memset(stateData, 0, statelen * sizeof(int64));
+		int size = statelen * sizeof(float8) + ARR_OVERHEAD_NONULLS(1);
+		outState->stateAsArray = (ArrayType *) palloc(size);
+		SET_VARSIZE(outState->stateAsArray, size);
+		outState->stateAsArray->ndim = 1;
+		outState->stateAsArray->dataoffset = 0;
+		outState->stateAsArray->elemtype = FLOAT8OID;
+		ARR_DIMS(outState->stateAsArray)[0] = statelen;
+		ARR_LBOUND(outState->stateAsArray)[0] = 1;
+		stateData = (float8*) ARR_DATA_PTR(outState->stateAsArray);
+		memset(stateData, 0, statelen * sizeof(float8));
 		stateData[0] = len;
 	}
 	
@@ -136,11 +145,17 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 	 *   N       = 3 + len(X)
 	 *   M       = N + len(X)*len(X)
 	 */
-	newData   = (float8*) ARR_DATA_PTR(newX);
-	stateData = (float8*) ARR_DATA_PTR(state);
+	outState->len = (float8*) ARR_DATA_PTR(outState->stateAsArray);
+    outState->count = outState->len + 1;
+    outState->sumy = outState->len + 2;
+    outState->sumy2 = outState->len + 3;
+    outState->Xty = outState->len + 4;
+    outState->XtX = outState->len + 4 + len;
+
+	outState->newXData  = (float8*) ARR_DATA_PTR(outState->newX);
 	
 	/* It is an error if the number of indepent variables is not constant */
-	if (stateData[0] != len)
+	if (*outState->len != len)
 	{
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -150,28 +165,49 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 	}
 	
 	/* Something is seriously fishy if our state has the wrong length */
-	if (ARR_DIMS(state)[0] != statelen)
+	if (ARR_DIMS(outState->stateAsArray)[0] != statelen)
 	{
 		ereport(ERROR, 
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("transition function \"%s\" called with invalid parameters",
 					format_procedure(fcinfo->flinfo->fn_oid))));
 	}
-	
+    
 	/* Okay... All's good now do the work */
-	stateData[1]++;
-	stateData[2] += newY;
-	stateData[3] += newY * newY;
+    return true;    
+}
+
+
+Datum
+float8_mregr_accum(PG_FUNCTION_ARGS)
+{
+    bool            goodArguments;
+    MRegrAccumState state;
+    float8          newY;
+	int             len, i,j;
+
+	goodArguments = float8_mregr_accum_get_state(fcinfo, &state);
+	if (!goodArguments) {
+        if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+        else
+            PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(0));
+	}
+   	newY = PG_GETARG_FLOAT8(1);
+
+    len = *state.len;
+	(*state.count)++;
+	*state.sumy += newY;
+	*state.sumy2 += newY * newY;
 	for (i = 0; i < len; i++)
-		stateData[4+i] += newY * newData[i];
+		state.Xty[i] += newY * state.newXData[i];
 	
 	/* Compute the matrix X[] * X'[] and add it in */
-	matrix = stateData + 4 + len;
 	for (i = 0; i < len; i++)
 		for (j = 0; j < len; j++)
-			matrix[i*len + j] += newData[i] * newData[j];
+			state.XtX[i*len + j] += state.newXData[i] * state.newXData[j];
 	
-	PG_RETURN_ARRAYTYPE_P(state);
+	PG_RETURN_ARRAYTYPE_P(state.stateAsArray);
 }
 
 
@@ -537,10 +573,12 @@ Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 
 
 Datum float8_cg_update_accum(PG_FUNCTION_ARGS);
+Datum float8_irls_update_accum(PG_FUNCTION_ARGS);
 Datum float8_cg_update_final(PG_FUNCTION_ARGS);
 Datum logreg_should_terminate(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(float8_cg_update_accum);
+PG_FUNCTION_INFO_V1(float8_irls_update_accum);
 PG_FUNCTION_INFO_V1(float8_cg_update_final);
 PG_FUNCTION_INFO_V1(logreg_should_terminate);
 
@@ -618,8 +656,8 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 									   LogRegrState *outState)
 {
 	ArrayType		*newX;
-	HeapTupleHeader	iterationStateTuple = PG_NARGS() == 1 || PG_ARGISNULL(1) ?
-						NULL : PG_GETARG_HEAPTUPLEHEADER(1),
+	HeapTupleHeader	iterationStateTuple = PG_NARGS() < 3 || PG_ARGISNULL(3) ?
+						NULL : PG_GETARG_HEAPTUPLEHEADER(3),
 					aggregateStateTuple = PG_ARGISNULL(0) ?
 						NULL : PG_GETARG_HEAPTUPLEHEADER(0);
 	bool			isNull[9];
@@ -648,7 +686,7 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 			/* This means: We are in the first iteration. We need to initialize the state. */
 
 			/* The length will only be set once: Here. */
-			newX = PG_GETARG_ARRAYTYPE_P(3);
+			newX = PG_GETARG_ARRAYTYPE_P(2);
 			outState->iteration = 0;
 			outState->len = ARR_DIMS(newX)[0];		
 			outState->coef = construct_uninitialized_array(outState->len, FLOAT8OID, 8);
@@ -703,7 +741,7 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	ArrayType		*newX;
 	int32			newY;
 	float8			*newXData;
-	float8			wTx, dTx;
+	float8			cTx, dTx;
 	
 	/* Input should be 4 parameters */
 	if (PG_NARGS() != 4)
@@ -712,7 +750,8 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 				 errmsg("transition function \"%s\" called with invalid parameters",
 					format_procedure(fcinfo->flinfo->fn_oid))));
 
-	for (int i = 2; i < 4; i++) {
+    /* If dependent or inependent variables are null, ignore this row */
+	for (int i = 1; i <= 2; i++) {
 		if (PG_ARGISNULL(i)) {
 			PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 		}
@@ -725,8 +764,8 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 				 errmsg("transition function \"%s\" not called from aggregate",
 					format_procedure(fcinfo->flinfo->fn_oid))));
 	
-	newY  = PG_GETARG_BOOL(2) ? 1 : -1;
-    newX  = PG_GETARG_ARRAYTYPE_P(3);
+	newY  = PG_GETARG_BOOL(1) ? 1 : -1;
+    newX  = PG_GETARG_ARRAYTYPE_P(2);
 	newXData = (float8 *) ARR_DATA_PTR(newX);
 		
 	/* Ensure that all arrays are single dimensional float8[] arrays without NULLs */
@@ -756,25 +795,26 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	/* Okay... All's good now do the work */
 	state.count++;
 
-	wTx = 0.;
+	cTx = 0.;
 	dTx = 0.;
 	
 	if (state.iteration > 0) {
-		/* if state.iteration = 0 then wTx and dTx will remain 0 anyway. */
+		/* if state.iteration = 0 then cTx and dTx will remain 0 anyway. */
 	
 		for (int i = 0; i < state.len; i++) {
-			wTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.coef))[i];
+			cTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.coef))[i];
 			dTx += newXData[i] * ((float8 *) ARR_DATA_PTR(state.dir))[i];
 		}
 	}
 	
+    // FIXME: y has different signs than in Minka (2003). Where is the bug?
 	if (state.iteration % 2 == 0) {		
 		for (int i = 0; i < state.len; i++) {
-			((float8*) ARR_DATA_PTR(state.gradNew))[i] +=
-				(1 - sigma(newY * wTx)) * newY * newXData[i];
+			((float8*) ARR_DATA_PTR(state.gradNew))[i] -=
+				sigma(newY * cTx) * newY * newXData[i];
 		}
 	} else {
-		state.dTHd += sigma(wTx) * (1 - sigma(wTx)) * dTx * dTx;
+		state.dTHd += sigma(cTx) * (1 - sigma(cTx)) * dTx * dTx;
 	}
 	
 	/* Construct the return tuple */
@@ -797,6 +837,86 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	
 	result = heap_form_tuple(resultDesc, resultDatum, resultNull);
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));
+}
+
+Datum
+float8_irls_update_accum(PG_FUNCTION_ARGS)
+{
+    bool            goodArguments;
+    MRegrAccumState state;
+    int32           newY;
+	int             len, i, j;
+    float8          cTx, a, z;
+    ArrayType       *coef;
+    float8          *coefData;
+
+	goodArguments = float8_mregr_accum_get_state(fcinfo, &state);
+	if (!goodArguments) {
+        if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+        else
+            PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(0));
+	}
+	newY  = PG_GETARG_BOOL(1) ? 1 : -1;
+
+    len = *state.len;
+
+    // If the array with coefficients is NULL or contains NULLs, assume
+    // that we are in the initial iteration. In that case initialize the vector
+    // of coefficients: c_0 = 0
+    coef = PG_ARGISNULL(3) ? NULL : PG_GETARG_ARRAYTYPE_P(3);
+    if (coef != NULL) {
+        if (ARR_NDIM(coef) != 1 || ARR_DIMS(coef)[0] != len ||
+            ARR_ELEMTYPE(coef) != FLOAT8OID)
+      		ereport(ERROR, 
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("transition function \"%s\" called with invalid parameters",
+					format_procedure(fcinfo->flinfo->fn_oid))));
+        
+        if (ARR_NULLBITMAP(coef))
+            coef = NULL;
+    }
+    
+    if (coef == NULL) {
+        coefData = palloc(sizeof(float8) * len);
+        memset(coefData, 0, sizeof(float8) * len);
+    } else {
+        coefData = (float8 *) ARR_DATA_PTR(coef);
+    }
+
+    // cTx = c_i^T x_i
+	cTx = 0.;
+	for (int i = 0; i < len; i++)
+		cTx += state.newXData[i] * coefData[i];
+    
+    // a_i = sigma(c^T x_i) sigma(-c^T x_i)
+    a = sigma(cTx) * sigma(-cTx);
+    
+    // FIXME: y has different signs than in Minka (2003). Where is the bug?
+    // Note: sigma(y_i c^T x_i) = 1 - sigma(-y_i c^T x_i).
+    //
+    //               sigma(y_i c^T x_i) y_i
+    // z_i = c^T x + ----------------------
+    //                           a_i
+    z = cTx + sigma(newY * cTx) * newY / a;
+
+	(*state.count)++;
+    // Currently, we are only computing coefficients. Therefore, the following
+    // two lines are not needed.
+	// *state.sumy += z * sqrt(a);
+	// *state.sumy2 += z * z * a;
+	for (i = 0; i < len; i++)
+		state.Xty[i] += z * state.newXData[i] * a;
+	
+	/* Compute the matrix X[] * X'[] and add it in */
+	for (i = 0; i < len; i++)
+		for (j = 0; j < len; j++)
+			state.XtX[i*len + j] += state.newXData[i] * state.newXData[j] * a;
+    
+    if (coef == NULL)
+        pfree(coefData);
+    
+	PG_RETURN_ARRAYTYPE_P(state.stateAsArray);
 }
 
 static inline float8 float8_dotProduct(ArrayType *inVec1, ArrayType *inVec2)
@@ -849,6 +969,66 @@ static inline ArrayType *float8_vectorMinus(ArrayType *inVec1, ArrayType *inVec2
 	
 	return returnVec;
 }
+
+/**
+ * Use conjugate-gradient approach to compute logistic regression coefficients.
+ *   
+ * The method we are using is known as Fletcher–Reeves method in the
+ * literature, where we use the Hestenes-Stiefel rule for calculating the step
+ * size.
+ *
+ * The gradient of \f$l(\boldsymbol c)\f$ is
+   @verbatim
+                 n
+                --  
+     ∇_c l(c) = \  (1 - σ(z_i c^T x_i)) z_i x_i
+                /_ 
+                i=1
+   @endverbatim
+ *
+ * We compute
+ *
+   @verbatim
+   For k = 0, 1, 2, ...:
+
+                       n
+                      --  
+     g_0 = ∇_c l(0) = \  (1 - σ(z_i c^T x_i)) z_i x_i
+                      /_ 
+                      i=1
+     
+     d_0 = g_0
+     
+            g_0^T d_0
+     c_0 = ----------- d_0
+           d_0^T H d_0
+       
+   For k = 1, 2, ...:
+
+     g_k = ∇_c l(c_{k-1})
+     
+            g_k^T (g_k - g_{k-1})
+     β_k = -----------------------
+           d_{k-1} (g_k - g_{k-1})
+
+     d_k = g_k - β_k d_{k-1}
+     
+                      g_k^T d_k
+     c_k = c_{k-1} + ----------- d_k
+                     d_k^T H d_k
+
+   where:
+                      n
+                     --
+     d_k^T H d_k = - \  σ(c^T x_i) (1 - σ(c^T x_i)) (d^T x_i)^2 
+                     /_
+                     i=1
+
+   and
+
+   H = the Hessian of the objective
+   @endverbatim
+ */
 
 Datum float8_cg_update_final(PG_FUNCTION_ARGS)
 {
@@ -917,11 +1097,14 @@ Datum float8_cg_update_final(PG_FUNCTION_ARGS)
 		
 		// c_k = c_{k-1} - alpha_k * d_k
 		state.coef = DatumGetArrayTypeP(
-			DirectFunctionCall2(matrix_add, PointerGetDatum(state.coef),
+			DirectFunctionCall2(matrix_add,
+                PointerGetDatum(state.coef),
 			
-			// alpha_k * d_k
-			DirectFunctionCall2(float8_matrix_smultiply,
-				PointerGetDatum(state.dir), Float8GetDatum(-alpha))));
+                // alpha_k * d_k
+                DirectFunctionCall2(float8_matrix_smultiply,
+                    PointerGetDatum(state.dir), Float8GetDatum(-alpha))
+            )
+        );
 	}
 
 	/* Construct the return tuple */
