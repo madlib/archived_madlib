@@ -415,6 +415,8 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     }
     
     width = top - bot + (int64)1;
+    
+    /* account for the fact that MIN and MAX are 1 off the true power of 2 */
     if (top == MAX_INT64 || bot == MIN_INT64)
         width++;
     
