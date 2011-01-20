@@ -1,6 +1,17 @@
-/*! \defgroup kernel-machines Support Vector Machines
+/*! 
 
-\par About
+@defgroup modeling Modeling
+
+@defgroup unsuplearn Unsupervised Learning
+@ingroup modeling
+
+@defgroup suplearn-categorization Categorization
+@ingroup suplearn
+
+@defgroup kernel-machines Support Vector Machines
+@ingroup suplearn-categorization
+
+@about
 
     Support vector machines (SVMs) and related kernel methods have been one of 
     the most popular and well-studied machine learning techniques of the 
@@ -67,12 +78,12 @@
     vector models can also be stored in tables for fast execution.
 
 
-\par Prerequisites
+@prereq
 
     - None at this point. Will need the Greenplum sparse vector 
       SVEC datatype eventually.
 
-\par Usage/API
+@usage
 
   Here are the main learning functions.
 
@@ -120,7 +131,7 @@
        madlib.drop_sv_model(modelname text).
   \endcode
 
-\par Examples
+@examp
 
 As a general first step, we need to prepare and populate an input 
 table/view with the following structure:
@@ -208,10 +219,6 @@ Example usage for novelty detection:
         testdb=# select * from madlib.svs_predict_combo('myexpnd', '{10,-10}');  
         testdb=# select * from madlib.svs_predict_combo('myexpnd', '{-1,-1}');  
         \endcode
-
-\par To Do
-
-    - Add support for sparse vectors (now it's only array of float8s).
 
 */
 
