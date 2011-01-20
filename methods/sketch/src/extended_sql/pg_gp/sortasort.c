@@ -28,9 +28,9 @@
  * \param s_sz size of s
  */
 sortasort *
-sortasort_init(sortasort *s,    
-               size_t capacity, 
-               size_t s_sz)     
+sortasort_init(sortasort *s,
+               size_t capacity,
+               size_t s_sz)
 {
     /* capacity is the size of the directory: i.e. max number of strings it can hold */
     s->capacity = capacity;

@@ -9,8 +9,8 @@
  *
  * \par Usage/API
  *   <c>fmsketch_dcount(col anytype)</c> is a UDA that can be run on any column of any type.  It returns an approximation to the number of distinct values in the column.  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  Example:\code
- *    SELECT pronargs, madlib.fmsketch_dcount(proname) 
- *      FROM pg_proc 
+ *    SELECT pronargs, madlib.fmsketch_dcount(proname)
+ *      FROM pg_proc
  *  GROUP BY pronargs;
  *    \endcode
  */
@@ -224,12 +224,12 @@ bytea *fm_new()
  */
 Datum __fmsketch_trans_c(bytea *transblob, char *input)
 {
-    fmtransval *   transval = (fmtransval *) VARDATA(transblob);
-    bytea *        bitmaps = (bytea *)transval->storage;
-    uint64         index;
-    uint8 *c;
-    int            rmost;
-    Datum          result;
+    fmtransval * transval = (fmtransval *) VARDATA(transblob);
+    bytea *      bitmaps = (bytea *)transval->storage;
+    uint64       index;
+    uint8 *      c;
+    int          rmost;
+    Datum        result;
 
     c = (uint8 *)VARDATA(DatumGetByteaP(md5_datum(input)));
 
@@ -288,13 +288,13 @@ Datum __fmsketch_count_distinct(PG_FUNCTION_ARGS)
 Datum __fmsketch_count_distinct_c(bytea *bitmaps)
 {
 /*  int R = 0; // Flajolet/Martin's R is handled by leftmost_zero */
-    uint32  S = 0;
+    uint32        S = 0;
     static double phi = 0.77351;     /*
-                                      * the magic constant 
-                                      * char out[NMAP*MD5_HASHLEN_BITS]; 
+                                      * the magic constant
+                                      * char out[NMAP*MD5_HASHLEN_BITS];
                                       */
-    int           i;
-    uint32  lz;
+    int    i;
+    uint32 lz;
 
     for (i = 0; i < NMAP; i++)
     {
@@ -399,8 +399,8 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
 /*! OR of two big bitmaps, for gathering sketches computed in parallel. */
 Datum big_or(bytea *bitmap1, bytea *bitmap2)
 {
-    bytea *      out;
-    uint32 i;
+    bytea * out;
+    uint32  i;
 
     if (VARSIZE(bitmap1) != VARSIZE(bitmap2))
         elog(ERROR,
@@ -420,7 +420,7 @@ Datum big_or(bytea *bitmap1, bytea *bitmap2)
 }
 
 /*!
- * wrapper for insertion into a sortasort. calls sorasort_try_insert and if that fails it 
+ * wrapper for insertion into a sortasort. calls sorasort_try_insert and if that fails it
  * makes more space for insertion (double or more the size) and tries again.
  * \param transblob the current transition value packed into a bytea
  * \param v the value to be inserted

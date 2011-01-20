@@ -8,7 +8,7 @@
 
 /*!
  * The directory is mostly sorted in ascending order of the vals it points
- * to, but the last < SORTA_SLOP entries are left unsorted.  Binary Search 
+ * to, but the last < SORTA_SLOP entries are left unsorted.  Binary Search
  * is used on all but those last entries, which must be scanned. At every
  * k*SORTA_SLOP'th insert, the full directory is sorted.
  */
