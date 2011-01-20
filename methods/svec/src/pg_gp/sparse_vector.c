@@ -239,7 +239,6 @@ Datum svec_in(PG_FUNCTION_ARGS)
 	if ((values=strchr(str,':')) == NULL) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Invalid input string for svec")));
 	} else {
 		*values = '\0';
@@ -262,14 +261,12 @@ Datum svec_in(PG_FUNCTION_ARGS)
 	if (num_values != *(ARR_DIMS(pgarray_vals)))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Unique value count not equal to run length count")));
 
 	/* Count array cannot have NULLs */
 	if (ARR_HASNULL(pgarray_ix))
 		ereport(ERROR,
 			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-			 errOmitLocation(true),
 			 errmsg("NULL value in the count array.")));
 
 	/* If the data array has NULLs, then we need to create an array to
@@ -305,7 +302,6 @@ Datum svec_in(PG_FUNCTION_ARGS)
 		if (u_index[i] <= 0) 
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errOmitLocation(true),
 				 errmsg("Non-positive run length in input")));
 
 		total_value_count+=u_index[i]; 

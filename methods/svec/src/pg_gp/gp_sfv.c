@@ -133,14 +133,14 @@ gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 
 void
 gp_extract_feature_histogram_usage(char *msg) {
-	ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),errOmitLocation(true),
+	ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg(
 		"%s\ngp_extract_feature_histogram requires args: IP_Address INT8\nWhere IP_Address is a 10s encoded IPV4 address.  For example: 10.4.128.1 would be entered here as the number 10004128001.",msg)));
 }
 
 void
 gp_extract_feature_histogram_errout(char *msg) {
-	ereport(ERROR,(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),errOmitLocation(true),
+	ereport(ERROR,(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
 				errmsg(
 		"%s\ngp_extract_feature_histogram internal error.",msg)));
 }
