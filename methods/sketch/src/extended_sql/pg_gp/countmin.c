@@ -4,8 +4,8 @@
  * \brief CountMin sketch implementation
  */
  
- /*! \defgroup countmin CountMin Sketch
- * \ingroup sketch
+ /*! \defgroup countmin CountMin (Cormode-Muthukrishnan)
+ * \ingroup sketches
  * \par About
  * Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
  * on integer values, implemented as user-defined aggregates.  Provides approximate counts, order statistics,

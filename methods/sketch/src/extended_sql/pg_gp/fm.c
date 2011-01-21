@@ -5,8 +5,8 @@
  */
  
  /*!
- * \defgroup fmsketch FM Sketch
- * \ingroup sketch
+ * \defgroup fmsketch FM (Flajolet-Martin)
+ * \ingroup sketches
  * \par About
  * Flajolet-Martin JCSS 1985 distinct count estimation
  * implemented as a user-defined aggregate.

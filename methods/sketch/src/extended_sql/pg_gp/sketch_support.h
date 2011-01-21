@@ -6,7 +6,8 @@
 #ifndef SKETCH_SUPPORT_H
 #define SKETCH_SUPPORT_H
 
-/*! \defgroup descriptive Descriptive Statistics 
+<<<<<<< HEAD
+/*! \defgroup desc-stats Descriptive Statistics 
  *
  * \par About:
  * SQL aggregation functions (COUNT, SUM, MAX, MIN, AVG, STDDEV) are only
@@ -27,8 +28,7 @@
  *  - frequent-value counting
  */
 
-/*! \defgroup sketch Sketch-based Approximations
- *  \ingroup descriptive
+/*! \defgroup sketches
  *
  * \par About:
  * There is a large body of research on small-space "sketch" techniques (sometimes called "synopsis data structures") for approximating properties of large data sets in a single pass.  Some of that work was targeted at stream or network processing, but it's equally applicable to large stored datasets.  Sketches are particularly useful for profiling multiple columns of a large table in a single pass.  This module currently implements user-defined aggregates for three main sketch methods:
