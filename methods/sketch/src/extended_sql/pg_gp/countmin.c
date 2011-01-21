@@ -7,8 +7,9 @@
  /*! \defgroup countmin CountMin Sketch
  * \ingroup sketch
  * \par About
- * Cormode-Muthukrishnan CountMin sketch
- * implemented as a user-defined aggregate, with user-defined functions to make estimations using it.
+ * Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
+ * on integer values, implemented as user-defined aggregates.  Provides approximate counts, order statistics,
+ * and histograms.
  * \par
  * The basic CountMin sketch is a set of DEPTH arrays, each with NUMCOUNTERS counters.
  * The idea is that each of those arrays is used as an independent random trial of the
@@ -52,17 +53,15 @@
  * GROUP BY relnamespace;
  *  \endcode
  *  - <c>cmsketch_width_histogram(cmsketch(intcol int8), min(intcol int8), max(intcol int8), nbuckets int4)</c>  is a <i>UDF</i> that takes three aggregates of a column <c>col</c> -- cmsketch, min and max-- as well as a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
- *   SELECT relnamespace,
- *          madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), min(oid::int8), max(oid::int8), 10)
- *     FROM pg_class
- * GROUP BY relnamespace;
+ *   SELECT madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), min(oid::int8), max(oid::int8), 10)
+ *     FROM pg_class;
  *  \endcode
  *  - <c>cmsketch_depth_histogram(intcol int8, nbuckets int4)</c> is a UDA that takes a column <c>col</c> and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
- *   SELECT relnamespace,
- *          madlib.cmsketch_depth_histogram(oid::int8, 10)
- *     FROM pg_class
- * GROUP BY relnamespace;
+ *   SELECT madlib.cmsketch_depth_histogram(oid::int8, 10)
+ *     FROM pg_class;
  *  \endcode
+ *
+ * \sa quantile
  */
 
 #include "postgres.h"
@@ -729,9 +728,13 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
             if (i > 0 && centile <= histo[nextbucket-1][1])
                 /* next centile is lower than previous; skip */
                 continue;
+            histo[nextbucket][1] = centile;
+        }
+        else {
+            /* this is the top bucket */
+            histo[nextbucket][1] = MAX_INT64;
         }
         histo[nextbucket][0] = Int64GetDatum(binlo);
-        histo[nextbucket][1] = ((i == buckets - 1) ? MAX_INT64 : centile);
         histo[nextbucket][2] = cmsketch_rangecount_c(transval,
                                             DatumGetInt64(histo[nextbucket][0]),
                                             DatumGetInt64(histo[nextbucket][1]));
