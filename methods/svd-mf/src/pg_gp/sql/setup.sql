@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- SVD sparse unit test : setup
 --------------------------------------------------------------------------------
-SET client_min_message=warning;
+set client_min_messages=warning;
 CREATE SCHEMA madlib_svdsparse_test;
 
 --------------------------------------------------------------------------------
@@ -26,7 +26,7 @@ CREATE TABLE madlib_svdsparse_test.test(
 ) DISTRIBUTED BY (row_num);
 
 FOR i IN 1..$1 LOOP
-	EXECUTE 'INSERT INTO test SELECT '||i||', gen.a, CAST((gen.a*'||i||') AS FLOAT) FROM (SELECT CAST((random()*'||$2||'+1) AS INT) AS a FROM generate_series(1,'||$2/$3||')) as gen';
+	EXECUTE 'INSERT INTO madlib_svdsparse_test.test SELECT '||i||', gen.a, CAST((gen.a*'||i||') AS FLOAT) FROM (SELECT CAST((random()*'||$2||'+1) AS INT) AS a FROM generate_series(1,'||$2/$3||')) as gen';
 END LOOP;
 end
 $$ LANGUAGE plpgsql;
@@ -54,7 +54,7 @@ CREATE TABLE madlib_svdsparse_test.test(
 ) DISTRIBUTED BY (row_num);
 
 FOR i IN 1..$1 LOOP
-	EXECUTE 'INSERT INTO test SELECT '||i||', gen.a, random() FROM (SELECT CAST((random()*'||$2||'+1) AS INT) AS a FROM generate_series(1,'||$2/$3||')) as gen';
+	EXECUTE 'INSERT INTO madlib_svdsparse_test.test SELECT '||i||', gen.a, random() FROM (SELECT CAST((random()*'||$2||'+1) AS INT) AS a FROM generate_series(1,'||$2/$3||')) as gen';
 END LOOP;
 end
 $$ LANGUAGE plpgsql;

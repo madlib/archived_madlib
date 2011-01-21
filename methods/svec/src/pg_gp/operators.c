@@ -30,7 +30,6 @@ void check_dimension(SvecType *svec1, SvecType *svec2, char *msg) {
 	    (svec1->dimension != svec2->dimension)) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("%s: array dimension of inputs are not the same: dim1=%d, dim2=%d\n",
 				msg, svec1->dimension, svec2->dimension)));
 	}
@@ -78,7 +77,6 @@ Datum svec_concat_replicate(PG_FUNCTION_ARGS)
 	if (multiplier < 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("multiplier cannot be negative")));
 
 	SvecType *svec = PG_GETARG_SVECTYPE_P(1);
@@ -146,7 +144,6 @@ Datum svec_append(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(2))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("count argument cannot be null")));
 
 	run_len = PG_GETARG_INT64(2);
@@ -244,13 +241,11 @@ Datum svec_change(PG_FUNCTION_ARGS)
 	if (idx < 1 || idx > inlen) 
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Invalid start index")));
 	
 	if (idx+midlen-1 > inlen)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Change vector is too long")));
 
 	if (idx >= 2) head = subarr(indata, 1, idx-1);
@@ -466,7 +461,6 @@ pow_svec_by_scalar_internal(SvecType *svec1, SvecType *svec2)
 	case 1:			//left arg is scalar
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Svec exponentiation is undefined when the right argument is a vector")));
 		break;
 	case 2:			//right arg is scalar
@@ -571,7 +565,6 @@ Datum svec_count(PG_FUNCTION_ARGS)
 	if (left->total_value_count != right->total_value_count)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("Array dimension of inputs are not the same: dim1=%d, dim2=%d\n",
 				left->total_value_count, right->total_value_count)));
 	
@@ -780,18 +773,15 @@ Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 	if (ARR_ELEMTYPE(A_PG) != FLOAT8OID)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("svec_cast_float8arr only defined over float8[]")));
 	if (ARR_NDIM(A_PG) != 1)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("svec_cast_float8arr only defined over 1 dimensional arrays")));
 	
 	if (ARR_NULLBITMAP(A_PG))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errOmitLocation(true),
 			 errmsg("svec_cast_float8arr does not allow null bitmaps on arrays")));
 
 	/* Extract array */

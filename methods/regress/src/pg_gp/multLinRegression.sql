@@ -86,25 +86,31 @@ AS 'multLinRegression'
 LANGUAGE C
 IMMUTABLE STRICT;
 
-CREATE TYPE madlib.LRegrState AS (
-	iteration	INTEGER,
-	len		INTEGER,
-	coef	DOUBLE PRECISION[],
-	dir		DOUBLE PRECISION[],
-	grad	DOUBLE PRECISION[],
-	beta	DOUBLE PRECISION,
+CREATE TYPE madlib.logregr_cg_state AS (
+	iteration		INTEGER,
+	len				INTEGER,
+	coef			DOUBLE PRECISION[],
+	dir				DOUBLE PRECISION[],
+	grad			DOUBLE PRECISION[],
+	beta			DOUBLE PRECISION,
 
-	count	BIGINT,
-	gradNew	DOUBLE PRECISION[],
-	dTHd	DOUBLE PRECISION
+	count			BIGINT,
+	gradNew			DOUBLE PRECISION[],
+	dTHd			DOUBLE PRECISION,
+	logLikelihood	DOUBLE PRECISION
+);
+
+CREATE TYPE madlib.logregr_irls_state AS (
+	coef			DOUBLE PRECISION[],
+	logLikelihood	DOUBLE PRECISION
 );
 
 CREATE FUNCTION madlib.float8_cg_update_accum(
-	madlib.LRegrState,
+	madlib.logregr_cg_state,
 	BOOLEAN,
 	DOUBLE PRECISION[],
-	madlib.LRegrState)
-RETURNS madlib.LRegrState
+	madlib.logregr_cg_state)
+RETURNS madlib.logregr_cg_state
 AS 'multLinRegression'
 LANGUAGE C;
 
@@ -112,27 +118,32 @@ CREATE FUNCTION madlib.float8_irls_update_accum(
 	DOUBLE PRECISION[],
 	BOOLEAN,
 	DOUBLE PRECISION[],
-	DOUBLE PRECISION[])
+	madlib.logregr_irls_state)
 RETURNS DOUBLE PRECISION[]
 AS 'multLinRegression'
 LANGUAGE C;
 
-CREATE FUNCTION madlib.float8_cg_update_final(madlib.LRegrState)
-RETURNS madlib.LRegrState
+CREATE FUNCTION madlib.float8_cg_update_final(madlib.logregr_cg_state)
+RETURNS madlib.logregr_cg_state
 AS 'multLinRegression'
 LANGUAGE C STRICT;
 
-CREATE AGGREGATE madlib.logreg_cg_step(BOOLEAN, DOUBLE PRECISION[], madlib.LRegrState) (
+CREATE FUNCTION madlib.float8_irls_update_final(DOUBLE PRECISION[])
+RETURNS madlib.logregr_irls_state
+AS 'multLinRegression'
+LANGUAGE C STRICT;
+
+CREATE AGGREGATE madlib.logreg_cg_step(BOOLEAN, DOUBLE PRECISION[], madlib.logregr_cg_state) (
 	SFUNC=madlib.float8_cg_update_accum,
-	STYPE=madlib.LRegrState,
+	STYPE=madlib.logregr_cg_state,
 	FINALFUNC=madlib.float8_cg_update_final
 );
 
-CREATE AGGREGATE madlib.logreg_irls_step(BOOLEAN, DOUBLE PRECISION[], DOUBLE PRECISION[]) (
+CREATE AGGREGATE madlib.logreg_irls_step(BOOLEAN, DOUBLE PRECISION[], madlib.logregr_irls_state) (
 	SFUNC=madlib.float8_irls_update_accum,
 	STYPE=float8[],
 	PREFUNC=madlib.float8_mregr_combine,
-	FINALFUNC=madlib.float8_mregr_coef,
+	FINALFUNC=madlib.float8_irls_update_final,
 	INITCOND='{0}'
 );
 
@@ -154,6 +165,7 @@ RETURNS DOUBLE PRECISION[] AS $$
 	return logRegress.compute_logreg_coef(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
 
+
 CREATE FUNCTION madlib.logreg_coef(
 	"source" VARCHAR,
 	"depColumn" VARCHAR,
@@ -163,6 +175,7 @@ RETURNS DOUBLE PRECISION[] AS $$
 	import logRegress
 	return logRegress.compute_logreg_coef(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
+
 
 CREATE FUNCTION madlib.logreg_coef(
 	"source" VARCHAR,
@@ -175,6 +188,7 @@ RETURNS DOUBLE PRECISION[] AS $$
 	return logRegress.compute_logreg_coef(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
 
+
 --! Logistic regression
 --! 
 --! @param source Name of the source relation containing the training data
@@ -182,9 +196,12 @@ $$ LANGUAGE plpythonu VOLATILE;
 --! @param indepColumn Name of the independent column (of type DOUBLE
 --!		PRECISION[])
 --! @param numIterations The maximum number of iterations
---! @param optimizer The optimizer to use (either 'ilrs'/'newton' for
---!		iteratively reweighted least squares or 'cg' for conjugent gradient)
---! @param precision 
+--! @param optimizer The optimizer to use (either
+--!		<tt>'ilrs'</tt>/<tt>'newton'</tt> for iteratively reweighted least
+--!		squares or <tt>'cg'</tt> for conjugent gradient)
+--! @param precision The difference between log-likelihood values in successive
+--!		iterations that should indicate convergence, or 0 indicating that
+--!		log-likelihood values should be ignored
 CREATE FUNCTION madlib.logreg_coef(
 	"source" VARCHAR,
 	"depColumn" VARCHAR,
@@ -197,12 +214,13 @@ RETURNS DOUBLE PRECISION[] AS $$
 	return logRegress.compute_logreg_coef(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
 
+
 CREATE FUNCTION madlib.logr_coef(iterations INTEGER)
-RETURNS madlib.LRegrState
+RETURNS madlib.logregr_cg_state
 AS $$
 DECLARE
 	i INTEGER;
-	state madlib.LRegrState;
+	state madlib.logregr_cg_state;
 BEGIN
 	state := NULL;
 	FOR i in 1..iterations LOOP

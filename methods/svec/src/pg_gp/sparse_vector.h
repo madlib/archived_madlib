@@ -4,9 +4,14 @@
  *
  */
 
-/*! \defgroup svec Sparse Vectors
+/*! 
 
-\par About
+@defgroup support Support Modules
+
+@defgroup svec Sparse Vectors
+@ingroup support
+
+@about
 
 This module implements a sparse vector data type named "svec", which 
 gives compressed storage of sparse vectors with many duplicate elements.
@@ -52,8 +57,11 @@ When we use arrays of floating point numbers for various calculations,
     The current version only supports sparse vectors of float8
     values. Future versions will support other base types.
 
+@usage
 
-\par Usage
+    Syntax reference can be found in gp_svec.sql_in.
+
+@examp
 
     We can input an array directly as an svec as follows: 
 \code   
@@ -316,18 +324,6 @@ When we use arrays of floating point numbers for various calculations,
 
     Other extensive examples of svecs usage can be found in the k-means
     module.
-
-\par Reference:
-
-    Syntax reference can be found in gp_svec.sql_in.
-
-\par Todo
-
-    - Support for other base types.
-
-    - Indexing on svecs. This requires indexing capability on arrays,
-      which is currently unsupported in GP.  
-
 
 */
 
