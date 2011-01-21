@@ -6,7 +6,7 @@
 #ifndef SKETCH_SUPPORT_H
 #define SKETCH_SUPPORT_H
 
-/*! \defgroup sketch
+/*! \defgroup sketches
  *
  * \par About:
  * There is a large body of research on small-space "sketch" techniques (sometimes called "synopsis data structures") for approximating properties of large data sets in a single pass.  Some of that work was targeted at stream or network processing, but it's equally applicable to large stored datasets.  Sketches are particularly useful for profiling multiple columns of a large table in a single pass.  This module currently implements user-defined aggregates for three main sketch methods:

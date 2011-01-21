@@ -5,8 +5,8 @@
  */
  
  /*!
- * \defgroup mfvsketch MFV Sketch
- * \ingroup countmin
+ * \defgroup mfvsketch MFV (Most Frequent Values)
+ * \ingroup sketches
  * \par About
  * MFVSketch: Most Frequent Values variant of CountMin sketch.
  * This is basically a CountMin sketch that keeps track of most frequent values

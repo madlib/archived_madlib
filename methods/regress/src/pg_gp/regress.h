@@ -7,7 +7,7 @@
  *//* ----------------------------------------------------------------------- */
 
 /**
- * @defgroup regression Regression
+ * @defgroup suplearn-regression
  *
  * @about
  *
