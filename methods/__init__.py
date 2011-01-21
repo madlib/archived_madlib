@@ -24,7 +24,7 @@ MADlib front page: http://madlib.net/
 
 @defgroup desc-stats Descriptive Statistics
 
-    @defgroup sketches Sketches
+    @defgroup sketches Sketch-based Estimators
     @ingroup desc-stats
 
 @defgroup sampling Sampling Methods
