@@ -14,7 +14,7 @@ changequote(`</m4>', `<m4>') </m4>
 
 Logistic Regression: Driver functions
 
-@defgroup logRegress Logistic Regression
+@defgroup grp_logreg Logistic Regression
 @ingroup regression
 
 @about
@@ -62,7 +62,8 @@ logistic regression in MADlib can use one of two algorithms:
 
 @prereq
 
-Implemented in C for PostgreSQL/Greenplum.
+Implemented in C (the computation) and Python (the driver/outer loop) for
+PostgreSQL/Greenplum.
 
 @usage
 
@@ -71,16 +72,54 @@ Implemented in C for PostgreSQL/Greenplum.
    BOOLEAN, <em>independentVariables</em> DOUBLE PRECISION[], [...])</tt>  
 -# Run the logistic regression by:\n
    <tt>SELECT logregr_coef('<em>sourceName</em>', '<em>dependentVariable</em>',
-   '<em>independentVariables</em>')</tt>
+   '<em>independentVariables</em>', <em>numIterations</em>,
+   '<em>optimizer</em>', <em>precision</em>)</tt>\n
+   The last three arguments are optional and can be omitted, in which case
+   default values will be used. See compute_logreg_coef().
    
+@examp
+
+@verbatim
+# select * from artificiallogreg;
+ y |                           x                           
+---+-------------------------------------------------------
+ t | {-1.19845,1.15366,0.941779,-0.23669,-0.711024}
+ f | {-0.0680205,-0.716733,-0.149781,-0.410448,-0.0843123}
+ f | {-0.330021,0.222596,-0.976091,0.773816,-1.06238}
+ f | {0.648293,0.286225,0.524144,-0.141286,-1.41774}
+ f | {0.859484,-0.412929,-0.273368,-0.243059,0.714789}
+[...]
+
+# select madlib.logreg_coef(
+#     'artificiallogreg', 'y', 'x', 20, 'irls', 0.001
+# )::REAL[];
+                 logreg_coef                 
+---------------------------------------------
+ {-3.0307,3.63312,0.714105,-1.72496,1.37484}
+@endverbatim
+
+@sa namespace logRegress (documenting the driver/outer loop implemented in
+	Python), function float8_cg_update_final() (documenting the
+	conjugate-gradient update/iteration steps, implemented in C), function
+	float8_cg_update_accum() (documenting the 
+	iteratively-reweighted-least-squares update/iteration steps, implemented in
+	C)
+
 @literature
 
-[1] Cosma Shalizi, Statistics 36-350: Data Mining, Lecture Notes, 18 November
+A somewhat random selection of nice write-ups, with valuable pointers into
+further literature:
+
+[1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
 
-[2] Thomas P. Minka, A comparison of numerical optimizers for logistic
+[2] Thomas P. Minka: A comparison of numerical optimizers for logistic
     regression, 2003 (revised Mar 26, 2007),
     http://research.microsoft.com/en-us/um/people/minka/papers/logreg/minka-logreg.pdf
+
+[3] Paul Komarek, Andrew W. Moore: Making Logistic Regression A Core Data Mining
+    Tool With TR-IRLS, IEEE International Conference on Data Mining 2005,
+    pp. 685-688, http://komarix.org/ac/papers/tr-irls.short.pdf
 """
 
 import plpy
@@ -171,8 +210,7 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
     plpy.execute("""
         SET client_min_messages = error;
         DROP TABLE IF EXISTS _madlib_iterative_alg;
-		CREATE TABLE _madlib_iterative_alg (
-        --CREATE TEMPORARY TABLE _madlib_iterative_alg (
+		CREATE TEMPORARY TABLE _madlib_iterative_alg (
             iteration INTEGER PRIMARY KEY,
             state {stateType}
         );
@@ -197,7 +235,7 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
     # conversion)
     
     returnValue = plpy.execute(returnSQL.format(**locals()))[0]['return_value']
-#    plpy.execute("DROP TABLE _madlib_iterative_alg")
+    plpy.execute("DROP TABLE _madlib_iterative_alg")
     return returnValue
 
 
@@ -280,10 +318,8 @@ def compute_logreg_coef(**kwargs):
     Compute logistic regression coefficients
     
     This method serves as an interface to different optimization algorithms.
-    
-    @todo
-    - It would be great if this method automatically chose the algorithm
-      that is expected to work best.
+    By default, iteratively reweighted least squares is used, but for data with
+    a lot of columns the conjugate-gradient method might perform better.
     
     @param source Name of relation containing the training data
     @param depColumn Name of dependent column in training data (of type BOOLEAN)
@@ -291,8 +327,8 @@ def compute_logreg_coef(**kwargs):
            DOUBLE PRECISION[])
     
     Optionally also provide the following:
-    @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively reweighted least squares,
-           'cg': conjugate gradient (default = 'cg')
+    @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
+        reweighted least squares, 'cg': conjugate gradient (default = 'irls')
     @param numIterations Maximum number of iterations (default = 20)
     @param precision Terminate if two consecutive iterations have a difference 
            in the log-likelihood of less than <tt>precision</tt>. In other
@@ -305,7 +341,7 @@ def compute_logreg_coef(**kwargs):
     
     """
     if not 'optimizer' in kwargs:
-        kwargs.update(optimizer = 'cg')
+        kwargs.update(optimizer = 'irls')
     if not 'numIterations' in kwargs:
         kwargs.update(numIterations = 20)
     if not 'precision' in kwargs:

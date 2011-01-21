@@ -15,7 +15,9 @@
 /* Use C++ */
 %option c++
 
-%option never-interactive
+/* instructs flex to generate a batch scanner, the opposite of interactive
+ * scanners */
+%option batch
 
 /* change the name of the scanner class. results in "SQLFlexLexer" */
 %option prefix="SQL"
@@ -42,14 +44,15 @@
 	
 	#include "sql.parser.hh"
 
-	#include <string>	
+	#include <string>
 
 	/* import the parser's token type into a local typedef */
 	typedef bison::SQLParser::token	token;
 
+	/* FIXME: Make class variables */
 	int		stringCaller;
 	char	*stringLiteralQuotation = NULL;
-
+	
 	/* YY_USER_ACTION is called from the lex() function, which has the signature
 	 * and name as defined by macro YY_DECL. yylval, yylloc, and driver are
 	 * arguments. */
@@ -58,8 +61,11 @@
 
 /* Definitions */
 CREATE_FUNCTION "CREATE"{SPACE}("OR"{SPACE}"REPLACE"{SPACE})?"FUNCTION"
+CREATE_AGGREGATE "CREATE"{SPACE}"AGGREGATE"
 COMMENT "--".*$
+CCOMMENT "/*"([^\*]|\*[^/])*"*/"
 IDENTIFIER [[:alpha:]_][[:alnum:]_]*
+QUOTED_IDENTIFIER "\""{IDENTIFIER}"\""
 INTEGER [[:digit:]]+
 SPACE [[:space:]]+
 DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
@@ -71,6 +77,9 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 %s sFUNC_DECL
 %s sFUNC_ARGLIST
 %s sFUNC_OPTIONS
+%s sAGG_DECL
+%s sAGG_ARGLIST
+%s sAGG_OPTIONS
 %x sSTRING_LITERAL
 %x sDOLLAR_STRING_LITERAL
 
@@ -80,7 +89,7 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 
 	/* Contiguity of comment blocks is meaningful and therefore has to be
 	 * preserved. Note that input . is handled below */
-<sAFTER_COMMENT>\n[[:space:]]* {
+<sAFTER_COMMENT>[[:space:]]*\n[[:space:]]* {
 	BEGIN(INITIAL);
 	return '\n';
 }
@@ -89,14 +98,24 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 {SPACE}
 
 {COMMENT} {
-	*yylval = static_cast<char *>( malloc(yyleng - 1) );
-	strcpy(*yylval, yytext + 2);
+	yytext[0] = yytext[1] = '/';
+	*yylval = static_cast<char *>( malloc(yyleng + 2) );
+	strcpy(*yylval, yytext);
+	(*yylval)[yyleng] = '\n'; 
+	(*yylval)[yyleng + 1] = 0; 
 	BEGIN(sAFTER_COMMENT);
 	
 	/* consume the newline character (we thus need to advance the line count) */
 	yyinput();
 	yylloc->lines(1);
 	
+	return token::COMMENT;
+}
+
+	/* If only whitespace and a newline follow, also consume that */
+{CCOMMENT}([[:space:]]*\n[[:space:]]*)? {
+	*yylval = strdup(yytext);
+	BEGIN(sAFTER_COMMENT);
 	return token::COMMENT;
 }
 
@@ -144,11 +163,27 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 
 {CREATE_FUNCTION} { BEGIN(sFUNC_DECL); return token::CREATE_FUNCTION; }
 
-<sFUNC_DECL>"(" { BEGIN(sFUNC_ARGLIST); return '('; }
-<sFUNC_ARGLIST>")" { BEGIN(sFUNC_OPTIONS); return ')'; }
+{CREATE_AGGREGATE} { BEGIN(sAGG_DECL); return token::CREATE_AGGREGATE; }
+
+<sFUNC_DECL,sAGG_DECL>"(" {
+	if (YY_START == sFUNC_DECL)
+		BEGIN(sFUNC_ARGLIST);
+	else
+		BEGIN(sAGG_ARGLIST);
+
+	return '(';
+}
+<sFUNC_ARGLIST,sAGG_ARGLIST>")" {
+	if (YY_START == sFUNC_ARGLIST)
+		BEGIN(sFUNC_OPTIONS);
+	else
+		BEGIN(sAGG_OPTIONS);
+
+	return ')';
+}
 
 	/* We disallow using the following keywords as argument names */
-<sFUNC_ARGLIST,sFUNC_OPTIONS>{
+<sFUNC_ARGLIST,sFUNC_OPTIONS,sAGG_ARGLIST,sAGG_OPTIONS>{
 	"IN" return token::IN;
 	"OUT" return token::OUT;
 	"INOUT" return token::INOUT;
@@ -179,8 +214,21 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 	("EXTERNAL"{SPACE})?"SECURITY"{SPACE}"DEFINER" return token::SECURITY_DEFINER;
 }
 
-<sFUNC_DECL,sFUNC_ARGLIST,sFUNC_OPTIONS>{
-	{IDENTIFIER} { *yylval = strdup(yytext); return token::IDENTIFIER; }
+	/* We disallow using the following keywords as argument names */
+<sAGG_ARGLIST,sAGG_OPTIONS>{
+	"SFUNC" return token::SFUNC;
+	"PREFUNC" return token::PREFUNC;
+	"FINALFUNC" return token::FINALFUNC;
+	"STYPE" return token::STYPE;
+	"INITCOND" return token::INITCOND;
+	"SORTOP" return token::SORTOP;
+}
+
+<sFUNC_DECL,sFUNC_ARGLIST,sFUNC_OPTIONS,sAGG_DECL,sAGG_ARGLIST,sAGG_OPTIONS>{
+	{QUOTED_IDENTIFIER} {
+		yytext[yyleng - 1] = 0; *yylval = strdup(yytext + 1); return token::IDENTIFIER;
+	}
+	{IDENTIFIER} { *yylval = strlowerdup(yytext); return token::IDENTIFIER; }
 	{INTEGER} { *yylval = strdup(yytext); return token::INTEGER_LITERAL; }
 	[^;]|\n return yytext[0];
 }
@@ -214,6 +262,13 @@ SQLScanner::SQLScanner(std::istream *arg_yyin, std::ostream *arg_yyout) :
 }
 
 SQLScanner::~SQLScanner() {
+}
+
+char *SQLScanner::strlowerdup(const char *inString) {
+	char *returnStr = strdup(inString);
+	for (int i = 0; returnStr[i]; i++)
+		returnStr[i] = tolower(returnStr[i]);
+	return returnStr;
 }
 
 void SQLScanner::preScannerAction(SQLParser::semantic_type *yylval,

@@ -1,13 +1,11 @@
-/* -----------------------------------------------------------------------------
+/* ----------------------------------------------------------------------- *//** 
  *
- * regress.c
+ * @file regress.c
  *
- * Multi-Linear Regression.
+ * @brief Multi-linear and logistic regression
+ * @author Florian Schoppmann
  *
- * Copyright (c) 2010, EMC
- *
- * -----------------------------------------------------------------------------
- */
+ *//* ----------------------------------------------------------------------- */
 
 #include "postgres.h"
 
@@ -20,6 +18,7 @@
 #include "catalog/pg_type.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "executor/executor.h" // Greenplum requires this for GetAttributeByNum()
 
 #include <math.h>
 #include <string.h>
@@ -35,6 +34,10 @@ PG_FUNCTION_INFO_V1(float8_mregr_tstats);
 PG_FUNCTION_INFO_V1(float8_mregr_pvalues);
 
 
+/**
+ * @internal
+ * @brief Transition state for multi-linear regression functions.
+ */
 typedef struct {
     ArrayType   *stateAsArray;
     float8      *len;
@@ -48,6 +51,10 @@ typedef struct {
     float8      *newXData;
 } MRegrAccumState;
 
+/**
+ * @internal
+ * @brief Final state for multi-linear regression functions.
+ */
 typedef struct {
 	int			len;		/* scalar:               len(X[]) */
 	float8		count;		/* scalar:               count(*) */
@@ -178,6 +185,9 @@ float8_mregr_accum_get_state(PG_FUNCTION_ARGS,
 }
 
 
+/**
+ * Transition function used by multi-linear regression aggregates.
+ */
 Datum
 float8_mregr_accum(PG_FUNCTION_ARGS)
 {
@@ -211,6 +221,10 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 }
 
 
+/**
+ * Preliminary segment-level calculation function for multi-linear regression
+ * aggregates.
+ */
 Datum
 float8_mregr_combine(PG_FUNCTION_ARGS)
 {
@@ -304,18 +318,17 @@ float8_mregr_combine(PG_FUNCTION_ARGS)
 }
 
 
-/*
- * float8_mregr_get_state()
- *
+/**
  * Check that a valid state is passed to the aggregate's final function.
- * PG_FUNCTION_ARGS expands to "FunctionCallInfo fcinfo". If we return
- * false, the calling function should return NULL.
  */
-
 static bool
 float8_mregr_get_state(PG_FUNCTION_ARGS,
 					   MRegrState *outState)
 {
+    /* PG_FUNCTION_ARGS expands to "FunctionCallInfo fcinfo". If we return
+     * false, the calling function should return NULL.
+     */
+    
 	Datum		tempDatum;
 	ArrayType	*in;
 	float8		*data;
@@ -387,13 +400,42 @@ float8_mregr_get_state(PG_FUNCTION_ARGS,
 	return true;
 }
 
-/*
- * float8_mregr_compute()
+/**
+ * Do the computations requested from final functions.
  *
  * Compute regression coefficients, coefficient of determination (R^2),
  * t-statistics, and p-values whenever the respective argument is non-NULL.
- */
+ * Since these functions share a lot of computation, they have been distilled
+ * into this function.
+ *
+ * First, we compute the regression coefficients, often called b or beta in
+ * the literature.
+ * Vector of coefficients c is found via the formula:
+   @verbatim
+   
+     c = (X^T X)+ * X^T * y = X+ * y
 
+   where:
+   
+     X' = the transpose of X
+     X+ = the pseudo-inverse of X
+   @endverbatim
+ * The identity \f$ X^+ = (X^T X)^+ X^T \f$ holds for all matrices $X$, a proof
+ * can be found here:
+ * http://en.wikipedia.org/wiki/Proofs_involving_the_Moore%2DPenrose_pseudoinverse
+ *
+ * Note that when the system \f$ X \boldsymbol c = y \f$ is satisfiable (because
+ * \f$ (X|\boldsymbol c) \f$ has rank at most <tt>inState->len</tt>), then
+ * setting \f$ \boldsymbol c = X^+ y \f$ means that
+ * \f$ |\boldsymbol c|_2 \le |\boldsymbol d|_2 \f$ for all solutions
+ * \f$ \boldsymbol d \f$ satisfying \f$ X \boldsymbol c = y \f$.
+ * (See http://en.wikipedia.org/wiki/Moore%2DPenrose_pseudoinverse)
+ *
+ * Explicitly computing $(X^T X)^+$ can become a significant source of numerical
+ * rounding erros (see, e.g., 
+ * http://en.wikipedia.org/wiki/Moore%2DPenrose_pseudoinverse#Construction
+ * or http://www.mathworks.com/moler/leastsquares.pdf p.16).
+ */
 static void
 float8_mregr_compute(MRegrState	*inState,
 					 ArrayType	**outCoef,
@@ -406,27 +448,6 @@ float8_mregr_compute(MRegrState	*inState,
 	float8		ssr, tss, ess, r2, variance;
 	float8		*coef, *XtXinv, *tstats, *pvalues;
 	int			i;
-	
-	/* 
-	 * First, we compute the regression coefficients, often called b or beta in
-	 * the literature.
-	 * Vector of coefficients b is found via the formula:
-	 *      b = (X'X)+ * X' * y = X+ * y
-	 *
-	 * The identity X+ = (X'X)+ * X' holds for all matrices X, a proof can be
-	 * found here:
-	 * http://en.wikipedia.org/wiki/Proofs_involving_the_Moore–Penrose_pseudoinverse
-	 *
-	 * Note that when the system X b = y is satisfiable (because X has rank at
-	 * most inState->len), then setting b = X+ * y means that |b|_2 <=
-	 * |c|_2 for all solutions c satisfying X c = y.
-	 * (See http://en.wikipedia.org/wiki/Moore–Penrose_pseudoinverse)
-	 *
-	 * Explicitly computing (X'X)+ can become a significant source of numerical
-	 * rounding erros (see, e.g., 
-	 * http://en.wikipedia.org/wiki/Moore–Penrose_pseudoinverse#Construction
-	 * or http://www.mathworks.com/moler/leastsquares.pdf p.16).
-	 */
 	
 	temp_datum = DirectFunctionCall2(matrix_multiply, PointerGetDatum(inState->_XtX_inv),
 									 PointerGetDatum(inState->Xty));
@@ -441,12 +462,15 @@ float8_mregr_compute(MRegrState	*inState,
 	
     if (outR2 || outTStats || outPValues)
     {    
-        /* 
-         * Next, we compute the total sum of squares (tss) and the explained sumed
-         * of squares (ssr).
-         *     ssr = y'X * b - sum(y)^2/c
-         *     tss = sum(y^2) - sum(y)^2/c
-         *     R^2 = ssr/tss
+        /**
+         * \par Computing the total sum of squares (tss) and the explained sum of squares (ssr)
+         *
+           @verbatim
+           
+             ssr = y'X * c - sum(y)^2/c
+             tss = sum(y^2) - sum(y)^2/c
+             R^2 = ssr/tss
+           @endverbatim
          */
         temp_datum = DirectFunctionCall2(matrix_multiply, PointerGetDatum(inState->_Xty_t),
                                          PointerGetDatum(coef_array));
@@ -463,7 +487,9 @@ float8_mregr_compute(MRegrState	*inState,
 	
 	if (outTStats || outPValues)
 	{
-		/*
+		/**
+         * \par Computing t-statistics and p-values
+         *
 		 * Total sum of squares (tss) = Residual Sum of sqaures (ess) +
 		 * Explained Sum of Squares (ssr) for linear regression.
 		 * Proof: http://en.wikipedia.org/wiki/Sum_of_squares
@@ -476,9 +502,12 @@ float8_mregr_compute(MRegrState	*inState,
 		coef = (float8 *) ARR_DATA_PTR(coef_array);
 		XtXinv = (float8 *) ARR_DATA_PTR(inState->_XtX_inv);
 		
-		/* The test statistics for each coef[i] is coef[i] / se(coef[i])
-		 * where se(coef[i]) is the standard error of coef[i], i.e.,
-		 * the square root of the i'th diagonoal element of variance * (X'X)^{-1} */
+		/**
+         * The t-statistic for each $c_i$ is $c_i / se(c_i)$
+		 * where $se(c_i)$ is the standard error of $c_i$, i.e.,
+		 * the square root of the i'th diagonoal element of
+         * \f$ \mathit{variance} * (X^T X)^{-1} \f$
+         */
 		tstats = (float8*) palloc(inState->len * sizeof(float8));
 		for (i = 0; i < inState->len; i++)
 			tstats[i] = coef[i] / sqrt( variance * XtXinv[i * (inState->len + 1)] );
@@ -507,6 +536,11 @@ float8_mregr_compute(MRegrState	*inState,
 }
 
 
+/**
+ * PostgreSQL final function for computing regression coefficients.
+ *
+ * This function is essentially a wrapper for float8_mregr_compute().
+ */
 Datum float8_mregr_coef(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -523,7 +557,11 @@ Datum float8_mregr_coef(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(coef);
 }
 
-
+/**
+ * PostgreSQL final function for computing the coefficient of determination, $R^2$.
+ *
+ * This function is essentially a wrapper for float8_mregr_compute().
+ */
 Datum float8_mregr_r2(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -540,7 +578,11 @@ Datum float8_mregr_r2(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(r2);
 }
 
-
+/**
+ * PostgreSQL final function for computing the vector of t-statistics, for every coefficient.
+ *
+ * This function is essentially a wrapper for float8_mregr_compute().
+ */
 Datum float8_mregr_tstats(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -557,7 +599,11 @@ Datum float8_mregr_tstats(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(tstats);
 }
 
-
+/**
+ * PostgreSQL final function for computing the vector of p-values, for every coefficient.
+ *
+ * This function is essentially a wrapper for float8_mregr_compute().
+ */
 Datum float8_mregr_pvalues(PG_FUNCTION_ARGS)
 {
 	bool goodArguments;
@@ -634,12 +680,6 @@ static ArrayType *construct_uninitialized_array(int inNumElements,
 	return array;
 }
 
-
-/**
- * @internal There are aggregation states and iteration states: Aggregation
- * states contain the previous iteration state.
- * In the first iteration, we need to compute (only) the gradient.
- */
 
 #define HeapTupleHeaderHasNulls(tuple) \
 	((tuple->t_infomask & HEAP_HASNULL) != 0)
@@ -731,6 +771,12 @@ static HeapTuple logreg_state_to_heap_tuple(LogRegrState *inState,
 }
 #undef StartCopyToHeapTuple
 #undef EndCopyToDatum
+
+/**
+ * @internal There are aggregation states and iteration states: Aggregation
+ * states contain the previous iteration state.
+ * In the first iteration, we need to compute (only) the gradient.
+ */
 
 static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 									   LogRegrState *outState)

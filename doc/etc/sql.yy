@@ -79,6 +79,7 @@
 	public:
 		SQLScanner(std::istream *arg_yyin = 0, std::ostream* arg_yyout = 0);
 		virtual ~SQLScanner();
+		static inline char *strlowerdup(const char *inString);
 		virtual int lex(SQLParser::semantic_type *yylval,
 			SQLParser::location_type *yylloc, SQLDriver *driver);
 		virtual void preScannerAction(SQLParser::semantic_type *yylval,
@@ -126,7 +127,9 @@
 %token COMMENT
 
 %token CREATE_FUNCTION
+%token CREATE_AGGREGATE
 
+/* Function tokens */
 %token IN
 %token OUT
 %token INOUT
@@ -143,6 +146,14 @@
 %token RETURNS_NULL_ON_NULL_INPUT
 %token SECURITY_INVOKER
 %token SECURITY_DEFINER
+
+/* Aggregate tokens */
+%token SFUNC
+%token PREFUNC
+%token FINALFUNC
+%token SORTOP
+%token STYPE
+%token INITCOND
 
 /* types with more than 1 word */
 %token BIT
@@ -163,19 +174,26 @@
 
 input:
 	| input stmt
-	| input COMMENT { std::cout << "//" << $2 << '\n'; }
+	| input COMMENT { std::cout << $2; }
 	| input '\n' { std::cout << '\n'; }
 ;
 
 stmt:
 	  ';'
 	| createFnStmt ';' { std::cout << ";\n\n"; }
+	| createAggStmt ';' { std::cout << ";\n\n"; } 
 ;
 
 createFnStmt:
-	  CREATE_FUNCTION qualifiedIdent '(' optArgList ')' returnDecl fnOptions {
+	  CREATE_FUNCTION qualifiedIdent '(' optFnArgList ')' returnDecl fnOptions {
 		std::cout << $6 << ' ' << $2 << '(' << $4 << ") { }";
-		driver->declToLineNo.insert(std::pair<std::string,int>($2, @2.begin.line));
+//		driver->declToLineNo.insert(std::pair<std::string,int>($2, @2.begin.line));
+	}
+;
+
+createAggStmt:
+	  CREATE_AGGREGATE qualifiedIdent '(' optAggArgList ')' '(' aggOptionList ')' {
+		printf("@aggregate %s (%s) { }", $2, $4);
 	}
 ;
 
@@ -187,24 +205,42 @@ qualifiedIdent:
 	}
 ;
 
-optArgList:
-	| argList
+optFnArgList:
+	| fnArgList
 ;
 
-argList:
-	  argument
-	| argList ',' argument {
+optAggArgList:
+	  '*'
+	| aggArgList
+;
+
+fnArgList:
+	  fnArgList ',' fnArgument {
 		asprintf(&($$), "%s, %s", $1, $3);
 	}
+	| fnArgument
 ;
 
-argument:
+aggArgList:
+	  aggArgList ',' aggArgument {
+		asprintf(&($$), "%s, %s", $1, $3);		
+	}
+	| aggArgument
+
+fnArgument:
 	  type
 	| argname type {
 		asprintf(&($$), "%s %s", $2, $1);
 	}
 	| argmode argname type {
 		asprintf(&($$), "%s %s", $3, $2);
+	}
+;
+
+aggArgument:
+	  type
+	| argname type {
+		asprintf(&($$), "%s %s", $2, $1);
 	}
 ;
 
@@ -284,6 +320,32 @@ fnOption:
 	| RETURNS_NULL_ON_NULL_INPUT
 	| SECURITY_INVOKER
 	| SECURITY_DEFINER
+;
+
+aggOptionList:
+	  aggOptionList ',' aggOption {
+		asprintf(&($$), "%s, %s", $1, $3);
+	}
+	| aggOption
+;
+
+aggOption:
+	  aggFunc '=' qualifiedIdent
+	| STYPE '=' type
+	| INITCOND '=' value
+	/* FIXME: SORTOP not yet supported at this point */
+;
+
+aggFunc:
+	  SFUNC
+	| PREFUNC
+	| FINALFUNC
+;
+
+value:
+	  INTEGER_LITERAL
+	| STRING_LITERAL
+	/* FIXME: Support more or ignore completely */
 ;
 
 %%

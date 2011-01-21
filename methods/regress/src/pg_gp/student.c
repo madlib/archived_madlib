@@ -18,7 +18,7 @@
  * expansion from [1] (see notes below) is vastly superior to using continued
  * fractions for computing the cdf via the incomplete beta function.
  *
- * Main reference:
+ * @literature
  *
  * [1] Abramowitz and Stegun, Handbook of Mathematical Functions with Formulas,
  *     Graphs, and Mathematical Tables, 1972
