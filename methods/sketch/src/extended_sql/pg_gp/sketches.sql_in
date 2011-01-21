@@ -1,3 +1,4 @@
+-- FM Sketch Functions
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.big_or(bitmap1 bytea, bitmap2 bytea) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.big_or(bitmap1 bytea, bitmap2 bytea)
 RETURNS bytea
@@ -32,11 +33,37 @@ CREATE AGGREGATE MADLIB_SCHEMA.fmsketch_dcount(anyelement)
     initcond = '' 
 );
 
+
+-- CM Sketch Functions
+
+-- We register __cmsketch_trans for varying numbers of arguments to support
+-- a variety of agg function signatures.  The first 2 args are used to 
+-- aggregate; the remaining args are carried along unchanged inside the 
+-- return structure for the use of the UDA finalizer.
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_trans(bytea, int8) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_trans(bitmaps bytea, input int8) 
 RETURNS bytea 
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_trans(bytea, int8, int8) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_trans(bitmaps bytea, input int8, arg1 int8) 
+RETURNS bytea 
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_trans(bytea, int8, int8, int8) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_trans(bitmaps bytea, input int8, arg1 int8, arg2 int8) 
+RETURNS bytea 
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_trans(bytea, int8, int8, int8, int8) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_trans(bitmaps bytea, input int8, arg1 int8, arg2 int8, arg3 int8) 
+RETURNS bytea 
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_final(bytea) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_final(counters bytea) 
@@ -60,23 +87,69 @@ CREATE AGGREGATE MADLIB_SCHEMA.cmsketch(int8)
     initcond = ''
 );
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_count(bytea, int8) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.cmsketch_count(counters bytea, val int8) 
-RETURNS int8 
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_rangecount(bytea, int8, int8) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.cmsketch_rangecount(bytea, int8, int8)
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_count_final(bytea) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_count_final(bytea)
 RETURNS int8
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_centile(bytea, int4) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.cmsketch_centile(bytea, int4)
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_count(int8, int8);
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_count(int8, int8)
+(
+    sfunc = MADLIB_SCHEMA.__cmsketch_trans,
+    stype = bytea, 
+    finalfunc = MADLIB_SCHEMA.__cmsketch_count_final,
+		ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
+    initcond = ''
+);
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_rangecount_final(bytea) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_rangecount_final(bytea)
 RETURNS int8
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_rangecount(int8, int8, int8);
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_rangecount(int8, int8, int8)
+(
+    sfunc = MADLIB_SCHEMA.__cmsketch_trans,
+    stype = bytea, 
+    finalfunc = MADLIB_SCHEMA.__cmsketch_rangecount_final,
+		ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
+    initcond = ''
+);
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_centile_final(bytea) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_centile_final(bytea)
+RETURNS int8
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_centile(int8, int8);
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_centile(int8, int8)
+(
+    sfunc = MADLIB_SCHEMA.__cmsketch_trans,
+    stype = bytea, 
+    finalfunc = MADLIB_SCHEMA.__cmsketch_centile_final,
+		ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
+    initcond = ''
+);
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_median_final(bytea) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_median_final(bytea)
+RETURNS int8
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_median(int8);
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_median(int8)
+(
+    sfunc = MADLIB_SCHEMA.__cmsketch_trans,
+    stype = bytea, 
+    finalfunc = MADLIB_SCHEMA.__cmsketch_median_final,
+		ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
+    initcond = ''
+);
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_width_histogram(bytea, int8, int8, int4) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.cmsketch_width_histogram(bytea, int8, int8, int4)
@@ -84,11 +157,23 @@ RETURNS int8[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_depth_histogram(bytea, int4) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.cmsketch_depth_histogram(bytea, int4)
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_dhist_final(bytea) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_dhist_final(bytea)
 RETURNS int8[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_depth_histogram(int8, int8);
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_depth_histogram(int8, int8)
+(
+    sfunc = MADLIB_SCHEMA.__cmsketch_trans,
+    stype = bytea, 
+    finalfunc = MADLIB_SCHEMA.__cmsketch_dhist_final,
+		ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
+    initcond = ''
+);
+
+-- MFV Sketch functions
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mfvsketch_trans(bytea, anyelement, int4) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.__mfvsketch_trans(bytea, anyelement, int4)
@@ -98,7 +183,7 @@ LANGUAGE C STRICT;
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mfvsketch_final(bytea) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.__mfvsketch_final(bytea)
-RETURNS text
+RETURNS text[][]
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 

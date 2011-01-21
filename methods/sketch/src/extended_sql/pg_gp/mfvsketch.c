@@ -220,53 +220,78 @@ bytea *mfv_transval_replace(bytea *transblob, bytea *text, int i)
 
 PG_FUNCTION_INFO_V1(__mfvsketch_final);
 /*!
- * scalar function taking an mfv sketch, returning a string with
+ * scalar function taking an mfv sketch, returning a histogram of
  * its most frequent values
  */
 Datum __mfvsketch_final(PG_FUNCTION_ARGS)
 {
     bytea *      transblob = PG_GETARG_BYTEA_P(0);
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    bytea *      retval;
+    ArrayType   *retval;
     int          i;
-    /* longest number takes MAXINT8LEN characters, plus two for punctuation,
-     * plus 1 for comfort */
-    char         numbuf[MAXINT8LEN+3];
+    Datum      histo[transval->num_mfvs][2];
+    int        dims[2], lbs[2];
+    // Oid     typInput, typIOParam;
+    Oid        outFuncOid;
+    bool       typIsVarlena;
+    int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	char		typdelim;
+	Oid			typioparam;
+	Oid			typiofunc;
+
 
     if (PG_ARGISNULL(0)) PG_RETURN_NULL();
     if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
 
-    /*
-     * we need MAXINT8LEN characters per counter and value,
-     * and we need padding for 5 punctuation per counter
-     * plus 1 for comfort
-     */
-    retval = palloc(VARSIZE(
-                        transblob) + transval->num_mfvs*(2*MAXINT8LEN+5) + 1);
-    SET_VARSIZE(retval, VARHDRSZ);
-
     qsort(transval->mfvs, transval->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
+    getTypeOutputInfo(INT8OID,
+                      &outFuncOid,
+                      &typIsVarlena);    
 
     for (i = 0; i < transval->next_mfv; i++) {
-        if (i > 0) {
-            ((char *)retval)[VARSIZE(retval)] = ' ';
-            SET_VARSIZE(retval, VARSIZE(retval)+1);
-        }
-        ((char *)retval)[VARSIZE(retval)] = '[';
-        SET_VARSIZE(retval, VARSIZE(retval)+1);
-        memcpy(&(((char *)retval)[VARSIZE(retval)]),
-               VARDATA(mfv_transval_getval(transval,i)),
-               VARSIZE(mfv_transval_getval(transval,i)) - VARHDRSZ);
-        SET_VARSIZE(retval, VARSIZE(retval) +
-                    VARSIZE(mfv_transval_getval(transval,i)) - VARHDRSZ);
-        sprintf(numbuf, ": ");
-        sprintf(&(numbuf[2]), UINT64_FORMAT, transval->mfvs[i].cnt);
-        memcpy(&(((char *)retval)[VARSIZE(retval)]), numbuf, strlen(numbuf));
-        SET_VARSIZE(retval, VARSIZE(retval) + strlen(numbuf));
-        ((char *)retval)[VARSIZE(retval)] = ']';
-        SET_VARSIZE(retval, VARSIZE(retval)+1);
+        bytea *curval = mfv_transval_getval(transval,i);
+        char *countbuf = OidOutputFunctionCall(outFuncOid, Int64GetDatum(transval->mfvs[i].cnt));
+                
+        histo[i][0] = PointerGetDatum(curval);
+        histo[i][1] = PointerGetDatum(cstring_to_text(countbuf));
+        // elog(NOTICE, "%s:%s, lengths are %d:%d(%u)", text_to_cstring(curval), countbuf, VARSIZE(histo[i][0]), VARSIZE(histo[i][1]), (unsigned) strlen(countbuf));
     }
-    PG_RETURN_BYTEA_P(retval);
+    
+	/*
+	 * Get info about element type
+	 */
+	get_type_io_data(TEXTOID, IOFunc_output,
+					 &typlen, &typbyval,
+					 &typalign, &typdelim,
+					 &typioparam, &typiofunc);
+    
+    dims[0] = i;
+    dims[1] = 2;
+    lbs[0] = lbs[1] = 0;
+    retval = construct_md_array((Datum *)histo,
+                                NULL,
+                                2,
+                                dims,
+                                lbs,
+                                TEXTOID,
+                                typlen,
+                                typbyval,
+                                typalign);
+    // elog(NOTICE, "array done, size %d, ndim %d, hasnull %d, nelems %d", ARR_SIZE(retval), ARR_NDIM(retval), ARR_HASNULL(retval), ArrayGetNItems(2, dims));
+    // for (i = 0 ; i < dims[0]; i++) {
+    //     int subs[2];
+    //     bool isNull;
+    //     bytea *t0, *t1;
+    //     subs[0] = i;
+    //     subs[1] = 0;
+    //     t0 = DatumGetPointer(array_ref(retval, 2, subs, -1, -1, false, 'i', &isNull));
+    //     subs[1] = 1;
+    //     t1 = DatumGetPointer(array_ref(retval, 2, subs, -1, -1, false, 'i', &isNull));
+    //     // elog(NOTICE, "found %s: %s, lengths %d: %d", text_to_cstring(t0), text_to_cstring(t1), VARSIZE(t0), VARSIZE(t1));
+    // }
+    PG_RETURN_ARRAYTYPE_P(retval);
 }
 
 PG_FUNCTION_INFO_V1(mfvsketch_array_out);

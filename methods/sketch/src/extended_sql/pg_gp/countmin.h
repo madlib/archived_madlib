@@ -35,6 +35,8 @@
  */
 typedef uint64 countmin[DEPTH][NUMCOUNTERS];
 
+#define MAXARGS 3
+
 /*! 
  * \brief the transition value struct for the cmsketch aggregate.
  *  
@@ -42,6 +44,8 @@ typedef uint64 countmin[DEPTH][NUMCOUNTERS];
  * and a cache of handy metadata that we'll reuse across calls
  */
 typedef struct {
+    Datum args[MAXARGS];  /*! carry along additional args for finalizer */
+    int nargs;            /*! number of args being carried for finalizer */   
     Oid typOid;     /*! oid of the data type we are sketching */
     Oid outFuncOid; /*! oid of the OutFunc for that data type */
     countmin sketches[RANGES];
@@ -127,15 +131,15 @@ typedef struct {
 
 /* countmin aggregate protos */
 char *countmin_trans_c(countmin, Datum, Oid);
-bytea *cmsketch_check_transval(bytea *);
+bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool);
 void  countmin_dyadic_trans_c(cmtransval *, int64);
 
 /* countmin scalar function protos */
 int64 cmsketch_count_c(countmin, Datum, Oid);
 Datum cmsketch_rangecount_c(cmtransval *, int64, int64);
 Datum cmsketch_centile_c(cmtransval *, int, int64);
-Datum cmsketch_width_histogram_c(cmtransval *, int64, int64, int);
-Datum cmsketch_depth_histogram_c(cmtransval *, int);
+Datum cmsketch_width_histogram_c(cmtransval *, int64, int64, int64);
+Datum cmsketch_depth_histogram_c(cmtransval *, int64);
 void  find_ranges(int64, int64, rangelist *);
 void  find_ranges_internal(int64, int64, int, rangelist *);
 /* Datum countmin_dump_c(int64 *); */
@@ -161,15 +165,19 @@ int cnt_cmp_desc(const void *i, const void *j);
 
 /* UDF protos */
 Datum __cmsketch_trans(PG_FUNCTION_ARGS);
-Datum cmsketch_count(PG_FUNCTION_ARGS);
-Datum cmsketch_rangecount(PG_FUNCTION_ARGS);
-Datum cmsketch_centile(PG_FUNCTION_ARGS);
+// Datum cmsketch_count(PG_FUNCTION_ARGS);
+// Datum cmsketch_rangecount(PG_FUNCTION_ARGS);
+// Datum cmsketch_centile(PG_FUNCTION_ARGS);
 Datum cmsketch_width_histogram(PG_FUNCTION_ARGS);
-Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS);
+Datum cmsketch_dhistogram(PG_FUNCTION_ARGS);
 Datum __cmsketch_final(PG_FUNCTION_ARGS);
 Datum __cmsketch_merge(PG_FUNCTION_ARGS);
 Datum cmsketch_dump(PG_FUNCTION_ARGS);
-
+Datum __cmsketch_count_final(PG_FUNCTION_ARGS);
+Datum __cmsketch_rangecount_final(PG_FUNCTION_ARGS);
+Datum __cmsketch_centile_final(PG_FUNCTION_ARGS);
+Datum __cmsketch_median_final(PG_FUNCTION_ARGS);
+Datum __cmsketch_dhist_final(PG_FUNCTION_ARGS);
 Datum __mfvsketch_trans(PG_FUNCTION_ARGS);
 Datum __mfvsketch_final(PG_FUNCTION_ARGS);
 Datum mfvsketch_array_out(PG_FUNCTION_ARGS);

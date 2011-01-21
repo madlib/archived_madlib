@@ -35,31 +35,31 @@
  *
  * \par Usage/API
  *  - <c>cmsketch(int8)</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a CountMin sketch: a large array of counters that is intended to be passed into one of a number of UDFs described below.
- *  - <c>cmsketch_count(cmsketch(col anytype), v int8)</c> is a UDF that takes a cmsketch over a column <c>col</c> and a value <c>v</c>, and reports the approximate number of occurrences of <c>v</c> in <c>col</c>.  Example:\code
- *   SELECT pronamespace, madlib.cmsketch_count(madlib.cmsketch(pronargs), 3)
+ *  - <c>cmsketch_count(col int8, v int8)</c> is a UDA that takes a column <c>col</c> and a value <c>v</c>, and reports the approximate number of occurrences of <c>v</c> in <c>col</c>.  Example:\code
+ *   SELECT pronamespace, madlib.cmsketch_count(pronargs, 3)
  *     FROM pg_proc
  * GROUP BY pronamespace;
  * \endcode
- *  - <c>cmsketch_rangecount(cmsketch(intcol int8), low int8, hi int8)</c> is a UDF that takes a cmsketch over a column <c>col</c> and a range <c>[low, hi]</c>, and  reports the approximate number of values in <c>col</c> that fall between <c>low</c> and <c>hi</c> inclusive.
+ *  - <c>cmsketch_rangecount(intcol int8, low int8, hi int8)</c> is a UDA that takes a column <c>col</c> and a range <c>[low, hi]</c>, and  reports the approximate number of values in <c>col</c> that fall between <c>low</c> and <c>hi</c> inclusive.
  *  Example:\code
- *   SELECT pronamespace, madlib.cmsketch_rangecount(madlib.cmsketch(pronargs), 3, 5)
+ *   SELECT pronamespace, madlib.cmsketch_rangecount(pronargs, 3, 5)
  *     FROM pg_proc
  * GROUP BY pronamespace;
  *  \endcode
- *  - <c>cmsketch_centile(cmsketch(intcol int8), pct int4)</c> is a UDF that takes a cmsketch over a column <c>col</c> and a percentage value <c>pct</c> between 1 and 99, and reports a value in <c>col</c> that is approximately at the <c>pct</c> centile in sorted order.  Example:\code
- *   SELECT relnamespace, madlib.cmsketch_centile(madlib.cmsketch(oid::int8), 75)
+ *  - <c>cmsketch_centile(intcol int8, pct int4)</c> is a UDA that takes a column <c>col</c> and a percentage value <c>pct</c> between 1 and 99, and reports a value in <c>col</c> that is approximately at the <c>pct</c> centile in sorted order.  Example:\code
+ *   SELECT relnamespace, madlib.cmsketch_centile(oid::int8, 75)
  *     FROM pg_class
  * GROUP BY relnamespace;
  *  \endcode
- *  - <c>cmsketch_width_histogram(cmsketch(intcol int8), min(intcol int8), max(intcol int8), nbuckets int4)</c>  is a UDF that takes three aggregates of a column <c>col</c> -- cmsketch, min and max-- as well as a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
+ *  - <c>cmsketch_width_histogram(cmsketch(intcol int8), min(intcol int8), max(intcol int8), nbuckets int4)</c>  is a <i>UDF</i> that takes three aggregates of a column <c>col</c> -- cmsketch, min and max-- as well as a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
  *   SELECT relnamespace,
  *          madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), min(oid::int8), max(oid::int8), 10)
  *     FROM pg_class
  * GROUP BY relnamespace;
  *  \endcode
- *  - <c>cmsketch_depth_histogram(cmsketch(intcol int8), nbuckets int4)</c>    is a UDF that takes a cmsketch over column <c>col</c> and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
+ *  - <c>cmsketch_depth_histogram(intcol int8, nbuckets int4)</c> is a UDA that takes a column <c>col</c> and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
  *   SELECT relnamespace,
- *          madlib.cmsketch_depth_histogram(madlib.cmsketch(oid::int8), 10)
+ *          madlib.cmsketch_depth_histogram(oid::int8, 10)
  *     FROM pg_class
  * GROUP BY relnamespace;
  *  \endcode
@@ -94,6 +94,7 @@ Datum __cmsketch_trans(PG_FUNCTION_ARGS)
      * This function makes destructive updates to its arguments.
      * Make sure it's being called in an agg context.
      */
+     
     if (!(fcinfo->context &&
           (IsA(fcinfo->context, AggState)
     #ifdef NOTGP
@@ -103,34 +104,35 @@ Datum __cmsketch_trans(PG_FUNCTION_ARGS)
         elog(ERROR,
              "destructive pass by reference outside agg");
 
-    transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
-    transval = (cmtransval *)(VARDATA(transblob));
-
     /* get the provided element, being careful in case it's NULL */
     if (!PG_ARGISNULL(1)) {
+        transblob = cmsketch_check_transval(fcinfo, true);
+        transval = (cmtransval *)(VARDATA(transblob));
+
         /* the following line modifies the contents of transval, and hence transblob */
         countmin_dyadic_trans_c(transval, PG_GETARG_INT64(1));
         PG_RETURN_DATUM(PointerGetDatum(transblob));
     }
-    else PG_RETURN_DATUM(PointerGetDatum(transblob));
+    else PG_RETURN_DATUM(PointerGetDatum(PG_GETARG_BYTEA_P(0)));
 }
 
 /*!
  * check if the transblob is not initialized, and do so if not
  * \param transblob a cmsketch transval packed in a bytea
  */
-bytea *cmsketch_check_transval(bytea *transblob)
+bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 {
     bool        typIsVarlena;
+    bytea *transblob = PG_GETARG_BYTEA_P(0);
     cmtransval *transval;
-
+    
     /*
      * an uninitialized transval should be a datum smaller than sizeof(cmtransval).
      * if this one is small, initialize it now, else return it.
      */
     if (VARSIZE(transblob) < CM_TRANSVAL_SZ) {
         /* XXX would be nice to pfree the existing transblob, but pfree complains. */
-
+        
         /* allocate and zero out a transval via palloc0 */
         transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
         SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
@@ -141,6 +143,22 @@ bytea *cmsketch_check_transval(bytea *transblob)
         getTypeOutputInfo(transval->typOid,
                           &(transval->outFuncOid),
                           &typIsVarlena);
+                          
+        if (initargs) {
+          int nargs = PG_NARGS();        
+          int i;
+          /* carry along any additional args */
+          if (nargs - 2 > MAXARGS)
+            elog(ERROR, "no more than %d additional arguments should be passed to __cmsketch_trans",
+                 MAXARGS);
+          transval->nargs = nargs - 2;
+          for (i = 2; i < nargs; i++) {
+            if (PG_ARGISNULL(i))
+                elog(ERROR, "NULL parameter %d passed to __cmsketch_trans", i);
+            transval->args[i-2] = PG_GETARG_DATUM(i);
+          }
+        }
+        else transval->nargs = -1;
     }
     return(transblob);
 }
@@ -190,15 +208,96 @@ char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
     return(input);
 }
 
+/*
+ * FINAL functions for various UDAs built on countmin sketches
+ */
 
 /*!
  * simply returns its input
- * for use as a finalizer in an agg returning the whole sketch
  */
 PG_FUNCTION_INFO_V1(__cmsketch_final);
 Datum __cmsketch_final(PG_FUNCTION_ARGS)
 {
     PG_RETURN_BYTEA_P(PG_GETARG_BYTEA_P(0));
+}
+
+/*!
+ *  use sketch to get the count of the 1st arg
+ */
+PG_FUNCTION_INFO_V1(__cmsketch_count_final);
+Datum __cmsketch_count_final(PG_FUNCTION_ARGS)
+{
+    bytea *blob = PG_GETARG_BYTEA_P(0);
+    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+        PG_RETURN_NULL();
+    PG_RETURN_INT64(cmsketch_count_c(sketch->sketches[0],
+                                     sketch->args[0], sketch->outFuncOid));
+}
+
+/*!
+ *  use sketch to get the count in range of the 1st 2 args
+ */
+PG_FUNCTION_INFO_V1(__cmsketch_rangecount_final);
+Datum __cmsketch_rangecount_final(PG_FUNCTION_ARGS)
+{
+    bytea *blob = PG_GETARG_BYTEA_P(0);
+    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+        PG_RETURN_NULL();
+    PG_RETURN_INT64(cmsketch_rangecount_c(sketch, DatumGetInt64(sketch->args[0]), 
+                                          DatumGetInt64(sketch->args[1])));
+}
+
+/*!
+ *  use sketch to get the centile stored in the 1st arg
+ */
+PG_FUNCTION_INFO_V1(__cmsketch_centile_final);
+Datum __cmsketch_centile_final(PG_FUNCTION_ARGS)
+{
+    bytea *blob = PG_GETARG_BYTEA_P(0);
+    int64 total;
+    
+    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+        PG_RETURN_NULL();
+    total = cmsketch_rangecount_c(sketch, MIN_INT64, MAX_INT64);     /* count(*) */
+    if (total == 0) {
+        PG_RETURN_NULL();
+    }
+    PG_RETURN_INT64(cmsketch_centile_c(sketch, DatumGetInt64(sketch->args[0]), total));
+}
+
+/*!
+ *  use sketch to get the median
+ */
+PG_FUNCTION_INFO_V1(__cmsketch_median_final);
+Datum __cmsketch_median_final(PG_FUNCTION_ARGS)
+{
+    bytea *blob = PG_GETARG_BYTEA_P(0);
+    int64 total;
+    
+    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+        PG_RETURN_NULL();
+    total = cmsketch_rangecount_c(sketch, MIN_INT64, MAX_INT64);     /* count(*) */
+    if (total == 0) {
+        PG_RETURN_NULL();
+    }
+    PG_RETURN_INT64(cmsketch_centile_c(sketch, 50, total));
+}
+
+/*!
+ *  use sketch get the equi-depth histogram
+ */
+PG_FUNCTION_INFO_V1(__cmsketch_dhist_final);
+Datum __cmsketch_dhist_final(PG_FUNCTION_ARGS)
+{
+    bytea *blob = PG_GETARG_BYTEA_P(0);    
+    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+        PG_RETURN_NULL();
+    PG_RETURN_INT64(cmsketch_depth_histogram_c(sketch, DatumGetInt64(sketch->args[0])));
 }
 
 /*!
@@ -208,9 +307,10 @@ PG_FUNCTION_INFO_V1(__cmsketch_merge);
 Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 {
     bytea *   counterblob1 =
-        cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(0));
+        cmsketch_check_transval(fcinfo, false);
     bytea *   counterblob2 =
-        cmsketch_check_transval((bytea *)PG_GETARG_BYTEA_P(1));
+        cmsketch_check_transval(fcinfo, false);
+    cmtransval *newtrans;
     countmin *sketches2 = (countmin *)
                           ((cmtransval *)(VARDATA(counterblob2)))->sketches;
     bytea *   newblob;
@@ -221,13 +321,22 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
     /* allocate a new transval as a copy of counterblob1 */
     newblob = (bytea *)palloc(sz);
     memcpy(newblob, counterblob1, sz);
-    newsketches = (countmin *)((cmtransval *)(VARDATA(newblob)))->sketches;
+    newtrans = (cmtransval *)(VARDATA(newblob));
+    newsketches = (countmin *)(newtrans)->sketches;
 
     /* add in values from counterblob2 */
     for (i = 0; i < RANGES; i++)
         for (j = 0; j < DEPTH; j++)
             for (k = 0; k < NUMCOUNTERS; k++)
                 newsketches[i][j][k] += sketches2[i][j][k];
+                
+    if (newtrans->nargs == -1) {
+        /* transfer in the args from the other input */
+        cmtransval *other = (cmtransval *)VARDATA(counterblob2);
+        newtrans->nargs = other->nargs;
+        for (i = 0; i < other->nargs; i++)
+            newtrans->args[i] = other->args[i];
+    }
 
     PG_RETURN_DATUM(PointerGetDatum(newblob));
 }
@@ -254,25 +363,6 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
         PG_RETURN_NULL(); \
     }
 
-
-
-
-PG_FUNCTION_INFO_V1(cmsketch_count);
-
-/*!
- * scalar function, takes a sketch and a value, produces approximate count of that value
- */
-Datum cmsketch_count(PG_FUNCTION_ARGS)
-{
-    bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
-    cmtransval *transval = (cmtransval *)VARDATA(transblob);
-
-    CM_CHECKARG(transval, 1);
-
-    PG_RETURN_INT64(cmsketch_count_c(transval->sketches[0],
-                                     PG_GETARG_DATUM(1), transval->outFuncOid));
-}
-
 /*!
  * get the approximate count of objects with value arg
  * \param sketch a countmin sketch
@@ -289,24 +379,6 @@ int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
     /* iterate through the sketches, finding the min counter associated with this hash */
     PG_RETURN_INT64(hash_counters_iterate(nhash, sketch, INT64_MAX,
                                           &min_counter));
-}
-
-PG_FUNCTION_INFO_V1(cmsketch_rangecount);
-/*!
- * scalar function, takes a sketch, a min and a max, and produces count of that
- * [min-max] range.
- * This is the UDF wrapper.  All the interesting stuff is in fmsketch_rangecount_c
- */
-Datum cmsketch_rangecount(PG_FUNCTION_ARGS)
-{
-    bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
-    cmtransval *transval = (cmtransval *)VARDATA(transblob);
-
-    CM_CHECKARG(transval, 1);
-    CM_CHECKARG(transval, 2);
-
-    return cmsketch_rangecount_c(transval, PG_GETARG_INT64(1),
-                                 PG_GETARG_INT64(2));
 }
 
 /*!
@@ -395,7 +467,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     /* Sanity check */
     if (top < bot || power < 0)
         return;
-
+        
     if (top == bot) {
         /* base case of recursion, a range of the form [x-x]. */
         r->spans[r->emptyoffset][0] = r->spans[r->emptyoffset][1] = bot;
@@ -499,32 +571,8 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     }
 }
 
-PG_FUNCTION_INFO_V1(cmsketch_centile);
 /*!
- * Scalar function taking a sketch and centile, produces approximate value for
- * that centile.
- * This is the UDF wrapper.  All the interesting stuff is in cmsketch_centile_c
- */
-Datum cmsketch_centile(PG_FUNCTION_ARGS)
-{
-    bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
-    cmtransval *transval = (cmtransval *)VARDATA(transblob);
-    int         centile;
-    int64       total;
-
-    if (PG_ARGISNULL(1)) PG_RETURN_NULL();
-    else centile = PG_GETARG_INT32(1);
-
-    total = cmsketch_rangecount_c(transval, MIN_INT64, MAX_INT64);     /* count(*) */
-    if (total == 0) {
-        PG_RETURN_NULL();
-    }
-
-    return cmsketch_centile_c(transval, centile, total);
-}
-
-/*!
- * find the centile by binary search in the domain of values
+ * find the approximate centile in a cm sketch by binary search in the domain of values
  * \param transval the current transition value
  * \param intcentile the centile to return
  * \param total the total count of items
@@ -537,7 +585,7 @@ Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 
 
     if (intcentile <= 0 || intcentile >= 100)
-        elog(ERROR, "centiles must be between 1-99 inclusive");
+        elog(ERROR, "centiles must be between 1-99 inclusive, was %d", intcentile);
 
 
     centile_cnt = (int64)(total * (float8)intcentile/100.0);
@@ -572,7 +620,7 @@ PG_FUNCTION_INFO_V1(cmsketch_width_histogram);
 /* UDF wrapper.  All the interesting stuff is in __fmsketch_count_distinct_c */
 Datum cmsketch_width_histogram(PG_FUNCTION_ARGS)
 {
-    bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
+    bytea *     transblob = cmsketch_check_transval(fcinfo, false);
     cmtransval *transval = (cmtransval *)VARDATA(transblob);
     int64       min = PG_GETARG_INT64(1);
     int64       max = PG_GETARG_INT64(2);
@@ -597,7 +645,7 @@ Datum cmsketch_width_histogram(PG_FUNCTION_ARGS)
 Datum cmsketch_width_histogram_c(cmtransval *transval,
                                  int64 min,
                                  int64 max,
-                                 int buckets)
+                                 int64 buckets)
 {
     int64      step;
     int        i;
@@ -605,6 +653,12 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
     int64      binlo, binhi, binval;
     Datum      histo[buckets][3];
     int        dims[2], lbs[2];
+    int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	char		typdelim;
+	Oid			typioparam;
+	Oid			typiofunc;
 
     step = Max(trunc((float8)(max-min+1) / (float8)buckets), 1);
     for (i = 0; i < buckets; i++) {
@@ -621,6 +675,14 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
     }
 
 
+	/*
+	 * Get info about element type
+	 */
+	get_type_io_data(INT8OID, IOFunc_output,
+					 &typlen, &typbyval,
+					 &typalign, &typdelim,
+					 &typioparam, &typiofunc);
+
     dims[0] = i;     /* may be less than requested buckets if too few values */
     dims[1] = 3;     /* lo, hi, and val */
     lbs[0] = 0;
@@ -632,57 +694,60 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
                                 dims,
                                 lbs,
                                 INT8OID,
-                                sizeof(int64),
-                                true,
-                                'd');
+                                typlen,
+                                typbyval,
+                                typalign);
     PG_RETURN_ARRAYTYPE_P(retval);
 }
 
-PG_FUNCTION_INFO_V1(cmsketch_depth_histogram);
 /*!
- * scalar function taking a number of buckets.  produces an equi-depth histogram
- * of that many buckets by finding equi-spaced centiles
- */
-/* UDF wrapper.  All the interesting stuff is in __fmsketch_count_distinct_c */
-Datum cmsketch_depth_histogram(PG_FUNCTION_ARGS)
-{
-    bytea *     transblob = cmsketch_check_transval(PG_GETARG_BYTEA_P(0));
-    cmtransval *transval = (cmtransval *)VARDATA(transblob);
-    int         buckets = PG_GETARG_INT32(1);
-    Datum       retval;
-
-    if (PG_ARGISNULL(1)) PG_RETURN_NULL();
-
-    retval = cmsketch_depth_histogram_c(transval, buckets);
-    PG_RETURN_DATUM(retval);
-}
-/*!
- * produces an equi-depth histogram
+ * produces an equi-depth histogram of a cm sketch
  * \param transval the transition value of the agg
  * \param buckets the number of buckets in the histogram
  */
-Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
+Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
 {
     int64      step;
-    int        i;
+    int        i, nextbucket;
     ArrayType *retval;
     int64      binlo;
     Datum      histo[buckets][3];
     int        dims[2], lbs[2];
     int64      total = cmsketch_rangecount_c(transval, MIN_INT64, MAX_INT64);
+    int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	char		typdelim;
+	Oid			typioparam;
+	Oid			typiofunc;
 
     step = Max(trunc(100 / (float8)buckets), 1);
-    for (i = 0, binlo = MIN_INT64; i < buckets; i++) {
-        histo[i][0] = Int64GetDatum(binlo);
-        histo[i][1] = ((i == buckets - 1) ? MAX_INT64 :
-                       cmsketch_centile_c(transval, (i+1)*step, total));
-        histo[i][2] = cmsketch_rangecount_c(transval,
-                                            DatumGetInt64(histo[i][0]),
-                                            DatumGetInt64(histo[i][1]));
-        binlo = histo[i][1] + 1;
+    for (i = nextbucket = 0, binlo = MIN_INT64; i < buckets; i++) {
+        int64 centile;
+        if (i < buckets - 1) {
+            centile = cmsketch_centile_c(transval, (i+1)*step, total);
+            if (i > 0 && centile <= histo[nextbucket-1][1])
+                /* next centile is lower than previous; skip */
+                continue;
+        }
+        histo[nextbucket][0] = Int64GetDatum(binlo);
+        histo[nextbucket][1] = ((i == buckets - 1) ? MAX_INT64 : centile);
+        histo[nextbucket][2] = cmsketch_rangecount_c(transval,
+                                            DatumGetInt64(histo[nextbucket][0]),
+                                            DatumGetInt64(histo[nextbucket][1]));
+        binlo = histo[nextbucket][1] + 1;
+        nextbucket++;
     }
 
-    dims[0] = i;     /* may be less than requested buckets if too few values */
+	/*
+	 * Get info about element type
+	 */
+	get_type_io_data(INT8OID, IOFunc_output,
+					 &typlen, &typbyval,
+					 &typalign, &typdelim,
+					 &typioparam, &typiofunc);
+					 
+	dims[0] = nextbucket;     /* may be less than requested buckets if too few values */
     dims[1] = 3;     /* lo, hi, and val */
     lbs[0] = 0;
     lbs[1] = 0;
@@ -693,9 +758,9 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int buckets)
                                 dims,
                                 lbs,
                                 INT8OID,
-                                sizeof(int64),
-                                true,
-                                'd');
+                                typlen,
+                                typbyval,
+                                typalign);
     PG_RETURN_ARRAYTYPE_P(retval);
 }
 
