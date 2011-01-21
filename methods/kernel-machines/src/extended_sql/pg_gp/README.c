@@ -1,13 +1,5 @@
 /*! 
 
-@defgroup modeling Modeling
-
-@defgroup unsuplearn Unsupervised Learning
-@ingroup modeling
-
-@defgroup suplearn-categorization Categorization
-@ingroup suplearn
-
 @defgroup kernel-machines Support Vector Machines
 @ingroup suplearn-categorization
 

@@ -5,8 +5,8 @@
  */
  
  /*!
- * \defgroup fmsketch FM Sketch
- * \ingroup sketch
+ * \defgroup fmsketch FM (Flajolet-Martin)
+ * \ingroup sketches
  * \par About
  * Flajolet-Martin JCSS 1985 distinct count estimation
  * implemented as a user-defined aggregate.
@@ -15,7 +15,7 @@
  *
  * \par Usage/API
  *   <c>fmsketch_dcount(col anytype)</c> is a UDA that can be run on any column of any type.  It returns an approximation to the number of distinct values in the column.  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  Example:\code
- *    SELECT pronargs, madlib.fmsketch_dcount(proname)
+ *    SELECT pronargs, madlib.fmsketch_dcount(proname) AS distinct_hat, count(proname)
  *      FROM pg_proc
  *  GROUP BY pronargs;
  *    \endcode

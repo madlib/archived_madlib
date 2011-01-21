@@ -5,5 +5,28 @@ The MADlib mission: to foster widespread development of scalable analytic skills
 
 MADlib front page: http://madlib.net/
 
+@defgroup modeling Data Modeling
+
+    @defgroup suplearn Supervised Learning
+    @ingroup modeling
+
+        @defgroup suplearn-categorization Categorization
+        @ingroup suplearn
+
+        @defgroup suplearn-regression Regression
+        @ingroup suplearn
+
+    @defgroup unsuplearn Unsupervised Learning
+    @ingroup modeling
+
+        @defgroup unsuplearn-categorization Categorization
+        @ingroup unsuplearn
+
+@defgroup desc-stats Descriptive Statistics
+
+@defgroup sampling Sampling Methods
+
+@defgroup support Support Modules
+
 """
 

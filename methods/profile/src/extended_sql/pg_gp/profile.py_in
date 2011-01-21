@@ -1,0 +1,102 @@
+import sys
+import os
+import libprofile
+import madpy
+from madpy.madpack import configyml
+from optparse import OptionParser
+
+basic_numerics = '["MIN", "MAX", "AVG", "MADLIB_SCHEMA.cmsketch_median"]'
+all_numerics = '["MIN", "MAX", "AVG", "MADLIB_SCHEMA.cmsketch_median", "MADLIB_SCHEMA.cmsketch_depth_histogram(%%,4)::text"]'
+basic_non_numerics = '["MADLIB_SCHEMA.fmsketch_dcount"]'
+all_non_numerics = '["MADLIB_SCHEMA.fmsketch_dcount", "MADLIB_SCHEMA.mfvsketch_top_histogram(%%,10)::text"]'
+
+usage = """usage: %prog [options] tablename
+   (note: database connection info taken from Config.yml, see -c flag)"""
+parser = OptionParser(usage=usage)
+parser.add_option("-n", "--numeric", dest="numericaggs", nargs = 1,
+                  help="array of aggs for integer columns",
+                  default=basic_numerics)
+parser.add_option("-t", "--nonnumeric", dest="non_numericaggs", nargs = 1,
+                help="array of aggs for non-numeric columns",
+                default=basic_non_numerics)
+parser.add_option("-k", "--kitchensink", action="store_true", dest="kitchen",
+                help="compute all available statistics", default=False)
+parser.add_option("-x", "--skip", dest="skipcols", nargs = 1,
+								                help="array of columns to skip",
+								                default='[]')
+parser.add_option('-c', '--configdir', nargs=1, dest='configdir',
+                    default=None,
+                    help="""directory holding Config.yml
+(default SCRIPTDIR if already initialized, else
+"""
+                         + madpy.__path__[0]+")")
+parser.add_option('-s', '--scriptdir', nargs=1, dest='scriptdir',
+                    default=madpy.__path__[0] + "/config/scripts",
+                    help="""directory holding scripts 
+(default """
+                         + madpy.__path__[0] + "/config/scripts"
+                         +")")
+
+(options, args) = parser.parse_args()
+
+try:
+  table = args[0]
+except:
+  parser.error("missing tablename")
+  sys.exit(2)
+
+
+# if config file left unspecified, first check scriptdir.
+# if nothing there, take the installed version: madpy/Config.yml
+if not options.configdir:
+   if os.path.exists(options.scriptdir+"/Config.yml"):
+       options.configdir = [options.scriptdir]
+   else:
+       options.configdir = madpy.__path__
+
+
+if options.kitchen:
+    numericaggs = all_numerics
+    non_numericaggs = all_non_numerics
+else:
+    numericaggs = options.numericaggs
+    non_numericaggs = options.non_numericaggs
+
+conf = configyml.get_config(options.configdir[0], False)        
+api = conf['dbapi2']
+connect_args = conf['connect_args']
+dbapi2 = __import__(api, globals(), locals(), [''])
+## @var dbconn live database connection
+con_args={};
+for arg in connect_args:
+    if arg.find("=") == -1:
+        print sys.exc_info()[0]
+        print "Missing '=' character in the connect_args parameter: " + arg
+        raise
+    # cleanup the string
+    arg = ((arg.replace( "'", "")).replace( '"', '')).replace( ' ', '')            
+    equal_sign = arg.find('=')
+    # create a proper dictionary of connection parameters
+    con_args[ arg[:equal_sign]] = arg[equal_sign+1:]
+conn = dbapi2.connect( **con_args)
+
+# Open a cursor to perform database operations
+cur = conn.cursor()
+
+(numcols, non_numcols) = libprofile.catalog_columns(conn, table, options.skipcols)
+query = libprofile.gen_profile_query(table,
+                                    `eval'(numericaggs),
+                                    `eval'(non_numericaggs),
+                                    numcols, non_numcols)
+print query
+print
+print "---"
+print
+
+# Fetch numeric columnnames from table
+cur.execute(query)
+out = cur.fetchone()
+for i in range(`len'(out)):
+    print cur.description[i][0]+": "+str(out[i])
+cur.close()
+conn.close()
