@@ -6,7 +6,7 @@
  
  /*!
  * \defgroup mfvsketch MFV Sketch
- * \ingroup countmin
+ * \ingroup sketch
  * \par About
  * MFVSketch: Most Frequent Values variant of CountMin sketch.
  * This is basically a CountMin sketch that keeps track of most frequent values
@@ -18,9 +18,8 @@
  * \par Usage/API:
  *
  *  - <c>mfvsketch_top_histogram(col anytype, nbuckets int4)</c>          is a UDA over column <c>col</c> of any type, and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket is for one of the most frequent values in the column. The output is an array of doubles {value, count} in descending order of frequency; counts are approximate. Ties are handled arbitrarily.  Example:\code
- *   SELECT pronamespace, madlib.mfvsketch_top_histogram(pronargs, 4)
- *     FROM pg_proc
- * GROUP BY pronamespace;
+ *   SELECT madlib.mfvsketch_top_histogram(proname, 4)
+ *     FROM pg_proc;
  * \endcode
  */
 
