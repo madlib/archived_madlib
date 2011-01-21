@@ -7,9 +7,10 @@
 #define SKETCH_SUPPORT_H
 
 <<<<<<< HEAD
-/*! \defgroup desc-stats Descriptive Statistics 
+
+/*! @addtogroup desc-stats 
  *
- * \par About:
+ * @par About:
  * SQL aggregation functions (COUNT, SUM, MAX, MIN, AVG, STDDEV) are only
  * only the tip of the iceberg for describing data.  MADlib extends this
  * suite of functionality.  Where possible we try to provide high-peformance
@@ -28,8 +29,7 @@
  *  - frequent-value counting
  */
 
-/*! \defgroup sketches Sketch-based Estimators
- *  \ingroup desc-stats
+/*! @addtogroup sketches 
  *
  * \par About:
  * There is a large body of research on small-space "sketch" techniques (sometimes called "synopsis data structures") for approximating properties of large data sets in a single pass.  Some of that work was targeted at stream or network processing, but it's equally applicable to large stored datasets.  Sketches are particularly useful for profiling multiple columns of a large table in a single pass.  This module currently implements user-defined aggregates for three main sketch methods:
