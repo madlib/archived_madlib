@@ -5,22 +5,20 @@ import psycopg2
 # helper routine to munge the agg arguments
 # replaces the string "%%" with the column argument
 # and adds the suffix "_distinct" to the AS name of distinct aggs
-def munge_agg(x):
+def __munge_agg(x):
     if x.split("(")[0] == x:
         x += '(%%)'
-    x += " AS " + x.split("(")[0]
+    fname = x.split("(")[0].split(".")[-1]
+    x += " AS " + "%%_" + fname
     if x.lower().find("distinct") >= 0:
         x += "_distinct"
-    return x + "_%%"
+    return x
 
 # helper routine to query the database catalog and get column names for
 # table "table".
 # return value is a list of lists; the first list is the
 # integer columns, the second list is the non-integer columns
-def catalog_columns(dbnamestr, dbuserstr, table):
-    # Connect to an existing database
-    conn = psycopg2.connect(dbnamestr, dbuserstr)
-
+def catalog_columns(conn, table, skipcols):
     # Open a cursor to perform database operations
     cur = conn.cursor()
 
@@ -30,7 +28,7 @@ def catalog_columns(dbnamestr, dbuserstr, table):
                    ordinal_position;""",
                 (str(table),))
     out = cur.fetchall()
-    numcols = [c[0] for c in out]
+    numcols = [c[0] for c in out if c[0] not in skipcols]
     cur.close()
 
     # Fetch non-integer columnnames from table
@@ -40,13 +38,12 @@ def catalog_columns(dbnamestr, dbuserstr, table):
                    numeric_scale > 0 order by ordinal_position;""",
                 (table,))
     out = cur.fetchall()
-    non_numcols = [c[0] for c in out]
+    non_numcols = [c[0] for c in out if c[0] not in skipcols]
     # Make the changes to the database persistent
     # conn.commit()
 
     # Close communication with the database
     cur.close()
-    conn.close()
     return([numcols, non_numcols])
 
 # Generates an SQL query for data profiling.  Arguments:
@@ -60,11 +57,11 @@ def catalog_columns(dbnamestr, dbuserstr, table):
 #  column expression
 def gen_profile_query(tablename, numaggs, non_numaggs, numcols, non_numcols):
     retval = "SELECT COUNT(*),\n       "
-    retval += ",\n       ".join([", ".join([munge_agg(a).replace('%%', c)
+    retval += ",\n       ".join([", ".join([__munge_agg(a).replace('%%', c)
                                     for a in numaggs+non_numaggs])
                                         for c in numcols])
     retval += ",\n       "
-    retval += ",\n       ".join([", ".join([munge_agg(a).replace('%%', c)
+    retval += ",\n       ".join([", ".join([__munge_agg(a).replace('%%', c)
                                     for a in non_numaggs])
                                         for c in non_numcols])
     retval += "\n  FROM "

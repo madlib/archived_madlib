@@ -1,12 +1,13 @@
 madlib_schema = SCHEMA_PLACEHOLDER
 conf_defines = CONFDEFS
 python_target = PYTHON_TARGET_DIR
+dbapi = DBAPI2_PLACEHOLDER
 
 %.sql: %.sql_in
 	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
 	
 %.py: %.py_in
-	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
+	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) -DDBAPI2=$(dbapi) $(conf_defines) $< >$@
 
 clean_data_built: 
 	rm $(DATA_built)

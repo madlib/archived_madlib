@@ -34,8 +34,8 @@ def __create_config_mk(conf, methdir):
         line2 = re.sub('SCHEMA_PLACEHOLDER', conf['target_schema'], line)
         line3 = re.sub('CONFDEFS', conf['prep_flags'], line2)
         line4 = re.sub('PYTHON_TARGET_DIR', conf['python_modules_dir'], line3)
-        mkfd.write(line4)
-
+        line5 = re.sub('DBAPI2_PLACEHOLDER', conf['dbapi2'], line4)          
+        mkfd.write(line5)
     mkfd.close()
 
 ## 
