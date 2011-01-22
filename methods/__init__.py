@@ -10,12 +10,6 @@ MADlib front page: http://madlib.net/
     @defgroup grp_suplearn Supervised Learning
     @ingroup modeling
 
-        @defgroup suplearn-categorization Categorization
-        @ingroup grp_suplearn
-
-        @defgroup suplearn-regression Regression
-        @ingroup grp_suplearn
-		
 		@defgroup grp_bayes Naive Bayes Classification
 		@ingroup grp_suplearn
 
@@ -25,18 +19,22 @@ MADlib front page: http://madlib.net/
 		@defgroup grp_logreg Logistic Regression
 		@ingroup grp_suplearn
 
-    @defgroup unsuplearn Unsupervised Learning
+        @defgroup grp_kernmach Support Vector Machines
+		@ingroup grp_suplearn
+
+    @defgroup grp_unsuplearn Unsupervised Learning
     @ingroup modeling
 
-        @defgroup unsuplearn-categorization Categorization
-        @ingroup unsuplearn
+        @defgroup grp_kmeans k-Means Clustering
+        @ingroup grp_unsuplearn
+
+        @defgroup grp_svdmf SVD Matrix Factorisation
+        @ingroup grp_unsuplearn
 
 @defgroup desc-stats Descriptive Statistics
 
     @defgroup sketches Sketch-based Estimators
     @ingroup desc-stats
-
-@defgroup sampling Sampling Methods
 
 @defgroup support Support Modules
 
