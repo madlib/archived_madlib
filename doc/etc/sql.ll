@@ -99,10 +99,10 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 
 {COMMENT} {
 	yytext[0] = yytext[1] = '/';
-	*yylval = static_cast<char *>( malloc(yyleng + 2) );
-	strcpy(*yylval, yytext);
-	(*yylval)[yyleng] = '\n'; 
-	(*yylval)[yyleng + 1] = 0; 
+	yylval->str = static_cast<char *>( malloc(yyleng + 2) );
+	strcpy(yylval->str, yytext);
+	yylval->str[yyleng] = '\n'; 
+	yylval->str[yyleng + 1] = 0; 
 	BEGIN(sAFTER_COMMENT);
 	
 	/* consume the newline character (we thus need to advance the line count) */
@@ -114,7 +114,7 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 
 	/* If only whitespace and a newline follow, also consume that */
 {CCOMMENT}([[:space:]]*\n[[:space:]]*)? {
-	*yylval = strdup(yytext);
+	yylval->str = strdup(yytext);
 	BEGIN(sAFTER_COMMENT);
 	return token::COMMENT;
 }
@@ -127,7 +127,7 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 	"\\'" { yymore(); }
 	"'" {
 		yytext[yyleng - 1] = '\0';
-		*yylval = strdup(yytext);
+		yylval->str = strdup(yytext);
 		BEGIN(stringCaller);
 		if (stringCaller != INITIAL && stringCaller != sAFTER_COMMENT)
 			return token::STRING_LITERAL;
@@ -147,7 +147,7 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 <sDOLLAR_STRING_LITERAL>{
 	{DOLLARQUOTE} {
 		if (strncmp(yytext + 1, stringLiteralQuotation, yyleng - 1) == 0) {
-			*yylval = "<omitted by lexer>";
+			yylval->str = "<omitted by lexer>";
 			BEGIN(stringCaller);
 			free(stringLiteralQuotation);
 			stringLiteralQuotation = NULL;
@@ -226,10 +226,12 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 
 <sFUNC_DECL,sFUNC_ARGLIST,sFUNC_OPTIONS,sAGG_DECL,sAGG_ARGLIST,sAGG_OPTIONS>{
 	{QUOTED_IDENTIFIER} {
-		yytext[yyleng - 1] = 0; *yylval = strdup(yytext + 1); return token::IDENTIFIER;
+		yytext[yyleng - 1] = 0;
+		yylval->str = strdup(yytext + 1);
+		return token::IDENTIFIER;
 	}
-	{IDENTIFIER} { *yylval = strlowerdup(yytext); return token::IDENTIFIER; }
-	{INTEGER} { *yylval = strdup(yytext); return token::INTEGER_LITERAL; }
+	{IDENTIFIER} { yylval->str = strlowerdup(yytext); return token::IDENTIFIER; }
+	{INTEGER} { yylval->str = strdup(yytext); return token::INTEGER_LITERAL; }
 	[^;]|\n return yytext[0];
 }
 

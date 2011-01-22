@@ -42,8 +42,9 @@
 		#undef yyFlexLexer
 	#endif
 	
+	/* FIXME: Remove if no longer necessary. */
 	/* Data type of semantic values */
-	#define YYSTYPE char *
+	// #define YYSTYPE char *
 	
 	namespace bison {
 
@@ -68,8 +69,8 @@
 		void error(const std::string &m);
 
 		
-		std::map<std::string, int>	declToLineNo;
-		SQLScanner					*scanner;
+		std::map<std::string, char *>	fnToReturnType;
+		SQLScanner						*scanner;
 	};
 	
 	/* We need to subclass because SQLFlexLexer's yylex function does not have
@@ -84,6 +85,16 @@
 			SQLParser::location_type *yylloc, SQLDriver *driver);
 		virtual void preScannerAction(SQLParser::semantic_type *yylval,
 			SQLParser::location_type *yylloc, SQLDriver *driver);
+	};
+	
+	class TaggedStr
+	{
+	public:
+		TaggedStr(int inTag, char *inStr) : tag(inTag), str(inStr) { };
+		virtual ~TaggedStr() { };
+	
+		int		tag;
+		char	*str;
 	};
 	
 	} // namespace bison
@@ -121,54 +132,69 @@
 /* namespace to enclose parser in */
 %name-prefix="bison"
 
+%union
+{
+	char			*str;
+	class TaggedStr	*tStr;
+	int				i;
+}
 
-%token IDENTIFIER
+%token			END		0	"end of file"
+%token <str>	IDENTIFIER	"identifier"
 
-%token COMMENT
+%token <str>	COMMENT
 
-%token CREATE_FUNCTION
-%token CREATE_AGGREGATE
+%token			CREATE_FUNCTION
+%token			CREATE_AGGREGATE
 
 /* Function tokens */
-%token IN
-%token OUT
-%token INOUT
+%token			IN
+%token			OUT
+%token			INOUT
 
-%token RETURNS
-%token SETOF
+%token			RETURNS
+%token			SETOF
 
-%token AS
-%token LANGUAGE
-%token IMMUTABLE
-%token STABLE
-%token VOLATILE
-%token CALLED_ON_NULL_INPUT
-%token RETURNS_NULL_ON_NULL_INPUT
-%token SECURITY_INVOKER
-%token SECURITY_DEFINER
+%token			AS
+%token			LANGUAGE
+%token			IMMUTABLE
+%token			STABLE
+%token			VOLATILE
+%token			CALLED_ON_NULL_INPUT
+%token			RETURNS_NULL_ON_NULL_INPUT
+%token			SECURITY_INVOKER
+%token			SECURITY_DEFINER
 
 /* Aggregate tokens */
-%token SFUNC
-%token PREFUNC
-%token FINALFUNC
-%token SORTOP
-%token STYPE
-%token INITCOND
+%token	<i>		SFUNC
+%token	<i>		PREFUNC
+%token	<i>		FINALFUNC
+%token			SORTOP
+%token			STYPE
+%token			INITCOND
 
 /* types with more than 1 word */
-%token BIT
-%token CHARACTER
-%token DOUBLE
-%token PRECISION
-%token TIME
-%token VARYING 
-%token VOID
-%token WITH
-%token WITHOUT 
-%token ZONE
+%token			BIT
+%token			CHARACTER
+%token			DOUBLE
+%token			PRECISION
+%token			TIME
+%token			VARYING 
+%token			VOID
+%token			WITH
+%token			WITHOUT 
+%token			ZONE
 
-%token INTEGER_LITERAL
-%token STRING_LITERAL
+%token	<str>	INTEGER_LITERAL
+%token	<str>	STRING_LITERAL
+
+%type	<str>	qualifiedIdent
+%type	<str>	optFnArgList fnArgList fnArgument
+%type	<str>	optAggArgList aggArgList aggArgument
+%type	<str>	argname	type baseType optLength optArray array
+%type	<str>	returnDecl retType
+%type	<tStr>	aggOptionList aggOption
+%type	<i>		aggFunc
 
 %% /* Grammar rules and actions follow. */
 
@@ -187,13 +213,13 @@ stmt:
 createFnStmt:
 	  CREATE_FUNCTION qualifiedIdent '(' optFnArgList ')' returnDecl fnOptions {
 		std::cout << $6 << ' ' << $2 << '(' << $4 << ") { }";
-//		driver->declToLineNo.insert(std::pair<std::string,int>($2, @2.begin.line));
+		driver->fnToReturnType.insert(std::pair<std::string,char *>($2, $6));
 	}
 ;
 
 createAggStmt:
 	  CREATE_AGGREGATE qualifiedIdent '(' optAggArgList ')' '(' aggOptionList ')' {
-		printf("@aggregate %s (%s) { }", $2, $4);
+		printf("@aggregate %s %s (%s) { }", $7 == NULL ? "" : $7->str, $2, $4);
 	}
 ;
 
@@ -205,12 +231,12 @@ qualifiedIdent:
 	}
 ;
 
-optFnArgList:
+optFnArgList: { $$ = ""; }
 	| fnArgList
 ;
 
 optAggArgList:
-	  '*'
+	  '*' { $$ = ""; }
 	| aggArgList
 ;
 
@@ -275,7 +301,7 @@ baseType:
 optArray: { $$ = ""; }
 	| array;
 
-optLength:
+optLength: { $$ = ""; }
 	| '(' INTEGER_LITERAL ')' {
 		asprintf(&($$), "(%s)", $2);
 	}
@@ -290,7 +316,7 @@ array:
 		asprintf(&($$), "%s[]", $1);
 	}
 	| array '[' INTEGER_LITERAL ']' {
-		asprintf(&($$), "%s[%s]", $1, $2);
+		asprintf(&($$), "%s[%s]", $1, $3);
 	}
 ;
 
@@ -324,15 +350,24 @@ fnOption:
 
 aggOptionList:
 	  aggOptionList ',' aggOption {
-		asprintf(&($$), "%s, %s", $1, $3);
+		if ($1 == NULL)
+			$$ = $3;
+		else if ($3 == NULL)
+			$$ = $1;
+		else if ($1->tag == token::FINALFUNC)
+			$$ = $1;
+		else
+			$$ = $3;
 	}
 	| aggOption
 ;
 
 aggOption:
-	  aggFunc '=' qualifiedIdent
-	| STYPE '=' type
-	| INITCOND '=' value
+	  aggFunc '=' qualifiedIdent {
+		$$ = new TaggedStr($1, driver->fnToReturnType[$3]);
+	}
+	| STYPE '=' type { $$ = new TaggedStr(token::STYPE, $3); }
+	| INITCOND '=' value { $$ = NULL; }
 	/* FIXME: SORTOP not yet supported at this point */
 ;
 
@@ -408,9 +443,9 @@ int	main(int argc, char **argv)
 		return result;
 	
 	std::cout << "// List of functions:\n";
-	for (std::map<std::string,int>::iterator it = driver.declToLineNo.begin();
-		it != driver.declToLineNo.end(); it++)
-		std::cout << "// " << (*it).first << ": line " << (*it).second << std::endl;
+	for (std::map<std::string,char *>::iterator it = driver.fnToReturnType.begin();
+		it != driver.fnToReturnType.end(); it++)
+		std::cout << "// " << (*it).first << ": return type " << (*it).second << std::endl;
 	
 	return 0;
 }
