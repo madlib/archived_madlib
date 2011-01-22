@@ -16,6 +16,9 @@ MADlib front page: http://madlib.net/
         @defgroup suplearn-regression Regression
         @ingroup grp_suplearn
 		
+		@defgroup grp_bayes Naive Bayes Classification
+		@ingroup grp_suplearn
+
 		@defgroup grp_linreg (Multi-)Linear Regression
 		@ingroup grp_suplearn
 		
