@@ -1,20 +1,106 @@
---! @file multLinRegression.sql
---! This file contains regression code.
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file multLinRegression.sql
+ *
+ * @brief SQL functions for multi-linear and logistic regression
+ * @date   January 2011
+ *
+ *//* ----------------------------------------------------------------------- */
+ 
+/**
+@addtogroup grp_linreg
 
---! State transition function.
---! @param state The transition state
---! @param y The y value of the current row
---! @param x The x array of the current row
+@about
+
+Linear regression refers to a stochastic model, in which the conditional mean
+of the dependent variable (usually denoted $y$) is an affine function of the
+independent variables (usually denoted \f$ \boldsymbol x \f$).
+
+@prereq
+
+Implemented in C for PostgreSQL/Greenplum.
+
+@usage
+
+-# The data set is expected to be of the following form:\n
+   <tt>{TABLE|VIEW} <em>sourceName</em> ([...] <em>dependentVariable</em>
+   DOUBLE PRECISION, <em>independentVariables</em> DOUBLE PRECISION[],
+   [...])</tt>  
+-# Run the linear regression by:\n
+   <tt>SELECT mregr_coef('<em>sourceName</em>', '<em>dependentVariable</em>',
+   '<em>independentVariables</em>')</tt>\n
+-# The coefficient of determination (also denoted $R^2$), the vector of t-statistics, and the
+   vector of p-values can be determined likewise by mregr_r2(), mregr_tstats(),
+   mregr_pvalues().
+
+@examp
+
+The following examples is taken from
+http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
+
+@verbatim
+# select * from houses;
+ id | tax  | bedroom | bath | price  | size |  lot  
+----+------+---------+------+--------+------+-------
+  1 |  590 |       2 |    1 |  50000 |  770 | 22100
+  2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
+  3 |   20 |       3 |    1 |  22500 | 1060 |  3500
+  4 |  870 |       2 |    2 |  90000 | 1300 | 17500
+  5 | 1320 |       3 |    2 | 133000 | 1500 | 30000
+  6 | 1350 |       2 |    1 |  90500 |  820 | 25700
+  7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000
+  8 |  680 |       2 |    1 | 142500 | 1170 | 22000
+  9 | 1840 |       3 |    2 | 160000 | 1500 | 19000
+ 10 | 3680 |       4 |    2 | 240000 | 2790 | 20000
+ 11 | 1660 |       3 |    1 |  87000 | 1030 | 17500
+ 12 | 1620 |       3 |    2 | 118600 | 1250 | 20000
+ 13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
+ 14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
+ 15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
+(15 rows)
+
+# select mregr_coef(price, array[1, bedroom, bath, size])::REAL[] from houses;
+             mregr_coef             
+------------------------------------
+ {27923.4,-35524.8,2269.34,130.794}
+(1 row)
+
+# select mregr_r2(price, array[1, bedroom, bath, size])::REAL from houses;
+ mregr_r2 
+----------
+ 0.745374
+(1 row)
+
+# select mregr_tstats(price, array[1, bedroom, bath, size])::REAL[] from houses;
+             mregr_tstats             
+--------------------------------------
+ {0.495919,-1.41891,0.102183,3.61223}
+(1 row)
+
+# select mregr_pvalues(price, array[1, bedroom, bath, size])::REAL[] from houses;
+              mregr_pvalues              
+-----------------------------------------
+ {0.629711,0.183633,0.920451,0.00408159}
+(1 row)
+@endverbatim
+
+@sa file regress.c (documenting the implementation in C), function
+	float8_mregr_compute() (documenting the formulas used for coefficients,
+	$R^2$, t-statistics, and p-values, implemented in C)
+
+@literature
+
+[1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 21 October
+    2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/17/lecture-17.pdf
+
+*/
+
 CREATE FUNCTION madlib.float8_mregr_accum(state DOUBLE PRECISION[], y DOUBLE PRECISION, x DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'multLinRegression'
 LANGUAGE C
 IMMUTABLE STRICT;
 
---! Function for merging two transition states
---! @param state1 First state
---! @param state2 Second state
---! @returns A merged state
 CREATE OR REPLACE FUNCTION madlib.float8_mregr_combine(state1 DOUBLE PRECISION[], state2 DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'multLinRegression'
@@ -46,6 +132,9 @@ LANGUAGE C STRICT;
 -- attribute)
 SET client_min_messages = error;
 
+/**
+ * @brief Compute multi-linear regression coefficients.
+ */
 CREATE AGGREGATE madlib.mregr_coef(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	SFUNC=madlib.float8_mregr_accum,
 	STYPE=float8[],
@@ -54,6 +143,9 @@ CREATE AGGREGATE madlib.mregr_coef(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	INITCOND='{0}'
 );
 
+/**
+ * @brief Compute the coefficient of determination, $R^2$.
+ */
 CREATE AGGREGATE madlib.mregr_r2(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	SFUNC=madlib.float8_mregr_accum,
 	STYPE=float8[],
@@ -62,6 +154,9 @@ CREATE AGGREGATE madlib.mregr_r2(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	INITCOND='{0}'
 );
 
+/**
+ * @brief Compute the vector of t-statistics, for every coefficient.
+ */
 CREATE AGGREGATE madlib.mregr_tstats(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	SFUNC=madlib.float8_mregr_accum,
 	STYPE=float8[],
@@ -70,6 +165,9 @@ CREATE AGGREGATE madlib.mregr_tstats(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	INITCOND='{0}'
 );
 
+/**
+ * @brief Compute the vector of p-values, for every coefficient.
+ */
 CREATE AGGREGATE madlib.mregr_pvalues(DOUBLE PRECISION, DOUBLE PRECISION[]) (
 	SFUNC=madlib.float8_mregr_accum,
 	STYPE=float8[],
@@ -156,7 +254,7 @@ RETURNS BOOLEAN
 AS 'multLinRegression'
 LANGUAGE C STRICT;
 
-CREATE FUNCTION madlib.logreg_coef(
+CREATE FUNCTION madlib.logregr_coef(
 	"source" VARCHAR,
 	"depColumn" VARCHAR,
 	"indepColumn" VARCHAR)
@@ -166,7 +264,7 @@ RETURNS DOUBLE PRECISION[] AS $$
 $$ LANGUAGE plpythonu VOLATILE;
 
 
-CREATE FUNCTION madlib.logreg_coef(
+CREATE FUNCTION madlib.logregr_coef(
 	"source" VARCHAR,
 	"depColumn" VARCHAR,
 	"indepColumn" VARCHAR,
@@ -177,7 +275,7 @@ RETURNS DOUBLE PRECISION[] AS $$
 $$ LANGUAGE plpythonu VOLATILE;
 
 
-CREATE FUNCTION madlib.logreg_coef(
+CREATE FUNCTION madlib.logregr_coef(
 	"source" VARCHAR,
 	"depColumn" VARCHAR,
 	"indepColumn" VARCHAR,
@@ -214,22 +312,6 @@ RETURNS DOUBLE PRECISION[] AS $$
 	return logRegress.compute_logreg_coef(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
 
-
-CREATE FUNCTION madlib.logr_coef(iterations INTEGER)
-RETURNS madlib.logregr_cg_state
-AS $$
-DECLARE
-	i INTEGER;
-	state madlib.logregr_cg_state;
-BEGIN
-	state := NULL;
-	FOR i in 1..iterations LOOP
-		state := (SELECT madlib.logregr_coef(state, a.y, a.x) FROM madlib_examples.artificiallogreg AS a);
-		RAISE NOTICE 'After iteration %: %', i, state;
-	END LOOP;
-	RETURN state;
-END;
-$$ LANGUAGE plpgsql;
 
 CREATE FUNCTION madlib.init_python_paths()
 RETURNS VOID AS

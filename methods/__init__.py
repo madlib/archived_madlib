@@ -7,14 +7,20 @@ MADlib front page: http://madlib.net/
 
 @defgroup modeling Data Modeling
 
-    @defgroup suplearn Supervised Learning
+    @defgroup grp_suplearn Supervised Learning
     @ingroup modeling
 
         @defgroup suplearn-categorization Categorization
-        @ingroup suplearn
+        @ingroup grp_suplearn
 
         @defgroup suplearn-regression Regression
-        @ingroup suplearn
+        @ingroup grp_suplearn
+		
+		@defgroup grp_linreg (Multi-)Linear Regression
+		@ingroup grp_suplearn
+		
+		@defgroup grp_logreg Logistic Regression
+		@ingroup grp_suplearn
 
     @defgroup unsuplearn Unsupervised Learning
     @ingroup modeling

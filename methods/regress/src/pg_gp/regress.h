@@ -6,16 +6,6 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-/**
- * @defgroup suplearn-regression
- *
- * @about
- *
- * Implementation of a variety of regression techniques, i.e., techniques for 
- * modeling and analyzing the relationship between a dependent variable and one
- * or more independent variables.
- */
-
 #ifndef MADLIB_REGRESS_H
 #define MADLIB_REGRESS_H
 
