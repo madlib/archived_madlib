@@ -1,7 +1,6 @@
 /*! 
 
-@defgroup kernel-machines Support Vector Machines
-@ingroup suplearn-categorization
+@addtogroup grp_kernmach
 
 @about
 
