@@ -6,8 +6,6 @@
 #ifndef SKETCH_SUPPORT_H
 #define SKETCH_SUPPORT_H
 
-<<<<<<< HEAD
-
 /*! @addtogroup desc-stats 
  *
  * @par About:
