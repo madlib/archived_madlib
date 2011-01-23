@@ -35,6 +35,9 @@ MADlib front page: http://madlib.net/
 
     @defgroup sketches Sketch-based Estimators
     @ingroup desc-stats
+    
+    @defgroup profile Profile 
+    @ingroup desc-stats
 
 @defgroup support Support Modules
 
