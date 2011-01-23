@@ -1,3 +1,42 @@
+"""
+@file profile.py_in
+
+@addtogroup profile
+Script for single-pass table profiles.
+
+@about
+
+This module computes a "profile" of a table or view: a configurable set of aggregates to be run on each numeric column, and subset to be run on non-numeric columns.
+
+Because the input schema of the table or view is unknown, we need to synthesize SQL to suit.  This is done with the genprofile.py script.  Currently it only supports registered tables and views, but with additional command-line options it could support ad-hoc queries: the user would need to specify the names of the numeric and non-numeric columns in their SELECT list.
+
+@prereq
+Requires MADlib sketch module, which provides single-pass approximations of various descriptive statistics.
+
+@usage
+Currently this module is available only as a command-line script.
+
+Running <c>python profile.py -h</c> gives usage information:
+<code>
+Usage: profile.py [options] tablename
+   (note: database connection info taken from Config.yml, see -c flag)
+
+Options:
+  -h, --help            show this help message and exit
+  -n NUMERICAGGS, --numeric=NUMERICAGGS
+                        array of aggs for integer columns
+  -t NON_NUMERICAGGS, --nonnumeric=NON_NUMERICAGGS
+                        array of aggs for non-numeric columns
+  -k, --kitchensink     compute all available statistics
+  -s SKIPCOLS, --skip=SKIPCOLS
+                        array of columns to skip
+  -c CONFIGDIR, --configdir=CONFIGDIR
+                        directory holding Config.yml (default SCRIPTDIR if
+                        already initialized, else /Library/Python/2.6/site-
+                        packages/madpy)
+</code>
+"""
+
 import sys
 import os
 import libprofile
@@ -10,93 +49,103 @@ all_numerics = '["MIN", "MAX", "AVG", "MADLIB_SCHEMA.cmsketch_median", "MADLIB_S
 basic_non_numerics = '["MADLIB_SCHEMA.fmsketch_dcount"]'
 all_non_numerics = '["MADLIB_SCHEMA.fmsketch_dcount", "MADLIB_SCHEMA.mfvsketch_top_histogram(%%,10)::text"]'
 
-usage = """usage: %prog [options] tablename
-   (note: database connection info taken from Config.yml, see -c flag)"""
-parser = OptionParser(usage=usage)
-parser.add_option("-n", "--numeric", dest="numericaggs", nargs = 1,
-                  help="array of aggs for integer columns",
-                  default=basic_numerics)
-parser.add_option("-t", "--nonnumeric", dest="non_numericaggs", nargs = 1,
-                help="array of aggs for non-numeric columns",
-                default=basic_non_numerics)
-parser.add_option("-k", "--kitchensink", action="store_true", dest="kitchen",
-                help="compute all available statistics", default=False)
-parser.add_option("-x", "--skip", dest="skipcols", nargs = 1,
-								                help="array of columns to skip",
-								                default='[]')
-parser.add_option('-c', '--configdir', nargs=1, dest='configdir',
-                    default=None,
-                    help="""directory holding Config.yml
-(default SCRIPTDIR if already initialized, else
-"""
-                         + madpy.__path__[0]+")")
-parser.add_option('-s', '--scriptdir', nargs=1, dest='scriptdir',
-                    default=madpy.__path__[0] + "/config/scripts",
-                    help="""directory holding scripts 
-(default """
-                         + madpy.__path__[0] + "/config/scripts"
-                         +")")
 
-(options, args) = parser.parse_args()
-
-try:
-  table = args[0]
-except:
-  parser.error("missing tablename")
-  sys.exit(2)
+def profile_run(table, numericaggs, non_numericaggs, configdir, skipcols):
+	# if config file left unspecified, first check scriptdir.
+	# if nothing there, take the installed version: madpy/Config.yml
+	if configdir == None:
+	   configdir = madpy.__path__
+	if numericaggs == None:
+	    numericaggs = basic_numerics
+	if non_numericaggs == None:
+	    non_numericaggs = basic_non_numerics
+	
 
 
-# if config file left unspecified, first check scriptdir.
-# if nothing there, take the installed version: madpy/Config.yml
-if not options.configdir:
-   if os.path.exists(options.scriptdir+"/Config.yml"):
-       options.configdir = [options.scriptdir]
-   else:
-       options.configdir = madpy.__path__
+	conf = configyml.get_config(configdir[0], False)        
+	api = conf['dbapi2']
+	connect_args = conf['connect_args']
+	dbapi2 = __import__(api, globals(), locals(), [''])
+	## @var dbconn live database connection
+	con_args={};
+	for arg in connect_args:
+	    if arg.find("=") == -1:
+	        print sys.exc_info()[0]
+	        print "Missing '=' character in the connect_args parameter: " + arg
+	        raise
+	    # cleanup the string
+	    arg = ((arg.replace( "'", "")).replace( '"', '')).replace( ' ', '')            
+	    equal_sign = arg.find('=')
+	    # create a proper dictionary of connection parameters
+	    con_args[ arg[:equal_sign]] = arg[equal_sign+1:]
+	conn = dbapi2.connect( **con_args)
+
+	# Open a cursor to perform database operations
+	cur = conn.cursor()
+
+	(numcols, non_numcols) = libprofile.catalog_columns(conn, table, skipcols)
+	query = libprofile.gen_profile_query(table,
+	                                    `eval'(numericaggs),
+	                                    `eval'(non_numericaggs),
+	                                    numcols, non_numcols)
+	print query
+	print
+	print "---"
+	print
+
+	# Fetch numeric columnnames from table
+	cur.execute(query)
+	out = cur.fetchone()
+	for i in range(`len'(out)):
+	    print cur.description[i][0]+": "+str(out[i])
+	cur.close()
+	conn.close()
 
 
-if options.kitchen:
-    numericaggs = all_numerics
-    non_numericaggs = all_non_numerics
-else:
-    numericaggs = options.numericaggs
-    non_numericaggs = options.non_numericaggs
+def main(argv):
+	usage = """usage: %prog [options] tablename
+	   (note: database connection info taken from Config.yml, see -c flag)"""
+	parser = OptionParser(usage=usage)
+	parser.add_option("-n", "--numeric", dest="numericaggs", nargs = 1,
+	                  help="array of aggs for integer columns",
+	                  default=basic_numerics)
+	parser.add_option("-t", "--nonnumeric", dest="non_numericaggs", nargs = 1,
+	                help="array of aggs for non-numeric columns",
+	                default=basic_non_numerics)
+	parser.add_option("-k", "--kitchensink", action="store_true", dest="kitchen",
+	                help="compute all available statistics", default=False)
+	parser.add_option("-s", "--skip", dest="skipcols", nargs = 1,
+									                help="array of columns to skip",
+									                default='[]')
+	parser.add_option('-c', '--configdir', nargs=1, dest='configdir',
+	                    default=None,
+	                    help="""directory holding Config.yml
+	(default SCRIPTDIR if already initialized, else
+	"""
+	                         + madpy.__path__[0]+")")
 
-conf = configyml.get_config(options.configdir[0], False)        
-api = conf['dbapi2']
-connect_args = conf['connect_args']
-dbapi2 = __import__(api, globals(), locals(), [''])
-## @var dbconn live database connection
-con_args={};
-for arg in connect_args:
-    if arg.find("=") == -1:
-        print sys.exc_info()[0]
-        print "Missing '=' character in the connect_args parameter: " + arg
-        raise
-    # cleanup the string
-    arg = ((arg.replace( "'", "")).replace( '"', '')).replace( ' ', '')            
-    equal_sign = arg.find('=')
-    # create a proper dictionary of connection parameters
-    con_args[ arg[:equal_sign]] = arg[equal_sign+1:]
-conn = dbapi2.connect( **con_args)
+	(options, args) = parser.parse_args()
 
-# Open a cursor to perform database operations
-cur = conn.cursor()
+	try:
+	  table = args[0]
+	except:
+	  parser.error("missing tablename")
+	  sys.exit(2)
 
-(numcols, non_numcols) = libprofile.catalog_columns(conn, table, options.skipcols)
-query = libprofile.gen_profile_query(table,
-                                    `eval'(numericaggs),
-                                    `eval'(non_numericaggs),
-                                    numcols, non_numcols)
-print query
-print
-print "---"
-print
+	if options.kitchen:
+	    numericaggs = all_numerics
+	    non_numericaggs = all_non_numerics
+	else:
+	    numericaggs = None
+	    non_numericaggs = None
 
-# Fetch numeric columnnames from table
-cur.execute(query)
-out = cur.fetchone()
-for i in range(`len'(out)):
-    print cur.description[i][0]+": "+str(out[i])
-cur.close()
-conn.close()
+	if not options.configdir:
+	    options.configdir = None
+	
+	if not options.skipcols:
+	    options.skipcols = []
+	
+	profile_run(table, numericaggs, non_numericaggs, options.configdir, options.skipcols)
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
