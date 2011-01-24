@@ -7,8 +7,6 @@ REGRESS = bayesRegression_test
 # the current directory
 REGRESS_OPTS := --dlpath=.
 
-# Changing the module name unfortunately also requires changing
-# naiveBayesClassification.sql
 MODULE_big = naiveBayesClassification
 OBJS = $(SOURCES:%.c=%.o)
 

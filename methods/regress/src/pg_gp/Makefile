@@ -7,8 +7,6 @@ REGRESS = multLinRegression_test
 # the current directory
 REGRESS_OPTS := --dlpath=.
 
-# Changing the module name unfortunately also requires changing
-# multLinRegression.sql
 MODULE_big = multLinRegression
 OBJS = $(SOURCES:%.c=%.o)
 
