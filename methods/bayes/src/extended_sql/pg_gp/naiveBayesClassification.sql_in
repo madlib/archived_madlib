@@ -1,0 +1,386 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file naiveBayesClassification.sql_in
+ *
+ * @brief SQL functions for naive Bayes
+ * @date   January 2011
+ *
+ *//* --------------------------------------------------------------------------
+ *
+ * This file is preprocessed with m4. Macro expansion can be turned of by
+ * enclosing text in <nom4> and </nom4>.
+ */
+changequote(`<nom4>', `</nom4>')
+
+-- Begin of argmax definition
+
+CREATE TYPE MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE AS (
+	args INTEGER[],
+	value DOUBLE PRECISION
+);
+
+CREATE FUNCTION MADLIB_SCHEMA.argmax_transition(
+	oldmax MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE,
+	newkey INTEGER,
+	newvalue DOUBLE PRECISION)
+RETURNS MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE AS
+$$
+	SELECT CASE WHEN $3 < $1.value OR $2 IS NULL OR ($3 IS NULL AND NOT $1.value IS NULL) THEN $1
+				WHEN $3 = $1.value OR ($3 IS NULL AND $1.value IS NULL AND NOT $1.args IS NULL)
+					THEN ($1.args || $2, $3)::MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE
+				ELSE (array[$2], $3)::MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE
+		   END
+$$
+LANGUAGE sql IMMUTABLE;
+
+CREATE FUNCTION MADLIB_SCHEMA.argmax_combine(
+	max1 MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE,
+	max2 MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE)
+RETURNS MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE AS
+$$
+	-- If SQL guaranteed short-circuit evaluation, the following could become
+	-- shorter. Unfortunately, this is not the case.
+	-- Section 6.3.3.3 of ISO/IEC 9075-1:2008 Framework (SQL/Framework):
+	--
+	--  "However, it is implementation-dependent whether expressions are
+	--   actually evaluated left to right, particularly when operands or
+	--   operators might cause conditions to be raised or if the results of the
+	--   expressions can be determined without completely evaluating all parts
+	--   of the expression."
+	--
+	-- Again, the optimizer does its job hopefully.
+	SELECT CASE WHEN $1 IS NULL THEN $2
+				WHEN $2 IS NULL THEN $1
+				WHEN ($1.value = $2.value) OR ($1.value IS NULL AND $2.value IS NULL)
+					THEN ($1.args || $2.args, $1.value)::MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE
+				WHEN $1.value IS NULL OR $1.value < $2.value THEN $2
+				ELSE $1
+		   END
+$$
+LANGUAGE sql IMMUTABLE;
+
+CREATE FUNCTION MADLIB_SCHEMA.argmax_final(
+	finalstate MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE)
+RETURNS INTEGER[] AS
+$$
+	SELECT $1.args
+$$
+LANGUAGE sql IMMUTABLE;
+
+/**
+ * @brief Argmax: Return the key for which the value column is maximal
+ *
+ * The "index set" of the argmax function is of type INTEGER and we range over
+ * DOUBLE PRECISION values. It is not required that all keys are distinct.
+ *
+ * @note
+ *
+ * argmax should only be used on unsorted data because it will not exploit
+ * indices, and its running time is \f$ \Theta(n) \f$.
+ *
+ * @implementation
+ *
+ * The implementation is in SQL, with a flavor of functional programming.
+ * The hope is that the optimizer does a good job here.
+ */
+CREATE AGGREGATE madlib.argmax(INTEGER, DOUBLE PRECISION) (
+	SFUNC=madlib.argmax_transition,
+	STYPE=madlib.ARGS_AND_VALUE_DOUBLE,
+	ifdef(<nom4>GREENPLUM</nom4>,<nom4>prefunc = MADLIB_SCHEMA.argmax_combine,</nom4>)
+	FINALFUNC=MADLIB_SCHEMA.argmax_final
+);
+
+
+/**
+ * @brief Precompute all class priors and feature probabilities
+ *
+ * Feature probabilities are stored in a table with columns
+ * (class, attr, value, cnt, attr_cnt)
+ *
+ * Class priors are stored in a relation with columns
+ * (class, class_cnt, all_cnt).
+ *
+ * @param trainingSource Name of relation containing the training data
+ * @param trainingClassColumn Name of class column in training data
+ * @param trainingAttrColumn Name of attributes-array column in training data
+ * @param numAttrs Number of attributes to use for classification
+ * @param featureProbsDestName Name of feature-probabilities table to create
+ * @param classPriorsDestName Name of class-priors table to create
+ *
+ * @sa This function is a wrapper for bayes::create_prepared_data().
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_prepared_data_tables(
+	"trainingSource" VARCHAR,
+	"trainingClassColumn" VARCHAR,
+	"trainingAttrColumn" VARCHAR,
+	"numAttrs" INTEGER,
+	"featureProbsDestName" VARCHAR,
+	"classPriorsDestName" VARCHAR)
+RETURNS VOID AS $$
+	import bayes
+	global whatToCreate
+
+	whatToCreate = 'TABLE'
+	bayes.create_prepared_data(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+/**
+ * @brief Create view that contains all keys of the source relation and the
+ *        respective naive Bayes classifications
+ *
+ * @param featureProbsSource Name of table with precomputed feature
+ *		  probabilities, as created with create_nb_prepared_data_tables()
+ * @param classPriorsSource Name of table with precomputed class priors, as
+ *        created with create_nb_prepared_data_tables()
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification(). See there
+ *     for details.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
+	"featureProbsSource" VARCHAR,
+	"classPriorsSource" VARCHAR,
+	"classifySource" VARCHAR,
+	"classifyKeyColumn" VARCHAR,
+	"classifyAttrColumn" VARCHAR,
+	"numAttrs" INTEGER,
+	"destName" VARCHAR)
+RETURNS VOID AS $$
+	import bayes
+	global whatToCreate
+	
+	whatToCreate = 'VIEW'
+	bayes.create_classification(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+/**
+ * @brief Create a view with columns <tt>(key, nb_classification)</tt>
+ *
+ * The created relation will be
+ *
+ * <tt>{TABLE|VIEW} <em>destName</em> (key, nb_classification)</tt>
+ *	
+ * where \c nb_classification is an array containing the most likely
+ * class(es) of the record in \em classifySource identified by \c key.
+ *
+ * @param trainingSource
+ *        Name of relation containing the training data
+ * @param trainingClassColumn
+ *        Name of class column in training data
+ * @param trainingAttrColumn
+ *        Name of attributes-array column in \em trainingSource	
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification().
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
+	"trainingSource" VARCHAR,
+	"trainingClassColumn" VARCHAR,
+	"trainingAttrColumn" VARCHAR,
+	"classifySource" VARCHAR,
+	"classifyKeyColumn" VARCHAR,
+	"classifyAttrColumn" VARCHAR,
+	"numAttrs" INTEGER,
+	"destName" VARCHAR)
+RETURNS VOID AS $$
+	import bayes
+	global whatToCreate
+	
+	whatToCreate = 'VIEW'
+	bayes.create_classification(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+/**
+ * @brief Create view with columns <tt>(key, class, nb_prob)</tt>
+ * 
+ * The created view will be
+ * 
+ * <tt>VIEW <em>destName</em> (key, class, nb_prob)</tt>
+ * 
+ * where \c nb_prob is the Naive-Bayes probability that \c class is the true
+ * class of the record in \em classifySource identified by \c key.
+ * 
+ * @param trainingSource
+ *        Name of relation containing the training data
+ * @param trainingClassColumn
+ *        Name of class column in training data
+ * @param trainingAttrColumn
+ *        Name of attributes-array column in \em trainingSource	
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_bayes_probabilities().
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
+	"trainingSource" VARCHAR,
+	"trainingClassColumn" VARCHAR,
+	"trainingAttrColumn" VARCHAR,
+	"classifySource" VARCHAR,
+	"classifyKeyColumn" VARCHAR,
+	"classifyAttrColumn" VARCHAR,
+	"numAttrs" INTEGER,
+	"destName" VARCHAR)
+RETURNS VOID AS $$
+	import bayes
+	global whatToCreate
+	
+	whatToCreate = 'VIEW'
+	bayes.create_bayes_probabilities(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+/**
+ * @brief Create view with columns <tt>(key, class, nb_prob)</tt>
+ * 
+ * The created view will be
+ * 
+ * <tt>VIEW <em>destName</em> (key, class, nb_prob)</tt>
+ * 
+ * where \c nb_prob is the Naive-Bayes probability that \c class is the true
+ * class of the record in \em classifySource identified by \c key.
+ * 
+ * @param featureProbsSource Name of table with precomputed feature
+ *		  probabilities, as created with create_nb_prepared_data_tables()
+ * @param classPriorsSource Name of table with precomputed class priors, as
+ *        created with create_nb_prepared_data_tables()
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_bayes_probabilities().
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
+	"featureProbsSource" VARCHAR,
+	"classPriorsSource" VARCHAR,
+	"classifySource" VARCHAR,
+	"classifyKeyColumn" VARCHAR,
+	"classifyAttrColumn" VARCHAR,
+	"numAttrs" INTEGER,
+	"destName" VARCHAR)
+RETURNS VOID AS $$
+	import bayes
+	global whatToCreate
+	
+	whatToCreate = 'VIEW'
+	bayes.create_bayes_probabilities(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+/**
+ * @brief Create a SQL function mapping arrays of attribute values to the Naive
+ *        Bayes classification.
+ * 
+ * The created SQL function will be:
+ *	
+ * <tt>
+ * FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
+ * RETURNS INTEGER[]</tt>
+ * 
+ * @note
+ * On Greenplum, the generated SQL function can only be called on the master.
+ *
+ * @param featureProbsSource Name of table with precomputed feature
+ *		  probabilities, as created with create_nb_prepared_data_tables()
+ * @param classPriorsSource Name of table with precomputed class priors, as
+ *        created with create_nb_prepared_data_tables()
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the function to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification_function().
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_fn(
+	"featureProbsSource" VARCHAR,
+	"classPriorsSource" VARCHAR,
+	"numAttrs" INTEGER,
+	"destName" VARCHAR)
+RETURNS VOID AS $$
+	import bayes
+	bayes.create_classification_function(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+/**
+ * @brief Create a SQL function mapping arrays of attribute values to the Naive
+ *        Bayes classification.
+ * 
+ * The created SQL function will be:
+ *	
+ * <tt>
+ * FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
+ * RETURNS INTEGER[]</tt>
+ * 
+ * @note
+ * On Greenplum, the generated SQL function can only be called on the master.
+ *
+ * @param trainingSource
+ *        Name of relation containing the training data
+ * @param trainingClassColumn
+ *        Name of class column in training data
+ * @param trainingAttrColumn
+ *        Name of attributes-array column in \em trainingSource	
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the function to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification_function().
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_fn(
+	"trainingSource" VARCHAR,
+	"trainingClassColumn" VARCHAR,
+	"trainingAttrColumn" VARCHAR,
+	"numAttrs" INTEGER,
+	"destName" VARCHAR)
+RETURNS VOID AS $$
+	import bayes
+	bayes.create_classification_function(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+ifdef(<nom4>PGXS</nom4>,<nom4>
+
+/*
+ * Function for initializing python paths to the paths in dynamic_library_path. This is only needed
+ * when debugging Python-based functions without installing them in a location where Python would
+ * find them automatically.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.init_python_paths()
+RETURNS VOID AS
+$$
+	# FIXME: The following code should be common code and not reside in a specialized module
+	import sys
+
+	dyld_paths = plpy.execute(
+		"SHOW dynamic_library_path")[0]["dynamic_library_path"].split(':')
+	before_default = True
+	count = 0
+	for path in dyld_paths:
+		if path == "$libdir":
+			before_default = False
+		else:
+			if before_default:
+				sys.path.insert(count, path)
+				count += 1
+			else:
+				sys.path.append(path)
+$$ LANGUAGE plpythonu VOLATILE;
+
+</nom4>)
