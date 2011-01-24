@@ -11,14 +11,33 @@
  * MFVSketch: Most Frequent Values variant of CountMin sketch.
  * This is basically a CountMin sketch that keeps track of most frequent values
  * as it goes.
+ *
+ * It comes in two different versions: a "quick and dirty" version that does
+ * parallel aggregation, and a more faithful implementation that preserves the 
+ * approximation guarantees of Cormode/Muthukrishnan, but ships all rows to the
+ * master for aggregation.
+ *
  * It only needs to do cmsketch_count, doesn't need the "dyadic" range trick.
  * As a result it's not limited to integers, and the implementation works
  * for the Postgres "anyelement".
  *
  * \par Usage/API:
  *
- *  - <c>mfvsketch_top_histogram(col anytype, nbuckets int4)</c>          is a UDA over column <c>col</c> of any type, and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket is for one of the most frequent values in the column. The output is an array of doubles {value, count} in descending order of frequency; counts are approximate. Ties are handled arbitrarily.  Example:\code
+ *  - <c>mfvsketch_top_histogram(col anytype, nbuckets int4)</c> 
+ *   is a UDA over column <c>col</c> of any type, and a number of buckets <c>nbuckets</c>, 
+ *   and produces an n-bucket histogram for the column where each bucket is for one of the 
+ *   most frequent values in the column. The output is an array of doubles {value, count} 
+ *   in descending order of frequency; counts are approximate. Ties are handled arbitrarily.  
+ *   Example:\code
  *   SELECT madlib.mfvsketch_top_histogram(proname, 4)
+ *     FROM pg_proc;
+ *   \endcode
+ *
+ *  - <c>mfvsketch_quick_histogram(col anytype, nbuckets int4)</c> is the same as the above
+ *  in PostgreSQL.  In Greenplum, it does parallel aggregation to provide a "quick and dirty" 
+ *   version of the above.
+ *   Example:\code
+ *   SELECT madlib.mfvsketch_quick_histogram(proname, 4)
  *     FROM pg_proc;
  * \endcode
  */
@@ -48,14 +67,12 @@ PG_FUNCTION_INFO_V1(__mfvsketch_trans);
 Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
 {
     bytea *      transblob = PG_GETARG_BYTEA_P(0);
-    int          num_mfvs  = PG_GETARG_INT32(2);
+    Datum        newdatum  = PG_GETARG_DATUM(1);
+    int          max_mfvs  = PG_GETARG_INT32(2);
     mfvtransval *transval;
     int64        tmpcnt;
     int          i;
-    bool         typIsVarlena;
-    bool         found = false;
     char *       outString;
-    bytea *      outText;
 
     /*
      * This function makes destructive updates to its arguments.
@@ -70,104 +87,171 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
         elog(ERROR,
              "destructive pass by reference outside agg");
 
+     /* initialize if this is first call */
+     if (VARSIZE(transblob) <= sizeof(MFV_TRANSVAL_SZ(0))) {
+         Oid typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
+         transblob = mfv_init_transval(max_mfvs, typOid);
+     }
+         
     /* ignore NULL inputs */
     if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
         PG_RETURN_DATUM(PointerGetDatum(transblob));
 
-    transval = (mfvtransval *)(VARDATA(transblob));
-
-    if (VARSIZE(transblob) <= sizeof(MFV_TRANSVAL_SZ(0))) {
-        Oid typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
-        int initial_size;
-        /*
-         * initialize mfvtransval, using palloc0 to zero it out.
-         * if typlen is positive (fixed), size chosen large enough to hold
-         * one 3x the length (on the theory that 2^8=256 takes 3 chars as a string).
-         * Else we'll do a conservative estimate of 8 bytes (=24 chars), and repalloc as needed.
-         */
-        if ((initial_size = get_typlen(typOid)) > 0)
-            initial_size *= num_mfvs*3;
-        else /* guess */
-            initial_size = num_mfvs*24;
-
-        transblob = (bytea *)palloc0(MFV_TRANSVAL_SZ(num_mfvs) + initial_size);
-
-        SET_VARSIZE(transblob, MFV_TRANSVAL_SZ(num_mfvs) + initial_size);
-        transval = (mfvtransval *)VARDATA(transblob);
-        transval->num_mfvs = num_mfvs;
-        transval->next_mfv = 0;
-        transval->next_offset = MFV_TRANSVAL_SZ(num_mfvs)-VARHDRSZ;
-        transval->typOid = typOid;
-        getTypeOutputInfo(transval->typOid,
-                          &(transval->outFuncOid),
-                          &typIsVarlena);
-        if (!transval->outFuncOid) {
-            /* no outFunc for this type! */
-            elog(ERROR, "no outFunc for type %d", transval->typOid);
-        }
-    }
-
     transval = (mfvtransval *)VARDATA(transblob);
     /* insert into the countmin sketch */
-    outString = countmin_trans_c(transval->sketch, PG_GETARG_DATUM(
-                                     1), transval->outFuncOid);
-    outText = cstring_to_text(outString);
+    outString = countmin_trans_c(transval->sketch, newdatum, transval->outFuncOid);
 
     tmpcnt = cmsketch_count_c(transval->sketch,
-                              PG_GETARG_DATUM(1),
+                              newdatum,
                               transval->outFuncOid);
-    /* look for existing entry for this value */
-    for (i = 0; i < transval->next_mfv; i++) {
-        bytea *iText = mfv_transval_getval(transval,i);
-        /* if they're the same */
-        if (VARSIZE(iText) == VARSIZE(outText)
-            && !strncmp(VARDATA(iText), VARDATA(outText), VARSIZE(iText)-
-                        VARHDRSZ)) {
-            /* arg is an mfv */
-            transval->mfvs[i].cnt = tmpcnt;
-            found = true;
-            break;
-        }
+    i = mfv_find(transblob, newdatum);
+    
+    if (i > -1) {
+        transval->mfvs[i].cnt = tmpcnt;
     }
-    if (!found)
+    else {
         /* try to insert as either a new or replacement entry */
-        for (i = 0; i < transval->num_mfvs; i++) {
+        for (i = 0; i < transval->max_mfvs; i++) {
             if ((i == transval->next_mfv)) {
                 /* room for new */
-                transblob = mfv_transval_insert(transblob, outText);
+                transblob = mfv_transval_append(transblob, newdatum);
                 transval = (mfvtransval *)VARDATA(transblob);
                 transval->mfvs[i].cnt = tmpcnt;
                 break;
             }
             else if (transval->mfvs[i].cnt < tmpcnt) {
                 /* arg beats this mfv */
-                transblob = mfv_transval_replace(transblob, outText, i);
+                transblob = mfv_transval_replace(transblob, newdatum, i);
                 transval = (mfvtransval *)VARDATA(transblob);
                 transval->mfvs[i].cnt = tmpcnt;
                 break;
             }
             /* else this is not a frequent value */
         }
-    pfree(outText);
+    }
     PG_RETURN_DATUM(PointerGetDatum(transblob));
 }
+
+int mfv_find(bytea *blob, Datum val)
+{
+    mfvtransval *transval = (mfvtransval *)VARDATA(blob);
+    int i, len;
+    Datum iDat;
+    
+    /* look for existing entry for this value */
+    for (i = 0; i < transval->next_mfv; i++) {
+        /* if they're the same */
+        iDat = mfv_transval_getval(blob,i);
+        if (transval->typByVal) iDat = *(Datum *)iDat;
+        
+        if ((len = att_addlength_datum(0, transval->typLen, iDat)) 
+            == att_addlength_datum(0, transval->typLen, val)) {
+            char *valp, *datp;
+            if (transval->typByVal) {
+                valp = (char *)&val;
+                datp = (char *)&iDat;
+            }
+            else {
+                valp = (char *)val;
+                datp = (char *)iDat;
+            }
+            if (!memcmp(datp, valp, len))
+                /* arg is an mfv */
+                return(i);
+        }
+    } 
+    return(-1);
+}
+
+bytea *mfv_init_transval(int max_mfvs, Oid typOid)
+{
+    int initial_size;
+    bool         typIsVarLen;
+    bytea       *transblob;
+    mfvtransval *transval;
+    
+    /*
+     * initialize mfvtransval, using palloc0 to zero it out.
+     * if typlen is positive (fixed), size chosen large enough to hold
+     * one 3x the length (on the theory that 2^8=256 takes 3 chars as a string).
+     * Else we'll do a conservative estimate of 8 bytes (=24 chars), and repalloc as needed.
+     */
+    if ((initial_size = get_typlen(typOid)) > 0)
+        initial_size *= max_mfvs*3;
+    else /* guess */
+        initial_size = max_mfvs*24;
+
+    transblob = (bytea *)palloc0(MFV_TRANSVAL_SZ(max_mfvs) + initial_size);
+    
+    SET_VARSIZE(transblob, MFV_TRANSVAL_SZ(max_mfvs) + initial_size);
+    transval = (mfvtransval *)VARDATA(transblob);
+    transval->max_mfvs = max_mfvs;
+    transval->next_mfv = 0;
+    transval->next_offset = MFV_TRANSVAL_SZ(max_mfvs)-VARHDRSZ;
+    transval->typOid = typOid;
+    getTypeOutputInfo(transval->typOid,
+                      &(transval->outFuncOid),
+                      &(typIsVarLen));
+    transval->typLen = get_typlen(transval->typOid);
+    transval->typByVal = get_typbyval(transval->typOid);
+    if (!transval->outFuncOid) {
+        /* no outFunc for this type! */
+        elog(ERROR, "no outFunc for type %d", transval->typOid);
+    }
+    return(transblob);
+}
+
+/*! get the datum associated with the i'th mfv */
+Datum mfv_transval_getval(bytea *blob, int i)
+{
+    mfvtransval *tvp = (mfvtransval *)VARDATA(blob);
+    Datum retval;
+    
+    if (i > tvp->next_mfv || i < 0)
+        elog(ERROR, "attempt to get frequent value at illegal index %d in mfv sketch", i);
+    if (tvp->mfvs[i].offset > VARSIZE(blob) - VARHDRSZ)
+        elog(ERROR, "offset exceeds size of transval in mfv sketch");
+    retval = PointerGetDatum((((char*)tvp) + tvp->mfvs[i].offset));
+    
+    return (retval);
+}
+
+void mfv_copy_datum(bytea *transblob, int offset, Datum dat)
+{
+    mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
+    size_t datumLen = att_addlength_datum(0, transval->typLen, dat);
+    char *curval = (char *)mfv_transval_getval(transblob,offset);
+    
+    if (transval->typByVal)
+        memcpy((char *)curval, (char *)&dat, datumLen);
+    else
+        memcpy((char *)curval, (char *)dat, datumLen);
+}
+
 /*!
  * insert a value at position i of the mfv sketch
+ *
+ * we place the new value at the next_offset, and do not
+ * currently garbage collection the old value's storage.
+ *
  * \param transblob the transition value packed into a bytea
- * \param text the value to be inserted
+ * \param dat the value to be inserted
  * \param i the position to insert at
  */
-bytea *mfv_transval_insert_at(bytea *transblob, bytea *text, int i)
+bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, int i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     bytea *      tmpblob;
+    size_t datumLen = att_addlength_datum(0, transval->typLen, dat);
 
-    if (MFV_TRANSVAL_CAPACITY(transblob) < VARSIZE(text)) {
-        /* allocate a copy with double the current space for values */
+    if (i > transval->next_mfv || i < 0)
+        elog(ERROR, "attempt to insert frequent value at illegal index %d in mfv sketch", i);
+    if (MFV_TRANSVAL_CAPACITY(transblob) < datumLen) {
+        /* allocate a copy with room for this, and double the current space for values */
         size_t curspace = transval->next_offset - transval->mfvs[0].offset;
-        tmpblob = palloc0(VARSIZE(transblob) + curspace);
+        tmpblob = palloc0(VARSIZE(transblob) + curspace + datumLen);
         memcpy(tmpblob, transblob, VARSIZE(transblob));
-        SET_VARSIZE(tmpblob, VARSIZE(transblob) + curspace);
+        SET_VARSIZE(tmpblob, VARSIZE(transblob) + curspace + datumLen);
         /*
          * PG won't let us pfree the old transblob
          * pfree(transblob);
@@ -176,10 +260,9 @@ bytea *mfv_transval_insert_at(bytea *transblob, bytea *text, int i)
         transval = (mfvtransval *)VARDATA(transblob);
     }
     transval->mfvs[i].offset = transval->next_offset;
-    memcpy(mfv_transval_getval(transval,i), (char *)text, VARSIZE(text));
-    transval->next_offset += VARSIZE(text);
-    if (i == transval->next_mfv)
-        (transval->next_mfv)++;
+    mfv_copy_datum(transblob, i, dat);
+
+    transval->next_offset += datumLen;
 
     return(transblob);
 }
@@ -187,34 +270,51 @@ bytea *mfv_transval_insert_at(bytea *transblob, bytea *text, int i)
 /*!
  * insert a value into the mfvsketch
  * \param transblob the transition value packed into a bytea
- * \param text the value to be inserted
+ * \param dat the value to be inserted
  */
-bytea *mfv_transval_insert(bytea *transblob, bytea *text)
+bytea *mfv_transval_append(bytea *transblob, Datum dat)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    bytea *      retval = mfv_transval_insert_at(transblob,
-                                                 text,
-                                                 transval->next_mfv);
+    bytea *      retval;
+    
+    if (transval->next_mfv == transval->max_mfvs) {
+        elog(ERROR, "attempt to append to a full mfv sketch");
+    }
+    retval = mfv_transval_insert_at(transblob,
+                                    dat,
+                                    transval->next_mfv);
+    (((mfvtransval *)VARDATA(retval))->next_mfv)++;
 
     return(retval);
 }
 
 /*!
- * replace the value at position i of the mfvsketch with text
+ * replace the value at position i of the mfvsketch with dat
+ *
  * \param transblob the transition value packed into a bytea
- * \param text the value to be inserted
+ * \param dat the value to be inserted
  * \param i the position to replace
  */
-bytea *mfv_transval_replace(bytea *transblob, bytea *text, int i)
+bytea *mfv_transval_replace(bytea *transblob, Datum dat, int i)
 {
-    mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    /* bytea *tmpblob; */
-
-    if (VARSIZE(text) < VARSIZE((bytea *)mfv_transval_getval(transval,i))) {
-        memcpy(mfv_transval_getval(transval, i), (char *)text, VARSIZE(text));
-        return transblob;
-    }
-    else return(mfv_transval_insert_at(transblob, text, i));
+    /*
+     * if new value is smaller than old, we overwrite at the old offset.
+     * otherwise we call mfv_transval_insert_at which will take care of
+     * space allocation for the new value
+    */
+     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
+     size_t datumLen = att_addlength_datum(0, transval->typLen, dat);
+     Datum oldDat = mfv_transval_getval(transblob,i);
+     size_t oldLen;   
+     
+     if (transval->typByVal) oldDat = *(Datum *)oldDat;
+     oldLen = att_addlength_datum(0, transval->typLen, oldDat);
+     
+     if (datumLen < oldLen) {
+         mfv_copy_datum(transblob, i, dat);
+         return transblob;
+     }
+     else return(mfv_transval_insert_at(transblob, dat, i));
 }
 
 PG_FUNCTION_INFO_V1(__mfvsketch_final);
@@ -228,7 +328,7 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     ArrayType   *retval;
     int          i;
-    Datum      histo[transval->num_mfvs][2];
+    Datum      histo[transval->max_mfvs][2];
     int        dims[2], lbs[2];
     // Oid     typInput, typIOParam;
     Oid        outFuncOid;
@@ -243,6 +343,8 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
 
     if (PG_ARGISNULL(0)) PG_RETURN_NULL();
     if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
+    
+    transval = (mfvtransval *)VARDATA(transblob);
 
     qsort(transval->mfvs, transval->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
     getTypeOutputInfo(INT8OID,
@@ -250,12 +352,14 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
                       &typIsVarlena);    
 
     for (i = 0; i < transval->next_mfv; i++) {
-        bytea *curval = mfv_transval_getval(transval,i);
-        char *countbuf = OidOutputFunctionCall(outFuncOid, Int64GetDatum(transval->mfvs[i].cnt));
+        Datum curval = mfv_transval_getval(transblob,i);
+        char *countbuf;
+        
+        if (transval->typByVal) curval = *(Datum *)curval;
+        countbuf = OidOutputFunctionCall(outFuncOid, Int64GetDatum(transval->mfvs[i].cnt));
                 
-        histo[i][0] = PointerGetDatum(curval);
+        histo[i][0] = PointerGetDatum(cstring_to_text(OidOutputFunctionCall(transval->outFuncOid, curval)));
         histo[i][1] = PointerGetDatum(cstring_to_text(countbuf));
-        // elog(NOTICE, "%s:%s, lengths are %d:%d(%u)", text_to_cstring(curval), countbuf, VARSIZE(histo[i][0]), VARSIZE(histo[i][1]), (unsigned) strlen(countbuf));
     }
     
 	/*
@@ -278,71 +382,10 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
                                 typlen,
                                 typbyval,
                                 typalign);
-    // elog(NOTICE, "array done, size %d, ndim %d, hasnull %d, nelems %d", ARR_SIZE(retval), ARR_NDIM(retval), ARR_HASNULL(retval), ArrayGetNItems(2, dims));
-    // for (i = 0 ; i < dims[0]; i++) {
-    //     int subs[2];
-    //     bool isNull;
-    //     bytea *t0, *t1;
-    //     subs[0] = i;
-    //     subs[1] = 0;
-    //     t0 = DatumGetPointer(array_ref(retval, 2, subs, -1, -1, false, 'i', &isNull));
-    //     subs[1] = 1;
-    //     t1 = DatumGetPointer(array_ref(retval, 2, subs, -1, -1, false, 'i', &isNull));
-    //     // elog(NOTICE, "found %s: %s, lengths %d: %d", text_to_cstring(t0), text_to_cstring(t1), VARSIZE(t0), VARSIZE(t1));
-    // }
     PG_RETURN_ARRAYTYPE_P(retval);
 }
 
-PG_FUNCTION_INFO_V1(mfvsketch_array_out);
-/*!
- * scalar function taking an mfv sketch, returning an array of tuple types
- * for its most frequent values.
- * XXX this code is under development and not working, should not be used.
- */
-Datum mfvsketch_array_out(PG_FUNCTION_ARGS)
-{
-    bytea *      transblob = PG_GETARG_BYTEA_P(0);
-    mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    int          i;
-    Datum        pair[2];
-    Oid          resultTypeId, elemTypeId;
-    TupleDesc    resultTupleDesc;
-    bool         isNull;
-    Datum *      result_data;
-    ArrayType *  retval;
 
-
-    if (PG_ARGISNULL(0)) PG_RETURN_NULL();
-    if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
-
-    result_data = (Datum *)palloc(sizeof(Datum) * transval->next_mfv);
-    /*
-     * the type we return is an array of records.  We need a tupledesc for the
-     * elements of this array.
-     */
-    get_call_result_type(fcinfo, &resultTypeId, &resultTupleDesc);
-    elemTypeId = get_element_type(resultTypeId);
-    resultTupleDesc = lookup_rowtype_tupdesc_copy(elemTypeId, -1);
-    BlessTupleDesc(resultTupleDesc);
-
-    qsort(transval->mfvs, transval->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
-
-    for (i = 0; i < transval->next_mfv; i++) {
-        pair[0] = PointerGetDatum(mfv_transval_getval(transval,i));
-        pair[1] = Int64GetDatum(transval->mfvs[0].cnt);
-
-        result_data[i] =
-            HeapTupleGetDatum(heap_form_tuple(resultTupleDesc, pair, &isNull));
-    }
-    retval = construct_array((Datum *)result_data,
-                             transval->next_mfv,
-                             elemTypeId,
-                             sizeof(Datum),
-                             false,
-                             'd');
-
-    PG_RETURN_BYTEA_P(retval);
-}
 
 /*!
  * support function to sort by count
@@ -356,3 +399,97 @@ int cnt_cmp_desc(const void *i, const void *j)
 
     return (p->cnt - o->cnt);
 }
+
+
+/*!
+ * Greenplum "prefunc" to combine sketches from multiple machines.
+ * This parallelization of the most-frequent-value makes the method a heuristic.  
+ * For example, it may be that the top n values on node 1 are very infrequent on 
+ * node 2, and the top n values on node 2 are infrequent on node 1.  But the n+1'th value
+ * is the same on both nodes and the most frequent value in toto.  It will get
+ * surpressed incorrectly.
+ *
+ * This is the optimal aggregation problem considered by Fagin, et al in his famous paper 
+ * that presents "Fagin's Algorithm".  
+ *
+ * However, we're probably OK here most of the time.  What we're interested in here are
+ * values whose frequencies are unusually high.  The results of this heuristic will likely be
+ * unusually frequent values, if not precisely the *most* frequent values.
+ *
+ * takes the most frequent values from pairs of nodes.
+ */
+PG_FUNCTION_INFO_V1(__mfvsketch_merge);
+Datum __mfvsketch_merge(PG_FUNCTION_ARGS)
+{
+    bytea *      transblob1 = (bytea *)PG_GETARG_BYTEA_P(0);
+    bytea *      transblob2 = (bytea *)PG_GETARG_BYTEA_P(1);
+    
+    PG_RETURN_DATUM(PointerGetDatum(mfvsketch_merge_c(transblob1, transblob2)));
+}
+
+bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
+{
+    mfvtransval *transval1 = (mfvtransval *)VARDATA(transblob1);
+    mfvtransval *transval2 = (mfvtransval *)VARDATA(transblob2);
+    int          i, j;
+
+      /* handle uninitialized args */
+    if (VARSIZE(transblob1) <= sizeof(MFV_TRANSVAL_SZ(0))
+        && VARSIZE(transblob2) <= sizeof(MFV_TRANSVAL_SZ(0)))
+        return(transblob1);
+    else if (VARSIZE(transblob1) <= sizeof(MFV_TRANSVAL_SZ(0))) {
+        transblob1 = mfv_init_transval(transval2->max_mfvs, transval2->typOid);
+        transval1 = (mfvtransval *)VARDATA(transblob1);
+    }
+    else if (VARSIZE(transblob2) <= sizeof(MFV_TRANSVAL_SZ(0))) {
+        transblob2 = mfv_init_transval(transval1->max_mfvs, transval1->typOid);
+        transval2 = (mfvtransval *)VARDATA(transblob2);
+    }
+
+     /* combine sketches */
+    for (i = 0; i < DEPTH; i++)
+        for (j = 0; j < NUMCOUNTERS; j++)
+        transval1->sketch[i][j] += transval2->sketch[i][j];
+
+     /* recompute the counts using the merged sketch */
+    for (i = 0; i < transval1->next_mfv; i++) {
+        Datum dat = mfv_transval_getval(transblob1,i);
+        if (transval1->typByVal) dat = *(Datum *)dat;
+        transval1->mfvs[i].cnt = cmsketch_count_c(transval1->sketch,
+            dat,
+            transval1->outFuncOid);
+    }
+    for (i = 0; i < transval2->next_mfv; i++) {
+        Datum dat = mfv_transval_getval(transblob2,i);
+        if (transval2->typByVal) dat = *(Datum *)dat;
+        transval2->mfvs[i].cnt = cmsketch_count_c(transval2->sketch,
+            dat,
+            transval2->outFuncOid);
+    }
+
+     /* now take maxes on mfvs in a sort-merge style, copying into transval1  */
+    qsort(transval1->mfvs, transval1->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
+    qsort(transval2->mfvs, transval2->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
+
+     /* scan through transval1, replace as we find bigger things in transval2 */
+    for (i = j = 0;
+         j < transval2->next_mfv && i < transval1->max_mfvs;
+         i++) {
+        Datum jDatum = mfv_transval_getval(transblob2, j);
+        if (transval1->typByVal) jDatum = *(Datum *)jDatum;
+        if (i == transval1->next_mfv && (mfv_find(transblob1, jDatum) == -1)
+                  /* && i < transval1->max_mfvs from for loop */) {
+            transblob1 = mfv_transval_append(transblob1, jDatum);
+            transval1 = (mfvtransval *)VARDATA(transblob1);
+            j++;
+        }
+        else if (transval1->mfvs[i].cnt < transval2->mfvs[j].cnt
+                 && mfv_find(transblob1, jDatum) == -1) {
+             /* copy into transval1 and advance both  */
+            transblob1 = mfv_transval_replace(transblob1, jDatum, i);
+            transval1 = (mfvtransval *)VARDATA(transblob1);
+            j++;
+        }
+    }
+    return(transblob1);
+}   

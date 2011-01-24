@@ -54,6 +54,9 @@ typedef struct {
 /*! base size of a cmtransval */
 #define CM_TRANSVAL_SZ (VARHDRSZ + sizeof(cmtransval))
 
+#define CM_TRANSVAL_INITIALIZED(t) (VARSIZE(t) >= CM_TRANSVAL_SZ)
+
+
 /*!
  * \brief array of ranges
  *
@@ -93,7 +96,7 @@ typedef struct {
  * Holds a single
  * countmin sketch (no dyadic ranges) and an array of Most Frequent Values.
  * We are flexible with the number of mfvs, as well as the type.
- * Hence at the end of this struct is an array mfv[num_mfvs] of offsetcnt entries,
+ * Hence at the end of this struct is an array mfv[max_mfvs] of offsetcnt entries,
  * followed by an array of Postgres text objects with the output formats of
  * the mfvs.
  * Each mfv entry contains an offset from the top of the structure where
@@ -101,10 +104,12 @@ typedef struct {
  * frequent value.
  */
 typedef struct {
-    int num_mfvs;    /*! number of frequent values */
+    int max_mfvs;    /*! number of frequent values */
     int next_mfv;    /*! index of next mfv to insert into */
     int next_offset; /*! next memory offset to insert into */
     Oid typOid;      /*! Oid of the type being counted */
+    int16 typLen;    /*! Length of the data type */
+    bool  typByVal;  /*! Whether type is by value or by reference */
     Oid outFuncOid;  /*! Oid of the outfunc for this type */
     countmin sketch; /*! a single countmin sketch */
     /*!
@@ -124,14 +129,10 @@ typedef struct {
                                           ((mfvtransval *)VARDATA(transblob))-> \
                                           next_offset)
 
-/*! macro to get the text value associated with the i'th mfv */
-#define mfv_transval_getval(tvp, \
-                            i) ((bytea *)(((char*)tvp) + tvp->mfvs[i].offset))
-
-
 /* countmin aggregate protos */
 char *countmin_trans_c(countmin, Datum, Oid);
 bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool);
+bytea *cmsketch_init_transval(void);
 void  countmin_dyadic_trans_c(cmtransval *, int64);
 
 /* countmin scalar function protos */
@@ -142,7 +143,6 @@ Datum cmsketch_width_histogram_c(cmtransval *, int64, int64, int64);
 Datum cmsketch_depth_histogram_c(cmtransval *, int64);
 void  find_ranges(int64, int64, rangelist *);
 void  find_ranges_internal(int64, int64, int, rangelist *);
-/* Datum countmin_dump_c(int64 *); */
 
 /* hash_counters_iterate and its lambdas */
 int64 hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
@@ -155,19 +155,19 @@ int64 increment_counter(uint32, uint32, countmin, int64);
 int64 min_counter(uint32, uint32, countmin, int64);
 
 /* MFV protos */
-/* Datum cmsketch_mfv_trans_c(int64 *, char *); */
-bytea *mfv_transval_insert(bytea *, bytea *);
-bytea *mfv_transval_replace(bytea *, bytea *, int);
-bytea *mfv_transval_insert_at(bytea *, bytea *, int);
-/* Datum __mfvsketch_final_c(mfvtransval *); */
+bytea *mfv_transval_append(bytea *, Datum);
+int mfv_find(bytea *, Datum);
+bytea *mfv_transval_replace(bytea *, Datum, int);
+bytea *mfv_transval_insert_at(bytea *, Datum, int);
+Datum mfv_transval_getval(bytea *, int);
+bytea *mfv_init_transval(int, Oid);
+bytea *mfvsketch_merge_c(bytea *, bytea *);
+void mfv_copy_datum(bytea *, int, Datum);
 int cnt_cmp_desc(const void *i, const void *j);
 
 
 /* UDF protos */
 Datum __cmsketch_trans(PG_FUNCTION_ARGS);
-// Datum cmsketch_count(PG_FUNCTION_ARGS);
-// Datum cmsketch_rangecount(PG_FUNCTION_ARGS);
-// Datum cmsketch_centile(PG_FUNCTION_ARGS);
 Datum cmsketch_width_histogram(PG_FUNCTION_ARGS);
 Datum cmsketch_dhistogram(PG_FUNCTION_ARGS);
 Datum __cmsketch_final(PG_FUNCTION_ARGS);
@@ -180,8 +180,7 @@ Datum __cmsketch_median_final(PG_FUNCTION_ARGS);
 Datum __cmsketch_dhist_final(PG_FUNCTION_ARGS);
 Datum __mfvsketch_trans(PG_FUNCTION_ARGS);
 Datum __mfvsketch_final(PG_FUNCTION_ARGS);
-Datum mfvsketch_array_out(PG_FUNCTION_ARGS);
-Datum mfvsketch_combine(PG_FUNCTION_ARGS);
+Datum __mfvsketch_merge(PG_FUNCTION_ARGS);
 
 #endif /* _COUNTMIN_H_ */
 
