@@ -1,3 +1,7 @@
+DATA_built = regression.sql logRegress.py regression_drop.sql
+PYTHON_built = logRegress.py
+
+#SRCS = $(wildcard *.c)
 SOURCES = $(wildcard *.c)
 
 REGRESS = multLinRegression_test
@@ -7,7 +11,9 @@ REGRESS = multLinRegression_test
 # the current directory
 REGRESS_OPTS := --dlpath=.
 
-MODULE_big = multLinRegression
+# MODULE_big should have the same name as the fw SQL file specified in
+# Install.yml
+MODULE_big = regression
 OBJS = $(SOURCES:%.c=%.o)
 
 # We want to include debugging symbols.
@@ -26,6 +32,7 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs) 
 
 include $(PGXS)
+include config.mk 
 
 # do not delete .o files because we want them for debugging
 .PRECIOUS: %.o

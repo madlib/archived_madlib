@@ -1,3 +1,6 @@
+DATA_built = bayes.sql bayes.py bayes_drop.sql
+PYTHON_built = bayes.py
+
 SOURCES = $(wildcard *.c)
 
 REGRESS = bayesRegression_test
@@ -18,6 +21,7 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs) 
 
 include $(PGXS)
+include config.mk 
 
 # do not delete .o files because we want them for debugging
 .PRECIOUS: %.o
