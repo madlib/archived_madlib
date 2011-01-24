@@ -321,8 +321,8 @@ bit_print(uint8 *c, int numbytes)
  * XXX In fact, the full cost right now is:
  * XXX -- outfunc converts internal type to CString
  * XXX -- here we convert CString to text, to call md5_bytea
- * XXX -- md5_bytea generates a byte array which it converts to hex text
- * XXX -- we then call binary_decode to convert back to the byte array.
+ * XXX -- md5_bytea generates a byte array 
+ * XXX -- we then call binary_decode to convert back to a textual representation
  * XXX -- (alternatively we could call hex_to_bytes in sketch_support.c for the last step)
  */
 Datum md5_datum(char *input)

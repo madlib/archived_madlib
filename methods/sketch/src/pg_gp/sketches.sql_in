@@ -187,6 +187,12 @@ RETURNS text[][]
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mfvsketch_merge(bytea, bytea) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.__mfvsketch_merge(bytea, bytea) 
+RETURNS bytea
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.mfvsketch_top_histogram(anyelement, int4);
 CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_top_histogram(anyelement, int4)
 (
@@ -195,3 +201,18 @@ CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_top_histogram(anyelement, int4)
     finalfunc = MADLIB_SCHEMA.__mfvsketch_final,
     initcond = ''
 );
+
+-- in PostgreSQL, this UDA is identical to mfvsketch_top_histogram.
+-- in Greenplum, the prefunc makes this UDA "quick and dirty": it
+-- will perform parallel aggregation, but in the case of skewed data 
+-- placement it may miss some of the values that would be returned
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.mfvsketch_quick_histogram(anyelement, int4);
+CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_quick_histogram(anyelement, int4)
+(
+    sfunc = MADLIB_SCHEMA.__mfvsketch_trans,
+    stype = bytea, 
+    finalfunc = MADLIB_SCHEMA.__mfvsketch_final,
+		ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__mfvsketch_merge,')
+    initcond = ''
+);
+

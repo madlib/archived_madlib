@@ -1,3 +1,6 @@
+DATA_built = bayes.sql bayes.py bayes_drop.sql
+PYTHON_built = bayes.py
+
 SOURCES = $(wildcard *.c)
 
 REGRESS = bayesRegression_test
@@ -7,8 +10,6 @@ REGRESS = bayesRegression_test
 # the current directory
 REGRESS_OPTS := --dlpath=.
 
-# Changing the module name unfortunately also requires changing
-# naiveBayesClassification.sql
 MODULE_big = naiveBayesClassification
 OBJS = $(SOURCES:%.c=%.o)
 
@@ -20,6 +21,7 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs) 
 
 include $(PGXS)
+include config.mk 
 
 # do not delete .o files because we want them for debugging
 .PRECIOUS: %.o

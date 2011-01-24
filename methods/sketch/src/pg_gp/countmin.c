@@ -121,7 +121,6 @@ Datum __cmsketch_trans(PG_FUNCTION_ARGS)
  */
 bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 {
-    bool        typIsVarlena;
     bytea *transblob = PG_GETARG_BYTEA_P(0);
     cmtransval *transval;
     
@@ -129,19 +128,10 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
      * an uninitialized transval should be a datum smaller than sizeof(cmtransval).
      * if this one is small, initialize it now, else return it.
      */
-    if (VARSIZE(transblob) < CM_TRANSVAL_SZ) {
+    if (!CM_TRANSVAL_INITIALIZED(transblob)) {
         /* XXX would be nice to pfree the existing transblob, but pfree complains. */
-        
-        /* allocate and zero out a transval via palloc0 */
-        transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
-        SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
-
-        /* set up  for stringifying INT8's according to PG type rules */
+        transblob = cmsketch_init_transval();
         transval = (cmtransval *)VARDATA(transblob);
-        transval->typOid = INT8OID; /* as of now we only support INT8 */
-        getTypeOutputInfo(transval->typOid,
-                          &(transval->outFuncOid),
-                          &typIsVarlena);
                           
         if (initargs) {
           int nargs = PG_NARGS();        
@@ -159,6 +149,24 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
         }
         else transval->nargs = -1;
     }
+    return(transblob);
+}
+
+bytea *cmsketch_init_transval()
+{    
+    bool        typIsVarlena;
+    cmtransval *transval;
+    
+    /* allocate and zero out a transval via palloc0 */
+    bytea *transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
+    SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
+
+    /* set up  for stringifying INT8's according to PG type rules */
+    transval = (cmtransval *)VARDATA(transblob);
+    transval->typOid = INT8OID; /* as of now we only support INT8 */
+    getTypeOutputInfo(transval->typOid,
+                      &(transval->outFuncOid),
+                      &typIsVarlena);
     return(transblob);
 }
 
@@ -228,7 +236,7 @@ Datum __cmsketch_count_final(PG_FUNCTION_ARGS)
 {
     bytea *blob = PG_GETARG_BYTEA_P(0);
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
-    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+    if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
     PG_RETURN_INT64(cmsketch_count_c(sketch->sketches[0],
                                      sketch->args[0], sketch->outFuncOid));
@@ -242,7 +250,7 @@ Datum __cmsketch_rangecount_final(PG_FUNCTION_ARGS)
 {
     bytea *blob = PG_GETARG_BYTEA_P(0);
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
-    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+    if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
     PG_RETURN_INT64(cmsketch_rangecount_c(sketch, DatumGetInt64(sketch->args[0]), 
                                           DatumGetInt64(sketch->args[1])));
@@ -258,7 +266,7 @@ Datum __cmsketch_centile_final(PG_FUNCTION_ARGS)
     int64 total;
     
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
-    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+    if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
     total = cmsketch_rangecount_c(sketch, MIN_INT64, MAX_INT64);     /* count(*) */
     if (total == 0) {
@@ -277,7 +285,7 @@ Datum __cmsketch_median_final(PG_FUNCTION_ARGS)
     int64 total;
     
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
-    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+    if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
     total = cmsketch_rangecount_c(sketch, MIN_INT64, MAX_INT64);     /* count(*) */
     if (total == 0) {
@@ -294,7 +302,7 @@ Datum __cmsketch_dhist_final(PG_FUNCTION_ARGS)
 {
     bytea *blob = PG_GETARG_BYTEA_P(0);    
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
-    if (VARSIZE(blob) < CM_TRANSVAL_SZ) 
+    if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
     PG_RETURN_INT64(cmsketch_depth_histogram_c(sketch, DatumGetInt64(sketch->args[0])));
 }
@@ -305,18 +313,23 @@ Datum __cmsketch_dhist_final(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(__cmsketch_merge);
 Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 {
-    bytea *   counterblob1 =
-        cmsketch_check_transval(fcinfo, false);
-    bytea *   counterblob2 =
-        cmsketch_check_transval(fcinfo, false);
+    bytea *   counterblob1 = PG_GETARG_BYTEA_P(0);
+    bytea *   counterblob2 = PG_GETARG_BYTEA_P(1);
     cmtransval *newtrans;
     countmin *sketches2 = (countmin *)
                           ((cmtransval *)(VARDATA(counterblob2)))->sketches;
     bytea *   newblob;
     countmin *newsketches;
     int       i, j, k;
-    int       sz = VARSIZE(counterblob1);
+    int       sz;
 
+    /* make sure they're initialized! */
+    if (!CM_TRANSVAL_INITIALIZED(counterblob1))
+        counterblob1 = cmsketch_init_transval();
+    if (!CM_TRANSVAL_INITIALIZED(counterblob2))
+        counterblob2 = cmsketch_init_transval();
+
+    sz = VARSIZE(counterblob1);
     /* allocate a new transval as a copy of counterblob1 */
     newblob = (bytea *)palloc(sz);
     memcpy(newblob, counterblob1, sz);
@@ -371,9 +384,15 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
 {
     Datum nhash;
+    char *txt;
+
+    if (funcOid == 0) {
+        elog(NOTICE, "null funcOid i cmsketch_count_c");
+    }
+    txt = OidOutputFunctionCall(funcOid, arg);
 
     /* get the md5 hash of the stringified argument. */
-    nhash = md5_datum(OidOutputFunctionCall(funcOid, arg));
+    nhash = md5_datum(txt);
 
     /* iterate through the sketches, finding the min counter associated with this hash */
     PG_RETURN_INT64(hash_counters_iterate(nhash, sketch, INT64_MAX,
