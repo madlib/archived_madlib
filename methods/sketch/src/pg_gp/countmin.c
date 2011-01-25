@@ -386,9 +386,6 @@ int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
     Datum nhash;
     char *txt;
 
-    if (funcOid == 0) {
-        elog(NOTICE, "null funcOid i cmsketch_count_c");
-    }
     txt = OidOutputFunctionCall(funcOid, arg);
 
     /* get the md5 hash of the stringified argument. */

@@ -159,7 +159,7 @@ bytea *mfv_transval_append(bytea *, Datum);
 int mfv_find(bytea *, Datum);
 bytea *mfv_transval_replace(bytea *, Datum, int);
 bytea *mfv_transval_insert_at(bytea *, Datum, int);
-Datum mfv_transval_getval(bytea *, int);
+void *mfv_transval_getval(bytea *, int);
 bytea *mfv_init_transval(int, Oid);
 bytea *mfvsketch_merge_c(bytea *, bytea *);
 void mfv_copy_datum(bytea *, int, Datum);
