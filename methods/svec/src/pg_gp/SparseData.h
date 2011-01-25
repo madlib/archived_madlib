@@ -21,10 +21,6 @@
 #ifndef SPARSEDATA_H
 #define SPARSEDATA_H
 
-#ifdef PG_MODULE_MAGIC
-PG_MODULE_MAGIC;
-#endif
-
 #include <math.h>
 #include <string.h>
 #include "postgres.h"
