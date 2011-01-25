@@ -11,9 +11,9 @@ operators.o : operators.c sparse_vector.h SparseData.h
 
 MODULE_big = gp_svec
 
-DATA_built = gp_svec.sql gp_svec_drop.sql sql/gp_sfv_test.sql sql/gp_svec_test.sql
+DATA_built = gp_svec.sql gp_svec_drop.sql sql/gp_svec_test.sql
 REGRESS = gp_svec_test
-OBJS = gp_sfv.o sparse_vector.o operators.o SparseData.o
+OBJS = sparse_vector.o operators.o SparseData.o
 
 ifdef USE_ICC
 	override CFLAGS=-O3 -Werror -std=c99 -vec-report2 -vec-threshold0
