@@ -8,22 +8,24 @@
  * \defgroup mfvsketch MFV (Most Frequent Values)
  * \ingroup sketches
  * \par About
- * MFVSketch: Most Frequent Values variant of CountMin sketch.
- * This is basically a CountMin sketch that keeps track of most frequent values
- * as it goes.
+ * MFVSketch: Most Frequent Values variant of CountMin sketch, implemented
+ * as a UDA.
  *
- *\par
- * It comes in two different versions: a "quick and dirty" version that does
+ * \implementation
+ * This is basically a CountMin sketch that keeps track of most frequent values
+ * as it goes.  This is easy to do, because at any point during a scan,
+ * it can use the CM sketch to quickly get the count of any value so far.
+ *
+ * \usage
+ * The MFV frequent-value UDA comes in two different versions: a "quick and dirty" version that does
  * parallel aggregation, and a more faithful implementation that preserves the 
  * approximation guarantees of Cormode/Muthukrishnan, but ships all rows to the
  * master for aggregation.
  *
- * \par
  * It only uses CountMin sketches for value counting, and doesn't need the "dyadic" range trick.
  * As a result it's not limited to integers, and the implementation works
  * for any Postgres data type.
  *
- * \par
  * The standard method here (<c>mfvsketch_top_histogram</c>) provides epsilon/delta
  * probabilistic guarantees of accuracy, but does not do any parallel aggregation.
  * The parallel method (<c>mfvsketch_quick_histogram</c>) is a heuristic with no
@@ -33,15 +35,11 @@
  * is the same on both nodes and the most frequent value in toto.  It will get
  * surpressed incorrectly by the parallel heuristic, but get chosen by the standard method.
  *
- * \par
  * However, we're probably OK here most of the time.  What we're interested in are
  * values whose frequencies are unusually high.  For 
  * columns with very flat distributions, we likely don't care about the results much.
  * Otherwise, The results of this heuristic will likely be
  * unusually frequent values, if not precisely the *most* frequent values.  
- *
- *
- * \par Usage/API:
  *
  *  - <c>mfvsketch_top_histogram(col anytype, nbuckets int4)</c> 
  *   is a UDA over column <c>col</c> of any type, and a number of buckets <c>nbuckets</c>, 
@@ -59,6 +57,14 @@
  *   SELECT madlib.mfvsketch_quick_histogram(proname, 4)
  *     FROM pg_proc;
  * \endcode
+ *
+ * \literature
+ * This method is not usually called an MFV sketch in the literature, it 
+ * is simply an application of the CountMin sketch.  We make the 
+ * distinction here because of implementation details: we use CountMin in 
+ * a stylized way (a single dyadic range, postgres anyelement type), and we 
+ * need to maintain the running histogram of top values.
+ * \sa countmin
  */
 
 #include "postgres.h"

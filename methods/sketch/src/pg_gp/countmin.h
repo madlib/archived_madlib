@@ -38,7 +38,7 @@ typedef uint64 countmin[DEPTH][NUMCOUNTERS];
 #define MAXARGS 3
 
 /*! 
- * \brief the transition value struct for the cmsketch aggregate.
+ * \brief the transition value struct for CM sketches
  *  
  * Holds the sketch counters
  * and a cache of handy metadata that we'll reuse across calls
@@ -91,7 +91,7 @@ typedef struct {
 
 
 /*!
- * \brief the transition value struct for the mfvsketch aggregate.  
+ * \brief the transition value struct for MFV sketches.  
  *
  * Holds a single
  * countmin sketch (no dyadic ranges) and an array of Most Frequent Values.
