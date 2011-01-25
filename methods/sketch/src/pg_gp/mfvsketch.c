@@ -12,20 +12,40 @@
  * This is basically a CountMin sketch that keeps track of most frequent values
  * as it goes.
  *
+ *\par
  * It comes in two different versions: a "quick and dirty" version that does
  * parallel aggregation, and a more faithful implementation that preserves the 
  * approximation guarantees of Cormode/Muthukrishnan, but ships all rows to the
  * master for aggregation.
  *
- * It only needs to do cmsketch_count, doesn't need the "dyadic" range trick.
+ * \par
+ * It only uses CountMin sketches for value counting, and doesn't need the "dyadic" range trick.
  * As a result it's not limited to integers, and the implementation works
- * for the Postgres "anyelement".
+ * for any Postgres data type.
+ *
+ * \par
+ * The standard method here (<c>mfvsketch_top_histogram</c>) provides epsilon/delta
+ * probabilistic guarantees of accuracy, but does not do any parallel aggregation.
+ * The parallel method (<c>mfvsketch_quick_histogram</c>) is a heuristic with no
+ * such guarantees, but it will likely work well in most cases.  As an example  
+ * of a case where it will fail, consider a scenario where the top <i>n</i> values on node 1 are very infrequent on 
+ * node 2, and the top <i>n</i> values on node 2 are infrequent on node 1.  But the <i>n</i>+1'th value
+ * is the same on both nodes and the most frequent value in toto.  It will get
+ * surpressed incorrectly by the parallel heuristic, but get chosen by the standard method.
+ *
+ * \par
+ * However, we're probably OK here most of the time.  What we're interested in are
+ * values whose frequencies are unusually high.  For 
+ * columns with very flat distributions, we likely don't care about the results much.
+ * Otherwise, The results of this heuristic will likely be
+ * unusually frequent values, if not precisely the *most* frequent values.  
+ *
  *
  * \par Usage/API:
  *
  *  - <c>mfvsketch_top_histogram(col anytype, nbuckets int4)</c> 
  *   is a UDA over column <c>col</c> of any type, and a number of buckets <c>nbuckets</c>, 
- *   and produces an n-bucket histogram for the column where each bucket is for one of the 
+ *   and produces an n-bucket histogram for the column where each bucket counts one of the 
  *   most frequent values in the column. The output is an array of doubles {value, count} 
  *   in descending order of frequency; counts are approximate. Ties are handled arbitrarily.  
  *   Example:\code
@@ -34,9 +54,8 @@
  *   \endcode
  *
  *  - <c>mfvsketch_quick_histogram(col anytype, nbuckets int4)</c> is the same as the above
- *  in PostgreSQL.  In Greenplum, it does parallel aggregation to provide a "quick and dirty" 
- *   version of the above.
- *   Example:\code
+ *  but, in Greenplum it does parallel aggregation to provide a "quick and dirty" 
+ *  answer.  In Postgres it is identical to <c>mfvsketch_top_histogram</c>. Example:\code
  *   SELECT madlib.mfvsketch_quick_histogram(proname, 4)
  *     FROM pg_proc;
  * \endcode
@@ -409,20 +428,7 @@ int cnt_cmp_desc(const void *i, const void *j)
 
 /*!
  * Greenplum "prefunc" to combine sketches from multiple machines.
- * This parallelization of the most-frequent-value makes the method a heuristic.  
- * For example, it may be that the top n values on node 1 are very infrequent on 
- * node 2, and the top n values on node 2 are infrequent on node 1.  But the n+1'th value
- * is the same on both nodes and the most frequent value in toto.  It will get
- * surpressed incorrectly.
- *
- * This is the optimal aggregation problem considered by Fagin, et al in his famous paper 
- * that presents "Fagin's Algorithm".  
- *
- * However, we're probably OK here most of the time.  What we're interested in here are
- * values whose frequencies are unusually high.  The results of this heuristic will likely be
- * unusually frequent values, if not precisely the *most* frequent values.
- *
- * takes the most frequent values from pairs of nodes.
+ * See notes at top of file regarding the heuristic nature of this approach.
  */
 PG_FUNCTION_INFO_V1(__mfvsketch_merge);
 Datum __mfvsketch_merge(PG_FUNCTION_ARGS)

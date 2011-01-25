@@ -7,35 +7,39 @@
  /*! \defgroup countmin CountMin (Cormode-Muthukrishnan)
  * \ingroup sketches
  * \par About
- * Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
- * on integer values, implemented as user-defined aggregates.  Provides approximate counts, order statistics,
+ * This module implements Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
+ * on integer values, implemented as user-defined aggregates.  It provides approximate counts, order statistics,
  * and histograms.
  * \par
  * The basic CountMin sketch is a set of DEPTH arrays, each with NUMCOUNTERS counters.
  * The idea is that each of those arrays is used as an independent random trial of the
- * same process: each holds counts h_i(x) from a different random hash function h_i.
- * Estimates of the count of some value x are based on the minimum counter h_i(x) across
+ * same process: for all the values x in a set, each holds counts of h_i(x) mod NUMCOUNTERS for a different random hash function h_i.
+ * Estimates of the count of some value x are based on the <i>minimum</i> counter h_i(x) across
  * the DEPTH arrays (hence the name CountMin.)
  *
  * \par
- * Let's call the process described above "sketching" the x's.
- * We're going to repeat this process INT64BITS times; this is the "dyadic range" trick
- * mentioned in Cormode/Muthu, which repeats the basic CountMin idea log_2(n) times as follows.
- * Every value x/(2^i) is "sketched"
- * at a different power-of-2 (dyadic) "range" i.  So we sketch x in range 0, then sketch x/2
- * in range 1, then sketch x/4 in range 2, etc.
+ * Let's call the process described above "sketching" the x's.  To support range
+ * lookups, we repeat the basic CountMin sketching process INT64BITS times as follows.
+ * (This is the "dyadic range" trick mentioned in Cormode/Muthu.)
  *
  * \par
- * This allows us to count up ranges (like 14-48) by doing CountMin lookups up constituent
- * dyadic ranges (like {[14-15], [16-31], [32-47], [48-48]}).  Dyadic ranges are also useful
- * for histogramming, frequent values, etc.
+ * Every value x/(2^i) is sketched
+ * at a different power-of-2 (dyadic) "range" i.  So we sketch x in range 0, then sketch x/2
+ * in range 1, then sketch x/4 in range 2, etc.  
+ * This allows us to count up ranges (like 14-48) by doing CountMin equality lookups on constituent
+ * dyadic ranges ({[14-15] as 7 in range 2, [16-31] as 1 in range 16, [32-47] as 2 in range 16, [48-48] as 48 in range 1}).  
+ * Dyadic ranges are similarly useful for histogramming, order stats, etc.
+ *
+ * \par
+ * The results of the estimators below generally have guarantees of the form
+ * "the answer is within \epsilon of the true answer with probability 1-\delta."
  *
  * \par
  * See http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf
  * for further explanation
  *
  * \par Usage/API
- *  - <c>cmsketch(int8)</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a CountMin sketch: a large array of counters that is intended to be passed into one of a number of UDFs described below.
+ *  - <c>cmsketch(int8)</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a CountMin sketch: a large array of counters that is intended to be passed into a UDF like <c>cmsketch_width_histogram</c> described below.
  *  - <c>cmsketch_count(col int8, v int8)</c> is a UDA that takes a column <c>col</c> and a value <c>v</c>, and reports the approximate number of occurrences of <c>v</c> in <c>col</c>.  Example:\code
  *   SELECT pronamespace, madlib.cmsketch_count(pronargs, 3)
  *     FROM pg_proc
@@ -56,7 +60,7 @@
  *   SELECT madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), min(oid::int8), max(oid::int8), 10)
  *     FROM pg_class;
  *  \endcode
- *  - <c>cmsketch_depth_histogram(intcol int8, nbuckets int4)</c> is a UDA that takes a column <c>col</c> and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
+ *  - <c>cmsketch_depth_histogram(intcol int8, nbuckets int4)</c> is a UDA that takes a column <c>col</c> and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles.  Example:\code
  *   SELECT madlib.cmsketch_depth_histogram(oid::int8, 10)
  *     FROM pg_class;
  *  \endcode
