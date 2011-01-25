@@ -6,23 +6,22 @@
  
  /*! \defgroup countmin CountMin (Cormode-Muthukrishnan)
  * \ingroup sketches
- * \par About
+ * \about
  * This module implements Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
  * on integer values, implemented as user-defined aggregates.  It provides approximate counts, order statistics,
  * and histograms.
- * \par
+ *
+ * \implementation
  * The basic CountMin sketch is a set of DEPTH arrays, each with NUMCOUNTERS counters.
  * The idea is that each of those arrays is used as an independent random trial of the
  * same process: for all the values x in a set, each holds counts of h_i(x) mod NUMCOUNTERS for a different random hash function h_i.
  * Estimates of the count of some value x are based on the <i>minimum</i> counter h_i(x) across
  * the DEPTH arrays (hence the name CountMin.)
  *
- * \par
  * Let's call the process described above "sketching" the x's.  To support range
  * lookups, we repeat the basic CountMin sketching process INT64BITS times as follows.
  * (This is the "dyadic range" trick mentioned in Cormode/Muthu.)
  *
- * \par
  * Every value x/(2^i) is sketched
  * at a different power-of-2 (dyadic) "range" i.  So we sketch x in range 0, then sketch x/2
  * in range 1, then sketch x/4 in range 2, etc.  
@@ -30,15 +29,10 @@
  * dyadic ranges ({[14-15] as 7 in range 2, [16-31] as 1 in range 16, [32-47] as 2 in range 16, [48-48] as 48 in range 1}).  
  * Dyadic ranges are similarly useful for histogramming, order stats, etc.
  *
- * \par
  * The results of the estimators below generally have guarantees of the form
  * "the answer is within \epsilon of the true answer with probability 1-\delta."
  *
- * \par
- * See http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf
- * for further explanation
- *
- * \par Usage/API
+ * \usage
  *  - <c>cmsketch(int8)</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a CountMin sketch: a large array of counters that is intended to be passed into a UDF like <c>cmsketch_width_histogram</c> described below.
  *  - <c>cmsketch_count(col int8, v int8)</c> is a UDA that takes a column <c>col</c> and a value <c>v</c>, and reports the approximate number of occurrences of <c>v</c> in <c>col</c>.  Example:\code
  *   SELECT pronamespace, madlib.cmsketch_count(pronargs, 3)
@@ -64,6 +58,12 @@
  *   SELECT madlib.cmsketch_depth_histogram(oid::int8, 10)
  *     FROM pg_class;
  *  \endcode
+ *
+ * \literature
+ *  - G. Cormode and S. Muthukrishnan. An improved data stream summary: The count-min sketch and its applications.  LATIN 2004, J. Algorithm 55(1): 58-75 (2005) . 
+ *  - G. Cormode and S. Muthukrishnan. Summarizing and mining skewed data streams. SDM 2005.
+ *  - http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf
+ * has a concise explanation
  *
  * \sa quantile
  */

@@ -20,6 +20,7 @@
  * It's always good to go back the research papers cited in the documents to
  * understand the caveats involved.
  *
+ * \par
  * In this module you will find methods for:
  *  - order statistics (quantiles, median)
  *  - distinct counting
@@ -30,6 +31,7 @@
  /*! @addtogroup sketches 
  *
  * @about
+ * \par
  * There is a large body of research on small-space "sketch" techniques (sometimes called "synopsis data structures") for approximating properties of large data sets in a single pass.  Some of that work was targeted at stream or network processing, but it's equally applicable to large stored datasets.  Sketches are particularly useful for profiling multiple columns of a large table in a single pass.  This module currently implements user-defined aggregates based on three main sketch methods:
  *  - <i>Flajolet-Martin (FM)</i> sketches (http://algo.inria.fr/flajolet/Publications/FlMa85.pdf) for approximately counting the number of distinct values in a set.
  *  - <i>Count-Min (CM)</i> sketches (http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf), which can be used to approximate a number of descriptive statistics including
@@ -59,7 +61,6 @@
  * In general this should work fine, but there is the possibility that two
  * different values in the domain could have the same textual representation.
  * In these corner cases we will see incorrect counts for those values.
- *
  * The proper way to do this is not to use the "outfunc", but rather to look up the
  * type-specific hash function as is done internally for hashjoin, hash indexes,
  * etc.  The basic pattern for looking up the hash function in Postgres
