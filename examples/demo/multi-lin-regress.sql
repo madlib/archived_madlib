@@ -4,7 +4,7 @@
 \qecho 
 \qecho === Refresh table: houses =======================================
 
-DROP TABLE houses;
+DROP TABLE IF EXISTS houses;
 CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT, size INT, lot INT) distributed by (ID);
 
 COPY houses FROM STDIN DELIMITER '|';
@@ -29,13 +29,13 @@ COPY houses FROM STDIN DELIMITER '|';
 select * from houses limit 5;
 
 \qecho === Calculate Coefficients ======================================
-select mregr_coef(price, array[1, bedroom, bath, size])::REAL[] from houses;
+select madlib.mregr_coef(price, array[1, bedroom, bath, size])::REAL[] from houses;
 
 \qecho === Calculate R square value ====================================
-select mregr_r2(price, array[1, bedroom, bath, size])::REAL from houses;
+select madlib.mregr_r2(price, array[1, bedroom, bath, size])::REAL from houses;
 
 \qecho === Calculate t statistics ======================================
-select mregr_tstats(price, array[1, bedroom, bath, size])::REAL[] from houses;
+select madlib.mregr_tstats(price, array[1, bedroom, bath, size])::REAL[] from houses;
 
 \qecho === Calculate p values ==========================================
-select mregr_pvalues(price, array[1, bedroom, bath, size])::REAL[] from houses;
+select madlib.mregr_pvalues(price, array[1, bedroom, bath, size])::REAL[] from houses;
