@@ -8,24 +8,42 @@
  * \defgroup mfvsketch MFV (Most Frequent Values)
  * \ingroup sketches
  * \par About
- * MFVSketch: Most Frequent Values variant of CountMin sketch.
- * This is basically a CountMin sketch that keeps track of most frequent values
- * as it goes.
+ * MFVSketch: Most Frequent Values variant of CountMin sketch, implemented
+ * as a UDA.
  *
- * It comes in two different versions: a "quick and dirty" version that does
+ * \implementation
+ * This is basically a CountMin sketch that keeps track of most frequent values
+ * as it goes.  This is easy to do, because at any point during a scan,
+ * it can use the CM sketch to quickly get the count of any value so far.
+ *
+ * \usage
+ * The MFV frequent-value UDA comes in two different versions: a "quick and dirty" version that does
  * parallel aggregation, and a more faithful implementation that preserves the 
  * approximation guarantees of Cormode/Muthukrishnan, but ships all rows to the
  * master for aggregation.
  *
- * It only needs to do cmsketch_count, doesn't need the "dyadic" range trick.
+ * It only uses CountMin sketches for value counting, and doesn't need the "dyadic" range trick.
  * As a result it's not limited to integers, and the implementation works
- * for the Postgres "anyelement".
+ * for any Postgres data type.
  *
- * \par Usage/API:
+ * The standard method here (<c>mfvsketch_top_histogram</c>) provides epsilon/delta
+ * probabilistic guarantees of accuracy, but does not do any parallel aggregation.
+ * The parallel method (<c>mfvsketch_quick_histogram</c>) is a heuristic with no
+ * such guarantees, but it will likely work well in most cases.  As an example  
+ * of a case where it will fail, consider a scenario where the top <i>n</i> values on node 1 are very infrequent on 
+ * node 2, and the top <i>n</i> values on node 2 are infrequent on node 1.  But the <i>n</i>+1'th value
+ * is the same on both nodes and the most frequent value in toto.  It will get
+ * surpressed incorrectly by the parallel heuristic, but get chosen by the standard method.
+ *
+ * However, we're probably OK here most of the time.  What we're interested in are
+ * values whose frequencies are unusually high.  For 
+ * columns with very flat distributions, we likely don't care about the results much.
+ * Otherwise, The results of this heuristic will likely be
+ * unusually frequent values, if not precisely the *most* frequent values.  
  *
  *  - <c>mfvsketch_top_histogram(col anytype, nbuckets int4)</c> 
  *   is a UDA over column <c>col</c> of any type, and a number of buckets <c>nbuckets</c>, 
- *   and produces an n-bucket histogram for the column where each bucket is for one of the 
+ *   and produces an n-bucket histogram for the column where each bucket counts one of the 
  *   most frequent values in the column. The output is an array of doubles {value, count} 
  *   in descending order of frequency; counts are approximate. Ties are handled arbitrarily.  
  *   Example:\code
@@ -34,12 +52,19 @@
  *   \endcode
  *
  *  - <c>mfvsketch_quick_histogram(col anytype, nbuckets int4)</c> is the same as the above
- *  in PostgreSQL.  In Greenplum, it does parallel aggregation to provide a "quick and dirty" 
- *   version of the above.
- *   Example:\code
+ *  but, in Greenplum it does parallel aggregation to provide a "quick and dirty" 
+ *  answer.  In Postgres it is identical to <c>mfvsketch_top_histogram</c>. Example:\code
  *   SELECT madlib.mfvsketch_quick_histogram(proname, 4)
  *     FROM pg_proc;
  * \endcode
+ *
+ * \literature
+ * This method is not usually called an MFV sketch in the literature, it 
+ * is simply an application of the CountMin sketch.  We make the 
+ * distinction here because of implementation details: we use CountMin in 
+ * a stylized way (a single dyadic range, postgres anyelement type), and we 
+ * need to maintain the running histogram of top values.
+ * \sa countmin
  */
 
 #include "postgres.h"
@@ -136,24 +161,26 @@ int mfv_find(bytea *blob, Datum val)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(blob);
     int i, len;
+    void *tmp;
     Datum iDat;
     
     /* look for existing entry for this value */
     for (i = 0; i < transval->next_mfv; i++) {
         /* if they're the same */
-        iDat = mfv_transval_getval(blob,i);
-        if (transval->typByVal) iDat = *(Datum *)iDat;
+        tmp = mfv_transval_getval(blob,i);
+        if (transval->typByVal) iDat = *(Datum *)tmp;
+        else iDat = PointerGetDatum(tmp);
         
         if ((len = att_addlength_datum(0, transval->typLen, iDat)) 
             == att_addlength_datum(0, transval->typLen, val)) {
-            char *valp, *datp;
+            void *valp, *datp;
             if (transval->typByVal) {
-                valp = (char *)&val;
-                datp = (char *)&iDat;
+                valp = (void *)&val;
+                datp = (void *)&iDat;
             }
             else {
-                valp = (char *)val;
-                datp = (char *)iDat;
+                valp = (void *)DatumGetPointer(val);
+                datp = (void *)DatumGetPointer(iDat);
             }
             if (!memcmp(datp, valp, len))
                 /* arg is an mfv */
@@ -202,16 +229,16 @@ bytea *mfv_init_transval(int max_mfvs, Oid typOid)
 }
 
 /*! get the datum associated with the i'th mfv */
-Datum mfv_transval_getval(bytea *blob, int i)
+void *mfv_transval_getval(bytea *blob, int i)
 {
     mfvtransval *tvp = (mfvtransval *)VARDATA(blob);
-    Datum retval;
+    void *retval;
     
     if (i > tvp->next_mfv || i < 0)
         elog(ERROR, "attempt to get frequent value at illegal index %d in mfv sketch", i);
     if (tvp->mfvs[i].offset > VARSIZE(blob) - VARHDRSZ)
         elog(ERROR, "offset exceeds size of transval in mfv sketch");
-    retval = PointerGetDatum((((char*)tvp) + tvp->mfvs[i].offset));
+    retval = (void *)(((char*)tvp) + tvp->mfvs[i].offset);
     
     return (retval);
 }
@@ -220,12 +247,12 @@ void mfv_copy_datum(bytea *transblob, int offset, Datum dat)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     size_t datumLen = att_addlength_datum(0, transval->typLen, dat);
-    char *curval = (char *)mfv_transval_getval(transblob,offset);
+    void *curval = mfv_transval_getval(transblob,offset);
     
     if (transval->typByVal)
-        memcpy((char *)curval, (char *)&dat, datumLen);
+        memmove(curval, (void *)&dat, datumLen);
     else
-        memcpy((char *)curval, (char *)dat, datumLen);
+        memmove(curval, (void *)DatumGetPointer(dat), datumLen);
 }
 
 /*!
@@ -250,7 +277,7 @@ bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, int i)
         /* allocate a copy with room for this, and double the current space for values */
         size_t curspace = transval->next_offset - transval->mfvs[0].offset;
         tmpblob = palloc0(VARSIZE(transblob) + curspace + datumLen);
-        memcpy(tmpblob, transblob, VARSIZE(transblob));
+        memmove(tmpblob, transblob, VARSIZE(transblob));
         SET_VARSIZE(tmpblob, VARSIZE(transblob) + curspace + datumLen);
         /*
          * PG won't let us pfree the old transblob
@@ -304,10 +331,12 @@ bytea *mfv_transval_replace(bytea *transblob, Datum dat, int i)
     */
      mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
      size_t datumLen = att_addlength_datum(0, transval->typLen, dat);
-     Datum oldDat = mfv_transval_getval(transblob,i);
+     void *tmpp = mfv_transval_getval(transblob,i);
+     Datum oldDat;
      size_t oldLen;   
      
-     if (transval->typByVal) oldDat = *(Datum *)oldDat;
+     if (transval->typByVal) oldDat = *(Datum *)tmpp;
+     else oldDat = PointerGetDatum(tmpp);
      oldLen = att_addlength_datum(0, transval->typLen, oldDat);
      
      if (datumLen < oldLen) {
@@ -352,10 +381,12 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
                       &typIsVarlena);    
 
     for (i = 0; i < transval->next_mfv; i++) {
-        Datum curval = mfv_transval_getval(transblob,i);
+        void *tmpp = mfv_transval_getval(transblob,i);
+        Datum curval;
         char *countbuf;
         
-        if (transval->typByVal) curval = *(Datum *)curval;
+        if (transval->typByVal) curval = *(Datum *)tmpp;
+        else curval = PointerGetDatum(tmpp);
         countbuf = OidOutputFunctionCall(outFuncOid, Int64GetDatum(transval->mfvs[i].cnt));
                 
         histo[i][0] = PointerGetDatum(cstring_to_text(OidOutputFunctionCall(transval->outFuncOid, curval)));
@@ -403,20 +434,7 @@ int cnt_cmp_desc(const void *i, const void *j)
 
 /*!
  * Greenplum "prefunc" to combine sketches from multiple machines.
- * This parallelization of the most-frequent-value makes the method a heuristic.  
- * For example, it may be that the top n values on node 1 are very infrequent on 
- * node 2, and the top n values on node 2 are infrequent on node 1.  But the n+1'th value
- * is the same on both nodes and the most frequent value in toto.  It will get
- * surpressed incorrectly.
- *
- * This is the optimal aggregation problem considered by Fagin, et al in his famous paper 
- * that presents "Fagin's Algorithm".  
- *
- * However, we're probably OK here most of the time.  What we're interested in here are
- * values whose frequencies are unusually high.  The results of this heuristic will likely be
- * unusually frequent values, if not precisely the *most* frequent values.
- *
- * takes the most frequent values from pairs of nodes.
+ * See notes at top of file regarding the heuristic nature of this approach.
  */
 PG_FUNCTION_INFO_V1(__mfvsketch_merge);
 Datum __mfvsketch_merge(PG_FUNCTION_ARGS)
@@ -453,15 +471,19 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
 
      /* recompute the counts using the merged sketch */
     for (i = 0; i < transval1->next_mfv; i++) {
-        Datum dat = mfv_transval_getval(transblob1,i);
-        if (transval1->typByVal) dat = *(Datum *)dat;
+        void *tmpp = mfv_transval_getval(transblob1,i);
+        Datum dat;
+        if (transval1->typByVal) dat = *(Datum *)tmpp;
+        else dat = PointerGetDatum(tmpp);
         transval1->mfvs[i].cnt = cmsketch_count_c(transval1->sketch,
             dat,
             transval1->outFuncOid);
     }
     for (i = 0; i < transval2->next_mfv; i++) {
-        Datum dat = mfv_transval_getval(transblob2,i);
-        if (transval2->typByVal) dat = *(Datum *)dat;
+        void *tmpp = mfv_transval_getval(transblob2,i);
+        Datum dat;
+        if (transval2->typByVal) dat = *(Datum *)tmpp;
+        else dat = PointerGetDatum(tmpp);
         transval2->mfvs[i].cnt = cmsketch_count_c(transval2->sketch,
             dat,
             transval2->outFuncOid);
@@ -475,8 +497,10 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     for (i = j = 0;
          j < transval2->next_mfv && i < transval1->max_mfvs;
          i++) {
-        Datum jDatum = mfv_transval_getval(transblob2, j);
-        if (transval1->typByVal) jDatum = *(Datum *)jDatum;
+        void *tmpp = mfv_transval_getval(transblob2,i);
+        Datum jDatum;
+        if (transval2->typByVal) jDatum = *(Datum *)tmpp;
+        else jDatum = PointerGetDatum(tmpp);
         if (i == transval1->next_mfv && (mfv_find(transblob1, jDatum) == -1)
                   /* && i < transval1->max_mfvs from for loop */) {
             transblob1 = mfv_transval_append(transblob1, jDatum);

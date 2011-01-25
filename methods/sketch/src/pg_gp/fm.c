@@ -7,18 +7,37 @@
  /*!
  * \defgroup fmsketch FM (Flajolet-Martin)
  * \ingroup sketches
- * \par About
- * Flajolet-Martin JCSS 1985 distinct count estimation
- * implemented as a user-defined aggregate.
- * See http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
- * for explanation and pseudocode
+ * \about
+ * Flajolet-Martin's distinct count estimation
+ * implemented as a user-defined aggregate.  
  *
- * \par Usage/API
- *   <c>fmsketch_dcount(col anytype)</c> is a UDA that can be run on any column of any type.  It returns an approximation to the number of distinct values in the column.  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  Example:\code
+ * \implementation
+ * In a nutshell, the FM sketch
+ * is based on the idea of a bitmap whose bits are "turned on" by hashes of 
+ * values in the domain.  It is arranged so that
+ * as you move left-to-right in that bitmap, the expected number of domain values
+ * that can turn on the bit decreases exponentially.
+ * After hashing all the values this way, the location of the first 0 from the 
+ * left of the bitmap is correlated with the
+ * number of distinct values.  This idea is smoothed across a number of 
+ * trials using multiple independent hash functions on multiple bitmaps.
+ *
+ * The FM sketch technique works poorly with small inputs, so we
+ * explicitly count the first 12K distinct values in a main-memory
+ * data structure before switching over to sketching.
+ *
+ * See the paper mentioned below
+ * for detailed explanation, formulae, and pseudocode.
+ *
+ * \usage
+ *   <c>fmsketch_dcount(col anytype)</c> is a UDA that can be run on any column of any type.  It returns an approximation to the number of distinct values in the column (a la <c>COUNT(DISTINCT x)</c>, but faster and approximate).  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  Example:\code
  *    SELECT pronargs, madlib.fmsketch_dcount(proname) AS distinct_hat, count(proname)
  *      FROM pg_proc
  *  GROUP BY pronargs;
  *    \endcode
+ *
+ * \literature
+ * - P. Flajolet and N.G. Martin.  Probabilistic counting algorithms for data base applications, Journal of Computer and System Sciences 31(2), pp 182-209, 1985.  http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
  */
 
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */

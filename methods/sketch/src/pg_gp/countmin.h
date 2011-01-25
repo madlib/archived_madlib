@@ -38,7 +38,7 @@ typedef uint64 countmin[DEPTH][NUMCOUNTERS];
 #define MAXARGS 3
 
 /*! 
- * \brief the transition value struct for the cmsketch aggregate.
+ * \brief the transition value struct for CM sketches
  *  
  * Holds the sketch counters
  * and a cache of handy metadata that we'll reuse across calls
@@ -91,7 +91,7 @@ typedef struct {
 
 
 /*!
- * \brief the transition value struct for the mfvsketch aggregate.  
+ * \brief the transition value struct for MFV sketches.  
  *
  * Holds a single
  * countmin sketch (no dyadic ranges) and an array of Most Frequent Values.
@@ -159,7 +159,7 @@ bytea *mfv_transval_append(bytea *, Datum);
 int mfv_find(bytea *, Datum);
 bytea *mfv_transval_replace(bytea *, Datum, int);
 bytea *mfv_transval_insert_at(bytea *, Datum, int);
-Datum mfv_transval_getval(bytea *, int);
+void *mfv_transval_getval(bytea *, int);
 bytea *mfv_init_transval(int, Oid);
 bytea *mfvsketch_merge_c(bytea *, bytea *);
 void mfv_copy_datum(bytea *, int, Datum);
