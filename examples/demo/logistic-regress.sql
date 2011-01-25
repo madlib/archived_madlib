@@ -19,7 +19,7 @@ CREATE TABLE artificiallogreg
 (
 	id SERIAL NOT NULL,
 	y BOOLEAN,
-	x DOUBLE PRECISION[]
+	x REAL[]
 );
 
 RESET client_min_messages;
@@ -80,17 +80,17 @@ $$ LANGUAGE plpgsql;
 
 SET client_min_messages = error;
 CREATE TABLE randomdata AS
-SELECT id, randomNormalArray(5) AS x
+SELECT id, randomNormalArray(5)::REAL[] AS x
 FROM generate_series(1,5000) AS id;
 RESET client_min_messages;
 
 INSERT INTO artificiallogreg (y, x)
 SELECT
-	(random() < 1. / (1. + exp(-dotProduct(r.x, c.coef)))),
+	random() < 1. / (1. + exp(-dotProduct(r.x, c.coef))),
 	r.x
 FROM randomdata AS r, (SELECT array[-2.4, 3.1, 0.6, -1.6, 1.3] AS coef) AS c;
 
-\qecho === Show data sample: ===========================================
+\qecho === Show data sample (top 5 rows only) ==========================
 
 SELECT * FROM artificiallogreg LIMIT 5;
 
