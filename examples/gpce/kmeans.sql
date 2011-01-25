@@ -3,6 +3,7 @@
 \qecho =================================================================
 \qecho 
 
+set search_path="$user",madlib,public;
 set client_min_messages=warning;
 
 DROP SCHEMA madlib_kmeans_test CASCADE;
@@ -137,6 +138,7 @@ end
 $$ language plpgsql;
 
 \qecho === create test table ===========================================
+drop table if exists madlib_kmeans_test.test_table;
 select madlib_kmeans_test.create_test_table( 'madlib_kmeans_test.test_table', 1000, 100, 20, 0.1);
 
 \qecho === run k-means algorythm =======================================
