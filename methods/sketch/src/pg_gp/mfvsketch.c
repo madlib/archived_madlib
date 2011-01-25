@@ -173,8 +173,8 @@ int mfv_find(bytea *blob, Datum val)
                 datp = (void *)&iDat;
             }
             else {
-                valp = (void *)val;
-                datp = (void *)iDat;
+                valp = (void *)DatumGetPointer(val);
+                datp = (void *)DatumGetPointer(iDat);
             }
             if (!memcmp(datp, valp, len))
                 /* arg is an mfv */
@@ -246,7 +246,7 @@ void mfv_copy_datum(bytea *transblob, int offset, Datum dat)
     if (transval->typByVal)
         memmove(curval, (void *)&dat, datumLen);
     else
-        memmove(curval, (void *)dat, datumLen);
+        memmove(curval, (void *)DatumGetPointer(dat), datumLen);
 }
 
 /*!
@@ -495,7 +495,6 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
         Datum jDatum;
         if (transval2->typByVal) jDatum = *(Datum *)tmpp;
         else jDatum = PointerGetDatum(tmpp);
-        if (transval1->typByVal) jDatum = *(Datum *)jDatum;
         if (i == transval1->next_mfv && (mfv_find(transblob1, jDatum) == -1)
                   /* && i < transval1->max_mfvs from for loop */) {
             transblob1 = mfv_transval_append(transblob1, jDatum);
