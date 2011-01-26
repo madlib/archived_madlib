@@ -1,0 +1,66 @@
+
+-----------------------------------------------------
+-- To use for a different dataset:
+-- 1. replace the schema domain name
+-- 2. replace the location of the mrtbl table file
+-- 3. replace the location of the segmenttbl file
+-----------------------------------------------------
+
+-- drop schema enron cascade;
+-- create schema enron;
+set search_path to enron;
+
+drop table if exists mr_with_dup;
+drop table if exists mrtable;
+-- drop table if exists mrtbl;
+-- drop table if exists segmenttbl;
+drop table if exists segmenttbl_with_dup;
+-- drop table if exists segment_hashtbl;
+
+create table mr_with_dup (seg_text text, label int, prev_label int, score float);
+
+create table mrtable (seg_id int, label int, prev_label int, score int);
+
+-- create table labels (id int, label text);
+
+copy mr_with_dup (seg_text,label,prev_label,score) from 'esyscmd(`pwd')/enron.test.MR' with CSV;
+
+copy labels (id, label) from 'esyscmd(`pwd')/enron.labels' with CSV;
+
+-- create table segmenttbl (doc_id int, start_pos int, seg_id int);
+
+create table segmenttbl_with_dup (doc_id int, seg_id int, start_pos int,end_pos int, seg_text text);
+
+copy segmenttbl_with_dup (doc_id,seg_id,start_pos,end_pos,seg_text) 
+from 'esyscmd(`pwd')/enron.test.SegmentTbl' with CSV;
+
+create table segment_hashtbl (seg_text text, seg_id int);
+
+insert into segment_hashtbl select seg_text, rank() over (order by seg_text) from (select distinct(seg_text) from segmenttbl_with_dup) as A;
+
+insert into segmenttbl select doc_id, start_pos, SH.seg_id from segmenttbl_with_dup S, segment_hashtbl SH where S.seg_text=SH.seg_text order by doc_id, start_pos;
+
+create index segmenttbl_doc_id_start_pos on segmenttbl(doc_id, start_pos);
+
+create view display_segmenttbl as select doc_id, start_pos, seg_text from segmenttbl S, segment_hashtbl SH where S.seg_id=SH.seg_id;
+
+insert into mrtable select seg_id,label,prev_label,(max(score)*1000) as score from mr_with_dup MR, segment_hashtbl SH where MR.seg_text=SH.seg_text group by seg_id,label,prev_label;
+
+-- array representation of the mr table
+select seg_id, array_agg(score) as score into mrtbl from (select seg_id, score from mrtable order by seg_id, prev_label, label) as ss group by seg_id order by seg_id;
+
+create index mrtbl_seg_id on mrtbl(seg_id);
+
+select distinct(doc_id) as doc_id into doc_id_tbl from segmenttbl order by doc_id;
+
+-- result table for viterbi_top1(doc_id)
+-- create table u10 (doc_id int, start_pos int, seg_id int, label int, score int);
+
+drop table mr_with_dup;
+drop table segmenttbl_with_dup;
+drop table mrtable;
+
+analyze mrtbl;
+analyze segmenttbl;
+analyze segment_hashtbl;
+
