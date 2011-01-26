@@ -497,7 +497,7 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     for (i = j = 0;
          j < transval2->next_mfv && i < transval1->max_mfvs;
          i++) {
-        void *tmpp = mfv_transval_getval(transblob2,i);
+        void *tmpp = mfv_transval_getval(transblob2,j);
         Datum jDatum;
         if (transval2->typByVal) jDatum = *(Datum *)tmpp;
         else jDatum = PointerGetDatum(tmpp);
