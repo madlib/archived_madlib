@@ -66,12 +66,12 @@ typedef struct {
  */
 typedef struct {
     int64 spans[2*INT64BITS][2]; /*! the ranges */
-    int emptyoffset;        /*! offset of next empty span */
+    uint32 emptyoffset;        /*! offset of next empty span */
 } rangelist;
 
 #define ADVANCE_OFFSET(r)  \
     if ((r).emptyoffset == 2*INT64BITS) { \
-        int i; \
+        uint32 i; \
         for (i = 0; i < 2*INT64BITS; i++) \
             elog(NOTICE, \
                  "[" INT64_FORMAT ", " INT64_FORMAT "]", \
