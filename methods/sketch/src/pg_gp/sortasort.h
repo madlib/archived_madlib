@@ -6,6 +6,7 @@
 #define SORTA_SLOP 100
 
 /*! 
+ * \internal 
  * \brief a pre-marshalled directory data structure to hold strings
  * 
  * A sortasort is a smallish array of strings, intended for append-only
@@ -18,6 +19,7 @@
  * to, but the last < SORTA_SLOP entries are left unsorted.  Binary Search
  * is used on all but those last entries, which must be scanned. At every
  * k*SORTA_SLOP'th insert, the full directory is sorted.
+ * \endinternal 
  */
 typedef struct {
     short num_vals;        /*! number of values so far */

@@ -38,10 +38,12 @@ typedef uint64 countmin[DEPTH][NUMCOUNTERS];
 #define MAXARGS 3
 
 /*! 
+ * \internal 
  * \brief the transition value struct for CM sketches
- *  
+ *
  * Holds the sketch counters
  * and a cache of handy metadata that we'll reuse across calls
+ * \endinternal
  */
 typedef struct {
     Datum args[MAXARGS];  /*! carry along additional args for finalizer */
@@ -58,11 +60,13 @@ typedef struct {
 
 
 /*!
+ * \internal 
  * \brief array of ranges
  *
  * a data structure to hold the constituent dyadic (power-of-two) ranges
  * corresponding to an arbitrary range.
  * E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
+ * \endinternal 
  */
 typedef struct {
     int64 spans[2*INT64BITS][2]; /*! the ranges */
@@ -82,7 +86,9 @@ typedef struct {
     else ((r).emptyoffset++);
 
 /*!
+ * \internal
  * \brief offset/count pairs for MFV sketches
+ * \endinternal
  */
 typedef struct {
     unsigned offset;  /*! memory offset to the value */
@@ -91,6 +97,7 @@ typedef struct {
 
 
 /*!
+ * \internal
  * \brief the transition value struct for MFV sketches.  
  *
  * Holds a single
@@ -102,6 +109,7 @@ typedef struct {
  * Each mfv entry contains an offset from the top of the structure where
  * we can find a Postgres text object holding the output format of a
  * frequent value.
+ * \endinternal
  */
 typedef struct {
     unsigned max_mfvs;    /*! number of frequent values */

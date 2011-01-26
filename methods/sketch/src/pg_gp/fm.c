@@ -75,6 +75,7 @@ PG_MODULE_MAGIC;
     8*MINVALS
 
 /*!
+ * \internal 
  * \brief transition value struct for FM sketches
  *
  * because FM sketches work poorly on small numbers of values,
@@ -82,6 +83,7 @@ PG_MODULE_MAGIC;
  * for "SMALL" numbers of values (<=MINVALS), the storage array
  * is a "sortasort" data structure containing an array of input values.
  * for "BIG" datasets (>MINVAL), it is an array of FM sketch bitmaps.
+ * \endinternal 
  */
 typedef struct {
     enum {SMALL,BIG} status;

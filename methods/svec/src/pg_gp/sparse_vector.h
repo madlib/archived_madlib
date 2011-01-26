@@ -182,9 +182,11 @@ When we use arrays of floating point numbers for various calculations,
 #include "SparseData.h"
 #include "float_specials.h"
 
-/**
+/*!
+ * \internal
  * Consists of the dimension of the vector (how many elements) and a SparseData
  * structure that stores the data in a compressed format.
+ * \endinternal
  */
 typedef struct {
 	int4 vl_len_;   /**< This is unused at the moment */
