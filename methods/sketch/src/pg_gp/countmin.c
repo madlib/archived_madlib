@@ -181,7 +181,7 @@ bytea *cmsketch_init_transval()
  */
 void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
 {
-    int j;
+    uint32 j;
 
     for (j = 0; j < RANGES; j++) {
         countmin_trans_c(transval->sketches[j], Int64GetDatum(
@@ -324,7 +324,7 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
                           ((cmtransval *)(VARDATA(counterblob2)))->sketches;
     bytea *   newblob;
     countmin *newsketches;
-    int       i, j, k;
+    uint32       i, j, k;
     int       sz;
 
     /* make sure they're initialized! */
@@ -350,7 +350,7 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
         /* transfer in the args from the other input */
         cmtransval *other = (cmtransval *)VARDATA(counterblob2);
         newtrans->nargs = other->nargs;
-        for (i = 0; i < other->nargs; i++)
+        for (i = 0; (int)i < other->nargs; i++)
             newtrans->args[i] = other->args[i];
     }
 
@@ -409,7 +409,7 @@ int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
 Datum cmsketch_rangecount_c(cmtransval *transval, int64 bot, int64 top)
 {
     int64     cursum = 0;
-    int       i;
+    uint32      i;
     rangelist r;
     int4     dyad;
     int64     val;
@@ -598,7 +598,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
  */
 Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 {
-    int   i;
+    uint  i;
     int64 higuess,loguess,curguess,curcount;
     int64 centile_cnt;
 
@@ -727,7 +727,7 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
 Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
 {
     int64      step;
-    int        i, nextbucket;
+    uint        i, nextbucket;
     ArrayType *retval;
     int64      binlo;
     Datum      histo[buckets][3];
@@ -742,7 +742,7 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
 
     step = Max(trunc(100 / (float8)buckets), 1);
     for (i = nextbucket = 0, binlo = MIN_INT64; i < buckets; i++) {
-        int64 centile;
+        uint64 centile;
         if (i < buckets - 1) {
             centile = cmsketch_centile_c(transval, (i+1)*step, total);
             if (i > 0 && centile <= histo[nextbucket-1][1])
@@ -798,7 +798,7 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
     bytea *   transblob = (bytea *)PG_GETARG_BYTEA_P(0);
     countmin *sketches;
     char *    newblob = (char *)palloc(10240);
-    int       i, j, k, c;
+    uint32       i, j, k, c;
 
     sketches = ((cmtransval *)VARDATA(transblob))->sketches;
     for (i=0, c=0; i < RANGES; i++)

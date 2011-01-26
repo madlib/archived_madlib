@@ -1,5 +1,5 @@
-PG_CONFIG = pg_config
-DATA_built = profile.py libprofile.py
+DATA_built = profile.py libprofile.py profile_create.sql profile_drop.sql
+PYTHON_built = profile.py libprofile.py
 
 PGXS := $(shell pg_config --pgxs)
 include $(PGXS)

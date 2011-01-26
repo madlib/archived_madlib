@@ -95,7 +95,7 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
     Datum        newdatum  = PG_GETARG_DATUM(1);
     int          max_mfvs  = PG_GETARG_INT32(2);
     mfvtransval *transval;
-    int64        tmpcnt;
+    uint64        tmpcnt;
     int          i;
     char *       outString;
 
@@ -160,7 +160,8 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
 int mfv_find(bytea *blob, Datum val)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(blob);
-    int i, len;
+    unsigned i;
+    size_t len;
     void *tmp;
     Datum iDat;
     
@@ -232,22 +233,29 @@ bytea *mfv_init_transval(int max_mfvs, Oid typOid)
 void *mfv_transval_getval(bytea *blob, int i)
 {
     mfvtransval *tvp = (mfvtransval *)VARDATA(blob);
-    void *retval;
+    void *retval = (void *)(((char*)tvp) + tvp->mfvs[i].offset);
+    Datum dat;
+    
+    if (tvp->typByVal) dat = *(Datum *)retval;
+    else dat = PointerGetDatum(retval);
     
     if (i > tvp->next_mfv || i < 0)
         elog(ERROR, "attempt to get frequent value at illegal index %d in mfv sketch", i);
-    if (tvp->mfvs[i].offset > VARSIZE(blob) - VARHDRSZ)
-        elog(ERROR, "offset exceeds size of transval in mfv sketch");
-    retval = (void *)(((char*)tvp) + tvp->mfvs[i].offset);
+    if (tvp->mfvs[i].offset > VARSIZE(blob) - VARHDRSZ 
+        || tvp->mfvs[i].offset < MFV_TRANSVAL_SZ(tvp->max_mfvs)-VARHDRSZ)
+        elog(ERROR, "illegal offset %u in mfv sketch", tvp->mfvs[i].offset);
+    if (tvp->mfvs[i].offset  + att_addlength_datum(0, tvp->typLen, dat)
+        > VARSIZE(blob) - VARHDRSZ)
+        elog(ERROR, "value overruns size of mfv sketch");
     
     return (retval);
 }
 
-void mfv_copy_datum(bytea *transblob, int offset, Datum dat)
+void mfv_copy_datum(bytea *transblob, int index, Datum dat)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     size_t datumLen = att_addlength_datum(0, transval->typLen, dat);
-    void *curval = mfv_transval_getval(transblob,offset);
+    void *curval = mfv_transval_getval(transblob,index);
     
     if (transval->typByVal)
         memmove(curval, (void *)&dat, datumLen);
@@ -275,8 +283,8 @@ bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, int i)
         elog(ERROR, "attempt to insert frequent value at illegal index %d in mfv sketch", i);
     if (MFV_TRANSVAL_CAPACITY(transblob) < datumLen) {
         /* allocate a copy with room for this, and double the current space for values */
-        size_t curspace = transval->next_offset - transval->mfvs[0].offset;
-        tmpblob = palloc0(VARSIZE(transblob) + curspace + datumLen);
+        size_t curspace = VARSIZE(transblob) - transval->mfvs[0].offset - VARHDRSZ;
+        tmpblob = (bytea *)palloc0(VARSIZE(transblob) + curspace + datumLen);
         memmove(tmpblob, transblob, VARSIZE(transblob));
         SET_VARSIZE(tmpblob, VARSIZE(transblob) + curspace + datumLen);
         /*
@@ -339,7 +347,7 @@ bytea *mfv_transval_replace(bytea *transblob, Datum dat, int i)
      else oldDat = PointerGetDatum(tmpp);
      oldLen = att_addlength_datum(0, transval->typLen, oldDat);
      
-     if (datumLen < oldLen) {
+     if (datumLen <= oldLen) {
          mfv_copy_datum(transblob, i, dat);
          return transblob;
      }
@@ -383,14 +391,16 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
     for (i = 0; i < transval->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob,i);
         Datum curval;
-        char *countbuf;
+        char *countbuf, *valbuf;
         
         if (transval->typByVal) curval = *(Datum *)tmpp;
         else curval = PointerGetDatum(tmpp);
         countbuf = OidOutputFunctionCall(outFuncOid, Int64GetDatum(transval->mfvs[i].cnt));
-                
-        histo[i][0] = PointerGetDatum(cstring_to_text(OidOutputFunctionCall(transval->outFuncOid, curval)));
+        valbuf = OidOutputFunctionCall(transval->outFuncOid, curval);
+        histo[i][0] = PointerGetDatum(cstring_to_text(valbuf));
         histo[i][1] = PointerGetDatum(cstring_to_text(countbuf));
+        pfree(countbuf);
+        pfree(valbuf);
     }
     
 	/*
@@ -410,9 +420,9 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
                                 dims,
                                 lbs,
                                 TEXTOID,
-                                typlen,
-                                typbyval,
-                                typalign);
+                                -1,
+                                0,
+                                'i');
     PG_RETURN_ARRAYTYPE_P(retval);
 }
 
@@ -497,7 +507,7 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     for (i = j = 0;
          j < transval2->next_mfv && i < transval1->max_mfvs;
          i++) {
-        void *tmpp = mfv_transval_getval(transblob2,i);
+        void *tmpp = mfv_transval_getval(transblob2, j);
         Datum jDatum;
         if (transval2->typByVal) jDatum = *(Datum *)tmpp;
         else jDatum = PointerGetDatum(tmpp);

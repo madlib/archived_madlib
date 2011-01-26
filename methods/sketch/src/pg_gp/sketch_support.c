@@ -144,9 +144,9 @@ uint32 leftmost_zero(uint8 *bits,
 {
     uint8 *s = &(((uint8 *)bits)[sketchnum*sketchsz_bits/8]);
 
-    int    i;
+    unsigned    i;
     uint32 c = 0;       /* output: c will count trailing zero bits, */
-    int    maxbyte = pow(2,8) - 1;
+    uint32    maxbyte = pow(2,8) - 1;
 
     if (sketchsz_bits % (sizeof(uint32)*8))
         elog(
@@ -271,7 +271,7 @@ uint32 ui_rightmost_one(uint32 v)
  */
 void hex_to_bytes(char *hex, uint8 *bytes, size_t hexlen)
 {
-    int i;
+    uint32 i;
 
     for (i = 0; i < hexlen; i+=2)     /* +2 to consume 2 hex characters each time */
     {
