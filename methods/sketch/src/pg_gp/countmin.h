@@ -85,8 +85,8 @@ typedef struct {
  * \brief offset/count pairs for MFV sketches
  */
 typedef struct {
-    int offset;  /*! memory offset to the value */
-    int64 cnt;   /*! counter */
+    unsigned offset;  /*! memory offset to the value */
+    uint64 cnt;   /*! counter */
 } offsetcnt;
 
 
@@ -104,11 +104,11 @@ typedef struct {
  * frequent value.
  */
 typedef struct {
-    int max_mfvs;    /*! number of frequent values */
-    int next_mfv;    /*! index of next mfv to insert into */
-    int next_offset; /*! next memory offset to insert into */
+    unsigned max_mfvs;    /*! number of frequent values */
+    unsigned next_mfv;    /*! index of next mfv to insert into */
+    unsigned next_offset; /*! next memory offset to insert into */
     Oid typOid;      /*! Oid of the type being counted */
-    int16 typLen;    /*! Length of the data type */
+    uint32 typLen;    /*! Length of the data type */
     bool  typByVal;  /*! Whether type is by value or by reference */
     Oid outFuncOid;  /*! Oid of the outfunc for this type */
     countmin sketch; /*! a single countmin sketch */
