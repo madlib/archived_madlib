@@ -24,7 +24,7 @@
 #else
 	#ifndef WIN32
 		/* Includes from the clapack library */
-		#include <f2c.h>
+		#include "f2c.h"
 
 		/* copied from clapack.h */
 		int dgesdd_(char *jobz, integer *m, integer *n, doublereal *

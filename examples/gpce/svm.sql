@@ -8,12 +8,12 @@ TRUNCATE TABLE madlib.sv_results;
 TRUNCATE TABLE madlib.sv_train_data;
 
 \qecho =================================================================
-\qecho === Example: regression =========================================
+\qecho === SVM: regression =========================================
 \qecho =================================================================
 \qecho 
 
-\qecho === generate 1000 5-dimensional data ============================
-select madlib.generateRegData(1000, 5);
+\qecho === generate 500 5-dimensional data ============================
+select madlib.generateRegData(500, 5);
 
 \qecho === create a model ==============================================
 select madlib.sv_regression('madlib.sv_train_data', 'myexp', false);
@@ -27,12 +27,12 @@ select madlib.sv_regression('madlib.sv_train_data', 'myexp', true);
 select * from madlib.svs_predict_combo('myexp', '{1,2,4,20,10}');
 
 \qecho =================================================================
-\qecho === Example: classification =====================================
+\qecho === SVM: classification =====================================
 \qecho =================================================================
 \qecho
 
-\qecho === generate 2000 5-dimensional data ============================
-select madlib.generateClData(2000, 5);
+\qecho === generate 500 5-dimensional data ============================
+select madlib.generateClData(500, 5);
 
 \qecho === create a model ==============================================
 select madlib.sv_classification('madlib.sv_train_data', 'myexpc', false);
@@ -45,7 +45,7 @@ select madlib.sv_classification('madlib.sv_train_data', 'myexpc', true);
 select * from madlib.svs_predict_combo('myexpc', '{10,-2,4,20,10}');
 
 \qecho =================================================================
-\qecho === Example: novelty detection ==================================
+\qecho === SVM: novelty detection ==================================
 \qecho =================================================================
 \qecho
 

@@ -1,12 +1,20 @@
 # Generate developer documentation
 # Hide warnings about keyword arguments in Python
 devdoc: doc/bin/doxysql mathjax
-	doxygen doc/etc/developer.doxyfile 2>&1 | egrep -v "warning:.*(@param is not found in the argument list.*kwargs\)$$|parameter 'kwargs'$$|The following parameters.*kwargs\) are not documented)"
+	( \
+		cat doc/etc/developer.doxyfile; \
+		echo "PROJECT_NUMBER = $$(cut -c 10- madpy/Version.yml)" \
+	) | doxygen - 2>&1 | \
+	egrep -v "warning:.*(@param is not found in the argument list.*kwargs\)$$|parameter 'kwargs'$$|The following parameters.*kwargs\) are not documented)"
 
 # Generate user documentation
 # Hide warnings about keyword arguments in Python
 doc: doc/bin/doxysql mathjax
-	doxygen doc/etc/user.doxyfile 2>&1 | egrep -v "warning:.*(@param is not found in the argument list.*kwargs\)$$|The following parameters.*kwargs\) are not documented)"
+	( \
+		cat doc/etc/user.doxyfile; \
+		echo "PROJECT_NUMBER = $$(cut -c 10- madpy/Version.yml)" \
+	) | doxygen - 2>&1 | \
+	egrep -v "warning:.*(@param is not found in the argument list.*kwargs\)$$|parameter 'kwargs'$$|The following parameters.*kwargs\) are not documented)"
 
 # doxysql for converting .sql files to a file with C++ declarations, for
 # use with doxygen

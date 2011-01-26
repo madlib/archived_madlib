@@ -19,6 +19,10 @@
 
 #include "sparse_vector.h"
 
+#ifdef PG_MODULE_MAGIC
+PG_MODULE_MAGIC;
+#endif
+
 /** 
  * For many functions defined in this module, the operation has no meaning 
  * if the array dimensions aren't the same, unless one of the inputs is a 
