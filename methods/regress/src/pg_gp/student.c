@@ -198,10 +198,9 @@ static inline float8 normal_cdf(float8 t)
  * rel_error < 0.0001 || abs_error < 0.00000001
  * for all nu >= 200. (Tested on Mac OS X 10.6, gcc-4.2.)
  */
-
 static float8 studentT_cdf_approx(int64 nu, float8 t)
 {
-	uint32	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
+	float8	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
 			z = sqrt( log(1. + t * t / nu) / g );
 
 	if (t < 0)
