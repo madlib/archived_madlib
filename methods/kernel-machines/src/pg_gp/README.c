@@ -161,10 +161,25 @@ Example usage for regression:
         \code
         testdb=# select madlib.sv_regression('madlib.sv_train_data', 'myexp', true);
         \endcode
-       The resultant models can be used for prediction as follows:
-       \code
-       testdb=# select * from madlib.svs_predict_combo('myexp', '{1,2,4,20,10}');
-       \endcode
+        The resultant models can be used for prediction as follows:
+        \code
+        testdb=# select * from madlib.svs_predict_combo('myexp', '{1,2,4,20,10}');
+        \endcode
+     -# To predict the labels of all the data points in a table named input_table using
+        a previously learned model named 'myexp', where the data points are stored in a 
+	column named col_name, and store the results in a table named output_table, we 
+	execute the following command:
+        \code
+        testdb=# select madlib.sv_predict('input_table', 'col_name', 'myexp', 'output_table', false); 
+        \code 
+        The output_table is created during the function; an existing table with that name
+        will be dropped.
+        To do the same using a set of support vector models learned in parallel and 
+        stored under the name 'myexp', we execute the command
+	\code
+        testdb=# select madlib.sv_predict('input_table', 'col_name', 'myexp', 'output_table', true); 
+        \code 
+
 
 Example usage for classification:
      -# We can randomly generate 2000 5-dimensional data labelled by the simple
@@ -191,6 +206,20 @@ Example usage for classification:
         testdb=# select madlib.sv_classification('madlib.sv_train_data', 'myexpc', true);
         testdb=# select * from madlib.svs_predict_combo('myexpc', '{10,-2,4,20,10}');
         \endcode
+     -# To predict the labels of all the data points in a table named input_table using
+        a previously learned model named 'myexpc', where the data points are stored in a 
+	column named col_name, and store the results in a table named output_table, we 
+	execute the following command:
+        \code
+        testdb=# select madlib.sv_predict('input_table', 'col_name', 'myexpc', 'output_table', false); 
+        \code 
+        The output_table is created during the function; an existing table with that name
+        will be dropped.
+        To do the same using a set of support vector models learned in parallel and 
+        stored under the name 'myexpc', we execute the command
+	\code
+        testdb=# select madlib.sv_predict('input_table', 'col_name', 'myexpc', 'output_table', true); 
+        \code 
 
 Example usage for novelty detection:
      -# We can randomly generate 100 2-dimensional data (the normal cases)
@@ -210,6 +239,20 @@ Example usage for novelty detection:
         testdb=# select * from madlib.svs_predict_combo('myexpnd', '{10,-10}');  
         testdb=# select * from madlib.svs_predict_combo('myexpnd', '{-1,-1}');  
         \endcode
+     -# To predict the labels of all the data points in a table named input_table using
+        a previously learned model named 'myexpnd', where the data points are stored in a 
+	column named col_name, and store the results in a table named output_table, we 
+	execute the following command:
+        \code
+        testdb=# select madlib.sv_predict('input_table', 'col_name', 'myexpnd', 'output_table', false); 
+        \code 
+        The output_table is created during the function; an existing table with that name
+        will be dropped.
+        To do the same using a set of support vector models learned in parallel and 
+        stored under the name 'myexpnd', we execute the command
+	\code
+        testdb=# select madlib.sv_predict('input_table', 'col_name', 'myexpnd', 'output_table', true); 
+        \code 
 
 */
 

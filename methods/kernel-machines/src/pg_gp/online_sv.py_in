@@ -48,8 +48,8 @@ def sv_regression( input_table, modelname, parallel):
         # Store the model learned
         plpy.execute('select MADLIB_SCHEMA.storeModel(\'' + modelname + '\')');
 
-        return '''Finished support vector regression learning on %s table. 
-               ''' % (input_table)
+    return '''Finished support vector regression learning on %s table. 
+           ''' % (input_table)
 
 # -----------------------------------------------
 # Function to run the classification algorithm
@@ -97,8 +97,8 @@ def sv_classification( input_table, modelname, parallel):
         # Store the model learned
         plpy.execute('select MADLIB_SCHEMA.storeModel(\'' + modelname + '\')');
 
-        return '''Finished support vector classification learning on %s table. 
-               ''' % (input_table)
+    return '''Finished support vector classification learning on %s table. 
+           ''' % (input_table)
 
 
 # -----------------------------------------------
@@ -147,5 +147,40 @@ def sv_novelty_detection( input_table, modelname, parallel):
         # Store the model learned
         plpy.execute('select MADLIB_SCHEMA.storeModel(\'' + modelname + '\')');
 
-        return '''Finished support vector novelty detection learning on %s table. 
-               ''' % (input_table)
+    return '''Finished support vector novelty detection learning on %s table. 
+           ''' % (input_table)
+
+
+
+# ---------------------------------------------------
+# Function to predict the labels of points in a table
+# ---------------------------------------------------
+def sv_predict( input_table, col_name, modelname, output_table, parallel):
+    """
+    Scores the data points stored in a table using a learned support vector model.
+
+    @param input_table Name of table/view containing the data points to be scored
+    @param col_name Name of column in input_table containing the data points
+    @param model_name Name under which we want to store the learned model 
+    @param output_table Name of table to store the results 
+    @param parallel A flag indicating whether the system should learn multiple models in parallel.
+    
+    """
+    
+    plpy.execute('drop table if exists ' + output_table);
+    plpy.execute('create table ' + output_table + ' ( id int, prediction float8 )');
+
+    if (parallel) :
+        num_models_t = plpy.execute('SELECT COUNT(DISTINCT(id)) n FROM MADLIB_SCHEMA.sv_model WHERE position(\'' + modelname + '\' in id) > 0 AND \'' + modelname + '\' <> id;');
+        num_models = num_models_t[0]['n'];
+
+        sql = 'insert into ' + output_table + '(select t.id, sum(weight * MADLIB_SCHEMA.kernel(m.sv, t.' + col_name + ')) / ' + str(num_models) + ' from MADLIB_SCHEMA.sv_model m, ' + input_table + ' t where position(\'' + modelname + '\' in m.id) > 0 AND \'' + modelname + '\' <> m.id group by 1)';
+        plpy.execute(sql);
+
+    else :
+        sql = 'insert into ' + output_table + '(select t.id, sum(weight * MADLIB_SCHEMA.kernel(m.sv, t.' + col_name + ')) from MADLIB_SCHEMA.sv_model m, ' + input_table + ' t where m.id = \'' + modelname + '\' group by 1)';
+        plpy.execute(sql);
+
+    return '''Finished processing data points in %s table; results are stored in %s table. 
+           ''' % (input_table,output_table)
+
