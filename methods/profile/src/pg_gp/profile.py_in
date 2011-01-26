@@ -17,7 +17,7 @@ The -k flag generates histograms, represented at PostgreSQL arrays.  The only py
 
 
 @usage
-Currently this module is available only as a command-line script.
+1) As a command-line script:
 
 Running <c>python profile.py -h</c> gives usage information:
 \code
@@ -36,6 +36,18 @@ Options:
   -c CONFIGDIR, --configdir=CONFIGDIR
                         directory holding Config.yml (default madpack SCRIPTDIR if
                         already initialized, else madpy directory)
+\endcode
+
+2) As a database stored procedure:
+
+Function: <tt>profile_run( '<em>input_table</em>')</tt>
+
+Parameters:
+    - <em>input_table</em> :      fully qualified table name to analyze
+
+Example:
+\code
+select madlib.profile_run( 'pg_tables');
 \endcode
 
 \bug
@@ -60,9 +72,11 @@ basic_non_numerics = '["MADLIB_SCHEMA.fmsketch_dcount"]'
 all_non_numerics = '["MADLIB_SCHEMA.fmsketch_dcount", "MADLIB_SCHEMA.mfvsketch_quick_histogram(%%,10)"]'
 
 
-def profile_run(table, numericaggs, non_numericaggs, configdir, skipcols):
+def profile(table, numericaggs, non_numericaggs, configdir, skipcols):
   # if config file left unspecified, first check scriptdir.
   # if nothing there, take the installed version: madpy/Config.yml
+  retval = ""
+  
   if configdir == None:
       scriptdir = madpy.__path__[0] + "/config/scripts"
       if os.path.exists(scriptdir+"/Config.yml"):
@@ -74,8 +88,6 @@ def profile_run(table, numericaggs, non_numericaggs, configdir, skipcols):
   if non_numericaggs == None:
       non_numericaggs = basic_non_numerics
   
-
-
   conf = configyml.get_config(configdir[0], False)        
   api = conf['dbapi2']
   connect_args = conf['connect_args']
@@ -84,8 +96,8 @@ def profile_run(table, numericaggs, non_numericaggs, configdir, skipcols):
   con_args={};
   for arg in connect_args:
       if arg.find("=") == -1:
-          print sys.exc_info()[0]
-          print "Missing '=' character in the connect_args parameter: " + arg
+          retval += sys.exc_info()[0]
+          retval += "Missing '=' character in the connect_args parameter: " + arg
           raise
       # cleanup the string
       arg = ((arg.replace( "'", "")).replace( '"', '')).replace( ' ', '')            
@@ -102,20 +114,28 @@ def profile_run(table, numericaggs, non_numericaggs, configdir, skipcols):
                                       `eval'(numericaggs),
                                       `eval'(non_numericaggs),
                                       numcols, non_numcols)
-  print query
-  print
-  print "---"
-  print
+  retval += query
+  retval += "\n"
+  retval += "---"
+  retval += "\n"
 
   # Fetch numeric columnnames from table
   cur.execute(query)
   out = cur.fetchone()
   for i in range(`len'(out)):
-      print cur.description[i][0]+": "+str(out[i])
+      retval += cur.description[i][0]+": "+str(out[i])+"\n"
   cur.close()
   conn.close()
+  
+  return retval
 
+def profile_run( table):
+  if table == "":
+    parser.error("missing tablename")
+    sys.exit(2)
 
+  return profile(table, all_numerics, all_non_numerics, None, [])
+  
 def main(argv):
   usage = """usage: %prog [options] tablename
      (note: database connection info taken from Config.yml, see -c flag)"""
@@ -159,7 +179,7 @@ def main(argv):
   if not options.skipcols:
       options.skipcols = []
   
-  profile_run(table, numericaggs, non_numericaggs, options.configdir, options.skipcols)
+  print profile(table, numericaggs, non_numericaggs, options.configdir, options.skipcols)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
