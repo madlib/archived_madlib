@@ -1,0 +1,73 @@
+--! \file viterbi.sql_in
+--!
+--! Instructions from Daisy Wang:
+--! * Import the enron sample dataset (a small number of signatures from enron
+--!   email corpus) by calling import_data.sql: <c>\i import_data.sql</c>
+--! * Setup the Viterbi UDF functions by calling viterbi.sql, which includes
+--!   the C and SQL UDF functions: <c>\i setup_viterbi.sql</c>
+--! * Try it out!
+--! \code
+--!   -- Compute the ML segmentation for the first document
+--!       select MADLIB_SCHEMA.vcrf_top1(1);
+--!       select * from display_u10;
+--! 
+--!       -- Compute the ML segmentation for the first 10 documents
+--!       truncate table u10;
+--!       select MADLIB_SCHEMA.vcrf_top1(doc_id) from doc_id_tbl where doc_id<11;
+--!       select * from display_u10;
+--! \endcode
+}}}
+
+set search_path to enron,MADLIB_SCHEMA;
+drop table if exists segmenttbl CASCADE;
+drop table if exists labels CASCADE;
+drop table if exists doc_id CASCADE;
+drop table if exists segment_hashtbl CASCADE;
+drop table if exists mrtbl CASCADE;
+drop table if exists norm_factor_tbl CASCADE;
+drop table if exists u10 CASCADE;
+
+
+create table segmenttbl (doc_id int, start_pos int, seg_id int);
+create table labels (id int, label text);
+create table doc_id (doc_id int);
+create table segment_hashtbl (seg_text text, seg_id int);
+create table mrtbl (seg_id int, score int[]);
+create table norm_factor_tbl (doc_id int, norm_factor int);
+create table u10 (doc_id int, start_pos int, seg_id int, label int, score int);
+
+-- a human readable view of the u10 table
+create or replace view display_u10 as 
+  select u10.doc_id, start_pos, SH.seg_text, L.label,
+         (exp((u10.score - N.norm_factor)::float/1000)) as prob 
+    from u10, labels L, 
+         segment_hashtbl SH, norm_factor_tbl N 
+   where u10.seg_id=SH.seg_id and u10.label=L.id-1 and u10.doc_id=N.doc_id
+   order by doc_id, start_pos;
+
+-- create C-UDF functions for array manipulations
+drop function if exists MADLIB_SCHEMA.vcrf_max_top1_array(anyarray) cascade;
+create function MADLIB_SCHEMA.vcrf_max_top1_array(anyarray) 
+returns anyarray as 'MODULE_PATHNAME' language c strict;
+
+drop function if exists MADLIB_SCHEMA.vcrf_topk_array(anyarray, anyarray) cascade;
+create function MADLIB_SCHEMA.vcrf_topk_array(anyarray, anyarray) 
+returns anyarray as 'MODULE_PATHNAME' language c strict; 
+
+drop function MADLIB_SCHEMA.vcrf_sum_array(anyarray, anyarray) cascade;
+create function MADLIB_SCHEMA.vcrf_sum_array(anyarray, anyarray) 
+returns anyarray as 'MODULE_PATHNAME' language c strict;
+
+drop function MADLIB_SCHEMA.vcrf_sum(anyarray) cascade;
+create function MADLIB_SCHEMA.vcrf_sum(anyarray) 
+returns integer as 'MODULE_PATHNAME' language c strict;
+
+-- -- create SQL-UDF function for Viterbi to compute ML segmentation  
+-- \i viterbi_top1.sql
+-- 
+-- set search_path to enron;
+-- 
+-- select doc_id, MADLIB_SCHEMA.normalization(doc_id) as norm_factor into norm_factor_tbl from doc_id_tbl;
+-- 
+-- create index norm_factor_tbl_doc_id on norm_factor_tbl(doc_id);
+

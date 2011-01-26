@@ -1,6 +1,6 @@
 -- The following is the structure to record the results of a learning process.
 -- We work with arrays of float8 for now; we'll extend the code to work with sparse vectors next.
-DROP TYPE IF EXISTS MADLIB_SCHEMA.model_rec CASCADE;
+-- DROP TYPE IF EXISTS MADLIB_SCHEMA.model_rec CASCADE;
 CREATE TYPE MADLIB_SCHEMA.model_rec AS (
        inds int,        -- number of individuals processed 
        cum_err float8,  -- cumulative error
@@ -14,17 +14,17 @@ CREATE TYPE MADLIB_SCHEMA.model_rec AS (
 );
 
 -- Create the necessary tables for storing training data and the learned support vector models
-DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_train_data CASCADE;
+-- DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_train_data CASCADE;
 CREATE TABLE MADLIB_SCHEMA.sv_train_data ( id int, ind float8[], label float8 ) 
 ifdef(`GREENPLUM', `DISTRIBUTED BY (id)')
 ;
 
-DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_results CASCADE;
+-- DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_results CASCADE;
 CREATE TABLE MADLIB_SCHEMA.sv_results ( id text, model MADLIB_SCHEMA.model_rec ) 
 ifdef(`GREENPLUM', `DISTRIBUTED BY (id)')
 ;
 
-DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_model CASCADE;
+-- DROP TABLE IF EXISTS MADLIB_SCHEMA.sv_model CASCADE;
 CREATE TABLE MADLIB_SCHEMA.sv_model ( id text, weight float8, sv float8[] ) ifdef(`GREENPLUM', `DISTRIBUTED BY (weight)')
 ;
 
@@ -99,6 +99,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+/*
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.my_svs_predict(modelname text, ind float8[])
+RETURNS float8 AS $$
+DECLARE
+	mymod MADLIB_SCHEMA.model_rec;
+BEGIN
+	SELECT INTO mymod model FROM MADLIB_SCHEMA.sv_results WHERE id = modelname;
+	RETURN MADLIB_SCHEMA.svs_predict(mymod, ind);
+END;
+$$ LANGUAGE plpgsql; 
+*/
+
 -- This is the main online support vector regression learning algorithm. 
 -- The function updates the support vector model as it processes each new training example.
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
@@ -145,7 +158,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_reg_agg(float8[], float8);
+-- DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_reg_agg(float8[], float8);
 CREATE AGGREGATE MADLIB_SCHEMA.online_sv_reg_agg(float8[], float8) (
        sfunc = MADLIB_SCHEMA.online_sv_reg_update,
        stype = MADLIB_SCHEMA.model_rec
@@ -199,7 +212,7 @@ $$ LANGUAGE plpgsql;
 -- The learning parameters (eta and nu) are hardcoded at the moment. 
 -- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
 -- of having to specify them. 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_cl_agg(float8[], float8);
+-- DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_cl_agg(float8[], float8);
 CREATE AGGREGATE MADLIB_SCHEMA.online_sv_cl_agg(float8[], float8) (
        sfunc = MADLIB_SCHEMA.online_sv_cl_update,
        stype = MADLIB_SCHEMA.model_rec
@@ -237,7 +250,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_nd_agg(float8[]);
+-- DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.online_sv_nd_agg(float8[]);
 CREATE AGGREGATE MADLIB_SCHEMA.online_sv_nd_agg(float8[]) (
        sfunc = MADLIB_SCHEMA.online_sv_nd_update,
        stype = MADLIB_SCHEMA.model_rec
@@ -294,7 +307,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TYPE IF EXISTS MADLIB_SCHEMA.model_pr CASCADE;
+-- DROP TYPE IF EXISTS MADLIB_SCHEMA.model_pr CASCADE;
 CREATE TYPE MADLIB_SCHEMA.model_pr AS ( model text, prediction float8 );
 
 -- This function performs prediction using the support vector machines stored in the MADLIB_SCHEMA.sv_model table.
@@ -307,6 +320,11 @@ DECLARE
 	n int;
 BEGIN
 	SELECT INTO n COUNT(DISTINCT(id)) FROM MADLIB_SCHEMA.sv_model WHERE position(modelname in id) > 0 AND modelname <> id;
+	IF n = 0 THEN
+	   RAISE EXCEPTION 'No parallel model with name prefix % found', modelname;
+	   EXIT;
+	END IF;
+
 	FOR i IN 0..n-1 LOOP
 	    mpr.model := modelname || i;
 	    mpr.prediction := MADLIB_SCHEMA.svs_predict(mpr.model, ind);
@@ -379,6 +397,15 @@ AS $$
 
 $$ LANGUAGE 'plpythonu';
 
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.sv_predict(input_table text, col_name text, modelname text, output_table text, parallel bool)
+RETURNS TEXT
+AS $$
+
+   from madlib import online_sv
+   return online_sv.sv_predict(input_table, col_name, modelname, output_table, parallel);
+
+$$ LANGUAGE 'plpythonu';
 
 -- Generate artificial training data 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.randomInd(d INT) RETURNS float8[] AS $$
