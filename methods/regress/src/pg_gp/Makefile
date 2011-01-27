@@ -16,10 +16,6 @@ REGRESS_OPTS := --dlpath=.
 MODULE_big = regression
 OBJS = $(SOURCES:%.c=%.o)
 
-# We want to include debugging symbols.
-# For release versions, comment out the next line.
-COPT = -g3 -O0 -std=c99
-
 # If we wanted to ensure thread-safety, we need to define _REENTRANT, so that
 # the appropriate thread-safe functions are used (such as lgamma_r). Then,
 # since they are non-standard (but widely available), we need gnu99 instead of c99.
@@ -30,6 +26,18 @@ SHLIB_LINK += -llapack
 
 PG_CONFIG = pg_config 
 PGXS := $(shell $(PG_CONFIG) --pgxs) 
+
+ifeq ($(CC),g++)
+	# If we make is run with make CC='g++' then assume we are doing this only
+	# to test for warnings
+
+	COPT = -O2 -Wall -Wconversion
+else
+	# We want to include debugging symbols.
+	# For release versions, comment out the next line.
+
+	COPT = -g3 -O0 -std=c99
+endif
 
 include $(PGXS)
 include config.mk 

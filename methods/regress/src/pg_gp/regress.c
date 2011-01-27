@@ -205,7 +205,7 @@ float8_mregr_accum(PG_FUNCTION_ARGS)
 	}
    	newY = PG_GETARG_FLOAT8(1);
 
-    len = *state.len;
+    len = (int) *state.len;
 	(*state.count)++;
 	*state.sumy += newY;
 	*state.sumy2 += newY * newY;
@@ -278,7 +278,7 @@ float8_mregr_combine(PG_FUNCTION_ARGS)
 					format_procedure(fcinfo->flinfo->fn_oid)),
 				 errdetail("The independent-variable array is not of constant width.")));
 	}
-	len = state1Data[0];
+	len = (int) state1Data[0];
 	statelen = 4 + len + len*len;
 	if (ARR_DIMS(state1)[0] != statelen)
 	{
@@ -445,8 +445,8 @@ float8_mregr_compute(MRegrState	*inState,
 {
 	Datum		temp_datum;
 	ArrayType	*coef_array, *temp_array;
-	float8		ssr, tss, ess, r2, variance;
-	float8		*coef, *XtXinv, *tstats, *pvalues;
+	float8		ssr = 0., tss = 0., ess, r2, variance;
+	float8		*coef, *XtXinv, *tstats = NULL, *pvalues = NULL;
 	int			i;
 	
 	temp_datum = DirectFunctionCall2(matrix_multiply, PointerGetDatum(inState->_XtX_inv),
@@ -521,7 +521,9 @@ float8_mregr_compute(MRegrState	*inState,
 	{
 		pvalues = (float8*) palloc(inState->len * sizeof(float8));
 		for (i = 0; i < inState->len; i++)
-			pvalues[i] = 2. * (1. - studentT_cdf( inState->count - inState->len, fabs( tstats[i] ) ));
+			pvalues[i] = 2. * (1. - studentT_cdf(
+                    (int) (inState->count - inState->len), fabs( tstats[i] )
+                ));
 		
 		*outPValues = construct_array((Datum *) pvalues, inState->len, FLOAT8OID,
 									  sizeof(float8), true, 'd');
@@ -636,10 +638,12 @@ PG_FUNCTION_INFO_V1(float8_irls_update_final);
 PG_FUNCTION_INFO_V1(logreg_should_terminate);
 
 /**
+ * \internal 
  * Note the order of computation:
  * 
  * FIXME: Several assumptions about this struct are hard coded (e.g., number of
  * elements)
+ * \endinternal 
  */
 typedef struct {
 	int32		iteration;	/* current iteration */
@@ -944,12 +948,12 @@ Datum float8_cg_update_combine(PG_FUNCTION_ARGS)
     
     copy_tuple_to_logreg_state(tuple1, &state1, isNull,
         /* copyIntraIterationState */ true);
-    for (int i = 0; i < sizeof(isNull); i++)
+    for (unsigned int i = 0; i < sizeof(isNull); i++)
         numNulls1 += (int) isNull[i];
 
     copy_tuple_to_logreg_state(tuple2, &state2, isNull,
         /* copyIntraIterationState */ true);
-    for (int i = 0; i < sizeof(isNull); i++)
+    for (unsigned int i = 0; i < sizeof(isNull); i++)
         numNulls2 += (int) isNull[i];
     
     // FIXME: This only partially checks the input for correctness
@@ -1005,7 +1009,7 @@ float8_irls_update_accum(PG_FUNCTION_ARGS)
 	}
 	newY  = PG_GETARG_BOOL(1) ? 1 : -1;
 
-    len = *state.len;
+    len = (int) *state.len;
 
     if (iterationStateTuple != NULL) {
         bool  coefIsNull;
@@ -1030,7 +1034,7 @@ float8_irls_update_accum(PG_FUNCTION_ARGS)
     }
     
     if (coef == NULL) {
-        coefData = palloc(sizeof(float8) * len);
+        coefData = (float8 *) palloc(sizeof(float8) * len);
         memset(coefData, 0, sizeof(float8) * len);
     } else {
         coefData = (float8 *) ARR_DATA_PTR(coef);

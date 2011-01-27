@@ -226,7 +226,7 @@ def __get_feature_probs_sql(**kwargs):
 	@param trainingClassColumn name of column with class
 	@param trainingAttrColumn name of column with attributes array
 	@param numAttrs Number of attributes to use for classification
-	
+	    
 	For meanings of \#(c,i,a), \#c, and \#i see the general description of
 	\ref bayes.
 	"""
@@ -240,6 +240,8 @@ def __get_feature_probs_sql(**kwargs):
 				attrCountsSource = "(" + __get_attr_counts_sql(**kwargs) + ")"
 			))
 
+    # {trainingSource} cannot be a subquery, because we use it more than once in
+    # our generated SQL.
 	return """
 		SELECT
 			class,
@@ -258,14 +260,17 @@ def __get_feature_probs_sql(**kwargs):
 		LEFT OUTER JOIN
 		(
 			SELECT
-				{trainingClassColumn} AS class,
-				attr,
-				{trainingAttrColumn}[attr] AS value,
+				trainingSource.{trainingClassColumn} AS class,
+				attr.attr,
+				trainingSource.{trainingAttrColumn}[attr.attr] AS value,
 				count(*) AS cnt
 			FROM
 				generate_series(1, {numAttrs}) AS attr,
-				{trainingSource}
-			GROUP BY class, attr, value
+				{trainingSource} AS trainingSource
+			GROUP BY
+                trainingSource.{trainingClassColumn},
+                attr.attr,
+                trainingSource.{trainingAttrColumn}[attr.attr]
 		) AS triple_counts
 		USING (class, attr, value)
 		INNER JOIN
@@ -297,11 +302,11 @@ def __get_attr_values_sql(**kwargs):
 
 	return """
 		SELECT DISTINCT
-			attr,
-			{trainingAttrColumn}[attr] AS value
+			attr.attr,
+			trainingSource.{trainingAttrColumn}[attr.attr] AS value
 		FROM
 			generate_series(1, {numAttrs}) AS attr,
-			{trainingSource}
+			{trainingSource} AS trainingSource
 		""".format(**kwargs)
 
 
@@ -319,12 +324,14 @@ def __get_attr_counts_sql(**kwargs):
 
 	return """
 		SELECT
-			attr,
-			count(DISTINCT {trainingAttrColumn}[attr]) AS attr_cnt
+			attr.attr,
+			count(
+                DISTINCT trainingSource.{trainingAttrColumn}[attr.attr]
+            ) AS attr_cnt
 		FROM
 			generate_series(1, {numAttrs}) AS attr,
-			{trainingSource}
-		GROUP BY attr
+			{trainingSource} AS trainingSource
+		GROUP BY attr.attr
 		""".format(**kwargs)
 
 
@@ -342,11 +349,11 @@ def __get_class_priors_sql(**kwargs):
 
 	return """
 		SELECT
-			{trainingClassColumn} AS class,
+			trainingSource.{trainingClassColumn} AS class,
 			count(*) AS class_cnt,
 			sum(count(*)) OVER () AS all_cnt
-		FROM {trainingSource}
-		GROUP BY class
+		FROM {trainingSource} AS trainingSource
+		GROUP BY trainingSource.{trainingClassColumn}
 		""".format(**kwargs)
 
 
@@ -379,6 +386,8 @@ def __get_keys_and_prob_values_sql(**kwargs):
 
 	"""
 
+    # {classifySource} cannot be a subquery, because we use it more than once in
+    # our generated SQL.
 	return """
 	SELECT
 		classify.key,
@@ -395,11 +404,11 @@ def __get_keys_and_prob_values_sql(**kwargs):
 		{classPriorsSource} AS classPriors,
 		(
 			SELECT
-				{classifyKeyColumn} AS key,
-				attr,
-				{classifyAttrColumn}[attr] AS value
+				classifySource.{classifyKeyColumn} AS key,
+				attr.attr,
+				classifySource.{classifyAttrColumn}[attr.attr] AS value
 			FROM
-				{classifySource},
+				{classifySource} AS classifySource,
 				generate_series(1, {numAttrs}) AS attr
 		) AS classify
 	WHERE
@@ -419,7 +428,7 @@ def __get_keys_and_prob_values_sql(**kwargs):
 	FROM
 		{classifySource} AS classify,
 		{classPriorsSource} AS classes
-	GROUP BY key, class
+	GROUP BY classify.{classifyKeyColumn}, classes.class
 	""".format(**kwargs)
 
 
@@ -449,6 +458,11 @@ def __get_prob_values_sql(**kwargs):
 
 	"""
 
+    # {classifyAttrColumn} binds to a names declared outside of the following
+    # SQL. We need to ensure that ther are no conflicting names with
+    # {classifyAttrColumn}. Therefore, we only introduce the unusual name
+    # __attr. Note that by the structure of the query, there can be no other
+    # name conflicts.
 	return """
 	SELECT
 		classPriors.class,
@@ -464,14 +478,14 @@ def __get_prob_values_sql(**kwargs):
 		{classPriorsSource} AS classPriors,
 		(
 			SELECT
-				attr,
-				{classifyAttrColumn}[attr] AS value
+				__attr.__attr,
+				{classifyAttrColumn}[__attr.__attr] AS value
 			FROM
-				generate_series(1, {numAttrs}) AS attr
+				generate_series(1, {numAttrs}) AS __attr
 		) AS classify
 	WHERE
 		featureProbs.class = classPriors.class AND
-		featureProbs.attr = classify.attr AND featureProbs.value = classify.value AND
+		featureProbs.attr = classify.__attr AND featureProbs.value = classify.value AND
 		({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
 	GROUP BY classPriors.class, classPriors.class_cnt, classPriors.all_cnt
 	
@@ -529,27 +543,31 @@ def create_prepared_data(**kwargs):
 	
 	if kwargs['whatToCreate'] == 'TABLE':
 		# FIXME: ANALYZE is not portable.
-		plpy.execute("""
-			CREATE TEMPORARY TABLE tmp_attr_counts
+		kwargs.update(dict(
+			attrCountsSource = '_madlib_nb_attr_counts',
+			attrValuesSource = '_madlib_nb_attr_values'
+		))
+        plpy.execute("""
+            DROP TABLE IF EXISTS {attrCountsSource};
+			CREATE TEMPORARY TABLE {attrCountsSource}
 			AS
 			{attr_counts_sql};
-			ALTER TABLE tmp_attr_counts ADD PRIMARY KEY (attr);
-			ANALYZE tmp_attr_counts;
+			ALTER TABLE {attrCountsSource} ADD PRIMARY KEY (attr);
+			ANALYZE {attrCountsSource};
 			
-			CREATE TEMPORARY TABLE tmp_attr_values
+            DROP TABLE IF EXISTS {attrValuesSource};
+			CREATE TEMPORARY TABLE {attrValuesSource}
 			AS
 			{attr_values_sql};
-			ALTER TABLE tmp_attr_values ADD PRIMARY KEY (attr, value);
-			ANALYZE tmp_attr_values;
+			ALTER TABLE {attrValuesSource} ADD PRIMARY KEY (attr, value);
+			ANALYZE {attrValuesSource};
 			""".format(
+                attrCountsSource = kwargs['attrCountsSource'],
+                attrValuesSource = kwargs['attrValuesSource'],
 				attr_counts_sql = "(" + __get_attr_counts_sql(**kwargs) + ")",
 				attr_values_sql = "(" + __get_attr_values_sql(**kwargs) + ")"
 				)
 			)
-		kwargs.update(dict(
-			attrValuesSource = 'tmp_attr_values',
-			attrCountsSource = 'tmp_attr_counts'
-		))
 
 
 	kwargs.update(dict(
@@ -582,8 +600,8 @@ def create_prepared_data(**kwargs):
 		plpy.execute("""
 			ALTER TABLE {featureProbsDestName} ADD PRIMARY KEY (class, attr, value);
 			ANALYZE {featureProbsDestName};
-			DROP TABLE tmp_attr_counts;
-			DROP TABLE tmp_attr_values;
+			DROP TABLE {attrCountsSource};
+			DROP TABLE {attrValuesSource};
 			""".format(**kwargs))
 
 

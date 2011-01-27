@@ -8,7 +8,7 @@ REGRESS = bayesRegression_test
 # commenting the next line means that, for the regression tests, the shared
 # library will be looked for in the PostgreSQL library directory and not in
 # the current directory
-# REGRESS_OPTS := --dlpath=.
+REGRESS_OPTS := --dlpath=.
 
 # MODULE_big = naiveBayesClassification
 # OBJS = $(SOURCES:%.c=%.o)
