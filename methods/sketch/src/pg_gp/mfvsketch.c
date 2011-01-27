@@ -202,14 +202,13 @@ bytea *mfv_init_transval(int max_mfvs, Oid typOid)
 
     /*
      * initialize mfvtransval, using palloc0 to zero it out.
-     * if typlen is positive (fixed), size chosen large enough to hold
-     * one 3x the length (on the theory that 2^8=256 takes 3 chars as a string).
-     * Else we'll do a conservative estimate of 8 bytes (=24 chars), and repalloc as needed.
+     * if typlen is positive (fixed), size chosen accurately.
+     * Else we'll do a conservative estimate of 16 bytes, and repalloc as needed.
      */
     if ((initial_size = get_typlen(typOid)) > 0)
-        initial_size *= max_mfvs*3;
+        initial_size *= max_mfvs*get_typlen(typOid);
     else /* guess */
-        initial_size = max_mfvs*24;
+        initial_size = max_mfvs*16;
 
     transblob = (bytea *)palloc0(MFV_TRANSVAL_SZ(max_mfvs) + initial_size);
 
