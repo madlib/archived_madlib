@@ -1,14 +1,22 @@
 SET dynamic_library_path TO '@libdir@';
--- Installation of all functions
-\i bayes.sql
+-- create madlib schema for PGXS regression test
 CREATE SCHEMA madlib;
 CREATE LANGUAGE plpythonu;
--- In the following, we implement an argmax function where the "index set" is
--- INTEGER and we range over DOUBLE PRECISION values.
--- argmax should only be used on unsorted data because it will not exploit
--- indices, and its running time is Theta(n).
--- The implementation is in SQL, with a flavor of functional programming.
--- The hope is that the optimizer does a good job here.
+-- Installation of all functions
+\i bayes.sql
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file bayes.sql_in
+ *
+ * @brief SQL functions for naive Bayes
+ * @date   January 2011
+ *
+ *//* --------------------------------------------------------------------------
+ *
+ * This file is preprocessed with m4. Macro expansion can be turned of by
+ * enclosing text in <nom4> and </nom4>.
+ */
+-- Begin of argmax definition
 CREATE TYPE madlib.ARGS_AND_VALUE_DOUBLE AS (
 	args INTEGER[],
 	value DOUBLE PRECISION
@@ -27,7 +35,8 @@ $$
 $$
 LANGUAGE sql IMMUTABLE;
 CREATE FUNCTION madlib.argmax_combine(
-	max1 madlib.ARGS_AND_VALUE_DOUBLE, max2 madlib.ARGS_AND_VALUE_DOUBLE)
+	max1 madlib.ARGS_AND_VALUE_DOUBLE,
+	max2 madlib.ARGS_AND_VALUE_DOUBLE)
 RETURNS madlib.ARGS_AND_VALUE_DOUBLE AS
 $$
 	-- If SQL guaranteed short-circuit evaluation, the following could become
@@ -50,22 +59,53 @@ $$
 		   END
 $$
 LANGUAGE sql IMMUTABLE;
-CREATE FUNCTION madlib.argmax_final(finalstate madlib.ARGS_AND_VALUE_DOUBLE)
+CREATE FUNCTION madlib.argmax_final(
+	finalstate madlib.ARGS_AND_VALUE_DOUBLE)
 RETURNS INTEGER[] AS
 $$
 	SELECT $1.args
 $$
 LANGUAGE sql IMMUTABLE;
--- No warning message while creating aggregates. (PREFUNC is a Greenplum-only
--- attribute)
-SET client_min_messages = error;
+/**
+ * @brief Argmax: Return the key for which the value column is maximal
+ *
+ * The "index set" of the argmax function is of type INTEGER and we range over
+ * DOUBLE PRECISION values. It is not required that all keys are distinct.
+ *
+ * @note
+ *
+ * argmax should only be used on unsorted data because it will not exploit
+ * indices, and its running time is \f$ \Theta(n) \f$.
+ *
+ * @implementation
+ *
+ * The implementation is in SQL, with a flavor of functional programming.
+ * The hope is that the optimizer does a good job here.
+ */
 CREATE AGGREGATE madlib.argmax(INTEGER, DOUBLE PRECISION) (
 	SFUNC=madlib.argmax_transition,
 	STYPE=madlib.ARGS_AND_VALUE_DOUBLE,
-	PREFUNC=madlib.argmax_combine,
+	
 	FINALFUNC=madlib.argmax_final
 );
-RESET client_min_messages;
+/**
+ * @brief Precompute all class priors and feature probabilities
+ *
+ * Feature probabilities are stored in a table with columns
+ * (class, attr, value, cnt, attr_cnt)
+ *
+ * Class priors are stored in a relation with columns
+ * (class, class_cnt, all_cnt).
+ *
+ * @param trainingSource Name of relation containing the training data
+ * @param trainingClassColumn Name of class column in training data
+ * @param trainingAttrColumn Name of attributes-array column in training data
+ * @param numAttrs Number of attributes to use for classification
+ * @param featureProbsDestName Name of feature-probabilities table to create
+ * @param classPriorsDestName Name of class-priors table to create
+ *
+ * @sa This function is a wrapper for bayes::create_prepared_data().
+ */
 CREATE FUNCTION madlib.create_nb_prepared_data_tables(
 	"trainingSource" VARCHAR,
 	"trainingClassColumn" VARCHAR,
@@ -80,6 +120,24 @@ RETURNS VOID AS $$
 	whatToCreate = 'TABLE'
 	bayes.create_prepared_data(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
+/**
+ * @brief Create view that contains all keys of the source relation and the
+ *        respective naive Bayes classifications
+ *
+ * @param featureProbsSource Name of table with precomputed feature
+ *		  probabilities, as created with create_nb_prepared_data_tables()
+ * @param classPriorsSource Name of table with precomputed class priors, as
+ *        created with create_nb_prepared_data_tables()
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification(). See there
+ *     for details.
+ */
 CREATE FUNCTION madlib.create_nb_classify_view(
 	"featureProbsSource" VARCHAR,
 	"classPriorsSource" VARCHAR,
@@ -95,6 +153,31 @@ RETURNS VOID AS $$
 	whatToCreate = 'VIEW'
 	bayes.create_classification(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
+/**
+ * @brief Create a view with columns <tt>(key, nb_classification)</tt>
+ *
+ * The created relation will be
+ *
+ * <tt>{TABLE|VIEW} <em>destName</em> (key, nb_classification)</tt>
+ *	
+ * where \c nb_classification is an array containing the most likely
+ * class(es) of the record in \em classifySource identified by \c key.
+ *
+ * @param trainingSource
+ *        Name of relation containing the training data
+ * @param trainingClassColumn
+ *        Name of class column in training data
+ * @param trainingAttrColumn
+ *        Name of attributes-array column in \em trainingSource	
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification().
+ */
 CREATE FUNCTION madlib.create_nb_classify_view(
 	"trainingSource" VARCHAR,
 	"trainingClassColumn" VARCHAR,
@@ -111,6 +194,31 @@ RETURNS VOID AS $$
 	whatToCreate = 'VIEW'
 	bayes.create_classification(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
+/**
+ * @brief Create view with columns <tt>(key, class, nb_prob)</tt>
+ * 
+ * The created view will be
+ * 
+ * <tt>VIEW <em>destName</em> (key, class, nb_prob)</tt>
+ * 
+ * where \c nb_prob is the Naive-Bayes probability that \c class is the true
+ * class of the record in \em classifySource identified by \c key.
+ * 
+ * @param trainingSource
+ *        Name of relation containing the training data
+ * @param trainingClassColumn
+ *        Name of class column in training data
+ * @param trainingAttrColumn
+ *        Name of attributes-array column in \em trainingSource	
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_bayes_probabilities().
+ */
 CREATE FUNCTION madlib.create_nb_probs_view(
 	"trainingSource" VARCHAR,
 	"trainingClassColumn" VARCHAR,
@@ -127,6 +235,29 @@ RETURNS VOID AS $$
 	whatToCreate = 'VIEW'
 	bayes.create_bayes_probabilities(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
+/**
+ * @brief Create view with columns <tt>(key, class, nb_prob)</tt>
+ * 
+ * The created view will be
+ * 
+ * <tt>VIEW <em>destName</em> (key, class, nb_prob)</tt>
+ * 
+ * where \c nb_prob is the Naive-Bayes probability that \c class is the true
+ * class of the record in \em classifySource identified by \c key.
+ * 
+ * @param featureProbsSource Name of table with precomputed feature
+ *		  probabilities, as created with create_nb_prepared_data_tables()
+ * @param classPriorsSource Name of table with precomputed class priors, as
+ *        created with create_nb_prepared_data_tables()
+ * @param classifySource Name of the relation that contains data to be classified
+ * @param classifyKeyColumn Name of column in \em classifySource that can
+ *		  serve as unique identifier (the key of the source relation)
+ * @param classifyAttrColumn Name of attributes-array column in \em classifySource
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the view to create
+ *
+ * @sa This function is a wrapper for bayes::create_bayes_probabilities().
+ */
 CREATE FUNCTION madlib.create_nb_probs_view(
 	"featureProbsSource" VARCHAR,
 	"classPriorsSource" VARCHAR,
@@ -142,6 +273,28 @@ RETURNS VOID AS $$
 	whatToCreate = 'VIEW'
 	bayes.create_bayes_probabilities(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
+/**
+ * @brief Create a SQL function mapping arrays of attribute values to the Naive
+ *        Bayes classification.
+ * 
+ * The created SQL function will be:
+ *	
+ * <tt>
+ * FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
+ * RETURNS INTEGER[]</tt>
+ * 
+ * @note
+ * On Greenplum, the generated SQL function can only be called on the master.
+ *
+ * @param featureProbsSource Name of table with precomputed feature
+ *		  probabilities, as created with create_nb_prepared_data_tables()
+ * @param classPriorsSource Name of table with precomputed class priors, as
+ *        created with create_nb_prepared_data_tables()
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the function to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification_function().
+ */
 CREATE FUNCTION madlib.create_nb_classify_fn(
 	"featureProbsSource" VARCHAR,
 	"classPriorsSource" VARCHAR,
@@ -151,6 +304,30 @@ RETURNS VOID AS $$
 	import bayes
 	bayes.create_classification_function(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
+/**
+ * @brief Create a SQL function mapping arrays of attribute values to the Naive
+ *        Bayes classification.
+ * 
+ * The created SQL function will be:
+ *	
+ * <tt>
+ * FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
+ * RETURNS INTEGER[]</tt>
+ * 
+ * @note
+ * On Greenplum, the generated SQL function can only be called on the master.
+ *
+ * @param trainingSource
+ *        Name of relation containing the training data
+ * @param trainingClassColumn
+ *        Name of class column in training data
+ * @param trainingAttrColumn
+ *        Name of attributes-array column in \em trainingSource	
+ * @param numAttrs Number of attributes to use for classification
+ * @param destName Name of the function to create
+ *
+ * @sa This function is a wrapper for bayes::create_classification_function().
+ */
 CREATE FUNCTION madlib.create_nb_classify_fn(
 	"trainingSource" VARCHAR,
 	"trainingClassColumn" VARCHAR,
@@ -161,22 +338,15 @@ RETURNS VOID AS $$
 	import bayes
 	bayes.create_classification_function(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
-CREATE FUNCTION madlib.update_nb_classification(
-	"featureProbsSource" VARCHAR,
-	"classPriorsSource" VARCHAR,
-	"numAttrs" INTEGER,
-	"destName" VARCHAR,
-	"classifyAttrColumn" VARCHAR,
-	"destColumn" VARCHAR)
-RETURNS VOID AS $$
-	import bayes
-	bayes.update_classification(**globals())
-$$ LANGUAGE plpythonu VOLATILE;
+/*
+ * Function for initializing python paths to the paths in dynamic_library_path. This is only needed
+ * when debugging Python-based functions without installing them in a location where Python would
+ * find them automatically.
+ */
 CREATE FUNCTION madlib.init_python_paths()
 RETURNS VOID AS
 $$
-	# FIXME: The following code should of course not reside in a specialized
-	# module such as bayes.sql
+	# FIXME: The following code should be common code and not reside in a specialized module
 	import sys
 
 	dyld_paths = plpy.execute(
@@ -227,12 +397,14 @@ COPY toclassify (attributes) FROM stdin;
 SET search_path TO madlib_examples;
 -- Create database objects
 -- Preprocess training data: Precompute feature probabilities and class priors
+SET client_min_messages = error;
 SELECT madlib.create_nb_prepared_data_tables('bayes', 'class', 'attributes', 3, 'nb_feature_probs', 'nb_class_priors');
  create_nb_prepared_data_tables 
 --------------------------------
  
 (1 row)
 
+RESET client_min_messages;
 -- Classify the features in table 'toclassify' using preprocessed training data
 SELECT madlib.create_nb_classify_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_fast');
  create_nb_classify_view 
@@ -279,34 +451,84 @@ SELECT madlib.create_nb_classify_fn('bayes', 'class', 'attributes', 3, 'nb_class
  
 (1 row)
 
--- Create a new table like toclassify but extended by a column 'classes'
-SET client_min_messages = error;
-CREATE TABLE classified (LIKE toclassify INCLUDING ALL, classification INTEGER[]);
-RESET client_min_messages;
-INSERT INTO classified (id, attributes)
-SELECT * FROM toclassify;
-SELECT madlib.update_nb_classification('nb_feature_probs', 'nb_class_priors', 3, 'classified', 'attributes', 'classification');
- update_nb_classification 
---------------------------
- 
-(1 row)
+/*
+-- Greenplum Naive Bayes
 
+-- Create intermediate views as needed for Naive Bayes implementation inherited from Greenplum
+CREATE VIEW class_example_unpivot AS
+SELECT
+	id,
+	'C' || class AS class,
+	unnest(array['A1', 'A2', 'A3']) AS attr,
+	unnest(attributes) AS value
+FROM bayes;
+
+CREATE TABLE class_example_nb_training AS
+SELECT
+	attr,
+	value,
+	madlib.pivot_sum(array['C1', 'C2'], class, 1::BIGINT) AS class_count
+FROM
+	class_example_unpivot
+GROUP BY attr, value;
+--DISTRIBUTED by (attr);
+
+CREATE VIEW class_example_nb_classify AS
+SELECT
+	attr,
+	value,
+	class_count,
+	array['C1', 'C2'] AS classes,
+	madlib.sum(class_count) OVER (wa)::INTEGER[] AS class_total,
+	attr_count
+
+	--	PostgreSQL does not support DISTINCT to be used within the function argument list
+	--	http://www.postgresql.org/docs/9/interactive/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
+	--  so we cannot use the following (taken from the Greenplum Admin Guide)
+	--	count(DISTINCT value) OVER (wa) AS attr_count
+	--
+	--  However, Greenplum does not support correlated subquery. So we cannot just use
+	--  a subquery like
+	--  ( SELECT count(DISTINCT value) FROM class_example_nb_training AS sub WHERE
+	--    sub.attr = training.attr FROM class_example_nb_training AS training )
+	--  either. We need to flatten the subquery manualy.
+
+FROM
+	class_example_nb_training AS training
+	
+	--  Self-join for the aforementioned resons...
+	INNER JOIN
+	(
+		SELECT
+			attr,
+			count(DISTINCT value) as attr_count
+		FROM class_example_nb_training AS sub
+		GROUP BY attr
+	) AS attr_count
+	USING (attr)
+
+WINDOW wa AS (PARTITION BY attr); */
 -- Now test created objects
 SELECT * FROM nb_feature_probs ORDER BY class, attr, value;
- class | attr | value |  log_feature_prob  
--------+------+-------+--------------------
-     1 |    1 |     1 |                  0
-     1 |    2 |     2 | -0.176091259055681
-     1 |    2 |     4 | -0.477121254719662
-     1 |    3 |     1 | -0.477121254719662
-     1 |    3 |     3 | -0.176091259055681
-     2 |    1 |     0 | -0.176091259055681
-     2 |    1 |     1 | -0.477121254719662
-     2 |    2 |     1 | -0.477121254719662
-     2 |    2 |     2 | -0.176091259055681
-     2 |    3 |     2 | -0.176091259055681
-     2 |    3 |     3 | -0.477121254719662
-(11 rows)
+ class | attr | value | cnt | attr_cnt 
+-------+------+-------+-----+----------
+     1 |    1 |     0 |   0 |        2
+     1 |    1 |     1 |   3 |        2
+     1 |    2 |     1 |   0 |        3
+     1 |    2 |     2 |   2 |        3
+     1 |    2 |     4 |   1 |        3
+     1 |    3 |     1 |   1 |        3
+     1 |    3 |     2 |   0 |        3
+     1 |    3 |     3 |   2 |        3
+     2 |    1 |     0 |   2 |        2
+     2 |    1 |     1 |   1 |        2
+     2 |    2 |     1 |   1 |        3
+     2 |    2 |     2 |   2 |        3
+     2 |    2 |     4 |   0 |        3
+     2 |    3 |     1 |   0 |        3
+     2 |    3 |     2 |   2 |        3
+     2 |    3 |     3 |   1 |        3
+(16 rows)
 
 SELECT * FROM nb_class_priors ORDER BY class;
  class | class_cnt | all_cnt 
@@ -316,55 +538,74 @@ SELECT * FROM nb_class_priors ORDER BY class;
 (2 rows)
 
 SELECT * FROM nb_classify_view_fast ORDER BY key;
- key | nb_classification | nb_log_probability 
------+-------------------+--------------------
-   1 | {1,2}             |                   
-   2 | {1}               | -0.653212513775344
+ key | nb_classification 
+-----+-------------------
+   1 | {2}
+   2 | {1}
 (2 rows)
 
 SELECT * FROM nb_classify_view_slow ORDER BY key;
- key | nb_classification | nb_log_probability 
------+-------------------+--------------------
-   1 | {1,2}             |                   
-   2 | {1}               | -0.653212513775344
+ key | nb_classification 
+-----+-------------------
+   1 | {2}
+   2 | {1}
 (2 rows)
 
 SELECT * FROM nb_probs_view_fast ORDER BY key, class;
- key | class |      nb_prob      
------+-------+-------------------
-   1 |     1 |                  
-   1 |     2 |                  
-   2 |     1 | 0.857142857142857
-   2 |     2 | 0.142857142857143
+ key | class | nb_prob 
+-----+-------+---------
+   1 |     1 |     0.4
+   1 |     2 |     0.6
+   2 |     1 |    0.75
+   2 |     2 |    0.25
 (4 rows)
 
 SELECT * FROM nb_probs_view_slow ORDER BY key, class;
- key | class |      nb_prob      
------+-------+-------------------
-   1 |     1 |                  
-   1 |     2 |                  
-   2 |     1 | 0.857142857142857
-   2 |     2 | 0.142857142857143
+ key | class | nb_prob 
+-----+-------+---------
+   1 |     1 |     0.4
+   1 |     2 |     0.6
+   2 |     1 |    0.75
+   2 |     2 |    0.25
 (4 rows)
 
-SELECT *, nb_classify_fast(attributes) FROM toclassify ORDER BY id;
+SELECT *, nb_classify_fast(attributes, 1) FROM toclassify ORDER BY id;
  id | attributes | nb_classify_fast 
 ----+------------+------------------
-  1 | {0,2,1}    | {2,1}
+  1 | {0,2,1}    | {2}
   2 | {1,2,3}    | {1}
 (2 rows)
 
-SELECT *, nb_classify_slow(attributes) FROM toclassify ORDER BY id;
+SELECT *, nb_classify_slow(attributes, 0) FROM toclassify ORDER BY id;
  id | attributes | nb_classify_slow 
 ----+------------+------------------
   1 | {0,2,1}    | {1,2}
   2 | {1,2,3}    | {1}
 (2 rows)
 
-SELECT * FROM classified ORDER BY id;
- id | attributes | classification 
-----+------------+----------------
-  1 | {0,2,1}    | {2,1}
-  2 | {1,2,3}    | {1}
-(2 rows)
+/*
+-- Greenplum Naive Bayes
 
+SELECT
+	classify.id,
+	classify.attributes,
+	madlib.nb_classify(classes, attr_count, class_count, class_total) AS class,
+	madlib.nb_probabilities(classes, attr_count, class_count, class_total) AS probabilities
+FROM
+	(
+		SELECT
+			id,
+			attributes,
+			'A' || attr AS attr,
+			attributes[attr] AS value
+		FROM
+			toclassify,
+			generate_series(1, 3) AS attr
+	) AS classify
+	LEFT OUTER JOIN
+	class_example_nb_classify AS prep
+	USING (attr, value)
+GROUP BY
+	classify.id, classify.attributes;
+
+*/
