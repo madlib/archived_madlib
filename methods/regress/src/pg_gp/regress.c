@@ -467,8 +467,8 @@ float8_mregr_compute(MRegrState	*inState,
          *
            @verbatim
            
-             ssr = y'X * c - sum(y)^2/c
-             tss = sum(y^2) - sum(y)^2/c
+             ssr = y'X * c - sum(y)^2/n
+             tss = sum(y^2) - sum(y)^2/n
              R^2 = ssr/tss
            @endverbatim
          */
