@@ -1,4 +1,4 @@
-/*! 
+/*!
  * \file countmin.h
  *
  * \brief header file for CM and MFV sketches
@@ -28,7 +28,7 @@
 
 /*!
  * \brief the CountMin sketch array
- * 
+ *
  * a CountMin sketch is a set of DEPTH arrays of NUMCOUNTERS each.
  * It's like a "counting Bloom Filter" where instead of just hashing to
  * DEPTH bitmaps, we count up hash-collisions in DEPTH counter arrays
@@ -37,8 +37,8 @@ typedef uint64 countmin[DEPTH][NUMCOUNTERS];
 
 #define MAXARGS 3
 
-/*! 
- * \internal 
+/*!
+ * \internal
  * \brief the transition value struct for CM sketches
  *
  * Holds the sketch counters
@@ -47,7 +47,7 @@ typedef uint64 countmin[DEPTH][NUMCOUNTERS];
  */
 typedef struct {
     Datum args[MAXARGS];  /*! carry along additional args for finalizer */
-    int nargs;            /*! number of args being carried for finalizer */   
+    int nargs;            /*! number of args being carried for finalizer */
     Oid typOid;     /*! oid of the data type we are sketching */
     Oid outFuncOid; /*! oid of the OutFunc for that data type */
     countmin sketches[RANGES];
@@ -60,13 +60,13 @@ typedef struct {
 
 
 /*!
- * \internal 
+ * \internal
  * \brief array of ranges
  *
  * a data structure to hold the constituent dyadic (power-of-two) ranges
  * corresponding to an arbitrary range.
  * E.g. 14-48 becomes [[14-15], [16-31], [32-47], [48-48]]
- * \endinternal 
+ * \endinternal
  */
 typedef struct {
     int64 spans[2*INT64BITS][2]; /*! the ranges */
@@ -98,7 +98,7 @@ typedef struct {
 
 /*!
  * \internal
- * \brief the transition value struct for MFV sketches.  
+ * \brief the transition value struct for MFV sketches.
  *
  * Holds a single
  * countmin sketch (no dyadic ranges) and an array of Most Frequent Values.
@@ -117,7 +117,7 @@ typedef struct {
     unsigned next_offset; /*! next memory offset to insert into */
     Oid typOid;      /*! Oid of the type being counted */
     uint32 typLen;    /*! Length of the data type */
-    bool  typByVal;  /*! Whether type is by value or by reference */
+    bool typByVal;   /*! Whether type is by value or by reference */
     Oid outFuncOid;  /*! Oid of the outfunc for this type */
     countmin sketch; /*! a single countmin sketch */
     /*!
@@ -138,39 +138,39 @@ typedef struct {
                                           next_offset)
 
 /* countmin aggregate protos */
-char *countmin_trans_c(countmin, Datum, Oid);
+char * countmin_trans_c(countmin, Datum, Oid);
 bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool);
 bytea *cmsketch_init_transval(void);
-void  countmin_dyadic_trans_c(cmtransval *, int64);
+void   countmin_dyadic_trans_c(cmtransval *, int64);
 
 /* countmin scalar function protos */
-int64 cmsketch_count_c(countmin, Datum, Oid);
-Datum cmsketch_rangecount_c(cmtransval *, int64, int64);
-Datum cmsketch_centile_c(cmtransval *, int, int64);
-Datum cmsketch_width_histogram_c(cmtransval *, int64, int64, int64);
-Datum cmsketch_depth_histogram_c(cmtransval *, int64);
-void  find_ranges(int64, int64, rangelist *);
-void  find_ranges_internal(int64, int64, int, rangelist *);
+int64  cmsketch_count_c(countmin, Datum, Oid);
+Datum  cmsketch_rangecount_c(cmtransval *, int64, int64);
+Datum  cmsketch_centile_c(cmtransval *, int, int64);
+Datum  cmsketch_width_histogram_c(cmtransval *, int64, int64, int64);
+Datum  cmsketch_depth_histogram_c(cmtransval *, int64);
+void   find_ranges(int64, int64, rangelist *);
+void   find_ranges_internal(int64, int64, int, rangelist *);
 
 /* hash_counters_iterate and its lambdas */
-int64 hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
-                                uint32,
-                                uint32,
-                                countmin,
-                                int64));
+int64  hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
+                                 uint32,
+                                 uint32,
+                                 countmin,
+                                 int64));
 
-int64 increment_counter(uint32, uint32, countmin, int64);
-int64 min_counter(uint32, uint32, countmin, int64);
+int64  increment_counter(uint32, uint32, countmin, int64);
+int64  min_counter(uint32, uint32, countmin, int64);
 
 /* MFV protos */
 bytea *mfv_transval_append(bytea *, Datum);
-int mfv_find(bytea *, Datum);
+int    mfv_find(bytea *, Datum);
 bytea *mfv_transval_replace(bytea *, Datum, int);
 bytea *mfv_transval_insert_at(bytea *, Datum, int);
 void *mfv_transval_getval(bytea *, int);
 bytea *mfv_init_transval(int, Oid);
 bytea *mfvsketch_merge_c(bytea *, bytea *);
-void mfv_copy_datum(bytea *, int, Datum);
+void   mfv_copy_datum(bytea *, int, Datum);
 int cnt_cmp_desc(const void *i, const void *j);
 
 

@@ -1,18 +1,18 @@
-/*! 
+/*!
  * \file sketch_support.c
  *
  * \brief Support routines for managing bitmaps used in sketches
  */
 
 
-/*! @addtogroup desc-stats 
+/*! @addtogroup desc-stats
  *
  * @par About:
  * MADlib provides a number of descriptive statistics to complement
- * SQL's builtin aggregation functions (COUNT, SUM, MAX, MIN, AVG, STDDEV).  
- * When possible we try 
- * to provide high-peformance algorithms that run in a single (parallel) 
- * pass of the data without overflowing main memory.  In some cases this 
+ * SQL's builtin aggregation functions (COUNT, SUM, MAX, MIN, AVG, STDDEV).
+ * When possible we try
+ * to provide high-peformance algorithms that run in a single (parallel)
+ * pass of the data without overflowing main memory.  In some cases this
  * is achieved by approximation
  * algorithms (e.g. sketches) -- for those algorithms it's important to
  * understand that answers are guaranteed mathematically to be within
@@ -27,8 +27,8 @@
  *  - histogramming
  *  - frequent-value counting
  */
- 
- /*! @addtogroup sketches 
+
+/*! @addtogroup sketches
  *
  * @about
  * \par
@@ -142,11 +142,11 @@ uint32 leftmost_zero(uint8 *bits,
                      size_t sketchsz_bits,
                      size_t sketchnum)
 {
-    uint8 *s = &(((uint8 *)bits)[sketchnum*sketchsz_bits/8]);
+    uint8 *  s = &(((uint8 *)bits)[sketchnum*sketchsz_bits/8]);
 
-    unsigned    i;
-    uint32 c = 0;       /* output: c will count trailing zero bits, */
-    uint32    maxbyte = pow(2,8) - 1;
+    unsigned i;
+    uint32   c = 0;     /* output: c will count trailing zero bits, */
+    uint32   maxbyte = pow(2,8) - 1;
 
     if (sketchsz_bits % (sizeof(uint32)*8))
         elog(
@@ -324,7 +324,7 @@ bit_print(uint8 *c, int numbytes)
  * XXX In fact, the full cost right now is:
  * XXX -- outfunc converts internal type to CString
  * XXX -- here we convert CString to text, to call md5_bytea
- * XXX -- md5_bytea generates a byte array 
+ * XXX -- md5_bytea generates a byte array
  * XXX -- we then call binary_decode to convert back to a textual representation
  * XXX -- (alternatively we could call hex_to_bytes in sketch_support.c for the last step)
  */

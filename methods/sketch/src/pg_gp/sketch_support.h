@@ -1,4 +1,4 @@
-/*! 
+/*!
  * \file sketch_support.h
  *
  * \brief header file for sketch support routines
@@ -19,5 +19,5 @@ uint32 ui_rightmost_one(uint32 v);
 void   hex_to_bytes(char *hex, uint8 *bytes, size_t);
 void bit_print(uint8 *c, int numbytes);
 Datum md5_datum(char *);
-int4 safe_log2(int64);
+int4   safe_log2(int64);
 #endif /* SKETCH_SUPPORT_H */

@@ -1,10 +1,10 @@
-/*! 
+/*!
  * \file countmin.c
  *
  * \brief CountMin sketch implementation
  */
- 
- /*! \defgroup countmin CountMin (Cormode-Muthukrishnan)
+
+/*! \defgroup countmin CountMin (Cormode-Muthukrishnan)
  * \ingroup sketches
  * \about
  * This module implements Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
@@ -24,9 +24,9 @@
  *
  * Every value x/(2^i) is sketched
  * at a different power-of-2 (dyadic) "range" i.  So we sketch x in range 0, then sketch x/2
- * in range 1, then sketch x/4 in range 2, etc.  
+ * in range 1, then sketch x/4 in range 2, etc.
  * This allows us to count up ranges (like 14-48) by doing CountMin equality lookups on constituent
- * dyadic ranges ({[14-15] as 7 in range 2, [16-31] as 1 in range 16, [32-47] as 2 in range 16, [48-48] as 48 in range 1}).  
+ * dyadic ranges ({[14-15] as 7 in range 2, [16-31] as 1 in range 16, [32-47] as 2 in range 16, [48-48] as 48 in range 1}).
  * Dyadic ranges are similarly useful for histogramming, order stats, etc.
  *
  * The results of the estimators below generally have guarantees of the form
@@ -60,7 +60,7 @@
  *  \endcode
  *
  * \literature
- *  - G. Cormode and S. Muthukrishnan. An improved data stream summary: The count-min sketch and its applications.  LATIN 2004, J. Algorithm 55(1): 58-75 (2005) . 
+ *  - G. Cormode and S. Muthukrishnan. An improved data stream summary: The count-min sketch and its applications.  LATIN 2004, J. Algorithm 55(1): 58-75 (2005) .
  *  - G. Cormode and S. Muthukrishnan. Summarizing and mining skewed data streams. SDM 2005.
  *  - http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf
  * has a concise explanation
@@ -97,7 +97,7 @@ Datum __cmsketch_trans(PG_FUNCTION_ARGS)
      * This function makes destructive updates to its arguments.
      * Make sure it's being called in an agg context.
      */
-     
+
     if (!(fcinfo->context &&
           (IsA(fcinfo->context, AggState)
     #ifdef NOTGP
@@ -125,9 +125,9 @@ Datum __cmsketch_trans(PG_FUNCTION_ARGS)
  */
 bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 {
-    bytea *transblob = PG_GETARG_BYTEA_P(0);
+    bytea *     transblob = PG_GETARG_BYTEA_P(0);
     cmtransval *transval;
-    
+
     /*
      * an uninitialized transval should be a datum smaller than sizeof(cmtransval).
      * if this one is small, initialize it now, else return it.
@@ -136,20 +136,24 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
         /* XXX would be nice to pfree the existing transblob, but pfree complains. */
         transblob = cmsketch_init_transval();
         transval = (cmtransval *)VARDATA(transblob);
-                          
+
         if (initargs) {
-          int nargs = PG_NARGS();        
-          int i;
-          /* carry along any additional args */
-          if (nargs - 2 > MAXARGS)
-            elog(ERROR, "no more than %d additional arguments should be passed to __cmsketch_trans",
-                 MAXARGS);
-          transval->nargs = nargs - 2;
-          for (i = 2; i < nargs; i++) {
-            if (PG_ARGISNULL(i))
-                elog(ERROR, "NULL parameter %d passed to __cmsketch_trans", i);
-            transval->args[i-2] = PG_GETARG_DATUM(i);
-          }
+            int nargs = PG_NARGS();
+            int i;
+            /* carry along any additional args */
+            if (nargs - 2 > MAXARGS)
+                elog(
+                    ERROR,
+                    "no more than %d additional arguments should be passed to __cmsketch_trans",
+                    MAXARGS);
+            transval->nargs = nargs - 2;
+            for (i = 2; i < nargs; i++) {
+                if (PG_ARGISNULL(i))
+                    elog(ERROR,
+                         "NULL parameter %d passed to __cmsketch_trans",
+                         i);
+                transval->args[i-2] = PG_GETARG_DATUM(i);
+            }
         }
         else transval->nargs = -1;
     }
@@ -157,12 +161,12 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 }
 
 bytea *cmsketch_init_transval()
-{    
+{
     bool        typIsVarlena;
     cmtransval *transval;
-    
+
     /* allocate and zero out a transval via palloc0 */
-    bytea *transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
+    bytea *     transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
     SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
 
     /* set up  for stringifying INT8's according to PG type rules */
@@ -238,7 +242,7 @@ Datum __cmsketch_final(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(__cmsketch_count_final);
 Datum __cmsketch_count_final(PG_FUNCTION_ARGS)
 {
-    bytea *blob = PG_GETARG_BYTEA_P(0);
+    bytea *     blob = PG_GETARG_BYTEA_P(0);
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
     if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
@@ -252,11 +256,11 @@ Datum __cmsketch_count_final(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(__cmsketch_rangecount_final);
 Datum __cmsketch_rangecount_final(PG_FUNCTION_ARGS)
 {
-    bytea *blob = PG_GETARG_BYTEA_P(0);
+    bytea *     blob = PG_GETARG_BYTEA_P(0);
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
     if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
-    PG_RETURN_INT64(cmsketch_rangecount_c(sketch, DatumGetInt64(sketch->args[0]), 
+    PG_RETURN_INT64(cmsketch_rangecount_c(sketch, DatumGetInt64(sketch->args[0]),
                                           DatumGetInt64(sketch->args[1])));
 }
 
@@ -266,9 +270,9 @@ Datum __cmsketch_rangecount_final(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(__cmsketch_centile_final);
 Datum __cmsketch_centile_final(PG_FUNCTION_ARGS)
 {
-    bytea *blob = PG_GETARG_BYTEA_P(0);
-    int64 total;
-    
+    bytea *     blob = PG_GETARG_BYTEA_P(0);
+    int64       total;
+
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
     if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
@@ -276,7 +280,8 @@ Datum __cmsketch_centile_final(PG_FUNCTION_ARGS)
     if (total == 0) {
         PG_RETURN_NULL();
     }
-    PG_RETURN_INT64(cmsketch_centile_c(sketch, DatumGetInt64(sketch->args[0]), total));
+    PG_RETURN_INT64(cmsketch_centile_c(sketch, DatumGetInt64(sketch->args[0]),
+                                       total));
 }
 
 /*!
@@ -285,9 +290,9 @@ Datum __cmsketch_centile_final(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(__cmsketch_median_final);
 Datum __cmsketch_median_final(PG_FUNCTION_ARGS)
 {
-    bytea *blob = PG_GETARG_BYTEA_P(0);
-    int64 total;
-    
+    bytea *     blob = PG_GETARG_BYTEA_P(0);
+    int64       total;
+
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
     if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
@@ -304,11 +309,12 @@ Datum __cmsketch_median_final(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(__cmsketch_dhist_final);
 Datum __cmsketch_dhist_final(PG_FUNCTION_ARGS)
 {
-    bytea *blob = PG_GETARG_BYTEA_P(0);    
+    bytea *     blob = PG_GETARG_BYTEA_P(0);
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
     if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
-    PG_RETURN_INT64(cmsketch_depth_histogram_c(sketch, DatumGetInt64(sketch->args[0])));
+    PG_RETURN_INT64(cmsketch_depth_histogram_c(sketch,
+                                               DatumGetInt64(sketch->args[0])));
 }
 
 /*!
@@ -317,15 +323,15 @@ Datum __cmsketch_dhist_final(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(__cmsketch_merge);
 Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 {
-    bytea *   counterblob1 = PG_GETARG_BYTEA_P(0);
-    bytea *   counterblob2 = PG_GETARG_BYTEA_P(1);
+    bytea *     counterblob1 = PG_GETARG_BYTEA_P(0);
+    bytea *     counterblob2 = PG_GETARG_BYTEA_P(1);
     cmtransval *newtrans;
-    countmin *sketches2 = (countmin *)
-                          ((cmtransval *)(VARDATA(counterblob2)))->sketches;
-    bytea *   newblob;
-    countmin *newsketches;
-    uint32       i, j, k;
-    int       sz;
+    countmin *  sketches2 = (countmin *)
+                            ((cmtransval *)(VARDATA(counterblob2)))->sketches;
+    bytea *     newblob;
+    countmin *  newsketches;
+    uint32      i, j, k;
+    int         sz;
 
     /* make sure they're initialized! */
     if (!CM_TRANSVAL_INITIALIZED(counterblob1))
@@ -345,7 +351,7 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
         for (j = 0; j < DEPTH; j++)
             for (k = 0; k < NUMCOUNTERS; k++)
                 newsketches[i][j][k] += sketches2[i][j][k];
-                
+
     if (newtrans->nargs == -1) {
         /* transfer in the args from the other input */
         cmtransval *other = (cmtransval *)VARDATA(counterblob2);
@@ -409,9 +415,9 @@ int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
 Datum cmsketch_rangecount_c(cmtransval *transval, int64 bot, int64 top)
 {
     int64     cursum = 0;
-    uint32      i;
+    uint32    i;
     rangelist r;
-    int4     dyad;
+    int4      dyad;
     int64     val;
     int64     countval;
 
@@ -486,7 +492,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
     /* Sanity check */
     if (top < bot || power < 0)
         return;
-        
+
     if (top == bot) {
         /* base case of recursion, a range of the form [x-x]. */
         r->spans[r->emptyoffset][0] = r->spans[r->emptyoffset][1] = bot;
@@ -504,13 +510,13 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
         find_ranges_internal(0, top, power-1, r);
         return;
     }
-    
+
     width = top - bot + (int64)1;
-    
+
     /* account for the fact that MIN and MAX are 1 off the true power of 2 */
     if (top == MAX_INT64 || bot == MIN_INT64)
         width++;
-    
+
     dyad = safe_log2(width);
     if (dyad > 62) {
         /* dangerously big, so split.  we know that we don't span 0. */
@@ -604,7 +610,9 @@ Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 
 
     if (intcentile <= 0 || intcentile >= 100)
-        elog(ERROR, "centiles must be between 1-99 inclusive, was %d", intcentile);
+        elog(ERROR,
+             "centiles must be between 1-99 inclusive, was %d",
+             intcentile);
 
 
     centile_cnt = (int64)(total * (float8)intcentile/100.0);
@@ -672,12 +680,12 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
     int64      binlo, binhi, binval;
     Datum      histo[buckets][3];
     int        dims[2], lbs[2];
-    int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	char		typdelim;
-	Oid			typioparam;
-	Oid			typiofunc;
+    int16      typlen;
+    bool       typbyval;
+    char       typalign;
+    char       typdelim;
+    Oid        typioparam;
+    Oid        typiofunc;
 
     step = Max(trunc((float8)(max-min+1) / (float8)buckets), 1);
     for (i = 0; i < buckets; i++) {
@@ -694,13 +702,13 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
     }
 
 
-	/*
-	 * Get info about element type
-	 */
-	get_type_io_data(INT8OID, IOFunc_output,
-					 &typlen, &typbyval,
-					 &typalign, &typdelim,
-					 &typioparam, &typiofunc);
+    /*
+     * Get info about element type
+     */
+    get_type_io_data(INT8OID, IOFunc_output,
+                     &typlen, &typbyval,
+                     &typalign, &typdelim,
+                     &typioparam, &typiofunc);
 
     dims[0] = i;     /* may be less than requested buckets if too few values */
     dims[1] = 3;     /* lo, hi, and val */
@@ -727,18 +735,18 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
 Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
 {
     int64      step;
-    uint        i, nextbucket;
+    uint       i, nextbucket;
     ArrayType *retval;
     int64      binlo;
     Datum      histo[buckets][3];
     int        dims[2], lbs[2];
     int64      total = cmsketch_rangecount_c(transval, MIN_INT64, MAX_INT64);
-    int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	char		typdelim;
-	Oid			typioparam;
-	Oid			typiofunc;
+    int16      typlen;
+    bool       typbyval;
+    char       typalign;
+    char       typdelim;
+    Oid        typioparam;
+    Oid        typiofunc;
 
     step = Max(trunc(100 / (float8)buckets), 1);
     for (i = nextbucket = 0, binlo = MIN_INT64; i < buckets; i++) {
@@ -756,21 +764,25 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
         }
         histo[nextbucket][0] = Int64GetDatum(binlo);
         histo[nextbucket][2] = cmsketch_rangecount_c(transval,
-                                            DatumGetInt64(histo[nextbucket][0]),
-                                            DatumGetInt64(histo[nextbucket][1]));
+                                                     DatumGetInt64(histo[
+                                                                       nextbucket
+                                                                   ][0]),
+                                                     DatumGetInt64(histo[
+                                                                       nextbucket
+                                                                   ][1]));
         binlo = histo[nextbucket][1] + 1;
         nextbucket++;
     }
 
-	/*
-	 * Get info about element type
-	 */
-	get_type_io_data(INT8OID, IOFunc_output,
-					 &typlen, &typbyval,
-					 &typalign, &typdelim,
-					 &typioparam, &typiofunc);
-					 
-	dims[0] = nextbucket;     /* may be less than requested buckets if too few values */
+    /*
+     * Get info about element type
+     */
+    get_type_io_data(INT8OID, IOFunc_output,
+                     &typlen, &typbyval,
+                     &typalign, &typdelim,
+                     &typioparam, &typiofunc);
+
+    dims[0] = nextbucket;         /* may be less than requested buckets if too few values */
     dims[1] = 3;     /* lo, hi, and val */
     lbs[0] = 0;
     lbs[1] = 0;
@@ -798,7 +810,7 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
     bytea *   transblob = (bytea *)PG_GETARG_BYTEA_P(0);
     countmin *sketches;
     char *    newblob = (char *)palloc(10240);
-    uint32       i, j, k, c;
+    uint32    i, j, k, c;
 
     sketches = ((cmtransval *)VARDATA(transblob))->sketches;
     for (i=0, c=0; i < RANGES; i++)

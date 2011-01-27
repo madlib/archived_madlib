@@ -1,10 +1,10 @@
-/*! 
+/*!
  * \file sortasort.c
  *
  * \brief sortasort dictionary implementation
  */
- 
- /*!
+
+/*!
  * A "sortasort" is a pre-marshalled *set* (no dups) of values intended for
  * append and query operations only (no deletion).  It's not a
  * particularly smart data structure.  Cuckoo hashing would be a
@@ -133,15 +133,18 @@ int sortasort_try_insert(sortasort *s_in, char *v)
  */
 int sortasort_find(sortasort *s, char *v)
 {
-    int theguess, diff;
-    int hi = (s->num_vals/SORTA_SLOP)*SORTA_SLOP;
-    int themin = 0, themax = hi - 1;
+    int    theguess, diff;
+    int    hi = (s->num_vals/SORTA_SLOP)*SORTA_SLOP;
+    int    themin = 0, themax = hi - 1;
     size_t i;
-    int addend, subtrahend;
+    int    addend, subtrahend;
 
     /* binary search on the front of the sortasort */
     if (themax >= (int)s->num_vals) {
-        elog(ERROR, "sortasort failure: max = %d, num_vals = %lu", themax, s->num_vals);
+        elog(ERROR,
+             "sortasort failure: max = %d, num_vals = %lu",
+             themax,
+             s->num_vals);
     }
     theguess = hi / 2;
     while (themin < themax ) {

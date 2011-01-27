@@ -1,14 +1,14 @@
-/*! 
+/*!
  * \file sortasort.h
  *
  * \brief header file for the sortasort directory data structure
  */
 #define SORTA_SLOP 100
 
-/*! 
- * \internal 
+/*!
+ * \internal
  * \brief a pre-marshalled directory data structure to hold strings
- * 
+ *
  * A sortasort is a smallish array of strings, intended for append-only
  * modification, and network transmission as a single byte-string.  It is
  * structured as a header followed by an array of offsets (directory) that
@@ -19,7 +19,7 @@
  * to, but the last < SORTA_SLOP entries are left unsorted.  Binary Search
  * is used on all but those last entries, which must be scanned. At every
  * k*SORTA_SLOP'th insert, the full directory is sorted.
- * \endinternal 
+ * \endinternal
  */
 typedef struct {
     size_t num_vals;       /*! number of values so far */

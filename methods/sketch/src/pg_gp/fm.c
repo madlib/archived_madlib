@@ -1,25 +1,25 @@
-/*! 
+/*!
  * \file fm.c
  *
  * \brief Flajolet-Martin sketch implementation
  */
- 
- /*!
+
+/*!
  * \defgroup fmsketch FM (Flajolet-Martin)
  * \ingroup sketches
  * \about
  * Flajolet-Martin's distinct count estimation
- * implemented as a user-defined aggregate.  
+ * implemented as a user-defined aggregate.
  *
  * \implementation
  * In a nutshell, the FM sketch
- * is based on the idea of a bitmap whose bits are "turned on" by hashes of 
+ * is based on the idea of a bitmap whose bits are "turned on" by hashes of
  * values in the domain.  It is arranged so that
  * as you move left-to-right in that bitmap, the expected number of domain values
  * that can turn on the bit decreases exponentially.
- * After hashing all the values this way, the location of the first 0 from the 
+ * After hashing all the values this way, the location of the first 0 from the
  * left of the bitmap is correlated with the
- * number of distinct values.  This idea is smoothed across a number of 
+ * number of distinct values.  This idea is smoothed across a number of
  * trials using multiple independent hash functions on multiple bitmaps.
  *
  * The FM sketch technique works poorly with small inputs, so we
@@ -77,7 +77,7 @@ PG_MODULE_MAGIC;
 typedef enum {SMALL, BIG} fmstatus;
 
 /*!
- * \internal 
+ * \internal
  * \brief transition value struct for FM sketches
  *
  * because FM sketches work poorly on small numbers of values,
@@ -85,7 +85,7 @@ typedef enum {SMALL, BIG} fmstatus;
  * for "SMALL" numbers of values (<=MINVALS), the storage array
  * is a "sortasort" data structure containing an array of input values.
  * for "BIG" datasets (>MINVAL), it is an array of FM sketch bitmaps.
- * \endinternal 
+ * \endinternal
  */
 typedef struct {
     fmstatus status;
