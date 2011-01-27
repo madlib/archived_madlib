@@ -77,13 +77,13 @@ int sortasort_try_insert(sortasort *s_in, char *v)
 {
     /* first check to see if the element is already there */
     int found = sortasort_find(s_in, v);
-    if (found >= 0 && found < s_in->num_vals) {
+    if (found >= 0 && found < (int)s_in->num_vals) {
         /* found!  just return TRUE */
         return TRUE;
     }
 
     /* sanity check */
-    if (found < -1 || found >= s_in->num_vals)
+    if (found < -1 || found >= (int) s_in->num_vals)
         elog(ERROR,
              "invalid offset %d returned by sortasort_find",
              found);
@@ -136,12 +136,12 @@ int sortasort_find(sortasort *s, char *v)
     int theguess, diff;
     int hi = (s->num_vals/SORTA_SLOP)*SORTA_SLOP;
     int themin = 0, themax = hi - 1;
-    int i;
+    size_t i;
     int addend, subtrahend;
 
     /* binary search on the front of the sortasort */
-    if (themax >= s->num_vals) {
-        elog(ERROR, "max = %d, num_vals = %d", themax, s->num_vals);
+    if (themax >= (int)s->num_vals) {
+        elog(ERROR, "sortasort failure: max = %d, num_vals = %lu", themax, s->num_vals);
     }
     theguess = hi / 2;
     while (themin < themax ) {

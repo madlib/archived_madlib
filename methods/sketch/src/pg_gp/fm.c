@@ -74,6 +74,8 @@ PG_MODULE_MAGIC;
 #define SORTASORT_INITIAL_STORAGE  sizeof(sortasort) + MINVALS*sizeof(uint32) + \
     8*MINVALS
 
+typedef enum {SMALL, BIG} fmstatus;
+
 /*!
  * \brief transition value struct for FM sketches
  *
@@ -84,7 +86,7 @@ PG_MODULE_MAGIC;
  * for "BIG" datasets (>MINVAL), it is an array of FM sketch bitmaps.
  */
 typedef struct {
-    enum {SMALL,BIG} status;
+    fmstatus status;
     char storage[0];
 } fmtransval;
 
@@ -353,7 +355,7 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
     sortasort * s1, *s2;
     sortasort * sortashort, *sortabig;
     bytea *     tblob_big, *tblob_small;
-    int         i;
+    uint32      i;
 
     /* deal with the case where one or both items is the initial value of '' */
     if (VARSIZE(transblob1) == VARHDRSZ) {
@@ -435,7 +437,7 @@ Datum big_or(bytea *bitmap1, bytea *bitmap2)
              VARSIZE(bitmap1),
              VARSIZE(bitmap2));
 
-    out = palloc(VARSIZE(bitmap1));
+    out = (bytea *)palloc(VARSIZE(bitmap1));
     SET_VARSIZE(out, VARSIZE(bitmap1));
 
     /* could probably be more efficient doing this 32 or 64 bits at a time */

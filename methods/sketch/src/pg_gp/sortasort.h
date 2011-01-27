@@ -20,7 +20,7 @@
  * k*SORTA_SLOP'th insert, the full directory is sorted.
  */
 typedef struct {
-    short num_vals;        /*! number of values so far */
+    size_t num_vals;       /*! number of values so far */
     size_t storage_sz;     /*! the number of bytes available for strings at the end */
     size_t capacity;       /*! size of the sortasort directory */
     unsigned storage_cur;  /*! offset after the directory to do the next insertion */
