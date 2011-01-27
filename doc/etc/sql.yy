@@ -63,7 +63,7 @@
 	class SQLDriver
 	{
 	public:
-		SQLDriver();
+		SQLDriver(std::string &inFilename);
 		virtual ~SQLDriver();
 		void error(const SQLParser::location_type &l, const std::string &m);
 		void error(const std::string &m);
@@ -71,6 +71,7 @@
 		
 		std::map<std::string, char *>	fnToReturnType;
 		SQLScanner						*scanner;
+        std::string                     filename;
 	};
 	
 	/* We need to subclass because SQLFlexLexer's yylex function does not have
@@ -115,6 +116,10 @@
 
 /* keep track of the current position within the input */
 %locations
+%initial-action {
+    // Initialize the initial location.
+    @$.begin.filename = @$.end.filename = &driver->filename;
+};
 
 /* The name of the parser class. */
 %define "parser_class_name" "SQLParser"
@@ -387,7 +392,7 @@ value:
 
 namespace bison{
 
-SQLDriver::SQLDriver() {
+SQLDriver::SQLDriver(std::string &inFilename) : filename(inFilename) {
 }
 
 SQLDriver::~SQLDriver() {
@@ -426,11 +431,14 @@ int SQLFlexLexer::yylex()
 int	main(int argc, char **argv)
 {
 	std::istream		*inStream = 0;
+    std::string         filename = "<stdin>";
 	
-	if (argc > 1)
+	if (argc > 1) {
 		inStream = new std::ifstream(argv[1]);
+        filename = argv[1];
+    }
 	
-	bison::SQLDriver	driver;
+	bison::SQLDriver	driver(filename);
 	bison::SQLScanner	scanner(inStream); driver.scanner = &scanner;
 	bison::SQLParser	parser(&driver);
 

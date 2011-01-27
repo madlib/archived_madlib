@@ -66,6 +66,7 @@ COMMENT "--".*$
 CCOMMENT "/*"([^\*]|\*[^/])*"*/"
 IDENTIFIER [[:alpha:]_][[:alnum:]_]*
 QUOTED_IDENTIFIER "\""{IDENTIFIER}"\""
+COMMENTED_IDENTIFIER "/*"[[:space:]]*({IDENTIFIER}|{QUOTED_IDENTIFIER})[[:space:]]*"*/"
 INTEGER [[:digit:]]+
 SPACE [[:space:]]+
 DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
@@ -110,6 +111,27 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 	yylloc->lines(1);
 	
 	return token::COMMENT;
+}
+
+    /* Since PostgreSQL (the SQL standard?) disallows labeling arguments of
+     * aggregate functions, we will treat a C-style comment consisting of a
+     * single word as the argument label. */
+    /* We consume whitespace and newline after the comment only because the next
+     * rule does so, too -- we need to be the longest applicable rule. */
+<sAGG_ARGLIST>{COMMENTED_IDENTIFIER}([[:space:]]*\n[[:space:]]*)? {
+    int     startpos = 2, endpos = yyleng - 3;
+    bool    quoted = false;
+    
+    while (isspace(yytext[startpos])) startpos++;
+    while (isspace(yytext[endpos])) endpos--;
+    if (yytext[startpos] == '\"') {
+        // QUOTED_IDENTIFIER
+        startpos++; endpos--;
+        quoted = true;
+    }
+    yytext[endpos + 1] = 0;
+    yylval->str = quoted ? strdup(yytext + startpos) : strlowerdup(yytext + startpos);
+    return token::IDENTIFIER;
 }
 
 	/* If only whitespace and a newline follow, also consume that */

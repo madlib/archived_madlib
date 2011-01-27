@@ -1,7 +1,8 @@
 # Generate developer documentation
 # Hide warnings about keyword arguments in Python
 devdoc: doc/bin/doxysql mathjax
-	( \
+	@echo "Running doxygen..."
+	@( \
 		cat doc/etc/developer.doxyfile; \
 		echo "PROJECT_NUMBER = $$(cut -c 10- madpy/Version.yml)" \
 	) | doxygen - 2>&1 | \
@@ -10,7 +11,8 @@ devdoc: doc/bin/doxysql mathjax
 # Generate user documentation
 # Hide warnings about keyword arguments in Python
 doc: doc/bin/doxysql mathjax
-	( \
+	@echo "Running doxygen..."
+	@( \
 		cat doc/etc/user.doxyfile; \
 		echo "PROJECT_NUMBER = $$(cut -c 10- madpy/Version.yml)" \
 	) | doxygen - 2>&1 | \
