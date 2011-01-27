@@ -638,10 +638,12 @@ PG_FUNCTION_INFO_V1(float8_irls_update_final);
 PG_FUNCTION_INFO_V1(logreg_should_terminate);
 
 /**
+ * \internal 
  * Note the order of computation:
  * 
  * FIXME: Several assumptions about this struct are hard coded (e.g., number of
  * elements)
+ * \endinternal 
  */
 typedef struct {
 	int32		iteration;	/* current iteration */

@@ -28,8 +28,10 @@
 #include "utils/array.h"
 #include "catalog/pg_type.h"
 
-/**
+/*!
+ * \internal 
  * SparseData holds information about a sparse array of values
+ * \endinternal 
  */
 typedef struct 
 {
