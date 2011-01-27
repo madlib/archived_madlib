@@ -115,11 +115,11 @@ typedef struct {
     unsigned max_mfvs;    /*! number of frequent values */
     unsigned next_mfv;    /*! index of next mfv to insert into */
     unsigned next_offset; /*! next memory offset to insert into */
-    Oid typOid;      /*! Oid of the type being counted */
-    uint32 typLen;    /*! Length of the data type */
-    bool typByVal;   /*! Whether type is by value or by reference */
-    Oid outFuncOid;  /*! Oid of the outfunc for this type */
-    countmin sketch; /*! a single countmin sketch */
+    Oid typOid;           /*! Oid of the type being counted */
+    int typLen;           /*! Length of the data type */
+    bool typByVal;        /*! Whether type is by value or by reference */
+    Oid outFuncOid;       /*! Oid of the outfunc for this type */
+    countmin sketch;      /*! a single countmin sketch */
     /*!
      * type-independent collection of Most Frequent Values
      * Holds an array of (counter,offset) pairs, which by
@@ -136,6 +136,9 @@ typedef struct {
 #define MFV_TRANSVAL_CAPACITY(transblob) (VARSIZE(transblob) - VARHDRSZ - \
                                           ((mfvtransval *)VARDATA(transblob))-> \
                                           next_offset)
+                                          
+/*! macro to convert a pointer into the mfvs array into a Datum */
+#define MFVPointerGetDatum(x, byVal)  (byVal ? (*(Datum *)x) : (PointerGetDatum(x)))
 
 /* countmin aggregate protos */
 char * countmin_trans_c(countmin, Datum, Oid);
@@ -166,8 +169,8 @@ int64  min_counter(uint32, uint32, countmin, int64);
 bytea *mfv_transval_append(bytea *, Datum);
 int    mfv_find(bytea *, Datum);
 bytea *mfv_transval_replace(bytea *, Datum, int);
-bytea *mfv_transval_insert_at(bytea *, Datum, int);
-void *mfv_transval_getval(bytea *, int);
+bytea *mfv_transval_insert_at(bytea *, Datum, uint32);
+void *mfv_transval_getval(bytea *, uint32);
 bytea *mfv_init_transval(int, Oid);
 bytea *mfvsketch_merge_c(bytea *, bytea *);
 void   mfv_copy_datum(bytea *, int, Datum);

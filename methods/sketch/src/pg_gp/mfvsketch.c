@@ -138,8 +138,8 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
     }
     else {
         /* try to insert as either a new or replacement entry */
-        for (i = 0; i < transval->max_mfvs; i++) {
-            if ((i == transval->next_mfv)) {
+        for (i = 0; i < (int)transval->max_mfvs; i++) {
+            if ((i == (int)transval->next_mfv)) {
                 /* room for new */
                 transblob = mfv_transval_append(transblob, newdatum);
                 transval = (mfvtransval *)VARDATA(transblob);
@@ -159,11 +159,21 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
     PG_RETURN_DATUM(PointerGetDatum(transblob));
 }
 
+/*!
+ * look to see if the mfvsketch currently has <c>val</c>
+ * stored as one of its most-frequent values.
+ * Returns the offset in the <c>mfvs</c> array, or -1
+ * if not found.
+ * NOTE: a 0 return value means the item <i>was found</i>
+ * at offset 0!
+ * \param blob a bytea holding an mfv transval
+ * \param val the datum to search for
+ */
 int mfv_find(bytea *blob, Datum val)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(blob);
     unsigned     i;
-    size_t       len;
+    uint32       len;
     void *       tmp;
     Datum        iDat;
 
@@ -171,11 +181,10 @@ int mfv_find(bytea *blob, Datum val)
     for (i = 0; i < transval->next_mfv; i++) {
         /* if they're the same */
         tmp = mfv_transval_getval(blob,i);
-        if (transval->typByVal) iDat = *(Datum *)tmp;
-        else iDat = PointerGetDatum(tmp);
+        iDat = MFVPointerGetDatum(tmp, transval->typByVal);
 
-        if ((len = att_addlength_datum(0, transval->typLen, iDat))
-            == att_addlength_datum(0, transval->typLen, val)) {
+        if ((len = (uint32)att_addlength_datum(0, transval->typLen, iDat))
+            == (uint32)att_addlength_datum(0, transval->typLen, val)) {
             void *valp, *datp;
             if (transval->typByVal) {
                 valp = (void *)&val;
@@ -193,6 +202,11 @@ int mfv_find(bytea *blob, Datum val)
     return(-1);
 }
 
+/*!
+ * Initialize an mfv sketch
+ * \param max_mfvs the number of "bins" in the histogram
+ * \param typOid the type ID for the column
+ */
 bytea *mfv_init_transval(int max_mfvs, Oid typOid)
 {
     int          initial_size;
@@ -230,15 +244,16 @@ bytea *mfv_init_transval(int max_mfvs, Oid typOid)
     return(transblob);
 }
 
-/*! get the datum associated with the i'th mfv */
-void *mfv_transval_getval(bytea *blob, int i)
+/*! 
+ * get the datum associated with the i'th mfv 
+ * \param blob a bytea holding an mfv transval
+ * \param i index of the mfv to look up
+ */
+void *mfv_transval_getval(bytea *blob, uint32 i)
 {
     mfvtransval *tvp = (mfvtransval *)VARDATA(blob);
     void *       retval = (void *)(((char*)tvp) + tvp->mfvs[i].offset);
-    Datum        dat;
-
-    if (tvp->typByVal) dat = *(Datum *)retval;
-    else dat = PointerGetDatum(retval);
+    Datum        dat = MFVPointerGetDatum(retval, tvp->typByVal);
 
     if (i > tvp->next_mfv || i < 0)
         elog(ERROR,
@@ -254,6 +269,18 @@ void *mfv_transval_getval(bytea *blob, int i)
     return (retval);
 }
 
+/*!
+ * copy datum <c>dat</c> into the offset of position <c>index</c> of
+ * the mfv sketch stored in <c>transblob</c>.
+ *
+ * <i>Caller beware: this helper return assumes that 
+ * <c>dat</c> is small enough to fit in the storage
+ * currently used by the datum at position <c>index</c>.</i>
+ *
+ * \param transblob a bytea holding and mfv transval
+ * \param index the index of the destination for copying
+ * \param dat the datum to be copied into the transval
+ */
 void mfv_copy_datum(bytea *transblob, int index, Datum dat)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
@@ -269,14 +296,18 @@ void mfv_copy_datum(bytea *transblob, int index, Datum dat)
 /*!
  * insert a value at position i of the mfv sketch
  *
- * we place the new value at the next_offset, and do not
- * currently garbage collection the old value's storage.
+ * we do not overwrite the previous value at position i.
+ * instead we place the new value at the next_offset. 
+ * 
+ * <i>Note: we do not currently garbage collection the old value's storage.
+ * This wastes space, with the worst-case scenario being a column with values
+ * of increasing size and frequency!</i>
  *
  * \param transblob the transition value packed into a bytea
  * \param dat the value to be inserted
  * \param i the position to insert at
  */
-bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, int i)
+bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, uint32 i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     bytea *      tmpblob;
@@ -347,12 +378,8 @@ bytea *mfv_transval_replace(bytea *transblob, Datum dat, int i)
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     size_t       datumLen = att_addlength_datum(0, transval->typLen, dat);
     void *       tmpp = mfv_transval_getval(transblob,i);
-    Datum        oldDat;
-    size_t       oldLen;
-
-    if (transval->typByVal) oldDat = *(Datum *)tmpp;
-    else oldDat = PointerGetDatum(tmpp);
-    oldLen = att_addlength_datum(0, transval->typLen, oldDat);
+    Datum        oldDat = MFVPointerGetDatum(tmpp, transval->typByVal);
+    size_t       oldLen = att_addlength_datum(0, transval->typLen, oldDat);
 
     if (datumLen <= oldLen) {
         mfv_copy_datum(transblob, i, dat);
@@ -371,7 +398,7 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
     bytea *      transblob = PG_GETARG_BYTEA_P(0);
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     ArrayType *  retval;
-    int          i;
+    uint32       i;
     Datum        histo[transval->max_mfvs][2];
     int          dims[2], lbs[2];
     /* Oid     typInput, typIOParam; */
@@ -397,15 +424,12 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
 
     for (i = 0; i < transval->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob,i);
-        Datum curval;
-        char *countbuf, *valbuf;
-
-        if (transval->typByVal) curval = *(Datum *)tmpp;
-        else curval = PointerGetDatum(tmpp);
-        countbuf =
+        Datum curval = MFVPointerGetDatum(tmpp, transval->typByVal);
+        char *countbuf =
             OidOutputFunctionCall(outFuncOid,
                                   Int64GetDatum(transval->mfvs[i].cnt));
-        valbuf = OidOutputFunctionCall(transval->outFuncOid, curval);
+        char *valbuf = OidOutputFunctionCall(transval->outFuncOid, curval);
+        
         histo[i][0] = PointerGetDatum(cstring_to_text(valbuf));
         histo[i][1] = PointerGetDatum(cstring_to_text(countbuf));
         pfree(countbuf);
@@ -464,11 +488,20 @@ Datum __mfvsketch_merge(PG_FUNCTION_ARGS)
     PG_RETURN_DATUM(PointerGetDatum(mfvsketch_merge_c(transblob1, transblob2)));
 }
 
+/*!
+ * implementation of the merge of two mfv sketches.  we
+ * first merge the embedded countmin sketches to get the
+ * sums of the counts, and then use those sums to pick the
+ * top values for the resulting histogram.  We overwrite
+ * the first argument and return it.
+ * \param transblob1 an mfv transval stored inside a bytea
+ * \param transblob2 another mfv transval in a bytea
+ */
 bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
 {
     mfvtransval *transval1 = (mfvtransval *)VARDATA(transblob1);
     mfvtransval *transval2 = (mfvtransval *)VARDATA(transblob2);
-    int          i, j;
+    uint32       i, j;
 
     /* handle uninitialized args */
     if (VARSIZE(transblob1) <= sizeof(MFV_TRANSVAL_SZ(0))
@@ -491,18 +524,16 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     /* recompute the counts using the merged sketch */
     for (i = 0; i < transval1->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob1,i);
-        Datum dat;
-        if (transval1->typByVal) dat = *(Datum *)tmpp;
-        else dat = PointerGetDatum(tmpp);
+        Datum dat = MFVPointerGetDatum(tmpp, transval1->typByVal);
+
         transval1->mfvs[i].cnt = cmsketch_count_c(transval1->sketch,
                                                   dat,
                                                   transval1->outFuncOid);
     }
     for (i = 0; i < transval2->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob2,i);
-        Datum dat;
-        if (transval2->typByVal) dat = *(Datum *)tmpp;
-        else dat = PointerGetDatum(tmpp);
+        Datum dat = MFVPointerGetDatum(tmpp, transval2->typByVal);
+
         transval2->mfvs[i].cnt = cmsketch_count_c(transval2->sketch,
                                                   dat,
                                                   transval2->outFuncOid);
@@ -517,9 +548,8 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
          j < transval2->next_mfv && i < transval1->max_mfvs;
          i++) {
         void *tmpp = mfv_transval_getval(transblob2, j);
-        Datum jDatum;
-        if (transval2->typByVal) jDatum = *(Datum *)tmpp;
-        else jDatum = PointerGetDatum(tmpp);
+        Datum jDatum = MFVPointerGetDatum(tmpp, transval2->typByVal);
+
         if (i == transval1->next_mfv && (mfv_find(transblob1, jDatum) == -1)
             /* && i < transval1->max_mfvs from for loop */) {
             transblob1 = mfv_transval_append(transblob1, jDatum);
