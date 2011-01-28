@@ -1,3 +1,73 @@
+/** 
+
+@file sketches.sql_in
+
+@brief SQL functions for sketch-based approximations of descriptive statistics
+@date   January 2011
+
+@sa For a brief introduction to sketches, see the module
+    description \ref sketches
+
+//* --------------------------------------------------------------------------
+
+This file is preprocessed with m4. Macro expansion can be turned of by
+enclosing text in <nom4> and </nom4>.
+*/
+changequote(`<nom4>', `</nom4>')
+
+/**
+ @addtogroup sketches
+
+@about
+
+Sketches (sometimes called "synopsis data structures") are small randomized 
+in-memory data structures that capture statistical properties of a large set 
+of values (e.g. a column of a table).  Sketches can be formed in a single
+pass of the data, and used to approximate a variety of descriptive statistics.
+
+We implement sketches as SQL User-Defined Aggregates (UDAs).  Because they
+are single-pass, small-space and parallelized, a single query can 
+gather summary statistics on many columns of a table efficiently.
+
+This module currently implements user-defined aggregates based on three main sketch methods:
+ - <i>Flajolet-Martin (FM)</i> sketches (http://algo.inria.fr/flajolet/Publications/FlMa85.pdf) for approximating <c>COUNT(DISTINCT)</c>.
+ - <i>Count-Min (CM)</i> sketches (http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf), which can be used to approximate a number of descriptive statistics including
+   - <c>COUNT(*)</c> of rows whose column value matches a given value in a set
+   - <c>COUNT(*)</c> of rows whose column value falls in a range (*)
+   - order statistics including <i>median</i> and <i>centiles</i> (*)
+   - <i>histograms</i>: both <i>equi-width</i> and <i>equi-depth</i> (*)
+   - <i>Most Frequent Value (MFV)</i> sketches output the most 
+frequently-occuring values in a column, with their associated counts.
+
+ <i>Note:</i> Features marked with a single star (*) only work for discrete types that can be cast to int8.
+
+@prereq
+Because sketches are essentially a high-performance compression technique, they were custom-coded for efficiency in C for PostgreSQL/Greenplum.
+ 
+@usage
+The sketch method consists of a number of SQL UDAs and UDFs, to be used
+directly in SQL queries.
+*/
+
+/**
+ @defgroup fmsketch FM (Flajolet-Martin)
+ @ingroup sketches
+ @about
+ Flajolet-Martin's distinct count estimation
+ implemented as a user-defined aggregate.
+
+
+ @usage
+   <c>fmsketch_dcount(col anytype)</c> is a UDA that can be run on any column of any type.  It returns an approximation to the number of distinct values in the column (a la <c>COUNT(DISTINCT x)</c>, but faster and approximate).  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  Example:@code
+    SELECT pronargs, madlib.fmsketch_dcount(proname) AS distinct_hat, count(proname)
+      FROM pg_proc
+  GROUP BY pronargs;
+    @endcode
+
+ @literature
+ - P. Flajolet and N.G. Martin.  Probabilistic counting algorithms for data base applications, Journal of Computer and System Sciences 31(2), pp 182-209, 1985.  http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
+*/
+
 -- FM Sketch Functions
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.big_or(bitmap1 bytea, bitmap2 bytea) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.big_or(bitmap1 bytea, bitmap2 bytea)
@@ -35,6 +105,43 @@ CREATE AGGREGATE MADLIB_SCHEMA.fmsketch_dcount(anyelement)
 
 
 -- CM Sketch Functions
+
+/** @defgroup countmin CountMin (Cormode-Muthukrishnan)
+ @ingroup sketches
+ @about
+ This module implements Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
+ on integer values, implemented as user-defined aggregates.  It provides approximate counts, order statistics,
+ and histograms.
+
+ @examp
+ @code
+   SELECT pronamespace, madlib.cmsketch_count(pronargs, 3)
+     FROM pg_proc
+ GROUP BY pronamespace;
+ @endcode
+  Example:@code
+   SELECT pronamespace, madlib.cmsketch_rangecount(pronargs, 3, 5)
+     FROM pg_proc
+ GROUP BY pronamespace;
+  @endcode
+   SELECT relnamespace, madlib.cmsketch_centile(oid::int8, 75)
+     FROM pg_class
+ GROUP BY relnamespace;
+  @endcode
+   SELECT madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), min(oid::int8), max(oid::int8), 10)
+     FROM pg_class;
+  @endcode
+
+   SELECT madlib.cmsketch_depth_histogram(oid::int8, 10)
+     FROM pg_class;
+  @endcode
+
+ @literature
+  [1] G. Cormode and S. Muthukrishnan. An improved data stream summary: The count-min sketch and its applications.  LATIN 2004, J. Algorithm 55(1): 58-75 (2005) .  http://dimacs.rutgers.edu/~graham/pubs/html/CormodeMuthukrishnan04CMLatin.html
+  [2] G. Cormode. Encyclopedia entry on 'Count-Min Sketch'. In L. Liu and M. T. Ozsu, editors, Encyclopedia of Database Systems, pages 511-516. Springer, 2009. http://dimacs.rutgers.edu/~graham/pubs/html/Cormode09b.html
+
+ @sa quantile
+*/
 
 -- We register __cmsketch_trans for varying numbers of arguments to support
 -- a variety of agg function signatures.  The first 2 args are used to 
@@ -78,7 +185,10 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch(int8);
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch(int8)
+/**
+ @brief <c>cmsketch</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a CountMin sketch: a large array of counters that is intended to be passed into a UDF like <c>cmsketch_width_histogram</c> described below.
+*/
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch(/* column */ int8)
 (
     sfunc = MADLIB_SCHEMA.__cmsketch_trans,
     stype = bytea, 
@@ -94,7 +204,10 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_count(int8, int8);
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_count(int8, int8)
+/**
+ @brief <c>cmsketch_count</c> is a UDA that takes a column and a constant value of type int8, and reports the approximate number of occurrences of the value in the column.  
+*/
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_count(/* column */ int8, /* value */ int8)
 (
     sfunc = MADLIB_SCHEMA.__cmsketch_trans,
     stype = bytea, 
@@ -110,7 +223,10 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_rangecount(int8, int8, int8);
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_rangecount(int8, int8, int8)
+/** \brief <c>cmsketch_rangecount</c> is a UDA that takes a column and a range <c>[low, hi]</c>, and  reports the approximate number of column values that fall between 
+  <c>low</c> and <c>hi</c> inclusive.
+*/
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_rangecount(/* column */ int8, /* low */ int8, /* hi */ int8)
 (
     sfunc = MADLIB_SCHEMA.__cmsketch_trans,
     stype = bytea, 
@@ -126,6 +242,10 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_centile(int8, int8);
+/**
+ @brief <c>cmsketch_centile</c> is a UDA that takes a column and a percentage value between 1 and 99, and reports a value in the column that is approximately at the percentage (centile) position in sorted order.  
+*/
+
 CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_centile(int8, int8)
 (
     sfunc = MADLIB_SCHEMA.__cmsketch_trans,
@@ -152,7 +272,11 @@ CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_median(int8)
 );
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_width_histogram(bytea, int8, int8, int4) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.cmsketch_width_histogram(bytea, int8, int8, int4)
+/**
+ \brief <c>cmsketch_width_histogram</c>  is a UDF (not an aggregate!) that takes three aggregates of a column -- cmsketch, min and max-- as well as a number of buckets, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  
+ */
+
+CREATE FUNCTION MADLIB_SCHEMA.cmsketch_width_histogram(/* cmsketch */bytea, /* min */int8, /* max */int8, /* nbuckets */ int4)
 RETURNS int8[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
@@ -164,7 +288,9 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_depth_histogram(int8, int8);
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_depth_histogram(int8, int8)
+/** @brief <c>cmsketch_depth_histogram</c> is a UDA that takes a column and a number of buckets n, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles.  
+*/
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_depth_histogram(/* column */int8, /* num_buckets */int8)
 (
     sfunc = MADLIB_SCHEMA.__cmsketch_trans,
     stype = bytea, 
@@ -174,6 +300,39 @@ CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_depth_histogram(int8, int8)
 );
 
 -- MFV Sketch functions
+/**
+ @defgroup mfvsketch MFV (Most Frequent Values)
+ @ingroup sketches
+ @par About
+ MFVSketch: Most Frequent Values variant of CountMin sketch, implemented
+ as a UDA.
+
+ \usage
+ The MFV frequent-value UDA comes in two different versions: a faithful implementation that preserves the
+ approximation guarantees of Cormode/Muthukrishnan, and a "quick and dirty"
+ version that can do parallel aggregation in Greenplum at the expense
+ of missing some of the most frequent values.  
+ In PostgreSQL the two UDAs are identical.
+ In Greenplum, the quick version should 
+ produce good results unless the number of values requested is very small,
+ or the distribution is very flat.
+ 
+
+   Example:\code
+   SELECT madlib.mfvsketch_top_histogram(proname, 4)
+     FROM pg_proc;
+   \endcode
+
+Example:\code
+   SELECT madlib.mfvsketch_quick_histogram(proname, 4)
+     FROM pg_proc;
+ \endcode
+
+ \literature
+ This method is not usually called an MFV sketch in the literature; it
+ is a natural extension of the CountMin sketch. 
+ \sa countmin
+*/
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mfvsketch_trans(bytea, anyelement, int4) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.__mfvsketch_trans(bytea, anyelement, int4)
@@ -194,7 +353,12 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.mfvsketch_top_histogram(anyelement, int4);
-CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_top_histogram(anyelement, int4)
+/**
+<c>mfvsketch_top_histogram</c> produces an n-bucket histogram for a 
+column where each bucket counts one of the most frequent values in the column. The output is an array of doubles {value, count}
+ in descending order of frequency; counts are approximated via CountMin sketches. Ties are handled arbitrarily.
+*/
+CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_top_histogram(/* column */ anyelement, /* number_of_buckets */) int4)
 (
     sfunc = MADLIB_SCHEMA.__mfvsketch_trans,
     stype = bytea, 
@@ -202,11 +366,12 @@ CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_top_histogram(anyelement, int4)
     initcond = ''
 );
 
--- in PostgreSQL, this UDA is identical to mfvsketch_top_histogram.
--- in Greenplum, the prefunc makes this UDA "quick and dirty": it
--- will perform parallel aggregation, but in the case of skewed data 
--- placement it may miss some of the values that would be returned
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.mfvsketch_quick_histogram(anyelement, int4);
+/**
+<c>mfvsketch_quick_histogram</c> is the same as the above
+but, in Greenplum it does parallel aggregation to provide a "quick and dirty"
+answer.  In Postgres it is identical to <c>mfvsketch_top_histogram</c>.
+*/
 CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_quick_histogram(anyelement, int4)
 (
     sfunc = MADLIB_SCHEMA.__mfvsketch_trans,
