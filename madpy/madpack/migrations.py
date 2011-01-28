@@ -153,7 +153,7 @@ class Migration(MadPackMigration):
                 fin = open(code_path, 'rb')
                 h = hashlib.md5()
                 h.update(code_path)
-                return  imp.load_source(h.hexdigest(), code_path, fin)
+                return  imp.load_source( h.hexdigest(), code_path, fin)
             finally:
                 try: fin.close()
                 except: pass
@@ -294,11 +294,16 @@ class Migration(MadPackMigration):
         self.setup()
         filename = self.__gen_filename(name)
         # while os.path.exists(dir + filename)
-        fd = open(dir + "/" + filename, 'w')
+        fd = open(dir + "/" + filename, mode='w')
+        fd.write("# This Python file uses the following encoding: utf-8")
         fd.write(self.mig_prolog)
         fd.write(self.mig_forwards_prolog)
         for f in upfiles:
-            fd.write(self.__wrap_sql(f,2))
+            s = self.__wrap_sql(f,2)
+            if isinstance(s, unicode):
+                fd.write( s.encode('utf-8'))
+            else:
+                fd.write( s)
         fd.write("\n\n\n")
         fd.write(self.mig_backwards_prolog)
         for f in downfiles:
