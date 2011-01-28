@@ -11,9 +11,12 @@ from types import *
 try:
     from pygresql import pg
 except Exception, e:
-    errorMsg = "unable to import The PyGreSQL Python module (pg.py) - %s\n" % str(e)
-    sys.stderr.write(str(errorMsg))
-    sys.exit(2)
+    try:
+        import pg
+    except Exception, e:
+        errorMsg = "unable to import The PyGreSQL Python module (pg.py) - %s\n" % str(e)
+        sys.stderr.write(str(errorMsg))
+        sys.exit(2)
               
 # This method establishes the connection to a database.
 #
