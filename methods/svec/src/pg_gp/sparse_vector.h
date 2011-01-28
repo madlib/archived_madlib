@@ -59,6 +59,9 @@ When we use arrays of floating point numbers for various calculations,
 
     Syntax reference can be found in gp_svec.sql_in.
 
+    Users need to add madlib to their search_path to use the svec operators
+    defined in the module.
+
 @examp
 
     We can input an array directly as an svec as follows: 
