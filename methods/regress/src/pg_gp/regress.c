@@ -628,14 +628,14 @@ Datum float8_cg_update_combine(PG_FUNCTION_ARGS);
 Datum float8_irls_update_accum(PG_FUNCTION_ARGS);
 Datum float8_cg_update_final(PG_FUNCTION_ARGS);
 Datum float8_irls_update_final(PG_FUNCTION_ARGS);
-Datum logreg_should_terminate(PG_FUNCTION_ARGS);
+Datum logregr_should_terminate(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(float8_cg_update_accum);
 PG_FUNCTION_INFO_V1(float8_cg_update_combine);
 PG_FUNCTION_INFO_V1(float8_irls_update_accum);
 PG_FUNCTION_INFO_V1(float8_cg_update_final);
 PG_FUNCTION_INFO_V1(float8_irls_update_final);
-PG_FUNCTION_INFO_V1(logreg_should_terminate);
+PG_FUNCTION_INFO_V1(logregr_should_terminate);
 
 /**
  * \internal 
@@ -710,7 +710,7 @@ static ArrayType *construct_uninitialized_array(int inNumElements,
 			dest = 0; \
 	} while(0)
 #define EndCopyFromTuple }
-static void copy_tuple_to_logreg_state(HeapTupleHeader inTuple,
+static void copy_tuple_to_logregr_state(HeapTupleHeader inTuple,
                                        LogRegrState *outState,
                                        bool *outIsNull,
                                        bool copyIntraIterationState)
@@ -745,7 +745,7 @@ static void copy_tuple_to_logreg_state(HeapTupleHeader inTuple,
             __datumArr[__tupleItem++] = PointerGetDatum(NULL); \
     } while (0)
 #define EndCopyToDatum }
-static HeapTuple logreg_state_to_heap_tuple(LogRegrState *inState,
+static HeapTuple logregr_state_to_heap_tuple(LogRegrState *inState,
                                             bool *inIsNull,
                                             PG_FUNCTION_ARGS)
 {
@@ -797,7 +797,7 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 		/* This means: State transition function was called for first row */
 	
 		if (iterationStateTuple != NULL)
-            copy_tuple_to_logreg_state(iterationStateTuple, outState,
+            copy_tuple_to_logregr_state(iterationStateTuple, outState,
                 isNull, /* copyIntraIterationState */ false);
 		
 		if (iterationStateTuple == NULL || outState->iteration == 0) {
@@ -825,7 +825,7 @@ static bool float8_cg_update_get_state(PG_FUNCTION_ARGS,
 		outState->dTHd = 0.;
         outState->logLikelihood = 0.;
 	} else {
-        copy_tuple_to_logreg_state(aggregateStateTuple, outState, isNull,
+        copy_tuple_to_logregr_state(aggregateStateTuple, outState, isNull,
             /* copyIntraIterationState */ true);
 	}
 			
@@ -932,7 +932,7 @@ Datum float8_cg_update_accum(PG_FUNCTION_ARGS)
 	memset(resultNull, 0, sizeof(resultNull));
 	resultNull[3] = state.dir == NULL;
 	resultNull[4] = state.grad == NULL;
-    result = logreg_state_to_heap_tuple(&state, resultNull, fcinfo);
+    result = logregr_state_to_heap_tuple(&state, resultNull, fcinfo);
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));
 }
 
@@ -946,12 +946,12 @@ Datum float8_cg_update_combine(PG_FUNCTION_ARGS)
     int             numNulls1 = 0, numNulls2 = 0;
 	bool			isNull[10];
     
-    copy_tuple_to_logreg_state(tuple1, &state1, isNull,
+    copy_tuple_to_logregr_state(tuple1, &state1, isNull,
         /* copyIntraIterationState */ true);
     for (unsigned int i = 0; i < sizeof(isNull); i++)
         numNulls1 += (int) isNull[i];
 
-    copy_tuple_to_logreg_state(tuple2, &state2, isNull,
+    copy_tuple_to_logregr_state(tuple2, &state2, isNull,
         /* copyIntraIterationState */ true);
     for (unsigned int i = 0; i < sizeof(isNull); i++)
         numNulls2 += (int) isNull[i];
@@ -969,7 +969,7 @@ Datum float8_cg_update_combine(PG_FUNCTION_ARGS)
                 format_procedure(fcinfo->flinfo->fn_oid))));
                 
     memset(&returnState, 0, sizeof(returnState));
-    copy_tuple_to_logreg_state(tuple1, &returnState, isNull, false);
+    copy_tuple_to_logregr_state(tuple1, &returnState, isNull, false);
     
     returnState.count = state1.count + state2.count;
     returnState.dTHd = state1.dTHd + state2.dTHd;
@@ -983,7 +983,7 @@ Datum float8_cg_update_combine(PG_FUNCTION_ARGS)
 	/* Construct the return tuple */
 	memset(isNull, 0, sizeof(isNull));
     PG_RETURN_DATUM(HeapTupleGetDatum(
-        logreg_state_to_heap_tuple(&returnState, isNull, fcinfo)
+        logregr_state_to_heap_tuple(&returnState, isNull, fcinfo)
     ));
 }
 
@@ -1271,7 +1271,7 @@ Datum float8_cg_update_final(PG_FUNCTION_ARGS)
     state.iteration++;
 	memset(resultNull, 0, sizeof(resultNull));
 	resultNull[6] = resultNull[7] = resultNull[8] = true;
-    result = logreg_state_to_heap_tuple(&state, resultNull, fcinfo);
+    result = logregr_state_to_heap_tuple(&state, resultNull, fcinfo);
 	PG_RETURN_DATUM(HeapTupleGetDatum(result));	
 }
 
@@ -1309,7 +1309,7 @@ Datum float8_irls_update_final(PG_FUNCTION_ARGS)
 }
 
 
-Datum logreg_should_terminate(PG_FUNCTION_ARGS)
+Datum logregr_should_terminate(PG_FUNCTION_ARGS)
 {
 	ArrayType	*oldCoef;
 	ArrayType	*newCoef;	
