@@ -1,3 +1,179 @@
+/**
+
+@defgroup svec Sparse Vectors
+@ingroup support
+
+@about
+
+This module implements a sparse vector data type named "svec", which 
+gives compressed storage of sparse vectors with many duplicate elements.
+
+When we use arrays of floating point numbers for various calculations, 
+    we will sometimes have long runs of zeros (or some other default value). 
+    This is common in applications like scientific computing, 
+    retail optimization, and text processing. Each floating point number takes 
+    8 bytes of storage in memory and/or disk, so saving those zeros is often 
+    worthwhile. There are also many computations that can benefit from skipping
+    over the zeros.
+
+    To focus the discussion, consider, for example, the following 
+    array of doubles stored as a Postgres/GP "float8[]" data type:
+
+\code
+      '{0, 33,...40,000 zeros..., 12, 22 }'::float8[].
+\endcode
+
+    This array would occupy slightly more than 320KB of memory/disk, most of 
+    it zeros. Even if we were to exploit the null bitmap and store the zeros 
+    as nulls, we would still end up with a 5KB null bitmap, which is still 
+    not nearly as memory efficient as we'd like. Also, as we perform various 
+    operations on the array, we'll often be doing work on 40,000 fields that 
+    would turn out not to be important. 
+
+    To solve the problems associated with the processing of sparse vectors 
+    discussed above, we adopt a simple Run Length Encoding (RLE) scheme to 
+    represent sparse vectors as pairs of count-value arrays. So, for example, 
+    the array above would be represented as follows
+
+\code
+      '{1,1,40000,1,1}:{0,33,0,12,22}'::madlib.svec,
+\endcode
+
+    which says there is 1 occurrence of 0, followed by 1 occurrence of 33, 
+    followed by 40,000 occurrences of 0, etc. In contrast to the naive 
+    representations, we only need 5 integers and 5 floating point numbers
+    to store the array. Further, it is easy to implement vector operations 
+    that can take advantage of the RLE representation to make computations 
+    faster. The module provides a library of such functions.
+
+    The current version only supports sparse vectors of float8
+    values. Future versions will support other base types.
+
+@usage
+
+    Syntax reference can be found in gp_svec.sql_in.
+
+    Users need to add madlib to their search_path to use the svec operators
+    defined in the module.
+
+@examp
+
+    We can input an array directly as an svec as follows: 
+\code   
+    testdb=# select '{1,1,40000,1,1}:{0,33,0,12,22}'::madlib.svec;
+\endcode
+    We can also cast an array into an svec:
+\code
+    testdb=# select ('{0,33,...40,000 zeros...,12,22}'::float8[])::madlib.svec;
+\endcode
+    We can use operations with svec type like <, >, *, **, /, =, +, SUM, etc, 
+    and they have meanings associated with typical vector operations. For 
+    example, the plus (+) operator adds each of the terms of two vectors having
+    the same dimension together. 
+\code
+    testdb=# select ('{0,1,5}'::float8[]::madlib.svec + '{4,3,2}'::float8[]::madlib.svec)::float8[];
+     float8  
+    ---------
+     {4,4,7}
+\endcode
+
+    Without the casting into float8[] at the end, we get:
+\code
+    testdb=# select '{0,1,5}'::float8[]::madlib.svec + '{4,3,2}'::float8[]::madlib.svec;
+     ?column?  
+    ----------
+    {2,1}:{4,7}    	    	
+\endcode
+
+    A dot product (%*%) between the two vectors will result in a scalar 
+    result of type float8. The dot product should be (0*4 + 1*3 + 5*2) = 13, 
+    like this:
+\code
+    testdb=# select '{0,1,5}'::float8[]::madlib.svec %*% '{4,3,2}'::float8[]::madlib.svec;
+     ?column? 
+    ----------
+        13
+\endcode
+
+    Special vector aggregate functions are also available. SUM is self 
+    explanatory. VEC_COUNT_NONZERO evaluates the count of non-zero terms 
+    in each column found in a set of n-dimensional svecs and returns an 
+    svec with the counts. For instance, if we have the vectors {0,1,5},
+    {10,0,3},{0,0,3},{0,1,0}, then executing the VEC_COUNT_NONZERO() aggregate
+    function would result in {1,2,3}:
+
+\code
+    testdb=# create table list (a madlib.svec);
+    testdb=# insert into list values ('{0,1,5}'::float8[]), ('{10,0,3}'::float8[]), ('{0,0,3}'::float8[]),('{0,1,0}'::float8[]);
+ 
+    testdb=# select madlib.vec_count_nonzero(a)::float8[] from list;
+    vec_count_nonzero 
+    -----------------
+        {1,2,3}
+\endcode
+
+    We do not use null bitmaps in the svec data type. A null value in an svec 
+    is represented explicitly as an NVP (No Value Present) value. For example, 
+    we have:
+\code
+    testdb=# select '{1,2,3}:{4,null,5}'::madlib.svec;
+          svec        
+    -------------------
+     {1,2,3}:{4,NVP,5}
+
+    testdb=# select '{1,2,3}:{4,null,5}'::madlib.svec + '{2,2,2}:{8,9,10}'::madlib.svec; 
+             ?column?         
+     --------------------------
+      {1,2,1,2}:{12,NVP,14,15}
+\endcode
+
+    An element of an svec can be accessed using the svec_proj() function,
+    which takes an svec and the index of the element desired.
+\code
+    testdb=# select madlib.svec_proj('{1,2,3}:{4,5,6}'::madlib.svec, 1) + madlib.svec_proj('{4,5,6}:{1,2,3}'::madlib.svec, 15);     
+     ?column? 
+    ----------
+        7
+\endcode
+
+    A subvector of an svec can be accessed using the svec_subvec() function,
+    which takes an svec and the start and end index of the subvector desired.
+\code
+    testdb=# select madlib.svec_subvec('{2,4,6}:{1,3,5}'::madlib.svec, 2, 11);
+       svec_subvec   
+    ----------------- 
+     {1,4,5}:{1,3,5}
+\endcode
+
+    The elements/subvector of an svec can be changed using the function 
+    svec_change(). It takes three arguments: an m-dimensional svec sv1, a
+    start index j, and an n-dimensional svec sv2 such that j + n - 1 <= m,
+    and returns an svec like sv1 but with the subvector sv1[j:j+n-1] 
+    replaced by sv2. An example follows:
+\code
+    testdb=# select madlib.svec_change('{1,2,3}:{4,5,6}'::madlib.svec,3,'{2}:{3}'::madlib.svec);
+         svec_change     
+    ---------------------
+     {1,1,2,2}:{4,5,3,6}
+\endcode
+
+    There are also higher-order functions for processing svecs. For example,
+    the following is the corresponding function for lapply() in R.
+\code
+    testdb=# select madlib.svec_lapply('sqrt', '{1,2,3}:{4,5,6}'::madlib.svec);
+                      svec_lapply                  
+    -----------------------------------------------
+     {1,2,3}:{2,2.23606797749979,2.44948974278318}
+\endcode
+
+    The full list of functions available for operating on svecs are available
+    in gp_svec.sql.
+
+    Other examples of svecs usage can be found in the k-means module.
+
+*/
+
+
 --! @file gp_svec.sql_in
 --!
 

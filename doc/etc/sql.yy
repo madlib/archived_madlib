@@ -41,11 +41,7 @@
 		#include "FlexLexer.h"
 		#undef yyFlexLexer
 	#endif
-	
-	/* FIXME: Remove if no longer necessary. */
-	/* Data type of semantic values */
-	// #define YYSTYPE char *
-	
+		
 	namespace bison {
 
 	/* Forward declaration because referenced by generated class declaration
@@ -63,12 +59,22 @@
 	class SQLDriver
 	{
 	public:
+        class CountingOStream {
+        public:
+            CountingOStream();
+            CountingOStream &advance(int line);
+            CountingOStream &operator<<(const char *str);
+            CountingOStream &operator<<(char c);
+
+            int     currentLine;
+        };
+    
 		SQLDriver(std::string &inFilename);
 		virtual ~SQLDriver();
 		void error(const SQLParser::location_type &l, const std::string &m);
 		void error(const std::string &m);
-
-		
+    
+        CountingOStream                 cout;
 		std::map<std::string, char *>	fnToReturnType;
 		SQLScanner						*scanner;
         std::string                     filename;
@@ -78,14 +84,16 @@
 	 * the proper signature */
 	class SQLScanner : public SQLFlexLexer
 	{
-	public:
+	public:    
 		SQLScanner(std::istream *arg_yyin = 0, std::ostream* arg_yyout = 0);
 		virtual ~SQLScanner();
 		static inline char *strlowerdup(const char *inString);
-		virtual int lex(SQLParser::semantic_type *yylval,
+		int lex(SQLParser::semantic_type *yylval,
 			SQLParser::location_type *yylloc, SQLDriver *driver);
-		virtual void preScannerAction(SQLParser::semantic_type *yylval,
+		void preScannerAction(SQLParser::semantic_type *yylval,
 			SQLParser::location_type *yylloc, SQLDriver *driver);
+
+        char            *stringLiteralQuotation;
 	};
 	
 	class TaggedStr
@@ -170,6 +178,8 @@
 %token			SECURITY_INVOKER
 %token			SECURITY_DEFINER
 
+%token          DEFAULT
+
 /* Aggregate tokens */
 %token	<i>		SFUNC
 %token	<i>		PREFUNC
@@ -191,40 +201,49 @@
 %token			ZONE
 
 %token	<str>	INTEGER_LITERAL
+%token  <str>   FLOAT_LITERAL
 %token	<str>	STRING_LITERAL
 
+/* Special tokens, for extending SQL syntax in C commands */
+%token          BEGIN_SPECIAL
+%token          END_SPECIAL
+
+%type   <str>   expr
 %type	<str>	qualifiedIdent
 %type	<str>	optFnArgList fnArgList fnArgument
+%type   <str>   optDefaultArgument defaultArgument
 %type	<str>	optAggArgList aggArgList aggArgument
 %type	<str>	argname	type baseType optLength optArray array
 %type	<str>	returnDecl retType
 %type	<tStr>	aggOptionList aggOption
 %type	<i>		aggFunc
 
+
 %% /* Grammar rules and actions follow. */
 
 input:
 	| input stmt
-	| input COMMENT { std::cout << $2; }
-	| input '\n' { std::cout << '\n'; }
+	| input COMMENT { driver->cout.advance(@2.begin.line) << $2; }
+	| input '\n' { driver->cout << '\n'; }
 ;
 
 stmt:
 	  ';'
-	| createFnStmt ';' { std::cout << ";\n\n"; }
-	| createAggStmt ';' { std::cout << ";\n\n"; } 
+	| createFnStmt ';'
+	| createAggStmt ';'
 ;
 
 createFnStmt:
 	  CREATE_FUNCTION qualifiedIdent '(' optFnArgList ')' returnDecl fnOptions {
-		std::cout << $6 << ' ' << $2 << '(' << $4 << ") { }";
+		driver->cout.advance(@1.begin.line) << $6 << ' ' << $2 << '(' << $4 << ") { };";
 		driver->fnToReturnType.insert(std::pair<std::string,char *>($2, $6));
 	}
 ;
 
 createAggStmt:
 	  CREATE_AGGREGATE qualifiedIdent '(' optAggArgList ')' '(' aggOptionList ')' {
-		printf("@aggregate %s %s (%s) { }", $7 == NULL ? "" : $7->str, $2, $4);
+		driver->cout.advance(@1.begin.line) << "@aggregate "
+            << ($7 == NULL ? "" : $7->str) << ' ' << $2 << '(' << $4 << ") { };";
 	}
 ;
 
@@ -259,19 +278,34 @@ aggArgList:
 	| aggArgument
 
 fnArgument:
-	  type
-	| argname type {
-		asprintf(&($$), "%s %s", $2, $1);
+	  type optDefaultArgument {
+        asprintf(&($$), "%s%s", $1, $2);
+    }
+	| argname type optDefaultArgument {
+		asprintf(&($$), "%s %s%s", $2, $1, $3);
 	}
-	| argmode argname type {
-		asprintf(&($$), "%s %s", $3, $2);
+	| argmode argname type optDefaultArgument {
+		asprintf(&($$), "%s %s%s", $3, $2, $4);
 	}
+;
+
+optDefaultArgument: { $$ = ""; }
+    | BEGIN_SPECIAL defaultArgument END_SPECIAL { $$ = $2; }
+;
+    
+defaultArgument:
+      DEFAULT expr {
+        asprintf(&($$), " = %s", $2);
+    }
+    | '=' expr {
+        asprintf(&($$), " = %s", $2);
+    }
 ;
 
 aggArgument:
 	  type
-	| argname type {
-		asprintf(&($$), "%s %s", $2, $1);
+	| BEGIN_SPECIAL argname END_SPECIAL type {
+		asprintf(&($$), "%s %s", $4, $2);
 	}
 ;
 
@@ -372,7 +406,7 @@ aggOption:
 		$$ = new TaggedStr($1, driver->fnToReturnType[$3]);
 	}
 	| STYPE '=' type { $$ = new TaggedStr(token::STYPE, $3); }
-	| INITCOND '=' value { $$ = NULL; }
+	| INITCOND '=' expr { $$ = NULL; }
 	/* FIXME: SORTOP not yet supported at this point */
 ;
 
@@ -382,8 +416,9 @@ aggFunc:
 	| FINALFUNC
 ;
 
-value:
+expr:
 	  INTEGER_LITERAL
+    | FLOAT_LITERAL
 	| STRING_LITERAL
 	/* FIXME: Support more or ignore completely */
 ;
@@ -392,7 +427,8 @@ value:
 
 namespace bison{
 
-SQLDriver::SQLDriver(std::string &inFilename) : filename(inFilename) {
+SQLDriver::SQLDriver(std::string &inFilename) :
+    filename(inFilename) {
 }
 
 SQLDriver::~SQLDriver() {
@@ -405,6 +441,35 @@ void SQLDriver::error(const SQLParser::location_type &l, const std::string &m) {
 void SQLDriver::error(const std::string &m) {
 	std::cerr << m << std::endl;
 }
+
+SQLDriver::CountingOStream::CountingOStream() : currentLine(1) {
+}
+
+SQLDriver::CountingOStream &SQLDriver::CountingOStream::advance(int line) {
+    while (currentLine < line) {
+        std::cout.put('\n');
+        currentLine++;
+    }
+    return *this;
+}
+
+SQLDriver::CountingOStream &SQLDriver::CountingOStream::operator<<(
+    const char *str) {
+    
+    for (int i = 0; str[i] != 0; i++)
+        if (str[i] == '\n')
+            currentLine++;
+    
+    std::cout << str;
+    return *this;
+}
+
+SQLDriver::CountingOStream &SQLDriver::CountingOStream::operator<<(char c) {
+    if (c == '\n') currentLine++;
+    std::cout.put(c);
+    return *this;
+}
+
 
 void SQLParser::error(const SQLParser::location_type &l,
 	const std::string &m) {
@@ -450,10 +515,13 @@ int	main(int argc, char **argv)
 	if (result != 0)
 		return result;
 	
+    std::cout << '\n';
+    
+    /*
 	std::cout << "// List of functions:\n";
 	for (std::map<std::string,char *>::iterator it = driver.fnToReturnType.begin();
 		it != driver.fnToReturnType.end(); it++)
 		std::cout << "// " << (*it).first << ": return type " << (*it).second << std::endl;
-	
+	*/
 	return 0;
 }

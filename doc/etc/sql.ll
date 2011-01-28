@@ -48,10 +48,6 @@
 
 	/* import the parser's token type into a local typedef */
 	typedef bison::SQLParser::token	token;
-
-	/* FIXME: Make class variables */
-	int		stringCaller;
-	char	*stringLiteralQuotation = NULL;
 	
 	/* YY_USER_ACTION is called from the lex() function, which has the signature
 	 * and name as defined by macro YY_DECL. yylval, yylloc, and driver are
@@ -62,126 +58,92 @@
 /* Definitions */
 CREATE_FUNCTION "CREATE"{SPACE}("OR"{SPACE}"REPLACE"{SPACE})?"FUNCTION"
 CREATE_AGGREGATE "CREATE"{SPACE}"AGGREGATE"
-COMMENT "--".*$
-CCOMMENT "/*"([^\*]|\*[^/])*"*/"
+COMMENT "--"[^\n\r]*(\n|\r\n?)?
+BEGIN_CCOMMENT "/*"
+END_CCOMMENT ([^\*]|\*[^/])*"*/"
 IDENTIFIER [[:alpha:]_][[:alnum:]_]*
 QUOTED_IDENTIFIER "\""{IDENTIFIER}"\""
-COMMENTED_IDENTIFIER "/*"[[:space:]]*({IDENTIFIER}|{QUOTED_IDENTIFIER})[[:space:]]*"*/"
 INTEGER [[:digit:]]+
 SPACE [[:space:]]+
 DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
+BEGIN_SPECIAL_COMMENT "/*+"
+END_SPECIAL_COMMENT "*/"
+STRING_LITERAL "'"([^']|''|\\')*"'"
+EXPONENT "e"("+"|"-")?[[:digit:]]+
+FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|[[:digit:]]+{EXPONENT}|"'"("+"|"-")?("NaN"|"Infinity")"'"
 
 
 /* State definitions */
 
-%s sAFTER_COMMENT
 %s sFUNC_DECL
 %s sFUNC_ARGLIST
 %s sFUNC_OPTIONS
 %s sAGG_DECL
 %s sAGG_ARGLIST
 %s sAGG_OPTIONS
-%x sSTRING_LITERAL
 %x sDOLLAR_STRING_LITERAL
+%x sCCOMMENT
 
 
 
 %%	/* Rules */
 
-	/* Contiguity of comment blocks is meaningful and therefore has to be
-	 * preserved. Note that input . is handled below */
-<sAFTER_COMMENT>[[:space:]]*\n[[:space:]]* {
-	BEGIN(INITIAL);
-	return '\n';
-}
-
 	/* Ignore spaces */
 {SPACE}
 
 {COMMENT} {
-	yytext[0] = yytext[1] = '/';
-	yylval->str = static_cast<char *>( malloc(yyleng + 2) );
-	strcpy(yylval->str, yytext);
-	yylval->str[yyleng] = '\n'; 
-	yylval->str[yyleng + 1] = 0; 
-	BEGIN(sAFTER_COMMENT);
-	
-	/* consume the newline character (we thus need to advance the line count) */
-	yyinput();
-	yylloc->lines(1);
-	
-	return token::COMMENT;
+    /* only return as token if it is a Doxygen comment. Otherwise, ignore it. */
+    if (yytext[2] == '!') {
+        yytext[0] = yytext[1] = '/';
+        yylval->str = static_cast<char *>( strdup(yytext) );
+        return token::COMMENT;
+    }
 }
 
-    /* Since PostgreSQL (the SQL standard?) disallows labeling arguments of
-     * aggregate functions, we will treat a C-style comment consisting of a
-     * single word as the argument label. */
+    /* Since not all of Greenplum and PostgreSQL allow the following
+     * - labeling arguments of aggregate functions,
+     * - default arguments
+     * we will at in argument lists simply uncomment C style comments when they
+     * begin with "/*+". */
     /* We consume whitespace and newline after the comment only because the next
      * rule does so, too -- we need to be the longest applicable rule. */
-<sAGG_ARGLIST>{COMMENTED_IDENTIFIER}([[:space:]]*\n[[:space:]]*)? {
-    int     startpos = 2, endpos = yyleng - 3;
-    bool    quoted = false;
-    
-    while (isspace(yytext[startpos])) startpos++;
-    while (isspace(yytext[endpos])) endpos--;
-    if (yytext[startpos] == '\"') {
-        // QUOTED_IDENTIFIER
-        startpos++; endpos--;
-        quoted = true;
+<sFUNC_ARGLIST,sAGG_ARGLIST>{
+    {BEGIN_SPECIAL_COMMENT} { return token::BEGIN_SPECIAL; }
+    {END_SPECIAL_COMMENT} { return token::END_SPECIAL; }
+}
+
+    /* A C comment is split up into two parts. The reason is that flex tries to
+     * match the longest rule and we want to give "normal" C comments a low
+     * precedence according to this rule. */
+{BEGIN_CCOMMENT} {
+    yymore();
+    yy_push_state(sCCOMMENT);
+}
+
+<sCCOMMENT>{END_CCOMMENT} {
+    yy_pop_state();
+
+    /* only return as token if it is a Doxygen comment. Otherwise, ignore it. */
+    if (yytext[2] == '*' || yytext[2] == '!') {
+        yylval->str = strdup(yytext);
+        return token::COMMENT;
     }
-    yytext[endpos + 1] = 0;
-    yylval->str = quoted ? strdup(yytext + startpos) : strlowerdup(yytext + startpos);
-    return token::IDENTIFIER;
-}
-
-	/* If only whitespace and a newline follow, also consume that */
-{CCOMMENT}([[:space:]]*\n[[:space:]]*)? {
-	yylval->str = strdup(yytext);
-	BEGIN(sAFTER_COMMENT);
-	return token::COMMENT;
-}
-
-	/* String literals in single quotes */
-"'" { stringCaller = YY_START; BEGIN(sSTRING_LITERAL); }
-
-<sSTRING_LITERAL>{
-	"''" { yymore(); }
-	"\\'" { yymore(); }
-	"'" {
-		yytext[yyleng - 1] = '\0';
-		yylval->str = strdup(yytext);
-		BEGIN(stringCaller);
-		if (stringCaller != INITIAL && stringCaller != sAFTER_COMMENT)
-			return token::STRING_LITERAL;
-	}
-	. { yymore(); }
-}
-
-	/* String literals in dollar quotes, see
-	http://www.postgresql.org/docs/current/static/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING */
-{DOLLARQUOTE} {
-	stringCaller = YY_START;
-	stringLiteralQuotation = static_cast<char *>( malloc(yyleng - 1) );
-	strncpy(stringLiteralQuotation, yytext + 1, yyleng - 1);
-	BEGIN(sDOLLAR_STRING_LITERAL);
 }
 
 <sDOLLAR_STRING_LITERAL>{
 	{DOLLARQUOTE} {
 		if (strncmp(yytext + 1, stringLiteralQuotation, yyleng - 1) == 0) {
-			yylval->str = "<omitted by lexer>";
-			BEGIN(stringCaller);
+			yylval->str = "\"<omitted by lexer>\"";
+			yy_pop_state();
 			free(stringLiteralQuotation);
 			stringLiteralQuotation = NULL;
-			if (stringCaller != INITIAL && stringCaller != sAFTER_COMMENT)
-				return token::STRING_LITERAL;
-		} else {
-			yymore();
+			return token::STRING_LITERAL;
 		}
 	}
-	.|\n
+    /* Speed up the lexer by matching large chunks of text if possible */
+    [^$]*
+    "$"
 }
-
 
 {CREATE_FUNCTION} { BEGIN(sFUNC_DECL); return token::CREATE_FUNCTION; }
 
@@ -234,6 +196,8 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 		return token::RETURNS_NULL_ON_NULL_INPUT; }
 	("EXTERNAL"{SPACE})?"SECURITY"{SPACE}"INVOKER" return token::SECURITY_INVOKER;
 	("EXTERNAL"{SPACE})?"SECURITY"{SPACE}"DEFINER" return token::SECURITY_DEFINER;
+    
+    "DEFAULT" return token::DEFAULT;
 }
 
 	/* We disallow using the following keywords as argument names */
@@ -253,19 +217,33 @@ DOLLARQUOTE "$$"|"$"{IDENTIFIER}"$"
 		return token::IDENTIFIER;
 	}
 	{IDENTIFIER} { yylval->str = strlowerdup(yytext); return token::IDENTIFIER; }
-	{INTEGER} { yylval->str = strdup(yytext); return token::INTEGER_LITERAL; }
+    
+	{INTEGER} {
+        yylval->str = strdup(yytext);
+        return token::INTEGER_LITERAL;
+    }
+    {FLOATING_POINT_LITERAL} {
+        yylval->str = strdup(yytext);
+        return token::FLOAT_LITERAL;
+    }
+    {STRING_LITERAL} {
+    	/* String literals in single quotes */
+        yytext[0] = yytext[yyleng - 1] = '"';
+        yylval->str = strdup(yytext);
+        return token::STRING_LITERAL;
+    }
+    {DOLLARQUOTE} {
+        /* String literals in dollar quotes, see
+        http://www.postgresql.org/docs/current/static/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING */
+        stringLiteralQuotation = static_cast<char *>( malloc(yyleng - 1) );
+        strncpy(stringLiteralQuotation, yytext + 1, yyleng - 1);
+        yy_push_state(sDOLLAR_STRING_LITERAL);
+    }
+    
 	[^;]|\n return yytext[0];
 }
 
 ";" { BEGIN(INITIAL); return ';'; }
-
-
-	/* Contiguity of comment blocks is meaningful and therefore has to be
-	 * preserved. Note that input '\n' is handled above */
-<sAFTER_COMMENT>. {
-	BEGIN(INITIAL);
-	return '\n';
-}
 
 	/* Default action if nothing else applies: consume next character and do nothing */
 .|\n { BEGIN(INITIAL); }
@@ -280,7 +258,7 @@ namespace bison {
  * the header file). */
 
 SQLScanner::SQLScanner(std::istream *arg_yyin, std::ostream *arg_yyout) :
-	SQLFlexLexer(arg_yyin, arg_yyout) {
+	SQLFlexLexer(arg_yyin, arg_yyout), stringLiteralQuotation(NULL) {
 	/* only has an effect if %option debug or flex -d is used */
 	set_debug(1);
 }
@@ -298,6 +276,7 @@ char *SQLScanner::strlowerdup(const char *inString) {
 void SQLScanner::preScannerAction(SQLParser::semantic_type *yylval,
 	SQLParser::location_type *yylloc, SQLDriver *driver) {
 	
+	yylloc->step();
 	for (int i = 0; i < yyleng; i++) {
 		if (yytext[i] == '\r' && i < yyleng - 1 && yytext[i + 1] == '\n') {
 			i++; yylloc->lines(1);
@@ -307,7 +286,6 @@ void SQLScanner::preScannerAction(SQLParser::semantic_type *yylval,
 			yylloc->columns(1);
 		}
 	}
-	yylloc->step(); \
 }
 
 } // namespace bison
