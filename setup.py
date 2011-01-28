@@ -33,6 +33,6 @@ setup(name='madlib',
       package_dir={'madpy': 'madpy', 'madlib': 'methods'},
       package_data=pkg_data,
       scripts=['madpy/madpack/madpack'],
-      requires=['yaml','argparse', 'shutil', 'sqlparse', 'imp', 'traceback', 'hashlib'],
+      requires=['yaml','argparse', 'shutil', 'sqlparse', 'imp', 'traceback', 'hashlib', 'pygresql'],
       provides=['madpy','madlib']
       )
