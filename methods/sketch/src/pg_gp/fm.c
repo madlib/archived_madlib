@@ -3,14 +3,7 @@
  *
  * \brief Flajolet-Martin sketch implementation
  */
-
-/*!
- * \defgroup fmsketch FM (Flajolet-Martin)
- * \ingroup sketches
- * \about
- * Flajolet-Martin's distinct count estimation
- * implemented as a user-defined aggregate.
- *
+/*! 
  * \implementation
  * In a nutshell, the FM sketch
  * is based on the idea of a bitmap whose bits are "turned on" by hashes of
@@ -28,17 +21,7 @@
  *
  * See the paper mentioned below
  * for detailed explanation, formulae, and pseudocode.
- *
- * \usage
- *   <c>fmsketch_dcount(col anytype)</c> is a UDA that can be run on any column of any type.  It returns an approximation to the number of distinct values in the column (a la <c>COUNT(DISTINCT x)</c>, but faster and approximate).  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  Example:\code
- *    SELECT pronargs, madlib.fmsketch_dcount(proname) AS distinct_hat, count(proname)
- *      FROM pg_proc
- *  GROUP BY pronargs;
- *    \endcode
- *
- * \literature
- * - P. Flajolet and N.G. Martin.  Probabilistic counting algorithms for data base applications, Journal of Computer and System Sciences 31(2), pp 182-209, 1985.  http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
- */
+ */ 
 
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 

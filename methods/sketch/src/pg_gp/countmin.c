@@ -2,14 +2,6 @@
  * \file countmin.c
  *
  * \brief CountMin sketch implementation
- */
-
-/*! \defgroup countmin CountMin (Cormode-Muthukrishnan)
- * \ingroup sketches
- * \about
- * This module implements Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
- * on integer values, implemented as user-defined aggregates.  It provides approximate counts, order statistics,
- * and histograms.
  *
  * \implementation
  * The basic CountMin sketch is a set of DEPTH arrays, each with NUMCOUNTERS counters.
@@ -31,41 +23,6 @@
  *
  * The results of the estimators below generally have guarantees of the form
  * "the answer is within \epsilon of the true answer with probability 1-\delta."
- *
- * \usage
- *  - <c>cmsketch(int8)</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a CountMin sketch: a large array of counters that is intended to be passed into a UDF like <c>cmsketch_width_histogram</c> described below.
- *  - <c>cmsketch_count(col int8, v int8)</c> is a UDA that takes a column <c>col</c> and a value <c>v</c>, and reports the approximate number of occurrences of <c>v</c> in <c>col</c>.  Example:\code
- *   SELECT pronamespace, madlib.cmsketch_count(pronargs, 3)
- *     FROM pg_proc
- * GROUP BY pronamespace;
- * \endcode
- *  - <c>cmsketch_rangecount(intcol int8, low int8, hi int8)</c> is a UDA that takes a column <c>col</c> and a range <c>[low, hi]</c>, and  reports the approximate number of values in <c>col</c> that fall between <c>low</c> and <c>hi</c> inclusive.
- *  Example:\code
- *   SELECT pronamespace, madlib.cmsketch_rangecount(pronargs, 3, 5)
- *     FROM pg_proc
- * GROUP BY pronamespace;
- *  \endcode
- *  - <c>cmsketch_centile(intcol int8, pct int4)</c> is a UDA that takes a column <c>col</c> and a percentage value <c>pct</c> between 1 and 99, and reports a value in <c>col</c> that is approximately at the <c>pct</c> centile in sorted order.  Example:\code
- *   SELECT relnamespace, madlib.cmsketch_centile(oid::int8, 75)
- *     FROM pg_class
- * GROUP BY relnamespace;
- *  \endcode
- *  - <c>cmsketch_width_histogram(cmsketch(intcol int8), min(intcol int8), max(intcol int8), nbuckets int4)</c>  is a <i>UDF</i> that takes three aggregates of a column <c>col</c> -- cmsketch, min and max-- as well as a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Example:\code
- *   SELECT madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), min(oid::int8), max(oid::int8), 10)
- *     FROM pg_class;
- *  \endcode
- *  - <c>cmsketch_depth_histogram(intcol int8, nbuckets int4)</c> is a UDA that takes a column <c>col</c> and a number of buckets <c>nbuckets</c>, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles.  Example:\code
- *   SELECT madlib.cmsketch_depth_histogram(oid::int8, 10)
- *     FROM pg_class;
- *  \endcode
- *
- * \literature
- *  - G. Cormode and S. Muthukrishnan. An improved data stream summary: The count-min sketch and its applications.  LATIN 2004, J. Algorithm 55(1): 58-75 (2005) .
- *  - G. Cormode and S. Muthukrishnan. Summarizing and mining skewed data streams. SDM 2005.
- *  - http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf
- * has a concise explanation
- *
- * \sa quantile
  */
 
 #include "postgres.h"

@@ -28,49 +28,28 @@
  *  - frequent-value counting
  */
 
-/*! @addtogroup sketches
- *
- * @about
- * \par
- * There is a large body of research on small-space "sketch" techniques (sometimes called "synopsis data structures") for approximating properties of large data sets in a single pass.  Some of that work was targeted at stream or network processing, but it's equally applicable to large stored datasets.  Sketches are particularly useful for profiling multiple columns of a large table in a single pass.  This module currently implements user-defined aggregates based on three main sketch methods:
- *  - <i>Flajolet-Martin (FM)</i> sketches (http://algo.inria.fr/flajolet/Publications/FlMa85.pdf) for approximately counting the number of distinct values in a set.
- *  - <i>Count-Min (CM)</i> sketches (http://dimacs.rutgers.edu/~graham/pubs/papers/cmencyc.pdf), which can be used to approximate a number of descriptive statistics including
- *    - number of occurrences of a given value in a set
- *    - number of occurrences in a set that fall in a range of values (*)
- *    - order statistics including median and centiles (*)
- *    - histograms: both equi-width and equi-depth (*)
- *  - <i>Most Frequent Value (MFV)</i> sketches are basically a variant of Count-Min sketches that can generate a histogram for the most frequent values in a set.
- *
- *  <i>Note:</i> Features marked with a single star (*) only work for discrete types that can be cast to int8.
- *
- *
- * @prereq
- * None.  Because sketches are essentially a high-performance compression technique, they were custom-coded for efficiency in C for PostgreSQL/Greenplum.
- *
- * @usage
- * The sketch method consists of a number of SQL user-defined functions (UDFs) and user-defined aggregates (UDAs), documented within each individual method.
- *
- * @todo
- * - Provide a relatively portable SQL-only implementation of CountMin.  (FM bit manipulation won't port well regardless).
- * - Provide a python wrapper to the CountMin sketch output, and write scalar functions in python.
- *
- *
- * \bug
- * - <i>Equality-Testing Corner Case:</i>
- * For hashing, we convert values into text using the type's text output routine.
- * In general this should work fine, but there is the possibility that two
- * different values in the domain could have the same textual representation.
- * In these corner cases we will see incorrect counts for those values.
- * The proper way to do this is not to use the "outfunc", but rather to look up the
- * type-specific hash function as is done internally for hashjoin, hash indexes,
- * etc.  The basic pattern for looking up the hash function in Postgres
- * internals is something like the following:
- * \code
- * get_sort_group_operators(dtype, false, true, false, &ltOpr, &eqOpr, &gtOpr);
- * success = get_op_hash_functions(eqOpr, result, NULL));
- * \endcode
- */
+/*
+@addtogroup sketches
+@todo
+- Provide a relatively portable SQL-only implementation of CountMin.  (FM bit manipulation won't port well regardless).
+- Provide a python wrapper to the CountMin sketch output, and write scalar functions in python.
 
+
+@bug
+- <i>Equality-Testing Corner Case:</i>
+For hashing, we convert values into text using the type's text output routine.
+In general this should work fine, but there is the possibility that two
+different values in the domain could have the same textual representation.
+In these corner cases we will see incorrect counts for those values.
+The proper way to do this is not to use the "outfunc", but rather to look up the
+type-specific hash function as is done internally for hashjoin, hash indexes,
+etc.  The basic pattern for looking up the hash function in Postgres
+internals is something like the following:
+@code
+get_sort_group_operators(dtype, false, true, false, &ltOpr, &eqOpr, &gtOpr);
+success = get_op_hash_functions(eqOpr, result, NULL));
+@endcode
+*/
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
 #include "postgres.h"
