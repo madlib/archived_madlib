@@ -32,8 +32,10 @@ def __create_config_mk(conf, methdir):
         
     for line in open(madpy.__path__[0]+'/config/config.mk').readlines():
         line2 = re.sub('SCHEMA_PLACEHOLDER', conf['target_schema'], line)
-        line3 = re.sub('CONFDEFS', conf['prep_flags'], line2)
-        line4 = re.sub('PYTHON_TARGET_DIR', conf['python_modules_dir'], line3)
+        # Below line will modify install-python section (python modules placement)
+        line3 = re.sub('PLPYTHON_LIBDIR', conf['plpython_libdir'], line2)
+        # Below line will modify the m4 calls (SQL files preprocessing)
+        line4 = re.sub('CONFDEFS', conf['prep_flags'] + ' -DPLPYTHON_LIBDIR=' + conf['plpython_libdir'], line3)        
         line5 = re.sub('DBAPI2_PLACEHOLDER', conf['dbapi2'], line4)          
         mkfd.write(line5)
     mkfd.close()
@@ -49,7 +51,7 @@ def __remove_config_mk(methdir):
 # @param mkarg the argument to the make command (install, clean, etc.)
 # @param conf the parsed Config.yml object
 def make_methods(mkarg, conf, verbose):
-    print "Processing MADlib methods: " + mkarg
+    print "Processing methods: " + mkarg
     for m in conf['methods']:
         mdir = madpy.__path__[0]+'/../madlib/' + m['name'] + '/src/' + m['port'] + '/'
         # print "changing directory to " + mdir

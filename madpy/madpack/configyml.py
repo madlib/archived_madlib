@@ -4,6 +4,7 @@
 # Install.yml files.
 import yaml
 import re
+import subprocess
 from itertools import chain
 
 ##
@@ -74,7 +75,8 @@ def get_config(configdir, first_install):
         # print "malformed Config.yml: no prep_flags"
         # exit(2)
     try:
-        conf['python_modules_dir']
+        pldir = subprocess.Popen(["pg_config --libdir"], shell=True, stdout=subprocess.PIPE).communicate()[0]
+        conf['plpython_libdir'] = pldir.replace('\n', '') + '/python'
     except:
         print "malformed Config.yml: no python_modules_dir"
         exit(2)
