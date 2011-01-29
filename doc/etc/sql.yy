@@ -92,8 +92,10 @@
 			SQLParser::location_type *yylloc, SQLDriver *driver);
 		void preScannerAction(SQLParser::semantic_type *yylval,
 			SQLParser::location_type *yylloc, SQLDriver *driver);
+        void more();
 
         char            *stringLiteralQuotation;
+        unsigned long   oldLength;
 	};
 	
 	class TaggedStr

@@ -35,6 +35,11 @@
  * of `lex.yy.c' */
 %option stdout
 
+/* We really use yymore, but only in more(). We need to provide this option
+ * because flex with otherwise complain:
+ * "error: ‘yymore_used_but_not_detected’ was not declared in this scope */
+%option yymore
+
 
 /* C++ Code */
 %{
@@ -103,10 +108,8 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
     /* Since not all of Greenplum and PostgreSQL allow the following
      * - labeling arguments of aggregate functions,
      * - default arguments
-     * we will at in argument lists simply uncomment C style comments when they
+     * we will simply uncomment C style comments in argument lists when they
      * begin with "/*+". */
-    /* We consume whitespace and newline after the comment only because the next
-     * rule does so, too -- we need to be the longest applicable rule. */
 <sFUNC_ARGLIST,sAGG_ARGLIST>{
     {BEGIN_SPECIAL_COMMENT} { return token::BEGIN_SPECIAL; }
     {END_SPECIAL_COMMENT} { return token::END_SPECIAL; }
@@ -116,7 +119,7 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
      * match the longest rule and we want to give "normal" C comments a low
      * precedence according to this rule. */
 {BEGIN_CCOMMENT} {
-    yymore();
+    more();
     yy_push_state(sCCOMMENT);
 }
 
@@ -240,7 +243,7 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
         yy_push_state(sDOLLAR_STRING_LITERAL);
     }
     
-	[^;]|\n return yytext[0];
+	[^;] { return yytext[0]; }
 }
 
 ";" { BEGIN(INITIAL); return ';'; }
@@ -258,7 +261,7 @@ namespace bison {
  * the header file). */
 
 SQLScanner::SQLScanner(std::istream *arg_yyin, std::ostream *arg_yyout) :
-	SQLFlexLexer(arg_yyin, arg_yyout), stringLiteralQuotation(NULL) {
+	SQLFlexLexer(arg_yyin, arg_yyout), stringLiteralQuotation(NULL), oldLength(0) {
 	/* only has an effect if %option debug or flex -d is used */
 	set_debug(1);
 }
@@ -277,15 +280,26 @@ void SQLScanner::preScannerAction(SQLParser::semantic_type *yylval,
 	SQLParser::location_type *yylloc, SQLDriver *driver) {
 	
 	yylloc->step();
-	for (int i = 0; i < yyleng; i++) {
+    
+    // Start at oldLength: We don't want to count preserved text more than once
+	for (int i = oldLength; i < yyleng; i++) {
 		if (yytext[i] == '\r' && i < yyleng - 1 && yytext[i + 1] == '\n') {
 			i++; yylloc->lines(1);
 		} else if (yytext[i] == '\r' || yytext[i] == '\n') {
 			yylloc->lines(1);
-		} else { \
+		} else {
 			yylloc->columns(1);
 		}
 	}
+    
+    // Reset oldLength. more() needs to be called if yytext is to be preserved
+    // again
+    oldLength = 0;
+}
+
+void SQLScanner::more() {
+    oldLength = yyleng;
+    yymore();
 }
 
 } // namespace bison
