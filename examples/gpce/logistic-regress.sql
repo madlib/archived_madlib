@@ -96,6 +96,6 @@ SELECT * FROM artificiallogreg LIMIT 5;
 
 \qecho === Calculate Coefficients from artificial data: ================
 
-SELECT madlib.logreg_coef(
+SELECT madlib.logregr_coef(
 	'artificiallogreg', 'y', 'x', 20, 'irls', 0.001
 )::REAL[];
