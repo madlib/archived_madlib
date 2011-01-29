@@ -1,140 +1,137 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file online_sv.sql_in
+ *
+ * @brief SQL functions for support vector machines
+ * @sa For an introduction to Support vector machines (SVMs) and related kernel
+ *     methods, see the module description \ref grp_kernmach.
+ *
+ *//* ------------------------------------------------------------------------*/
+
 /**
-
-@file online_sv.sql_in
-
 @addtogroup grp_kernmach
 
 @about
 
-    Support vector machines (SVMs) and related kernel methods have been one of 
-    the most popular and well-studied machine learning techniques of the 
-    past 15 years, with an amazing number of innovations and applications.
+Support vector machines (SVMs) and related kernel methods have been one of 
+the most popular and well-studied machine learning techniques of the 
+past 15 years, with an amazing number of innovations and applications.
 
-    In a nutshell, an SVM model f(x) takes the form of
-\code
-        f(x) = sum_i alpha_i k(x_i,x),
-\endcode
-    where each alpha_i is a real number, each x_i is a data point from the
-    training set (called a support vector), and k(.,.) is a kernel function 
-    that measures how `similar' two objects are. In regression, f(x) is the 
-    regression function we seek. In classification, f(x) serves as the 
-    decision boundary; so for example in binary classification, the predictor 
-    can output class 1 for object x if f(x) >= 0, and class 2 otherwise.
+In a nutshell, an SVM model $f(x)$ takes the form of
+\f[
+    f(x) = \sum_i \alpha_i k(x_i,x),
+\f]
+where each \f$ \alpha_i \f$ is a real number, each $x_i$ is a data point from
+the training set (called a support vector), and \f$ k(\cdot, \cdot) \f$ is a
+kernel function that measures how "similar" two objects are. In regression,
+$f(x)$ is the regression function we seek. In classification, $f(x)$ serves as
+the decision boundary; so for example in binary classification, the predictor 
+can output class 1 for object $x$ if \f$ f(x) \geq 0 \f$, and class 2 otherwise.
 
-    In the case when the kernel function k(.,.) is the standard inner product 
-    on vectors, f(x) is just an alternative way of writing a linear function
-\code
-        f'(x) = <w,x>,
-\endcode
-    where w is a weight vector having the same dimension as x. One of the 
-    key points of SVMs is that we can use more fancy kernel functions to 
-    efficiently learn linear models in high-dimensional feature spaces, 
-    since k(x_i,x_j) can be understood as an efficient way of computing an 
-    inner product in the feature space:
-\code
-        k(x_i,x_j) = <phi(x_i),phi(x_j)>,
-\endcode
-    where phi(x) projects x into a (possibly infinite-dimensional) feature
-    space.
+In the case when the kernel function \f$ k(\cdot, \cdot) \f$ is the standard
+inner product on vectors, $f(x)$ is just an alternative way of writing a linear
+function
+\f[
+    f'(x) = \langle w,x \rangle,
+\f]
+where $w$ is a weight vector having the same dimension as $x$. One of the 
+key points of SVMs is that we can use more fancy kernel functions to 
+efficiently learn linear models in high-dimensional feature spaces, 
+since $k(x_i,x_j)$ can be understood as an efficient way of computing an 
+inner product in the feature space:
+\f[
+    k(x_i,x_j) = \langle \phi(x_i), \phi(x_j) \rangle,
+\f]
+where \f$ \phi(x) \f$ projects $x$ into a (possibly infinite-dimensional)
+feature space.
 
-    There are many algorithms for learning kernel machines. This module 
-    implements the class of online learning with kernels algorithms 
-    described in \n
+There are many algorithms for learning kernel machines. This module 
+implements the class of online learning with kernels algorithms 
+described in Kivinen et al. [1]. See also the book Scholkopf and Smola [2]
+for much more details.
 
-      - Jyrki Kivinen, Alexander J. Smola and Robert C. Williamson, \n
-        Online Learning with Kernels, IEEE Transactions on Signal Processing, 52(8), 2165-2176, 2004.\n
+The implementation follows the original description in the Kivinen et al 
+paper faithfully, except that we only update the support vector model 
+when we make a significant error. The original algorithms update the 
+support vector model at every step, even when no error was made, in the 
+name of regularisation. For practical purposes, and this is verified 
+empirically to a certain degree, updating only when necessary is both 
+faster and better from a learning-theoretic point of view, at least in 
+the i.i.d. setting.
 
-    See also the book \n
-  
-      - Bernhard Scholkopf and Alexander J. Smola, Learning with Kernels: \n
-        Support Vector Machines, Regularization, Optimization, and Beyond, 
-        MIT Press, 2002 \n
- 
-    for much more details.
+Methods for classification, regression and novelty detection are 
+available. Multiple instances of the algorithms can be executed 
+in parallel on different subsets of the training data. The resultant
+support vector models can then be combined using standard techniques
+like averaging or majority voting.
 
-    The implementation follows the original description in the Kivinen et al 
-    paper faithfully, except that we only update the support vector model 
-    when we make a significant error. The original algorithms update the 
-    support vector model at every step, even when no error was made, in the 
-    name of regularisation. For practical purposes, and this is verified 
-    empirically to a certain degree, updating only when necessary is both 
-    faster and better from a learning-theoretic point of view, at least in 
-    the i.i.d. setting.
-
-    Methods for classification, regression and novelty detection are 
-    available. Multiple instances of the algorithms can be executed 
-    in parallel on different subsets of the training data. The resultant
-    support vector models can then be combined using standard techniques
-    like averaging or majority voting.
-
-    Training data points are accessed via a table or a view. The support
-    vector models can also be stored in tables for fast execution.
-
+Training data points are accessed via a table or a view. The support
+vector models can also be stored in tables for fast execution.
 
 @prereq
 
-    - None at this point. Will need the Greenplum sparse vector 
-      SVEC datatype eventually.
+None at this point. Will need the \link svec sparse vector SVEC
+datatype\endlink eventually.
 
 @usage
 
-  Here are the main learning functions.
+Here are the main learning functions.
 
-     -  Regression learning is achieved through the following function
-        \code
-        madlib.sv_regression(input_table text, model_name text, parallel bool)
-        \endcode
+-  Regression learning is achieved through the following function
+   \code
+   madlib.sv_regression(input_table text, model_name text, parallel bool)
+   \endcode
 
-     -  Classification learning is achieved through the following function
-        \code
-        madlib.sv_classification(input_table text, model_name text, parallel bool)
-        \endcode
+-  Classification learning is achieved through the following function
+   \code
+   madlib.sv_classification(input_table text, model_name text, parallel bool)
+   \endcode
 
-     -  Novelty detection is achieved through the following function
-        \code
-        madlib.sv_novelty_detection(input_table text, model_name text, parallel bool)
-        \endcode
+-  Novelty detection is achieved through the following function
+   \code
+   madlib.sv_novelty_detection(input_table text, model_name text, parallel bool)
+   \endcode
 
-  In each case, input_table is the name of the table/view with the training 
-  data, model_name is the name under which we want to store the resultant 
-  learned model, and parallel is a flag indicating whether the system
-  should learn multiple models in parallel. (The multiple models can be
-  combined to make predictions; more on that shortly.)
+In each case, input_table is the name of the table/view with the training 
+data, model_name is the name under which we want to store the resultant 
+learned model, and parallel is a flag indicating whether the system
+should learn multiple models in parallel. (The multiple models can be
+combined to make predictions; more on that shortly.)
 
-  Here are the functions that can be used to make predictions on new
-  data points.
+Here are the functions that can be used to make predictions on new
+data points.
 
-     - To make predictions on new data points using a single model
-       learned previously, we use the function
-       \code
-       madlib.svs_predict(model_name text, x float8[]),
-       \endcode
-       where model_name is the name of the model stored and x is a data point.
-
-     - To make predictions on new data points using multiple models
-       learned in parallel, we use the function
-       \code
-       madlib.svs_predict_combo(model_name text, x float8[]),
-       \endcode
-       where model_name is the name under which the models are stored, and x 
-       is a data point.
-
-     - To make predictions on new data points stored in a table using
-       previously learned models, we use the function
-       \code
-       madlib.sv_predict(input_table text, col_name text, model_name text, output_table text, parallel bool),
-       \endcode
-       where the data points are stored under column col_name in input_table,
-       output_table is the table into which we will store the results,
-       model_name is the name of the model previously learned, and parallel is 
-       true if the model was learned in parallel, false otherwise. 
-       The output_table is created during the function call; an existing table with 
-       the same name will be dropped.
-
-  Models that have been stored can be deleted using the function
+- To make predictions on new data points using a single model
+  learned previously, we use the function
   \code
-       madlib.drop_sv_model(modelname text).
+  madlib.svs_predict(model_name text, x float8[]),
   \endcode
+  where model_name is the name of the model stored and x is a data point.
+
+- To make predictions on new data points using multiple models
+  learned in parallel, we use the function
+  \code
+  madlib.svs_predict_combo(model_name text, x float8[]),
+  \endcode
+  where model_name is the name under which the models are stored, and x 
+  is a data point.
+
+- To make predictions on new data points stored in a table using
+  previously learned models, we use the function
+  \code
+  madlib.sv_predict(input_table text, col_name text, model_name text, output_table text, parallel bool),
+  \endcode
+  where the data points are stored under column col_name in input_table,
+  output_table is the table into which we will store the results,
+  model_name is the name of the model previously learned, and parallel is 
+  true if the model was learned in parallel, false otherwise. 
+  The output_table is created during the function call; an existing table with 
+  the same name will be dropped.
+
+Models that have been stored can be deleted using the function
+\code
+   madlib.drop_sv_model(modelname text).
+\endcode
 
 @examp
 
@@ -235,6 +232,21 @@ Example usage for novelty detection:
         testdb=# select * from madlib.svs_predict_combo('myexpnd', '{-1,-1}');  
         \endcode
 
+@sa file online_sv.sql_in (documenting the SQL functions)
+
+@interntal
+@sa 
+@endinternal
+
+@literature
+
+[1] Jyrki Kivinen, Alexander J. Smola, and Robert C. Williamson: <em>Online
+    Learning with Kernels</em>, IEEE Transactions on Signal Processing, 52(8),
+    2165-2176, 2004.
+
+[2] Bernhard Scholkopf and Alexander J. Smola: <em>Learning with Kernels:
+    Support Vector Machines, Regularization, Optimization, and Beyond</em>, 
+    MIT Press, 2002.
 */
 
 -- The following is the structure to record the results of a learning process.

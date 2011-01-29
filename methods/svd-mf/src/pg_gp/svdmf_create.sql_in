@@ -1,13 +1,127 @@
---------------------------------------------------------------------------------
--- DB Migration >> create script
---------------------------------------------------------------------------------
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file svdmf_create.sql_in
+ *
+ * @brief SQL functions for SVD Matrix Factorization
+ * @date   January 2011
+ *
+ * @sa For a brief introduction to SVD Matrix Factorization, see the module
+ *     description \ref grp_svdmf.
+ *
+ *//* ----------------------------------------------------------------------- */
 
---! @file svdmf_create.sql_in
+/**
+@addtogroup grp_svdmf 
 
---! This function takes as an input table representation of a sparse matrix and decomposes it into
---!	the specified set of most significant features of matrices of U and V matrix. With Delta values 
---!	being randomly distributed between U and V
---!
+@about
+
+This module implements "partial SVD decomposition" method for a table
+representing a sparse matrix. Code is based on the write-up as appears at
+[1], with some modifications.
+
+This algorithm is not intended to do the full decomposition, or to be used as part of
+inverse procedure. It is meant to compute a low-rank approximation of the U and V matrices, which 
+is used in machine learning applications. 
+
+It expects input to be contained in a table where column number and row number for each cell
+are sequential; that is to say that if the data was written as a matrix, those values would be the
+actual row and column numbers and not some random identifiers. Hence each row and each column must
+have at least one value. 
+
+@prereq
+
+None.
+
+@usage
+
+Function: <tt>svdmf_run( '<em>input_table</em>', '<em>col_name</em>',
+   '<em>row_name</em>', '<em>value</em>', <em>num_features</em>)</tt>
+
+Parameters:
+    - <em>input_table</em> :     name of the table/view with the source data
+    - <em>col_name</em> :        name of the column containing cell column number
+    - <em>row_name</em> :        name of the column containing cell row number
+    - <em>value</em> :           name of the column containing cell value
+    - <em>num_features</em> :    number of features to specify
+
+@examp
+
+1) Prepare an input table/view:
+
+
+\code
+CREATE TABLE svd_test (
+ col INT,
+ row INT,
+ val FLOAT
+);
+\endcode
+     
+2) Populate the input table with some data. For example:
+
+\code
+SQL> INSERT INTO svd_test SELECT (g.a%1000)+1, g.a/1000+1, random() FROM generate_series(1,1000) AS g(a);
+\endcode
+   
+3) Call svdmf_run() stored procedure, e.g.:  
+
+\code
+SQL> select madlib.svdmf_run( 'svd_test', 'col', 'row', 'val', 3);
+\endcode
+
+4) Sample Output:
+
+\code
+INFO:  ('Started svdmf_run() with parameters:',)
+INFO:  (' * input_matrix = madlib_svdsparse_test.test',)
+INFO:  (' * col_name = col_num',)
+INFO:  (' * row_name = row_num',)
+INFO:  (' * value = val',)
+INFO:  (' * num_features = 3',)
+INFO:  ('Copying the source data into a temporary table...',)
+INFO:  ('Estimating feature: 1',)
+INFO:  ('...Iteration 1: residual_error = 33345014611.1, step_size = 4.9997500125e-10, min_improvement = 1.0',)
+INFO:  ('...Iteration 2: residual_error = 33345014557.6, step_size = 5.49972501375e-10, min_improvement = 1.0',)
+INFO:  ('...Iteration 3: residual_error = 33345014054.3, step_size = 6.04969751512e-10, min_improvement = 1.0',)
+...
+INFO:  ('...Iteration 78: residual_error = 2.02512133868, step_size = 5.78105354457e-10, min_improvement = 1.0',)
+INFO:  ('...Iteration 79: residual_error = 0.893810181282, step_size = 6.35915889903e-10, min_improvement = 1.0',)
+INFO:  ('...Iteration 80: residual_error = 0.34496773222, step_size = 6.99507478893e-10, min_improvement = 1.0',)
+INFO:  ('Swapping residual error matrix...',)
+                                         svdmf_run                                          
+--------------------------------------------------------------------------------------------
+ 
+ Finished SVD matrix factorisation for madlib_svdsparse_test.test (row_num, col_num, val). 
+ Results: 
+  * total error = 0.34496773222
+  * number of estimated features = 1
+ Output:
+  * table : madlib.matrix_u
+  * table : madlib.matrix_v
+ Time elapsed: 4 minutes 47.86839 seconds.
+
+\endcode
+
+@sa file svdmf_create.sql_in (documenting the SQL functions)
+
+@internal
+@sa namespace svdmf (documenting the implementation in Python)
+@endinternal
+
+@literature
+
+[1] Simon Funk, Netflix Update: Try This at Home, December 11 2006,
+    http://sifter.org/~simon/journal/20061211.html
+*/
+
+/**
+ * @brief Partial SVD decomposition of a sparse matrix into U and V components
+ *
+ * This function takes as input the table representation of a sparse matrix and
+ * decomposes it into the specified set of most significant features of matrices
+ * of U and V matrix. With Delta values being randomly distributed between U
+ * and V.
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svdmf_run(
     input_table TEXT, col_name TEXT, row_name TEXT, value TEXT, num_features INT
 )

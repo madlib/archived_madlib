@@ -1,5 +1,79 @@
---!
---! @file quantile.sql_in
---!
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file quantile.sql_in
+ *
+ * @brief SQL functions for Qantile
+ * @date   January 2011
+ *
+ * @sa For a brief introduction to quantiles, see the module
+ *     description \ref grp_quantile.
+ *
+ *//* ----------------------------------------------------------------------- */
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile( table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$declare  size FLOAT[];  curr FLOAT;BeginEXECUTE	'SELECT ARRAY[COUNT(*), MIN( ' || col_name || ' ), MAX(' || col_name || ' ), AVG( ' || col_name || ' )] FROM ' || table_name || ';' INTO size;	size[1] = size[1]*quantile;    LOOP    	EXECUTE 'SELECT COUNT(*) FROM '|| table_name || ' WHERE ' || col_name  || ' <= ' || size[4] || ';'  INTO curr;    	-- RAISE INFO 'VALUES NOW: % WANT: % FRACT: % MIN: % MAX: % CURR: %', curr, size[1], curr/size[1] + size[1]/curr, size[2], size[3], size[4];    	IF((curr - size[1]) > 1) THEN    		size[3] = size[4];    		size[4] = (size[2]+size[4])/2.0;    	ELSIF((size[1] - curr) > 1) THEN    		size[2] = size[4];    		size[4] = (size[3]+size[4])/2.0;    	ELSE    		RETURN size[4];    	END IF;    END LOOP;    RETURN size[4];end$$ LANGUAGE plpgsql;
+/**
+@addtogroup grp_quantile
+
+@about
+This function computes the specified quantile value. It reads the name of the table, the specific column, and
+computes the quantile value based on the fraction specified as the third argument. 
+
+For a different implementation of quantile check out the cmsketch_centile() 
+aggregate in \link countmin CountMin (Cormode-Muthukrishnan) \endlink module. 
+
+
+@prereq
+None
+
+@usage
+Function: <tt>quantile( '<em>table_name</em>', '<em>col_name</em>',
+ <em>quantile</em>)</tt>
+
+@examp
+
+-# Prepare some input:\n
+   <tt>CREATE TABLE tab1 AS SELECT generate_series( 1,1000) as col1;</tt>
+-# Run the quantile() function:\n
+   <tt>SELECT madlib.quantile( 'tab1', 'col1', .3);</tt>
+
+@sa file quantile.sql_in (documenting the SQL function),
+    module countmin (for an approximate quantile implementation)
+*/
+
+
+/**
+ * @brief Compute a quantile
+ * 
+ * @param table_name name of the table from which quantile is to be taken
+ * @param col_name name of the column that is to be used for quantile calculation
+ * @param quantile desired quantile value \f$ \in (0,1) \f$
+ * @returns The quantile value
+ *
+ * This function computes the specified quantile value. It reads the name of the
+ * table, the specific column, and computes the quantile value based on the
+ * fraction specified as the third argument.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile( table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
+declare
+  size FLOAT[];
+  curr FLOAT;
+Begin
+EXECUTE	'SELECT ARRAY[COUNT(*), MIN( ' || col_name || ' ), MAX(' || col_name || ' ), AVG( ' || col_name || ' )] FROM ' || table_name || ';' INTO size;
+	size[1] = size[1]*quantile;
+
+    LOOP
+    	EXECUTE 'SELECT COUNT(*) FROM '|| table_name || ' WHERE ' || col_name  || ' <= ' || size[4] || ';'  INTO curr;
+    	-- RAISE INFO 'VALUES NOW: % WANT: % FRACT: % MIN: % MAX: % CURR: %', curr, size[1], curr/size[1] + size[1]/curr, size[2], size[3], size[4];
+    	IF((curr - size[1]) > 1) THEN
+    		size[3] = size[4];
+    		size[4] = (size[2]+size[4])/2.0;
+    	ELSIF((size[1] - curr) > 1) THEN
+    		size[2] = size[4];
+    		size[4] = (size[3]+size[4])/2.0;
+    	ELSE
+    		RETURN size[4];
+    	END IF;
+    END LOOP;
+
+    RETURN size[4];
+end
+$$ LANGUAGE plpgsql;

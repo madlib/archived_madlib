@@ -1,17 +1,132 @@
---------------------------------------------------------------------------------
--- MADlib K-Means Clustering:
--- DB Migration >> create script
---------------------------------------------------------------------------------
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file kmeans_create.sql_in
+ *
+ * @brief SQL functions for k-means clustering
+ * @date January 2011
+ *
+ * @sa For a brief introduction to k-means clustering, see the module
+ *     description \ref grp_kmeans.
+ *
+ *//* ----------------------------------------------------------------------- */
 
---! @file kmeans_create.sql_in
---!
---! Database objects for k-means clustering
+/**
+@addtogroup grp_kmeans 
+
+@about
+
+K-means clustering algorithm helps in dividing a list of objects 
+into K groups based on the similarity of their attributes. 
+
+Both objects and groups are represented as points in n-dimensional 
+space. The similarity is expressed as distance between objects (points) and
+group centers (centroids). Each object is assigned to a group with 
+the nearest centroid in a series of iterations, the goal of which is
+to minimize the total distance between points and their centroids. 
+The distance is currently measured using l2-norm, 
+also know as
+<a href="http://en.wikipedia.org/wiki/Norm_(mathematics)#Euclidean_norm">Euclidean
+distance</a>.
+
+
+This method works on a set of data points accessible in a table or through a view. 
+Initial centroids are found according to  
+k-means++ algorithm [1]. 
+Further adjustments are based on the Euclidean distance between 
+the current centroids and all available data points or a random subset of them
+, such that there are at least 200 points from each initial cluster.
+
+The algorithm stops when one of the following conditions is met:
+- fraction of reassigned nodes is not growing
+- fraction of reassigned nodes is smaller than the limit (default = 0.001)
+- reached the maximum number of allowed iterations (default = 20)
+
+@prereq
+
+Requires MADlib \link svec svec module\endlink, which provides a sparse vector
+data type.
+
+@usage
+
+Function: <tt>kmeans_run( '<em>input_table</em>', <em>k</em>,
+   '<em>goodness</em>', '<em>run_id</em>', '<em>output_schema</em>')</tt>
+
+Parameters:
+    - <em>input_table</em> :      table with the source data
+    - <em>k</em> :                max number of clusters to consider 
+                                  (must be smaller than number of input points)
+    - <em>goodness</em> :         goodness of fit test flag [0,1]
+    - <em>run_id</em> :           execution identifier
+    - <em>output_schema</em> :    target schema for output tables (points, centroids)
+
+@examp
+
+1) Prepare the input table/view with the following structure. This method
+currently requires the following column names, as well as the data types:
+
+\code
+	pid 		INTEGER                            
+	position 	{SVEC|INT[]|FLOAT[]}   
+\endcode
+ 
+where: 
+    - <em>pid</em> is the name of the column with an ID of the object (point)
+    - <em>position</em> is the attribute vector (point coordinates)
+    
+2) Populate the input table with some data. You can use a helper function (create_test_table) from the sql/setup.sql file.
+   
+3) Call kmeans_run() stored procedure, e.g.:  
+
+\code
+SQL> select madlib.kmeans_run( 'source_schema.source_name', 10, 1, 'my_test_run', 'my_schema');
+\endcode
+  
+4) Sample output:
+
+\code
+INFO: Parameters:
+INFO:  * k = 10 (number of centroids)
+INFO:  * input_table = source_schema.source_name
+INFO:  * goodness = 1 (GOF test on)
+INFO:  * run_id = my_test_run
+INFO:  * output_schema = my_schema
+INFO: Seeding 10 centroids...
+INFO: Using sample data set for analysis... (9200 out of 10000 points)
+INFO: ...Iteration 1
+INFO: ...Iteration 2
+INFO: Exit reason: fraction of reassigned nodes is smaller than the limit: 0.001
+INFO: Expanding cluster assignment to all points...
+INFO: Calculating goodness of fit...
+
+Finished k-means clustering on "my_schema"."kmeans_input_table" table. 
+Results: 
+    * 10 centroids (goodness of fit = 2.9787570001).
+Output:
+    * table : "my_schema"."kmeans_out_centroids_testrun"
+    * table : "my_schema"."kmeans_out_points_testrun"
+Time elapsed: 0 minutes 4.335644 seconds.
+\endcode
+
+@sa file kmeans_create.sql_in (documenting the SQL functions)
+
+@internal
+@sa namespace kmeans (documenting the implementation in Python)
+@endinternal
+
+@literature
+
+[1] Wikipedia, K-means++,
+    http://en.wikipedia.org/wiki/K-means%2B%2B
+*/
 
 BEGIN;
 
---! Support function: takes a single SVEC (A) and an array of SVECs (B)
---! and returns the index of (B) with the shortest distance to (A).
---!
+
+/**
+ * @internal
+ * Support function: takes a single SVEC (A) and an array of SVECs (B)
+ * and returns the index of (B) with the shortest distance to (A).
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_closestID( 
     p_point MADLIB_SCHEMA.SVEC, p_centroids MADLIB_SCHEMA.SVEC[]
 ) 
@@ -43,8 +158,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
---! Finalize function for _kmeans_meanPosition() aggregate.
---!
+-- Finalize function for _kmeans_meanPosition() aggregate.
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_mean_finalize( p_centroid MADLIB_SCHEMA.SVEC) 
 RETURNS MADLIB_SCHEMA.SVEC AS $$
 DECLARE
@@ -61,8 +175,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
---! Sfunc function for _kmeans_meanPosition() aggregate.
---!
+-- Sfunc function for _kmeans_meanPosition() aggregate.
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_mean_product(MADLIB_SCHEMA.SVEC, MADLIB_SCHEMA.SVEC) 
 RETURNS MADLIB_SCHEMA.SVEC AS $$
 DECLARE
@@ -76,8 +189,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
---! Prefunc function for _kmeans_meanPosition() aggregate.
---!
+-- Prefunc function for _kmeans_meanPosition() aggregate.
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_mean_aggr( MADLIB_SCHEMA.SVEC, MADLIB_SCHEMA.SVEC) RETURNS MADLIB_SCHEMA.SVEC AS $$
 DECLARE
 BEGIN
@@ -93,14 +205,10 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
---! Aggregate that computes a mean position for a set of SVECs.
---!
---! Aggregate options:
---! - stype = MADLIB_SCHEMA.SVEC
---! - sfunc = MADLIB_SCHEMA.__kmeans_mean_product
---! - prefunc = MADLIB_SCHEMA.__kmeans_mean_aggr
---! - finalfunc = MADLIB_SCHEMA.__kmeans_mean_finalize
---!
+/**
+ * @internal
+ * @brief Compute a mean position for a set of SVECs.
+ */
 CREATE AGGREGATE MADLIB_SCHEMA.__kmeans_meanPosition( MADLIB_SCHEMA.SVEC ) 
 (
   stype = MADLIB_SCHEMA.SVEC,
@@ -109,9 +217,20 @@ CREATE AGGREGATE MADLIB_SCHEMA.__kmeans_meanPosition( MADLIB_SCHEMA.SVEC )
   finalfunc = MADLIB_SCHEMA.__kmeans_mean_finalize
 );
 
-
---! Runs the k-means algorythm (imported from kmeans.py module)
---!
+/**
+ * @brief Compute a k-means clustering
+ *
+ * @param input_table Name of relation containing the input data points
+ * @param k Number of centroids to generate
+ * @param goodness Goodness of fit test flag (allowed values: 0, 1)
+ * @param run_id Name/ID of the execution
+ * @param output_schema Target schema for the output tables
+ * @return Textual summary of the algorithm run, including the names of the
+ *     created tables and run time statistics.
+ *
+ * @internal
+ * @sa This function is a wrapper for kmeans::kmeans_run()
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans_run( input_table text, k int, goodness int, run_id text, output_table text)
   RETURNS text
 AS $$
