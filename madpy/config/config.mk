@@ -1,6 +1,6 @@
 madlib_schema = SCHEMA_PLACEHOLDER
 conf_defines = CONFDEFS
-python_target = PYTHON_TARGET_DIR
+plpython_libdir = PLPYTHON_LIBDIR/madlib
 dbapi = DBAPI2_PLACEHOLDER
 
 %.sql: %.sql_in
@@ -25,14 +25,14 @@ clean_data_built:
 # Put C shared objects under $(pkglibdir)/madlib
 override pkglibdir := $(pkglibdir)/madlib
 
-# Put Python modules under $(python_target)
+# Put Python modules under $(plpython_libdir)
 install-python:
 ifneq (,$(PYTHON_built))
-	if [ ! -d $(python_target) ]; then mkdir $(python_target); fi;
-	if [ ! -f $(python_target)/__init__.py ]; then touch $(python_target)/__init__.py; fi; 
+	if [ ! -d $(plpython_libdir) ]; then mkdir $(plpython_libdir); fi;
+	if [ ! -f $(plpython_libdir)/__init__.py ]; then touch $(plpython_libdir)/__init__.py; fi; 
 	@for file in $(PYTHON_built); do \
-		echo "$(INSTALL_DATA) $$file '$(python_target)'"; \
-		$(INSTALL_DATA) $$file '$(python_target)'; \
+		echo "$(INSTALL_DATA) $$file '$(plpython_libdir)'"; \
+		$(INSTALL_DATA) $$file '$(plpython_libdir)'; \
 	done
 endif # 
 

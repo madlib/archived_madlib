@@ -73,7 +73,11 @@ class MadPackMigration:
         self.conf = configyml.get_config(conf_dir, False)        
         api = self.conf['dbapi2']
         connect_args = self.conf['connect_args']
-        dbapi2 = __import__(api, globals(), locals(), [''])
+        try:       
+            dbapi2 = __import__( api, globals(), locals(), [''])
+        except:
+            if api.rfind('.') > 0:
+                dbapi2 = __import__( api[api.rfind('.')+1:], globals(), locals(), [''])
 
         ## @var mig_dir the directory with the migration files
         self.mig_dir = mig_dir
