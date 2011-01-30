@@ -21,29 +21,33 @@ In a nutshell, an SVM model $f(x)$ takes the form of
 \f[
     f(x) = \sum_i \alpha_i k(x_i,x),
 \f]
-where each \f$ \alpha_i \f$ is a real number, each $x_i$ is a data point from
-the training set (called a support vector), and \f$ k(\cdot, \cdot) \f$ is a
-kernel function that measures how "similar" two objects are. In regression,
-$f(x)$ is the regression function we seek. In classification, $f(x)$ serves as
+where each \f$ \alpha_i \f$ is a real number, each \f$ \boldsymbol x_i \f$ is a
+data point from the training set (called a support vector), and
+\f$ k(\cdot, \cdot) \f$ is a kernel function that measures how "similar" two
+objects are. In regression, \f$ f(\boldsymbol x) \f$ is the regression function
+we seek. In classification, \f$ f(\boldsymbol x) \f$ serves as
 the decision boundary; so for example in binary classification, the predictor 
-can output class 1 for object $x$ if \f$ f(x) \geq 0 \f$, and class 2 otherwise.
+can output class 1 for object $x$ if \f$ f(\boldsymbol x) \geq 0 \f$, and class
+2 otherwise.
 
 In the case when the kernel function \f$ k(\cdot, \cdot) \f$ is the standard
-inner product on vectors, $f(x)$ is just an alternative way of writing a linear
-function
+inner product on vectors, \f$ f(\boldsymbol x) \f$ is just an alternative way of
+writing a linear function
 \f[
-    f'(x) = \langle w,x \rangle,
+    f'(\boldsymbol x) = \langle \boldsymbol w, \boldsymbol x \rangle,
 \f]
-where $w$ is a weight vector having the same dimension as $x$. One of the 
-key points of SVMs is that we can use more fancy kernel functions to 
-efficiently learn linear models in high-dimensional feature spaces, 
-since $k(x_i,x_j)$ can be understood as an efficient way of computing an 
-inner product in the feature space:
+where \f$ \boldsymbol w \f$ is a weight vector having the same dimension as
+\f$ \boldsymbol x \f$. One of the key points of SVMs is that we can use more
+fancy kernel functions to efficiently learn linear models in high-dimensional
+feature spaces, since \f$ k(\boldsymbol x_i, \boldsymbol x_j) \f$ can be
+understood as an efficient way of computing an inner product in the feature
+space:
 \f[
-    k(x_i,x_j) = \langle \phi(x_i), \phi(x_j) \rangle,
+    k(\boldsymbol x_i, \boldsymbol x_j)
+    =   \langle \phi(\boldsymbol x_i), \phi(\boldsymbol x_j) \rangle,
 \f]
-where \f$ \phi(x) \f$ projects $x$ into a (possibly infinite-dimensional)
-feature space.
+where \f$ \phi(\boldsymbol x) \f$ projects \f$ \boldsymbol x \f$ into a
+(possibly infinite-dimensional) feature space.
 
 There are many algorithms for learning kernel machines. This module 
 implements the class of online learning with kernels algorithms 
@@ -70,7 +74,7 @@ vector models can also be stored in tables for fast execution.
 
 @prereq
 
-None at this point. Will need the \link svec sparse vector SVEC
+None at this point. Will need the \link grp_svec sparse vector SVEC
 datatype\endlink eventually.
 
 @usage
@@ -234,8 +238,8 @@ Example usage for novelty detection:
 
 @sa file online_sv.sql_in (documenting the SQL functions)
 
-@interntal
-@sa 
+@internal
+@sa namespace online_sv (documenting the implementation in Python)
 @endinternal
 
 @literature
@@ -336,7 +340,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- This implements the prediction function: f(x) = sum_i weight[i] * MADLIB_SCHEMA.kernel(suppor_vector[i], x).
+/**
+ * @brief Evaluate the prediction function
+ *
+ * @param svs The learned model, containing the vector of weights
+ *      \f$ \boldsymbol w \f$ and the support vectors \f$ \boldsymbol x_i \f$
+ * @param ind The data point \f$ \boldsymbol x \f$
+ * @return This function returns
+ *      \f$ f(\boldsymbol x) = \sum_i w_i k(\boldsymbol x_i, \boldsymbol x) \f$
+ */
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.svs_predict(svs MADLIB_SCHEMA.model_rec, ind float8[]) 
 RETURNS float8 AS $$
@@ -561,9 +573,21 @@ $$ LANGUAGE plpgsql;
 -- DROP TYPE IF EXISTS MADLIB_SCHEMA.model_pr CASCADE;
 CREATE TYPE MADLIB_SCHEMA.model_pr AS ( model text, prediction float8 );
 
--- This function performs prediction using the support vector machines stored in the MADLIB_SCHEMA.sv_model table.
--- The different models are assumed to be named modelname1, modelname2, ....
--- An average prediction is given at the end.
+/**
+ * @brief Evaluate prediction function for multiple models
+ *
+ * This function performs prediction using the support vector machines stored in
+ * the <tt>MADLIB_SCHEMA.sv_model</tt> table.
+ * The different models are assumed to be named <tt><em>modelname</em>1</tt>,
+ * <tt><em>modelname</em>2</tt>, ....
+ * An average prediction is given at the end.
+ *
+ * @param modelname Prefix of the model names.
+ * @param ind The data point \f$ \boldsymbol x \f$
+ * @return This function returns a table: For each model, there is a row
+ *      containing the result returned by \ref svs_predict(). Moreover, the last
+ *      row contains the average value, over all models.
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svs_predict_combo(modelname text, ind float8[]) RETURNS SETOF MADLIB_SCHEMA.model_pr AS $$
 DECLARE
 	sumpr float8 := 0;
@@ -597,65 +621,106 @@ AS $$
    plpy.execute(sql);
 $$ LANGUAGE 'plpythonu';
 
-/* 
- This is the support vector regression function.
- Parameters:
-   input_table: the name of the table/view with the training data;
-   model_name : the name under which we want to store the resultant learned model; 
-   parallel   : a flag indicating whether the system should learn multiple models in parallel.
-*/
+/**
+ * @brief The support vector regression function
+ *
+ * @param input_table The name of the table/view with the training data
+ * @param modelname The name under which we want to store the resultant learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::sv_regression().
+ */
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.sv_regression(input_table text, modelname text, parallel bool)
 RETURNS TEXT
 AS $$
+    import sys
+    try:
+        from madlib import online_sv
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        from madlib import online_sv
 
-   from madlib import online_sv
-   return online_sv.sv_regression(input_table, modelname, parallel);
-
+    return online_sv.sv_regression(input_table, modelname, parallel);
 $$ LANGUAGE 'plpythonu';
 
-/* 
- This is the support vector classification function.
- Parameters:
-   input_table: the name of the table/view with the training data;
-   model_name : the name under which we want to store the resultant learned model; 
-   parallel   : a flag indicating whether the system should learn multiple models in parallel.
-*/
+/**
+ * @brief The support vector classification function
+ *
+ * @param input_table The name of the table/view with the training data
+ * @param modelname The name under which we want to store the resultant learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::sv_classification().
+ */
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.sv_classification(input_table text, modelname text, parallel bool)
 RETURNS TEXT
 AS $$
+    import sys
+    try:
+        from madlib import online_sv
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        from madlib import online_sv
 
-   from madlib import online_sv
-   return online_sv.sv_classification(input_table, modelname, parallel);
-
+    return online_sv.sv_classification(input_table, modelname, parallel);
 $$ LANGUAGE 'plpythonu';
 
-/* 
- This is the support vector novelty detection function.
- Parameters:
-   input_table: the name of the table/view with the training data;
-   model_name : the name under which we want to store the resultant learned model; 
-   parallel   : a flag indicating whether the system should learn multiple models in parallel.
-*/
+/**
+ * @brief This is the support vector novelty detection function.
+ * 
+ * @param input_table The name of the table/view with the training data
+ * @param modelname The name under which we want to store the resultant learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::sv_novelty_detection().
+ */
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.sv_novelty_detection(input_table text, modelname text, parallel bool)
 RETURNS TEXT
 AS $$
+    import sys
+    try:
+        from madlib import online_sv
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        from madlib import online_sv
 
-   from madlib import online_sv
-   return online_sv.sv_novelty_detection(input_table, modelname, parallel);
-
+    return online_sv.sv_novelty_detection(input_table, modelname, parallel);
 $$ LANGUAGE 'plpythonu';
 
+/**
+ * @brief Scores the data points stored in a table using a learned support vector model
+ *
+ * @param input_table Name of table/view containing the data points to be scored
+ * @param col_name Name of column in input_table containing the data points
+ * @param modelname Name under which we want to store the learned model 
+ * @param output_table Name of table to store the results 
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::sv_predict().
+ */
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.sv_predict(input_table text, col_name text, modelname text, output_table text, parallel bool)
 RETURNS TEXT
 AS $$
+    import sys
+    try:
+        from madlib import online_sv
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        from madlib import online_sv
 
-   from madlib import online_sv
-   return online_sv.sv_predict(input_table, col_name, modelname, output_table, parallel);
-
+    return online_sv.sv_predict(input_table, col_name, modelname, output_table, parallel);
 $$ LANGUAGE 'plpythonu';
 
 -- Generate artificial training data 
