@@ -1,4 +1,4 @@
-DATA_built = svdmf_create.sql svdmf_drop.sql svdmf.py sql/cleanup.sql sql/test.sql
+DATA_built = svdmf.sql svdmf_drop.sql svdmf.py sql/cleanup.sql sql/test.sql
 PYTHON_built = svdmf.py
 REGRESS = setup test cleanup
 
