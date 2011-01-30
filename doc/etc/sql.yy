@@ -6,8 +6,12 @@
  * This allows .sql files to be documented by documentation tools like Doxygen.
  *
  * Revision History:
- * 0.2: Florian Schoppmann, 16 Jan 2011, Converted to C++
- * 0.1:          "        , 10 Jan 2011, Initial version.
+ * 0.3: Florian Schoppmann, 29 Jan 2011, CREATE AGGREGATE supported, return
+ *                                       types inferred from final function,
+ *                                       line numbers are preserved
+ * 0.2:          "        , 16 Jan 2011, Converted to C++
+ * 0.1:          "        , 10 Jan 2011, Initial version, support for CREATE
+ *                                       FUNCTION.
  * -----------------------------------------------------------------------------
  */
 
@@ -292,6 +296,7 @@ fnArgument:
 ;
 
 optDefaultArgument: { $$ = ""; }
+    | defaultArgument
     | BEGIN_SPECIAL defaultArgument END_SPECIAL { $$ = $2; }
 ;
     
@@ -306,8 +311,8 @@ defaultArgument:
 
 aggArgument:
 	  type
-	| BEGIN_SPECIAL argname END_SPECIAL type {
-		asprintf(&($$), "%s %s", $4, $2);
+	| argname type {
+		asprintf(&($$), "%s %s", $2, $1);
 	}
 ;
 
@@ -318,7 +323,8 @@ argmode:
 ;
 
 argname:
-	IDENTIFIER
+	  IDENTIFIER
+    | BEGIN_SPECIAL IDENTIFIER END_SPECIAL { $$ = $2; }
 ;
 
 type:

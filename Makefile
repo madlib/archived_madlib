@@ -9,14 +9,14 @@ devdoc: doc/bin/doxysql mathjax
 	egrep -v "warning:.*(@param is not found in the argument list.*kwargs\)$$|The following parameters.*kwargs\) are not documented)|parameter 'kwargs'$$"
 
 # Generate user documentation
-# Hide warnings about keyword arguments in Python
+# Hide bogus warnings about missing \internal (bug in Doxygen 1.7.3)
 doc: doc/bin/doxysql mathjax
 	@echo "Running doxygen..."
 	@( \
 		cat doc/etc/user.doxyfile; \
 		echo "PROJECT_NUMBER = $$(cut -c 10- madpy/Version.yml)" \
 	) | doxygen - 2>&1 | \
-	egrep -v "warning:.*(@param is not found in the argument list.*kwargs\)$$|The following parameters.*kwargs\) are not documented)|parameter 'kwargs'$$"
+	egrep -v "warning: found \\\\endinternal without matching \\\\internal$$"
 
 # doxysql for converting .sql files to a file with C++ declarations, for
 # use with doxygen
