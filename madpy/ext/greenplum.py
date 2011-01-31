@@ -6,6 +6,17 @@
 import os, sys
 import subprocess
 
+# get and check GPHOME 
+gphome = os.getenv('GPHOME')
+while (not os.path.isdir( gphome)):    
+    gphome = raw_input("> GPHOME not found. Enter full path to your Greenplum installation: ")
+
+# check the MADLIB dir
+madlibdir = gphome + '/lib/postgresql/madlib'
+if (not os.path.isdir( madlibdir)):
+    print "> " + madlibdir + " does not exist. Nothing to push to segment nodes."
+    exit(1)
+    
 print "> deploying object code libraries to Greenplum segment nodes"
 
 # get & check host_file
@@ -13,12 +24,7 @@ hostfile = raw_input("> enter full path to the host file: ")
 while (not os.path.isfile( hostfile)):    
     hostfile = raw_input("> file does not exist. Try again: ")
 
-# check and get GPHOME 
-gphome = os.getenv('GPHOME')
-while (not os.path.isdir( gphome)):    
-    gphome = raw_input("> GPHOME not found. Enter full path to your Greenplum installation: ")
-
-# use SCP to push the SO files
+# use SCP to push the MADLIB dir with SO files
 n=0
 try:
     f = open( hostfile, "r")
