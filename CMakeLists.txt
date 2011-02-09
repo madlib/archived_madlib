@@ -34,7 +34,12 @@ set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
 # try this at home.
 # ==============================================================================
 
-cmake_minimum_required(VERSION 2.8.4)
+# According to
+# http://www.cmake.org/cmake/help/cmake2.6docs.html#variable:CMAKE_VERSION
+# variable CMAKE_VERSION is only defined starting 2.6.3. And doing simple
+# version checks is the least we require... Also, Armadillo needs 2.6, so our
+# requirement should not be too limiting.
+cmake_minimum_required(VERSION 2.6.3)
 
 # Set the directory for tools needed during build time
 set(MAD_BUILD_TOOLS ${CMAKE_SOURCE_DIR}/cmake_tools)
@@ -75,10 +80,13 @@ include_directories(${CMAKE_SOURCE_DIR}/..)
 find_package(Boost REQUIRED)
 include_directories(${Boost_INCLUDE_DIRS})
 
-# @loader_path is the Mac OS X equivalent to $ORIGIN...
+# @loader_path is the Mac OS X equivalent to $ORIGIN.
+# For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
+# (and not ${MAD_THIRD_PARTY}/lib64), even if building on a 64-bit architecture
 set(ARMADILLO_CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=../..
     -DCMAKE_INSTALL_NAME_DIR=@rpath
+    -DLIB_INSTALL_DIR=lib
 )
 
 # On a Mac, find out the architectures in the Accelerate Framework.

@@ -65,7 +65,7 @@ endif(POSTGRESQL_INCLUDE_DIR)
 
 # find_package_handle_standard_args has VERSION_VAR argument onl since version 2.8.4
 if(${CMAKE_VERSION} VERSION_LESS "2.8.4")
-    set(VERSION_VAR "")
+    set(VERSION_VAR "dummy")
 endif()
 
 # Checks 'RECQUIRED', 'QUIET' and versions.
