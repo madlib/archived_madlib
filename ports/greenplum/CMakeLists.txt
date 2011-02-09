@@ -13,7 +13,7 @@ foreach(FILE ${MAD_DBAL_GP_SOURCES})
 endforeach()
 
 message(STATUS "Trying to find Greenplum installation")
-find_package(Greenplum REQUIRED)
+find_package(Greenplum)
 
 if(GREENPLUM_FOUND)
     message(STATUS "***")
