@@ -89,9 +89,9 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
                                 newdatum,
                                 transval->outFuncOid);
 
-    tmpcnt = cmsketch_count_c(transval->sketch,
-                              newdatum,
-                              transval->outFuncOid);
+    tmpcnt = cmsketch_count_md5_datum(transval->sketch,
+                                      md5_datum,
+                                      transval->outFuncOid);
     i = mfv_find(transblob, newdatum);
 
     if (i > -1) {
