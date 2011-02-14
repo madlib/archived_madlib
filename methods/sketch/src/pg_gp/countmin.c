@@ -161,7 +161,7 @@ void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
  * \param dat the datum to be inserted
  * \param outFuncOid Oid of the PostgreSQL function to convert dat to a string
  */
-char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
+Datum countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
 {
     Datum nhash;
     char *input;
@@ -177,7 +177,7 @@ char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
      * we don't care about return value here, so 3rd (initialization) argument is arbitrary.
      */
     (void)hash_counters_iterate(nhash, sketch, 0, &increment_counter);
-    return(input);
+    return(nhash);
 }
 
 /*
@@ -357,9 +357,13 @@ int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
 
     /* get the md5 hash of the stringified argument. */
     nhash = md5_datum(txt);
+    return(cmsketch_count_md5_datum(sketch, nhash, funcOid));
+}
 
+int64 cmsketch_count_md5_datum(countmin sketch, Datum md5_datum, Oid funcOid)
+{
     /* iterate through the sketches, finding the min counter associated with this hash */
-    PG_RETURN_INT64(hash_counters_iterate(nhash, sketch, INT64_MAX,
+    return(hash_counters_iterate(md5_datum, sketch, INT64_MAX,
                                           &min_counter));
 }
 

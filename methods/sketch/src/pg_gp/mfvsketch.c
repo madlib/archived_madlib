@@ -26,6 +26,8 @@
   unusually frequent values, if not precisely the *most* frequent values.
  */
 
+
+
 #include "postgres.h"
 #include "utils/array.h"
 #include "utils/elog.h"
@@ -56,7 +58,7 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
     mfvtransval *transval;
     uint64       tmpcnt;
     int          i;
-    char *       outString;
+    Datum        md5_datum;
 
     /*
      * This function makes destructive updates to its arguments.
@@ -83,9 +85,9 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
 
     transval = (mfvtransval *)VARDATA(transblob);
     /* insert into the countmin sketch */
-    outString = countmin_trans_c(transval->sketch,
-                                 newdatum,
-                                 transval->outFuncOid);
+    md5_datum = countmin_trans_c(transval->sketch,
+                                newdatum,
+                                transval->outFuncOid);
 
     tmpcnt = cmsketch_count_c(transval->sketch,
                               newdatum,
