@@ -87,7 +87,8 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
     /* insert into the countmin sketch */
     md5_datum = countmin_trans_c(transval->sketch,
                                 newdatum,
-                                transval->outFuncOid);
+                                transval->outFuncOid,
+                                transval->typOid);
 
     tmpcnt = cmsketch_count_md5_datum(transval->sketch,
                                       md5_datum,
@@ -489,7 +490,8 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
 
         transval1->mfvs[i].cnt = cmsketch_count_c(transval1->sketch,
                                                   dat,
-                                                  transval1->outFuncOid);
+                                                  transval1->outFuncOid,
+                                                  transval1->typOid);
     }
     for (i = 0; i < transval2->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob2,i);
@@ -497,7 +499,8 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
 
         transval2->mfvs[i].cnt = cmsketch_count_c(transval2->sketch,
                                                   dat,
-                                                  transval2->outFuncOid);
+                                                  transval2->outFuncOid,
+                                                  transval2->typOid);
     }
 
     /* now take maxes on mfvs in a sort-merge style, copying into transval1  */

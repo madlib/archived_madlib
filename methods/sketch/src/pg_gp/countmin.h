@@ -141,13 +141,13 @@ typedef struct {
 #define MFVPointerGetDatum(x, byVal)  (byVal ? (*(Datum *)x) : (PointerGetDatum(x)))
 
 /* countmin aggregate protos */
-Datum  countmin_trans_c(countmin, Datum, Oid);
+Datum  countmin_trans_c(countmin, Datum, Oid, Oid);
 bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool);
 bytea *cmsketch_init_transval(void);
-void   countmin_dyadic_trans_c(cmtransval *, int64);
+void   countmin_dyadic_trans_c(cmtransval *, Datum);
 
 /* countmin scalar function protos */
-int64  cmsketch_count_c(countmin, Datum, Oid);
+int64  cmsketch_count_c(countmin, Datum, Oid, Oid);
 int64  cmsketch_count_md5_datum(countmin sketch, Datum md5Datum, Oid funcOid);
 Datum  cmsketch_rangecount_c(cmtransval *, int64, int64);
 Datum  cmsketch_centile_c(cmtransval *, int, int64);

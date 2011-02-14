@@ -59,6 +59,8 @@ success = get_op_hash_functions(eqOpr, result, NULL));
 #include "fmgr.h"
 #include "sketch_support.h"
 #include "utils/builtins.h"
+#include "libpq/md5.h"
+#include "utils/lsyscache.h"
 
 /*!
  * Simple linear function to find the rightmost bit that's set to one
@@ -307,13 +309,41 @@ bit_print(uint8 *c, int numbytes)
  * XXX -- we then call binary_decode to convert back to a textual representation
  * XXX -- (alternatively we could call hex_to_bytes in sketch_support.c for the last step)
  */
-Datum md5_datum(char *input)
+Datum md5_cstring(char *input)
 {
-    Datum hashtxt =
+    Datum hashtxt = 
         DirectFunctionCall1(md5_bytea, PointerGetDatum(cstring_to_text(input)));
 
     return DirectFunctionCall2(binary_decode, hashtxt,
                                CStringGetTextDatum("hex"));
+}
+
+Datum sketch_md5_bytea(Datum dat, Oid typOid)
+{
+    // according to postgres' libpq/md5.c, need 33 bytes to hold null-terminated string
+    char outbuf[MD5_HASHLEN*2+1];
+    bytea *out = palloc(MD5_HASHLEN+VARHDRSZ);
+    
+    int len = get_typlen(typOid);
+    bool byval = get_typbyval(typOid);
+    if (byval) {
+        pg_md5_hash((char *)(&dat), len, outbuf);
+    }
+    else if (len > 0) {
+        pg_md5_hash((char *)DatumGetPointer(dat), len, outbuf);
+    }
+    else if (len == -1) {
+        pg_md5_hash(VARDATA((bytea *)DatumGetPointer(dat)), 
+                    VARSIZE_ANY((bytea *)DatumGetPointer(dat)) - VARHDRSZ, outbuf);
+    }                    
+    else if (len == -2) {
+        pg_md5_hash((char *)DatumGetPointer(dat), 
+                    strlen((char *)DatumGetPointer(dat))+1, outbuf);
+    }
+    
+    hex_to_bytes(outbuf, (uint8 *)VARDATA(out), strlen(outbuf));
+    SET_VARSIZE(out, MD5_HASHLEN+VARHDRSZ);
+    return PointerGetDatum(out);
 }
 
 
