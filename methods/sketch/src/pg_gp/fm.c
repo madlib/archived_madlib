@@ -245,7 +245,7 @@ Datum __fmsketch_trans_c(bytea *transblob, char *input)
     int          rmost;
     Datum        result;
 
-    c = (uint8 *)VARDATA(DatumGetByteaP(md5_datum(input)));
+    c = (uint8 *)VARDATA(DatumGetByteaP(md5_cstring(input)));
 
     /*
      * During the insertion we insert each element

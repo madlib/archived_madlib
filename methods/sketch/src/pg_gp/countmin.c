@@ -70,7 +70,7 @@ Datum __cmsketch_trans(PG_FUNCTION_ARGS)
         transval = (cmtransval *)(VARDATA(transblob));
 
         /* the following line modifies the contents of transval, and hence transblob */
-        countmin_dyadic_trans_c(transval, PG_GETARG_INT64(1));
+        countmin_dyadic_trans_c(transval, PG_GETARG_DATUM(1));
         PG_RETURN_DATUM(PointerGetDatum(transblob));
     }
     else PG_RETURN_DATUM(PointerGetDatum(PG_GETARG_BYTEA_P(0)));
@@ -140,15 +140,15 @@ bytea *cmsketch_init_transval()
  * * \param transval the cmsketch transval
  * * \param inputi the value to be inserted
  */
-void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
+void countmin_dyadic_trans_c(cmtransval *transval, Datum input)
 {
     uint32 j;
 
     for (j = 0; j < RANGES; j++) {
-        countmin_trans_c(transval->sketches[j], Int64GetDatum(
-                             inputi), transval->outFuncOid);
+        countmin_trans_c(transval->sketches[j], input, 
+                         transval->outFuncOid, transval->typOid);
         /* now divide by 2 for the next dyadic range */
-        inputi >>= 1;
+        input = Int64GetDatum(DatumGetInt64(input) >> 1);
     }
 }
 
@@ -161,23 +161,25 @@ void countmin_dyadic_trans_c(cmtransval *transval, int64 inputi)
  * \param dat the datum to be inserted
  * \param outFuncOid Oid of the PostgreSQL function to convert dat to a string
  */
-char *countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid)
+Datum countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid, Oid typOid)
 {
     Datum nhash;
     char *input;
 
-    /* stringify input for the md5 function */
-    input = OidOutputFunctionCall(outFuncOid, dat);
-
-    /* get the md5 hash of the input. */
-    nhash = md5_datum(input);
+    nhash = sketch_md5_bytea(dat, typOid);
+    // 
+    // /* stringify input for the md5 function */
+    // input = OidOutputFunctionCall(outFuncOid, dat);
+    // 
+    // /* get the md5 hash of the input. */
+    // nhash = md5_cstring(input);
 
     /*
      * iterate through all sketches, incrementing the counters indicated by the hash
      * we don't care about return value here, so 3rd (initialization) argument is arbitrary.
      */
     (void)hash_counters_iterate(nhash, sketch, 0, &increment_counter);
-    return(input);
+    return(nhash);
 }
 
 /*
@@ -204,7 +206,8 @@ Datum __cmsketch_count_final(PG_FUNCTION_ARGS)
     if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
     PG_RETURN_INT64(cmsketch_count_c(sketch->sketches[0],
-                                     sketch->args[0], sketch->outFuncOid));
+                                     sketch->args[0], sketch->outFuncOid,
+                                     sketch->typOid));
 }
 
 /*!
@@ -348,18 +351,23 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
  * \param arg the Datum we want to find the count of
  * \param funcOid the Postgres function that converts arg to a string
  */
-int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid)
+int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid, Oid typOid)
 {
     Datum nhash;
-    char *txt;
+    // char *txt;
 
-    txt = OidOutputFunctionCall(funcOid, arg);
+    // txt = OidOutputFunctionCall(funcOid, arg);
 
     /* get the md5 hash of the stringified argument. */
-    nhash = md5_datum(txt);
+    nhash = sketch_md5_bytea(arg, typOid);
+    // nhash = md5_cstring(txt);
+    return(cmsketch_count_md5_datum(sketch, nhash, funcOid));
+}
 
+int64 cmsketch_count_md5_datum(countmin sketch, Datum md5_datum, Oid funcOid)
+{
     /* iterate through the sketches, finding the min counter associated with this hash */
-    PG_RETURN_INT64(hash_counters_iterate(nhash, sketch, INT64_MAX,
+    return(hash_counters_iterate(md5_datum, sketch, INT64_MAX,
                                           &min_counter));
 }
 
@@ -410,7 +418,7 @@ Datum cmsketch_rangecount_c(cmtransval *transval, int64 bot, int64 top)
         }
         val = cmsketch_count_c(transval->sketches[dyad],
                                (Datum) countval,
-                               transval->outFuncOid);
+                               transval->outFuncOid, transval->typOid);
         cursum += val;
     }
     PG_RETURN_DATUM(cursum);
@@ -800,17 +808,21 @@ int64 hash_counters_iterate(Datum hashval,
                                                int64))
 {
     uint32         i, col;
+    char          *c;
     unsigned short twobytes;
     int64          retval = initial;
 
     /*
      * XXX WARNING: are there problems with unaligned access here?
-     * XXX I'm currently using copies rather than casting, which is inefficient,
+     * XXX I was using copies rather than casting, which was inefficient,
      * XXX but I was hoping memmove would deal with unaligned access in a portable way.
+     * XXX However the deref of 2 bytes seems to work OK.
      */
-    for (i = 0; i < DEPTH; i++) {
-        memmove((void *)&twobytes,
-                (void *)((char *)VARDATA(DatumGetByteaP(hashval)) + 2*i), 2);
+    for (i = 0, c = (char *)VARDATA(DatumGetByteaP(hashval)); 
+         i < DEPTH; 
+         i++, c += 2) {
+        // memmove((void *)&twobytes, c, 2);
+        twobytes = *(unsigned short *)c;
         col = twobytes % NUMCOUNTERS;
         retval = (*lambdaptr)(i, col, sketch, retval);
     }

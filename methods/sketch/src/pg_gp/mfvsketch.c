@@ -26,6 +26,8 @@
   unusually frequent values, if not precisely the *most* frequent values.
  */
 
+
+
 #include "postgres.h"
 #include "utils/array.h"
 #include "utils/elog.h"
@@ -56,7 +58,7 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
     mfvtransval *transval;
     uint64       tmpcnt;
     int          i;
-    char *       outString;
+    Datum        md5_datum;
 
     /*
      * This function makes destructive updates to its arguments.
@@ -83,13 +85,14 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
 
     transval = (mfvtransval *)VARDATA(transblob);
     /* insert into the countmin sketch */
-    outString = countmin_trans_c(transval->sketch,
-                                 newdatum,
-                                 transval->outFuncOid);
+    md5_datum = countmin_trans_c(transval->sketch,
+                                newdatum,
+                                transval->outFuncOid,
+                                transval->typOid);
 
-    tmpcnt = cmsketch_count_c(transval->sketch,
-                              newdatum,
-                              transval->outFuncOid);
+    tmpcnt = cmsketch_count_md5_datum(transval->sketch,
+                                      md5_datum,
+                                      transval->outFuncOid);
     i = mfv_find(transblob, newdatum);
 
     if (i > -1) {
@@ -487,7 +490,8 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
 
         transval1->mfvs[i].cnt = cmsketch_count_c(transval1->sketch,
                                                   dat,
-                                                  transval1->outFuncOid);
+                                                  transval1->outFuncOid,
+                                                  transval1->typOid);
     }
     for (i = 0; i < transval2->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob2,i);
@@ -495,7 +499,8 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
 
         transval2->mfvs[i].cnt = cmsketch_count_c(transval2->sketch,
                                                   dat,
-                                                  transval2->outFuncOid);
+                                                  transval2->outFuncOid,
+                                                  transval2->typOid);
     }
 
     /* now take maxes on mfvs in a sort-merge style, copying into transval1  */
