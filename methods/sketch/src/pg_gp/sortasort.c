@@ -101,7 +101,7 @@ int sorta_cmp(const void *i, const void *j, void *thunk)
 int sortasort_try_insert(sortasort *s_in, Datum dat, int len)
 {
     /* sanity check */
-    
+    void *datp = DatumExtractPointer(dat, s_in->typByVal);
     
     /* first check to see if the element is already there */
     int found = sortasort_find(s_in, dat);
@@ -133,7 +133,7 @@ int sortasort_try_insert(sortasort *s_in, Datum dat, int len)
      * update num_vals and storage_cur
      */
     memcpy(SORTASORT_DATA(s_in) + s_in->storage_cur, 
-           DatumExtractPointer(dat, s_in->typByVal), 
+           datp, 
            len);
     s_in->dir[s_in->num_vals++] = s_in->storage_cur;
     s_in->storage_cur += len;

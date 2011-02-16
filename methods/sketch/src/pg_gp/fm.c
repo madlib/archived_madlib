@@ -84,7 +84,7 @@ Datum __fmsketch_count_distinct_c(bytea *);
 Datum __fmsketch_trans(PG_FUNCTION_ARGS);
 Datum __fmsketch_count_distinct(PG_FUNCTION_ARGS);
 Datum __fmsketch_merge(PG_FUNCTION_ARGS);
-Datum big_or(bytea *bitmap1, bytea *bitmap2);
+void big_or(bytea *bitmap1, bytea *bitmap2, bytea *out);
 bytea *fmsketch_sortasort_insert(bytea *, Datum, size_t);
 bytea *fm_new(fmtransval *);
 
@@ -375,7 +375,11 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
 
     if (transval1->status == BIG && transval2->status == BIG) {
         /* easy case: merge two FM sketches via bitwise OR. */
-        PG_RETURN_DATUM(big_or(transblob1, transblob2));
+        fmtransval *newval;
+        tblob_big = fm_new(transval1);
+        newval = (fmtransval *)VARDATA(tblob_big);
+        big_or(transblob1, transblob2, (bytea *)newval->storage);
+        PG_RETURN_DATUM(PointerGetDatum(tblob_big));
     }
     else if (transval1->status == SMALL && transval2->status == SMALL) {
         s1 = (sortasort *)(transval1->storage);
@@ -385,8 +389,8 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
         tblob_small =
             (s1->num_vals > s2->num_vals) ? transblob2 : transblob1;
         sortashort =
-            (sortasort *)(((fmtransval *)(tblob_small))->storage);
-        sortabig = (sortasort *)(((fmtransval *)(tblob_big))->storage);
+            (sortasort *)(((fmtransval *)((fmtransval *)VARDATA(tblob_small)))->storage);
+        sortabig = (sortasort *)(((fmtransval *)((fmtransval *)VARDATA(tblob_big)))->storage);
         if (sortabig->num_vals + sortashort->num_vals <=
             sortabig->capacity) {
             /*
@@ -400,7 +404,8 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
                                                     transval1->typByVal);
                 int the_len = ExtractDatumLen(the_val, transval1->typLen, 
                                               transval1->typByVal);
-                tblob_big = fmsketch_sortasort_insert(tblob_big, the_val, 
+                tblob_big = fmsketch_sortasort_insert(tblob_big, 
+                                                      the_val, 
                                                       the_len);
             }
             PG_RETURN_DATUM(PointerGetDatum(tblob_big));
@@ -436,9 +441,8 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
 }
 
 /*! OR of two big bitmaps, for gathering sketches computed in parallel. */
-Datum big_or(bytea *bitmap1, bytea *bitmap2)
+void big_or(bytea *bitmap1, bytea *bitmap2, bytea *out)
 {
-    bytea * out;
     uint32  i;
 
     if (VARSIZE(bitmap1) != VARSIZE(bitmap2))
@@ -455,14 +459,13 @@ Datum big_or(bytea *bitmap1, bytea *bitmap2)
         ((char *)(VARDATA(out)))[i] = ((char *)(VARDATA(bitmap1)))[i] |
                                       ((char *)(VARDATA(bitmap2)))[i];
 
-    PG_RETURN_BYTEA_P(out);
 }
 
 /*!
- * wrapper for insertion into a sortasort. calls sorasort_try_insert and if that fails it
+ * wrapper for insertion into a sortasort. calls sortasort_try_insert and if that fails it
  * makes more space for insertion (double or more the size) and tries again.
  * \param transblob the current transition value packed into a bytea
- * \param dat the Datum to be inserted, already in byValue format!
+ * \param dat the Datum to be inserted
  */
 bytea *fmsketch_sortasort_insert(bytea *transblob, Datum dat, size_t len)
 {
