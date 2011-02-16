@@ -91,7 +91,7 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
                                 transval->typOid);
 
     tmpcnt = cmsketch_count_md5_datum(transval->sketch,
-                                      md5_datum,
+                                      (bytea *)DatumGetPointer(md5_datum),
                                       transval->outFuncOid);
     i = mfv_find(transblob, newdatum);
 

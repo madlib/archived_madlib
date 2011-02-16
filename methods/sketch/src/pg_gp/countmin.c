@@ -812,7 +812,7 @@ int64 hash_counters_iterate(bytea *hashval,
      * XXX but I was hoping memmove would deal with unaligned access in a portable way.
      * XXX However the deref of 2 bytes seems to work OK.
      */
-    for (i = 0, c = (char *)VARDATA(DatumGetByteaP(hashval)); 
+    for (i = 0, c = (char *)VARDATA(hashval); 
          i < DEPTH; 
          i++, c += 2) {
         // memmove((void *)&twobytes, c, 2);

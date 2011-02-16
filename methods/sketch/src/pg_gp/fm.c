@@ -261,7 +261,7 @@ Datum __fmsketch_trans_c(bytea *transblob, Datum indat)
     bytea       *hashed;
 
     hashed = sketch_md5_bytea(indat, transval->typOid);
-    c = (uint8 *)VARDATA(DatumGetByteaP(hashed));
+    c = (uint8 *)VARDATA(hashed);
     // hex = text_to_cstring((bytea *)DatumGetPointer(DirectFunctionCall2(binary_encode, PointerGetDatum(hashed),
     //                       CStringGetTextDatum("hex"))));
     // elog(NOTICE, "md5(%s), len %d: %s", text_to_cstring((bytea *)PointerGetDatum(indat)),
