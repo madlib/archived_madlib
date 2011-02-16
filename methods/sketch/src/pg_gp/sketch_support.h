@@ -20,6 +20,13 @@ uint32 ui_rightmost_one(uint32 v);
 void   hex_to_bytes(char *hex, uint8 *bytes, size_t);
 void bit_print(uint8 *c, int numbytes);
 Datum md5_cstring(char *);
-Datum sketch_md5_bytea(Datum, Oid);
+bytea *sketch_md5_bytea(Datum, Oid);
 int4   safe_log2(int64);
+
+/*! macro to convert a pointer into a marshalled array of Datums into a Datum */
+#define PointerExtractDatum(x, byVal)  (byVal ? (*(Datum *)x) : (PointerGetDatum(x)))
+/*! macro to convert a Datum into a pointer suitable for memcpy */
+#define DatumExtractPointer(x, byVal)  (byVal ? (void *)&x : DatumGetPointer(x))
+
+size_t ExtractDatumLen(Datum x, int len, bool byVal);
 #endif /* SKETCH_SUPPORT_H */

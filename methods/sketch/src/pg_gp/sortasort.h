@@ -25,15 +25,17 @@ typedef struct {
     size_t num_vals;       /*! number of values so far */
     size_t storage_sz;     /*! the number of bytes available for strings at the end */
     size_t capacity;       /*! size of the sortasort directory */
+    int    typLen;         /*! length of this Postgres type (-1 for bytea, -2 for cstring) */
+    size_t typByVal;       /*! Postgres typByVal flag */
     unsigned storage_cur;  /*! offset after the directory to do the next insertion */
     unsigned dir[0];       /*! storage of the strings */
 } sortasort;
 
-#define SORTASORT_DATA(s)  ((char *)(s->dir)) + \
-    (s->capacity * (sizeof (s->dir[0])))
+#define SORTASORT_DATA(s)  (((char *)(s->dir)) + \
+    (s->capacity * (sizeof (s->dir[0]))))
 #define SORTASORT_GETVAL(s, i) (SORTASORT_DATA(s) + s->dir[i])
 
-int sortasort_try_insert(sortasort *, char *);
-sortasort *sortasort_init(sortasort *, size_t, size_t);
-int sortasort_find(sortasort *, char *);
+int sortasort_try_insert(sortasort *, Datum, int);
+sortasort *sortasort_init(sortasort *, size_t, size_t, int, bool);
+int sortasort_find(sortasort *, Datum);
 int sorta_cmp(const void *i, const void *j, void *thunk);

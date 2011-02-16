@@ -137,18 +137,15 @@ typedef struct {
                                           ((mfvtransval *)VARDATA(transblob))-> \
                                           next_offset)
                                           
-/*! macro to convert a pointer into the mfvs array into a Datum */
-#define MFVPointerGetDatum(x, byVal)  (byVal ? (*(Datum *)x) : (PointerGetDatum(x)))
-
 /* countmin aggregate protos */
 Datum  countmin_trans_c(countmin, Datum, Oid, Oid);
 bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool);
-bytea *cmsketch_init_transval(void);
+bytea *cmsketch_init_transval(Oid);
 void   countmin_dyadic_trans_c(cmtransval *, Datum);
 
 /* countmin scalar function protos */
 int64  cmsketch_count_c(countmin, Datum, Oid, Oid);
-int64  cmsketch_count_md5_datum(countmin sketch, Datum md5Datum, Oid funcOid);
+int64  cmsketch_count_md5_datum(countmin, bytea *, Oid);
 Datum  cmsketch_rangecount_c(cmtransval *, int64, int64);
 Datum  cmsketch_centile_c(cmtransval *, int, int64);
 Datum  cmsketch_width_histogram_c(cmtransval *, int64, int64, int64);
@@ -157,7 +154,7 @@ void   find_ranges(int64, int64, rangelist *);
 void   find_ranges_internal(int64, int64, int, rangelist *);
 
 /* hash_counters_iterate and its lambdas */
-int64  hash_counters_iterate(Datum, countmin, int64, int64 (*lambdaptr)(
+int64  hash_counters_iterate(bytea *, countmin, int64, int64 (*lambdaptr)(
                                  uint32,
                                  uint32,
                                  countmin,
@@ -179,7 +176,7 @@ int cnt_cmp_desc(const void *i, const void *j);
 
 
 /* UDF protos */
-Datum __cmsketch_trans(PG_FUNCTION_ARGS);
+Datum __cmsketch_int8_trans(PG_FUNCTION_ARGS);
 Datum cmsketch_width_histogram(PG_FUNCTION_ARGS);
 Datum cmsketch_dhistogram(PG_FUNCTION_ARGS);
 Datum __cmsketch_final(PG_FUNCTION_ARGS);
