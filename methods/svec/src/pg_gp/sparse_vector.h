@@ -158,4 +158,6 @@ Datum svec_cast_float8arr(PG_FUNCTION_ARGS);
 Datum svec_unnest(PG_FUNCTION_ARGS);
 Datum svec_pivot(PG_FUNCTION_ARGS);
 
+Datum svec_hash(PG_FUNCTION_ARGS);
+
 #endif  /* SPARSEVECTOR_H */
