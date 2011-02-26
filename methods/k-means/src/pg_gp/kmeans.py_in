@@ -38,7 +38,7 @@ def quote_literal(val):
 # ----------------------------------------
 # Function to initialize K centroids
 # ----------------------------------------
-def __kmeans_init( input_table, k):
+def __kmeans_init( input_view, k):
     """
     Creates the initial set of centroids.
 
@@ -79,7 +79,7 @@ def __kmeans_init( input_table, k):
     sql = '''    
         INSERT INTO ''' + output_centroids + ''' (cid, position) 
         SELECT 1, position::MADLIB_SCHEMA.SVEC 
-        FROM ''' + input_table + '''
+        FROM ''' + input_view + '''
         ORDER BY random() DESC 
         LIMIT 1
         ''';
@@ -93,14 +93,14 @@ def __kmeans_init( input_table, k):
             INSERT INTO ''' + output_centroids + ''' (cid, position) 
             SELECT ''' + str(i) + ''', pt.position 
             FROM 
-                ''' + input_table + ''' pt,
+                ''' + input_view + ''' pt,
                 ( 
                 -- Q1: Find a random point 
                 -- (that is furthest away from current Centroids)
                 --
                 SELECT p.pid, min( MADLIB_SCHEMA.l2norm (p.position - c.position)) * (random()^(0.2)) AS distance 
                 FROM
-                    (SELECT position, pid FROM ''' + input_table + ''' ORDER BY random() LIMIT ''' + str(numCentroids) + ''') AS p -- K random points
+                    (SELECT position, pid FROM ''' + input_view + ''' ORDER BY random() LIMIT ''' + str(numCentroids) + ''') AS p -- K random points
                     CROSS JOIN 
                     (SELECT position FROM ''' + output_centroids + ''') AS c -- current centroids
                 GROUP BY p.pid ORDER BY distance DESC LIMIT 1
@@ -126,7 +126,7 @@ def __kmeans_init( input_table, k):
         return '''        
 Finished seeding %d centroids for %s table/view.
 Time elapsed: %d minutes %d.%d seconds.
-    ''' % (i, input_table, minutes, seconds, microsec)
+    ''' % (i, input_view, minutes, seconds, microsec)
 
 
 # ----------------------------------------
@@ -251,7 +251,8 @@ def kmeans_run( input_table, k, goodness, run_id, output_schema):
         # If PID column does not exist - auto generate the IDs
         input_view = 'MADLIB_SCHEMA.' + quote_ident( 'input_view_' + run_id);
         rv = plpy.execute( "CREATE VIEW " + input_view + " AS SELECT row_number() over() as pid, position FROM " + input_table);  
-        input_table = input_view;      
+    else:
+        input_view = input_table
 
     # Global variables
     global output_points, output_centroids
@@ -263,7 +264,7 @@ def kmeans_run( input_table, k, goodness, run_id, output_schema):
     # Initialize centroids
     global caller;  # set variable to indicate that kmeans_init is called from kmeans_run
     caller = 'kmeans_run';  # as above
-    c_count = __kmeans_init( input_table, k);
+    c_count = __kmeans_init( input_view, k);
     if (c_count != k):
         info( 'Requested %d centroids, but %d have been seeded.' % k, c_count);
             
@@ -282,17 +283,19 @@ def kmeans_run( input_table, k, goodness, run_id, output_schema):
     plpy.execute( sql);
     if (sampling == 1 and sample_size < p_count):
         info( 'Using sample data set for analysis... (' + str(sample_size) + ' out of ' + str(p_count) + ' points)');
+        result_analysis = 'analysis based on a sample (' + str(sample_size) + ' out of ' + str(p_count) + ' points)'
         sql = '''
             INSERT INTO TempTable0 
-            SELECT pid, position, 0 FROM ''' + input_table + ''' 
+            SELECT pid, position, 0 FROM ''' + input_view + ''' 
             ORDER BY random() 
             LIMIT ''' + str( sample_size);
         expand = 1;
     else:
         info( 'Using full data set for analysis (' + str(p_count) + ' points)');
+        result_analysis = 'analysis based on full data set (' + str(p_count) + ' points)'
         sql = '''
             INSERT INTO TempTable0 
-            SELECT pid, position, 0 FROM ''' + input_table;
+            SELECT pid, position, 0 FROM ''' + input_view;
         expand = 0;
     plpy.execute( sql);	    
 	
@@ -391,7 +394,7 @@ def kmeans_run( input_table, k, goodness, run_id, output_schema):
                 p.position, 
                 MADLIB_SCHEMA.__kmeans_closestID( p.position, arr.arr) as cid 
             FROM 
-                ''' + input_table + ''' p CROSS JOIN ArrayOfCentroids arr
+                ''' + input_view + ''' p CROSS JOIN ArrayOfCentroids arr
         ''';
     # Fill the output table
     else:
@@ -432,11 +435,19 @@ def kmeans_run( input_table, k, goodness, run_id, output_schema):
     microsec = (end - start).microseconds
 
     return '''
-Finished k-means clustering for %s. 
+K-Means Clustering has completed.
+Parameters:
+ - k = %d (number of centroids)
+ - input_table = %s
+ - goodness = %d (GOF test on/off)
+ - run_id = %s
+ - output_schema = %s
 Results: 
- * %s centroids (goodness of fit = %s).
-Output:
- * table : %s
- * table : %s
+ - %s
+ - generated %s centroids (goodness of fit = %s)
+ - table: %s
+ - table: %s
 Time elapsed: %d minutes %d.%d seconds.
-    ''' % (input_table, c_count_final, gfit, output_centroids, output_points, minutes, seconds, microsec)
+    ''' % ( k, input_table, goodness, run_id, output_schema, 
+    result_analysis, c_count_final, gfit, output_centroids, output_points, 
+    minutes, seconds, microsec)
