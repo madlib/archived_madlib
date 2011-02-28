@@ -13,9 +13,9 @@
 
 /*
  * It is structured as a header, followed by a fixed-length "directory"
- * (an array of offsets) that point to the actual null-terminated strings
+ * (an array of offsets) that point to the actual Datums
  * concatenated in a variable-length array at the end of the directory.
- * The initial directory entries are sorted in ascending order of the strings
+ * The initial directory entries are sorted in ascending order of the Datums
  * they point to, but the last < SORTA_SLOP entries are left unsorted to facilitate
  * efficient insertion.  Binary Search is used on all but those last entries,
  * which must be scanned. At every k*SORTA_SLOP'th insert, the full directory is
@@ -25,6 +25,7 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "sortasort.h"
+#include "sketch_support.h"
 
 /*!
  * given a pre-allocated sortasort, set up its metadata
@@ -32,21 +33,28 @@
  * \param s a pre-allocated sortasort
  * \param capacity size of the sortasort directory
  * \param s_sz size of s
+ * \param typLen Postgres type length (-1 for bytea, -2 for cstring)
  */
 sortasort *
 sortasort_init(sortasort *s,
                size_t capacity,
-               size_t s_sz)
+               size_t s_sz,
+               int    typLen,
+               bool   typByVal)
 {
-    /* capacity is the size of the directory: i.e. max number of strings it can hold */
+    /* capacity is the size of the directory: i.e. max number of Datums it can hold */
     s->capacity = capacity;
+
+    /* storage_sz is the number of bytes available for Datums at the end. */
+    s->storage_sz = s_sz - sizeof(sortasort) - capacity*sizeof(s->dir[0]);
     if (s_sz - sizeof(sortasort) <= capacity*sizeof(s->dir[0]))
         elog(
             ERROR,
             "sortasort initialized too small to hold its own directory");
 
-    /* storage_sz is the number of bytes available for strings at the end. */
-    s->storage_sz = s_sz - sizeof(sortasort) - capacity*sizeof(s->dir[0]);
+    s->typLen = typLen;
+    s->typByVal = typByVal;
+
 
     /* number of values so far */
     s->num_vals = 0;
@@ -63,7 +71,23 @@ int sorta_cmp(const void *i, const void *j, void *thunk)
     sortasort *s = (sortasort *)thunk;
     int        first = *(int *)i;
     int        second = *(int *)j;
-    return strcmp((SORTASORT_DATA(s) + first), (SORTASORT_DATA(s) + second));
+    char      *dat1 = SORTASORT_DATA(s) + first;
+    char      *dat2 = SORTASORT_DATA(s) + second;
+    int        len = s->typLen;
+    int        shorter;
+    
+    /*
+     * we always use typByVal = true, since we've marshalled the data into place
+     */
+    if (len < 0) {
+        len = (int)ExtractDatumLen(PointerGetDatum(dat1), len, s->typByVal);
+        if ((shorter = (len - ExtractDatumLen(PointerGetDatum(dat2), len, s->typByVal))))
+            /* order by length */
+            return shorter;
+        /* else drop through */
+    }
+    /* byte ordering */
+    return memcmp(dat1, dat2, len);
 }
 
 
@@ -71,17 +95,23 @@ int sorta_cmp(const void *i, const void *j, void *thunk)
  * insert a new element into s_in if there's room and return TRUE
  * if not enough room, return FALSE
  * \param s_in a sortasort
- * \param v an element to insert
+ * \param dat a Datum to insert
+ * \param len the Postgres typLen
  */
-int sortasort_try_insert(sortasort *s_in, char *v)
+int sortasort_try_insert(sortasort *s_in, Datum dat, int len)
 {
+    /* sanity check */
+    void *datp = DatumExtractPointer(dat, s_in->typByVal);
+    
     /* first check to see if the element is already there */
-    int found = sortasort_find(s_in, v);
+    int found = sortasort_find(s_in, dat);
     if (found >= 0 && found < (int)s_in->num_vals) {
         /* found!  just return TRUE */
         return TRUE;
     }
 
+    len = ExtractDatumLen(dat, len, s_in->typByVal);    
+    
     /* sanity check */
     if (found < -1 || found >= (int) s_in->num_vals)
         elog(ERROR,
@@ -89,7 +119,7 @@ int sortasort_try_insert(sortasort *s_in, char *v)
              found);
 
     /* we need to insert v.  return FALSE if not enough space. */
-    if (s_in->storage_cur + strlen(v) + 1 >= s_in->storage_sz) {
+    if (s_in->storage_cur + len >= s_in->storage_sz) {
         /* caller will have to allocate a bigger one and try again */
         return FALSE;
     }
@@ -99,12 +129,14 @@ int sortasort_try_insert(sortasort *s_in, char *v)
         return -1;
 
     /*
-     * copy v to the current storage offset, put a pointer into dir,
+     * copy dat to the current storage offset, put a pointer into dir,
      * update num_vals and storage_cur
      */
-    memcpy((SORTASORT_DATA(s_in) + s_in->storage_cur), v, strlen(v) + 1);     /* +1 to pick up the '\0' */
+    memcpy(SORTASORT_DATA(s_in) + s_in->storage_cur, 
+           datp, 
+           len);
     s_in->dir[s_in->num_vals++] = s_in->storage_cur;
-    s_in->storage_cur += strlen(v) + 1;
+    s_in->storage_cur += len;
     if (s_in->storage_cur > s_in->storage_sz)
         elog(ERROR, "went off the end of sortasort storage");
 
@@ -131,13 +163,14 @@ int sortasort_try_insert(sortasort *s_in, char *v)
  * NOTE: return value 0 does not mean false!!  It means it *found* the item
  *       at position 0
  */
-int sortasort_find(sortasort *s, char *v)
+int sortasort_find(sortasort *s, Datum dat)
 {
     int    theguess, diff;
     int    hi = (s->num_vals/SORTA_SLOP)*SORTA_SLOP;
     int    themin = 0, themax = hi - 1;
     size_t i;
     int    addend, subtrahend;
+    size_t len = ExtractDatumLen(dat, s->typLen, s->typByVal);
 
     /* binary search on the front of the sortasort */
     if (themax >= (int)s->num_vals) {
@@ -148,7 +181,9 @@ int sortasort_find(sortasort *s, char *v)
     }
     theguess = hi / 2;
     while (themin < themax ) {
-        if (!(diff = strcmp((SORTASORT_GETVAL(s,theguess)), v)))
+        if (!(diff = memcmp(SORTASORT_GETVAL(s,theguess), 
+                            DatumExtractPointer(dat, s->typByVal), 
+                            len)))
             return theguess;
         if (themin == themax - 1) break;
         else if (diff < 0) {
@@ -169,7 +204,9 @@ int sortasort_find(sortasort *s, char *v)
 
     /* if we got here, continue with a naive linear search on the tail */
     for (i = hi; i < s->num_vals; i++)
-        if (!strcmp((SORTASORT_GETVAL(s, i)), v))
+        if (!memcmp(SORTASORT_GETVAL(s, i), 
+                    DatumExtractPointer(dat, s->typByVal), 
+                    len))
             return i;
     return -1;
 }

@@ -39,13 +39,13 @@
 
 #include <ctype.h>
 
-PG_FUNCTION_INFO_V1(__cmsketch_trans);
+PG_FUNCTION_INFO_V1(__cmsketch_int8_trans);
 
 /*
  * This is the UDF interface.  It does sanity checks and preps values
  * for the interesting logic in countmin_dyadic_trans_c
  */
-Datum __cmsketch_trans(PG_FUNCTION_ARGS)
+Datum __cmsketch_int8_trans(PG_FUNCTION_ARGS)
 {
     bytea *     transblob = NULL;
     cmtransval *transval;
@@ -84,6 +84,7 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 {
     bytea *     transblob = PG_GETARG_BYTEA_P(0);
     cmtransval *transval;
+    Oid         element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
     /*
      * an uninitialized transval should be a datum smaller than sizeof(cmtransval).
@@ -91,7 +92,7 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
      */
     if (!CM_TRANSVAL_INITIALIZED(transblob)) {
         /* XXX would be nice to pfree the existing transblob, but pfree complains. */
-        transblob = cmsketch_init_transval();
+        transblob = cmsketch_init_transval(element_type);
         transval = (cmtransval *)VARDATA(transblob);
 
         if (initargs) {
@@ -101,13 +102,13 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
             if (nargs - 2 > MAXARGS)
                 elog(
                     ERROR,
-                    "no more than %d additional arguments should be passed to __cmsketch_trans",
+                    "no more than %d additional arguments should be passed to __cmsketch_int8_trans",
                     MAXARGS);
             transval->nargs = nargs - 2;
             for (i = 2; i < nargs; i++) {
                 if (PG_ARGISNULL(i))
                     elog(ERROR,
-                         "NULL parameter %d passed to __cmsketch_trans",
+                         "NULL parameter %d passed to __cmsketch_int8_trans",
                          i);
                 transval->args[i-2] = PG_GETARG_DATUM(i);
             }
@@ -117,7 +118,7 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
     return(transblob);
 }
 
-bytea *cmsketch_init_transval()
+bytea *cmsketch_init_transval(Oid typOid)
 {
     bool        typIsVarlena;
     cmtransval *transval;
@@ -126,9 +127,8 @@ bytea *cmsketch_init_transval()
     bytea *     transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
     SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
 
-    /* set up  for stringifying INT8's according to PG type rules */
     transval = (cmtransval *)VARDATA(transblob);
-    transval->typOid = INT8OID; /* as of now we only support INT8 */
+    transval->typOid = typOid;
     getTypeOutputInfo(transval->typOid,
                       &(transval->outFuncOid),
                       &typIsVarlena);
@@ -143,6 +143,9 @@ bytea *cmsketch_init_transval()
 void countmin_dyadic_trans_c(cmtransval *transval, Datum input)
 {
     uint32 j;
+    
+    if (transval->typOid != INT8OID)
+        elog(ERROR, "cmsketch can only compute ranges for int64");
 
     for (j = 0; j < RANGES; j++) {
         countmin_trans_c(transval->sketches[j], input, 
@@ -160,26 +163,21 @@ void countmin_dyadic_trans_c(cmtransval *transval, Datum input)
  * \param sketch the current countmin sketch
  * \param dat the datum to be inserted
  * \param outFuncOid Oid of the PostgreSQL function to convert dat to a string
+ * \param typOid Oid of the Postgres type for dat
  */
 Datum countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid, Oid typOid)
 {
-    Datum nhash;
-    char *input;
+    bytea *nhash;
+    // char *input;
 
     nhash = sketch_md5_bytea(dat, typOid);
-    // 
-    // /* stringify input for the md5 function */
-    // input = OidOutputFunctionCall(outFuncOid, dat);
-    // 
-    // /* get the md5 hash of the input. */
-    // nhash = md5_cstring(input);
 
     /*
      * iterate through all sketches, incrementing the counters indicated by the hash
      * we don't care about return value here, so 3rd (initialization) argument is arbitrary.
      */
     (void)hash_counters_iterate(nhash, sketch, 0, &increment_counter);
-    return(nhash);
+    return(PointerGetDatum(nhash));
 }
 
 /*
@@ -205,7 +203,7 @@ Datum __cmsketch_count_final(PG_FUNCTION_ARGS)
     cmtransval *sketch = (cmtransval *)VARDATA(blob);
     if (!CM_TRANSVAL_INITIALIZED(blob))
         PG_RETURN_NULL();
-    PG_RETURN_INT64(cmsketch_count_c(sketch->sketches[0],
+    PG_RETURN_DATUM(cmsketch_count_c(sketch->sketches[0],
                                      sketch->args[0], sketch->outFuncOid,
                                      sketch->typOid));
 }
@@ -285,6 +283,7 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 {
     bytea *     counterblob1 = PG_GETARG_BYTEA_P(0);
     bytea *     counterblob2 = PG_GETARG_BYTEA_P(1);
+    cmtransval *transval2 = (cmtransval *)VARDATA(counterblob2);
     cmtransval *newtrans;
     countmin *  sketches2 = (countmin *)
                             ((cmtransval *)(VARDATA(counterblob2)))->sketches;
@@ -295,9 +294,9 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 
     /* make sure they're initialized! */
     if (!CM_TRANSVAL_INITIALIZED(counterblob1))
-        counterblob1 = cmsketch_init_transval();
+        counterblob1 = cmsketch_init_transval(transval2->typOid);
     if (!CM_TRANSVAL_INITIALIZED(counterblob2))
-        counterblob2 = cmsketch_init_transval();
+        counterblob2 = cmsketch_init_transval(transval2->typOid);
 
     sz = VARSIZE(counterblob1);
     /* allocate a new transval as a copy of counterblob1 */
@@ -314,10 +313,9 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 
     if (newtrans->nargs == -1) {
         /* transfer in the args from the other input */
-        cmtransval *other = (cmtransval *)VARDATA(counterblob2);
-        newtrans->nargs = other->nargs;
-        for (i = 0; (int)i < other->nargs; i++)
-            newtrans->args[i] = other->args[i];
+        newtrans->nargs = transval2->nargs;
+        for (i = 0; (int)i < transval2->nargs; i++)
+            newtrans->args[i] = transval2->args[i];
     }
 
     PG_RETURN_DATUM(PointerGetDatum(newblob));
@@ -353,21 +351,17 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
  */
 int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid, Oid typOid)
 {
-    Datum nhash;
-    // char *txt;
+    bytea *nhash;
 
-    // txt = OidOutputFunctionCall(funcOid, arg);
-
-    /* get the md5 hash of the stringified argument. */
+    /* get the md5 hash of the argument. */
     nhash = sketch_md5_bytea(arg, typOid);
-    // nhash = md5_cstring(txt);
     return(cmsketch_count_md5_datum(sketch, nhash, funcOid));
 }
 
-int64 cmsketch_count_md5_datum(countmin sketch, Datum md5_datum, Oid funcOid)
+int64 cmsketch_count_md5_datum(countmin sketch, bytea *md5_bytea, Oid funcOid)
 {
     /* iterate through the sketches, finding the min counter associated with this hash */
-    return(hash_counters_iterate(md5_datum, sketch, INT64_MAX,
+    return(hash_counters_iterate(md5_bytea, sketch, INT64_MAX,
                                           &min_counter));
 }
 
@@ -670,7 +664,7 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
     /*
      * Get info about element type
      */
-    get_type_io_data(INT8OID, IOFunc_output,
+    get_type_io_data(transval->typOid, IOFunc_output,
                      &typlen, &typbyval,
                      &typalign, &typdelim,
                      &typioparam, &typiofunc);
@@ -685,7 +679,7 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
                                 2,
                                 dims,
                                 lbs,
-                                INT8OID,
+                                transval->typOid,
                                 typlen,
                                 typbyval,
                                 typalign);
@@ -742,7 +736,7 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
     /*
      * Get info about element type
      */
-    get_type_io_data(INT8OID, IOFunc_output,
+    get_type_io_data(transval->typOid, IOFunc_output,
                      &typlen, &typbyval,
                      &typalign, &typdelim,
                      &typioparam, &typiofunc);
@@ -757,7 +751,7 @@ Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
                                 2,
                                 dims,
                                 lbs,
-                                INT8OID,
+                                transval->typOid,
                                 typlen,
                                 typbyval,
                                 typalign);
@@ -794,12 +788,12 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
 /*!
  * for each row of the sketch, use the 16 bits starting at 2^i mod NUMCOUNTERS,
  * and invoke the lambda on those 16 bits (which may destructively modify counters).
- * \param hashval the MD5 hashe value that we take 16 bits at a time
+ * \param hashval the MD5 hashed value that we take 16 bits at a time
  * \param sketch the cmsketch
  * \param initial the initialized return value
  * \param lambdaptr the function to invoke on each 16 bits
  */
-int64 hash_counters_iterate(Datum hashval,
+int64 hash_counters_iterate(bytea *hashval,
                             countmin sketch, /* width is DEPTH*NUMCOUNTERS */
                             int64 initial,
                             int64 (*lambdaptr)(uint32,
@@ -818,7 +812,7 @@ int64 hash_counters_iterate(Datum hashval,
      * XXX but I was hoping memmove would deal with unaligned access in a portable way.
      * XXX However the deref of 2 bytes seems to work OK.
      */
-    for (i = 0, c = (char *)VARDATA(DatumGetByteaP(hashval)); 
+    for (i = 0, c = (char *)VARDATA(hashval); 
          i < DEPTH; 
          i++, c += 2) {
         // memmove((void *)&twobytes, c, 2);

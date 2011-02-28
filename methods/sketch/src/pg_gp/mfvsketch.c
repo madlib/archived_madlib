@@ -91,7 +91,7 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
                                 transval->typOid);
 
     tmpcnt = cmsketch_count_md5_datum(transval->sketch,
-                                      md5_datum,
+                                      (bytea *)DatumGetPointer(md5_datum),
                                       transval->outFuncOid);
     i = mfv_find(transblob, newdatum);
 
@@ -136,26 +136,18 @@ int mfv_find(bytea *blob, Datum val)
     mfvtransval *transval = (mfvtransval *)VARDATA(blob);
     unsigned     i;
     uint32       len;
-    void *       tmp;
+    void *       datp;
     Datum        iDat;
+    void        *valp = DatumExtractPointer(val, transval->typByVal);
 
     /* look for existing entry for this value */
     for (i = 0; i < transval->next_mfv; i++) {
         /* if they're the same */
-        tmp = mfv_transval_getval(blob,i);
-        iDat = MFVPointerGetDatum(tmp, transval->typByVal);
+        datp = mfv_transval_getval(blob,i);
+        iDat = PointerExtractDatum(datp, transval->typByVal);
 
-        if ((len = (uint32)att_addlength_datum(0, transval->typLen, iDat))
-            == (uint32)att_addlength_datum(0, transval->typLen, val)) {
-            void *valp, *datp;
-            if (transval->typByVal) {
-                valp = (void *)&val;
-                datp = (void *)&iDat;
-            }
-            else {
-                valp = (void *)DatumGetPointer(val);
-                datp = (void *)DatumGetPointer(iDat);
-            }
+        if ((len = ExtractDatumLen(iDat, transval->typLen, transval->typByVal))
+            == ExtractDatumLen(val, transval->typLen, transval->typByVal)) {
             if (!memcmp(datp, valp, len))
                 /* arg is an mfv */
                 return(i);
@@ -207,15 +199,15 @@ bytea *mfv_init_transval(int max_mfvs, Oid typOid)
 }
 
 /*! 
- * get the datum associated with the i'th mfv 
  * \param blob a bytea holding an mfv transval
  * \param i index of the mfv to look up
+ * \returns pointer to the datum associated with the i'th mfv 
  */
 void *mfv_transval_getval(bytea *blob, uint32 i)
 {
     mfvtransval *tvp = (mfvtransval *)VARDATA(blob);
     void *       retval = (void *)(((char*)tvp) + tvp->mfvs[i].offset);
-    Datum        dat = MFVPointerGetDatum(retval, tvp->typByVal);
+    Datum        dat = PointerExtractDatum(retval, tvp->typByVal);
 
     if (i > tvp->next_mfv || i < 0)
         elog(ERROR,
@@ -224,7 +216,7 @@ void *mfv_transval_getval(bytea *blob, uint32 i)
     if (tvp->mfvs[i].offset > VARSIZE(blob) - VARHDRSZ
         || tvp->mfvs[i].offset < MFV_TRANSVAL_SZ(tvp->max_mfvs)-VARHDRSZ)
         elog(ERROR, "illegal offset %u in mfv sketch", tvp->mfvs[i].offset);
-    if (tvp->mfvs[i].offset  + att_addlength_datum(0, tvp->typLen, dat)
+    if (tvp->mfvs[i].offset  + ExtractDatumLen(dat, tvp->typLen, tvp->typByVal)
         > VARSIZE(blob) - VARHDRSZ)
         elog(ERROR, "value overruns size of mfv sketch");
 
@@ -246,13 +238,10 @@ void *mfv_transval_getval(bytea *blob, uint32 i)
 void mfv_copy_datum(bytea *transblob, int index, Datum dat)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    size_t       datumLen = att_addlength_datum(0, transval->typLen, dat);
+    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal);
     void *       curval = mfv_transval_getval(transblob,index);
 
-    if (transval->typByVal)
-        memmove(curval, (void *)&dat, datumLen);
-    else
-        memmove(curval, (void *)DatumGetPointer(dat), datumLen);
+    memmove(curval, (void *)DatumExtractPointer(dat, transval->typByVal), datumLen);
 }
 
 /*!
@@ -273,7 +262,7 @@ bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, uint32 i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     bytea *      tmpblob;
-    size_t       datumLen = att_addlength_datum(0, transval->typLen, dat);
+    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal);
 
     if (i > transval->next_mfv || i < 0)
         elog(
@@ -338,10 +327,10 @@ bytea *mfv_transval_replace(bytea *transblob, Datum dat, int i)
      * space allocation for the new value
      */
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    size_t       datumLen = att_addlength_datum(0, transval->typLen, dat);
+    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal);
     void *       tmpp = mfv_transval_getval(transblob,i);
-    Datum        oldDat = MFVPointerGetDatum(tmpp, transval->typByVal);
-    size_t       oldLen = att_addlength_datum(0, transval->typLen, oldDat);
+    Datum        oldDat = PointerExtractDatum(tmpp, transval->typByVal);
+    size_t       oldLen = ExtractDatumLen(oldDat, transval->typLen, transval->typByVal);
 
     if (datumLen <= oldLen) {
         mfv_copy_datum(transblob, i, dat);
@@ -386,7 +375,7 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
 
     for (i = 0; i < transval->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob,i);
-        Datum curval = MFVPointerGetDatum(tmpp, transval->typByVal);
+        Datum curval = PointerExtractDatum(tmpp, transval->typByVal);
         char *countbuf =
             OidOutputFunctionCall(outFuncOid,
                                   Int64GetDatum(transval->mfvs[i].cnt));
@@ -486,7 +475,7 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     /* recompute the counts using the merged sketch */
     for (i = 0; i < transval1->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob1,i);
-        Datum dat = MFVPointerGetDatum(tmpp, transval1->typByVal);
+        Datum dat = PointerExtractDatum(tmpp, transval1->typByVal);
 
         transval1->mfvs[i].cnt = cmsketch_count_c(transval1->sketch,
                                                   dat,
@@ -495,7 +484,7 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     }
     for (i = 0; i < transval2->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob2,i);
-        Datum dat = MFVPointerGetDatum(tmpp, transval2->typByVal);
+        Datum dat = PointerExtractDatum(tmpp, transval2->typByVal);
 
         transval2->mfvs[i].cnt = cmsketch_count_c(transval2->sketch,
                                                   dat,
@@ -512,7 +501,7 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
          j < transval2->next_mfv && i < transval1->max_mfvs;
          i++) {
         void *tmpp = mfv_transval_getval(transblob2, j);
-        Datum jDatum = MFVPointerGetDatum(tmpp, transval2->typByVal);
+        Datum jDatum = PointerExtractDatum(tmpp, transval2->typByVal);
 
         if (i == transval1->next_mfv && (mfv_find(transblob1, jDatum) == -1)
             /* && i < transval1->max_mfvs from for loop */) {

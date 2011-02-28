@@ -1590,3 +1590,29 @@ svec_median(PG_FUNCTION_ARGS) {
 	PG_RETURN_FLOAT8(ret);
 }
 
+PG_FUNCTION_INFO_V1(svec_hash);
+/**
+ *  svec_hash - computes a hash value of svec
+ */
+Datum svec_hash( PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SparseData sdata  = sdata_from_svec(svec1);
+	char *ix = sdata->index->data;
+	double *vals = (double *)sdata->vals->data;
+	
+	unsigned long hash = 65599;
+    unsigned short c;
+    
+    for (int i=0;i<sdata->unique_value_count;i++)
+	{
+		c = compword_to_int8(ix);
+		hash = c + (hash << 7) + (hash << 16) - hash;
+		c = vals[i];
+		hash = c + (hash << 7) + (hash << 16) - hash;
+		
+		ix+=int8compstoragesize(ix);
+	}
+	PG_RETURN_INT32(hash);
+}
+

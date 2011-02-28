@@ -51,7 +51,7 @@ PG_MODULE_MAGIC;
 #define MINVALS 1024*12
 
 /*!
- * initial size for a sortasort: we'll guess at 8 bytes per string.
+ * initial size for a sortasort: we'll guess at 8 bytes per datum.
  * sortasort will grow dynamically if we guessed too low
  */
 #define SORTASORT_INITIAL_STORAGE  sizeof(sortasort) + MINVALS*sizeof(uint32) + \
@@ -72,17 +72,21 @@ typedef enum {SMALL, BIG} fmstatus;
  */
 typedef struct {
     fmstatus status;
+    Oid      typOid;
+    Oid      funcOid;
+    int16    typLen;
+    bool     typByVal;   
     char storage[0];
 } fmtransval;
 
-Datum __fmsketch_trans_c(bytea *, char *);
+Datum __fmsketch_trans_c(bytea *, Datum);
 Datum __fmsketch_count_distinct_c(bytea *);
 Datum __fmsketch_trans(PG_FUNCTION_ARGS);
 Datum __fmsketch_count_distinct(PG_FUNCTION_ARGS);
 Datum __fmsketch_merge(PG_FUNCTION_ARGS);
-Datum big_or(bytea *bitmap1, bytea *bitmap2);
-bytea *fmsketch_sortasort_insert(bytea *, char *);
-bytea *fm_new(void);
+void big_or(bytea *bitmap1, bytea *bitmap2, bytea *out);
+bytea *fmsketch_sortasort_insert(bytea *, Datum, size_t);
+bytea *fm_new(fmtransval *);
 
 PG_FUNCTION_INFO_V1(__fmsketch_trans);
 
@@ -94,8 +98,8 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
     Oid         element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
     Oid         funcOid;
     bool        typIsVarlena;
-    char *      string;
     Datum       retval;
+    Datum       inval;
 
     if (!OidIsValid(element_type))
         elog(ERROR, "could not determine data type of input");
@@ -118,14 +122,7 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
 
     /* get the provided element, being careful in case it's NULL */
     if (!PG_ARGISNULL(1)) {
-        /* figure out the outfunc for this type */
-        getTypeOutputInfo(element_type, &funcOid, &typIsVarlena);
-
-        /*
-         * convert input to a cstring
-         * we'll pfree it before we exit
-         */
-        string = OidOutputFunctionCall(funcOid, PG_GETARG_DATUM(1));
+        inval = PG_GETARG_DATUM(1);
 
         /*
          * if this is the first call, initialize transval to hold a sortasort
@@ -134,13 +131,21 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
         if (VARSIZE(transblob) <= VARHDRSZ) {
             size_t blobsz = VARHDRSZ + sizeof(fmtransval) +
                             SORTASORT_INITIAL_STORAGE;
+
             transblob = (bytea *)palloc0(blobsz);
             SET_VARSIZE(transblob, blobsz);
             transval = (fmtransval *)VARDATA(transblob);
+
+            transval->typOid = element_type;
+            /* figure out the outfunc for this type */
+            getTypeOutputInfo(element_type, &funcOid, &typIsVarlena);
+            get_typlenbyval(element_type, &(transval->typLen), &(transval->typByVal));
             transval->status = SMALL;
             sortasort_init((sortasort *)transval->storage,
                            MINVALS,
-                           SORTASORT_INITIAL_STORAGE);
+                           SORTASORT_INITIAL_STORAGE, 
+                           transval->typLen,
+                           transval->typByVal);
         }
         else {
             /* extract the existing transval from the transblob */
@@ -148,17 +153,18 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
         }
 
         /*
-         * if we've seen < MINVALS distinct values, place string into the sortasort
+         * if we've seen < MINVALS distinct values, place datum into the sortasort
          * XXXX Would be cleaner to try the sortasort insert and if it fails, then continue.
          */
         if (transval->status == SMALL
             && ((sortasort *)(transval->storage))->num_vals <
             MINVALS) {
+            int len = ExtractDatumLen(inval, transval->typLen, transval->typByVal);
+            
             retval =
                 PointerGetDatum(fmsketch_sortasort_insert(
                                     transblob,
-                                    string));
-            pfree(string);
+                                    inval, len));
             PG_RETURN_DATUM(retval);
         }
 
@@ -170,23 +176,25 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
                  && ((sortasort *)(transval->storage))->num_vals ==
                  MINVALS) {
             int        i;
-            sortasort *s = (sortasort *)(transval->storage);
-            bytea *    newblob = fm_new();
+            sortasort  *s = (sortasort *)(transval->storage);
+            bytea      *newblob = fm_new(transval);
+            
             transval = (fmtransval *)VARDATA(newblob);
-
+            
             /*
              * "catch up" on the past as if we were doing FM from the beginning:
              * apply the FM sketching algorithm to each value previously stored in the sortasort
              */
             for (i = 0; i < MINVALS; i++)
-                __fmsketch_trans_c(newblob, SORTASORT_GETVAL(s,i));
+                __fmsketch_trans_c(newblob, 
+                                   PointerExtractDatum(SORTASORT_GETVAL(s,i), s->typByVal));
 
             /*
              * XXXX would like to pfree the old transblob, but the memory allocator doesn't like it
              * XXXX Meanwhile we know that this memory "leak" is of fixed size and will get
              * XXXX deallocated "soon" when the memory context is destroyed.
              */
-            /* drop through to insert the current string in "BIG" mode */
+            /* drop through to insert the current datum in "BIG" mode */
             transblob = newblob;
         }
 
@@ -199,9 +207,8 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
                 ERROR,
                 "FM sketch failed internal sanity check");
 
-        /* Apply FM algorithm to this string */
-        retval = __fmsketch_trans_c(transblob, string);
-        pfree(string);
+        /* Apply FM algorithm to this datum */
+        retval = __fmsketch_trans_c(transblob, inval);
         PG_RETURN_DATUM(retval);
     }
     else PG_RETURN_NULL();
@@ -210,8 +217,9 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
 /*!
  * generate a bytea holding a transval in BIG mode, with the right amount of
  * zero bits for an empty FM sketch.
+ * \param template an optional pre-existing transval whose fields we can copy in
  */
-bytea *fm_new()
+bytea *fm_new(fmtransval *template)
 {
     int         fmsize = VARHDRSZ + sizeof(fmtransval) + FMSKETCH_SZ;
     /* use palloc0 to make sure it's initialized to 0 */
@@ -220,6 +228,11 @@ bytea *fm_new()
 
     SET_VARSIZE(newblob, fmsize);
     transval = (fmtransval *)VARDATA(newblob);
+    /* copy over the struct values */
+    if (template != NULL)
+        memcpy(transval, template, sizeof(fmtransval));    
+
+    /* set status to BIG, possibly overwriting what was in template */
     transval->status = BIG;
 
     SET_VARSIZE((bytea *)transval->storage, FMSKETCH_SZ);
@@ -236,7 +249,7 @@ bytea *fm_new()
  * \param transblob the transition value packed into a bytea
  * \param input a textual representation of the value to hash
  */
-Datum __fmsketch_trans_c(bytea *transblob, char *input)
+Datum __fmsketch_trans_c(bytea *transblob, Datum indat)
 {
     fmtransval * transval = (fmtransval *) VARDATA(transblob);
     bytea *      bitmaps = (bytea *)transval->storage;
@@ -244,8 +257,15 @@ Datum __fmsketch_trans_c(bytea *transblob, char *input)
     uint8 *      c;
     int          rmost;
     Datum        result;
+    // char        *hex;
+    bytea       *hashed;
 
-    c = (uint8 *)VARDATA(DatumGetByteaP(md5_cstring(input)));
+    hashed = sketch_md5_bytea(indat, transval->typOid);
+    c = (uint8 *)VARDATA(hashed);
+    // hex = text_to_cstring((bytea *)DatumGetPointer(DirectFunctionCall2(binary_encode, PointerGetDatum(hashed),
+    //                       CStringGetTextDatum("hex"))));
+    // elog(NOTICE, "md5(%s), len %d: %s", text_to_cstring((bytea *)PointerGetDatum(indat)),
+    //      VARSIZE((bytea *)PointerGetDatum(indat)), hex);
 
     /*
      * During the insertion we insert each element
@@ -355,7 +375,11 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
 
     if (transval1->status == BIG && transval2->status == BIG) {
         /* easy case: merge two FM sketches via bitwise OR. */
-        PG_RETURN_DATUM(big_or(transblob1, transblob2));
+        fmtransval *newval;
+        tblob_big = fm_new(transval1);
+        newval = (fmtransval *)VARDATA(tblob_big);
+        big_or(transblob1, transblob2, (bytea *)newval->storage);
+        PG_RETURN_DATUM(PointerGetDatum(tblob_big));
     }
     else if (transval1->status == SMALL && transval2->status == SMALL) {
         s1 = (sortasort *)(transval1->storage);
@@ -365,8 +389,8 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
         tblob_small =
             (s1->num_vals > s2->num_vals) ? transblob2 : transblob1;
         sortashort =
-            (sortasort *)(((fmtransval *)(tblob_small))->storage);
-        sortabig = (sortasort *)(((fmtransval *)(tblob_big))->storage);
+            (sortasort *)(((fmtransval *)((fmtransval *)VARDATA(tblob_small)))->storage);
+        sortabig = (sortasort *)(((fmtransval *)((fmtransval *)VARDATA(tblob_big)))->storage);
         if (sortabig->num_vals + sortashort->num_vals <=
             sortabig->capacity) {
             /*
@@ -375,11 +399,15 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
              * but for now we just copy the values from the smaller sortasort into
              * the bigger one.
              */
-            for (i = 0; i < sortashort->num_vals; i++)
-                tblob_big = fmsketch_sortasort_insert(
-                    tblob_big,
-                    SORTASORT_GETVAL(
-                        sortashort,i));
+            for (i = 0; i < sortashort->num_vals; i++) {
+                Datum the_val = PointerExtractDatum(SORTASORT_GETVAL(sortashort,i),
+                                                    transval1->typByVal);
+                int the_len = ExtractDatumLen(the_val, transval1->typLen, 
+                                              transval1->typByVal);
+                tblob_big = fmsketch_sortasort_insert(tblob_big, 
+                                                      the_val, 
+                                                      the_len);
+            }
             PG_RETURN_DATUM(PointerGetDatum(tblob_big));
         }
         /* else drop through. */
@@ -390,7 +418,7 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
      * need to form an FM sketch and populate with the SMALL transval(s)
      */
     if (transval1->status == SMALL && transval2->status == SMALL)
-        tblob_big = fm_new();
+        tblob_big = fm_new(transval1);
     else
         tblob_big =
             (transval1->status == BIG) ? transblob1 : transblob2;
@@ -398,22 +426,23 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
     if (transval1->status == SMALL) {
         s1 = (sortasort *)(transval1->storage);
         for(i = 0; i < s1->num_vals; i++) {
-            __fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s1,i));
+            __fmsketch_trans_c(tblob_big, PointerExtractDatum(SORTASORT_GETVAL(s1,i),
+                                                              transval1->typByVal));
         }
     }
     if (transval2->status == SMALL) {
         s2 = (sortasort *)(transval2->storage);
         for(i = 0; i < s2->num_vals; i++) {
-            __fmsketch_trans_c(tblob_big, SORTASORT_GETVAL(s2,i));
+            __fmsketch_trans_c(tblob_big, PointerExtractDatum(SORTASORT_GETVAL(s2,i),
+                                                              transval1->typByVal));
         }
     }
     PG_RETURN_DATUM(PointerGetDatum(tblob_big));
 }
 
 /*! OR of two big bitmaps, for gathering sketches computed in parallel. */
-Datum big_or(bytea *bitmap1, bytea *bitmap2)
+void big_or(bytea *bitmap1, bytea *bitmap2, bytea *out)
 {
-    bytea * out;
     uint32  i;
 
     if (VARSIZE(bitmap1) != VARSIZE(bitmap2))
@@ -430,19 +459,19 @@ Datum big_or(bytea *bitmap1, bytea *bitmap2)
         ((char *)(VARDATA(out)))[i] = ((char *)(VARDATA(bitmap1)))[i] |
                                       ((char *)(VARDATA(bitmap2)))[i];
 
-    PG_RETURN_BYTEA_P(out);
 }
 
 /*!
- * wrapper for insertion into a sortasort. calls sorasort_try_insert and if that fails it
+ * wrapper for insertion into a sortasort. calls sortasort_try_insert and if that fails it
  * makes more space for insertion (double or more the size) and tries again.
  * \param transblob the current transition value packed into a bytea
- * \param v the value to be inserted
+ * \param dat the Datum to be inserted
  */
-bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
+bytea *fmsketch_sortasort_insert(bytea *transblob, Datum dat, size_t len)
 {
+    fmtransval *transval = (fmtransval *)VARDATA(transblob);
     sortasort *s_in =
-        (sortasort *)((fmtransval *)VARDATA(transblob))->storage;
+        (sortasort *)(transval->storage);
     bytea *    newblob;
     bool       success = FALSE;
     size_t     new_storage_sz;
@@ -451,7 +480,7 @@ bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
     if (s_in->num_vals >= s_in->capacity)
         elog(ERROR, "attempt to insert into full sortasort");
 
-    success = sortasort_try_insert(s_in, v);
+    success = sortasort_try_insert(s_in, dat, transval->typLen);
     if (success < 0)
         elog(ERROR, "insufficient directory capacity in sortasort");
 
@@ -466,7 +495,7 @@ bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
          * we can't use repalloc because it fails trying to free the old transblob
          */
 
-        new_storage_sz = s_in->storage_sz*2 + strlen(v);
+        new_storage_sz = s_in->storage_sz*2 + len;
         /* XXX THIS POINTER ARITHMETIC SHOULD BE HIDDEN BY A MACRO IN THE SORTASORT LIBRARY! */
         newsize = VARHDRSZ + sizeof(fmtransval) + sizeof(sortasort)
                   + s_in->capacity*sizeof(s_in->dir[0]) +
@@ -481,7 +510,7 @@ bytea *fmsketch_sortasort_insert(bytea *transblob, char *v)
          * pfree(transblob);
          */
         transblob = newblob;
-        success = sortasort_try_insert(s_in, v);
+        success = sortasort_try_insert(s_in, dat, transval->typLen);
     }
     return(transblob);
 }

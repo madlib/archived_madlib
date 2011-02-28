@@ -67,8 +67,8 @@ success = get_op_hash_functions(eqOpr, result, NULL));
  * (i.e. the # of trailing zeros to the right).
  * \param bits a bitmap containing many fm sketches
  * \param numsketches the number of sketches in the bits variable
- * \param the size of each sketch in bits
- * \param the sketch number in which we want to find the rightmost one
+ * \param sketchsz_bits the size of each sketch in bits
+ * \param sketchnum the sketch number in which we want to find the rightmost one
  */
 uint32 rightmost_one(uint8 *bits,
                      size_t numsketches,
@@ -298,52 +298,29 @@ bit_print(uint8 *c, int numbytes)
 }
 
 /*!
+ * Run the datum through an md5 hash.  No need to special-case variable-length types,
+ * we'll just has their length header too.
  * The POSTGRES code for md5 returns a bytea with a textual representation of the
  * md5 result.  We then convert it back into binary.
- * XXX The internal POSTGRES source code is actually converting from binary to the bytea
- *     so this is rather wasteful, but the internal code is marked static and unavailable here.
- * XXX In fact, the full cost right now is:
- * XXX -- outfunc converts internal type to CString
- * XXX -- here we convert CString to text, to call md5_bytea
- * XXX -- md5_bytea generates a byte array
- * XXX -- we then call binary_decode to convert back to a textual representation
- * XXX -- (alternatively we could call hex_to_bytes in sketch_support.c for the last step)
+ * \param dat a Postgres Datum
+ * \param typOid Postgres type Oid
+ * \returns a bytea containing the hashed bytes
  */
-Datum md5_cstring(char *input)
+bytea *sketch_md5_bytea(Datum dat, Oid typOid)
 {
-    Datum hashtxt = 
-        DirectFunctionCall1(md5_bytea, PointerGetDatum(cstring_to_text(input)));
-
-    return DirectFunctionCall2(binary_decode, hashtxt,
-                               CStringGetTextDatum("hex"));
-}
-
-Datum sketch_md5_bytea(Datum dat, Oid typOid)
-{
-    // according to postgres' libpq/md5.c, need 33 bytes to hold null-terminated string
+    // according to postgres' libpq/md5.c, need 33 bytes to hold 
+    // null-terminated md5 string
     char outbuf[MD5_HASHLEN*2+1];
-    bytea *out = palloc(MD5_HASHLEN+VARHDRSZ);
-    
-    int len = get_typlen(typOid);
+    bytea *out = palloc0(MD5_HASHLEN+VARHDRSZ);    
     bool byval = get_typbyval(typOid);
-    if (byval) {
-        pg_md5_hash((char *)(&dat), len, outbuf);
-    }
-    else if (len > 0) {
-        pg_md5_hash((char *)DatumGetPointer(dat), len, outbuf);
-    }
-    else if (len == -1) {
-        pg_md5_hash(VARDATA((bytea *)DatumGetPointer(dat)), 
-                    VARSIZE_ANY((bytea *)DatumGetPointer(dat)) - VARHDRSZ, outbuf);
-    }                    
-    else if (len == -2) {
-        pg_md5_hash((char *)DatumGetPointer(dat), 
-                    strlen((char *)DatumGetPointer(dat))+1, outbuf);
-    }
+    int len = ExtractDatumLen(dat, get_typlen(typOid), byval);
+    void *datp = DatumExtractPointer(dat, byval);
+        
+    pg_md5_hash(datp, len, outbuf);        
     
-    hex_to_bytes(outbuf, (uint8 *)VARDATA(out), strlen(outbuf));
+    hex_to_bytes(outbuf, (uint8 *)VARDATA(out), MD5_HASHLEN*2);
     SET_VARSIZE(out, MD5_HASHLEN+VARHDRSZ);
-    return PointerGetDatum(out);
+    return out;
 }
 
 
@@ -402,3 +379,18 @@ int4 safe_log2(int64 x)
         out--;
     return out;
 }
+
+size_t ExtractDatumLen(Datum x, int len, bool byVal)
+{
+    if (len > 0) 
+        return len;
+    else if (len == -1) 
+        return VARSIZE_ANY(DatumGetPointer(x));
+    else if (len == -2) 
+        return strlen((char *)DatumGetPointer(x));
+    else {
+        elog(ERROR, "Datum typelength error in ExtractDatumLen: len is %u", (unsigned)len);
+        return 0;
+    }
+}
+
