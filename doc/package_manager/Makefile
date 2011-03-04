@@ -1,4 +1,4 @@
-all: madlib_pkgspec.pdf
+all: madlib_pkgspec.pdf madlib_install_tools.pdf
 
 .PHONY: clean
 
