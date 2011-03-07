@@ -1,6 +1,8 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "utils/array.h"
+#include "math.h"
+#include "pg_type.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -17,10 +19,11 @@ Datum hash_array( PG_FUNCTION_ARGS)
 	int numstate = ArrayGetNItems(dimstate,dimsstate);
     int32 *vals_state=(int32 *)ARR_DATA_PTR(state);
 	
-	unsigned long hash = 65599;
+    unsigned long hash = 65599;
     unsigned short c;
+    int i = 0;
     
-    for (int i=0;i<numstate;i++)
+    for (;i<numstate;i++)
 	{
 		c = vals_state[i];
 		hash = c + (hash << 7) + (hash << 16) - hash;
@@ -69,6 +72,7 @@ Datum aggr_InfoGain(PG_FUNCTION_ARGS) {
 	float8 trueweight = PG_GETARG_FLOAT8(2);
 	int32 posclasses = PG_GETARG_INT32(3);
 	int32 trueclass = PG_GETARG_INT32(5);
+   	ArrayType *pgarray;
 
 	vals_state[0] += trueweight;
 	vals_state[trueclass] += trueweight;
@@ -76,7 +80,6 @@ Datum aggr_InfoGain(PG_FUNCTION_ARGS) {
 	vals_state[(int)(truevalue*(posclasses+1))] += trueweight;
 	vals_state[(int)(truevalue*(posclasses+1) + trueclass)] += trueweight;
   
-   	ArrayType *pgarray;
     pgarray = construct_array((Datum *)vals_state,
 		numstate,FLOAT8OID,
 		sizeof(float8),true,'d');
@@ -98,6 +101,8 @@ Datum compute_InfoGain(PG_FUNCTION_ARGS) {
 	int i = 1;
 	int max = 1;
 	float8 tot = entropyWeightedFloat(vals_state, 1, posclasses, vals_state[0], vals_state[0]);
+	ArrayType *pgarray;  
+
 	for(; i < (posvalues+1); ++i){
 		tot -= entropyWeightedFloat(vals_state, (i*(posclasses+1)+1), posclasses, vals_state[i*(posclasses+1)], vals_state[0]);
 	}
@@ -119,7 +124,6 @@ Datum compute_InfoGain(PG_FUNCTION_ARGS) {
 	result[2] = vals_state[max]/vals_state[0];
 	result[3] = max;
 	  
-	ArrayType *pgarray;  
     pgarray = construct_array((Datum *)result,
 		4,FLOAT8OID,
 		sizeof(float8),true,'d');
@@ -133,9 +137,10 @@ Datum mallocset(PG_FUNCTION_ARGS) {
 	int size = PG_GETARG_INT32(0);
 	int value = PG_GETARG_INT32(1);
 	float8 *result = (float8*)malloc(sizeof(float8)*size); 
+	ArrayType *pgarray;
+
 	memset(result, value, sizeof(float8)*size);
 	
-    ArrayType *pgarray;
 	pgarray = construct_array((Datum *)result,
 		size, FLOAT8OID,
 		sizeof(float8),true,'d');
@@ -150,12 +155,12 @@ Datum WeightedNoReplacement(PG_FUNCTION_ARGS) {
 	int value2 = PG_GETARG_INT32(1);
 	int64 *result = (int64*)malloc(sizeof(int64)*value1);
 	int32 i = 0;
+	ArrayType *pgarray;
 	
    	for(;i < value1; ++i){
    		result[i] = rand()%value2;
    	}
    
-    ArrayType *pgarray;
 	pgarray = construct_array((Datum *)result,
 		value1, INT8OID,
 		sizeof(int64),true,'d');
@@ -214,11 +219,11 @@ Datum array_add(PG_FUNCTION_ARGS) {
     float8 *vals_2=(float8 *)ARR_DATA_PTR(arr2);
   
   	float8 *result = (float8*)malloc(sizeof(float8)*numvalues1);
+	ArrayType *pgarray;
   	  	
 	for (; i<numvalues1; ++i){
       	result[i] = vals_1[i] + vals_2[i];
 	}
-	ArrayType *pgarray;
 	pgarray = construct_array((Datum *)result,
 		numvalues1, FLOAT8OID,
 		sizeof(float8),true,'d');
