@@ -1,3 +1,5 @@
+DATA_built = decision_tree.sql decision_tree_drop.sql
+
 MODULES = DTree_stat
 PGXS := $(shell pg_config --pgxs)
 include $(PGXS)
