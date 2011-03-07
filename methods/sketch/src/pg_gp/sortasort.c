@@ -175,7 +175,7 @@ int sortasort_find(sortasort *s, Datum dat)
     /* binary search on the front of the sortasort */
     if (themax >= (int)s->num_vals) {
         elog(ERROR,
-             "sortasort failure: max = %d, num_vals = %lu",
+             "sortasort failure: max = %d, num_vals = %zu",
              themax,
              s->num_vals);
     }
