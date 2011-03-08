@@ -2,7 +2,7 @@
 #include "fmgr.h"
 #include "utils/array.h"
 #include "math.h"
-#include "/catalog/pg_type.h"
+#include "catalog/pg_type.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
