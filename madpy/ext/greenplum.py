@@ -16,7 +16,7 @@ madlibdir = gphome + '/lib/postgresql/madlib'
 if (not os.path.isdir( madlibdir)):
     print "> " + madlibdir + " does not exist. Nothing to push to segment nodes."
     exit(1)
-    
+
 print "> deploying object code libraries to Greenplum segment nodes"
 
 # get & check host_file
@@ -37,7 +37,8 @@ try:
     while line:
         n+=1
         line = line.replace("\n","");
-        subprocess.call(['scp ' + gphome + '/lib/postgresql/*.so ' + line + ':' + gphome + '/lib/postgresql/'], stdout = subprocess.PIPE, shell=True)
+	print 'copying files to ' + line
+        subprocess.call(['scp -pr ' + madlibdir + ' ' + line + ':' + gphome + '/lib/postgresql/' ], stdout = subprocess.PIPE, shell=True)
         line = f.readline()
 except: 
     print sys.exc_info()
