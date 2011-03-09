@@ -283,6 +283,7 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 {
     bytea *     counterblob1 = PG_GETARG_BYTEA_P(0);
     bytea *     counterblob2 = PG_GETARG_BYTEA_P(1);
+    cmtransval *transval1 = (cmtransval *)VARDATA(counterblob1);
     cmtransval *transval2 = (cmtransval *)VARDATA(counterblob2);
     cmtransval *newtrans;
     countmin *  sketches2 = (countmin *)
@@ -293,10 +294,20 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
     int         sz;
 
     /* make sure they're initialized! */
-    if (!CM_TRANSVAL_INITIALIZED(counterblob1))
+    if (!CM_TRANSVAL_INITIALIZED(counterblob1)
+        && !CM_TRANSVAL_INITIALIZED(counterblob2))
+        /* if both are empty can return one of them */
+        PG_RETURN_DATUM(PointerGetDatum(counterblob1));
+    else if (!CM_TRANSVAL_INITIALIZED(counterblob1)) {
+        elog(NOTICE, "typOid is %d", transval2->typOid);
         counterblob1 = cmsketch_init_transval(transval2->typOid);
-    if (!CM_TRANSVAL_INITIALIZED(counterblob2))
-        counterblob2 = cmsketch_init_transval(transval2->typOid);
+        transval1 = (cmtransval *)VARDATA(counterblob1);
+    }
+    else if (!CM_TRANSVAL_INITIALIZED(counterblob2)) {
+        elog(NOTICE, "typOid is %d", transval1->typOid);
+        counterblob2 = cmsketch_init_transval(transval1->typOid);
+        transval2 = (cmtransval *)VARDATA(counterblob2);
+    }
 
     sz = VARSIZE(counterblob1);
     /* allocate a new transval as a copy of counterblob1 */
