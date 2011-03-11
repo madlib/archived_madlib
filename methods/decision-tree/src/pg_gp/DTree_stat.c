@@ -32,6 +32,21 @@ Datum hash_array( PG_FUNCTION_ARGS)
 	PG_RETURN_INT32(hash);
 }
 
+static float8 ChiSquareStatistic(float8* values, int from, int size, float8 fract, float8 total){
+	int i = from, j = 1;
+	float8 mult = fract/total;
+	float8 estimate = 0;
+	float8 result = 0;
+	
+	for(; i < (size+from); ++i, ++j){
+		estimate = ((float8)values[j])*mult;
+		if(estimate > 0){
+			result += ((float8)values[i] - estimate)*((float8)values[i] - estimate)/estimate;
+		}
+	}
+	return result;
+}
+
 static float entropyWeighted(int* values, int size, float fract, float total){
 	int i = 0;
 	float mult = fract/total;
