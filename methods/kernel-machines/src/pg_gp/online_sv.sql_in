@@ -265,7 +265,7 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
        nsvs int,        -- number of support vectors
        ind_dim int,     -- the dimension of the individuals
        weights float8[],       -- the weight of the support vectors
-       individuals float8[][]  -- the array of support vectors
+       individuals float8[]    -- the array of support vectors, represented as a 1-D array
 );
 
 -- Create the necessary tables for storing training data and the learned support vector models
@@ -287,19 +287,6 @@ ifdef(`GREENPLUM', `DISTRIBUTED BY (weight)')
 -- Here we specify the dot product as the kernel; it can be replace with any other kernel, including the polynomial
 -- and Gaussian kernels defined below.
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_kernel(x float8[][], idx int, y float8[]) RETURNS float8 AS $$
-DECLARE
-	len INT;
-	ind float8[];
-BEGIN
-	len := array_upper(y,1);
-	FOR i IN 1..len LOOP
-	    ind[i] := x[idx][i];
-	END LOOP;
-	RETURN MADLIB_SCHEMA.svm_kernel(ind, y);
-END
-$$ LANGUAGE plpgsql;
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_kernel(x float8[], y float8[]) RETURNS float8 AS $$
 DECLARE
 	len INT;
@@ -344,10 +331,12 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
 RETURNS float8 AS $$
 DECLARE
+	idx INT := 0;
 	ret FLOAT8 := 0;
 BEGIN
 	FOR i IN 1..svs.nsvs LOOP
-	    ret := ret + svs.weights[i] * MADLIB_SCHEMA.svm_kernel(svs.individuals, i, ind);
+	    idx := svs.ind_dim * (i - 1);
+	    ret := ret + svs.weights[i] * MADLIB_SCHEMA.svm_kernel(svs.individuals[(idx+1):(idx+svs.ind_dim)], ind);
         END LOOP;
 	RETURN ret;
 END;
@@ -372,7 +361,7 @@ DECLARE
 	weight FLOAT8;  -- the weight of ind if it turns out to be a support vector
 BEGIN
 	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', array[ind]);  -- we have to be careful to initialise a multi-dimensional array
+	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  -- we have to be careful to initialise a multi-dimensional array
         END IF;
 
 	p := MADLIB_SCHEMA.svm_predict(svs, ind);
@@ -390,7 +379,7 @@ BEGIN
 	    IF (diff < 0) THEN weight := -1 * weight; END IF;
 	    svs.nsvs := svs.nsvs + 1;
 	    svs.weights[svs.nsvs] := weight;
-	    svs.individuals := array_cat(svs.individuals, ind);
+	    svs.individuals := svs.individuals || ind;
 	    svs.epsilon := svs.epsilon + (1 - nu) * eta;      
 	ELSE
 	    svs.epsilon := svs.epsilon - eta * nu;
@@ -420,7 +409,7 @@ DECLARE
 	p FLOAT8;       -- prediction for the input individual
 BEGIN
 	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', array[ind]);  -- we have to be careful to initialise a multi-dimensional array
+	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  -- we have to be careful to initialise a multi-dimensional array
         END IF;
 
 	p := label * (MADLIB_SCHEMA.svm_predict(svs, ind) + svs.b);
@@ -436,7 +425,7 @@ BEGIN
 
 	    svs.nsvs := svs.nsvs + 1;
 	    svs.weights[svs.nsvs] := label * eta;
-	    svs.individuals := array_cat(svs.individuals, ind);
+	    svs.individuals := svs.individuals || ind;
 	    svs.b := svs.b + eta * label;
 	    svs.rho := svs.rho + eta * (1 - nu);
 	ELSE
@@ -469,7 +458,7 @@ DECLARE
 	p FLOAT8;       -- prediction for the input individual
 BEGIN
 	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', array[ind]);  -- we have to be careful to initialise a multi-dimensional array
+	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  -- we have to be careful to initialise a multi-dimensional array
         END IF;
 
 	p := MADLIB_SCHEMA.svm_predict(svs, ind);
@@ -482,7 +471,7 @@ BEGIN
 
 	    svs.nsvs := svs.nsvs + 1;
 	    svs.weights[svs.nsvs] := eta;
-	    svs.individuals := array_cat(svs.individuals, ind);
+	    svs.individuals := svs.individuals || ind;
 	    svs.rho := svs.rho + eta * (1 - nu);
 	ELSE
 	    svs.rho := svs.rho - eta * nu;
@@ -500,16 +489,20 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[]) (
 
 -- This function transforms a MADLIB_SCHEMA.svm_model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__svm_transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[][]) RETURNS SETOF MADLIB_SCHEMA.svm_model AS $$
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__svm_transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[]) 
+RETURNS SETOF MADLIB_SCHEMA.svm_model AS $$
 DECLARE
+	idx INT := 0;
 	nsvs INT;
 	sv MADLIB_SCHEMA.svm_model;
 BEGIN
 	nsvs = array_upper(weights,1);
 	FOR i IN 1..nsvs LOOP 
-	    sv.id = modelname;
-       	    sv.weight = weights[i];
-	    FOR j IN 1..ind_dim LOOP sv.sv[j] = individuals[i][j]; END LOOP; -- we copy the individual because we can't say sv.sv[j] = individuals[i]
+	    sv.id := modelname;
+       	    sv.weight := weights[i];
+	    idx := ind_dim * (i-1);
+	    sv.sv := individuals[(idx+1):(idx+ind_dim)]; 
 	    RETURN NEXT sv;
      	END LOOP;
 END;
@@ -521,7 +514,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_storeModel(modelname TEXT) RETURNS 
 DECLARE
 	myind_dim INT;
 	myweights float8[];
-	myindividuals float8[][];
+	myindividuals float8[];
 --	mysvs MADLIB_SCHEMA.svm_model_rec;
 BEGIN
 --	SELECT INTO mysvs model FROM MADLIB_SCHEMA.svm_results WHERE id = modelname; -- for some strange reason this line doesn't work....
