@@ -303,9 +303,11 @@ $$ LANGUAGE SQL IMMUTABLE;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_gaussian_kernel(x float8[], y float8[], gamma float) 
 RETURNS float8 AS $$
-	SELECT exp(-1.0 * $3 * MADLIB_SCHEMA.svec_dot(MADLIB_SCHEMA.float8arr_minus_float8arr($1,$2),MADLIB_SCHEMA.float8arr_minus_float8arr($1,$2)));
+	SELECT exp(-1.0 * $3 * MADLIB_SCHEMA.svec_dot(MADLIB_SCHEMA.float8arr_minus_float8arr($1,$2),
+						      MADLIB_SCHEMA.float8arr_minus_float8arr($1,$2)));
 $$ LANGUAGE SQL IMMUTABLE;
 
+/*
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
 RETURNS float8 AS $$
@@ -320,6 +322,17 @@ BEGIN
 	RETURN ret;
 END;
 $$ LANGUAGE plpgsql;
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict_sub(int,int,float8[],float8[],float8[]) RETURNS float8
+AS 'MODULE_PATHNAME', 'svm_predict_sub' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
+RETURNS float8 AS $$
+	SELECT MADLIB_SCHEMA.svm_predict_sub($1.nsvs, $1.ind_dim, $1.weights, $1.individuals, $2);
+$$ LANGUAGE SQL;
+
 
 -- This is the main online support vector regression learning algorithm. 
 -- The function updates the support vector model as it processes each new training example.
@@ -523,11 +536,10 @@ $$ LANGUAGE plpgsql;
  * @param ind The data point \f$ \boldsymbol x \f$
  * @return This function returns \f$ f(\boldsymbol x) \f$
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict(modelname text, ind float8[], OUT ret float8) RETURNS FLOAT8 AS $$
-BEGIN
-	SELECT INTO ret sum(weight * MADLIB_SCHEMA.svm_kernel(sv, ind)) FROM MADLIB_SCHEMA.svm_model WHERE id = modelname;
-END;
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_predict(modelname text, ind float8[]) RETURNS FLOAT8 AS $$
+	SELECT sum(weight * MADLIB_SCHEMA.svm_kernel(sv, $2)) FROM MADLIB_SCHEMA.svm_model WHERE id = $1;
+$$ LANGUAGE SQL;
 
 -- DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_model_pr CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_model_pr AS ( model text, prediction float8 );
