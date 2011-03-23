@@ -280,7 +280,7 @@ ifdef(`GREENPLUM', `DISTRIBUTED BY (id)')
 
 -- The table for storing learned support vector models, one row per support vector
 CREATE TABLE MADLIB_SCHEMA.svm_model ( id text, weight float8, sv float8[] ) 
-ifdef(`GREENPLUM', `DISTRIBUTED BY (weight)')   -- why is this distributed by weight?
+ifdef(`GREENPLUM', `DISTRIBUTED BY (weight)')   -- this shouldn't be distributed by id; otherwise won't get parallelism
 ;
 
 -- Kernel functions are a generalisation of inner products. 
@@ -307,32 +307,17 @@ RETURNS float8 AS $$
 						      MADLIB_SCHEMA.float8arr_minus_float8arr($1,$2)));
 $$ LANGUAGE SQL IMMUTABLE;
 
-/*
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
-RETURNS float8 AS $$
-DECLARE
-	idx INT := 0;
-	ret FLOAT8 := 0;
-BEGIN
-	FOR i IN 1..svs.nsvs LOOP
-	    idx := svs.ind_dim * (i - 1);
-	    ret := ret + svs.weights[i] * MADLIB_SCHEMA.svm_kernel(svs.individuals[(idx+1):(idx+svs.ind_dim)], ind);
-        END LOOP;
-	RETURN ret;
-END;
-$$ LANGUAGE plpgsql;
-*/
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict_sub(int,int,float8[],float8[],float8[]) RETURNS float8
 AS 'MODULE_PATHNAME', 'svm_predict_sub' LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
 RETURNS float8 AS $$
 	SELECT MADLIB_SCHEMA.svm_predict_sub($1.nsvs, $1.ind_dim, $1.weights, $1.individuals, $2);
 $$ LANGUAGE SQL;
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_reg_update_sub(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8)
+RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_reg_update_sub' LANGUAGE C STRICT;   
 
 -- This is the main online support vector regression learning algorithm. 
 -- The function updates the support vector model as it processes each new training example.
@@ -341,6 +326,7 @@ $$ LANGUAGE SQL;
 -- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
 -- of having to specify them.
 -- 
+/*
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind float8[], label float8) 
 RETURNS MADLIB_SCHEMA.svm_model_rec AS $$
 DECLARE
@@ -352,8 +338,9 @@ DECLARE
 	error FLOAT8;   -- absolute value of diff
 	weight FLOAT8;  -- the weight of ind if it turns out to be a support vector
 BEGIN
+
 	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  -- we have to be careful to initialise a multi-dimensional array
+	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  
         END IF;
 
 	p := MADLIB_SCHEMA.svm_predict(svs, ind);
@@ -380,10 +367,12 @@ BEGIN
 	return svs;
 END
 $$ LANGUAGE plpgsql;
+*/
 
 CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8) (
-       sfunc = MADLIB_SCHEMA.svm_reg_update,
-       stype = MADLIB_SCHEMA.svm_model_rec
+       sfunc = MADLIB_SCHEMA.svm_reg_update_sub,
+       stype = MADLIB_SCHEMA.svm_model_rec,
+       initcond = '(0,0,0,0.5,1,0,0,{},{})'
 );
 
 -- This is the main online support vector classification algorithm. 

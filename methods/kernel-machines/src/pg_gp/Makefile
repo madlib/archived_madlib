@@ -1,3 +1,5 @@
+override CFLAGS+=-std=gnu99
+
 online_sv.o : online_sv.c
 
 MODULE_big = online_sv
