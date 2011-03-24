@@ -324,6 +324,8 @@ RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_reg_update' LANGU
 
 
 /*
+-- The svm_reg_update() function above is basically the C implementation of the following pl/pgsql function.
+--
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind float8[], label float8) 
 RETURNS MADLIB_SCHEMA.svm_model_rec AS $$
 DECLARE
@@ -372,6 +374,14 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8) (
        initcond = '(0,0,0,0.5,1,0,0,{},{})'
 );
 
+-- This is the main online support vector classification learning algorithm. 
+-- The function updates the support vector model as it processes each new training example.
+-- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
+--
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_cls_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, slambda FLOAT8, rho FLOAT8)
+RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_cls_update' LANGUAGE C STRICT;   
+
+/*
 -- This is the main online support vector classification algorithm. 
 -- The function updates the support vector model as it processes each new training example.
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
@@ -413,6 +423,7 @@ BEGIN
 	return svs;
 END
 $$ LANGUAGE plpgsql;
+*/
 
 -- This is the main online support vector novelty detection algorithm. 
 -- The function updates the support vector model as it processes each new training example.
@@ -422,9 +433,10 @@ $$ LANGUAGE plpgsql;
 -- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
 -- of having to specify them. 
 --
-CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8) (
+CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, float8, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_cls_update,
-       stype = MADLIB_SCHEMA.svm_model_rec
+       stype = MADLIB_SCHEMA.svm_model_rec,
+       initcond = '(0,0,0,0.5,1,0,0,{},{})'
 );
 
 
@@ -629,6 +641,34 @@ AS $$
         from madlib import online_sv
 
     return online_sv.svm_classification(input_table, modelname, parallel);
+$$ LANGUAGE 'plpythonu';
+
+/**
+ * @brief This is the support vector classification function
+ *
+ * @param input_table The name of the table/view with the training data
+ * @param modelname The name under which we want to store the resultant learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @param eta Learning rate
+ * @param slambda Regularisation parameter
+ * @param rho Margin required
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::svm_classification().
+ */
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_classification(input_table text, modelname text, parallel bool, eta float8, slambda float8, rho float8)
+RETURNS TEXT
+AS $$
+    import sys
+    try:
+        from madlib import online_sv
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        from madlib import online_sv
+
+    return online_sv.svm_classification(input_table, modelname, parallel, eta, slambda, rho);
 $$ LANGUAGE 'plpythonu';
 
 /**

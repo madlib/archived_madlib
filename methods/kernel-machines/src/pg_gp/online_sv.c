@@ -188,7 +188,7 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 	    ARR_ELEMTYPE(ind_arr) != FLOAT8OID)
 		ereport(ERROR,
 		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("function \"%s\" called with invalid parameters",
+			errmsg("function \"%s\" called with invalid ind parameter",
 			       format_procedure(fcinfo->flinfo->fn_oid))));
 
 	float8 * ind = (float8 *)ARR_DATA_PTR(ind_arr);
@@ -213,14 +213,16 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 
 	// The first time this function is called, the initial state doesn't
 	// tell us the dimension of the data points; this needs to be extracted
-	// from the ind argument. Also, initially the weights_arr and 
-	// support_vectors_arr arrays are empty, so we can't do a dimension 
-	// check the first time this function is called.
+	// from the ind argument. 
 	if (ind_dim == 0) {
 		int ndims = ARR_NDIM(ind_arr);
 		int * dims = ARR_DIMS(ind_arr);
 		ind_dim = ArrayGetNItems(ndims, dims);
-	} else {
+	} 
+	// Also, initially the weights_arr and support_vectors_arr arrays 
+	// are empty, so we can't do a dimension check until there are
+	// support vectors.
+	if (nsvs > 0) {
 		if (ARR_NULLBITMAP(weights_arr) || ARR_NDIM(weights_arr) != 1 ||
 		    ARR_ELEMTYPE(weights_arr) != FLOAT8OID || 
 		    ARR_NULLBITMAP(support_vectors_arr) || 
@@ -285,10 +287,146 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 		if (isnulls[i])
 			ereport(ERROR,
 		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("function \"%s\" called with invalid parameters %d",
+			errmsg("function \"%s\" produced null results",
 			       format_procedure(fcinfo->flinfo->fn_oid),i)));
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(ret));
 }
 
+
+/**
+ * This is the main online support vector classification algorithm. 
+ * The function updates the support vector model as it processes each new 
+ * training example.
+ * This function is wrapped in an aggregate function to process all the 
+ * training examples stored in a table.  
+ * The learning parameters (eta and nu) are hardcoded at the moment. 
+ * We may want to make them input parameters at some stage, although the 
+ * naive user would probably be daunted with the prospect of having to 
+ * specify them. 
+ */
+Datum svm_cls_update(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(svm_cls_update);
+
+Datum svm_cls_update(PG_FUNCTION_ARGS)
+{
+	float8 p;             // label * prediction for data point 
+	int i;
+
+	// Get the input arguments and check for errors
+	HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(0);
+	ArrayType * ind_arr = PG_GETARG_ARRAYTYPE_P(1);
+	float8 label = PG_GETARG_FLOAT8(2);
+	float8 eta = PG_GETARG_FLOAT8(3);     // learning rate
+	float8 slambda = PG_GETARG_FLOAT8(4); // regularisation parameter
+	float8 rho = PG_GETARG_FLOAT8(5);     // margin
+
+	if (ARR_NULLBITMAP(ind_arr) || ARR_NDIM(ind_arr) != 1 ||
+	    ARR_ELEMTYPE(ind_arr) != FLOAT8OID)
+		ereport(ERROR,
+		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("function \"%s\" called with invalid ind parameter",
+			       format_procedure(fcinfo->flinfo->fn_oid))));
+
+	float8 * ind = (float8 *)ARR_DATA_PTR(ind_arr);
+
+	// Read the attributes of the input support vector model
+	bool nil[9] = { 0,0,0,0,0,0,0,0,0 };
+
+	int32 inds = DatumGetInt32(GetAttributeByName(t, "inds", &nil[0]));
+	float8 cum_err =DatumGetFloat8(GetAttributeByName(t,"cum_err",&nil[1]));
+	float8 epsilon =DatumGetFloat8(GetAttributeByName(t,"epsilon",&nil[2]));
+	float8 rho2 = DatumGetFloat8(GetAttributeByName(t, "rho", &nil[3]));
+	float8 b = DatumGetFloat8(GetAttributeByName(t, "b", &nil[4]));
+	int32 nsvs = DatumGetInt32(GetAttributeByName(t, "nsvs", &nil[5]));
+	int32 ind_dim =DatumGetInt32(GetAttributeByName(t, "ind_dim", &nil[6]));
+	ArrayType * weights_arr = 
+		DatumGetArrayTypeP(GetAttributeByName(t, "weights", &nil[7]));
+	ArrayType * support_vectors_arr = 
+		DatumGetArrayTypeP(GetAttributeByName(t,"individuals",&nil[8]));
+
+	for (i=0; i!=9; i++)
+		if (nil[i]) elog(ERROR, "error reading support vector model");
+
+	// The first time this function is called, the initial state doesn't
+	// tell us the dimension of the data points; this needs to be extracted
+	// from the ind argument. 
+	if (ind_dim == 0) {
+		int ndims = ARR_NDIM(ind_arr);
+		int * dims = ARR_DIMS(ind_arr);
+		ind_dim = ArrayGetNItems(ndims, dims);
+	} 
+	// Also, initially the weights_arr and support_vectors_arr arrays 
+	// are empty, so we can't do a dimension check until there are
+	// support vectors.
+	if (nsvs > 0) {
+		if (ARR_NULLBITMAP(weights_arr) || ARR_NDIM(weights_arr) != 1 ||
+		    ARR_ELEMTYPE(weights_arr) != FLOAT8OID || 
+		    ARR_NULLBITMAP(support_vectors_arr) || 
+		    ARR_NDIM(support_vectors_arr) != 1 ||
+		    ARR_ELEMTYPE(support_vectors_arr) != FLOAT8OID) 
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("function \"%s\" called with invalid array parameters",
+			       format_procedure(fcinfo->flinfo->fn_oid))));
+	}
+
+	float8 * weights = (float8 *)ARR_DATA_PTR(weights_arr);
+	float8 * support_vectors = (float8 *)ARR_DATA_PTR(support_vectors_arr);
+
+	// This is the main classification update algorithm.
+	// When rho = 0 and slambda = 0, this is equiv. to kernel perceptron.
+	// When rho = 0 and slambda > 0, this is equiv. to kernel perceptron 
+	// with regularisation
+	// The standard SVM case is when rho > 0 and slambda > 0.
+	p = svm_predict_eval(weights, support_vectors, ind, nsvs, ind_dim) + b; 
+	p = label * p;
+
+	inds++;
+	if (p < 0) cum_err++;
+
+	if (p <= rho) {
+		// unlike the original algorithm in Kivinen et at, this 
+		// rescaling is only done when we make a large enough error
+		for (i=0; i!=nsvs; i++) 
+			weights[i] = weights[i] * (1 - eta * slambda);
+
+		weights_arr = addNewWeight(weights_arr,label * eta,nsvs);
+	        support_vectors_arr = addNewSV(support_vectors_arr,ind,nsvs,ind_dim);
+		nsvs++;
+		b = b + eta * label;
+	}
+
+	// Package up the attributes and return the resultant composite object
+	Datum values[9];
+	values[0] = Int32GetDatum(inds);
+	values[1] = Float8GetDatum(cum_err);
+	values[2] = Float8GetDatum(epsilon);
+	values[3] = Float8GetDatum(rho);
+	values[4] = Float8GetDatum(b);
+	values[5] = Int32GetDatum(nsvs);
+	values[6] = Int32GetDatum(ind_dim);
+	values[7] = PointerGetDatum(weights_arr);
+	values[8] = PointerGetDatum(support_vectors_arr);
+
+	TupleDesc tuple;
+	if (get_call_result_type(fcinfo, NULL, &tuple) != TYPEFUNC_COMPOSITE)
+		ereport(ERROR,
+			(errcode( ERRCODE_FEATURE_NOT_SUPPORTED ),
+			 errmsg( "function returning record called in context "
+				 "that cannot accept type record" )));
+	tuple = BlessTupleDesc(tuple);
+
+	bool * isnulls = palloc0(9 * sizeof(bool));
+	HeapTuple ret = heap_form_tuple(tuple, values, isnulls);
+
+	for (i=0; i!=9; i++)
+		if (isnulls[i])
+			ereport(ERROR,
+		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("function \"%s\" produced null results %d",
+			       format_procedure(fcinfo->flinfo->fn_oid),i)));
+
+	PG_RETURN_DATUM(HeapTupleGetDatum(ret));
+}
 
