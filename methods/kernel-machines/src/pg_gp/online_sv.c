@@ -86,118 +86,156 @@ Datum svm_predict_sub(PG_FUNCTION_ARGS)
 }
 
 /*
-static ArrayType * zero_array(int len)
+ * This function constructs an array of zeros.
+ */
+static ArrayType *construct_zero_array(int inNumElements,
+	Oid inElementType, int inElementSize)
 {
-	float8 * array = palloc0(len * sizeof(float8));
-	ArrayType * ret_arr = construct_array((Datum *)array, len, FLOAT8OID,
-					      sizeof(float8), true, 'd');
-	return ret_arr;
-}
-*/
-
-static ArrayType * makeNewWeights(float8 * weights, float8 weight, int nsvs) 
-{
-	ArrayType * ret_arr;
-	float8 * ret = palloc0((nsvs+1) * sizeof(float8));
-	int i;
-	// for (i=0; i!=nsvs; i++) ret[i] = weights[i];
-	memcpy(ret, weights, sizeof(float8) * nsvs);
-	ret[nsvs] = weight;
+	int64 size = inElementSize * inNumElements + ARR_OVERHEAD_NONULLS(1);
+	ArrayType * array;
 	
-	ret_arr = construct_array((Datum *)ret, nsvs+1, FLOAT8OID,
-				  sizeof(float8), true, 'd');
-	pfree(ret);
-	return ret_arr;
+	array = (ArrayType *) palloc0(size);
+	SET_VARSIZE(array, size);
+	array->ndim = 1;
+	array->dataoffset = 0;
+	array->elemtype = inElementType;
+	ARR_DIMS(array)[0] = inNumElements;
+	ARR_LBOUND(array)[0] = 1;
+	return array;
 }
 
-
-static ArrayType * makeNewSPVS(float8 * spvs, float8 * ind, int nsvs, int dim) 
+/*
+ * This function extends a weight array with the weight of a new support vector.
+ * The extra work of pre-allocating a larger block of memory doesn't appear
+ * to make a difference in terms of total computation time.
+ */
+static int blocksize = 100;
+static ArrayType * addNewWeight(ArrayType * weights, float8 weight, int nsvs) 
 {
-	ArrayType * ret_arr;
-	float8 * ret = palloc0((nsvs+1) * dim * sizeof(float8));
-	int i;
-	memcpy(ret, spvs, sizeof(float8) * nsvs * dim);
-	// for (i=0; i!=nsvs*dim; i++) ret[i] = spvs[i];
-	for (i=0; i!=dim; i++) ret[nsvs*dim + i] = ind[i];
-	
-	ret_arr = construct_array((Datum *)ret, (nsvs+1) * dim, FLOAT8OID,
-				  sizeof(float8), true, 'd');
-	pfree(ret);
+	float8 * weights_data = (float8 *)ARR_DATA_PTR(weights);
 
-	ret = (float8 *)ARR_DATA_PTR(ret_arr);
-	return ret_arr;
+	if (nsvs % blocksize == 0) {
+		ArrayType * ret_arr = 
+			construct_zero_array(nsvs+blocksize, FLOAT8OID, 8);
+		float8 * ret = (float8 *)ARR_DATA_PTR(ret_arr); 
+
+		memcpy(ret, weights_data, sizeof(float8) * nsvs);
+		ret[nsvs] = weight;
+
+		return ret_arr;
+	} else {
+		weights_data[nsvs] = weight;
+		return weights;
+	}
 }
 
-Datum svm_reg_update_sub(PG_FUNCTION_ARGS);
-PG_FUNCTION_INFO_V1(svm_reg_update_sub);
+/* 
+ * This function extends a support vector array with a new support vector.
+ * The extra work of pre-allocating a larger block of memory doesn't appear
+ * to make a difference in terms of total computation time.
+ */
+static ArrayType * addNewSV(ArrayType * spvs, float8 * ind, int nsvs, int dim) 
+{
+	int i;
+	float8 * spvs_data = (float8 *)ARR_DATA_PTR(spvs);
 
-Datum svm_reg_update_sub(PG_FUNCTION_ARGS)
+	if (nsvs % blocksize == 0) {
+		ArrayType * ret_arr = 
+			construct_zero_array((nsvs+blocksize)*dim, FLOAT8OID,8);
+		float8 * ret = (float8 *)ARR_DATA_PTR(ret_arr); 
+
+		memcpy(ret, spvs_data, sizeof(float8) * nsvs * dim);
+		for (i=0; i!=dim; i++) ret[nsvs*dim + i] = ind[i];
+
+		return ret_arr;
+	} else {
+		for (i=0; i!=dim; i++) spvs_data[nsvs*dim + i] = ind[i];
+		return spvs;
+	}
+}
+
+/**
+ * This is the main online support vector regression learning algorithm. 
+ * The function updates the support vector model as it processes each new 
+ * training example.
+ * This function is wrapped in an aggregate function to process all the 
+ * training examples stored in a table.  
+ * The learning parameters (eta, slambda, and nu) are hardcoded at the moment. 
+ * We may want to make them input parameters at some stage, although the naive 
+ * user would probably be daunted with the prospect of having to specify them.
+ */
+Datum svm_reg_update(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(svm_reg_update);
+
+Datum svm_reg_update(PG_FUNCTION_ARGS)
 {
 	float8 eta = 0.05;    // learning rate
 	float8 slambda = 0.2; // regularisation parameter
 	float8 nu = 0.001;    // compression parameter in [0,1]
 	float8 p;             // prediction for data point
-	float8 diff;
-	float8 error;
-	float8 weight;
+	float8 diff;          // difference between p and target label
+	float8 error;         // absolute value of diff
+	float8 weight;        // the weight of new support vector
 
 	int i;
-	float8 * temp;
 
+	// Get the input arguments and check for errors
 	HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(0);
 	ArrayType * ind_arr = PG_GETARG_ARRAYTYPE_P(1);
 	float8 label = PG_GETARG_FLOAT8(2);
 
+	if (ARR_NULLBITMAP(ind_arr) || ARR_NDIM(ind_arr) != 1 ||
+	    ARR_ELEMTYPE(ind_arr) != FLOAT8OID)
+		ereport(ERROR,
+		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("function \"%s\" called with invalid parameters",
+			       format_procedure(fcinfo->flinfo->fn_oid))));
+
 	float8 * ind = (float8 *)ARR_DATA_PTR(ind_arr);
 
-	TupleDesc tuple;
-	HeapTuple ret;
+	// Read the attributes of the input support vector model
+	bool nil[9] = { 0,0,0,0,0,0,0,0,0 };
 
-	Datum * values = palloc(9 * sizeof(Datum));
-	bool isnull;
-	bool * isnulls;
+	int32 inds = DatumGetInt32(GetAttributeByName(t, "inds", &nil[0]));
+	float8 cum_err =DatumGetFloat8(GetAttributeByName(t,"cum_err",&nil[1]));
+	float8 epsilon =DatumGetFloat8(GetAttributeByName(t,"epsilon",&nil[2]));
+	float8 rho = DatumGetFloat8(GetAttributeByName(t, "rho", &nil[3]));
+	float8 b = DatumGetFloat8(GetAttributeByName(t, "b", &nil[4]));
+	int32 nsvs = DatumGetInt32(GetAttributeByName(t, "nsvs", &nil[5]));
+	int32 ind_dim =DatumGetInt32(GetAttributeByName(t, "ind_dim", &nil[6]));
+	ArrayType * weights_arr = 
+		DatumGetArrayTypeP(GetAttributeByName(t, "weights", &nil[7]));
+	ArrayType * support_vectors_arr = 
+		DatumGetArrayTypeP(GetAttributeByName(t,"individuals",&nil[8]));
 
-	int32 inds;
-	float8 cum_err, epsilon;
-	float8 rho, b;
-	int32 nsvs, ind_dim;
-	ArrayType * weights_arr;
-	ArrayType * support_vectors_arr;
-	ArrayType * new_weights_arr = NULL;
-	ArrayType * new_support_vectors_arr = NULL;
-	float8 * weights, * support_vectors;
+	for (i=0; i!=9; i++)
+		if (nil[i]) elog(ERROR, "error reading support vector model");
 
-	int ndims;
-	int * dims;
-
-	inds = DatumGetInt32(GetAttributeByName(t, "inds", &isnull));
-	if (isnull) elog(ERROR, "inds");
-	cum_err = DatumGetFloat8(GetAttributeByName(t, "cum_err", &isnull));
-	if (isnull) elog(ERROR, "cum_err");
-	epsilon = DatumGetFloat8(GetAttributeByName(t, "epsilon", &isnull));
-	if (isnull) elog(ERROR, "epsilon");
-	rho = DatumGetFloat8(GetAttributeByName(t, "rho", &isnull));
-	if (isnull) elog(ERROR, "rho");
-	b = DatumGetFloat8(GetAttributeByName(t, "b", &isnull));
-	if (isnull) elog(ERROR, "b");
-	nsvs = DatumGetInt32(GetAttributeByName(t, "nsvs", &isnull));
-	if (isnull) elog(ERROR, "nsvs");
-	ind_dim = DatumGetInt32(GetAttributeByName(t, "ind_dim", &isnull));
-	if (isnull) elog(ERROR, "ind_dim");
-	weights_arr = DatumGetArrayTypeP(GetAttributeByName(t, "weights", &isnull));
-	if (isnull) elog(ERROR, "weights");
-	support_vectors_arr = DatumGetArrayTypeP(GetAttributeByName(t, "individuals", &isnull));
-	if (isnull) elog(ERROR, "individuals");
-
-	weights = (float8 *)ARR_DATA_PTR(weights_arr);
-	support_vectors = (float8 *)ARR_DATA_PTR(support_vectors_arr);
-
+	// The first time this function is called, the initial state doesn't
+	// tell us the dimension of the data points; this needs to be extracted
+	// from the ind argument. Also, initially the weights_arr and 
+	// support_vectors_arr arrays are empty, so we can't do a dimension 
+	// check the first time this function is called.
 	if (ind_dim == 0) {
-		ndims = ARR_NDIM(ind_arr);
-		dims = ARR_DIMS(ind_arr);
+		int ndims = ARR_NDIM(ind_arr);
+		int * dims = ARR_DIMS(ind_arr);
 		ind_dim = ArrayGetNItems(ndims, dims);
+	} else {
+		if (ARR_NULLBITMAP(weights_arr) || ARR_NDIM(weights_arr) != 1 ||
+		    ARR_ELEMTYPE(weights_arr) != FLOAT8OID || 
+		    ARR_NULLBITMAP(support_vectors_arr) || 
+		    ARR_NDIM(support_vectors_arr) != 1 ||
+		    ARR_ELEMTYPE(support_vectors_arr) != FLOAT8OID)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("function \"%s\" called with invalid parameters",
+			       format_procedure(fcinfo->flinfo->fn_oid))));
 	}
 
+	float8 * weights = (float8 *)ARR_DATA_PTR(weights_arr);
+	float8 * support_vectors = (float8 *)ARR_DATA_PTR(support_vectors_arr);
+
+	// This is the main regression update algorithm
 	p = svm_predict_eval(weights, support_vectors, ind, nsvs, ind_dim); 
 	diff = label - p;
 	error = fabs(diff);
@@ -206,18 +244,22 @@ Datum svm_reg_update_sub(PG_FUNCTION_ARGS)
 	cum_err = cum_err + error;
 
 	if (error > epsilon) {
+		// unlike the original algorithm in Kivinen et at, this 
+		// rescaling is only done when we make a large enough error
 		for (i=0; i!=nsvs; i++) 
 			weights[i] = weights[i] * (1 - eta * slambda);
 
 		weight = diff < 0 ? -eta : eta;
-		new_weights_arr = makeNewWeights(weights,weight,nsvs);
-	        new_support_vectors_arr = makeNewSPVS(support_vectors,ind,nsvs,ind_dim);
+		weights_arr = addNewWeight(weights_arr,weight,nsvs);
+	        support_vectors_arr = addNewSV(support_vectors_arr,ind,nsvs,ind_dim);
 		nsvs++;
 		epsilon = epsilon + (1 - nu) * eta;
 	} else {
 		epsilon = epsilon - eta * nu;
 	}
 
+	// Package up the attributes and return the resultant composite object
+	Datum values[9];
 	values[0] = Int32GetDatum(inds);
 	values[1] = Float8GetDatum(cum_err);
 	values[2] = Float8GetDatum(epsilon);
@@ -225,14 +267,10 @@ Datum svm_reg_update_sub(PG_FUNCTION_ARGS)
 	values[4] = Float8GetDatum(b);
 	values[5] = Int32GetDatum(nsvs);
 	values[6] = Int32GetDatum(ind_dim);
-	if (new_weights_arr == NULL) {
-		values[7] = PointerGetDatum(weights_arr);
-		values[8] = PointerGetDatum(support_vectors_arr);
-	} else {
-		values[7] = PointerGetDatum(new_weights_arr);
-		values[8] = PointerGetDatum(new_support_vectors_arr);
-	}
+	values[7] = PointerGetDatum(weights_arr);
+	values[8] = PointerGetDatum(support_vectors_arr);
 
+	TupleDesc tuple;
 	if (get_call_result_type(fcinfo, NULL, &tuple) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
 			(errcode( ERRCODE_FEATURE_NOT_SUPPORTED ),
@@ -240,10 +278,9 @@ Datum svm_reg_update_sub(PG_FUNCTION_ARGS)
 				 "that cannot accept type record" )));
 	tuple = BlessTupleDesc(tuple);
 
-	isnulls = palloc0(9 * sizeof(bool));
-	ret = heap_form_tuple(tuple, values, isnulls);
+	bool * isnulls = palloc0(9 * sizeof(bool));
+	HeapTuple ret = heap_form_tuple(tuple, values, isnulls);
 
-	/*
 	for (i=0; i!=9; i++)
 		if (isnulls[i])
 			ereport(ERROR,
@@ -251,7 +288,6 @@ Datum svm_reg_update_sub(PG_FUNCTION_ARGS)
 			errmsg("function \"%s\" called with invalid parameters %d",
 			       format_procedure(fcinfo->flinfo->fn_oid),i)));
 
-	*/
 	PG_RETURN_DATUM(HeapTupleGetDatum(ret));
 }
 
