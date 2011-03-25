@@ -722,6 +722,69 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
 	return true;
 }
 
+/* Checks the equality of two SparseData. We can't assume that two 
+ * SparseData are in canonical form.
+ *
+ * The algorithm is simple: we traverse the left SparseData element by 
+ * element, and for each such element x, we traverse all the elements of 
+ * the right SparseData that overlaps with x and check that they are equal.
+ *
+ * Unlike sparsedata_eq, this function assumes that any zero represents a 
+ * mission data and hence still implyies equality
+ *
+ * Note: This function only works on SparseData of float8s at present.
+ */ 
+static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right)
+{
+	char * ix = left->index->data;	
+	double * vals = (double *)left->vals->data;
+	
+	char * rix = right->index->data;
+	double * rvals = (double *)right->vals->data;
+	
+	int read = 0, rread = 0;
+	int i, j;
+	
+	for (i=0, j=0; (i<left->unique_value_count)&&(j<right->unique_value_count);) {
+		read += compword_to_int8(ix);
+		rread += compword_to_int8(rix);
+		
+		/* 
+		* We need to use memcmp to handle NULLs (represented
+		* as NaNs) properly
+		*/
+		if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
+			return false;
+		}
+
+		/* 
+		 * If span of the left vector elements extends past right vector span, advance left array to the next
+		 * unique value. If not, check if this is true for the right vector. If neither vector is ahead advance
+		 * both vectors.
+		 */
+		if(read < rread){
+			i++;
+			ix+=int8compstoragesize(ix);
+		}else if(read > rread){
+			j++;
+			rix += int8compstoragesize(rix);
+		}else{
+			i++;
+			ix+=int8compstoragesize(ix);
+			j++;
+			rix += int8compstoragesize(rix);
+		}
+	}
+	if((i<left->unique_value_count)&&(vals[i]!=0.0)){
+		return false;
+	}
+	if((j<right->unique_value_count)&&(rvals[j]!=0.0)){
+		return false;
+	}
+	return true;
+}
+
+
 static inline double id(double x) { return x; }
 static inline double square(double x) { return x*x; }
 static inline double myabs(double x) { return (x < 0) ? -(x) : x ; }
