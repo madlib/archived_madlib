@@ -775,12 +775,17 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 			rix += int8compstoragesize(rix);
 		}
 	}
-	if((i<left->unique_value_count)&&(vals[i]!=0.0)){
-		return false;
+	while(i<left->unique_value_count){
+		if(vals[i]!=0.0){
+			return false;
+		}
+		i++;
 	}
-	if((j<right->unique_value_count)&&(rvals[j]!=0.0)){
-		return false;
-	}
+	while(j<right->unique_value_count){
+		if(rvals[j]!=0.0){
+			return false;
+		}
+		j++;
 	return true;
 }
 
