@@ -37,7 +37,7 @@ try:
     while line:
         n+=1
         line = line.replace("\n","");
-	print 'copying files to ' + line
+        print 'copying files to ' + line
         subprocess.call(['scp -pr ' + madlibdir + ' ' + line + ':' + gphome + '/lib/postgresql/' ], stdout = subprocess.PIPE, shell=True)
         line = f.readline()
 except: 
