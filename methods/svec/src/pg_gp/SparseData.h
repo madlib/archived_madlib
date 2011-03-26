@@ -782,10 +782,6 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 			rread += (int)compword_to_int8(rix);
 		}
 	}
-	sprintf(result, "this %d %d %d %d", i, j, read, rread);
-	ereport(ERROR, 
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg(result)));
 	
 	while(i<left->unique_value_count){
 		if(vals[i]!=0.0){
