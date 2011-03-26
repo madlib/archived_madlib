@@ -741,13 +741,16 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 	
 	char * rix = right->index->data;
 	double * rvals = (double *)right->vals->data;
+	char* result;
 	
 	int read = 0, rread = 0;
 	int i, j;
 	
 	for (i=0, j=0; (i<left->unique_value_count)&&(j<right->unique_value_count);) {
-		read += compword_to_int8(ix);
-		rread += compword_to_int8(rix);
+		if((i==0)&&(j==0)){
+			read += (int)compword_to_int8(ix);
+			rread += (int)compword_to_int8(rix);
+		}
 		
 		/* 
 		* We need to use memcmp to handle NULLs (represented
@@ -764,17 +767,26 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 		 */
 		if(read < rread){
 			i++;
-			ix+=int8compstoragesize(ix);
+			ix +=int8compstoragesize(ix);
+			read += (int)compword_to_int8(ix);
 		}else if(read > rread){
 			j++;
-			rix += int8compstoragesize(rix);
+			rix+=int8compstoragesize(rix);
+			rread += (int)compword_to_int8(rix);
 		}else{
 			i++;
-			ix+=int8compstoragesize(ix);
+			ix +=int8compstoragesize(ix);
 			j++;
-			rix += int8compstoragesize(rix);
+			rix+=int8compstoragesize(rix);
+			read += (int)compword_to_int8(ix);
+			rread += (int)compword_to_int8(rix);
 		}
 	}
+	sprintf(result, "this %d %d %d %d", i, j, read, rread);
+	ereport(ERROR, 
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg(result)));
+	
 	while(i<left->unique_value_count){
 		if(vals[i]!=0.0){
 			return false;
@@ -783,9 +795,10 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 	}
 	while(j<right->unique_value_count){
 		if(rvals[j]!=0.0){
-			return false;
+		    return false;
 		}
 		j++;
+	}
 	return true;
 }
 
