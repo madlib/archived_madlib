@@ -744,13 +744,16 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 	char* result;
 	
 	int read = 0, rread = 0;
-	int i, j;
+	int i, j, select = 3;
 	
 	for (i=0, j=0; (i<left->unique_value_count)&&(j<right->unique_value_count);) {
-		if((i==0)&&(j==0)){
+		if(select%2==1){
 			read += (int)compword_to_int8(ix);
+		}
+		if(select/2==1){
 			rread += (int)compword_to_int8(rix);
 		}
+		select=0;
 		
 		/* 
 		* We need to use memcmp to handle NULLs (represented
@@ -769,10 +772,12 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 			i++;
 			ix +=int8compstoragesize(ix);
 			read += (int)compword_to_int8(ix);
+			select +=1;
 		}else if(read > rread){
 			j++;
 			rix+=int8compstoragesize(rix);
 			rread += (int)compword_to_int8(rix);
+			select +=2;
 		}else{
 			i++;
 			ix +=int8compstoragesize(ix);
@@ -780,6 +785,7 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 			rix+=int8compstoragesize(rix);
 			read += (int)compword_to_int8(ix);
 			rread += (int)compword_to_int8(rix);
+			select +=3;
 		}
 	}
 	
