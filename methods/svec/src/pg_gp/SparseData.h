@@ -737,70 +737,47 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
 static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right)
 {
 	char * ix = left->index->data;	
-	double * vals = (double *)left->vals->data;
+	double* vals = (double *)left->vals->data;
 	
 	char * rix = right->index->data;
-	double * rvals = (double *)right->vals->data;
+	double* rvals = (double *)right->vals->data;
 	char* result;
 	
 	int read = 0, rread = 0;
-	int i, j, select = 3;
+	int i=-1, j=-1, minimum = 0;
+	minimum = (left->total_value_count > right->total_value_count)?right->total_value_count:left->total_value_count;
 	
-	for (i=0, j=0; (i<left->unique_value_count)&&(j<right->unique_value_count);) {
-		if(select%2==1){
-			read += (int)compword_to_int8(ix);
-		}
-		if(select/2==1){
-			rread += (int)compword_to_int8(rix);
-		}
-		select=0;
-		
-		/* 
-		* We need to use memcmp to handle NULLs (represented
-		* as NaNs) properly
-		*/
-		if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
-			return false;
-		}
-
-		/* 
-		 * If span of the left vector elements extends past right vector span, advance left array to the next
-		 * unique value. If not, check if this is true for the right vector. If neither vector is ahead advance
-		 * both vectors.
-		 */
+	for (;(read < minimum)||(rread < minimum);) {
 		if(read < rread){
-			i++;
-			ix +=int8compstoragesize(ix);
 			read += (int)compword_to_int8(ix);
-			select +=1;
+			ix +=int8compstoragesize(ix);
+			i++;
+			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
+				return false;
+			}
 		}else if(read > rread){
-			j++;
-			rix+=int8compstoragesize(rix);
 			rread += (int)compword_to_int8(rix);
-			select +=2;
-		}else{
-			i++;
-			ix +=int8compstoragesize(ix);
-			j++;
 			rix+=int8compstoragesize(rix);
+			j++;
+			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
+				return false;
+			}
+		}else{
 			read += (int)compword_to_int8(ix);
 			rread += (int)compword_to_int8(rix);
-			select +=3;
-		}
+			ix +=int8compstoragesize(ix);
+			rix+=int8compstoragesize(rix);
+			i++;
+			j++;
+			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
+				return false;
+			}
+		}		
 	}
-	
-	while(i<left->unique_value_count){
-		if(vals[i]!=0.0){
-			return false;
-		}
-		i++;
-	}
-	while(j<right->unique_value_count){
-		if(rvals[j]!=0.0){
-		    return false;
-		}
-		j++;
-	}
+	/*sprintf(result, "result after %d %f", j, rvals[j]);
+	 ereport(NOTICE, 
+	 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+	 errmsg(result)));*/
 	return true;
 }
 
