@@ -74,8 +74,7 @@ vector models can also be stored in tables for fast execution.
 
 @prereq
 
-None at this point. Will need the \link grp_svec sparse vector SVEC
-datatype\endlink eventually.
+The \link grp_svec sparse vector SVEC datatype\endlink.
 
 @usage
 
@@ -83,24 +82,38 @@ Here are the main learning functions.
 
 -  Regression learning is achieved through the following function
    \code
-   madlib.svm_regression(input_table text, model_name text, parallel bool)
+   madlib.svm_regression(input_table text, model_name text, parallel bool, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.005, slambda float8 DEFAULT 0.2)
    \endcode
 
 -  Classification learning is achieved through the following function
    \code
-   madlib.sv_classification(input_table text, model_name text, parallel bool)
+   madlib.svm_classification(input_table text, model_name text, parallel bool, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.005)
    \endcode
 
 -  Novelty detection is achieved through the following function
    \code
-   madlib.sv_novelty_detection(input_table text, model_name text, parallel bool)
+   madlib.svm_novelty_detection(input_table text, model_name text, parallel bool, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.01)
    \endcode
 
-In each case, input_table is the name of the table/view with the training 
-data, model_name is the name under which we want to store the resultant 
-learned model, and parallel is a flag indicating whether the system
+In each case, input_table is the name of the table/view with the training data. 
+In the case of classification and regression, mandatory fields for input_table are
+\code
+	( id INT,       -- point ID
+	  ind FLOAT8[], -- data point
+	  label FLOAT8  -- label of data point
+        ).
+\endcode
+For novelty detection, the label field is not required.
+
+The model_name parameter is the name under which we want to store the resultant learned model. 
+The parallel parameter is a flag indicating whether the system
 should learn multiple models in parallel. (The multiple models can be
-combined to make predictions; more on that shortly.)
+combined to make predictions; more on that shortly.) 
+The eta, nu, and slambda parameters are optional. (The default values are shown.) 
+The eta parameter is the learning rate, a number in (0,1]. 
+The nu parameter is a compression parameter with a value in (0,1] that corresponds approximately 
+to the fraction of the training data that will become support vectors. 
+Finally, the slambda parameter is a regularisation parameter.
 
 Here are the functions that can be used to make predictions on new
 data points.
@@ -119,6 +132,13 @@ data points.
   \endcode
   where model_name is the name under which the models are stored, and x 
   is a data point.
+
+- Note that, at the moment, we cannot use madlib.svm_predict() and madlib.svm_predict_combo()
+  on multiple data points. For example, something like the following
+  \code
+  select madlib.svm_predict('mymodel', ind) from a_table;
+  \endcode
+  will fail.
 
 - To make predictions on new data points stored in a table using
   previously learned models, we use the function
@@ -183,12 +203,12 @@ Example usage for regression:
      -# We can also predict the labels of all the data points stored in a table.
         For example, we can execute the following:
         \code
-        testdb=# create table madlib.sv_reg_test ( id int, ind float8[] );
-        testdb=# insert into madlib.sv_reg_test (select id, ind from madlib.svm_train_data limit 20);
-        testdb=# select madlib.svm_predict('madlib.sv_reg_test', 'ind', 'myexp', 'madlib.sv_reg_output1', false); 
-        testdb=# select * from madlib.sv_reg_output1;
-        testdb=# select madlib.svm_predict('madlib.sv_reg_test', 'ind', 'myexp', 'madlib.sv_reg_output2', true);
-        testdb=# select * from madlib.sv_reg_output2;
+        testdb=# create table madlib.svm_reg_test ( id int, ind float8[] );
+        testdb=# insert into madlib.svm_reg_test (select id, ind from madlib.svm_train_data limit 20);
+        testdb=# select madlib.svm_predict('madlib.svm_reg_test', 'ind', 'myexp', 'madlib.svm_reg_output1', false); 
+        testdb=# select * from madlib.svm_reg_output1;
+        testdb=# select madlib.svm_predict('madlib.svm_reg_test', 'ind', 'myexp', 'madlib.svm_reg_output2', true);
+        testdb=# select * from madlib.svm_reg_output2;
         \endcode 
 
 Example usage for classification:
@@ -204,7 +224,7 @@ Example usage for classification:
      -# We can now learn a classification model and store the resultant model
         under the name  'myexpc'.
         \code
-        testdb=# select madlib.sv_classification('madlib.svm_train_data', 'myexpc', false);
+        testdb=# select madlib.svm_classification('madlib.svm_train_data', 'myexpc', false);
         \endcode
      -# We can now start using it to predict the labels of new data points 
         like as follows:
@@ -213,7 +233,7 @@ Example usage for classification:
         \endcode 
      -# To learn multiple support vector models, replace the model-building and prediction steps above by 
         \code
-        testdb=# select madlib.sv_classification('madlib.svm_train_data', 'myexpc', true);
+        testdb=# select madlib.svm_classification('madlib.svm_train_data', 'myexpc', true);
         testdb=# select * from madlib.svm_predict_combo('myexpc', '{10,-2,4,20,10}');
         \endcode
 
@@ -225,13 +245,13 @@ Example usage for novelty detection:
         \endcode
      -# Learning and predicting using a single novelty detection model can be done as follows:
         \code
-        testdb=# select madlib.sv_novelty_detection('madlib.svm_train_data', 'myexpnd', false);
+        testdb=# select madlib.svm_novelty_detection('madlib.svm_train_data', 'myexpnd', false);
         testdb=# select madlib.svm_predict('myexpnd', '{10,-10}');  
         testdb=# select madlib.svm_predict('myexpnd', '{-1,-1}');  
         \endcode
      -# Learning and predicting using multiple models can be done as follows:
         \code
-        testdb=# select madlib.sv_novelty_detection('madlib.svm_train_data', 'myexpnd', true);
+        testdb=# select madlib.svm_novelty_detection('madlib.svm_train_data', 'myexpnd', true);
         testdb=# select * from madlib.svm_predict_combo('myexpnd', '{10,-10}');  
         testdb=# select * from madlib.svm_predict_combo('myexpnd', '{-1,-1}');  
         \endcode
@@ -319,161 +339,43 @@ $$ LANGUAGE SQL;
 -- The function updates the support vector model as it processes each new training example.
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8)
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, nu FLOAT8, slambda FLOAT8)
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_reg_update' LANGUAGE C STRICT;   
 
-
-/*
--- The svm_reg_update() function above is basically the C implementation of the following pl/pgsql function.
---
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind float8[], label float8) 
-RETURNS MADLIB_SCHEMA.svm_model_rec AS $$
-DECLARE
-	eta FLOAT8 := 0.05; -- learning rate
-	slambda FLOAT8 := 0.2;  -- regularisation parameter
-	nu FLOAT8 := 0.001;     -- compression parameter, a number between 0 and 1; the fraction of the training data that appear as support vectors
-	p FLOAT8;       -- prediction for the input individual
-	diff FLOAT8;    -- difference between p and label
-	error FLOAT8;   -- absolute value of diff
-	weight FLOAT8;  -- the weight of ind if it turns out to be a support vector
-BEGIN
-
-	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  
-        END IF;
-
-	p := MADLIB_SCHEMA.svm_predict(svs, ind);
-	diff := label - p;
-	error := abs(diff);
-	svs.inds := svs.inds + 1;
-	svs.cum_err := svs.cum_err + error;
-
-	IF (error > svs.epsilon) THEN
-	    FOR i IN 1..svs.nsvs LOOP -- Unlike the original algorithm, this rescaling is only done when we make a large enough error.
-	    	 svs.weights[i] := svs.weights[i] * (1 - eta * slambda);
-            END LOOP;
-
-	    weight := eta;
-	    IF (diff < 0) THEN weight := -1 * weight; END IF;
-	    svs.nsvs := svs.nsvs + 1;
-	    svs.weights[svs.nsvs] := weight;
-	    svs.individuals := svs.individuals || ind;
-	    svs.epsilon := svs.epsilon + (1 - nu) * eta;      
-	ELSE
-	    svs.epsilon := svs.epsilon - eta * nu;
-        END IF;
-
-	return svs;
-END
-$$ LANGUAGE plpgsql;
-*/
-
-CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8) (
+CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8, float8, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_reg_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
-       initcond = '(0,0,0,0.5,1,0,0,{},{})'
+       initcond = '(0,0,0,0,1,0,0,{},{})'
 );
 
 -- This is the main online support vector classification learning algorithm. 
 -- The function updates the support vector model as it processes each new training example.
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_cls_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, slambda FLOAT8, rho FLOAT8)
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_cls_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, nu FLOAT8)
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_cls_update' LANGUAGE C STRICT;   
 
-/*
--- This is the main online support vector classification algorithm. 
--- The function updates the support vector model as it processes each new training example.
--- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
--- The learning parameters (eta and nu) are hardcoded at the moment. 
--- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
--- of having to specify them. 
---
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_cls_update(svs MADLIB_SCHEMA.svm_model_rec, ind float8[], label float8) 
-RETURNS MADLIB_SCHEMA.svm_model_rec AS $$
-DECLARE
-	eta FLOAT8 := 0.05; -- learning rate
-	nu FLOAT8 := 0.2;     -- the fraction of the training data with margin error, a number between 0 and 1; small nu => large margin and more support vectors
-	p FLOAT8;       -- prediction for the input individual
-BEGIN
-	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  -- we have to be careful to initialise a multi-dimensional array
-        END IF;
-
-	p := label * (MADLIB_SCHEMA.svm_predict(svs, ind) + svs.b);
-	svs.inds := svs.inds + 1;
-	IF p < 0 THEN
-	    svs.cum_err := svs.cum_err + 1;
-        END IF;
-
-	IF (p < svs.rho) THEN
-	    FOR i IN 1..svs.nsvs LOOP -- Unlike the original algorithm, this rescaling is only done when we make a margin error.
-	    	 svs.weights[i] := svs.weights[i] * (1 - eta);
-            END LOOP;
-
-	    svs.nsvs := svs.nsvs + 1;
-	    svs.weights[svs.nsvs] := label * eta;
-	    svs.individuals := svs.individuals || ind;
-	    svs.b := svs.b + eta * label;
-	    svs.rho := svs.rho + eta * (1 - nu);
-	ELSE
-	    svs.rho := svs.rho - eta * nu;
-        END IF;
-
-	return svs;
-END
-$$ LANGUAGE plpgsql;
-*/
+CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, float8, float8) (
+       sfunc = MADLIB_SCHEMA.svm_cls_update,
+       stype = MADLIB_SCHEMA.svm_model_rec,
+       initcond = '(0,0,0,0,1,0,0,{},{})'
+);
 
 -- This is the main online support vector novelty detection algorithm. 
 -- The function updates the support vector model as it processes each new training example.
 -- In contrast to classification and regression, the training data points have no labels.
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
--- The learning parameters (eta and nu) are hardcoded at the moment. 
--- We may want to make them input parameters at some stage, although the naive user would probably be daunted with the prospect
--- of having to specify them. 
 --
-CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, float8, float8, float8) (
-       sfunc = MADLIB_SCHEMA.svm_cls_update,
-       stype = MADLIB_SCHEMA.svm_model_rec,
-       initcond = '(0,0,0,0.5,1,0,0,{},{})'
-);
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_nd_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], eta FLOAT8, nu FLOAT8)
+RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_nd_update' LANGUAGE C STRICT;   
 
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_nd_update(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
-RETURNS MADLIB_SCHEMA.svm_model_rec AS $$
-DECLARE
-	eta FLOAT8 := 0.1; -- learning rate
-	nu FLOAT8 := 0.05;  -- the fraction of the training data with margin error, a number between 0 and 1
-	p FLOAT8;       -- prediction for the input individual
-BEGIN
-	IF svs IS NULL THEN
-	    svs := (0, 0, 0, 0.5, 1, 1, array_upper(ind,1), '{0}', ind);  -- we have to be careful to initialise a multi-dimensional array
-        END IF;
-
-	p := MADLIB_SCHEMA.svm_predict(svs, ind);
-	svs.inds := svs.inds + 1;
-
-	IF (p < svs.rho) THEN
-	    FOR i IN 1..svs.nsvs LOOP -- Unlike the original algorithm, this rescaling is only done when we make a margin error.
-	    	 svs.weights[i] := svs.weights[i] * (1 - eta);
-            END LOOP;
-
-	    svs.nsvs := svs.nsvs + 1;
-	    svs.weights[svs.nsvs] := eta;
-	    svs.individuals := svs.individuals || ind;
-	    svs.rho := svs.rho + eta * (1 - nu);
-	ELSE
-	    svs.rho := svs.rho - eta * nu;
-        END IF;
-
-	return svs;
-END
-$$ LANGUAGE plpgsql;
-
-CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[]) (
+CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_nd_update,
-       stype = MADLIB_SCHEMA.svm_model_rec
+       stype = MADLIB_SCHEMA.svm_model_rec,
+       initcond = '(0,0,0,0,0,0,0,{},{})'
 );
 
 
@@ -618,6 +520,35 @@ AS $$
     return online_sv.svm_regression(input_table, modelname, parallel);
 $$ LANGUAGE 'plpythonu';
 
+
+/**
+ * @brief This is the support vector regression function
+ *
+ * @param input_table The name of the table/view with the training data
+ * @param modelname The name under which we want to store the resultant learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @param eta Learning rate in (0,1] 
+ * @param nu  Compression parameter in (0,1] associated with the fraction of training data that will become support vectors 
+ * @param slambda Regularisation parameter
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::svm_regression().
+ */
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_regression(input_table text, modelname text, parallel bool, eta float8, nu float8, slambda float8)
+RETURNS TEXT
+AS $$
+    import sys
+    try:
+        from madlib import online_sv
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        from madlib import online_sv
+
+    return online_sv.svm_regression(input_table, modelname, parallel, eta, nu, slambda);
+$$ LANGUAGE 'plpythonu';
+
 /**
  * @brief This is the support vector classification function
  *
@@ -649,16 +580,15 @@ $$ LANGUAGE 'plpythonu';
  * @param input_table The name of the table/view with the training data
  * @param modelname The name under which we want to store the resultant learned model
  * @param parallel A flag indicating whether the system should learn multiple models in parallel
- * @param eta Learning rate
- * @param slambda Regularisation parameter
- * @param rho Margin required
+ * @param eta Learning rate in (0,1]
+ * @param nu Compression parameter in (0,1] associated with the fraction of training data that will become support vectors
  * @return Textual summary of the algorithm run
  *
  * @internal 
  * @sa This function is a wrapper for online_sv::svm_classification().
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_classification(input_table text, modelname text, parallel bool, eta float8, slambda float8, rho float8)
+MADLIB_SCHEMA.svm_classification(input_table text, modelname text, parallel bool, eta float8, nu float8)
 RETURNS TEXT
 AS $$
     import sys
@@ -668,7 +598,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_classification(input_table, modelname, parallel, eta, slambda, rho);
+    return online_sv.svm_classification(input_table, modelname, parallel, eta, nu);
 $$ LANGUAGE 'plpythonu';
 
 /**
@@ -695,6 +625,34 @@ AS $$
 
     return online_sv.svm_novelty_detection(input_table, modelname, parallel);
 $$ LANGUAGE 'plpythonu';
+
+/**
+ * @brief This is the support vector novelty detection function.
+ * 
+ * @param input_table The name of the table/view with the training data
+ * @param modelname The name under which we want to store the resultant learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @param eta Learning rate in (0,1]
+ * @param nu Compression parameter in (0,1] associated with the fraction of training data that will become support vectors
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::svm_novelty_detection().
+ */
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_novelty_detection(input_table text, modelname text, parallel bool, eta float8, nu float8)
+RETURNS TEXT
+AS $$
+    import sys
+    try:
+        from madlib import online_sv
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        from madlib import online_sv
+
+    return online_sv.svm_novelty_detection(input_table, modelname, parallel, eta, nu);
+$$ LANGUAGE 'plpythonu';
+
 
 /**
  * @brief Scores the data points stored in a table using a learned support-vector model
@@ -785,5 +743,4 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_generate_nd_data(num int, dim int) 
     plpy.execute("DELETE FROM MADLIB_SCHEMA.svm_train_data")
     plpy.execute("INSERT INTO MADLIB_SCHEMA.svm_train_data SELECT a.val, MADLIB_SCHEMA.__svm_random_ind2(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
 $$ LANGUAGE 'plpythonu';
-
 
