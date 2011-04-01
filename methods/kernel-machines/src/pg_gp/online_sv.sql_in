@@ -404,18 +404,28 @@ $$ LANGUAGE plpgsql;
 --
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_storeModel(modelname TEXT) RETURNS VOID AS $$
 DECLARE
+	temp INT;
 	myind_dim INT;
 	mynsvs INT;
 	myweights float8[];
 	myindividuals float8[];
 --	mysvs MADLIB_SCHEMA.svm_model_rec;
 BEGIN
+	SELECT INTO temp COUNT(*) FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
+	IF temp = 0 THEN
+	   	RAISE EXCEPTION 'No support vector model with name ''%'' found. (Be careful of white spaces.)', modelname;
+	   	EXIT;
+	END IF;	
 --	SELECT INTO mysvs model FROM MADLIB_SCHEMA.svm_results WHERE id = modelname; -- for some strange reason this line doesn't work....
 	SELECT INTO myind_dim (model).ind_dim FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
 	SELECT INTO mynsvs (model).nsvs FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
 	SELECT INTO myweights (model).weights FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
 	SELECT INTO myindividuals (model).individuals FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
- 	INSERT INTO MADLIB_SCHEMA.svm_model (SELECT * FROM MADLIB_SCHEMA.__svm_transform_rec(modelname, myind_dim, myweights[1:mynsvs], myindividuals));
+	IF mynsvs = 0 THEN
+	   	RAISE NOTICE 'Model ''%'' has no support vectors and therefore not processed', modelname;
+	ELSE
+		INSERT INTO MADLIB_SCHEMA.svm_model (SELECT * FROM MADLIB_SCHEMA.__svm_transform_rec(modelname, myind_dim, myweights[1:mynsvs], myindividuals));
+	END IF;	
 END;
 $$ LANGUAGE plpgsql;
 
@@ -439,9 +449,20 @@ $$ LANGUAGE plpgsql;
  * @return This function returns \f$ f(\boldsymbol x) \f$
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_predict(modelname text, ind float8[]) RETURNS FLOAT8 AS $$
-	SELECT sum(weight * MADLIB_SCHEMA.svm_kernel(sv, $2)) FROM MADLIB_SCHEMA.svm_model WHERE id = $1;
-$$ LANGUAGE SQL;
+MADLIB_SCHEMA.svm_predict(modelid text, ind float8[]) RETURNS FLOAT8 AS $$
+DECLARE
+	ret FLOAT8;
+	n INT := 0;
+BEGIN
+	SELECT INTO n COUNT(id) FROM MADLIB_SCHEMA.svm_model WHERE id = modelid;
+	IF n = 0 THEN
+	   RAISE EXCEPTION 'No support vector model with name ''%'' found. (Be careful of white spaces.)', modelid;
+	   EXIT;
+	END IF;
+	SELECT INTO ret sum(weight * MADLIB_SCHEMA.svm_kernel(sv, ind)) FROM MADLIB_SCHEMA.svm_model WHERE id = modelid;
+	RETURN ret;
+END;
+$$ LANGUAGE plpgsql;
 
 -- DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_model_pr CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_model_pr AS ( model text, prediction float8 );
@@ -487,13 +508,10 @@ $$ LANGUAGE plpgsql;
 
 -- This function removes all the models whose id is prefixed with modelname in the svm_results table
 --
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.svm_drop_model(modelname text)
-RETURNS VOID
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_drop_model(modelname text) RETURNS VOID
 AS $$
-   sql = 'DELETE FROM MADLIB_SCHEMA.svm_results WHERE position(\'' + modelname + '\' in id) > 0';
-   plpy.execute(sql);
-$$ LANGUAGE 'plpythonu';
+   DELETE FROM MADLIB_SCHEMA.svm_results WHERE position($1 in id) > 0;
+$$ LANGUAGE SQL;
 
 /**
  * @brief This is the support vector regression function
