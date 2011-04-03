@@ -244,3 +244,4 @@ Datum array_add(PG_FUNCTION_ARGS) {
 		sizeof(float8),true,'d');
     PG_RETURN_ARRAYTYPE_P(pgarray);
 }
+
