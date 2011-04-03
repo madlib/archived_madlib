@@ -259,7 +259,7 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 		for (i=0; i!=nsvs; i++) {
 			// we need to avoid underflows; cap is designed to 
 			// make sure we never go below DBL_MIN
-			if (weights[i] < (cap + 0.1) * DBL_MIN) { 
+			if (fabs(weights[i]) < (cap + 0.1) * DBL_MIN) { 
 				weights[i] = 0;
 				continue;
 			}
@@ -407,7 +407,7 @@ Datum svm_cls_update(PG_FUNCTION_ARGS)
 			// we need to avoid underflows; the weight discounting
 			// never multiply a weight by less than 0.9, 
 			// and 1.15 * 0.9 > 1
-			if (weights[i] < 1.15 * DBL_MIN) { 
+			if (fabs(weights[i]) < 1.15 * DBL_MIN) { 
 				weights[i] = 0;
 				continue;
 			}
