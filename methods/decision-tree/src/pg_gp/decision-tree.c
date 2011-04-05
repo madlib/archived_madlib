@@ -173,7 +173,7 @@ Datum WeightedNoReplacement(PG_FUNCTION_ARGS) {
 	ArrayType *pgarray;
 	
    	for(;i < value1; ++i){
-   		result[i] = rand()%value2;
+   		result[i] = 1+rand()%value2;
    	}
    
 	pgarray = construct_array((Datum *)result,
