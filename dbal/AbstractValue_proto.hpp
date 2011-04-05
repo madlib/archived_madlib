@@ -1,24 +1,11 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractValue.hpp
- *
- * @brief Header file for abstract value class
+ * @file AbstractValue_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_ABSTRACTVALUE_HPP
-#define MADLIB_ABSTRACTVALUE_HPP
-
-#include <madlib/dbal/dbal.hpp>
-
-
-namespace madlib {
-
-namespace dbal {
-
 class AbstractValue {
     friend class AnyValue;
-//    friend class ValueConverter;
 
 public:
     virtual unsigned int size() const {
@@ -27,10 +14,6 @@ public:
     
     virtual bool isCompound() const {
         return false;
-    }
-    
-    virtual AbstractValueSPtr operator[](unsigned int inID) const {
-        return getValueByID(inID);
     }
     
     virtual bool isNull() const {
@@ -45,6 +28,13 @@ public:
     virtual void convert(AbstractValueConverter &inConverter) const {
     }
     
+    #define EXPAND_TYPE(T) \
+        inline virtual T getAs(T* /* pure type parameter */) const;
+
+    EXPAND_FOR_ALL_TYPES
+
+    #undef EXPAND_TYPE
+    
 protected:
     AbstractValue() {
     }
@@ -57,9 +47,3 @@ protected:
         return AbstractValueSPtr();
     }
 };
-
-} // namespace dbal
-
-} // namespace madlib
-
-#endif

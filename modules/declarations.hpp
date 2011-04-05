@@ -33,11 +33,9 @@
 #endif
 
 #ifndef NO_REGRESS
-    #include <madlib/modules/regress/regression.hpp>
-
-    DECLARE_UDF(regress, multiply);
-    DECLARE_UDF_EXT(add_test, regress, add);
-    DECLARE_UDF(regress, subtract);
+    #include <madlib/modules/regress/linear.hpp>
+    DECLARE_UDF_EXT(linreg_trans, regress, linearRegression::transition);
+    DECLARE_UDF_EXT(linreg_final, regress, linearRegression::final);
 #endif
 
 

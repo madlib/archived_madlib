@@ -6,8 +6,6 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/dbal/AbstractValue.hpp>
-#include <madlib/dbal/Null.hpp>
 #include <madlib/ports/postgres/PGValue.hpp>
 
 #include <stdexcept>
@@ -24,9 +22,7 @@ namespace ports {
 
 namespace postgres {
 
-using dbal::AbstractValueSPtr;
-using dbal::Null;
-
+using namespace dbal;
 
 AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) const {
     if (fcinfo == NULL)
@@ -36,13 +32,23 @@ AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) con
         throw std::out_of_range("Access behind end of argument list");
 
     if (PG_ARGISNULL(inID))
-        return Null::sptr();
+        return AbstractValueSPtr(new AnyValue(Null()));
     
     Oid typeID = get_fn_expr_argtype(fcinfo->flinfo, inID);
     if (typeID == InvalidOid)
         throw std::invalid_argument("Cannot determine argument type");
 
-    AbstractValueSPtr value = DatumToValue(typeID, PG_GETARG_DATUM(inID));
+    // If we are called as an aggregate function, the first argument is the
+    // transition state. In that case, we are free to modify the data.
+    // In fact, for performance reasons, we *should* even do all modifications
+    // in-place. In all other cases, directly modifying memory is dangerous.
+    // See warning at:
+    // http://www.postgresql.org/docs/current/static/xfunc-c.html#XFUNC-C-BASETYPE
+    bool writable = inID == 0 && fcinfo->context &&
+            (IsA(fcinfo->context, AggState) ||
+             IsA(fcinfo->context, WindowAggState));
+
+    AbstractValueSPtr value = DatumToValue(writable, typeID, PG_GETARG_DATUM(inID));
     if (!value)
         throw std::invalid_argument(
             "Internal argument type does not match SQL argument type");
@@ -73,7 +79,8 @@ AbstractValueSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) cons
     
     ReleaseTupleDesc(tupDesc);
 
-    AbstractValueSPtr value = DatumToValue(typeID, datum);
+    AbstractValueSPtr value = DatumToValue(false /* memory is not writable */,
+        typeID, datum);
     if (!value)
         throw std::invalid_argument(
             "Internal argument type does not match SQL argument type");

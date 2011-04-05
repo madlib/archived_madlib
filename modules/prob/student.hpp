@@ -17,24 +17,15 @@ namespace modules {
 
 namespace prob {
 
+/**
+ * C/C++ interface to Student-t CDF
+ */
 double studentT_cdf(int64_t nu, double t);
 
 /**
- * Expose studentT_cdf as a user-defined function.
+ * In-DB interface to Student-t CDF
  */
-struct student_t_cdf {
-    AnyValue operator()(AnyValue::iterator arg) const {
-        int64_t nu = *arg;
-        double t = *(++arg);
-        
-        /* We want to ensure nu > 0 */
-        if (nu <= 0)
-            throw std::domain_error("Student-t distribution undefined for "
-                "degree of freedom <= 0");
-
-        return studentT_cdf(nu, t);    
-    }
-};
+AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args);
 
 } // namespace prob
 

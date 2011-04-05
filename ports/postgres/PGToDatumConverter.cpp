@@ -1,22 +1,22 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGReturnValue.cpp
+ * @file PGToDatumConverter.cpp
  *
  * @brief Automatic conversion of return values into PostgreSQL Datums
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/madlib.hpp>
-
-#include <madlib/ports/postgres/PGReturnValue.hpp>
-#include <madlib/utils/memory.hpp>
+#include <madlib/ports/postgres/PGToDatumConverter.hpp>
+#include <madlib/ports/postgres/PGArrayHandle.hpp>
 
 extern "C" {
+    #include <utils/array.h>
     #include <catalog/pg_type.h>
     #include <funcapi.h>
     #include <utils/lsyscache.h>
     #include <utils/typcache.h>
 }
+
 
 namespace madlib {
 
@@ -24,15 +24,11 @@ namespace ports {
 
 namespace postgres {
 
-using dbal::AbstractValue;
-using dbal::AbstractValueSPtr;
-using utils::memory::ArrayDeleter;
-using utils::memory::NoDeleter;
-
-PGReturnValue::PGReturnValue(const FunctionCallInfo inFCInfo,
+PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo,
     const AbstractValue &inValue)
     : ValueConverter<Datum>(inValue), mTupleDesc(NULL), mTypeID(0) {
     
+    // FIXME: (Or Note:) get_call_result_type is tagged as expensive in funcapi.c
     TypeFuncClass funcClass = get_call_result_type(inFCInfo, &mTypeID,
         &mTupleDesc);
     
@@ -45,7 +41,7 @@ PGReturnValue::PGReturnValue(const FunctionCallInfo inFCInfo,
             "compound type");
 }
 
-PGReturnValue::PGReturnValue(Oid inTypeID,
+PGToDatumConverter::PGToDatumConverter(Oid inTypeID,
     const AbstractValue &inValue)
     : ValueConverter<Datum>(inValue), mTupleDesc(NULL), mTypeID(inTypeID) {
     
@@ -64,19 +60,8 @@ PGReturnValue::PGReturnValue(Oid inTypeID,
                 "compound type");
     }
 }
-/*
-PGReturnValue::operator Datum() {
-    if (!mDatumInitialized) {
-        // This does a call-back to our convert(), overloaded for all
-        // ConcreteValue<...> subclasses
-        mValue.convert(*this);
-        mDatumInitialized = true;
-    }
-        
-    return mDatum;
-}*/
 
-void PGReturnValue::convert(const AnyValueVector &inRecord) {
+void PGToDatumConverter::convert(const AnyValueVector &inRecord) {
     if (!mValue.isCompound())
         throw std::logic_error("Internal MADlib error, got internal compound "
             "type where not expected");
@@ -91,7 +76,7 @@ void PGReturnValue::convert(const AnyValueVector &inRecord) {
         new bool[mTupleDesc->natts], ArrayDeleter<bool>());
 
     for (int i = 0; i < mTupleDesc->natts; i++) {
-        resultDatum.get()[i] = PGReturnValue(
+        resultDatum.get()[i] = PGToDatumConverter(
             mTupleDesc->attrs[i]->atttypid, inRecord[i]);
         resultDatumIsNull.get()[i] = inRecord[i].isNull();
     }
@@ -103,7 +88,7 @@ void PGReturnValue::convert(const AnyValueVector &inRecord) {
     mDatumInitialized = true;
 }
 
-void PGReturnValue::convert(const double &inValue) {
+void PGToDatumConverter::convert(const double &inValue) {
     switch (mTypeID) {
         case FLOAT8OID: mConvertedValue = Float8GetDatum(inValue); break;
         default: throw std::logic_error(
@@ -111,7 +96,7 @@ void PGReturnValue::convert(const double &inValue) {
     }
 }
 
-void PGReturnValue::convert(const float &inValue) {
+void PGToDatumConverter::convert(const float &inValue) {
     switch (mTypeID) {
         case FLOAT8OID: mConvertedValue = Float8GetDatum(inValue); break;
         case FLOAT4OID: mConvertedValue = Float4GetDatum(inValue); break;
@@ -129,13 +114,61 @@ void PGReturnValue::convert(const float &inValue) {
  * - Floating Point numbers with significand (mantissa) precision at least
  *   32 bit
  */
-void PGReturnValue::convert(const int32_t &inValue) {
+void PGToDatumConverter::convert(const int32_t &inValue) {
     switch (mTypeID) {
         case INT8OID: mConvertedValue = Int64GetDatum(inValue); break;
         case INT4OID: mConvertedValue = Int32GetDatum(inValue); break;
         case FLOAT8OID: mConvertedValue = Float8GetDatum(inValue); break;
         default: throw std::logic_error(
-            "Internal return type does not match SQL return type");
+            "Internal return type does not match SQL declaration");
+    }
+}
+
+void PGToDatumConverter::convert(const Array<double> &inValue) {
+    Oid elementTypeID = get_element_type(mTypeID);
+    switch (elementTypeID) {
+        case FLOAT8OID: {
+            shared_ptr<PGArrayHandle> arrayHandle
+                = dynamic_pointer_cast<PGArrayHandle>(inValue.memoryHandle());
+            
+            if (arrayHandle) {
+                mConvertedValue = PointerGetDatum(arrayHandle->array());
+            } else {
+                // If the Array does not use an PostgreSQL array
+                // as its storage, we have to create a new one and copy the values.
+                mConvertedValue =
+                    PointerGetDatum(
+                        construct_array(
+                            reinterpret_cast<Datum*>(
+                                const_cast<double*>(inValue.data())
+                            ),
+                            inValue.num_elements(),
+                            FLOAT8OID, sizeof(double), true, 'd'
+                        )
+                    );
+            }
+        }   break;
+        case InvalidOid: throw std::logic_error(
+            "Internal return type does not match SQL declaration");
+        default: throw std::logic_error(
+            "Internal element type of returned array does not match SQL declaration");
+    }
+}
+
+void PGToDatumConverter::convert(const DoubleCol &inValue) {
+    Oid elementTypeID = get_element_type(mTypeID);
+    switch (elementTypeID) {
+        // FIXME: We copy memory here!
+        case FLOAT8OID:
+            mConvertedValue = PointerGetDatum(
+                construct_array(
+                    reinterpret_cast<Datum*>(const_cast<double*>(inValue.memptr())),
+                    inValue.n_elem, FLOAT8OID, sizeof(double), true, 'd')
+            ); break;
+        case InvalidOid: throw std::logic_error(
+            "Internal return type does not match SQL declaration");
+        default: throw std::logic_error(
+            "Internal element type of returned array does not match SQL declaration");
     }
 }
 

@@ -25,10 +25,10 @@ struct NoDeleter {
     void operator()(T *p) { }
 };
 
-} // namespace memory
+} // namespace prob
 
-} // namespace utils
+} // namespace modules
 
-} // namespace madlib
+} // namespace regress
 
 #endif

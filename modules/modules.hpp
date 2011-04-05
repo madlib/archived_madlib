@@ -9,20 +9,10 @@
 #ifndef MADLIB_MODULES_HPP
 #define MADLIB_MODULES_HPP
 
-// All sources need to (implicitly or explicitly) include madlib.hpp, so we also
-// include it here
+// Inlcude Database Abstraction Layer
 
-#include <madlib/madlib.hpp>
-
-
-// Database Abstraction Layer
-
-#include <madlib/dbal/AnyValue.hpp>
-#include <madlib/dbal/AnyValue.hpp>
-#include <madlib/dbal/ConcreteValue.hpp>
-#include <madlib/dbal/Null.hpp>
-#include <madlib/dbal/ValueConverter.hpp>
-
+#include <madlib/dbal/dbal.hpp>
+#include <madlib/utils/memory.hpp>
 
 // Import commonly used names into the modules namespace
 
@@ -31,6 +21,7 @@ namespace madlib {
 namespace modules {
 
 using namespace dbal;
+using namespace utils::memory;
 
 } // namespace modules
 

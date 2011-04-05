@@ -1,24 +1,8 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AnyValue.hpp
- *
- * @brief Header file for abstract value class
+ * @file AnyValue_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
-
-#ifndef MADLIB_ANYVALUE_HPP
-#define MADLIB_ANYVALUE_HPP
-
-#include <madlib/dbal/dbal.hpp>
-#include <madlib/dbal/AbstractValue.hpp>
-
-#include <stdexcept>
-#include <boost/type_traits/is_base_of.hpp>
-#include <boost/utility/enable_if.hpp>
-
-namespace madlib {
-
-namespace dbal {
 
 class AnyValue : public AbstractValue {
 public:
@@ -27,7 +11,7 @@ public:
         iterator(const AbstractValue &inValue)
             : mValue(inValue), mCurrentID(0) {
         }
-    
+        
         iterator &operator++() {
             ++mCurrentID;
             return *this;
@@ -68,7 +52,7 @@ public:
             else
                 // Return an AnyValue by value (which uses the Value returned
                 // by getValueByID as delegate)
-                return shared_ptr<AnyValue>( new AnyValue(mValue.getValueByID(mCurrentID)) );
+                return shared_ptr<AnyValue>( new AnyValue(valuePtr) );
         }
             
     private:
@@ -96,6 +80,11 @@ public:
      */
     AnyValue(const AbstractValue &inValue) : mDelegate(inValue.clone()) {
     }
+    
+    /**
+     * We want to allow the notation anyValue = Null();
+     */
+    AnyValue(const Null &inValue) { }
 
     template <class T>
     operator T() const;
@@ -108,10 +97,7 @@ public:
     }
             
     bool isNull() const {
-        if (mDelegate)
-            return mDelegate->isNull();
-        
-        return AbstractValue::isNull();
+        return !mDelegate;
     }
     
     unsigned int size() const {
@@ -124,6 +110,20 @@ public:
     void convert(AbstractValueConverter &inConverter) const {
         if (mDelegate)
             mDelegate->convert(inConverter);
+    }
+    
+    AnyValue operator[](uint16_t inID) {
+        AbstractValueSPtr valuePtr = getValueByID(inID);
+        shared_ptr<const AnyValue> anyValuePtr(
+            dynamic_pointer_cast<const AnyValue>( valuePtr ));
+
+        // FIXME: Null!
+        if (anyValuePtr)
+            return *anyValuePtr;
+        else
+            // Return an AnyValue by value (which uses the Value returned
+            // by getValueByID as delegate)
+            return AnyValue(valuePtr);
     }
     
 protected:
@@ -156,9 +156,3 @@ private:
     
     AbstractValueSPtr mDelegate;
 };
-
-} // namespace dbal
-
-} // namespace madlib
-
-#endif

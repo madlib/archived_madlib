@@ -9,8 +9,7 @@
 #ifndef MADLIB_POSTGRESQLVALUE_HPP
 #define MADLIB_POSTGRESQLVALUE_HPP
 
-#include <madlib/madlib.hpp>
-
+#include <madlib/ports/postgres/postgres.hpp>
 #include <madlib/ports/postgres/AbstractPGValue.hpp>
 
 extern "C" {
@@ -40,6 +39,10 @@ public:
 protected:
     AbstractValueSPtr getValueByID(unsigned int inID) const;
     
+    AbstractValueSPtr clone() const {
+        return AbstractValueSPtr( new PGValue<FunctionCallInfo>(*this) );
+    }
+    
 private:
     /**
      * The name is chosen so that PostgreSQL macros like PG_NARGS can be
@@ -56,6 +59,10 @@ public:
 
 protected:
     AbstractValueSPtr getValueByID(unsigned int inID) const;
+
+    AbstractValueSPtr clone() const {
+        return AbstractValueSPtr( new PGValue<HeapTupleHeader>(*this) );
+    }
 
 private:    
     const HeapTupleHeader mTuple;

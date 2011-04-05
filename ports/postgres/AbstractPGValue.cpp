@@ -4,12 +4,13 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/dbal/ConcreteValue.hpp>
 #include <madlib/ports/postgres/AbstractPGValue.hpp>
+#include <madlib/ports/postgres/PGArrayHandle.hpp>
 #include <madlib/ports/postgres/PGValue.hpp>
 
 extern "C" {
     #include "catalog/pg_type.h"
+    #include "utils/array.h"
     #include "utils/typcache.h"
     #include "utils/lsyscache.h"
 }
@@ -20,15 +21,43 @@ namespace ports {
 
 namespace postgres {
 
-using dbal::AbstractValueSPtr;
-using dbal::ConcreteValue;
-
-
-AbstractValueSPtr AbstractPGValue::DatumToValue(Oid inTypeID, Datum inDatum) const {
+AbstractValueSPtr AbstractPGValue::DatumToValue(bool inMemoryIsWritable,
+    Oid inTypeID, Datum inDatum) const {
+        
     // First check if datum is rowtype
     if (type_is_rowtype(inTypeID)) {
         HeapTupleHeader pgTuple = DatumGetHeapTupleHeader(inDatum);
         return AbstractValueSPtr(new PGValue<HeapTupleHeader>(pgTuple));
+    } else if (type_is_array(inTypeID)) {
+        ArrayType *pgArray = DatumGetArrayTypeP(inDatum);
+        
+        if (ARR_NDIM(pgArray) != 1)
+            throw std::invalid_argument("Multidimensional arrays not yet supported");
+        
+        if (ARR_HASNULL(pgArray))
+            throw std::invalid_argument("Arrays with NULLs not yet supported");
+        
+        switch (ARR_ELEMTYPE(pgArray)) {
+            case FLOAT8OID: {
+                MemHandleSPtr memoryHandle(new PGArrayHandle(pgArray));
+                
+                if (inMemoryIsWritable) {
+                    return AbstractValueSPtr(
+                        new ConcreteValue<Array<double> >(
+                            Array<double>(memoryHandle,
+                                boost::extents[ ARR_DIMS(pgArray)[0] ])
+                            )
+                        );
+                } else {
+                    return AbstractValueSPtr(
+                        new ConcreteValue<Array<double> >(
+                            Array<double>(memoryHandle,
+                                boost::extents[ ARR_DIMS(pgArray)[0] ])
+                            )
+                        );
+                }
+            }
+        }
     }
 
     switch (inTypeID) {

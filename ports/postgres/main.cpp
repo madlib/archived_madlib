@@ -11,7 +11,7 @@
  * default declarations.
  */
 
-#include <madlib/ports/postgres/postgres.hpp>
+#include <madlib/ports/postgres/main.hpp>
 
 #include <madlib/modules/declarations.hpp>
 

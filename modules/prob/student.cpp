@@ -135,11 +135,11 @@ double studentT_cdf(int64_t nu, double t) {
 	/* Handle main case (nu < 200) in the rest of the function. */
 
 	z = 1. + t * t / nu;
-	t_by_sqrt_nu = fabs(t) / sqrt(nu);
+	t_by_sqrt_nu = std::fabs(t) / std::sqrt(nu);
 	
 	if (nu == 1)
 	{
-		A = 2. / M_PI * atan(t_by_sqrt_nu);
+		A = 2. / M_PI * std::atan(t_by_sqrt_nu);
 	}
 	else if (nu & 1) /* odd nu > 1 */
 	{
@@ -148,7 +148,7 @@ double studentT_cdf(int64_t nu, double t) {
 			prod = prod * j / ((j + 1) * z);
 			sum = sum + prod;
 		}
-		A = 2 / M_PI * ( atan(t_by_sqrt_nu) + t_by_sqrt_nu / z * sum );
+		A = 2 / M_PI * ( std::atan(t_by_sqrt_nu) + t_by_sqrt_nu / z * sum );
 	}
 	else /* even nu */
 	{
@@ -157,7 +157,7 @@ double studentT_cdf(int64_t nu, double t) {
 			prod = prod * (j - 1) / (j * z);
 			sum = sum + prod;
 		}
-		A = t_by_sqrt_nu / sqrt(z) * sum;
+		A = t_by_sqrt_nu / std::sqrt(z) * sum;
 	}
 	
 	/* A should obviously lie withing the interval [0,1] plus minus (hopefully
@@ -184,7 +184,7 @@ double studentT_cdf(int64_t nu, double t) {
 
 static inline double normal_cdf(double t)
 {
-	return .5 + .5 * erf(t / sqrt(2.));
+	return .5 + .5 * std::tr1::erf(t / std::sqrt(2.));
 }
 
 
@@ -199,13 +199,32 @@ static inline double normal_cdf(double t)
 static double studentT_cdf_approx(int64_t nu, double t)
 {
 	double	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
-			z = std::sqrt( log(1. + t * t / nu) / g );
+			z = std::sqrt( std::log(1. + t * t / nu) / g );
 
 	if (t < 0)
 		z *= -1.;
 	
 	return normal_cdf(z);
 }
+
+/**
+ * We need to do some additional domain checking for the in-DB function.
+ */
+AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args) {
+    AnyValue::iterator arg(args);
+
+    // Arguments from SQL call
+    const int64_t nu = *arg++;
+    const double t = *arg;
+    
+    /* We want to ensure nu > 0 */
+    if (nu <= 0)
+        throw std::domain_error("Student-t distribution undefined for "
+            "degree of freedom <= 0");
+
+    return studentT_cdf(nu, t);    
+}
+
 
 } // namespace prob
 

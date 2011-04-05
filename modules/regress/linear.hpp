@@ -1,6 +1,6 @@
-/*-------------------------------------------------------------------------
+/* ----------------------------------------------------------------------- *//**
  *
- * @file regression.hpp
+ * @file linear.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -15,16 +15,9 @@ namespace modules {
 
 namespace regress {
 
-struct multiply {
-    AnyValue operator()(AnyValue::iterator arg) const;
-};
-
-struct add {
-    AnyValue operator()(AnyValue::iterator arg) const;
-};
-
-struct subtract {
-    AnyValue operator()(AnyValue::iterator arg) const;
+struct linearRegression {
+    static AnyValue transition(AbstractDBInterface &db, AnyValue args);
+    static AnyValue final(AbstractDBInterface &db, AnyValue args);
 };
 
 } // namespace regress

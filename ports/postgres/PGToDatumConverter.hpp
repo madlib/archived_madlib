@@ -1,20 +1,16 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGReturnValue.hpp
+ * @file PGToDatumConverter.hpp
  *
  * @brief Header file for automatic conversion of return values into PostgreSQL
  *        Datums
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_PGRETURNVALUE_HPP
-#define MADLIB_PGRETURNVALUE_HPP
+#ifndef MADLIB_PGTODATUMCONVERTER_HPP
+#define MADLIB_PGTODATUMCONVERTER_HPP
 
-#include <madlib/madlib.hpp>
-
-#include <madlib/dbal/AbstractValue.hpp>
-#include <madlib/dbal/ConcreteValue.hpp>
-#include <madlib/dbal/ValueConverter.hpp>
+#include <madlib/ports/postgres/postgres.hpp>
 
 extern "C" {
     #include <postgres.h>
@@ -29,22 +25,14 @@ namespace ports {
 
 namespace postgres {
 
-using dbal::AbstractValue;
-//using dbal::ConcreteValue;
-//using dbal::ConcreteRecord;
-//using dbal::AbstractValueConverter;
-using dbal::AnyValueVector;
-using dbal::ValueConverter;
-
-
-class PGReturnValue : public ValueConverter<Datum> {
+class PGToDatumConverter : public ValueConverter<Datum> {
 public:
-    PGReturnValue(const FunctionCallInfo inFCInfo,
+    PGToDatumConverter(const FunctionCallInfo inFCInfo,
         const AbstractValue &inValue);
     
-    PGReturnValue(Oid inTypeID, const AbstractValue &inValue);
+    PGToDatumConverter(Oid inTypeID, const AbstractValue &inValue);
     
-    ~PGReturnValue() {
+    ~PGToDatumConverter() {
         if (mTupleDesc != NULL)
             ReleaseTupleDesc(mTupleDesc);
     }
@@ -52,15 +40,14 @@ public:
     void convert(const double &inValue);
     void convert(const float &inValue);
     void convert(const int32_t &inValue);
+    
+    void convert(const Array<double> &inValue);
+    void convert(const DoubleCol &inValue);
+    
     void convert(const AnyValueVector &inRecord);
     
-//    operator Datum();
-
 protected:
-//    const AbstractValue &mValue;
     TupleDesc mTupleDesc;
-//    Datum mDatum;
-//    bool mDatumInitialized;
     Oid mTypeID;
 };
 
