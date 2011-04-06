@@ -47,12 +47,29 @@ def svm_regression( input_table, modelname, parallel, eta = 0.1, nu = 0.005, sla
         # Start learning process    
         sql = 'insert into MADLIB_SCHEMA.svm_results (select \'' + modelname + '\', MADLIB_SCHEMA.svm_reg_agg(ind, label,' + str(eta) + ',' + str(nu) + ',' + str(slambda) + ') from ' + input_table + ')';
         plpy.execute(sql);
-
-        # Store the model learned
         plpy.execute('select MADLIB_SCHEMA.svm_storeModel(\'' + modelname + '\')');
 
-    return '''Finished support vector regression learning on %s table. 
-           ''' % (input_table)
+    # Store the model learned
+    if parallel:
+        where_cond = "position('" + modelname + "' in id) > 0 AND '" + modelname + "' <> id";
+    else:
+        where_cond = "id = '" + modelname + "'";
+
+    plpy.execute('drop table if exists ' + modelname);
+    plpy.execute('create table ' + modelname + ' ( id text, weight float8, sv float8[] )');
+    plpy.execute("insert into " + modelname + " (select * from MADLIB_SCHEMA.svm_model where " + where_cond + " )");
+
+    # Retrieve and return the summary for each model learned    
+    summary = plpy.execute("select id, (model).inds, (model).cum_err, (model).epsilon, (model).b, (model).nsvs from MADLIB_SCHEMA.svm_results where " + where_cond);
+
+    result = [];
+    for i in range(0,summary.nrows()):
+        result = result + [(modelname, summary[i]['id'], summary[i]['inds'], summary[i]['cum_err'], summary[i]['epsilon'], summary[i]['b'], summary[i]['nsvs'])];
+
+    plpy.execute("delete from MADLIB_SCHEMA.svm_model where " + where_cond);
+    plpy.execute("delete from MADLIB_SCHEMA.svm_results where " + where_cond);
+
+    return result;
 
 # -----------------------------------------------
 # Function to run the classification algorithm
@@ -169,6 +186,8 @@ def svm_predict( input_table, col_name, modelname, output_table, parallel):
     @param parallel A flag indicating whether the system should learn multiple models in parallel.
     
     """
+
+    plpy.error('this function currently does not work');
     
     plpy.execute('drop table if exists ' + output_table);
     plpy.execute('create table ' + output_table + ' ( id int, prediction float8 )');

@@ -288,6 +288,16 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
        individuals float8[]    -- the array of support vectors, represented as a 1-D array
 );
 
+CREATE TABLE MADLIB_SCHEMA.svm_reg_result (
+       model_table text, -- table where the model is stored
+       model_name text,  -- model name
+       inds int,         -- number of individuals processed 
+       cum_err float8,   -- cumulative error
+       epsilon float8,   -- the size of the epsilon tube around the hyperplane, adaptively adjusted by algorithm
+       b float8,         -- classifier offset
+       nsvs int          -- number of support vectors
+);
+
 -- The table for storing training data 
 CREATE TABLE MADLIB_SCHEMA.svm_train_data ( id int, ind float8[], label float8 ) 
 ifdef(`GREENPLUM', `DISTRIBUTED BY (id)')
@@ -378,7 +388,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], float8, float8) (
        initcond = '(0,0,0,0,0,0,0,{},{})'
 );
 
-
 -- This function transforms a MADLIB_SCHEMA.svm_model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
 --
 CREATE OR REPLACE FUNCTION 
@@ -441,70 +450,65 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-/**
- * @brief Evaluates a support-vector model on a given data point
- *
- * @param modelname The learned model \f$ f \f$ to be used
- * @param ind The data point \f$ \boldsymbol x \f$
- * @return This function returns \f$ f(\boldsymbol x) \f$
- */
-CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_predict(modelid text, ind float8[]) RETURNS FLOAT8 AS $$
-DECLARE
-	ret FLOAT8;
-	n INT := 0;
-BEGIN
-	SELECT INTO n COUNT(id) FROM MADLIB_SCHEMA.svm_model WHERE id = modelid;
-	IF n = 0 THEN
-	   RAISE EXCEPTION 'No support vector model with name ''%'' found. (Be careful of white spaces.)', modelid;
-	   EXIT;
-	END IF;
-	SELECT INTO ret sum(weight * MADLIB_SCHEMA.svm_kernel(sv, ind)) FROM MADLIB_SCHEMA.svm_model WHERE id = modelid;
-	RETURN ret;
-END;
-$$ LANGUAGE plpgsql;
 
 -- DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_model_pr CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_model_pr AS ( model text, prediction float8 );
 
 /**
+ * @brief Evaluates a support-vector model on a given data point
+ *
+ * @param modelname The table storing learned model \f$ f \f$ to be used
+ * @param ind The data point \f$ \boldsymbol x \f$
+ * @return This function returns \f$ f(\boldsymbol x) \f$
+ */
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.svm_predict(modelname text, ind float8[]) RETURNS FLOAT8 AS $$
+    nmodels_rec = plpy.execute("select count(distinct id) from " + modelname);
+
+    if (nmodels_rec[0]['count'] <> 1):
+        plpy.error("Error in MADLIB_SCHEMA.svm_predict(): the table contains an ensemble of models");
+
+    ret = plpy.execute("SELECT sum(weight * MADLIB_SCHEMA.svm_kernel(sv, \'" + str(ind) + "\')) FROM " + modelname);
+    if (ret.nrows() == 0):
+       plpy.error("Error executing svm_predict()");    
+    return ret[0]['sum'];
+$$ LANGUAGE plpythonu;
+
+/**
  * @brief Evaluates multiple support-vector models on a data point
  *
- * This function performs prediction using the support vector machines stored in
- * the <tt>MADLIB_SCHEMA.svm_model</tt> table.
+ * @param modelname The table storing the learned models to be used.
+ * @param ind The data point \f$ \boldsymbol x \f$
+ * @return This function returns a table, a row for each model.
+ *      Moreover, the last row contains the average value, over all models.
+ *
  * The different models are assumed to be named <tt><em>modelname</em>1</tt>,
  * <tt><em>modelname</em>2</tt>, ....
- * An average prediction is given at the end.
- *
- * @param modelname Prefix of the model names.
- * @param ind The data point \f$ \boldsymbol x \f$
- * @return This function returns a table: For each model, there is a row
- *      containing the result returned by \ref svm_predict(). Moreover, the last
- *      row contains the average value, over all models.
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict_combo(modelname text, ind float8[]) RETURNS SETOF MADLIB_SCHEMA.svm_model_pr AS $$
-DECLARE
-	sumpr float8 := 0;
-	mpr MADLIB_SCHEMA.svm_model_pr;
-	n int;
-BEGIN
-	SELECT INTO n COUNT(DISTINCT(id)) FROM MADLIB_SCHEMA.svm_model WHERE position(modelname in id) > 0 AND modelname <> id;
-	IF n = 0 THEN
-	   RAISE EXCEPTION 'No parallel model with name prefix % found', modelname;
-	   EXIT;
-	END IF;
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.svm_predict_combo(modelname text, ind float8[]) RETURNS SETOF MADLIB_SCHEMA.svm_model_pr AS $$
+    nmodels_rec = plpy.execute("select count(distinct id) from " + modelname);
+    nmodels = nmodels_rec[0]['count'];
 
-	FOR i IN 0..n-1 LOOP
-	    mpr.model := modelname || i;
-	    mpr.prediction := MADLIB_SCHEMA.svm_predict(mpr.model, ind);
-	    sumpr := sumpr + mpr.prediction;
-	    RETURN NEXT mpr;
- 	END LOOP;
-	mpr.model := 'avg';
-	mpr.prediction := sumpr / n;
-	RETURN NEXT mpr;
-END;
-$$ LANGUAGE plpgsql;
+    if (nmodels <= 1):
+        plpy.error("Error in MADLIB_SCHEMA.svm_predict_combo(): not an ensemble of models");
+
+    sumpr = 0.0;
+    ret = [];
+
+    for i in range(0,nmodels):
+        pred = plpy.execute("select sum(weight * MADLIB_SCHEMA.svm_kernel(sv, \'" + str(ind) + "\')) from " + modelname + " where id = '" + modelname + str(i) + "'");
+        if (pred.nrows() == 0):
+            plpy.error("Error in MADLIB_SCHEMA.svm_predict_combo(): failed to compute prediction for model '" + modelname + str(i) + "'.");
+
+        prediction = pred[0]['sum'];
+        sumpr = sumpr + prediction;
+        ret = ret + [(modelname + str(i), prediction)];
+
+    ret = ret + [('avg', sumpr/nmodels)];	
+    return ret;
+$$ LANGUAGE plpythonu;
+
 
 -- This function removes all the models whose id is prefixed with modelname in the svm_results table
 --
@@ -526,7 +530,7 @@ $$ LANGUAGE SQL;
  */
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.svm_regression(input_table text, modelname text, parallel bool)
-RETURNS TEXT
+RETURNS SETOF MADLIB_SCHEMA.svm_reg_result
 AS $$
     import sys
     try:
@@ -535,9 +539,8 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_regression(input_table, modelname, parallel);
+    return online_sv.svm_regression(input_table, modelname, parallel);	
 $$ LANGUAGE 'plpythonu';
-
 
 /**
  * @brief This is the support vector regression function
