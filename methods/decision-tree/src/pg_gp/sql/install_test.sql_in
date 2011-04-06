@@ -1,0 +1,90 @@
+SET client_min_messages = 'ERROR';
+
+CREATE TYPE MADLIB_SCHEMA.elem AS(
+	feature MADLIB_SCHEMA.svec,
+	class INTEGER
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.CreateTreePoint(pre_class INTEGER) RETURNS MADLIB_SCHEMA.elem AS $$
+declare
+	result MADLIB_SCHEMA.elem;
+	feature FLOAT[];
+	class INTEGER;
+	i INTEGER;
+begin
+	class = (pre_class+4)%5+1;
+	
+	feature = ARRAY[0,0,0,0,0,0,0,0,0,0];
+	IF(class = 1) THEN
+		feature[1] = 1;
+		feature[3] = 1;
+		feature[5] = 1;
+	ELSIF(class = 2) THEN
+		feature[1] = 1;
+		IF(pre_class < 2500) THEN
+			feature[3] = 1;
+			feature[5] = 2;
+		ELSE
+			feature[3] = 2;
+			feature[5] = 1;
+		END IF;
+	ELSIF(class = 3) THEN
+		IF(pre_class < 2500) THEN
+			feature[1] = 1;
+			feature[3] = 2;
+			feature[5] = 2;
+		ELSE
+			feature[1] = 2;
+			feature[3] = 1;
+			feature[5] = 1;
+		END IF;
+	ELSIF(class = 4) THEN
+		feature[1] = 2;
+		IF(pre_class < 2500) THEN
+			feature[3] = 2;
+			feature[5] = 1;
+		ELSE
+			feature[3] = 1;
+			feature[5] = 2;
+		END IF;
+	ELSIF(class = 5) THEN
+		feature[1] = 2;
+		feature[3] = 2;
+		feature[5] = 2;
+	END IF;
+	
+	result.feature = MADLIB_SCHEMA.svec_cast_float8arr(feature);
+	result.class = class;
+	RETURN result;
+end
+$$ language plpgsql;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.install_test() RETURNS TEXT AS $$
+declare
+	result TEXT;
+begin 
+
+	CREATE TEMP TABLE Points(
+		id INTEGER,
+		feature MADLIB_SCHEMA.svec,
+		class INTEGER
+	) DISTRIBUTED BY (id);
+
+	CREATE TEMP TABLE Speedup(
+		id INTEGER
+	) DISTRIBUTED BY (id);
+	
+	INSERT INTO Speedup SELECT G.a FROM generate_series(1, 5000) AS G(a);
+	INSERT INTO Points (id, feature, class) SELECT id, (g.t).* FROM (SELECT id, MADLIB_SCHEMA.CreateTreePoint(id) AS t FROM Speedup) As g;
+	PERFORM MADLIB_SCHEMA.Train_Tree('Points','id','feature','class',10, 3000);
+	PERFORM MADLIB_SCHEMA.Classify_Tree('Points','id','feature',10);
+	SELECT INTO result CASE WHEN(sum((id+4)%5+1-class)=0) THEN 'PASS' ELSE 'FAILED' END FROM MADLIB_SCHEMA.classified_points;
+	RETURN result;
+end
+$$ language plpgsql;	
+
+SELECT MADLIB_SCHEMA.install_test();
+
+DROP FUNCTION MADLIB_SCHEMA.install_test();
+DROP FUNCTION MADLIB_SCHEMA.CreateTreePoint(INTEGER);
+DROP TYPE MADLIB_SCHEMA.elem; 
