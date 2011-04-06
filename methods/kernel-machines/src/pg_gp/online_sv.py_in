@@ -10,7 +10,7 @@ def svm_regression( input_table, modelname, parallel, eta = 0.1, nu = 0.005, sla
     Executes the support vector regression algorithm.
 
     @param input_table Name of table/view containing the training data
-    @param model_name Name under which we want to store the learned model 
+    @param model_name Name of table under which we want to store the learned model 
     @param parallel A flag indicating whether the system should learn multiple models in parallel
     @param eta Learning rate in (0,1] (default value is 0.1)
     @param nu  Compression parameter in (0,1] associated with the fraction of training data that will become support vectors (default value is 0.005)
@@ -31,7 +31,7 @@ def svm_regression( input_table, modelname, parallel, eta = 0.1, nu = 0.005, sla
         sql = 'insert into MADLIB_SCHEMA.svm_results (select \'' + modelname + '\' || gp_segment_id, MADLIB_SCHEMA.svm_reg_agg(ind, label,' + str(eta) + ',' + str(nu) + ',' + str(slambda) + ') from ' + input_table + ' group by gp_segment_id)';
         plpy.execute(sql);
 
-        # Store the models learned
+        # Store the models learned in a temp location
         numproc_t = plpy.execute('select count(distinct(gp_segment_id)) from ' + input_table);
         numproc = numproc_t[0]['count'];
         plpy.execute('select MADLIB_SCHEMA.svm_storeModel(\'' + modelname + '\', ' + str(numproc) + ')');     
@@ -47,9 +47,10 @@ def svm_regression( input_table, modelname, parallel, eta = 0.1, nu = 0.005, sla
         # Start learning process    
         sql = 'insert into MADLIB_SCHEMA.svm_results (select \'' + modelname + '\', MADLIB_SCHEMA.svm_reg_agg(ind, label,' + str(eta) + ',' + str(nu) + ',' + str(slambda) + ') from ' + input_table + ')';
         plpy.execute(sql);
+        # Store the model learned in a temp location
         plpy.execute('select MADLIB_SCHEMA.svm_storeModel(\'' + modelname + '\')');
 
-    # Store the model learned
+    # Store the model learned in table specified by user
     if parallel:
         where_cond = "position('" + modelname + "' in id) > 0 AND '" + modelname + "' <> id";
     else:
@@ -66,6 +67,7 @@ def svm_regression( input_table, modelname, parallel, eta = 0.1, nu = 0.005, sla
     for i in range(0,summary.nrows()):
         result = result + [(modelname, summary[i]['id'], summary[i]['inds'], summary[i]['cum_err'], summary[i]['epsilon'], summary[i]['b'], summary[i]['nsvs'])];
 
+    # Clean up temp storage of models
     plpy.execute("delete from MADLIB_SCHEMA.svm_model where " + where_cond);
     plpy.execute("delete from MADLIB_SCHEMA.svm_results where " + where_cond);
 
@@ -99,7 +101,7 @@ def svm_classification( input_table, modelname, parallel, eta=0.1, nu=0.005):
         sql = 'insert into MADLIB_SCHEMA.svm_results (select \'' + modelname + '\' || gp_segment_id, MADLIB_SCHEMA.svm_cls_agg(ind, label,' + str(eta) + ',' + str(nu) + ') from ' + input_table + ' group by gp_segment_id)';
         plpy.execute(sql);
 
-        # Store the models learned
+        # Store the models learned in a temp location
         numproc_t = plpy.execute('select count(distinct(gp_segment_id)) from ' + input_table);
         numproc = numproc_t[0]['count'];
         plpy.execute('select MADLIB_SCHEMA.svm_storeModel(\'' + modelname + '\', ' + str(numproc) + ')');     
@@ -116,11 +118,31 @@ def svm_classification( input_table, modelname, parallel, eta=0.1, nu=0.005):
         sql = 'insert into MADLIB_SCHEMA.svm_results (select \'' + modelname + '\', MADLIB_SCHEMA.svm_cls_agg(ind, label,' + str(eta) + ',' + str(nu) + ') from ' + input_table + ')';
         plpy.execute(sql);
 
-        # Store the model learned
+        # Store the model learned in a temp location
         plpy.execute('select MADLIB_SCHEMA.svm_storeModel(\'' + modelname + '\')');
 
-    return '''Finished support vector classification learning on %s table. 
-           ''' % (input_table)
+    # Store the model learned in table specified by user
+    if parallel:
+        where_cond = "position('" + modelname + "' in id) > 0 AND '" + modelname + "' <> id";
+    else:
+        where_cond = "id = '" + modelname + "'";
+
+    plpy.execute('drop table if exists ' + modelname);
+    plpy.execute('create table ' + modelname + ' ( id text, weight float8, sv float8[] )');
+    plpy.execute("insert into " + modelname + " (select * from MADLIB_SCHEMA.svm_model where " + where_cond + " )");
+
+    # Retrieve and return the summary for each model learned    
+    summary = plpy.execute("select id, (model).inds, (model).cum_err, (model).rho, (model).b, (model).nsvs from MADLIB_SCHEMA.svm_results where " + where_cond);
+
+    result = [];
+    for i in range(0,summary.nrows()):
+        result = result + [(modelname, summary[i]['id'], summary[i]['inds'], summary[i]['cum_err'], summary[i]['rho'], summary[i]['b'], summary[i]['nsvs'])];
+
+    # Clean up the temp storage of models
+    plpy.execute("delete from MADLIB_SCHEMA.svm_model where " + where_cond);
+    plpy.execute("delete from MADLIB_SCHEMA.svm_results where " + where_cond);
+
+    return result;
 
 # -----------------------------------------------
 # Function to run the novelty detection algorithm
@@ -130,7 +152,7 @@ def svm_novelty_detection( input_table, modelname, parallel, eta = 0.1, nu = 0.0
     Executes the support vector novelty detection algorithm.
 
     @param input_table Name of table/view containing the training data
-    @param model_name Name under which we want to store the learned model 
+    @param model_name Name of table under which we want to store the learned model 
     @param parallel A flag indicating whether the system should learn multiple models in parallel.
     @param eta Learning rate in (0,1] (default value is 0.1)
     @param nu Compression parameter in (0,1] associated with the fraction of training data that will become support vectors (default value is 0.01)
@@ -149,7 +171,7 @@ def svm_novelty_detection( input_table, modelname, parallel, eta = 0.1, nu = 0.0
         sql = 'insert into MADLIB_SCHEMA.svm_results (select \'' + modelname + '\' || gp_segment_id, MADLIB_SCHEMA.svm_nd_agg(ind,' + str(eta) + ',' + str(nu) + ') from ' + input_table + ' group by gp_segment_id)';
         plpy.execute(sql);
 
-        # Store the models learned
+        # Store the models learned in a temp location
         numproc_t = plpy.execute('select count(distinct(gp_segment_id)) from ' + input_table);
         numproc = numproc_t[0]['count'];
         plpy.execute('select MADLIB_SCHEMA.svm_storeModel(\'' + modelname + '\', ' + str(numproc) + ')');     
@@ -166,11 +188,31 @@ def svm_novelty_detection( input_table, modelname, parallel, eta = 0.1, nu = 0.0
         sql = 'insert into MADLIB_SCHEMA.svm_results (select \'' + modelname + '\', MADLIB_SCHEMA.svm_nd_agg(ind,' + str(eta) + ',' + str(nu) + ') from ' + input_table + ')';
         plpy.execute(sql);
 
-        # Store the model learned
+        # Store the model learned in a temp location
         plpy.execute('select MADLIB_SCHEMA.svm_storeModel(\'' + modelname + '\')');
 
-    return '''Finished support vector novelty detection learning on %s table. 
-           ''' % (input_table)
+    # Store the model learned in table specified by user
+    if parallel:
+        where_cond = "position('" + modelname + "' in id) > 0 AND '" + modelname + "' <> id";
+    else:
+        where_cond = "id = '" + modelname + "'";
+
+    plpy.execute('drop table if exists ' + modelname);
+    plpy.execute('create table ' + modelname + ' ( id text, weight float8, sv float8[] )');
+    plpy.execute("insert into " + modelname + " (select * from MADLIB_SCHEMA.svm_model where " + where_cond + " )");
+
+    # Retrieve and return the summary for each model learned    
+    summary = plpy.execute("select id, (model).inds, (model).rho, (model).nsvs from MADLIB_SCHEMA.svm_results where " + where_cond);
+
+    result = [];
+    for i in range(0,summary.nrows()):
+        result = result + [(modelname, summary[i]['id'], summary[i]['inds'], summary[i]['rho'], summary[i]['nsvs'])];
+
+    # Clean up the temp storage of models
+    plpy.execute("delete from MADLIB_SCHEMA.svm_model where " + where_cond);
+    plpy.execute("delete from MADLIB_SCHEMA.svm_results where " + where_cond);
+
+    return result;
 
 # ---------------------------------------------------
 # Function to predict the labels of points in a table
