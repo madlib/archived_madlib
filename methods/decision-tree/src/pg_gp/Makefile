@@ -1,4 +1,4 @@
-DATA_built = decision-tree.sql decision-tree-drop.sql
+DATA_built = decision-tree.sql decision-tree-drop.sql sql/install_test.sql
 MODULES = decision-tree
 PGXS := $(shell pg_config --pgxs)
 include $(PGXS)
