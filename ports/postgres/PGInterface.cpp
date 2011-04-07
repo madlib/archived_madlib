@@ -10,7 +10,7 @@ namespace postgres {
 inline AllocatorSPtr PGInterface::allocator(
     AbstractAllocator::Context inMemContext) {
     
-    return AllocatorSPtr(new PGAllocator(inMemContext, *this));
+    return AllocatorSPtr(new PGAllocator(this, inMemContext));
 }
 
 } // namespace postgres
