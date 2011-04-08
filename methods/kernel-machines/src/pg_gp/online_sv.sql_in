@@ -162,7 +162,7 @@ Models that have been stored can be deleted using the function
 As a general first step, we need to prepare and populate an input 
 table/view with the following structure:
 \code   
-        CREATE TABLE my_schema.my_input_table 
+        TABLE/VIEW my_schema.my_input_table 
         (       
                 id    INT,       -- point ID
                 ind   FLOAT8[],  -- data point
@@ -290,7 +290,7 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
 
 -- The following is the return type of a regression learning process
 --
-CREATE TABLE MADLIB_SCHEMA.svm_reg_result (
+CREATE TYPE MADLIB_SCHEMA.svm_reg_result AS (
        model_table text, -- table where the model is stored
        model_name text,  -- model name
        inds int,         -- number of individuals processed 
@@ -302,7 +302,7 @@ CREATE TABLE MADLIB_SCHEMA.svm_reg_result (
 
 -- The following is the return type of a classification learning process
 --
-CREATE TABLE MADLIB_SCHEMA.svm_cls_result (
+CREATE TYPE MADLIB_SCHEMA.svm_cls_result AS (
        model_table text, -- table where the model is stored
        model_name text,  -- model name
        inds int,         -- number of individuals processed 
@@ -314,7 +314,7 @@ CREATE TABLE MADLIB_SCHEMA.svm_cls_result (
 
 -- The following is the return type of a novelty detection learning process
 --
-CREATE TABLE MADLIB_SCHEMA.svm_nd_result (
+CREATE TYPE MADLIB_SCHEMA.svm_nd_result AS (
        model_table text, -- table where the model is stored
        model_name text,  -- model name
        inds int,         -- number of individuals processed 
@@ -322,20 +322,9 @@ CREATE TABLE MADLIB_SCHEMA.svm_nd_result (
        nsvs int          -- number of support vectors
 );
 
--- The table for storing training data 
-CREATE TABLE MADLIB_SCHEMA.svm_train_data ( id int, ind float8[], label float8 ) 
-ifdef(`GREENPLUM', `DISTRIBUTED BY (id)')
-;
-
--- The table for storing learned support vector models, as one composite object
-CREATE TABLE MADLIB_SCHEMA.svm_results ( id text, model MADLIB_SCHEMA.svm_model_rec ) 
-ifdef(`GREENPLUM', `DISTRIBUTED BY (id)')
-;
-
--- The table for storing learned support vector models, one row per support vector
-CREATE TABLE MADLIB_SCHEMA.svm_model ( id text, weight float8, sv float8[] ) 
-ifdef(`GREENPLUM', `DISTRIBUTED BY (weight)')   -- this shouldn't be distributed by id; otherwise won't get parallelism
-;
+-- The type for representing support vectors
+--
+CREATE TYPE MADLIB_SCHEMA.svm_support_vector AS ( id text, weight float8, sv float8[] );
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
@@ -350,6 +339,7 @@ $$ LANGUAGE SQL IMMUTABLE;
 
 
 -- Here are two other standard kernels.
+--
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_polynomial_kernel(x float8[], y float8[], degree int) 
 RETURNS float8 AS $$
 	SELECT MADLIB_SCHEMA.svec_dot($1,$2) ^ $3;
@@ -413,16 +403,15 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], float8, float8) (
 );
 
 -- This function transforms a MADLIB_SCHEMA.svm_model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
+-- This is currently written as a plpgsql function because we cannot pass array arguments in plpython functions.
 --
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.__svm_transform_rec(modelname text, ind_dim int, weights float8[], individuals float8[]) 
-RETURNS SETOF MADLIB_SCHEMA.svm_model AS $$
+MADLIB_SCHEMA.__svm_transform_rec(modelname text, ind_dim int, nsvs int, weights float8[], individuals float8[]) 
+RETURNS SETOF MADLIB_SCHEMA.svm_support_vector AS $$
 DECLARE
 	idx INT := 0;
-	nsvs INT;
-	sv MADLIB_SCHEMA.svm_model;
+	sv MADLIB_SCHEMA.svm_support_vector;
 BEGIN
-	nsvs = array_upper(weights,1);
 	FOR i IN 1..nsvs LOOP 
 	    sv.id := modelname;
        	    sv.weight := weights[i];
@@ -433,49 +422,47 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- This function stores a MADLIB_SCHEMA.svm_model_rec stored with modelname in the MADLIB_SCHEMA.svm_results table into the MADLIB_SCHEMA.svm_model table.
+-- This function stores a MADLIB_SCHEMA.svm_model_rec stored in model_temp_table into the model_table.
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_storeModel(modelname TEXT) RETURNS VOID AS $$
-DECLARE
-	temp INT;
-	myind_dim INT;
-	mynsvs INT;
-	myweights float8[];
-	myindividuals float8[];
---	mysvs MADLIB_SCHEMA.svm_model_rec;
-BEGIN
-	SELECT INTO temp COUNT(*) FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
-	IF temp = 0 THEN
-	   	RAISE EXCEPTION 'No support vector model with name ''%'' found. (Be careful of white spaces.)', modelname;
-	   	EXIT;
-	END IF;	
---	SELECT INTO mysvs model FROM MADLIB_SCHEMA.svm_results WHERE id = modelname; -- for some strange reason this line doesn't work....
-	SELECT INTO myind_dim (model).ind_dim FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
-	SELECT INTO mynsvs (model).nsvs FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
-	SELECT INTO myweights (model).weights FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
-	SELECT INTO myindividuals (model).individuals FROM MADLIB_SCHEMA.svm_results WHERE id = modelname;
-	IF mynsvs = 0 THEN
-	   	RAISE NOTICE 'Model ''%'' has no support vectors and therefore not processed', modelname;
-	ELSE
-		INSERT INTO MADLIB_SCHEMA.svm_model (SELECT * FROM MADLIB_SCHEMA.__svm_transform_rec(modelname, myind_dim, myweights[1:mynsvs], myindividuals));
-	END IF;	
-END;
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_store_model(model_temp_table TEXT, model_name TEXT, model_table TEXT) RETURNS VOID AS $$
+	sql = "SELECT COUNT(*) FROM " + model_temp_table + " WHERE id = \'" + model_name + "\'";
+	temp = plpy.execute(sql);
+	if (temp[0]['count'] == 0):
+	    plpy.error("No support vector model with name " + model_name + " found.");
 
--- This function stores a collection of models learned in parallel into the MADLIB_SCHEMA.svm_model table.
--- The different models are assumed to be named modelname1, modelname2, ....
+	sql = "SELECT (model).ind_dim FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
+	myind_dim_t = plpy.execute(sql);
+	myind_dim = myind_dim_t[0]['ind_dim'];
+
+	sql = "SELECT (model).nsvs FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
+	mynsvs_t = plpy.execute(sql);
+	mynsvs = mynsvs_t[0]['nsvs'];
+
+	sql = "SELECT (model).weights FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
+	myweights_t = plpy.execute(sql);
+	myweights = myweights_t[0]['weights'];
+
+	sql = "SELECT (model).individuals FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
+	myindividuals_t = plpy.execute(sql);
+	myindividuals = myindividuals_t[0]['individuals'];
+
+	if (mynsvs == 0):
+	    plpy.error("The specified model has no support vectors and therefore not processed");
+
+	sql = "INSERT INTO " + model_table + " (SELECT * FROM MADLIB_SCHEMA.__svm_transform_rec('" + model_name + "', " + str(myind_dim) + ", " + str(mynsvs) + ", '" + str(myweights) + "', '" + str(myindividuals) + "'))";
+	plpy.execute(sql);
+
+$$ LANGUAGE plpythonu;
+
+-- This function stores a collection of models learned in parallel into the model_table.
+-- The different models are stored in model_temp_table and are assumed to be named model_table1, model_table2, ....
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_storeModel(modelname TEXT, n INT) RETURNS VOID AS $$
-DECLARE
-BEGIN
-	FOR i IN 0..n-1 LOOP
-	    PERFORM MADLIB_SCHEMA.svm_storeModel(modelname || i);
-        END LOOP;
-END;
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_store_model(model_temp_table TEXT, model_table TEXT, model_name TEXT, n INT) RETURNS VOID AS $$
+       for i in range(0,n):
+       	   plpy.execute("select MADLIB_SCHEMA.svm_store_model('" + model_temp_table + "', '" + model_name + str(i) + "', '" + model_table + "')");
+$$ LANGUAGE plpythonu;
 
 
--- DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_model_pr CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_model_pr AS ( model text, prediction float8 );
 
 /**
@@ -533,13 +520,6 @@ MADLIB_SCHEMA.svm_predict_combo(modelname text, ind float8[]) RETURNS SETOF MADL
     return ret;
 $$ LANGUAGE plpythonu;
 
-
--- This function removes all the models whose id is prefixed with modelname in the svm_results table
---
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_drop_model(modelname text) RETURNS VOID
-AS $$
-   DELETE FROM MADLIB_SCHEMA.svm_results WHERE position($1 in id) > 0;
-$$ LANGUAGE SQL;
 
 /**
  * @brief This is the support vector regression function
@@ -703,8 +683,9 @@ $$ LANGUAGE 'plpythonu';
  * @brief Scores the data points stored in a table using a learned support-vector model
  *
  * @param input_table Name of table/view containing the data points to be scored
- * @param col_name Name of column in input_table containing the data points
- * @param modelname Name of the learned model to be used for scoring 
+ * @param data_col Name of column in input_table containing the data points
+ * @param id_col Name of column in input_table containing the integer identifier of data points
+ * @param model_table Name of table where the learned model to be used is stored
  * @param output_table Name of table to store the results 
  * @param parallel A flag indicating whether the model to be used was learned in parallel
  * @return Textual summary of the algorithm run
@@ -713,7 +694,7 @@ $$ LANGUAGE 'plpythonu';
  * @sa This function is a wrapper for online_sv::svm_predict().
  */
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.svm_predict(input_table text, col_name text, modelname text, output_table text, parallel bool)
+MADLIB_SCHEMA.svm_predict(input_table text, data_col text, id_col text, model_table text, output_table text, parallel bool)
 RETURNS TEXT
 AS $$
     import sys
@@ -723,8 +704,15 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_predict(input_table, col_name, modelname, output_table, parallel);
+    return online_sv.svm_predict(input_table, data_col, id_col, model_table, output_table, parallel);
 $$ LANGUAGE 'plpythonu';
+
+
+-- The table for storing training data 
+--
+CREATE TABLE MADLIB_SCHEMA.svm_train_data ( id int, ind float8[], label float8 ) 
+ifdef(`GREENPLUM', `DISTRIBUTED BY (id)')
+;
 
 -- Generate artificial training data 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__svm_random_ind(d INT) RETURNS float8[] AS $$
