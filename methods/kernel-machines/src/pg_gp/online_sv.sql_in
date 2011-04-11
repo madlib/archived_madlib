@@ -82,17 +82,17 @@ Here are the main learning functions.
 
 -  Regression learning is achieved through the following function
    \code
-   madlib.svm_regression(input_table text, model_table text, parallel bool, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.005, slambda float8 DEFAULT 0.2)
+   MADLIB_SCHEMA.svm_regression(input_table text, model_table text, parallel bool, kernel_func text, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.005, slambda float8 DEFAULT 0.2)
    \endcode
 
 -  Classification learning is achieved through the following function
    \code
-   madlib.svm_classification(input_table text, model_table text, parallel bool, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.005)
+   MADLIB_SCHEMA.svm_classification(input_table text, model_table text, parallel bool, kernel_func text, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.005)
    \endcode
 
 -  Novelty detection is achieved through the following function
    \code
-   madlib.svm_novelty_detection(input_table text, model_table text, parallel bool, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.01)
+   MADLIB_SCHEMA.svm_novelty_detection(input_table text, model_table text, parallel bool, kernel_func text, eta float8 DEFAULT 0.1, nu float8 DEFAULT 0.01)
    \endcode
 
 In each case, input_table is the name of the table/view with the training data. 
@@ -109,6 +109,7 @@ The model_table parameter is the name of the table that will be created to store
 The parallel parameter is a flag indicating whether the system
 should learn multiple models in parallel. (The multiple models can be
 combined to make predictions; more on that shortly.) 
+The kernel_func parameter is the name of the kernel function to be used.
 The eta, nu, and slambda parameters are optional. (The default values are shown.) 
 The eta parameter is the learning rate, a number in (0,1]. 
 The nu parameter is a compression parameter with a value in (0,1] that corresponds approximately 
@@ -121,29 +122,30 @@ data points.
 - To make predictions on new data points using a single model
   learned previously, we use the function
   \code
-  madlib.svm_predict(model_table text, x float8[]),
+  MADLIB_SCHEMA.svm_predict(model_table text, x float8[], kernel text),
   \endcode
-  where model_table is the name of the table where the model is stored and x is a data point.
+  where model_table is the name of the table where the model is stored, x is a data point, and 
+  kernel is the name of the kernel function to be used.
 
 - To make predictions on new data points using multiple models
   learned in parallel, we use the function
   \code
-  madlib.svm_predict_combo(model_table text, x float8[]),
+  MADLIB_SCHEMA.svm_predict_combo(model_table text, x float8[], kernel text),
   \endcode
-  where model_table is the name of the table where the models are stored, and x 
-  is a data point.
+  where model_table is the name of the table where the models are stored, x is a data point, and 
+  kernel is the name of the kernel function to be used.
 
-- Note that, at the moment, we cannot use madlib.svm_predict() and madlib.svm_predict_combo()
+- Note that, at the moment, we cannot use MADLIB_SCHEMA.svm_predict() and MADLIB_SCHEMA.svm_predict_combo()
   on multiple data points. For example, something like the following
   \code
-  select madlib.svm_predict('mymodel', ind) from a_table;
+  select MADLIB_SCHEMA.svm_predict('mymodel', ind, 'MADLIB_SCHEMA.svm_dot') from a_table;
   \endcode
   will fail.
 
 - To make predictions on new data points stored in a table using
   previously learned models, we use the function
   \code
-  madlib.svm_predict(input_table text, data_col text, id_col text, model_table text, output_table text, parallel bool),
+  MADLIB_SCHEMA.svm_predict(input_table text, data_col text, id_col text, model_table text, output_table text, parallel bool, kernel text),
   \endcode
   where input_table is the name of the table/view containing the data points to be scored,
   data_col is the column in input_table containing the data points,
@@ -176,36 +178,36 @@ Example usage for regression:
         \endcode
         and store that in the my_schema.my_train_data table as follows:
         \code
-        testdb=# select madlib.svm_generate_reg_data('my_schema.my_train_data', 1000, 5);
+        testdb=# select MADLIB_SCHEMA.svm_generate_reg_data('my_schema.my_train_data', 1000, 5);
         \endcode
      -# We can now learn a regression model and store the resultant model
         under the name 'myexp'.
         \code
-        testdb=# select madlib.svm_regression('my_schema.my_train_data', 'myexp', false);
+        testdb=# select MADLIB_SCHEMA.svm_regression('my_schema.my_train_data', 'myexp', false, 'MADLIB_SCHEMA.svm_dot');
         \endcode
      -# We can now start using it to predict the labels of new data points 
         like as follows:
         \code
-        testdb=# select madlib.svm_predict('myexp', '{1,2,4,20,10}');
-        testdb=# select madlib.svm_predict('myexp', '{1,2,4,20,-10}');
+        testdb=# select MADLIB_SCHEMA.svm_predict('myexp', '{1,2,4,20,10}', 'MADLIB_SCHEMA.svm_dot');
+        testdb=# select MADLIB_SCHEMA.svm_predict('myexp', '{1,2,4,20,-10}', 'MADLIB_SCHEMA.svm_dot');
         \endcode
      -# To learn multiple support vector models, we replace the learning step above by 
         \code
-        testdb=# select madlib.svm_regression('my_schema.my_train_data', 'myexp', true);
+        testdb=# select MADLIB_SCHEMA.svm_regression('my_schema.my_train_data', 'myexp', true, 'MADLIB_SCHEMA.svm_dot');
         \endcode
         The resultant models can be used for prediction as follows:
         \code
-        testdb=# select * from madlib.svm_predict_combo('myexp', '{1,2,4,20,10}');
+        testdb=# select * from MADLIB_SCHEMA.svm_predict_combo('myexp', '{1,2,4,20,10}', 'MADLIB_SCHEMA.svm_dot');
         \endcode
      -# We can also predict the labels of all the data points stored in a table.
         For example, we can execute the following:
         \code
-        testdb=# create table madlib.svm_reg_test ( id int, ind float8[] );
-        testdb=# insert into madlib.svm_reg_test (select id, ind from my_schema.my_train_data limit 20);
-        testdb=# select madlib.svm_predict('madlib.svm_reg_test', 'ind', 'id', 'myexp', 'madlib.svm_reg_output1', false); 
-        testdb=# select * from madlib.svm_reg_output1;
-        testdb=# select madlib.svm_predict('madlib.svm_reg_test', 'ind', 'id, 'myexp', 'madlib.svm_reg_output2', true);
-        testdb=# select * from madlib.svm_reg_output2;
+        testdb=# create table MADLIB_SCHEMA.svm_reg_test ( id int, ind float8[] );
+        testdb=# insert into MADLIB_SCHEMA.svm_reg_test (select id, ind from my_schema.my_train_data limit 20);
+        testdb=# select MADLIB_SCHEMA.svm_predict('MADLIB_SCHEMA.svm_reg_test', 'ind', 'id', 'myexp', 'MADLIB_SCHEMA.svm_reg_output1', false, 'MADLIB_SCHEMA.svm_dot'); 
+        testdb=# select * from MADLIB_SCHEMA.svm_reg_output1;
+        testdb=# select MADLIB_SCHEMA.svm_predict('MADLIB_SCHEMA.svm_reg_test', 'ind', 'id, 'myexp', 'MADLIB_SCHEMA.svm_reg_output2', true, 'MADLIB_SCHEMA.svm_dot');
+        testdb=# select * from MADLIB_SCHEMA.svm_reg_output2;
         \endcode 
 
 Example usage for classification:
@@ -216,41 +218,41 @@ Example usage for classification:
         \endcode
         and store that in the my_schema.my_train_data table as follows:
         \code 
-        testdb=# select madlib.svm_generate_cls_data('my_schema.my_train_data', 2000, 5);
+        testdb=# select MADLIB_SCHEMA.svm_generate_cls_data('my_schema.my_train_data', 2000, 5);
         \endcode
      -# We can now learn a classification model and store the resultant model
         under the name  'myexpc'.
         \code
-        testdb=# select madlib.svm_classification('my_schema.my_train_data', 'myexpc', false);
+        testdb=# select MADLIB_SCHEMA.svm_classification('my_schema.my_train_data', 'myexpc', false, 'MADLIB_SCHEMA.svm_dot');
         \endcode
      -# We can now start using it to predict the labels of new data points 
         like as follows:
         \code
-        testdb=# select madlib.svm_predict('myexpc', '{10,-2,4,20,10}');
+        testdb=# select MADLIB_SCHEMA.svm_predict('myexpc', '{10,-2,4,20,10}', 'MADLIB_SCHEMA.svm_dot');
         \endcode 
      -# To learn multiple support vector models, replace the model-building and prediction steps above by 
         \code
-        testdb=# select madlib.svm_classification('my_schema.my_train_data', 'myexpc', true);
-        testdb=# select * from madlib.svm_predict_combo('myexpc', '{10,-2,4,20,10}');
+        testdb=# select MADLIB_SCHEMA.svm_classification('my_schema.my_train_data', 'myexpc', true, 'MADLIB_SCHEMA.svm_dot');
+        testdb=# select * from MADLIB_SCHEMA.svm_predict_combo('myexpc', '{10,-2,4,20,10}', 'MADLIB_SCHEMA.svm_dot');
         \endcode
 
 Example usage for novelty detection:
      -# We can randomly generate 100 2-dimensional data (the normal cases)
         and store that in the my_schema.my_train_data table as follows:
         \code
-        testdb=# select madlib.svm_generate_nd_data('my_schema.my_train_data', 100, 2);
+        testdb=# select MADLIB_SCHEMA.svm_generate_nd_data('my_schema.my_train_data', 100, 2);
         \endcode
      -# Learning and predicting using a single novelty detection model can be done as follows:
         \code
-        testdb=# select madlib.svm_novelty_detection('my_schema.my_train_data', 'myexpnd', false);
-        testdb=# select madlib.svm_predict('myexpnd', '{10,-10}');  
-        testdb=# select madlib.svm_predict('myexpnd', '{-1,-1}');  
+        testdb=# select MADLIB_SCHEMA.svm_novelty_detection('my_schema.my_train_data', 'myexpnd', false, 'MADLIB_SCHEMA.svm_dot');
+        testdb=# select MADLIB_SCHEMA.svm_predict('myexpnd', '{10,-10}', 'MADLIB_SCHEMA.svm_dot');  
+        testdb=# select MADLIB_SCHEMA.svm_predict('myexpnd', '{-1,-1}', 'MADLIB_SCHEMA.svm_dot');  
         \endcode
      -# Learning and predicting using multiple models can be done as follows:
         \code
-        testdb=# select madlib.svm_novelty_detection('my_schema.my_train_data', 'myexpnd', true);
-        testdb=# select * from madlib.svm_predict_combo('myexpnd', '{10,-10}');  
-        testdb=# select * from madlib.svm_predict_combo('myexpnd', '{-1,-1}');  
+        testdb=# select MADLIB_SCHEMA.svm_novelty_detection('my_schema.my_train_data', 'myexpnd', true, 'MADLIB_SCHEMA.svm_dot');
+        testdb=# select * from MADLIB_SCHEMA.svm_predict_combo('myexpnd', '{10,-10}', 'MADLIB_SCHEMA.svm_dot');  
+        testdb=# select * from MADLIB_SCHEMA.svm_predict_combo('myexpnd', '{-1,-1}', 'MADLIB_SCHEMA.svm_dot');  
         \endcode
 
 @sa file online_sv.sql_in (documenting the SQL functions)
@@ -282,7 +284,8 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
        nsvs int,        -- number of support vectors
        ind_dim int,     -- the dimension of the individuals
        weights float8[],       -- the weight of the support vectors
-       individuals float8[]    -- the array of support vectors, represented as a 1-D array
+       individuals float8[],    -- the array of support vectors, represented as a 1-D array
+       kernel_oid oid   -- OID of kernel function
 );
 
 -- The following is the return type of a regression learning process
@@ -325,35 +328,23 @@ CREATE TYPE MADLIB_SCHEMA.svm_support_vector AS ( id text, weight float8, sv flo
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
--- Here we specify the dot product as the kernel; it can be replaced with any other kernel, including the polynomial
--- and Gaussian kernels defined below.
+-- Here are a few standard kernels: dot product, polynomial kernel, Gaussian kernel.
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_kernel(float8[], float8[]) RETURNS float8 AS $$
-	SELECT MADLIB_SCHEMA.svec_dot($1, $2);
---	SELECT MADLIB_SCHEMA.svm_polynomial_kernel($1, $2, 2);
--- 	SELECT MADLIB_SCHEMA.svm_gaussian_kernel($1, $2, 0.5);
-$$ LANGUAGE SQL IMMUTABLE;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_dot(float8[], float8[]) RETURNS float8 
+AS 'MODULE_PATHNAME', 'svm_dot' LANGUAGE C IMMUTABLE STRICT;
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_polynomial(x float8[], y float8[], degree float8) RETURNS float8 
+AS 'MODULE_PATHNAME', 'svm_polynomial' LANGUAGE C IMMUTABLE STRICT;
 
--- Here are two other standard kernels.
---
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_polynomial_kernel(x float8[], y float8[], degree int) 
-RETURNS float8 AS $$
-	SELECT MADLIB_SCHEMA.svec_dot($1,$2) ^ $3;
-$$ LANGUAGE SQL IMMUTABLE;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_gaussian(x float8[], y float8[], gamma float8) RETURNS float8 
+AS 'MODULE_PATHNAME', 'svm_gaussian' LANGUAGE C IMMUTABLE STRICT; 
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_gaussian_kernel(x float8[], y float8[], gamma float) 
-RETURNS float8 AS $$
-	SELECT exp(-1.0 * $3 * MADLIB_SCHEMA.svec_dot(MADLIB_SCHEMA.float8arr_minus_float8arr($1,$2),
-						      MADLIB_SCHEMA.float8arr_minus_float8arr($1,$2)));
-$$ LANGUAGE SQL IMMUTABLE;
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict_sub(int,int,float8[],float8[],float8[]) RETURNS float8
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict_sub(int,int,float8[],float8[],float8[],text) RETURNS float8
 AS 'MODULE_PATHNAME', 'svm_predict_sub' LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[]) 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict(svs MADLIB_SCHEMA.svm_model_rec, ind float8[], kernel text) 
 RETURNS float8 AS $$
-	SELECT MADLIB_SCHEMA.svm_predict_sub($1.nsvs, $1.ind_dim, $1.weights, $1.individuals, $2);
+	SELECT MADLIB_SCHEMA.svm_predict_sub($1.nsvs, $1.ind_dim, $1.weights, $1.individuals, $2, $3);
 $$ LANGUAGE SQL;
 
 -- This is the main online support vector regression learning algorithm. 
@@ -361,13 +352,13 @@ $$ LANGUAGE SQL;
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
 --
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, nu FLOAT8, slambda FLOAT8)
+MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, kernel TEXT, eta FLOAT8, nu FLOAT8, slambda FLOAT8)
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_reg_update' LANGUAGE C STRICT;   
 
-CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8, float8, float8, float8) (
+CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8, text, float8, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_reg_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
-       initcond = '(0,0,0,0,1,0,0,{},{})'
+       initcond = '(0,0,0,0,1,0,0,{},{},0)'
 );
 
 -- This is the main online support vector classification learning algorithm. 
@@ -375,13 +366,13 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8, float8, float8, flo
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
 --
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_cls_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, nu FLOAT8)
+MADLIB_SCHEMA.svm_cls_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], label FLOAT8, kernel TEXT, eta FLOAT8, nu FLOAT8)
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_cls_update' LANGUAGE C STRICT;   
 
-CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, float8, float8) (
+CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, text, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_cls_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
-       initcond = '(0,0,0,0,1,0,0,{},{})'
+       initcond = '(0,0,0,0,1,0,0,{},{},0)'
 );
 
 -- This is the main online support vector novelty detection algorithm. 
@@ -390,13 +381,13 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, float8, float8) (
 -- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
 --
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_nd_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], eta FLOAT8, nu FLOAT8)
+MADLIB_SCHEMA.svm_nd_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], kernel TEXT, eta FLOAT8, nu FLOAT8)
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_nd_update' LANGUAGE C STRICT;   
 
-CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], float8, float8) (
+CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], text, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_nd_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
-       initcond = '(0,0,0,0,0,0,0,{},{})'
+       initcond = '(0,0,0,0,0,0,0,{},{},0)'
 );
 
 -- This function transforms a MADLIB_SCHEMA.svm_model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
@@ -470,13 +461,13 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_pr AS ( model text, prediction float8 );
  * @return This function returns \f$ f(\boldsymbol x) \f$
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_predict(model_table text, ind float8[]) RETURNS FLOAT8 AS $$
+MADLIB_SCHEMA.svm_predict(model_table text, ind float8[], kernel_func text) RETURNS FLOAT8 AS $$
     nmodels_rec = plpy.execute("select count(distinct id) from " + model_table);
 
     if (nmodels_rec[0]['count'] <> 1):
         plpy.error("Error in MADLIB_SCHEMA.svm_predict(): the table contains an ensemble of models");
 
-    ret = plpy.execute("SELECT sum(weight * MADLIB_SCHEMA.svm_kernel(sv, \'" + str(ind) + "\')) FROM " + model_table);
+    ret = plpy.execute("SELECT sum(weight * " + kernel_func + "(sv, \'" + str(ind) + "\')) FROM " + model_table);
     if (ret.nrows() == 0):
        plpy.error("Error executing svm_predict()");    
     return ret[0]['sum'];
@@ -494,7 +485,7 @@ $$ LANGUAGE plpythonu;
  * <tt><em>model_table</em>2</tt>, ....
  */
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.svm_predict_combo(model_table text, ind float8[]) RETURNS SETOF MADLIB_SCHEMA.svm_model_pr AS $$
+MADLIB_SCHEMA.svm_predict_combo(model_table text, ind float8[], kernel_func text) RETURNS SETOF MADLIB_SCHEMA.svm_model_pr AS $$
     nmodels_rec = plpy.execute("select count(distinct id) from " + model_table);
     nmodels = nmodels_rec[0]['count'];
 
@@ -505,7 +496,7 @@ MADLIB_SCHEMA.svm_predict_combo(model_table text, ind float8[]) RETURNS SETOF MA
     ret = [];
 
     for i in range(0,nmodels):
-        pred = plpy.execute("select sum(weight * MADLIB_SCHEMA.svm_kernel(sv, \'" + str(ind) + "\')) from " + model_table + " where id = '" + model_table + str(i) + "'");
+        pred = plpy.execute("select sum(weight * " + kernel_func + "(sv, \'" + str(ind) + "\')) from " + model_table + " where id = '" + model_table + str(i) + "'");
         if (pred.nrows() == 0):
             plpy.error("Error in MADLIB_SCHEMA.svm_predict_combo(): failed to compute prediction for model '" + model_table + str(i) + "'.");
 
@@ -524,13 +515,14 @@ $$ LANGUAGE plpythonu;
  * @param input_table The name of the table/view with the training data
  * @param model_table The name of the table under which we want to store the learned model
  * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @parm kernel_func Kernel function
  * @return A summary of the learning process
  *
  * @internal 
  * @sa This function is a wrapper for online_sv::svm_regression().
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_regression(input_table text, model_table text, parallel bool)
+MADLIB_SCHEMA.svm_regression(input_table text, model_table text,  parallel bool, kernel_func text)
 RETURNS SETOF MADLIB_SCHEMA.svm_reg_result
 AS $$
     import sys
@@ -540,7 +532,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_regression(input_table, model_table, parallel);	
+    return online_sv.svm_regression(input_table, model_table, parallel, kernel_func);	
 $$ LANGUAGE 'plpythonu';
 
 /**
@@ -549,6 +541,7 @@ $$ LANGUAGE 'plpythonu';
  * @param input_table The name of the table/view with the training data
  * @param model_table The name of the table under which we want to store the learned model
  * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @parm kernel_func Kernel function
  * @param eta Learning rate in (0,1] 
  * @param nu  Compression parameter in (0,1] associated with the fraction of training data that will become support vectors 
  * @param slambda Regularisation parameter
@@ -558,7 +551,7 @@ $$ LANGUAGE 'plpythonu';
  * @sa This function is a wrapper for online_sv::svm_regression().
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_regression(input_table text, model_table text, parallel bool, eta float8, nu float8, slambda float8)
+MADLIB_SCHEMA.svm_regression(input_table text, model_table text, parallel bool, kernel_func text, eta float8, nu float8, slambda float8)
 RETURNS SETOF MADLIB_SCHEMA.svm_reg_result
 AS $$
     import sys
@@ -568,7 +561,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_regression(input_table, model_table, parallel, eta, nu, slambda);
+    return online_sv.svm_regression(input_table, model_table, parallel, kernel_func, eta, nu, slambda);
 $$ LANGUAGE 'plpythonu';
 
 /**
@@ -577,13 +570,14 @@ $$ LANGUAGE 'plpythonu';
  * @param input_table The name of the table/view with the training data
  * @param model_table The name of the table under which we want to store the learned model
  * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @parm kernel_func Kernel function
  * @return A summary of the learning process
  *
  * @internal 
  * @sa This function is a wrapper for online_sv::svm_classification().
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_classification(input_table text, model_table text, parallel bool)
+MADLIB_SCHEMA.svm_classification(input_table text, model_table text, parallel bool, kernel_func text)
 RETURNS SETOF MADLIB_SCHEMA.svm_cls_result
 AS $$
     import sys
@@ -593,7 +587,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_classification(input_table, model_table, parallel);
+    return online_sv.svm_classification(input_table, model_table, parallel, kernel_func);
 $$ LANGUAGE 'plpythonu';
 
 /**
@@ -602,6 +596,7 @@ $$ LANGUAGE 'plpythonu';
  * @param input_table The name of the table/view with the training data
  * @param model_table The name of the table under which we want to store the learned model
  * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @parm kernel_func Kernel function
  * @param eta Learning rate in (0,1]
  * @param nu Compression parameter in (0,1] associated with the fraction of training data that will become support vectors
  * @return A summary of the learning process
@@ -610,7 +605,7 @@ $$ LANGUAGE 'plpythonu';
  * @sa This function is a wrapper for online_sv::svm_classification().
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_classification(input_table text, model_table text, parallel bool, eta float8, nu float8)
+MADLIB_SCHEMA.svm_classification(input_table text, model_table text, parallel bool, kernel_func text, eta float8, nu float8)
 RETURNS SETOF MADLIB_SCHEMA.svm_cls_result
 AS $$
     import sys
@@ -620,7 +615,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_classification(input_table, model_table, parallel, eta, nu);
+    return online_sv.svm_classification(input_table, model_table, parallel, kernel_func, eta, nu);
 $$ LANGUAGE 'plpythonu';
 
 /**
@@ -629,13 +624,14 @@ $$ LANGUAGE 'plpythonu';
  * @param input_table The name of the table/view with the training data
  * @param model_table The name of the table under which we want to store the learned model
  * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @parm kernel_func Kernel function
  * @return A summary of the learning process
  *
  * @internal 
  * @sa This function is a wrapper for online_sv::svm_novelty_detection().
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_novelty_detection(input_table text, model_table text, parallel bool)
+MADLIB_SCHEMA.svm_novelty_detection(input_table text, model_table text, parallel bool, kernel_func text)
 RETURNS SETOF MADLIB_SCHEMA.svm_nd_result
 AS $$
     import sys
@@ -645,7 +641,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_novelty_detection(input_table, model_table, parallel);
+    return online_sv.svm_novelty_detection(input_table, model_table, parallel, kernel_func);
 $$ LANGUAGE 'plpythonu';
 
 /**
@@ -654,6 +650,7 @@ $$ LANGUAGE 'plpythonu';
  * @param input_table The name of the table/view with the training data
  * @param model_table The name of the table under which we want to store the learned model
  * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @parm kernel_func Kernel function
  * @param eta Learning rate in (0,1]
  * @param nu Compression parameter in (0,1] associated with the fraction of training data that will become support vectors
  * @return A summary of the learning process
@@ -662,7 +659,7 @@ $$ LANGUAGE 'plpythonu';
  * @sa This function is a wrapper for online_sv::svm_novelty_detection().
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.svm_novelty_detection(input_table text, model_table text, parallel bool, eta float8, nu float8)
+MADLIB_SCHEMA.svm_novelty_detection(input_table text, model_table text, parallel bool, kernel_func text, eta float8, nu float8)
 RETURNS SETOF MADLIB_SCHEMA.svm_nd_result
 AS $$
     import sys
@@ -672,7 +669,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_novelty_detection(input_table, model_table, parallel, eta, nu);
+    return online_sv.svm_novelty_detection(input_table, model_table, parallel, kernel_func, eta, nu);
 $$ LANGUAGE 'plpythonu';
 
 
@@ -685,13 +682,14 @@ $$ LANGUAGE 'plpythonu';
  * @param model_table Name of table where the learned model to be used is stored
  * @param output_table Name of table to store the results 
  * @param parallel A flag indicating whether the model to be used was learned in parallel
+ * @param kernel_func Kernel function
  * @return Textual summary of the algorithm run
  *
  * @internal 
  * @sa This function is a wrapper for online_sv::svm_predict().
  */
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.svm_predict(input_table text, data_col text, id_col text, model_table text, output_table text, parallel bool)
+MADLIB_SCHEMA.svm_predict(input_table text, data_col text, id_col text, model_table text, output_table text, parallel bool, kernel_func text)
 RETURNS TEXT
 AS $$
     import sys
@@ -701,7 +699,7 @@ AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         from madlib import online_sv
 
-    return online_sv.svm_predict(input_table, data_col, id_col, model_table, output_table, parallel);
+    return online_sv.svm_predict(input_table, data_col, id_col, model_table, output_table, parallel, kernel_func);
 $$ LANGUAGE 'plpythonu';
 
 -- Generate artificial training data 
