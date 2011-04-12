@@ -1,6 +1,4 @@
-DATA_built = quantile.sql quantile_drop.sql 
-# PYTHON_built = kmeans.py
-# REGRESS = setup test cleanup      
+DATA_built = quantile.sql quantile_drop.sql sql/install_test.sql     
       
 PGXS := $(shell pg_config --pgxs) 
 include $(PGXS) 
