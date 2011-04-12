@@ -1,25 +1,26 @@
 -- Example usage for regression:
 -- \i online_sv.sql_in
-select madlib.svm_generate_reg_data('madlib.svm_train_data', 1000, 5);
+select madlib.svm_generate_reg_data('madlib.svm_train_data', 10000, 5);
+psql:online_sv_test.sql_in:4: NOTICE:  table "svm_train_data" does not exist, skipping
+CONTEXT:  SQL statement "drop table if exists madlib.svm_train_data"
  svm_generate_reg_data 
 -----------------------
  
 (1 row)
 
-select madlib.svm_regression('madlib.svm_train_data', 'myexp', false, 'madlib.svm_dot');
-                                svm_regression                                
-------------------------------------------------------------------------------
- Finished support vector regression learning on madlib.svm_train_data table. 
-            
+select * from madlib.svm_regression('madlib.svm_train_data', 'regs', false, 'madlib.svm_dot');
+ model_table | model_name | inds  |    cum_err    | epsilon | b | nsvs 
+-------------+------------+-------+---------------+---------+---+------
+ regs        | regs       | 10000 | 92059.6994467 |    26.7 | 1 |  317
 (1 row)
 
-select madlib.svm_predict('myexp', '{1,2,4,20,10}', 'madlib.svm_dot') > 0;
+select madlib.svm_predict('regs', '{1,2,4,20,10}', 'madlib.svm_dot') > 0;
  ?column? 
 ----------
  t
 (1 row)
 
-select madlib.svm_predict('myexp', '{1,2,4,20,-10}', 'madlib.svm_dot') < 0;
+select madlib.svm_predict('regs', '{1,2,4,20,-10}', 'madlib.svm_dot') < 0;
  ?column? 
 ----------
  t
@@ -27,14 +28,14 @@ select madlib.svm_predict('myexp', '{1,2,4,20,-10}', 'madlib.svm_dot') < 0;
 
    
 -- To learn multiple support vector regression models
-select madlib.svm_regression('madlib.svm_train_data', 'myexp', true, 'madlib.svm_dot');
-                                svm_regression                                
-------------------------------------------------------------------------------
- Finished support vector regression learning on madlib.svm_train_data table. 
-            
-(1 row)
+select * from madlib.svm_regression('madlib.svm_train_data', 'regp', true, 'madlib.svm_dot');
+ model_table | model_name | inds |    cum_err    | epsilon | b | nsvs 
+-------------+------------+------+---------------+---------+---+------
+ regp        | regp0      | 5001 | 30124.2989005 | 17.4995 | 1 |  200
+ regp        | regp1      | 4999 | 59367.9186697 | 31.0005 | 1 |  335
+(2 rows)
 
-select pred.prediction > 0 from madlib.svm_predict_combo('myexp', '{1,2,4,20,10}', 'madlib.svm_dot') as pred;
+select pred.prediction > 0 from madlib.svm_predict_combo('regp', '{1,2,4,20,10}', 'madlib.svm_dot') as pred;
  ?column? 
 ----------
  t
@@ -42,41 +43,117 @@ select pred.prediction > 0 from madlib.svm_predict_combo('myexp', '{1,2,4,20,10}
  t
 (3 rows)
 
+select pred.prediction < 0 from madlib.svm_predict_combo('regp', '{1,2,4,20,-10}', 'madlib.svm_dot') as pred;
+ ?column? 
+----------
+ t
+ t
+ t
+(3 rows)
+
+-- Score data points stored in a table
+create table madlib.svm_reg_test ( id int, ind float8[] );
+psql:online_sv_test.sql_in:16: NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column named 'id' as the Greenplum Database data distribution key for this table.
+HINT:  The 'DISTRIBUTED BY' clause determines the distribution of data. Make sure column(s) chosen are the optimal data distribution key to minimize skew.
+insert into madlib.svm_reg_test (select id, ind from madlib.svm_train_data limit 20);
+select madlib.svm_predict('madlib.svm_reg_test', 'ind', 'id', 'regs', 'madlib.svm_reg_output1', false, 'madlib.svm_dot');
+                                                    svm_predict                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Finished processing data points in madlib.svm_reg_test table; results are stored in madlib.svm_reg_output1 table. 
+            
+(1 row)
+
+select * from madlib.svm_reg_output1;
+ id |    prediction     
+----+-------------------
+ 23 |  26.9300576200937
+  3 |  -23.598380778927
+ 21 |  -57.612998893314
+ 27 | -42.3440838678137
+ 39 |   -58.00914987132
+ 19 | -58.3146122289517
+ 11 |   24.877405556327
+ 33 |  44.7969304998504
+ 29 |  39.8658223390095
+ 13 |  33.6032918267319
+ 25 |  47.6909491019796
+ 37 | -27.5460901498066
+  5 | -56.7575780341779
+ 15 | -31.7973741485303
+  9 |  56.0936564625763
+ 17 | -56.0666121050552
+ 31 | -35.2582202584543
+  1 | -55.6352181946846
+  7 | -43.4358522351199
+ 35 | -31.7824471174004
+(20 rows)
+
+select madlib.svm_predict('madlib.svm_reg_test', 'ind', 'id', 'regp', 'madlib.svm_reg_output2', true, 'madlib.svm_dot');
+                                                    svm_predict                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Finished processing data points in madlib.svm_reg_test table; results are stored in madlib.svm_reg_output2 table. 
+            
+(1 row)
+
+select * from madlib.svm_reg_output2;
+ id |    prediction     
+----+-------------------
+ 23 |  46.3177474673451
+  3 | -48.4757236461826
+ 21 | -53.5411532378599
+ 27 |   -47.83741892065
+ 39 | -58.7811361360291
+ 19 | -56.4659997639978
+ 11 |  49.8952927710485
+ 33 |  48.2356737936876
+ 29 |   49.176794789709
+ 13 |     43.5443422221
+ 25 |  58.7045068698343
+ 37 | -46.6428061179674
+  5 | -59.2786480673176
+ 15 | -43.9760447102268
+  9 |  54.6522167412905
+ 17 | -55.9085434705904
+ 31 | -51.6727197084192
+  1 | -56.8691656077879
+  7 | -53.5424219036283
+ 35 | -53.5512314559152
+(20 rows)
+
 -- Example usage for classification:
-select madlib.svm_generate_cls_data('madlib.svm_train_data', 1000, 2);
+select madlib.svm_generate_cls_data('madlib.svm_train_data', 10000, 4);
  svm_generate_cls_data 
 -----------------------
  
 (1 row)
 
-select madlib.svm_classification('madlib.svm_train_data', 'myexpc', false, 'madlib.svm_dot');
-                                svm_classification                                
-----------------------------------------------------------------------------------
- Finished support vector classification learning on madlib.svm_train_data table. 
-            
+select * from madlib.svm_classification('madlib.svm_train_data', 'clss', false, 'madlib.svm_dot');
+ model_table | model_name | inds  | cum_err |      rho       |  b   | nsvs 
+-------------+------------+-------+---------+----------------+------+------
+ clss        | clss       | 10000 |    1412 | -8.79999999999 | -8.6 |  138
 (1 row)
 
-select madlib.svm_predict('myexpc', '{10,-20}', 'madlib.svm_dot') > 0;
+select madlib.svm_predict('clss', '{10,-20,5,5}', 'madlib.svm_dot') > 0;
  ?column? 
 ----------
  t
 (1 row)
 
-select madlib.svm_predict('myexpc', '{-10,20}', 'madlib.svm_dot') < 0;
+select madlib.svm_predict('clss', '{-10,20,5,5}', 'madlib.svm_dot') < 0;
  ?column? 
 ----------
  t
 (1 row)
 
 -- To learn multiple support vector models, replace the above by 
-select madlib.svm_classification('madlib.svm_train_data', 'myexpc', true, 'madlib.svm_dot');
-                                svm_classification                                
-----------------------------------------------------------------------------------
- Finished support vector classification learning on madlib.svm_train_data table. 
-            
-(1 row)
+select * from madlib.svm_classification('madlib.svm_train_data', 'clsp', true, 'madlib.svm_dot');
+ model_table | model_name | inds | cum_err |   rho    |   b   | nsvs 
+-------------+------------+------+---------+----------+-------+------
+ clsp        | clsp0      | 5001 |     634 | -14.0995 | -10.4 |  166
+ clsp        | clsp1      | 4999 |    1115 | -20.6005 | -11.9 |  231
+(2 rows)
 
-select pred.prediction > 0 from madlib.svm_predict_combo('myexpc', '{10,-20}', 'madlib.svm_dot') as pred;
+select pred.prediction > 0 from madlib.svm_predict_combo('clsp', '{10,-20,5,5}', 'madlib.svm_dot') as pred;
  ?column? 
 ----------
  t
@@ -84,7 +161,7 @@ select pred.prediction > 0 from madlib.svm_predict_combo('myexpc', '{10,-20}', '
  t
 (3 rows)
 
-select pred.prediction < 0 from madlib.svm_predict_combo('myexpc', '{-10,20}', 'madlib.svm_dot') as pred;
+select pred.prediction < 0 from madlib.svm_predict_combo('clsp', '{-10,20,5,5}', 'madlib.svm_dot') as pred;
  ?column? 
 ----------
  t
@@ -93,28 +170,29 @@ select pred.prediction < 0 from madlib.svm_predict_combo('myexpc', '{-10,20}', '
 (3 rows)
 
 -- Example usage for novelty detection:
-select madlib.svm_generate_nd_data('madlib.svm_train_data', 500, 2);
+select madlib.svm_generate_nd_data('madlib.svm_train_data', 10000, 4);
  svm_generate_nd_data 
 ----------------------
  
 (1 row)
 
-select madlib.svm_novelty_detection('madlib.svm_train_data', 'myexpnd', false, 'madlib.svm_dot');
-                                svm_novelty_detection                                
--------------------------------------------------------------------------------------
- Finished support vector novelty detection learning on madlib.svm_train_data table. 
-            
+select * from madlib.svm_novelty_detection('madlib.svm_train_data', 'nds', false, 'madlib.svm_dot');
+ model_table | model_name | inds  |  rho  | nsvs 
+-------------+------------+-------+-------+------
+ nds         | nds        | 10000 | -22.4 |  324
 (1 row)
 
-select madlib.svm_predict('myexpnd', '{10,-5}', 'madlib.svm_dot') > 0;  
+select madlib.svm_predict('nds', '{10,-5,2,2}', 'madlib.svm_dot') > 0;  
+ ?column? 
+----------
+ f
+(1 row)
+
+select madlib.svm_predict('nds', '{-1,-1,2,2}', 'madlib.svm_dot') < 0;  
  ?column? 
 ----------
  t
 (1 row)
 
-select madlib.svm_predict('myexpnd', '{-1,-1}', 'madlib.svm_dot') < 0;  
- ?column? 
-----------
- t
-(1 row)
-
+drop table madlib.svm_train_data;
+drop table madlib.svm_reg_test;
