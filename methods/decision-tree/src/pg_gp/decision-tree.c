@@ -217,31 +217,3 @@ Datum findentropy(PG_FUNCTION_ARGS) {
 	free(pre_entropy);
     PG_RETURN_FLOAT8((float8)result);
 }
-
-Datum array_add(PG_FUNCTION_ARGS);
-
-PG_FUNCTION_INFO_V1(array_add);
-Datum array_add(PG_FUNCTION_ARGS) {
-	ArrayType *arr1  = PG_GETARG_ARRAYTYPE_P(0);
-	ArrayType *arr2 = PG_GETARG_ARRAYTYPE_P(1);
-
-	int dimvalues = ARR_NDIM(arr1);
-    int *dimsvalues = ARR_DIMS(arr1);
-	int numvalues1 = ArrayGetNItems(dimvalues,dimsvalues);
-	int i = 0;
-	
-    float8 *vals_1=(float8 *)ARR_DATA_PTR(arr1);
-    float8 *vals_2=(float8 *)ARR_DATA_PTR(arr2);
-  
-  	float8 *result = (float8*)malloc(sizeof(float8)*numvalues1);
-	ArrayType *pgarray;
-  	  	
-	for (; i<numvalues1; ++i){
-      	result[i] = vals_1[i] + vals_2[i];
-	}
-	pgarray = construct_array((Datum *)result,
-		numvalues1, FLOAT8OID,
-		sizeof(float8),true,'d');
-    PG_RETURN_ARRAYTYPE_P(pgarray);
-}
-
