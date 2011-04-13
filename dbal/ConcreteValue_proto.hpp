@@ -26,6 +26,13 @@ public:
     inline bool isCompound() const {
         return AbstractValue::isCompound();
     }
+    
+    /**
+     * This function will be specialized for immutable types.
+     */
+    inline bool isMutable() const {
+        return true;
+    }
 
     const T &get() const {
         return mValue;
@@ -33,7 +40,7 @@ public:
     
     #define EXPAND_TYPE(T) \
         inline T getAs(T* ignoredTypeParameter) const { \
-            throw std::logic_error("Internal error: Unsupported type conversion requested"); \
+            return AbstractValue::getAs(ignoredTypeParameter); \
         }
 
     EXPAND_FOR_ALL_TYPES
@@ -46,6 +53,13 @@ protected:
 
     AbstractValueSPtr clone() const {
         return AbstractValueSPtr( new ConcreteValue<T>(*this) );
+    }
+    
+    /**
+     * This function will be specialized for immutable types.
+     */
+    AbstractValueSPtr mutableClone() {
+        return clone();
     }
 
 protected:

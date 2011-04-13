@@ -78,11 +78,33 @@ DECLARE_OR_DEFINE_STD_CONVERSION(int8_t, int64_t);
 DECLARE_OR_DEFINE_STD_CONVERSION(int16_t, int32_t);
 DECLARE_OR_DEFINE_STD_CONVERSION(int8_t, int32_t);
 
+// Additional implicit conversion from Array<double>
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, Array_const<double>);
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleCol);
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleCol_const);
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleRow);
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleRow_const);
+
+// Additional implicit conversion from Array_const<double>
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, DoubleCol_const);
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, DoubleRow_const);
+
+// FIXME: We might want to add detailed error messages when converting immutable
+// into mutable type. Right now, the standard error msg will be displayed.
+
 #undef DECLARE_OR_DEFINE_STD_CONVERSION
 
+/*
+// Conversion of mutable arrays to immutable arrays and vectors (no copying
+// needed)
 template <>
 inline DoubleCol ConcreteValue<Array<double> >::getAs(DoubleCol*) const {
-    return DoubleCol(
+    return DoubleCol(mValue.memoryHandle(), mValue.size());
+}
+
+template <>
+inline DoubleCol_const ConcreteValue<Array<double> >::getAs(DoubleCol_const*) const {
+    return DoubleCol_const(
         TransparentHandle::create(const_cast<double*>(mValue.data())),
         mValue.size());
 }
@@ -92,4 +114,31 @@ inline DoubleRow ConcreteValue<Array<double> >::getAs(DoubleRow*) const {
     return DoubleRow(
         TransparentHandle::create(const_cast<double*>(mValue.data())),
         mValue.size());
+}
+
+template <>
+inline DoubleRow_const ConcreteValue<Array<double> >::getAs(DoubleRow_const*) const {
+    return DoubleRow_const(
+        TransparentHandle::create(const_cast<double*>(mValue.data())),
+        mValue.size());
+}
+
+// Conversion of immutable arrays to mutable arrays and vectors (copying needed)
+*/
+
+template <>
+inline bool ConcreteValue<Array_const<double> >::isMutable() const {
+    return false;
+}
+
+template <>
+inline AbstractValueSPtr ConcreteValue<Array_const<double> >::mutableClone() {
+    return AbstractValueSPtr(
+        new ConcreteValue<Array<double> >(
+                Array<double>(
+                    mValue.memoryHandle()->clone(), 
+                    utils::shapeToExtents<1>(mValue.shape())
+                )
+            )
+        );
 }

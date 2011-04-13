@@ -106,6 +106,14 @@ public:
         
         return AbstractValue::size();
     }
+    
+    virtual AnyValue copyIfImmutable() const {
+        // FIXME: Necessary to test: if (mDelegate)?
+        if (mDelegate->isMutable())
+            return *this;
+        
+        return AnyValue( mDelegate->mutableClone() );
+    }
 
     void convert(AbstractValueConverter &inConverter) const {
         if (mDelegate)

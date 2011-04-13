@@ -4,8 +4,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_REGRESSION_H
-#define MADLIB_REGRESSION_H
+#ifndef MADLIB_REGRESS_LINEAR_H
+#define MADLIB_REGRESS_LINEAR_H
 
 #include <madlib/modules/modules.hpp>
 
@@ -15,9 +15,21 @@ namespace modules {
 
 namespace regress {
 
-struct linearRegression {
+struct LinearRegression {
+    enum What { kCoef, kRSquare, kTStats, kPValues };
+    
+    class TransitionState;
+    
     static AnyValue transition(AbstractDBInterface &db, AnyValue args);
-    static AnyValue final(AbstractDBInterface &db, AnyValue args);
+    static AnyValue preliminary(AbstractDBInterface &db, AnyValue args);
+    
+    static AnyValue coefFinal(AbstractDBInterface &db, AnyValue args);
+    static AnyValue RSquareFinal(AbstractDBInterface &db, AnyValue args);
+    static AnyValue tStatsFinal(AbstractDBInterface &db, AnyValue args);
+    static AnyValue pValuesFinal(AbstractDBInterface &db, AnyValue args);
+    
+    template <What what>
+    static AnyValue final(AbstractDBInterface &db, const TransitionState &state);
 };
 
 } // namespace regress

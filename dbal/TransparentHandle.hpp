@@ -13,7 +13,23 @@ public:
     void *ptr() {
         return mPtr;
     }
-        
+    
+    MemHandleSPtr clone() const {
+        return MemHandleSPtr( new TransparentHandle(*this) );
+    }
+    
+    /**
+     * Do nothing.
+     */
+    void retain() {
+    }
+    
+    /**
+     * Do nothing.
+     */
+    void release() {
+    }
+    
 protected:
     TransparentHandle(void *inPtr)
         : mPtr(inPtr) { }

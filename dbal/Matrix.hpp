@@ -2,7 +2,7 @@
  *
  * @file Matrix.hpp
  *
- * @brief The MADlib Matrix class -- a thin wrapper around arma::Mat
+ * @brief MADlib mutable matrix class -- a thin wrapper around arma::Mat
  *
  *//* ----------------------------------------------------------------------- */
 

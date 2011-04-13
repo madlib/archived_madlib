@@ -1,42 +1,55 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file Array.hpp
+ * @file Array_const.hpp
  *
- * @brief The MADlib Array class -- a thin wrapper around boost::multi_array_ref
+ * @brief The MADlib Array class -- a thin wrapper around
+ *        boost::const_multi_array_ref
+ *
+ * @internal Unfortunately, we have some duplicate code from Array.hpp. 
+ *      A clean solution would to have Array_const a superclass of Array.
+ *      However, \c const_multi_array_ref is not a virtual superclass of
+ *      \c multi_array_ref, so this is not feasible.
  *
  *//* ----------------------------------------------------------------------- */
 
 template <typename T, std::size_t NumDims>
-class Array : public multi_array_ref<T, NumDims> {
+class Array_const : public const_multi_array_ref<T, NumDims> {
     typedef typename boost::detail::multi_array::multi_array_impl_base<T,NumDims> super_type;
     
 public:
     typedef typename super_type::index index;
     typedef typename super_type::size_type size_type;
-
+    
     typedef boost::array<index, NumDims> extent_list;
     typedef boost::detail::multi_array::extent_gen<NumDims> extent_gen;
 
-    inline Array(
-        const Array<T, NumDims> &inArray)
-        : multi_array_ref<T, NumDims>(
+    inline Array_const(
+        const Array_const<T, NumDims> &inArray)
+        : const_multi_array_ref<T, NumDims>(
             inArray),
           mMemoryHandle(inArray.mMemoryHandle)
         { }
+
+    inline Array_const(
+        const Array<T, NumDims> &inArray)
+        : const_multi_array_ref<T, NumDims>(
+            inArray),
+          mMemoryHandle(inArray.memoryHandle())
+        { }
         
-    inline Array(
+    inline Array_const(
         const MemHandleSPtr inHandle,
         const extent_gen &ranges)
-        : multi_array_ref<T, NumDims>(
+        : const_multi_array_ref<T, NumDims>(
             static_cast<T*>(inHandle->ptr()),
             ranges),
           mMemoryHandle(inHandle)
         { }
     
-    inline Array(
+    inline Array_const(
         AllocatorSPtr inAllocator,
         const extent_gen &ranges)
-        : multi_array_ref<T, NumDims>(
+        : const_multi_array_ref<T, NumDims>(
             NULL,
             ranges),
           mMemoryHandle(
@@ -45,22 +58,8 @@ public:
             
         this->set_base_ptr(mMemoryHandle->ptr());
     }
-    
-    // FIXME: We might "own" the cloned memory handle, so we should release it.
-    // This is not a problem for PostgreSQL, but we need to implement reference
-    // counting. Either based on shared_ptr or our own.
-/*    inline Array(
-        const Array_const<T, NumDims> &inArray)
-        : multi_array_ref<T, NumDims>(
-            NULL,
-            utils::shapeToExtents<NumDims>(inArray.shape())),
-          mMemoryHandle(
-            inArray.memoryHandle().clone()) {
-        
-        this->set_base_ptr(mMemoryHandle->ptr());
-    }
-*/    
-    inline Array &rebind(
+
+    inline Array_const &rebind(
         const MemHandleSPtr inHandle,
         const extent_gen &ranges) {
         
@@ -68,7 +67,7 @@ public:
         return internalRebind(ranges);
     }
     
-    inline Array &rebind(
+    inline Array_const &rebind(
         AllocatorSPtr inAllocator,
         const extent_gen &ranges) {
         
@@ -98,7 +97,7 @@ protected:
             size_type(1), std::multiplies<size_type>());
     }
     
-    inline Array &internalRebind(const extent_gen &ranges) {
+    inline Array_const &internalRebind(const extent_gen &ranges) {
         this->set_base_ptr(static_cast<T*>(mMemoryHandle->ptr()));
 
         // See init_from_extent_gen()

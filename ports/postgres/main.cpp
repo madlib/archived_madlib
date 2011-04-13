@@ -50,7 +50,7 @@ void *operator new(std::size_t size) throw (std::bad_alloc) {
  *   void operator delete[](void *inPtr) throw()
  *   void operator delete[](void *inPtr, const std::nothrow_t&) throw()
  *
- * is to call the non-array variants (§18.4.1.2). Hence no need to override.
+ * is to call the non-array variants (18.4.1.2). Hence no need to override.
  */
 
 /**

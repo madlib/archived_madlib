@@ -2,7 +2,7 @@
  *
  * @file Vector.hpp
  *
- * @brief The MADlib Vector class -- a thin wrapper around arma::Col or arma::Row
+ * @brief MADlib mutable vector class, a thin wrapper around arma::Col or arma::Row
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -47,6 +47,16 @@ public:
             false /* copy_aux_mem */,
             true /* strict */),
           mMemoryHandle(inVec.mMemoryHandle)
+        { }
+    
+    inline Vector(
+        const Array<eT> &inArray)
+        : T<eT>(
+            const_cast<eT*>(inArray.data()),
+            inArray.size(),
+            false /* copy_aux_mem */,
+            true /* strict */),
+          mMemoryHandle(inArray.memoryHandle())
         { }
     
     template<typename T1>

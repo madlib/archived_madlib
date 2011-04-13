@@ -34,8 +34,8 @@
 
 #ifndef NO_REGRESS
     #include <madlib/modules/regress/linear.hpp>
-    DECLARE_UDF_EXT(linreg_trans, regress, linearRegression::transition);
-    DECLARE_UDF_EXT(linreg_final, regress, linearRegression::final);
+    DECLARE_UDF_EXT(linreg_trans, regress, LinearRegression::transition);
+    DECLARE_UDF_EXT(linreg_final, regress, LinearRegression::coefFinal);
 #endif
 
 

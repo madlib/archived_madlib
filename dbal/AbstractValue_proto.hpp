@@ -19,7 +19,11 @@ public:
     virtual bool isNull() const {
         return false;
     }
-
+    
+    virtual bool isMutable() const {
+        return true;
+    }
+        
     /**
      * This function performs a callback to the specified ValueConverter.
      * This allows relying on the vtable of ValueConverter for dispatching
@@ -44,6 +48,10 @@ protected:
     }
     
     virtual AbstractValueSPtr clone() const {
+        return AbstractValueSPtr();
+    }
+    
+    virtual AbstractValueSPtr mutableClone() const {
         return AbstractValueSPtr();
     }
 };

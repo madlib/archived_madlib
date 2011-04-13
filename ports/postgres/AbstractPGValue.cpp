@@ -21,6 +21,9 @@ namespace ports {
 
 namespace postgres {
 
+/**
+ * Convert postgres Datum into a ConcreteValue object.
+ */
 AbstractValueSPtr AbstractPGValue::DatumToValue(bool inMemoryIsWritable,
     Oid inTypeID, Datum inDatum) const {
         
@@ -50,8 +53,8 @@ AbstractValueSPtr AbstractPGValue::DatumToValue(bool inMemoryIsWritable,
                         );
                 } else {
                     return AbstractValueSPtr(
-                        new ConcreteValue<Array<double> >(
-                            Array<double>(memoryHandle,
+                        new ConcreteValue<Array_const<double> >(
+                            Array_const<double>(memoryHandle,
                                 boost::extents[ ARR_DIMS(pgArray)[0] ])
                             )
                         );

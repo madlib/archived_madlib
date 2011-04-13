@@ -26,8 +26,16 @@ public:
         return mArray;
     }
     
+    virtual MemHandleSPtr clone() const {
+        // Use operator new to allocate memory (this will allocate memory in
+        // the default postgres context)
+        ArrayType   *newArray =
+            static_cast<ArrayType *>( ::operator new(VARSIZE(mArray)) );
+        std::memcpy(newArray, mArray, VARSIZE(mArray));
+        return MemHandleSPtr( new PGArrayHandle(newArray) );
+    }
+    
 protected:
-
     ArrayType *mArray;
 };
 

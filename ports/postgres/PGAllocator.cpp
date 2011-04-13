@@ -100,9 +100,9 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
      * our own message. After unwinding the C++ stack, the PostgreSQL
      * exception will be re-thrown into the PostgreSQL C code.
      *
-     * Throwing C++ exceptions inside a PG_CATCH block is not problematic by
+     * Throwing C++ exceptions inside a PG_CATCH block is not problematic
      * per se, but it does not hurt to keep the exception mechanisms clearly
-     * isolated.
+     * separated.
      */
     if (errorOccurred)
         throw std::bad_alloc();
@@ -112,9 +112,11 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
 
 
 /**
- * Allocate postgres memory in the current memory context. In case allocation
- * fails, do not throw an exception. Choosing a memory context is not supported
- * for PGAllocator(const uint32_t, const std::nothrow_t&).
+ * @brief Allocate postgres memory in the default (function) memory context.
+ *
+ * In case allocation fails, do not throw an exception. Choosing a memory
+ * context is not currently supported for
+ * PGAllocator(const uint32_t, const std::nothrow_t&).
  *
  * We will hold back interrupts while in this function because we do not want
  * to flush the postgres error state, unless it is related to memory allocation.
@@ -128,8 +130,8 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
  * For the actual processing, see ProcessInterrupts() in tcop/postgres.c.
  * All aborting is done through the ereport mechanism.
  *
- * Note: This function is also called by operator new (std::nothrow), which must
- * not throw *any* exception.
+ * @note This function is also called by operator new (std::nothrow), which must
+ *       not throw *any* exception.
  *
  * @see See also the notes for PGAllocator<kThrow>::allocate
  */
