@@ -35,8 +35,17 @@
 #ifndef NO_REGRESS
     #include <madlib/modules/regress/linear.hpp>
     DECLARE_UDF_EXT(linreg_trans, regress, LinearRegression::transition);
-    DECLARE_UDF_EXT(linreg_final, regress, LinearRegression::coefFinal);
+    DECLARE_UDF_EXT(linreg_prelim, regress, LinearRegression::preliminary);
+    
+    DECLARE_UDF_EXT(linreg_coef_final, regress, LinearRegression::coefFinal);
+    DECLARE_UDF_EXT(linreg_r2_final, regress, LinearRegression::RSquareFinal);
+    DECLARE_UDF_EXT(linreg_tstats_final, regress, LinearRegression::tStatsFinal);
+    DECLARE_UDF_EXT(linreg_pvalues_final, regress, LinearRegression::pValuesFinal);
+        
+    #include <madlib/modules/regress/logistic.hpp>
+    DECLARE_UDF_EXT(logreg_cg_trans, regress, LogisticRegressionCG::transition);
+    DECLARE_UDF_EXT(logreg_cg_prelim, regress, LogisticRegressionCG::preliminary);
+    DECLARE_UDF_EXT(logreg_cg_coef_final, regress, LogisticRegressionCG::coefFinal);
 #endif
-
 
 #endif

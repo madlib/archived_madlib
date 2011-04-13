@@ -4,6 +4,11 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Try to convert into whatever type is requested
+ */
+// FIXME: Think whether we need to use a safe conversion idiom like
+// http://www.artima.com/cppsource/safebool.html
 template <class T>
 AnyValue::operator T() const {
     AbstractValueSPtr lastDelegate;

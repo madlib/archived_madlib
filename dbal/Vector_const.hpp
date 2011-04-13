@@ -13,7 +13,8 @@
 
 template<template <class> class T, typename eT>
 class Vector_const : public arma::Base< eT, Vector_const<T, eT> > {
-    friend class arma::unwrap< T<eT> >;
+    friend class arma::unwrap< Vector_const<T,eT> >;
+    friend class arma::Proxy< Vector_const<T,eT> >;
 
 public:
     typedef eT elem_type;

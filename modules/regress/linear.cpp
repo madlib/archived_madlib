@@ -25,13 +25,13 @@ namespace regress {
 /**
  * @brief Transition state for linear-regression functions
  *
- * LinRegState encapsualtes the transition state during the linear-regression
- * aggregate functions. To the database, the state is exposed as a single
- * DOUBLE PRECISION array, to the C++ code it is a proper object containing
- * scalars, a vector, and a matrix.
+ * TransitionState encapsualtes the transition state during the
+ * linear-regression aggregate functions. To the database, the state is exposed
+ * as a single DOUBLE PRECISION array, to the C++ code it is a proper object
+ * containing scalars, a vector, and a matrix.
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length 4, and all elemenets are 0.
+ * database with length at least 5, and all elemenets are 0.
  */
 class LinearRegression::TransitionState {
 public:
@@ -104,7 +104,7 @@ public:
     inline double y_square_sum() const { return mStorage[3]; }
     
 private:
-    inline uint32_t arraySize(const uint16_t inWidthOfX) {
+    static inline uint32_t arraySize(const uint16_t inWidthOfX) {
         return 4 + inWidthOfX + inWidthOfX * inWidthOfX;
     }
 

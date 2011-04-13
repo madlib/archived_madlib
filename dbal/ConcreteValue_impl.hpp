@@ -64,19 +64,30 @@ DECLARE_OR_DEFINE_STD_CONVERSION(float, double);
 DECLARE_OR_DEFINE_STD_CONVERSION(int32_t, double);
 DECLARE_OR_DEFINE_STD_CONVERSION(int16_t, double);
 DECLARE_OR_DEFINE_STD_CONVERSION(int8_t, double);
+DECLARE_OR_DEFINE_STD_CONVERSION(bool, double);
 
 // Additional implicit conversion to float
 DECLARE_OR_DEFINE_STD_CONVERSION(int16_t, float);
 DECLARE_OR_DEFINE_STD_CONVERSION(int8_t, float);
+DECLARE_OR_DEFINE_STD_CONVERSION(bool, float);
 
 // Additional implicit conversion to int64_t
 DECLARE_OR_DEFINE_STD_CONVERSION(int32_t, int64_t);
 DECLARE_OR_DEFINE_STD_CONVERSION(int16_t, int64_t);
 DECLARE_OR_DEFINE_STD_CONVERSION(int8_t, int64_t);
+DECLARE_OR_DEFINE_STD_CONVERSION(bool, int64_t);
 
 // Additional implicit conversion to int32_t
 DECLARE_OR_DEFINE_STD_CONVERSION(int16_t, int32_t);
 DECLARE_OR_DEFINE_STD_CONVERSION(int8_t, int32_t);
+DECLARE_OR_DEFINE_STD_CONVERSION(bool, int32_t);
+
+// Additional implicit conversion to int16_t
+DECLARE_OR_DEFINE_STD_CONVERSION(int8_t, int16_t);
+DECLARE_OR_DEFINE_STD_CONVERSION(bool, int16_t);
+
+// Additional implicit conversion to int8_t
+DECLARE_OR_DEFINE_STD_CONVERSION(bool, int8_t);
 
 // Additional implicit conversion from Array<double>
 DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, Array_const<double>);

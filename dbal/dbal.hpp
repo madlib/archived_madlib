@@ -39,6 +39,7 @@
     EXPAND_TYPE(int32_t) \
     EXPAND_TYPE(int16_t) \
     EXPAND_TYPE(int8_t) \
+    EXPAND_TYPE(bool)
 
 #define EXPAND_FOR_ALL_TYPES \
     EXPAND_FOR_PRIMITIVE_TYPES \
@@ -123,7 +124,7 @@ typedef ConcreteValue<AnyValueVector> ConcreteRecord;
 
 namespace arma {
 
-#include <madlib/dbal/unwrap.hpp>
+#include <madlib/dbal/ArmadilloIntegration.hpp>
 
 }
 

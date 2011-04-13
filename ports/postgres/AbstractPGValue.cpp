@@ -64,6 +64,8 @@ AbstractValueSPtr AbstractPGValue::DatumToValue(bool inMemoryIsWritable,
     }
 
     switch (inTypeID) {
+        case BOOLOID: return AbstractValueSPtr(
+            new ConcreteValue<bool>( DatumGetBool(inDatum) ));
         case INT2OID: return AbstractValueSPtr(
             new ConcreteValue<int16_t>( DatumGetInt16(inDatum) ));
         case INT4OID: return AbstractValueSPtr(
