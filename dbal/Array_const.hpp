@@ -14,11 +14,9 @@
 
 template <typename T, std::size_t NumDims>
 class Array_const : public const_multi_array_ref<T, NumDims> {
-    typedef typename boost::detail::multi_array::multi_array_impl_base<T,NumDims> super_type;
-    
 public:
-    typedef typename super_type::index index;
-    typedef typename super_type::size_type size_type;
+    typedef boost::multi_array_types::index index;
+    typedef boost::multi_array_types::size_type size_type;
     
     typedef boost::array<index, NumDims> extent_list;
     typedef boost::detail::multi_array::extent_gen<NumDims> extent_gen;
@@ -58,7 +56,7 @@ public:
             
         this->set_base_ptr(mMemoryHandle->ptr());
     }
-
+    
     inline Array_const &rebind(
         const MemHandleSPtr inHandle,
         const extent_gen &ranges) {

@@ -58,7 +58,7 @@ protected:
     /**
      * This function will be specialized for immutable types.
      */
-    AbstractValueSPtr mutableClone() {
+    AbstractValueSPtr mutableClone() const {
         return clone();
     }
 

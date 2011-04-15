@@ -108,6 +108,7 @@ typedef ConcreteValue<AnyValueVector> ConcreteRecord;
 
 // Type Classes
 
+// Array depends on Array_const, so including Array_const first
 #include <madlib/dbal/Array.hpp>
 #include <madlib/dbal/Array_const.hpp>
 #include <madlib/dbal/Matrix.hpp>

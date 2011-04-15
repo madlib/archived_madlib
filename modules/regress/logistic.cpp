@@ -4,6 +4,9 @@
  *
  * @brief Logistic-Regression functions
  *
+ * We implement the conjugate-gradient method and the iteratively-reweighted-
+ * least-squares method.
+ *
  *//* ----------------------------------------------------------------------- */
 
 #include <madlib/modules/regress/logistic.hpp>
@@ -26,7 +29,7 @@ namespace regress {
  * TransitionState encapsualtes the transition state during the
  * logistic-regression aggregate function. To the database, the state is
  * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
- * object containing scalars, a vector, and a matrix.
+ * object containing scalars and vectors.
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 6, and all elemenets are 0.
@@ -50,18 +53,14 @@ class LogisticRegressionCG::State {
 public:
     State(AnyValue inArg)
         : mStorage(inArg.copyIfImmutable()),
-          coef(
-            TransparentHandle::create(&mStorage[2]),
-            widthOfX()),
-          dir(
-            TransparentHandle::create(&mStorage[2] + static_cast<uint32_t>(widthOfX())),
-            widthOfX()),
-          grad(
-            TransparentHandle::create(&mStorage[2] + 2 * static_cast<uint32_t>(widthOfX())),
-            widthOfX()),
-          gradNew(
-            TransparentHandle::create(&mStorage[4] + 3 * static_cast<uint32_t>(widthOfX())),
-            widthOfX())
+          coef(TransparentHandle::create(&mStorage[2]),
+               widthOfX()),
+          dir(TransparentHandle::create(&mStorage[2 + widthOfX()]),
+              widthOfX()),
+          grad(TransparentHandle::create(&mStorage[2 + 2 * widthOfX()]),
+              widthOfX()),
+          gradNew(TransparentHandle::create(&mStorage[4 + 3 * widthOfX()]),
+                  widthOfX())
         { }
     
     /**
@@ -83,20 +82,16 @@ public:
         mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
         iteration() = 0;
         widthOfX() = inWidthOfX;
-        coef.rebind(
-            TransparentHandle::create(&mStorage[2]),
-            widthOfX()).zeros();
-        dir.rebind(
-            TransparentHandle::create(&mStorage[2] + static_cast<uint32_t>(widthOfX())),
-            widthOfX()).zeros();
-        grad.rebind(
-            TransparentHandle::create(&mStorage[2] + 2 * static_cast<uint32_t>(widthOfX())),
-            widthOfX()).zeros();
+        coef.rebind(TransparentHandle::create(&mStorage[2]),
+                    widthOfX()).zeros();
+        dir.rebind(TransparentHandle::create(&mStorage[2 + widthOfX()]),
+                   widthOfX()).zeros();
+        grad.rebind(TransparentHandle::create(&mStorage[2 + 2 * widthOfX()]),
+                    widthOfX()).zeros();
         beta() = 0;
 
-        gradNew.rebind(
-            TransparentHandle::create(&mStorage[4] + 3 * static_cast<uint32_t>(widthOfX())),
-            widthOfX());
+        gradNew.rebind(TransparentHandle::create(&mStorage[4 + 3 * widthOfX()]),
+                       widthOfX());
         
         reset();
     }
@@ -171,7 +166,7 @@ public:
  * @brief Logistic function
  */
 static double sigma(double x) {
-	return 1 / (1 + std::exp(-x));
+	return 1. / (1. + std::exp(-x));
 }
 
 /**
@@ -182,7 +177,7 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
     
     // Initialize Arguments from SQL call
     State state = *arg++;
-    int y = *arg++ ? 1 : -1;
+    double y = *arg++ ? 1. : -1.;
     DoubleRow_const x = *arg++;
     if (state.numRows() == 0) {
         state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
@@ -197,20 +192,21 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
     // Now do the transition step
     state.numRows()++;
 	
-    double cTx = as_scalar( trans(state.coef) * x );
-	double dTx = as_scalar( trans(state.dir) * x );
+    double xc = as_scalar( x * state.coef );
+	double xd = as_scalar( x * state.dir );
     
     if (static_cast<uint32_t>(state.iteration()) % 2 == 0)
-        state.gradNew += sigma(y * cTx) * y * x;
+        state.gradNew += sigma(-y * xc) * y * trans(x);
     else
-        state.dTHd() += sigma(cTx) * (1 - sigma(cTx)) * dTx * dTx;
+        // Note that 1 - sigma(x) = sigma(-x)
+        state.dTHd() -= sigma(xc) * sigma(-xc) * xd * xd;
     
     //          n
     //         --
-    // l(c) = -\  ln(1 + exp(-y_i * c^T x_i))
+    // l(c) = -\  log(1 + exp(-y_i * c^T x_i))
     //         /_
     //         i=1
-    state.logLikelihood() -= std::log( 1. + std::exp(-y * cTx) );
+    state.logLikelihood() -= std::log( 1. + std::exp(-y * xc) );
     return state;
 }
 
@@ -229,12 +225,12 @@ AnyValue LogisticRegressionCG::preliminary(AbstractDBInterface &db, AnyValue arg
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyValue LogisticRegressionCG::coefFinal(AbstractDBInterface &db, AnyValue args) {
+AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
     // Argument from SQL call
     State state = args[0].copyIfImmutable();
     
     // Note: k = state.iteration() / 2
-    if (state.iteration() == 0) {
+    if (static_cast<uint32_t>(state.iteration()) == 0) {
 		// Iteration computes the gradient
 	
 		state.dir = state.gradNew;
@@ -247,22 +243,21 @@ AnyValue LogisticRegressionCG::coefFinal(AbstractDBInterface &db, AnyValue args)
 		//            g_k^T (g_k - g_{k-1})
 		// beta_k = -------------------------
 		//          d_{k-1}^T (g_k - g_{k-1})
-        colvec gradMinusGradOld = state.gradNew - state.grad;
+        colvec gradNewMinusGrad = state.gradNew - state.grad;
         state.beta()
-            = as_scalar(
-                (trans(state.gradNew) * gradMinusGradOld)
-            /   (trans(state.dir) * gradMinusGradOld) );
+            = dot(state.gradNew, gradNewMinusGrad)
+            / dot(state.dir, gradNewMinusGrad);
         
         // d_k = g_k - beta_k * d_{k-1}
         state.dir = state.gradNew - state.beta() * state.dir;
 		state.grad = state.gradNew;
 	} else {
-		// Odd iteration compute -d^T H d (during the accumulation phase) and
-		// and the new coefficients (during the final phase).
+		// Odd iteration compute d^T H d (during the accumulation phase) and the
+		// new coefficients (during the final phase).
 
-		//              g_k^T d_k
-		// alpha_k = - -----------
-		//             d_k^T H d_k
+		//            g_k^T d_k
+		// alpha_k = -----------
+		//           d_k^T H d_k
         //
 		// c_k = c_{k-1} - alpha_k * d_k
 
@@ -271,6 +266,239 @@ AnyValue LogisticRegressionCG::coefFinal(AbstractDBInterface &db, AnyValue args)
     state.iteration()++;
     return state;
 }
+
+/**
+ * @brief Return the difference in log-likelihood between two states
+ */
+AnyValue LogisticRegressionCG::distance(AbstractDBInterface &db, AnyValue args) {
+    const State stateLeft = args[0];
+    const State stateRight = args[1];
+
+    return std::abs(stateLeft.logLikelihood() - stateRight.logLikelihood());
+}
+
+/**
+ * @brief Return the coefficients of the state
+ */
+AnyValue LogisticRegressionCG::coef(AbstractDBInterface &db, AnyValue args) {
+    const State state = args[0];
+
+    return state.coef;
+}
+
+/**
+ * @brief Inter- and intra-iteration state for iteratively-reweighted-least-
+ *        squares method for logistic regression
+ *
+ * TransitionState encapsualtes the transition state during the
+ * logistic-regression aggregate function. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars, a vector, and a matrix.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 3, and all elemenets are 0.
+ *
+ * @internal Array layout (iteration refers to one aggregate-function call):
+ * Inter-iteration components (updated in final function):
+ * - 0: widthOfX (numer of coefficients)
+ * - 1: coef (vector of coefficients)
+ *
+ * Intra-iteration components (updated in transition step):
+ * - 1 + widthOfX: numRows (number of rows already processed in this iteration)
+ * - 2 + widthOfX: X_transp_Az (X^T A z)
+ * - 2 + 2 * widthOfX: X_transp_AX (X^T A X)
+ * - 2 + widthOfX^2 + 2 * widthOfX: logLikelihood ( ln(l(c)) )
+ */
+class LogisticRegressionIRLS::State {
+public:
+    State(AnyValue inArg)
+        : mStorage(inArg.copyIfImmutable()),
+          coef(TransparentHandle::create(&mStorage[1]),
+               widthOfX()),
+          X_transp_Az(TransparentHandle::create(&mStorage[2 + widthOfX()]),
+              widthOfX()),
+          X_transp_AX(TransparentHandle::create(&mStorage[2 + 2 * widthOfX()]),
+              widthOfX(), widthOfX())
+        { }
+    
+    /**
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyValue() {
+        return mStorage;
+    }
+    
+    /**
+     * @brief Initialize the conjugate-gradient state.
+     * 
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(AllocatorSPtr inAllocator,
+        const uint16_t inWidthOfX) {
+        
+        mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
+        widthOfX() = inWidthOfX;
+        coef.rebind(TransparentHandle::create(&mStorage[1]),
+                    widthOfX()).zeros();
+            
+        X_transp_Az.rebind(TransparentHandle::create(&mStorage[2 + widthOfX()]),
+                           widthOfX());
+        X_transp_AX.rebind(TransparentHandle::create(&mStorage[2 + 2 * widthOfX()]),
+                           widthOfX(), widthOfX());
+        
+        reset();
+    }
+    
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    State &operator=(const State &inOtherState) {
+        mStorage = inOtherState.mStorage;
+        return *this;
+    }
+    
+    /**
+     * @brief Merge with another State object by copying the intra-iteration fields
+     */
+    State &operator+=(const State &inOtherState) {
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX() != inOtherState.widthOfX())
+            throw std::logic_error("Internal error: Incompatible transition states");
+        
+        numRows() += inOtherState.numRows();
+        X_transp_Az += inOtherState.X_transp_Az;
+        X_transp_AX += inOtherState.X_transp_AX;
+        logLikelihood() += inOtherState.logLikelihood();
+        return *this;
+    }
+    
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+        numRows() = 0;
+        X_transp_Az.zeros();
+        X_transp_AX.zeros();
+        logLikelihood() = 0;
+    }
+
+    inline double &widthOfX() { return mStorage[0]; }
+    inline double widthOfX() const { return mStorage[0]; }
+    
+    inline double &numRows() { return mStorage[ 1 + widthOfX() ]; }
+    inline double numRows() const { return mStorage[ 1 + widthOfX() ]; }
+    
+    inline double &logLikelihood() { return mStorage[
+        2 + widthOfX() * widthOfX() + 2 * widthOfX() ]; }
+    inline double logLikelihood() const { return mStorage[
+        2 + widthOfX() * widthOfX() + 2 * widthOfX() ]; }
+    
+private:
+    static inline uint32_t arraySize(const uint16_t inWidthOfX) {
+        return 3 + inWidthOfX * inWidthOfX + 2 * inWidthOfX;
+    }
+
+    Array<double> mStorage;
+
+public:
+    DoubleCol coef;
+
+    DoubleCol X_transp_Az;
+    DoubleMat X_transp_AX;
+};
+
+AnyValue LogisticRegressionIRLS::transition(AbstractDBInterface &db,
+    AnyValue args) {
+    AnyValue::iterator arg(args);
+    
+    // Initialize Arguments from SQL call
+    State state = *arg++;
+    double y = *arg++ ? 1. : -1.;
+    DoubleRow_const x = *arg++;
+    if (state.numRows() == 0) {
+        state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
+        if (!arg->isNull()) {
+            const State previousState = *arg;
+            
+            state = previousState;
+            state.reset();
+        }
+    }
+    
+    // Now do the transition step
+    state.numRows()++;
+
+    // xc = x_i c
+    double xc = as_scalar( x * state.coef );
+        
+    // a_i = sigma(x_i c) sigma(-x_i c)
+    double a = sigma(xc) * sigma(-xc);
+    
+    // Note: sigma(-x) = 1 - sigma(x).
+    //
+    //             sigma(-y_i x_i c) y_i
+    // z = x_i c + ---------------------
+    //                     a_i
+    double z = xc + sigma(-y * xc) * y / a;
+
+    state.X_transp_Az += trans(x) * a * z;
+    state.X_transp_AX += trans(x) * a * x;
+        
+    // We use state.sumy to store the log likelihood.
+    //          n
+    //         --
+    // l(c) = -\  ln(1 + exp(-y_i * c^T x_i))
+    //         /_
+    //         i=1
+    state.logLikelihood() -= std::log( 1. + std::exp(-y * xc) );
+    return state;
+}
+
+/**
+ * @brief Perform the perliminary aggregation function: Merge transition states
+ */
+AnyValue LogisticRegressionIRLS::preliminary(AbstractDBInterface &db, AnyValue args) {
+    State stateLeft = args[0].copyIfImmutable();
+    const State stateRight = args[1];
+    
+    // Merge states together and return
+    stateLeft += stateRight;
+    return stateLeft;
+}
+
+/**
+ * @brief Perform the logistic-regression final step
+ */
+AnyValue LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyValue args) {
+    // Argument from SQL call
+    State state = args[0].copyIfImmutable();
+
+    // FIXME: Harden the code. pinv can throw an exception if 
+    // matrix is ill-formed
+    state.coef = pinv(state.X_transp_AX) * state.X_transp_Az;    
+    return state;
+}
+
+/**
+ * @brief Return the difference in log-likelihood between two states
+ */
+AnyValue LogisticRegressionIRLS::distance(AbstractDBInterface &db, AnyValue args) {
+    const State stateLeft = args[0];
+    const State stateRight = args[1];
+
+    return std::abs(stateLeft.logLikelihood() - stateRight.logLikelihood());
+}
+
+/**
+ * @brief Return the coefficients of the state
+ */
+AnyValue LogisticRegressionIRLS::coef(AbstractDBInterface &db, AnyValue args) {
+    const State state = args[0];
+
+    return state.coef;
+}
+
 
 } // namespace regress
 

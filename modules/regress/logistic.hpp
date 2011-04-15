@@ -23,7 +23,10 @@ struct LogisticRegressionCG {
     
     static AnyValue transition(AbstractDBInterface &db, AnyValue args);
     static AnyValue preliminary(AbstractDBInterface &db, AnyValue args);
-    static AnyValue coefFinal(AbstractDBInterface &db, AnyValue args);
+    static AnyValue final(AbstractDBInterface &db, AnyValue args);
+    
+    static AnyValue distance(AbstractDBInterface &db, AnyValue args);
+    static AnyValue coef(AbstractDBInterface &db, AnyValue args);
 };
 
 /**
@@ -35,7 +38,10 @@ struct LogisticRegressionIRLS {
     
     static AnyValue transition(AbstractDBInterface &db, AnyValue args);
     static AnyValue preliminary(AbstractDBInterface &db, AnyValue args);
-    static AnyValue coefFinal(AbstractDBInterface &db, AnyValue args);
+    static AnyValue final(AbstractDBInterface &db, AnyValue args);
+    
+    static AnyValue distance(AbstractDBInterface &db, AnyValue args);
+    static AnyValue coef(AbstractDBInterface &db, AnyValue args);
 };
 
 } // namespace regress

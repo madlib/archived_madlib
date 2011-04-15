@@ -143,7 +143,7 @@ inline bool ConcreteValue<Array_const<double> >::isMutable() const {
 }
 
 template <>
-inline AbstractValueSPtr ConcreteValue<Array_const<double> >::mutableClone() {
+inline AbstractValueSPtr ConcreteValue<Array_const<double> >::mutableClone() const {
     return AbstractValueSPtr(
         new ConcreteValue<Array<double> >(
                 Array<double>(

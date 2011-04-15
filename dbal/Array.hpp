@@ -8,11 +8,9 @@
 
 template <typename T, std::size_t NumDims>
 class Array : public multi_array_ref<T, NumDims> {
-    typedef typename boost::detail::multi_array::multi_array_impl_base<T,NumDims> super_type;
-    
 public:
-    typedef typename super_type::index index;
-    typedef typename super_type::size_type size_type;
+    typedef boost::multi_array_types::index index;
+    typedef boost::multi_array_types::size_type size_type;
 
     typedef boost::array<index, NumDims> extent_list;
     typedef boost::detail::multi_array::extent_gen<NumDims> extent_gen;
@@ -44,6 +42,28 @@ public:
             static_cast<T*>(NULL) /* pure type parameter */)) {
             
         this->set_base_ptr(mMemoryHandle->ptr());
+    }
+    
+    /**
+     * @brief Perform a deep copy
+     *
+     * @internal It is important to define this function. Otherwise, C++ will
+     *      provide a default implementation that calls
+     *      multi_array_ref::operator=() but copies mMemoryHandle bitwise.
+     *      Hence, the mMemoryHandle and the array are out of sync.
+     *      The correct thing to do os leave mMemoryHandle untouched!
+     */
+    inline const Array &operator=(const Array &inOtherArray) {
+        multi_array_ref<T, NumDims>::operator=(inOtherArray);
+        return *this;
+    }
+
+    /**
+     * @brief Perform a deep copy from Array_const
+     */
+    inline const Array &operator=(const Array_const<T, NumDims> &inOtherArray) {
+        multi_array_ref<T, NumDims>::operator=(inOtherArray);
+        return *this;
     }
     
     // FIXME: We might "own" the cloned memory handle, so we should release it.
