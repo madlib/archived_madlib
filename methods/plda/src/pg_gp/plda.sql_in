@@ -274,7 +274,7 @@ RETURNS int4 AS $$
 
 	# -- Copy corpus into temp table
 	plpy.execute("CREATE TEMP TABLE corpus0" + " ( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) " 
-		     + ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
+		     ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
 
 	plpy.execute("INSERT INTO corpus0 " + 
 			"(SELECT id, contents, MADLIB_SCHEMA.lda_random_topics(array_upper(contents,1)," + str(num_topics) + ")" +
@@ -347,12 +347,8 @@ CREATE TYPE MADLIB_SCHEMA.lda_word_weight AS ( word text, prob float, wcount int
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.lda_topic_word_prob(num_topics int4, mytopic int4, ltimestamp int4, model_table text, data_table text, dict_table text) 
 RETURNS SETOF MADLIB_SCHEMA.lda_word_weight AS $$
-       dict_t = plpy.execute("SELECT dict FROM " + dict_table)
-       if (dict_t.nrows() == 0):
-       	   plpy.error("error: failed to find dictionary")
-       dict = dict_t[0]['dict']
-       dict = map(int, dict[1:-1].split(',')) # -- convert string into array
-       dsize = len(dict)
+       dsize_t = plpy.execute("SELECT array_upper(dict,1) dsize FROM " + dict_table)
+       dsize = dsize_t[0]['dsize']
 
        glbcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glbcounts FROM " + model_table + 
        		     		  " WHERE mytimestamp = " + str(ltimestamp))
@@ -374,7 +370,9 @@ RETURNS SETOF MADLIB_SCHEMA.lda_word_weight AS $$
        	   idx = i*num_topics + mytopic - 1
        	   wcount = glbcounts[idx]
 	   prob = wcount * 1.0 / topic_sum[mytopic - 1]
-	   ret = ret + [(dict[i],prob,wcount)]
+	   word_t = plpy.execute("SELECT dict[" + str(i+1) + "] word FROM " + dict_table);
+	   word = word_t[0]['word']
+	   ret = ret + [(word,prob,wcount)]
 
        return ret	   
 $$ LANGUAGE plpythonu;
@@ -456,7 +454,7 @@ RETURNS VOID AS $$
                                             + ", '" + modeltable + "', '" + outputdatatable + "', '" 
                                             + dicttable + "') order by -prob limit 20")
         plpy.info( 'Topic %d' % i)
-        for j in range(0,min(len(rv),20)):
+        for j in range(0,min(rv.nrows(),20)):
             word = rv[j]['word']
             prob = rv[j]['prob']
             count = rv[j]['wcount']
