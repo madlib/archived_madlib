@@ -94,7 +94,7 @@ This is the main learning function.
 
 There is another function that will allow users to predict the labels of new documents using
 the LDA model learned from a training corpus. This function, implemented as 
-madlib.lda_label_test_documents() in plda.sql, is still subject to further testing and is to 
+MADLIB_SCHEMA.lda_label_test_documents() in plda.sql, is still subject to further testing and is to 
 be used with caution for now.
 
 @examp
@@ -117,7 +117,7 @@ We now give a usage example.
    \endcode
    Words must be represented using positive numbers.
    The module comes with some randomly generated data. For example, we can import two
-   test tables madlib.lda_mycorpus and madlib.lda_mydict using the command
+   test tables MADLIB_SCHEMA.lda_mycorpus and MADLIB_SCHEMA.lda_mydict using the command
    \code
    psql database_name -f importTestcases.sql
    \endcode     
@@ -132,22 +132,22 @@ We now give a usage example.
 After a successful run of the lda_run() function, the most probable words associated 
 with each topic are displayed. Other results of the learning process can be obtained 
 by running the following commands inside the Greenplum Database. Here we assume
-the modeltable and outputdatatable parameters to lda_run() are 'madlib.lda_mymodel'
-and 'madlib.lda_corpus' respectively.
+the modeltable and outputdatatable parameters to lda_run() are 'MADLIB_SCHEMA.lda_mymodel'
+and 'MADLIB_SCHEMA.lda_corpus' respectively.
 
 -# The topic assignments for each document can be obtained as follows:
    \code
-   select id, (topics).topics from madlib.lda_corpus;
+   select id, (topics).topics from MADLIB_SCHEMA.lda_corpus;
    \endcode
 -# The topic distribution of each document can be obtained as follows:
    \code
-   select id, (topics).topic_d from madlib.lda_corpus;
+   select id, (topics).topic_d from MADLIB_SCHEMA.lda_corpus;
    \endcode
 -# The number of times each word was assigned to a given topic in the whole corpus can 
    be computed as follows:
    \code
-   select ss.i, madlib.lda_word_topic_distrn(gcounts,$numtopics,ss.i) 
-   from madlib.lda_mymodel, 
+   select ss.i, MADLIB_SCHEMA.lda_word_topic_distrn(gcounts,$numtopics,ss.i) 
+   from MADLIB_SCHEMA.lda_mymodel, 
         (select generate_series(1,$dictsize) i) as ss;
    \endcode
    where $numtopics is the number of topics used in the learning process, and 
@@ -155,7 +155,7 @@ and 'madlib.lda_corpus' respectively.
 -# The total number of words assigned to each topic in the whole corpus can be computed 
    as follows:
    \code
-   select sum((topics).topic_d) topic_sums from madlib.lda_corpus;
+   select sum((topics).topic_d) topic_sums from MADLIB_SCHEMA.lda_corpus;
    \endcode
 
 \section notes Additional Notes
@@ -203,17 +203,17 @@ Here are some relevant references.
 
 -- The lda_topics_t data type store the assignment of topics to each word in a document,
 -- plus the distribution of those topics in the document.
-CREATE TYPE madlib.lda_topics_t AS (
+CREATE TYPE MADLIB_SCHEMA.lda_topics_t AS (
        topics int4[],
        topic_d int4[]
 );
 
 -- Returns a zero'd array of a given dimension
-CREATE OR REPLACE FUNCTION madlib.lda_zero_array(d int4) RETURNS int4[] 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lda_zero_array(d int4) RETURNS int4[] 
 AS 'plda_support.so', 'zero_array' LANGUAGE C STRICT;
 
 -- Returns an array of random topic assignments for a given document length
-CREATE OR REPLACE FUNCTION madlib.lda_random_topics(doclen int4, numtopics int4) RETURNS madlib.lda_topics_t 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lda_random_topics(doclen int4, numtopics int4) RETURNS MADLIB_SCHEMA.lda_topics_t 
 AS 'plda_support.so', 'randomTopics' LANGUAGE C STRICT;
 
 -- This function assigns a randomly chosen topic to each word in a document according to 
@@ -230,26 +230,26 @@ AS 'plda_support.so', 'randomTopics' LANGUAGE C STRICT;
 --   eta          : the parameter of the Dirichlet distribution
 --
 CREATE OR REPLACE FUNCTION
-madlib.lda_sample_new_topics(doc int4[], topics int4[], topic_d int4[], global_count int4[],
+MADLIB_SCHEMA.lda_sample_new_topics(doc int4[], topics int4[], topic_d int4[], global_count int4[],
 		       	     topic_counts int4[], num_topics int4, dsize int4, alpha float, eta float) 
-RETURNS madlib.lda_topics_t
+RETURNS MADLIB_SCHEMA.lda_topics_t
 AS 'plda_support.so', 'sampleNewTopics' LANGUAGE C STRICT;
 
 -- Computes the per document word-topic counts
 CREATE OR REPLACE FUNCTION 
-madlib.lda_cword_count(mystate int4[], doc int4[], topics int4[], doclen int4, num_topics int4, dsize int4)
+MADLIB_SCHEMA.lda_cword_count(mystate int4[], doc int4[], topics int4[], doclen int4, num_topics int4, dsize int4)
 RETURNS int4[]
 AS 'plda_support.so', 'cword_count' LANGUAGE C;
 
 -- Aggregate function to compute all word-topic counts given topic assignments for each document
-CREATE AGGREGATE madlib.lda_cword_agg(int4[], int4[], int4, int4, int4) (
-       sfunc = madlib.lda_cword_count,
+CREATE AGGREGATE MADLIB_SCHEMA.lda_cword_agg(int4[], int4[], int4, int4, int4) (
+       sfunc = MADLIB_SCHEMA.lda_cword_count,
        stype = int4[] 
 );
 
 -- The main parallel LDA learning function
 CREATE OR REPLACE FUNCTION
-madlib.lda_train(num_topics int4, num_iter int4, init_iter int4, alpha float, eta float, 
+MADLIB_SCHEMA.lda_train(num_topics int4, num_iter int4, init_iter int4, alpha float, eta float, 
 	         data_table text, dict_table text, model_table text, output_data_table text) 
 RETURNS int4 AS $$
 	# -- Get dictionary size
@@ -261,23 +261,24 @@ RETURNS int4 AS $$
 
 	# -- Initialise global word-topic counts 
 	plpy.info('Initialising global word-topic count')
-	glwcounts_t = plpy.execute("SELECT madlib.lda_zero_array(" + str(dsize*num_topics) + ") glwcounts")
+	glwcounts_t = plpy.execute("SELECT MADLIB_SCHEMA.lda_zero_array(" + str(dsize*num_topics) + ") glwcounts")
 	glwcounts = glwcounts_t[0]['glwcounts']
 
 	# -- This stores the local word-topic counts computed at each segment 
-	plpy.execute("CREATE TEMP TABLE local_word_topic_count ( id int4, mytimestamp int4, lcounts int4[] ) " + 
-                     "DISTRIBUTED BY (mytimestamp)")
+	plpy.execute("CREATE TEMP TABLE local_word_topic_count ( id int4, mytimestamp int4, lcounts int4[] ) " 
+		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (mytimestamp)"'))
 
 	# -- This stores the global word-topic counts	     
-	plpy.execute("CREATE TABLE " + model_table + " ( mytimestamp int4, gcounts int4[] ) " +
-		     "DISTRIBUTED BY (mytimestamp)")	     
+	plpy.execute("CREATE TABLE " + model_table + " ( mytimestamp int4, gcounts int4[] ) " 
+		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (mytimestamp)"'))	     
 
 	# -- Copy corpus into temp table
-	plpy.execute("CREATE TEMP TABLE corpus0" + " ( id int4, contents int4[], topics madlib.lda_topics_t ) " +
-		     "WITH (appendonly=true, orientation=column, compresstype=quicklz) DISTRIBUTED RANDOMLY")
+	plpy.execute("CREATE TEMP TABLE corpus0" + " ( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) " 
+		     + ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
 
-	plpy.execute("INSERT INTO corpus0 (SELECT id, contents, madlib.lda_random_topics(array_upper(contents,1)," + str(num_topics) + 
-			     	  	  ") FROM " + data_table + ")")
+	plpy.execute("INSERT INTO corpus0 " + 
+			"(SELECT id, contents, MADLIB_SCHEMA.lda_random_topics(array_upper(contents,1)," + str(num_topics) + ")" +
+			 "FROM " + data_table + ")")
 
 	# -- Get topic counts				  
 	topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus0")
@@ -293,12 +294,12 @@ RETURNS int4 AS $$
 		 old_table_id = 0	 
 
 	    plpy.execute("CREATE TEMP TABLE corpus" + str(new_table_id) + 
-	    	         " ( id int4, contents int4[], topics madlib.lda_topics_t ) " + 
-			 "WITH (appendonly=true, orientation=column, compresstype=quicklz) DISTRIBUTED RANDOMLY")
+	    	         " ( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) " 
+			 ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
 
 	    # -- Randomly reassign topics to the words in each document, in parallel; the map step
 	    plpy.execute("INSERT INTO corpus" + str(new_table_id) 
-	    		 + " (SELECT id, contents, madlib.lda_sample_new_topics(contents,(topics).topics,(topics).topic_d,'" 
+	    		 + " (SELECT id, contents, MADLIB_SCHEMA.lda_sample_new_topics(contents,(topics).topics,(topics).topic_d,'" 
 			     	 	            + str(glwcounts) + "','" + str(topic_counts) + "'," + str(num_topics) 
 					            + "," + str(dsize) + "," + str(alpha) + "," + str(eta) + ") FROM corpus" + str(old_table_id) + ")")
 
@@ -307,7 +308,7 @@ RETURNS int4 AS $$
 	    # -- Compute the local word-topic counts in parallel; the map step
 	    plpy.execute("INSERT INTO local_word_topic_count " +
 	    		 " (SELECT gp_segment_id, " + str(iter) 
-			     	   + ", madlib.lda_cword_agg(contents,(topics).topics,array_upper(contents,1)," 
+			     	   + ", MADLIB_SCHEMA.lda_cword_agg(contents,(topics).topics,array_upper(contents,1)," 
 				   + str(num_topics) + "," + str(dsize) + ") FROM corpus" + str(new_table_id) + 
 			    " GROUP BY gp_segment_id)")  
 
@@ -329,7 +330,7 @@ RETURNS int4 AS $$
 
 	# -- This store a copy of the corpus of documents to be analysed
 	plpy.execute("CREATE TABLE " + output_data_table + 
-	             "( id int4, contents int4[], topics madlib.lda_topics_t ) DISTRIBUTED RANDOMLY")
+	             "( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) ifdef(`GREENPLUM',`DISTRIBUTED RANDOMLY')")
 	plpy.execute("INSERT INTO " + output_data_table + " (SELECT * FROM corpus" + str(new_table_id) + ")")
 
 	# -- Clean up    
@@ -340,12 +341,12 @@ RETURNS int4 AS $$
 	return init_iter + num_iter   
 $$ LANGUAGE plpythonu;
 
-CREATE TYPE madlib.lda_word_weight AS ( word text, prob float, wcount int4 );
+CREATE TYPE MADLIB_SCHEMA.lda_word_weight AS ( word text, prob float, wcount int4 );
 
 -- Returns the most important words for each topic, base on Pr( word | topic ).
 CREATE OR REPLACE FUNCTION 
-madlib.lda_topic_word_prob(num_topics int4, mytopic int4, ltimestamp int4, model_table text, data_table text, dict_table text) 
-RETURNS SETOF madlib.lda_word_weight AS $$
+MADLIB_SCHEMA.lda_topic_word_prob(num_topics int4, mytopic int4, ltimestamp int4, model_table text, data_table text, dict_table text) 
+RETURNS SETOF MADLIB_SCHEMA.lda_word_weight AS $$
        dict_t = plpy.execute("SELECT dict FROM " + dict_table)
        if (dict_t.nrows() == 0):
        	   plpy.error("error: failed to find dictionary")
@@ -379,22 +380,22 @@ RETURNS SETOF madlib.lda_word_weight AS $$
 $$ LANGUAGE plpythonu;
 
 
-CREATE TYPE madlib.lda_word_distrn AS ( word text, distrn int4[], prob float8[] );
+CREATE TYPE MADLIB_SCHEMA.lda_word_distrn AS ( word text, distrn int4[], prob float8[] );
 
 -- This function computes the topic assignments to words in a document given previously computed
 -- statistics from the training corpus. This function and the next are still being tested.
 -- This function has not been rewritten in PL/Python because it is hard to handle structured types
--- like madlib.lda_topics_t in PL/Python (this has to be done via conversion to text, which is not nice).
+-- like MADLIB_SCHEMA.lda_topics_t in PL/Python (this has to be done via conversion to text, which is not nice).
 CREATE OR REPLACE FUNCTION 
-madlib.lda_label_document(doc int4[], global_count int4[], topic_counts int4[], num_topics int4, dsize int4, 
+MADLIB_SCHEMA.lda_label_document(doc int4[], global_count int4[], topic_counts int4[], num_topics int4, dsize int4, 
 		     alpha float, eta float)
-RETURNS madlib.lda_topics_t AS $$
+RETURNS MADLIB_SCHEMA.lda_topics_t AS $$
 DECLARE
-	ret madlib.lda_topics_t;
+	ret MADLIB_SCHEMA.lda_topics_t;
 BEGIN
-	ret := madlib.lda_random_topics(array_upper(doc,1), num_topics);
+	ret := MADLIB_SCHEMA.lda_random_topics(array_upper(doc,1), num_topics);
 	FOR i in 1..20 LOOP
-	    ret := madlib.lda_sample_new_topics(doc,(ret).topics,(ret).topic_d,global_count,topic_counts,num_topics,dsize,alpha,eta);
+	    ret := MADLIB_SCHEMA.lda_sample_new_topics(doc,(ret).topics,(ret).topic_d,global_count,topic_counts,num_topics,dsize,alpha,eta);
     	END LOOP;
 	RETURN ret;
 END;
@@ -403,7 +404,7 @@ $$ LANGUAGE plpgsql;
 -- This function computes the topic assignments to documents in a test corpus.
 -- The data_table argument appears unnecessary, as long as topic_counts is saved in a table from the lda_train() routine
 CREATE OR REPLACE FUNCTION
-madlib.lda_label_test_documents(test_table text, model_table text, data_table text, dict_table text, ltimestep int4, num_topics int4, alpha float, eta float)
+MADLIB_SCHEMA.lda_label_test_documents(test_table text, model_table text, data_table text, dict_table text, ltimestep int4, num_topics int4, alpha float, eta float)
 RETURNS VOID AS $$
 	dsize_t = plpy.execute("SELECT array_upper(dict,1) dictsize FROM " + dict_table)
 	dsize = dsize_t[0]['dictsize']
@@ -423,34 +424,34 @@ RETURNS VOID AS $$
 
         # Compute new topic assignments for each document
 	plpy.execute("UPDATE " + test_table 
-                     + " SET topics = madlib.lda_label_document(contents, '" 
+                     + " SET topics = MADLIB_SCHEMA.lda_label_document(contents, '" 
                                         + str(glwcounts) + "', '" + str(topic_counts) + "', " 
                                         + str(num_topics) + ", " + str(dsize) + ", " 
                                         + str(alpha) + ", " + str(eta) + ")")
 $$ LANGUAGE plpythonu;
 
 -- Returns the distribution of topics for a given word
-CREATE OR REPLACE FUNCTION madlib.lda_word_topic_distrn(arr int4[], ntopics int4, word int4, OUT ret int4[]) AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lda_word_topic_distrn(arr int4[], ntopics int4, word int4, OUT ret int4[]) AS $$
        SELECT $1[(($3-1)*$2 + 1):(($3-1)*$2 + $2)];
 $$ LANGUAGE sql;
 
 
 CREATE OR REPLACE FUNCTION 
-madlib.lda_run(datatable text, dicttable text, modeltable text, outputdatatable text, 
+MADLIB_SCHEMA.lda_run(datatable text, dicttable text, modeltable text, outputdatatable text, 
 	       numiter int4, numtopics int4, alpha float, eta float)
 RETURNS VOID AS $$
     restartstep = 0
     plpy.execute("SELECT setseed(0.5)")
         
     plpy.info('Starting learning process')
-    plpy.execute("SELECT madlib.lda_train(" + str(numtopics) + "," 
+    plpy.execute("SELECT MADLIB_SCHEMA.lda_train(" + str(numtopics) + "," 
                                + str(numiter) +"," + str(restartstep) + "," 
                                + str(alpha) + "," + str(eta) + ",'" + datatable + "', '" 
 			       + dicttable + "','" + modeltable + "','" + outputdatatable + "')")
 
     # -- Print the most probable words in each topic
     for i in range(1,numtopics+1):
-        rv = plpy.execute("select * from madlib.lda_topic_word_prob(" 
+        rv = plpy.execute("select * from MADLIB_SCHEMA.lda_topic_word_prob(" 
                                             + str(numtopics) + "," + str(i) + "," + str(numiter) 
                                             + ", '" + modeltable + "', '" + outputdatatable + "', '" 
                                             + dicttable + "') order by -prob limit 20")
