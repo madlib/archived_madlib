@@ -4,7 +4,8 @@ SOURCES = plda_support.c
 OBJS = $(SOURCES:%.c=%.o)
 
 MODULE_big = plda_support
-DATA_built = plda.sql plda_drop.sql sql/plda_test.sql sql/importTestcases.sql sql/importSmall.sql
+DATA_built = plda.sql plda_drop.sql sql/plda_test.sql sql/importTestcases.sql sql/importSmall.sql plda.py
+
 PYTHON_built = plda.py
 
 REGRESS = plda_test

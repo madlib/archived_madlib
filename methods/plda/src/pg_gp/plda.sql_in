@@ -230,93 +230,14 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.lda_train(num_topics int4, num_iter int4, init_iter int4, alpha float, eta float, 
 	         data_table text, dict_table text, model_table text, output_data_table text) 
 RETURNS int4 AS $$
-	# -- Get dictionary size
-	dsize_t = plpy.execute("SELECT array_upper(dict,1) dsize FROM " + dict_table)
-	dsize = dsize_t[0]['dsize']
+	import sys
+	try:
+		from madlib import plda
+	except:
+		sys.path.append("PLPYTHON_LIBDIR")
+		from madlib import plda
 
-	if (dsize == 0):
-	    plpy.error("error: dictionary has not been initialised")
-
-	# -- Initialise global word-topic counts 
-	plpy.info('Initialising global word-topic count')
-	glwcounts_t = plpy.execute("SELECT MADLIB_SCHEMA.lda_zero_array(" + str(dsize*num_topics) + ") glwcounts")
-	glwcounts = glwcounts_t[0]['glwcounts']
-
-	# -- This stores the local word-topic counts computed at each segment 
-	plpy.execute("CREATE TEMP TABLE local_word_topic_count ( id int4, mytimestamp int4, lcounts int4[] ) " 
-		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (mytimestamp)"'))
-
-	# -- This stores the global word-topic counts	     
-	plpy.execute("CREATE TABLE " + model_table + " ( mytimestamp int4, gcounts int4[] ) " 
-		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (mytimestamp)"'))	     
-
-	# -- Copy corpus into temp table
-	plpy.execute("CREATE TEMP TABLE corpus0" + " ( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) " 
-		     ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
-
-	plpy.execute("INSERT INTO corpus0 " + 
-			"(SELECT id, contents, MADLIB_SCHEMA.lda_random_topics(array_upper(contents,1)," + str(num_topics) + ")" +
-			 "FROM " + data_table + ")")
-
-	# -- Get topic counts				  
-	topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus0")
-	topic_counts = topic_counts_t[0]['tc']
-
-	for i in range(1,num_iter+1):
-	    iter = i + init_iter
-
-	    new_table_id = i % 2
-	    if (new_table_id == 0):
-	         old_table_id = 1
-	    else:
-		 old_table_id = 0	 
-
-	    plpy.execute("CREATE TEMP TABLE corpus" + str(new_table_id) + 
-	    	         " ( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) " 
-			 ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
-
-	    # -- Randomly reassign topics to the words in each document, in parallel; the map step
-	    plpy.execute("INSERT INTO corpus" + str(new_table_id) 
-	    		 + " (SELECT id, contents, MADLIB_SCHEMA.lda_sample_new_topics(contents,(topics).topics,(topics).topic_d,'" 
-			     	 	            + str(glwcounts) + "','" + str(topic_counts) + "'," + str(num_topics) 
-					            + "," + str(dsize) + "," + str(alpha) + "," + str(eta) + ") FROM corpus" + str(old_table_id) + ")")
-
-	    plpy.execute("DROP TABLE corpus" + str(old_table_id)) 
-    
-	    # -- Compute the local word-topic counts in parallel; the map step
-	    plpy.execute("INSERT INTO local_word_topic_count " +
-	    		 " (SELECT gp_segment_id, " + str(iter) 
-			     	   + ", MADLIB_SCHEMA.lda_cword_agg(contents,(topics).topics,array_upper(contents,1)," 
-				   + str(num_topics) + "," + str(dsize) + ") FROM corpus" + str(new_table_id) + 
-			    " GROUP BY gp_segment_id)")  
-
-	    # -- Compute the global word-topic counts; the reduce step; Is storage into model_table necessary?
-	    plpy.execute("INSERT INTO " + model_table +
-	    		 " (SELECT " + str(iter) + ", sum(lcounts) FROM local_word_topic_count " +
-			  " WHERE mytimestamp = " + str(iter) + ")")
-	    
-	    glwcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glwcounts " +
-	    		  	       "FROM " + model_table + " WHERE mytimestamp = " + str(iter))
-	    glwcounts = glwcounts_t[0]['glwcounts']
-
-	    # -- Compute the denominator
-	    topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus" + str(new_table_id))
-	    topic_counts = topic_counts_t[0]['tc']
-
-	    if (iter % 5 == 0):
-	         plpy.info('  Done iteration %d' % iter)
-
-	# -- This store a copy of the corpus of documents to be analysed
-	plpy.execute("CREATE TABLE " + output_data_table + 
-	             "( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) ifdef(`GREENPLUM',`DISTRIBUTED RANDOMLY')")
-	plpy.execute("INSERT INTO " + output_data_table + " (SELECT * FROM corpus" + str(new_table_id) + ")")
-
-	# -- Clean up    
-	plpy.execute("DROP TABLE corpus" + str(new_table_id))
-	plpy.execute("DROP TABLE local_word_topic_count")
-	plpy.execute("DELETE FROM " + model_table + " WHERE mytimestamp < " + str(num_iter))
-
-	return init_iter + num_iter   
+	return plda.lda_train(num_topics, num_iter, init_iter, alpha, eta, data_table, dict_table, model_table, output_data_table)
 $$ LANGUAGE plpythonu;
 
 CREATE TYPE MADLIB_SCHEMA.lda_word_weight AS ( word text, prob float, wcount int4 );
@@ -325,36 +246,14 @@ CREATE TYPE MADLIB_SCHEMA.lda_word_weight AS ( word text, prob float, wcount int
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.lda_topic_word_prob(num_topics int4, mytopic int4, ltimestamp int4, model_table text, data_table text, dict_table text) 
 RETURNS SETOF MADLIB_SCHEMA.lda_word_weight AS $$
-       dsize_t = plpy.execute("SELECT array_upper(dict,1) dsize FROM " + dict_table)
-       dsize = dsize_t[0]['dsize']
+	import sys
+	try:
+		from madlib import plda
+	except:
+		sys.path.append("PLPYTHON_LIBDIR")
+		from madlib import plda
 
-       glbcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glbcounts FROM " + model_table + 
-       		     		  " WHERE mytimestamp = " + str(ltimestamp))
-       if (glbcounts_t.nrows() == 0):
-       	   plpy.error("error: failed to find gcounts for time step %d" % ltimestamp)
-       glbcounts = glbcounts_t[0]['glbcounts']
-
-       topic_sum_t = plpy.execute("SELECT sum((topics).topic_d) topic_sum FROM " + data_table)
-       if (topic_sum_t.nrows() == 0):
-       	   plpy.error("error: failed to compute topic_sum")
-       topic_sum = topic_sum_t[0]['topic_sum']
-
-       # -- Convert the strings into arrays
-       glbcounts = map(int, glbcounts[1:-1].split(','))
-       topic_sum = map(int, topic_sum[1:-1].split(','))
-
-       ret = []
-       for i in range(0,dsize):
-       	   idx = i*num_topics + mytopic - 1
-       	   wcount = glbcounts[idx]
-	   if (wcount == 0):
-	       continue
-	   prob = wcount * 1.0 / topic_sum[mytopic - 1]
-	   word_t = plpy.execute("SELECT dict[" + str(i+1) + "] word FROM " + dict_table);
-	   word = word_t[0]['word']
-	   ret = ret + [(word,prob,wcount)]
-
-       return ret	   
+	return plda.lda_topic_word_prob(num_topics, mytopic, ltimestamp, model_table, data_table, dict_table) 
 $$ LANGUAGE plpythonu;
 
 
@@ -384,28 +283,14 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.lda_label_test_documents(test_table text, model_table text, data_table text, dict_table text, ltimestep int4, num_topics int4, alpha float, eta float)
 RETURNS VOID AS $$
-	dsize_t = plpy.execute("SELECT array_upper(dict,1) dictsize FROM " + dict_table)
-	dsize = dsize_t[0]['dictsize']
+	import sys
+	try:
+		from madlib import plda
+	except:
+		sys.path.append("PLPYTHON_LIBDIR")
+		from madlib import plda
 
-        # Get the word-topic counts
-	glwcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glwcounts FROM " 
-                                   + model_table + " WHERE mytimestamp = " + str(ltimestep))
-	if (glwcounts_t.nrows() == 0):
-	    plpy.error("error: gcounts for time step %d not found" % ltimestep)
-	glwcounts = glwcounts_t[0]['glwcounts']
-
-        # Get counts for each topic; this appears heavy, should be saved from lda_train() routine
-	topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM " + data_table)
-	if (topic_counts_t.nrows() == 0):
-	    plpy.error("error: failed to compute topic_counts")
-	topic_counts = topic_counts_t[0]['tc']
-
-        # Compute new topic assignments for each document
-	plpy.execute("UPDATE " + test_table 
-                     + " SET topics = MADLIB_SCHEMA.lda_label_document(contents, '" 
-                                        + str(glwcounts) + "', '" + str(topic_counts) + "', " 
-                                        + str(num_topics) + ", " + str(dsize) + ", " 
-                                        + str(alpha) + ", " + str(eta) + ")")
+	plda.lda_label_test_documents(test_table, model_table, data_table, dict_table, ltimestep, num_topics, alpha, eta)
 $$ LANGUAGE plpythonu;
 
 -- Returns the distribution of topics for a given word
@@ -418,28 +303,14 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.lda_run(datatable text, dicttable text, modeltable text, outputdatatable text, 
 	       numiter int4, numtopics int4, alpha float, eta float)
 RETURNS VOID AS $$
-    restartstep = 0
-    plpy.execute("SELECT setseed(0.5)")
-        
-    plpy.info('Starting learning process')
-    plpy.execute("SELECT MADLIB_SCHEMA.lda_train(" + str(numtopics) + "," 
-                               + str(numiter) +"," + str(restartstep) + "," 
-                               + str(alpha) + "," + str(eta) + ",'" + datatable + "', '" 
-			       + dicttable + "','" + modeltable + "','" + outputdatatable + "')")
+	import sys
+	try:
+		from madlib import plda
+	except:
+		sys.path.append("PLPYTHON_LIBDIR")
+		from madlib import plda
 
-    # -- Print the most probable words in each topic
-    for i in range(1,numtopics+1):
-        rv = plpy.execute("select * from MADLIB_SCHEMA.lda_topic_word_prob(" 
-                                            + str(numtopics) + "," + str(i) + "," + str(numiter) 
-                                            + ", '" + modeltable + "', '" + outputdatatable + "', '" 
-                                            + dicttable + "') order by -prob limit 20")
-        plpy.info( 'Topic %d' % i)
-        for j in range(0,min(rv.nrows(),20)):
-            word = rv[j]['word']
-            prob = rv[j]['prob']
-            count = rv[j]['wcount']
-            plpy.info( ' %d) %s    %f  %d' % (j+1, word, prob, count))
-
+	plda.lda_run(datatable, dicttable, modeltable, outputdatatable, numiter, numtopics, alpha, eta)	
 $$ LANGUAGE plpythonu;
 
 
