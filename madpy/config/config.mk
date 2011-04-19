@@ -4,10 +4,10 @@ plpython_libdir = PLPYTHON_LIBDIR/madlib
 dbapi = DBAPI2_PLACEHOLDER
 
 %.sql: %.sql_in
-	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
+	m4 -P -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) $(conf_defines) $< >$@
 	
 %.py: %.py_in
-	m4 -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) -DDBAPI2=$(dbapi) $(conf_defines) $< >$@
+	m4 -P -DMODULE_PATHNAME='$$libdir/madlib/$*' -DMADLIB_SCHEMA=$(madlib_schema) -DDBAPI2=$(dbapi) $(conf_defines) $< >$@
 
 clean_data_built: 
 	rm $(DATA_built)
