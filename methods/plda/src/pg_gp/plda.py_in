@@ -1,51 +1,62 @@
+"""@file plda.py_in
+
+@brief Parallel Latent Dirichlet Allocation inference using collapsed Gibbs sampling algorithm
+
+@namespace plda
+
+Parallel LDA: Driver and training functions
 """
-@file plda.py
-
-@brief Parallel LDA: Driver function
-@author Kee Siong Ng
-
-Parallel LDA: Driver function
-"""
-
 import plpy
 
-def lda_train(num_topics, num_iter, init_iter, alpha, eta, 
-	      data_table, dict_table, model_table, output_data_table): 
-	# -- Get dictionary size
+def lda_train(num_topics, num_iter, alpha, eta, data_table, dict_table, model_table, output_data_table): 
+	"""Performs LDA inference on a corpus of documents
+
+	@param num_topics  Number of topics to discover
+	@param num_iter    Number of Gibbs sampling iterations to run
+	@param alpha       The parameter of the topic Dirichlet prior
+	@param eta         The parameter of the Dirichlet prior on per-topic word distributions
+	@param data_table  The name of the table/view containing the corpus to be analysed
+	@param dict_table  The name of the table/view containing the dictionary of words appearing in the corpus
+	@param model_table The name of the table to store the learned model (in the form of word-topic counts and total topic counts)
+	@param output_data_table The name of the table to store a copy of the data_table plus topic assignments to each document
+	"""
+
+	# Get dictionary size
 	dsize_t = plpy.execute("SELECT array_upper(dict,1) dsize FROM " + dict_table)
+	if (dsize_t.nrows() <> 1):
+	    plpy.error("error: dictionary table is not of the expected form")
+
 	dsize = dsize_t[0]['dsize']
 
 	if (dsize == 0):
 	    plpy.error("error: dictionary has not been initialised")
 
-	# -- Initialise global word-topic counts 
-	plpy.info('Initialising global word-topic count')
+	# Initialise global word-topic counts 
 	glwcounts_t = plpy.execute("SELECT MADLIB_SCHEMA.lda_zero_array(" + str(dsize*num_topics) + ") glwcounts")
 	glwcounts = glwcounts_t[0]['glwcounts']
 
-	# -- This stores the local word-topic counts computed at each segment 
-	plpy.execute("CREATE TEMP TABLE local_word_topic_count ( id int4, mytimestamp int4, lcounts int4[] ) " 
-		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (mytimestamp)"'))
+	# The temp table that stores the local word-topic counts computed at each segment 
+	plpy.execute("CREATE TEMP TABLE lda_local_word_topic_count ( id int4, iternum int4, lcounts int4[] ) " 
+		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (iternum)"'))
 
-	# -- This stores the global word-topic counts	     
-	plpy.execute("CREATE TABLE " + model_table + " ( mytimestamp int4, gcounts int4[] ) " 
-		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (mytimestamp)"'))	     
+	# The temp table that stores the global word-topic counts	     
+	plpy.execute("CREATE TABLE " + model_table + " ( iternum int4, gcounts int4[], tcounts int4[] ) " 
+		     ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (iternum)"'))	     
 
-	# -- Copy corpus into temp table
+	# Copy training corpus into temp table
 	plpy.execute("CREATE TEMP TABLE corpus0" + " ( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) " 
-		     ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
+		     ifdef(`GREENPLUM',`+ "WITH (appendonly=true, orientation=column, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
 
 	plpy.execute("INSERT INTO corpus0 " + 
 			"(SELECT id, contents, MADLIB_SCHEMA.lda_random_topics(array_upper(contents,1)," + str(num_topics) + ")" +
 			 "FROM " + data_table + ")")
 
-	# -- Get topic counts				  
+	# Get topic counts				  
 	topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus0")
 	topic_counts = topic_counts_t[0]['tc']
 
 	for i in range(1,num_iter+1):
-	    iter = i + init_iter
-
+	    # We alternate between temp tables corpus0 and corpus1, creating and dropping them as appropriate
 	    new_table_id = i % 2
 	    if (new_table_id == 0):
 	         old_table_id = 1
@@ -54,126 +65,150 @@ def lda_train(num_topics, num_iter, init_iter, alpha, eta,
 
 	    plpy.execute("CREATE TEMP TABLE corpus" + str(new_table_id) + 
 	    	         " ( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) " 
-			 ifdef(`GREENPLUM',`+ "WITH (appendonly=true, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
+			 ifdef(`GREENPLUM',`+ "WITH (appendonly=true, orientation=column, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
 
-	    # -- Randomly reassign topics to the words in each document, in parallel; the map step
+	    # Sample new topics for each document, in parallel; the map step
 	    plpy.execute("INSERT INTO corpus" + str(new_table_id) 
 	    		 + " (SELECT id, contents, MADLIB_SCHEMA.lda_sample_new_topics(contents,(topics).topics,(topics).topic_d,'" 
 			     	 	            + str(glwcounts) + "','" + str(topic_counts) + "'," + str(num_topics) 
 					            + "," + str(dsize) + "," + str(alpha) + "," + str(eta) + ") FROM corpus" + str(old_table_id) + ")")
 
 	    plpy.execute("DROP TABLE corpus" + str(old_table_id)) 
+
+	    # Compute the denominator
+	    topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus" + str(new_table_id))
+	    topic_counts = topic_counts_t[0]['tc']
     
-	    # -- Compute the local word-topic counts in parallel; the map step
-	    plpy.execute("INSERT INTO local_word_topic_count " +
-	    		 " (SELECT gp_segment_id, " + str(iter) 
+	    # Compute the local word-topic counts in parallel; the map step
+	    plpy.execute("INSERT INTO lda_local_word_topic_count " +
+	    		 " (SELECT gp_segment_id, " + str(i) 
 			     	   + ", MADLIB_SCHEMA.lda_cword_agg(contents,(topics).topics,array_upper(contents,1)," 
 				   + str(num_topics) + "," + str(dsize) + ") FROM corpus" + str(new_table_id) + 
 			    " GROUP BY gp_segment_id)")  
 
-	    # -- Compute the global word-topic counts; the reduce step; Is storage into model_table necessary?
+	    # Compute the global word-topic counts; the reduce step; 
+	    # we store result in model_table because array manipulation in plpython is painful
 	    plpy.execute("INSERT INTO " + model_table +
-	    		 " (SELECT " + str(iter) + ", sum(lcounts) FROM local_word_topic_count " +
-			  " WHERE mytimestamp = " + str(iter) + ")")
+	    		 " (SELECT " + str(i) + ", sum(lcounts), '" + str(topic_counts) + "' FROM lda_local_word_topic_count" +
+	    		  " WHERE iternum = " + str(i) + ")")
 	    
 	    glwcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glwcounts " +
-	    		  	       "FROM " + model_table + " WHERE mytimestamp = " + str(iter))
+				       "FROM " + model_table + " WHERE iternum = " + str(i))
 	    glwcounts = glwcounts_t[0]['glwcounts']
 
-	    # -- Compute the denominator
-	    topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus" + str(new_table_id))
-	    topic_counts = topic_counts_t[0]['tc']
+	    # if (i % 5 == 0):
+	    #     plpy.info('  Done iteration %d' % i)
 
-	    if (iter % 5 == 0):
-	         plpy.info('  Done iteration %d' % iter)
-
-	# -- This store a copy of the corpus of documents to be analysed
+	# Copy the corpus of documents and their topic assignments to the output_data_table
 	plpy.execute("CREATE TABLE " + output_data_table + 
 	             "( id int4, contents int4[], topics MADLIB_SCHEMA.lda_topics_t ) ifdef(`GREENPLUM',`DISTRIBUTED RANDOMLY')")
 	plpy.execute("INSERT INTO " + output_data_table + " (SELECT * FROM corpus" + str(new_table_id) + ")")
 
-	# -- Clean up    
+	# Clean up    
 	plpy.execute("DROP TABLE corpus" + str(new_table_id))
-	plpy.execute("DROP TABLE local_word_topic_count")
-	plpy.execute("DELETE FROM " + model_table + " WHERE mytimestamp < " + str(num_iter))
+	plpy.execute("DROP TABLE lda_local_word_topic_count")
+	plpy.execute("DELETE FROM " + model_table + " WHERE iternum < " + str(num_iter))
 
-	return init_iter + num_iter   
+	return num_iter   
 
-def lda_topic_word_prob(num_topics, mytopic, ltimestamp, model_table, data_table, dict_table):
-       dsize_t = plpy.execute("SELECT array_upper(dict,1) dsize FROM " + dict_table)
-       dsize = dsize_t[0]['dsize']
+def lda_topic_word_prob(num_topics, topic, model_table, dict_table):
+	"""Returns the word-probability pairs for a given topic
 
-       glbcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glbcounts FROM " + model_table + 
-       		     		  " WHERE mytimestamp = " + str(ltimestamp))
-       if (glbcounts_t.nrows() == 0):
-       	   plpy.error("error: failed to find gcounts for time step %d" % ltimestamp)
-       glbcounts = glbcounts_t[0]['glbcounts']
+	@param num_topics  Number of topics to discover
+	@param topic       The topic to be processed
+	@param model_table The name of the table that stores the learned LDA model
+	@param dict_table  The name of the table/view containing the dictionary of words appearing in the corpus
+	"""
 
-       topic_sum_t = plpy.execute("SELECT sum((topics).topic_d) topic_sum FROM " + data_table)
-       if (topic_sum_t.nrows() == 0):
-       	   plpy.error("error: failed to compute topic_sum")
-       topic_sum = topic_sum_t[0]['topic_sum']
+	# Get dictionary size
+        dsize_t = plpy.execute("SELECT array_upper(dict,1) dsize FROM " + dict_table)
+        if (dsize_t.nrows() <> 1):
+             plpy.error("error: dictionary is not of the expected form")		
+        dsize = dsize_t[0]['dsize']
 
-       # -- Convert the strings into arrays
-       glbcounts = map(int, glbcounts[1:-1].split(','))
-       topic_sum = map(int, topic_sum[1:-1].split(','))
+	# Get word-topic counts and topic counts from model_table
+        counts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glbcounts, tcounts FROM " + model_table)
+        if (counts_t.nrows() <> 1):
+       	    plpy.error("error: model_table is not of the right form")
+        glbcounts = counts_t[0]['glbcounts']
+	topic_sum = counts_t[0]['tcounts']
 
-       ret = []
-       for i in range(0,dsize):
-       	   idx = i*num_topics + mytopic - 1
-       	   wcount = glbcounts[idx]
-	   if (wcount == 0):
-	       continue
-	   prob = wcount * 1.0 / topic_sum[mytopic - 1]
-	   word_t = plpy.execute("SELECT dict[" + str(i+1) + "] word FROM " + dict_table);
-	   word = word_t[0]['word']
-	   ret = ret + [(word,prob,wcount)]
+        # Convert the strings into arrays
+        glbcounts = map(int, glbcounts[1:-1].split(','))
+        topic_sum = map(int, topic_sum[1:-1].split(','))
 
-       return ret	  
+        # Compute the probability of each word and insert that into ret record
+        ret = []
+        for i in range(0,dsize):
+       	    idx = i*num_topics + topic - 1
+       	    wcount = glbcounts[idx]
+	    if (wcount == 0):
+	        continue
+	    prob = wcount * 1.0 / topic_sum[topic - 1]
+	    word_t = plpy.execute("SELECT dict[" + str(i+1) + "] word FROM " + dict_table);
+	    word = word_t[0]['word']
+	    ret = ret + [(word,prob,wcount)]
 
-def lda_label_test_documents(test_table, model_table, data_table, dict_table, ltimestep, num_topics, alpha, eta):
+        return ret	  
+
+def lda_label_test_documents(test_table, model_table, dict_table, num_topics, alpha, eta):
+	"""Computes probable topic assignments to a test corpus based on a learned LDA model
+
+	@param test_table  The name of the table/view that stores the test corpus
+	@param model_table The name of the table that stores the learned LDA model
+	@param dict_table  The name of the table/view containing the dictionary of words appearing in the corpus
+	@param num_topics  Number of topics to discover
+	@param alpha       The parameter of the topic Dirichlet prior
+	@param eta         The parameter of the Dirichlet prior on per-topic word distributions
+	"""
+
+	# Get dictionary size
 	dsize_t = plpy.execute("SELECT array_upper(dict,1) dictsize FROM " + dict_table)
+	if (dsize_t.nrows() <> 1):
+		plpy.error("error: dictionary is not of the expected form")
 	dsize = dsize_t[0]['dictsize']
 
-        # Get the word-topic counts
-	glwcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glwcounts FROM " 
-                                   + model_table + " WHERE mytimestamp = " + str(ltimestep))
-	if (glwcounts_t.nrows() == 0):
-	    plpy.error("error: gcounts for time step %d not found" % ltimestep)
-	glwcounts = glwcounts_t[0]['glwcounts']
-
-        # Get counts for each topic; this appears heavy, should be saved from lda_train() routine
-	topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM " + data_table)
-	if (topic_counts_t.nrows() == 0):
-	    plpy.error("error: failed to compute topic_counts")
-	topic_counts = topic_counts_t[0]['tc']
+	# Get word-topic counts and topic counts from model_table
+        counts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glbcounts, tcounts FROM " + model_table)
+        if (counts_t.nrows() <> 1):
+       	    plpy.error("error: model_table is not of the right form")
+        glbcounts = counts_t[0]['glbcounts']
+	topic_counts = counts_t[0]['tcounts']
 
         # Compute new topic assignments for each document
 	plpy.execute("UPDATE " + test_table 
                      + " SET topics = MADLIB_SCHEMA.lda_label_document(contents, '" 
-                                        + str(glwcounts) + "', '" + str(topic_counts) + "', " 
+                                        + str(glbcounts) + "', '" + str(topic_counts) + "', " 
                                         + str(num_topics) + ", " + str(dsize) + ", " 
                                         + str(alpha) + ", " + str(eta) + ")")
 
 def lda_run(datatable, dicttable, modeltable, outputdatatable, numiter, numtopics, alpha, eta):
-    restartstep = 0
-    plpy.execute("SELECT setseed(0.5)")
-        
-    plpy.info('Starting learning process')
-    plpy.execute("SELECT MADLIB_SCHEMA.lda_train(" + str(numtopics) + "," 
-                               + str(numiter) +"," + str(restartstep) + "," 
+	"""Calls LDA inference routine on a corpus of documents and then reports the most probable words for each topic
+
+	@param data_table  The name of the table/view containing the corpus to be analysed
+	@param dict_table  The name of the table/view containing the dictionary of words appearing in the corpus
+	@param model_table The name of the table to store the learned model (in the form of word-topic counts and total topic counts)
+	@param output_data_table The name of the table to store a copy of the data_table plus topic assignments to each document
+	@param num_iter    Number of Gibbs sampling iterations to run
+	@param num_topics  Number of topics to discover
+	@param alpha       The parameter of the topic Dirichlet prior
+	@param eta         The parameter of the Dirichlet prior on per-topic word distributions
+
+	"""
+
+	# plpy.info('Starting learning process')
+	plpy.execute("SELECT MADLIB_SCHEMA.lda_train(" + str(numtopics) + "," + str(numiter) +"," 
                                + str(alpha) + "," + str(eta) + ",'" + datatable + "', '" 
 			       + dicttable + "','" + modeltable + "','" + outputdatatable + "')")
 
-    # -- Print the most probable words in each topic
-    for i in range(1,numtopics+1):
-        rv = plpy.execute("select * from MADLIB_SCHEMA.lda_topic_word_prob(" 
-                                            + str(numtopics) + "," + str(i) + "," + str(numiter) 
-                                            + ", '" + modeltable + "', '" + outputdatatable + "', '" 
-                                            + dicttable + "') order by -prob limit 20")
-        plpy.info( 'Topic %d' % i)
-        for j in range(0,min(rv.nrows(),20)):
-            word = rv[j]['word']
-            prob = rv[j]['prob']
-            count = rv[j]['wcount']
-            plpy.info( ' %d) %s    %f  %d' % (j+1, word, prob, count))
+        # Print the most probable words in each topic
+	for i in range(1,numtopics+1):
+		rv = plpy.execute("select * from MADLIB_SCHEMA.lda_topic_word_prob(" 
+                                            + str(numtopics) + "," + str(i) + ",'" 
+                                            + modeltable + "', '" + dicttable + "') order by -prob limit 20")
+		plpy.info( 'Topic %d' % i)
+		for j in range(0,min(rv.nrows(),20)):
+			word = rv[j]['word']
+			prob = rv[j]['prob']
+			count = rv[j]['wcount']
+			plpy.info( ' %d) %s    %f  %d' % (j+1, word, prob, count))
