@@ -52,9 +52,9 @@ int main() {
 	cerr << "Please enter number of words per document required.\n";
 	cin >> numwords;
 
-	cout << "DROP TABLE IF EXISTS madlib.lda_mycorpus;\n";
-	cout << "CREATE TABLE madlib.lda_mycorpus ( id int4, contents int4[] ) DISTRIBUTED BY (id);\n";
-	cout << "INSERT INTO madlib.lda_mycorpus VALUES \n";
+	cout << "DROP TABLE IF EXISTS madlib.plda_mycorpus;\n";
+	cout << "CREATE TABLE madlib.plda_mycorpus ( id int4, contents int4[] ) DISTRIBUTED BY (id);\n";
+	cout << "INSERT INTO madlib.plda_mycorpus VALUES \n";
 	for (int i=0; i!=numdocs; i++) {
 		sampleTopicDistrn(ret);
 		// printTopicDistrn(ret);
@@ -75,9 +75,9 @@ int main() {
 	}
 
 	cout << endl << endl;
-	cout << "DROP TABLE IF EXISTS madlib.lda_mydict;\n";
-	cout << "CREATE TABLE madlib.lda_mydict ( dict text[] ) DISTRIBUTED RANDOMLY;\n";
-	cout << "insert into madlib.lda_mydict values \n";
+	cout << "DROP TABLE IF EXISTS madlib.plda_mydict;\n";
+	cout << "CREATE TABLE madlib.plda_mydict ( dict text[] ) DISTRIBUTED RANDOMLY;\n";
+	cout << "insert into madlib.plda_mydict values \n";
 	cout << " ('{";
 	for (int i=1; i!=maxword; i++)
 		cout << i << ",";
