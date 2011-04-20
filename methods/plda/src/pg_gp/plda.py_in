@@ -111,6 +111,113 @@ def plda_train(num_topics, num_iter, alpha, eta, data_table, dict_table, model_t
 
 	return num_iter   
 
+def plda_train_alternative(num_topics, num_iter, alpha, eta, data_table, dict_table, model_table, output_data_table): 
+	"""Performs LDA inference on a corpus of documents
+
+        This function is similar to plda_train() above, but is potentially more memory efficient
+        because it uses temp tables that do not contain a complete duplicate of the entire corpus.
+        The price we pay is that joins are required.
+
+	@param num_topics  Number of topics to discover
+	@param num_iter    Number of Gibbs sampling iterations to run
+	@param alpha       The parameter of the topic Dirichlet prior
+	@param eta         The parameter of the Dirichlet prior on per-topic word distributions
+	@param data_table  The name of the table/view containing the corpus to be analysed
+	@param dict_table  The name of the table/view containing the dictionary of words appearing in the corpus
+	@param model_table The name of the table to store the learned model (in the form of word-topic counts and total topic counts)
+	@param output_data_table The name of the table to store a copy of the data_table plus topic assignments to each document
+	"""
+
+	# Get dictionary size
+	dsize_t = plpy.execute("SELECT array_upper(dict,1) dsize FROM " + dict_table)
+	if (dsize_t.nrows() <> 1):
+	    plpy.error("error: dictionary table is not of the expected form")
+
+	dsize = dsize_t[0]['dsize']
+
+	if (dsize == 0):
+	    plpy.error("error: dictionary has not been initialised")
+
+	# Initialise global word-topic counts 
+	glwcounts_t = plpy.execute("SELECT MADLIB_SCHEMA.plda_zero_array(" + str(dsize*num_topics) + ") glwcounts")
+	glwcounts = glwcounts_t[0]['glwcounts']
+
+	# The temp table that stores the local word-topic counts computed at each segment 
+	plpy.execute("CREATE TEMP TABLE plda_local_word_topic_count ( id int4, iternum int4, lcounts int4[] ) " 
+		     m4_ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (iternum)"'))
+
+	# The temp table that stores the global word-topic counts	     
+	plpy.execute("CREATE TABLE " + model_table + " ( iternum int4, gcounts int4[], tcounts int4[] ) " 
+		     m4_ifdef(`GREENPLUM',`+ "DISTRIBUTED BY (iternum)"'))	     
+
+	# Copy training corpus into temp table
+	plpy.execute("CREATE TEMP TABLE corpus0" + " ( id int4, topics MADLIB_SCHEMA.plda_topics_t ) " 
+		     m4_ifdef(`GREENPLUM',`+ "WITH (appendonly=true, orientation=column, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
+
+	plpy.execute("INSERT INTO corpus0 " + 
+			"(SELECT id, MADLIB_SCHEMA.plda_random_topics(array_upper(contents,1)," + str(num_topics) + ")" +
+			 "FROM " + data_table + ")")
+
+	# Get topic counts				  
+	topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus0")
+	topic_counts = topic_counts_t[0]['tc']
+
+	for i in range(1,num_iter+1):
+	    # We alternate between temp tables corpus0 and corpus1, creating and dropping them as appropriate
+	    new_table_id = i % 2
+	    if (new_table_id == 0):
+	         old_table_id = 1
+	    else:
+		 old_table_id = 0	 
+
+	    plpy.execute("CREATE TEMP TABLE corpus" + str(new_table_id) + 
+	    	         " ( id int4, topics MADLIB_SCHEMA.plda_topics_t ) " 
+			 m4_ifdef(`GREENPLUM',`+ "WITH (appendonly=true, orientation=column, compresstype=quicklz) DISTRIBUTED RANDOMLY"'))
+
+	    # Sample new topics for each document, in parallel; the map step
+	    plpy.execute("INSERT INTO corpus" + str(new_table_id) 
+	    		 + " (SELECT c.id, MADLIB_SCHEMA.plda_sample_new_topics(contents,(topics).topics,(topics).topic_d,'" 
+			     	 	            + str(glwcounts) + "','" + str(topic_counts) + "'," + str(num_topics) 
+					            + "," + str(dsize) + "," + str(alpha) + "," + str(eta) + ") FROM corpus" + str(old_table_id) + " c, " + data_table + " d WHERE c.id = d.id)")
+
+	    plpy.execute("DROP TABLE corpus" + str(old_table_id)) 
+
+	    # Compute the denominator
+	    topic_counts_t = plpy.execute("SELECT sum((topics).topic_d) tc FROM corpus" + str(new_table_id))
+	    topic_counts = topic_counts_t[0]['tc']
+    
+	    # Compute the local word-topic counts in parallel; the map step
+	    plpy.execute("INSERT INTO plda_local_word_topic_count " +
+	    		 " (SELECT c.gp_segment_id, " + str(i) 
+			     	   + ", MADLIB_SCHEMA.plda_cword_agg(contents,(topics).topics,array_upper((topics).topics,1)," 
+				   + str(num_topics) + "," + str(dsize) + ") FROM corpus" + str(new_table_id) + " c, " + data_table + " d WHERE c.id = d.id " +
+			    " GROUP BY c.gp_segment_id)")  
+
+	    # Compute the global word-topic counts; the reduce step; 
+	    # we store result in model_table because array manipulation in plpython is painful
+	    plpy.execute("INSERT INTO " + model_table +
+	    		 " (SELECT " + str(i) + ", sum(lcounts), '" + str(topic_counts) + "' FROM plda_local_word_topic_count" +
+	    		  " WHERE iternum = " + str(i) + ")")
+	    
+	    glwcounts_t = plpy.execute("SELECT gcounts[1:" + str(dsize*num_topics) + "] glwcounts " +
+				       "FROM " + model_table + " WHERE iternum = " + str(i))
+	    glwcounts = glwcounts_t[0]['glwcounts']
+
+	    # if (i % 5 == 0):
+	    #     plpy.info('  Done iteration %d' % i)
+
+	# Copy the corpus of documents and their topic assignments to the output_data_table
+	plpy.execute("CREATE TABLE " + output_data_table + 
+	             "( id int4, contents int4[], topics MADLIB_SCHEMA.plda_topics_t ) m4_ifdef(`GREENPLUM',`DISTRIBUTED RANDOMLY')")
+	plpy.execute("INSERT INTO " + output_data_table + " (SELECT c.id, contents, topics FROM corpus" + str(new_table_id) + " c," + data_table + " d WHERE c.id = d.id)")
+
+	# Clean up    
+	plpy.execute("DROP TABLE corpus" + str(new_table_id))
+	plpy.execute("DROP TABLE plda_local_word_topic_count")
+	plpy.execute("DELETE FROM " + model_table + " WHERE iternum < " + str(num_iter))
+
+	return num_iter   
+
 def plda_topic_word_prob(num_topics, topic, model_table, dict_table):
 	"""Returns the word-probability pairs for a given topic
 
