@@ -73,18 +73,18 @@ This is the main learning function.
    prior, and eta is the parameter to the Dirichlet prior on the per-topic word distributions.
 -# Labelling of test documents using a learned LDA model is achieved using the following UDF
    \code
-   plda_label_test_documents(testtable text, modeltable text, dicttable text,
+   plda_label_test_documents(testtable text, outputtable text, modeltable text, dicttable text,
                              numtopics int, alpha float, eta float),
    \endcode
-   where testtable 
-
-There is another function that will allow users to predict the labels of new documents using
-the LDA model learned from a training corpus. This function, implemented as 
-MADLIB_SCHEMA.plda_label_test_documents() in plda.sql, is still subject to further testing and is to 
-be used with caution for now.
+   where testtable is the table containing the test corpus (mandatory columns are id int and contents int[]),
+   outputtable is the name of the table to store the results,
+   modeltable is the name of the table containing the learned LDA model,
+   dicttable is the table containing the dictionary (mandatory column is dict text[]),
+   numtopics is the number of topics, 
+   and alpha and eta are the parameters of Dirichlet prior on topic distributions and per-topic 
+   word distributions.
 
 @examp
-\section example Example
 
 We now give a usage example.
 
@@ -102,50 +102,68 @@ We now give a usage example.
    );
    \endcode
    Words must be represented using positive numbers.
-   The module comes with some randomly generated data. For example, we can import two
-   test tables MADLIB_SCHEMA.plda_mycorpus and MADLIB_SCHEMA.plda_mydict using the command
+   The module comes with some randomly generated data. 
+   For example, we can use these two tables.
    \code
-   psql database_name -f importTestcases.sql
+   CREATE TABLE MADLIB_SCHEMA.plda_mydict ( dict text[] ) DISTRIBUTED RANDOMLY;
+   INSERT into MADLIB_SCHEMA.plda_mydict values
+     ('{human,machine,interface,for,abc,computer,applications,a,survey,of,
+       user,opinion,system,response,time,the,eps,management,and,engineering,
+       testing,relation,perceived,to,error,generation,random,binary,order,tree,
+       intersection,graph,path,in,minor,IV,widths,well,quasi}');
+
+   CREATE TABLE MADLIB_SCHEMA.plda_mycorpus ( id int4, contents int4[] );
+   INSERT INTO MADLIB_SCHEMA.plda_mycorpus VALUES 
+     (1, '{1,2,3,4,5,6,7}'), 
+     (2, '{8,9,10,11,12,10,6,13,14,15}'),
+     (3, '{16,17,11,3,18,13}'),
+     (4, '{13,19,1,13,20,21,10,17}'),
+     (5, '{22,10,11,23,14,15,24,25,18}'),
+     (6, '{16,26,10,27,28,29,30}'),
+     (7, '{16,31,32,10,33,34,30}'),
+     (8, '{32,35,36,37,10,30,19,38,39,29}'),
+     (9, '{32,35,8,9}') ;
    \endcode     
--# To run the program, we need to call the plda_run() function with the appropriate parameters. 
-   The file plda_test.sql contains an example of a call sequence. After making the 
-   necessary changes to the desired parameters for plda_run(), we can kick-start the 
-   inference process by running the following:
+-# To perform inference, we call the plda_run() function with the appropriate parameters. 
+   Here is an example.
    \code
-   psql database_name -f plda_test.sql
+   select MADLIB_SCHEMA.plda_run('MADLIB_SCHEMA.plda_mycorpus', 'MADLIB_SCHEMA.plda_mydict', 
+   	  			 'MADLIB_SCHEMA.plda_mymodel', 'MADLIB_SCHEMA.plda_corpus', 
+				 30,10,0.5,0.5);
    \endcode
+   After a successful run of the plda_run() function, the most probable words associated 
+   with each topic are displayed. Other results of the learning process can be obtained 
+   by running the following commands. Here we assume the modeltable and outputdatatable 
+   parameters to plda_run() are 'MADLIB_SCHEMA.plda_mymodel' and 'MADLIB_SCHEMA.plda_corpus' respectively.
+   -# The topic assignments for each document can be obtained as follows:
+      \code
+      select id, (topics).topics from MADLIB_SCHEMA.plda_corpus;
+      \endcode
+   -# The topic distribution of each document can be obtained as follows:
+      \code
+      select id, (topics).topic_d from MADLIB_SCHEMA.plda_corpus;
+      \endcode
+   -# The number of times each word was assigned to a given topic in the whole corpus can 
+      be computed as follows:
+      \code
+      select ss.i, MADLIB_SCHEMA.plda_word_topic_distrn(gcounts,$numtopics,ss.i) 
+      from MADLIB_SCHEMA.plda_mymodel, 
+           (select generate_series(1,$dictsize) i) as ss;
+      \endcode
+      where $numtopics is the number of topics used in the learning process, and 
+      $dictsize is the size of the dictionary.
+   -# The total number of words assigned to each topic in the whole corpus can be computed 
+      as follows:
+      \code
+      select sum((topics).topic_d) topic_sums from MADLIB_SCHEMA.plda_corpus;
+      \endcode
+-# To use a learned LDA model to label new documents, we can use the following commands:
+   \code
+   select MAD_SCHEMA.plda_label_test_documents('MADLIB_SCHEMA.plda_mycorpus', 'MADLIB_SCHEMA.plda_testresult', 'MADLIB_SCHEMA.plda_mymodel', 'MADLIB_SCHEMA.plda_mydict', 10,0.5,0.5);
+   select * from MADLIB_SCHEMA.plda_testresult;
+   \code
 
-After a successful run of the plda_run() function, the most probable words associated 
-with each topic are displayed. Other results of the learning process can be obtained 
-by running the following commands inside the Greenplum Database. Here we assume
-the modeltable and outputdatatable parameters to plda_run() are 'MADLIB_SCHEMA.plda_mymodel'
-and 'MADLIB_SCHEMA.plda_corpus' respectively.
-
--# The topic assignments for each document can be obtained as follows:
-   \code
-   select id, (topics).topics from MADLIB_SCHEMA.plda_corpus;
-   \endcode
--# The topic distribution of each document can be obtained as follows:
-   \code
-   select id, (topics).topic_d from MADLIB_SCHEMA.plda_corpus;
-   \endcode
--# The number of times each word was assigned to a given topic in the whole corpus can 
-   be computed as follows:
-   \code
-   select ss.i, MADLIB_SCHEMA.plda_word_topic_distrn(gcounts,$numtopics,ss.i) 
-   from MADLIB_SCHEMA.plda_mymodel, 
-        (select generate_series(1,$dictsize) i) as ss;
-   \endcode
-   where $numtopics is the number of topics used in the learning process, and 
-   $dictsize is the size of the dictionary.
--# The total number of words assigned to each topic in the whole corpus can be computed 
-   as follows:
-   \code
-   select sum((topics).topic_d) topic_sums from MADLIB_SCHEMA.plda_corpus;
-   \endcode
-
-\section notes Additional Notes
-
+Additional Notes:
 The input format for the Parallel LDA module is different from that used by the 
 `lda' package for R. In the `lda' package, each document is represented by two
 equal dimensional integer arrays. The first array represents the words that occur
@@ -162,8 +180,7 @@ simple test documents to validate the correctness and effiency of the parallel
 LDA implementation.
 
 This module is not yet in the main MADlib repository. It currently sits in the 
-madlib/contrib directory and will be moved into the main madlib directory over
-time.
+madlib/contrib directory and will be moved into the main madlib directory over time.
  
 @literature
 \section literature Literature
@@ -184,8 +201,6 @@ Here are some relevant references.
 [5] J. Chang, Collapsed Gibbs sampling methods for topic models, R manual, 2010.
 
 */
-
--- \i plda_drop.sql
 
 -- The plda_topics_t data type store the assignment of topics to each word in a document,
 -- plus the distribution of those topics in the document.
@@ -268,7 +283,7 @@ $$ LANGUAGE plpythonu;
 CREATE TYPE MADLIB_SCHEMA.plda_word_distrn AS ( word text, distrn int4[], prob float8[] );
 
 -- This function computes the topic assignments to words in a document given previously computed
--- statistics from the training corpus. This function and the next are still being tested.
+-- statistics from the training corpus. 
 -- This function has not been rewritten in PL/Python because it is hard to handle structured types
 -- like MADLIB_SCHEMA.plda_topics_t in PL/Python (this has to be done via conversion to text, which is not nice).
 CREATE OR REPLACE FUNCTION 
