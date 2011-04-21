@@ -4,15 +4,16 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#include <madlib/ports/postgres/compatibility.hpp>
 #include <madlib/ports/postgres/AbstractPGValue.hpp>
 #include <madlib/ports/postgres/PGArrayHandle.hpp>
 #include <madlib/ports/postgres/PGValue.hpp>
 
 extern "C" {
-    #include "catalog/pg_type.h"
-    #include "utils/array.h"
-    #include "utils/typcache.h"
-    #include "utils/lsyscache.h"
+    #include <catalog/pg_type.h>
+    #include <utils/array.h>
+    #include <utils/typcache.h>
+    #include <utils/lsyscache.h>
 }
 
 namespace madlib {

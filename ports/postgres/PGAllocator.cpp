@@ -1,3 +1,4 @@
+#include <madlib/ports/postgres/compatibility.hpp>
 #include <madlib/ports/postgres/PGAllocator.hpp>
 #include <madlib/ports/postgres/PGArrayHandle.hpp>
 #include <madlib/ports/postgres/PGInterface.hpp>

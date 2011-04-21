@@ -6,6 +6,7 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#include <madlib/ports/postgres/compatibility.hpp>
 #include <madlib/ports/postgres/PGValue.hpp>
 
 #include <stdexcept>
@@ -44,9 +45,7 @@ AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) con
     // in-place. In all other cases, directly modifying memory is dangerous.
     // See warning at:
     // http://www.postgresql.org/docs/current/static/xfunc-c.html#XFUNC-C-BASETYPE
-    bool writable = inID == 0 && fcinfo->context &&
-            (IsA(fcinfo->context, AggState) ||
-             IsA(fcinfo->context, WindowAggState));
+    bool writable = (inID == 0 && AggCheckCallContext(fcinfo, NULL));
 
     AbstractValueSPtr value = DatumToValue(writable, typeID, PG_GETARG_DATUM(inID));
     if (!value)
