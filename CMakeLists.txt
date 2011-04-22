@@ -83,10 +83,12 @@ include_directories(${Boost_INCLUDE_DIRS})
 # @loader_path is the Mac OS X equivalent to $ORIGIN.
 # For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
 # (and not ${MAD_THIRD_PARTY}/lib64), even if building on a 64-bit architecture
+# Note: INSTALL_LIB_DIR was previously LIB_INSTALL_DIR in Armadillo. We might
+# want to anticipate further changes...
 set(ARMADILLO_CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=../..
     -DCMAKE_INSTALL_NAME_DIR=@rpath
-    -DLIB_INSTALL_DIR=lib
+    -DINSTALL_LIB_DIR=lib
 )
 
 # On a Mac, find out the architectures in the Accelerate Framework.
