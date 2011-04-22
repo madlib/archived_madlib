@@ -6,6 +6,7 @@
 #
 # This module sets the following variables:
 #  POSTGRESQL_FOUND - set to true if headers and binary were found
+#  POSTGRESQL_BASE_DIR - Greenplum base directory
 #  POSTGRESQL_INCLUDE_DIR - list of include directories
 #  POSTGRESQL_EXECUTABLE - path to postgres binary
 #  POSTGRESQL_VERSION_MAJOR - major version number
@@ -17,6 +18,11 @@
 #
 # Distributed under the BSD-License.
 
+# According to
+# http://www.cmake.org/cmake/help/cmake2.6docs.html#variable:CMAKE_VERSION
+# variable CMAKE_VERSION is only defined starting 2.6.3. And doing simple versin
+# checks is the least we require...
+cmake_minimum_required(VERSION 2.6.3)
 
 find_path(POSTGRESQL_INCLUDE_DIR
 	NAMES server/postgres.h server/fmgr.h
@@ -37,6 +43,12 @@ find_program(POSTGRESQL_EXECUTABLE
 )
 
 if(POSTGRESQL_INCLUDE_DIR)
+    # Unfortunately, the regex engine of CMake is rather primitive.
+    # It treats the following the same as "^(.*)/[^/]*$"
+    string(REGEX REPLACE "^(.*)/([^/]|\\/)*$" "\\1" POSTGRESQL_BASE_DIR ${POSTGRESQL_INCLUDE_DIR})
+
+    set(POSTGRESQL_FOUND "YES")
+
 	set(POSTGRESQL_VERSION_MAJOR 0)
 	set(POSTGRESQL_VERSION_MINOR 0)
 	set(POSTGRESQL_VERSION_PATCH 0)
@@ -51,9 +63,17 @@ if(POSTGRESQL_INCLUDE_DIR)
 	endif(EXISTS "${POSTGRESQL_INCLUDE_DIR}/pg_config.h")
 endif(POSTGRESQL_INCLUDE_DIR)
 
+# find_package_handle_standard_args has VERSION_VAR argument onl since version 2.8.4
+if(${CMAKE_VERSION} VERSION_LESS "2.8.4")
+    set(VERSION_VAR "")
+endif()
+
 # Checks 'RECQUIRED', 'QUIET' and versions.
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(PostgreSQL
 	REQUIRED_VARS POSTGRESQL_INCLUDE_DIR POSTGRESQL_EXECUTABLE
 	VERSION_VAR POSTGRESQL_VERSION_STRING)
 
+if(${CMAKE_VERSION} VERSION_LESS "2.8.4")
+    unset(VERSION_VAR)
+endif()

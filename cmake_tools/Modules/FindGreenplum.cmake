@@ -18,6 +18,11 @@
 #
 # Distributed under the BSD-License.
 
+# According to
+# http://www.cmake.org/cmake/help/cmake2.6docs.html#variable:CMAKE_VERSION
+# variable CMAKE_VERSION is only defined starting 2.6.3. And doing simple versin
+# checks is the least we require...
+cmake_minimum_required(VERSION 2.6.3)
 
 # Note: HINTS get looked at before PATHS, see find_program documentation
 find_path(GREENPLUM_INCLUDE_DIR
@@ -46,6 +51,8 @@ endif(NOT EXISTS ${GREENPLUM_EXECUTABLE})
 #)
 
 if(GREENPLUM_INCLUDE_DIR)
+    set(GREENPLUM_FOUND, "YES")
+
 	set(GREENPLUM_VERSION_MAJOR 0)
 	set(GREENPLUM_VERSION_MINOR 0)
 	set(GREENPLUM_VERSION_PATCH 0)
@@ -63,8 +70,17 @@ endif(GREENPLUM_INCLUDE_DIR)
 # server/funcapi.h ultimately includes server/access/xact.h, from which cdb/cdbpathlocus.h is included
 list(APPEND GREENPLUM_INCLUDE_DIR ${GREENPLUM_INTERNAL_INCLUDE_DIR})
 
+# find_package_handle_standard_args has VERSION_VAR argument onl since version 2.8.4
+if(${CMAKE_VERSION} VERSION_LESS "2.8.4")
+    set(VERSION_VAR "")
+endif()
+
 # Checks 'RECQUIRED', 'QUIET' and versions.
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Greenplum
 	REQUIRED_VARS GREENPLUM_INCLUDE_DIR GREENPLUM_EXECUTABLE
 	VERSION_VAR GREENPLUM_VERSION_STRING)
+
+if(${CMAKE_VERSION} VERSION_LESS "2.8.4")
+    unset(VERSION_VAR)
+endif()
