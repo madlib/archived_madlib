@@ -26,6 +26,7 @@ if(POSTGRESQL_FOUND)
         MODULE
         ${MAD_SOURCES}
     )
+    add_dependencies(madlib_postgres EP_armadillo)
 
     set_target_properties(madlib_postgres
         PROPERTIES PREFIX "")
@@ -34,9 +35,22 @@ if(POSTGRESQL_FOUND)
         set_target_properties(madlib_postgres
             PROPERTIES LINK_FLAGS "-bundle_loader ${POSTGRESQL_EXECUTABLE}")
         osx_archs(${POSTGRESQL_EXECUTABLE} MAD_ARCHITECTURES)
+        message(STATUS ${POSTGRESQL_EXECUTABLE} " has architectures " ${MAD_ARCHITECTURES})
         set_target_properties(madlib_postgres
             PROPERTIES OSX_ARCHITECTURES ${MAD_ARCHITECTURES})
+        
+        # On the Mac, the Accelerate is already an umbrella for everything
+        # we need for Armadillo
         target_link_libraries(madlib_postgres "-framework Accelerate")
+    else(APPLE)
+        # On other platforms, we link to the armadillo library
+        target_link_libraries(madlib_postgres armadillo)
+        
+        # the RPATH to be used when installing. This is set to "$ORIGIN" because
+        # the armadillo library will reside in the same directory as the MADlib
+        # library
+        set_target_properties(madlib_postgres
+            PROPERTIES INSTALL_RPATH "\$ORIGIN")
     endif(APPLE)
 else(POSTGRESQL_FOUND)
     message(STATUS "***")
