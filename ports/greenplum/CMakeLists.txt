@@ -57,7 +57,8 @@ if(GREENPLUM_FOUND)
     add_dependencies(madlib_greenplum EP_armadillo)
 
     set_target_properties(madlib_greenplum
-        PROPERTIES PREFIX "")
+        PROPERTIES PREFIX ""
+        OUTPUT_NAME madlib)
 
     if(APPLE)
         set_target_properties(madlib_greenplum

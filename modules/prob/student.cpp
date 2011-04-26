@@ -57,7 +57,9 @@
 
 #include <madlib/modules/prob/student.hpp>
 
-#include <cmath>
+// The error function is in C99 and TR1, but not in the official C++ Standard
+// (before C++0x). We therefore use the Boost implementation
+#include <boost/math/special_functions/erf.hpp>
 
 
 namespace madlib {
@@ -184,7 +186,7 @@ double studentT_cdf(int64_t nu, double t) {
 
 static inline double normal_cdf(double t)
 {
-	return .5 + .5 * std::tr1::erf(t / std::sqrt(2.));
+	return .5 + .5 * boost::math::erf(t / std::sqrt(2.));
 }
 
 
