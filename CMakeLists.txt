@@ -34,12 +34,13 @@ set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
 # try this at home.
 # ==============================================================================
 
-# According to
-# http://www.cmake.org/cmake/help/cmake2.6docs.html#variable:CMAKE_VERSION
-# variable CMAKE_VERSION is only defined starting 2.6.3. And doing simple
-# version checks is the least we require... Also, Armadillo needs 2.6, so our
-# requirement should not be too limiting.
-cmake_minimum_required(VERSION 2.6.3)
+# Since Armadillo is not yet a widely available package on Linux distros, we
+# want to build it along with MADlib. For that we rely on
+# ExternalProject_Add, which requires CMake 2.8.
+# http://www.kitware.com/news/home/browse/252
+cmake_minimum_required(VERSION 2.8)
+
+include (ExternalProject)
 
 # Set the directory for tools needed during build time
 set(MAD_BUILD_TOOLS ${CMAKE_SOURCE_DIR}/cmake_tools)
