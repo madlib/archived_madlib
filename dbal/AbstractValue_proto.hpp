@@ -8,6 +8,8 @@ class AbstractValue {
     friend class AnyValue;
 
 public:
+    virtual ~AbstractValue() { }
+
     virtual unsigned int size() const {
         return 1;
     }

@@ -29,31 +29,31 @@
 
 #ifndef NO_PROB
     #include <madlib/modules/prob/student.hpp>
-    DECLARE_UDF(prob, student_t_cdf);
+    DECLARE_UDF(prob, student_t_cdf)
 #endif
 
 #ifndef NO_REGRESS
     #include <madlib/modules/regress/linear.hpp>
-    DECLARE_UDF_EXT(linreg_trans, regress, LinearRegression::transition);
-    DECLARE_UDF_EXT(linreg_prelim, regress, LinearRegression::preliminary);
+    DECLARE_UDF_EXT(linreg_trans, regress, LinearRegression::transition)
+    DECLARE_UDF_EXT(linreg_prelim, regress, LinearRegression::preliminary)
     
-    DECLARE_UDF_EXT(linreg_coef_final, regress, LinearRegression::coefFinal);
-    DECLARE_UDF_EXT(linreg_r2_final, regress, LinearRegression::RSquareFinal);
-    DECLARE_UDF_EXT(linreg_tstats_final, regress, LinearRegression::tStatsFinal);
-    DECLARE_UDF_EXT(linreg_pvalues_final, regress, LinearRegression::pValuesFinal);
+    DECLARE_UDF_EXT(linreg_coef_final, regress, LinearRegression::coefFinal)
+    DECLARE_UDF_EXT(linreg_r2_final, regress, LinearRegression::RSquareFinal)
+    DECLARE_UDF_EXT(linreg_tstats_final, regress, LinearRegression::tStatsFinal)
+    DECLARE_UDF_EXT(linreg_pvalues_final, regress, LinearRegression::pValuesFinal)
         
     #include <madlib/modules/regress/logistic.hpp>
-    DECLARE_UDF_EXT(logreg_cg_step_trans, regress, LogisticRegressionCG::transition);
-    DECLARE_UDF_EXT(logreg_cg_step_prelim, regress, LogisticRegressionCG::preliminary);
-    DECLARE_UDF_EXT(logreg_cg_step_final, regress, LogisticRegressionCG::final);
-    DECLARE_UDF_EXT(_logreg_cg_step_distance, regress, LogisticRegressionCG::distance);
-    DECLARE_UDF_EXT(_logreg_cg_coef, regress, LogisticRegressionCG::coef);
+    DECLARE_UDF_EXT(logreg_cg_step_trans, regress, LogisticRegressionCG::transition)
+    DECLARE_UDF_EXT(logreg_cg_step_prelim, regress, LogisticRegressionCG::preliminary)
+    DECLARE_UDF_EXT(logreg_cg_step_final, regress, LogisticRegressionCG::final)
+    DECLARE_UDF_EXT(_logreg_cg_step_distance, regress, LogisticRegressionCG::distance)
+    DECLARE_UDF_EXT(_logreg_cg_coef, regress, LogisticRegressionCG::coef)
 
-    DECLARE_UDF_EXT(logreg_irls_step_trans, regress, LogisticRegressionIRLS::transition);
-    DECLARE_UDF_EXT(logreg_irls_step_prelim, regress, LogisticRegressionIRLS::preliminary);
-    DECLARE_UDF_EXT(logreg_irls_step_final, regress, LogisticRegressionIRLS::final);
-    DECLARE_UDF_EXT(_logreg_irls_step_distance, regress, LogisticRegressionIRLS::distance);
-    DECLARE_UDF_EXT(_logreg_irls_coef, regress, LogisticRegressionIRLS::coef);
+    DECLARE_UDF_EXT(logreg_irls_step_trans, regress, LogisticRegressionIRLS::transition)
+    DECLARE_UDF_EXT(logreg_irls_step_prelim, regress, LogisticRegressionIRLS::preliminary)
+    DECLARE_UDF_EXT(logreg_irls_step_final, regress, LogisticRegressionIRLS::final)
+    DECLARE_UDF_EXT(_logreg_irls_step_distance, regress, LogisticRegressionIRLS::distance)
+    DECLARE_UDF_EXT(_logreg_irls_coef, regress, LogisticRegressionIRLS::coef)
 #endif
 
 #endif

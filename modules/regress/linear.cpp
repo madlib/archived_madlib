@@ -8,12 +8,15 @@
 
 #include <madlib/modules/regress/linear.hpp>
 #include <madlib/modules/prob/student.hpp>
+#include <madlib/utils/Reference.hpp>
 
 // Import names from Armadillo
 using arma::mat;
 using arma::as_scalar;
 
 namespace madlib {
+
+using utils::Reference;
 
 namespace modules {
 
@@ -43,12 +46,16 @@ public:
      */
     TransitionState(AnyValue inArg)
         : mStorage(inArg.copyIfImmutable()),
+          numRows(&mStorage[0]),
+          widthOfX(&mStorage[1]),
+          y_sum(&mStorage[2]),
+          y_square_sum(&mStorage[3]),
           X_transp_Y(
             TransparentHandle::create(&mStorage[4]),
-            widthOfX()),
+            widthOfX),
           X_transp_X(
-            TransparentHandle::create(&mStorage[4] + static_cast<uint32_t>(widthOfX())),
-            widthOfX(), widthOfX()) { }
+            TransparentHandle::create(&mStorage[4 + widthOfX]),
+            widthOfX, widthOfX) { }
 
     /**
      * We define this function so that we can use TransitionState in the argument
@@ -65,10 +72,10 @@ public:
         const uint16_t inWidthOfX) {
         
         mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
-        numRows() = 0;
-        widthOfX() = inWidthOfX;
-        y_sum() = 0;
-        y_square_sum() = 0;
+        numRows.rebind(&mStorage[0]) = 0;
+        widthOfX.rebind(&mStorage[1]) = inWidthOfX;
+        y_sum.rebind(&mStorage[2]) = 0;
+        y_square_sum.rebind(&mStorage[3]) = 0;
         X_transp_Y.rebind(
             TransparentHandle::create(&mStorage[4]),
             inWidthOfX);
@@ -87,22 +94,10 @@ public:
         for (uint32_t i = 0; i < mStorage.size(); i++)
             mStorage[i] += inOtherState.mStorage[i];
         
-        widthOfX() = inOtherState.widthOfX();
+        widthOfX = inOtherState.widthOfX;
         return *this;
     }
-    
-    inline double &numRows() { return mStorage[0]; }
-    inline double numRows() const { return mStorage[0]; }
-
-    inline double &widthOfX() { return mStorage[1]; }
-    inline double widthOfX() const { return mStorage[1]; }
-
-    inline double &y_sum() { return mStorage[2]; }
-    inline double y_sum() const { return mStorage[2]; }
-    
-    inline double &y_square_sum() { return mStorage[3]; }
-    inline double y_square_sum() const { return mStorage[3]; }
-    
+        
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
         return 4 + inWidthOfX + inWidthOfX * inWidthOfX;
@@ -111,6 +106,10 @@ private:
     Array<double> mStorage;
 
 public:
+    Reference<double, uint64_t> numRows;
+    Reference<double, uint16_t> widthOfX;
+    Reference<double> y_sum;
+    Reference<double> y_square_sum;
     DoubleCol X_transp_Y;
     DoubleMat X_transp_X;
 };
@@ -162,11 +161,11 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
     DoubleRow_const x = *arg++;
     
     // Now do the transition step.
-    if (state.numRows() == 0)
+    if (state.numRows == 0)
         state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
-    state.numRows()++;
-    state.y_sum() += y;
-    state.y_square_sum() += y * y;
+    state.numRows++;
+    state.y_sum += y;
+    state.y_square_sum += y * y;
     state.X_transp_Y += trans(x) * y;
     state.X_transp_X += trans(x) * x;
         
@@ -196,7 +195,7 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
 
     // Vector of coefficients: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    DoubleCol coef(db.allocator(), state.widthOfX());
+    DoubleCol coef(db.allocator(), state.widthOfX);
     coef = pinv(state.X_transp_X) * state.X_transp_Y;
     if (what == kCoef)
         return coef;
@@ -205,39 +204,39 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
     double ess
         = as_scalar(
             trans(state.X_transp_Y) * coef
-            - ((state.y_sum() * state.y_sum()) / state.numRows())
+            - ((state.y_sum * state.y_sum) / state.numRows)
           );
 
     // coefficient of determination
     if (what == kRSquare) {
         // total sum of squares
         double tss
-            = state.y_square_sum()
-                - ((state.y_sum() * state.y_sum()) / state.numRows());
+            = state.y_square_sum
+                - ((state.y_sum * state.y_sum) / state.numRows);
     
         return ess / tss;
     }
 
     // Variance is also called the mean square error
-	double variance = ess / (state.numRows() - state.widthOfX());
+	double variance = ess / (state.numRows - state.widthOfX);
 
     // Precompute (X^T * X)^{-1}
     mat inverse_of_X_transp_X = inv(state.X_transp_X);
     
     // Vector of t-statistics: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    DoubleCol tStats(db.allocator(), state.widthOfX());
-    for (int i = 0; i < state.widthOfX(); i++)
+    DoubleCol tStats(db.allocator(), state.widthOfX);
+    for (int i = 0; i < state.widthOfX; i++)
         tStats(i) = coef(i) / std::sqrt( variance * inverse_of_X_transp_X(i,i) );
     if (what == kTStats)
         return tStats;
     
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    DoubleCol pValues(db.allocator(), state.widthOfX());
-    for (int i = 0; i < state.widthOfX(); i++)
+    DoubleCol pValues(db.allocator(), state.widthOfX);
+    for (int i = 0; i < state.widthOfX; i++)
         pValues(i) = 2. * (1. - studentT_cdf(
-                                    state.numRows() - state.widthOfX(),
+                                    state.numRows - state.widthOfX,
                                     std::fabs( tStats(i) )));
     return pValues;
 }

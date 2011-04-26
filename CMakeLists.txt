@@ -20,6 +20,10 @@ set(SRC_regress
 	logistic.cpp
 )
 
+
+set(BOOST_TAR_VERSION "1_46_1")
+set(BOOST_TAR_MD5 341e5d993b19d099bf1a548495ea91ec)
+
 # If Armadillo is not present on the system, this is the version we will download
 # automatically. It is also possible to specify the path to the Armadillo tarball:
 # -DARMADILLO_TAR_SOURCE=/path/to/armadillo-x.x.x.tar.gz
@@ -78,15 +82,44 @@ endmacro(osx_archs)
 
 include_directories(${CMAKE_SOURCE_DIR}/..)
 
-find_package(Boost REQUIRED)
+find_package(Boost 1.34)
 include_directories(${Boost_INCLUDE_DIRS})
+
+if(NOT Boost_FOUND)
+    message(STATUS "No sufficiently recent version (>= 1.34) of Boost was found. Will download.")
+
+    set(BOOST_TAR "boost_${BOOST_TAR_VERSION}.tar.gz")
+    set(BOOST_URL "http://downloads.sourceforge.net/project/boost/${BOOST_TAR}")
+
+    if(NOT BOOST_TAR_SOURCE)
+        find_file(BOOST_TAR_SOURCE ${BOOST_TAR}
+            PATHS ${MAD_THIRD_PARTY}/downloads)
+    endif(NOT BOOST_TAR_SOURCE)
+
+    ExternalProject_Add(EP_boost
+        PREFIX ${MAD_THIRD_PARTY}
+#        LIST_SEPARATOR ${EXTERNALPROJECT_LIST_SEPARATOR}
+        DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
+        URL ${BOOST_TAR_SOURCE}
+        URL_MD5 ${BOOST_TAR_MD5}
+        CMAKE_COMMAND /usr/bin/env echo Ignored: cmake
+        BUILD_COMMAND /usr/bin/env echo Ignored: make
+        INSTALL_COMMAND /usr/bin/env echo Ignored: make
+        BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_boost
+    )
+    list(APPEND ARMADILLO_DEPENDS
+        EP_boost)
+    list(APPEND ARMADILLO_CMAKE_ARGS
+        -DCMAKE_INCLUDE_PATH=${MAD_THIRD_PARTY}/src/EP_boost)
+    include_directories(${MAD_THIRD_PARTY}/src/EP_boost)
+endif(NOT Boost_FOUND)
 
 # @loader_path is the Mac OS X equivalent to $ORIGIN.
 # For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
 # (and not ${MAD_THIRD_PARTY}/lib64), even if building on a 64-bit architecture
 # Note: INSTALL_LIB_DIR was previously LIB_INSTALL_DIR in Armadillo. We might
 # want to anticipate further changes...
-set(ARMADILLO_CMAKE_ARGS
+list(APPEND ARMADILLO_CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=../..
     -DCMAKE_INSTALL_NAME_DIR=@rpath
     -DINSTALL_LIB_DIR=lib
@@ -126,8 +159,8 @@ if(NOT ARMADILLO_TAR_SOURCE)
 endif (NOT ARMADILLO_TAR_SOURCE)
 
 #    message(STATUS "Building with ${ARMADILLO_CMAKE_ARGS}")
-include (ExternalProject)
 ExternalProject_Add(EP_armadillo
+    DEPENDS ${ARMADILLO_DEPENDS}
     PREFIX ${MAD_THIRD_PARTY}
     LIST_SEPARATOR ${EXTERNALPROJECT_LIST_SEPARATOR}
     DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
@@ -161,9 +194,9 @@ message(STATUS ${ARMADILLO_LIBRARY})
 # message(STATUS "ARMA_USE_LAPACK: ${ARMA_USE_LAPACK}")
 
 # FIXME: The following should probably only be set for gcc
-set( CMAKE_CXX_FLAGS "-Wall -Wno-div-by-zero" CACHE STRING
-    "Flags used by the C++ compiler during builds."
-    FORCE )
+# set( CMAKE_CXX_FLAGS "-Wall -Wno-div-by-zero" CACHE STRING
+#    "Flags used by the C++ compiler during builds."
+#    FORCE )
 
 
 # Add Ports

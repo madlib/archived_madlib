@@ -8,6 +8,8 @@ class AbstractAllocator {
 public:
     enum Context { kFunction, kAggregate };
 
+    virtual ~AbstractAllocator() { }
+
     virtual MemHandleSPtr allocateArray(uint32_t inNumElements,
         double * = NULL /* ignored */) const = 0;
     
