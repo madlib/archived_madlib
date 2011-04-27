@@ -8,12 +8,13 @@ override CFLAGS+=-std=gnu99
 SparseData.o : SparseData.c SparseData.h
 sparse_vector.o : sparse_vector.c sparse_vector.h SparseData.h
 operators.o : operators.c sparse_vector.h SparseData.h
+gp_sfv.o : gp_sfv.c sparse_vector.h
 
 MODULE_big = gp_svec
 
 DATA_built = gp_svec.sql gp_svec_drop.sql sql/gp_svec_test.sql
 REGRESS = gp_svec_test
-OBJS = sparse_vector.o operators.o SparseData.o
+OBJS = sparse_vector.o operators.o SparseData.o gp_sfv.o
 
 ifdef USE_ICC
 	override CFLAGS=-O3 -Werror -std=c99 -vec-report2 -vec-threshold0
