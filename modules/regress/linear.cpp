@@ -80,7 +80,7 @@ public:
             TransparentHandle::create(&mStorage[4]),
             inWidthOfX);
         X_transp_X.rebind(
-            TransparentHandle::create(&mStorage[4] + inWidthOfX),
+            TransparentHandle::create(&mStorage[4 + inWidthOfX]),
             inWidthOfX, inWidthOfX);
     }
     
