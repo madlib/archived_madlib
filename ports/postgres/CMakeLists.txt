@@ -29,7 +29,8 @@ if(POSTGRESQL_FOUND)
     add_dependencies(madlib_postgres EP_armadillo)
 
     set_target_properties(madlib_postgres
-        PROPERTIES PREFIX "")
+        PROPERTIES PREFIX ""
+        OUTPUT_NAME madlib)
 
     if(APPLE)
         set_target_properties(madlib_postgres
