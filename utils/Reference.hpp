@@ -44,12 +44,12 @@ public:
     
     U operator++(int) {
         U returnValue = static_cast<U>(*mPtr);
-        *mPtr++;
+        *mPtr += 1;
         return returnValue;
     }
     
     Reference &operator++() {
-        *mPtr++;
+        *mPtr += 1;
         return *this;
     }
         
