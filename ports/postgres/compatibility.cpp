@@ -8,7 +8,7 @@
 
 extern "C" {
     #include <funcapi.h>
-    #include <utils/builtins.h>
+    #include <nodes/execnodes.h>
 } // extern "C"
 
 namespace madlib {

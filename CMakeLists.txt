@@ -21,7 +21,7 @@ set(SRC_regress
 )
 
 
-set(BOOST_TAR_VERSION "1_46_1")
+set(BOOST_TAR_VERSION "1.46.1")
 set(BOOST_TAR_MD5 341e5d993b19d099bf1a548495ea91ec)
 
 # If Armadillo is not present on the system, this is the version we will download
@@ -83,18 +83,23 @@ endmacro(osx_archs)
 include_directories(${CMAKE_SOURCE_DIR}/..)
 
 find_package(Boost 1.34)
-include_directories(${Boost_INCLUDE_DIRS})
-
-if(NOT Boost_FOUND)
+if(Boost_FOUND)
+    include_directories(${Boost_INCLUDE_DIRS})
+else(Boost_FOUND)
     message(STATUS "No sufficiently recent version (>= 1.34) of Boost was found. Will download.")
 
-    set(BOOST_TAR "boost_${BOOST_TAR_VERSION}.tar.gz")
-    set(BOOST_URL "http://downloads.sourceforge.net/project/boost/${BOOST_TAR}")
+    string(REPLACE "." "_" _BOOST_TAR_VERSION_UNDERSCORES ${BOOST_TAR_VERSION})
+    set(BOOST_TAR "boost_${_BOOST_TAR_VERSION_UNDERSCORES}.tar.gz")
+    set(BOOST_URL "http://sourceforge.net/projects/boost/files/boost/${BOOST_TAR_VERSION}/${BOOST_TAR}")
 
     if(NOT BOOST_TAR_SOURCE)
         find_file(BOOST_TAR_SOURCE ${BOOST_TAR}
             PATHS ${MAD_THIRD_PARTY}/downloads)
     endif(NOT BOOST_TAR_SOURCE)
+
+    if(NOT BOOST_TAR_SOURCE)
+        set(BOOST_TAR_SOURCE ${BOOST_URL})
+    endif (NOT BOOST_TAR_SOURCE)
 
     ExternalProject_Add(EP_boost
         PREFIX ${MAD_THIRD_PARTY}
@@ -112,7 +117,7 @@ if(NOT Boost_FOUND)
     list(APPEND ARMADILLO_CMAKE_ARGS
         -DCMAKE_INCLUDE_PATH=${MAD_THIRD_PARTY}/src/EP_boost)
     include_directories(${MAD_THIRD_PARTY}/src/EP_boost)
-endif(NOT Boost_FOUND)
+endif(Boost_FOUND)
 
 # @loader_path is the Mac OS X equivalent to $ORIGIN.
 # For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
