@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//** 
  *
- * @file plda_support.c
+ * @file plda.c
  *
  * @brief Support functions for Parallel Latent Dirichlet Allocation
  * @author Kee Siong Ng

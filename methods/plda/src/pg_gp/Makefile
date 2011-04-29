@@ -1,9 +1,9 @@
 override CFLAGS+=-std=gnu99
 
-SOURCES = plda_support.c
+SOURCES = plda.c
 OBJS = $(SOURCES:%.c=%.o)
 
-MODULE_big = plda_support
+MODULE_big = plda
 DATA_built = plda.sql plda_drop.sql sql/plda_test.sql sql/importTestcases.sql sql/importSmall.sql plda.py
 
 PYTHON_built = plda.py
