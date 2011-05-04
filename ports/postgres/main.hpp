@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file postgres.hpp
+ * @file main.hpp
  *
  * @brief Central header file for PostgreSQL database abstraction layer
  *
@@ -20,25 +20,17 @@ extern "C" {
     #include <executor/executor.h> // Greenplum requires this for GetAttributeByNum()
 } // extern "C"
 
-#define DECLARE_UDF_EXT(SQLName, NameSpace, Function) \
-    extern "C" { \
-        Datum SQLName(PG_FUNCTION_ARGS); \
-        PG_FUNCTION_INFO_V1(SQLName); \
-        Datum SQLName(PG_FUNCTION_ARGS) { \
-            return madlib::ports::postgres::call<madlib::modules::NameSpace::Function>(fcinfo); \
-        } \
-    }
-
-#define DECLARE_UDF(NameSpace, Function) DECLARE_UDF_EXT(Function, NameSpace, Function)
-
 namespace madlib {
 
 namespace ports {
 
 namespace postgres {
 
-template <AnyValue f(AbstractDBInterface &, AnyValue)>
-inline Datum call(PG_FUNCTION_ARGS) {
+inline static Datum call(
+    AnyValue (&f)(AbstractDBInterface &, AnyValue),
+    PG_FUNCTION_ARGS) {
+//template <AnyValue f(AbstractDBInterface &, AnyValue)>
+//inline Datum call(PG_FUNCTION_ARGS) {
     int sqlerrcode;
     char msg[256];
     Datum datum;

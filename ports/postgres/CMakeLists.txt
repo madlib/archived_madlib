@@ -38,7 +38,7 @@ if(POSTGRESQL_FOUND)
         osx_archs(${POSTGRESQL_EXECUTABLE} MAD_ARCHITECTURES)
         message(STATUS ${POSTGRESQL_EXECUTABLE} " has architectures " ${MAD_ARCHITECTURES})
         set_target_properties(madlib_postgres
-            PROPERTIES OSX_ARCHITECTURES ${MAD_ARCHITECTURES})
+            PROPERTIES OSX_ARCHITECTURES "${MAD_ARCHITECTURES}")
         
         # On the Mac, the Accelerate is already an umbrella for everything
         # we need for Armadillo

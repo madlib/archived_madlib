@@ -55,6 +55,10 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${MAD_BUILD_TOOLS}/Modules/")
 
 set(EXTERNALPROJECT_LIST_SEPARATOR "~!~")
 
+if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    set(LINUX TRUE)
+endif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+
 # Get the MADlib version number
 execute_process(
 	COMMAND ${MAD_BUILD_TOOLS}/extract_version.sh
@@ -70,6 +74,12 @@ foreach(MAD_MODULE ${MAD_MODULES})
 	endforeach()
 endforeach()
 
+if(LINUX)
+    # On Linux, we export "C" all symbols with their SQL name.
+    # See ports/linux/declarations.cpp for explanations.
+    list(APPEND MAD_SOURCES ports/linux/declarations.cpp)
+endif(LINUX)
+
 # Get the architectures in a Mac OS X binary
 macro(osx_archs FILENAME OUT_ARCHS)
     execute_process(
@@ -77,7 +87,7 @@ macro(osx_archs FILENAME OUT_ARCHS)
         OUTPUT_VARIABLE _LIPO_OUTPUT)
     string(REPLACE "\n" "" _LIPO_OUTPUT ${_LIPO_OUTPUT})
     string(REGEX REPLACE ".*:[ ]*([^ ].*[^ ])[ ]*\$" "\\1" ${OUT_ARCHS} "${_LIPO_OUTPUT}")
-    string(REPLACE " " ${EXTERNALPROJECT_LIST_SEPARATOR} ${OUT_ARCHS} ${${OUT_ARCHS}})
+    string(REPLACE " " ";" ${OUT_ARCHS} ${${OUT_ARCHS}})
 endmacro(osx_archs)
 
 include_directories(${CMAKE_SOURCE_DIR}/..)
@@ -202,6 +212,41 @@ message(STATUS ${ARMADILLO_LIBRARY})
 # set( CMAKE_CXX_FLAGS "-Wall -Wno-div-by-zero" CACHE STRING
 #    "Flags used by the C++ compiler during builds."
 #    FORCE )
+
+
+# Create library
+add_library(
+    madlib
+    SHARED
+    ${MAD_SOURCES}
+)
+#set_target_properties(madlib
+#    PROPERTIES PREFIX ""
+#    OUTPUT_NAME madlib)
+add_dependencies(madlib EP_armadillo)
+
+if(APPLE)
+    find_library(ACCELERATE_FRAMEWORK Accelerate)
+    osx_archs(${ACCELERATE_FRAMEWORK}/Accelerate ACCELERATE_ARCHS)
+    message(STATUS "Will build madlib for same architecture as detected in "
+        "${ACCELERATE_FRAMEWORK}, which has architectures "
+        "${ACCELERATE_ARCHS}")
+    set_target_properties(madlib
+        PROPERTIES OSX_ARCHITECTURES "${ACCELERATE_ARCHS}")
+    
+    # On the Mac, the Accelerate framework is already an umbrella for everything
+    # we need for Armadillo
+    target_link_libraries(madlib "-framework Accelerate")
+else(APPLE)
+    # On other platforms, we link to the armadillo library
+    target_link_libraries(madlib armadillo)
+    
+    # the RPATH to be used when installing. This is set to "$ORIGIN" because
+    # the armadillo library will reside in the same directory as the MADlib
+    # library
+    set_target_properties(madlib
+        PROPERTIES INSTALL_RPATH "\$ORIGIN")
+endif(APPLE)
 
 
 # Add Ports

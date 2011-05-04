@@ -17,8 +17,6 @@ namespace ports {
 
 namespace postgres {
 
-#if PG_VERSION_NUM < 90000
-
 /**
  * This function is essentially a copy of AggCheckCallContext from
  * backend/executor/nodeAgg.c, which is part of PostgreSQL >= 9.0.
@@ -29,22 +27,17 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 			*aggcontext = ((AggState *) fcinfo->context)->aggcontext;
 		return AGG_CONTEXT_AGGREGATE;
 	}
-
-#if PG_VERSION_NUM >= 80400
-	if (fcinfo->context && IsA(fcinfo->context, WindowAggState)) {
+    if (fcinfo->context && IsA(fcinfo->context, WindowState)) {
 		if (aggcontext)
-			*aggcontext = ((WindowAggState *) fcinfo->context)->aggcontext;
+			*aggcontext = ((WindowState *) fcinfo->context)->transcontext;
 		return AGG_CONTEXT_WINDOW;
 	}
-#endif
 
 	/* this is just to prevent "uninitialized variable" warnings */
 	if (aggcontext)
 		*aggcontext = NULL;
 	return 0;
 }
-
-#endif
 
 } // namespace postgres
 
