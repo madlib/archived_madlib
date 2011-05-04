@@ -9,7 +9,7 @@
 #ifndef MADLIB_PROB_STUDENT_H
 #define MADLIB_PROB_STUDENT_H
 
-#include <madlib/modules/modules.hpp>
+#include <madlib/modules/common.hpp>
 
 namespace madlib {
 

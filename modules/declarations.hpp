@@ -24,12 +24,6 @@
  * name implementing the UDF.
  */
 
-#ifdef MADLIB_INCLUDE_MODULE_HEADERS
-    #include<madlib/modules/prob/student.hpp>
-    #include<madlib/modules/regress/linear.hpp>
-    #include<madlib/modules/regress/logistic.hpp>
-#endif
-
 // prob/student.hpp
 DECLARE_UDF(prob, student_t_cdf)
 

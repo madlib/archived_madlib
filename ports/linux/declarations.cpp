@@ -15,20 +15,36 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#define MADLIB_INCLUDE_MODULES_HEADERS
+#include <madlib/dbal/dbal.hpp>
+#include <madlib/modules/modules.hpp>
+
+namespace madlib {
+
+using namespace madlib::dbal;
+
+namespace ports {
+
+// FIXME: we cannot write namespace linux for some reason
+namespace linux_ {
 
 #define DECLARE_UDF(NameSpace, Function) DECLARE_UDF_EXT(Function, NameSpace, Function)
 
 #define DECLARE_UDF_EXT(SQLName, NameSpace, Function) \
     extern "C" { \
         __attribute__((visibility("default"))) \
-        Datum madlib_ ## SQLName(AbstractDBInterface &db, AnyValue args) { \
-            return madlib::modules::NameSpace::Function(db, args); \
+        AnyValue madlib_ ## SQLName(AbstractDBInterface &db, AnyValue args) { \
+            return modules::NameSpace::Function(db, args); \
         } \
     }
 
 #include <madlib/modules/declarations.hpp>
 
-#undef MADLIB_INCLUDE_MODULES_HEADERS
 #undef DECLARE_UDF_EXT
 #undef DECLARE_UDF
+#undef MADLIB_INCLUDE_MODULE_HEADERS
+
+} // namespace linux
+
+} // namespace ports
+
+} // namespace madlib

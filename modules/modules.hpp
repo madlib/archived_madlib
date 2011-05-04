@@ -2,29 +2,15 @@
  *
  * @file modules.hpp
  *
- * @brief Common header file all modules are supposed to include
+ * @brief Umbrella header that includes all module headers
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_MODULES_HPP
-#define MADLIB_MODULES_HPP
+#ifndef MADLIB_MODULES_MODULES_HPP
+#define MADLIB_MODULES_MODULES_HPP
 
-// Inlcude Database Abstraction Layer
-
-#include <madlib/dbal/dbal.hpp>
-#include <madlib/utils/memory.hpp>
-
-// Import commonly used names into the modules namespace
-
-namespace madlib {
-
-namespace modules {
-
-using namespace dbal;
-using namespace utils::memory;
-
-} // namespace modules
-
-} // namespace madlib
+#include <madlib/modules/prob/student.hpp>
+#include <madlib/modules/regress/linear.hpp>
+#include <madlib/modules/regress/logistic.hpp>
 
 #endif

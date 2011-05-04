@@ -9,12 +9,12 @@
 #ifndef MADLIB_POSTGRES_MAIN_HPP
 #define MADLIB_POSTGRES_MAIN_HPP
 
+#include <madlib/ports/postgres/postgres.hpp>
 #include <madlib/ports/postgres/PGToDatumConverter.hpp>
 #include <madlib/ports/postgres/PGInterface.hpp>
 #include <madlib/ports/postgres/PGValue.hpp>
 
 extern "C" {
-    #include <postgres.h>
     #include <funcapi.h>
     #include <utils/builtins.h>    // needed for format_procedure()
     #include <executor/executor.h> // Greenplum requires this for GetAttributeByNum()
@@ -27,7 +27,7 @@ namespace ports {
 namespace postgres {
 
 inline static Datum call(
-    AnyValue (&f)(AbstractDBInterface &, AnyValue),
+    MADFunction &f,
     PG_FUNCTION_ARGS) {
 //template <AnyValue f(AbstractDBInterface &, AnyValue)>
 //inline Datum call(PG_FUNCTION_ARGS) {

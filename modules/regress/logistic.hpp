@@ -7,7 +7,7 @@
 #ifndef MADLIB_REGRESS_LOGISTIC_H
 #define MADLIB_REGRESS_LOGISTIC_H
 
-#include <madlib/modules/modules.hpp>
+#include <madlib/modules/common.hpp>
 
 namespace madlib {
 

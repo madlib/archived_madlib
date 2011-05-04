@@ -12,12 +12,17 @@
  */
 
 #include <madlib/ports/postgres/main.hpp>
+#include <madlib/modules/modules.hpp>
+
+namespace madlib {
+
+namespace ports {
+
+namespace postgres {
 
 extern "C" {
     PG_MODULE_MAGIC;
 } // extern "C"
-
-#define MADLIB_INCLUDE_MODULE_HEADERS
 
 #define DECLARE_UDF(NameSpace, Function) DECLARE_UDF_EXT(Function, NameSpace, Function)
 
@@ -26,8 +31,8 @@ extern "C" {
         Datum SQLName(PG_FUNCTION_ARGS); \
         PG_FUNCTION_INFO_V1(SQLName); \
         Datum SQLName(PG_FUNCTION_ARGS) { \
-            return madlib::ports::postgres::call( \
-                madlib::modules::NameSpace::Function, \
+            return call( \
+                modules::NameSpace::Function, \
                 fcinfo); \
         } \
     }
@@ -36,4 +41,9 @@ extern "C" {
 
 #undef DECLARE_UDF_EXT
 #undef DECLARE_UDF
-#undef MADLIB_INCLUDE_MODULE_HEADERS
+
+} // namespace postgres
+
+} // namespace ports
+
+} // namespace madlib

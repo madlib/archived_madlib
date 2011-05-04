@@ -27,6 +27,8 @@ namespace postgres {
 using namespace dbal;
 using namespace utils::memory;
 
+typedef AnyValue (MADFunction)(AbstractDBInterface &, AnyValue);
+
 // Forward declarations
 // ====================
 

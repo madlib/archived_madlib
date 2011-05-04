@@ -36,9 +36,23 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// MADlib headers
 #include <madlib/ports/postgres/main.hpp>
+#include <madlib/modules/modules.hpp>
 
+// System headers
+#include <dlfcn.h>
+
+// PostgreSQL headers
 #include <utils/elog.h>
+
+namespace madlib {
+
+namespace ports {
+
+using namespace postgres;
+
+namespace greenplum {
 
 static void *sHandleMADlib = NULL;
 
@@ -56,7 +70,7 @@ void madlib_constructor() {
 __attribute__((destructor))
 void madlib_destructor() {
     if (sHandleMADlib)
-        dlclose(handleMADlib);
+        dlclose(sHandleMADlib);
 }
 
 extern "C" {
@@ -70,14 +84,16 @@ extern "C" {
         Datum SQLName(PG_FUNCTION_ARGS); \
         PG_FUNCTION_INFO_V1(SQLName); \
         Datum SQLName(PG_FUNCTION_ARGS) { \
-            static MadFunction *f = NULL; \
-            if (handle == NULL) \
-                f = getFnHandle("madlib_" #SQLName, fninfo); \
-            return call(f, fcinfo); \
+            static MADFunction *f = NULL; \
+            if (f == NULL) \
+                f = reinterpret_cast<MADFunction*>( \
+                    getFnHandle("madlib_" #SQLName, fcinfo) \
+                ); \
+            return call( (*f), fcinfo); \
         } \
     }
     
-static MADFunction *getFnHandle(const char *inFnName, PG_FUNCTION_ARGS) {
+static void *getFnHandle(const char *inFnName, PG_FUNCTION_ARGS) {
     if (sHandleMADlib == NULL) {
         ereport(
             ERROR, (
@@ -98,7 +114,6 @@ static MADFunction *getFnHandle(const char *inFnName, PG_FUNCTION_ARGS) {
     if (error != NULL) {
         ereport(
             ERROR, (
-                errcode(sqlerrcode),
                 errmsg(
                     "Function \"%s\" cannot be found in libmad.so",
                     format_procedure(fcinfo->flinfo->fn_oid)
@@ -117,3 +132,9 @@ static MADFunction *getFnHandle(const char *inFnName, PG_FUNCTION_ARGS) {
 
 #undef DECLARE_UDF_EXT
 #undef DECLARE_UDF
+
+} // namespace greenplum
+
+} // namespace ports
+
+} // namespace madlib
