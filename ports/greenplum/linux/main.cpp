@@ -59,7 +59,9 @@ static void *sHandleMADlib = NULL;
 __attribute__((constructor))
 void madlib_constructor() {
     dlerror();
-    sHandleMADlib = dlopen("libmad.so", RTLD_NOW | RTLD_GLOBAL | RTLD_DEEPBIND);
+    // FIXME: Think again about RTLD_GLOBAL and what happens if other UDFs
+    // depend on LAPACK/BLAS
+    sHandleMADlib = dlopen("libmad.so", RTLD_NOW | RTLD_DEEPBIND);
     if (!sHandleMADlib) {
         ereport(WARNING,
             (errmsg("libmad.so not found. MADlib will not work correctly."),
