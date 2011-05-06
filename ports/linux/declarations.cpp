@@ -11,7 +11,7 @@
  * 
  * The short reason for why dlopen is used on Linux is that Linux only has a
  * flat namespace for shared libraries. The long reason is explained in
- * libDependencyFix.c.
+ * ports/greenplum/linux/main.cpp.
  *
  *//* ----------------------------------------------------------------------- */
 
