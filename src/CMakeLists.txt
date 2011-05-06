@@ -46,6 +46,23 @@ cmake_minimum_required(VERSION 2.8)
 
 include (ExternalProject)
 
+find_program(M4_BINARY m4
+    /usr/local/bin /usr/bin /bin /opt/local/bin
+)
+if(NOT M4_BINARY)
+    message(FATAL_ERROR "Cannot find the m4 preprocessor.")
+endif(NOT M4_BINARY)
+
+macro(join_strings OUT_STRING SEPARATOR LIST)
+    foreach(ITEM ${LIST})
+        if(${OUT_STRING} EQUAL "")
+            set(OUT_STRING "${OUT_STRING}${SEPARATOR}${ITEM}")
+        else(${OUT_STRING} EQUAL "")
+            set(OUT_STRING "${ITEM}")
+        endif(${OUT_STRING} EQUAL "")
+    endforeach(ITEM ${LIST})
+endmacro(join_strings)
+
 # Set the directory for tools needed during build time
 set(MAD_BUILD_TOOLS ${CMAKE_SOURCE_DIR}/cmake_tools)
 

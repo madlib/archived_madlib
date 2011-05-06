@@ -94,6 +94,23 @@ if(GREENPLUM_FOUND)
     get_property(MADLIB_SHARED_LIB TARGET madlib_greenplum PROPERTY LOCATION)
     set(MADLIB_PYTHON_PATH ${CMAKE_CURRENT_BINARY_DIR})
     configure_file(${CMAKE_SOURCE_DIR}/extra/regress.sql.in regress.sql)
+    
+    # Directory we will use for python files
+    set(PYTHON_DIR ${CMAKE_CURRENT_BINARY_DIR}/python)    
+    list(APPEND M4_ARGUMENTS
+        "-DGREENPLUM"
+    )
+    foreach(PATH PYTHON_FILES)
+        get_filename_component(FILENAME ${PATH} NAME)
+        execute_process(
+            COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${PATH}"
+            OUTPUT_FILE "${PYTHON_DIR}/${FILENAME}"
+        )
+    endforeach(PATH)
+    
+    install(DIRECTORY ${PYTHON_DIR}
+        DESTINATION ports/greennplum/python)
+
 else(GREENPLUM_FOUND)
     message(STATUS "***")
     message(STATUS "*** No Greenplum installation found. Skipping.")
