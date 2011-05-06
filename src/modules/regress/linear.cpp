@@ -6,9 +6,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/modules/regress/linear.hpp>
-#include <madlib/modules/prob/student.hpp>
-#include <madlib/utils/Reference.hpp>
+#include <modules/regress/linear.hpp>
+#include <modules/prob/student.hpp>
+#include <utils/Reference.hpp>
 
 // Import names from Armadillo
 using arma::mat;

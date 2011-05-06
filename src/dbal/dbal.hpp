@@ -25,9 +25,9 @@
 // All sources need to (implicitly or explicitly) include madlib.hpp, so we also
 // include it here
 
-#include <madlib/madlib.hpp>
-#include <madlib/utils/memory.hpp>
-#include <madlib/utils/shapeToExtents.hpp>
+#include <madlib.hpp>
+#include <utils/memory.hpp>
+#include <utils/shapeToExtents.hpp>
 
 // All data types for which ConcreteValue<T> classes should be created and
 // for which conversion functions have to be supplied
@@ -100,20 +100,20 @@ typedef ConcreteValue<AnyValueVector> ConcreteRecord;
 
 // Abstract Base Clases (Headers only)
 
-#include <madlib/dbal/AbstractAllocator.hpp>
-#include <madlib/dbal/AbstractHandle.hpp>
-#include <madlib/dbal/AbstractDBInterface.hpp>
-#include <madlib/dbal/AbstractValue_proto.hpp>
-#include <madlib/dbal/AbstractValueConverter.hpp>
+#include <dbal/AbstractAllocator.hpp>
+#include <dbal/AbstractHandle.hpp>
+#include <dbal/AbstractDBInterface.hpp>
+#include <dbal/AbstractValue_proto.hpp>
+#include <dbal/AbstractValueConverter.hpp>
 
 // Type Classes
 
 // Array depends on Array_const, so including Array_const first
-#include <madlib/dbal/Array.hpp>
-#include <madlib/dbal/Array_const.hpp>
-#include <madlib/dbal/Matrix.hpp>
-#include <madlib/dbal/Vector.hpp>
-#include <madlib/dbal/Vector_const.hpp>
+#include <dbal/Array.hpp>
+#include <dbal/Array_const.hpp>
+#include <dbal/Matrix.hpp>
+#include <dbal/Vector.hpp>
+#include <dbal/Vector_const.hpp>
 
 } // namespace dbal
 
@@ -125,7 +125,7 @@ typedef ConcreteValue<AnyValueVector> ConcreteRecord;
 
 namespace arma {
 
-#include <madlib/dbal/ArmadilloIntegration.hpp>
+#include <dbal/ArmadilloIntegration.hpp>
 
 }
 
@@ -138,20 +138,20 @@ namespace dbal {
 
 // Simple Helper Classes
 
-#include <madlib/dbal/TransparentHandle.hpp>
+#include <dbal/TransparentHandle.hpp>
 
 // Implementation Classes (Headers)
 
-#include <madlib/dbal/AnyValue_proto.hpp>
-#include <madlib/dbal/ConcreteValue_proto.hpp>
-#include <madlib/dbal/ValueConverter_proto.hpp>
+#include <dbal/AnyValue_proto.hpp>
+#include <dbal/ConcreteValue_proto.hpp>
+#include <dbal/ValueConverter_proto.hpp>
 
 // Implementation Classes
 
-#include <madlib/dbal/AbstractValue_impl.hpp>
-#include <madlib/dbal/AnyValue_impl.hpp>
-#include <madlib/dbal/ConcreteValue_impl.hpp>
-#include <madlib/dbal/ValueConverter_impl.hpp>
+#include <dbal/AbstractValue_impl.hpp>
+#include <dbal/AnyValue_impl.hpp>
+#include <dbal/ConcreteValue_impl.hpp>
+#include <dbal/ValueConverter_impl.hpp>
 
 
 } // namespace dbal

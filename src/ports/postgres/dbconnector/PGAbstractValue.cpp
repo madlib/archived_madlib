@@ -1,13 +1,13 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractPGValue.cpp
+ * @file PGAbstractValue.cpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/ports/postgres/compatibility.hpp>
-#include <madlib/ports/postgres/AbstractPGValue.hpp>
-#include <madlib/ports/postgres/PGArrayHandle.hpp>
-#include <madlib/ports/postgres/PGValue.hpp>
+#include <dbconnector/PGCompatibility.hpp>
+#include <dbconnector/PGAbstractValue.hpp>
+#include <dbconnector/PGArrayHandle.hpp>
+#include <dbconnector/PGValue.hpp>
 
 extern "C" {
     #include <catalog/pg_type.h>
@@ -18,14 +18,12 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 /**
  * Convert postgres Datum into a ConcreteValue object.
  */
-AbstractValueSPtr AbstractPGValue::DatumToValue(bool inMemoryIsWritable,
+AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
     Oid inTypeID, Datum inDatum) const {
         
     // First check if datum is rowtype
@@ -82,8 +80,6 @@ AbstractValueSPtr AbstractPGValue::DatumToValue(bool inMemoryIsWritable,
     return AbstractValueSPtr();
 }
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib

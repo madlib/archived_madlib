@@ -1,29 +1,25 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractPGValue.cpp
+ * @file PGAbstractValue.cpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_ABSTRACTPGVALUE_HPP
-#define MADLIB_ABSTRACTPGVALUE_HPP
+#ifndef MADLIB_POSTGRES_PGABSTRACTVALUE_HPP
+#define MADLIB_POSTGRES_PGABSTRACTVALUE_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
+#include <dbconnector/PGCommon.hpp>
 
 namespace madlib {
 
-namespace ports {
+namespace dbconnector {
 
-namespace postgres {
-
-class AbstractPGValue : public AbstractValue {
+class PGAbstractValue : public AbstractValue {
 protected:
     AbstractValueSPtr getValueByID(unsigned int inID) const = 0;
     AbstractValueSPtr DatumToValue(bool inMemoryIsWritable, Oid inTypeID, Datum inDatum) const;
 };
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

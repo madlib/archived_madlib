@@ -11,8 +11,8 @@
 
 // Inlcude Database Abstraction Layer
 
-#include <madlib/dbal/dbal.hpp>
-#include <madlib/utils/memory.hpp>
+#include <dbal/dbal.hpp>
+#include <utils/memory.hpp>
 
 // Import commonly used names into the modules namespace
 

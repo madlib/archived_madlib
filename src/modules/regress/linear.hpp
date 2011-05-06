@@ -7,7 +7,7 @@
 #ifndef MADLIB_REGRESS_LINEAR_H
 #define MADLIB_REGRESS_LINEAR_H
 
-#include <madlib/modules/common.hpp>
+#include <modules/common.hpp>
 
 namespace madlib {
 

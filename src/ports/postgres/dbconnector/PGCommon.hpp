@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file postgres.hpp
+ * @file PGCommon.hpp
  *
  * @brief Common header file for PostgreSQL port
  *
@@ -8,11 +8,11 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_HPP
-#define MADLIB_POSTGRES_HPP
+#ifndef MADLIB_POSTGRES_COMMON_HPP
+#define MADLIB_POSTGRES_COMMON_HPP
 
-#include <madlib/dbal/dbal.hpp>
-#include <madlib/utils/memory.hpp>
+#include <dbal/dbal.hpp>
+#include <utils/memory.hpp>
 
 extern "C" {
     #include <postgres.h>   // for Oid, Datum
@@ -20,9 +20,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 using namespace dbal;
 using namespace utils::memory;
@@ -37,9 +35,7 @@ typedef AnyValue (MADFunction)(AbstractDBInterface &, AnyValue);
 class PGInterface;
 class PGAllocator;
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

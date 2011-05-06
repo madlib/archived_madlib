@@ -6,11 +6,11 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRESQLVALUE_HPP
-#define MADLIB_POSTGRESQLVALUE_HPP
+#ifndef MADLIB_POSTGRES_PGVALUE_HPP
+#define MADLIB_POSTGRES_PGVALUE_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
-#include <madlib/ports/postgres/AbstractPGValue.hpp>
+#include <dbconnector/PGCommon.hpp>
+#include <dbconnector/PGAbstractValue.hpp>
 
 extern "C" {
     #include <fmgr.h>           // for FunctionCallInfo
@@ -19,9 +19,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 using dbal::AbstractValue;
 using dbal::AbstractValueSPtr;
@@ -31,7 +29,7 @@ template <typename T>
 class PGValue;
 
 template <>
-class PGValue<FunctionCallInfo> : public AbstractPGValue {
+class PGValue<FunctionCallInfo> : public PGAbstractValue {
 public:
     PGValue<FunctionCallInfo>(const FunctionCallInfo inFCinfo)
         : fcinfo(inFCinfo) { }
@@ -52,7 +50,7 @@ private:
 };
 
 template <>
-class PGValue<HeapTupleHeader> : public AbstractPGValue {
+class PGValue<HeapTupleHeader> : public PGAbstractValue {
 public:    
     PGValue<HeapTupleHeader>(HeapTupleHeader inTuple)
         : mTuple(inTuple) { }
@@ -68,9 +66,7 @@ private:
     const HeapTupleHeader mTuple;
 };
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

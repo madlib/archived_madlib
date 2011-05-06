@@ -6,8 +6,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/ports/postgres/PGToDatumConverter.hpp>
-#include <madlib/ports/postgres/PGArrayHandle.hpp>
+#include <dbconnector/PGToDatumConverter.hpp>
+#include <dbconnector/PGArrayHandle.hpp>
 
 extern "C" {
     #include <utils/array.h>
@@ -20,9 +20,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo,
     const AbstractValue &inValue)
@@ -172,8 +170,6 @@ void PGToDatumConverter::convert(const DoubleCol &inValue) {
     }
 }
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib

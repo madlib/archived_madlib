@@ -55,7 +55,7 @@
  *      Statistician, Vol. 38, No. 4, 1984
  */
 
-#include <madlib/modules/prob/student.hpp>
+#include <modules/prob/student.hpp>
 
 // The error function is in C99 and TR1, but not in the official C++ Standard
 // (before C++0x). We therefore use the Boost implementation

@@ -6,8 +6,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/ports/postgres/compatibility.hpp>
-#include <madlib/ports/postgres/PGValue.hpp>
+#include <dbconnector/PGCompatibility.hpp>
+#include <dbconnector/PGValue.hpp>
 
 #include <stdexcept>
 
@@ -19,9 +19,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 using namespace dbal;
 
@@ -87,8 +85,6 @@ AbstractValueSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) cons
     return value;
 }
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib

@@ -37,7 +37,7 @@
  *//* ----------------------------------------------------------------------- */
 
 // MADlib headers
-#include <madlib/ports/postgres/main.hpp>
+#include <PGMain.hpp>
 #include <madlib/modules/modules.hpp>
 
 // System headers

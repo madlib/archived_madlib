@@ -31,6 +31,7 @@ set(BOOST_TAR_MD5 341e5d993b19d099bf1a548495ea91ec)
 set(ARMADILLO_TAR_VERSION "1.2.0")
 set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
 
+set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/../madpy/Version.yml)
 
 # ==============================================================================
 # From here on, modifications should rarely be necessary.
@@ -68,7 +69,8 @@ set(MAD_BUILD_TOOLS ${CMAKE_SOURCE_DIR}/cmake_tools)
 
 set(MAD_THIRD_PARTY ${CMAKE_BINARY_DIR}/third_party)
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${MAD_BUILD_TOOLS}/Modules/")
+list(APPEND CMAKE_MODULE_PATH
+    "${MAD_BUILD_TOOLS}/Modules/")
 
 set(EXTERNALPROJECT_LIST_SEPARATOR "~!~")
 
@@ -82,11 +84,12 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     set(LINUX TRUE)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
-# Get the MADlib version number
-execute_process(
-	COMMAND ${MAD_BUILD_TOOLS}/extract_version.sh
-	OUTPUT_VARIABLE MADLIB_VERSION
-)
+# Read and parse Version.yml file
+file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
+string(REGEX REPLACE "^.*version:[ \t]*([^\n]*)\n.*" "\\1" MADLIB_VERSION_STRING "${_MADLIB_VERSION_CONTENTS}")
+string(REGEX REPLACE "([0-9]+).*" "\\1" MADLIB_VERSION_MAJOR "${MADLIB_VERSION_STRING}")
+string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_MINOR "${MADLIB_VERSION_STRING}")
+string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "${MADLIB_VERSION_STRING}")
 
 set(MAD_MODULE_DIR ${CMAKE_SOURCE_DIR}/modules)
 
@@ -113,7 +116,7 @@ macro(osx_archs FILENAME OUT_ARCHS)
     string(REPLACE " " ";" ${OUT_ARCHS} ${${OUT_ARCHS}})
 endmacro(osx_archs)
 
-include_directories(${CMAKE_SOURCE_DIR}/..)
+include_directories(${CMAKE_SOURCE_DIR})
 
 find_package(Boost 1.34)
 if(Boost_FOUND)
@@ -304,17 +307,17 @@ set(CPACK_PACKAGE_FILE_NAME "madlib-${MADLIB_VERSION}-${MADLIB_OS}-${MADLIB_ARCH
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "madlib")
 set(CPACK_PACKAGE_NAME "madlib")
 set(CPACK_PACKAGE_VENDOR "The MADlib.net open source project")
-set(CPACK_PACKAGE_VERSION ${MADLIB_VERSION})
-set(CPACK_PACKAGE_VERSION_MAJOR "0")
-set(CPACK_PACKAGE_VERSION_MINOR "1")
-set(CPACK_PACKAGE_VERSION_PATCH "0")
+set(CPACK_PACKAGE_VERSION ${MADLIB_VERSION_STRING})
+set(CPACK_PACKAGE_VERSION_MAJOR ${MADLIB_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${MADLIB_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 set(CPACK_SOURCE_GENERATOR "TGZ;TZ")
 
 # FIXME: Maybe we should not hard code this
 set(CPACK_RPM_PACKAGE_ARCHITECTURE x86_64)
 set(CPACK_RPM_PACKAGE_LICENSE "New BSD License")
 set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries")
-set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.4, lapack >= 3.0")
+set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.4, lapack >= 3.0, m4 >= 1.4")
 
 set(CPACK_OSX_PACKAGE_VERSION "10.5")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local/share/madlib")

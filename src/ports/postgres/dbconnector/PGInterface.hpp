@@ -1,7 +1,7 @@
-#ifndef MADLIB_PGINTERFACE_HPP
-#define MADLIB_PGINTERFACE_HPP
+#ifndef MADLIB_POSTGRES_PGINTERFACE_HPP
+#define MADLIB_POSTGRES_PGINTERFACE_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
+#include <dbconnector/PGCommon.hpp>
 
 extern "C" {
     #include "postgres.h"
@@ -10,9 +10,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 class PGInterface : public AbstractDBInterface {
     friend class PGAllocator;
@@ -32,9 +30,7 @@ private:
     const FunctionCallInfo fcinfo;
 };
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

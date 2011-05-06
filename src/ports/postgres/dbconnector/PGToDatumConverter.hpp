@@ -7,10 +7,10 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_PGTODATUMCONVERTER_HPP
-#define MADLIB_PGTODATUMCONVERTER_HPP
+#ifndef MADLIB_POSTGRES_PGTODATUMCONVERTER_HPP
+#define MADLIB_POSTGRES_PGTODATUMCONVERTER_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
+#include <dbconnector/PGCommon.hpp>
 
 extern "C" {
     #include <postgres.h>
@@ -21,9 +21,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 class PGToDatumConverter : public ValueConverter<Datum> {
 public:
@@ -51,9 +49,7 @@ protected:
     Oid mTypeID;
 };
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

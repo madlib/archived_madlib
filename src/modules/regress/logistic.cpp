@@ -9,8 +9,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/modules/regress/logistic.hpp>
-#include <madlib/utils/Reference.hpp>
+#include <modules/regress/logistic.hpp>
+#include <utils/Reference.hpp>
 
 // Import names from Armadillo
 using arma::trans;

@@ -9,8 +9,8 @@
 #ifndef MADLIB_MODULES_MODULES_HPP
 #define MADLIB_MODULES_MODULES_HPP
 
-#include <madlib/modules/prob/student.hpp>
-#include <madlib/modules/regress/linear.hpp>
-#include <madlib/modules/regress/logistic.hpp>
+#include <modules/prob/student.hpp>
+#include <modules/regress/linear.hpp>
+#include <modules/regress/logistic.hpp>
 
 #endif

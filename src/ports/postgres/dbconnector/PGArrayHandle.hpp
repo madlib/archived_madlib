@@ -1,7 +1,7 @@
-#ifndef MADLIB_PGARRAYHANDLE_HPP
-#define MADLIB_PGARRAYHANDLE_HPP
+#ifndef MADLIB_POSTGRES_PGARRAYHANDLE_HPP
+#define MADLIB_POSTGRES_PGARRAYHANDLE_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
+#include <dbconnector/PGCommon.hpp>
 
 extern "C" {
     #include "utils/array.h"
@@ -9,9 +9,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 class PGArrayHandle : public AbstractHandle {
 friend class PGAllocator;
@@ -39,9 +37,7 @@ protected:
     ArrayType *mArray;
 };
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

@@ -1,11 +1,9 @@
-#include <madlib/ports/postgres/PGInterface.hpp>
-#include <madlib/ports/postgres/PGAllocator.hpp>
+#include <dbconnector/PGInterface.hpp>
+#include <dbconnector/PGAllocator.hpp>
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 inline AllocatorSPtr PGInterface::allocator(
     AbstractAllocator::Context inMemContext) {
@@ -13,8 +11,6 @@ inline AllocatorSPtr PGInterface::allocator(
     return AllocatorSPtr(new PGAllocator(this, inMemContext));
 }
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib

@@ -1,14 +1,14 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file operatorNewDelete.cpp
+ * @file PGNewDelete.cpp
  *
  * @brief Overloading operator new and operator delete.
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/ports/postgres/PGAllocator.hpp>
+#include <dbconnector/PGAllocator.hpp>
 
-using madlib::ports::postgres::PGAllocator;
+using madlib::dbconnector::PGAllocator;
 
 /**
  * The default allocator used by operator new and operator delete. It is not

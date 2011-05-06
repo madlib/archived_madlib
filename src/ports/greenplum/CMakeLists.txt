@@ -1,20 +1,25 @@
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 set(MAD_DBAL_GP_SOURCES
-	../postgres/AbstractPGValue.cpp
-    compatibility.cpp
-	../postgres/operatorNewDelete.cpp
-    ../postgres/PGAllocator.cpp
-	../postgres/PGInterface.cpp
-	../postgres/PGToDatumConverter.cpp
-	../postgres/PGValue.cpp
+	../postgres/dbconnector/PGAbstractValue.cpp
+    dbconnector/GPCompatibility.cpp
+	../postgres/dbconnector/PGNewDelete.cpp
+    ../postgres/dbconnector/PGAllocator.cpp
+	../postgres/dbconnector/PGInterface.cpp
+	../postgres/dbconnector/PGToDatumConverter.cpp
+	../postgres/dbconnector/PGValue.cpp
 )
 
 if(LINUX)
 	list(APPEND MAD_DBAL_GP_SOURCES
-		linux/main.cpp
+		linux/GPMain.cpp
 	)
 else(LINUX)
     list(APPEND MAD_DBAL_GP_SOURCES
-    	../postgres/main.cpp
+    	../postgres/dbconnector/PGMain.cpp
     )
 endif(LINUX)
 

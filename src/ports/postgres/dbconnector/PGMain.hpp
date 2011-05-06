@@ -1,18 +1,18 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file main.hpp
+ * @file PGMain.hpp
  *
  * @brief Central header file for PostgreSQL database abstraction layer
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_MAIN_HPP
-#define MADLIB_POSTGRES_MAIN_HPP
+#ifndef MADLIB_POSTGRES_PGMAIN_HPP
+#define MADLIB_POSTGRES_PGMAIN_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
-#include <madlib/ports/postgres/PGToDatumConverter.hpp>
-#include <madlib/ports/postgres/PGInterface.hpp>
-#include <madlib/ports/postgres/PGValue.hpp>
+#include <dbconnector/PGCommon.hpp>
+#include <dbconnector/PGToDatumConverter.hpp>
+#include <dbconnector/PGInterface.hpp>
+#include <dbconnector/PGValue.hpp>
 
 extern "C" {
     #include <funcapi.h>
@@ -22,9 +22,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 inline static Datum call(
     MADFunction &f,
@@ -74,9 +72,7 @@ inline static Datum call(
     PG_RETURN_NULL();
 }
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

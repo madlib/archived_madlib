@@ -1,6 +1,7 @@
-#ifndef MADLIB_PGCOMPATIBILITY_HPP
+#ifndef MADLIB_POSTGRES_PGCOMPATIBILITY_HPP
+#define MADLIB_POSTGRES_PGCOMPATIBILITY_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
+#include <dbconnector/PGCommon.hpp>
 
 extern "C" {
     #include <fmgr.h>
@@ -9,9 +10,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 #if PG_VERSION_NUM < 90000
 
@@ -38,9 +37,7 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext);
 
 #endif // PG_VERSION_NUM < 90000
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

@@ -1,10 +1,11 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file compatibility.cpp
+ * @file GPCompatibility.cpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/ports/postgres/compatibility.hpp>
+// Include the PostgreSQL header
+#include <dbconnector/PGCompatibility.hpp>
 
 extern "C" {
     #include <funcapi.h>
@@ -13,11 +14,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
-
-#if PG_VERSION_NUM < 90000
+namespace dbconnector {
 
 /**
  * This function is essentially a copy of AggCheckCallContext from
@@ -29,14 +26,11 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 			*aggcontext = ((AggState *) fcinfo->context)->aggcontext;
 		return AGG_CONTEXT_AGGREGATE;
 	}
-
-#if PG_VERSION_NUM >= 80400
-	if (fcinfo->context && IsA(fcinfo->context, WindowAggState)) {
+    if (fcinfo->context && IsA(fcinfo->context, WindowState)) {
 		if (aggcontext)
-			*aggcontext = ((WindowAggState *) fcinfo->context)->aggcontext;
+			*aggcontext = ((WindowState *) fcinfo->context)->transcontext;
 		return AGG_CONTEXT_WINDOW;
 	}
-#endif
 
 	/* this is just to prevent "uninitialized variable" warnings */
 	if (aggcontext)
@@ -44,10 +38,6 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 	return 0;
 }
 
-#endif
-
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib

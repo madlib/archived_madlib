@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file main.cpp
+ * @file PGMain.cpp
  *
  * @brief PostgreSQL database abstraction layer 
  *
@@ -11,14 +11,12 @@
  * default declarations.
  */
 
-#include <madlib/ports/postgres/main.hpp>
-#include <madlib/modules/modules.hpp>
+#include <dbconnector/PGMain.hpp>
+#include <modules/modules.hpp>
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 extern "C" {
     PG_MODULE_MAGIC;
@@ -37,13 +35,11 @@ extern "C" {
         } \
     }
 
-#include <madlib/modules/declarations.hpp>
+#include <modules/declarations.hpp>
 
 #undef DECLARE_UDF_EXT
 #undef DECLARE_UDF
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib

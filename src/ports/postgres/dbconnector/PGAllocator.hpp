@@ -1,7 +1,7 @@
-#ifndef MADLIB_PGALLOCATOR_HPP
-#define MADLIB_PGALLOCATOR_HPP
+#ifndef MADLIB_POSTGRES_PGALLOCATOR_HPP
+#define MADLIB_POSTGRES_PGALLOCATOR_HPP
 
-#include <madlib/ports/postgres/postgres.hpp>
+#include <dbconnector/PGCommon.hpp>
 
 extern "C" {
     #include "utils/array.h"
@@ -9,9 +9,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 class PGAllocator : public AbstractAllocator {
 friend class PGInterface;
@@ -45,9 +43,7 @@ protected:
     const PGInterface *const mPGInterface;    
 };
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
 

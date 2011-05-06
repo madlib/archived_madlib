@@ -1,7 +1,7 @@
-#include <madlib/ports/postgres/compatibility.hpp>
-#include <madlib/ports/postgres/PGAllocator.hpp>
-#include <madlib/ports/postgres/PGArrayHandle.hpp>
-#include <madlib/ports/postgres/PGInterface.hpp>
+#include <dbconnector/PGCompatibility.hpp>
+#include <dbconnector/PGAllocator.hpp>
+#include <dbconnector/PGArrayHandle.hpp>
+#include <dbconnector/PGInterface.hpp>
 
 extern "C" {
     #include <postgres.h>
@@ -12,9 +12,7 @@ extern "C" {
 
 namespace madlib {
 
-namespace ports {
-
-namespace postgres {
+namespace dbconnector {
 
 MemHandleSPtr PGAllocator::allocateArray(uint32_t inNumElements,
     double * /* ignored */) const {
@@ -191,8 +189,6 @@ void PGAllocator::free(void *inPtr) const throw() {
 }
 
 
-} // namespace postgres
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib
