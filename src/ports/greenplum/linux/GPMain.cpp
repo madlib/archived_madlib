@@ -61,7 +61,7 @@ void madlib_constructor() {
     dlerror();
     // FIXME: Think again about RTLD_GLOBAL and what happens if other UDFs
     // depend on LAPACK/BLAS
-    sHandleMADlib = dlopen("libmad.so", RTLD_NOW | RTLD_DEEPBIND);
+    sHandleMADlib = dlopen("libmadlib.so", RTLD_NOW | RTLD_DEEPBIND);
     if (!sHandleMADlib) {
         ereport(WARNING,
             (errmsg("libmad.so not found. MADlib will not work correctly."),

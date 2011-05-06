@@ -248,8 +248,8 @@ add_library(
     SHARED
     ${MAD_SOURCES}
 )
-set_target_properties(madlib PROPERTIES
-    OUTPUT_NAME mad)
+# set_target_properties(madlib PROPERTIES
+#     OUTPUT_NAME mad)
 
 add_dependencies(madlib EP_armadillo)
 
