@@ -72,6 +72,12 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${MAD_BUILD_TOOLS}/Modules/")
 
 set(EXTERNALPROJECT_LIST_SEPARATOR "~!~")
 
+IF(NOT CMAKE_BUILD_TYPE)
+  SET(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
+      "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
+      FORCE)
+ENDIF(NOT CMAKE_BUILD_TYPE)
+
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     set(LINUX TRUE)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
@@ -152,9 +158,10 @@ endif(Boost_FOUND)
 # Note: INSTALL_LIB_DIR was previously LIB_INSTALL_DIR in Armadillo. We might
 # want to anticipate further changes...
 list(APPEND ARMADILLO_CMAKE_ARGS
-    -DCMAKE_INSTALL_PREFIX=../..
-    -DCMAKE_INSTALL_NAME_DIR=@rpath
-    -DINSTALL_LIB_DIR=lib
+    -DCMAKE_BUILD_TYPE=Release
+#    -DCMAKE_INSTALL_PREFIX=../..
+#    -DCMAKE_INSTALL_NAME_DIR=@rpath
+#    -DINSTALL_LIB_DIR=lib
 )
 
 # On a Mac, find out the architectures in the Accelerate Framework.
@@ -199,6 +206,7 @@ ExternalProject_Add(EP_armadillo
     URL ${ARMADILLO_TAR_SOURCE}
     URL_MD5 ${ARMADILLO_TAR_MD5}
     CMAKE_ARGS ${ARMADILLO_CMAKE_ARGS}
+    INSTALL_COMMAND /usr/bin/env echo Ignored: make
     BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_armadillo
 )
 add_library(armadillo SHARED IMPORTED)
@@ -208,10 +216,10 @@ add_library(armadillo SHARED IMPORTED)
 # path will be.
 set_target_properties(armadillo
     PROPERTIES IMPORTED_LOCATION
-    "${MAD_THIRD_PARTY}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    "${MAD_THIRD_PARTY}/src/EP_armadillo/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
 
-set(ARMADILLO_INCLUDE_DIRS ${MAD_THIRD_PARTY}/include)
+set(ARMADILLO_INCLUDE_DIRS ${MAD_THIRD_PARTY}/src/EP_armadillo/include)
 #endif(NOT ARMADILLO_INCLUDE_DIRS)
 include_directories(${ARMADILLO_INCLUDE_DIRS})
 
@@ -237,10 +245,18 @@ add_library(
     SHARED
     ${MAD_SOURCES}
 )
-#set_target_properties(madlib
-#    PROPERTIES PREFIX ""
-#    OUTPUT_NAME madlib)
+set_target_properties(madlib PROPERTIES
+    OUTPUT_NAME mad)
+
 add_dependencies(madlib EP_armadillo)
+
+install(TARGETS madlib
+    LIBRARY DESTINATION lib)
+
+# INSTALL_NAME_DIR is a Mac OS X only property
+set_target_properties(madlib PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY lib
+    INSTALL_NAME_DIR "@rpath")
 
 if(APPLE)
     find_library(ACCELERATE_FRAMEWORK Accelerate)
@@ -248,8 +264,8 @@ if(APPLE)
     message(STATUS "Will build madlib for same architecture as detected in "
         "${ACCELERATE_FRAMEWORK}, which has architectures "
         "${ACCELERATE_ARCHS}")
-    set_target_properties(madlib
-        PROPERTIES OSX_ARCHITECTURES "${ACCELERATE_ARCHS}")
+    set_target_properties(madlib PROPERTIES
+        OSX_ARCHITECTURES "${ACCELERATE_ARCHS}")
     
     # On the Mac, the Accelerate framework is already an umbrella for everything
     # we need for Armadillo
@@ -257,14 +273,50 @@ if(APPLE)
 else(APPLE)
     # On other platforms, we link to the armadillo library
     target_link_libraries(madlib armadillo)
+    install(TARGETS armadillo
+        LIBRARY DESTINATION lib)
     
     # the RPATH to be used when installing. This is set to "$ORIGIN" because
     # the armadillo library will reside in the same directory as the MADlib
     # library
-    set_target_properties(madlib
-        PROPERTIES INSTALL_RPATH "\$ORIGIN")
+    set_target_properties(madlib PROPERTIES
+        INSTALL_RPATH "\$ORIGIN")
 endif(APPLE)
-
 
 # Add Ports
 add_subdirectory(ports)
+
+#file(READ extra/packageDescription.txt CPACK_RPM_PACKAGE_SUMMARY)
+
+if(APPLE)
+    list(APPEND CPACK_GENERATOR 
+        PackageMaker
+    )
+elseif(UNIX)
+    list(APPEND CPACK_GENERATOR
+        RPM
+    )
+endif()
+
+set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/extra/packageDescription.txt")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open-Source Library for Scalable in-Database Analytics")
+set(CPACK_PACKAGE_FILE_NAME "madlib-${MADLIB_VERSION}-${MADLIB_OS}-${MADLIB_ARCHS}")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "madlib")
+set(CPACK_PACKAGE_NAME "madlib")
+set(CPACK_PACKAGE_VENDOR "The MADlib.net open source project")
+set(CPACK_PACKAGE_VERSION ${MADLIB_VERSION})
+set(CPACK_PACKAGE_VERSION_MAJOR "0")
+set(CPACK_PACKAGE_VERSION_MINOR "1")
+set(CPACK_PACKAGE_VERSION_PATCH "0")
+set(CPACK_SOURCE_GENERATOR "TGZ;TZ")
+
+# FIXME: Maybe we should not hard code this
+set(CPACK_RPM_PACKAGE_ARCHITECTURE x86_64)
+set(CPACK_RPM_PACKAGE_LICENSE "New BSD License")
+set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries")
+set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.4, lapack >= 3.0")
+
+set(CPACK_OSX_PACKAGE_VERSION "10.5")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local/share/madlib")
+
+include(CPack)
