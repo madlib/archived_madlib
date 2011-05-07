@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//** 
  *
- * @file regression.sql_in
+ * @file regress.sql_in
  *
  * @brief SQL functions for multi-linear and logistic regression
  * @date January 2011
@@ -166,38 +166,53 @@ http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
 
 */
 
-CREATE FUNCTION MADLIB_SCHEMA.float8_mregr_accum(state DOUBLE PRECISION[], y DOUBLE PRECISION, x DOUBLE PRECISION[])
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_transition(
+    state DOUBLE PRECISION[],
+    y DOUBLE PRECISION,
+    x DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.float8_mregr_combine(state1 DOUBLE PRECISION[], state2 DOUBLE PRECISION[])
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_combine(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE STRICT;
+
 
 -- Final functions
-CREATE FUNCTION MADLIB_SCHEMA.float8_mregr_coef(DOUBLE PRECISION[])
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_coef(
+    state DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION MADLIB_SCHEMA.float8_mregr_r2(DOUBLE PRECISION[])
+
+CREATE FUNCTION MADLIB_SCHEMA.linregr_r2(
+    state DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION MADLIB_SCHEMA.float8_mregr_tstats(DOUBLE PRECISION[])
+
+CREATE FUNCTION MADLIB_SCHEMA.linregr_tstats(
+    state DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION MADLIB_SCHEMA.float8_mregr_pvalues(DOUBLE PRECISION[])
+
+CREATE FUNCTION MADLIB_SCHEMA.linregr_pvalues(
+    state DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+LANGUAGE C IMMUTABLE STRICT;
 
 
 /**
@@ -211,29 +226,29 @@ LANGUAGE C STRICT;
  *
  * @examp <tt>SELECT mregr_coef(y, [1, x1, x2]) FROM data;</tt>
  */
-CREATE AGGREGATE MADLIB_SCHEMA.mregr_coef(
+CREATE AGGREGATE MADLIB_SCHEMA.linregr_coef(
     /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[]) (
     
-    SFUNC=MADLIB_SCHEMA.float8_mregr_accum,
+    SFUNC=MADLIB_SCHEMA.linregr_trans,
     STYPE=float8[],
-    FINALFUNC=MADLIB_SCHEMA.float8_mregr_coef,
-    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.float8_mregr_combine,</nm4>)
-    INITCOND='{0}'
+    FINALFUNC=MADLIB_SCHEMA.linregr_coef_final,
+    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.linregr_prelim,</nm4>)
+    INITCOND='{0,0,0,0,0}'
 );
 
 /**
  * @brief Compute the coefficient of determination, $R^2$.
  */
-CREATE AGGREGATE MADLIB_SCHEMA.mregr_r2(
+CREATE AGGREGATE MADLIB_SCHEMA.linregr_r2(
     /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[]) (
     
-    SFUNC=MADLIB_SCHEMA.float8_mregr_accum,
+    SFUNC=MADLIB_SCHEMA.linregr_trans,
     STYPE=float8[],
-    FINALFUNC=MADLIB_SCHEMA.float8_mregr_r2,
-    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.float8_mregr_combine,</nm4>)
-    INITCOND='{0}'
+    FINALFUNC=MADLIB_SCHEMA.linregr_r2_final,
+    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.linregr_prelim,</nm4>)
+    INITCOND='{0,0,0,0,0}'
 );
 
 /**
@@ -247,15 +262,15 @@ CREATE AGGREGATE MADLIB_SCHEMA.mregr_r2(
  * @return Array of t-statistics for each coefficient. The returned array has
  *      the same length as the array of independent variables.
  */
-CREATE AGGREGATE MADLIB_SCHEMA.mregr_tstats(
+CREATE AGGREGATE MADLIB_SCHEMA.linregr_tstats(
     /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[]) (
     
-    SFUNC=MADLIB_SCHEMA.float8_mregr_accum,
+    SFUNC=MADLIB_SCHEMA.linregr_trans,
     STYPE=float8[],
-    FINALFUNC=MADLIB_SCHEMA.float8_mregr_tstats,
-    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.float8_mregr_combine,</nm4>)
-    INITCOND='{0}'
+    FINALFUNC=MADLIB_SCHEMA.linregr_tstats_final,
+    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.linregr_prelim,</nm4>)
+    INITCOND='{0,0,0,0,0}'
 );
 
 /**
@@ -266,15 +281,15 @@ CREATE AGGREGATE MADLIB_SCHEMA.mregr_tstats(
  * @return Array of p-values for each coefficient. The returned array has
  *      the same length as the array of independent variables.
  */
-CREATE AGGREGATE MADLIB_SCHEMA.mregr_pvalues(
+CREATE AGGREGATE MADLIB_SCHEMA.linregr_pvalues(
     /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[]) (
     
-    SFUNC=MADLIB_SCHEMA.float8_mregr_accum,
+    SFUNC=MADLIB_SCHEMA.linregr_trans,
     STYPE=float8[],
-    FINALFUNC=MADLIB_SCHEMA.float8_mregr_pvalues,
-    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.float8_mregr_combine,</nm4>)
-    INITCOND='{0}'
+    FINALFUNC=MADLIB_SCHEMA.linregr_pvalues_final,
+    m4_ifdef(<nm4>GREENPLUM</nm4>,<nm4>prefunc=MADLIB_SCHEMA.linregr_prelim,</nm4>)
+    INITCOND='{0,0,0,0,0}'
 );
 
 /**
@@ -406,52 +421,54 @@ further literature:
     pp. 685-688, http://komarix.org/ac/papers/tr-irls.short.pdf
 */
 
-CREATE TYPE MADLIB_SCHEMA.logregr_cg_state AS (
-    iteration       INTEGER,
-    len             INTEGER,
-    coef            DOUBLE PRECISION[],
-    dir             DOUBLE PRECISION[],
-    grad            DOUBLE PRECISION[],
-    beta            DOUBLE PRECISION,
-
-    count           BIGINT,
-    gradNew         DOUBLE PRECISION[],
-    dTHd            DOUBLE PRECISION,
-    logLikelihood   DOUBLE PRECISION
-);
-
-CREATE TYPE MADLIB_SCHEMA.logregr_irls_state AS (
-    coef            DOUBLE PRECISION[],
-    logLikelihood   DOUBLE PRECISION
-);
-
-CREATE FUNCTION MADLIB_SCHEMA.float8_cg_update_accum(
-    MADLIB_SCHEMA.logregr_cg_state,
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_trans(
+    DOUBLE PRECISION[],
     BOOLEAN,
     DOUBLE PRECISION[],
-    MADLIB_SCHEMA.logregr_cg_state)
+    DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.logregr_cg_state
 AS 'MODULE_PATHNAME'
-LANGUAGE C;
+LANGUAGE C IMMUTABLE;
 
-CREATE FUNCTION MADLIB_SCHEMA.float8_irls_update_accum(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_irls_step_trans(
     DOUBLE PRECISION[],
     BOOLEAN,
     DOUBLE PRECISION[],
-    MADLIB_SCHEMA.logregr_irls_state)
+    DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C;
+LANGUAGE C IMMUTABLE;
 
-CREATE FUNCTION MADLIB_SCHEMA.float8_cg_update_final(MADLIB_SCHEMA.logregr_cg_state)
-RETURNS MADLIB_SCHEMA.logregr_cg_state
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_prelim(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION MADLIB_SCHEMA.float8_irls_update_final(DOUBLE PRECISION[])
-RETURNS MADLIB_SCHEMA.logregr_irls_state
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_irls_step_prelim(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_irls_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_cg_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state" */ DOUBLE PRECISION[]);
 
 /**
  * @internal
@@ -459,13 +476,15 @@ LANGUAGE C STRICT;
  *        logistic regression
  */
 CREATE AGGREGATE MADLIB_SCHEMA.logregr_cg_step(
-    BOOLEAN,
-    DOUBLE PRECISION[],
-    MADLIB_SCHEMA.logregr_cg_state) (
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state" */ DOUBLE PRECISION[]) (
     
-    SFUNC=MADLIB_SCHEMA.float8_cg_update_accum,
-    STYPE=MADLIB_SCHEMA.logregr_cg_state,
-    FINALFUNC=MADLIB_SCHEMA.float8_cg_update_final
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.logregr_cg_step_trans,
+    PREFUNC=MADLIB_SCHEMA.logregr_cg_step_prelim,
+    FINALFUNC=MADLIB_SCHEMA.logregr_cg_step_final,
+	INITCOND='{0,0,0,0,0,0}'
 );
 
 /**
@@ -474,25 +493,43 @@ CREATE AGGREGATE MADLIB_SCHEMA.logregr_cg_step(
  *        method for computing linear regression
  */
 CREATE AGGREGATE MADLIB_SCHEMA.logregr_irls_step(
-    BOOLEAN,
-    DOUBLE PRECISION[],
-    MADLIB_SCHEMA.logregr_irls_state) (
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state" */ DOUBLE PRECISION[]) (
     
-    SFUNC=MADLIB_SCHEMA.float8_irls_update_accum,
-    STYPE=float8[],
-    PREFUNC=MADLIB_SCHEMA.float8_mregr_combine,
-    FINALFUNC=MADLIB_SCHEMA.float8_irls_update_final,
-    INITCOND='{0}'
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.logregr_irls_step_trans,
+    PREFUNC=MADLIB_SCHEMA.logregr_irls_step_prelim,
+    FINALFUNC=MADLIB_SCHEMA.logregr_irls_step_final,
+	INITCOND='{0,0,0}'
 );
 
-CREATE FUNCTION MADLIB_SCHEMA.logregr_should_terminate(
-    DOUBLE PRECISION[],
-    DOUBLE PRECISION[],
-    VARCHAR,
-    DOUBLE PRECISION)
-RETURNS BOOLEAN
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION internal_logregr_cg_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION internal_logregr_cg_coef(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION internal_logregr_irls_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION internal_logregr_irls_coef(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
 
 -- begin functions for logistic-regression coefficients
 -- We only need to document the last one (unfortunately, in Greenplum we have to
@@ -542,6 +579,7 @@ RETURNS DOUBLE PRECISION[] AS $$
         sys.path.append("PLPYTHON_LIBDIR")
         m4_ifdef(<nm4>DEBUG</nm4>,,<nm4>from madlib </nm4>)import logRegress
 
+    MADlibSchema = "MADLIB_SCHEMA"
     return logRegress.compute_logregr_coef(**globals())
 $$ LANGUAGE plpythonu VOLATILE;
 
