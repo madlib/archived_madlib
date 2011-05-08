@@ -28,6 +28,14 @@ maddir_lib  = maddir + "/lib/libmad.so"   # C/C++ libraries
 maddir_sql  = maddir + "/sql"             # SQL create files 
 maddir_test = maddir + "/sql/test"        # Test SQL files 
 
+# Tempdir
+tmpdir = '/tmp/madlib'
+if not os.path.isdir( tmpdir):
+    try:
+        os.mkdir( tmpdir)
+    except:
+        __error( 'Can not create temp dir: %s' % tmpdir, True)
+
 # Read the config files
 ports = configyml.get_ports( maddir_conf )  # object made of Ports.yml
 rev = configyml.get_version( maddir_conf )  # MADlib OS-level version
@@ -37,7 +45,7 @@ portid = None       # Target port ID ( eg: pg90, gp40)
 dbconn = None       # DB Connection object
 con_args = {}       # DB connection arguments
 verbose = None      # Verbose flag
-logfile = '/tmp/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
+logfile = tmpdir + '/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
 log = open( logfile, 'w')
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -67,8 +75,6 @@ def __error( msg, stop):
     if stop == True:
         __log_close()
         exit(2)
-    else:
-        raise Exception
 
 #class MadpackError( Exception):
 #    pass
@@ -233,10 +239,10 @@ def __db_install( schema, dbrev):
             __db_rollback( schema, None)
 
         # Create MADlib objects
-        #try:
-        __db_create_objects( schema, None)
-        #except:
-        #    __db_rollback( schema, None)
+        try:
+            __db_create_objects( schema, None)
+        except:
+            __db_rollback( schema, None)
 
     __info( "MADlib installed successfully in %s schema." % schema.upper(), True)
     
@@ -328,11 +334,14 @@ def __db_create_objects( schema, old_schema):
         
         # Set file names
         sqlfile = maddir_sql + '/' + method + '.sql_in'
-        tmpfile = '/tmp/' + method + '.tmp.sql'
-        logfile = '/tmp/' + method + '.sql.log'
+        tmpfile = tmpdir + '/' + method + '.tmp.sql'
+        logfile = tmpdir + '/' + method + '.sql.log'
         
         # Run the SQL
-        __db_run_sql( schema, sqlfile, tmpfile, logfile)
+        try:
+            __db_run_sql( schema, sqlfile, tmpfile, logfile)
+        except:
+            raise Exception
 
         # Check the output
         log = open( logfile, 'r')
@@ -354,7 +363,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile):
         # Check if the SQL file exists     
         if not os.path.isfile( sqlfile):
             __error("Missing method SQL file (%s)" % sqlfile, False)
-            raise Exception     
+            raise      
         
         # Prepare the file using M4
         try:
@@ -418,6 +427,8 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __db_rollback( drop_schema, keep_schema):
 
+    __info( "Rolling back the installation...", True)
+
     if drop_schema == None:
         __error( 'No schema name to drop. Stopping rollback...', True)        
 
@@ -433,8 +444,9 @@ def __db_rollback( drop_schema, keep_schema):
     # Rename old to current schema
     if keep_schema != None:    
         __db_rename_schema( keep_schema, drop_schema)   
-        
-    __error( "Rollback finished. Stopping execution...", True) 
+
+    __info( "Rollback finished. Stopping execution.", True)
+    __error( "Installation failed. ", True) 
             
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Main       
@@ -709,8 +721,8 @@ def main( argv):
                 
                     # Set file names
                     sqlfile = maddir_test + '/' + file
-                    tmpfile = '/tmp/' + file + '.tmp'
-                    logfile = '/tmp/' + file + '.log'
+                    tmpfile = tmpdir + '/' + file + '.tmp'
+                    logfile = tmpdir + '/' + file + '.log'
                     
                     # Run the SQL
                     run_start = datetime.datetime.now()
