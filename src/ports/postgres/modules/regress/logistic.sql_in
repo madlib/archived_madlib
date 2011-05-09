@@ -1,0 +1,345 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file logistic.sql_in
+ *
+ * @brief SQL functions for logistic regression
+ * @date January 2011
+ *
+ * @sa For a brief introduction to logistic regression, see the
+ *     module description \ref grp_logreg.
+ *
+ *//* ----------------------------------------------------------------------- */
+ 
+/**
+@addtogroup grp_logreg
+
+@about
+
+Logistic regression is used to estimate probabilities of a dependent binary
+variable, by fitting a stochastic model. It is one of the most commonly used
+tools for applied statistics and data mining [1].
+
+Logistic regression assumes a generalized linear model:
+\f[
+    E[Y] = g^{-1}(\boldsymbol c^T X)
+\f]
+where:
+- $Y$ is the dependent variable
+- \f$\boldsymbol c^T X\f$ is the linear predictor
+- \f$g(x) = \ln\left( \frac{x}{1-x} \right)\f$ is the link function, with
+  inverse \f$\sigma(x) := g^{-1}(x) = \frac{1}{1 + \exp(-x)} \f$
+
+For each training data point $i$, we have a vector of
+features $x_i$ and an observed class $y_i$. For ease of notation, let $Z$ be a
+dependent random variable such that $Z = -1$ if $Y = 0$ and $Z = 1$ if $Y = 1$,
+i.e., \f$Z := 2(Y - \frac 12)\f$. By definition,
+\f$P[Z = z_i | X = x_i] = σ(z_i \cdot \boldsymbol c^T x_i)\f$.
+
+Since logistic regression predicts probabilities, we can do maximum-likelihood
+fitting: That is, we want the vector of regression coefficients
+\f$\boldsymbol c\f$ to maximize
+\f[
+    \prod_{i=1}^n \sigma(z_i \cdot \boldsymbol c^T \boldsymbol x_i)
+\f]
+or, equivalently, to maximize the objective
+\f[
+    l(\boldsymbol c) =
+        -\sum_{i=1}^n \ln(1 + \exp(-z_i \cdot \boldsymbol c^T \boldsymbol x_i))
+\f]
+By looking at the Hessian, we can verify that \f$l(\boldsymbol c)\f$ is convex.
+
+There are many techniques for solving convex optimization problems. Currently,
+logistic regression in MADlib can use one of two algorithms:
+- Iteratively Reweighted Least Squares
+- A conjugate-gradient approach, also known as Fletcher-Reeves method in the
+  literature, where we use the Hestenes-Stiefel rule for calculating the step
+  size.
+
+
+@prereq
+
+Implemented in C (the computation) and Python (the driver/outer loop) for
+PostgreSQL/Greenplum.
+
+@usage
+
+-# The training data is expected to be of the following form:\n
+   <tt>{TABLE|VIEW} <em>sourceName</em> ([...] <em>dependentVariable</em>
+   BOOLEAN, <em>independentVariables</em> DOUBLE PRECISION[], [...])</tt>
+-# Run the logistic regression by:\n
+   <tt>SELECT \ref logregr_coef(varchar,varchar,varchar,integer,varchar,float8)
+   "logregr_coef"('<em>sourceName</em>',
+   '<em>dependentVariable</em>', '<em>independentVariables</em>',
+   <em>numIterations</em>, '<em>optimizer</em>', <em>precision</em>)</tt>\n
+   The last three arguments are optional and can be omitted, in which case
+   default values will be used. See logregr_coef().\n
+   Note: In order to model an intercept, set one coordinate in the
+   <tt>independentVariables</tt> array to 1.
+   
+   
+@examp
+
+@verbatim
+# select * from artificiallogreg;
+ y |                           x                           
+---+-------------------------------------------------------
+ t | {-1.19845,1.15366,0.941779,-0.23669,-0.711024}
+ f | {-0.0680205,-0.716733,-0.149781,-0.410448,-0.0843123}
+ f | {-0.330021,0.222596,-0.976091,0.773816,-1.06238}
+ f | {0.648293,0.286225,0.524144,-0.141286,-1.41774}
+ f | {0.859484,-0.412929,-0.273368,-0.243059,0.714789}
+[...]
+
+# select madlib.logregr_coef(
+#     'artificiallogreg', 'y', 'x', 20, 'irls', 0.001
+# )::REAL[];
+                logregr_coef                 
+---------------------------------------------
+ {-3.0307,3.63312,0.714105,-1.72496,1.37484}
+@endverbatim
+
+@sa file regression.sql_in (documenting the SQL functions)
+
+@internal
+@sa namespace logistic (documenting the driver/outer loop implemented in
+    Python), function float8_cg_update_final() (documenting the
+    conjugate-gradient update/iteration steps, implemented in C), function
+    float8_cg_update_accum() (documenting the 
+    iteratively-reweighted-least-squares update/iteration steps, implemented in
+    C)
+@endinternal
+
+@literature
+
+A somewhat random selection of nice write-ups, with valuable pointers into
+further literature:
+
+[1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
+    2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
+
+[2] Thomas P. Minka: A comparison of numerical optimizers for logistic
+    regression, 2003 (revised Mar 26, 2007),
+    http://research.microsoft.com/en-us/um/people/minka/papers/logreg/minka-logreg.pdf
+
+[3] Paul Komarek, Andrew W. Moore: Making Logistic Regression A Core Data Mining
+    Tool With TR-IRLS, IEEE International Conference on Data Mining 2005,
+    pp. 685-688, http://komarix.org/ac/papers/tr-irls.short.pdf
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_trans(
+    DOUBLE PRECISION[],
+    BOOLEAN,
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.logregr_cg_state
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_irls_step_trans(
+    DOUBLE PRECISION[],
+    BOOLEAN,
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_prelim(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_irls_step_prelim(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_irls_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_cg_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state" */ DOUBLE PRECISION[]);
+
+/**
+ * @internal
+ * @brief Perform one iteration of the conjugate-gradient method for computing
+ *        logistic regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.logregr_cg_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state" */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.logregr_cg_step_trans,
+    PREFUNC=MADLIB_SCHEMA.logregr_cg_step_prelim,
+    FINALFUNC=MADLIB_SCHEMA.logregr_cg_step_final,
+	INITCOND='{0,0,0,0,0,0}'
+);
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_irls_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state" */ DOUBLE PRECISION[]);
+
+/**
+ * @internal
+ * @brief Perform one iteration of the iteratively-reweighted-least-squares
+ *        method for computing linear regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.logregr_irls_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state" */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.logregr_irls_step_trans,
+    PREFUNC=MADLIB_SCHEMA.logregr_irls_step_prelim,
+    FINALFUNC=MADLIB_SCHEMA.logregr_irls_step_final,
+	INITCOND='{0,0,0}'
+);
+
+CREATE OR REPLACE FUNCTION internal_logregr_cg_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION internal_logregr_cg_coef(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION internal_logregr_irls_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION internal_logregr_irls_coef(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+-- begin functions for logistic-regression coefficients
+-- We only need to document the last one (unfortunately, in Greenplum we have to
+-- use function overloading instead of default arguments).
+CREATE FUNCTION MADLIB_SCHEMA.logregr_coef(
+    "source" VARCHAR,
+    "depColumn" VARCHAR,
+    "indepColumn" VARCHAR)
+RETURNS DOUBLE PRECISION[] AS $$
+    import sys
+    try:
+        import logistic
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        import logistic
+    MADlibSchema = "MADLIB_SCHEMA"
+
+    return logistic.compute_logregr_coef(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logregr_coef(
+    "source" VARCHAR,
+    "depColumn" VARCHAR,
+    "indepColumn" VARCHAR,
+    "numIterations" INTEGER)
+RETURNS DOUBLE PRECISION[] AS $$
+    import sys
+    try:
+        import logistic
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        import logistic
+    MADlibSchema = "MADLIB_SCHEMA"
+
+    return logistic.compute_logregr_coef(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logregr_coef(
+    "source" VARCHAR,
+    "depColumn" VARCHAR,
+    "indepColumn" VARCHAR,
+    "numIterations" INTEGER,
+    "optimizer" VARCHAR)
+RETURNS DOUBLE PRECISION[] AS $$
+    import sys
+    try:
+        import logistic
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        import logistic
+    MADlibSchema = "MADLIB_SCHEMA"
+
+    return logistic.compute_logregr_coef(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
+
+
+/**
+ * @brief Compute logistic-regression coefficients
+ *
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ * 
+ * @param source Name of the source relation containing the training data
+ * @param depColumn Name of the dependent column (of type BOOLEAN)
+ * @param indepColumn Name of the independent column (of type DOUBLE
+ *        PRECISION[])
+ * @param numIterations The maximum number of iterations
+ * @param optimizer The optimizer to use (either
+ *        <tt>'ilrs'</tt>/<tt>'newton'</tt> for iteratively reweighted least
+ *        squares or <tt>'cg'</tt> for conjugent gradient)
+ * @param precision The difference between log-likelihood values in successive
+ *        iterations that should indicate convergence, or 0 indicating that
+ *        log-likelihood values should be ignored
+ *
+ * @note This function starts an iterative algorithm. It is not an aggregate
+ *       function. Source and column names have to be passed as strings (due to
+ *       limitations of the SQL syntax).
+ *
+ * @examp <tt>SELECT logregr_coef('data', 'y', 'array[1, x1, x2]', 20, 'cg',
+ *        0.001);</tt>
+ *
+ * @internal
+ * @sa This function is a wrapper for logistic::compute_logregr_coef(), which
+ *     sets the default values.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.logregr_coef(
+    "source" VARCHAR,
+    "depColumn" VARCHAR,
+    "indepColumn" VARCHAR,
+    "numIterations" INTEGER /*+ DEFAULT 20 */,
+    "optimizer" VARCHAR /*+ DEFAULT 'irls' */,
+    "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
+RETURNS DOUBLE PRECISION[] AS $$
+    import sys
+    try:
+        import logistic
+    except:
+        sys.path.append("PLPYTHON_LIBDIR")
+        import logistic
+    MADlibSchema = "MADLIB_SCHEMA"
+
+    return logistic.compute_logregr_coef(**globals())
+$$ LANGUAGE plpythonu VOLATILE;
