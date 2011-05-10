@@ -31,7 +31,7 @@ set(BOOST_TAR_MD5 341e5d993b19d099bf1a548495ea91ec)
 set(ARMADILLO_TAR_VERSION "1.2.0")
 set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
 
-set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/../madpy/Version.yml)
+set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/../config/Version.yml)
 
 # ==============================================================================
 # From here on, modifications should rarely be necessary.
@@ -303,7 +303,7 @@ endif()
 
 set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/extra/packageDescription.txt")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open-Source Library for Scalable in-Database Analytics")
-set(CPACK_PACKAGE_FILE_NAME "madlib-${MADLIB_VERSION}-${MADLIB_OS}-${MADLIB_ARCHS}")
+set(CPACK_PACKAGE_FILE_NAME "madlib-${MADLIB_VERSION_STRING}-${CMAKE_SYSTEM_NAME}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "madlib")
 set(CPACK_PACKAGE_NAME "madlib")
 set(CPACK_PACKAGE_VENDOR "The MADlib.net open source project")
