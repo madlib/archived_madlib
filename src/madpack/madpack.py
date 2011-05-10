@@ -12,8 +12,13 @@ import subprocess
 import datetime
 from time import strftime
 
-# Import madpack modlues
-maddir = os.path.abspath( os.path.dirname( sys.argv[0]) + "/..")   # MADlib root dir
+# Import madpack modlues. This file is installed to
+# $MADLIB_ROOT/python/madpack/madpack.py, so to get $MADLIB_ROOT we need to go
+# two levels up in the directory hierarchy. We use (a) os.path.realpath and
+# (b) __file__ (instead of sys.argv[0]) because madpack.py could be called
+# (a) through a symbolic link and (b) not as the main module.
+maddir = os.path.abspath(os.path.dirname(os.path.realpath(
+    __file__)) + "/../..")   # MADlib root dir
 sys.path.append( maddir + "/python")
 sys.path.append( maddir + "/python/ext")
 from madpack import configyml
@@ -22,11 +27,11 @@ from madpack import configyml
 this =  os.path.basename(sys.argv[0])   # name of this script
 
 # Default directories
-maddir_conf = maddir + "/config"          # Config dir
-maddir_py   = maddir + "/python/methods"  # Python methods  
-maddir_lib  = maddir + "/lib/libmad.so"   # C/C++ libraries 
-maddir_sql  = maddir + "/sql"             # SQL create files 
-maddir_test = maddir + "/sql/test"        # Test SQL files 
+maddir_conf = maddir + "/config"           # Config dir
+maddir_py   = maddir + "/python/methods"   # Python methods  
+maddir_lib  = maddir + "/lib/libmadlib.so" # C/C++ libraries 
+maddir_sql  = maddir + "/sql"              # SQL create files 
+maddir_test = maddir + "/sql/test"         # Test SQL files 
 
 # Tempdir
 tmpdir = '/tmp/madlib'
@@ -547,8 +552,10 @@ def main( argv):
                         maddir_conf = maddir + "/ports/" + port['id'] + "/config"
                     if os.path.isdir( maddir + "/ports/" + port['id'] + "/python"):
                         maddir_py   = maddir + "/ports/" + port['id'] + "/python"
-                    if os.path.isdir( maddir + "/ports/" + port['id'] + "/lib/libmad.so"):
-                        maddir_lib  = maddir + "/ports/" + port['id'] + "/lib/libmad.so"
+                    if os.path.isdir( maddir + "/ports/" + port['id'] + 
+                            "/lib/libmadlib_" + port['id'] + ".so"):
+                        maddir_lib  = maddir + "/ports/" + port['id'] +
+                            "/lib/libmadlib_" + port['id'] + ".so"
                     if os.path.isdir( maddir + "/ports/" + port['id'] + "/sql"):
                         maddir_sql  = maddir + "/ports/" + port['id'] + "/sql"
                     if os.path.isdir( maddir + "/ports/" + port['id'] + "/sql/test"):
@@ -681,7 +688,8 @@ def main( argv):
         while go != 'Y' and go != 'N':
             go = raw_input( 'Yes or No >>> ').upper()
         
-        # 2) Do the uninstall/drop             if go == 'N':            
+        # 2) Do the uninstall/drop     
+        if go == 'N':            
             __info( 'No problem. Nothing droped.', True)
             return
             
@@ -694,18 +702,23 @@ def main( argv):
                 dbconn.commit();
             except:
                 __error( "Could not drop schema %s." % schema.upper(), True)         
-            dbconn.close()             __info( 'Schema %s has been dropped. MADlib uninstalled.' % schema.upper(), True)
+            dbconn.close() 
+            __info( 'Schema %s has been dropped. MADlib uninstalled.' % schema.upper(), True)
             
         else:
             return
-               ###
+           
+    ###
     # COMMAND: install-check
     ###
-    if args.command[0] == 'install-check':            # 1) Compare OS and DB versions. Continue if OS = DB.
+    if args.command[0] == 'install-check':
+    
+        # 1) Compare OS and DB versions. Continue if OS = DB.
         if __get_rev_num( dbrev) != __get_rev_num( rev):
             __info( "Versions do not match. Install-check stopped.", True)
             return
-                 # 2) Run test SQLs 
+         
+        # 2) Run test SQLs 
         __info( "> Running test scripts for:", verbose)   
         
         # Loop through all methods 

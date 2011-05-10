@@ -286,6 +286,54 @@ else(APPLE)
         INSTALL_RPATH "\$ORIGIN")
 endif(APPLE)
 
+file(GLOB_RECURSE MADPACK_FILES "madpack/*.py")
+
+# FIXME: Refactor and put into its own function (the same code is used several
+# times in our build scripts)
+# Directory we will use for SQL files
+set(MADPACK_DIR ${CMAKE_CURRENT_BINARY_DIR}/python/madpack)
+execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${MADPACK_DIR})
+foreach(PATH ${MADPACK_FILES})
+    get_filename_component(CURRENT_NAME ${PATH} NAME)
+
+    set(OUTFILE "${MADPACK_DIR}/${CURRENT_NAME}")
+    add_custom_command(OUTPUT "${OUTFILE}"
+        COMMAND ${CMAKE_COMMAND} -E copy "${PATH}" "${OUTFILE}"
+        DEPENDS "${PATH}"
+        COMMENT "Copying ${CURRENT_NAME}.")
+    
+    list(APPEND MADPACK_TARGET_FILES
+        ${OUTFILE})
+endforeach(PATH)
+add_custom_target(madpackFiles ALL DEPENDS ${MADPACK_TARGET_FILES})
+
+install(DIRECTORY ${MADPACK_DIR}
+    DESTINATION python
+    REGEX ".*/\\.DS_Store\$" EXCLUDE
+    REGEX ".*/madpack\\.py\$" PERMISSIONS
+        OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_EXECUTE GROUP_READ
+        WORLD_EXECUTE WORLD_READ)
+
+# Create a symlink from bin/madpack into Python directory
+set(BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
+set(MADPACK_EXE ${BIN_DIR}/madpack)
+list(APPEND MADPACK_BINARY_FILES
+    ${MADPACK_EXE})
+execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${BIN_DIR})
+add_custom_command(
+    OUTPUT ${MADPACK_EXE}
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+        ../python/madpack/madpack.py ${MADPACK_EXE}
+    WORKING_DIRECTORY ${BIN_DIR}
+    COMMENT "Creating symbolic link for bin/madpack.")
+add_custom_target(binaryFiles ALL DEPENDS ${MADPACK_BINARY_FILES})
+add_dependencies(binaryFiles madpackFiles)
+
+install(DIRECTORY ${BIN_DIR}
+    DESTINATION .
+    REGEX ".*/\\.DS_Store\$" EXCLUDE
+)
+
 # Add Ports
 add_subdirectory(ports)
 
@@ -306,7 +354,7 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open-Source Library for Scalable in-Datab
 set(CPACK_PACKAGE_FILE_NAME "madlib-${MADLIB_VERSION_STRING}-${CMAKE_SYSTEM_NAME}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "madlib")
 set(CPACK_PACKAGE_NAME "madlib")
-set(CPACK_PACKAGE_VENDOR "The MADlib.net open source project")
+set(CPACK_PACKAGE_VENDOR "madlib")
 set(CPACK_PACKAGE_VERSION ${MADLIB_VERSION_STRING})
 set(CPACK_PACKAGE_VERSION_MAJOR ${MADLIB_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${MADLIB_VERSION_MINOR})

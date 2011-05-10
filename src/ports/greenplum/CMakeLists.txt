@@ -127,7 +127,9 @@ if(GREENPLUM_FOUND)
     add_custom_target(pythonFiles ALL DEPENDS ${PYTHON_TARGET_FILES})
     
     install(DIRECTORY ${PYTHON_DIR}
-        DESTINATION ports/greenplum/python)
+        DESTINATION ports/greenplum
+        REGEX ".*/\\.DS_Store\$" EXCLUDE
+    )
     
     # Directory we will use for SQL files
     set(SQL_DIR ${CMAKE_CURRENT_BINARY_DIR}/sql)
@@ -147,7 +149,9 @@ if(GREENPLUM_FOUND)
     add_custom_target(sqlFiles ALL DEPENDS ${SQL_TARGET_FILES})
 
     install(DIRECTORY ${SQL_DIR}
-        DESTINATION ports/greenplum/sql)
+        DESTINATION ports/greenplum
+        REGEX ".*/\\.DS_Store\$" EXCLUDE
+    )
 
 else(GREENPLUM_FOUND)
     message(STATUS "***")
