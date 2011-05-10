@@ -23,6 +23,10 @@ else(LINUX)
     )
 endif(LINUX)
 
+file(GLOB_RECURSE PYTHON_FILES "../postgres/modules/*.py_in")
+
+file(GLOB_RECURSE SQL_FILES "../postgres/modules/*.sql_in")
+
 message(STATUS "Trying to find Greenplum installation")
 find_package(Greenplum)
 
@@ -101,29 +105,49 @@ if(GREENPLUM_FOUND)
         set_target_properties(madlib_greenplum
             PROPERTIES INSTALL_RPATH "\$ORIGIN/../../../lib")
     endif(APPLE)
-        
-    # FIXME: The following 4 lines are for testing purposes only. madpack will
-    # do this job later.
-    configure_file(${CMAKE_SOURCE_DIR}/extra/regress.py regress.py COPYONLY)
-    get_property(MADLIB_SHARED_LIB TARGET madlib_greenplum PROPERTY LOCATION)
-    set(MADLIB_PYTHON_PATH ${CMAKE_CURRENT_BINARY_DIR})
-    configure_file(${CMAKE_SOURCE_DIR}/extra/regress.sql.in regress.sql)
-    
+
     # Directory we will use for python files
-    set(PYTHON_DIR ${CMAKE_CURRENT_BINARY_DIR}/python)    
+    set(PYTHON_DIR ${CMAKE_CURRENT_BINARY_DIR}/python)
+    execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_DIR})
     list(APPEND M4_ARGUMENTS
         "-DGREENPLUM"
     )
-    foreach(PATH PYTHON_FILES)
-        get_filename_component(FILENAME ${PATH} NAME)
-        execute_process(
-            COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${PATH}"
-            OUTPUT_FILE "${PYTHON_DIR}/${FILENAME}"
-        )
+    foreach(PATH ${PYTHON_FILES})
+        get_filename_component(CURRENT_NAME ${PATH} NAME)
+        
+        string(REGEX REPLACE ".py_in\$" ".py" OUTFILE "${PYTHON_DIR}/${CURRENT_NAME}")
+        add_custom_command(OUTPUT "${OUTFILE}"
+            COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${PATH}" > "${OUTFILE}"
+            DEPENDS "${PATH}"
+            COMMENT "Preprocessing ${CURRENT_NAME} with m4.")
+        
+        list(APPEND PYTHON_TARGET_FILES
+            ${OUTFILE})
     endforeach(PATH)
+    add_custom_target(pythonFiles ALL DEPENDS ${PYTHON_TARGET_FILES})
     
     install(DIRECTORY ${PYTHON_DIR}
-        DESTINATION ports/greennplum/python)
+        DESTINATION ports/greenplum/python)
+    
+    # Directory we will use for SQL files
+    set(SQL_DIR ${CMAKE_CURRENT_BINARY_DIR}/sql)
+    execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${SQL_DIR})
+    foreach(PATH ${SQL_FILES})
+        get_filename_component(CURRENT_NAME ${PATH} NAME)
+
+        set(OUTFILE "${SQL_DIR}/${CURRENT_NAME}")
+        add_custom_command(OUTPUT "${OUTFILE}"
+            COMMAND ${CMAKE_COMMAND} -E copy "${PATH}" "${OUTFILE}"
+            DEPENDS "${PATH}"
+            COMMENT "Copying ${CURRENT_NAME}.")
+        
+        list(APPEND SQL_TARGET_FILES
+            ${OUTFILE})
+    endforeach(PATH)
+    add_custom_target(sqlFiles ALL DEPENDS ${SQL_TARGET_FILES})
+
+    install(DIRECTORY ${SQL_DIR}
+        DESTINATION ports/greenplum/sql)
 
 else(GREENPLUM_FOUND)
     message(STATUS "***")
