@@ -3,43 +3,45 @@
 # Main Madpack installation executable.
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import sys 
-import argparse
 import getpass
 import re
 import os
+import glob
 import traceback
 import subprocess
 import datetime
 from time import strftime
 
-# Import madpack modlues. This file is installed to
-# $MADLIB_ROOT/python/madpack/madpack.py, so to get $MADLIB_ROOT we need to go
+# Find MADlib root directory. This file is installed to
+# $MADLIB_ROOT/madpack/madpack.py, so to get $MADLIB_ROOT we need to go
 # two levels up in the directory hierarchy. We use (a) os.path.realpath and
 # (b) __file__ (instead of sys.argv[0]) because madpack.py could be called
 # (a) through a symbolic link and (b) not as the main module.
-maddir = os.path.abspath(os.path.dirname(os.path.realpath(
-    __file__)) + "/../..")   # MADlib root dir
-sys.path.append( maddir + "/python")
-sys.path.append( maddir + "/python/ext")
-from madpack import configyml
+maddir = os.path.abspath( os.path.dirname( os.path.realpath(
+    __file__)) + "/..")   # MADlib root dir
+sys.path.append( maddir + "/madpack")
+
+# Next lines are for development/testing only, so madpack.py can be run
+# from the SRC directory tree
+#maddir = os.path.abspath( os.path.dirname( os.path.realpath(
+#    __file__)) + "/../..")   # MADlib root dir
+#sys.path.append( maddir + "/src/madpack")
+# END - For development/testing only
+
+# Import MADlib python modules
+import argparse
+import configyml
 
 # Some read-only variables
 this =  os.path.basename(sys.argv[0])   # name of this script
 
 # Default directories
 maddir_conf = maddir + "/config"           # Config dir
-maddir_py   = maddir + "/python/methods"   # Python methods  
+maddir_mod  = maddir + "/modules"          # Python methods/modules  
 maddir_lib  = maddir + "/lib/libmadlib.so" # C/C++ libraries 
-maddir_sql  = maddir + "/sql"              # SQL create files 
-maddir_test = maddir + "/sql/test"         # Test SQL files 
 
 # Tempdir
 tmpdir = '/tmp/madlib'
-if not os.path.isdir( tmpdir):
-    try:
-        os.mkdir( tmpdir)
-    except:
-        __error( 'Can not create temp dir: %s' % tmpdir, True)
 
 # Read the config files
 ports = configyml.get_ports( maddir_conf )  # object made of Ports.yml
@@ -57,6 +59,17 @@ logfile = tmpdir + '/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
 log = open( logfile, 'w')
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Create a temp dir 
+# @param dir temp directory path
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __make_temp_dir( tmpdir):
+    if not os.path.isdir( tmpdir):
+        try:
+            os.mkdir( tmpdir)
+        except:
+            __error( 'Can not create temp directory: %s' % tmpdir, True)
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Close the log file 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __log_close():
@@ -69,6 +82,7 @@ def __log_close():
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Error message wrapper 
 # @param msg error message
+# @param stop program exit flag
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __error( msg, stop):
     # Print stack trace
@@ -340,27 +354,34 @@ def __db_create_objects( schema, old_schema):
         method = methodinfo['name']
         __info("> - %s" % method, True)        
         
-        # Set file names
-        sqlfile = maddir_sql + '/' + method + '.sql_in'
-        tmpfile = tmpdir + '/' + method + '.tmp.sql'
-        logfile = tmpdir + '/' + method + '.sql.log'
-        
-        # Run the SQL
-        try:
-            __db_run_sql( schema, sqlfile, tmpfile, logfile)
-        except:
-            raise Exception
+        # Make a temp dir for this method (if doesn't exist)
+        cur_tmpdir = '/tmp/madlib/' + method
+        __make_temp_dir( cur_tmpdir)
 
-        # Check the output
-        log = open( logfile, 'r')
-        try:
-            for line in log:
-                if line.upper().find( 'ERROR') >= 0:
-                    print line,
-                    __error( "Problem running %s. Check %s for details." % (tmpfile, logfile), False)
-                    raise Exception
-        finally:
-            log.close() 
+        # Loop through all SQL files for this method
+        sql_files = maddir_mod + '/' + method + '/*.sql_in'
+        for sqlfile in glob.glob( sql_files):
+        
+            # Set file names
+            tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
+            logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
+            
+            # Run the SQL
+            try:
+                __db_run_sql( schema, sqlfile, tmpfile, logfile)
+            except:
+                raise Exception
+    
+            # Check the output
+            log = open( logfile, 'r')
+            try:
+                for line in log:
+                    if line.upper().find( 'ERROR') >= 0:
+                        print line,
+                        __error( "Problem running %s. Check %s for details." % (tmpfile, logfile), False)
+                        raise Exception
+            finally:
+                log.close() 
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
@@ -380,7 +401,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile):
             m4args = [ 'm4', 
                        '-P', 
                        '-DMADLIB_SCHEMA=' + schema, 
-                       '-DPLPYTHON_LIBDIR=' + maddir_py, 
+                       '-DPLPYTHON_LIBDIR=' + maddir_mod, 
                        '-DMODULE_PATHNAME=' + maddir_lib, 
                        '-D' + portid.upper(), 
                        sqlfile ]
@@ -499,6 +520,9 @@ def main( argv):
     parser.add_argument( '-v', '--verbose', dest='verbose', 
                          action="store_true", help="more output")
 
+    # Create temp dir:
+    __make_temp_dir( tmpdir)
+    
     ##
     # Get the arguments
     ##
@@ -540,26 +564,25 @@ def main( argv):
             # Loop through available db ports 
             for port in ports['ports']:                
                 if args.platform[0] == port['id']:
-                    # Get the DB id
+                    # Get the DB name
                     platform = args.platform
                     # Get the Python DBAPI2 module
                     portapi = port['dbapi2'] 
+                    # Get the DB id
                     global portid  
                     portid = port['id']
-                    # Adjust MADlib directories for this port (if exist)
-                    global maddir_conf, maddir_py, maddir_lib, maddir_sql, maddir_test
-                    if os.path.isdir( maddir + "/ports/" + port['id'] + "/config"):
-                        maddir_conf = maddir + "/ports/" + port['id'] + "/config"
-                    if os.path.isdir( maddir + "/ports/" + port['id'] + "/python"):
-                        maddir_py   = maddir + "/ports/" + port['id'] + "/python"
-                    if os.path.isdir( maddir + "/ports/" + port['id'] + 
-                            "/lib/libmadlib_" + port['id'] + ".so"):
-                        maddir_lib  = maddir + "/ports/" + port['id'] +
-                            "/lib/libmadlib_" + port['id'] + ".so"
-                    if os.path.isdir( maddir + "/ports/" + port['id'] + "/sql"):
-                        maddir_sql  = maddir + "/ports/" + port['id'] + "/sql"
-                    if os.path.isdir( maddir + "/ports/" + port['id'] + "/sql/test"):
-                        maddir_test = maddir + "/ports/" + port['id'] + "/sql/test"
+                    # Adjust MADlib directories for this port (if they exist)
+                    global maddir_conf 
+                    if os.path.isdir( maddir + "/ports/" + portid + "/config"):
+                        maddir_conf = maddir + "/ports/" + portid + "/config"
+                    global maddir_mod
+                    if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
+                        maddir_mod  = maddir + "/ports/" + portid + "/modules"
+                    global maddir_lib
+                    if os.path.isdir( maddir + "/ports/" + portid + \
+                            "/lib/libmadlib_" + portid + ".so"):
+                        maddir_lib  = maddir + "/ports/" + portid + \
+                            "/lib/libmadlib_" + portid + ".so"
                     # Get the list of methods for this port
                     global portspecs
                     portspecs = configyml.get_methods( maddir_conf) 
@@ -727,39 +750,43 @@ def main( argv):
             # Get method name
             method = methodinfo['name']
             __info("> - %s" % method, verbose)        
+
+            # Make a temp dir for this method (if doesn't exist)
+            cur_tmpdir = '/tmp/madlib/' + method + '/test'
+            __make_temp_dir( cur_tmpdir)
             
             # Loop through all test files for each method
-            for file in os.listdir( maddir_test):
-                if file.find( method) == 0:
-                
-                    # Set file names
-                    sqlfile = maddir_test + '/' + file
-                    tmpfile = tmpdir + '/' + file + '.tmp'
-                    logfile = tmpdir + '/' + file + '.log'
-                    
-                    # Run the SQL
-                    run_start = datetime.datetime.now()
-                    __db_run_sql( schema, sqlfile, tmpfile, logfile)
-                    # Runtime evaluation
-                    run_end = datetime.datetime.now()
-                    seconds = (run_end - run_start).seconds
-                    microsec = (run_end - run_start).microseconds
+            sql_files = maddir_mod + '/' + method + '/test/*.sql_in'
+            for sqlfile in glob.glob( sql_files):
             
-                    # Check the output
-                    log = open( logfile, 'r')
-                    result = 'PASS'
-                    try:
-                        for line in log:
-                            if line.upper().find( 'ERROR') >= 0:
-                                result = 'FAIL'
-                    except:
-                        result = 'ERROR'
-                    finally:
-                        log.close()                     
-                    
-                    # Spit the line
-                    print "TEST CASE RESULT|MADlib method: " + method + "\
-|" + file + "|" + result + "|Time: %s.%s sec" % (seconds, microsec)           
+                # Set file names
+                tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
+                logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
+                            
+                # Run the SQL
+                run_start = datetime.datetime.now()
+                __db_run_sql( schema, sqlfile, tmpfile, logfile)
+                # Runtime evaluation
+                run_end = datetime.datetime.now()
+                seconds = (run_end - run_start).seconds
+                microsec = (run_end - run_start).microseconds
+        
+                # Check the output
+                log = open( logfile, 'r')
+                result = 'PASS'
+                try:
+                    for line in log:
+                        if line.upper().find( 'ERROR') >= 0:
+                            result = 'FAIL'
+                except:
+                    result = 'ERROR'
+                finally:
+                    log.close()                     
+                
+                # Spit the line
+                print "TEST CASE RESULT|MADlib method: " + method + \
+                    "|" + file + "|" + result + \
+                    "|Time: %s.%s sec" % (seconds, microsec)           
     
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Start Here
