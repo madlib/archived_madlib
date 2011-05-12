@@ -56,7 +56,6 @@ dbconn = None       # DB Connection object
 con_args = {}       # DB connection arguments
 verbose = None      # Verbose flag
 logfile = tmpdir + '/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
-log = open( logfile, 'w')
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Create a temp dir 
@@ -74,8 +73,11 @@ def __make_temp_dir( tmpdir):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __log_close():
     try:
-        __info( "Log saved in " + logfile, verbose)
-        log.close()            
+        log.close()     
+        if os.path.getsize( logfile) == 0:
+            os.remove( logfile)       
+        else:
+            __info( "Log saved in " + logfile, verbose)
     except:
         pass            
 
@@ -520,9 +522,6 @@ def main( argv):
     parser.add_argument( '-v', '--verbose', dest='verbose', 
                          action="store_true", help="more output")
 
-    # Create temp dir:
-    __make_temp_dir( tmpdir)
-    
     ##
     # Get the arguments
     ##
@@ -793,9 +792,14 @@ def main( argv):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 if __name__ == "__main__":
 
-    # Run main
-    main(sys.argv[1:])
+    # Open the log
+    __make_temp_dir( tmpdir)
+    log = open( logfile, 'w')
 
-    # Close the log
-    __log_close()
+    # Run main
+    try:
+        main(sys.argv[1:])
+    finally:
+        # Close the log
+        __log_close()
     
