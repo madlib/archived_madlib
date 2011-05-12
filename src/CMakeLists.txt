@@ -1,31 +1,16 @@
 project(MADlib)
 
-# List all methods that need to be compiled from source
-# Note: The module names must match the directory names in the module/
-# hierarchy.
-
-set(MAD_MODULES
-    prob
-    regress)
-
-
-# For each module, list all source files.
-
-set(SRC_prob
-	student.cpp
-)
-
-set(SRC_regress
-	linear.cpp
-	logistic.cpp
-)
-
+# If Boost is not present on the system (or simply too old), this is the version
+# we will download automatically. It is also possible to specify the path to the
+# Boost tarball:
+# -DBOOST_TAR_SOURCE=/path/to/boost_x_x_x.tar.gz
 
 set(BOOST_TAR_VERSION "1.46.1")
 set(BOOST_TAR_MD5 341e5d993b19d099bf1a548495ea91ec)
 
-# If Armadillo is not present on the system, this is the version we will download
-# automatically. It is also possible to specify the path to the Armadillo tarball:
+# If Armadillo is not present on the system, this is the version we will
+# download automatically. It is also possible to specify the path to the
+# Armadillo tarball:
 # -DARMADILLO_TAR_SOURCE=/path/to/armadillo-x.x.x.tar.gz
 
 set(ARMADILLO_TAR_VERSION "1.2.0")
@@ -64,6 +49,17 @@ macro(join_strings OUT_STRING SEPARATOR LIST)
     endforeach(ITEM ${LIST})
 endmacro(join_strings)
 
+macro(get_dir_name OUT_DIR IN_PATH)
+    if(${IN_PATH} MATCHES "^.+/[^/]*\$")
+        # If the argument for string(REGEX REPLACE does not match the
+        # search string, CMake sets the output to the input string
+        # This is not what we want, hence the if-block.
+        string(REGEX REPLACE "^(.+)/[^/]*\$" "\\1" ${OUT_DIR} "${IN_PATH}")
+    else(${IN_PATH} MATCHES "^.+/[^/]*\$")
+        set(${OUT_DIR} "")
+    endif(${IN_PATH} MATCHES "^.+/[^/]*\$")
+endmacro(get_dir_name)
+
 # Set the directory for tools needed during build time
 set(MAD_BUILD_TOOLS ${CMAKE_SOURCE_DIR}/cmake_tools)
 
@@ -94,11 +90,24 @@ string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "
 set(MAD_MODULE_DIR ${CMAKE_SOURCE_DIR}/modules)
 
 # By default, we include all modules
-foreach(MAD_MODULE ${MAD_MODULES})
-	foreach(MAD_FILE ${SRC_${MAD_MODULE}})
-		list(APPEND MAD_SOURCES ${MAD_MODULE_DIR}/${MAD_MODULE}/${MAD_FILE})
-	endforeach()
-endforeach()
+# foreach(MAD_MODULE ${MAD_MODULES})
+# 	foreach(MAD_FILE ${SRC_${MAD_MODULE}})
+# 		list(APPEND MAD_SOURCES ${MAD_MODULE_DIR}/${MAD_MODULE}/${MAD_FILE})
+# 	endforeach()
+# endforeach()
+
+# FIXME: The CMake description of file(GLOB ...) says:
+# "We do not recommend using GLOB to collect a list of source files from your
+# source tree. If no CMakeLists.txt file changes when a source is added or
+# removed then the generated build system cannot know when to ask CMake to
+# regenerate."
+# We still use GLOB here because we think the benefits outweigh the mentioned
+# disadvantage.
+
+file(GLOB_RECURSE MAD_CPP_SOURCES modules/*.cpp)
+list(APPEND MAD_SOURCES
+    ${MAD_CPP_SOURCES}
+)
 
 if(LINUX)
     # On Linux, we export "C" all symbols with their SQL name.
@@ -319,12 +328,12 @@ set(BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
 set(MADPACK_EXE ${BIN_DIR}/madpack)
 list(APPEND MADPACK_BINARY_FILES
     ${MADPACK_EXE})
-execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${BIN_DIR})
 add_custom_command(
     OUTPUT ${MADPACK_EXE}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BIN_DIR}
     COMMAND ${CMAKE_COMMAND} -E create_symlink
         ../python/madpack/madpack.py ${MADPACK_EXE}
-    WORKING_DIRECTORY ${BIN_DIR}
+#    WORKING_DIRECTORY ${BIN_DIR}
     COMMENT "Creating symbolic link for bin/madpack.")
 add_custom_target(binaryFiles ALL DEPENDS ${MADPACK_BINARY_FILES})
 add_dependencies(binaryFiles madpackFiles)
