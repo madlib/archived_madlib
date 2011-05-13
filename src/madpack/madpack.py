@@ -23,8 +23,7 @@ sys.path.append( maddir + "/madpack")
 
 # Next lines are for development/testing only, so madpack.py can be run
 # from the SRC directory tree
-#maddir = os.path.abspath( os.path.dirname( os.path.realpath(
-#    __file__)) + "/../..")   # MADlib root dir
+#maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
 #sys.path.append( maddir + "/src/madpack")
 # END - For development/testing only
 
@@ -41,7 +40,7 @@ maddir_mod  = maddir + "/modules"          # Python methods/modules
 maddir_lib  = maddir + "/lib/libmadlib.so" # C/C++ libraries 
 
 # Tempdir
-tmpdir = '/tmp/madlib'
+tmpdir = '/tmp/madlib/log/%s' % strftime( "%Y%m%d-%H%M%S")
 
 # Read the config files
 ports = configyml.get_ports( maddir_conf )  # object made of Ports.yml
@@ -55,7 +54,7 @@ portid = None       # Target port ID ( eg: pg90, gp40)
 dbconn = None       # DB Connection object
 con_args = {}       # DB connection arguments
 verbose = None      # Verbose flag
-logfile = tmpdir + '/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
+logfile = tmpdir + '/madpack.log'
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Create a temp dir 
@@ -64,7 +63,7 @@ logfile = tmpdir + '/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
 def __make_temp_dir( tmpdir):
     if not os.path.isdir( tmpdir):
         try:
-            os.mkdir( tmpdir)
+            os.makedirs( tmpdir)
         except:
             __error( 'Can not create temp directory: %s' % tmpdir, True)
 
@@ -357,7 +356,7 @@ def __db_create_objects( schema, old_schema):
         __info("> - %s" % method, True)        
         
         # Make a temp dir for this method (if doesn't exist)
-        cur_tmpdir = '/tmp/madlib/' + method
+        cur_tmpdir = tmpdir + "/" + method
         __make_temp_dir( cur_tmpdir)
 
         # Loop through all SQL files for this method
@@ -761,7 +760,7 @@ def main( argv):
             __info("> - %s" % method, verbose)        
 
             # Make a temp dir for this method (if doesn't exist)
-            cur_tmpdir = '/tmp/madlib/' + method + '/test'
+            cur_tmpdir = tmpdir + '/' + method + '/test'
             __make_temp_dir( cur_tmpdir)
             
             # Loop through all test files for each method
