@@ -36,7 +36,6 @@ this =  os.path.basename(sys.argv[0])   # name of this script
 
 # Default directories
 maddir_conf = maddir + "/config"           # Config dir
-maddir_mod  = maddir + "/modules"          # Python methods/modules  
 maddir_lib  = maddir + "/lib/libmadlib.so" # C/C++ libraries 
 
 # Tempdir
@@ -348,19 +347,25 @@ def __db_create_objects( schema, old_schema):
     # Run migration SQLs    
     __info( "> Creating objects for:", True)  
     
-    # Loop through all methods  
+    # Loop through all methods/modules  
     for methodinfo in portspecs['methods']:   
      
         # Get the method name
         method = methodinfo['name']
         __info("> - %s" % method, True)        
         
-        # Make a temp dir for this method (if doesn't exist)
+        # Make a temp dir for this method 
         cur_tmpdir = tmpdir + "/" + method
         __make_temp_dir( cur_tmpdir)
 
+        # Find the method/module dir (platform specific or generic)
+        if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + method):
+            maddir_mod  = maddir + "/ports/" + portid + "/modules/" + method
+        else:        
+            maddir_mod  = maddir + "/modules/" + method
+
         # Loop through all SQL files for this method
-        sql_files = maddir_mod + '/' + method + '/*.sql_in'
+        sql_files = maddir_mod + '/*.sql_in'
         for sqlfile in glob.glob( sql_files):
         
             # Set file names
@@ -369,7 +374,7 @@ def __db_create_objects( schema, old_schema):
             
             # Run the SQL
             try:
-                __db_run_sql( schema, sqlfile, tmpfile, logfile)
+                __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
             except:
                 raise Exception
     
@@ -386,9 +391,13 @@ def __db_create_objects( schema, old_schema):
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
-# @param method name of the method  
+# @param schema name of the target schema  
+# @param sqlfile name of the file to parse  
+# @param tmpfile name of the temp file to run
+# @param logfile name of the log file    
+# @param maddir_pyt name of the Python library directory
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_run_sql( schema, sqlfile, tmpfile, logfile):       
+def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):       
 
         # Check if the SQL file exists     
         if not os.path.isfile( sqlfile):
@@ -402,7 +411,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile):
             m4args = [ 'm4', 
                        '-P', 
                        '-DMADLIB_SCHEMA=' + schema, 
-                       '-DPLPYTHON_LIBDIR=' + maddir_mod, 
+                       '-DPLPYTHON_LIBDIR=' + maddir_pyt, 
                        '-DMODULE_PATHNAME=' + maddir_lib, 
                        '-D' + portid.upper(), 
                        sqlfile ]
@@ -573,9 +582,6 @@ def main( argv):
                     global maddir_conf 
                     if os.path.isdir( maddir + "/ports/" + portid + "/config"):
                         maddir_conf = maddir + "/ports/" + portid + "/config"
-                    global maddir_mod
-                    if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
-                        maddir_mod  = maddir + "/ports/" + portid + "/modules"
                     global maddir_lib
                     if os.path.isdir( maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"):
@@ -763,8 +769,14 @@ def main( argv):
             cur_tmpdir = tmpdir + '/' + method + '/test'
             __make_temp_dir( cur_tmpdir)
             
-            # Loop through all test files for each method
-            sql_files = maddir_mod + '/' + method + '/test/*.sql_in'
+            # Find the method/module dir (platform specific or generic)
+            if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + method):
+                maddir_mod  = maddir + "/ports/" + portid + "/modules/" + method
+            else:        
+                maddir_mod  = maddir + "/modules/" + method
+    
+            # Loop through all test SQL files for this method
+            sql_files = maddir_mod + '/test/*.sql_in'
             for sqlfile in glob.glob( sql_files):
             
                 # Set file names
@@ -773,7 +785,7 @@ def main( argv):
                             
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                __db_run_sql( schema, sqlfile, tmpfile, logfile)
+                __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 seconds = (run_end - run_start).seconds
