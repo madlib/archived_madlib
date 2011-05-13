@@ -23,9 +23,8 @@ sys.path.append( maddir + "/madpack")
 
 # Next lines are for development/testing only, so madpack.py can be run
 # from the SRC directory tree
-#maddir = os.path.abspath( os.path.dirname( os.path.realpath(
-#    __file__)) + "/../..")   # MADlib root dir
-#sys.path.append( maddir + "/src/madpack")
+# maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
+# sys.path.append( maddir + "/src/madpack")
 # END - For development/testing only
 
 # Import MADlib python modules
@@ -37,11 +36,10 @@ this =  os.path.basename(sys.argv[0])   # name of this script
 
 # Default directories
 maddir_conf = maddir + "/config"           # Config dir
-maddir_mod  = maddir + "/modules"          # Python methods/modules  
 maddir_lib  = maddir + "/lib/libmadlib.so" # C/C++ libraries 
 
 # Tempdir
-tmpdir = '/tmp/madlib'
+tmpdir = '/tmp/madlib/log/%s' % strftime( "%Y%m%d-%H%M%S")
 
 # Read the config files
 ports = configyml.get_ports( maddir_conf )  # object made of Ports.yml
@@ -55,7 +53,7 @@ portid = None       # Target port ID ( eg: pg90, gp40)
 dbconn = None       # DB Connection object
 con_args = {}       # DB connection arguments
 verbose = None      # Verbose flag
-logfile = tmpdir + '/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
+logfile = tmpdir + '/madpack.log'
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Create a temp dir 
@@ -64,7 +62,7 @@ logfile = tmpdir + '/' + "%s-%s.log" % ('madlib', strftime( "%Y%m%d-%H%M%S"))
 def __make_temp_dir( tmpdir):
     if not os.path.isdir( tmpdir):
         try:
-            os.mkdir( tmpdir)
+            os.makedirs( tmpdir)
         except:
             __error( 'Can not create temp directory: %s' % tmpdir, True)
 
@@ -349,19 +347,25 @@ def __db_create_objects( schema, old_schema):
     # Run migration SQLs    
     __info( "> Creating objects for:", True)  
     
-    # Loop through all methods  
-    for methodinfo in portspecs['methods']:   
+    # Loop through all modules/modules  
+    for moduleinfo in portspecs['modules']:   
      
-        # Get the method name
-        method = methodinfo['name']
-        __info("> - %s" % method, True)        
+        # Get the module name
+        module = moduleinfo['name']
+        __info("> - %s" % module, True)        
         
-        # Make a temp dir for this method (if doesn't exist)
-        cur_tmpdir = '/tmp/madlib/' + method
+        # Make a temp dir for this module 
+        cur_tmpdir = tmpdir + "/" + module
         __make_temp_dir( cur_tmpdir)
 
-        # Loop through all SQL files for this method
-        sql_files = maddir_mod + '/' + method + '/*.sql_in'
+        # Find the module dir (platform specific or generic)
+        if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
+            maddir_mod  = maddir + "/ports/" + portid + "/modules/" + module
+        else:        
+            maddir_mod  = maddir + "/modules/" + module
+
+        # Loop through all SQL files for this module
+        sql_files = maddir_mod + '/*.sql_in'
         for sqlfile in glob.glob( sql_files):
         
             # Set file names
@@ -370,7 +374,7 @@ def __db_create_objects( schema, old_schema):
             
             # Run the SQL
             try:
-                __db_run_sql( schema, sqlfile, tmpfile, logfile)
+                __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
             except:
                 raise Exception
     
@@ -387,13 +391,17 @@ def __db_create_objects( schema, old_schema):
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
-# @param method name of the method  
+# @param schema name of the target schema  
+# @param sqlfile name of the file to parse  
+# @param tmpfile name of the temp file to run
+# @param logfile name of the log file    
+# @param maddir_pyt name of the Python library directory
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_run_sql( schema, sqlfile, tmpfile, logfile):       
+def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):       
 
         # Check if the SQL file exists     
         if not os.path.isfile( sqlfile):
-            __error("Missing method SQL file (%s)" % sqlfile, False)
+            __error("Missing module SQL file (%s)" % sqlfile, False)
             raise      
         
         # Prepare the file using M4
@@ -403,7 +411,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile):
             m4args = [ 'm4', 
                        '-P', 
                        '-DMADLIB_SCHEMA=' + schema, 
-                       '-DPLPYTHON_LIBDIR=' + maddir_mod, 
+                       '-DPLPYTHON_LIBDIR=' + maddir_pyt, 
                        '-DMODULE_PATHNAME=' + maddir_lib, 
                        '-D' + portid.upper(), 
                        sqlfile ]
@@ -503,7 +511,7 @@ def main( argv):
   install/update : run sql scripts to load into DB
   uninstall      : run sql scripts to uninstall from DB
   version        : compare and print MADlib version (binaries vs database objects)
-  install-check  : test all installed methods""")
+  install-check  : test all installed modules""")
   
     parser.add_argument( '-a', '--api', nargs=1, dest='api', metavar='API', 
                          help="Python module for your database platform (DBAPI2 compliant)")
@@ -542,7 +550,7 @@ def main( argv):
     if api != None:
         try:
             dbapi2 = __import_dbapi( api)
-            __info( "Using provided dbapi2 module (%s)." % (api), verbose)
+            __info( "Imported user defined dbapi2 module (%s)." % (api), verbose)
         except:
             __error( "cannot import dbapi2 module: %s. Try using the deafult one from Ports.yml file." % (args.api[0]), True)
         
@@ -574,17 +582,14 @@ def main( argv):
                     global maddir_conf 
                     if os.path.isdir( maddir + "/ports/" + portid + "/config"):
                         maddir_conf = maddir + "/ports/" + portid + "/config"
-                    global maddir_mod
-                    if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
-                        maddir_mod  = maddir + "/ports/" + portid + "/modules"
                     global maddir_lib
                     if os.path.isdir( maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"):
                         maddir_lib  = maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"
-                    # Get the list of methods for this port
+                    # Get the list of modules for this port
                     global portspecs
-                    portspecs = configyml.get_methods( maddir_conf) 
+                    portspecs = configyml.get_modules( maddir_conf) 
                     # print portspecs
         except:
             platform = None
@@ -596,12 +601,22 @@ def main( argv):
     ##
     # If no API defined yet (try the default API - from Ports.yml)
     ##
-    if api == None and portapi != None:
-        try:       
-            dbapi2 = __import_dbapi( portapi)
-            __info( "Using dbapi module (%s) defined in Ports.yml." % (portapi), verbose)
-        except:
-            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
+    if api is None and portapi != None:
+        # For POSTGRES import Pygresql.pgdb from madpack package
+        if portid.upper() == 'POSTGRES':
+            try:       
+                sys.path.append( maddir + "/ports/postgres/madpack")
+                dbapi2 = __import_dbapi( portapi)
+                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+            except:
+                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
+        # For GREENPLUM use the GP one: $GPHOME/lib/python/pygresql
+        else: 
+            try:       
+                dbapi2 = __import_dbapi( portapi)
+                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+            except:
+                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
 
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)
@@ -743,19 +758,25 @@ def main( argv):
         # 2) Run test SQLs 
         __info( "> Running test scripts for:", verbose)   
         
-        # Loop through all methods 
-        for methodinfo in portspecs['methods']:    
+        # Loop through all modules 
+        for moduleinfo in portspecs['modules']:    
         
-            # Get method name
-            method = methodinfo['name']
-            __info("> - %s" % method, verbose)        
+            # Get module name
+            module = moduleinfo['name']
+            __info("> - %s" % module, verbose)        
 
-            # Make a temp dir for this method (if doesn't exist)
-            cur_tmpdir = '/tmp/madlib/' + method + '/test'
+            # Make a temp dir for this module (if doesn't exist)
+            cur_tmpdir = tmpdir + '/' + module + '/test'
             __make_temp_dir( cur_tmpdir)
             
-            # Loop through all test files for each method
-            sql_files = maddir_mod + '/' + method + '/test/*.sql_in'
+            # Find the module/module dir (platform specific or generic)
+            if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
+                maddir_mod  = maddir + "/ports/" + portid + "/modules/" + module
+            else:        
+                maddir_mod  = maddir + "/modules/" + module
+    
+            # Loop through all test SQL files for this module
+            sql_files = maddir_mod + '/test/*.sql_in'
             for sqlfile in glob.glob( sql_files):
             
                 # Set file names
@@ -764,7 +785,7 @@ def main( argv):
                             
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                __db_run_sql( schema, sqlfile, tmpfile, logfile)
+                __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 seconds = (run_end - run_start).seconds
@@ -783,7 +804,7 @@ def main( argv):
                     log.close()                     
                 
                 # Spit the line
-                print "TEST CASE RESULT|MADlib method: " + method + \
+                print "TEST CASE RESULT|MADlib module: " + module + \
                     "|" + file + "|" + result + \
                     "|Time: %s.%s sec" % (seconds, microsec)           
     

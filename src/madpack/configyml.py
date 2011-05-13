@@ -3,7 +3,7 @@
 # Routines to pull information out of YML config files:
 #   - config/Version.yml
 #   - config/Ports.yml
-#   - config/Methods.yml
+#   - config/Modules.yml
 #
 import yaml
 import re
@@ -45,10 +45,10 @@ def get_version(configdir):
 # Load Install.yml file.
 # @param configdir the directory where we can find Version.yml
 ##
-#def get_method_spec( methoddir):
+#def get_module_spec( moduledir):
 #
 #    try:
-#        install = yaml.load(open(methoddir + '/Install.yml'))
+#        install = yaml.load(open(moduledir + '/Install.yml'))
 #    except:
 #        print "configyml : ERROR : missing or malformed Install.yml"
 #        exit(2)
@@ -110,15 +110,15 @@ def get_ports(configdir):
     return conf
     
 ## 
-# Load methods
+# Load modules
 #
 # @param configdir the directory where we can find the [port_id].yml file
 # @param id the ID of the specific DB port
 # @param src the directory of the source code for a specific port
 ##
-def get_methods( confdir):
+def get_modules( confdir):
 
-    fname = "Methods.yml"
+    fname = "Modules.yml"
     
     try:
         conf = yaml.load( open( confdir + '/' + fname))
@@ -133,12 +133,12 @@ def get_methods( confdir):
     #    exit(2)
 
     try:
-        conf['methods']
+        conf['modules']
     except:
-        print "configyml : ERROR : missing methods section in " + fname
+        print "configyml : ERROR : missing modules section in " + fname
         raise Exception
         
-    conf = topsort_methods( conf)
+    conf = topsort_modules( conf)
     
     return conf
 
@@ -187,22 +187,22 @@ def topsort(depdict):
     return out
 
 ## 
-# Top-sort the methods in conf
+# Top-sort the modules in conf
 # @param conf a madpack configuration
 ##
-def topsort_methods(conf):
+def topsort_modules(conf):
 
     depdict = dict()    
-    for m in conf['methods']:
+    for m in conf['modules']:
         try:
             depdict[m['name']] = m['depends']
         except:
             depdict[m['name']] = []        
     try:
-        method_dict = topsort(depdict)
+        module_dict = topsort(depdict)
     except MadPackConfigError as e:
-        raise MadPackConfigError("invalid cyclic dependency between methods: " + e.value + "; check Methods.yml files")
-    missing = set(method_dict.keys()) - set(depdict.keys())
+        raise MadPackConfigError("invalid cyclic dependency between modules: " + e.value + "; check Modules.yml files")
+    missing = set(module_dict.keys()) - set(depdict.keys())
     inverted = dict()
     if len(missing) > 0:
         for k in depdict.iterkeys():
@@ -210,9 +210,9 @@ def topsort_methods(conf):
                 if v not in inverted:
                     inverted[v] = set()
                 inverted[v].add(k)
-        print "configyml : ERROR : required methods missing from Methods.yml: " 
+        print "configyml : ERROR : required modules missing from Modules.yml: " 
         for m in missing:
             print  "    " + m + " (required by " + str(list(inverted[m])) + ")"
         exit(2)
-    conf['methods'] = sorted(conf['methods'], key=lambda m:method_dict[m['name']])
+    conf['modulesmodules'] = sorted(conf['modules'], key=lambda m:module_dict[m['name']])
     return conf
