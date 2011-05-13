@@ -113,8 +113,6 @@ if(GREENPLUM_FOUND)
     endif(APPLE)
 
     # Directory we will use for python files
-#    set(PYTHON_DIR ${CMAKE_CURRENT_BINARY_DIR}/modules)
-#    execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_DIR})
     list(APPEND M4_ARGUMENTS
         "-DGREENPLUM"
     )
@@ -135,14 +133,11 @@ if(GREENPLUM_FOUND)
     add_custom_target(pythonFiles ALL DEPENDS ${PYTHON_TARGET_FILES})
     
     # Directory we will use for SQL files
-#    set(SQL_DIR ${CMAKE_CURRENT_BINARY_DIR}/sql)
-#    execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${SQL_DIR})
     foreach(CURRENT_FILE ${SQL_FILES})
         get_filename_component(CURRENT_PATH "../postgres/modules/${CURRENT_FILE}" ABSOLUTE)
 
         set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
         add_custom_command(OUTPUT "${OUTFILE}"
-#            COMMAND ${CMAKE_COMMAND} -E touch ${OUTFILE}
             COMMAND ${CMAKE_COMMAND} -E copy "${CURRENT_PATH}" "${OUTFILE}"
             DEPENDS "${CURRENT_PATH}"
             COMMENT "Copying ${CURRENT_FILE}.")
@@ -157,11 +152,6 @@ if(GREENPLUM_FOUND)
         REGEX ".*/\\.DS_Store\$" EXCLUDE
     )
     
-#    install(DIRECTORY ${SQL_DIR}
-#        DESTINATION ports/greenplum
-#        REGEX ".*/\\.DS_Store\$" EXCLUDE
-#    )
-
 else(GREENPLUM_FOUND)
     message(STATUS "***")
     message(STATUS "*** No Greenplum installation found. Skipping.")

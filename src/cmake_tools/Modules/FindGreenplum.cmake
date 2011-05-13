@@ -29,12 +29,13 @@ find_path(GREENPLUM_INCLUDE_DIR
 	NAMES postgresql/server/postgres.h postgresql/server/fmgr.h
 	HINTS 
 	/usr/local/greenplum-db/include
+    "$ENV{GPHOME}/include"
 )
 
 if(GREENPLUM_INCLUDE_DIR)
     # Unfortunately, the regex engine of CMake is rather primitive.
     # It treats the following the same as "^(.*)/[^/]*$"
-    string(REGEX REPLACE "^(.*)/([^/]|\\/)*$" "\\1" GREENPLUM_BASE_DIR ${GREENPLUM_INCLUDE_DIR})
+    string(REGEX REPLACE "^(.*)/([^/]|\\/)*\$" "\\1" GREENPLUM_BASE_DIR ${GREENPLUM_INCLUDE_DIR})
     set(GREENPLUM_EXECUTABLE ${GREENPLUM_BASE_DIR}/bin/postgres)
     
     set(GREENPLUM_INTERNAL_INCLUDE_DIR ${GREENPLUM_INCLUDE_DIR}/postgresql/internal)

@@ -16,7 +16,7 @@ set(BOOST_TAR_MD5 341e5d993b19d099bf1a548495ea91ec)
 set(ARMADILLO_TAR_VERSION "1.2.0")
 set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
 
-set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/../config/Version.yml)
+set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/config/Version.yml)
 
 # ==============================================================================
 # From here on, modifications should rarely be necessary.
@@ -30,7 +30,7 @@ set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/../config/Version.yml)
 # http://www.kitware.com/news/home/browse/252
 cmake_minimum_required(VERSION 2.8)
 
-include (ExternalProject)
+include(ExternalProject)
 
 find_program(M4_BINARY m4
     /usr/local/bin /usr/bin /bin /opt/local/bin
@@ -39,27 +39,6 @@ if(NOT M4_BINARY)
     message(FATAL_ERROR "Cannot find the m4 preprocessor.")
 endif(NOT M4_BINARY)
 
-macro(join_strings OUT_STRING SEPARATOR LIST)
-    foreach(ITEM ${LIST})
-        if(${OUT_STRING} EQUAL "")
-            set(OUT_STRING "${OUT_STRING}${SEPARATOR}${ITEM}")
-        else(${OUT_STRING} EQUAL "")
-            set(OUT_STRING "${ITEM}")
-        endif(${OUT_STRING} EQUAL "")
-    endforeach(ITEM ${LIST})
-endmacro(join_strings)
-
-macro(get_dir_name OUT_DIR IN_PATH)
-    if(${IN_PATH} MATCHES "^.+/[^/]*\$")
-        # If the argument for string(REGEX REPLACE does not match the
-        # search string, CMake sets the output to the input string
-        # This is not what we want, hence the if-block.
-        string(REGEX REPLACE "^(.+)/[^/]*\$" "\\1" ${OUT_DIR} "${IN_PATH}")
-    else(${IN_PATH} MATCHES "^.+/[^/]*\$")
-        set(${OUT_DIR} "")
-    endif(${IN_PATH} MATCHES "^.+/[^/]*\$")
-endmacro(get_dir_name)
-
 # Set the directory for tools needed during build time
 set(MAD_BUILD_TOOLS ${CMAKE_SOURCE_DIR}/cmake_tools)
 
@@ -67,6 +46,9 @@ set(MAD_THIRD_PARTY ${CMAKE_BINARY_DIR}/third_party)
 
 list(APPEND CMAKE_MODULE_PATH
     "${MAD_BUILD_TOOLS}/Modules/")
+
+include(Utils)
+include(OSXUtils)
 
 set(EXTERNALPROJECT_LIST_SEPARATOR "~!~")
 
@@ -295,53 +277,9 @@ else(APPLE)
         INSTALL_RPATH "\$ORIGIN")
 endif(APPLE)
 
-file(GLOB_RECURSE MADPACK_FILES "madpack/*.py")
-
-# FIXME: Refactor and put into its own function (the same code is used several
-# times in our build scripts)
-# Directory we will use for SQL files
-set(MADPACK_DIR ${CMAKE_CURRENT_BINARY_DIR}/python/madpack)
-execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${MADPACK_DIR})
-foreach(PATH ${MADPACK_FILES})
-    get_filename_component(CURRENT_NAME ${PATH} NAME)
-
-    set(OUTFILE "${MADPACK_DIR}/${CURRENT_NAME}")
-    add_custom_command(OUTPUT "${OUTFILE}"
-        COMMAND ${CMAKE_COMMAND} -E copy "${PATH}" "${OUTFILE}"
-        DEPENDS "${PATH}"
-        COMMENT "Copying ${CURRENT_NAME}.")
-    
-    list(APPEND MADPACK_TARGET_FILES
-        ${OUTFILE})
-endforeach(PATH)
-add_custom_target(madpackFiles ALL DEPENDS ${MADPACK_TARGET_FILES})
-
-install(DIRECTORY ${MADPACK_DIR}
-    DESTINATION python
-    REGEX ".*/\\.DS_Store\$" EXCLUDE
-    REGEX ".*/madpack\\.py\$" PERMISSIONS
-        OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_EXECUTE GROUP_READ
-        WORLD_EXECUTE WORLD_READ)
-
-# Create a symlink from bin/madpack into Python directory
-set(BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
-set(MADPACK_EXE ${BIN_DIR}/madpack)
-list(APPEND MADPACK_BINARY_FILES
-    ${MADPACK_EXE})
-add_custom_command(
-    OUTPUT ${MADPACK_EXE}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${BIN_DIR}
-    COMMAND ${CMAKE_COMMAND} -E create_symlink
-        ../python/madpack/madpack.py ${MADPACK_EXE}
-#    WORKING_DIRECTORY ${BIN_DIR}
-    COMMENT "Creating symbolic link for bin/madpack.")
-add_custom_target(binaryFiles ALL DEPENDS ${MADPACK_BINARY_FILES})
-add_dependencies(binaryFiles madpackFiles)
-
-install(DIRECTORY ${BIN_DIR}
-    DESTINATION .
-    REGEX ".*/\\.DS_Store\$" EXCLUDE
-)
+add_subdirectory(bin)
+add_subdirectory(config)
+add_subdirectory(madpack)
 
 # Add Ports
 add_subdirectory(ports)
