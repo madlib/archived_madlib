@@ -23,8 +23,8 @@ sys.path.append( maddir + "/madpack")
 
 # Next lines are for development/testing only, so madpack.py can be run
 # from the SRC directory tree
-#maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
-#sys.path.append( maddir + "/src/madpack")
+maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
+sys.path.append( maddir + "/src/madpack")
 # END - For development/testing only
 
 # Import MADlib python modules
@@ -347,24 +347,24 @@ def __db_create_objects( schema, old_schema):
     # Run migration SQLs    
     __info( "> Creating objects for:", True)  
     
-    # Loop through all methods/modules  
-    for methodinfo in portspecs['methods']:   
+    # Loop through all modules/modules  
+    for moduleinfo in portspecs['modules']:   
      
-        # Get the method name
-        method = methodinfo['name']
-        __info("> - %s" % method, True)        
+        # Get the module name
+        module = moduleinfo['name']
+        __info("> - %s" % module, True)        
         
-        # Make a temp dir for this method 
-        cur_tmpdir = tmpdir + "/" + method
+        # Make a temp dir for this module 
+        cur_tmpdir = tmpdir + "/" + module
         __make_temp_dir( cur_tmpdir)
 
-        # Find the method/module dir (platform specific or generic)
-        if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + method):
-            maddir_mod  = maddir + "/ports/" + portid + "/modules/" + method
+        # Find the module dir (platform specific or generic)
+        if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
+            maddir_mod  = maddir + "/ports/" + portid + "/modules/" + module
         else:        
-            maddir_mod  = maddir + "/modules/" + method
+            maddir_mod  = maddir + "/modules/" + module
 
-        # Loop through all SQL files for this method
+        # Loop through all SQL files for this module
         sql_files = maddir_mod + '/*.sql_in'
         for sqlfile in glob.glob( sql_files):
         
@@ -401,7 +401,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
 
         # Check if the SQL file exists     
         if not os.path.isfile( sqlfile):
-            __error("Missing method SQL file (%s)" % sqlfile, False)
+            __error("Missing module SQL file (%s)" % sqlfile, False)
             raise      
         
         # Prepare the file using M4
@@ -511,7 +511,7 @@ def main( argv):
   install/update : run sql scripts to load into DB
   uninstall      : run sql scripts to uninstall from DB
   version        : compare and print MADlib version (binaries vs database objects)
-  install-check  : test all installed methods""")
+  install-check  : test all installed modules""")
   
     parser.add_argument( '-a', '--api', nargs=1, dest='api', metavar='API', 
                          help="Python module for your database platform (DBAPI2 compliant)")
@@ -587,9 +587,9 @@ def main( argv):
                             "/lib/libmadlib_" + portid + ".so"):
                         maddir_lib  = maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"
-                    # Get the list of methods for this port
+                    # Get the list of modules for this port
                     global portspecs
-                    portspecs = configyml.get_methods( maddir_conf) 
+                    portspecs = configyml.get_modules( maddir_conf) 
                     # print portspecs
         except:
             platform = None
@@ -758,24 +758,24 @@ def main( argv):
         # 2) Run test SQLs 
         __info( "> Running test scripts for:", verbose)   
         
-        # Loop through all methods 
-        for methodinfo in portspecs['methods']:    
+        # Loop through all modules 
+        for moduleinfo in portspecs['modules']:    
         
-            # Get method name
-            method = methodinfo['name']
-            __info("> - %s" % method, verbose)        
+            # Get module name
+            module = moduleinfo['name']
+            __info("> - %s" % module, verbose)        
 
-            # Make a temp dir for this method (if doesn't exist)
-            cur_tmpdir = tmpdir + '/' + method + '/test'
+            # Make a temp dir for this module (if doesn't exist)
+            cur_tmpdir = tmpdir + '/' + module + '/test'
             __make_temp_dir( cur_tmpdir)
             
-            # Find the method/module dir (platform specific or generic)
-            if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + method):
-                maddir_mod  = maddir + "/ports/" + portid + "/modules/" + method
+            # Find the module/module dir (platform specific or generic)
+            if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
+                maddir_mod  = maddir + "/ports/" + portid + "/modules/" + module
             else:        
-                maddir_mod  = maddir + "/modules/" + method
+                maddir_mod  = maddir + "/modules/" + module
     
-            # Loop through all test SQL files for this method
+            # Loop through all test SQL files for this module
             sql_files = maddir_mod + '/test/*.sql_in'
             for sqlfile in glob.glob( sql_files):
             
@@ -804,7 +804,7 @@ def main( argv):
                     log.close()                     
                 
                 # Spit the line
-                print "TEST CASE RESULT|MADlib method: " + method + \
+                print "TEST CASE RESULT|MADlib module: " + module + \
                     "|" + file + "|" + result + \
                     "|Time: %s.%s sec" % (seconds, microsec)           
     
