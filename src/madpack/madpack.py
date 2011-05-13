@@ -542,7 +542,7 @@ def main( argv):
     if api != None:
         try:
             dbapi2 = __import_dbapi( api)
-            __info( "Using provided dbapi2 module (%s)." % (api), verbose)
+            __info( "Imported user defined dbapi2 module (%s)." % (api), verbose)
         except:
             __error( "cannot import dbapi2 module: %s. Try using the deafult one from Ports.yml file." % (args.api[0]), True)
         
@@ -596,12 +596,22 @@ def main( argv):
     ##
     # If no API defined yet (try the default API - from Ports.yml)
     ##
-    if api == None and portapi != None:
-        try:       
-            dbapi2 = __import_dbapi( portapi)
-            __info( "Using dbapi module (%s) defined in Ports.yml." % (portapi), verbose)
-        except:
-            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
+    if api is None and portapi != None:
+        # For POSTGRES import Pygresql.pgdb from madpack package
+        if portid.upper() == 'POSTGRES':
+            try:       
+                sys.path.append( maddir + "/ports/postgres/madpack")
+                dbapi2 = __import_dbapi( portapi)
+                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+            except:
+                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
+        # For GREENPLUM use the GP one: $GPHOME/lib/python/pygresql
+        else: 
+            try:       
+                dbapi2 = __import_dbapi( portapi)
+                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+            except:
+                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
 
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)
