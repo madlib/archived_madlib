@@ -23,8 +23,8 @@ sys.path.append( maddir + "/madpack")
 
 # Next lines are for development/testing only, so madpack.py can be run
 # from the SRC directory tree
-maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
-sys.path.append( maddir + "/src/madpack")
+# maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
+# sys.path.append( maddir + "/src/madpack")
 # END - For development/testing only
 
 # Import MADlib python modules
