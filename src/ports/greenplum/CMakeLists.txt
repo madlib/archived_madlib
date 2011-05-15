@@ -7,7 +7,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-set(MAD_DBAL_GP_SOURCES
+set(MAD_DBAL_SOURCES_GREENPLUM
 	../postgres/dbconnector/PGAbstractValue.cpp
     dbconnector/GPCompatibility.cpp
 	../postgres/dbconnector/PGNewDelete.cpp
@@ -18,11 +18,11 @@ set(MAD_DBAL_GP_SOURCES
 )
 
 if(LINUX)
-	list(APPEND MAD_DBAL_GP_SOURCES
+	list(APPEND MAD_DBAL_SOURCES_GREENPLUM
 		linux/GPMain.cpp
 	)
 else(LINUX)
-    list(APPEND MAD_DBAL_GP_SOURCES
+    list(APPEND MAD_DBAL_SOURCES_GREENPLUM
     	../postgres/dbconnector/PGMain.cpp
     )
 endif(LINUX)
@@ -65,15 +65,22 @@ if(GREENPLUM_FOUND)
     add_library(
         madlib_greenplum
         MODULE
-        ${MAD_DBAL_GP_SOURCES}
+        ${MAD_DBAL_SOURCES_GREENPLUM}
     )
     add_dependencies(madlib_greenplum madlib)
     install(TARGETS madlib_greenplum
-        LIBRARY DESTINATION ports/greenplum/lib)
+        LIBRARY DESTINATION ports/greenplum/lib
+    )
     set_target_properties(madlib_greenplum PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY lib
-        BUILD_WITH_INSTALL_RPATH YES)
+        BUILD_WITH_INSTALL_RPATH YES
+    )
 
+    if(NOT LINUX)
+        # On non-Linux platforms (where there is direct binding), we declare
+        # madlib as a dependency. On Linux, madlib is laoded dynamically.
+        target_link_libraries(madlib_greenplum madlib)
+    endif(NOT LINUX)
     if(APPLE)
         osx_archs(${GREENPLUM_EXECUTABLE} MAD_ARCHITECTURES)
         message(STATUS "Will build madlib Greenplum connector for same "
@@ -82,7 +89,6 @@ if(GREENPLUM_FOUND)
         set_target_properties(madlib_greenplum PROPERTIES
             OSX_ARCHITECTURES "${MAD_ARCHITECTURES}"
             LINK_FLAGS "-bundle_loader ${GREENPLUM_EXECUTABLE} -Wl,-rpath -Wl,@loader_path/../../../lib")
-        target_link_libraries(madlib_greenplum madlib)
 
         # the RPATH to be used when installing. This is set to "$ORIGIN/../../lib"
         # because the core MADlib library will reside in $MADLIB_ROOT/lib
@@ -90,12 +96,6 @@ if(GREENPLUM_FOUND)
         set_target_properties(madlib_greenplum
             PROPERTIES INSTALL_RPATH "@loader_path/../../../lib")
     else(APPLE)
-        if(NOT LINUX)
-            # On non-Linux platforms (where there is direct binding), we declare
-            # madlib as a dependency. On Linux, madlib is laoded dynamically.
-            target_link_libraries(madlib_greenplum madlib)
-        endif(NOT LINUX)
-
         # the RPATH to be used when installing. This is set to "$ORIGIN/../../lib"
         # because the core MADlib library will reside in $MADLIB_ROOT/lib
         # and the Greenplum connector library in $MADLIB_ROOT/ports/greenplum/lib"
