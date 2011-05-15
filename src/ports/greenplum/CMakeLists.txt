@@ -1,3 +1,7 @@
+# ------------------------------------------------------------------------------
+# Database Connector for Greenplum
+# ------------------------------------------------------------------------------
+
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -22,16 +26,6 @@ else(LINUX)
     	../postgres/dbconnector/PGMain.cpp
     )
 endif(LINUX)
-
-file(GLOB_RECURSE PYTHON_FILES
-    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/modules"
-    "../postgres/modules/*.py_in"
-)
-
-file(GLOB_RECURSE SQL_FILES
-    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/modules"
-    "../postgres/modules/*.sql_in"
-)
 
 message(STATUS "Trying to find Greenplum installation")
 find_package(Greenplum)
@@ -80,9 +74,6 @@ if(GREENPLUM_FOUND)
         LIBRARY_OUTPUT_DIRECTORY lib
         BUILD_WITH_INSTALL_RPATH YES)
 
-#    set_target_properties(madlib_greenplum
-#        OUTPUT_NAME madlib)
-
     if(APPLE)
         osx_archs(${GREENPLUM_EXECUTABLE} MAD_ARCHITECTURES)
         message(STATUS "Will build madlib Greenplum connector for same "
@@ -113,43 +104,27 @@ if(GREENPLUM_FOUND)
     endif(APPLE)
 
     # Directory we will use for python files
-    list(APPEND M4_ARGUMENTS
+    list(APPEND M4_ARGUMENTS_GREENPLUM
         "-DGREENPLUM"
     )
-    foreach(CURRENT_FILE ${PYTHON_FILES})
-        get_filename_component(CURRENT_PATH "../postgres/modules/${CURRENT_FILE}" ABSOLUTE)
-        
-        string(REGEX REPLACE ".py_in\$" ".py" OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
-        get_dir_name(OUTDIR ${OUTFILE})
-        add_custom_command(OUTPUT "${OUTFILE}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTDIR}
-            COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${CURRENT_PATH}" > "${OUTFILE}"
-            DEPENDS "${CURRENT_PATH}"
-            COMMENT "Preprocessing ${CURRENT_FILE} with m4.")
-        
-        list(APPEND PYTHON_TARGET_FILES
-            ${OUTFILE})
-    endforeach(CURRENT_FILE)
-    add_custom_target(pythonFiles ALL DEPENDS ${PYTHON_TARGET_FILES})
+    add_python_files(
+        PYTHON_TARGET_FILES_GREENPLUM
+        "../postgres/modules"
+        "${CMAKE_CURRENT_BINARY_DIR}/modules"
+        ${M4_ARGUMENTS_GREENPLUM}
+    )
+    add_custom_target(pythonFiles_Greenplum ALL DEPENDS ${PYTHON_TARGET_FILES_GREENPLUM})
     
-    # Directory we will use for SQL files
-    foreach(CURRENT_FILE ${SQL_FILES})
-        get_filename_component(CURRENT_PATH "../postgres/modules/${CURRENT_FILE}" ABSOLUTE)
-
-        set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
-        add_custom_command(OUTPUT "${OUTFILE}"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CURRENT_PATH}" "${OUTFILE}"
-            DEPENDS "${CURRENT_PATH}"
-            COMMENT "Copying ${CURRENT_FILE}.")
-        
-        list(APPEND SQL_TARGET_FILES
-            ${OUTFILE})
-    endforeach(CURRENT_FILE)
-    add_custom_target(sqlFiles ALL DEPENDS ${SQL_TARGET_FILES})
+    add_sql_files(
+        SQL_TARGET_FILES_GREENPLUM
+        "../postgres/modules"
+        "${CMAKE_CURRENT_BINARY_DIR}/modules"
+    )
+    add_custom_target(sqlFiles_Greenplum ALL DEPENDS ${SQL_TARGET_FILES_GREENPLUM})
 
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
         DESTINATION ports/greenplum
-        REGEX ".*/\\.DS_Store\$" EXCLUDE
+        REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
     
 else(GREENPLUM_FOUND)

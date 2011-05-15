@@ -62,6 +62,63 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     set(LINUX TRUE)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
+
+# Support for Python files
+macro(add_python_files OUT_PYTHON_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
+    set(IN_M4_ARGUMENTS ${ARGN})
+    
+    get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
+    get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
+    file(GLOB_RECURSE PYTHON_FILES
+        RELATIVE "${SOURCE_DIR_ABS}"
+        "${SOURCE_DIR_ABS}/*.py_in"
+    )
+    set(MADLIB_PYTHON_M4_PREPROCESSING
+        COMMAND ${CMAKE_COMMAND} -E make_directory "\"\${OUTDIR}\""
+        COMMAND ${M4_BINARY} ${IN_M4_ARGUMENTS} "\"\${CURRENT_PATH}\"" > "\"\${OUTFILE}\""
+    )
+    batch_add_command(
+        TARGET_PREFIX "${TARGET_DIR_ABS}/"
+        SOURCE_PREFIX "${SOURCE_DIR_ABS}/"
+        TARGET_SUFFIX ".py"
+        SOURCE_SUFFIX "[.]py_in"
+        RUN "${MADLIB_PYTHON_M4_PREPROCESSING}"
+        COMMENT "Preprocessing \${CURRENT_FILE} with m4."
+        TARGET_FILE_LIST_REF ${OUT_PYTHON_TARGET_FILES}
+        SOURCE_FILE_LIST ${PYTHON_FILES}
+    )
+endmacro(add_python_files)
+
+macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
+    file(GLOB_RECURSE SQL_FILES
+        RELATIVE "${SOURCE_DIR_ABS}"
+        "${SOURCE_DIR_ABS}/*.sql_in"
+    )
+    add_files(${OUT_SQL_TARGET_FILES} "${IN_SOURCE_DIR}" "${IN_TARGET_DIR}" ${SQL_FILES})
+#    
+#    get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
+#    get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
+#    file(GLOB_RECURSE SQL_FILES
+#        RELATIVE "${SOURCE_DIR_ABS}"
+#        "${SOURCE_DIR_ABS}/*.sql_in"
+#    )
+#    set(MADLIB_SQL_COPY_COMMAND
+#        COMMAND ${CMAKE_COMMAND} -E copy "\"\${CURRENT_PATH}\"" "\"\${OUTFILE}\""
+#    )
+#    batch_add_command(
+#        TARGET_PREFIX "${TARGET_DIR_ABS}/"
+#        SOURCE_PREFIX "${SOURCE_DIR_ABS}/"
+#        TARGET_SUFFIX ".sql_in"
+#        SOURCE_SUFFIX "[.]sql_in"
+#        RUN "${MADLIB_SQL_COPY_COMMAND}"
+#        COMMENT "Copying \${CURRENT_FILE}."
+#        TARGET_FILE_LIST_REF ${OUT_SQL_TARGET_FILES}
+#        SOURCE_FILE_LIST ${SQL_FILES}
+#    )
+endmacro(add_sql_files)
+
+
+
 # Read and parse Version.yml file
 file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
 string(REGEX REPLACE "^.*version:[ \t]*([^\n]*)\n.*" "\\1" MADLIB_VERSION_STRING "${_MADLIB_VERSION_CONTENTS}")
@@ -219,20 +276,6 @@ include_directories(${ARMADILLO_INCLUDE_DIRS})
 
 message(STATUS ${ARMADILLO_LIBRARY})
 
-# Unfortunately, at this point, we do not have access to config.hpp, yet.
-# file(READ "${ARMADILLO_INCLUDE_DIRS}/armadillo_bits/config.hpp" _ARMADILLO_HEADER_CONTENTS)
-# set(ARMA_DEFINES ARMA_USE_LAPACK ARMA_USE_BLAS)
-# foreach(MACRO ${ARMA_DEFINES})
-#     string(REGEX MATCH "^#define ${MACRO}\$" ${MACRO} "${_ARMADILLO_HEADER_CONTENTS}")
-# endforeach(MACRO ${ARMA_DEFINES})
-# message(STATUS "ARMA_USE_LAPACK: ${ARMA_USE_LAPACK}")
-
-# FIXME: The following should probably only be set for gcc
-# set( CMAKE_CXX_FLAGS "-Wall -Wno-div-by-zero" CACHE STRING
-#    "Flags used by the C++ compiler during builds."
-#    FORCE )
-
-
 # Create library
 add_library(
     madlib
@@ -280,6 +323,25 @@ endif(APPLE)
 add_subdirectory(bin)
 add_subdirectory(config)
 add_subdirectory(madpack)
+
+add_python_files(
+    PYTHON_TARGET_FILES
+    "modules"
+    "${CMAKE_CURRENT_BINARY_DIR}/modules"
+)
+add_custom_target(pythonFiles ALL DEPENDS ${PYTHON_TARGET_FILES})
+
+add_sql_files(
+    SQL_TARGET_FILES
+    "modules"
+    "${CMAKE_CURRENT_BINARY_DIR}/modules"
+)
+add_custom_target(sqlFiles ALL DEPENDS ${SQL_TARGET_FILES})
+
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
+    DESTINATION .
+    REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
+)
 
 # Add Ports
 add_subdirectory(ports)
