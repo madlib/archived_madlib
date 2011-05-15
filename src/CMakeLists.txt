@@ -95,28 +95,44 @@ macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
         "${SOURCE_DIR_ABS}/*.sql_in"
     )
     add_files(${OUT_SQL_TARGET_FILES} "${IN_SOURCE_DIR}" "${IN_TARGET_DIR}" ${SQL_FILES})
-#    
-#    get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
-#    get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
-#    file(GLOB_RECURSE SQL_FILES
-#        RELATIVE "${SOURCE_DIR_ABS}"
-#        "${SOURCE_DIR_ABS}/*.sql_in"
-#    )
-#    set(MADLIB_SQL_COPY_COMMAND
-#        COMMAND ${CMAKE_COMMAND} -E copy "\"\${CURRENT_PATH}\"" "\"\${OUTFILE}\""
-#    )
-#    batch_add_command(
-#        TARGET_PREFIX "${TARGET_DIR_ABS}/"
-#        SOURCE_PREFIX "${SOURCE_DIR_ABS}/"
-#        TARGET_SUFFIX ".sql_in"
-#        SOURCE_SUFFIX "[.]sql_in"
-#        RUN "${MADLIB_SQL_COPY_COMMAND}"
-#        COMMENT "Copying \${CURRENT_FILE}."
-#        TARGET_FILE_LIST_REF ${OUT_SQL_TARGET_FILES}
-#        SOURCE_FILE_LIST ${SQL_FILES}
-#    )
 endmacro(add_sql_files)
 
+macro(add_madlib_connector_library IN_DBMS IN_OSX_BUNDLE_LOADER OUT_TARGET_NAME)
+    set(IN_LIBRARY_SOURCES ${ARGN})
+
+    set(${OUT_TARGET_NAME} "madlib_${IN_DBMS}")
+    add_library(
+        ${${OUT_TARGET_NAME}}
+        MODULE
+        ${IN_LIBRARY_SOURCES}
+    )
+    add_dependencies(${${OUT_TARGET_NAME}} madlib)
+    set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY lib
+        BUILD_WITH_INSTALL_RPATH YES
+    )
+    
+    if(APPLE)
+        osx_archs("${IN_OSX_BUNDLE_LOADER}" _MAD_ARCHITECTURES)
+        message(STATUS "Will build MADlib ${IN_DBMS} connector for same "
+            "architectures as detected in ${IN_OSX_BUNDLE_LOADER}, which has "
+            "architectures ${_MAD_ARCHITECTURES}")
+        set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
+            OSX_ARCHITECTURES "${_MAD_ARCHITECTURES}"
+            LINK_FLAGS "-bundle_loader ${IN_OSX_BUNDLE_LOADER} -Wl,-rpath -Wl,@loader_path/../../../lib")
+
+        # The MADlib connector library for port xyz resides in
+        # $MADLIB_ROOT/ports/xyz/lib. The MADlib core library is in
+        # $MADLIB_ROOT/lib, hence we set the RPATH to "@loader_path/../../../lib"
+        set_target_properties(${${OUT_TARGET_NAME}}
+            PROPERTIES INSTALL_RPATH "@loader_path/../../../lib")
+    else(APPLE)
+        # See comment above. On UNIX/Linux, \$ORIGIN has essentially the same
+        # menaing as @loader_path on Mac OS X
+        set_target_properties(${${OUT_TARGET_NAME}}
+            PROPERTIES INSTALL_RPATH "\$ORIGIN/../../../lib")
+    endif(APPLE)
+endmacro(add_madlib_connector_library)
 
 
 # Read and parse Version.yml file

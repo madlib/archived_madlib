@@ -2,41 +2,51 @@
 # Database Connector for Greenplum
 # ------------------------------------------------------------------------------
 
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
 
-set(MAD_DBAL_SOURCES_GREENPLUM
-	../postgres/dbconnector/PGAbstractValue.cpp
-    dbconnector/GPCompatibility.cpp
-	../postgres/dbconnector/PGNewDelete.cpp
-    ../postgres/dbconnector/PGAllocator.cpp
-	../postgres/dbconnector/PGInterface.cpp
-	../postgres/dbconnector/PGToDatumConverter.cpp
-	../postgres/dbconnector/PGValue.cpp
-)
-
-if(LINUX)
-	list(APPEND MAD_DBAL_SOURCES_GREENPLUM
-		linux/GPMain.cpp
-	)
-else(LINUX)
-    list(APPEND MAD_DBAL_SOURCES_GREENPLUM
-    	../postgres/dbconnector/PGMain.cpp
-    )
-endif(LINUX)
+# -- 1. Find Greenplum installation. Do nothing if not found -------------------
 
 message(STATUS "Trying to find Greenplum installation")
 find_package(Greenplum)
+
+
+# -- 2. If Greenplum is found, specify files that will be compiled into the
+#       shared library ---------------------------------------------------------
 
 if(GREENPLUM_FOUND)
     message(STATUS "***")
     message(STATUS "*** Adding Greenplum to target list...")
     message(STATUS "***")
-    
+
+    set(MAD_DBAL_SOURCES_GREENPLUM
+        ../postgres/dbconnector/PGAbstractValue.cpp
+        dbconnector/GPCompatibility.cpp
+        ../postgres/dbconnector/PGNewDelete.cpp
+        ../postgres/dbconnector/PGAllocator.cpp
+        ../postgres/dbconnector/PGInterface.cpp
+        ../postgres/dbconnector/PGToDatumConverter.cpp
+        ../postgres/dbconnector/PGValue.cpp
+    )
+
+    if(LINUX)
+        list(APPEND MAD_DBAL_SOURCES_GREENPLUM
+            linux/GPMain.cpp
+        )
+    else(LINUX)
+        list(APPEND MAD_DBAL_SOURCES_GREENPLUM
+            ../postgres/dbconnector/PGMain.cpp
+        )
+    endif(LINUX)
+
+    include_directories(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
     include_directories(${GREENPLUM_INCLUDE_DIR})
     
+    
+# -- 3. Some versions of Greenplum ship with header files that need a patch to
+#       be compatible with C++ -------------------------------------------------
+
     # Directory we will use for patches
     set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
     
@@ -61,49 +71,28 @@ if(GREENPLUM_FOUND)
         include_directories(BEFORE ${PATCH_DIR}/server)
     endif(${_GP_VERSION} VERSION_EQUAL "4.1.0" OR ${_GP_VERSION} VERSION_EQUAL "4.1.1")
 
-    # Create library
-    add_library(
-        madlib_greenplum
-        MODULE
-        ${MAD_DBAL_SOURCES_GREENPLUM}
-    )
-    add_dependencies(madlib_greenplum madlib)
-    install(TARGETS madlib_greenplum
-        LIBRARY DESTINATION ports/greenplum/lib
-    )
-    set_target_properties(madlib_greenplum PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY lib
-        BUILD_WITH_INSTALL_RPATH YES
-    )
 
+# -- 4. Build MADlib connector -------------------------------------------------
+
+    add_madlib_connector_library(greenplum "${GREENPLUM_EXECUTABLE}"
+        MADLIB_GREENPLUM_TARGETNAME ${MAD_DBAL_SOURCES_GREENPLUM}
+    )
     if(NOT LINUX)
         # On non-Linux platforms (where there is direct binding), we declare
         # madlib as a dependency. On Linux, madlib is laoded dynamically.
-        target_link_libraries(madlib_greenplum madlib)
+        target_link_libraries(${MADLIB_GREENPLUM_TARGETNAME} madlib)
     endif(NOT LINUX)
-    if(APPLE)
-        osx_archs(${GREENPLUM_EXECUTABLE} MAD_ARCHITECTURES)
-        message(STATUS "Will build madlib Greenplum connector for same "
-            "architectures as detected in ${GREENPLUM_EXECUTABLE}, which has "
-            "architectures ${MAD_ARCHITECTURES}")
-        set_target_properties(madlib_greenplum PROPERTIES
-            OSX_ARCHITECTURES "${MAD_ARCHITECTURES}"
-            LINK_FLAGS "-bundle_loader ${GREENPLUM_EXECUTABLE} -Wl,-rpath -Wl,@loader_path/../../../lib")
 
-        # the RPATH to be used when installing. This is set to "$ORIGIN/../../lib"
-        # because the core MADlib library will reside in $MADLIB_ROOT/lib
-        # and the Greenplum connector library in $MADLIB_ROOT/ports/greenplum/lib"
-        set_target_properties(madlib_greenplum
-            PROPERTIES INSTALL_RPATH "@loader_path/../../../lib")
-    else(APPLE)
-        # the RPATH to be used when installing. This is set to "$ORIGIN/../../lib"
-        # because the core MADlib library will reside in $MADLIB_ROOT/lib
-        # and the Greenplum connector library in $MADLIB_ROOT/ports/greenplum/lib"
-        set_target_properties(madlib_greenplum
-            PROPERTIES INSTALL_RPATH "\$ORIGIN/../../../lib")
-    endif(APPLE)
 
-    # Directory we will use for python files
+# -- 5. Install MADlib connector -----------------------------------------------
+
+    install(TARGETS ${MADLIB_GREENPLUM_TARGETNAME}
+        LIBRARY DESTINATION ports/greenplum/lib
+    )
+    
+
+# -- 6. Preprocess/copy all Python/SQL files -----------------------------------
+
     list(APPEND M4_ARGUMENTS_GREENPLUM
         "-DGREENPLUM"
     )
@@ -121,6 +110,9 @@ if(GREENPLUM_FOUND)
         "${CMAKE_CURRENT_BINARY_DIR}/modules"
     )
     add_custom_target(sqlFiles_Greenplum ALL DEPENDS ${SQL_TARGET_FILES_GREENPLUM})
+
+
+# -- 7. Install all Python/SQL files -------------------------------------------
 
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
         DESTINATION ports/greenplum

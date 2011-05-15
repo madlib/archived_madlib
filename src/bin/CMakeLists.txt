@@ -1,4 +1,10 @@
-# Create a symlink from bin/madpack into Python directory
+# ------------------------------------------------------------------------------
+# MADlib binary files
+# ------------------------------------------------------------------------------
+
+
+# -- 1. Create a symlink madpack -> ../madpack/madpack.py ----------------------
+
 set(MADPACK_EXE madpack)
 
 add_custom_command(
@@ -12,6 +18,9 @@ list(APPEND BINARY_TARGET_FILES
 
 add_custom_target(binaryFiles ALL DEPENDS ${BINARY_TARGET_FILES})
 add_dependencies(binaryFiles madpackFiles)
+
+
+# -- 2. Install binary files to $MADLIB_ROOT/bin -------------------------------
 
 install(FILES ${BINARY_TARGET_FILES}
     DESTINATION bin
