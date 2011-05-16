@@ -27,6 +27,7 @@ if(POSTGRESQL_FOUND)
         dbconnector/PGValue.cpp
     )
 
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR})
     include_directories(${POSTGRESQL_SERVER_INCLUDE_DIR})
 
 # -- 3. Build MADlib connector -------------------------------------------------
@@ -34,6 +35,7 @@ if(POSTGRESQL_FOUND)
     add_madlib_connector_library(postgres "${POSTGRESQL_EXECUTABLE}"
         MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
     )
+    target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} madlib)
 
 # -- 4. Install MADlib connector -----------------------------------------------
 

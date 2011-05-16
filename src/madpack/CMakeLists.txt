@@ -16,10 +16,9 @@ add_custom_target(madpackFiles ALL DEPENDS ${MADPACK_TARGET_FILES})
 # -- 2. Install madpack files to $MADLIB_ROOT/madpack, set executable flagse
 #       for madpack.py ---------------------------------------------------------
 
-install(PROGRAMS madpack.py
+install(FILES ${MADPACK_TARGET_FILES}
     DESTINATION madpack
 )
-list(REMOVE_ITEM MADPACK_TARGET_FILES madpack.py)
-install(FILES ${MADPACK_TARGET_FILES}
+install(PROGRAMS madpack.py
     DESTINATION madpack
 )
