@@ -166,8 +166,8 @@ list(APPEND MAD_SOURCES
 
 if(LINUX)
     # On Linux, we export "C" all symbols with their SQL name.
-    # See ports/linux/declarations.cpp for explanations.
-    list(APPEND MAD_SOURCES ports/linux/declarations.cpp)
+    # See ports/linux/modules/declarations.cpp for explanations.
+    list(APPEND MAD_SOURCES ports/linux/modules/declarations.cpp)
 endif(LINUX)
 
 # Get the architectures in a Mac OS X binary
@@ -326,8 +326,9 @@ if(APPLE)
 else(APPLE)
     # On other platforms, we link to the armadillo library
     target_link_libraries(madlib armadillo)
-    install(TARGETS armadillo
-        LIBRARY DESTINATION lib)
+    get_target_property(_FILENAME armadillo IMPORTED_LOCATION)
+    install(FILES "${_FILENAME}"
+        DESTINATION lib)
     
     # the RPATH to be used when installing. This is set to "$ORIGIN" because
     # the armadillo library will reside in the same directory as the MADlib
