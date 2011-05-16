@@ -406,8 +406,8 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         
         # Prepare the file using M4
         try:
-            __info("> ...executing " + os.path.basename(tmpfile), verbose )                
             f = open(tmpfile, 'w')
+            __info("> ...parsing " + sqlfile " using m4", verbose )                
             m4args = [ 'm4', 
                        '-P', 
                        '-DMADLIB_SCHEMA=' + schema, 
@@ -438,6 +438,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
             runenv["PGPASSWORD"] = con_args['password']
         try:
             log = open( logfile, 'w') 
+            __info("> ...executing " + os.path.basename(tmpfile), verbose )                
             subprocess.call( runcmd , env=runenv, stdout=log, stderr=log)          
         except:
             __error( "Could not execute %s" % tmpsql, False)
