@@ -437,6 +437,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
             
         runcmd = [ 'psql', '-a',
                     '-v', 'ON_ERROR_STOP=1',
+                    #'-v', 'CLIENT_MIN_MESSAGES=error',
                     '-h', con_args['host'].split(':')[0],
                     '-p', con_args['host'].split(':')[1],
                     '-d', con_args['database'],
@@ -450,8 +451,8 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         __error( "Could not create log file %s" % tmpfile, False)
         raise Exception    
     try:
-        __info("> ... executing " + os.path.basename(tmpfile), verbose )                
-        retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log)      
+        __info("> ... executing " + tmpfile, verbose ) 
+        retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log) 
     except:            
         __error( "Failed executing %s." % tmpfile, False)  
         raise Exception    
@@ -809,6 +810,8 @@ def main( argv):
                 # Analyze the output
                 # If DB cmd line returned error
                 if retval == 3:
+                    __error( "Failed executing: %s" % tmpfile, False)  
+                    __error( "For details check: %s" % logfile, False) 
                     result = 'ERROR'
                 # If log file exists
                 elif os.path.getsize( logfile) > 0:
@@ -827,8 +830,8 @@ def main( argv):
                     result = 'ERROR'
                 
                 # Spit the line
-                print "TEST CASE RESULT|MADlib module: " + module + \
-                    "|" + file + "|" + result + \
+                print "TEST CASE RESULT|Module: " + module + \
+                    "|" + os.path.basename(sqlfile) + "|" + result + \
                     "|Time: %s.%s sec" % (seconds, microsec)           
     
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
