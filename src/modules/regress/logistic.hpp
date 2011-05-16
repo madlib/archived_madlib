@@ -22,7 +22,7 @@ struct LogisticRegressionCG {
     class State;
     
     static AnyValue transition(AbstractDBInterface &db, AnyValue args);
-    static AnyValue preliminary(AbstractDBInterface &db, AnyValue args);
+    static AnyValue mergeStates(AbstractDBInterface &db, AnyValue args);
     static AnyValue final(AbstractDBInterface &db, AnyValue args);
     
     static AnyValue distance(AbstractDBInterface &db, AnyValue args);
@@ -37,7 +37,7 @@ struct LogisticRegressionIRLS {
     class State;
     
     static AnyValue transition(AbstractDBInterface &db, AnyValue args);
-    static AnyValue preliminary(AbstractDBInterface &db, AnyValue args);
+    static AnyValue mergeStates(AbstractDBInterface &db, AnyValue args);
     static AnyValue final(AbstractDBInterface &db, AnyValue args);
     
     static AnyValue distance(AbstractDBInterface &db, AnyValue args);

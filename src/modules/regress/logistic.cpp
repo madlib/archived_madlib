@@ -213,7 +213,7 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyValue LogisticRegressionCG::preliminary(AbstractDBInterface &db, AnyValue args) {
+AnyValue LogisticRegressionCG::mergeStates(AbstractDBInterface &db, AnyValue args) {
     State stateLeft = args[0].copyIfImmutable();
     const State stateRight = args[1];
     
@@ -455,7 +455,7 @@ AnyValue LogisticRegressionIRLS::transition(AbstractDBInterface &db,
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyValue LogisticRegressionIRLS::preliminary(AbstractDBInterface &db, AnyValue args) {
+AnyValue LogisticRegressionIRLS::mergeStates(AbstractDBInterface &db, AnyValue args) {
     State stateLeft = args[0].copyIfImmutable();
     const State stateRight = args[1];
     
