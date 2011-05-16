@@ -37,8 +37,8 @@
  *//* ----------------------------------------------------------------------- */
 
 // MADlib headers
-#include <PGMain.hpp>
-#include <madlib/modules/modules.hpp>
+#include <dbconnector/PGMain.hpp>
+#include <modules/modules.hpp>
 
 // System headers
 #include <dlfcn.h>
@@ -48,11 +48,7 @@
 
 namespace madlib {
 
-namespace ports {
-
-using namespace postgres;
-
-namespace greenplum {
+namespace dbconnector {
 
 static void *sHandleMADlib = NULL;
 
@@ -130,13 +126,11 @@ static void *getFnHandle(const char *inFnName, PG_FUNCTION_ARGS) {
     return fnHandle;
 }
 
-#include <madlib/modules/declarations.hpp>
+#include <modules/declarations.hpp>
 
 #undef DECLARE_UDF_EXT
 #undef DECLARE_UDF
 
-} // namespace greenplum
-
-} // namespace ports
+} // namespace dbconnector
 
 } // namespace madlib

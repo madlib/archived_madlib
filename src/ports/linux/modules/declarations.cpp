@@ -15,8 +15,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <madlib/dbal/dbal.hpp>
-#include <madlib/modules/modules.hpp>
+#include <dbal/dbal.hpp>
+#include <modules/modules.hpp>
 
 namespace madlib {
 
@@ -37,7 +37,7 @@ namespace linux_ {
         } \
     }
 
-#include <madlib/modules/declarations.hpp>
+#include <modules/declarations.hpp>
 
 #undef DECLARE_UDF_EXT
 #undef DECLARE_UDF
