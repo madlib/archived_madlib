@@ -175,7 +175,7 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyValue LinearRegression::preliminary(AbstractDBInterface &db, AnyValue args) {
+AnyValue LinearRegression::mergeStates(AbstractDBInterface &db, AnyValue args) {
     TransitionState stateLeft = args[0].copyIfImmutable();
     const TransitionState stateRight = args[1];
     
