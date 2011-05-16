@@ -95,7 +95,7 @@ def __error( msg, stop):
     log.write( this + ' : ERROR : ' + msg + '\n')
     # Stop script
     if stop == True:
-        __log_close()
+        # __log_close()
         exit(2)
 
 #class MadpackError( Exception):
@@ -407,7 +407,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         # Prepare the file using M4
         try:
             f = open(tmpfile, 'w')
-            __info("> ...parsing " + sqlfile " using m4", verbose )                
+            __info("> ...parsing " + sqlfile + " using m4", verbose )                
             m4args = [ 'm4', 
                        '-P', 
                        '-DMADLIB_SCHEMA=' + schema, 
