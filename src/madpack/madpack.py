@@ -95,7 +95,7 @@ def __error( msg, stop):
     log.write( this + ' : ERROR : ' + msg + '\n')
     # Stop script
     if stop == True:
-        __log_close()
+        # __log_close()
         exit(2)
 
 #class MadpackError( Exception):
@@ -406,8 +406,8 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         
         # Prepare the file using M4
         try:
-            __info("> executing " + os.path.basename(tmpfile), verbose )                
             f = open(tmpfile, 'w')
+            __info("> ...parsing " + sqlfile + " using m4", verbose )                
             m4args = [ 'm4', 
                        '-P', 
                        '-DMADLIB_SCHEMA=' + schema, 
@@ -438,6 +438,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
             runenv["PGPASSWORD"] = con_args['password']
         try:
             log = open( logfile, 'w') 
+            __info("> ...executing " + os.path.basename(tmpfile), verbose )                
             subprocess.call( runcmd , env=runenv, stdout=log, stderr=log)          
         except:
             __error( "Could not execute %s" % tmpsql, False)
@@ -583,10 +584,11 @@ def main( argv):
                     if os.path.isdir( maddir + "/ports/" + portid + "/config"):
                         maddir_conf = maddir + "/ports/" + portid + "/config"
                     global maddir_lib
-                    if os.path.isdir( maddir + "/ports/" + portid + \
+                    if os.path.isfile( maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"):
                         maddir_lib  = maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"
+                    print maddir_lib
                     # Get the list of modules for this port
                     global portspecs
                     portspecs = configyml.get_modules( maddir_conf) 
@@ -791,17 +793,20 @@ def main( argv):
                 seconds = (run_end - run_start).seconds
                 microsec = (run_end - run_start).microseconds
         
-                # Check the output
-                log = open( logfile, 'r')
-                result = 'PASS'
-                try:
-                    for line in log:
-                        if line.upper().find( 'ERROR') >= 0:
-                            result = 'FAIL'
-                except:
+                # Analyze the output (if log size > 0)
+                if os.path.getsize( logfile) > 0:
+                    log = open( logfile, 'r')
+                    result = 'PASS'
+                    try:
+                        for line in log:
+                            if line.upper().find( 'ERROR') >= 0:
+                                result = 'FAIL'
+                    except:
+                        result = 'ERROR'
+                    finally:
+                        log.close()                     
+                else:
                     result = 'ERROR'
-                finally:
-                    log.close()                     
                 
                 # Spit the line
                 print "TEST CASE RESULT|MADlib module: " + module + \
