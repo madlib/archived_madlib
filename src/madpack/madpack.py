@@ -21,7 +21,7 @@ maddir = os.path.abspath( os.path.dirname( os.path.realpath(
     __file__)) + "/..")   # MADlib root dir
 sys.path.append( maddir + "/madpack")
 
-# Next lines are for development/testing only, so madpack.py can be run
+# Following lines are for development/testing only, so madpack.py can be run
 # from the SRC directory tree
 # maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
 # sys.path.append( maddir + "/src/madpack")
@@ -345,7 +345,7 @@ def __db_create_objects( schema, old_schema):
         raise Exception
     
     # Run migration SQLs    
-    __info( "> Creating objects for:", True)  
+    __info( "> Creating objects for modules:", True)  
     
     # Loop through all modules/modules  
     for moduleinfo in portspecs['modules']:   
@@ -374,9 +374,16 @@ def __db_create_objects( schema, old_schema):
             
             # Run the SQL
             try:
-                __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
+                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
             except:
                 raise Exception
+                
+            # If PSQL returned error
+            if retval == 3:
+                __error( "Failed executing: %s" % tmpfile, False)  
+                __error( "For details check: %s" % logfile, False) 
+                raise Exception    
+
     
             # Check the output
             #log = open( logfile, 'r')
@@ -399,73 +406,73 @@ def __db_create_objects( schema, old_schema):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):       
 
-        # Check if the SQL file exists     
-        if not os.path.isfile( sqlfile):
-            __error("Missing module SQL file (%s)" % sqlfile, False)
-            raise      
-        
-        # Prepare the file using M4
-        try:
-            f = open(tmpfile, 'w')
-            __info("> ...parsing " + sqlfile + " using m4", verbose )                
-            m4args = [ 'm4', 
-                       '-P', 
-                       '-DMADLIB_SCHEMA=' + schema, 
-                       '-DPLPYTHON_LIBDIR=' + maddir_pyt, 
-                       '-DMODULE_PATHNAME=' + maddir_lib, 
-                       '-D' + portid.upper(), 
-                       sqlfile ]
-            subprocess.call(m4args, stdout=f)   
-            f.close()         
-        except:
-            __error("Failed executing m4 on %s" % sqlfile, False)
+    # Check if the SQL file exists     
+    if not os.path.isfile( sqlfile):
+        __error("Missing module SQL file (%s)" % sqlfile, False)
+        raise      
+    
+    # Prepare the file using M4
+    try:
+        f = open(tmpfile, 'w')
+        __info("> ... parsing " + sqlfile + " using m4", verbose )                
+        m4args = [ 'm4', 
+                    '-P', 
+                    '-DMADLIB_SCHEMA=' + schema, 
+                    '-DPLPYTHON_LIBDIR=' + maddir_pyt, 
+                    '-DMODULE_PATHNAME=' + maddir_lib, 
+                    '-D' + portid.upper(), 
+                    sqlfile ]
+        subprocess.call(m4args, stdout=f)   
+        f.close()         
+    except:
+        __error("Failed executing m4 on %s" % sqlfile, False)
+        raise Exception
+
+    # Run the SQL using DB command-line utility
+    if portid.upper() == 'GREENPLUM' or portid.upper() == 'POSTGRES':
+    
+        if subprocess.call(['which', 'psql'], stdout=subprocess.PIPE, stderr=subprocess.PIPE) != 0:
+            __error( "Can not find: psql", False)
             raise Exception
+            
+        runcmd = [ 'psql', '-a',
+                    '-v', 'ON_ERROR_STOP=1',
+                    '-h', con_args['host'].split(':')[0],
+                    '-p', con_args['host'].split(':')[1],
+                    '-d', con_args['database'],
+                    '-U', con_args['user'],
+                    '-f', tmpfile]
+        runenv = os.environ
+        runenv["PGPASSWORD"] = con_args['password']
+    try:
+        log = open( logfile, 'w') 
+    except:
+        __error( "Could not create log file %s" % tmpfile, False)
+        raise Exception    
+    try:
+        __info("> ... executing " + os.path.basename(tmpfile), verbose )                
+        retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log)      
+    except:            
+        __error( "Failed executing %s." % tmpfile, False)  
+        raise Exception    
+    finally:
+        log.close()
 
-        # Run the SQL using DB command-line utility
-        if portid.upper() == 'GREENPLUM' or portid.upper() == 'POSTGRES':
-        
-            if subprocess.call(['which', 'psql'], stdout=subprocess.PIPE, stderr=subprocess.PIPE) != 0:
-                __error( "Can not find: psql", False)
-                raise Exception
-                
-            runcmd = [ 'psql', '-a',
-                       '-v', 'ON_ERROR_STOP=1',
-                       '-h', con_args['host'].split(':')[0],
-                       '-p', con_args['host'].split(':')[1],
-                       '-d', con_args['database'],
-                       '-U', con_args['user'],
-                       '-f', tmpfile]
-            runenv = os.environ
-            runenv["PGPASSWORD"] = con_args['password']
-        try:
-            log = open( logfile, 'w') 
-        except:
-            __error( "Could not create file %s" % tmpfile, False)
-            raise Exception    
-        try:
-            __info("> ...executing " + os.path.basename(tmpfile), verbose )                
-            retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log)      
-            # If PSQL returned error
-            if retval == 3:
-                __error( "Failed executing %s." % tmpfile, False)  
-                __error( "Check %s for details." % logfile, False) 
-                raise Exception    
-        finally:
-            log.close()
+    return retval
 
-        # Run the SQL using DBAPI2 & SQLParse
-        #import sqlparse
-        #try:
-        #    f = open(tmpfile)
-        #    sqltext = "".join(f.readlines())
-        #    stmts = sqlparse.split(sqltext)
-        #    cur = dbconn.cursor()
-        #    for s in stmts:
-        #        if s.strip() != "":
-        #            cur.execute( s.strip())
-        #    dbconn.commit()            
-        #except:
-        #    __error( "Error while executing %s" % tmpfile, True)    
+    # Run the SQL using DBAPI2 & SQLParse
+    #import sqlparse
+    #try:
+    #    f = open(tmpfile)
+    #    sqltext = "".join(f.readlines())
+    #    stmts = sqlparse.split(sqltext)
+    #    cur = dbconn.cursor()
+    #    for s in stmts:
+    #        if s.strip() != "":
+    #            cur.execute( s.strip())
+    #    dbconn.commit()            
+    #except:
+    #    __error( "Error while executing %s" % tmpfile, True)    
                        
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Rollback installation
@@ -793,24 +800,29 @@ def main( argv):
                             
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
+                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 seconds = (run_end - run_start).seconds
                 microsec = (run_end - run_start).microseconds
         
-                # Analyze the output (if log size > 0)
-                if os.path.getsize( logfile) > 0:
+                # Analyze the output
+                # If DB cmd line returned error
+                if retval == 3:
+                    result = 'ERROR'
+                # If log file exists
+                elif os.path.getsize( logfile) > 0:
                     log = open( logfile, 'r')
                     result = 'PASS'
                     try:
                         for line in log:
-                            if line.upper().find( 'ERROR') >= 0:
+                            if line.upper().find( '<FAIL>') >= 0:
                                 result = 'FAIL'
                     except:
                         result = 'ERROR'
                     finally:
-                        log.close()                     
+                        log.close()  
+                # Otherwise                   
                 else:
                     result = 'ERROR'
                 
