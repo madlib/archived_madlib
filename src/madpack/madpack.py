@@ -583,10 +583,11 @@ def main( argv):
                     if os.path.isdir( maddir + "/ports/" + portid + "/config"):
                         maddir_conf = maddir + "/ports/" + portid + "/config"
                     global maddir_lib
-                    if os.path.isdir( maddir + "/ports/" + portid + \
+                    if os.path.isfile( maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"):
                         maddir_lib  = maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"
+                    print maddir_lib
                     # Get the list of modules for this port
                     global portspecs
                     portspecs = configyml.get_modules( maddir_conf) 
