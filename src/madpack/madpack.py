@@ -406,7 +406,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         
         # Prepare the file using M4
         try:
-            __info("> executing " + os.path.basename(tmpfile), verbose )                
+            __info("> ...executing " + os.path.basename(tmpfile), verbose )                
             f = open(tmpfile, 'w')
             m4args = [ 'm4', 
                        '-P', 
@@ -791,17 +791,20 @@ def main( argv):
                 seconds = (run_end - run_start).seconds
                 microsec = (run_end - run_start).microseconds
         
-                # Check the output
-                log = open( logfile, 'r')
-                result = 'PASS'
-                try:
-                    for line in log:
-                        if line.upper().find( 'ERROR') >= 0:
-                            result = 'FAIL'
-                except:
+                # Analyze the output (if log size > 0)
+                if os.path.getsize( logfile) > 0:
+                    log = open( logfile, 'r')
+                    result = 'PASS'
+                    try:
+                        for line in log:
+                            if line.upper().find( 'ERROR') >= 0:
+                                result = 'FAIL'
+                    except:
+                        result = 'ERROR'
+                    finally:
+                        log.close()                     
+                else:
                     result = 'ERROR'
-                finally:
-                    log.close()                     
                 
                 # Spit the line
                 print "TEST CASE RESULT|MADlib module: " + module + \
