@@ -379,15 +379,15 @@ def __db_create_objects( schema, old_schema):
                 raise Exception
     
             # Check the output
-            log = open( logfile, 'r')
-            try:
-                for line in log:
-                    if line.upper().find( 'ERROR') >= 0:
-                        print line,
-                        __error( "Problem running %s. Check %s for details." % (tmpfile, logfile), False)
-                        raise Exception
-            finally:
-                log.close() 
+            #log = open( logfile, 'r')
+            #try:
+            #    for line in log:
+            #        if line.upper().find( 'ERROR') >= 0:
+            #            print line,
+            #            __error( "Problem running %s. Check %s for details." % (tmpfile, logfile), False)
+            #            raise Exception
+            #finally:
+            #    log.close() 
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
@@ -429,6 +429,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
                 raise Exception
                 
             runcmd = [ 'psql', '-a',
+                       '-v', 'ON_ERROR_STOP=1',
                        '-h', con_args['host'].split(':')[0],
                        '-p', con_args['host'].split(':')[1],
                        '-d', con_args['database'],
@@ -438,18 +439,24 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
             runenv["PGPASSWORD"] = con_args['password']
         try:
             log = open( logfile, 'w') 
-            __info("> ...executing " + os.path.basename(tmpfile), verbose )                
-            subprocess.call( runcmd , env=runenv, stdout=log, stderr=log)          
         except:
-            __error( "Could not execute %s" % tmpsql, False)
+            __error( "Could not create file %s" % tmpfile, False)
             raise Exception    
+        try:
+            __info("> ...executing " + os.path.basename(tmpfile), verbose )                
+            retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log)      
+            # If PSQL returned error
+            if retval == 3:
+                __error( "Failed executing %s." % tmpfile, False)  
+                __error( "Check %s for details." % logfile, False) 
+                raise Exception    
         finally:
             log.close()
 
         # Run the SQL using DBAPI2 & SQLParse
         #import sqlparse
         #try:
-        #    f = open(tmpsql)
+        #    f = open(tmpfile)
         #    sqltext = "".join(f.readlines())
         #    stmts = sqlparse.split(sqltext)
         #    cur = dbconn.cursor()
@@ -458,7 +465,7 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         #            cur.execute( s.strip())
         #    dbconn.commit()            
         #except:
-        #    __error( "Error while executing %s" % tmpsql, True)    
+        #    __error( "Error while executing %s" % tmpfile, True)    
                        
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Rollback installation
@@ -588,7 +595,6 @@ def main( argv):
                             "/lib/libmadlib_" + portid + ".so"):
                         maddir_lib  = maddir + "/ports/" + portid + \
                             "/lib/libmadlib_" + portid + ".so"
-                    print maddir_lib
                     # Get the list of modules for this port
                     global portspecs
                     portspecs = configyml.get_modules( maddir_conf) 
