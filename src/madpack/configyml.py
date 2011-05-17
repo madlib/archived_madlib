@@ -214,5 +214,5 @@ def topsort_modules(conf):
         for m in missing:
             print  "    " + m + " (required by " + str(list(inverted[m])) + ")"
         exit(2)
-    conf['modulesmodules'] = sorted(conf['modules'], key=lambda m:module_dict[m['name']])
+    conf['modules'] = sorted(conf['modules'], key=lambda m:module_dict[m['name']])
     return conf
