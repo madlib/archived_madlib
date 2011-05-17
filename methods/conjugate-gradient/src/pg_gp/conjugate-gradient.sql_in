@@ -20,69 +20,8 @@ None
 @usage
 Function: <tt>conjugate_gradient('<em>table_name</em>', '<em>name_of_row_values_col</em>', '<em>name_of_row_number_col</em>', '<em>aray_of_b_values<\em>', '<em>desired_precision</em>')</tt>
 
-@sa file quantile.sql_in (documenting the SQL function),
-    module grp_countmin (for an approximate quantile implementation)
+@sa file conjugate_gradient.sql_in (documenting the SQL function)
 */
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.vector_of(int4, float8);
-CREATE FUNCTION MADLIB_SCHEMA.vector_of(int4, float8) RETURNS FLOAT8[] 
-AS 'MODULE_PATHNAME', 'vector_of'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_add_remove_null(float8[], float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_add_remove_null(float8[], float8[]) RETURNS FLOAT8[] 
-AS 'MODULE_PATHNAME', 'array_add_remove_null'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_add(float8[], float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_add(float8[], float8[]) RETURNS FLOAT8[] 
-AS 'MODULE_PATHNAME', 'array_add'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_sub(float8[], float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_sub(float8[], float8[]) RETURNS FLOAT8[] 
-AS 'MODULE_PATHNAME', 'array_sub'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_mult(float8[], float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_mult(float8[], float8[]) RETURNS FLOAT8[] 
-AS 'MODULE_PATHNAME', 'array_mult'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_div(float8[], float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_div(float8[], float8[]) RETURNS FLOAT8[] 
-AS 'MODULE_PATHNAME', 'array_div'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_dif(float8[], float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_dif(float8[], float8[]) RETURNS FLOAT8
-AS 'MODULE_PATHNAME', 'array_dif'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_sum(float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_sum(float8[]) RETURNS FLOAT8
-AS 'MODULE_PATHNAME', 'array_sum'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_dot(float8[], float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_dot(float8[], float8[]) RETURNS FLOAT8
-AS 'MODULE_PATHNAME', 'array_dot'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_scalar_mult(float8[], float8);
-CREATE FUNCTION MADLIB_SCHEMA.array_scalar_mult(float8[], float8) RETURNS FLOAT8[]
-AS 'MODULE_PATHNAME', 'array_scalar_mult'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_sqrt(float8[]);
-CREATE FUNCTION MADLIB_SCHEMA.array_sqrt(float8[]) RETURNS FLOAT8[]
-AS 'MODULE_PATHNAME', 'array_sqrt'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.array_limit(float8[], float8, float8);
-CREATE FUNCTION MADLIB_SCHEMA.array_limit(float8[], float8, float8) RETURNS FLOAT8[]
-AS 'MODULE_PATHNAME', 'array_limit'
-LANGUAGE C IMMUTABLE;
 
 /**
  * @brief Compute conjugate gradient
@@ -96,8 +35,7 @@ LANGUAGE C IMMUTABLE;
  *
  */
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.conjugate_gradient(Matrix TEXT, val_id TEXT, row_id TEXT, b FLOAT[], precision_limit FLOAT) CASCADE;
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.conjugate_gradient(Matrix TEXT, val_id TEXT, row_id TEXT, b FLOAT[], precision_limit FLOAT)  RETURNS FLOAT[] AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.conjugate_gradient(Matrix TEXT, val_id TEXT, row_id TEXT, b FLOAT[], precision_limit FLOAT, verbose INT)  RETURNS FLOAT[] AS $$
 declare
 	r FLOAT[];
 	p FLOAT[];
@@ -116,50 +54,67 @@ begin
 	DROP TABLE IF EXISTS X_val;
 	CREATE TEMP TABLE X_val(
 		value FLOAT[]
-	) DISTRIBUTED RANDOMLY;
+	);
 	
 	DROP TABLE IF EXISTS P_val;
 	CREATE TEMP TABLE P_val(
 		value FLOAT[]
-	) DISTRIBUTED RANDOMLY; 
+	); 
 	
 	SELECT INTO k array_upper(b,1);
 	INSERT INTO X_val SELECT ARRAY(SELECT random() FROM generate_series(1, k));
 	LOOP
 		IF(iter%recidual_refresh = 0)THEN 
-			EXECUTE 'SELECT ARRAY(SELECT array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
-			SELECT INTO r array_sub(b, Ax);
-			SELECT INTO r_size array_dot(r, r);
-			RAISE INFO 'COMPUTE RESIDUAL ERROR %', r_size;
+			EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
+			SELECT INTO r MADLIB_SCHEMA.array_sub(b, Ax);
+			SELECT INTO r_size MADLIB_SCHEMA.array_dot(r, r);
+			IF(verbose = 1) THEN
+				RAISE INFO 'COMPUTE RESIDUAL ERROR %', r_size;
+			END IF;
 			SELECT INTO p r; 
 		END IF;
 		iter = iter + 1;
 		TRUNCATE TABLE P_val;
 		INSERT INTO P_val VALUES(p);
-		EXECUTE 'SELECT ARRAY(SELECT array_dot('||val_id||', j.p) FROM (SELECT value AS p FROM P_val) AS j,'|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ap;
-		SELECT INTO pAp_size array_dot(p, Ap);
+		EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.p) FROM (SELECT value AS p FROM P_val) AS j,'|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ap;
+		SELECT INTO pAp_size MADLIB_SCHEMA.array_dot(p, Ap);
 		alpha = r_size/pAp_size;
 		
-		SELECT INTO x array_add(value, array_scalar_mult(p,alpha)) FROM X_val;
+		SELECT INTO x MADLIB_SCHEMA.array_add(value, MADLIB_SCHEMA.array_scalar_mult(p,alpha)) FROM X_val;
 		TRUNCATE TABLE X_val;
 		INSERT INTO X_val VALUES(x);
 		
-		SELECT INTO r array_add(r,array_scalar_mult(Ap, -alpha));
-		SELECT INTO r_new_size array_dot(r,r);
-		RAISE INFO 'ERROR %',r_new_size; 
+		SELECT INTO r MADLIB_SCHEMA.array_add(r,MADLIB_SCHEMA.array_scalar_mult(Ap, -alpha));
+		SELECT INTO r_new_size MADLIB_SCHEMA.array_dot(r,r);
+		
+		IF(verbose = 1) THEN
+			RAISE INFO 'ERROR %',r_new_size; 
+		END IF;
 		IF (r_new_size < precision_limit) THEN
-			EXECUTE 'SELECT ARRAY(SELECT array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
-			SELECT INTO r array_sub(b, Ax);
-			SELECT INTO r_new_size array_dot(r, r);
-			RAISE INFO 'TEST FINAL ERROR %', r_new_size;
+			EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
+			SELECT INTO r MADLIB_SCHEMA.array_sub(b, Ax);
+			SELECT INTO r_new_size MADLIB_SCHEMA.array_dot(r, r);
+			IF(verbose = 1) THEN
+				RAISE INFO 'TEST FINAL ERROR %', r_new_size;
+			END IF;
 			IF (r_new_size < precision_limit) THEN
 				EXIT;
 			END IF;
 		END IF;
-		SELECT INTO p array_add(r, array_scalar_mult(p, r_new_size/r_size));
+		SELECT INTO p MADLIB_SCHEMA.array_add(r, MADLIB_SCHEMA.array_scalar_mult(p, r_new_size/r_size));
 		r_size = r_new_size;
 	END LOOP; 
+	IF(verbose = 2) THEN
+		RETURN ARRAY[r_new_size];
+	END IF;
 	SELECT INTO x value FROM X_val;
 	RETURN x;
+end
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.conjugate_gradient(Matrix TEXT, val_id TEXT, row_id TEXT, b FLOAT[], precision_limit FLOAT)  RETURNS FLOAT[] AS $$
+declare
+begin
+	RETURN MADLIB_SCHEMA.conjugate_gradient(Matrix, val_id, row_id, b, precision_limit,0);
 end
 $$ LANGUAGE plpgsql;
