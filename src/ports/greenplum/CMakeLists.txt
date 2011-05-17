@@ -118,6 +118,30 @@ if(GREENPLUM_FOUND)
         "${CMAKE_CURRENT_BINARY_DIR}/modules"
         ${M4_ARGUMENTS_GREENPLUM}
     )
+    # FIXME: Check legacy code for compliance with new architecture
+    # BEGIN Legacy Code
+        
+        file(GLOB_RECURSE LEGACY_SQL_FILES_GREENPLUM RELATIVE
+            "${CMAKE_SOURCE_DIR}/../methods"
+            "${CMAKE_SOURCE_DIR}/../methods/*.py_in")
+        foreach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
+            if(NOT("${CURRENT_FILE}" MATCHES "^.*(drop|test|/sql/)[^/]*.sql_in"))
+                get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
+                set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
+                string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
+                string(REGEX REPLACE ".py_in\$" ".py" OUTFILE ${OUTFILE})
+                get_dir_name(OUTDIR ${OUTFILE})
+                add_custom_command(OUTPUT "${OUTFILE}"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTDIR}"
+                    COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${CURRENT_PATH}" > "${OUTFILE}"
+                    DEPENDS "${CURRENT_PATH}"
+                    COMMENT "Preprocessing ${CURRENT_FILE} with m4."
+                )
+                list(APPEND PYTHON_TARGET_FILES_GREENPLUM ${OUTFILE})
+            endif()
+        endforeach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
+        
+    # END Legacy Code
     add_custom_target(pythonFiles_Greenplum ALL DEPENDS ${PYTHON_TARGET_FILES_GREENPLUM})
     
     add_sql_files(
@@ -125,6 +149,27 @@ if(GREENPLUM_FOUND)
         "../postgres/modules"
         "${CMAKE_CURRENT_BINARY_DIR}/modules"
     )
+    # FIXME: Check legacy code for compliance with new architecture
+    # BEGIN Legacy Code
+        
+        file(GLOB_RECURSE LEGACY_SQL_FILES_GREENPLUM RELATIVE
+            "${CMAKE_SOURCE_DIR}/../methods"
+            "${CMAKE_SOURCE_DIR}/../methods/*.sql_in")
+        foreach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
+            if(NOT("${CURRENT_FILE}" MATCHES "^.*(drop|test|/sql/)[^/]*.sql_in"))
+                get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
+                set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
+                string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
+                add_custom_command(OUTPUT "${OUTFILE}"
+                    COMMAND ${CMAKE_COMMAND} -E copy "${CURRENT_PATH}" "${OUTFILE}"
+                    DEPENDS "${CURRENT_PATH}"
+                    COMMENT "Copying ${CURRENT_FILE}"
+                )
+                list(APPEND SQL_TARGET_FILES_GREENPLUM ${OUTFILE})
+            endif()
+        endforeach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
+        
+    # END Legacy Code
     add_custom_target(sqlFiles_Greenplum ALL DEPENDS ${SQL_TARGET_FILES_GREENPLUM})
 
 
