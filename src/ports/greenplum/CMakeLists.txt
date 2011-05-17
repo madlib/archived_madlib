@@ -37,6 +37,22 @@ if(GREENPLUM_FOUND)
         )
     endif(LINUX)
 
+    # FIXME: Convert legacy source code written in C
+    # BEGIN Legacy Code
+    
+        if(${CMAKE_COMPILER_IS_GNUCC})
+            set(CMAKE_C_FLAGS "-std=c99")
+        endif(${CMAKE_COMPILER_IS_GNUCC})
+        file(GLOB_RECURSE LEGACY_C_FILES_GREENPLUM RELATIVE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/../methods/*.c")
+
+        set_source_files_properties(${LEGACY_C_FILES_GREENPLUM} PROPERTIES
+            COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
+        )
+        list(APPEND MAD_DBAL_SOURCES_GREENPLUM ${LEGACY_C_FILES_GREENPLUM})
+    
+    # END Legacy Code
+
     include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
         ${CMAKE_CURRENT_SOURCE_DIR}
