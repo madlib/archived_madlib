@@ -804,8 +804,7 @@ def main( argv):
                 retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
-                seconds = (run_end - run_start).seconds
-                microsec = (run_end - run_start).microseconds
+                milliseconds = round( (run_end - run_start).microseconds / 1000)
         
                 # Analyze the output
                 # If DB cmd line returned error
@@ -832,7 +831,7 @@ def main( argv):
                 # Spit the line
                 print "TEST CASE RESULT|Module: " + module + \
                     "|" + os.path.basename(sqlfile) + "|" + result + \
-                    "|Time: %s.%s sec" % (seconds, microsec)           
+                    "|Time: %s milliseconds" % (milliseconds)           
     
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Start Here
