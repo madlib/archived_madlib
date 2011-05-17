@@ -19,7 +19,7 @@
 
 #include "sparse_vector.h"
 
-#ifdef PG_MODULE_MAGIC
+#ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
 

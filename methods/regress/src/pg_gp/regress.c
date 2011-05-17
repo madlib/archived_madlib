@@ -79,8 +79,9 @@ static void float8_mregr_compute(MRegrState	*inState,
 								 ArrayType	**outTStats,
 								 ArrayType	**outPValues);
 
+#ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
-
+#endif
 
 
 static bool
