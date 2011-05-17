@@ -28,15 +28,22 @@ if(POSTGRESQL_FOUND)
     )
     
     # FIXME: Convert legacy source code written in C
-    if(${CMAKE_COMPILER_IS_GNUCC})
-        set(CMAKE_C_FLAGS "-std=c99")
-    endif(${CMAKE_COMPILER_IS_GNUCC})
-    file(GLOB_RECURSE LEGACY_C_FILES_POSTGRES RELATIVE
-        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/../methods/*.c")
-    set_source_files_properties(${LEGACY_C_FILES_POSTGRES} PROPERTIES
-        COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
-    )
-    list(APPEND MAD_DBAL_SOURCES_POSTGRES ${LEGACY_C_FILES_POSTGRES})
+    # BEGIN Legacy Code
+    
+        if(${CMAKE_COMPILER_IS_GNUCC})
+            set(CMAKE_C_FLAGS "-std=c99")
+        endif(${CMAKE_COMPILER_IS_GNUCC})
+        file(GLOB_RECURSE LEGACY_C_FILES_POSTGRES RELATIVE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/../methods/*.c")
+
+        # errOmitLocation is used in legacy C code, but it is Greenplum only
+        # we define it so that it has no effect for PostgreSQL.
+        set_source_files_properties(${LEGACY_C_FILES_POSTGRES} PROPERTIES
+            COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC;errOmitLocation=(int)"
+        )
+        list(APPEND MAD_DBAL_SOURCES_POSTGRES ${LEGACY_C_FILES_POSTGRES})
+    
+    # END Legacy Code
 
     include_directories(${CMAKE_CURRENT_SOURCE_DIR})
     include_directories(${POSTGRESQL_SERVER_INCLUDE_DIR})
