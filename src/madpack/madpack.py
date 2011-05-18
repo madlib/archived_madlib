@@ -283,7 +283,7 @@ def __db_rename_schema( from_schema, to_schema):
         dbconn.commit();
     except:
         __error( 'Could not rename schema. Stopping execution...', False)
-        raise Exception
+        raise
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Create schema
@@ -319,7 +319,7 @@ def __db_create_objects( schema, old_schema):
         dbconn.commit();    
     except:
         __error( "could not crate MigrationHistory table", False)
-        raise Exception
+        raise
     
     # Copy MigrationHistory table for record keeping purposes
     if old_schema:
@@ -332,7 +332,7 @@ def __db_create_objects( schema, old_schema):
             dbconn.commit();    
         except:
             __error( "Could not copy MigrationHistory table", False)
-            raise Exception
+            raise
 
     # Stamp the DB installation
     try:
@@ -342,7 +342,7 @@ def __db_create_objects( schema, old_schema):
         dbconn.commit();    
     except:
         __error( "Could not insert data into %s.migrationhistory table" % schema, False)
-        raise Exception
+        raise
     
     # Run migration SQLs    
     __info( "> Creating objects for modules:", True)  
@@ -376,25 +376,13 @@ def __db_create_objects( schema, old_schema):
             try:
                 retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
             except:
-                raise Exception
+                raise
                 
             # If PSQL returned error
             if retval == 3:
                 __error( "Failed executing: %s" % tmpfile, False)  
                 __error( "For details check: %s" % logfile, False) 
-                raise Exception    
-
-    
-            # Check the output
-            #log = open( logfile, 'r')
-            #try:
-            #    for line in log:
-            #        if line.upper().find( 'ERROR') >= 0:
-            #            print line,
-            #            __error( "Problem running %s. Check %s for details." % (tmpfile, logfile), False)
-            #            raise Exception
-            #finally:
-            #    log.close() 
+                raise    
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
@@ -426,14 +414,14 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         f.close()         
     except:
         __error("Failed executing m4 on %s" % sqlfile, False)
-        raise Exception
+        raise
 
     # Run the SQL using DB command-line utility
     if portid.upper() == 'GREENPLUM' or portid.upper() == 'POSTGRES':
     
         if subprocess.call(['which', 'psql'], stdout=subprocess.PIPE, stderr=subprocess.PIPE) != 0:
             __error( "Can not find: psql", False)
-            raise Exception
+            raise
             
         runcmd = [ 'psql', '-a',
                     '-v', 'ON_ERROR_STOP=1',
@@ -449,15 +437,16 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         log = open( logfile, 'w') 
     except:
         __error( "Could not create log file %s" % tmpfile, False)
-        raise Exception    
+        raise    
     try:
         __info("> ... executing " + tmpfile, verbose ) 
         retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log) 
     except:            
         __error( "Failed executing %s." % tmpfile, False)  
-        raise Exception    
-    finally:
         log.close()
+        raise    
+
+    log.close()
 
     return retval
 
@@ -822,8 +811,8 @@ def main( argv):
                                 result = 'FAIL'
                     except:
                         result = 'ERROR'
-                    finally:
-                        log.close()  
+                                            
+                    log.close()                      
                 # Otherwise                   
                 else:
                     result = 'ERROR'
@@ -845,7 +834,10 @@ if __name__ == "__main__":
     # Run main
     try:
         main(sys.argv[1:])
-    finally:
-        # Close the log
+    except:
         __log_close()
+        raise
+
+    # Close the log
+    __log_close()
     
