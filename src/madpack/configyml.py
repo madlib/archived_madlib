@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 #
 # Routines to pull information out of YML config files:
 #   - config/Version.yml
