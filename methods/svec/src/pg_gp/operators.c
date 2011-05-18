@@ -5,11 +5,12 @@
  * SparseData.
  */
 
+#include <postgres.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
-#include "postgres.h"
 #include "utils/array.h"
 #include "catalog/pg_type.h"
 #include "utils/numeric.h"
