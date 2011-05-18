@@ -111,7 +111,7 @@ if(GREENPLUM_FOUND)
 
 # -- 6. Preprocess/copy all Python/SQL files -----------------------------------
 
-    list(APPEND M4_ARGUMENTS_GREENPLUM
+    set(M4_ARGUMENTS_GREENPLUM
         "-DGREENPLUM"
     )
     add_python_files(

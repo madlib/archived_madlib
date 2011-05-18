@@ -63,6 +63,11 @@ if(NOT CMAKE_BUILD_TYPE)
       FORCE)
 endif(NOT CMAKE_BUILD_TYPE)
 
+set(M4_ARGUMENTS
+    # force a `m4_' prefix to all builtins
+    "--prefix-builtins"
+)
+
 
 # Read and parse Version.yml file
 file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
@@ -206,7 +211,8 @@ macro(add_python_files OUT_PYTHON_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
     )
     set(MADLIB_PYTHON_M4_PREPROCESSING
         COMMAND ${CMAKE_COMMAND} -E make_directory "\"\${OUTDIR}\""
-        COMMAND ${M4_BINARY} ${IN_M4_ARGUMENTS} "\"\${CURRENT_PATH}\"" > "\"\${OUTFILE}\""
+        COMMAND ${M4_BINARY} ${M4_ARGUMENTS} ${IN_M4_ARGUMENTS}
+            "\"\${CURRENT_PATH}\"" > "\"\${OUTFILE}\""
     )
     batch_add_command(
         TARGET_PREFIX "${TARGET_DIR_ABS}/"

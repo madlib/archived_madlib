@@ -77,7 +77,7 @@ public:
      * We define this function so that we can use State in the
      * argument list and as a return type.
      */
-    inline operator AnyValue() {
+    inline operator AnyValue() const {
         return mStorage;
     }
     
@@ -216,6 +216,13 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
 AnyValue LogisticRegressionCG::mergeStates(AbstractDBInterface &db, AnyValue args) {
     State stateLeft = args[0].copyIfImmutable();
     const State stateRight = args[1];
+
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
     
     // Merge states together and return
     stateLeft += stateRight;
@@ -329,7 +336,7 @@ public:
      * We define this function so that we can use State in the
      * argument list and as a return type.
      */
-    inline operator AnyValue() {
+    inline operator AnyValue() const {
         return mStorage;
     }
     
@@ -458,6 +465,13 @@ AnyValue LogisticRegressionIRLS::transition(AbstractDBInterface &db,
 AnyValue LogisticRegressionIRLS::mergeStates(AbstractDBInterface &db, AnyValue args) {
     State stateLeft = args[0].copyIfImmutable();
     const State stateRight = args[1];
+    
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
     
     // Merge states together and return
     stateLeft += stateRight;

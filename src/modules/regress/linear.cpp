@@ -61,7 +61,7 @@ public:
      * We define this function so that we can use TransitionState in the argument
      * list and as a return type.
      */
-    inline operator AnyValue() {
+    inline operator AnyValue() const {
         return mStorage;
     }
     
@@ -178,6 +178,13 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
 AnyValue LinearRegression::mergeStates(AbstractDBInterface &db, AnyValue args) {
     TransitionState stateLeft = args[0].copyIfImmutable();
     const TransitionState stateRight = args[1];
+    
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
     
     // Merge states together and return
     stateLeft += stateRight;
