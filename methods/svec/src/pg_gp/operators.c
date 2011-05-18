@@ -284,7 +284,7 @@ Datum svec_eq(PG_FUNCTION_ARGS)
 
 /**
  *  svec_eq - returns the equality of two svecs if their
- *  non-zero elments are equal. Zero is viewed as a mission data
+ *  non-zero elments are equal. Zero is viewed as a missing data
  *  and hence equals to any other value. 
  */
 Datum svec_eq_non_zero(PG_FUNCTION_ARGS);
@@ -296,6 +296,22 @@ Datum svec_eq_non_zero(PG_FUNCTION_ARGS)
 	SparseData left  = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
 	PG_RETURN_BOOL(sparsedata_eq_zero_is_equal(left,right));
+}
+
+/**
+ *  svec_eq - returns the equality of two svecs if their
+ *  non-zero elments are equal. Zero is viewed as a missing data
+ *  and hence equals to any other value. 
+ */
+Datum svec_contains(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_contains );
+Datum svec_contains(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	PG_RETURN_BOOL(sparsedata_contains(left,right));
 }
 
 
