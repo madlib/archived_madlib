@@ -21,7 +21,7 @@
  * which must be scanned. At every k*SORTA_SLOP'th insert, the full directory is
  * sorted.
  */
-#include <ctype.h>
+//#include <ctype.h>
 #include "postgres.h"
 #include "fmgr.h"
 #include "sortasort.h"

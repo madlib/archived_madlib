@@ -11,6 +11,7 @@
  *  3. Make the function available in gp_svec.sql.
  */
 
+#include <postgres.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
