@@ -185,12 +185,21 @@ Datum countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid, Oid typOid)
  */
 
 /*!
- * simply returns its input
+ * return the array of sketch counters as a bytea
  */
 PG_FUNCTION_INFO_V1(__cmsketch_final);
 Datum __cmsketch_final(PG_FUNCTION_ARGS)
 {
-    PG_RETURN_BYTEA_P(PG_GETARG_BYTEA_P(0));
+    bytea *     blob = PG_GETARG_BYTEA_P(0);
+    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    int         len = RANGES*sizeof(countmin) + VARHDRSZ;
+    bytea *out = palloc0(len);    
+    
+    memcpy((uint8 *)VARDATA(out), sketch->sketches, len - VARHDRSZ);
+    //int64_big_endianize((uint64 *)VARDATA(out), len - VARHDRSZ, false);
+    SET_VARSIZE(out, len);
+    
+    PG_RETURN_BYTEA_P(out);
 }
 
 /*!
