@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Main Madpack installation executable.
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -11,6 +11,12 @@ import traceback
 import subprocess
 import datetime
 from time import strftime
+
+# Check python version
+if sys.version_info[:2] < (2, 6):
+    print "ERROR: Too old python version %s. You need 2.6 or greater." \
+          % str( sys.version_info[:3]).replace(', ', '.')
+    exit(1)
 
 # Find MADlib root directory. This file is installed to
 # $MADLIB_ROOT/madpack/madpack.py, so to get $MADLIB_ROOT we need to go
