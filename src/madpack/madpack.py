@@ -384,6 +384,18 @@ def __db_create_objects( schema, old_schema):
                 __error( "For details check: %s" % logfile, False) 
                 raise    
 
+    
+            # Check the output
+            #log = open( logfile, 'r')
+            #try:
+            #    for line in log:
+            #        if line.upper().find( 'ERROR') >= 0:
+            #            print line,
+            #            __error( "Problem running %s. Check %s for details." % (tmpfile, logfile), False)
+            #            raise
+            #finally:
+            #    log.close() 
+
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
 # @param schema name of the target schema  
@@ -443,10 +455,9 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
         retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log) 
     except:            
         __error( "Failed executing %s." % tmpfile, False)  
-        log.close()
         raise    
-
-    log.close()
+    finally:
+        log.close()
 
     return retval
 
@@ -811,8 +822,8 @@ def main( argv):
                                 result = 'FAIL'
                     except:
                         result = 'ERROR'
-                                            
-                    log.close()                      
+                    finally:
+                        log.close()  
                 # Otherwise                   
                 else:
                     result = 'ERROR'
@@ -834,10 +845,7 @@ if __name__ == "__main__":
     # Run main
     try:
         main(sys.argv[1:])
-    except:
+    finally:
+        # Close the log
         __log_close()
-        raise
-
-    # Close the log
-    __log_close()
     
