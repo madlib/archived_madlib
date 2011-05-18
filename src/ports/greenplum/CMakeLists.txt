@@ -50,6 +50,8 @@ if(GREENPLUM_FOUND)
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
         )
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM ${LEGACY_C_FILES_GREENPLUM})
+        # sparse_vector.c indirectly includes openssl/ssl.h (via libpq/libpq-be.h)
+        include_directories(${GREENPLUM_BASE_DIR}/include)
     
     # END Legacy Code
 
