@@ -214,18 +214,23 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
             - ((state.y_sum * state.y_sum) / state.numRows)
           );
 
+    // total sum of squares
+    double tss
+        = state.y_square_sum
+            - ((state.y_sum * state.y_sum) / state.numRows);
+
     // coefficient of determination
-    if (what == kRSquare) {
-        // total sum of squares
-        double tss
-            = state.y_square_sum
-                - ((state.y_sum * state.y_sum) / state.numRows);
-    
+    if (what == kRSquare)    
         return ess / tss;
-    }
+
+    // In the case of linear regression:
+    // residual sum of squares (rss) = total sum of squares (tss) - explained
+    // sum of squares (ess)
+    // Proof: http://en.wikipedia.org/wiki/Sum_of_squares
+    double rss = tss - ess;
 
     // Variance is also called the mean square error
-	double variance = ess / (state.numRows - state.widthOfX);
+	double variance = rss / (state.numRows - state.widthOfX);
 
     // Precompute (X^T * X)^{-1}
     mat inverse_of_X_transp_X = inv(state.X_transp_X);
