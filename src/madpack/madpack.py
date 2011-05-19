@@ -365,13 +365,13 @@ def __db_create_objects( schema, old_schema):
         __make_temp_dir( cur_tmpdir)
 
         # Find the module dir (platform specific or generic)
-        if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
-            maddir_mod  = maddir + "/ports/" + portid + "/modules/" + module
+        if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
+            maddir_mod  = maddir + "/ports/" + portid + "/modules"
         else:        
-            maddir_mod  = maddir + "/modules/" + module
+            maddir_mod  = maddir + "/modules"
 
         # Loop through all SQL files for this module
-        sql_files = maddir_mod + '/*.sql_in'
+        sql_files = maddir_mod + '/' + module + '/*.sql_in'
         for sqlfile in glob.glob( sql_files):
         
             # Set file names
@@ -380,7 +380,7 @@ def __db_create_objects( schema, old_schema):
             
             # Run the SQL
             try:
-                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
+                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod, module)
             except:
                 raise
                 
@@ -408,9 +408,10 @@ def __db_create_objects( schema, old_schema):
 # @param sqlfile name of the file to parse  
 # @param tmpfile name of the temp file to run
 # @param logfile name of the log file    
-# @param maddir_pyt name of the Python library directory
+# @param maddir_mod name of the module dir with Python code
+# @param module name of the module 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):       
+def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod, module):       
 
     # Check if the SQL file exists     
     if not os.path.isfile( sqlfile):
@@ -420,15 +421,17 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_pyt):
     # Prepare the file using M4
     try:
         f = open(tmpfile, 'w')
-        __info("> ... parsing " + sqlfile + " using m4", verbose )                
+        __info("> ... parsing " + sqlfile + " using m4", verbose )    
         m4args = [ 'm4', 
                     '-P', 
                     '-DMADLIB_SCHEMA=' + schema, 
-                    '-DPLPYTHON_LIBDIR=' + maddir_pyt, 
+                    '-DPLPYTHON_LIBDIR=' + maddir_mod, 
                     '-DMODULE_PATHNAME=' + maddir_lib, 
+                    '-DMODULE_NAME=' + module, 
+                    '-I' + maddir + '/madpack',
                     '-D' + portid.upper(), 
                     sqlfile ]
-        subprocess.call(m4args, stdout=f)   
+        subprocess.call( m4args, stdout=f)  
         f.close()         
     except:
         __error("Failed executing m4 on %s" % sqlfile, False)
@@ -792,13 +795,13 @@ def main( argv):
             __make_temp_dir( cur_tmpdir)
             
             # Find the module/module dir (platform specific or generic)
-            if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
-                maddir_mod  = maddir + "/ports/" + portid + "/modules/" + module
+            if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
+                maddir_mod  = maddir + "/ports/" + portid + "/modules"
             else:        
-                maddir_mod  = maddir + "/modules/" + module
+                maddir_mod  = maddir + "/modules"
     
             # Loop through all test SQL files for this module
-            sql_files = maddir_mod + '/test/*.sql_in'
+            sql_files = maddir_mod + '/' + module + '/test/*.sql_in'
             for sqlfile in glob.glob( sql_files):
             
                 # Set file names
@@ -807,7 +810,7 @@ def main( argv):
                             
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod)
+                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod, module)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 milliseconds = round( (run_end - run_start).microseconds / 1000)
