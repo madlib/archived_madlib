@@ -27,6 +27,18 @@ public:
         return static_cast<U>(*mPtr);
     }
     
+    /**
+     * @internal
+     * It is important to define this operator because C++ will otherwise
+     * perform an assignment as a bit-by-bit copy. Note that this default 
+     * operator= would be used even though there is a conversion path
+     * through dest.operator=(orig.operator U())
+     */
+    Reference &operator=(const Reference &inReference) {
+        *mPtr = *inReference.mPtr;
+        return *this;
+    }
+    
     Reference &operator=(const U &inValue) {
         *mPtr = inValue;
         return *this;
