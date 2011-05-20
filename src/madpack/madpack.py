@@ -288,7 +288,7 @@ def __db_rename_schema( from_schema, to_schema):
         cur.execute( "ALTER SCHEMA %s RENAME TO %s;" % (from_schema, to_schema))
         dbconn.commit();
     except:
-        __error( 'Could not rename schema. Stopping execution...', False)
+        __error( 'Cannot rename schema. Stopping execution...', False)
         raise
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -305,7 +305,7 @@ def __db_create_schema( schema):
         cur.close()
         dbconn.commit();
     except:
-        __info( 'Could not create new schema. Rolling back installation...', True)
+        __info( 'Cannot create new schema. Rolling back installation...', True)
         pass
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -324,7 +324,7 @@ def __db_create_objects( schema, old_schema):
         cur.execute( sql)
         dbconn.commit();    
     except:
-        __error( "could not crate MigrationHistory table", False)
+        __error( "Cannot crate MigrationHistory table", False)
         raise
     
     # Copy MigrationHistory table for record keeping purposes
@@ -337,7 +337,7 @@ def __db_create_objects( schema, old_schema):
             cur.execute( sql)
             dbconn.commit();    
         except:
-            __error( "Could not copy MigrationHistory table", False)
+            __error( "Cannot copy MigrationHistory table", False)
             raise
 
     # Stamp the DB installation
@@ -347,7 +347,7 @@ def __db_create_objects( schema, old_schema):
         cur.execute( "INSERT INTO %s.migrationhistory(version) VALUES('%s')" % (schema, rev))
         dbconn.commit();    
     except:
-        __error( "Could not insert data into %s.migrationhistory table" % schema, False)
+        __error( "Cannot insert data into %s.migrationhistory table" % schema, False)
         raise
     
     # Run migration SQLs    
@@ -380,7 +380,7 @@ def __db_create_objects( schema, old_schema):
             
             # Run the SQL
             try:
-                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod, module)
+                retval = __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile)
             except:
                 raise
                 
@@ -405,13 +405,13 @@ def __db_create_objects( schema, old_schema):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
 # @param schema name of the target schema  
-# @param sqlfile name of the file to parse  
-# @param tmpfile name of the temp file to run
-# @param logfile name of the log file    
 # @param maddir_mod name of the module dir with Python code
 # @param module name of the module 
+# @param sqlfile name of the file to parse  
+# @param tmpfile name of the temp file to run
+# @param logfile name of the log file (stdout)    
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod, module):       
+def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):       
 
     # Check if the SQL file exists     
     if not os.path.isfile( sqlfile):
@@ -454,11 +454,13 @@ def __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod, module):
                     '-f', tmpfile]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
+    # Open log file
     try:
         log = open( logfile, 'w') 
     except:
-        __error( "Could not create log file %s" % tmpfile, False)
+        __error( "Cannot create log file %s" % logfile, False)
         raise    
+    # Run the SQL
     try:
         __info("> ... executing " + tmpfile, verbose ) 
         retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log) 
@@ -503,7 +505,7 @@ def __db_rollback( drop_schema, keep_schema):
         cur.execute( "DROP SCHEMA %s CASCADE;" % (drop_schema))
         dbconn.commit();
     except:
-        __error( "Could not drop schema %s. Stopping rollback..." % drop_schema.upper(), True)        
+        __error( "Cannot drop schema %s. Stopping rollback..." % drop_schema.upper(), True)        
 
     # Rename old to current schema
     if keep_schema != None:    
@@ -763,7 +765,7 @@ def main( argv):
                 cur.execute( "DROP SCHEMA %s CASCADE;" % (schema))
                 dbconn.commit();
             except:
-                __error( "Could not drop schema %s." % schema.upper(), True)         
+                __error( "Cannot drop schema %s." % schema.upper(), True)         
             dbconn.close() 
             __info( 'Schema %s has been dropped. MADlib uninstalled.' % schema.upper(), True)
             
@@ -810,7 +812,7 @@ def main( argv):
                             
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                retval = __db_run_sql( schema, sqlfile, tmpfile, logfile, maddir_mod, module)
+                retval = __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 milliseconds = round( (run_end - run_start).microseconds / 1000)
@@ -820,21 +822,10 @@ def main( argv):
                 if retval == 3:
                     __error( "Failed executing: %s" % tmpfile, False)  
                     __error( "For details check: %s" % logfile, False) 
-                    result = 'ERROR'
-                # If log file exists
+                    result = 'FAIL'
+                # If error log file exists
                 elif os.path.getsize( logfile) > 0:
-                    log = open( logfile, 'r')
-                    result = 'UNKNOWN'
-                    try:
-                        for line in log:
-                            if line.upper().find( '<<FAIL>>') >= 0:
-                                result = 'FAIL'
-                            elif line.upper().find( '<<PASS>>') >= 0:
-                                result = 'PASS'
-                    except:
-                        result = 'ERROR'
-                    finally:
-                        log.close()  
+                    result = 'PASS'
                 # Otherwise                   
                 else:
                     result = 'ERROR'
