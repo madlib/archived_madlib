@@ -824,11 +824,13 @@ def main( argv):
                 # If log file exists
                 elif os.path.getsize( logfile) > 0:
                     log = open( logfile, 'r')
-                    result = 'PASS'
+                    result = 'UNKNOWN'
                     try:
                         for line in log:
-                            if line.upper().find( '<FAIL>') >= 0:
+                            if line.upper().find( '<<FAIL>>') >= 0:
                                 result = 'FAIL'
+                            elif line.upper().find( '<<PASS>>') >= 0:
+                                result = 'PASS'
                     except:
                         result = 'ERROR'
                     finally:
