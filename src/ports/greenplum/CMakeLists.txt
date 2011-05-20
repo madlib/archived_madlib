@@ -81,7 +81,7 @@ if(GREENPLUM_FOUND)
         file(COPY ${GREENPLUM_SERVER_INCLUDE_DIR}/utils/syncbitvector.h DESTINATION
             ${PATCH_DIR}/server/utils)
         execute_process(
-            COMMAND ${MAD_BUILD_TOOLS}/greenplum_patch_4_1_x.sh
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_4_1_0_to_4_1_1.sh
             WORKING_DIRECTORY ${PATCH_DIR}
         )
         
@@ -181,7 +181,8 @@ if(GREENPLUM_FOUND)
         DESTINATION ports/greenplum
         REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
-    
+
+    add_subdirectory(madpack)
 else(GREENPLUM_FOUND)
     message(STATUS "***")
     message(STATUS "*** No Greenplum installation found. Skipping.")
