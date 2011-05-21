@@ -48,8 +48,7 @@ $$
     MADlibSchema = rv[0]['nspname']
     
     return $2.$3(**globals())
-$$
-!>)
+$$ !>)
 
 /*
  * Repetition: m4 is a lousy preprocessor. We change the quote character back to
