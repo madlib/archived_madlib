@@ -4,7 +4,7 @@
 #include "math.h"
 #include "catalog/pg_type.h"
 
-#ifdef PG_MODULE_MAGIC
+#ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
 

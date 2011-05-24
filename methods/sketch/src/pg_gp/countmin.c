@@ -583,7 +583,7 @@ void find_ranges_internal(int64 bot, int64 top, int power, rangelist *r)
  */
 Datum cmsketch_centile_c(cmtransval *transval, int intcentile, int64 total)
 {
-    uint  i;
+    uint32  i;
     int64 higuess,loguess,curguess,curcount;
     int64 centile_cnt;
 
@@ -714,7 +714,7 @@ Datum cmsketch_width_histogram_c(cmtransval *transval,
 Datum cmsketch_depth_histogram_c(cmtransval *transval, int64 buckets)
 {
     int64      step;
-    uint       i, nextbucket;
+    uint64     i, nextbucket;
     ArrayType *retval;
     int64      binlo;
     Datum      histo[buckets][3];

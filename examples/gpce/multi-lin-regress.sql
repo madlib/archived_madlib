@@ -29,13 +29,13 @@ COPY houses FROM STDIN DELIMITER '|';
 select * from houses limit 5;
 
 \qecho === Calculate Coefficients ======================================
-select madlib.mregr_coef(price, array[1, bedroom, bath, size])::REAL[] from houses;
+select madlib.linregr_coef(price, array[1, bedroom, bath, size])::REAL[] from houses;
 
 \qecho === Calculate R square value ====================================
-select madlib.mregr_r2(price, array[1, bedroom, bath, size])::REAL from houses;
+select madlib.linregr_r2(price, array[1, bedroom, bath, size])::REAL from houses;
 
 \qecho === Calculate t statistics ======================================
-select madlib.mregr_tstats(price, array[1, bedroom, bath, size])::REAL[] from houses;
+select madlib.linregr_tstats(price, array[1, bedroom, bath, size])::REAL[] from houses;
 
 \qecho === Calculate p values ==========================================
-select madlib.mregr_pvalues(price, array[1, bedroom, bath, size])::REAL[] from houses;
+select madlib.linregr_pvalues(price, array[1, bedroom, bath, size])::REAL[] from houses;

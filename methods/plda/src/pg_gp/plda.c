@@ -24,7 +24,9 @@
 #include <stdlib.h>
 #include <assert.h>
 
+#ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
+#endif
 
 /* Indicate "version 1" calling conventions for all exported functions. */
 PG_FUNCTION_INFO_V1(sampleNewTopics);
