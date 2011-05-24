@@ -75,21 +75,18 @@ if(POSTGRESQL_FOUND)
             "${CMAKE_SOURCE_DIR}/../methods"
             "${CMAKE_SOURCE_DIR}/../methods/*.py_in")
         foreach(CURRENT_FILE ${LEGACY_SQL_FILES_POSTGRES})
-            if(NOT("${CURRENT_FILE}" MATCHES "^.*(drop|test)[^/]*.sql_in"))
-                get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
-                set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
-                string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
-                string(REGEX REPLACE ".py_in\$" ".py" OUTFILE ${OUTFILE})
-                string(REPLACE "/sql/" "/test/" OUTFILE ${OUTFILE})
-                get_dir_name(OUTDIR ${OUTFILE})
-                add_custom_command(OUTPUT "${OUTFILE}"
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTDIR}"
-                    COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${CURRENT_PATH}" > "${OUTFILE}"
-                    DEPENDS "${CURRENT_PATH}"
-                    COMMENT "Preprocessing ${CURRENT_FILE} with m4."
-                )
-                list(APPEND PYTHON_TARGET_FILES_POSTGRES ${OUTFILE})
-            endif()
+            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
+            set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
+            string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
+            string(REGEX REPLACE ".py_in\$" ".py" OUTFILE ${OUTFILE})
+            get_dir_name(OUTDIR ${OUTFILE})
+            add_custom_command(OUTPUT "${OUTFILE}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTDIR}"
+                COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${CURRENT_PATH}" > "${OUTFILE}"
+                DEPENDS "${CURRENT_PATH}"
+                COMMENT "Preprocessing ${CURRENT_FILE} with m4."
+            )
+            list(APPEND PYTHON_TARGET_FILES_POSTGRES ${OUTFILE})
         endforeach(CURRENT_FILE ${LEGACY_SQL_FILES_POSTGRES})
         
     # END Legacy Code
@@ -107,10 +104,11 @@ if(POSTGRESQL_FOUND)
             "${CMAKE_SOURCE_DIR}/../methods"
             "${CMAKE_SOURCE_DIR}/../methods/*.sql_in")
         foreach(CURRENT_FILE ${LEGACY_SQL_FILES_POSTGRES})
-            if(NOT("${CURRENT_FILE}" MATCHES "^.*(drop|test|/sql/)[^/]*.sql_in"))
+            if(NOT("${CURRENT_FILE}" MATCHES "^.*(drop|test)[^/]*.sql_in"))
                 get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
                 set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
                 string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
+                string(REPLACE "/sql/" "/test/" OUTFILE ${OUTFILE})
                 add_custom_command(OUTPUT "${OUTFILE}"
                     COMMAND ${CMAKE_COMMAND} -E copy "${CURRENT_PATH}" "${OUTFILE}"
                     DEPENDS "${CURRENT_PATH}"
