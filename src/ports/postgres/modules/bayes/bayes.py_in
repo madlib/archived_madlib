@@ -1,10 +1,5 @@
 # coding=utf-8
 
-# This file is preprocessed with m4. Since we only want macro expansion at 
-# very few places, most of the file is quoted. Macros can be used by enclosing
-# them in <m4> and </m4>.
-m4_changequote(`</m4>', `<m4>') </m4>
-
 """@file bayes.py_in
 
 @brief Naive Bayes classification with user-defined smoothing factor (default:
@@ -341,17 +336,23 @@ def __get_classification_sql(**kwargs):
     
     """
 
+    kwargs.update(
+        keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
+    )
     return """
         SELECT
             key,
-            <m4>MADLIB_SCHEMA</m4>.argmax(class, log_prob) AS nb_classification,
+            {MADlibSchema}.argmax(class, log_prob) AS nb_classification,
             max(log_prob) AS nb_log_probability
         FROM {keys_and_prob_values} AS keys_and_nb_values
         GROUP BY key
-        """.format(
-            keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
-        )
+        """.format(**kwargs)
 
+def create_prepared_data_table(**kwargs):
+    """Wrapper around create_prepared_data() to create a table (and not a view)
+    """
+    kwargs.update(whatToCreate = 'TABLE')
+    create_prepared_data(**kwargs)
 
 def create_prepared_data(**kwargs):
     """Precompute all class priors and feature probabilities.
@@ -439,6 +440,13 @@ def create_prepared_data(**kwargs):
             """.format(**kwargs))
 
 
+def create_classification_view(**kwargs):
+    """Wrapper around create_classification() to create a view (and not a table) 
+    """
+    kwargs.update(whatToCreate = 'VIEW')
+    create_classification(**kwargs)
+
+
 def create_classification(**kwargs):
     """
     Create a view/table with columns (key, nb_classification).
@@ -482,18 +490,24 @@ def create_classification(**kwargs):
     """
     
     __init_prepared_data(kwargs)
-    kwargs.update(dict(
+    kwargs.update(
         keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
-        ))
+        )
     plpy.execute("""
         CREATE {whatToCreate} {destName} AS
         SELECT
             key,
-            <m4>MADLIB_SCHEMA</m4>.argmax(class, log_prob) AS nb_classification
+            {MADlibSchema}.argmax(class, log_prob) AS nb_classification
         FROM {keys_and_prob_values} AS keys_and_nb_values
         GROUP BY key
         """.format(**kwargs))
 
+
+def create_bayes_probabilities_view(**kwargs):
+    """Wrapper around create_bayes_probabilities() to create a view (and not a table) 
+    """
+    kwargs.update(whatToCreate = 'VIEW')
+    create_bayes_probabilities(**kwargs)
 
 def create_bayes_probabilities(**kwargs):
     """Create table/view with columns (key, class, nb_prob)
@@ -631,15 +645,15 @@ def create_classification_function(**kwargs):
         smoothingFactor = "$2"
         ))
     __init_prepared_data(kwargs)
-    kwargs.update(dict(
+    kwargs.update(
         keys_and_prob_values = "(" + __get_prob_values_sql(**kwargs) + ")"
-        ))
+        )
     plpy.execute("""
         CREATE FUNCTION {destName} (inAttributes INTEGER[], inSmoothingFactor DOUBLE PRECISION)
         RETURNS INTEGER[] AS
         $$
             SELECT
-                <m4>MADLIB_SCHEMA</m4>.argmax(class, log_prob)
+                {MADlibSchema}.argmax(class, log_prob)
             FROM {keys_and_prob_values} AS key_and_nb_values
         $$
         LANGUAGE sql STABLE
@@ -665,7 +679,3 @@ def __init_prepared_data(kwargs):
         kwargs.update(dict(
                 smoothingFactor = 1
             ))
-    
-
-# The m4 preprocessor complains if eof is reach in quoted mode.
-<m4>

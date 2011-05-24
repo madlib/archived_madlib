@@ -14,7 +14,7 @@ add_files(MADPACK_TARGET_FILES . "${CMAKE_CURRENT_BINARY_DIR}" ${MADPACK_FILES})
 add_custom_target(madpackFiles ALL DEPENDS ${MADPACK_TARGET_FILES})
 
 
-# -- 2. Install madpack files to $MADLIB_ROOT/madpack, set executable flagse
+# -- 2. Install madpack files to $MADLIB_ROOT/madpack, set executable flags
 #       for madpack.py ---------------------------------------------------------
 
 install(FILES ${MADPACK_TARGET_FILES}
