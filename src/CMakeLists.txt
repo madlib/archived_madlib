@@ -106,6 +106,16 @@ endif(NOT M4_BINARY)
 # -- Third-party dependencies: Find or download Boost --------------------------
 
 find_package(Boost 1.34)
+
+# We need Boost >= 1.34. Unfortunately, the FindBoost module seems to be broken
+# with respect to version checking, so we will set Boost_FOUND to FALSE if the
+# version is too old.
+if(Boost_FOUND)
+    if(Boost_VERSION LESS 103400)
+        set(Boost_FOUND FALSE)
+    endif(Boost_VERSION LESS 103400 )
+endif(Boost_FOUND)
+
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
 else(Boost_FOUND)
@@ -138,7 +148,7 @@ else(Boost_FOUND)
         EP_boost)
     list(APPEND ARMADILLO_CMAKE_ARGS
         -DCMAKE_INCLUDE_PATH=${MAD_THIRD_PARTY}/src/EP_boost)
-    include_directories(${MAD_THIRD_PARTY}/src/EP_boost)
+    include_directories(BEFORE ${MAD_THIRD_PARTY}/src/EP_boost)
 endif(Boost_FOUND)
 
 
