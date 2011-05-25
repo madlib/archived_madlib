@@ -59,6 +59,7 @@ AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
                         );
                 }
             }
+            // FIXME: Default case
         }
     }
 

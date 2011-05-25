@@ -19,21 +19,17 @@ if(GREENPLUM_FOUND)
 
     set(MAD_DBAL_SOURCES_GREENPLUM
         ../postgres/dbconnector/PGAbstractValue.cpp
-        dbconnector/GPCompatibility.cpp
-        ../postgres/dbconnector/PGNewDelete.cpp
         ../postgres/dbconnector/PGAllocator.cpp
+        dbconnector/GPCompatibility.cpp
         ../postgres/dbconnector/PGInterface.cpp
+        ../postgres/dbconnector/PGMain.cpp
+        ../postgres/dbconnector/PGNewDelete.cpp
         ../postgres/dbconnector/PGToDatumConverter.cpp
         ../postgres/dbconnector/PGValue.cpp
     )
-
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM
-            linux/GPMain.cpp
-        )
-    else(LINUX)
-        list(APPEND MAD_DBAL_SOURCES_GREENPLUM
-            ../postgres/dbconnector/PGMain.cpp
+            linux/GPArmadilloGlue.cpp
         )
     endif(LINUX)
 
