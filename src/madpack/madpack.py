@@ -365,7 +365,7 @@ def __db_create_objects( schema, old_schema):
         __make_temp_dir( cur_tmpdir)
 
         # Find the module dir (platform specific or generic)
-        if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
+        if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
             maddir_mod  = maddir + "/ports/" + portid + "/modules"
         else:        
             maddir_mod  = maddir + "/modules"
@@ -428,7 +428,7 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
             maddir_madpack  = maddir + "/ports/" + portid + "/madpack"
         else:        
             maddir_madpack  = maddir + "/madpack"
-        
+
         m4args = [ 'm4', 
                     '-P', 
                     '-DMADLIB_SCHEMA=' + schema, 
@@ -438,7 +438,7 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
                     '-I' + maddir_madpack,
                     '-D' + portid.upper(), 
                     sqlfile ]
-                    
+
         __info(" ".join(m4args), verbose)
                     
         subprocess.call( m4args, stdout=f)  
@@ -806,11 +806,11 @@ def main( argv):
             cur_tmpdir = tmpdir + '/' + module + '/test'
             __make_temp_dir( cur_tmpdir)
             
-            # Find the module/module dir (platform specific or generic)
-            if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
+            # Find the module dir (platform specific or generic)
+            if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
                 maddir_mod  = maddir + "/ports/" + portid + "/modules"
             else:        
-                maddir_mod  = maddir + "/modules"
+                maddir_mod  = maddir + "/modules"      
     
             # Loop through all test SQL files for this module
             sql_files = maddir_mod + '/' + module + '/test/*.sql_in'
