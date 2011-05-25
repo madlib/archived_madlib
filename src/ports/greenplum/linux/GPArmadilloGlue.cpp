@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file main.cpp
+ * @file GPArmadilloGlue.cpp
  *
  * Greenplum <= 4.1 statically links to CLAPACK and BLAS. However, it only
  * contains a subset of these libraries (unused symbols are removed from its
@@ -19,20 +19,29 @@
  * mixing implementations from potentially different versions of a third-party
  * library almost certainly calls for trouble.
  *
- * In MADlib, we want to dynamically link to the system-provided version of
- * LAPACK and BLAS (because these are probably tuned and optimized). Hence, we
- * have only a lazy link to armadillo and then call dlload explicitly with
- * the RTLD_DEEPBIND option [2] in the second argument. (BLAS and possibly ATLAS
- * will be loaded as depedencies with the same settings.)
+ * In MADlib, we want to use the system-provided version of LAPACK and BLAS
+ * (because these are probably tuned and optimized). One option would be to
+ * dynamically load the core library on OR in RTLD_DEEPBIND to the second
+ * argument [2]. Unfortunately, this is also a bad idea because, due to the GCC
+ * C++ ABI, there would be ugly side-effects on C++ semanticss [3].
+ *
+ * The solution that we use is to dynamically load armadillo at runtime and OR
+ * in RTLD_DEEPBIND to the second argument. (BLAS and possibly ATLAS
+ * will be loaded as depedencies with the same settings.) To make this work, the
+ * core library calls madlib_arma_<LAPACK-function>, which is defined in the
+ * connector library (i.e., here). The connector library looks up
+ * <LAPACK-function> with dlsym() within libarmadillo.so and its dependencies
+ * (i.e., LAPACK/BLAS).
  * 
- * This ensures that all calls into the external LAPACK library will not call
- * back into the main image in case when symbols with the same name exist there.
- * (E.g., dgesvd calls dlange, which would exists both in the postgres binary
- * and in the external LAPACK.)
+ * The RTLD_DEEPBIND ensures that all calls into the external LAPACK library
+ * will not call back into the main image in case when symbols with the same
+ * name exist there. (E.g., dgesvd calls dlange, which would exists both in the
+ * postgres binary and in the external LAPACK.)
  *
  * [1] POSIX standard on dlopen:
  *     http://pubs.opengroup.org/onlinepubs/9699919799/functions/dlopen.html
  * [2] man dlopen on Linux (since glibc 2.3.4)
+ * [3] http://gcc.gnu.org/faq.html#dso
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -45,70 +54,10 @@
 // PostgreSQL headers
 #include <utils/elog.h>
 
-#define MADLIB_FORTRAN_FUNCTIONS \
-    MADLIB_FORTRAN( sgetrf ) \
-    MADLIB_FORTRAN( dgetrf ) \
-    MADLIB_FORTRAN( cgetrf ) \
-    MADLIB_FORTRAN( zgetrf ) \
-    MADLIB_FORTRAN( sgetri ) \
-    MADLIB_FORTRAN( dgetri ) \
-    MADLIB_FORTRAN( cgetri ) \
-    MADLIB_FORTRAN( zgetri ) \
-    MADLIB_FORTRAN( strtri ) \
-    MADLIB_FORTRAN( dtrtri ) \
-    MADLIB_FORTRAN( ctrtri ) \
-    MADLIB_FORTRAN( ztrtri ) \
-    MADLIB_FORTRAN( ssyev  ) \
-    MADLIB_FORTRAN( dsyev  ) \
-    MADLIB_FORTRAN( cheev  ) \
-    MADLIB_FORTRAN( zheev  ) \
-    MADLIB_FORTRAN( sgeev  ) \
-    MADLIB_FORTRAN( dgeev  ) \
-    MADLIB_FORTRAN( cgeev  ) \
-    MADLIB_FORTRAN( zgeev  ) \
-    MADLIB_FORTRAN( spotrf ) \
-    MADLIB_FORTRAN( dpotrf ) \
-    MADLIB_FORTRAN( cpotrf ) \
-    MADLIB_FORTRAN( zpotrf ) \
-    MADLIB_FORTRAN( sgeqrf ) \
-    MADLIB_FORTRAN( dgeqrf ) \
-    MADLIB_FORTRAN( cgeqrf ) \
-    MADLIB_FORTRAN( zgeqrf ) \
-    MADLIB_FORTRAN( sorgqr ) \
-    MADLIB_FORTRAN( dorgqr ) \
-    MADLIB_FORTRAN( cungqr ) \
-    MADLIB_FORTRAN( zungqr ) \
-    MADLIB_FORTRAN( sgesvd ) \
-    MADLIB_FORTRAN( dgesvd ) \
-    MADLIB_FORTRAN( cgesvd ) \
-    MADLIB_FORTRAN( zgesvd ) \
-    MADLIB_FORTRAN( sgesv  ) \
-    MADLIB_FORTRAN( dgesv  ) \
-    MADLIB_FORTRAN( cgesv  ) \
-    MADLIB_FORTRAN( zgesv  ) \
-    MADLIB_FORTRAN( sgels  ) \
-    MADLIB_FORTRAN( dgels  ) \
-    MADLIB_FORTRAN( cgels  ) \
-    MADLIB_FORTRAN( zgels  ) \
-    MADLIB_FORTRAN( strtrs ) \
-    MADLIB_FORTRAN( dtrtrs ) \
-    MADLIB_FORTRAN( ctrtrs ) \
-    MADLIB_FORTRAN( ztrtrs ) \
-    MADLIB_FORTRAN( sdot   ) \
-    MADLIB_FORTRAN( ddot   ) \
-    MADLIB_FORTRAN( sgemv  ) \
-    MADLIB_FORTRAN( dgemv  ) \
-    MADLIB_FORTRAN( cgemv  ) \
-    MADLIB_FORTRAN( zgemv  ) \
-    MADLIB_FORTRAN( sgemm  ) \
-    MADLIB_FORTRAN( dgemm  ) \
-    MADLIB_FORTRAN( cgemm  ) \
-    MADLIB_FORTRAN( zgemm  )
 
 namespace madlib {
 
 namespace dbconnector {
-
 
 static void *sHandleLibArmadillo = NULL;
 
@@ -135,25 +84,6 @@ void madlib_destructor() {
         dlclose(sHandleLibArmadillo);
 }
 
-
-
-/*
-
-
-#define MADLIB_FORTRAN(function) \
-    extern "C" { \
-        __typeof__(arma_fortran(arma_##function)) madlib_##function { \
-            static __typeof__(arma_fortran(arma_##function)) *f = NULL; \
-            if (f == NULL) \
-                f = reinterpret_cast<__typeof__(arma_fortran(arma_##function)) *>( \
-                    getFnHandle(#arma_fortran(arma_##function)) \
-                ); \
-            return call( (*f), fcinfo); \
-        } \
-    }
-
-*/
-
 static void *getFnHandle(const char *inFnName) {
     if (sHandleLibArmadillo == NULL)
         throw std::runtime_error("libarmadillo.so not found. MADlib will not work properly.");
@@ -170,20 +100,20 @@ static void *getFnHandle(const char *inFnName) {
 #define STRINGIFY_INTERMEDIATE(s) #s
 #define STRINGIFY(s) STRINGIFY_INTERMEDIATE(s)
 
-#define MADLIB_FORTRAN_INIT(function) \
-    static __typeof__(madlib_##function) *f = NULL; \
+#define MADLIB_FORTRAN_INIT(madlib_function, function) \
+    static __typeof__(madlib_function) *f = NULL; \
     if (f == NULL) { \
-        f = reinterpret_cast<__typeof__(madlib_##function) *>( \
+        f = reinterpret_cast<__typeof__(madlib_function) *>( \
             getFnHandle(STRINGIFY(arma_fortran2(function))) \
         ); \
     }
 
 #define MADLIB_FORTRAN(function) \
-    MADLIB_FORTRAN_INIT(function) \
+    MADLIB_FORTRAN_INIT(madlib_##function, function) \
     (*f)
 
 #define MADLIB_FORTRAN_RETURN(function) \
-    MADLIB_FORTRAN_INIT(function) \
+    MADLIB_FORTRAN_INIT(madlib_##function, function) \
     return (*f)
 
 
