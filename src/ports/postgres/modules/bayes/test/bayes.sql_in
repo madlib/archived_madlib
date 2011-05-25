@@ -1,0 +1,158 @@
+--------------------------------------------------------------------------------
+-- Linear Regression tests
+--------------------------------------------------------------------------------
+
+DROP SCHEMA IF EXISTS madlib_bayes_installcheck CASCADE;
+CREATE SCHEMA madlib_bayes_installcheck;
+
+SET search_path TO madlib_bayes_installcheck;
+
+--------------------------------------------------------------------------------
+-- Create some data
+--------------------------------------------------------------------------------
+
+-- No notice message while creating table (creating implicit index).
+SET client_min_messages = error;
+CREATE TABLE bayes
+(
+	id integer NOT NULL,
+	class INTEGER,
+	attributes INTEGER[],
+	CONSTRAINT pk_bayes PRIMARY KEY (id)
+);
+RESET client_min_messages;
+
+COPY bayes (id, class, attributes) FROM stdin;
+1	1	{1, 2, 3}
+3	1	{1, 4, 3}
+5	2	{0, 2, 2}
+2	1	{1, 2, 1}
+4	2	{1, 2, 2}
+6	2	{0, 1, 3}
+\.
+
+SET client_min_messages = error;
+CREATE TABLE toclassify
+(
+	id SERIAL NOT NULL,
+	attributes INTEGER[],
+	CONSTRAINT pk_toclassify PRIMARY KEY (id)
+);
+RESET client_min_messages;
+
+COPY toclassify (attributes) FROM stdin;
+{0, 2, 1}
+{1, 2, 3}
+\.
+
+--------------------------------------------------------------------------------
+-- Run some code
+--------------------------------------------------------------------------------
+
+-- Preprocess training data: Precompute feature probabilities and class priors
+SET client_min_messages = error;
+SELECT MADLIB_SCHEMA.create_nb_prepared_data_tables('bayes', 'class', 'attributes', 3, 'nb_feature_probs', 'nb_class_priors');
+RESET client_min_messages;
+
+-- Classify the features in table 'toclassify' using preprocessed training data
+SELECT MADLIB_SCHEMA.create_nb_classify_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_fast');
+
+-- Classify the features in table 'toclassify' without preprocessed training data
+SELECT MADLIB_SCHEMA.create_nb_classify_view('bayes', 'class', 'attributes', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_slow');
+
+-- Compute all class probabilities for the features in table 'toclassify' using
+-- preprocessed training data
+SELECT MADLIB_SCHEMA.create_nb_probs_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_fast');
+
+-- Compute all class probabilities for the features in table 'toclassify' without
+-- preprocessed training data
+SELECT MADLIB_SCHEMA.create_nb_probs_view('bayes', 'class', 'attributes', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_slow');
+
+-- Create a classify function nb_classify_fast: Attributes -> Classes, using
+-- preprocessed training data
+SELECT MADLIB_SCHEMA.create_nb_classify_fn('nb_feature_probs', 'nb_class_priors', 3, 'nb_classify_fast');
+
+-- Create a classify function nb_classify_slow: Attributes -> Classes, without
+-- preprocessed training data
+SELECT MADLIB_SCHEMA.create_nb_classify_fn('bayes', 'class', 'attributes', 3, 'nb_classify_slow');
+
+/*
+-- Greenplum Naive Bayes
+
+-- Create intermediate views as needed for Naive Bayes implementation inherited from Greenplum
+CREATE VIEW class_example_unpivot AS
+SELECT
+	id,
+	'C' || class AS class,
+	unnest(array['A1', 'A2', 'A3']) AS attr,
+	unnest(attributes) AS value
+FROM bayes;
+
+CREATE TABLE class_example_nb_training AS
+SELECT
+	attr,
+	value,
+	MADLIB_SCHEMA.pivot_sum(array['C1', 'C2'], class, 1::BIGINT) AS class_count
+FROM
+	class_example_unpivot
+GROUP BY attr, value;
+--DISTRIBUTED by (attr);
+
+CREATE VIEW class_example_nb_classify AS
+SELECT
+	attr,
+	value,
+	class_count,
+	array['C1', 'C2'] AS classes,
+	MADLIB_SCHEMA.MADLIB_SCHEMA.sum(class_count) OVER (wa)::INTEGER[] AS class_total,
+	attr_count
+
+	--	PostgreSQL does not support DISTINCT to be used within the function argument list
+	--	http://www.postgresql.org/docs/9/interactive/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
+	--  so we cannot use the following (taken from the Greenplum Admin Guide)
+	--	count(DISTINCT value) OVER (wa) AS attr_count
+	--
+	--  However, Greenplum does not support correlated subquery. So we cannot just use
+	--  a subquery like
+	--  ( SELECT count(DISTINCT value) FROM class_example_nb_training AS sub WHERE
+	--    sub.attr = training.attr FROM class_example_nb_training AS training )
+	--  either. We need to flatten the subquery manualy.
+
+FROM
+	class_example_nb_training AS training
+	
+	--  Self-join for the aforementioned resons...
+	INNER JOIN
+	(
+		SELECT
+			attr,
+			count(DISTINCT value) as attr_count
+		FROM class_example_nb_training AS sub
+		GROUP BY attr
+	) AS attr_count
+	USING (attr)
+
+WINDOW wa AS (PARTITION BY attr); */
+
+-- Now test created objects
+
+SELECT * FROM nb_feature_probs ORDER BY class, attr, value;
+
+SELECT * FROM nb_class_priors ORDER BY class;
+
+SELECT * FROM nb_classify_view_fast ORDER BY key;
+
+SELECT * FROM nb_classify_view_slow ORDER BY key;
+
+SELECT * FROM nb_probs_view_fast ORDER BY key, class;
+
+SELECT * FROM nb_probs_view_slow ORDER BY key, class;
+
+m4_ifdef( `POSTGRES', `SELECT *, nb_classify_fast(attributes, 1) FROM toclassify ORDER BY id;')
+
+m4_ifdef( `POSTGRES', `SELECT *, nb_classify_slow(attributes, 0) FROM toclassify ORDER BY id;')
+
+--------------------------------------------------------------------------------
+-- Cleanup
+--------------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS madlib_bayes_installcheck CASCADE;
