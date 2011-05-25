@@ -198,6 +198,14 @@ set_target_properties(armadillo
     PROPERTIES IMPORTED_LOCATION
     "${MAD_THIRD_PARTY}/src/EP_armadillo/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
+# create a symbolic link to the Armadillo shared object. This is really needed
+# only on Linux, where we load libarmadillo.so dynamically during runtime.
+get_target_property(_FILEPATH armadillo IMPORTED_LOCATION)
+get_filename_component(_FILENAME "${_FILEPATH}" NAME)
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E create_symlink "${_FILEPATH}" "${CMAKE_BINARY_DIR}/lib/${_FILENAME}"
+)
+
 set(ARMADILLO_INCLUDE_DIRS ${MAD_THIRD_PARTY}/src/EP_armadillo/include)
 include_directories(${ARMADILLO_INCLUDE_DIRS})
 
@@ -376,10 +384,10 @@ if(LINUX)
             "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
         COMMAND ${CMAKE_COMMAND} -E copy
             "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo"
-            "${MAD_PATCH_DIR}"
+            "${MAD_PATCH_DIR}/armadillo"
         COMMAND ${CMAKE_COMMAND} -E copy
             "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo_bits/compiler_setup.hpp"
-            "${MAD_PATCH_DIR}/armadillo_bits"
+            "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/Armadillo.sh"
         DEPENDS
             "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo"

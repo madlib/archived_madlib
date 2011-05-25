@@ -51,9 +51,10 @@
 // System headers
 #include <dlfcn.h>
 
-// PostgreSQL headers
-#include <utils/elog.h>
-
+extern "C" {
+    // PostgreSQL headers
+    #include <utils/elog.h>
+} // extern "C"
 
 namespace madlib {
 
@@ -86,13 +87,13 @@ void madlib_destructor() {
 
 static void *getFnHandle(const char *inFnName) {
     if (sHandleLibArmadillo == NULL)
-        throw std::runtime_error("libarmadillo.so not found. MADlib will not work properly.");
+        throw std::runtime_error("libarmadillo.so not found.");
     
     dlerror();
     void *fnHandle = dlsym(sHandleLibArmadillo, inFnName);
     char *error = dlerror();
     if (error != NULL)
-        throw std::runtime_error("libarmadillo.so not found.");
+        throw std::runtime_error("Could not find function in libarmadillo.so.");
     
     return fnHandle;
 }

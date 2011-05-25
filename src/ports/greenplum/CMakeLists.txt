@@ -91,12 +91,8 @@ if(GREENPLUM_FOUND)
     add_madlib_connector_library(greenplum "${GREENPLUM_EXECUTABLE}"
         MADLIB_GREENPLUM_TARGETNAME ${MAD_DBAL_SOURCES_GREENPLUM}
     )
-    if(NOT LINUX)
-        # On non-Linux platforms (where there is direct binding), we declare
-        # madlib as a dependency. On Linux, madlib is laoded dynamically.
-        target_link_libraries(${MADLIB_GREENPLUM_TARGETNAME} madlib)
-    endif(NOT LINUX)
-
+    target_link_libraries(${MADLIB_GREENPLUM_TARGETNAME} madlib)
+    
 
 # -- 5. Install MADlib connector -----------------------------------------------
 
