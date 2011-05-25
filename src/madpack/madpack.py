@@ -747,7 +747,7 @@ def main( argv):
     if args.command[0] == 'uninstall':
 
         # 1) Check versions and confirm deletion
-        __print_revs( rev, dbrev, con_args, schema)
+        # __print_revs( rev, dbrev, con_args, schema)
 
         if __get_rev_num( dbrev) == ['0']:
             __info( "Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
