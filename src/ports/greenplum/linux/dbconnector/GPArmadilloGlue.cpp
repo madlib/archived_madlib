@@ -111,6 +111,8 @@ static void *getFnHandle(const char *inFnName) {
 
 #define MADLIB_FORTRAN_QUALIFIER
 
+#define MADLIB_FORTRAN_DECLARE(x) { x; }
+
 #define MADLIB_FORTRAN(function) \
     MADLIB_FORTRAN_INIT(madlib_##function, function) \
     (*f)
