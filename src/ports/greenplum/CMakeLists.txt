@@ -31,6 +31,7 @@ if(GREENPLUM_FOUND)
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM
             linux/GPArmadilloGlue.cpp
         )
+        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
     endif(LINUX)
 
     # FIXME: Convert legacy source code written in C

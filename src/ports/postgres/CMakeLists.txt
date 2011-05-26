@@ -26,6 +26,12 @@ if(POSTGRESQL_FOUND)
         dbconnector/PGToDatumConverter.cpp
         dbconnector/PGValue.cpp
     )
+    if(LINUX)
+        list(APPEND MAD_DBAL_SOURCES_POSTGRES
+            linux/PGArmadilloGlue.cpp
+        )
+        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
+    endif(LINUX)
     
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
@@ -54,6 +60,12 @@ if(POSTGRESQL_FOUND)
         MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
     )
     target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} madlib)
+    if(LINUX)
+        # On Linux, we declare Armadillo a dependency of the connector not the
+        # core library. See main CMakeLists.txt file why.
+        target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} armadillo)
+    endif(LINUX)
+
 
 # -- 4. Install MADlib connector -----------------------------------------------
 

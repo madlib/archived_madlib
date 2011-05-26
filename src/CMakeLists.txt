@@ -347,10 +347,12 @@ else(APPLE)
     # On other platforms with dreict binding, we dynamically link to the
     # armadillo library
     if(NOT LINUX)
-        # On Linux / systems with a flat namespace, we load Armadillo with
-        # dlopen and OR in RTLD_DEEPBIND for the second argument (to ensure that
-        # all LAPACK/BLAS symbols are resolved properly and do not interference
-        # with symbols of the same name in the main executable)
+        # When running on Linux / systems with a flat namespace, there are DBMSs
+        # that need to load Armadillo with dlopen, where RTLD_DEEPBIND is ORed
+        # in for the second argument (to ensure that all LAPACK/BLAS symbols are
+        # resolved properly and do not interference with symbols of the same
+        # name in the main executable). Hence, we cannot declare librarmadillo
+        # a dependency of the core library.
         target_link_libraries(madlib armadillo)
     endif(NOT LINUX)
     
