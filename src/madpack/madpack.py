@@ -421,7 +421,6 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
     # Prepare the file using M4
     try:
         f = open(tmpfile, 'w')
-        __info("> ... parsing " + sqlfile + " using m4", verbose )
         
         # Find the madpack dir (platform specific or generic)
         if os.path.isdir( maddir + "/ports/" + portid + "/madpack"):
@@ -439,7 +438,7 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
                     '-D' + portid.upper(), 
                     sqlfile ]
 
-        __info(" ".join(m4args), verbose)
+        __info("> ... parsing: " + " ".join(m4args), verbose )
                     
         subprocess.call( m4args, stdout=f)  
         f.close()         
