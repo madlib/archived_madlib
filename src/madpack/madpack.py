@@ -421,7 +421,6 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
     # Prepare the file using M4
     try:
         f = open(tmpfile, 'w')
-        __info("> ... parsing " + sqlfile + " using m4", verbose )
         
         # Find the madpack dir (platform specific or generic)
         if os.path.isdir( maddir + "/ports/" + portid + "/madpack"):
@@ -439,7 +438,7 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
                     '-D' + portid.upper(), 
                     sqlfile ]
 
-        __info(" ".join(m4args), verbose)
+        __info("> ... parsing: " + " ".join(m4args), verbose )
                     
         subprocess.call( m4args, stdout=f)  
         f.close()         
@@ -747,7 +746,7 @@ def main( argv):
     if args.command[0] == 'uninstall':
 
         # 1) Check versions and confirm deletion
-        __print_revs( rev, dbrev, con_args, schema)
+        # __print_revs( rev, dbrev, con_args, schema)
 
         if __get_rev_num( dbrev) == ['0']:
             __info( "Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
