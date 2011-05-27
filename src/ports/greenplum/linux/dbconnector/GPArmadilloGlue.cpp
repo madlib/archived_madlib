@@ -62,10 +62,6 @@ namespace dbconnector {
 
 static void *sHandleLibArmadillo = NULL;
 
-static void *ArmadilloNotFound() {
-    throw std::runtime_error("libarmadillo.so not found.");
-}
-
 __attribute__((constructor))
 void madlib_constructor() {
     dlerror();
@@ -74,7 +70,7 @@ void madlib_constructor() {
     sHandleLibArmadillo = dlopen("libarmadillo.so", RTLD_NOW | RTLD_DEEPBIND);
     if (!sHandleLibArmadillo) {
         ereport(WARNING,
-            (errmsg("libarmadillo.so not found. MADlib will not work correctly."),
+            (errmsg("libarmadillo.so not loaded. MADlib will not work correctly."),
             errdetail("%s", dlerror())));
     }
 }
@@ -87,7 +83,7 @@ void madlib_destructor() {
 
 static void *getFnHandle(const char *inFnName) {
     if (sHandleLibArmadillo == NULL)
-        throw std::runtime_error("libarmadillo.so not found.");
+        throw std::runtime_error("libarmadillo.so not loaded. Stopping execution.");
     
     dlerror();
     void *fnHandle = dlsym(sHandleLibArmadillo, inFnName);
