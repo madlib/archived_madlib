@@ -480,7 +480,7 @@ begin
 		class INTEGER,
 		weight INTEGER,
 		selection INTEGER
-	) DISTRIBUTED BY (selection);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (selection)');
 	
 	CREATE TEMP TABLE weighted_points2(
 		id INTEGER,
@@ -488,7 +488,7 @@ begin
 		class INTEGER,
 		weight INTEGER,
 		selection INTEGER
-	) DISTRIBUTED BY (selection);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (selection)');
 	
 	EXECUTE 'INSERT INTO weighted_points SELECT (MADLIB_SCHEMA.CreateHash(id, feature, class)).* FROM (SELECT '||id_col_name||' as id, '||id_feature_name||' as feature, '||class_col_name||' as class, MADLIB_SCHEMA.svec_hash('||id_feature_name||') as hash FROM '||table_input||') as A GROUP BY A.hash';
 end
@@ -623,12 +623,12 @@ begin
 		classProb FLOAT,
 		classID FLOAT,
 		relativeSize FLOAT
-	) DISTRIBUTED BY (dim);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (dim)');
 	
 	DROP TABLE IF EXISTS selectedDimentionTable;
 	CREATE TEMP TABLE selectedDimentionTable(
 		dim INT
-	) DISTRIBUTED BY (dim);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (dim)');
 	
 	EXECUTE 'INSERT INTO selectedDimentionTable SELECT distinct unnest(ARRAY[ ' || array_to_string(selected_dimentions, ',') || ']);';
 	EXECUTE 'SELECT count(*) FROM selectedDimentionTable' INTO tablesize;
@@ -693,7 +693,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.declare_tree_tables() RETURNS void AS $
 		cat_size INT,
 		parent_id INT,
 		jump INT[]
-	) DISTRIBUTED BY (id);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
 	DROP TABLE IF EXISTS MADLIB_SCHEMA.tree;
 	CREATE TABLE MADLIB_SCHEMA.tree(
@@ -709,23 +709,23 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.declare_tree_tables() RETURNS void AS $
 		cat_size INT,
 		parent_id INT,
 		jump INT[]
-	) DISTRIBUTED BY (id);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
 	CREATE TEMP TABLE finaltree(
 		id INT,
 		new_id INT,
 		parent_id INT
-	) DISTRIBUTED BY (id);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
 	CREATE TEMP TABLE finaltree2(
 		id INT,
 		new_id INT,
 		parent_id INT
-	) DISTRIBUTED BY (id);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 end $$ LANGUAGE plpgsql;
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.Classify_Tree(TEXT, TEXT, TEXT, INT, INT);
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.Classify_Tree(table_name TEXT, id_col_name TEXT, feature_col_name TEXT, num_values INT, verbose INT) RETURNS void AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.Classify_Tree(table_name TEXT, id_col_name TEXT, feature_col_name TEXT, num_values INT, verbosity INT) RETURNS void AS $$
 declare
 	table_names TEXT[] = '{classified_points1,classified_points2}';
 	jump_so_far INT := 0;
@@ -742,7 +742,7 @@ begin
 		jump INT,
 		class INT,
 		prob FLOAT
-	) DISTRIBUTED BY (jump);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (jump)');
 	
 	CREATE TEMP TABLE classified_points2(
 		id INT,
@@ -750,7 +750,7 @@ begin
 		jump INT,
 		class INT,
 		prob FLOAT
-	) DISTRIBUTED BY (jump);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (jump)');
 	
 	DROP TABLE IF EXISTS MADLIB_SCHEMA.classified_points;
 	CREATE TABLE MADLIB_SCHEMA.classified_points(
@@ -759,12 +759,12 @@ begin
 		jump INT,
 		class INT,
 		prob FLOAT
-	) DISTRIBUTED BY (jump);
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (jump)');
 
 	EXECUTE 'INSERT INTO classified_points1 (id, feature, jump, class, prob) SELECT '||id_col_name||', '||feature_col_name||', 1, 0, 0 FROM ' || table_name || ';'; 	
 	LOOP
 		EXECUTE 'SELECT id FROM MADLIB_SCHEMA.tree WHERE id > '|| jump_so_far ||' ORDER BY id LIMIT 1' INTO jump_so_far;
-		IF(verbose > 0) THEN	
+		IF(verbosity > 0) THEN	
 			RAISE INFO 'CLASSIFICATION STEP [%] CLASSIFIED: % TO BE CLASSIFIED: %', jump_so_far, size_finished, remains_to_classify;
 		END IF;
 		
@@ -821,7 +821,7 @@ end
 $$ language plpgsql;
 
 DROP FUNCTION IF EXISTS  MADLIB_SCHEMA.Train_Tree(TEXT, TEXT, TEXT, TEXT, INT, INT, INT);
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.Train_Tree(table_input TEXT, id_col_name TEXT, feature_col_name TEXT, class_col_name TEXT, num_values INT, max_num_iter INT, verbose INT) RETURNS void AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.Train_Tree(table_input TEXT, id_col_name TEXT, feature_col_name TEXT, class_col_name TEXT, num_values INT, max_num_iter INT, verbosity INT) RETURNS void AS $$
 declare
 	feature_dimention INT;
 	dimensions FLOAT[];
@@ -846,19 +846,19 @@ begin
 	PERFORM MADLIB_SCHEMA.declare_tree_tables();
 	time_stamp2 = clock_timestamp();
 	EXECUTE 'SELECT count(*) FROM '|| table_input ||';' INTO misc_size;
-	IF(verbose > 0) THEN
+	IF(verbosity > 0) THEN
 		RAISE INFO 'INPUT TABLE SIZE: %', misc_size;
 	END IF;
 	
 	PERFORM MADLIB_SCHEMA.remove_redundent(table_input, id_col_name, feature_col_name, class_col_name);
 	EXECUTE 'SELECT count(*) FROM weighted_points;' INTO misc_size;
-	IF(verbose > 0) THEN
+	IF(verbosity > 0) THEN
 		RAISE INFO 'TABLE SIZE AFTER COMPRESSION: %', misc_size;
 	END IF;
 	
 	EXECUTE 'SELECT MADLIB_SCHEMA.svec_dimension(feature) FROM ' || table_names[1] || ' LIMIT 1;' INTO feature_dimention;
 	EXECUTE 'SELECT COUNT(DISTINCT class) FROM ' || table_names[1] || ';' INTO num_classes; 
-	IF(verbose > 0) THEN
+	IF(verbosity > 0) THEN
 		RAISE INFO 'NUMBER OF CLASSES IN THE TRAINING SET %', num_classes;
 	END IF;
 	
@@ -868,7 +868,7 @@ begin
 	LOOP
 		SELECT INTO lifenodes COUNT(*) FROM tree2 WHERE live = 1;
 		IF((max_iter = 0) OR (lifenodes < 1)) THEN
-			IF(verbose > 0) THEN
+			IF(verbosity > 0) THEN
 				RAISE INFO 'EXIT: LIMIT % OR NO NODES LEFT', max_iter;
 			END IF;
 			EXIT;
@@ -885,7 +885,7 @@ begin
 		
 		EXECUTE 'SELECT ARRAY[COALESCE(count(*),0),COALESCE(sum(weight),0)] FROM ' || table_names[(flip%2)+1] || ' WHERE selection = ' || selection || ';' INTO category_size; 
 		IF ((category_size[1] > 1) AND (category_size[2] > num_classes)) THEN
-			IF(verbose > 0) THEN
+			IF(verbosity > 0) THEN
 				RAISE INFO 'CURRENT SELECTION % CATEGORY SIZE %', selection, category_size[2];
 			END IF;
 			answer = MADLIB_SCHEMA.find_best_split(feature_dimention, num_classes, num_values, selection, sample_limit, table_names[(flip)%2+1]);
@@ -926,7 +926,7 @@ begin
 		END IF;
 	END LOOP;
 	EXECUTE 'SELECT MADLIB_SCHEMA.Cleanup_Tree(' || num_values || ');';
-	IF(verbose > 0) THEN
+	IF(verbosity > 0) THEN
 		RAISE INFO '-------> FINAL TIME %' , (clock_timestamp() - time_stamp2);
 	END IF;
 end
