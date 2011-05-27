@@ -5,6 +5,6 @@
 # we do a simple find & substitute. Essentially, we replace
 # "const char *namespace," by "const char *qualifier,".
 
-sed -E -i ".orig" \
-    's/(const[[:space:]]+char[[:space:]]*\*[[:space:]]*)namespace[[:space:]]*,/\1qualifier,/g' \
+sed -i.orig \
+    's/\(const[[:space:]]*char[[:space:]]*\*[[:space:]]*\)namespace[a-z]*[[:space:]]*,/\1qualifier,/g' \
     server/utils/builtins.h
