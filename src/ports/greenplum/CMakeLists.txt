@@ -76,10 +76,13 @@ if(GREENPLUM_FOUND)
     if(${_GP_VERSION} VERSION_LESS "4.1")
         message(STATUS "Installed Greenplum version has bug in header file. Applying patch for version below 4.1...")
         
-        file(COPY ${GREENPLUM_SERVER_INCLUDE_DIR}/utils/builtins.h DESTINATION
-            ${PATCH_DIR}/server/utils)
-        execute_process(
-            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_4_0_and_below.sh
+        execute_process(COMMAND
+            ${CMAKE_COMMAND} -E copy
+                ${GREENPLUM_SERVER_INCLUDE_DIR}/utils/builtins.h
+                ${PATCH_DIR}/server/utils/builtins.orig.h
+        )
+        execute_process(COMMAND
+            ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_4_0_and_below.sh
             WORKING_DIRECTORY ${PATCH_DIR}
         )
         
