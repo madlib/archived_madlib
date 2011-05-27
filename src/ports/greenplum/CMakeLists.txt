@@ -66,28 +66,45 @@ if(GREENPLUM_FOUND)
 
     # Directory we will use for patches
     set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
+    set(_GP_VERSION "${GREENPLUM_VERSION_MAJOR}.${GREENPLUM_VERSION_MINOR}.${GREENPLUM_VERSION_PATCH}")
+
+    # The first element in GREENPLUM_INCLUDE_DIR is include/server
+    list(GET GREENPLUM_INCLUDE_DIR 0 GREENPLUM_SERVER_INCLUDE_DIR)
+    
+    # Version 4.0 of Greenplum and below ship with a utils/builtin.h that has
+    # C++ keywords as identifiers. We need to patch this.
+    if(${_GP_VERSION} VERSION_LESS "4.1")
+        message(STATUS "Installed Greenplum version has bug in header file. Applying patch for version below 4.1...")
+        
+        file(COPY ${GREENPLUM_SERVER_INCLUDE_DIR}/utils/builtins.h DESTINATION
+            ${PATCH_DIR}/server/utils)
+        execute_process(
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_4_0_and_below.sh
+            WORKING_DIRECTORY ${PATCH_DIR}
+        )
+        
+        set(_DID_PATCH YES)
+    endif(${_GP_VERSION} VERSION_LESS "4.1")
     
     # Version 4.1 of Greenplum has a bug in one of its header files that
     # needs to be fixed when building with C++.
-    set(_GP_VERSION "${GREENPLUM_VERSION_MAJOR}.${GREENPLUM_VERSION_MINOR}.${GREENPLUM_VERSION_PATCH}")
     if(${_GP_VERSION} VERSION_EQUAL "4.1.0" OR ${_GP_VERSION} VERSION_EQUAL "4.1.1")
-        
-        message(STATUS "Installed Greenplum version has bug in header file. Applying patch...")
-        
-        # The first element in GREENPLUM_INCLUDE_DIR is include/server
-        list(GET GREENPLUM_INCLUDE_DIR 0 GREENPLUM_SERVER_INCLUDE_DIR)
-        
+        message(STATUS "Installed Greenplum version has bug in header file. Applying patch for versions 4.1.0 to 4.1.1...")
+                
         file(COPY ${GREENPLUM_SERVER_INCLUDE_DIR}/utils/syncbitvector.h DESTINATION
             ${PATCH_DIR}/server/utils)
         execute_process(
             COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_4_1_0_to_4_1_1.sh
             WORKING_DIRECTORY ${PATCH_DIR}
         )
-        
-        # Append directory with patched header file at beginning
-        include_directories(BEFORE ${PATCH_DIR}/server)
+
+        set(_DID_PATCH YES)
     endif(${_GP_VERSION} VERSION_EQUAL "4.1.0" OR ${_GP_VERSION} VERSION_EQUAL "4.1.1")
 
+    if(_DID_PATCH)
+        # Append directory with patched header file at beginning
+        include_directories(BEFORE ${PATCH_DIR}/server)
+    endif(_DID_PATCH)
 
 # -- 4. Build MADlib connector -------------------------------------------------
 
