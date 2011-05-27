@@ -20,7 +20,8 @@ include(ExternalProject)
 
 # For in-house testing, we might want to change the base URL to something local
 # "-DSOURCEFORGE_BASE_URL=http://test.local/projects"
-set(SOURCEFORGE_BASE_URL "http://sourceforge.net/projects")
+set(SOURCEFORGE_BASE_URL "http://sourceforge.net/projects" CACHE STRING
+    "Base URL for Sourceforge projects. May be overridden for testing purposes.")
 
 # Boost might not be present on the system (or simply too old). In this case, we
 # download the following version (unless it is already present in
