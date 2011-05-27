@@ -167,6 +167,8 @@ endif(Boost_FOUND)
 # want to anticipate further changes...
 list(APPEND ARMADILLO_CMAKE_ARGS
     -DCMAKE_BUILD_TYPE=Release
+    "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}"
+    -DINSTALL_LIB_DIR=lib
 )
 
 if(NOT ARMADILLO_TAR_SOURCE)
@@ -186,7 +188,6 @@ ExternalProject_Add(EP_armadillo
     URL ${ARMADILLO_TAR_SOURCE}
     URL_MD5 ${ARMADILLO_TAR_MD5}
     CMAKE_ARGS ${ARMADILLO_CMAKE_ARGS}
-    INSTALL_COMMAND /usr/bin/env echo Ignored: make
     BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_armadillo
 )
 add_library(armadillo SHARED IMPORTED)
@@ -194,9 +195,10 @@ add_library(armadillo SHARED IMPORTED)
 # The Armadillo CMake script uses the default settings for 
 # a shared library. We can therefore know what the installed library
 # path will be.
-set_target_properties(armadillo
-    PROPERTIES IMPORTED_LOCATION
-    "${MAD_THIRD_PARTY}/src/EP_armadillo/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}")
+set_target_properties(armadillo PROPERTIES
+    IMPORTED_LOCATION
+        "${MAD_THIRD_PARTY}/src/EP_armadillo/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}"
+)
 
 # create a symbolic link to the Armadillo shared object. This is really needed
 # only on Linux, where we load libarmadillo.so dynamically during runtime.
@@ -356,9 +358,10 @@ else(APPLE)
         target_link_libraries(madlib armadillo)
     endif(NOT LINUX)
     
-    get_target_property(_FILENAME armadillo IMPORTED_LOCATION)
-    install(FILES "${_FILENAME}"
-        DESTINATION lib)
+    install(DIRECTORY ${CMAKE_BINARY_DIR}/lib
+        DESTINATION .
+        FILES_MATCHING REGEX "^.*/[^/]*armadillo[^/]*\$"
+    )
     
     # the RPATH to be used when installing. This is set to "$ORIGIN" because
     # the armadillo library will reside in the same directory as the MADlib

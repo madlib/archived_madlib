@@ -43,11 +43,7 @@ extern "C" {
 
 #undef arma_fortran
 
-#undef MADLIB_FORTRAN_QUALIFIER
 
-
-
-#define MADLIB_FORTRAN_QUALIFIER inline
 
 #define arma_fortran(function) madlib_##function
 
