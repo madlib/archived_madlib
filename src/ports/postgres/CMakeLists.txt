@@ -54,7 +54,45 @@ if(POSTGRESQL_FOUND)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR})
     include_directories(${POSTGRESQL_SERVER_INCLUDE_DIR})
 
-# -- 3. Build MADlib connector -------------------------------------------------
+# -- 3. Old versions of PostgreSQL ship with header files that need a patch to
+#       be compatible with C++ -------------------------------------------------
+
+    # Directory we will use for patches
+    set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
+    set(_PG_VERSION "${POSTGRESQL_VERSION_MAJOR}.${POSTGRESQL_VERSION_MINOR}.${POSTGRESQL_VERSION_PATCH}")
+
+    # Version 8.4 of PostgreSQL and below ship with server/nodes/parsenodes.h
+    # and server/nodes/primnodes.h that have C++ keywords as identifiers.
+    # We need to patch this.
+    if(${_PG_VERSION} VERSION_LESS "9.0")
+        message(STATUS "Installed PostgreSQL version has header files that need a patch for C++ compatibility. Applying patch for versions below 9.0...")
+        
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/parsenodes.h
+                ${PATCH_DIR}/server/nodes/parsenodes.orig.h
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/primnodes.h
+                ${PATCH_DIR}/server/nodes/primnodes.orig.h
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${POSTGRESQL_SERVER_INCLUDE_DIR}/utils/builtins.h
+                ${PATCH_DIR}/server/utils/builtins.orig.h
+        )
+        execute_process(COMMAND
+            ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_8_4_and_below.sh
+            WORKING_DIRECTORY ${PATCH_DIR}
+        )
+        
+        set(_DID_PATCH YES)
+    endif(${_PG_VERSION} VERSION_LESS "9.0")
+
+    if(_DID_PATCH)
+        # Append directory with patched header file at beginning
+        include_directories(BEFORE ${PATCH_DIR}/server)
+    endif(_DID_PATCH)
+
+
+# -- 4. Build MADlib connector -------------------------------------------------
 
     add_madlib_connector_library(postgres "${POSTGRESQL_EXECUTABLE}"
         MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
@@ -67,13 +105,13 @@ if(POSTGRESQL_FOUND)
     endif(LINUX)
 
 
-# -- 4. Install MADlib connector -----------------------------------------------
+# -- 5. Install MADlib connector -----------------------------------------------
 
     install(TARGETS ${MADLIB_POSTGRES_TARGETNAME}
         LIBRARY DESTINATION ports/postgres/lib
     )
 
-# -- 5. Preprocess/copy all Python/SQL files -----------------------------------
+# -- 6. Preprocess/copy all Python/SQL files -----------------------------------
     
     add_python_files(
         PYTHON_TARGET_FILES_POSTGRES

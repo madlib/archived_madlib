@@ -2,6 +2,9 @@
  *
  * @file PGCompatibility.cpp
  *
+ * This file is only used in the PostgreSQL port, not derived ports (like
+ * Greenplum).
+ *
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/PGCompatibility.hpp>
@@ -28,14 +31,14 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 		return AGG_CONTEXT_AGGREGATE;
 	}
 
-#if PG_VERSION_NUM >= 80400
-	if (fcinfo->context && IsA(fcinfo->context, WindowAggState)) {
-		if (aggcontext)
-			*aggcontext = ((WindowAggState *) fcinfo->context)->aggcontext;
-		return AGG_CONTEXT_WINDOW;
-	}
-#endif
-
+    /* More recent versions of PostgreSQL also have a window aggregate context.
+     * However, these changes are not contained in the 8.4 branch (or before).
+     *
+     * Reference: See changed file src/include/nodes/execnodes.h from
+     * commit ec4be2ee6827b6bd85e0813c7a8993cfbb0e6fa7 from
+     * Fri, 12 Feb 2010 17:33:21 +0000 (17:33 +0000)
+     * by Tom Lane <tgl@sss.pgh.pa.us> */
+    
 	/* this is just to prevent "uninitialized variable" warnings */
 	if (aggcontext)
 		*aggcontext = NULL;
