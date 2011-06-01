@@ -149,7 +149,7 @@ if(GREENPLUM_FOUND)
             get_dir_name(OUTDIR ${OUTFILE})
             add_custom_command(OUTPUT "${OUTFILE}"
                 COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTDIR}"
-                COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${CURRENT_PATH}" > "${OUTFILE}"
+                COMMAND ${M4_BINARY} ${M4_ARGUMENTS} ${M4_ARGUMENTS_GREENPLUM} "${CURRENT_PATH}" > "${OUTFILE}"
                 DEPENDS "${CURRENT_PATH}"
                 COMMENT "Preprocessing ${CURRENT_FILE} with m4."
             )
