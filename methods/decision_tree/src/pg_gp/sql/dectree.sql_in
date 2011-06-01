@@ -1,13 +1,19 @@
 SET client_min_messages = 'ERROR';
 
-CREATE TYPE MADLIB_SCHEMA.elem AS(
+DROP SCHEMA IF EXISTS madlib_dectree_installcheck CASCADE;
+
+CREATE SCHEMA madlib_dectree_installcheck;
+SET search_path = madlib_dectree_installcheck, MADLIB_SCHEMA;
+
+CREATE TYPE dectree_elem AS(
 	feature MADLIB_SCHEMA.svec,
 	class INTEGER
 );
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.CreateTreePoint(pre_class INTEGER) RETURNS MADLIB_SCHEMA.elem AS $$
+CREATE OR REPLACE FUNCTION dectree_CreateTreePoint(pre_class INTEGER) 
+RETURNS dectree_elem AS $$
 declare
-	result MADLIB_SCHEMA.elem;
+	result dectree_elem;
 	feature FLOAT[];
 	class INTEGER;
 	i INTEGER;
@@ -59,7 +65,7 @@ begin
 end
 $$ language plpgsql;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.install_test() RETURNS TEXT AS $$
+CREATE OR REPLACE FUNCTION dectree_install_test() RETURNS TEXT AS $$
 declare
 	result TEXT;
 begin 
@@ -75,16 +81,25 @@ begin
 	) DISTRIBUTED BY (id);
 	
 	INSERT INTO Speedup SELECT G.a FROM generate_series(1, 5000) AS G(a);
-	INSERT INTO Points (id, feature, class) SELECT id, (g.t).* FROM (SELECT id, MADLIB_SCHEMA.CreateTreePoint(id) AS t FROM Speedup) As g;
+	
+	INSERT INTO Points (id, feature, class) SELECT id, (g.t).* 
+	    FROM (SELECT id, dectree_CreateTreePoint(id) AS t FROM Speedup) As g;
+
 	PERFORM MADLIB_SCHEMA.Train_Tree('Points','id','feature','class',10, 3000);
+
 	PERFORM MADLIB_SCHEMA.Classify_Tree('Points','id','feature',10);
-	SELECT INTO result CASE WHEN(sum((id+4)%5+1-class)=0) THEN 'PASS' ELSE 'FAILED' END FROM MADLIB_SCHEMA.classified_points;
+
+	SELECT INTO result CASE WHEN(sum((id+4)%5+1-class)=0) THEN 'PASS' ELSE 'FAIL' END 
+	    FROM classified_points;
+	
+	IF result = 'FAIL' THEN
+	   RAISE EXCEPTION 'Install check failed.';
+	END IF;
+	
 	RETURN result;
 end
 $$ language plpgsql;	
 
-SELECT MADLIB_SCHEMA.install_test();
+SELECT dectree_install_test();
 
-DROP FUNCTION MADLIB_SCHEMA.install_test();
-DROP FUNCTION MADLIB_SCHEMA.CreateTreePoint(INTEGER);
-DROP TYPE MADLIB_SCHEMA.elem; 
+DROP SCHEMA IF EXISTS madlib_dectree_installcheck CASCADE;
