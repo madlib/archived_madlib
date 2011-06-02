@@ -394,3 +394,33 @@ size_t ExtractDatumLen(Datum x, int len, bool byVal)
     }
 }
 
+/* 
+ * walk an array of int64s and convert word order of int64s to big-endian 
+ * if force == true, convert even if this arch is big-endian
+ */
+void int64_big_endianize(uint64 *bytes64,
+                         uint32 numbytes,
+                         bool force)     
+{
+    uint32 i;
+    uint32 *bytes32 = (uint32 *)bytes64;
+    uint32 x;
+    uint32 total = 0;
+#ifdef WORDS_BIGENDIAN
+    bool small_endian = false;
+#else
+    bool small_endian = true;
+#endif
+    
+    if (numbytes % 8)
+        elog(ERROR, "illegal numbytes argument to big_endianize: not a multiple of 8");
+    if (small_endian || force) {
+        for (i = 0; i < numbytes/8; i+=2) {
+            x = bytes32[i];
+            bytes32[i] = bytes32[i+1];
+            bytes32[i+1] = x;
+            total++;
+        }
+    }
+}
+

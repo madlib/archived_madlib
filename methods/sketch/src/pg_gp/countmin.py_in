@@ -1,0 +1,258 @@
+import hashlib
+from struct import pack, unpack
+from math import log
+import base64
+import numpy as np
+__ranges = 8*8 # INT64BITS
+__depth = 8 # magic # of hash functions
+__numcounters = 1024 # magic mod of hash function 
+__countmin_sz = __depth*__numcounters
+__numsketches = __ranges
+total_size = __numsketches * __countmin_sz
+__max_int64 = (1L << 63) - 1
+__min_int64 = __max_int64 * (-1)
+
+def count(b64sketch, val):
+    return __do_count(base64.b64decode(b64sketch), val)
+
+def __do_count(all_sketch, val):
+    rows = [ all_sketch[i*__countmin_sz:(i+1)*__countmin_sz] for i in range(0,__depth) ]
+    return __do_count_rows(rows, val)
+    
+def __do_count_rows(rows, val):
+    m = hashlib.md5(pack('@q', val)).hexdigest()
+    
+    # we have to flip the bytes around here
+    col_per_row = [int(m[i+2:i+4]+m[i:i+2],16) % __numcounters for i in range(0,__depth*4,4)]
+    
+    counts = [rows[i][col_per_row[i]*8:col_per_row[i]*8+8] for i in range(0,__depth)]
+    
+    return min([unpack('@q',x)[0] for x in counts])
+
+def intlog2(x):
+  i = 0
+  while (x > 0):
+    x /= 2
+    i += 1
+  return i-1
+
+#!
+# convert an arbitrary range [bot-top] into a rangelist of dyadic ranges.
+# E.g. convert 14-48 into [[14-15], [16-31], [32-47], [48-48]]
+# To manage overflow issues, do not generate a range larger than 2^63-1!
+# \param bot the bottom of the range (inclusive)
+# \param top the top of the range (inclusive)
+# \param r the list of ranges to be returned
+#
+def __find_ranges(bot, top):
+    # kick off the recursion at power RANGES-1
+    return __find_ranges_recursive(bot, top, __ranges-1, [])
+
+#!
+# find the ranges via recursive calls to this routine, pulling out smaller and
+# smaller powers of 2
+# To manage overflow issues, do not generate a range larger than 2^63-1!
+# \param bot the bottom of the range (inclusive)
+# \param top the top of the range (inclusive)
+# \param power the highest power to start with
+# \param r the rangelist to be returned
+def __find_ranges_recursive(bot, top, power, r):
+    # Sanity check
+    if (top < bot or power < 0):
+        # skip.  we get a bunch of off-by-one errors here right now
+        return r
+
+    if (top == bot):
+        # base case of recursion, a range of the form [x-x].
+        r.append([bot, bot])
+        return r
+
+    # a range that's 2^63 or larger will overflow int64's in the
+    # code below, so recurse to the left and right by hand
+    if (top >= 0 and bot < 0):
+        # don't even try to figure out how wide this range is, just split
+        r = __find_ranges_recursive(bot, -1, power-1, r)
+        r = __find_ranges_recursive(0, top, power-1, r)
+        return r
+
+    width = top - bot + 1L
+
+    # account for the fact that MIN and MAX are 1 off the true power of 2
+    if (top == __max_int64 or bot == __min_int64):
+        width += 1
+
+    dyad = intlog2(width)
+    if (dyad > 62):
+        # dangerously big, so split.  we know that we don't span 0.
+        sign = -1 if (top < 0) else 1
+        r = __find_ranges_recursive(bot, (1L << 62)*sign - 1, 62, r)
+        r = __find_ranges_recursive((1L << 62)*sign, top, 62, r)
+        return r
+
+    # if we get here, we have a range of size 2 or greater.
+    # Find the largest dyadic range width in this range.
+    pow_dyad = 1L << dyad
+
+    # if this is a complete dyad
+    if (pow_dyad == width):
+        # if aligned, just append and return	
+        if (bot % pow_dyad == 0):
+            r.append([bot,top])
+            return r
+        else:
+        # largest dyad that fits is 1 power-of-2 smaller
+            pow_dyad /= 2
+
+    if ((bot == __min_int64) or (bot % pow_dyad == 0)):
+        # our range is left-aligned on the dyad's min
+        r.append([bot, None])
+        if (top == __max_int64):
+            # special case: no need to recurse on right, and doing so
+            # could overflow, so handle by hand
+            r[-1][1] = __max_int64
+        else :
+            # -1 on end of next line because range to the right will
+            # start at the power-of-2 boundary.
+            r[-1][1] = (bot + pow_dyad - 1)
+            if (bot == __min_int64):
+                # account for fact that __min_int64 is 1 bigger than -2^63
+                r[-1][1] -= 1
+            newbot = r[-1][1] + 1
+            # recurse on right at finer grain
+            r = __find_ranges_recursive(newbot, top, power-1, r)
+    elif (top == __max_int64 or ((top+1) % pow_dyad) == 0):
+        # our range is right-aligned on the dyad's max.
+        r.append([None, top])
+        if (bot == __min_int64):
+            # special case: no need to recurse on left, and doing so
+            # could overflow, so handle by hand
+            r[-1][0] = __min_int64
+        else:
+            r[-1][0] = (top - pow_dyad + 1)
+            if (top == __max_int64):
+                # account for fact that __max_int64 is 1 smaller than 2^63
+                r[-1][0] += 1
+            newtop = r[-1][0] - 1
+            # recurse on left at finer grain.
+            r = __find_ranges_recursive(bot, newtop, power-1, r)
+    else:
+        # we straddle a power of 2
+        power_of_2 = pow_dyad*(top/pow_dyad)
+
+        # recurse on right at finer grain
+        r = __find_ranges_recursive(bot, power_of_2 - 1, power-1, r)
+        # recurse on left at finer grain
+        r = __find_ranges_recursive(power_of_2, top, power-1, r)    
+    return r
+
+def rangecount(b64sketch, bot, top):
+    return __do_rangecount(base64.b64decode(b64sketch), bot, top)
+
+def __do_rangecount(all_sketch, bot, top):
+    cursum = 0
+    rows = [ all_sketch[i*__countmin_sz:(i+1)*__countmin_sz] for i in range(0,__depth*__ranges) ]
+    r = __find_ranges(bot, top)
+		# for obscure reasons, len(r) isn't working so use sum to compute
+    lenny = sum([1 for i in r])
+
+    # __find_ranges will not generate a span larger than 2^63-1, so
+    # we only need to consider 2^63 or less.
+    for i in range(0, lenny):
+        # What power of 2 is this range?
+        if (r[i][0] == __min_int64 and r[i][1] == -1):
+            # special case to avoid overflow: full range left of 0
+            dyad = 63
+            countval = -1
+        elif (r[i][0] == 0 and r[i][1] == __max_int64):
+            # special case to avoid overflow: full range right of 0
+            dyad = 63
+            countval = 0
+        else:
+            width = r[i][1] - r[i][0] + 1
+            if (r[i][0] == __min_int64):
+                width += 1
+            if (r[i][1] == __max_int64):
+                width += 1
+            # Divide min of range by 2^dyad and get count
+            dyad = intlog2(width)
+            countval = r[i][0] >> dyad
+        val = __do_count_rows(rows[dyad*__depth:(dyad+1)*__depth], countval)
+
+        cursum += val
+    return cursum
+
+
+#!
+# find the approximate centile in a cm sketch by binary search in the domain of values
+# \param transval the current transition value
+# \param intcentile the centile to return
+# \param total the total count of items
+def centile(b64sketch, intcentile, total):
+    return __do_centile(base64.b64decode(b64sketch), intcentile, total)
+
+def __do_centile(all_sketches, intcentile, total):
+    if (intcentile <= 0 or intcentile >= 100):
+        print "centiles must be between 1-99 inclusive, was " + str(intcentile)
+
+    centile_cnt = (total * intcentile/100.0);
+
+    loguess = __min_int64
+    higuess = __max_int64
+    curguess = 0
+    i = 0
+    while i < (__ranges - 1) and (higuess-loguess > 1):
+        curcount = __do_rangecount(all_sketches, __min_int64, curguess)
+        if (curcount == centile_cnt):
+            break
+        if (curcount > centile_cnt):
+            # overshot
+            higuess = curguess
+            curguess = loguess + int((curguess - loguess) / 2)
+        else:
+            # undershot
+            loguess = curguess;
+            curguess = higuess - int((higuess - curguess) / 2)
+        i += 1
+    return curguess
+    
+    
+def width_histogram(b64sketch, min, max, buckets):
+    return __do_width_histo(base64.b64decode(b64sketch), min, max, buckets)
+
+def __do_width_histo(all_sketches, min, max, buckets):
+    step = int(float(max-min+1) / float(buckets))
+    step = 1 if step < 1 else step
+    histo = []
+    for i in range(0, buckets):
+        binlo = min + i*step;
+        if (binlo > max):
+            break
+        binhi = max if (i == buckets-1) else (min + (i+1)*step - 1)
+        binval = __do_rangecount(all_sketches, binlo, binhi)        
+        histo.append([binlo,binhi,binval])
+    return histo
+    
+def depth_histogram(b64sketch, buckets):
+    return __do_depth_histo(base64.b64decode(b64sketch), buckets)
+
+def __do_depth_histo(all_sketches, buckets):
+    step = int(100.0 / float(buckets))
+    step = 1 if step < 1 else step
+    total = __do_rangecount(all_sketches, __min_int64, __max_int64)
+    binlo = __min_int64
+    histo = []
+    
+    for i in range(0, buckets):
+        if (i < buckets - 1):
+            cent = __do_centile(all_sketches, (i+1)*step, total);
+            if (i > 0 and cent <= histo[-1][1]):
+                # next centile is lower than previous; skip
+                continue;
+            histo.append([binlo,cent])
+        else:
+            # this is the top bucket
+            histo.append([binlo, __max_int64])
+        histo[-1].append(__do_rangecount(all_sketches,\
+                                    histo[-1][0], histo[-1][1]))
+        binlo = histo[-1][1] + 1;
+    return histo
