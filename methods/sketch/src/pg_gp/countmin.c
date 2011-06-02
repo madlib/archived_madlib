@@ -262,22 +262,6 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
  */
 
 /*!
- * match sketch type to scalar arg type
- */
-#define CM_CHECKARG(sketch, arg_offset) \
-    if (PG_ARGISNULL(arg_offset)) PG_RETURN_NULL(); \
-    if (sketch->typOid != get_fn_expr_argtype(fcinfo->flinfo, arg_offset)) { \
-        elog( \
-            ERROR, \
-            "sketch computed over type " INT64_FORMAT \
-            "; argument %d over type " INT64_FORMAT ".", \
-            (int64)sketch->typOid, \
-            arg_offset, \
-            (int64)get_fn_expr_argtype(fcinfo->flinfo, arg_offset)); \
-        PG_RETURN_NULL(); \
-    }
-
-/*!
  * get the approximate count of objects with value arg
  * \param sketch a countmin sketch
  * \param arg the Datum we want to find the count of
