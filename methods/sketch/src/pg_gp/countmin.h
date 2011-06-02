@@ -13,10 +13,10 @@
 #define NUMCOUNTERS 1024  /* another magic tuning value: modulus of hash functions */
 
 #ifdef INT64_IS_BUSTED
-#define MAX_INT64 (INT64CONST(0x7FFFFFFF) - 1)
+#define MAX_INT64 (INT64CONST(0x7FFFFFFF))
 #define MAX_UINT64 (UINT64CONST(0xFFFFFFFF))
 #else
-#define MAX_INT64 (INT64CONST(0x7FFFFFFFFFFFFFFF) - 1)
+#define MAX_INT64 (INT64CONST(0x7FFFFFFFFFFFFFFF))
 #define MAX_UINT64 (UINT64CONST(0xFFFFFFFFFFFFFFFF))
 #endif /* INT64_IS_BUSTED */
 
@@ -146,12 +146,6 @@ void   countmin_dyadic_trans_c(cmtransval *, Datum);
 /* countmin scalar function protos */
 int64  cmsketch_count_c(countmin, Datum, Oid, Oid);
 int64  cmsketch_count_md5_datum(countmin, bytea *, Oid);
-Datum  cmsketch_rangecount_c(cmtransval *, int64, int64);
-Datum  cmsketch_centile_c(cmtransval *, int, int64);
-Datum  cmsketch_width_histogram_c(cmtransval *, int64, int64, int64);
-Datum  cmsketch_depth_histogram_c(cmtransval *, int64);
-void   find_ranges(int64, int64, rangelist *);
-void   find_ranges_internal(int64, int64, int, rangelist *);
 
 /* hash_counters_iterate and its lambdas */
 int64  hash_counters_iterate(bytea *, countmin, int64, int64 (*lambdaptr)(
