@@ -1,0 +1,45 @@
+---------------------------------------------------------------------------
+-- Setup
+---------------------------------------------------------------------------
+SET client_min_messages=warning;
+
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
+CREATE SCHEMA madlib_installcheck;
+
+-- Adjust SEARCH_PATH
+set search_path=madlib_installcheck,MADLIB_SCHEMA,"$user",public;
+
+---------------------------------------------------------------------------
+-- Test
+---------------------------------------------------------------------------
+CREATE FUNCTION install_test() RETURNS VOID AS $$ 
+declare
+	result TEXT;
+	q FLOAT;
+begin
+	DROP TABLE IF EXISTS T;
+	CREATE TABLE T (
+		val FLOAT
+	) DISTRIBUTED BY (val);
+
+	INSERT INTO T SELECT random()*100 FROM generate_series(1,1000);
+	SELECT INTO q MADLIB_SCHEMA.quantile('T', 'val', .5);
+
+	SELECT INTO result CASE WHEN( q > 49 and q < 51) THEN 'PASS' ELSE 'FAIL' END;
+	DROP TABLE IF EXISTS T;
+	
+    IF result = 'FAIL' THEN
+        RAISE EXCEPTION 'Quantile install check failed: returned=%, expected=(49:51)', q;
+    END IF;
+    
+    RAISE INFO 'Quantile install check passed: returned=%, expected=(49:51)', q;
+	RETURN;
+	
+end $$ language plpgsql;
+
+SELECT install_test();
+
+---------------------------------------------------------------------------
+-- Cleanup
+---------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
