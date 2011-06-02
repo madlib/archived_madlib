@@ -38,7 +38,7 @@ frequently-occuring values in a column, along with their associated counts.
  <i>Note:</i> Features marked with a single star (*) only work for discrete types that can be cast to int8.
 
 @prereq
-Because sketches are essentially a high-performance compression technique, they were custom-coded for efficiency in C for PostgreSQL/Greenplum.
+Because sketches are essentially a high-performance compression technique, the sketch-formation code was custom-coded for efficiency in C for PostgreSQL/Greenplum.
  
 @usage
 The sketch method consists of a number of SQL UDAs and UDFs, to be used
@@ -73,26 +73,25 @@ directly in SQL queries.
 @addtogroup grp_countmin
 
  @about
- This module implements Cormode-Muthukrishnan <i>CountMin</i> sketch estimators for various descriptive statistics
- on integer values, implemented as user-defined aggregates.  It provides approximate counts, order statistics,
- and histograms.
+ This module implements Cormode-Muthukrishnan <i>CountMin</i> sketches
+ on integer values, implemented as a user-defined aggregate.  It also provides scalar functions over the sketches to produce approximate counts, order statistics, and histograms.
  
  @examp
  @code
    -- count number of rows with pronargs = 3
-   SELECT pronamespace, madlib.cmsketch_count(pronargs, 3)
+   SELECT pronamespace, madlib.cmsketch_count(madlib.cmsketch(pronargs), 3)
      FROM pg_proc
  GROUP BY pronamespace;
  @endcode
  @code
    -- count number of rows with pronargs between 3 and 5 inclusive
-   SELECT pronamespace, madlib.cmsketch_rangecount(pronargs, 3, 5)
+   SELECT pronamespace, madlib.cmsketch_rangecount(madlib.cmsketch(pronargs), 3, 5)
      FROM pg_proc
  GROUP BY pronamespace;
   @endcode
   @code
    -- find 75th percentile value of oid
-   SELECT relnamespace, madlib.cmsketch_centile(oid::int8, 75)
+   SELECT relnamespace, madlib.cmsketch_centile(madlib.cmsketch(oid::int8), 75, count(*))
      FROM pg_class
  GROUP BY relnamespace;
   @endcode
@@ -106,7 +105,7 @@ directly in SQL queries.
   @endcode
   @code
    -- produce equi-depth histogram of oid
-   SELECT madlib.cmsketch_depth_histogram(oid::int8, 10)
+   SELECT madlib.cmsketch_depth_histogram(madlib.cmsketch(oid::int8), 10)
      FROM pg_class;
   @endcode
 
@@ -231,7 +230,6 @@ RETURNS bytea
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_final(bytea) CASCADE;
 CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_final(counters bytea) 
 RETURNS bytea 
@@ -265,107 +263,87 @@ CREATE AGGREGATE MADLIB_SCHEMA.cmsketch(/*+ column */ int8)
     initcond = ''
 );
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_count_final(bytea) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_count_final(bytea)
-RETURNS int8
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
-
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_count(int8, int8);
 /**
- @brief <c>cmsketch_count</c> is a UDA that takes a column and a constant value of type int8, and reports the approximate number of occurrences of the value in the column.  
-*/
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_count(/*+ column */ int8, /*+ value */ int8)
-(
-    sfunc = MADLIB_SCHEMA.__cmsketch_int8_trans,
-    stype = bytea, 
-    finalfunc = MADLIB_SCHEMA.__cmsketch_count_final,
-		m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
-    initcond = ''
-);
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_rangecount_final(bytea) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_rangecount_final(bytea)
+ @brief <c>cmsketch_count</c> is a scalar UDF to compute the approximate
+ number of occurences of a value in a column summarized by a cmsketch.  Takes 
+ the results of the <c>cmsketch</c> aggregate as its first argument, and the
+ desired value as the second.  
+ */ 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_count(text, int8) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.cmsketch_count(sketches64 text, val int8)
 RETURNS int8
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+AS $$
+    from madlib import countmin
+    return countmin.count(sketches64, val)
+$$ LANGUAGE plpythonu;
 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_rangecount(int8, int8, int8);
-/** \brief <c>cmsketch_rangecount</c> is a UDA that takes a column and a range <c>[low, hi]</c>, and  reports the approximate number of column values that fall between 
-  <c>low</c> and <c>hi</c> inclusive.
-*/
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_rangecount(/*+ column */ int8, /*+ low */ int8, /*+ hi */ int8)
-(
-    sfunc = MADLIB_SCHEMA.__cmsketch_int8_trans,
-    stype = bytea, 
-    finalfunc = MADLIB_SCHEMA.__cmsketch_rangecount_final,
-		m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
-    initcond = ''
-);
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_centile_final(bytea) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_centile_final(bytea)
-RETURNS int8
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
-
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_centile(int8, int8);
 /**
- @brief <c>cmsketch_centile</c> is a UDA that takes a column and a percentage value between 1 and 99, and reports a value in the column that is approximately at the percentage (centile) position in sorted order.  
-*/
-
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_centile(int8, int8)
-(
-    sfunc = MADLIB_SCHEMA.__cmsketch_int8_trans,
-    stype = bytea, 
-    finalfunc = MADLIB_SCHEMA.__cmsketch_centile_final,
-		m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
-    initcond = ''
-);
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_median_final(bytea) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_median_final(bytea)
+ @brief <c>cmsketch_rangecount</c> is a scalar UDF to approximate the number
+ of occurrences of values in the range <c>[lo,hi]</c> inclusive, given a
+ cmsketch of a column.  Takes the results
+ of the <c>cmsketch</c> aggregate as its first argument, and the desired range
+ boundaries as the second and third.
+ */ 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_rangecount(text, int8, int8) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.cmsketch_rangecount(sketches64 text, bot int8, top int8)
 RETURNS int8
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+AS $$
+    from madlib import countmin
+    return countmin.rangecount(sketches64, bot, top)
+$$ LANGUAGE plpythonu;
 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_median(int8);
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_median(int8)
-(
-    sfunc = MADLIB_SCHEMA.__cmsketch_int8_trans,
-    stype = bytea, 
-    finalfunc = MADLIB_SCHEMA.__cmsketch_median_final,
-		m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
-    initcond = ''
-);
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_width_histogram(bytea, int8, int8, int4) CASCADE;
 /**
- \brief <c>cmsketch_width_histogram</c>  is a UDF (not an aggregate!) that takes three aggregates of a column -- cmsketch, min and max-- as well as a number of buckets, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  
+ @brief <c>cmsketch_centile</c> is a scalar UDF to compute a centile value  
+ from a cmsketch.  Takes the results of the <c>cmsketch</c> aggregate as its
+ first argument, a number between 1 and 99 as the desired centile in the
+ second, and the count of the column as the third.  Produces a value from the
+ sketched column that is approximately at the centile's position in sorted
+ order.
+ */ 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_centile(text, int8, int8) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.cmsketch_centile(sketches64 text, centile int8, cnt int8)
+RETURNS int8
+AS $$
+    from madlib import countmin
+    return countmin.centile(sketches64, centile, cnt)
+$$ LANGUAGE plpythonu;
+
+/**
+ @brief <c>cmsketch_median</c> is a scalar UDF to compute a median value  
+ from a cmsketch.  Takes the results of the <c>cmsketch</c> aggregate as its
+ first argument, and the count as the second.  Produces a value from the
+ sketched column that is approximately at the halfway position in sorted
+ order.
  */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_median(int8) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.cmsketch_median(sketches64 text, cnt int8)
+RETURNS int8
+AS $$
+    from madlib import countmin
+    return countmin.centile(sketches64, 50, cnt)
+$$ LANGUAGE plpythonu;
 
-CREATE FUNCTION MADLIB_SCHEMA.cmsketch_width_histogram(/*+ cmsketch */bytea, /*+ min */int8, /*+ max */int8, /*+ nbuckets */ int4)
-RETURNS int8[]
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
+/**
+ \brief <c>cmsketch_width_histogram</c>  is a scalar UDF that takes three aggregates of a column -- cmsketch, min and max-- as well as a number of buckets, and produces an n-bucket histogram for the column where each bucket has approximately the same width. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.  
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.cmsketch_width_histogram(text, /*+ min */int8, /*+ max */int8, /*+ nbuckets */ int4) CASCADE;
+CREATE FUNCTION MADLIB_SCHEMA.cmsketch_width_histogram(sketches64 text, themin int8, themax int8,  nbuckets int4)
+RETURNS text
+AS $$
+    from madlib import countmin
+    return countmin.width_histogram(sketches64, themin, themax, nbuckets)
+$$ LANGUAGE plpythonu;
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__cmsketch_dhist_final(bytea) CASCADE;
-CREATE FUNCTION MADLIB_SCHEMA.__cmsketch_dhist_final(bytea)
-RETURNS int8[]
-AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT;
-
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch_depth_histogram(int8, int8);
-/** @brief <c>cmsketch_depth_histogram</c> is a UDA that takes a column and a number of buckets n, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is an array of triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles.  
+/** @brief <c>cmsketch_depth_histogram</c> is a UDA that takes a cmsketch and a number of buckets n, and produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles.  
 */
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch_depth_histogram(/*+ column */int8, /*+ num_buckets */int8)
-(
-    sfunc = MADLIB_SCHEMA.__cmsketch_int8_trans,
-    stype = bytea, 
-    finalfunc = MADLIB_SCHEMA.__cmsketch_dhist_final,
-		m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__cmsketch_merge,')
-    initcond = ''
-);
+DROP FUNCTION IF EXISTS madlib.cmsketch_depth_histogram(text, /*+ nbuckets */ int4) CASCADE;
+CREATE FUNCTION madlib.cmsketch_depth_histogram(sketches64 text, nbuckets int4)
+RETURNS text
+AS $$
+    from madlib import countmin
+    return countmin.depth_histogram(sketches64, nbuckets)
+$$ LANGUAGE plpythonu;
 
 -- MFV Sketch functions
 

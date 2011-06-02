@@ -22,6 +22,7 @@ void bit_print(uint8 *c, int numbytes);
 Datum md5_cstring(char *);
 bytea *sketch_md5_bytea(Datum, Oid);
 int4   safe_log2(int64);
+void   int64_big_endianize(uint64 *, uint32, bool);
 
 /*! macro to convert a pointer into a marshalled array of Datums into a Datum */
 #define PointerExtractDatum(x, byVal)  (byVal ? (*(Datum *)x) : (PointerGetDatum(x)))

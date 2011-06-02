@@ -1,6 +1,7 @@
 PG_CONFIG = pg_config
 MODULE_big = sketches
-DATA_built = sketches.sql sketches_drop.sql
+DATA_built = sketches.sql countmin_py.sql countmin.py
+PYTHON_built = countmin.py
 SRCS = fm.c sketch_support.c sortasort.c countmin.c mfvsketch.c
 OBJS = $(SRCS:.c=.o)
 SHLIB_LINK = -lpq

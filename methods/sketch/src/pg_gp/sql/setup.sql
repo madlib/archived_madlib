@@ -1,3 +1,3 @@
 create schema madlib;
-\i sketches_drop.sql
+create language 'plpythonu';
 \i sketches.sql
