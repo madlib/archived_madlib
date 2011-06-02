@@ -1,17 +1,56 @@
-\timing
-drop table if exists MADLIB_SCHEMA.plda_mymodel;
-drop table if exists MADLIB_SCHEMA.plda_corpus;
-drop table if exists MADLIB_SCHEMA.plda_testcorpus;
-drop table if exists MADLIB_SCHEMA.plda_testresult;
+---------------------------------------------------------------------------
+-- Setup
+---------------------------------------------------------------------------
+SET client_min_messages=warning;
 
-create table 
-MADLIB_SCHEMA.plda_testcorpus ( id int4, contents int4[] ) 
-distributed randomly;
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
+CREATE SCHEMA madlib_installcheck;
 
-insert into MADLIB_SCHEMA.plda_testcorpus (select id, contents from MADLIB_SCHEMA.plda_mycorpus limit 10);
+SET search_path=madlib_installcheck,MADLIB_SCHEMA,"$user",public;
 
-select MADLIB_SCHEMA.plda_run('MADLIB_SCHEMA.plda_mycorpus', 'MADLIB_SCHEMA.plda_mydict', 'MADLIB_SCHEMA.plda_mymodel', 'MADLIB_SCHEMA.plda_corpus', 30,10,0.5,0.5);
+---------------------------------------------------------------------------
+-- Prepare data
+---------------------------------------------------------------------------
+-- Can use string_to_array() to convert texts into arrays.
+-- E.g. string_to_array('This is good', ' ') produces {This,is,good}.
+-- Can use R's lda.lexicalize() function to convert texts into the 
+-- desired format.
 
-select MADLIB_SCHEMA.plda_label_test_documents('MADLIB_SCHEMA.plda_testcorpus', 'MADLIB_SCHEMA.plda_testresult', 'MADLIB_SCHEMA.plda_mymodel', 'MADLIB_SCHEMA.plda_mydict', 10,0.5,0.5);
+CREATE TABLE plda_mycorpus ( id int4, contents int4[] ) DISTRIBUTED BY (id);
+INSERT INTO plda_mycorpus VALUES 
+ (1, '{1,2,3,4,5,6,7}'), 
+ (2, '{8,9,10,11,12,10,6,13,14,15}'),
+ (3, '{16,17,11,3,18,13}'),
+ (4, '{13,19,1,13,20,21,10,17}'),
+ (5, '{22,10,11,23,14,15,24,25,18}'),
+ (6, '{16,26,10,27,28,29,30}'),
+ (7, '{16,31,32,10,33,34,30}'),
+ (8, '{32,35,36,37,10,30,19,38,39,29}'),
+ (9, '{32,35,8,9}') ;
 
-select id, contents[1:5], (topics).topics[1:5], (topics).topic_d from MADLIB_SCHEMA.plda_testresult;
+CREATE TABLE plda_mydict ( dict text[] ) DISTRIBUTED RANDOMLY;
+INSERT INTO plda_mydict values
+ ('{human,machine,interface,for,abc,computer,applications,a,survey,of,
+    user,opinion,system,response,time,the,eps,management,and,engineering,
+    testing,relation,perceived,to,error,generation,random,binary,order,tree,
+    intersection,graph,path,in,minor,IV,widths,well,quasi}');
+
+---------------------------------------------------------------------------
+-- Run tests
+---------------------------------------------------------------------------
+
+CREATE TABLE plda_testcorpus ( id int4, contents int4[] ) 
+DISTRIBUTED RANDOMLY;
+
+INSERT INTO plda_testcorpus (SELECT id, contents FROM plda_mycorpus limit 10);
+
+SELECT MADLIB_SCHEMA.plda_run('plda_mycorpus', 'plda_mydict', 'plda_mymodel', 'plda_corpus', 30,10,0.5,0.5);
+
+SELECT MADLIB_SCHEMA.plda_label_test_documents('plda_testcorpus', 'madlib_installcheck.plda_testresult', 'plda_mymodel', 'plda_mydict', 10,0.5,0.5);
+
+SELECT id, contents[1:5], (topics).topics[1:5], (topics).topic_d FROM plda_testresult;
+
+---------------------------------------------------------------------------
+-- Cleanup
+---------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;

@@ -1,8 +1,17 @@
+# ------------------------------------------------------------------------------
+# madpack source files for PostgreSQL
+# ------------------------------------------------------------------------------
+
+# -- 1. Paths and MD5 hashes of third-party downloadable source code -----------
+
 set(PYGRESQL_TAR_VERSION "4.0")
 set(PYGRESQL_TAR_MD5 1aca50e59ff4cc56abe9452a9a49c5ff)
 
 set(PYGRESQL_TAR "PyGreSQL.tgz")
 set(PYGRESQL_URL "ftp://ftp.pygresql.org/pub/distrib/${PYGRESQL_TAR}")
+
+
+# -- 2. Third-party dependencies: Download and build PyGreSQL ------------------
 
 set(EXTERNALPROJECT_LIST_SEPARATOR "~!~")
 join_strings(_CMAKE_MODULE_PATH
@@ -36,7 +45,24 @@ ExternalProject_Add(EP_pygresql
     BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_pygresql
 )
 
+# -- 3. Copy all *.py and *.m4 files -------------------------------------------
+
+file(GLOB_RECURSE MADPACK_FILES_POSTGRES
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "*.py"
+    "*.m4"
+)
+add_files(MADPACK_TARGET_FILES_POSTGRES . "${CMAKE_CURRENT_BINARY_DIR}" ${MADPACK_FILES_POSTGRES})
+add_custom_target(madpackFiles_Postgres ALL DEPENDS ${MADPACK_TARGET_FILES_POSTGRES})
+
+
+# -- 4. Install madpack files to $MADLIB_ROOT/ports/postgres/madpack ----------
+
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/pygresql
-    DESTINATION ports/postgres
+    DESTINATION ports/postgres/madpack
     REGEX ".*/\\.DS_Store\$" EXCLUDE
+)
+
+install(FILES ${MADPACK_TARGET_FILES_POSTGRES}
+    DESTINATION ports/postgres/madpack
 )

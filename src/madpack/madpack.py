@@ -365,7 +365,7 @@ def __db_create_objects( schema, old_schema):
         __make_temp_dir( cur_tmpdir)
 
         # Find the module dir (platform specific or generic)
-        if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
+        if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
             maddir_mod  = maddir + "/ports/" + portid + "/modules"
         else:        
             maddir_mod  = maddir + "/modules"
@@ -421,16 +421,25 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
     # Prepare the file using M4
     try:
         f = open(tmpfile, 'w')
-        __info("> ... parsing " + sqlfile + " using m4", verbose )    
+        
+        # Find the madpack dir (platform specific or generic)
+        if os.path.isdir( maddir + "/ports/" + portid + "/madpack"):
+            maddir_madpack  = maddir + "/ports/" + portid + "/madpack"
+        else:        
+            maddir_madpack  = maddir + "/madpack"
+
         m4args = [ 'm4', 
                     '-P', 
                     '-DMADLIB_SCHEMA=' + schema, 
                     '-DPLPYTHON_LIBDIR=' + maddir_mod, 
                     '-DMODULE_PATHNAME=' + maddir_lib, 
                     '-DMODULE_NAME=' + module, 
-                    '-I' + maddir + '/madpack',
+                    '-I' + maddir_madpack,
                     '-D' + portid.upper(), 
                     sqlfile ]
+
+        __info("> ... parsing: " + " ".join(m4args), verbose )
+                    
         subprocess.call( m4args, stdout=f)  
         f.close()         
     except:
@@ -737,7 +746,7 @@ def main( argv):
     if args.command[0] == 'uninstall':
 
         # 1) Check versions and confirm deletion
-        __print_revs( rev, dbrev, con_args, schema)
+        # __print_revs( rev, dbrev, con_args, schema)
 
         if __get_rev_num( dbrev) == ['0']:
             __info( "Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
@@ -796,11 +805,11 @@ def main( argv):
             cur_tmpdir = tmpdir + '/' + module + '/test'
             __make_temp_dir( cur_tmpdir)
             
-            # Find the module/module dir (platform specific or generic)
-            if os.path.isdir( maddir + "/ports/" + portid + "/modules"):
+            # Find the module dir (platform specific or generic)
+            if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
                 maddir_mod  = maddir + "/ports/" + portid + "/modules"
             else:        
-                maddir_mod  = maddir + "/modules"
+                maddir_mod  = maddir + "/modules"      
     
             # Loop through all test SQL files for this module
             sql_files = maddir_mod + '/' + module + '/test/*.sql_in'
