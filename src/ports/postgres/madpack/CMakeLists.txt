@@ -4,11 +4,16 @@
 
 # -- 1. Paths and MD5 hashes of third-party downloadable source code -----------
 
+# For in-house testing, we might want to change the base URL to something local
+# "-DPYPI_BASE_URL=http://test.local/projects"
+set(PYPI_BASE_URL "http://pypi.python.org/packages/source" CACHE STRING
+    "Base URL for projects from the Python Package Index. May be overridden for testing purposes.")
+
 set(PYGRESQL_TAR_VERSION "4.0")
 set(PYGRESQL_TAR_MD5 1aca50e59ff4cc56abe9452a9a49c5ff)
 
-set(PYGRESQL_TAR "PyGreSQL.tgz")
-set(PYGRESQL_URL "ftp://ftp.pygresql.org/pub/distrib/${PYGRESQL_TAR}")
+set(PYGRESQL_TAR "PyGreSQL-${PYGRESQL_TAR_VERSION}.tar.gz")
+set(PYGRESQL_URL "${PYPI_BASE_URL}/P/PyGreSQL/${PYGRESQL_TAR}")
 
 
 # -- 2. Third-party dependencies: Download and build PyGreSQL ------------------
