@@ -103,6 +103,7 @@ typedef ConcreteValue<AnyValueVector> ConcreteRecord;
 #include <dbal/AbstractAllocator.hpp>
 #include <dbal/AbstractHandle.hpp>
 #include <dbal/AbstractDBInterface.hpp>
+#include <dbal/AbstractOutputStreamBuffer.hpp>
 #include <dbal/AbstractValue_proto.hpp>
 #include <dbal/AbstractValueConverter.hpp>
 
