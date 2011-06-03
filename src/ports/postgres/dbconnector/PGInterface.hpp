@@ -19,7 +19,7 @@ public:
     PGInterface(const FunctionCallInfo inFCinfo)
     :   AbstractDBInterface(
             new PGOutputStreamBuffer(INFO),
-            new PGOutputStreamBuffer(ERROR)),
+            new PGOutputStreamBuffer(WARNING)),
         fcinfo(inFCinfo) { }
 
     ~PGInterface() {
