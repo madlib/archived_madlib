@@ -51,6 +51,12 @@ set(ARMADILLO_URL "${SOURCEFORGE_BASE_URL}/arma/files/${ARMADILLO_TAR}")
 
 # -- Local definitions (filenames, paths, etc.) --------------------------------
 
+# The default MADlib root directory should be "/usr/local/share/madlib" and not
+# "/usr/local" (which is the CMake default)
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "/usr/local/share/madlib")
+endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+
 set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/config/Version.yml)
 
 # Set the directory for tools needed during build time
