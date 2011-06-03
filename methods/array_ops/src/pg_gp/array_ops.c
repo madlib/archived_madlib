@@ -47,6 +47,7 @@ char* element_div(Datum elt1, Datum elt2, Oid element_type, char* result);
 char* element_set(Datum elt1, Datum elt2, Oid element_type, char* result);
 char* element_sqrt(Datum elt1, Datum elt2, Oid element_type, char* result);
 Datum element_dot(Datum elt1, Datum elt2, Oid element_type, Datum result);
+Datum element_contains(Datum elt1, Datum elt2, Oid element_type, Datum result);
 Datum element_max(Datum elt1, Datum *flag, Oid element_type, Datum result);
 Datum element_min(Datum elt1, Datum *flag, Oid element_type, Datum result);
 Datum element_sum(Datum elt1, Datum *flag, Oid element_type, Datum result);
@@ -57,6 +58,7 @@ Datum array_sub(PG_FUNCTION_ARGS);
 Datum array_mult(PG_FUNCTION_ARGS);
 Datum array_div(PG_FUNCTION_ARGS);
 Datum array_dot(PG_FUNCTION_ARGS);
+Datum array_contains(PG_FUNCTION_ARGS);
 Datum array_max(PG_FUNCTION_ARGS);
 Datum array_min(PG_FUNCTION_ARGS);
 Datum array_sum(PG_FUNCTION_ARGS);
@@ -233,6 +235,27 @@ Datum element_dot(Datum elt1, Datum elt2, Oid element_type, Datum result){
 			break;
 	}
 	PG_RETURN_FLOAT8(temp);
+}
+
+Datum element_contains(Datum elt1, Datum elt2, Oid element_type, Datum result){
+	switch(element_type){
+		case INT2OID:
+			return Float8GetDatum(DatumGetFloat8(result)+(((DatumGetInt16(elt1) == DatumGetInt16(elt2))||(DatumGetInt16(elt2)==0))?0:1));break;
+		case INT4OID:
+			return Float8GetDatum(DatumGetFloat8(result)+(((DatumGetInt32(elt1) == DatumGetInt32(elt2))||(DatumGetInt32(elt2)==0))?0:1));break;
+		case INT8OID:
+			return Float8GetDatum(DatumGetFloat8(result)+(((DatumGetInt64(elt1) == DatumGetInt64(elt2))||(DatumGetInt64(elt2)==0))?0:1));break;
+		case FLOAT4OID:
+			return Float8GetDatum(DatumGetFloat8(result)+(((DatumGetFloat4(elt1) == DatumGetFloat4(elt2))||(DatumGetFloat4(elt2)==0))?0:1));break;
+		case FLOAT8OID:
+			return Float8GetDatum(DatumGetFloat8(result)+(((DatumGetFloat8(elt1) == DatumGetFloat8(elt2))||(DatumGetFloat8(elt2)==0))?0:1));break;
+		default:
+			ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), 
+							errmsg("type is not supported"), 
+							errdetail("Arrays with element type %d are not supported.", (int)element_type)));
+			break;
+	}
+	return result;
 }
 
 inline char* element_set(Datum elt1, Datum elt2, Oid element_type, char* result){
@@ -490,6 +513,31 @@ Datum array_dot(PG_FUNCTION_ARGS){
 	PG_FREE_IF_COPY(v2, 1);
 	
 	return(res);
+}
+
+PG_FUNCTION_INFO_V1(array_contains);
+Datum array_contains(PG_FUNCTION_ARGS){
+	ArrayType *v1;
+	ArrayType *v2;
+	Datum res;
+	
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+	if (PG_ARGISNULL(1))
+		PG_RETURN_NULL();
+	
+	v1 = PG_GETARG_ARRAYTYPE_P(0);
+	v2 = PG_GETARG_ARRAYTYPE_P(1);
+	
+	res = General_2Array_to_Element(v1, v2, element_contains, noop_finalize, 0);
+	
+	PG_FREE_IF_COPY(v1, 0);
+	PG_FREE_IF_COPY(v2, 1);
+	
+	if(res == 0){
+		PG_RETURN_BOOL(TRUE);
+	}
+	PG_RETURN_BOOL(FALSE);
 }
 
 
@@ -781,7 +829,7 @@ Datum General_2Array_to_Element(ArrayType *v1, ArrayType *v2, Datum(*element_fun
 	
 	if(ndims1 != ndims2){
 		ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), 
-						errmsg("cannot add array of different dimention"), 
+						errmsg("cannot operate on arrays of different dimention"), 
 						errdetail("Arrays with element dimention %d and %d are not compatible for addition.", ndims1, ndims2)));
 	}
 	
@@ -808,7 +856,7 @@ Datum General_2Array_to_Element(ArrayType *v1, ArrayType *v2, Datum(*element_fun
 	{
 		if (dims1[i] != dims2[i] || lbs1[i] != lbs2[i]){
 			ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), 
-							errmsg("cannot compute dot product of array of different length"), 
+							errmsg("cannot compute this operation on arrays of different length"), 
 							errdetail("Arrays with element length %d and %d are not compatible for this operation.", dims1[i], dims2[i])));
 		}
 	}
@@ -894,7 +942,7 @@ Datum General_2Array_to_Array(ArrayType *v1, ArrayType *v2, char*(*element_funct
 	
 	if(ndims1 != ndims2){
 		ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), 
-						errmsg("cannot add array of different dimention"), 
+						errmsg("cannot perform operation arrays of different dimention"), 
 						errdetail("Arrays with element dimention %d and %d are not compatible for addition.", ndims1, ndims2)));
 	}
 	
@@ -924,8 +972,8 @@ Datum General_2Array_to_Array(ArrayType *v1, ArrayType *v2, char*(*element_funct
 	{
 		if (dims1[i] != dims2[i] || lbs1[i] != lbs2[i]){
 			ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), 
-							errmsg("cannot add array of different length"), 
-							errdetail("Arrays with element length %d and %d are not compatible for addition.", dims1[i], dims2[i])));
+							errmsg("cannot operate on arrays of different length"), 
+							errdetail("Arrays with element length %d and %d are not compatible for operations.", dims1[i], dims2[i])));
 		}
 		dims[i] = dims1[i];
 		lbs[i] = lbs1[i];
