@@ -4,9 +4,7 @@ devdoc: doc/bin/doxysql mathjax
 	@echo "Running doxygen..."
 	@( \
 		cat doc/etc/developer.doxyfile; \
-		echo "PROJECT_NUMBER = $$(if [ -f ./src/config/Version.yml ]; \
-		    then cut -c 10- ./src/config/Version.yml; \
-		    else cut -c 10- ./madpy/Version.yml; fi;)" \
+		echo "PROJECT_NUMBER = $$(cut -c 10- ./src/config/Version.yml)" \
 	) | doxygen - 2>&1 | \
 	egrep -v "warning:.*(@param is not found in the argument list.*kwargs\)$$|The following parameters.*kwargs\) are not documented)|parameter 'kwargs'$$"
 
@@ -16,9 +14,7 @@ doc: doc/bin/doxysql mathjax
 	@echo "Running doxygen..."
 	@( \
 		cat doc/etc/user.doxyfile; \
-		echo "PROJECT_NUMBER = $$(if [ -f ./src/config/Version.yml ]; \
-		    then cut -c 10- ./src/config/Version.yml; \
-		    else cut -c 10- ./madpy/Version.yml; fi;)" \
+		echo "PROJECT_NUMBER = $$(cut -c 10- ./src/config/Version.yml)" \
 	) | doxygen - 2>&1 | \
 	egrep -v "warning: found \\\\endinternal without matching \\\\internal$$"
 
