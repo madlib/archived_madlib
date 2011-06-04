@@ -22,6 +22,10 @@
 // Matrix, Vector
 #include <armadillo>
 
+#if !defined(ARMA_USE_LAPACK) || !defined(ARMA_USE_BLAS)
+    #error Armadillo has been configured without LAPACK and/or BLAS. Cannot continue.
+#endif
+
 // All sources need to (implicitly or explicitly) include madlib.hpp, so we also
 // include it here
 
