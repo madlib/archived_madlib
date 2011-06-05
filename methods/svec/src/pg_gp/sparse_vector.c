@@ -208,6 +208,8 @@ char * svec_out_internal(SvecType *svec)
 	return(result);
 }
 
+SvecType * svec_in_internal(char * str);
+
 PG_FUNCTION_INFO_V1(svec_in);
 /**
  *  svec_in - reads in a string and convert that to an svec
@@ -215,6 +217,12 @@ PG_FUNCTION_INFO_V1(svec_in);
 Datum svec_in(PG_FUNCTION_ARGS)
 {
 	char *str = pstrdup(PG_GETARG_CSTRING(0));
+	SvecType *result = svec_in_internal(str);
+	PG_RETURN_SVECTYPE_P(result);
+}
+
+SvecType * svec_in_internal(char * str)
+{
 	char *values;
 	ArrayType *pgarray_vals,*pgarray_ix;
 	double *vals, *vals_temp;
@@ -322,6 +330,28 @@ Datum svec_in(PG_FUNCTION_ARGS)
 	pfree(pgarray_ix);
 	pfree(pgarray_vals);
 
+	return result;
+}
+
+PG_FUNCTION_INFO_V1(svec_to_string);
+/**
+ *  svec_to_string - converts a sparse vector to a text 
+ */
+Datum svec_to_string(PG_FUNCTION_ARGS)
+{
+	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
+	char *result = svec_out_internal(svec);
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+PG_FUNCTION_INFO_V1(svec_from_string);
+/**
+ *  svec_from_string - converts a text into an svec
+ */
+Datum svec_from_string(PG_FUNCTION_ARGS)
+{
+	char *str = pstrdup(text_to_cstring(PG_GETARG_TEXT_P(0)));
+	SvecType *result = svec_in_internal(str);
 	PG_RETURN_SVECTYPE_P(result);
 }
 
