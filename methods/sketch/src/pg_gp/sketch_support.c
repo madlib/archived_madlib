@@ -30,25 +30,6 @@
 
 /*
 @addtogroup sketches
-@todo
-- Provide a relatively portable SQL-only implementation of CountMin.  (FM bit manipulation won't port well regardless).
-- Provide a python wrapper to the CountMin sketch output, and write scalar functions in python.
-
-
-@bug
-- <i>Equality-Testing Corner Case:</i>
-For hashing, we convert values into text using the type's text output routine.
-In general this should work fine, but there is the possibility that two
-different values in the domain could have the same textual representation.
-In these corner cases we will see incorrect counts for those values.
-The proper way to do this is not to use the "outfunc", but rather to look up the
-type-specific hash function as is done internally for hashjoin, hash indexes,
-etc.  The basic pattern for looking up the hash function in Postgres
-internals is something like the following:
-@code
-get_sort_group_operators(dtype, false, true, false, &ltOpr, &eqOpr, &gtOpr);
-success = get_op_hash_functions(eqOpr, result, NULL));
-@endcode
 */
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
