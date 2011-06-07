@@ -299,7 +299,7 @@ bit_print(uint8 *c, int numbytes)
 
 /*!
  * Run the datum through an md5 hash.  No need to special-case variable-length types,
- * we'll just has their length header too.
+ * we'll just hash their length header too.
  * The POSTGRES code for md5 returns a bytea with a textual representation of the
  * md5 result.  We then convert it back into binary.
  * \param dat a Postgres Datum
@@ -315,11 +315,27 @@ bytea *sketch_md5_bytea(Datum dat, Oid typOid)
     bool byval = get_typbyval(typOid);
     int len = ExtractDatumLen(dat, get_typlen(typOid), byval);
     void *datp = DatumExtractPointer(dat, byval);
+    /* 
+     * it's very common to be hashing 0 for countmin sketches.  Rather than 
+     * hard-code it here, we cache on first lookup.  In future a bigger cache here
+     * would be nice.
+     */
+    static bool zero_cached = false;
+    static char md5_of_0_mem[MD5_HASHLEN+VARHDRSZ];
+    static bytea *md5_of_0 = (bytea *) &md5_of_0_mem;
         
-    pg_md5_hash(datp, len, outbuf);        
+    if (byval && len == sizeof(int64) && *(int64 *)datp == 0 && zero_cached) {
+        return md5_of_0;
+    }
+    else
+        pg_md5_hash(datp, len, outbuf);        
     
     hex_to_bytes(outbuf, (uint8 *)VARDATA(out), MD5_HASHLEN*2);
     SET_VARSIZE(out, MD5_HASHLEN+VARHDRSZ);
+    if (byval && len == sizeof(int64) && *(int64 *)datp == 0 && !zero_cached) {
+        zero_cached = true;
+        memcpy(md5_of_0, out, MD5_HASHLEN+VARHDRSZ);
+    }
     return out;
 }
 
