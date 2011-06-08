@@ -15,3 +15,9 @@ list(APPEND
 join_strings(_M4_ARGUMENTS " " "${M4_ARGUMENTS}")
 configure_file(py_filter.sh.in py_filter.sh @ONLY)
 configure_file(sql_filter.sh.in sql_filter.sh @ONLY)
+
+get_dir_name(_MATHJAX_PARENT_DIR "${MATHJAX_RELPATH}")
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_MATHJAX_PARENT_DIR}"
+)
+configure_file(update_mathjax.sh.in update_mathjax.sh @ONLY)

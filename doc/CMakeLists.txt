@@ -2,8 +2,11 @@
 # MADlib Documentation
 # ------------------------------------------------------------------------------
 
-set(DOXYGEN_CONFIGURATION "user" CACHE STRING
-    "Doxygen configuration (either 'user' or 'developer')")
+set(MADLIB_DOXYGEN_SOURCE_DIR "\"${CMAKE_SOURCE_DIR}/src\" \"${CMAKE_SOURCE_DIR}/methods\"")
+set(USE_MATHJAX NO CACHE BOOL "In user documentation, render LaTeX formulas using MathJax")
+set(MATHJAX_RELPATH "${CMAKE_BINARY_DIR}/third_party/downloads/mathjax" CACHE PATH
+    "Path to MathJax installation")
+
 
 # -- Build doxysql (the SQL parser) using flex and bison -----------------------
 
@@ -31,10 +34,21 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
 
 # -- Run doxygen ---------------------------------------------------------------
 
-    add_custom_target(doxygen
-        COMMAND ${DOXYGEN_EXECUTABLE} etc/${DOXYGEN_CONFIGURATION}.doxyfile
+    set(_DOXYGEN_UNNEEDED_WARNINGS_FILTER egrep -v
+        "warning:.*\\(@param is not found in the argument list.*kwargs\\)\$|The following parameters.*kwargs\\) are not documented\\)|parameter 'kwargs'\$")
+    add_custom_target(doc
+        COMMAND ${DOXYGEN_EXECUTABLE} etc/user.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        DEPENDS doxysql doxyBinFiles)
+        DEPENDS doxysql doxyBinFiles
+        VERBATIM
+    )
+    
+    add_custom_target(devdoc
+        COMMAND bin/update_mathjax.sh
+        COMMAND ${DOXYGEN_EXECUTABLE} etc/developer.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        DEPENDS doxysql doxyBinFiles
+    )
     
 # -- Install doc/user/html output directory to doc/html ------------------------
 
