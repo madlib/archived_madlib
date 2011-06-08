@@ -1,10 +1,10 @@
 macro(join_strings OUT_STRING SEPARATOR LIST)
     foreach(ITEM ${LIST})
-        if("${${OUT_STRING}}" EQUAL "")
+        if("${${OUT_STRING}}" STREQUAL "")
             set(${OUT_STRING} "${ITEM}")
-        else("${${OUT_STRING}}" EQUAL "")
+        else("${${OUT_STRING}}" STREQUAL "")
             set(${OUT_STRING} "${${OUT_STRING}}${SEPARATOR}${ITEM}")
-        endif("${${OUT_STRING}}" EQUAL "")
+        endif("${${OUT_STRING}}" STREQUAL "")
     endforeach(ITEM ${LIST})
 endmacro(join_strings)
 
