@@ -109,6 +109,7 @@ if(POSTGRESQL_FOUND)
 
     install(TARGETS ${MADLIB_POSTGRES_TARGETNAME}
         LIBRARY DESTINATION ports/postgres/lib
+        COMPONENT postgres
     )
 
 # -- 6. Preprocess/copy all Python/SQL files -----------------------------------
@@ -173,6 +174,7 @@ if(POSTGRESQL_FOUND)
 
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
         DESTINATION ports/postgres
+        COMPONENT postgres
         REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
 

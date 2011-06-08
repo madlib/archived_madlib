@@ -19,7 +19,9 @@ add_custom_target(madpackFiles ALL DEPENDS ${MADPACK_TARGET_FILES})
 
 install(FILES ${MADPACK_TARGET_FILES}
     DESTINATION madpack
+    COMPONENT core
 )
 install(PROGRAMS madpack.py
     DESTINATION madpack
+    COMPONENT core
 )

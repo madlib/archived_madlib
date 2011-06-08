@@ -121,6 +121,7 @@ if(GREENPLUM_FOUND)
 
     install(TARGETS ${MADLIB_GREENPLUM_TARGETNAME}
         LIBRARY DESTINATION ports/greenplum/lib
+        COMPONENT greenplum
     )
     
 
@@ -191,6 +192,7 @@ if(GREENPLUM_FOUND)
 
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
         DESTINATION ports/greenplum
+        COMPONENT greenplum
         REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
 
