@@ -290,14 +290,18 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 					 errmsg("posit_to_sdata conflicting values for the same position")));
 			}
 		}
-		add_run_to_sdata(run_val,run_len,width,sdata);
 		run_val = array+index[i]*size_of_type(type_of_data);
+		add_run_to_sdata(run_val,run_len,width,sdata);
 		
 		if(i < count-1){
 			run_len = array_pos[index[i+1]]-array_pos[index[i]]-1;
-			add_run_to_sdata(zero_val,run_len,width,sdata);
+			if(run_len > 0){
+				add_run_to_sdata(zero_val,run_len,width,sdata);
+			}
 		}else if(array_pos[index[i]] < end){
-			run_len = end-array_pos[index[i]];
+			if(run_len > 0){
+				run_len = end-array_pos[index[i]];
+			}
 			add_run_to_sdata(zero_val,run_len,width,sdata);
 		}
 	}
