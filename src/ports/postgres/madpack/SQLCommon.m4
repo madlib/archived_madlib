@@ -46,6 +46,8 @@ m4_define(<!PythonFunction!>, <!
     global MADlibSchema
     MADlibSchema = rv[0]['nspname']
     
+    plpy.execute('SET client_min_messages=WARNING')
+    
     return $2.$3(**globals())
 !>)
 
@@ -78,6 +80,8 @@ m4_define(<!PythonFunctionBodyOnly!>, <!
 
     global MADlibSchema
     MADlibSchema = rv[0]['nspname']
+    
+    plpy.execute('SET client_min_messages=WARNING')
 !>)
 
 /*
