@@ -170,10 +170,22 @@ Datum WeightedNoReplacement(PG_FUNCTION_ARGS) {
 	int value2 = PG_GETARG_INT32(1);
 	int64 *result = (int64*)malloc(sizeof(int64)*value1);
 	int32 i = 0;
+	int32 k = 0;
 	ArrayType *pgarray;
-	
-   	for(;i < value1; ++i){
-   		result[i] = 1+rand()%value2;
+	float prob = 1.0;	
+	float to_select = value1;
+
+   	for(;i < value2; i++){
+		
+		if(rand()%100 < (to_select/(value2 - i))*100){
+   			//to_select--;			
+			result[k] = i+1;
+			k++;
+		}
+
+		if(to_select == 0)
+			break; 
+
    	}
    
 	pgarray = construct_array((Datum *)result,
