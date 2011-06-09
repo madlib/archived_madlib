@@ -885,7 +885,7 @@ Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
 	float8 *array = (float8 *)ARR_DATA_PTR(A_PG);
 	int64 *array_pos =  (int64 *)ARR_DATA_PTR(B_PG);
 	
-	if (array_pos[dimension-1] > size)
+	if ((array_pos[dimension-1] > size)&&(size > 0))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("svec_cast_positions_float8arr some of the position values are larger than maximum array size declared")));	
