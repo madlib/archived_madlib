@@ -185,12 +185,12 @@ SparseData float8arr_to_sdata(double *array, int count) {
 
 /**
  * @param array The array of values to be converted to values in SparseData
- * @param array The array of positions to be converted to runs in SparseData
+ * @param array_pos The array of positions to be converted to runs in SparseData
  * @param count The size of array
  * @return A SparseData representation of an input array of doubles
  */
-SparseData position_to_sdata(double *array,int64 *array_pos, int count, int64 end) {
-	return posit_to_sdata((char *)array, array_pos, sizeof(float8), FLOAT8OID, count, end);
+SparseData position_to_sdata(double *array,int64 *array_pos, int count, int64 end, double base_val) {
+	return posit_to_sdata((char *)array, array_pos, sizeof(float8), FLOAT8OID, count, end, (char *)&base_val);
 }
 
 /**
@@ -236,22 +236,22 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	return sdata;
 }
 
-/**
- * @param array The values of the positions	
- * @param array_pos The position for the values
- * @param width The size of the element in the array
- * @param type_of_data Size of weapons
- * @param count Number of element in the array
- * @param end Target size of the element
- * @return A SparseData representation of an input array
- */
 int compar(void *array, const void *i, const void *j){
 	return (int)((int64*)array)[*(int*)i] - ((int64*)array)[*(int*)j];
 }
 
-SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end){
+/**
+ * @param array The values of the positions	
+ * @param array_pos The position for the values
+ * @param width The size of the element in the array
+ * @param type_of_data tyep of the value element
+ * @param count Number of element in the array
+ * @param end Target size of the element
+ * @return A SparseData representation of an input array
+ */
+
+SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end, char *base_val){
 	char *run_val=array;
-	char *zero_val = (char*)palloc(size_of_type(type_of_data));
 	char *curr_val;
 	int64 run_len;
 	SparseData sdata = makeSparseData();
@@ -262,12 +262,10 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 	}
 	qsort_r(index, count, sizeof(int), array_pos, compar);
 	
-	memset(zero_val, 0, size_of_type(type_of_data));
 	sdata->type_of_data=type_of_data;
-	
 	if(array_pos[index[0]] > 1){
 		run_len = array_pos[index[0]]-1;
-		add_run_to_sdata(zero_val,run_len,width,sdata);
+		add_run_to_sdata(base_val,run_len,width,sdata);
 	}
 	
 	for (int i = 0; i<count; i++) {
@@ -296,20 +294,19 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 		if(i < count-1){
 			run_len = array_pos[index[i+1]]-array_pos[index[i]]-1;
 			if(run_len > 0){
-				add_run_to_sdata(zero_val,run_len,width,sdata);
+				add_run_to_sdata(base_val,run_len,width,sdata);
 			}
 		}else if(array_pos[index[i]] < end){
+			run_len = end-array_pos[index[i]];
 			if(run_len > 0){
-				run_len = end-array_pos[index[i]];
+				add_run_to_sdata(base_val,run_len,width,sdata);
 			}
-			add_run_to_sdata(zero_val,run_len,width,sdata);
 		}
 	}
 	
 	/* Add the final tallies */
 	sdata->unique_value_count = sdata->vals->len/width;
 	sdata->total_value_count = count;
-	pfree(zero_val);
 	pfree(index);
 	return sdata;
 }

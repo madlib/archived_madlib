@@ -148,9 +148,9 @@ StringInfo makeStringInfoFromData(char *data,int len);
 double *sdata_to_float8arr(SparseData sdata);
 int64 *sdata_index_to_int64arr(SparseData sdata);
 SparseData float8arr_to_sdata(double *array, int count);
-SparseData position_to_sdata(double *array, int64 *array_pos, int count, int64 end);
+SparseData position_to_sdata(double *array, int64 *array_pos, int count, int64 end, double base_val);
 SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count);
-SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end);
+SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end, char *base_val);
 
 /* Some functions for accessing and changing elements of a SparseData */
 SparseData lapply(text * func, SparseData sdata);
