@@ -8,6 +8,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+
+#ifdef ARMA_USE_LAPACK
+
 // Armadillo LAPACK functions
 
 // LU factorisation
@@ -266,6 +269,9 @@ void arma_fortran(arma_ztrtrs)(char* uplo, char* trans, char* diag, blas_int* n,
 MADLIB_FORTRAN_DECLARE
 (  MADLIB_FORTRAN(arma_ztrtrs)(      uplo,       trans,       diag,           n,           nrhs,               a,           lda,         b,           ldb,           info)  )
 
+#endif // ARMA_USE_LAPACK
+
+#ifdef ARMA_USE_BLAS
 
 // Armadillo BLAS functions
 
@@ -320,3 +326,5 @@ MADLIB_FORTRAN_QUALIFIER
 void arma_fortran(arma_zgemm)(const char* transA, const char* transB, const blas_int* m, const blas_int* n, const blas_int* k, const void*   alpha, const void*   A, const blas_int* ldA, const void*   B, const blas_int* ldB, const void*   beta, void*   C, const blas_int* ldC)
 MADLIB_FORTRAN_DECLARE
 (  MADLIB_FORTRAN(arma_zgemm)(            transA,             transB,                 m,                 n,                 k,               alpha,               A,                 ldA,               B,                 ldB,               beta,         C,                 ldC) )
+
+#endif // ARMA_USE_BLAS

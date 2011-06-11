@@ -17,9 +17,11 @@ add_custom_target(madpackFiles ALL DEPENDS ${MADPACK_TARGET_FILES})
 # -- 2. Install madpack files to $MADLIB_ROOT/madpack, set executable flags
 #       for madpack.py ---------------------------------------------------------
 
-install(FILES ${MADPACK_TARGET_FILES}
-    DESTINATION madpack
-)
-install(PROGRAMS madpack.py
-    DESTINATION madpack
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DESTINATION .
+    USE_SOURCE_PERMISSIONS
+    COMPONENT core
+    FILES_MATCHING
+    PATTERN "*.py"
+    PATTERN ".DS_Store" EXCLUDE
 )

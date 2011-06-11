@@ -20,11 +20,10 @@
  *     "depColumn" VARCHAR,
  *     "indepColumn" VARCHAR)
  * RETURNS DOUBLE PRECISION[]
- * AS PythonFunction(`regress', `logistic', `compute_logregr_coef')
+ * AS $$PythonFunction(regress, logistic, compute_logregr_coef)$$
  * LANGUAGE plpythonu VOLATILE;
  */ 
 m4_define(<!PythonFunction!>, <!
-$$
     import sys
     from inspect import getframeinfo, currentframe
     try:
@@ -50,7 +49,7 @@ $$
     plpy.execute('SET client_min_messages=WARNING')
     
     return $2.$3(**globals())
-$$ !>)
+!>)
 
 /*
  * PythonFunctionBodyOnly

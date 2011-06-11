@@ -65,9 +65,11 @@ add_custom_target(madpackFiles_Postgres ALL DEPENDS ${MADPACK_TARGET_FILES_POSTG
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/pygresql
     DESTINATION ports/postgres/madpack
+    COMPONENT postgres
     REGEX ".*/\\.DS_Store\$" EXCLUDE
 )
 
 install(FILES ${MADPACK_TARGET_FILES_POSTGRES}
     DESTINATION ports/postgres/madpack
+    COMPONENT postgres
 )

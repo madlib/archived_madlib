@@ -31,10 +31,6 @@
  * that there are no more files to scan */
 %option noyywrap
 
-/* instructs `flex' to write the scanner it generates to standard output instead
- * of `lex.yy.c' */
-%option stdout
-
 /* We really use yymore, but only in more(). We need to provide this option
  * because flex with otherwise complain:
  * "error: ‘yymore_used_but_not_detected’ was not declared in this scope */

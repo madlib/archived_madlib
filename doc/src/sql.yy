@@ -73,7 +73,7 @@
             int     currentLine;
         };
     
-		SQLDriver(std::string &inFilename);
+		SQLDriver(const std::string &inExeName, const std::string &inFilename);
 		virtual ~SQLDriver();
 		void error(const SQLParser::location_type &l, const std::string &m);
 		void error(const std::string &m);
@@ -81,6 +81,7 @@
         CountingOStream                 cout;
 		std::map<std::string, char *>	fnToReturnType;
 		SQLScanner						*scanner;
+        std::string                     exeName;
         std::string                     filename;
 	};
 	
@@ -435,15 +436,14 @@ expr:
 
 namespace bison{
 
-SQLDriver::SQLDriver(std::string &inFilename) :
-    filename(inFilename) {
-}
+SQLDriver::SQLDriver(const std::string &inExeName,
+    const std::string &inFilename)
+    :   exeName(inExeName), filename(inFilename) { }
 
-SQLDriver::~SQLDriver() {
-}
+SQLDriver::~SQLDriver() { }
 
 void SQLDriver::error(const SQLParser::location_type &l, const std::string &m) {
-	std::cerr << l << ": " << m << std::endl;
+	std::cerr << exeName << ":" << l << ": " << m << std::endl;
 }
 
 void SQLDriver::error(const std::string &m) {
@@ -503,21 +503,39 @@ int SQLFlexLexer::yylex()
 
 int	main(int argc, char **argv)
 {
-	std::istream		*inStream = 0;
+	std::istream		*inStream = NULL;
     std::string         filename = "<stdin>";
-	
-	if (argc > 1) {
-		inStream = new std::ifstream(argv[1]);
-        filename = argv[1];
+	bool                error = false;
+    bool                customFileName = false;
+    
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[1], "-f") == 0) {
+            if (i < argc - 1) {
+                filename = argv[++i];
+                customFileName = true;
+            } else {
+                error = true;
+                break;
+            }
+        } else if (inStream == NULL) {
+            inStream = new std::ifstream(argv[i]);
+            if (!customFileName)
+                filename = argv[i];
+        }
     }
-	
-	bison::SQLDriver	driver(filename);
+    if (error) {
+        std::cerr << "Usage: " << argv[0] << " [-f customFileName] [inputFile]"
+            << std::endl;
+        return 1;
+    }
+    
+	bison::SQLDriver	driver(argv[0], filename);
 	bison::SQLScanner	scanner(inStream); driver.scanner = &scanner;
 	bison::SQLParser	parser(&driver);
 
 	int result = parser.parse();
 	
-	if (argc > 1)
+	if (inStream != NULL)
 		delete inStream;
 
 	if (result != 0)

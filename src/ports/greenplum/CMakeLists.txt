@@ -43,7 +43,7 @@ if(GREENPLUM_FOUND)
             set(CMAKE_C_FLAGS "-std=gnu99 -include sys/time.h")
         endif(${CMAKE_COMPILER_IS_GNUCC})
         file(GLOB_RECURSE LEGACY_C_FILES_GREENPLUM RELATIVE
-            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/../methods/*.c")
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 
         set_source_files_properties(${LEGACY_C_FILES_GREENPLUM} PROPERTIES
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
@@ -121,6 +121,7 @@ if(GREENPLUM_FOUND)
 
     install(TARGETS ${MADLIB_GREENPLUM_TARGETNAME}
         LIBRARY DESTINATION ports/greenplum/lib
+        COMPONENT greenplum
     )
     
 
@@ -139,10 +140,10 @@ if(GREENPLUM_FOUND)
     # BEGIN Legacy Code
         
         file(GLOB_RECURSE LEGACY_SQL_FILES_GREENPLUM RELATIVE
-            "${CMAKE_SOURCE_DIR}/../methods"
-            "${CMAKE_SOURCE_DIR}/../methods/*.py_in")
+            "${CMAKE_SOURCE_DIR}/methods"
+            "${CMAKE_SOURCE_DIR}/methods/*.py_in")
         foreach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
-            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
+            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/methods/${CURRENT_FILE}" ABSOLUTE)
             set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
             string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
             string(REGEX REPLACE ".py_in\$" ".py" OUTFILE ${OUTFILE})
@@ -168,10 +169,10 @@ if(GREENPLUM_FOUND)
     # BEGIN Legacy Code
         
         file(GLOB_RECURSE LEGACY_SQL_FILES_GREENPLUM RELATIVE
-            "${CMAKE_SOURCE_DIR}/../methods"
-            "${CMAKE_SOURCE_DIR}/../methods/*.sql_in")
+            "${CMAKE_SOURCE_DIR}/methods"
+            "${CMAKE_SOURCE_DIR}/methods/*.sql_in")
         foreach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
-            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
+            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/methods/${CURRENT_FILE}" ABSOLUTE)
             set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
             string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
             string(REPLACE "/sql/" "/test/" OUTFILE ${OUTFILE})
@@ -191,6 +192,7 @@ if(GREENPLUM_FOUND)
 
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
         DESTINATION ports/greenplum
+        COMPONENT greenplum
         REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
 

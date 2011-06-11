@@ -24,4 +24,5 @@ add_dependencies(binaryFiles madpackFiles)
 
 install(FILES ${BINARY_TARGET_FILES}
     DESTINATION bin
+    COMPONENT core
 )

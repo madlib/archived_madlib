@@ -18,4 +18,5 @@ add_custom_target(madpackFiles_Greenplum ALL DEPENDS ${MADPACK_TARGET_FILES_GREE
 
 install(FILES ${MADPACK_TARGET_FILES_GREENPLUM}
     DESTINATION ports/greenplum/madpack
+    COMPONENT greenplum
 )
