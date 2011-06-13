@@ -85,6 +85,7 @@ if(GREENPLUM_PG_CONFIG AND GREENPLUM_CLIENT_INCLUDE_DIR)
     else(GREENPLUM_PACKAGE_NAME STREQUAL "Greenplum Database")
         message(STATUS "Found pg_config at \"${GREENPLUM_PG_CONFIG}\", but it does not point to a Greenplum installation.")
         unset(GREENPLUM_CLIENT_INCLUDE_DIR)
+        unset(GREENPLUM_VERSION_STRING)
     endif(GREENPLUM_PACKAGE_NAME STREQUAL "Greenplum Database")
 endif(GREENPLUM_PG_CONFIG AND GREENPLUM_CLIENT_INCLUDE_DIR)
 
