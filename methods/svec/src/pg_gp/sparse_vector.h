@@ -155,6 +155,7 @@ Datum float8arr_cast_float8(PG_FUNCTION_ARGS);
 Datum float8arr_cast_numeric(PG_FUNCTION_ARGS);
 
 Datum svec_cast_float8arr(PG_FUNCTION_ARGS);
+Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS);
 Datum svec_unnest(PG_FUNCTION_ARGS);
 Datum svec_pivot(PG_FUNCTION_ARGS);
 
