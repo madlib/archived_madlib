@@ -9,6 +9,10 @@
 #ifndef MADLIB_MODULES_COMMON_HPP
 #define MADLIB_MODULES_COMMON_HPP
 
+// Handle failed Boost assertions in a sophisticated way. This is implemented
+// in assert.cpp
+#define BOOST_ENABLE_ASSERT_HANDLER
+
 // Inlcude Database Abstraction Layer
 
 #include <dbal/dbal.hpp>
