@@ -65,12 +65,13 @@ logfile = tmpdir + '/madpack.log'
 # Create a temp dir 
 # @param dir temp directory path
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __make_temp_dir( tmpdir):
-    if not os.path.isdir( tmpdir):
+def __make_log_dir( dir):
+    if not os.path.isdir( dir):
         try:
-            os.makedirs( tmpdir)
+            os.makedirs( dir)
         except:
-            __error( 'Can not create temp directory: %s' % tmpdir, True)
+            print "ERROR: can not create directory: %s. Check permissions." % dir
+            exit(1)    
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Close the log file 
@@ -368,7 +369,7 @@ def __db_create_objects( schema, old_schema):
         
         # Make a temp dir for this module 
         cur_tmpdir = tmpdir + "/" + module
-        __make_temp_dir( cur_tmpdir)
+        __make_log_dir( cur_tmpdir)
 
         # Find the module dir (platform specific or generic)
         if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
@@ -812,7 +813,7 @@ def main( argv):
 
             # Make a temp dir for this module (if doesn't exist)
             cur_tmpdir = tmpdir + '/' + module + '/test'
-            __make_temp_dir( cur_tmpdir)
+            __make_log_dir( cur_tmpdir)
             
             # Find the module dir (platform specific or generic)
             if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
@@ -859,8 +860,12 @@ def main( argv):
 if __name__ == "__main__":
 
     # Open the log
-    __make_temp_dir( tmpdir)
-    log = open( logfile, 'w')
+    __make_log_dir( tmpdir)
+    try:
+        log = open( logfile, 'w')
+    except:
+        print "ERROR: can not create log file: %s." % logfile
+        exit(1)   
 
     # Run main
     try:
