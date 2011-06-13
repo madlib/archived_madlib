@@ -22,7 +22,7 @@ execute_process(
 )
 configure_file(sql_filter.sh.in sql_filter.sh @ONLY)
 
-get_dir_name(_MATHJAX_PARENT_DIR "${MATHJAX_RELPATH}")
+get_dir_name(_MATHJAX_PARENT_DIR "${MATHJAX_INSTALLATION}")
 execute_process(
     COMMAND ${CMAKE_COMMAND} -E make_directory "${_MATHJAX_PARENT_DIR}"
 )

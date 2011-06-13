@@ -50,7 +50,7 @@ if(GREENPLUM_FOUND)
         )
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM ${LEGACY_C_FILES_GREENPLUM})
         # sparse_vector.c indirectly includes openssl/ssl.h (via libpq/libpq-be.h)
-        include_directories(${GREENPLUM_BASE_DIR}/include)
+        include_directories(${GREENPLUM_CLIENT_INCLUDE_DIR})
     
     # END Legacy Code
 
@@ -58,7 +58,8 @@ if(GREENPLUM_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
-    include_directories(${GREENPLUM_INCLUDE_DIR})
+    include_directories(${GREENPLUM_SERVER_INCLUDE_DIR})
+    include_directories(${GREENPLUM_ADDITIONAL_INCLUDE_DIRS})
     
     
 # -- 3. Some versions of Greenplum ship with header files that need a patch to
@@ -68,9 +69,6 @@ if(GREENPLUM_FOUND)
     set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
     set(_GP_VERSION "${GREENPLUM_VERSION_MAJOR}.${GREENPLUM_VERSION_MINOR}.${GREENPLUM_VERSION_PATCH}")
 
-    # The first element in GREENPLUM_INCLUDE_DIR is include/server
-    list(GET GREENPLUM_INCLUDE_DIR 0 GREENPLUM_SERVER_INCLUDE_DIR)
-    
     # Version 4.0 of Greenplum and below ship with a utils/builtin.h that has
     # C++ keywords as identifiers. We need to patch this.
     if(${_GP_VERSION} VERSION_LESS "4.1")
