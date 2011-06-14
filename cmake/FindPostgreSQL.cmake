@@ -80,6 +80,7 @@ if(POSTGRESQL_PG_CONFIG AND POSTGRESQL_CLIENT_INCLUDE_DIR)
         # here.
         message(STATUS "Found pg_config at \"${POSTGRESQL_PG_CONFIG}\", but it does not point to a PostgreSQL installation.")
         unset(POSTGRESQL_CLIENT_INCLUDE_DIR)
+        unset(POSTGRESQL_VERSION_STRING)
     endif(POSTGRESQL_PACKAGE_NAME STREQUAL "PostgreSQL")
 endif(POSTGRESQL_PG_CONFIG AND POSTGRESQL_CLIENT_INCLUDE_DIR)
 

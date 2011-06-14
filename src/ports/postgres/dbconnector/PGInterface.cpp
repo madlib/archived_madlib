@@ -12,7 +12,7 @@ inline AllocatorSPtr PGInterface::allocator(
 }
 
 inline void PGInterface::PGOutputStreamBuffer::output(
-    char *inMsg, uint32_t inLength) const {
+    char *inMsg, uint32_t /* inLength */) {
 
     bool errorOccurred = false;
     

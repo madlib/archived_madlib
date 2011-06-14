@@ -20,7 +20,12 @@ public:
     :   AbstractDBInterface(
             new PGOutputStreamBuffer(INFO),
             new PGOutputStreamBuffer(WARNING)),
-        fcinfo(inFCinfo) { }
+        fcinfo(inFCinfo) {
+        
+        // Observe: This only works because PostgreSQL does not use multiple
+        // threads for UDFs
+        arma::set_log_stream(mArmadilloOut);
+    }
 
     ~PGInterface() {
         // We allocated the streambuf objects in the initialization list of
@@ -37,15 +42,15 @@ private:
     public:
         PGOutputStreamBuffer(int inErrorLevel) : mErrorLevel(inErrorLevel) { }
     
-        void output(char *inMsg, uint32_t inLength) const;
+        void output(char *inMsg, uint32_t inLength);
         
     private:
         int mErrorLevel;
     };
 
     /**
-     * The name is chosen so that PostgreSQL macros like PG_NARGS can be
-     * used.
+     * @internal The name is chosen so that PostgreSQL macros like PG_NARGS can
+     *           be used.
      */
     const FunctionCallInfo fcinfo;
 };

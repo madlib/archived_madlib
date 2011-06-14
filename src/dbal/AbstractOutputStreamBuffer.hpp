@@ -37,6 +37,16 @@ public:
     virtual ~AbstractOutputStreamBuffer() {
         delete mStorage;
     }
+    
+    /**
+     * @brief Output a string
+     *
+     * Subclasses are required to implement this method and to feed the message
+     * the the the DBMS-specific logging routine.
+     * @param inMsg Null-terminated string to be output.
+     * @param inLength Length of inMsg (for convenience).
+     */
+    virtual void output(_CharT *inMsg, uint32_t inLength) = 0;
 
 protected:
     virtual int_type overflow(int_type c = traits_type::eof()) {
@@ -66,6 +76,9 @@ protected:
         return traits_type::not_eof(c);
     }
 
+    /**
+     * @brief Flush and reset buffer.
+     */
     virtual int sync() {
         int length = this->pptr() - this->pbase();
         
@@ -75,15 +88,7 @@ protected:
         setp(mStorage, mStorage + mStorageSize);
         return 0;
     }
-    
-    /**
-     * @brief Output a string
-     *
-     * Subclasses are required to implement this method and to feed the message
-     * the the the DBMS-specific logging routine.
-     */
-    virtual void output(_CharT *inMsg, uint32_t inLength) const = 0;
-    
+        
     private:
         uint32_t mStorageSize;
         _CharT *mStorage;
