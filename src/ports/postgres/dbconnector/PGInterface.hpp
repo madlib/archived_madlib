@@ -20,7 +20,12 @@ public:
     :   AbstractDBInterface(
             new PGOutputStreamBuffer(INFO),
             new PGOutputStreamBuffer(WARNING)),
-        fcinfo(inFCinfo) { }
+        fcinfo(inFCinfo) {
+        
+        // Observe: This only works because PostgreSQL does not use multiple
+        // threads for UDFs
+        arma::set_log_stream(mArmadilloOut);
+    }
 
     ~PGInterface() {
         // We allocated the streambuf objects in the initialization list of

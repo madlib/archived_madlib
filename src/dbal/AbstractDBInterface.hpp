@@ -71,7 +71,8 @@ public:
         AbstractOutputStreamBuffer<> *inErrorBuffer)
     :   out(inInfoBuffer),
         err(inErrorBuffer),
-        mArmadilloOutputStreamBuffer(*inErrorBuffer) { }
+        mArmadilloOutputStreamBuffer(*inErrorBuffer),
+        mArmadilloOut(&mArmadilloOutputStreamBuffer) { }
     
     virtual ~AbstractDBInterface() { }
     
@@ -99,6 +100,7 @@ public:
     std::ostream out;
     std::ostream err;
     
-private:
+protected:
     ArmadilloOutputStreamBuffer mArmadilloOutputStreamBuffer;
+    std::ostream mArmadilloOut;
 };
