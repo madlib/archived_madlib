@@ -47,6 +47,9 @@ protected:
                 mTrimmedMsg = strStart;
                 mError = true;
                 return;
+            } else if (*strStart == '\0') {
+                // Ignore if the stream gets flushed with nothing in the buffer
+                return;
             }
             
             mRelayStream.output(inMsg, inLength);
