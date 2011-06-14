@@ -833,6 +833,78 @@ Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 	PG_RETURN_SVECTYPE_P(output_svec);
 }
 
+PG_FUNCTION_INFO_V1( svec_cast_positions_float8arr );
+/**
+ *  svec_cast_positions_float8arr - turns a int4 array with values and float8 array with positions into an svec with zeroes elsewhere
+ */
+Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
+	ArrayType *B_PG = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType *A_PG = PG_GETARG_ARRAYTYPE_P(1);
+	int64 size = PG_GETARG_INT64(2);
+	float8 base_value = PG_GETARG_FLOAT8(3);
+	SvecType *output_svec;
+	int i = 0;
+	
+	if (ARR_ELEMTYPE(A_PG) != FLOAT8OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr valeus only defined over float8[]")));
+	if (ARR_NDIM(A_PG) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr only defined over 1 dimensional arrays")));
+	
+	if (ARR_NULLBITMAP(A_PG))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr does not allow null bitmaps on arrays")));
+	
+	if (ARR_ELEMTYPE(B_PG) != INT8OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr positions only defined over int[]")));
+	if (ARR_NDIM(B_PG) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr only defined over 1 dimensional arrays")));
+	
+	if (ARR_NULLBITMAP(B_PG))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr does not allow null bitmaps on arrays")));
+	
+	/* Extract array */
+	int dimension = ARR_DIMS(A_PG)[0];
+	int dimension2 = ARR_DIMS(B_PG)[0];
+	
+	if (dimension != dimension2)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr position and value vectors must be of the same size")));
+	
+	float8 *array = (float8 *)ARR_DATA_PTR(A_PG);
+	int64 *array_pos =  (int64 *)ARR_DATA_PTR(B_PG);
+	
+	if ((array_pos[dimension-1] > size)&&(size > 0))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("svec_cast_positions_float8arr some of the position values are larger than maximum array size declared")));	
+	
+	for(i=0;i < dimension;++i){
+		if(array_pos[i] <= 0){
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("svec_cast_positions_float8arr only accepts position that are positive integers (x > 0)")));
+		}
+	}
+	
+	/* Create the output SVEC */
+	SparseData sdata = position_to_sdata(array,array_pos,dimension,size,base_value); //float8arr_to_sdata(array,dimension);
+	output_svec = svec_from_sparsedata(sdata,true);
+	
+	PG_RETURN_SVECTYPE_P(output_svec);
+}
+
 /*
  * Provide some operators for Postgres FLOAT8OID arrays
  */

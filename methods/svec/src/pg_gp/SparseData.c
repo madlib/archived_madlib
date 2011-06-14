@@ -184,6 +184,16 @@ SparseData float8arr_to_sdata(double *array, int count) {
 }
 
 /**
+ * @param array The array of values to be converted to values in SparseData
+ * @param array_pos The array of positions to be converted to runs in SparseData
+ * @param count The size of array
+ * @return A SparseData representation of an input array of doubles
+ */
+SparseData position_to_sdata(double *array,int64 *array_pos, int count, int64 end, double base_val) {
+	return posit_to_sdata((char *)array, array_pos, sizeof(float8), FLOAT8OID, count, end, (char *)&base_val);
+}
+
+/**
  * @param array The array of elements to be converted to a SparseData
  * @param width The size of the elements in array
  * @param type_of_data The object ID of the elements in array
@@ -223,6 +233,81 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	sdata->unique_value_count = sdata->vals->len/width;
 	sdata->total_value_count = count;
 
+	return sdata;
+}
+
+int compar(void *array, const void *i, const void *j){
+	return (int)((int64*)array)[*(int*)i] - ((int64*)array)[*(int*)j];
+}
+
+/**
+ * @param array The values of the positions	
+ * @param array_pos The position for the values
+ * @param width The size of the element in the array
+ * @param type_of_data tyep of the value element
+ * @param count Number of element in the array
+ * @param end Target size of the element
+ * @return A SparseData representation of an input array
+ */
+
+SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end, char *base_val){
+	char *run_val=array;
+	char *curr_val;
+	int64 run_len;
+	SparseData sdata = makeSparseData();
+	
+	int *index = (int*)palloc(count*sizeof(int));
+	for(int i = 0; i < count; ++i){
+		index[i] = i;
+	}
+	qsort_r(index, count, sizeof(int), array_pos, compar);
+	
+	sdata->type_of_data=type_of_data;
+	if(array_pos[index[0]] > 1){
+		run_len = array_pos[index[0]]-1;
+		add_run_to_sdata(base_val,run_len,width,sdata);
+	}
+	
+	for (int i = 0; i<count; i++) {
+		run_len=1;
+		/*
+		 * Note that special double values like denormalized numbers and exceptions
+		 * like NaN are treated like any other value - if there are duplicates, the
+		 * value of the special number is preserved and they are counted.
+		 */
+		while((i < count-1)&&((array_pos[index[i+1]] - array_pos[index[i]])==1)&&(memcmp((array+index[i]*size_of_type(type_of_data)),(array+index[i+1]*size_of_type(type_of_data)),width)==0)){
+			run_len++;
+			i++;
+		}
+		while((i < count-1)&&((array_pos[index[i+1]] - array_pos[index[i]])==0)){
+			if((memcmp((array+index[i]*size_of_type(type_of_data)),(array+index[i+1]*size_of_type(type_of_data)),width)==0)){
+				i++;
+			}else{
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("posit_to_sdata conflicting values for the same position")));
+			}
+		}
+		run_val = array+index[i]*size_of_type(type_of_data);
+		add_run_to_sdata(run_val,run_len,width,sdata);
+		
+		if(i < count-1){
+			run_len = array_pos[index[i+1]]-array_pos[index[i]]-1;
+			if(run_len > 0){
+				add_run_to_sdata(base_val,run_len,width,sdata);
+			}
+		}else if(array_pos[index[i]] < end){
+			run_len = end-array_pos[index[i]];
+			if(run_len > 0){
+				add_run_to_sdata(base_val,run_len,width,sdata);
+			}
+		}
+	}
+	
+	/* Add the final tallies */
+	sdata->unique_value_count = sdata->vals->len/width;
+	sdata->total_value_count = count;
+	pfree(index);
 	return sdata;
 }
 
