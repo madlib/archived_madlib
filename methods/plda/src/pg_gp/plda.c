@@ -51,7 +51,9 @@ Datum zero_array(PG_FUNCTION_ARGS)
 }
 
 /**
- * Returns the element-wise sum of two arrays
+ * Returns the element-wise sum of two arrays.
+ *
+ * First argument can be NULL; second argument can't.
  */
 Datum sum_int4array(PG_FUNCTION_ARGS);
 Datum sum_int4array(PG_FUNCTION_ARGS)
@@ -65,9 +67,10 @@ Datum sum_int4array(PG_FUNCTION_ARGS)
 		ereport
 		 (ERROR,
 		  (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-		   errmsg("function \"%s\" called with invalid parameters",
+		   errmsg("function \"%s\" called with NULL second argument",
 			  format_procedure(fcinfo->flinfo->fn_oid))));
 
+	/* Get second argument */
 	arr1 = PG_GETARG_ARRAYTYPE_P(1);
 
 	if (ARR_NDIM(arr1) != 1 || ARR_ELEMTYPE(arr1) != INT4OID)
@@ -82,6 +85,7 @@ Datum sum_int4array(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0)) 
 		PG_RETURN_ARRAYTYPE_P(arr1);
 
+	/* Get first argument */
 	arr0 = PG_GETARG_ARRAYTYPE_P(0);
 	if (ARR_NDIM(arr0) != 1 || ARR_ELEMTYPE(arr0) != INT4OID ||
 	    ARR_DIMS(arr1)[0] != ARR_DIMS(arr0)[0])
@@ -91,6 +95,7 @@ Datum sum_int4array(PG_FUNCTION_ARGS)
 		   errmsg("function \"%s\" called with invalid parameters",
 			  format_procedure(fcinfo->flinfo->fn_oid))));
 
+	/* Do appropriate casts */
 	dim = ARR_DIMS(arr1)[0];
 	arr1_v = (int32 *)ARR_DATA_PTR(arr1);
 	arr0_v = (int32 *)ARR_DATA_PTR(arr0);
