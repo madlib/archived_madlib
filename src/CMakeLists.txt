@@ -2,19 +2,6 @@
 # MADlib CMake Build Script
 # ------------------------------------------------------------------------------
 
-# -- CMake setup ---------------------------------------------------------------
-
-project(MADlib)
-
-# We automatically download and build missing parts. For that we rely on
-# ExternalProject_Add, which requires CMake 2.8.
-# http://www.kitware.com/news/home/browse/252
-
-cmake_minimum_required(VERSION 2.8)
-
-include(ExternalProject)
-
-
 # -- Paths and MD5 hashes of third-party downloadable source code (third-party
 #    components needed only by specific ports are downloaded there) ------------
 
@@ -51,47 +38,9 @@ set(ARMADILLO_URL "${SOURCEFORGE_BASE_URL}/arma/files/${ARMADILLO_TAR}")
 
 # -- Local definitions (filenames, paths, etc.) --------------------------------
 
-# The default MADlib root directory should be "/usr/local/share/madlib" and not
-# "/usr/local" (which is the CMake default)
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "/usr/local/share/madlib")
-endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+set(MAD_PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
 
-set(MADLIB_VERSION_YML ${CMAKE_SOURCE_DIR}/config/Version.yml)
-
-# Set the directory for tools needed during build time
-set(MAD_BUILD_TOOLS ${CMAKE_SOURCE_DIR}/cmake_tools)
-
-set(MAD_THIRD_PARTY ${CMAKE_BINARY_DIR}/third_party)
-
-set(MAD_PATCH_DIR ${CMAKE_BINARY_DIR}/patch)
-
-set(MAD_MODULE_DIR ${CMAKE_SOURCE_DIR}/modules)
-
-set(EXTERNALPROJECT_LIST_SEPARATOR "~!~")
-
-if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set(LINUX TRUE)
-endif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
-      "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
-      FORCE)
-endif(NOT CMAKE_BUILD_TYPE)
-
-set(M4_ARGUMENTS
-    # force a `m4_' prefix to all builtins
-    "--prefix-builtins"
-)
-
-
-# Read and parse Version.yml file
-file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
-string(REGEX REPLACE "^.*version:[ \t]*([^\n]*)\n.*" "\\1" MADLIB_VERSION_STRING "${_MADLIB_VERSION_CONTENTS}")
-string(REGEX REPLACE "([0-9]+).*" "\\1" MADLIB_VERSION_MAJOR "${MADLIB_VERSION_STRING}")
-string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_MINOR "${MADLIB_VERSION_STRING}")
-string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "${MADLIB_VERSION_STRING}")
+set(MAD_MODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/modules)
 
 
 # ==============================================================================
@@ -101,29 +50,13 @@ string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "
 # ==============================================================================
 
 
-# -- Local includes ------------------------------------------------------------
-
-list(APPEND CMAKE_MODULE_PATH
-    "${MAD_BUILD_TOOLS}/Modules/")
-
-include(Utils)
-include(OSXUtils)
-
-
-# -- Third-party dependencies: Find m4 -----------------------------------------
-
-find_program(M4_BINARY m4
-    /usr/local/bin /usr/bin /bin /opt/local/bin
-)
-if(NOT M4_BINARY)
-    message(FATAL_ERROR "Cannot find the m4 preprocessor.")
-endif(NOT M4_BINARY)
-
 
 # -- Third-party dependencies: Find or download Boost --------------------------
 
-find_package(Boost 1.34)
+find_package(Boost 1.46)
 
+# We use BOOST_ASSERT_MSG, which only exists in Boost 1.46 and later.
+# FIXME: Think whether we really need the latest 1.46 (and BOOST_ASSERT_MSG).
 # We need Boost >= 1.34. Unfortunately, the FindBoost module seems to be broken
 # with respect to version checking, so we will set Boost_FOUND to FALSE if the
 # version is too old.
@@ -174,7 +107,7 @@ endif(Boost_FOUND)
 # want to anticipate further changes...
 list(APPEND ARMADILLO_CMAKE_ARGS
     -DCMAKE_BUILD_TYPE=Release
-    "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}"
+    "-DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}"
     -DINSTALL_LIB_DIR=lib
 )
 
@@ -204,18 +137,10 @@ add_library(armadillo SHARED IMPORTED)
 # path will be.
 set_target_properties(armadillo PROPERTIES
     IMPORTED_LOCATION
-        "${MAD_THIRD_PARTY}/src/EP_armadillo/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}"
+        "${CMAKE_CURRENT_BINARY_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}"
 )
 
-# create a symbolic link to the Armadillo shared object. This is really needed
-# only on Linux, where we load libarmadillo.so dynamically during runtime.
-get_target_property(_FILEPATH armadillo IMPORTED_LOCATION)
-get_filename_component(_FILENAME "${_FILEPATH}" NAME)
-execute_process(
-    COMMAND ${CMAKE_COMMAND} -E create_symlink "${_FILEPATH}" "${CMAKE_BINARY_DIR}/lib/${_FILENAME}"
-)
-
-set(ARMADILLO_INCLUDE_DIRS ${MAD_THIRD_PARTY}/src/EP_armadillo/include)
+set(ARMADILLO_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/include)
 include_directories(${ARMADILLO_INCLUDE_DIRS})
 
 
@@ -322,7 +247,7 @@ list(APPEND MAD_SOURCES
     ${MAD_CPP_SOURCES}
 )
 
-include_directories(${CMAKE_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 
 # -- Build and install MADlib core library -------------------------------------
@@ -365,8 +290,9 @@ else(APPLE)
         target_link_libraries(madlib armadillo)
     endif(NOT LINUX)
     
-    install(DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib
         DESTINATION .
+        COMPONENT core
         FILES_MATCHING REGEX "^.*/[^/]*armadillo[^/]*\$"
     )
     
@@ -378,7 +304,9 @@ else(APPLE)
 endif(APPLE)
 
 install(TARGETS madlib
-    LIBRARY DESTINATION lib)
+    LIBRARY DESTINATION lib
+    COMPONENT core
+)
 
 
 # -- On platforms with a flat namespace for symbols in executables, patch
@@ -436,6 +364,7 @@ add_custom_target(sqlFiles ALL DEPENDS ${SQL_TARGET_FILES})
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
     DESTINATION .
+    COMPONENT core
     REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
 )
 
@@ -446,41 +375,3 @@ add_subdirectory(bin)
 add_subdirectory(config)
 add_subdirectory(madpack)
 add_subdirectory(ports)
-
-
-# -- Generate installation packages --------------------------------------------
-
-#file(READ extra/packageDescription.txt CPACK_RPM_PACKAGE_SUMMARY)
-
-if(APPLE)
-    list(APPEND CPACK_GENERATOR 
-        PackageMaker
-    )
-elseif(UNIX)
-    list(APPEND CPACK_GENERATOR
-        RPM
-    )
-endif()
-
-set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/extra/packageDescription.txt")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open-Source Library for Scalable in-Database Analytics")
-set(CPACK_PACKAGE_FILE_NAME "madlib-${MADLIB_VERSION_STRING}-${CMAKE_SYSTEM_NAME}")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "madlib")
-set(CPACK_PACKAGE_NAME "madlib")
-set(CPACK_PACKAGE_VENDOR "madlib")
-set(CPACK_PACKAGE_VERSION ${MADLIB_VERSION_STRING})
-set(CPACK_PACKAGE_VERSION_MAJOR ${MADLIB_VERSION_MAJOR})
-set(CPACK_PACKAGE_VERSION_MINOR ${MADLIB_VERSION_MINOR})
-set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
-set(CPACK_SOURCE_GENERATOR "TGZ;TZ")
-
-# FIXME: Maybe we should not hard code this
-set(CPACK_RPM_PACKAGE_ARCHITECTURE x86_64)
-set(CPACK_RPM_PACKAGE_LICENSE "New BSD License")
-set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries")
-set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.4, lapack >= 3.0, m4 >= 1.4")
-
-set(CPACK_OSX_PACKAGE_VERSION "10.5")
-set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local/share/madlib")
-
-include(CPack)

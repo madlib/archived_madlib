@@ -12,6 +12,7 @@
 
 // STL dependencies
 
+#include <locale>
 #include <vector>
 
 // Other dependencies
@@ -21,6 +22,10 @@
 
 // Matrix, Vector
 #include <armadillo>
+
+#if !defined(ARMA_USE_LAPACK) || !defined(ARMA_USE_BLAS)
+    #error Armadillo has been configured without LAPACK and/or BLAS. Cannot continue.
+#endif
 
 // All sources need to (implicitly or explicitly) include madlib.hpp, so we also
 // include it here
@@ -102,6 +107,7 @@ typedef ConcreteValue<AnyValueVector> ConcreteRecord;
 
 #include <dbal/AbstractAllocator.hpp>
 #include <dbal/AbstractHandle.hpp>
+#include <dbal/AbstractOutputStreamBuffer.hpp>
 #include <dbal/AbstractDBInterface.hpp>
 #include <dbal/AbstractValue_proto.hpp>
 #include <dbal/AbstractValueConverter.hpp>

@@ -24,33 +24,40 @@ namespace madlib {
 
 namespace dbconnector {
 
-inline static Datum call(
-    MADFunction &f,
-    PG_FUNCTION_ARGS) {
-//template <AnyValue f(AbstractDBInterface &, AnyValue)>
-//inline Datum call(PG_FUNCTION_ARGS) {
+inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
     int sqlerrcode;
-    char msg[256];
+    char msg[2048];
     Datum datum;
 
     try {
         PGInterface db(fcinfo);
-        AnyValue result = f(db, PGValue<FunctionCallInfo>(fcinfo));
-
-        if (result.isNull())
-            PG_RETURN_NULL();
         
-        datum = PGToDatumConverter(fcinfo, result);
-        return datum;
+        try {
+            AnyValue result = f(db, PGValue<FunctionCallInfo>(fcinfo));
+
+            if (result.isNull())
+                PG_RETURN_NULL();
+            
+            datum = PGToDatumConverter(fcinfo, result);
+            return datum;
+        } catch (std::exception &exc) {
+            sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
+            const char *error = exc.what();
+            
+            // If there is a pending error, we report this instead.
+            if (db.lastError())
+                error = db.lastError();
+                
+            strncpy(msg, error, sizeof(msg));
+        }
     } catch (std::exception &exc) {
         sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
         strncpy(msg, exc.what(), sizeof(msg));
     } catch (...) {
         sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
         strncpy(msg,
-            "Unknown error. Kindly ask MADlib developers for a "
-            "debugging session.",
-            sizeof(msg));
+                "Unknown exception was raised.",
+                sizeof(msg));
     }
     
     // This code will only be reached in case of error.

@@ -14,7 +14,7 @@ from time import strftime
 
 # Check python version
 if sys.version_info[:2] < (2, 6):
-    print "ERROR: Too old python version %s. You need 2.6 or greater." \
+    print "ERROR: too old python version (%s). You need 2.6 or greater." \
           % str( sys.version_info[:3]).replace(', ', '.')
     exit(1)
 
@@ -65,12 +65,13 @@ logfile = tmpdir + '/madpack.log'
 # Create a temp dir 
 # @param dir temp directory path
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __make_temp_dir( tmpdir):
-    if not os.path.isdir( tmpdir):
+def __make_log_dir( dir):
+    if not os.path.isdir( dir):
         try:
-            os.makedirs( tmpdir)
+            os.makedirs( dir)
         except:
-            __error( 'Can not create temp directory: %s' % tmpdir, True)
+            print "ERROR: can not create directory: %s. Check permissions." % dir
+            exit(1)    
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Close the log file 
@@ -206,6 +207,7 @@ def __db_install( schema, dbrev):
     # Test if schema is writable
     try:
         cur = dbconn.cursor()
+        cur.execute( "SET client_min_messages=WARNING;")
         cur.execute( "CREATE TABLE %s.__madlib_test_table (A INT);" % schema)
         cur.execute( "DROP TABLE %s.__madlib_test_table;" % schema)
         schema_writable = True
@@ -285,6 +287,7 @@ def __db_rename_schema( from_schema, to_schema):
     __info( "> Renaming schema %s to %s" % (from_schema.upper(), to_schema.upper()), True)        
     try:
         cur = dbconn.cursor()
+        cur.execute( "SET client_min_messages=WARNING;")
         cur.execute( "ALTER SCHEMA %s RENAME TO %s;" % (from_schema, to_schema))
         dbconn.commit();
     except:
@@ -301,6 +304,7 @@ def __db_create_schema( schema):
     __info( "> Creating %s schema" % schema.upper(), True)        
     try:
         cur = dbconn.cursor()
+        cur.execute( "SET client_min_messages=WARNING;")
         cur.execute( "CREATE SCHEMA " + schema + ";")
         cur.close()
         dbconn.commit();
@@ -318,6 +322,7 @@ def __db_create_objects( schema, old_schema):
     try:
         __info( "> Creating %s.MigrationHistory table" % schema.upper(), True)
         cur = dbconn.cursor()
+        cur.execute( "SET client_min_messages=WARNING;")
         cur.execute( "DROP TABLE IF EXISTS %s.migrationhistory" % schema)
         sql = """CREATE TABLE %s.migrationhistory 
                (id serial, version varchar(255), applied timestamp default current_timestamp);""" % schema
@@ -334,6 +339,7 @@ def __db_create_objects( schema, old_schema):
             sql = """INSERT INTO %s.migrationhistory (version, applied) 
                    SELECT version, applied FROM %s.migrationhistory 
                    ORDER BY id;""" % (schema, old_schema)
+            cur.execute( "SET client_min_messages=WARNING;")
             cur.execute( sql)
             dbconn.commit();    
         except:
@@ -344,6 +350,7 @@ def __db_create_objects( schema, old_schema):
     try:
         __info( "> Writing version info in MigrationHistory table", True)
         cur = dbconn.cursor()
+        cur.execute( "SET client_min_messages=WARNING;")
         cur.execute( "INSERT INTO %s.migrationhistory(version) VALUES('%s')" % (schema, rev))
         dbconn.commit();    
     except:
@@ -362,7 +369,7 @@ def __db_create_objects( schema, old_schema):
         
         # Make a temp dir for this module 
         cur_tmpdir = tmpdir + "/" + module
-        __make_temp_dir( cur_tmpdir)
+        __make_log_dir( cur_tmpdir)
 
         # Find the module dir (platform specific or generic)
         if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
@@ -455,7 +462,7 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
             
         runcmd = [ 'psql', '-a',
                     '-v', 'ON_ERROR_STOP=1',
-                    #'-v', 'CLIENT_MIN_MESSAGES=error',
+                    # '-v', 'CLIENT_MIN_MESSAGES=error',
                     '-h', con_args['host'].split(':')[0],
                     '-p', con_args['host'].split(':')[1],
                     '-d', con_args['database'],
@@ -511,6 +518,7 @@ def __db_rollback( drop_schema, keep_schema):
     __info( "> Dropping schema %s" % drop_schema.upper(), verbose)        
     try:
         cur = dbconn.cursor()
+        cur.execute( "SET client_min_messages=WARNING;")
         cur.execute( "DROP SCHEMA %s CASCADE;" % (drop_schema))
         dbconn.commit();
     except:
@@ -763,7 +771,7 @@ def main( argv):
         
         # 2) Do the uninstall/drop     
         if go == 'N':            
-            __info( 'No problem. Nothing droped.', True)
+            __info( 'No problem. Nothing dropped.', True)
             return
             
         elif go == 'Y':
@@ -771,12 +779,14 @@ def main( argv):
             __info( "> dropping schema %s" % schema.upper(), verbose)        
             try:
                 cur = dbconn.cursor()
+                cur.execute( "SET client_min_messages=WARNING;")
                 cur.execute( "DROP SCHEMA %s CASCADE;" % (schema))
                 dbconn.commit();
             except:
                 __error( "Cannot drop schema %s." % schema.upper(), True)         
             dbconn.close() 
-            __info( 'Schema %s has been dropped. MADlib uninstalled.' % schema.upper(), True)
+            __info( 'Schema %s (and all dependent objects) has been dropped.' % schema.upper(), True)
+            __info( 'MADlib is uninstalled.', True)
             
         else:
             return
@@ -788,6 +798,7 @@ def main( argv):
     
         # 1) Compare OS and DB versions. Continue if OS = DB.
         if __get_rev_num( dbrev) != __get_rev_num( rev):
+            __print_revs( rev, dbrev, con_args, schema)
             __info( "Versions do not match. Install-check stopped.", True)
             return
          
@@ -803,7 +814,7 @@ def main( argv):
 
             # Make a temp dir for this module (if doesn't exist)
             cur_tmpdir = tmpdir + '/' + module + '/test'
-            __make_temp_dir( cur_tmpdir)
+            __make_log_dir( cur_tmpdir)
             
             # Find the module dir (platform specific or generic)
             if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
@@ -850,8 +861,12 @@ def main( argv):
 if __name__ == "__main__":
 
     # Open the log
-    __make_temp_dir( tmpdir)
-    log = open( logfile, 'w')
+    __make_log_dir( tmpdir)
+    try:
+        log = open( logfile, 'w')
+    except:
+        print "ERROR: can not create log file: %s." % logfile
+        exit(1)   
 
     # Run main
     try:

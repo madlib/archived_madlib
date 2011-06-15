@@ -43,14 +43,14 @@ if(GREENPLUM_FOUND)
             set(CMAKE_C_FLAGS "-std=gnu99 -include sys/time.h")
         endif(${CMAKE_COMPILER_IS_GNUCC})
         file(GLOB_RECURSE LEGACY_C_FILES_GREENPLUM RELATIVE
-            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/../methods/*.c")
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 
         set_source_files_properties(${LEGACY_C_FILES_GREENPLUM} PROPERTIES
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
         )
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM ${LEGACY_C_FILES_GREENPLUM})
         # sparse_vector.c indirectly includes openssl/ssl.h (via libpq/libpq-be.h)
-        include_directories(${GREENPLUM_BASE_DIR}/include)
+        include_directories(${GREENPLUM_CLIENT_INCLUDE_DIR})
     
     # END Legacy Code
 
@@ -58,7 +58,8 @@ if(GREENPLUM_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
-    include_directories(${GREENPLUM_INCLUDE_DIR})
+    include_directories(${GREENPLUM_SERVER_INCLUDE_DIR})
+    include_directories(${GREENPLUM_ADDITIONAL_INCLUDE_DIRS})
     
     
 # -- 3. Some versions of Greenplum ship with header files that need a patch to
@@ -68,9 +69,6 @@ if(GREENPLUM_FOUND)
     set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
     set(_GP_VERSION "${GREENPLUM_VERSION_MAJOR}.${GREENPLUM_VERSION_MINOR}.${GREENPLUM_VERSION_PATCH}")
 
-    # The first element in GREENPLUM_INCLUDE_DIR is include/server
-    list(GET GREENPLUM_INCLUDE_DIR 0 GREENPLUM_SERVER_INCLUDE_DIR)
-    
     # Version 4.0 of Greenplum and below ship with a utils/builtin.h that has
     # C++ keywords as identifiers. We need to patch this.
     if(${_GP_VERSION} VERSION_LESS "4.1")
@@ -121,6 +119,7 @@ if(GREENPLUM_FOUND)
 
     install(TARGETS ${MADLIB_GREENPLUM_TARGETNAME}
         LIBRARY DESTINATION ports/greenplum/lib
+        COMPONENT greenplum
     )
     
 
@@ -139,10 +138,10 @@ if(GREENPLUM_FOUND)
     # BEGIN Legacy Code
         
         file(GLOB_RECURSE LEGACY_SQL_FILES_GREENPLUM RELATIVE
-            "${CMAKE_SOURCE_DIR}/../methods"
-            "${CMAKE_SOURCE_DIR}/../methods/*.py_in")
+            "${CMAKE_SOURCE_DIR}/methods"
+            "${CMAKE_SOURCE_DIR}/methods/*.py_in")
         foreach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
-            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
+            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/methods/${CURRENT_FILE}" ABSOLUTE)
             set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
             string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
             string(REGEX REPLACE ".py_in\$" ".py" OUTFILE ${OUTFILE})
@@ -168,10 +167,10 @@ if(GREENPLUM_FOUND)
     # BEGIN Legacy Code
         
         file(GLOB_RECURSE LEGACY_SQL_FILES_GREENPLUM RELATIVE
-            "${CMAKE_SOURCE_DIR}/../methods"
-            "${CMAKE_SOURCE_DIR}/../methods/*.sql_in")
+            "${CMAKE_SOURCE_DIR}/methods"
+            "${CMAKE_SOURCE_DIR}/methods/*.sql_in")
         foreach(CURRENT_FILE ${LEGACY_SQL_FILES_GREENPLUM})
-            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/../methods/${CURRENT_FILE}" ABSOLUTE)
+            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/methods/${CURRENT_FILE}" ABSOLUTE)
             set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
             string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
             string(REPLACE "/sql/" "/test/" OUTFILE ${OUTFILE})
@@ -191,6 +190,7 @@ if(GREENPLUM_FOUND)
 
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
         DESTINATION ports/greenplum
+        COMPONENT greenplum
         REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
 

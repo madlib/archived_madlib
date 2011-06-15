@@ -17,15 +17,40 @@ class PGInterface : public AbstractDBInterface {
 
 public:
     PGInterface(const FunctionCallInfo inFCinfo)
-        : fcinfo(inFCinfo) { }
+    :   AbstractDBInterface(
+            new PGOutputStreamBuffer(INFO),
+            new PGOutputStreamBuffer(WARNING)),
+        fcinfo(inFCinfo) {
+        
+        // Observe: This only works because PostgreSQL does not use multiple
+        // threads for UDFs
+        arma::set_log_stream(mArmadilloOut);
+    }
+
+    ~PGInterface() {
+        // We allocated the streambuf objects in the initialization list of
+        // the constructor. Hence, we also have to clean them up.
+        delete out.rdbuf();
+        delete err.rdbuf();
+    }
     
     AllocatorSPtr allocator(
         AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction);
     
 private:
+    class PGOutputStreamBuffer : public AbstractOutputStreamBuffer<char> {
+    public:
+        PGOutputStreamBuffer(int inErrorLevel) : mErrorLevel(inErrorLevel) { }
+    
+        void output(char *inMsg, uint32_t inLength);
+        
+    private:
+        int mErrorLevel;
+    };
+
     /**
-     * The name is chosen so that PostgreSQL macros like PG_NARGS can be
-     * used.
+     * @internal The name is chosen so that PostgreSQL macros like PG_NARGS can
+     *           be used.
      */
     const FunctionCallInfo fcinfo;
 };

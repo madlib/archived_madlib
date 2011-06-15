@@ -19,5 +19,5 @@ add_custom_target(configFiles ALL DEPENDS ${CONFIG_TARGET_FILES})
 
 install(FILES ${CONFIG_TARGET_FILES}
     DESTINATION config
+    COMPONENT core
 )
-
