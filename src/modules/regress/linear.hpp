@@ -15,6 +15,9 @@ namespace modules {
 
 namespace regress {
 
+/**
+ * @brief Linear-regression functions
+ */
 struct LinearRegression {
     enum What { kCoef, kRSquare, kTStats, kPValues };
     

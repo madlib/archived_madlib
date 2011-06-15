@@ -59,6 +59,9 @@
 
 namespace madlib {
 
+/**
+ * @brief Database-abstraction-layer classes (independent of a particular DBMS)
+ */
 namespace dbal {
 
 // Forward declarations
@@ -163,5 +166,11 @@ namespace dbal {
 } // namespace dbal
 
 } // namespace madlib
+
+/**
+ * @namespace madlib::dbconnector
+ *
+ * @brief Connector classes for specific DBMSs
+ */
 
 #endif

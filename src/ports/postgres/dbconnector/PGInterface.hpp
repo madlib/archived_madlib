@@ -12,6 +12,9 @@ namespace madlib {
 
 namespace dbconnector {
 
+/**
+ * @brief PostgreSQL database interface
+ */
 class PGInterface : public AbstractDBInterface {
     friend class PGAllocator;
 
@@ -38,6 +41,10 @@ public:
         AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction);
     
 private:
+    /**
+     * @brief Stream buffer that dispatches all output to PostgreSQL's ereport
+     *        function
+     */
     class PGOutputStreamBuffer : public AbstractOutputStreamBuffer<char> {
     public:
         PGOutputStreamBuffer(int inErrorLevel) : mErrorLevel(inErrorLevel) { }

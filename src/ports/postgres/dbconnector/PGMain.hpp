@@ -24,6 +24,12 @@ namespace madlib {
 
 namespace dbconnector {
 
+/**
+ * @brief C++ entry point for calls from the database
+ *
+ * The DBMS calls an export "C" function defined in PGMain.cpp, which calls
+ * this function.
+ */
 inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
     int sqlerrcode;
     char msg[2048];
