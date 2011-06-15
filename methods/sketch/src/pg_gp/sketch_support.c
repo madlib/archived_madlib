@@ -30,25 +30,6 @@
 
 /*
 @addtogroup sketches
-@todo
-- Provide a relatively portable SQL-only implementation of CountMin.  (FM bit manipulation won't port well regardless).
-- Provide a python wrapper to the CountMin sketch output, and write scalar functions in python.
-
-
-@bug
-- <i>Equality-Testing Corner Case:</i>
-For hashing, we convert values into text using the type's text output routine.
-In general this should work fine, but there is the possibility that two
-different values in the domain could have the same textual representation.
-In these corner cases we will see incorrect counts for those values.
-The proper way to do this is not to use the "outfunc", but rather to look up the
-type-specific hash function as is done internally for hashjoin, hash indexes,
-etc.  The basic pattern for looking up the hash function in Postgres
-internals is something like the following:
-@code
-get_sort_group_operators(dtype, false, true, false, &ltOpr, &eqOpr, &gtOpr);
-success = get_op_hash_functions(eqOpr, result, NULL));
-@endcode
 */
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
@@ -299,7 +280,7 @@ bit_print(uint8 *c, int numbytes)
 
 /*!
  * Run the datum through an md5 hash.  No need to special-case variable-length types,
- * we'll just has their length header too.
+ * we'll just hash their length header too.
  * The POSTGRES code for md5 returns a bytea with a textual representation of the
  * md5 result.  We then convert it back into binary.
  * \param dat a Postgres Datum
@@ -315,11 +296,27 @@ bytea *sketch_md5_bytea(Datum dat, Oid typOid)
     bool byval = get_typbyval(typOid);
     int len = ExtractDatumLen(dat, get_typlen(typOid), byval);
     void *datp = DatumExtractPointer(dat, byval);
+    /* 
+     * it's very common to be hashing 0 for countmin sketches.  Rather than 
+     * hard-code it here, we cache on first lookup.  In future a bigger cache here
+     * would be nice.
+     */
+    static bool zero_cached = false;
+    static char md5_of_0_mem[MD5_HASHLEN+VARHDRSZ];
+    static bytea *md5_of_0 = (bytea *) &md5_of_0_mem;
         
-    pg_md5_hash(datp, len, outbuf);        
+    if (byval && len == sizeof(int64) && *(int64 *)datp == 0 && zero_cached) {
+        return md5_of_0;
+    }
+    else
+        pg_md5_hash(datp, len, outbuf);        
     
     hex_to_bytes(outbuf, (uint8 *)VARDATA(out), MD5_HASHLEN*2);
     SET_VARSIZE(out, MD5_HASHLEN+VARHDRSZ);
+    if (byval && len == sizeof(int64) && *(int64 *)datp == 0 && !zero_cached) {
+        zero_cached = true;
+        memcpy(md5_of_0, out, MD5_HASHLEN+VARHDRSZ);
+    }
     return out;
 }
 
