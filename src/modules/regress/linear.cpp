@@ -2,7 +2,7 @@
  *
  * @file linear.cpp
  *
- * @brief Linear-Regression functions
+ * @brief Linear-regression functions
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -145,9 +145,9 @@ AnyValue LinearRegression::pValuesFinal(AbstractDBInterface &db, AnyValue args) 
 /**
  * @brief Perform the linear-regression transition step
  * 
- * We update: the number of rows $n$, the partial sums \f$ \sum_{i=1}^n y_i \f$
- * and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix \f$ X^T X \F$, and the vector
- * \f$ X^T \boldsymbol y \f$.
+ * We update: the number of rows \f$ n \f$, the partial sums
+ * \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
+ * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
  */
 AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
     AnyValue::iterator arg(args);

@@ -16,15 +16,29 @@ if(POSTGRESQL_FOUND)
     message(STATUS "*** Adding PostgreSQL to target list...")
     message(STATUS "***")
 
+    add_library(postgres STATIC IMPORTED)
+    set_target_properties(postgres PROPERTIES
+        IMPORTED_LOCATION "${POSTGRESQL_EXECUTABLE}"
+    )
+
     set(MAD_DBAL_SOURCES_POSTGRES
         dbconnector/PGAbstractValue.cpp
-        dbconnector/PGCompatibility.cpp
-        dbconnector/PGNewDelete.cpp
+        dbconnector/PGAbstractValue.hpp
         dbconnector/PGAllocator.cpp
+        dbconnector/PGAllocator.hpp
+        dbconnector/PGArrayHandle.hpp
+        dbconnector/PGCommon.hpp
+        dbconnector/PGCompatibility.cpp
+        dbconnector/PGCompatibility.hpp
         dbconnector/PGInterface.cpp
+        dbconnector/PGInterface.hpp
         dbconnector/PGMain.cpp
+        dbconnector/PGMain.hpp
+        dbconnector/PGNewDelete.cpp
         dbconnector/PGToDatumConverter.cpp
+        dbconnector/PGToDatumConverter.hpp
         dbconnector/PGValue.cpp
+        dbconnector/PGValue.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_POSTGRES

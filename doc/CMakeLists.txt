@@ -2,8 +2,9 @@
 # MADlib Documentation
 # ------------------------------------------------------------------------------
 
-set(DOXYGEN_INPUT "\"${CMAKE_SOURCE_DIR}/src\" \"${CMAKE_SOURCE_DIR}/methods\"")
+set(DOXYGEN_INPUT "\"${CMAKE_SOURCE_DIR}/src/dbal/dbal.hpp\" \"${CMAKE_SOURCE_DIR}/src/modules\" \"${CMAKE_SOURCE_DIR}/src/ports\" \"${CMAKE_SOURCE_DIR}/src/utils\" \"${CMAKE_SOURCE_DIR}/methods\"")
 set(DOXYGEN_USE_MATHJAX NO CACHE BOOL "In user documentation, render LaTeX formulas using MathJax")
+set(DOXYGEN_INCLUDE_PATH "\"${CMAKE_SOURCE_DIR}/src\" \"${CMAKE_SOURCE_DIR}/src/ports/linux\"")
 
 # Note: Type PATH implies that the value is either a relative path to
 # ${CMAKE_CURRENT_BINARY_DIR} (and CMake generates the full path) or as an
