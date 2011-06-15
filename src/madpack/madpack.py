@@ -798,6 +798,7 @@ def main( argv):
     
         # 1) Compare OS and DB versions. Continue if OS = DB.
         if __get_rev_num( dbrev) != __get_rev_num( rev):
+            __print_revs( rev, dbrev, con_args, schema)
             __info( "Versions do not match. Install-check stopped.", True)
             return
          
