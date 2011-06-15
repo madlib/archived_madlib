@@ -403,43 +403,45 @@ DECLARE
 	sv MADLIB_SCHEMA.svm_support_vector;
 BEGIN
 	FOR i IN 1..nsvs LOOP 
-	    sv.id := modelname;
-       	    sv.weight := weights[i];
-	    idx := ind_dim * (i-1);
-	    sv.sv := individuals[(idx+1):(idx+ind_dim)]; 
-	    RETURN NEXT sv;
-     	END LOOP;
+        sv.id := modelname;
+        sv.weight := weights[i];
+        idx := ind_dim * (i-1);
+        sv.sv := individuals[(idx+1):(idx+ind_dim)]; 
+        RETURN NEXT sv;
+    END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
 -- This function stores a MADLIB_SCHEMA.svm_model_rec stored in model_temp_table into the model_table.
 --
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_store_model(model_temp_table TEXT, model_name TEXT, model_table TEXT) RETURNS VOID AS $$
+
 	sql = "SELECT COUNT(*) FROM " + model_temp_table + " WHERE id = \'" + model_name + "\'";
 	temp = plpy.execute(sql);
 	if (temp[0]['count'] == 0):
 	    plpy.error("No support vector model with name " + model_name + " found.");
 
-	sql = "SELECT (model).ind_dim FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
-	myind_dim_t = plpy.execute(sql);
-	myind_dim = myind_dim_t[0]['ind_dim'];
-
-	sql = "SELECT (model).nsvs FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
-	mynsvs_t = plpy.execute(sql);
-	mynsvs = mynsvs_t[0]['nsvs'];
-
-	sql = "SELECT (model).weights FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
-	myweights_t = plpy.execute(sql);
-	myweights = myweights_t[0]['weights'];
-
-	sql = "SELECT (model).individuals FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
-	myindividuals_t = plpy.execute(sql);
-	myindividuals = myindividuals_t[0]['individuals'];
+	sql = "SELECT (model).ind_dim, (model).nsvs, (model).weights, (model).individuals" \
+	       + " FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
+	rv = plpy.execute(sql);
+	myind_dim = rv[0]['ind_dim'];
+	mynsvs = rv[0]['nsvs'];
+	myweights = rv[0]['weights'];
+	myindividuals = rv[0]['individuals'];
 
 	if (mynsvs == 0):
 	    plpy.error("The specified model has no support vectors and therefore not processed");
 
-	sql = "INSERT INTO " + model_table + " (SELECT * FROM MADLIB_SCHEMA.__svm_transform_rec('" + model_name + "', " + str(myind_dim) + ", " + str(mynsvs) + ", '" + str(myweights) + "', '" + str(myindividuals) + "'))";
+	sql =  "INSERT INTO " + model_table + " \
+            SELECT * \
+            FROM \
+                madlib.__svm_transform_rec ( \
+                    '" + model_name + "' \
+                    , (SELECT (model).ind_dim FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
+                    , (SELECT (model).nsvs FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
+                    , (SELECT (model).weights FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
+                    , (SELECT (model).individuals FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
+                )"
 	plpy.execute(sql);
 
 $$ LANGUAGE plpythonu;
@@ -469,7 +471,7 @@ MADLIB_SCHEMA.svm_predict(model_table text, ind float8[], kernel_func text) RETU
     if (nmodels_rec[0]['count'] <> 1):
         plpy.error("Error in MADLIB_SCHEMA.svm_predict(): the table contains an ensemble of models");
 
-    ret = plpy.execute("SELECT sum(weight * " + kernel_func + "(sv, \'" + str(ind) + "\')) FROM " + model_table);
+    ret = plpy.execute("SELECT sum(weight * " + kernel_func + "(sv, array[" + str(ind)[1:-1] + "]::float8[])) FROM " + model_table);
     if (ret.nrows() == 0):
        plpy.error("Error executing svm_predict()");    
     return ret[0]['sum'];
@@ -492,13 +494,15 @@ MADLIB_SCHEMA.svm_predict_combo(model_table text, ind float8[], kernel_func text
     nmodels = nmodels_rec[0]['count'];
 
     if (nmodels <= 1):
-        plpy.error("Error in MADLIB_SCHEMA.svm_predict_combo(): not an ensemble of models");
+        plpy.info("MADLIB_SCHEMA.svm_predict_combo(): not an ensemble of models, will use a single prediction");
+        pred = plpy.execute("select * from MADLIB_SCHEMA.svm_predict('" + model_table + "', array[" + str(ind)[1:-1] + "], '" + kernel_func + "')")
+        return [( model_table, str(pred[0]['svm_predict']) )]
 
     sumpr = 0.0;
     ret = [];
 
     for i in range(0,nmodels):
-        pred = plpy.execute("select sum(weight * " + kernel_func + "(sv, \'" + str(ind) + "\')) from " + model_table + " where id = '" + model_table + str(i) + "'");
+        pred = plpy.execute("select sum(weight * " + kernel_func + "(sv, array[" + str(ind)[1:-1] + "])) from " + model_table + " where id = '" + model_table + str(i) + "'");
         if (pred.nrows() == 0):
             plpy.error("Error in MADLIB_SCHEMA.svm_predict_combo(): failed to compute prediction for model '" + model_table + str(i) + "'.");
 
