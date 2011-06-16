@@ -1756,6 +1756,62 @@ svec_nonbase_positions(PG_FUNCTION_ARGS) {
     PG_RETURN_ARRAYTYPE_P(pgarray);
 }
 
+Datum svec_nonbase_values(PG_FUNCTION_ARGS);
+
+PG_FUNCTION_INFO_V1(svec_nonbase_values);
+
+Datum
+svec_nonbase_values(PG_FUNCTION_ARGS) {
+	SvecType *svec  = PG_GETARG_SVECTYPE_P_COPY(0);
+	float8 base_val = PG_GETARG_FLOAT8(1);
+	float8 *result = NULL;
+	int result_size = 0;
+	SparseData sdata = sdata_from_svec(svec);
+	char *i_ptr;
+	int fill_count = 0;
+	int64 *rle_index;
+	ArrayType *pgarray;
+	
+	float8 * vals = (float8 *)sdata->vals->data;
+	
+	if (sdata->index->data != NULL) //Sparse vector
+	{
+		/*
+	 	 * We need to create an uncompressed run length index to
+	 	 * feed to the partition select routine
+	 	 */
+		rle_index = (int64 *)palloc(sizeof(int64)*(sdata->unique_value_count));
+		i_ptr = sdata->index->data;
+		for (int i=0;i<sdata->unique_value_count;i++,i_ptr+=int8compstoragesize(i_ptr))
+		{
+			rle_index[i] = compword_to_int8(i_ptr);
+			if(memcmp(&base_val,&vals[i],sizeof(float8))){
+				result_size+=rle_index[i];
+			}
+		}
+		/*
+		 now we have array of values and array of runs (vals,rle_index and size sdata->unique_value_count), need to find positions that 
+		 are not base value
+		 */
+		result = (float8 *)palloc(sizeof(int64)*(result_size));
+		for (int i=0;i<sdata->unique_value_count;i++,i_ptr+=int8compstoragesize(i_ptr))
+		{
+			if(memcmp(&base_val,&vals[i],sizeof(float8))){
+				for(int j = 0; j < rle_index[i]; ++j){
+					result[fill_count] = vals[i];
+					fill_count++;
+				}
+			}
+		}
+		
+		pfree(rle_index);
+	}
+	pgarray = construct_array((Datum *)result,
+							  result_size, FLOAT8OID,
+							  sizeof(float8),true,'d');
+    PG_RETURN_ARRAYTYPE_P(pgarray);
+}
+
 PG_FUNCTION_INFO_V1(svec_hash);
 /**
  *  svec_hash - computes a hash value of svec
