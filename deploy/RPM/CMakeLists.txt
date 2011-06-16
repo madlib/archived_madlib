@@ -22,5 +22,5 @@ if(EXISTS "/etc/rpm/macros.python26")
     # process uses Python 2.6.
     # See https://bugzilla.redhat.com/show_bug.cgi?id=573151#c9 for more
     # information.
-    CPACK_RPM_SPEC_MORE_DEFINE="%define __os_install_post %{__python26_os_install_post}"
+    set(CPACK_RPM_SPEC_MORE_DEFINE "%define __os_install_post %{__python26_os_install_post}" PARENT_SCOPE)
 endif(EXISTS "/etc/rpm/macros.python26")
