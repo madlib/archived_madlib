@@ -11,7 +11,7 @@
 set(CPACK_RPM_PACKAGE_ARCHITECTURE x86_64 PARENT_SCOPE)
 set(CPACK_RPM_PACKAGE_LICENSE "New BSD License" PARENT_SCOPE)
 set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries" PARENT_SCOPE)
-set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.4, lapack >= 3.0, m4 >= 1.4" PARENT_SCOPE)
+set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.6, lapack >= 3.0, m4 >= 1.4" PARENT_SCOPE)
 
 if(EXISTS "/etc/rpm/macros.python26")
     # On RH 5/CentOS 5, /usr/bin/python is Python 2.4. Unfortunately,
