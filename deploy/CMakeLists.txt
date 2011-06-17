@@ -30,9 +30,9 @@ set(CPACK_PACKAGE_VERSION ${MADLIB_VERSION_STRING})
 set(CPACK_PACKAGE_VERSION_MAJOR ${MADLIB_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${MADLIB_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
-set(CPACK_PACKAGE_DEFAULT_LOCATION "/usr/local")
-set(CPACK_PACKAGING_INSTALL_PREFIX "/madlib")
 
+# CPACK_PACKAGING_INSTALL_PREFIX has to be set in the generator-specific
+# section!
 
 # -- Set settings for specific package generators ------------------------------
 
