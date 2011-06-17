@@ -1,158 +1,222 @@
---------------------------------------------------------------------------------
--- Linear Regression tests
---------------------------------------------------------------------------------
+﻿---------------------------------------------------------------------------
+-- Setup
+---------------------------------------------------------------------------
+--SET client_min_messages=warning;
 
-DROP SCHEMA IF EXISTS madlib_bayes_installcheck CASCADE;
-CREATE SCHEMA madlib_bayes_installcheck;
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
+CREATE SCHEMA madlib_installcheck;
 
-SET search_path TO madlib_bayes_installcheck;
+-- Adjust SEARCH_PATH
+set search_path=madlib_installcheck,MADLIB_SCHEMA,"$user",public;
 
---------------------------------------------------------------------------------
--- Create some data
---------------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- Test
+---------------------------------------------------------------------------
+-- functions to create some data
+CREATE OR REPLACE FUNCTION fill_feature(pre_class INT, p FLOAT, total INT)
+RETURNS FLOAT AS $$
+declare
+	result FLOAT;
+	thres INT;
+begin
+	thres = total*p;
 
--- No notice message while creating table (creating implicit index).
-SET client_min_messages = error;
-CREATE TABLE bayes
-(
-	id integer NOT NULL,
-	class INTEGER,
-	attributes INTEGER[],
-	CONSTRAINT pk_bayes PRIMARY KEY (id)
-);
-RESET client_min_messages;
+	IF pre_class <= thres THEN
+		result = 1;
+	ELSE
+		result = 0;
+	END IF;
+	RETURN result;
+end
+$$ language plpgsql;
 
-COPY bayes (id, class, attributes) FROM stdin;
-1	1	{1, 2, 3}
-3	1	{1, 4, 3}
-5	2	{0, 2, 2}
-2	1	{1, 2, 1}
-4	2	{1, 2, 2}
-6	2	{0, 1, 3}
-\.
+CREATE OR REPLACE FUNCTION fill_feature3(pre_class INT, p1 FLOAT, p2 FLOAT, total INT)
+RETURNS FLOAT AS $$
+declare
+	result FLOAT;
+	thres1 INT;
+	thres2 INT;
+begin
+	thres1 = total*p1;
+	thres2 = total*(p2+p1);
 
-SET client_min_messages = error;
-CREATE TABLE toclassify
-(
-	id SERIAL NOT NULL,
-	attributes INTEGER[],
-	CONSTRAINT pk_toclassify PRIMARY KEY (id)
-);
-RESET client_min_messages;
+	IF pre_class <= thres1 THEN
+		result = 2;
+	ELSIF pre_class <= thres2 THEN
+		result = 1;
+	ELSE
+		result = 0;
+	END IF;
+	RETURN result;
+end
+$$ language plpgsql;
 
-COPY toclassify (attributes) FROM stdin;
-{0, 2, 1}
-{1, 2, 3}
-\.
+-- test function
+CREATE FUNCTION install_test() RETURNS VOID AS $$ 
+declare
+	num1 INT := 10;
+	num2 INT := 10;	
 
---------------------------------------------------------------------------------
--- Run some code
---------------------------------------------------------------------------------
-
--- Preprocess training data: Precompute feature probabilities and class priors
-SET client_min_messages = error;
-SELECT MADLIB_SCHEMA.create_nb_prepared_data_tables('bayes', 'class', 'attributes', 3, 'nb_feature_probs', 'nb_class_priors');
-RESET client_min_messages;
-
--- Classify the features in table 'toclassify' using preprocessed training data
-SELECT MADLIB_SCHEMA.create_nb_classify_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_fast');
-
--- Classify the features in table 'toclassify' without preprocessed training data
-SELECT MADLIB_SCHEMA.create_nb_classify_view('bayes', 'class', 'attributes', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_slow');
-
--- Compute all class probabilities for the features in table 'toclassify' using
--- preprocessed training data
-SELECT MADLIB_SCHEMA.create_nb_probs_view('nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_fast');
-
--- Compute all class probabilities for the features in table 'toclassify' without
--- preprocessed training data
-SELECT MADLIB_SCHEMA.create_nb_probs_view('bayes', 'class', 'attributes', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_slow');
-
--- Create a classify function nb_classify_fast: Attributes -> Classes, using
--- preprocessed training data
-SELECT MADLIB_SCHEMA.create_nb_classify_fn('nb_feature_probs', 'nb_class_priors', 3, 'nb_classify_fast');
-
--- Create a classify function nb_classify_slow: Attributes -> Classes, without
--- preprocessed training data
-SELECT MADLIB_SCHEMA.create_nb_classify_fn('bayes', 'class', 'attributes', 3, 'nb_classify_slow');
-
-/*
--- Greenplum Naive Bayes
-
--- Create intermediate views as needed for Naive Bayes implementation inherited from Greenplum
-CREATE VIEW class_example_unpivot AS
-SELECT
-	id,
-	'C' || class AS class,
-	unnest(array['A1', 'A2', 'A3']) AS attr,
-	unnest(attributes) AS value
-FROM bayes;
-
-CREATE TABLE class_example_nb_training AS
-SELECT
-	attr,
-	value,
-	MADLIB_SCHEMA.pivot_sum(array['C1', 'C2'], class, 1::BIGINT) AS class_count
-FROM
-	class_example_unpivot
-GROUP BY attr, value;
---DISTRIBUTED by (attr);
-
-CREATE VIEW class_example_nb_classify AS
-SELECT
-	attr,
-	value,
-	class_count,
-	array['C1', 'C2'] AS classes,
-	MADLIB_SCHEMA.MADLIB_SCHEMA.sum(class_count) OVER (wa)::INTEGER[] AS class_total,
-	attr_count
-
-	--	PostgreSQL does not support DISTINCT to be used within the function argument list
-	--	http://www.postgresql.org/docs/9/interactive/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
-	--  so we cannot use the following (taken from the Greenplum Admin Guide)
-	--	count(DISTINCT value) OVER (wa) AS attr_count
-	--
-	--  However, Greenplum does not support correlated subquery. So we cannot just use
-	--  a subquery like
-	--  ( SELECT count(DISTINCT value) FROM class_example_nb_training AS sub WHERE
-	--    sub.attr = training.attr FROM class_example_nb_training AS training )
-	--  either. We need to flatten the subquery manualy.
-
-FROM
-	class_example_nb_training AS training
+	result1 INT;	
+	count1 INT;
+	tempvar INT[];
 	
-	--  Self-join for the aforementioned resons...
-	INNER JOIN
-	(
+begin
+	-- prepare training data: equal priors
+	DROP TABLE IF EXISTS data CASCADE;	
+	CREATE TABLE data( class INT, attrib FLOAT[] );
+	INSERT INTO data SELECT 1, ARRAY[fill_feature(id,0.3,num1),fill_feature(id,0.8,num1)] FROM generate_series(1,num1) as id;
+	INSERT INTO data SELECT 2, ARRAY[fill_feature(id,0.5,num2),fill_feature(id,0.5,num2)] FROM generate_series(1,num2) as id;
+
+	-- prepare testing data
+	DROP TABLE IF EXISTS data_test CASCADE;
+	CREATE TABLE data_test( id INT, attrib INT[], prob FLOAT[] );
+	INSERT INTO data_test VALUES (1,'{0,0}','{0.4,0.6}');
+	INSERT INTO data_test VALUES (2,'{0,1}','{0.66666,0.33333}');
+	INSERT INTO data_test VALUES (3,'{1,0}','{0.25,0.75}');
+	INSERT INTO data_test VALUES (4,'{1,1}','{0.5,0.5}');
+
+	-- prepare true results for testing data
+	DROP TABLE IF EXISTS data_results;
+	CREATE TABLE data_results AS
 		SELECT
-			attr,
-			count(DISTINCT value) as attr_count
-		FROM class_example_nb_training AS sub
-		GROUP BY attr
-	) AS attr_count
-	USING (attr)
+			id,
+			unnest('{1,2}'::INT[]) as class,
+			unnest(prob) as prob
+		FROM data_test;
 
-WINDOW wa AS (PARTITION BY attr); */
+	-- Process training
+	DROP TABLE IF EXISTS probs CASCADE;
+	DROP TABLE IF EXISTS priors CASCADE;
+	PERFORM MADLIB_SCHEMA.create_nb_prepared_data_tables('data','class','attrib',2,'probs','priors');
+	-- Classify
+	DROP VIEW IF EXISTS results;
+	PERFORM MADLIB_SCHEMA.create_nb_classify_view('probs','priors','data_test','id','attrib',2,'results');
+	-- Compute posteriors
+	DROP VIEW IF EXISTS probs_view;
+	PERFORM MADLIB_SCHEMA.create_nb_probs_view('probs','priors','data_test','id','attrib',2,'probs_view');
 
--- Now test created objects
+	-- Check the results
+	SELECT * INTO result1,count1 FROM
+		(SELECT sum( abs( (data_results.prob*100)::INT - (probs_view.nb_prob*100)::INT) ),count(*) 
+		FROM data_results INNER JOIN probs_view 
+		ON (data_results.id = probs_view.key AND data_results.class = probs_view.class)) AS t;
 
-SELECT * FROM nb_feature_probs ORDER BY class, attr, value;
+	IF (result1 != 0) OR (count1 != 8) THEN
+		RAISE EXCEPTION 'Incorrect probabilities';
+	END IF;
 
-SELECT * FROM nb_class_priors ORDER BY class;
+	-- Check classification: case {1,1} should have equal posteriors, so should return 2 classes
+	SELECT * INTO tempvar
+		FROM (SELECT nb_classification FROM results WHERE key=4) as a;
 
-SELECT * FROM nb_classify_view_fast ORDER BY key;
+	SELECT count(*) INTO result1
+		FROM (SELECT unnest(tempvar)) as b;
 
-SELECT * FROM nb_classify_view_slow ORDER BY key;
+	IF (result1 != 2) THEN
+		RAISE EXCEPTION 'Incorrect classification';
+	END IF;		
 
-SELECT * FROM nb_probs_view_fast ORDER BY key, class;
+	-- Repeat using function w/out preprocessing priors
+	-- Classify
+	DROP VIEW IF EXISTS results;
+	PERFORM MADLIB_SCHEMA.create_nb_classify_view('data','class','attrib','data_test','id','attrib',2,'results');
+	-- Compute posteriors
+	DROP VIEW IF EXISTS probs_view;
+	PERFORM MADLIB_SCHEMA.create_nb_probs_view('data','class','attrib','data_test','id','attrib',2,'probs_view');
 
-SELECT * FROM nb_probs_view_slow ORDER BY key, class;
+	-- 3 class case
+	INSERT INTO data SELECT 3, ARRAY[fill_feature3(id,0.3,0.5,num1),fill_feature(id,0.6,num1)] FROM generate_series(1,num1) as id;
 
-m4_ifdef( `POSTGRES', `SELECT *, nb_classify_fast(attributes, 1) FROM toclassify ORDER BY id;')
+	DROP TABLE IF EXISTS data_test CASCADE;
+	CREATE TABLE data_test( id INT, attrib INT[], prob FLOAT[] );
+	INSERT INTO data_test VALUES (1,'{0,0}','{0.32,0.48,0.2}');
+	INSERT INTO data_test VALUES (2,'{0,1}','{0.5581,0.279,0.1627}');
+	INSERT INTO data_test VALUES (3,'{1,0}','{0.1538,0.4615,0.3846}');
+	INSERT INTO data_test VALUES (4,'{1,1}','{0.3157,0.3157,0.3684}');
+	INSERT INTO data_test VALUES (5,'{2,0}','{0.1034,0.2068,0.6897}');
+	INSERT INTO data_test VALUES (6,'{2,1}','{0.2093,0.1395,0.6511}');
 
-m4_ifdef( `POSTGRES', `SELECT *, nb_classify_slow(attributes, 0) FROM toclassify ORDER BY id;')
+	DROP TABLE IF EXISTS data_results;
+	CREATE TABLE data_results AS
+		SELECT
+			id,
+			unnest('{1,2,3}'::INT[]) as class,
+			unnest(prob) as prob
+		FROM data_test;
 
---------------------------------------------------------------------------------
+	DROP TABLE IF EXISTS probs CASCADE;
+	DROP TABLE IF EXISTS priors CASCADE;
+	PERFORM create_nb_prepared_data_tables('data','class','attrib',2,'probs','priors');
+	
+	DROP VIEW IF EXISTS results;
+	PERFORM create_nb_classify_view('probs','priors','data_test','id','attrib',2,'results');
+	
+	DROP VIEW IF EXISTS probs_view;
+	PERFORM create_nb_probs_view('probs','priors','data_test','id','attrib',2,'probs_view');
+	
+	SELECT * INTO result1,count1 FROM
+		(SELECT sum( abs( (data_results.prob*100)::INT - (probs_view.nb_prob*100)::INT) ),count(*) 
+		FROM data_results INNER JOIN probs_view 
+		ON (data_results.id = probs_view.key AND data_results.class = probs_view.class)) AS t;
+
+	IF (result1 != 0) OR (count1 != 18) THEN
+		RAISE EXCEPTION 'Incorrect probabilities for 3-class, got %',result1;
+	END IF;
+
+	-- Unequal prior probabilities
+	DROP TABLE IF EXISTS data CASCADE;	
+	CREATE TABLE data( class INT, attrib FLOAT[] );
+	INSERT INTO data SELECT 1, ARRAY[fill_feature(id,0.3,num1*2),fill_feature(id,0.8,num1*2)] FROM generate_series(1,num1*2) as id;
+	INSERT INTO data SELECT 2, ARRAY[fill_feature(id,0.5,num2),fill_feature(id,0.5,num2)] FROM generate_series(1,num2) as id;
+
+	-- prepare testing data
+	DROP TABLE IF EXISTS data_test CASCADE;
+	CREATE TABLE data_test( id INT, attrib INT[], prob FLOAT[] );
+	INSERT INTO data_test VALUES (1,'{0,0}','{0.5535,0.4464}');
+	INSERT INTO data_test VALUES (2,'{0,1}','{0.8082,0.1917}');
+	INSERT INTO data_test VALUES (3,'{1,0}','{0.3664,0.6335}');
+	INSERT INTO data_test VALUES (4,'{1,1}','{0.6629,0.337}');
+
+	-- prepare true results for testing data
+	DROP TABLE IF EXISTS data_results;
+	CREATE TABLE data_results AS
+		SELECT
+			id,
+			unnest('{1,2}'::INT[]) as class,
+			unnest(prob) as prob
+		FROM data_test;
+
+	-- Process training
+	DROP TABLE IF EXISTS probs CASCADE;
+	DROP TABLE IF EXISTS priors CASCADE;
+	PERFORM MADLIB_SCHEMA.create_nb_prepared_data_tables('data','class','attrib',2,'probs','priors');
+	-- Classify
+	DROP VIEW IF EXISTS results;
+	PERFORM MADLIB_SCHEMA.create_nb_classify_view('probs','priors','data_test','id','attrib',2,'results');
+	-- Compute posteriors
+	DROP VIEW IF EXISTS probs_view;
+	PERFORM MADLIB_SCHEMA.create_nb_probs_view('probs','priors','data_test','id','attrib',2,'probs_view');
+
+	-- Check the results
+	SELECT * INTO result1,count1 FROM
+		(SELECT sum( abs( (data_results.prob*100)::INT - (probs_view.nb_prob*100)::INT) ),count(*) 
+		FROM data_results INNER JOIN probs_view 
+		ON (data_results.id = probs_view.key AND data_results.class = probs_view.class)) AS t;
+
+	IF (result1 != 0) OR (count1 != 8) THEN
+		RAISE EXCEPTION 'Incorrect probabilities';
+	END IF;
+	
+	RAISE INFO 'Naive Bayes install checks passed';
+	RETURN;
+	
+end 
+$$ language plpgsql;
+
+SELECT install_test();
+
+---------------------------------------------------------------------------
 -- Cleanup
---------------------------------------------------------------------------------
-DROP SCHEMA IF EXISTS madlib_bayes_installcheck CASCADE;
+---------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;

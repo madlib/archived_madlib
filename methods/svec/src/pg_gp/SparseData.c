@@ -24,6 +24,8 @@
 #include "access/htup.h"
 #include "catalog/pg_proc.h"
 
+void* array_pos_ref = NULL;
+
 /** 
  * @return A SparseData structure with allocated empty dynamic 
  * StringInfo of unknown initial sizes.
@@ -236,8 +238,8 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	return sdata;
 }
 
-int compar(void *array, const void *i, const void *j){
-	return (int)((int64*)array)[*(int*)i] - ((int64*)array)[*(int*)j];
+int compar(const void *i, const void *j){
+	return (int)((int64*)array_pos_ref)[*(int*)i] - ((int64*)array_pos_ref)[*(int*)j];
 }
 
 /**
@@ -260,7 +262,10 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 	for(int i = 0; i < count; ++i){
 		index[i] = i;
 	}
-	qsort_r(index, count, sizeof(int), array_pos, compar);
+	
+	/* this is a temp solutoin that will be in place only until qsort_r is a standard llibrary */
+	array_pos_ref = array_pos;
+	qsort(index, count, sizeof(int), compar);
 	
 	sdata->type_of_data=type_of_data;
 	if(array_pos[index[0]] > 1){

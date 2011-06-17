@@ -144,7 +144,6 @@ Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 void gp_extract_feature_histogram_errout(char *msg) {
 	ereport(ERROR,
 		(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-		 errOmitLocation(true),
 		 errmsg(
 		"%s\ngp_extract_feature_histogram internal error.",msg)));
 }
