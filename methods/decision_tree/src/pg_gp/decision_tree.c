@@ -34,10 +34,14 @@ Datum hash_array( PG_FUNCTION_ARGS)
 
 static float8 ChiSquareStatistic(float8* values, int from, int size, float8 fract, float8 total){
 	int i = from, j = 1;
-	float8 mult = fract/total;
+	float8 mult = 0;
 	float8 estimate = 0;
 	float8 result = 0;
 	
+	if((fract == 0.0)||(total == 0)){
+		return 0;
+	}
+	mult = fract/total;
 	for(; i < (size+from); ++i, ++j){
 		estimate = ((float8)values[j])*mult;
 		if(estimate > 0){
@@ -49,9 +53,13 @@ static float8 ChiSquareStatistic(float8* values, int from, int size, float8 frac
 
 static float entropyWeighted(int* values, int size, float fract, float total){
 	int i = 0;
-	float mult = fract/total;
+	float mult = 0;
 	float result = 0;
 	
+	if((fract == 0.0)||(total == 0)){
+		return 0;
+	}
+	mult = fract/total;
 	for(; i < size; ++i){
 		if(values[i] > 0){
 			result -= (values[i]/fract)*log(values[i]/fract);
@@ -62,9 +70,13 @@ static float entropyWeighted(int* values, int size, float fract, float total){
 
 static float8 entropyWeightedFloat(float8* values, int from, int size, float8 fract, float8 total){
 	int i = from;
-	float8 mult = fract/total;
+	float8 mult = 0;
 	float8 result = 0;
 	
+	if((fract == 0.0)||(total == 0)){
+		return 0;
+	}
+	mult = fract/total;
 	for(; i < (size+from); ++i){
 		if(values[i] > 0){
 			result -= (values[i]/fract)*log(values[i]/fract);
@@ -111,12 +123,16 @@ Datum compute_InfoGain(PG_FUNCTION_ARGS) {
 	int32 posclasses = PG_GETARG_INT32(1);
 	int32 posvalues = PG_GETARG_INT32(2);
 
-	float8 *result = malloc(sizeof(float8)*4);
+	float8 *result = palloc(sizeof(float8)*4);
 	
 	int i = 1;
 	int max = 1;
 	float8 tot = entropyWeightedFloat(vals_state, 1, posclasses, vals_state[0], vals_state[0]);
 	ArrayType *pgarray;  
+	
+	/*ereport(NOTICE,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+             errmsg(">>>>>>>R1: %f %f %f %f %f %f %f %f %f", vals_state[0], vals_state[1], vals_state[2], vals_state[3], vals_state[4], vals_state[5], vals_state[6], vals_state[7], vals_state[8])));*/
 
 	for(; i < (posvalues+1); ++i){
 		tot -= entropyWeightedFloat(vals_state, (i*(posclasses+1)+1), posclasses, vals_state[i*(posclasses+1)], vals_state[0]);
@@ -136,8 +152,16 @@ Datum compute_InfoGain(PG_FUNCTION_ARGS) {
 			max = i;
 		}
 	}
-	result[2] = vals_state[max]/vals_state[0];
+	if(vals_state[0] == 0){
+		result[2] = 0;
+	}else{
+		result[2] = vals_state[max]/vals_state[0];
+	}
 	result[3] = max;
+	
+	/*ereport(NOTICE,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+             errmsg(">>>>>>>R2: %f %f %f %f %f %f %f %f", result[0], result[1], result[2] ,result[3], vals_state[0], vals_state[1], vals_state[2], vals_state[3])));*/
 	  
     pgarray = construct_array((Datum *)result,
 		4,FLOAT8OID,
@@ -151,7 +175,7 @@ PG_FUNCTION_INFO_V1(mallocset);
 Datum mallocset(PG_FUNCTION_ARGS) {
 	int size = PG_GETARG_INT32(0);
 	int value = PG_GETARG_INT32(1);
-	float8 *result = (float8*)malloc(sizeof(float8)*size); 
+	float8 *result = (float8*)palloc(sizeof(float8)*size); 
 	ArrayType *pgarray;
 
 	memset(result, value, sizeof(float8)*size);
@@ -168,12 +192,23 @@ PG_FUNCTION_INFO_V1(WeightedNoReplacement);
 Datum WeightedNoReplacement(PG_FUNCTION_ARGS) {
 	int value1 = PG_GETARG_INT32(0);
 	int value2 = PG_GETARG_INT32(1);
-	int64 *result = (int64*)malloc(sizeof(int64)*value1);
+	int64 *result = (int64*)palloc(sizeof(int64)*value1);
 	int32 i = 0;
+	int32 k = 0;
 	ArrayType *pgarray;
-	
-   	for(;i < value1; ++i){
-   		result[i] = 1+rand()%value2;
+	float prob = 1.0;	
+	float to_select = value1;
+
+   	for(;i < value2; i++){
+		
+		if(rand()%100 < (to_select/(value2 - i))*100){			
+			result[k] = i+1;
+			k++;
+		}
+
+		if(to_select == 0)
+			break; 
+
    	}
    
 	pgarray = construct_array((Datum *)result,
@@ -198,7 +233,7 @@ Datum findentropy(PG_FUNCTION_ARGS) {
     int32 *vals_values=(int32 *)ARR_DATA_PTR(values);
     int32 *vals_classes=(int32 *)ARR_DATA_PTR(classes);
   
-  	int *pre_entropy = (int*)malloc(sizeof(int)*posclasses);
+  	int *pre_entropy = (int*)palloc(sizeof(int)*posclasses);
   	int i;
   	int j;
   	int sum = 0;

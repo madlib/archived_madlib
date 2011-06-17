@@ -490,7 +490,7 @@ begin
 		selection INTEGER
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (selection)');
 	
-	EXECUTE 'INSERT INTO weighted_points SELECT (MADLIB_SCHEMA.CreateHash(id, feature, class)).* FROM (SELECT '||id_col_name||' as id, '||id_feature_name||' as feature, '||class_col_name||' as class, MADLIB_SCHEMA.svec_hash('||id_feature_name||') as hash FROM '||table_input||') as A GROUP BY A.hash';
+	EXECUTE 'INSERT INTO weighted_points SELECT (MADLIB_SCHEMA.CreateHash(id, feature, class)).* FROM (SELECT '||id_col_name||' as id, '||id_feature_name||' as feature, '||class_col_name||' as class, MADLIB_SCHEMA.svec_hash('||id_feature_name||') as hash FROM '||table_input||') as A GROUP BY A.hash,A.class';
 end
 $$ language plpgsql;
 
@@ -607,8 +607,10 @@ declare
 begin	 
 	--this computes how many dimentions need to samples to find one that is in 90th percentile with
 	-- .999 probability.
-	sample_dimentions = MADLIB_SCHEMA.min(floor(-ln(1-(.999)^(1/CAST(10 AS FLOAT)))*10),feature_dimentions);
+	sample_dimentions = MADLIB_SCHEMA.min(floor(-ln(1-(.999)^(1/CAST(feature_dimentions AS FLOAT)))*feature_dimentions),feature_dimentions);
 	selected_dimentions = MADLIB_SCHEMA.WeightedNoReplacement(sample_dimentions, feature_dimentions);
+
+	RAISE INFO 'selected_dimensions = % , sample dimentions = %',selected_dimentions,sample_dimentions;
 	
 	EXECUTE 'SELECT count(*) FROM ' || table_name || ' WHERE selection = ' || selection || ';' INTO total_size;
 	IF (new_sample_limit = 0) THEN
@@ -647,7 +649,7 @@ begin
 	result.infogain = pre_result[2];
 	result.chisq = MADLIB_SCHEMA.chi2pdf(pre_result[3], distinct_features-1);
 	
-	IF ((result.chisq < 0.5/sample_dimentions) OR (MADLIB_SCHEMA.chi2pdf((pre_result[6]-total_size)*(pre_result[6]-total_size)/total_size, 1) < .1)) THEN
+	IF (((result.chisq < 0.5/sample_dimentions) OR (MADLIB_SCHEMA.chi2pdf((pre_result[6]-total_size)*(pre_result[6]-total_size)/total_size, 1) < .1))AND(result.infogain > .1/sample_dimentions)) THEN
 		result.live = 1;
 	ELSE
 		result.live = 0;
@@ -843,6 +845,7 @@ declare
 	time_stamp2 TIMESTAMP;
 	misc_size INT;
 begin	
+
 	PERFORM MADLIB_SCHEMA.declare_tree_tables();
 	time_stamp2 = clock_timestamp();
 	EXECUTE 'SELECT count(*) FROM '|| table_input ||';' INTO misc_size;
