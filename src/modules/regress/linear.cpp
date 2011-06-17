@@ -200,10 +200,13 @@ template <LinearRegression::What what>
 AnyValue LinearRegression::final(AbstractDBInterface &db,
     const LinearRegression::TransitionState &state) {
 
+    // Precompute (X^T * X)^+
+    mat inverse_of_X_transp_X = pinv(state.X_transp_X);
+
     // Vector of coefficients: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
     DoubleCol coef(db.allocator(), state.widthOfX);
-    coef = pinv(state.X_transp_X) * state.X_transp_Y;
+    coef = inverse_of_X_transp_X * state.X_transp_Y;
     if (what == kCoef)
         return coef;
     
@@ -231,9 +234,6 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
 
     // Variance is also called the mean square error
 	double variance = rss / (state.numRows - state.widthOfX);
-
-    // Precompute (X^T * X)^{-1}
-    mat inverse_of_X_transp_X = inv(state.X_transp_X);
     
     // Vector of t-statistics: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
