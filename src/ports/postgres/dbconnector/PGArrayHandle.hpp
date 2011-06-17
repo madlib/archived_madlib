@@ -11,6 +11,9 @@ namespace madlib {
 
 namespace dbconnector {
 
+/**
+ * @brief Handle to a PostgreSQL array
+ */
 class PGArrayHandle : public AbstractHandle {
 friend class PGAllocator;
 public:    

@@ -21,7 +21,7 @@ namespace madlib {
 namespace dbconnector {
 
 /**
- * Convert postgres Datum into a ConcreteValue object.
+ * @brief Convert postgres Datum into a ConcreteValue object.
  */
 AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
     Oid inTypeID, Datum inDatum) const {

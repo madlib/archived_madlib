@@ -14,6 +14,9 @@ namespace madlib {
 
 namespace dbconnector {
 
+/**
+ * @brief Allocate a double array
+ */
 MemHandleSPtr PGAllocator::allocateArray(uint32_t inNumElements,
     double * /* ignored */) const {
     
@@ -21,6 +24,9 @@ MemHandleSPtr PGAllocator::allocateArray(uint32_t inNumElements,
         internalAllocateForArray(FLOAT8OID, inNumElements, sizeof(double))));
 }
 
+/**
+ * @brief Deallocate an AbstractHandle
+ */
 void PGAllocator::deallocateHandle(MemHandleSPtr inHandle) const {
     shared_ptr<PGArrayHandle> arrayPtr = dynamic_pointer_cast<PGArrayHandle>(inHandle);
     
@@ -31,8 +37,9 @@ void PGAllocator::deallocateHandle(MemHandleSPtr inHandle) const {
 }
 
 /**
- * Construct an empty postgres array of a given size. Set the length of the
- * varlena header, set the element type, etc.
+ * @brief Construct an empty postgres array of a given size.
+ * 
+ * Set the length of the varlena header, set the element type, etc.
  */
 ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
     uint32_t inNumElements, size_t inElementSize) const {
@@ -41,6 +48,9 @@ ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
     ArrayType	*array;
     void		*arrayData;
 
+    // Note: Except for the allocate call, this function does not call into the
+    // PostgreSQL backend. We are only using macros here.
+    
     array = static_cast<ArrayType *>(allocate(size));
     SET_VARSIZE(array, size);
     array->ndim = 1;
@@ -54,9 +64,11 @@ ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
 }
 
 /**
- * Allocate postgres memory in "our" memory context. In case allocation fails,
- * throw an exception. At the boundary of the C++ layer, a stacked postgres 
- * error will be raised.
+ * @brief Allocate memory in "our" PostgreSQL memory context. Throws on fail.
+ * 
+ * In case allocation fails, throw an exception. At the boundary of the C++
+ * layer, another PostgreSQL error will be raised (i.e., there will be at least
+ * two errors on the PostgreSQL error handling stack).
  *
  * Important:
  * We call back into the database backend here, and these calls might cause
@@ -65,7 +77,8 @@ ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
  * C++'s defined behavior, we insist on proper stack unwinding and thus
  * surround any access of the database backend with PG_TRY()/PG_CATCH() macros.
  *
- * By default, memory allocation happens in AllocSetAlloc from utils/mmgr/aset.c.
+ * By default, PostgreSQL's memory allocation happens in AllocSetAlloc from
+ * utils/mmgr/aset.c.
  */
 void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
     
@@ -111,7 +124,7 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
 
 
 /**
- * @brief Allocate postgres memory in the default (function) memory context.
+ * @brief Allocate memory in "our" PostgreSQL memory context. Never throw.
  *
  * In case allocation fails, do not throw an exception. Choosing a memory
  * context is not currently supported for
@@ -132,7 +145,7 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
  * @note This function is also called by operator new (std::nothrow), which must
  *       not throw *any* exception.
  *
- * @see See also the notes for PGAllocator<kThrow>::allocate
+ * @see See also the notes for allocate(allocate(const uint32_t)
  */
 void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
     throw() {
@@ -166,6 +179,8 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
 }
 
 /**
+ * @brief Free a block of memory previously allocated with allocate
+ * 
  * FIXME: Think again whether our error-handling policy (ignoring) is appropriate
  * The default implementation calls AllocSetFree() from utils/mmgr/aset.c.
  * We must not throw errors, so we are essentially ignoring all errors.
@@ -177,7 +192,8 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
  */
 void PGAllocator::free(void *inPtr) const throw() {
     /*
-     * See PGAllocator<kNull>::allocate why we disable processing of interrupts
+     * See allocate(const uint32_t, const std::nothrow_t&) why we disable
+     * processing of interrupts.
      */
     HOLD_INTERRUPTS();
     PG_TRY(); {

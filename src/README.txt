@@ -67,13 +67,8 @@ To Do
 =====
 
 - C++ Library:
-  + Failed boost assertions should become error messages and not abort the
-    process
-  + Translate armadillo error messages into our own error messages
   + For DBMSs other than PG/GP, we need some proper reference counting for
     AbstractHandles. Perhaps wrapping shared_ptr will already work
-- There might be caching issue with some CMake variables (e.g., Boost_FOUND).
-  This needs to be checked.
 
 
 Debugging

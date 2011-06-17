@@ -31,6 +31,8 @@ set(CPACK_PACKAGE_VERSION_MAJOR ${MADLIB_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${MADLIB_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 
+# CPACK_PACKAGING_INSTALL_PREFIX has to be set in the generator-specific
+# section!
 
 # -- Set settings for specific package generators ------------------------------
 

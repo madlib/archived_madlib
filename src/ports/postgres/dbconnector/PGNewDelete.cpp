@@ -22,6 +22,8 @@ static PGAllocator sDefaultAllocator;
  */
 
 /**
+ * @brief operator new for PostgreSQL. Throw on fail.
+ *
  * The allocation function (3.7.3.1) called by a new-expression (5.3.4) to
  * allocate size bytes of storage suitably aligned to represent any object of
  * that size.
@@ -42,6 +44,8 @@ void *operator new(std::size_t size) throw (std::bad_alloc) {
  */
 
 /**
+ * @brief operator delete for PostgreSQL. Throw on fail.
+ *
  * The deallocation function (3.7.3.2) called by a delete-expression to render
  * the value of ptr invalid.
  */
@@ -50,6 +54,8 @@ void operator delete(void *ptr) throw() {
 }
 
 /**
+ * @brief operator new for PostgreSQL. Never throws.
+ *
  * Same as above, except that it is called by a placement version of a
  * new-expression when a C++ program prefers a null pointer result as an error
  * indication, instead of a bad_alloc exception.
@@ -59,7 +65,7 @@ void *operator new(std::size_t size, const std::nothrow_t &ignored) throw() {
 }
 
 /**
- * Same as above.
+ * @brief operator delete for PostgreSQL. Never throws.
  */
 void operator delete(void *ptr, const std::nothrow_t&) throw() {
     sDefaultAllocator.free(ptr);

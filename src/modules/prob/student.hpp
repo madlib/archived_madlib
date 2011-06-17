@@ -17,14 +17,8 @@ namespace modules {
 
 namespace prob {
 
-/**
- * C/C++ interface to Student-t CDF
- */
 double studentT_cdf(int64_t nu, double t);
 
-/**
- * In-DB interface to Student-t CDF
- */
 AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args);
 
 } // namespace prob

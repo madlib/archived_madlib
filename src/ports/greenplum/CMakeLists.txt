@@ -17,15 +17,29 @@ if(GREENPLUM_FOUND)
     message(STATUS "*** Adding Greenplum to target list...")
     message(STATUS "***")
 
+    add_executable(greenplum IMPORTED)
+    set_target_properties(greenplum PROPERTIES
+        IMPORTED_LOCATION "${GREENPLUM_EXECUTABLE}"
+    )
+
     set(MAD_DBAL_SOURCES_GREENPLUM
         ../postgres/dbconnector/PGAbstractValue.cpp
+        ../postgres/dbconnector/PGAbstractValue.hpp
         ../postgres/dbconnector/PGAllocator.cpp
+        ../postgres/dbconnector/PGAllocator.hpp
+        ../postgres/dbconnector/PGArrayHandle.hpp
+        ../postgres/dbconnector/PGCommon.hpp
         dbconnector/GPCompatibility.cpp
+        ../postgres/dbconnector/PGCompatibility.hpp
         ../postgres/dbconnector/PGInterface.cpp
+        ../postgres/dbconnector/PGInterface.hpp
         ../postgres/dbconnector/PGMain.cpp
+        ../postgres/dbconnector/PGMain.hpp
         ../postgres/dbconnector/PGNewDelete.cpp
         ../postgres/dbconnector/PGToDatumConverter.cpp
+        ../postgres/dbconnector/PGToDatumConverter.hpp
         ../postgres/dbconnector/PGValue.cpp
+        ../postgres/dbconnector/PGValue.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM

@@ -21,6 +21,13 @@ namespace dbconnector {
 #if PG_VERSION_NUM < 90000
 
 /**
+ * @brief Test whether we are currently in an aggregate calling context.
+ * 
+ * Knowing whether we are in an aggregate calling context is useful, because it
+ * allows write access to the transition state of the aggregate function.
+ * At all other time, modifying a pass-by-reference input is strictly forbidden:
+ * http://developer.postgresql.org/pgdocs/postgres/xaggr.html
+ *
  * This function is essentially a copy of AggCheckCallContext from
  * backend/executor/nodeAgg.c, which is part of PostgreSQL >= 9.0.
  */
