@@ -202,9 +202,9 @@ def __plpy_check( py_min_ver):
     cur.execute( "SELECT count(*) AS CNT FROM pg_language WHERE lanname = 'plpythonu'")
     rv = cur.fetchall()
     if rv[0][0] > 0:
-        __info( "> PL/Python already installed.", verbose)            
+        __info( "> PL/Python already installed", verbose)            
     else:
-        __info( "> PL/Python not installed.", verbose)            
+        __info( "> PL/Python not installed", verbose)            
         __info( "> Creating language PL/Python...", True)            
         try:
             cur.execute( "CREATE LANGUAGE plpythonu;")            
@@ -229,12 +229,12 @@ def __plpy_check( py_min_ver):
     if py_cur_ver >= py_min_ver:
         __info( "> PL/Python version: %s" % rv[0][0], verbose)            
     else:
-        __error( "PL/Python version too old: %s. You need %s or greater." \
+        __error( "PL/Python version too old: %s. You need %s or greater" \
                 % (rv[0][0], '.'.join(str(i) for i in py_min_ver)) 
                 , False)            
         raise
 
-    __info( "> PL/Python environment OK.", True)            
+    __info( "> PL/Python environment OK", True)            
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Install MADlib
@@ -580,7 +580,7 @@ def __db_rollback( drop_schema, keep_schema):
         __db_rename_schema( keep_schema, drop_schema)   
 
     __info( "Rollback finished OK.", True)
-    __error( "MADlib installation failed. ", True) 
+    raise
             
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Main       
@@ -798,9 +798,9 @@ def main( argv):
         dbconn = dbapi2.connect( **con_args)
         try:
             __plpy_check( py_min_ver)
+            __db_install( schema, dbrev)
         except:
             __error( "MADlib installation failed.", True)
-        __db_install( schema, dbrev)
         dbconn.close()     
 
     ###
