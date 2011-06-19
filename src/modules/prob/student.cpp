@@ -221,9 +221,7 @@ AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args) {
     // Arguments from SQL call
     const int64_t nu = *arg++;
     const double t = *arg;
-    
-    arma::arma_stop("I don't like this");
-    
+        
     /* We want to ensure nu > 0 */
     if (nu <= 0)
         throw std::domain_error("Student-t distribution undefined for "
