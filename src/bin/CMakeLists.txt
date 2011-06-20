@@ -15,7 +15,7 @@ add_dependencies(binaryFiles madpackFiles)
 
 # -- 2. Install binary files to $MADLIB_ROOT/bin -------------------------------
 
-install(FILES ${BINARY_TARGET_FILES}
+install(PROGRAMS ${BINARY_TARGET_FILES}
     DESTINATION bin
     COMPONENT core
 )

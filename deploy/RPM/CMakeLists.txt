@@ -28,7 +28,7 @@ if(EXISTS "/etc/rpm/macros.python26")
     # /usr/lib/rpm/redhat/macros defines __os_install_post to call
     # /usr/lib/rpm/brp-python-bytecompile without any argument, which then leads
     # to /usr/bin/python being used for byte-compiling. If the python26 package
-    # from EPEL is installed, we provide an autmatic fix, so that thr RPM build
+    # from EPEL is installed, we provide an autmatic fix, so that the RPM build
     # process uses Python 2.6.
     # See https://bugzilla.redhat.com/show_bug.cgi?id=573151#c9 for more
     # information.
