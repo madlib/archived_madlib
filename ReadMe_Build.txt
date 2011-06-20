@@ -18,16 +18,24 @@ Installation from Source
 
 Requirements:
 
-- Installed LAPACK library and header files.
+- LAPACK and BLAS libraries and their header files.
   
   Platform notes:
   + Mac OS X comes with LAPACK and BLAS preinstalled (as part of the Accelerate
     framework)
-  + On RedHat/CentOS, LAPACK and BLAS come with with the lapack-devel package
+  + On RedHat/CentOS, LAPACK and BLAS come with with the lapack-devel and
+    blas-devel packages. When compiling against PostgreSQL, other "-devel"
+    packages might be needed (e.g., openssl-devel).
   + On Solaris, LAPACK and BLAS come with the Orcale Performance Studio
 
 - Internet connection to automatically download MADlib's dependencies if needed
   (Boost, Armadillo). See notes below.
+  
+Optional:
+
+- doxygen >= 1.7.3 to generate the user-level API reference in HTML format
+- git to download/update the local MathJax installation, which is used for
+  displaying formulas in the developer-level documentation
 
 
 ** Build instructions (required read):
@@ -37,10 +45,40 @@ From the MADlib root directory, execute the following commands:
 	./configure
 	cd build/
 	make
+    
+Optionally, install MADlib with
 
-If your are missing a library, the ./configure step will notify. Refer to your
-operating system's manual for instructions how to install the above
-prerequisites.
+    make install
+
+Depending on the environment, ./configure might have to be called with
+additional configuration parameters:
+
+    CMAKE_BUILD_TYPE
+        "Debug", "Release", "RelWithDebInfo", or "MinSizeRel"
+
+    CMAKE_PREFIX_PATH
+        List (separated by ";" without trailing space) of additional search
+        paths (for each ${PREFIX_PATH} in ${CMAKE_PREFIX_PATH}, binaries are
+        searched for in ${PREFIX_PATH}/bin, headers are searched for in 
+        ${PREFIX_PATH}/include, etc.)
+    
+    CMAKE_INSTALL_PREFIX
+        Prefix when installing MADlib with "make install". The default is
+        "/usr/local". All files will be installed within
+        "${CMAKE_INSTALL_PREFIX}/madlib".
+
+    POSTGRESQL_PG_CONFIG
+        Path to pg_config of PostgreSQL installation, which is used to determine
+        various PostgreSQL search paths.
+
+    GREENPLUM_PG_CONFIG
+        Path to pg_config of Greenplum installation, which is used to determine
+        various Greenplum search paths.
+    
+
+If your are missing a required library, the ./configure or make step will
+notice. Refer to your operating system's manual for instructions how to install
+the above prerequisites.
 
 Notes:
 
