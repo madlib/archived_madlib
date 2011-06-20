@@ -28,6 +28,12 @@ using dbal::AbstractValueSPtr;
 template <typename T>
 class PGValue;
 
+/**
+ * @brief PostgreSQL function-argument value class
+ *
+ * Implements PGAbstractValue for values that are a function argument
+ * (as opposed to being a tuple element).
+ */
 template <>
 class PGValue<FunctionCallInfo> : public PGAbstractValue {
 public:
@@ -49,6 +55,12 @@ private:
     const FunctionCallInfo fcinfo;
 };
 
+/**
+ * @brief PostgreSQL tuple-element value class
+ *
+ * Implements PGAbstractValue for values that are a tuple element
+ * (as opposed to being a function argument).
+ */
 template <>
 class PGValue<HeapTupleHeader> : public PGAbstractValue {
 public:    

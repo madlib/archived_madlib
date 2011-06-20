@@ -17,15 +17,29 @@ if(GREENPLUM_FOUND)
     message(STATUS "*** Adding Greenplum to target list...")
     message(STATUS "***")
 
+    add_executable(greenplum IMPORTED)
+    set_target_properties(greenplum PROPERTIES
+        IMPORTED_LOCATION "${GREENPLUM_EXECUTABLE}"
+    )
+
     set(MAD_DBAL_SOURCES_GREENPLUM
         ../postgres/dbconnector/PGAbstractValue.cpp
+        ../postgres/dbconnector/PGAbstractValue.hpp
         ../postgres/dbconnector/PGAllocator.cpp
+        ../postgres/dbconnector/PGAllocator.hpp
+        ../postgres/dbconnector/PGArrayHandle.hpp
+        ../postgres/dbconnector/PGCommon.hpp
         dbconnector/GPCompatibility.cpp
+        ../postgres/dbconnector/PGCompatibility.hpp
         ../postgres/dbconnector/PGInterface.cpp
+        ../postgres/dbconnector/PGInterface.hpp
         ../postgres/dbconnector/PGMain.cpp
+        ../postgres/dbconnector/PGMain.hpp
         ../postgres/dbconnector/PGNewDelete.cpp
         ../postgres/dbconnector/PGToDatumConverter.cpp
+        ../postgres/dbconnector/PGToDatumConverter.hpp
         ../postgres/dbconnector/PGValue.cpp
+        ../postgres/dbconnector/PGValue.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM
@@ -60,9 +74,17 @@ if(GREENPLUM_FOUND)
     )
     include_directories(${GREENPLUM_SERVER_INCLUDE_DIR})
     include_directories(${GREENPLUM_ADDITIONAL_INCLUDE_DIRS})
+
+
+# -- 3. Build MADlib connector -------------------------------------------------
+
+    add_madlib_connector_library(greenplum "${GREENPLUM_EXECUTABLE}"
+        MADLIB_GREENPLUM_TARGETNAME ${MAD_DBAL_SOURCES_GREENPLUM}
+    )
+    target_link_libraries(${MADLIB_GREENPLUM_TARGETNAME} madlib)
+
     
-    
-# -- 3. Some versions of Greenplum ship with header files that need a patch to
+# -- 4. Some versions of Greenplum ship with header files that need a patch to
 #       be compatible with C++ -------------------------------------------------
 
     # Directory we will use for patches
@@ -72,48 +94,55 @@ if(GREENPLUM_FOUND)
     # Version 4.0 of Greenplum and below ship with a utils/builtin.h that has
     # C++ keywords as identifiers. We need to patch this.
     if(${_GP_VERSION} VERSION_LESS "4.1")
-        message(STATUS "Installed Greenplum version has bug in header file. Applying patch for version below 4.1...")
+        message(STATUS "Installed Greenplum version has bug in header file. "
+            "Will apply patch for versions below 4.1.")
         
-        execute_process(COMMAND
-            ${CMAKE_COMMAND} -E copy
-                ${GREENPLUM_SERVER_INCLUDE_DIR}/utils/builtins.h
-                ${PATCH_DIR}/server/utils/builtins.orig.h
+        add_custom_command(
+            OUTPUT
+                "${PATCH_DIR}/server/utils/builtins.h"
+            COMMAND 
+                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_4_0_and_below.sh"
+            DEPENDS
+                "${GREENPLUM_SERVER_INCLUDE_DIR}/utils/builtins.h"
+                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_4_0_and_below.sh"
+            WORKING_DIRECTORY "${PATCH_DIR}"
+            COMMENT "Patching builtins.h: Renaming identifiers that are C++ keywords."
         )
-        execute_process(COMMAND
-            ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_4_0_and_below.sh
-            WORKING_DIRECTORY ${PATCH_DIR}
+        list(APPEND GREENPLUM_PATCH_FILES
+            "${PATCH_DIR}/server/utils/builtins.h"
         )
-        
-        set(_DID_PATCH YES)
     endif(${_GP_VERSION} VERSION_LESS "4.1")
     
     # Version 4.1 of Greenplum has a bug in one of its header files that
     # needs to be fixed when building with C++.
     if(${_GP_VERSION} VERSION_EQUAL "4.1.0" OR ${_GP_VERSION} VERSION_EQUAL "4.1.1")
-        message(STATUS "Installed Greenplum version has bug in header file. Applying patch for versions 4.1.0 to 4.1.1...")
-                
-        file(COPY ${GREENPLUM_SERVER_INCLUDE_DIR}/utils/syncbitvector.h DESTINATION
-            ${PATCH_DIR}/server/utils)
-        execute_process(
-            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_4_1_0_to_4_1_1.sh
-            WORKING_DIRECTORY ${PATCH_DIR}
+        message(STATUS "Installed Greenplum version has bug in header file. "
+            "Will apply patch for versions 4.1.0 to 4.1.1.")
+        
+        add_custom_command(
+            OUTPUT
+                "${PATCH_DIR}/server/utils/syncbitvector.h"
+            COMMAND
+                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_4_1_0_to_4_1_1.sh"
+            DEPENDS
+                "${GREENPLUM_SERVER_INCLUDE_DIR}/utils/syncbitvector.h"
+                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_4_1_0_to_4_1_1.sh"
+            WORKING_DIRECTORY "${PATCH_DIR}"
+            COMMENT "Patching syncbitvector.h: Add missing key word \"typedef\"."
         )
-
-        set(_DID_PATCH YES)
+        list(APPEND GREENPLUM_PATCH_FILES
+            "${PATCH_DIR}/server/utils/syncbitvector.h"
+        )
     endif(${_GP_VERSION} VERSION_EQUAL "4.1.0" OR ${_GP_VERSION} VERSION_EQUAL "4.1.1")
 
-    if(_DID_PATCH)
+    if(GREENPLUM_PATCH_FILES)
+        add_subdirectory(patch)
+        add_custom_target(greenplumPatches ALL DEPENDS ${GREENPLUM_PATCH_FILES})
         # Append directory with patched header file at beginning
         include_directories(BEFORE ${PATCH_DIR}/server)
-    endif(_DID_PATCH)
-
-# -- 4. Build MADlib connector -------------------------------------------------
-
-    add_madlib_connector_library(greenplum "${GREENPLUM_EXECUTABLE}"
-        MADLIB_GREENPLUM_TARGETNAME ${MAD_DBAL_SOURCES_GREENPLUM}
-    )
-    target_link_libraries(${MADLIB_GREENPLUM_TARGETNAME} madlib)
-    
+        add_dependencies(madlib_greenplum greenplumPatches)
+    endif(GREENPLUM_PATCH_FILES)
+        
 
 # -- 5. Install MADlib connector -----------------------------------------------
 

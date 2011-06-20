@@ -11,6 +11,11 @@ namespace madlib {
 
 namespace dbconnector {
 
+/**
+ * @brief PostgreSQL memory allocation
+ *
+ * Implement the AbstractAllocator interface on top of the PostgreSQL API.
+ */
 class PGAllocator : public AbstractAllocator {
 friend class PGInterface;
 public:

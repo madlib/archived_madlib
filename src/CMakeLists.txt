@@ -242,7 +242,11 @@ endmacro(add_madlib_connector_library)
 # We still use GLOB here because we think the benefits outweigh the mentioned
 # disadvantage.
 
-file(GLOB_RECURSE MAD_CPP_SOURCES modules/*.cpp)
+file(GLOB_RECURSE MAD_CPP_SOURCES
+    dbal/*.hpp
+    modules/*.cpp modules/*.hpp
+    utils/*.hpp
+)
 list(APPEND MAD_SOURCES
     ${MAD_CPP_SOURCES}
 )

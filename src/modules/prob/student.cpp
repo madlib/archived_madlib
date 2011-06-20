@@ -75,7 +75,10 @@ static double studentT_cdf_approx(int64_t nu, double t);
 
 
 /**
- * Compute Pr[T <= t] for Student-t distributed T with nu degrees of freedom.
+ * @brief Student-t cumulative distribution function: C++ interface
+ * 
+ * Compute \f$ Pr[T <= t] \f$ for Student-t distributed T with \f$ \nu \f$
+ * degrees of freedom.
  *
  * For nu >= 1000000, we just use the normal distribution as an approximation.
  * For 1000000 >= nu >= 200, we use a simple approximation from [9].
@@ -177,7 +180,7 @@ double studentT_cdf(int64_t nu, double t) {
 }
 
 /**
- * Compute the normal distribution function using the library error function.
+ * @brief Compute the normal distribution function using the library error function.
  *
  * This approximation satisfies
  * rel_error < 0.0001 || abs_error < 0.00000001
@@ -191,8 +194,8 @@ static inline double normal_cdf(double t)
 
 
 /**
- * Approximate Student-T distribution using a formula suggested in
- * [9], which goes back to an approximation suggested in [10].
+ * @brief Approximate Student-T distribution using a formula suggested in
+ *        [9], which goes back to an approximation suggested in [10].
  *
  * Compared to the series expansion, this approximation satisfies
  * rel_error < 0.0001 || abs_error < 0.00000001
@@ -210,7 +213,7 @@ static double studentT_cdf_approx(int64_t nu, double t)
 }
 
 /**
- * We need to do some additional domain checking for the in-DB function.
+ * @brief Student-t cumulative distribution function: In-database interface
  */
 AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args) {
     AnyValue::iterator arg(args);
@@ -218,7 +221,7 @@ AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args) {
     // Arguments from SQL call
     const int64_t nu = *arg++;
     const double t = *arg;
-    
+        
     /* We want to ensure nu > 0 */
     if (nu <= 0)
         throw std::domain_error("Student-t distribution undefined for "

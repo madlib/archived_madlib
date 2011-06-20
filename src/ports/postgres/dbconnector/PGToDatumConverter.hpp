@@ -23,6 +23,9 @@ namespace madlib {
 
 namespace dbconnector {
 
+/**
+ * @brief Convert DBAL types into PostgreSQL Datum
+ */
 class PGToDatumConverter : public ValueConverter<Datum> {
 public:
     PGToDatumConverter(const FunctionCallInfo inFCInfo,

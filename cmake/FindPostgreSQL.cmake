@@ -47,7 +47,15 @@ if(POSTGRESQL_PG_CONFIG AND POSTGRESQL_CLIENT_INCLUDE_DIR)
 	
 	if(EXISTS "${POSTGRESQL_CLIENT_INCLUDE_DIR}/pg_config.h")
 		# Read and parse postgres version header file for version number
-		file(READ "${POSTGRESQL_CLIENT_INCLUDE_DIR}/pg_config.h" _POSTGRESQL_HEADER_CONTENTS)
+        if(${CMAKE_COMPILER_IS_GNUCC})
+            # If we know the compiler, we can do something that is a little smarter
+            execute_process(
+                COMMAND ${CMAKE_C_COMPILER} -E -dD "${POSTGRESQL_CLIENT_INCLUDE_DIR}/pg_config.h"
+                OUTPUT_VARIABLE _POSTGRESQL_HEADER_CONTENTS
+            )
+        else(${CMAKE_COMPILER_IS_GNUCC})
+            file(READ "${POSTGRESQL_CLIENT_INCLUDE_DIR}/pg_config.h" _POSTGRESQL_HEADER_CONTENTS)
+        endif(${CMAKE_COMPILER_IS_GNUCC})
         
         string(REGEX REPLACE ".*#define PACKAGE_NAME \"([^\"]+)\".*" "\\1" POSTGRESQL_PACKAGE_NAME "${_POSTGRESQL_HEADER_CONTENTS}")
 		string(REGEX REPLACE ".*#define PG_VERSION \"([0-9.]+)\".*" "\\1" POSTGRESQL_VERSION_STRING "${_POSTGRESQL_HEADER_CONTENTS}")

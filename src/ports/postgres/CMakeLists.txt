@@ -16,15 +16,29 @@ if(POSTGRESQL_FOUND)
     message(STATUS "*** Adding PostgreSQL to target list...")
     message(STATUS "***")
 
+    add_library(postgres STATIC IMPORTED)
+    set_target_properties(postgres PROPERTIES
+        IMPORTED_LOCATION "${POSTGRESQL_EXECUTABLE}"
+    )
+
     set(MAD_DBAL_SOURCES_POSTGRES
         dbconnector/PGAbstractValue.cpp
-        dbconnector/PGCompatibility.cpp
-        dbconnector/PGNewDelete.cpp
+        dbconnector/PGAbstractValue.hpp
         dbconnector/PGAllocator.cpp
+        dbconnector/PGAllocator.hpp
+        dbconnector/PGArrayHandle.hpp
+        dbconnector/PGCommon.hpp
+        dbconnector/PGCompatibility.cpp
+        dbconnector/PGCompatibility.hpp
         dbconnector/PGInterface.cpp
+        dbconnector/PGInterface.hpp
         dbconnector/PGMain.cpp
+        dbconnector/PGMain.hpp
+        dbconnector/PGNewDelete.cpp
         dbconnector/PGToDatumConverter.cpp
+        dbconnector/PGToDatumConverter.hpp
         dbconnector/PGValue.cpp
+        dbconnector/PGValue.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_POSTGRES
@@ -54,45 +68,8 @@ if(POSTGRESQL_FOUND)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR})
     include_directories(${POSTGRESQL_SERVER_INCLUDE_DIR})
 
-# -- 3. Old versions of PostgreSQL ship with header files that need a patch to
-#       be compatible with C++ -------------------------------------------------
 
-    # Directory we will use for patches
-    set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
-    set(_PG_VERSION "${POSTGRESQL_VERSION_MAJOR}.${POSTGRESQL_VERSION_MINOR}.${POSTGRESQL_VERSION_PATCH}")
-
-    # Version 8.4 of PostgreSQL and below ship with server/nodes/parsenodes.h
-    # and server/nodes/primnodes.h that have C++ keywords as identifiers.
-    # We need to patch this.
-    if(${_PG_VERSION} VERSION_LESS "9.0")
-        message(STATUS "Installed PostgreSQL version has header files that need a patch for C++ compatibility. Applying patch for versions below 9.0...")
-        
-        execute_process(
-            COMMAND ${CMAKE_COMMAND} -E copy
-                ${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/parsenodes.h
-                ${PATCH_DIR}/server/nodes/parsenodes.orig.h
-            COMMAND ${CMAKE_COMMAND} -E copy
-                ${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/primnodes.h
-                ${PATCH_DIR}/server/nodes/primnodes.orig.h
-            COMMAND ${CMAKE_COMMAND} -E copy
-                ${POSTGRESQL_SERVER_INCLUDE_DIR}/utils/builtins.h
-                ${PATCH_DIR}/server/utils/builtins.orig.h
-        )
-        execute_process(COMMAND
-            ${CMAKE_CURRENT_SOURCE_DIR}/patch/Versions_8_4_and_below.sh
-            WORKING_DIRECTORY ${PATCH_DIR}
-        )
-        
-        set(_DID_PATCH YES)
-    endif(${_PG_VERSION} VERSION_LESS "9.0")
-
-    if(_DID_PATCH)
-        # Append directory with patched header file at beginning
-        include_directories(BEFORE ${PATCH_DIR}/server)
-    endif(_DID_PATCH)
-
-
-# -- 4. Build MADlib connector -------------------------------------------------
+# -- 3. Build MADlib connector -------------------------------------------------
 
     add_madlib_connector_library(postgres "${POSTGRESQL_EXECUTABLE}"
         MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
@@ -103,6 +80,50 @@ if(POSTGRESQL_FOUND)
         # core library. See main CMakeLists.txt file why.
         target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} armadillo)
     endif(LINUX)
+
+
+# -- 4. Old versions of PostgreSQL ship with header files that need a patch to
+#       be compatible with C++ -------------------------------------------------
+
+    # Directory we will use for patches
+    set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
+    set(_PG_VERSION "${POSTGRESQL_VERSION_MAJOR}.${POSTGRESQL_VERSION_MINOR}.${POSTGRESQL_VERSION_PATCH}")
+
+    # Version 8.4 of PostgreSQL and below ship with server/nodes/parsenodes.h
+    # and server/nodes/primnodes.h that have C++ keywords as identifiers.
+    # We need to patch this.
+    if(${_PG_VERSION} VERSION_LESS "9.0")
+        message(STATUS "Installed PostgreSQL version has header files that need a patch for C++ compatibility. Will apply patch for versions below 9.0.")
+        
+        add_custom_command(
+            OUTPUT
+                "${PATCH_DIR}/server/nodes/parsenodes.h"
+                "${PATCH_DIR}/server/nodes/primnodes.h"
+                "${PATCH_DIR}/server/utils/builtins.h"
+            COMMAND
+                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_8_4_and_below.sh"
+            DEPENDS
+                "${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/parsenodes.h"
+                "${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/primnodes.h"
+                "${POSTGRESQL_SERVER_INCLUDE_DIR}/utils/builtins.h"
+                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_8_4_and_below.sh"
+            WORKING_DIRECTORY "${PATCH_DIR}"
+            COMMENT "Patching parsenodes.h, primnodes.h, builtins.h: Renaming identifiers that are C++ keywords."
+        )
+        list(APPEND POSTGRESQL_PATCH_FILES
+            "${PATCH_DIR}/server/nodes/parsenodes.h"
+            "${PATCH_DIR}/server/nodes/primnodes.h"
+            "${PATCH_DIR}/server/utils/builtins.h"
+        )
+    endif(${_PG_VERSION} VERSION_LESS "9.0")
+
+    if(POSTGRESQL_PATCH_FILES)
+        add_subdirectory(patch)
+        add_custom_target(postgresPatches ALL DEPENDS ${POSTGRESQL_PATCH_FILES})
+        # Append directory with patched header file at beginning
+        include_directories(BEFORE ${PATCH_DIR}/server)
+        add_dependencies(madlib_postgres postgresPatches)
+    endif(POSTGRESQL_PATCH_FILES)
 
 
 # -- 5. Install MADlib connector -----------------------------------------------

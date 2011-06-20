@@ -12,10 +12,13 @@ import subprocess
 import datetime
 from time import strftime
 
+# Required Python version
+py_min_ver = [2,6]
+
 # Check python version
-if sys.version_info[:2] < (2, 6):
-    print "ERROR: too old python version (%s). You need 2.6 or greater." \
-          % str( sys.version_info[:3]).replace(', ', '.')
+if sys.version_info[:2] < py_min_ver:
+    print "ERROR: python version too old (%s). You need %s or greater." \
+          % ( '.'.join(str(i) for i in sys.version_info[:3]), '.'.join(str(i) for i in py_min_ver))
     exit(1)
 
 # Find MADlib root directory. This file is installed to
@@ -186,6 +189,54 @@ def __print_revs( rev, dbrev, con_args, schema):
     return
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Check pl/python existence and version
+# @param py_min_ver min Python version to run MADlib 
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __plpy_check( py_min_ver):
+
+    __info( "Testing PL/Python environment...", True)
+    cur = dbconn.cursor()
+
+    # Check PL/Python existence
+    cur.execute( "SET client_min_messages=WARNING")
+    cur.execute( "SELECT count(*) AS CNT FROM pg_language WHERE lanname = 'plpythonu'")
+    rv = cur.fetchall()
+    if rv[0][0] > 0:
+        __info( "> PL/Python already installed", verbose)            
+    else:
+        __info( "> PL/Python not installed", verbose)            
+        __info( "> Creating language PL/Python...", True)            
+        try:
+            cur.execute( "CREATE LANGUAGE plpythonu;")            
+            dbconn.commit()
+        except:
+            __error( 'Cannot create language plpythonu. Stopping installation...', False)
+            raise                
+
+    # Check PL/Python version
+    cur.execute( "SET client_min_messages=WARNING;")
+    cur.execute( "DROP FUNCTION IF EXISTS plpy_version_for_madlib();")
+    cur.execute( """CREATE OR REPLACE FUNCTION plpy_version_for_madlib() 
+                    RETURNS TEXT AS 
+                    $$
+                        import sys
+                        return '.'.join(str(item) for item in sys.version_info[:3])
+                    $$
+                    LANGUAGE plpythonu;""")
+    cur.execute( "SELECT plpy_version_for_madlib() AS ver;")
+    rv = cur.fetchall()
+    py_cur_ver = [int(i) for i in rv[0][0].split('.')]
+    if py_cur_ver >= py_min_ver:
+        __info( "> PL/Python version: %s" % rv[0][0], verbose)            
+    else:
+        __error( "PL/Python version too old: %s. You need %s or greater" \
+                % (rv[0][0], '.'.join(str(i) for i in py_min_ver)) 
+                , False)            
+        raise
+
+    __info( "> PL/Python environment OK", True)            
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Install MADlib
 # @param schema MADlib schema name
 # @param dbrev DB-level MADlib version
@@ -291,7 +342,7 @@ def __db_rename_schema( from_schema, to_schema):
         cur.execute( "ALTER SCHEMA %s RENAME TO %s;" % (from_schema, to_schema))
         dbconn.commit();
     except:
-        __error( 'Cannot rename schema. Stopping execution...', False)
+        __error( 'Cannot rename schema. Stopping installation...', False)
         raise
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -528,8 +579,8 @@ def __db_rollback( drop_schema, keep_schema):
     if keep_schema != None:    
         __db_rename_schema( keep_schema, drop_schema)   
 
-    __info( "Rollback finished. Stopping execution.", True)
-    __error( "Installation failed. ", True) 
+    __info( "Rollback finished OK.", True)
+    raise
             
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Main       
@@ -745,7 +796,11 @@ def main( argv):
 
         # 2) Run installation 
         dbconn = dbapi2.connect( **con_args)
-        __db_install( schema, dbrev)
+        try:
+            __plpy_check( py_min_ver)
+            __db_install( schema, dbrev)
+        except:
+            __error( "MADlib installation failed.", True)
         dbconn.close()     
 
     ###

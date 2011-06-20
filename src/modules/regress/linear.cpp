@@ -2,13 +2,18 @@
  *
  * @file linear.cpp
  *
- * @brief Linear-Regression functions
+ * @brief Linear-regression functions
  *
  *//* ----------------------------------------------------------------------- */
 
 #include <modules/regress/linear.hpp>
 #include <modules/prob/student.hpp>
 #include <utils/Reference.hpp>
+
+// Floating-point classification functions are in C99 and TR1, but not in the
+// official C++ Standard (before C++0x). We therefore use the Boost implementation
+#include <boost/math/special_functions/fpclassify.hpp>
+
 
 // Import names from Armadillo
 using arma::mat;
@@ -145,9 +150,9 @@ AnyValue LinearRegression::pValuesFinal(AbstractDBInterface &db, AnyValue args) 
 /**
  * @brief Perform the linear-regression transition step
  * 
- * We update: the number of rows $n$, the partial sums \f$ \sum_{i=1}^n y_i \f$
- * and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix \f$ X^T X \F$, and the vector
- * \f$ X^T \boldsymbol y \f$.
+ * We update: the number of rows \f$ n \f$, the partial sums
+ * \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
+ * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
  */
 AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
     AnyValue::iterator arg(args);
@@ -159,6 +164,14 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
     TransitionState state = *arg++;
     double y = *arg++;
     DoubleRow_const x = *arg++;
+    
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!boost::math::isfinite(y))
+        throw std::invalid_argument("Dependent variables are not finite.");
+    else if (!x.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
     
     // Now do the transition step.
     if (state.numRows == 0)
@@ -200,10 +213,19 @@ template <LinearRegression::What what>
 AnyValue LinearRegression::final(AbstractDBInterface &db,
     const LinearRegression::TransitionState &state) {
 
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!state.X_transp_X.is_finite() || !state.X_transp_Y.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
+
+    // Precompute (X^T * X)^+
+    mat inverse_of_X_transp_X = pinv(state.X_transp_X);
+
     // Vector of coefficients: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
     DoubleCol coef(db.allocator(), state.widthOfX);
-    coef = pinv(state.X_transp_X) * state.X_transp_Y;
+    coef = inverse_of_X_transp_X * state.X_transp_Y;
     if (what == kCoef)
         return coef;
     
@@ -231,9 +253,6 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
 
     // Variance is also called the mean square error
 	double variance = rss / (state.numRows - state.widthOfX);
-
-    // Precompute (X^T * X)^{-1}
-    mat inverse_of_X_transp_X = inv(state.X_transp_X);
     
     // Vector of t-statistics: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory

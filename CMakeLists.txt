@@ -72,6 +72,7 @@ list(APPEND CMAKE_MODULE_PATH
     "${MAD_BUILD_TOOLS}")
 
 include(Utils)
+include(LinuxUtils)
 include(OSXUtils)
 
 
