@@ -50,6 +50,7 @@ declare
 	Ax FLOAT[];
 	pAp_size FLOAT;
 	beta FLOAT;
+	exit_if_no_progess_in INT := 20;
 begin	
 	DROP TABLE IF EXISTS X_val;
 	CREATE TEMP TABLE X_val(
@@ -68,7 +69,7 @@ begin
 			EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
 			SELECT INTO r MADLIB_SCHEMA.array_sub(b, Ax);
 			SELECT INTO r_size MADLIB_SCHEMA.array_dot(r, r);
-			IF(verbosity = 1) THEN
+			IF(verbosity > 0) THEN
 				RAISE INFO 'COMPUTE RESIDUAL ERROR %', r_size;
 			END IF;
 			SELECT INTO p r; 
@@ -87,14 +88,14 @@ begin
 		SELECT INTO r MADLIB_SCHEMA.array_add(r,MADLIB_SCHEMA.array_scalar_mult(Ap, -alpha));
 		SELECT INTO r_new_size MADLIB_SCHEMA.array_dot(r,r);
 		
-		IF(verbosity = 1) THEN
+		IF(verbosity > 0) THEN
 			RAISE INFO 'ERROR %',r_new_size; 
 		END IF;
 		IF (r_new_size < precision_limit) THEN
 			EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
 			SELECT INTO r MADLIB_SCHEMA.array_sub(b, Ax);
 			SELECT INTO r_new_size MADLIB_SCHEMA.array_dot(r, r);
-			IF(verbosity = 1) THEN
+			IF(verbosity > 0) THEN
 				RAISE INFO 'TEST FINAL ERROR %', r_new_size;
 			END IF;
 			IF (r_new_size < precision_limit) THEN
@@ -102,9 +103,17 @@ begin
 			END IF;
 		END IF;
 		SELECT INTO p MADLIB_SCHEMA.array_add(r, MADLIB_SCHEMA.array_scalar_mult(p, r_new_size/r_size));
+		IF(r_size < r_new_size) THEN
+			exit_if_no_progess_in = exit_if_no_progess_in-1;
+			IF(exit_if_no_progess_in <= 0) THEN
+				RAISE EXCEPTION 'Algorithm failed to converge. Check is input is positive definate.';
+			END IF;
+		ELSE
+			exit_if_no_progess_in = 20;
+		END IF;
 		r_size = r_new_size;
 	END LOOP; 
-	IF(verbosity = 2) THEN
+	IF(verbosity > 1) THEN
 		RETURN ARRAY[r_new_size];
 	END IF;
 	SELECT INTO x value FROM X_val;
