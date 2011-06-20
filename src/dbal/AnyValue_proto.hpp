@@ -4,6 +4,11 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Class for representing any type.
+ *
+ * Instances of this class are a proxy to ConcreteValue.
+ */
 class AnyValue : public AbstractValue {
 public:
     class iterator : public std::iterator<std::input_iterator_tag, AnyValue> {

@@ -4,6 +4,13 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Abstract base class for the interface to a DBMS backend
+ *
+ * This class provides the interface that MADlib modules use for communicating
+ * wit the DBMS backend. Every MADlib module function is passed a reference to
+ * an AbstractDBInterface object as first argument.
+ */
 class AbstractDBInterface {
 protected:
     /**
@@ -79,8 +86,13 @@ public:
     
     virtual ~AbstractDBInterface() { }
     
-    // This function should be allowed to have side effects, so we do not
-    // declare it as const.
+    /**
+     * @brief Return the memory allocator for this DBMS backend
+     * @param inMemContext Memory context the returned allocator shall use.
+     *
+     * @internal This function should be allowed to have side effects, so we do
+     *     not declare it as const.
+     */
     virtual AllocatorSPtr allocator(
         AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction)
         = 0;
@@ -91,8 +103,8 @@ public:
      * Subclasses should call this methods as first step, and only if the return
      * value is NULL, they may report own last errors.
      *
-     * The implementation of this function in AbstractDBInterface is only for
-     * Armadillo.
+     * The implementation in AbstractDBInterface only cheks for errors
+     * reported by Armadillo.
      *
      * @see ArmadilloOutputStreamBuffer
      */

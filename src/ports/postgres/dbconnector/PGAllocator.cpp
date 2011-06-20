@@ -64,7 +64,7 @@ ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
 }
 
 /**
- * @brief Allocate memory in "our" PostgreSQL memory context. Throws on fail.
+ * @brief Allocate memory in our PostgreSQL memory context. Throws on fail.
  * 
  * In case allocation fails, throw an exception. At the boundary of the C++
  * layer, another PostgreSQL error will be raised (i.e., there will be at least
