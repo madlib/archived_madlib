@@ -46,6 +46,12 @@ From the MADlib root directory, execute the following commands:
 	cd build/
 	make
     
+To build the user-level documentation using doxygen, run:
+
+    make doc
+
+The developer documentation can be built by running "make devdoc" instead.
+
 Optionally, install MADlib with
 
     make install
