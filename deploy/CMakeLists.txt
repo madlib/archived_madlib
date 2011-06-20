@@ -18,7 +18,7 @@ endif()
 
 # -- General settings for all/multiple packages generators ---------------------
 
-set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/README.txt")
+set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/ReadMe_Install.txt")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
     "Open-Source Library for Scalable in-Database Analytics")
 set(CPACK_PACKAGE_FILE_NAME

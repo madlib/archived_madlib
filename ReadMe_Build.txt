@@ -21,11 +21,10 @@ Requirements:
 - Installed LAPACK library and header files.
   
   Platform notes:
-  + Mac OS X comes with LAPACK preinstalled (as part of the Accelerate
+  + Mac OS X comes with LAPACK and BLAS preinstalled (as part of the Accelerate
     framework)
-  + On RedHat/CentOS, LAPACK comes with with the lapack-devel package
-  + On Solaris, LAPACK comes with the Orcale Performance Studio
-    (FIXME)
+  + On RedHat/CentOS, LAPACK and BLAS come with with the lapack-devel package
+  + On Solaris, LAPACK and BLAS come with the Orcale Performance Studio
 
 - Internet connection to automatically download MADlib's dependencies if needed
   (Boost, Armadillo). See notes below.
@@ -52,11 +51,11 @@ Notes:
   Boost is too outdated (pre 1.34), it is downloaded automatically.
   Alternatively, the path to the sources can be specified by calling cmake with
   "-DBOOST_TAR_SOURCE=/path/to/boost_x.tar.gz"
-- MADlib depends on the linear-algebra library Armadillo. Since at this point
-  Armadillo is not a common package on many platforms, we always build it during
-  the build process and always install the armadillo shared inside the MADlib
-  directory. (The Armadillo shared library is a mere umbrella library for the
-  lower-level maths libraries LAPACK, BLAS, ...)
+- MADlib depends on the linear-algebra library Armadillo. We always build it
+  during as part of our own build process. On all platforms except Mac OS X, we
+  install the armadillo shared library inside the MADlib directory. (The
+  Armadillo shared library is a mere umbrella library for the lower-level maths
+  libraries LAPACK, BLAS, ...)
   Armadillo is downloaded automatically, unless the you call cmake with
   "-DARMADILLO_TAR_SOURCE=/path/to/armadillo_x.tar.gz", in which case this file
   is used.
