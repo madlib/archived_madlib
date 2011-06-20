@@ -10,6 +10,11 @@
 #include <modules/prob/student.hpp>
 #include <utils/Reference.hpp>
 
+// Floating-point classification functions are in C99 and TR1, but not in the
+// official C++ Standard (before C++0x). We therefore use the Boost implementation
+#include <boost/math/special_functions/fpclassify.hpp>
+
+
 // Import names from Armadillo
 using arma::mat;
 using arma::as_scalar;
@@ -160,6 +165,14 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
     double y = *arg++;
     DoubleRow_const x = *arg++;
     
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!boost::math::isfinite(y))
+        throw std::invalid_argument("Dependent variables are not finite.");
+    else if (!x.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
+    
     // Now do the transition step.
     if (state.numRows == 0)
         state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
@@ -199,6 +212,12 @@ AnyValue LinearRegression::mergeStates(AbstractDBInterface &db, AnyValue args) {
 template <LinearRegression::What what>
 AnyValue LinearRegression::final(AbstractDBInterface &db,
     const LinearRegression::TransitionState &state) {
+
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!state.X_transp_X.is_finite() || !state.X_transp_Y.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
 
     // Precompute (X^T * X)^+
     mat inverse_of_X_transp_X = pinv(state.X_transp_X);

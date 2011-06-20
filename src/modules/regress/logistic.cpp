@@ -12,6 +12,11 @@
 #include <modules/regress/logistic.hpp>
 #include <utils/Reference.hpp>
 
+// Floating-point classification functions are in C99 and TR1, but not in the
+// official C++ Standard (before C++0x). We therefore use the Boost implementation
+#include <boost/math/special_functions/fpclassify.hpp>
+
+
 // Import names from Armadillo
 using arma::trans;
 using arma::colvec;
@@ -420,6 +425,15 @@ AnyValue LogisticRegressionIRLS::transition(AbstractDBInterface &db,
     State state = *arg++;
     double y = *arg++ ? 1. : -1.;
     DoubleRow_const x = *arg++;
+
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!boost::math::isfinite(y))
+        throw std::invalid_argument("Dependent variables are not finite.");
+    else if (!x.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
+
     if (state.numRows == 0) {
         state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
         if (!arg->isNull()) {
@@ -485,8 +499,12 @@ AnyValue LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyValue args) {
     // Argument from SQL call
     State state = args[0].copyIfImmutable();
 
-    // FIXME: Harden the code. pinv can throw an exception if 
-    // matrix is ill-formed
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
+    
     state.coef = pinv(state.X_transp_AX) * state.X_transp_Az;    
     return state;
 }
