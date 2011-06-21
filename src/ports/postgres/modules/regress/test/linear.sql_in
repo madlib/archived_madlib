@@ -1,4 +1,4 @@
---------------------------------------------------------------------------------
+﻿--------------------------------------------------------------------------------
 -- Linear Regression tests
 --------------------------------------------------------------------------------
 
@@ -10,6 +10,84 @@ SET search_path TO madlib_regress_installcheck;
 --------------------------------------------------------------------------------
 -- Create some test data
 --------------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- Test
+---------------------------------------------------------------------------
+-- test function
+CREATE FUNCTION install_test() RETURNS VOID AS $$ 
+declare
+	coef FLOAT[];
+	rsq FLOAT;
+	tst FLOAT[];
+	pval FLOAT[];
+
+	n FLOAT;
+	xsq FLOAT;
+
+	acoef FLOAT[];
+	arsq FLOAT;
+	atst1 FLOAT;
+	atst2 FLOAT;
+	atst FLOAT[];
+
+	result INT;
+	result2 INT;
+	
+begin
+	DROP TABLE IF EXISTS data;	
+	CREATE TABLE data(x1 numeric,x2 float,noise numeric);
+	INSERT INTO data(x1,x2,noise) SELECT (random()-0.5),(random()-0.5),(random()-0.5) FROM generate_series(1,100) as a;
+
+	DROP TABLE IF EXISTS data2;
+	CREATE TABLE data2(r1 float, r2 float, r3 float, y numeric);
+	INSERT INTO data2(r1,r2,r3,y) SELECT x1,x2,noise,(x1*3.4+x2*2.5+noise) FROM data;
+
+	SELECT MADLIB_SCHEMA.linregr_coef(y,array[r1,1]) INTO coef FROM data2;
+	SELECT MADLIB_SCHEMA.linregr_r2(y,array[r1,1]) INTO rsq FROM data2;
+	SELECT MADLIB_SCHEMA.linregr_tstats(y,array[r1,1]) INTO tst FROM data2;
+	SELECT MADLIB_SCHEMA.linregr_pvalues(y,array[r1,1]) INTO pval FROM data2;	
+
+	--check univariate results
+	SELECT count(y) INTO n FROM data2;
+	SELECT sum(r1*r1)::float INTO xsq FROM data2;
+	SELECT ARRAY[ ((count(y) * sum(r1*y) - sum(r1)*sum(y))/(count(y) * sum(r1*r1) - sum(r1)^2)),
+		((sum(y)*sum(r1*r1) - sum(r1)*sum(r1*y))/(count(y) * sum(r1*r1) - sum(r1)^2))]::float[] INTO acoef FROM data2;
+	SELECT ((count(y) * sum(r1*y) - sum(r1)*sum(y))^2/
+		((count(y) * sum(r1*r1) - sum(r1)^2) * (count(y) * sum(y*y) - sum(y)^2)))::float INTO arsq FROM data2;
+	SELECT |/ ( (count(y)-2) / ( 1/
+		( ((count(y) * sum(r1*y) - sum(r1)*sum(y))^2/
+		((count(y) * sum(r1*r1) - sum(r1)^2) * (count(y) * sum(y*y) - sum(y)^2))) ) - 1) ) ::float INTO atst1 FROM data2;      	         
+	atst = array[ atst1, acoef[2]/( (acoef[1]/atst1)*sqrt(xsq/n)) ];
+
+	result =  (MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(coef,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(acoef,1000::FLOAT) ) ))::INT 
+		+((rsq*1000) - (arsq*1000))::INT
+		+(MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(tst,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(atst,1000::FLOAT) ) ))::INT; 
+
+	IF (result != 0) THEN
+		RAISE EXCEPTION 'Incorrect univariate results';
+	END IF;
+
+	--check multivariate results
+	SELECT MADLIB_SCHEMA.linregr_coef(y,array[r1,r2,1]) INTO coef FROM data2;
+	SELECT MADLIB_SCHEMA.linregr_r2(y,array[r1,r2,1]) INTO rsq FROM data2;
+	SELECT MADLIB_SCHEMA.linregr_tstats(y,array[r1,r2,1]) INTO tst FROM data2;
+	SELECT MADLIB_SCHEMA.linregr_pvalues(y,array[r1,r2,1]) INTO pval FROM data2;
+
+	result = abs(coef[1]*10 - 34)::INT;
+	result2 = abs(coef[2]*10 - 25)::INT;
+
+	IF (result > 5) OR (result2 > 5) OR (rsq < 0.9) THEN
+		RAISE EXCEPTION 'Incorrect multivariate results, got %,%',coef,rsq;
+	END IF;
+	
+	RAISE INFO 'Linear regression install checks passed';
+	RETURN;
+	
+end 
+$$ language plpgsql;
+
+SELECT install_test();
+
 
 -- The following example is taken from:
 -- http://www.weibull.com/DOEWeb/estimating_regression_models_using_least_squares.htm#Example%205.1
@@ -132,6 +210,8 @@ select MADLIB_SCHEMA.linregr_coef(price, array[1, bedroom, bath, size])::REAL[] 
 select MADLIB_SCHEMA.linregr_r2(price, array[1, bedroom, bath, size])::REAL from houses;
 select MADLIB_SCHEMA.linregr_tstats(price, array[1, bedroom, bath, size])::REAL[] from houses;
 select MADLIB_SCHEMA.linregr_pvalues(price, array[1, bedroom, bath, size])::REAL[] from houses;
+
+
 
 
 --------------------------------------------------------------------------------
