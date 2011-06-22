@@ -234,7 +234,7 @@ def __plpy_check( py_min_ver):
                 , False)            
         raise
 
-    __info( "> PL/Python environment OK", True)            
+    __info( "> PL/Python environment OK (version: %s)" % rv[0][0], True)            
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Install MADlib
