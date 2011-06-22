@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+﻿/* ----------------------------------------------------------------------- *//** 
  *
  * @file conjugate_gradient.sql_in
  *
@@ -50,6 +50,7 @@ declare
 	Ax FLOAT[];
 	pAp_size FLOAT;
 	beta FLOAT;
+	exit_if_no_progess_in INT := 15;
 begin	
 	DROP TABLE IF EXISTS X_val;
 	CREATE TEMP TABLE X_val(
@@ -62,39 +63,43 @@ begin
 	); 
 	
 	SELECT INTO k array_upper(b,1);
-	INSERT INTO X_val SELECT ARRAY(SELECT random() FROM generate_series(1, k));
+	--INSERT INTO X_val SELECT ARRAY(SELECT random() FROM generate_series(1, k));
+	EXECUTE 'INSERT INTO X_val SELECT ARRAY(SELECT random() FROM generate_series(1,' ||k|| '))';
 	LOOP
 		IF(iter%recidual_refresh = 0)THEN 
 			EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
 			SELECT INTO r MADLIB_SCHEMA.array_sub(b, Ax);
 			SELECT INTO r_size MADLIB_SCHEMA.array_dot(r, r);
-			IF(verbosity = 1) THEN
+			IF(verbosity > 0) THEN
 				RAISE INFO 'COMPUTE RESIDUAL ERROR %', r_size;
 			END IF;
 			SELECT INTO p r; 
 		END IF;
 		iter = iter + 1;
 		TRUNCATE TABLE P_val;
-		INSERT INTO P_val VALUES(p);
+		--INSERT INTO P_val VALUES(p);
+		EXECUTE 'INSERT INTO P_val(value) VALUES(array['|| array_to_string(p,',') ||'])';
 		EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.p) FROM (SELECT value AS p FROM P_val) AS j,'|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ap;
 		SELECT INTO pAp_size MADLIB_SCHEMA.array_dot(p, Ap);
 		alpha = r_size/pAp_size;
 		
-		SELECT INTO x MADLIB_SCHEMA.array_add(value, MADLIB_SCHEMA.array_scalar_mult(p,alpha)) FROM X_val;
+		--SELECT INTO x MADLIB_SCHEMA.array_add(value, MADLIB_SCHEMA.array_scalar_mult(p,alpha)) FROM X_val;
+		EXECUTE 'SELECT MADLIB_SCHEMA.array_add(value, MADLIB_SCHEMA.array_scalar_mult(array['|| array_to_string(p,',') ||']::float[],'||alpha||'::float)) FROM X_val' INTO x;
 		TRUNCATE TABLE X_val;
-		INSERT INTO X_val VALUES(x);
+		--INSERT INTO X_val VALUES(x);
+		EXECUTE 'INSERT INTO X_val VALUES(array['|| array_to_string(x,',') ||'])';
 		
 		SELECT INTO r MADLIB_SCHEMA.array_add(r,MADLIB_SCHEMA.array_scalar_mult(Ap, -alpha));
 		SELECT INTO r_new_size MADLIB_SCHEMA.array_dot(r,r);
 		
-		IF(verbosity = 1) THEN
+		IF(verbosity > 0) THEN
 			RAISE INFO 'ERROR %',r_new_size; 
 		END IF;
 		IF (r_new_size < precision_limit) THEN
 			EXECUTE 'SELECT ARRAY(SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||')' INTO Ax;
 			SELECT INTO r MADLIB_SCHEMA.array_sub(b, Ax);
 			SELECT INTO r_new_size MADLIB_SCHEMA.array_dot(r, r);
-			IF(verbosity = 1) THEN
+			IF(verbosity > 0) THEN
 				RAISE INFO 'TEST FINAL ERROR %', r_new_size;
 			END IF;
 			IF (r_new_size < precision_limit) THEN
@@ -102,12 +107,23 @@ begin
 			END IF;
 		END IF;
 		SELECT INTO p MADLIB_SCHEMA.array_add(r, MADLIB_SCHEMA.array_scalar_mult(p, r_new_size/r_size));
+		IF(r_size < r_new_size) THEN
+			exit_if_no_progess_in = exit_if_no_progess_in-1;
+			RAISE INFO 'No progress! count = %',exit_if_no_progess_in;
+			
+			IF(exit_if_no_progess_in <= 0) THEN
+				RAISE EXCEPTION 'Algorithm failed to converge. Check is input is positive definate.';
+			END IF;
+		ELSE
+			exit_if_no_progess_in = 15;
+		END IF;
 		r_size = r_new_size;
 	END LOOP; 
-	IF(verbosity = 2) THEN
+	IF(verbosity > 1) THEN
 		RETURN ARRAY[r_new_size];
 	END IF;
-	SELECT INTO x value FROM X_val;
+	--SELECT INTO x value FROM X_val;
+	EXECUTE 'SELECT value FROM X_val' INTO x;
 	RETURN x;
 end
 $$ LANGUAGE plpgsql;

@@ -474,6 +474,7 @@ $$ LANGUAGE 'plpgsql';
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.remove_redundent(table_input TEXT, id_col_name TEXT, id_feature_name TEXT, class_col_name TEXT) RETURNS void AS $$
 begin	
+	DROP TABLE IF EXISTS weighted_points CASCADE;
 	CREATE TEMP TABLE weighted_points(
 		id INTEGER,
 		feature MADLIB_SCHEMA.svec,
@@ -481,7 +482,8 @@ begin
 		weight INTEGER,
 		selection INTEGER
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (selection)');
-	
+
+	DROP TABLE IF EXISTS weighted_points2 CASCADE;
 	CREATE TEMP TABLE weighted_points2(
 		id INTEGER,
 		feature MADLIB_SCHEMA.svec,
@@ -490,7 +492,7 @@ begin
 		selection INTEGER
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (selection)');
 	
-	EXECUTE 'INSERT INTO weighted_points SELECT (MADLIB_SCHEMA.CreateHash(id, feature, class)).* FROM (SELECT '||id_col_name||' as id, '||id_feature_name||' as feature, '||class_col_name||' as class, MADLIB_SCHEMA.svec_hash('||id_feature_name||') as hash FROM '||table_input||') as A GROUP BY A.hash';
+	EXECUTE 'INSERT INTO weighted_points SELECT (MADLIB_SCHEMA.CreateHash(id, feature, class)).* FROM (SELECT '||id_col_name||' as id, '||id_feature_name||' as feature, '||class_col_name||' as class, MADLIB_SCHEMA.svec_hash('||id_feature_name||') as hash FROM '||table_input||') as A GROUP BY A.hash,A.class';
 end
 $$ language plpgsql;
 
@@ -649,7 +651,7 @@ begin
 	result.infogain = pre_result[2];
 	result.chisq = MADLIB_SCHEMA.chi2pdf(pre_result[3], distinct_features-1);
 	
-	IF ((result.chisq < 0.5/sample_dimentions) OR (MADLIB_SCHEMA.chi2pdf((pre_result[6]-total_size)*(pre_result[6]-total_size)/total_size, 1) < .1)) THEN
+	IF (((result.chisq < 0.5/sample_dimentions) OR (MADLIB_SCHEMA.chi2pdf((pre_result[6]-total_size)*(pre_result[6]-total_size)/total_size, 1) < .1))AND(result.infogain > .1/sample_dimentions)) THEN
 		result.live = 1;
 	ELSE
 		result.live = 0;
@@ -682,6 +684,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.JumpCalc(INT, INT) (
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.declare_tree_tables();
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.declare_tree_tables() RETURNS void AS $$ begin
+	DROP TABLE IF EXISTS tree2 CASCADE;
 	CREATE TEMP TABLE tree2(
 		id SERIAL,
 		tree_location INT[],
@@ -697,7 +700,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.declare_tree_tables() RETURNS void AS $
 		jump INT[]
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
-	DROP TABLE IF EXISTS MADLIB_SCHEMA.tree;
+	DROP TABLE IF EXISTS MADLIB_SCHEMA.tree CASCADE;
 	CREATE TABLE MADLIB_SCHEMA.tree(
 		id SERIAL,
 		tree_location INT[],
@@ -713,12 +716,14 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.declare_tree_tables() RETURNS void AS $
 		jump INT[]
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
+	DROP TABLE IF EXISTS finaltree CASCADE;
 	CREATE TEMP TABLE finaltree(
 		id INT,
 		new_id INT,
 		parent_id INT
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
+	DROP TABLE IF EXISTS finaltree2 CASCADE;
 	CREATE TEMP TABLE finaltree2(
 		id INT,
 		new_id INT,
@@ -863,6 +868,9 @@ begin
 	EXECUTE 'SELECT COUNT(DISTINCT class) FROM ' || table_names[1] || ';' INTO num_classes; 
 	IF(verbosity > 0) THEN
 		RAISE INFO 'NUMBER OF CLASSES IN THE TRAINING SET %', num_classes;
+	END IF;
+	IF(num_classes < 2)THEN
+		RAISE EXCEPTION 'Number of classes cannot be less than 1';
 	END IF;
 	
 	EXECUTE 'INSERT INTO tree2 (tree_location, hash, feature, probability, chisq, maxclass, infogain, live, cat_size, parent_id) VALUES(ARRAY[0], MADLIB_SCHEMA.hash_array(ARRAY[0]), 0, 1, 1, 1, 1, 1, 0, 0)';
