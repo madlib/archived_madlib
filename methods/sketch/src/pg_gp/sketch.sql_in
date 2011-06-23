@@ -54,14 +54,34 @@ directly in SQL queries.
 
 
  @usage
-   <c>fmsketch_dcount</c> is a UDA that can be run on any column of any type.  
+ <strong><tt>fmsketch_dcount('<em>col_name</em>')</tt></strong>\n
+ Returns the number of distinct values in the designated column.
+ 
+   <c>fmsketch_dcount</c> can be run on any column of any type.  
    It returns an approximation to the number of distinct values in the column 
-   (a la <c>COUNT(DISTINCT x)</c>, but faster and approximate).  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  Example:@code
-   -- find distinct number of proname values for each value of pronargs
-    SELECT pronargs, madlib.fmsketch_dcount(proname) AS distinct_hat, count(proname)
-      FROM pg_proc
-  GROUP BY pronargs;
-    @endcode
+   (a la <c>COUNT(DISTINCT x)</c>, but faster and approximate).  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  
+
+   @examp
+   @code
+   -- Generate some data
+ CREATE TABLE data(class INT, a1 INT); 
+ INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
+ INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
+ INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
+ INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
+ INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+
+ -- Find distinct number of values for each class
+ SELECT class,fmsketch_dcount(a1)
+ FROM data GROUP BY data.class;
+
+  class | fmsketch_dcount 
+ -------+-----------------
+      2 |               2
+      1 |               3
+ (2 rows)
+
+@endcode
 
 @sa file sketch.sql_in (documenting the SQL function)
 
@@ -75,39 +95,87 @@ directly in SQL queries.
  @about
  This module implements Cormode-Muthukrishnan <i>CountMin</i> sketches
  on integer values, implemented as a user-defined aggregate.  It also provides scalar functions over the sketches to produce approximate counts, order statistics, and histograms.
+
+ @usage
+ <strong><tt>cmsketch('<em>col_name</em>')</tt></strong>\n
+ Returns a sketch of the column specified by <em>col_name</em>. 
+ 
+ <strong><tt>cmsketch_count('<em>cmsketch</em>',<em>p</em>)</tt></strong>\n
+ Returns the number of rows where <em>col_name = p</em>, computed from the sketch obtained from <tt>cmsketch</tt>.
+ 
+ <strong><tt>cmsketch_rangecount('<em>cmsketch</em>',<em>m</em>,<em>n</em>)</tt></strong>\n
+ Returns the number of rows where <em>col_name</em> is between <em>m</em> and <em>n</em> inclusive.
+ 
+ <strong><tt>cmsketch_centile('<em>cmsketch</em>',<em>k</em>,<em>count</em>)</tt></strong>\n
+ Returns the <em>k</em>th percentile of <em>col_name</em> where <em>count</em> specifies number of rows. <em>k</em> should be an integer between 1 to 99.
+ 
+ <strong><tt>cmsketch_median('<em>cmsketch</em>',<em>count</em>)</tt></strong>\n
+ Returns the median of <em>col_name</em> where <em>count</em> specifies number of rows. This is equivalent to <tt>cmsketch_centile('<em>cmsketch</em>',50,'<em>count</em>')</tt>.
+ 
+ <strong><tt>cmsketch_width_histogram('<em>cmsketch</em>',<em>min</em>,<em>max</em>,<em>n</em>)</tt></strong>\n
+ Produces an n-bucket histogram for values between min and max for the column where each bucket has approximately the same width. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.
+ 
+ <strong><tt>cmsketch_depth_histogram('<em>cmsketch</em>',<em>n</em>)</tt></strong>\n
+ Produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles. 
  
  @examp
  @code
-   -- count number of rows with pronargs = 3
-   SELECT pronamespace, madlib.cmsketch_count(madlib.cmsketch(pronargs), 3)
-     FROM pg_proc
- GROUP BY pronamespace;
+ -- Generate some data
+ CREATE TABLE data(class INT, a1 INT); 
+ INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
+ INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
+ INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
+ INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
+ INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+
+ -- Count number of rows where a1 = 2 in each class
+ SELECT class,cmsketch_count(cmsketch(a1),2) 
+ FROM data GROUP BY data.class;
+
+ -- Count number of rows where a1 is between 3 and 6
+ SELECT class,cmsketch_rangecount(cmsketch(a1),3,6)
+ FROM data GROUP BY data.class;
+
+ -- Compute the 90th percentile of all of a1
+ SELECT cmsketch_centile(cmsketch(a1),90,count(*))
+ FROM data;
+
+ -- Produce an equi-width histogram with 2 bins between 0 and 10
+ SELECT cmsketch_width_histogram(cmsketch(a1),0,10,2)
+ FROM data;
+
+ -- Produce an equi-depth histogram of a1 with 2 bins of approximately equal depth
+ SELECT cmsketch_depth_histogram(cmsketch(a1),2)
+ FROM data;
+
+  class | cmsketch_count 
+-------+----------------
+     2 |              0
+     1 |          15000
+(2 rows)
+
+ class | cmsketch_rangecount 
+-------+---------------------
+     2 |                2000
+     1 |               10000
+(2 rows)
+
+ cmsketch_centile 
+------------------
+                3
+(1 row)
+
+      cmsketch_width_histogram      
+------------------------------------
+ [[0L, 4L, 35000], [5L, 10L, 2000]]
+(1 row)
+
+                       cmsketch_depth_histogram                        
+-----------------------------------------------------------------------
+ [[-9223372036854775807L, 1, 10000], [2, 9223372036854775807L, 27000]]
+(1 row)
+
  @endcode
- @code
-   -- count number of rows with pronargs between 3 and 5 inclusive
-   SELECT pronamespace, madlib.cmsketch_rangecount(madlib.cmsketch(pronargs), 3, 5)
-     FROM pg_proc
- GROUP BY pronamespace;
-  @endcode
-  @code
-   -- find 75th percentile value of oid
-   SELECT relnamespace, madlib.cmsketch_centile(madlib.cmsketch(oid::int8), 75, count(*))
-     FROM pg_class
- GROUP BY relnamespace;
-  @endcode
-  @code
-   -- produce equi-width histogram of oid
-   SELECT madlib.cmsketch_width_histogram(madlib.cmsketch(oid::int8), 
-                                          min(oid::int8), 
-                                          max(oid::int8), 
-                                          10)
-     FROM pg_class;
-  @endcode
-  @code
-   -- produce equi-depth histogram of oid
-   SELECT madlib.cmsketch_depth_histogram(madlib.cmsketch(oid::int8), 10)
-     FROM pg_class;
-  @endcode
 
  @sa file sketch.sql_in (documenting the SQL functions)
 
@@ -127,6 +195,11 @@ directly in SQL queries.
  as a UDA.
 
  \usage
+ <strong><tt>mfv_top_histogram('<em>col_name</em>',n)</tt></strong>\n
+ <strong><tt>mfv_quick_histogram('<em>col_name</em>',n)</tt></strong>\n
+ Produces an n-bucket histogram for a column where each bucket counts one of the most frequent values in the column. The output is an array of doubles {value, count}
+ in descending order of frequency; counts are approximated via CountMin sketches. Ties are handled arbitrarily.
+ 
  The MFV frequent-value UDA comes in two different versions: a faithful implementation that preserves the
  approximation guarantees of Cormode/Muthukrishnan, and a "quick and dirty"
  version that can do parallel aggregation in Greenplum at the expense
@@ -135,20 +208,25 @@ directly in SQL queries.
  In Greenplum, the quick version should 
  produce good results unless the number of values requested is very small,
  or the distribution is very flat.
- 
 
-  Examples:
+ @examp
   @code
-  -- Find most frequent values of proname, and their counts.
-  -- No parallel aggregation
-  SELECT madlib.mfvsketch_top_histogram(proname, 4)
-    FROM pg_proc;
+ -- Generate some data
+ CREATE TABLE data(class INT, a1 INT); 
+ INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
+ INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
+ INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
+ INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
+ INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
 
-  -- Find most frequent values of proname, and their counts.
-  -- In Greenplum, aggregation will run in parallel, but some 
-  -- of the mfvs may be skipped
-  SELECT madlib.mfvsketch_quick_histogram(proname, 4)
-    FROM pg_proc;
+ -- Produce histogram of 5 bins and return the most frequent value and associated count in each bin
+ SELECT mfvsketch_top_histogram(a1,5) FROM data;
+
+                   mfvsketch_top_histogram                    
+--------------------------------------------------------------
+ [0:4][0:1]={{2,15000},{1,10000},{3,10000},{5,1000},{6,1000}}
+(1 row)
+
  @endcode
 
  @sa file sketch.sql_in (documenting the SQL functions)
