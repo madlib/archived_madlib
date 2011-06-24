@@ -13,8 +13,7 @@ Logistic Regression: Driver functions
 import plpy
 
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
-    terminateExpr, cyclesPerIteration, maxNumIterations,
-    returnExpr = "st.state"):
+    terminateExpr, cyclesPerIteration, maxNumIterations):
     """
     Driver for an iterative algorithm
     
@@ -23,8 +22,6 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
     initialized with <tt><em>initialState</em></tt>. During each iteration, the
     SQL statement <tt>updateSQL</tt> is executed in the database. Afterwards,
     the SQL query <tt>updateSQL</tt> decides whether the algorithm terminates.
-    At the end of the algorithm, the last state (or an arbitrary transformation
-    as given by <tt>returnExpr</tt>) will be returned.
     
     @param stateType SQL type of the state between iterations
     @param initialState The initial value of the SQL state variable
@@ -41,13 +38,6 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
     @param cyclesPerIteration Number of aggregate function calls per iteration.
     @param maxNumIterations Maximum number of iterations. Algorithm will then
         terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
-    @param returnExpr An optional transformation of the final state. If omitted,
-        the final state will be returned. <tt>returnExpr</tt> can be, e.g., a
-        function call or access to a tuple element. Use "{state}" to refer
-        to the state variable. E.g., if <tt>stateType</tt> is a tuple containing
-        a field <tt>coefficients</tt>, and this should be returned as the result
-        of the algorithm, pass <tt>"{state}.coefficients"</tt> here. The
-        replacement field <tt>"{iteration}"</tt> can also be used.
     """
 
     state = "(st.state)"
@@ -57,7 +47,6 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
     
     updateExpr = updateExpr.format(**locals())
     terminateExpr = terminateExpr.format(**locals())
-    returnExpr = returnExpr.format(**locals())
 
     updateSQL = """
         INSERT INTO _madlib_iterative_alg
@@ -85,14 +74,6 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             WHERE iteration = {iteration}
         ) AS newer
         """
-    returnSQL = """
-        SELECT
-            {returnExpr} AS return_value
-        FROM
-            _madlib_iterative_alg AS st
-        WHERE
-            st.iteration = {iteration}
-        """
 
     oldMsgLevel = plpy.execute("SHOW client_min_messages")[0]['client_min_messages']
     plpy.execute("""
@@ -118,20 +99,15 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
                 == True):
             break
     
-    # FIXME: Returning the result set from Python code means that values
-    # pass through Python (and there is a potential loss of precision by
-    # conversion)
-    
-    returnValue = plpy.execute(returnSQL.format(**locals()))[0]['return_value']
-    plpy.execute("DROP TABLE _madlib_iterative_alg")
-    return returnValue
+    # Note: We do not drop the temporary table
+    return iteration
 
 
-def __cg_logregr_coef(**kwargs):
+def __cg_logregr(**kwargs):
     """
     Logistic regression algorithm with the conjugate-gradient method
     
-    The parameters are the same as for compute_logregr_coef(), except that
+    The parameters are the same as for compute_logregr(), except that
     <tt>optimizer</tt> should not be set. This function sets up all SQL
     expression as needed for the conjugate-gradient method and then calls
     __runIterativeAlg().
@@ -162,16 +138,15 @@ def __cg_logregr_coef(**kwargs):
     # See float8_cg_update_final().
     cyclesPerIteration = 2
     maxNumIterations = kwargs['numIterations']
-    returnExpr = "{MADlibSchema}.internal_logregr_cg_coef({{state}})".format(**kwargs)
     return __runIterativeAlg(stateType, initialState, source, updateExpr,
-        terminateExpr, cyclesPerIteration, maxNumIterations, returnExpr)
+        terminateExpr, cyclesPerIteration, maxNumIterations)
 
 
-def __irls__logregr_coef(**kwargs):
+def __irls__logregr(**kwargs):
     """
     Logistic regression algorithm with the iteratively-reweighted-least-squares method
     
-    The parameters are the same as for compute_logregr_coef(), except that
+    The parameters are the same as for compute_logregr(), except that
     <tt>optimizer</tt> should not be set. This function sets up all SQL
     expression as needed for the iteratively-reweighted-least-squares method and
     then calls __runIterativeAlg().
@@ -196,12 +171,11 @@ def __irls__logregr_coef(**kwargs):
 
     cyclesPerIteration = 1
     maxNumIterations = kwargs['numIterations']
-    returnExpr = "{MADlibSchema}.internal_logregr_irls_coef({{state}})".format(**kwargs)
     return __runIterativeAlg(stateType, initialState, source, updateExpr,
-        terminateExpr, cyclesPerIteration, maxNumIterations, returnExpr)
+        terminateExpr, cyclesPerIteration, maxNumIterations)
     
 
-def compute_logregr_coef(**kwargs):
+def compute_logregr(**kwargs):
     """
     Compute logistic regression coefficients
     
@@ -236,9 +210,9 @@ def compute_logregr_coef(**kwargs):
         kwargs.update(precision = 0.0001)
         
     if kwargs['optimizer'] == 'cg':
-        return __cg_logregr_coef(**kwargs)
+        return __cg_logregr(**kwargs)
     elif kwargs['optimizer'] in ['irls', 'newton']:
-        return __irls__logregr_coef(**kwargs)
+        return __irls__logregr(**kwargs)
     else:
         plpy.error("Unknown optimizer requested. Must be 'newton'/'irls' or 'cg'")
     
