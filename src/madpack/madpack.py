@@ -141,7 +141,6 @@ def __import_dbapi( api):
 # @param dbconn database conection object
 # @param schema MADlib schema name
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-#def __get_madlib_dbver( dbconn, schema):
 def __get_madlib_dbver( schema):
     cur = dbconn.cursor()
     try:
@@ -154,7 +153,33 @@ def __get_madlib_dbver( schema):
     except:
         dbconn.rollback()
         return None
-        
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Make sure we are connected to the expected db platform
+# @param portid expected DB port id - to be validates
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __check_db_port( portid):
+    cur = dbconn.cursor()
+    # PostgerSQL
+    if portid == 'postgres':
+        try:
+            cur.execute( "SELECT version() AS version")        
+            row = cur.fetchone()
+            if row[0].lower().find( portid) >= 0 and row[0].lower().find( 'greenplum') < 0:
+                return True
+        except:
+            dbconn.rollback()
+    # Greenplum
+    if portid == 'greenplum':
+        try:
+            cur.execute( "SELECT version() AS version")        
+            row = cur.fetchone()
+            if row[0].lower().find( portid) >= 0:
+                return True
+        except:
+            dbconn.rollback()
+    return False
+                
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Convert version string into number for comparison
 # @param rev version text
@@ -714,6 +739,7 @@ def main( argv):
     if api is None and portapi:
         # For POSTGRES import Pygresql.pgdb from madpack package
         if portid == 'postgres':
+        #if portid == 'postgres' or portid == 'greenplum':
             try:       
                 sys.path.append( maddir + "/ports/postgres/madpack")
                 dbapi2 = __import_dbapi( portapi)
@@ -731,7 +757,6 @@ def main( argv):
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)
     ##
-    #if portid and dbapi2 and args.connstr:
     if portid and dbapi2:
     
         # Define connection arguments
@@ -804,21 +829,30 @@ def main( argv):
         # Try connecting to the database
         ##
         __info( "Testing database connection...", verbose)
+        
         # Get password
         if c_pass is None:
             c_pass = getpass.getpass( "Password for user %s: " % c_user)
+
         # Set connection variables
         global con_args
         con_args['host'] = c_host + ':' + c_port
         con_args['database'] = c_db
         con_args['user'] = c_user
         con_args['password'] = c_pass    
+
         # Open connection
         global dbconn
         dbconn = dbapi2.connect( **con_args)
         __info( 'Database connection successful: %s@%s/%s' % (c_user, c_host + ':' + c_port, c_db), verbose)
+
         # Get MADlib version in DB
         dbrev = __get_madlib_dbver( schema)
+        
+        # Validate that db platform is correct 
+        if __check_db_port( portid) == False:
+            __error( "invalid database platform selected", True)
+                   
         # Close connection
         dbconn.close()
         
