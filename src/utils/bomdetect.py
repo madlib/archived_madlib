@@ -103,10 +103,12 @@ if __name__ == '__main__':
     global errors
     
     errors = 0
-    def check_boms(arg, dirname, names):
+    def check_boms(verbose, dirname, names):
         global errors
         for fname in names:
-            fname = os.path.join(dirname, fname)
+            fname = os.path.join(dirname, fname)            
+            if verbose:
+                print fname
             if not os.path.isfile(fname):
                 continue
             f = open(fname)
@@ -118,9 +120,22 @@ if __name__ == '__main__':
                 print "%s:  ==> BOM DETECTED (%s) <== " % (fname, bom)
                 errors += 1
 
-    dirs = sys.argv[1:] or [os.getcwd()]
+    # Get parameters (verbose & dirs)
+    verbose = False
+    dirs = []
+    for a in sys.argv[1:]:
+        if a.lower() == '-v':
+            verbose = True  
+        else:
+           dirs.append( a)
+            
+    # If dirs is empty get the current working dir
+    if len( dirs) == 0:
+        dirs.append( os.getcwd())
+
+    # Run the search
     for d in dirs:
-        os.path.walk(d, check_boms, None)
+        os.path.walk(d, check_boms, verbose)
 
     if errors > 0:
         sys.exit(1)
