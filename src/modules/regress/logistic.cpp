@@ -93,7 +93,6 @@ public:
           X_transp_AX(TransparentHandle::create(&mStorage[4 + 4 * widthOfX]),
               widthOfX, widthOfX),
           logLikelihood(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX])
-//          dTHd(&mStorage[5 + widthOfX * widthOfX + 4 * widthOfX])
         { }
     
     /**
@@ -129,7 +128,6 @@ public:
         X_transp_AX.rebind(TransparentHandle::create(&mStorage[4 + 4 * widthOfX]),
               widthOfX, widthOfX);
         logLikelihood.rebind(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX]);
-//        dTHd.rebind(&mStorage[5 + widthOfX * widthOfX + 4 * widthOfX]);
         reset();
     }
     
@@ -151,7 +149,6 @@ public:
         
         numRows += inOtherState.numRows;
         gradNew += inOtherState.gradNew;
-//        dTHd += inOtherState.dTHd;
         X_transp_AX += inOtherState.X_transp_AX;
         logLikelihood += inOtherState.logLikelihood;
         return *this;
@@ -162,7 +159,6 @@ public:
      */
     inline void reset() {
         numRows = 0;
-//        dTHd = 0;
         X_transp_AX.zeros();
         gradNew.zeros();
         logLikelihood = 0;
@@ -223,18 +219,13 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
     double xc = as_scalar( x * state.coef );
 	double xd = as_scalar( x * state.dir );
     
-    if (state.iteration % 2 == 0)
-        state.gradNew += sigma(-y * xc) * y * trans(x);
-    else {
-        // Note: sigma(-x) = 1 - sigma(x).
-        // a_i = sigma(x_i c) sigma(-x_i c)
-        double a = sigma(xc) * sigma(-xc);
-        state.X_transp_AX += trans(x) * a * x;
+    state.gradNew += sigma(-y * xc) * y * trans(x);
 
-//      Note that 1 - sigma(x) = sigma(-x)
-//        state.dTHd -= sigma(xc) * sigma(-xc) * xd * xd;
-    }
-        
+    // Note: sigma(-x) = 1 - sigma(x).
+    // a_i = sigma(x_i c) sigma(-x_i c)
+    double a = sigma(xc) * sigma(-xc);
+    state.X_transp_AX += trans(x) * a * x;
+
     //          n
     //         --
     // l(c) = -\  log(1 + exp(-y_i * c^T x_i))
@@ -270,13 +261,13 @@ AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
     // Argument from SQL call
     State state = args[0].copyIfImmutable();
     
-    // Note: k = state.iteration() / 2
+    // Note: k = state.iteration
     if (state.iteration == 0) {
 		// Iteration computes the gradient
 	
 		state.dir = state.gradNew;
 		state.grad = state.gradNew;
-	} else if (state.iteration % 2 == 0) {
+	} else {
 		// Even iterations compute the gradient (during the accumulation phase)
 		// and the new direction (during the final phase).  Note that
 		// state.gradNew != state.grad starting from iteration 2
@@ -292,22 +283,20 @@ AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
         // d_k = g_k - beta_k * d_{k-1}
         state.dir = state.gradNew - state.beta * state.dir;
 		state.grad = state.gradNew;
-	} else {
-		// Odd iteration compute d^T H d (during the accumulation phase) and the
-		// new coefficients (during the final phase).
+	}
 
-		//            g_k^T d_k
-		// alpha_k = -----------
-		//           d_k^T H d_k
-        //
-		// c_k = c_{k-1} - alpha_k * d_k
+    // H_k = - X^T A_k X
+    // where A_k = diag(a_1, ..., a_n) and a_i = sigma(x_i c_{k-1}) sigma(-x_i c_{k-1})
+    //
+    //             g_k^T d_k
+    // alpha_k = -------------
+    //           d_k^T H_k d_k
+    //
+    // c_k = c_{k-1} - alpha_k * d_k
+    state.coef += dot(state.grad, state.dir) /
+        as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
+        * state.dir;
 
-//		state.coef -= ( dot(state.grad, state.dir) / state.dTHd ) * state.dir;
-
-		state.coef += dot(state.grad, state.dir) /
-            as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
-            * state.dir;
-    }
     state.iteration++;
     return state;
 }
