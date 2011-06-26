@@ -234,7 +234,7 @@ def __plpy_check( py_min_ver):
                 , False)            
         raise
 
-    __info( "> PL/Python environment OK", True)            
+    __info( "> PL/Python environment OK (version: %s)" % rv[0][0], True)            
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Install MADlib
@@ -505,7 +505,7 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
         raise
 
     # Run the SQL using DB command-line utility
-    if portid.upper() == 'GREENPLUM' or portid.upper() == 'POSTGRES':
+    if portid == 'greenplum' or portid == 'postgres':
     
         if subprocess.call(['which', 'psql'], stdout=subprocess.PIPE, stderr=subprocess.PIPE) != 0:
             __error( "Can not find: psql", False)
@@ -602,28 +602,46 @@ def main( argv):
             
     parser.add_argument( 'command', metavar='COMMAND', nargs=1, 
                          choices=['install','update','uninstall','version','install-check'], 
-                         help="""One of the following options: 
-  install/update : run sql scripts to load into DB
-  uninstall      : run sql scripts to uninstall from DB
-  version        : compare and print MADlib version (binaries vs database objects)
-  install-check  : test all installed modules""")
+                         help = "One of the following options:\n"
+                              + "  install/update : run sql scripts to load into DB\n"
+                              + "  uninstall      : run sql scripts to uninstall from DB\n"
+                              + "  version        : compare and print MADlib version (binaries vs database objects)\n"
+                              + "  install-check  : test all installed modules\n")
   
     parser.add_argument( '-a', '--api', nargs=1, dest='api', metavar='API', 
-                         help="Python module for your database platform (DBAPI2 compliant)")
+                         help="DBAPI2 compliant Python module name")
 
     parser.add_argument( '-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
-                         help="connection string of the following syntax: user[/pass]@host:port/dbname")
+                         help= "Connection string of the following syntax:   user/pass@host:port/dbname\n" 
+                             + "All connection string elements {user,pass,host,port,dbname} are optional.\n" 
+                             + "All connection string separators {/,@,:,/} except the first one are mandatory.\n" 
+                             + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
+                             + "- user: PGUSER or USER env variable or OS username\n"
+                             + "- pass: PGPASSWORD env variable or runtime prompt\n"
+                             + "- host: PGHOST env variable or 'localhost'\n"
+                             + "- port: PGPORT env variable or '5432'\n"
+                             + "- db: PGDATABASE env variable or OS username\n"
+                             + "Examples (for PostgerSQL):\n"
+                             + "1) to use default values for all connect string elements, run:\n"
+                             + "   madpack -p postgres ...\n"
+                             + "2) to supply a non-default port value, run:\n"
+                             + "   madpack -p postgres -c @:1234/ ...\n"
+                             + "3) to supply no password and be prompted for it, skip the first separator:\n"
+                             + "   madpack -p postgres -c @:/ ...\n"
+                             + "4) to supply empty string as password, make sure to write the first separator:\n"
+                             + "   madpack -p postgres -c /@:/ ...\n"
+                             )
 
     parser.add_argument( '-s', '--schema', nargs=1, dest='schema', 
                          metavar='SCHEMA', default='madlib',
-                         help="target schema for the database objects")
+                         help="Target schema for the database objects.")
                          
     parser.add_argument( '-p', '--platform', nargs=1, dest='platform', 
                          metavar='PLATFORM', choices=portid_list,
-                         help="target database platform, current choices: " + str(portid_list))
+                         help="Target database platform, current choices: " + str(portid_list))
 
     parser.add_argument( '-v', '--verbose', dest='verbose', 
-                         action="store_true", help="more output")
+                         action="store_true", help="Verbose mode.")
 
     ##
     # Get the arguments
@@ -658,21 +676,18 @@ def main( argv):
         schema = args.schema
 
     ##
-    # Parse DB PLATFORM and compare with Ports.yml
+    # Parse DB Platform (== PortID) and compare with Ports.yml
     ##
+    global portid  
     if args.platform:
         try:
-            platform = args.platform[0]
+            # Get the DB platform name == DB port id
+            portid = args.platform[0].lower()
             # Loop through available db ports 
             for port in ports['ports']:                
-                if args.platform[0] == port['id']:
-                    # Get the DB name
-                    platform = args.platform
+                if portid == port['id']:
                     # Get the Python DBAPI2 module
                     portapi = port['dbapi2'] 
-                    # Get the DB id
-                    global portid  
-                    portid = port['id']
                     # Adjust MADlib directories for this port (if they exist)
                     global maddir_conf 
                     if os.path.isdir( maddir + "/ports/" + portid + "/config"):
@@ -687,18 +702,18 @@ def main( argv):
                     portspecs = configyml.get_modules( maddir_conf) 
                     # print portspecs
         except:
-            platform = None
+            portid = None
             __error( "Can not find specs for port %s" % (args.platform[0]), True)
     else:
-        platform = None
+        portid = None
         portapi = None
 
     ##
     # If no API defined yet (try the default API - from Ports.yml)
     ##
-    if api is None and portapi != None:
+    if api is None and portapi:
         # For POSTGRES import Pygresql.pgdb from madpack package
-        if portid.upper() == 'POSTGRES':
+        if portid == 'postgres':
             try:       
                 sys.path.append( maddir + "/ports/postgres/madpack")
                 dbapi2 = __import_dbapi( portapi)
@@ -716,49 +731,92 @@ def main( argv):
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)
     ##
-    if platform != None and dbapi2 and args.connstr != None:
+    #if portid and dbapi2 and args.connstr:
+    if portid and dbapi2:
+    
+        # Define connection arguments
+        c_user = ''
+        c_pass = None
+        c_host = ''
+        c_port = ''
+        c_db = ''
+    
+        # Find the default values for PG and GP
+        if portid == 'postgres' or portid == 'greenplum':
+        
+            # user        
+            try: 
+                default_user = os.environ['PGUSER'] or os.environ['USER']
+            except: 
+                default_user = getpass.getuser()
+            # user        
+            try: 
+                default_pass = os.environ['PGPASSWORD']
+            except: 
+                default_pass = None
+            # host        
+            try: 
+                default_host = os.environ['PGHOST']
+            except: 
+                default_host = 'localhost'
+            # port        
+            try: 
+                default_port = os.environ['PGPORT']
+            except: 
+                default_port = '5432'
+            # db        
+            try: 
+                default_db = os.environ['PGDATABASE'] 
+            except: 
+                default_db = default_user
+                
+        # Review --connection string
+        if args.connstr:
 
-        try:
-            (c_user, c_dsn) = args.connstr[0].split('@')
-        except:
-            __error( "invalid connection string: missing '@' separator (see '-h' for help)", True)
-    
-        try: 
-            (c_user, c_pass) = c_user.split('/')
-        except:
-            pass_prompt = True
-            c_pass = None
-            
-        if c_user == '':
-            __error( "invalid connection string: missing 'user' parameter (see '-h' for help)", True) 
-            
-        try: 
-            (c_dsn, c_db) = c_dsn.split('/')
-        except:
-            __error( "invalid connection string: missing '/' separator (see '-h' for help)", True)
-    
-        try: 
-            (c_host, c_port) = c_dsn.split(':')
-        except:
-            __error( "invalid connection string: missing ':' separator (see '-h' for help)", True)
-    
+            try:
+                (c_user, c_dsn) = args.connstr[0].split('@')
+            except:
+                __error( "invalid connection string: missing '@' separator (see '-h' for help)", True)
+       
+            try: 
+                (c_user, c_pass) = c_user.split('/')
+            except:
+                c_pass = None
+
+            try: 
+                (c_dsn, c_db) = c_dsn.split('/')
+            except:
+                __error( "invalid connection string: missing '/' separator (see '-h' for help)", True)
+        
+            try: 
+                (c_host, c_port) = c_dsn.split(':')
+            except:
+                __error( "invalid connection string: missing ':' separator (see '-h' for help)", True)
+                
+        # Fill in the defaults
+        if c_user == '': c_user = default_user
+        if c_pass == None: c_pass = default_pass
+        if c_host == '': c_host = default_host
+        if c_port == '': c_port = default_port
+        if c_db   == '': c_db = default_db        
+
         ##
         # Try connecting to the database
         ##
         __info( "Testing database connection...", verbose)
-        # get password
-        if c_pass == None:
+        # Get password
+        if c_pass is None:
             c_pass = getpass.getpass( "Password for user %s: " % c_user)
-        # set connection variables
+        # Set connection variables
         global con_args
-        con_args['host'] = c_dsn
+        con_args['host'] = c_host + ':' + c_port
         con_args['database'] = c_db
         con_args['user'] = c_user
         con_args['password'] = c_pass    
         # Open connection
         global dbconn
         dbconn = dbapi2.connect( **con_args)
-        __info( 'Database connection successful: %s@%s/%s' % (c_user, c_dsn, c_db), verbose)
+        __info( 'Database connection successful: %s@%s/%s' % (c_user, c_host + ':' + c_port, c_db), verbose)
         # Get MADlib version in DB
         dbrev = __get_madlib_dbver( schema)
         # Close connection

@@ -345,14 +345,39 @@ inline char* element_mult(Datum elt1, Datum elt2, Oid element_type, char* result
 char* element_div(Datum elt1, Datum elt2, Oid element_type, char* result){
 	switch(element_type){
 		case INT2OID:
+			if(DatumGetInt16(elt2) == 0){
+				ereport(ERROR, (errcode(ERRCODE_DIVISION_BY_ZERO), 
+							errmsg("division by zero is not allowed"), 
+							errdetail("Arrays with element 0 can not be use in the denominator")));
+			}
 			*((int16*)(result)) = DatumGetInt16(elt1)/DatumGetInt16(elt2);break;
 		case INT4OID:
+			if(DatumGetInt32(elt2) == 0){
+				ereport(ERROR, (errcode(ERRCODE_DIVISION_BY_ZERO), 
+								errmsg("division by zero is not allowed"), 
+								errdetail("Arrays with element 0 can not be use in the denominator")));
+			}
 			*((int32*)(result)) = DatumGetInt32(elt1)/DatumGetInt32(elt2);break;
 		case INT8OID:
+			if(DatumGetInt64(elt2) == 0){
+				ereport(ERROR, (errcode(ERRCODE_DIVISION_BY_ZERO), 
+								errmsg("division by zero is not allowed"), 
+								errdetail("Arrays with element 0 can not be use in the denominator")));
+			}
 			*((int64*)(result)) = DatumGetInt64(elt1)/DatumGetInt64(elt2);break;
 		case FLOAT4OID:
+			if(DatumGetFloat4(elt2) == 0){
+				ereport(ERROR, (errcode(ERRCODE_DIVISION_BY_ZERO), 
+								errmsg("division by zero is not allowed"), 
+								errdetail("Arrays with element 0 can not be use in the denominator")));
+			}
 			*((float4*)(result)) = DatumGetFloat4(elt1)/DatumGetFloat4(elt2);break;
 		case FLOAT8OID:
+			if(DatumGetFloat8(elt2) == 0){
+				ereport(ERROR, (errcode(ERRCODE_DIVISION_BY_ZERO), 
+								errmsg("division by zero is not allowed"), 
+								errdetail("Arrays with element 0 can not be use in the denominator")));
+			}
 			*((float8*)(result)) = DatumGetFloat8(elt1)/DatumGetFloat8(elt2);break;
 		default:
 			ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), 
