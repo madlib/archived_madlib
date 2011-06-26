@@ -22,7 +22,7 @@ def main(argv = None):
     if argv is None:
         argv = sys.argv
     BOM = detectBOM(argv[1])
-    if BOM == "unknown":
+    if BOM != "utf_8":
         return 0
     else:
         print 'Detected byte-order mark ({0}) in file "{1}".'.format(

@@ -217,7 +217,7 @@ macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
     )
     # psql of PostgreSQL < 9 does not like byte-order marks
     set(_MADLIB_VERIFY_AND_COPY_COMMAND
-        COMMAND "${CMAKE_SOURCE_DIR}/cmake/TestIfNoBOM.py" "\"\${CURRENT_PATH}\""
+        COMMAND "${CMAKE_SOURCE_DIR}/cmake/TestIfNoUTF8BOM.py" "\"\${CURRENT_PATH}\""
         COMMAND "${CMAKE_COMMAND}" -E copy "\"\${CURRENT_PATH}\"" "\"\${OUTFILE}\""
     )
     batch_add_command(
