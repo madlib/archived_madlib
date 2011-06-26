@@ -210,11 +210,26 @@ endmacro(add_python_files)
 # Add sql files to be copied
 macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
     get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
+    get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
     file(GLOB_RECURSE SQL_FILES
         RELATIVE "${SOURCE_DIR_ABS}"
         "${SOURCE_DIR_ABS}/*.sql_in"
     )
-    add_files(${OUT_SQL_TARGET_FILES} "${IN_SOURCE_DIR}" "${IN_TARGET_DIR}" ${SQL_FILES})
+    # psql of PostgreSQL < 9 does not like byte-order marks
+    set(_MADLIB_VERIFY_AND_COPY_COMMAND
+        COMMAND "${CMAKE_SOURCE_DIR}/cmake/TestIfNoBOM.py" "\"\${CURRENT_PATH}\""
+        COMMAND "${CMAKE_COMMAND}" -E copy "\"\${CURRENT_PATH}\"" "\"\${OUTFILE}\""
+    )
+    batch_add_command(
+        TARGET_PREFIX "${TARGET_DIR_ABS}/"
+        SOURCE_PREFIX "${SOURCE_DIR_ABS}/"
+        TARGET_SUFFIX ""
+        SOURCE_SUFFIX ""
+        RUN "${_MADLIB_VERIFY_AND_COPY_COMMAND}"
+        COMMENT "Validating and copying \${CURRENT_FILE}."
+        TARGET_FILE_LIST_REF ${OUT_SQL_TARGET_FILES}
+        SOURCE_FILE_LIST ${SQL_FILES}
+    )
 endmacro(add_sql_files)
 
 # Add a connector library for a specific DBMS port

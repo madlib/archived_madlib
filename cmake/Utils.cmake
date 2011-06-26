@@ -82,7 +82,7 @@ macro(add_files OUT_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
     get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
     get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
     set(MADLIB_COPY_COMMAND
-        COMMAND ${CMAKE_COMMAND} -E copy "\"\${CURRENT_PATH}\"" "\"\${OUTFILE}\""
+        COMMAND "${CMAKE_COMMAND}" -E copy "\"\${CURRENT_PATH}\"" "\"\${OUTFILE}\""
     )
     batch_add_command(
         TARGET_PREFIX "${TARGET_DIR_ABS}/"
