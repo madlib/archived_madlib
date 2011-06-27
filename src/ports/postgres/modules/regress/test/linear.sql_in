@@ -1,4 +1,4 @@
-﻿--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 -- Linear Regression tests
 --------------------------------------------------------------------------------
 
@@ -16,11 +16,8 @@ SET search_path TO madlib_regress_installcheck;
 -- test function
 CREATE FUNCTION install_test() RETURNS VOID AS $$ 
 declare
-	coef FLOAT[];
-	rsq FLOAT;
-	tst FLOAT[];
-	pval FLOAT[];
-
+    lr MADLIB_SCHEMA.linregr_result;
+    
 	n FLOAT;
 	xsq FLOAT;
 
@@ -42,10 +39,7 @@ begin
 	CREATE TABLE data2(r1 float, r2 float, r3 float, y numeric);
 	INSERT INTO data2(r1,r2,r3,y) SELECT x1,x2,noise,(x1*3.4+x2*2.5+noise) FROM data;
 
-	SELECT MADLIB_SCHEMA.linregr_coef(y,array[r1,1]) INTO coef FROM data2;
-	SELECT MADLIB_SCHEMA.linregr_r2(y,array[r1,1]) INTO rsq FROM data2;
-	SELECT MADLIB_SCHEMA.linregr_tstats(y,array[r1,1]) INTO tst FROM data2;
-	SELECT MADLIB_SCHEMA.linregr_pvalues(y,array[r1,1]) INTO pval FROM data2;	
+	lr := (SELECT MADLIB_SCHEMA.linregr(y,array[r1,1]) FROM data2);
 
 	--check univariate results
 	SELECT count(y) INTO n FROM data2;
@@ -59,25 +53,22 @@ begin
 		((count(y) * sum(r1*r1) - sum(r1)^2) * (count(y) * sum(y*y) - sum(y)^2))) ) - 1) ) ::float INTO atst1 FROM data2;      	         
 	atst = array[ atst1, acoef[2]/( (acoef[1]/atst1)*sqrt(xsq/n)) ];
 
-	result =  (MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(coef,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(acoef,1000::FLOAT) ) ))::INT 
-		+((rsq*1000) - (arsq*1000))::INT
-		+(MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(tst,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(atst,1000::FLOAT) ) ))::INT; 
+	result =  (MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(lr.coef,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(acoef,1000::FLOAT) ) ))::INT 
+		+((lr.r2*1000) - (arsq*1000))::INT
+		+(MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(lr.t_stats,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(atst,1000::FLOAT) ) ))::INT; 
 
 	IF (result != 0) THEN
 		RAISE EXCEPTION 'Incorrect univariate results';
 	END IF;
 
 	--check multivariate results
-	SELECT MADLIB_SCHEMA.linregr_coef(y,array[r1,r2,1]) INTO coef FROM data2;
-	SELECT MADLIB_SCHEMA.linregr_r2(y,array[r1,r2,1]) INTO rsq FROM data2;
-	SELECT MADLIB_SCHEMA.linregr_tstats(y,array[r1,r2,1]) INTO tst FROM data2;
-	SELECT MADLIB_SCHEMA.linregr_pvalues(y,array[r1,r2,1]) INTO pval FROM data2;
+	lr := (SELECT MADLIB_SCHEMA.linregr(y,array[r1,r2,1]) FROM data2);
 
-	result = abs(coef[1]*10 - 34)::INT;
-	result2 = abs(coef[2]*10 - 25)::INT;
+	result = abs(lr.coef[1]*10 - 34)::INT;
+	result2 = abs(lr.coef[2]*10 - 25)::INT;
 
-	IF (result > 5) OR (result2 > 5) OR (rsq < 0.9) THEN
-		RAISE EXCEPTION 'Incorrect multivariate results, got %,%',coef,rsq;
+	IF (result > 5) OR (result2 > 5) OR (lr.r2 < 0.9) THEN
+		RAISE EXCEPTION 'Incorrect multivariate results, got %,%',lr.coef,lr.r2;
 	END IF;
 	
 	RAISE INFO 'Linear regression install checks passed';
@@ -196,20 +187,20 @@ COPY houses (tax, bedroom, bath, price, size, lot) FROM stdin;
 -- significant digits, depending on the implementation of internal library
 -- functions.
 
-select MADLIB_SCHEMA.linregr_coef(y, array[1, x1, x2])::REAL[] from weibull;
-select MADLIB_SCHEMA.linregr_r2(y, array[1, x1, x2])::REAL from weibull;
-select MADLIB_SCHEMA.linregr_tstats(y, array[1, x1, x2])::REAL[] from weibull;
-select MADLIB_SCHEMA.linregr_pvalues(y, array[1, x1, x2])::REAL[] from weibull;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).coef::REAL[] from weibull;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).r2::REAL from weibull;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).t_stats::REAL[] from weibull;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).p_values::REAL[] from weibull;
 
-select MADLIB_SCHEMA.linregr_coef(y, array[1, x1, x2])::REAL[] from unm;
-select MADLIB_SCHEMA.linregr_r2(y, array[1, x1, x2])::REAL from unm;
-select MADLIB_SCHEMA.linregr_tstats(y, array[1, x1, x2])::REAL[] from unm;
-select MADLIB_SCHEMA.linregr_pvalues(y, array[1, x1, x2])::REAL[] from unm;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).coef::REAL[] from unm;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).r2::REAL from unm;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).t_stats::REAL[] from unm;
+select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).p_values::REAL[] from unm;
 
-select MADLIB_SCHEMA.linregr_coef(price, array[1, bedroom, bath, size])::REAL[] from houses;
-select MADLIB_SCHEMA.linregr_r2(price, array[1, bedroom, bath, size])::REAL from houses;
-select MADLIB_SCHEMA.linregr_tstats(price, array[1, bedroom, bath, size])::REAL[] from houses;
-select MADLIB_SCHEMA.linregr_pvalues(price, array[1, bedroom, bath, size])::REAL[] from houses;
+select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).coef::REAL[] from houses;
+select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).r2::REAL from houses;
+select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).t_stats::REAL[] from houses;
+select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).p_values::REAL[] from houses;
 
 
 

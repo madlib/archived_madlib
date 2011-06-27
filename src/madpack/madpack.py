@@ -141,7 +141,6 @@ def __import_dbapi( api):
 # @param dbconn database conection object
 # @param schema MADlib schema name
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-#def __get_madlib_dbver( dbconn, schema):
 def __get_madlib_dbver( schema):
     cur = dbconn.cursor()
     try:
@@ -154,7 +153,33 @@ def __get_madlib_dbver( schema):
     except:
         dbconn.rollback()
         return None
-        
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Make sure we are connected to the expected db platform
+# @param portid expected DB port id - to be validates
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __check_db_port( portid):
+    cur = dbconn.cursor()
+    # PostgerSQL
+    if portid == 'postgres':
+        try:
+            cur.execute( "SELECT version() AS version")        
+            row = cur.fetchone()
+            if row[0].lower().find( portid) >= 0 and row[0].lower().find( 'greenplum') < 0:
+                return True
+        except:
+            dbconn.rollback()
+    # Greenplum
+    if portid == 'greenplum':
+        try:
+            cur.execute( "SELECT version() AS version")        
+            row = cur.fetchone()
+            if row[0].lower().find( portid) >= 0:
+                return True
+        except:
+            dbconn.rollback()
+    return False
+                
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Convert version string into number for comparison
 # @param rev version text
@@ -234,7 +259,7 @@ def __plpy_check( py_min_ver):
                 , False)            
         raise
 
-    __info( "> PL/Python environment OK", True)            
+    __info( "> PL/Python environment OK (version: %s)" % rv[0][0], True)            
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Install MADlib
@@ -505,7 +530,7 @@ def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):
         raise
 
     # Run the SQL using DB command-line utility
-    if portid.upper() == 'GREENPLUM' or portid.upper() == 'POSTGRES':
+    if portid == 'greenplum' or portid == 'postgres':
     
         if subprocess.call(['which', 'psql'], stdout=subprocess.PIPE, stderr=subprocess.PIPE) != 0:
             __error( "Can not find: psql", False)
@@ -582,6 +607,39 @@ def __db_rollback( drop_schema, keep_schema):
     __info( "Rollback finished OK.", True)
     raise
             
+
+def unescape(string):
+    """
+    Unescape separation characters in connection strings, i.e., remove first
+    backslash from "\/", "\@", "\:", and "\\".
+    """
+    if string is None:
+        return None
+    else:
+        return re.sub(r'\\(?P<char>[/@:\\])', '\g<char>', string)
+
+def parseConnectionStr(connectionStr):
+    """
+    @brief Parse connection strings of the form
+           <tt>[username[/password]@][hostname][:port][/database]</tt>
+    
+    Separation characters (/@:) and the backslash (\) need to be escaped.
+    @returns A tuple (username, password, hostname, port, database). Field not
+             specified will be None.
+    """
+    match = re.search(
+        r'((?P<user>([^/@:\\]|\\/|\\@|\\:|\\\\)+)' +
+        r'(/(?P<password>([^/@:\\]|\\/|\\@|\\:|\\\\)*))?@)?' +
+        r'(?P<host>([^/@:\\]|\\/|\\@|\\:|\\\\)+)?' +
+        r'(:(?P<port>[0-9]+))?' + 
+        r'(/(?P<database>([^/@:\\]|\\/|\\@|\\:|\\\\)+))?', connectionStr)
+    return (
+        unescape(match.group('user')),
+        unescape(match.group('password')),
+        unescape(match.group('host')),
+        match.group('port'),
+        unescape(match.group('database')))
+
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Main       
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -602,28 +660,36 @@ def main( argv):
             
     parser.add_argument( 'command', metavar='COMMAND', nargs=1, 
                          choices=['install','update','uninstall','version','install-check'], 
-                         help="""One of the following options: 
-  install/update : run sql scripts to load into DB
-  uninstall      : run sql scripts to uninstall from DB
-  version        : compare and print MADlib version (binaries vs database objects)
-  install-check  : test all installed modules""")
+                         help = "One of the following options:\n"
+                              + "  install/update : run sql scripts to load into DB\n"
+                              + "  uninstall      : run sql scripts to uninstall from DB\n"
+                              + "  version        : compare and print MADlib version (binaries vs database objects)\n"
+                              + "  install-check  : test all installed modules\n")
   
     parser.add_argument( '-a', '--api', nargs=1, dest='api', metavar='API', 
-                         help="Python module for your database platform (DBAPI2 compliant)")
+                         help="DBAPI2 compliant Python module name")
 
     parser.add_argument( '-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
-                         help="connection string of the following syntax: user[/pass]@host:port/dbname")
+                         help= "Connection string of the following syntax:\n"
+                             + "  [user[/password]@][host][:port][/database]\n" 
+                             + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
+                             + "- user: PGUSER or USER env variable or OS username\n"
+                             + "- pass: PGPASSWORD env variable or runtime prompt\n"
+                             + "- host: PGHOST env variable or 'localhost'\n"
+                             + "- port: PGPORT env variable or '5432'\n"
+                             + "- db: PGDATABASE env variable or OS username\n"
+                             )
 
     parser.add_argument( '-s', '--schema', nargs=1, dest='schema', 
                          metavar='SCHEMA', default='madlib',
-                         help="target schema for the database objects")
+                         help="Target schema for the database objects.")
                          
     parser.add_argument( '-p', '--platform', nargs=1, dest='platform', 
                          metavar='PLATFORM', choices=portid_list,
-                         help="target database platform, current choices: " + str(portid_list))
+                         help="Target database platform, current choices: " + str(portid_list))
 
     parser.add_argument( '-v', '--verbose', dest='verbose', 
-                         action="store_true", help="more output")
+                         action="store_true", help="Verbose mode.")
 
     ##
     # Get the arguments
@@ -658,21 +724,18 @@ def main( argv):
         schema = args.schema
 
     ##
-    # Parse DB PLATFORM and compare with Ports.yml
+    # Parse DB Platform (== PortID) and compare with Ports.yml
     ##
+    global portid  
     if args.platform:
         try:
-            platform = args.platform[0]
+            # Get the DB platform name == DB port id
+            portid = args.platform[0].lower()
             # Loop through available db ports 
             for port in ports['ports']:                
-                if args.platform[0] == port['id']:
-                    # Get the DB name
-                    platform = args.platform
+                if portid == port['id']:
                     # Get the Python DBAPI2 module
                     portapi = port['dbapi2'] 
-                    # Get the DB id
-                    global portid  
-                    portid = port['id']
                     # Adjust MADlib directories for this port (if they exist)
                     global maddir_conf 
                     if os.path.isdir( maddir + "/ports/" + portid + "/config"):
@@ -687,80 +750,90 @@ def main( argv):
                     portspecs = configyml.get_modules( maddir_conf) 
                     # print portspecs
         except:
-            platform = None
+            portid = None
             __error( "Can not find specs for port %s" % (args.platform[0]), True)
     else:
-        platform = None
+        portid = None
         portapi = None
 
     ##
     # If no API defined yet (try the default API - from Ports.yml)
     ##
-    if api is None and portapi != None:
-        # For POSTGRES import Pygresql.pgdb from madpack package
-        if portid.upper() == 'POSTGRES':
-            try:       
-                sys.path.append( maddir + "/ports/postgres/madpack")
-                dbapi2 = __import_dbapi( portapi)
-                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
-            except:
-                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
-        # For GREENPLUM use the GP one: $GPHOME/lib/python/pygresql
-        else: 
-            try:       
-                dbapi2 = __import_dbapi( portapi)
-                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
-            except:
-                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
+    if api is None and portapi:
+    #
+    # Keeping the old version for a bit until we decide which way to go:
+    #
+    #    # For POSTGRES import Pygresql.pgdb from madpack package
+    #    if portid == 'postgres':
+    #    #if portid == 'postgres' or portid == 'greenplum':
+    #        try:       
+    #            sys.path.append( maddir + "/ports/postgres/madpack")
+    #            dbapi2 = __import_dbapi( portapi)
+    #            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+    #        except:
+    #            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
+    #    # For GREENPLUM use the GP one: $GPHOME/lib/python/pygresql
+    #    else: 
+    #        try:       
+    #            dbapi2 = __import_dbapi( portapi)
+    #            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+    #        except:
+    #            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
+        try:
+            sys.path.append( maddir + "/ports/" + portid + "/madpack")
+            dbapi2 = __import_dbapi( portapi)
+            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+        except:
+            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
 
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)
     ##
-    if platform != None and dbapi2 and args.connstr != None:
-
-        try:
-            (c_user, c_dsn) = args.connstr[0].split('@')
-        except:
-            __error( "invalid connection string: missing '@' separator (see '-h' for help)", True)
-    
-        try: 
-            (c_user, c_pass) = c_user.split('/')
-        except:
-            pass_prompt = True
-            c_pass = None
-            
-        if c_user == '':
-            __error( "invalid connection string: missing 'user' parameter (see '-h' for help)", True) 
-            
-        try: 
-            (c_dsn, c_db) = c_dsn.split('/')
-        except:
-            __error( "invalid connection string: missing '/' separator (see '-h' for help)", True)
-    
-        try: 
-            (c_host, c_port) = c_dsn.split(':')
-        except:
-            __error( "invalid connection string: missing ':' separator (see '-h' for help)", True)
-    
+    if portid and dbapi2:
+        connStr = "" if args.connstr is None else args.connstr[0]
+        (c_user, c_pass, c_host, c_port, c_db) = parseConnectionStr(connStr)
+        
+        # Find the default values for PG and GP
+        if portid == 'postgres' or portid == 'greenplum':
+            if c_user is None:
+                c_user = os.environ.get('PGUSER', getpass.getuser())
+            if c_pass is None:
+                c_pass = os.environ.get('PGPASSWORD', None)
+            if c_host is None:
+                c_host = os.environ.get('PGHOST', 'localhost')
+            if c_port is None:
+                c_port = os.environ.get('PGPORT', '5432')
+            if c_db is None:
+                c_db = os.environ.get('PGDATABASE', c_user)
+        
         ##
         # Try connecting to the database
         ##
         __info( "Testing database connection...", verbose)
-        # get password
-        if c_pass == None:
+        
+        # Get password
+        if c_pass is None:
             c_pass = getpass.getpass( "Password for user %s: " % c_user)
-        # set connection variables
+
+        # Set connection variables
         global con_args
-        con_args['host'] = c_dsn
+        con_args['host'] = c_host + ':' + c_port
         con_args['database'] = c_db
         con_args['user'] = c_user
         con_args['password'] = c_pass    
+
         # Open connection
         global dbconn
         dbconn = dbapi2.connect( **con_args)
-        __info( 'Database connection successful: %s@%s/%s' % (c_user, c_dsn, c_db), verbose)
+        __info( 'Database connection successful: %s@%s/%s' % (c_user, c_host + ':' + c_port, c_db), verbose)
+
         # Get MADlib version in DB
         dbrev = __get_madlib_dbver( schema)
+        
+        # Validate that db platform is correct 
+        if __check_db_port( portid) == False:
+            __error( "invalid database platform selected", True)
+                   
         # Close connection
         dbconn.close()
         
