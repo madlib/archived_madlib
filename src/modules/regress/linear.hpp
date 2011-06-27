@@ -25,14 +25,7 @@ struct LinearRegression {
     
     static AnyValue transition(AbstractDBInterface &db, AnyValue args);
     static AnyValue mergeStates(AbstractDBInterface &db, AnyValue args);
-    
-    static AnyValue coefFinal(AbstractDBInterface &db, AnyValue args);
-    static AnyValue RSquareFinal(AbstractDBInterface &db, AnyValue args);
-    static AnyValue tStatsFinal(AbstractDBInterface &db, AnyValue args);
-    static AnyValue pValuesFinal(AbstractDBInterface &db, AnyValue args);
-    
-    template <What what>
-    static AnyValue final(AbstractDBInterface &db, const TransitionState &state);
+    static AnyValue final(AbstractDBInterface &db, AnyValue args);
 };
 
 } // namespace regress
