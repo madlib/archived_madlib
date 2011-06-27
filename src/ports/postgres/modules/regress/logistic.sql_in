@@ -128,7 +128,7 @@ further literature:
     pp. 685-688, http://komarix.org/ac/papers/tr-irls.short.pdf
 */
 
-DROP TYPE IF EXISTS madlib.logregr_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.logregr_result;
 CREATE TYPE MADLIB_SCHEMA.logregr_result AS (
     coef DOUBLE PRECISION[],
     log_likelihood DOUBLE PRECISION,
@@ -311,16 +311,27 @@ BEGIN
     theIteration := (
         SELECT MADLIB_SCHEMA.compute_logregr($1, $2, $3, $4, $5, $6)
     );
-    theResult := (
-        SELECT CASE
-            WHEN optimizer = 'irls' OR optimizer = 'newton' THEN
-                MADLIB_SCHEMA.internal_logregr_irls_result(state)
-            WHEN optimizer = 'cg' THEN
-                MADLIB_SCHEMA.internal_logregr_cg_result(state)
-            END
-            FROM _madlib_iterative_alg
-            WHERE iteration = theIteration
-    );
+    EXECUTE '
+        SELECT 
+            coef,
+            log_likelihood,
+            std_err,
+            z_stats,
+            p_values,
+            odd_ratios 
+        FROM (
+            SELECT (
+                CASE
+                WHEN ''' || optimizer || '''=''irls'' OR ''' || optimizer || '''=''newton'' THEN
+                    MADLIB_SCHEMA.internal_logregr_irls_result(state)
+                WHEN ''' || optimizer || '''=''cg'' THEN
+                    MADLIB_SCHEMA.internal_logregr_cg_result(state)
+                END
+                ).*
+                FROM _madlib_iterative_alg
+                WHERE iteration = ' || theIteration || '
+            ) x
+    ' INTO theResult;
     RETURN theResult;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
