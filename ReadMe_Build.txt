@@ -6,14 +6,15 @@ Installation from Source
 ========================
 
 Requirements:
+-------------
 
 - LAPACK and BLAS libraries and their header files.
   
   Platform notes:
   + Mac OS X comes with LAPACK and BLAS preinstalled (as part of the Accelerate
     framework)
-  + On RedHat/CentOS, LAPACK and BLAS come with with the _lapack-devel_ and
-    blas-devel packages. When compiling against PostgreSQL, other `-devel`
+  + On RedHat/CentOS, LAPACK and BLAS come with with the lapack-devel and
+    blas-devel packages. When compiling against PostgreSQL, other "\*.-devel"
     packages might be needed (e.g., openssl-devel).
   + On Solaris, LAPACK and BLAS come with the Orcale Performance Studio
 
@@ -30,6 +31,7 @@ Optional:
 
 
 ** Build instructions (required read):
+--------------------------------------
 
 From the MADlib root directory, execute the following commands:
 
@@ -47,42 +49,49 @@ Optionally, install MADlib with
 
     make install
 
-Depending on the environment, `./configure` might have to be called with
-additional configuration parameters:
+If your are missing a required library, the `./configure` or `make` step will
+notice. Refer to your operating system's manual for instructions how to install
+the above prerequisites.
 
-- `CMAKE_BUILD_TYPE`
+
+Configuration Options:
+----------------------
+
+Depending on the environment, `./configure` might have to be called with
+additional configuration parameters. The following provides an overview of the
+most important options. Look at `build/CMakeCache.txt` (relative to MADlib root
+directory) for more options, after having run `cmake` the first time.
+
+- `CMAKE_BUILD_TYPE` (default: `RelWithDebInfo`)
 
     `Debug`, `Release`, `RelWithDebInfo`, or `MinSizeRel`
 
-- `CMAKE_PREFIX_PATH`
+- `CMAKE_PREFIX_PATH` (default: *empty*)
 
     List (separated by `;` without trailing space) of additional search
     paths (for each `${PREFIX_PATH}` in `${CMAKE_PREFIX_PATH}`, binaries are
     searched for in `${PREFIX_PATH}/bin`, headers are searched for in 
     `${PREFIX_PATH}/include`, etc.)
     
-- `CMAKE_INSTALL_PREFIX`
+- `CMAKE_INSTALL_PREFIX` (default: `/usr/local/madlib`)
 
-    Prefix when installing MADlib with `make install`. The default is
-    `/usr/local`. All files will be installed within
-    `${CMAKE_INSTALL_PREFIX}/madlib`.
+    Prefix when installing MADlib with `make install`. All files will be
+    installed within `${CMAKE_INSTALL_PREFIX}`.
 
-- `POSTGRESQL_PG_CONFIG`
+- `POSTGRESQL_PG_CONFIG` (default: `$(command -v pg_config)`)
 
     Path to `pg_config` of PostgreSQL installation, which is used to determine
     various PostgreSQL search paths.
 
-- `GREENPLUM_PG_CONFIG`
+- `GREENPLUM_PG_CONFIG` (default: `/usr/local/greenplum-db/bin/pg_config` if
+   available, otherwise `$(command -v pg_config)`)
     
     Path to `pg_config` of Greenplum installation, which is used to determine
     various Greenplum search paths.
-    
 
-If your are missing a required library, the `./configure` or `make` step will
-notice. Refer to your operating system's manual for instructions how to install
-the above prerequisites.
 
 Notes:
+------
 
 - To speed things up, run `make -j X` instead of `make` where X is the number of
   jobs (commands) to run simultaneously. A good choice is the number of
