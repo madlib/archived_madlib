@@ -62,7 +62,7 @@ protected:
             
             BOOST_ASSERT_MSG(
                 this->pptr() == this->epptr() &&
-                this->pptr() - this->pbase() == mStorageSize,
+                this->pptr() - this->pbase() == static_cast<int64_t>(mStorageSize),
                 "Internal error: Logging buffer has become inconsistent");
             
             setp(mStorage, mStorage + newStorageSize);

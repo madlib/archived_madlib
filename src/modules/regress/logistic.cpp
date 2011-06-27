@@ -16,11 +16,20 @@
 // official C++ Standard (before C++0x). We therefore use the Boost implementation
 #include <boost/math/special_functions/fpclassify.hpp>
 
+// z values are normally distributed
+#include <boost/math/distributions/normal.hpp>
+
+// The squared z values of regression coefficients are approximately chi-squared
+// distributed.
+#include <boost/math/distributions/chi_squared.hpp>
+
 
 // Import names from Armadillo
+using arma::mat;
 using arma::trans;
 using arma::colvec;
 using arma::as_scalar;
+
 
 namespace madlib {
 
@@ -29,6 +38,12 @@ using utils::Reference;
 namespace modules {
 
 namespace regress {
+
+// Local functions
+AnyValue stateToResult(AbstractDBInterface &db,
+    const DoubleCol &inCoef,
+    const double &inLogLikelihood,
+    const mat &inInverse_of_X_transp_AX);
 
 /**
  * @brief Inter- and intra-iteration state for conjugate-gradient method for
@@ -40,12 +55,12 @@ namespace regress {
  * object containing scalars and vectors.
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length at least 6, and all elemenets are 0.
+ * database with length at least 5, and all elemenets are 0.
  *
  * @internal Array layout (iteration refers to one aggregate-function call):
  * Inter-iteration components (updated in final function):
  * - 0: iteration (current iteration)
- * - 1: widthOfX (numer of coefficients)
+ * - 1: widthOfX (number of coefficients)
  * - 2: coef (vector of coefficients)
  * - 2 + widthOfX: dir (direction)
  * - 2 + 2 * widthOfX: grad (gradient)
@@ -54,8 +69,9 @@ namespace regress {
  * Intra-iteration components (updated in transition step):
  * - 3 + 3 * widthOfX: numRows (number of rows already processed in this iteration)
  * - 4 + 3 * widthOfX: gradNew (intermediate value for gradient)
- * - 4 + 4 * widthOfX: dTHd (intermediate value for d^T * H * d)
- * - 5 + 4 * widthOfX: logLikelihood ( ln(l(c)) )
+ * - 4 + 4 * widthOfX: X_transp_AX (X^T A X)
+ * - 4 + widthOfX * widthOfX + 4 * widthOfX: logLikelihood ( ln(l(c)) )
+// * - 5 + widthOfX * widthOfX + 4 * widthOfX: dTHd (intermediate value for d^T * H * d)
  */
 class LogisticRegressionCG::State {
 public:
@@ -74,8 +90,9 @@ public:
           numRows(&mStorage[3 + 3 * widthOfX]),
           gradNew(TransparentHandle::create(&mStorage[4 + 3 * widthOfX]),
                   widthOfX),
-          dTHd(&mStorage[4 + 4 * widthOfX]),
-          logLikelihood(&mStorage[5 + 4 * widthOfX])
+          X_transp_AX(TransparentHandle::create(&mStorage[4 + 4 * widthOfX]),
+              widthOfX, widthOfX),
+          logLikelihood(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX])
         { }
     
     /**
@@ -108,8 +125,9 @@ public:
         numRows.rebind(&mStorage[3 + 3 * widthOfX]);
         gradNew.rebind(TransparentHandle::create(&mStorage[4 + 3 * widthOfX]),
                        widthOfX);
-        dTHd.rebind(&mStorage[4 + 4 * widthOfX]);
-        logLikelihood.rebind(&mStorage[5 + 4 * widthOfX]);
+        X_transp_AX.rebind(TransparentHandle::create(&mStorage[4 + 4 * widthOfX]),
+              widthOfX, widthOfX);
+        logLikelihood.rebind(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX]);
         reset();
     }
     
@@ -131,7 +149,7 @@ public:
         
         numRows += inOtherState.numRows;
         gradNew += inOtherState.gradNew;
-        dTHd += inOtherState.dTHd;
+        X_transp_AX += inOtherState.X_transp_AX;
         logLikelihood += inOtherState.logLikelihood;
         return *this;
     }
@@ -141,14 +159,14 @@ public:
      */
     inline void reset() {
         numRows = 0;
-        dTHd = 0;
+        X_transp_AX.zeros();
         gradNew.zeros();
         logLikelihood = 0;
     }
 
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
-        return 6 + 4 * inWidthOfX;
+        return 5 + inWidthOfX * inWidthOfX + 4 * inWidthOfX;
     }
 
     Array<double> mStorage;
@@ -163,8 +181,9 @@ public:
     
     Reference<double, uint64_t> numRows;
     DoubleCol gradNew;
-    Reference<double> dTHd;
+    DoubleMat X_transp_AX;
     Reference<double> logLikelihood;
+//    Reference<double> dTHd;
 };
 
 /**
@@ -200,12 +219,13 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
     double xc = as_scalar( x * state.coef );
 	double xd = as_scalar( x * state.dir );
     
-    if (state.iteration % 2 == 0)
-        state.gradNew += sigma(-y * xc) * y * trans(x);
-    else
-        // Note that 1 - sigma(x) = sigma(-x)
-        state.dTHd -= sigma(xc) * sigma(-xc) * xd * xd;
-    
+    state.gradNew += sigma(-y * xc) * y * trans(x);
+
+    // Note: sigma(-x) = 1 - sigma(x).
+    // a_i = sigma(x_i c) sigma(-x_i c)
+    double a = sigma(xc) * sigma(-xc);
+    state.X_transp_AX += trans(x) * a * x;
+
     //          n
     //         --
     // l(c) = -\  log(1 + exp(-y_i * c^T x_i))
@@ -241,13 +261,13 @@ AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
     // Argument from SQL call
     State state = args[0].copyIfImmutable();
     
-    // Note: k = state.iteration() / 2
+    // Note: k = state.iteration
     if (state.iteration == 0) {
 		// Iteration computes the gradient
 	
 		state.dir = state.gradNew;
 		state.grad = state.gradNew;
-	} else if (state.iteration % 2 == 0) {
+	} else {
 		// Even iterations compute the gradient (during the accumulation phase)
 		// and the new direction (during the final phase).  Note that
 		// state.gradNew != state.grad starting from iteration 2
@@ -263,18 +283,20 @@ AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
         // d_k = g_k - beta_k * d_{k-1}
         state.dir = state.gradNew - state.beta * state.dir;
 		state.grad = state.gradNew;
-	} else {
-		// Odd iteration compute d^T H d (during the accumulation phase) and the
-		// new coefficients (during the final phase).
-
-		//            g_k^T d_k
-		// alpha_k = -----------
-		//           d_k^T H d_k
-        //
-		// c_k = c_{k-1} - alpha_k * d_k
-
-		state.coef -= ( dot(state.grad, state.dir) / state.dTHd ) * state.dir;
 	}
+
+    // H_k = - X^T A_k X
+    // where A_k = diag(a_1, ..., a_n) and a_i = sigma(x_i c_{k-1}) sigma(-x_i c_{k-1})
+    //
+    //             g_k^T d_k
+    // alpha_k = -------------
+    //           d_k^T H_k d_k
+    //
+    // c_k = c_{k-1} - alpha_k * d_k
+    state.coef += dot(state.grad, state.dir) /
+        as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
+        * state.dir;
+
     state.iteration++;
     return state;
 }
@@ -290,12 +312,16 @@ AnyValue LogisticRegressionCG::distance(AbstractDBInterface &db, AnyValue args) 
 }
 
 /**
- * @brief Return the coefficients of the state
+ * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyValue LogisticRegressionCG::coef(AbstractDBInterface &db, AnyValue args) {
+AnyValue LogisticRegressionCG::result(AbstractDBInterface &db, AnyValue args) {
     const State state = args[0];
 
-    return state.coef;
+    // Compute (X^T * A * X)^+
+    mat inverse_of_X_transp_AX = pinv(state.X_transp_AX);
+    
+    return stateToResult(db, state.coef, state.logLikelihood,
+        inverse_of_X_transp_AX);
 }
 
 /**
@@ -308,11 +334,11 @@ AnyValue LogisticRegressionCG::coef(AbstractDBInterface &db, AnyValue args) {
  * object containing scalars, a vector, and a matrix.
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length at least 3, and all elemenets are 0.
+ * database with length at least 4, and all elemenets are 0.
  *
  * @internal Array layout (iteration refers to one aggregate-function call):
  * Inter-iteration components (updated in final function):
- * - 0: widthOfX (numer of coefficients)
+ * - 0: widthOfX (number of coefficients)
  * - 1: coef (vector of coefficients)
  *
  * Intra-iteration components (updated in transition step):
@@ -505,7 +531,8 @@ AnyValue LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyValue args) {
     if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite())
         throw std::invalid_argument("Design matrix is not finite.");
     
-    state.coef = pinv(state.X_transp_AX) * state.X_transp_Az;    
+    state.coef = pinv(state.X_transp_AX) * state.X_transp_Az;
+    
     return state;
 }
 
@@ -520,14 +547,54 @@ AnyValue LogisticRegressionIRLS::distance(AbstractDBInterface &db, AnyValue args
 }
 
 /**
- * @brief Return the coefficients of the state
+ * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyValue LogisticRegressionIRLS::coef(AbstractDBInterface &db, AnyValue args) {
+AnyValue LogisticRegressionIRLS::result(AbstractDBInterface &db, AnyValue args) {
     const State state = args[0];
 
-    return state.coef;
+    // Compute (X^T * A * X)^+
+    mat inverse_of_X_transp_AX = pinv(state.X_transp_AX);
+    
+    return stateToResult(db, state.coef, state.logLikelihood,
+        inverse_of_X_transp_AX);
 }
 
+/**
+ * @brief Compute the diagnostic statistics
+ *
+ * This function wraps the common parts of computing the results for both the
+ * CG and the IRLS method.
+ */
+AnyValue stateToResult(AbstractDBInterface &db,
+    const DoubleCol &inCoef,
+    const double &inLogLikelihood,
+    const mat &inInverse_of_X_transp_AX) {
+    
+    DoubleCol stdErr(db.allocator(), inCoef.n_elem);
+    DoubleCol waldZStats(db.allocator(), inCoef.n_elem);
+    DoubleCol waldPValues(db.allocator(), inCoef.n_elem);
+    DoubleCol oddRatios(db.allocator(), inCoef.n_elem);
+    for (unsigned int i = 0; i < inCoef.n_elem; i++) {
+        stdErr(i) = std::sqrt(inInverse_of_X_transp_AX(i,i));
+        waldZStats(i) = inCoef(i) / stdErr(i);
+        waldPValues(i) = 2. *  ( boost::math::cdf(boost::math::normal(),
+            -std::abs( waldZStats(i) )) );
+        oddRatios(i) = std::exp( inCoef(i) );
+    }
+
+    // Return all coefficients, standard errors, etc. in a tuple
+    AnyValueVector tuple;
+    ConcreteRecord::iterator tupleElement(tuple);
+    
+    tupleElement++ = inCoef;
+    tupleElement++ = inLogLikelihood;
+    tupleElement++ = stdErr;
+    tupleElement++ = waldZStats;
+    tupleElement++ = waldPValues;
+    tupleElement++ = oddRatios;
+    
+    return tuple;
+}
 
 } // namespace regress
 

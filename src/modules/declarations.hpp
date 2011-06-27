@@ -24,27 +24,27 @@
  * name implementing the UDF.
  */
 
+// prob/chiSquared.hpp
+DECLARE_UDF(prob, chi_squared_cdf)
+
 // prob/student.hpp
 DECLARE_UDF(prob, student_t_cdf)
+
 
 // regress/linear.hpp
 DECLARE_UDF_EXT(linregr_transition, regress, LinearRegression::transition)
 DECLARE_UDF_EXT(linregr_merge_states, regress, LinearRegression::mergeStates)
-
-DECLARE_UDF_EXT(linregr_coef_final, regress, LinearRegression::coefFinal)
-DECLARE_UDF_EXT(linregr_r2_final, regress, LinearRegression::RSquareFinal)
-DECLARE_UDF_EXT(linregr_tstats_final, regress, LinearRegression::tStatsFinal)
-DECLARE_UDF_EXT(linregr_pvalues_final, regress, LinearRegression::pValuesFinal)
+DECLARE_UDF_EXT(linregr_final, regress, LinearRegression::final)
     
 // regress/logistic.hpp
 DECLARE_UDF_EXT(logregr_cg_step_transition, regress, LogisticRegressionCG::transition)
 DECLARE_UDF_EXT(logregr_cg_step_merge_states, regress, LogisticRegressionCG::mergeStates)
 DECLARE_UDF_EXT(logregr_cg_step_final, regress, LogisticRegressionCG::final)
 DECLARE_UDF_EXT(internal_logregr_cg_step_distance, regress, LogisticRegressionCG::distance)
-DECLARE_UDF_EXT(internal_logregr_cg_coef, regress, LogisticRegressionCG::coef)
+DECLARE_UDF_EXT(internal_logregr_cg_result, regress, LogisticRegressionCG::result)
 
 DECLARE_UDF_EXT(logregr_irls_step_transition, regress, LogisticRegressionIRLS::transition)
 DECLARE_UDF_EXT(logregr_irls_step_merge_states, regress, LogisticRegressionIRLS::mergeStates)
 DECLARE_UDF_EXT(logregr_irls_step_final, regress, LogisticRegressionIRLS::final)
 DECLARE_UDF_EXT(internal_logregr_irls_step_distance, regress, LogisticRegressionIRLS::distance)
-DECLARE_UDF_EXT(internal_logregr_irls_coef, regress, LogisticRegressionIRLS::coef)
+DECLARE_UDF_EXT(internal_logregr_irls_result, regress, LogisticRegressionIRLS::result)

@@ -607,6 +607,39 @@ def __db_rollback( drop_schema, keep_schema):
     __info( "Rollback finished OK.", True)
     raise
             
+
+def unescape(string):
+    """
+    Unescape separation characters in connection strings, i.e., remove first
+    backslash from "\/", "\@", "\:", and "\\".
+    """
+    if string is None:
+        return None
+    else:
+        return re.sub(r'\\(?P<char>[/@:\\])', '\g<char>', string)
+
+def parseConnectionStr(connectionStr):
+    """
+    @brief Parse connection strings of the form
+           <tt>[username[/password]@][hostname][:port][/database]</tt>
+    
+    Separation characters (/@:) and the backslash (\) need to be escaped.
+    @returns A tuple (username, password, hostname, port, database). Field not
+             specified will be None.
+    """
+    match = re.search(
+        r'((?P<user>([^/@:\\]|\\/|\\@|\\:|\\\\)+)' +
+        r'(/(?P<password>([^/@:\\]|\\/|\\@|\\:|\\\\)*))?@)?' +
+        r'(?P<host>([^/@:\\]|\\/|\\@|\\:|\\\\)+)?' +
+        r'(:(?P<port>[0-9]+))?' + 
+        r'(/(?P<database>([^/@:\\]|\\/|\\@|\\:|\\\\)+))?', connectionStr)
+    return (
+        unescape(match.group('user')),
+        unescape(match.group('password')),
+        unescape(match.group('host')),
+        match.group('port'),
+        unescape(match.group('database')))
+
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Main       
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -637,24 +670,14 @@ def main( argv):
                          help="DBAPI2 compliant Python module name")
 
     parser.add_argument( '-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
-                         help= "Connection string of the following syntax:   user/pass@host:port/dbname\n" 
-                             + "All connection string elements {user,pass,host,port,dbname} are optional.\n" 
-                             + "All connection string separators {/,@,:,/} except the first one are mandatory.\n" 
+                         help= "Connection string of the following syntax:\n"
+                             + "  [user[/password]@][host][:port][/database]\n" 
                              + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
                              + "- user: PGUSER or USER env variable or OS username\n"
                              + "- pass: PGPASSWORD env variable or runtime prompt\n"
                              + "- host: PGHOST env variable or 'localhost'\n"
                              + "- port: PGPORT env variable or '5432'\n"
                              + "- db: PGDATABASE env variable or OS username\n"
-                             + "Examples (for PostgerSQL):\n"
-                             + "1) to use default values for all connect string elements, run:\n"
-                             + "   madpack -p postgres ...\n"
-                             + "2) to supply a non-default port value, run:\n"
-                             + "   madpack -p postgres -c @:1234/ ...\n"
-                             + "3) to supply no password and be prompted for it, skip the first separator:\n"
-                             + "   madpack -p postgres -c @:/ ...\n"
-                             + "4) to supply empty string as password, make sure to write the first separator:\n"
-                             + "   madpack -p postgres -c /@:/ ...\n"
                              )
 
     parser.add_argument( '-s', '--schema', nargs=1, dest='schema', 
@@ -737,94 +760,52 @@ def main( argv):
     # If no API defined yet (try the default API - from Ports.yml)
     ##
     if api is None and portapi:
-        # For POSTGRES import Pygresql.pgdb from madpack package
-        if portid == 'postgres':
-        #if portid == 'postgres' or portid == 'greenplum':
-            try:       
-                sys.path.append( maddir + "/ports/postgres/madpack")
-                dbapi2 = __import_dbapi( portapi)
-                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
-            except:
-                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
-        # For GREENPLUM use the GP one: $GPHOME/lib/python/pygresql
-        else: 
-            try:       
-                dbapi2 = __import_dbapi( portapi)
-                __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
-            except:
-                __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
+    #
+    # Keeping the old version for a bit until we decide which way to go:
+    #
+    #    # For POSTGRES import Pygresql.pgdb from madpack package
+    #    if portid == 'postgres':
+    #    #if portid == 'postgres' or portid == 'greenplum':
+    #        try:       
+    #            sys.path.append( maddir + "/ports/postgres/madpack")
+    #            dbapi2 = __import_dbapi( portapi)
+    #            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+    #        except:
+    #            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
+    #    # For GREENPLUM use the GP one: $GPHOME/lib/python/pygresql
+    #    else: 
+    #        try:       
+    #            dbapi2 = __import_dbapi( portapi)
+    #            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+    #        except:
+    #            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
+        try:
+            sys.path.append( maddir + "/ports/" + portid + "/madpack")
+            dbapi2 = __import_dbapi( portapi)
+            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
+        except:
+            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
 
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)
     ##
     if portid and dbapi2:
-    
-        # Define connection arguments
-        c_user = ''
-        c_pass = None
-        c_host = ''
-        c_port = ''
-        c_db = ''
-    
+        connStr = "" if args.connstr is None else args.connstr[0]
+        (c_user, c_pass, c_host, c_port, c_db) = parseConnectionStr(connStr)
+        
         # Find the default values for PG and GP
         if portid == 'postgres' or portid == 'greenplum':
+            if c_user is None:
+                c_user = os.environ.get('PGUSER', getpass.getuser())
+            if c_pass is None:
+                c_pass = os.environ.get('PGPASSWORD', None)
+            if c_host is None:
+                c_host = os.environ.get('PGHOST', 'localhost')
+            if c_port is None:
+                c_port = os.environ.get('PGPORT', '5432')
+            if c_db is None:
+                c_db = os.environ.get('PGDATABASE', c_user)
         
-            # user        
-            try: 
-                default_user = os.environ['PGUSER'] or os.environ['USER']
-            except: 
-                default_user = getpass.getuser()
-            # user        
-            try: 
-                default_pass = os.environ['PGPASSWORD']
-            except: 
-                default_pass = None
-            # host        
-            try: 
-                default_host = os.environ['PGHOST']
-            except: 
-                default_host = 'localhost'
-            # port        
-            try: 
-                default_port = os.environ['PGPORT']
-            except: 
-                default_port = '5432'
-            # db        
-            try: 
-                default_db = os.environ['PGDATABASE'] 
-            except: 
-                default_db = default_user
-                
-        # Review --connection string
-        if args.connstr:
-
-            try:
-                (c_user, c_dsn) = args.connstr[0].split('@')
-            except:
-                __error( "invalid connection string: missing '@' separator (see '-h' for help)", True)
-       
-            try: 
-                (c_user, c_pass) = c_user.split('/')
-            except:
-                c_pass = None
-
-            try: 
-                (c_dsn, c_db) = c_dsn.split('/')
-            except:
-                __error( "invalid connection string: missing '/' separator (see '-h' for help)", True)
-        
-            try: 
-                (c_host, c_port) = c_dsn.split(':')
-            except:
-                __error( "invalid connection string: missing ':' separator (see '-h' for help)", True)
-                
-        # Fill in the defaults
-        if c_user == '': c_user = default_user
-        if c_pass == None: c_pass = default_pass
-        if c_host == '': c_host = default_host
-        if c_port == '': c_port = default_port
-        if c_db   == '': c_db = default_db        
-
         ##
         # Try connecting to the database
         ##
