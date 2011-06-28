@@ -306,6 +306,7 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr(
 RETURNS MADLIB_SCHEMA.logregr_result AS $$
 DECLARE
     theIteration INTEGER;
+    fnName VARCHAR;
     theResult MADLIB_SCHEMA.logregr_result;
 BEGIN
     theIteration := (
@@ -315,18 +316,19 @@ BEGIN
     -- EXECUTE) in the following
     -- Because of Greenplum bug MPP-6731, we have to hide the tuple-returning
     -- function in a subquery
+    IF optimizer = 'irls' OR optimizer = 'newton' THEN
+        fnName := 'internal_logregr_irls_result';
+    ELSE
+        fnName := 'internal_logregr_cg_result';
+    END IF;
     EXECUTE
         $sql$
         SELECT (result).*
         FROM (
-            SELECT CASE
-                WHEN $1='irls' OR $1='newton' THEN
-                    MADLIB_SCHEMA.internal_logregr_irls_result(state)
-                WHEN $1='cg' THEN
-                    MADLIB_SCHEMA.internal_logregr_cg_result(state)
-                END AS result
+            SELECT
+                MADLIB_SCHEMA.$sql$ || fnName || $sql$(state) AS result
                 FROM _madlib_iterative_alg
-                WHERE iteration = $2
+                WHERE iteration = $sql$ || theIteration || $sql$
             ) subq
         $sql$
         INTO theResult
