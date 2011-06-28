@@ -2,8 +2,8 @@ Please read all sections marked with **. All others are optional and provide
 background information.
 
 
-Installation from Source
-========================
+Building and Installing from Source
+===================================
 
 Run-time Requirements:
 ----------------------
@@ -71,6 +71,19 @@ Optionally, install MADlib with
 If your are missing a required library, the `./configure` or `make` step will
 notice. Refer to your operating system's manual for instructions how to install
 the above prerequisites.
+
+
+Notes:
+------
+
+- To speed things up, run `make -j X` instead of `make` where X is the number of
+  jobs (commands) to run simultaneously. A good choice is the number of
+  processor cores in your machine.
+- MADlib depends on the linear-algebra library Armadillo. We always build it
+  during as part of our own build process. On all platforms except Mac OS X, we
+  install the armadillo shared library inside the MADlib directory. (The
+  Armadillo shared library is a mere umbrella library for the lower-level maths
+  libraries LAPACK, BLAS, ...)
 
 
 Building an installation package (RPM, Package Maker, ...)
@@ -143,18 +156,6 @@ directory) for more options, after having run `cmake` the first time.
     Armadillo is downloaded automatically, unless the you call `./configure`
     with `-DARMADILLO_TAR_SOURCE=/path/to/armadillo_x.tar.gz`, in which case
     this tarball is used.
-
-Notes:
-------
-
-- To speed things up, run `make -j X` instead of `make` where X is the number of
-  jobs (commands) to run simultaneously. A good choice is the number of
-  processor cores in your machine.
-- MADlib depends on the linear-algebra library Armadillo. We always build it
-  during as part of our own build process. On all platforms except Mac OS X, we
-  install the armadillo shared library inside the MADlib directory. (The
-  Armadillo shared library is a mere umbrella library for the lower-level maths
-  libraries LAPACK, BLAS, ...)
 
 
 Madlib C++ Code
