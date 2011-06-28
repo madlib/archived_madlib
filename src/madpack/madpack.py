@@ -780,7 +780,6 @@ def main( argv):
     #        except:
     #            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
         try:
-            sys.path.append( maddir + "/ports/" + portid + "/madpack")
             dbapi2 = __import_dbapi( portapi)
             __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
         except:
