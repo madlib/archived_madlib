@@ -268,10 +268,8 @@ AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
 		state.dir = state.gradNew;
 		state.grad = state.gradNew;
 	} else {
-		// Even iterations compute the gradient (during the accumulation phase)
-		// and the new direction (during the final phase).  Note that
-		// state.gradNew != state.grad starting from iteration 2
-		
+        // We use the Hestenes-Stiefel update formula:
+        //
 		//            g_k^T (g_k - g_{k-1})
 		// beta_k = -------------------------
 		//          d_{k-1}^T (g_k - g_{k-1})
@@ -279,6 +277,22 @@ AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
         state.beta
             = dot(state.gradNew, gradNewMinusGrad)
             / dot(state.dir, gradNewMinusGrad);
+        
+        // Alternatively, we could use Polak-Ribière
+        // state.beta
+        //     = dot(state.gradNew, gradNewMinusGrad)
+        //     / dot(state.grad, state.grad);
+        
+        // Or Fletcher–Reeves
+        // state.beta
+        //     = dot(state.gradNew, state.gradNew)
+        //     / dot(state.grad, state.grad);
+        
+        // Do a direction restart (Powell restart)
+        // Note: This is testing whether state.beta < 0 if state.beta were
+        // assigned according to Polak-Ribière
+        if (dot(state.gradNew, gradNewMinusGrad)
+            / dot(state.grad, state.grad) < 0) state.beta = 0;
         
         // d_k = g_k - beta_k * d_{k-1}
         state.dir = state.gradNew - state.beta * state.dir;
