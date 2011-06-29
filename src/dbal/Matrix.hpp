@@ -6,6 +6,18 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief MADlib mutable matrix class -- a thin wrapper around arma::Mat
+ *
+ * Armadillo does not provide a public interface to rebind the chunk of memory 
+ * an arma::Mat<eT> object is using. We therefore need this sublcass to 
+ * make matrix objects first-class citizen in the C++ DBAL.
+ *
+ * @internal Inheritance is not without issues here, and in a future version
+ *     we might want to switch to composition instead of inheritance (in order
+ *     to make it less likely that changes in the superclass break our
+ *     implementation).
+ */
 template<typename eT>
 class Matrix : public arma::Mat<eT> {
 public:
@@ -62,6 +74,14 @@ public:
         return *this;
     }
 
+    /**
+     * @brief Rebind the array to a different chunk of memory (referred to by a
+     *     memory handle)
+     *
+     * @param inHandle the memory handle
+     * @param inNumRows number of rows after the reallocation
+     * @param inNumCols number of columns after the reallocation
+     */
     inline Matrix &rebind(
         const MemHandleSPtr inHandle,
         const uint32_t inNumRows,

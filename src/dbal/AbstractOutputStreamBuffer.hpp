@@ -49,6 +49,14 @@ public:
     virtual void output(_CharT *inMsg, uint32_t inLength) = 0;
 
 protected:
+    /**
+     * @brief Handle case when stream receives a character that does not fit
+     *        into the current buffer any more
+     *
+     * This function will allocate a new buffer of twice the old buffer size. If
+     * the buffer has already the maximum size kMaxBufferSize, eof is returned
+     * to indicate that the buffer cannot take any more input before a flush.
+     */
     virtual int_type overflow(int_type c = traits_type::eof()) {
         if (this->pptr() >= this->epptr()) {
             if (mStorageSize >= kMaxBufferSize)

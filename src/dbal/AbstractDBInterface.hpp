@@ -62,6 +62,13 @@ protected:
             mRelayStream.output(inMsg, inLength);
         }
         
+        /**
+         * @brief Return a C string containing the last error message, NULL if
+         *        no error has occurred.
+         *
+         * @internal There is no need to reset the error message because an
+         *           error will eventually become an exception.
+         */
         const char *error() {
             if (mError)
                 return mTrimmedMsg.c_str();

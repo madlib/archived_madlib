@@ -18,6 +18,16 @@
 
 namespace boost
 {
+    /**
+     * @brief Boost failed assertion handler, with message
+     *
+     * @internal
+     * If the macro \c BOOST_ENABLE_ASSERT_HANDLER is defined when
+     * <tt><boost/assert.hpp></tt> is included, instead of sending a error
+     * message to an output stream, the expression
+     * <tt>::boost::assertion_failed_msg(#expr, BOOST_CURRENT_FUNCTION, __FILE__, __LINE__)</tt>
+     * is evaluated.
+     */
     void assertion_failed_msg(char const *inExpr, char const *inMsg,
         char const *inFunction, char const *inFile, long inLine) {
         
@@ -32,6 +42,8 @@ namespace boost
     }
 
     /**
+     * @brief Boost failed assertion handler, without message
+     *
      * @internal
      * If the macro \c BOOST_ENABLE_ASSERT_HANDLER is defined when
      * <tt><boost/assert.hpp></tt> is included, <tt>BOOST_ASSERT(expr)</tt>
