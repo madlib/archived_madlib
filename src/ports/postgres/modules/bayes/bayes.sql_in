@@ -17,8 +17,8 @@ m4_include(`SQLCommon.m4')
 
 @about
 
-Naive Bayes classification with user-defined smoothing factor (default:
-Laplacian smoothing).
+This is a Naive Bayes classification module with user-defined smoothing factor 
+(the default is "Laplacian smoothing").
 
 A Naive Bayes classifier computes the following formula:
 \f[
@@ -31,7 +31,7 @@ where $c$ ranges over all classes in the training data and probabilites are
 estimated with relative frequencies from the training set.
 
 There are different ways to estimate the feature probabilities
-\f$ P(A_i = a \mid C = c) \f$.  The maximum likelihood exstimate takes the relative
+\f$ P(A_i = a \mid C = c) \f$.  The maximum likelihood estimate takes the relative
 frequencies. That is:
 \f[
     P(A_i = a \mid C = c) = \frac{\#(c,i,a)}{\#c}
@@ -41,10 +41,10 @@ where
   is $c$
 - \f$ \#c \f$ denotes the # of training samples where class is $c$.
 
-Since the maximum likelihood sometimes results in estimates of 0, it might
-be desirable to use a "smoothed" estimate. Intuitively, one adds a number of
-"virtual" samples and assumes that these samples are evenly distributed
-among the values attribute $i$ can assume (i.e., the set of all values observed
+Since the maximum likelihood sometimes results in estimates of "0", you might
+want to use a "smoothed" estimate. To do this, you add a number of
+"virtual" samples and make the assumption that these samples are evenly distributed
+among the values assumed by attribute $i$ (that is, the set of all values observed
 for attribute $a$ for any class):
 
 \f[
@@ -55,57 +55,147 @@ where
   classes)
 - \f$ s \geq 0 \f$ denotes the smoothing factor.
 
-The case $s = 1$ is known as "Laplace smoothing" in the literature. The case
+The case $s = 1$ is known as "Laplace smoothing". The case
 $s = 0$ trivially reduces to maximum-likelihood estimates.
-
-@prereq
-
-Implemented in Python and SQL for PostgreSQL/Greenplum. The Python code only
-serves to genereate SQL and should be portable.
 
 @usage
 
--# The training data is expected to be of the following form:\n
-   <tt>{TABLE|VIEW} <em>trainingSource</em> ([...] <em>trainingClassColumn</em>
-   INTEGER, <em>trainingAttrColumn</em> INTEGER[]
-   [...])</tt>
--# (Optional step:) Precompute feature probabilities and class priors for faster
-   classification later:\n
-   <tt>SELECT \ref create_nb_prepared_data_tables(varchar,varchar,varchar,integer,varchar,varchar)
-   "create_nb_prepared_data_tables"('<em>trainingSource</em>',
-   '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>', numAttrs,
-   '<em>featureProbsName</em>', '<em>classPriorsName</em>')</tt>\n
-   \n
-   This creates the two tables\n
-   <tt><em>featureProbsName</em>(class INTEGER,
-   attr INTEGER, value INTEGER, cnt INTEGER, attr_cnt INTEGER))</tt>\n
-   and\n
-   <tt><em>classPriorsName</em>(class INTEGER, class_cnt INTEGER, all_cnt
-   INTEGER)</tt>.
--# The data that we want to run Naive Bayes classification on is expected to be
-   of the following form:\n
-   <tt>{TABLE|VIEW} <em>classifySource</em> ([...] <em>classifyKeyColumn</em>
-   ANYTYPE, <em>classifyAttrColumn</em> INTEGER[] [...])</tt>\n
--# Run Naive Bayes classification as follows:\n
-   <tt>SELECT \ref create_nb_classify_view(varchar ,varchar,varchar,varchar,varchar,integer,varchar)
-   "create_nb_classify_view"('<em>featureProbsName</em>',
-   '<em>classPriorsName</em>', '<em>classifySource</em>',
-   '<em>classifyKeyColumn</em>', '<em>classifyAttrColumn</em>', numAttrs,
-   '<em>destName</em>')</tt>\n
-   \n
-   This creates a view <tt><em>destName</em>(key ANYTYPE,
-   nb_classification INTEGER)</tt> which contains a row for every row in
-   <tt><em>classifySource</em></tt>, where <tt>key</tt> =
-   <tt><em>classifyKeyColumn</em></tt> and <tt>nb_classification</tt>
-   is the Naive Bayes classification.
+-   <b>Input</b>\n\n
+    The <b>training data</b> is expected to be of the following form:\n\n 
+    <tt>{TABLE|VIEW} <em>trainingSource</em> (\n
+        &nbsp;&nbsp;&nbsp;...\n
+        &nbsp;&nbsp;&nbsp;<em>trainingClassColumn</em> INTEGER\n 
+        &nbsp;&nbsp;&nbsp;<em>trainingAttrColumn</em> INTEGER[]\n
+        &nbsp;&nbsp;&nbsp;...\n
+    )</tt>\n\n
+    The <b>data to classify</b> is expected to be of the following form:\n\n
+    <tt>{TABLE|VIEW} <em>classifySource</em> (\n
+        &nbsp;&nbsp;&nbsp;...\n
+        &nbsp;&nbsp;&nbsp;<em>classifyKeyColumn</em> ANYTYPE\n
+        &nbsp;&nbsp;&nbsp;<em>classifyAttrColumn</em> INTEGER[]\n
+        &nbsp;&nbsp;&nbsp;...\n
+    )</tt>\n\n
+    
+-   <b>Option #1 (with pre-computation step)</b>\n\n
+    -# For faster classification in the following steps you can run the 
+    <tt>\ref create_nb_prepared_data_tables(
+    '<em>trainingSource</em>', 
+    '<em>trainingClassColumn</em>', 
+    '<em>trainingAttrColumn</em>',
+    <em>numAttrs</em>, 
+    '<em>featureProbsName</em>', 
+    '<em>classPriorsName</em>')</tt>
+    function to create tables of pre-computed feature probabilities 
+    and class priors of the following structure:\n\n
+    <tt>TABLE <em>featureProbsName</em> (\n
+        &nbsp;&nbsp;&nbsp;class INTEGER,\n
+        &nbsp;&nbsp;&nbsp;attr INTEGER,\n 
+        &nbsp;&nbsp;&nbsp;value INTEGER,\n 
+        &nbsp;&nbsp;&nbsp;cnt INTEGER,\n 
+        &nbsp;&nbsp;&nbsp;attr_cnt INTEGER\n
+    )</tt>\n\n
+    <tt>TABLE <em>classPriorsName</em> (\n
+        &nbsp;&nbsp;&nbsp;class INTEGER,\n
+        &nbsp;&nbsp;&nbsp;class_cnt INTEGER,\n
+        &nbsp;&nbsp;&nbsp;all_cnt INTEGER\n
+    )</tt>\n\n
+    -# To create the Naive-Bayes classification view for the source data (based 
+    on the pre-computed <em>featureProbsName</em> and <em>classPriorsName</em> 
+    tables) run
+    <tt>\ref create_nb_classify_view (
+    '<em>featureProbsName</em>',
+    '<em>classPriorsName</em>',
+    '<em>classifySource</em>',
+    '<em>classifyKeyColumn</em>',
+    '<em>classifyAttrColumn</em>',
+    <em>numAttrs</em>,
+    '<em>destView</em>')</tt>. 
+    The output view (<em>destView</em>) will contain one row for every value of 
+    <tt><em>classifyKeyColumn</em></tt> in <tt><em>classifySource</em></tt> table:\n\n
+    <tt>VIEW <em>destView</em> (\n
+        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
+        &nbsp;&nbsp;&nbsp;nb_classification INTEGER\n
+    )</tt>\n\n
+    -# To create the view with classification probabilities 
+    (based on the pre-computed <em>featureProbsName</em> 
+    and <em>classPriorsName</em> tables) run
+    <tt>\ref create_nb_probs_view (
+    '<em>featureProbsName</em>',
+    '<em>classPriorsName</em>',
+    '<em>classifySource</em>',
+    '<em>classifyKeyColumn</em>',
+    '<em>classifyAttrColumn</em>',
+    <em>numAttrs</em>,
+    '<em>destView</em>')</tt>. 
+    The output view (<em>destView</em>) will contain one row for every (key,class) 
+    pair:\n\n
+    <tt>VIEW <em>destView</em> (\n
+        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
+        &nbsp;&nbsp;&nbsp;class INTEGER,\n
+        &nbsp;&nbsp;&nbsp;nb_prob FLOAT\n
+    )</tt>\n
+       
+-   <b>Option #2 (w/o pre-computation step)</b>\n\n
+    -# This option is does not include the creating of the pre-computed 
+    feature probabilities and class priors tables.\n\n
+    -# To create the Naive-Bayes classification view for the source data run
+    <tt>\ref create_nb_classify_view (
+    '<em>trainingSource</em>',
+    '<em>trainingClassColumn</em>',
+    '<em>trainingAttrColumn</em>',
+    '<em>classifySource</em>',
+    '<em>classifyKeyColumn</em>',
+    '<em>classifyAttrColumn</em>',
+    <em>numAttrs</em>,
+    '<em>destView</em>')</tt>. 
+    The output view (<em>destView</em>) will contain one row for every value of 
+    <tt><em>classifyKeyColumn</em></tt> in <tt><em>classifySource</em></tt> table:\n\n
+    <tt>VIEW <em>destView</em> (\n
+        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
+        &nbsp;&nbsp;&nbsp;nb_classification INTEGER\n
+    )</tt>\n\n
+    -# To create the view with the classification probabilities run
+    <tt>\ref create_nb_probs_view (
+    '<em>trainingSource</em>',
+    '<em>trainingClassColumn</em>',
+    '<em>trainingAttrColumn</em>',
+    '<em>classifySource</em>',
+    '<em>classifyKeyColumn</em>',
+    '<em>classifyAttrColumn</em>',
+    <em>numAttrs</em>,
+    '<em>destView</em>')</tt>. 
+    The output view (<em>destView</em>) will contain one row for every (key,class) 
+    pair:\n\n
+    <tt>VIEW <em>destView</em> (\n
+        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
+        &nbsp;&nbsp;&nbsp;class INTEGER,\n
+        &nbsp;&nbsp;&nbsp;nb_prob FLOAT\n
+    )</tt>\n
 
 @examp
 
-The following is an extremely simplified example which can by verify by hand.
+The following is an extremely simplified example of the above option #1 which can by verify by hand.
 
-@verbatim
-# -- The training data
-# select * from bayes;
+-#  Create the training and the to-be-classified data sets:
+\verbatim
+sql> CREATE TABLE training (id INT, class INT, attributes INT[]);
+sql> COPY training FROM STDIN WITH DELIMITER '|';
+    1 |     1 | {1,2,3}
+    3 |     1 | {1,4,3}
+    5 |     2 | {0,2,2}
+    2 |     1 | {1,2,1}
+    4 |     2 | {1,2,2}
+    6 |     2 | {0,1,3}
+\.
+sql> CREATE TABLE toclassify (id INT, attributes INT[]);
+sql> COPY toclassify FROM STDIN WITH DELIMITER '|';
+  1 | {0,2,1}
+  2 | {1,2,3}
+\.
+\endverbatim\n
+-#  Make sure they look good:
+\verbatim
+sql> SELECT * FROM training;
  id | class | attributes 
 ----+-------+------------
   1 |     1 | {1,2,3}
@@ -116,54 +206,54 @@ The following is an extremely simplified example which can by verify by hand.
   6 |     2 | {0,1,3}
 (6 rows)
 
-# -- Precompute feature probabilities and class priors
-# select create_nb_prepared_data_tables(
-#     'bayes', 'class', 'attributes', 3,
-#     'nb_feature_probs', 'nb_class_priors');
-
-# select * from nb_feature_probs;
- class | attr | value | cnt | attr_cnt 
--------+------+-------+-----+----------
-     1 |    1 |     0 |   0 |        2
-     1 |    1 |     1 |   3 |        2
-     1 |    2 |     1 |   0 |        3
-     1 |    2 |     2 |   2 |        3
-[...]
-
-# select * from nb_class_priors;
+sql> select * from toclassify;
+ id | attributes 
+----+------------
+  1 | {0,2,1}
+  2 | {1,2,3}
+(2 rows)
+\endverbatim\n
+-# Precompute feature probabilities and class priors
+\verbatim
+sql> SELECT madlib.create_nb_prepared_data_tables( 
+'training', 'class', 'attributes', 3, 'nb_feature_probs', 'nb_class_priors');
+\endverbatim\n
+-# Optionally check the contents of the precomputed tables:
+\verbatim
+sql> SELECT * FROM nb_class_priors;
  class | class_cnt | all_cnt 
 -------+-----------+---------
      1 |         3 |       6
      2 |         3 |       6
 (2 rows)
 
-# -- Data we want to run Naive Bayes classification on
-# select * from toclassify;
- id | attributes 
-----+------------
-  1 | {0,2,1}
-  2 | {1,2,3}
+sql> SELECT * FROM nb_feature_probs;
+ class | attr | value | cnt | attr_cnt 
+-------+------+-------+-----+----------
+     1 |    1 |     0 |   0 |        2
+     1 |    1 |     1 |   3 |        2
+     1 |    2 |     1 |   0 |        3
+     1 |    2 |     2 |   2 |        3
+...
+\endverbatim\n
+-# Create the view with Naive Bayes classification and check the results:
+\verbatim
+sql> SELECT madlib.create_nb_classify_view (
+'nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_fast');
 
-# -- Run Naive Bayes
-# select create_nb_classify_view(
-#     'nb_feature_probs', 'nb_class_priors',
-#     'toclassify', 'id', 'attributes', 3,
-#     'nb_classify_view_fast');
-
-# select * from nb_classify_view_fast;
+sql> SELECT * FROM nb_classify_view_fast;
  key | nb_classification 
 -----+-------------------
    1 | {2}
    2 | {1}
 (2 rows)
+\endverbatim\n
+-# Look at the probabilities for each class (note that we use "Laplacian smoothing"):
+\verbatim
+sql> SELECT madlib.create_nb_probs_view (
+'nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_fast');
 
-# -- Look at the probabilities for each class (Note we use Laplacian Smoothing):
-# select create_nb_probs_view(
-#     'nb_feature_probs', 'nb_class_priors',
-#     'toclassify', 'id', 'attributes', 3,
-#     'nb_probs_view_fast');
-
-# select * from nb_probs_view_fast;
+sql> SELECT * FROM nb_probs_view_fast;
  key | class | nb_prob 
 -----+-------+---------
    1 |     1 |     0.4
@@ -171,9 +261,9 @@ The following is an extremely simplified example which can by verify by hand.
    2 |     1 |    0.75
    2 |     2 |    0.25
 (4 rows)
-@endverbatim
+\endverbatim
 
-@sa file bayes.sql_in (documenting the SQL functions)
+@sa File bayes.sql_in documenting the SQL functions.
 
 @internal
 @sa namespace bayes (documenting the implementation in Python)
@@ -181,11 +271,11 @@ The following is an extremely simplified example which can by verify by hand.
 
 @literature
 
-[1] Tom Mitchell: Machine Learning, McGraw Hill, 1997. Book chapter
+-   [1] Tom Mitchell: Machine Learning, McGraw Hill, 1997. Book chapter
     <em>Generativ and Discriminative Classifiers: Naive Bayes and Logistic
     Regression</em> available at: http://www.cs.cmu.edu/~tom/NewChapters.html
 
-[2] Wikipedia, Naive Bayes classifier,
+-   [2] Wikipedia, Naive Bayes classifier,
     http://en.wikipedia.org/wiki/Naive_Bayes_classifier
 */
 
