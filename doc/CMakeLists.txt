@@ -43,7 +43,7 @@ set(DOXYGEN_HTML_OUTPUT html CACHE STRING
 
 # -- Build doxysql (the SQL parser) using flex and bison -----------------------
 
-find_package(FLEX 2.5)
+find_package(FLEX 2.5.33)
 find_package(BISON 2.4)
 find_package(Doxygen)
 

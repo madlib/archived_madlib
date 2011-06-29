@@ -1,0 +1,90 @@
+---------------------------------------------------------------------------
+-- Setup
+---------------------------------------------------------------------------
+SET client_min_messages=warning;
+
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
+CREATE SCHEMA madlib_installcheck;
+
+-- Adjust SEARCH_PATH
+set search_path=madlib_installcheck,MADLIB_SCHEMA,"$user",public;
+
+---------------------------------------------------------------------------
+-- Test
+---------------------------------------------------------------------------
+CREATE FUNCTION install_test() RETURNS VOID AS $$ 
+declare
+	result1 TEXT;
+	result2 TEXT; 
+	result3 TEXT;  
+begin
+	DROP TABLE IF EXISTS test_data1;
+	CREATE TABLE test_data1 (
+		trans_id INT
+		, product INT
+	);
+	
+	DROP TABLE IF EXISTS test_data2; 
+	CREATE TABLE test_data2 (
+		trans_id INT
+		, product VARCHAR
+	); 
+
+
+	INSERT INTO test_data1 VALUES (1,1);
+	INSERT INTO test_data1 VALUES (1,2); 
+	INSERT INTO test_data1 VALUES (2,3); 
+	INSERT INTO test_data1 VALUES (3,4); 
+	INSERT INTO test_data1 VALUES (4,1); 
+	INSERT INTO test_data1 VALUES (4,2); 
+	INSERT INTO test_data1 VALUES (4,3); 
+	INSERT INTO test_data1 VALUES (5,2); 
+
+	INSERT INTO test_data2 VALUES (1, 'beer'); 
+	INSERT INTO test_data2 VALUES (1, 'diapers'); 
+	INSERT INTO test_data2 VALUES (1, 'chips'); 
+	INSERT INTO test_data2 VALUES (2, 'beer'); 
+	INSERT INTO test_data2 VALUES (2, 'diapers'); 
+	INSERT INTO test_data2 VALUES (3, 'beer'); 
+	INSERT INTO test_data2 VALUES (3, 'diapers');
+	INSERT INTO test_data2 VALUES (4, 'beer'); 
+	INSERT INTO test_data2 VALUES (4, 'chips'); 
+	INSERT INTO test_data2 VALUES (5, 'beer');
+	INSERT INTO test_data2 VALUES (6, 'beer'); 
+	INSERT INTO test_data2 VALUES (6, 'diapers'); 
+	INSERT INTO test_data2 VALUES (6, 'chips'); 
+	INSERT INTO test_data2 VALUES (7, 'beer'); 
+	INSERT INTO test_data2 VALUES (7, 'diapers'); 
+
+  
+
+	PERFORM MADLIB_SCHEMA.assoc_rules (.1, .5, 'trans_id', 'product', 'test_data1','madlib_installcheck', false); 
+	SELECT INTO result1 CASE WHEN count(*)>0 then 'PASS' ELSE 'FAIL' END FROM madlib_installcheck.assoc_rules; 
+
+	PERFORM MADLIB_SCHEMA.assoc_rules (.1, .5, 'trans_id', 'product', 'test_data2','madlib_installcheck', false); 
+	SELECT INTO result2 CASE WHEN count(*)>0 then 'PASS' ELSE 'FAIL' END FROM madlib_installcheck.assoc_rules; 
+	SELECT INTO result3 CASE WHEN count(*)>0 then 'PASS' ELSE 'FAIL' END FROM assoc_prod_uniq; 
+
+
+	DROP TABLE IF EXISTS test_data1;
+	DROP TABLE IF EXISTS test_data2; 
+	
+    IF result3 = 'FAIL' THEN
+        RAISE EXCEPTION 'Input data transformation failed'; 
+    END IF; 
+    
+    IF (result1 = 'FAIL') OR (result2 = 'FAIL') THEN
+        RAISE EXCEPTION 'Association rules mining failed. No results were returned.';
+    END IF;
+    
+    RAISE INFO 'Association rules install check passed.';
+	RETURN;
+	
+end $$ language plpgsql;
+
+SELECT install_test();
+
+---------------------------------------------------------------------------
+-- Cleanup
+---------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;

@@ -10,4 +10,5 @@
  * @brief Probability functions
  */
 
+#include <modules/prob/chiSquared.hpp>
 #include <modules/prob/student.hpp>

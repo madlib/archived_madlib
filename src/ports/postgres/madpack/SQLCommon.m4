@@ -50,6 +50,38 @@ m4_define(<!PythonFunction!>, <!
 !>)
 
 /*
+ * IterativeAlgorithm
+ *
+ * @param $1 compute function with argument list
+ * @param $2 result function name
+ *
+ * Example:
+ * CREATE FUNCTION MADLIB_SCHEMA.logregr(
+ *     "source" VARCHAR,
+ *     "depColumn" VARCHAR,
+ *     "indepColumn" VARCHAR)
+ * RETURNS INTEGER
+ * AS $$IterativeAlgorithm(`compute_logregr($1, $2, $3, $4, $5, $6)',
+ *   internal_logregr_irls_result)$$
+ * LANGUAGE plpgsql VOLATILE;
+ *
+ 
+m4_define(<!IterativeAlgorithm!>, <!
+DECLARE
+    iteration INTEGER;
+BEGIN
+    SELECT MADLIB_SCHEMA.$1 INTO iteration;
+    SELECT 
+        
+END;
+!>)
+    SELECT MADLIB_SCHEMA.compute_logregr($1, $2, $3, $4, $5, $6);
+    SELECT MADLIB_SCHEMA.internal_logregr_irls_result(state)
+    FROM _madlib_iterative_alg
+    WHERE iteration = (SELECT max(iteration) FROM _madlib_iterative_alg);
+*/
+
+/*
  * PythonFunctionBodyOnly
  *
  * @param $1 directory

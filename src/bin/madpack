@@ -1,7 +1,12 @@
 #!/bin/sh
 
 # This script does the following:
-# 1. Find python interpreter by
+# 0. If indicated by environent variables, look for DBMS-supplied Python
+#    installation. E.g., Greenplum supplies its own Python, and its currently
+#    the first choice to use because it guarantees that python, pygresql
+#    (currently needed to connect to a GP database), and libpg all have the same
+#    architecture.
+# 1. Of step 0 failed, find python interpreter by
 #    - first looking for "python${VERSION}" in $PATH where
 #      ${VERSION} in {2.7, 2.6}
 #    - Only if that fails, look for "python" in $PATH
@@ -11,6 +16,17 @@ PYTHON_PREFIX="python"
 PYTHON_VERSIONS="2.7 2.6"
 MADPACK_PATH="$(dirname $0)/../madpack/madpack.py"
 
+# Initialization
+DID_NOT_FIND_INTERPRETER=1
+
+# Platform-specific overrides
+if [[ "$GPHOME" && "$PYTHONHOME" && \
+    "${PYTHONHOME:0:${#GPHOME}}" == "$GPHOME" ]]; then
+    
+    DID_NOT_FIND_INTERPRETER=0
+    PYTHON_EXE_NAME="${PYTHONHOME}/bin/python"
+fi
+
 function errorNoPythonFound() {
     echo "No Python interpreter found. Please install Python 2.6 or higher to" \
         "run madpack."
@@ -19,22 +35,22 @@ function errorNoPythonFound() {
 
 function setAndTestPythonVesion() {
     PYTHON_EXE_NAME="${PYTHON_PREFIX}$1"
-    which -s "${PYTHON_EXE_NAME}"
+    command -v "${PYTHON_EXE_NAME}" > /dev/null
     DID_NOT_FIND_INTERPRETER=$?
 }
 
 
 # function main()
-
-DID_NOT_FIND_INTERPRETER=1
-for VERSION in $PYTHON_VERSIONS; do
-    VERSION_DENSE=${VERSION/./}
-    
-    setAndTestPythonVesion "${VERSION}"
-    if [[ $DID_NOT_FIND_INTERPRETER -eq 0 ]]; then
-        break
-    fi
-done
+if [[ $DID_NOT_FIND_INTERPRETER -ne 0 ]]; then
+    for VERSION in $PYTHON_VERSIONS; do
+        VERSION_DENSE=${VERSION/./}
+        
+        setAndTestPythonVesion "${VERSION}"
+        if [[ $DID_NOT_FIND_INTERPRETER -eq 0 ]]; then
+            break
+        fi
+    done
+fi
 
 if [[ $DID_NOT_FIND_INTERPRETER -ne 0 ]]; then
     setAndTestPythonVesion ""
@@ -44,4 +60,4 @@ if [[ $DID_NOT_FIND_INTERPRETER -ne 0 ]]; then
     errorNoPythonFound
 fi
 
-$PYTHON_EXE_NAME "${MADPACK_PATH}" "$@"
+"$PYTHON_EXE_NAME" "${MADPACK_PATH}" "$@"

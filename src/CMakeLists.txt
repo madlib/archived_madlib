@@ -24,6 +24,15 @@ string(REPLACE "." "_" _BOOST_TAR_VERSION_UNDERSCORES ${BOOST_TAR_VERSION})
 set(BOOST_TAR "boost_${_BOOST_TAR_VERSION_UNDERSCORES}.tar.gz")
 set(BOOST_URL "${SOURCEFORGE_BASE_URL}/boost/files/${BOOST_TAR}")
 
+if(NOT BOOST_TAR_SOURCE)
+    find_file(BOOST_TAR_SOURCE ${BOOST_TAR}
+        PATHS ${MAD_THIRD_PARTY}/downloads)
+endif(NOT BOOST_TAR_SOURCE)
+
+if(NOT BOOST_TAR_SOURCE)
+    set(BOOST_TAR_SOURCE ${BOOST_URL})
+endif (NOT BOOST_TAR_SOURCE)
+
 # We always download Armadillo (unless it is already present in
 # ${CMAKE_CURRENT_BINARY_DIR}/third_party/downloads). It is also possible to
 # specify an alternative path to the Armadillo tarball:
@@ -34,6 +43,39 @@ set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
 
 set(ARMADILLO_TAR "armadillo-${ARMADILLO_TAR_VERSION}.tar.gz")
 set(ARMADILLO_URL "${SOURCEFORGE_BASE_URL}/arma/files/${ARMADILLO_TAR}")
+
+if(NOT ARMADILLO_TAR_SOURCE)
+    find_file(ARMADILLO_TAR_SOURCE ${ARMADILLO_TAR}
+        PATHS ${MAD_THIRD_PARTY}/downloads)
+endif(NOT ARMADILLO_TAR_SOURCE)
+
+if(NOT ARMADILLO_TAR_SOURCE)
+    set(ARMADILLO_TAR_SOURCE ${ARMADILLO_URL})
+endif (NOT ARMADILLO_TAR_SOURCE)
+
+
+# -- Paths for madpack third-party components (those that are used by multiple
+#    ports) -------------------------------------------------------------------- 
+
+# For in-house testing, we might want to change the base URL to something local
+# "-DPYPI_BASE_URL=http://test.local/projects"
+set(PYPI_BASE_URL "http://pypi.python.org/packages/source" CACHE STRING
+    "Base URL for projects from the Python Package Index. May be overridden for testing purposes.")
+
+set(PYGRESQL_TAR_VERSION "4.0")
+set(PYGRESQL_TAR_MD5 1aca50e59ff4cc56abe9452a9a49c5ff)
+
+set(PYGRESQL_TAR "PyGreSQL-${PYGRESQL_TAR_VERSION}.tar.gz")
+set(PYGRESQL_URL "${PYPI_BASE_URL}/P/PyGreSQL/${PYGRESQL_TAR}")
+
+if(NOT PYGRESQL_TAR_SOURCE)
+    find_file(PYGRESQL_TAR_SOURCE ${PYGRESQL_TAR}
+        PATHS ${MAD_THIRD_PARTY}/downloads)
+endif(NOT PYGRESQL_TAR_SOURCE)
+
+if(NOT PYGRESQL_TAR_SOURCE)
+    set(PYGRESQL_TAR_SOURCE ${PYGRESQL_URL})
+endif (NOT PYGRESQL_TAR_SOURCE)
 
 
 # -- Local definitions (filenames, paths, etc.) --------------------------------
@@ -71,15 +113,6 @@ if(Boost_FOUND)
 else(Boost_FOUND)
     message(STATUS "No sufficiently recent version (>= 1.34) of Boost was found. Will download.")
 
-    if(NOT BOOST_TAR_SOURCE)
-        find_file(BOOST_TAR_SOURCE ${BOOST_TAR}
-            PATHS ${MAD_THIRD_PARTY}/downloads)
-    endif(NOT BOOST_TAR_SOURCE)
-
-    if(NOT BOOST_TAR_SOURCE)
-        set(BOOST_TAR_SOURCE ${BOOST_URL})
-    endif (NOT BOOST_TAR_SOURCE)
-
     ExternalProject_Add(EP_boost
         PREFIX ${MAD_THIRD_PARTY}
         DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
@@ -110,15 +143,6 @@ list(APPEND ARMADILLO_CMAKE_ARGS
     "-DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}"
     -DINSTALL_LIB_DIR=lib
 )
-
-if(NOT ARMADILLO_TAR_SOURCE)
-    find_file(ARMADILLO_TAR_SOURCE ${ARMADILLO_TAR}
-        PATHS ${MAD_THIRD_PARTY}/downloads)
-endif(NOT ARMADILLO_TAR_SOURCE)
-
-if(NOT ARMADILLO_TAR_SOURCE)
-    set(ARMADILLO_TAR_SOURCE ${ARMADILLO_URL})
-endif (NOT ARMADILLO_TAR_SOURCE)
 
 ExternalProject_Add(EP_armadillo
     DEPENDS ${ARMADILLO_DEPENDS}
@@ -186,11 +210,26 @@ endmacro(add_python_files)
 # Add sql files to be copied
 macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
     get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
+    get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
     file(GLOB_RECURSE SQL_FILES
         RELATIVE "${SOURCE_DIR_ABS}"
         "${SOURCE_DIR_ABS}/*.sql_in"
     )
-    add_files(${OUT_SQL_TARGET_FILES} "${IN_SOURCE_DIR}" "${IN_TARGET_DIR}" ${SQL_FILES})
+    # psql of PostgreSQL < 9 does not like byte-order marks
+    set(_MADLIB_VERIFY_AND_COPY_COMMAND
+        COMMAND "${CMAKE_SOURCE_DIR}/cmake/TestIfNoUTF8BOM.py" "\"\${CURRENT_PATH}\""
+        COMMAND "${CMAKE_COMMAND}" -E copy "\"\${CURRENT_PATH}\"" "\"\${OUTFILE}\""
+    )
+    batch_add_command(
+        TARGET_PREFIX "${TARGET_DIR_ABS}/"
+        SOURCE_PREFIX "${SOURCE_DIR_ABS}/"
+        TARGET_SUFFIX ""
+        SOURCE_SUFFIX ""
+        RUN "${_MADLIB_VERIFY_AND_COPY_COMMAND}"
+        COMMENT "Validating and copying \${CURRENT_FILE}."
+        TARGET_FILE_LIST_REF ${OUT_SQL_TARGET_FILES}
+        SOURCE_FILE_LIST ${SQL_FILES}
+    )
 endmacro(add_sql_files)
 
 # Add a connector library for a specific DBMS port

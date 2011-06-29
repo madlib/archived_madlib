@@ -127,6 +127,10 @@ public:
         mMemoryHandle = inHandle;
         return *this;
     }
+    
+    inline bool is_finite() const {
+        return mVector.is_finite();
+    }
 
     inline MemHandleSPtr memoryHandle() const {
         return mMemoryHandle;

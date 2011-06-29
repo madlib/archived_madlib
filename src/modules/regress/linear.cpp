@@ -10,6 +10,11 @@
 #include <modules/prob/student.hpp>
 #include <utils/Reference.hpp>
 
+// Floating-point classification functions are in C99 and TR1, but not in the
+// official C++ Standard (before C++0x). We therefore use the Boost implementation
+#include <boost/math/special_functions/fpclassify.hpp>
+
+
 // Import names from Armadillo
 using arma::mat;
 using arma::as_scalar;
@@ -115,34 +120,6 @@ public:
 };
 
 /**
- * @brief Compute the linear-regression coefficient as final step
- */
-AnyValue LinearRegression::coefFinal(AbstractDBInterface &db, AnyValue args) {
-    return final<kCoef>(db, args[0]);
-}
-
-/**
- * @brief Compute the coefficient of determination as final step
- */
-AnyValue LinearRegression::RSquareFinal(AbstractDBInterface &db, AnyValue args) {
-    return final<kRSquare>(db, args[0]);
-}
-
-/**
- * @brief Compute the vector of t-statistics as final step
- */
-AnyValue LinearRegression::tStatsFinal(AbstractDBInterface &db, AnyValue args) {
-    return final<kTStats>(db, args[0]);
-}
-
-/**
- * @brief Compute the vector of p-values as final step
- */
-AnyValue LinearRegression::pValuesFinal(AbstractDBInterface &db, AnyValue args) {
-    return final<kPValues>(db, args[0]);
-}
-
-/**
  * @brief Perform the linear-regression transition step
  * 
  * We update: the number of rows \f$ n \f$, the partial sums
@@ -159,6 +136,14 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
     TransitionState state = *arg++;
     double y = *arg++;
     DoubleRow_const x = *arg++;
+    
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!boost::math::isfinite(y))
+        throw std::invalid_argument("Dependent variables are not finite.");
+    else if (!x.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
     
     // Now do the transition step.
     if (state.numRows == 0)
@@ -193,12 +178,15 @@ AnyValue LinearRegression::mergeStates(AbstractDBInterface &db, AnyValue args) {
 
 /**
  * @brief Perform the linear-regression final step
- *
- * @internal We pass \c what as a compile-time argument.
  */
-template <LinearRegression::What what>
-AnyValue LinearRegression::final(AbstractDBInterface &db,
-    const LinearRegression::TransitionState &state) {
+AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
+    const TransitionState state = args[0];
+
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!state.X_transp_X.is_finite() || !state.X_transp_Y.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
 
     // Precompute (X^T * X)^+
     mat inverse_of_X_transp_X = pinv(state.X_transp_X);
@@ -207,8 +195,6 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
     // by reference, so we need to bind to db memory
     DoubleCol coef(db.allocator(), state.widthOfX);
     coef = inverse_of_X_transp_X * state.X_transp_Y;
-    if (what == kCoef)
-        return coef;
     
     // explained sum of squares (regression sum of squares)
     double ess
@@ -223,8 +209,7 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
             - ((state.y_sum * state.y_sum) / state.numRows);
 
     // coefficient of determination
-    if (what == kRSquare)    
-        return ess / tss;
+    double r2 = ess / tss;
 
     // In the case of linear regression:
     // residual sum of squares (rss) = total sum of squares (tss) - explained
@@ -235,13 +220,14 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
     // Variance is also called the mean square error
 	double variance = rss / (state.numRows - state.widthOfX);
     
-    // Vector of t-statistics: For efficiency reasons, we want to return this
-    // by reference, so we need to bind to db memory
+    // Vector of standard errors and t-statistics: For efficiency reasons, we
+    // want to return these by reference, so we need to bind to db memory
+    DoubleCol stdErr(db.allocator(), state.widthOfX);
     DoubleCol tStats(db.allocator(), state.widthOfX);
-    for (int i = 0; i < state.widthOfX; i++)
-        tStats(i) = coef(i) / std::sqrt( variance * inverse_of_X_transp_X(i,i) );
-    if (what == kTStats)
-        return tStats;
+    for (int i = 0; i < state.widthOfX; i++) {
+        stdErr(i) = std::sqrt( variance * inverse_of_X_transp_X(i,i) );
+        tStats(i) = coef(i) / stdErr(i);
+    }
     
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
@@ -250,7 +236,18 @@ AnyValue LinearRegression::final(AbstractDBInterface &db,
         pValues(i) = 2. * (1. - studentT_cdf(
                                     state.numRows - state.widthOfX,
                                     std::fabs( tStats(i) )));
-    return pValues;
+    
+    // Return all coefficients, standard errors, etc. in a tuple
+    AnyValueVector tuple;
+    ConcreteRecord::iterator tupleElement(tuple);
+    
+    tupleElement++ = coef;
+    tupleElement++ = r2;
+    tupleElement++ = stdErr;
+    tupleElement++ = tStats;
+    tupleElement++ = pValues;
+    
+    return tuple;
 }
 
 } // namespace regress
