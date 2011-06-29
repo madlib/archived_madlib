@@ -713,7 +713,7 @@ def main( argv):
             dbapi2 = __import_dbapi( api)
             __info( "Imported user defined dbapi2 module (%s)." % (api), verbose)
         except:
-            __error( "cannot import dbapi2 module: %s. Try using the deafult one from Ports.yml file." % (args.api[0]), True)
+            __error( "cannot import python module: %s. Try using the deafult one by skipping option -a/--api." % (args.api[0]), True)
         
     ##
     # Parse SCHEMA
@@ -760,31 +760,11 @@ def main( argv):
     # If no API defined yet (try the default API - from Ports.yml)
     ##
     if api is None and portapi:
-    #
-    # Keeping the old version for a bit until we decide which way to go:
-    #
-    #    # For POSTGRES import Pygresql.pgdb from madpack package
-    #    if portid == 'postgres':
-    #    #if portid == 'postgres' or portid == 'greenplum':
-    #        try:       
-    #            sys.path.append( maddir + "/ports/postgres/madpack")
-    #            dbapi2 = __import_dbapi( portapi)
-    #            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
-    #        except:
-    #            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
-    #    # For GREENPLUM use the GP one: $GPHOME/lib/python/pygresql
-    #    else: 
-    #        try:       
-    #            dbapi2 = __import_dbapi( portapi)
-    #            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
-    #        except:
-    #            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)
         try:
-            sys.path.append( maddir + "/ports/" + portid + "/madpack")
             dbapi2 = __import_dbapi( portapi)
             __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
         except:
-            __error( "cannot import dbapi2 module: %s. You can try specifying a different one (see --help)." % (portapi), True)    
+            __error( "cannot import python module: %s. You can try importing another one using -a/--api option (see --help for details)." % (portapi), True)    
 
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)

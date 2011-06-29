@@ -315,32 +315,32 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr(
 RETURNS MADLIB_SCHEMA.logregr_result AS $$
 DECLARE
     theIteration INTEGER;
+    fnName VARCHAR;
     theResult MADLIB_SCHEMA.logregr_result;
 BEGIN
     theIteration := (
         SELECT MADLIB_SCHEMA.compute_logregr($1, $2, $3, $4, $5, $6)
     );
-    EXECUTE '
-        SELECT 
-            coef,
-            log_likelihood,
-            std_err,
-            z_stats,
-            p_values,
-            odd_ratios 
+    -- Because of Greenplum bug MPP-10050, we have to use dynamic SQL (using
+    -- EXECUTE) in the following
+    -- Because of Greenplum bug MPP-6731, we have to hide the tuple-returning
+    -- function in a subquery
+    IF optimizer = 'irls' OR optimizer = 'newton' THEN
+        fnName := 'internal_logregr_irls_result';
+    ELSE
+        fnName := 'internal_logregr_cg_result';
+    END IF;
+    EXECUTE
+        $sql$
+        SELECT (result).*
         FROM (
-            SELECT (
-                CASE
-                WHEN ''' || optimizer || '''=''irls'' OR ''' || optimizer || '''=''newton'' THEN
-                    MADLIB_SCHEMA.internal_logregr_irls_result(state)
-                WHEN ''' || optimizer || '''=''cg'' THEN
-                    MADLIB_SCHEMA.internal_logregr_cg_result(state)
-                END
-                ).*
+            SELECT
+                MADLIB_SCHEMA.$sql$ || fnName || $sql$(state) AS result
                 FROM _madlib_iterative_alg
-                WHERE iteration = ' || theIteration || '
-            ) x
-    ' INTO theResult;
+                WHERE iteration = $sql$ || theIteration || $sql$
+            ) subq
+        $sql$
+        INTO theResult;
     RETURN theResult;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
