@@ -84,7 +84,7 @@ Given a frequent itemset \f$ A \f$ generated from the Apriori algorithm, and all
 
 
 @usage
-Function: \ref assoc_rules( <em>i_support</em>, <em>i_confidence</em>,'<em>id_col</em>','<em>product_col</em>','<em>input_table</em>','<em>output_schema</em>', <em> verbose </em>)
+Function: \ref assoc_rules( <em>i_support</em>, <em>i_confidence</em>,'<em>id_col</em>','<em>product_col</em>','<em>input_table</em>','<em>output_schema</em>', <em> p_verbose </em>)
 
 - \b Syntax 
 
@@ -100,9 +100,9 @@ An example of the syntax for calling the association rules function is below:
 
 The following code will generate all association rules from 'my_schema.my_data' (with transaction id being 'user_id', and items in 'product') that meet a minimum support of .01 and confidence .75. The function will return a table name and schema where results are stored, as well as the total number of results. The results containing the rules, support, confidence, lift, and conviction will be stored in the table myoutput_schema.assoc_rules.
 
-The input data should be stored in two columns as mentioned in about section, with one row per transaction id and product pair. The transaction ids are expected to be integers, and the products are accepted as varchars. The algorithm will map the product names to consective integer ids starting at 1. If they are already structured this way, then the ids will not change.  
+The input data should be stored in two columns as mentioned in about section, with one row per transaction id and product pair. The transaction ids are expected to be integers, and the products are accepted as text. The algorithm will map the product names to consective integer ids starting at 1. If they are already structured this way, then the ids will not change.  
 
-The support and confidence variables should be \c float8 value between 0 and 1. The remaining input variables are expected as text. There is a final optional variable \c verbose is expected as a boolean. If 'verbose' is set to true, then the output of function includes iteration steps and comments on Apriori algorithm steps. If no variable is given, then the function will assume \c verbose is false. 
+The support and confidence variables should be \c float8 value between 0 and 1. The remaining input variables are expected as text. There is a final optional variable \c p_verbose is expected as a boolean. If 'p_verbose' is set to true, then the output of function includes iteration steps and comments on Apriori algorithm steps. If no variable is given, then the function will assume \c p_verbose is false. 
 
 - \b Output 
 
@@ -151,7 +151,7 @@ Let us take a look at some sample transactional data and generate association ru
 	DROP TABLE IF EXISTS test_data; 
 	CREATE TABLE test_data (
 		trans_id INT
-		, product VARCHAR
+		, product text
 	); 
 
 	INSERT INTO test_data VALUES (1, 'beer'); 
@@ -172,7 +172,7 @@ Let us take a look at some sample transactional data and generate association ru
 
 \endcode 
 
-Let \f$ min(support) = .25 \f$ and \f$ min(confidence) = .5 \f$, and the output schema be 'myschema'. For this example, we will set verbose to 'true' so that we have some insight into the progress of the function. We can now generate association rules as follows: 
+Let \f$ min(support) = .25 \f$ and \f$ min(confidence) = .5 \f$, and the output schema be 'myschema'. For this example, we will set p_verbose to 'true' so that we have some insight into the progress of the function. We can now generate association rules as follows: 
 
 \code 
 
@@ -350,7 +350,7 @@ $$
  */
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules(i_support float8, i_confidence float8, id_col text, product_col text, input_table text, output_schema text) 
-RETURNS assoc_rules_results AS $$ 
+RETURNS MADLIB_SCHEMA.assoc_rules_results AS $$ 
 DECLARE 
   r record; 
 BEGIN
@@ -368,7 +368,7 @@ $$
  * @param product_col name of the column storing the products 
  * @param input_table name of the table where the data is stored 
  * @param output_schema name of the schema where the final results will be stored
- * @param verbose boolean determining if output contains comments 
+ * @param p_verbose boolean determining if output contains comments 
  * @returns The schema and table name containing association rules, and total number of rules found. 
  *
  * This function computes the association rules between products in a data set. 
@@ -378,7 +378,7 @@ $$
  * When verbose is true, output of function includes iteration steps and comments on Apriori algorithm steps. 
  */
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules (i_support float8, i_confidence float8, id_col text, product_col text, input_table text, output_schema text, verbose boolean)
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules (i_support float8, i_confidence float8, id_col text, product_col text, input_table text, output_schema text, p_verbose boolean)
   RETURNS MADLIB_SCHEMA.assoc_rules_results
 AS $$
 DECLARE
@@ -388,8 +388,8 @@ DECLARE
   tot_uniq int; 
   id_tot int; 
   prod_tot int; 
-  prod_min varchar; 
-  prod_max varchar;
+  prod_min int; 
+  prod_max int;
   r  MADLIB_SCHEMA.assoc_rules_results; 
   total_rules int;  
 BEGIN
@@ -397,7 +397,7 @@ SET client_min_messages= warning;
 
 -- Stores data as one row per transaction (transactions saved as MADLIB_SCHEMA.svec type) 
   EXECUTE 'DROP TABLE IF EXISTS assoc_trans_svec'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_trans_svec (trans_id varchar, products MADLIB_SCHEMA.svec)'; 
+  EXECUTE 'CREATE TEMPORARY TABLE assoc_trans_svec (trans_id text, products MADLIB_SCHEMA.svec)'; 
 
 -- Transaction svecs expressed as subsets in two columns 
   EXECUTE 'DROP TABLE IF EXISTS assoc_set_list_parts'; 
@@ -413,7 +413,7 @@ SET client_min_messages= warning;
 -- Frequently occurring itemsets 
   EXECUTE 'DROP TABLE IF EXISTS assoc_rule_sets';
   EXECUTE 'CREATE TEMPORARY TABLE assoc_rule_sets (
-    set_name  varchar 
+    set_name  text 
     , set_list MADLIB_SCHEMA.svec
     , hash_key int
     , support numeric 
@@ -443,7 +443,7 @@ SET client_min_messages= warning;
   EXECUTE 'CREATE TEMPORARY TABLE assoc_id_uniq AS
     SELECT 
     ' || id_col || ' as trans_id
-    , ' || product_col || ' as product
+    , ' || product_col || '::text as product
     FROM 
     ' || input_table || '
     GROUP BY 1,2
@@ -451,7 +451,7 @@ SET client_min_messages= warning;
 
   EXECUTE 'SELECT count(*) from ' || input_table INTO tot_rec;
   EXECUTE 'SELECT count(*) FROM (SELECT ' || id_col || ', ' || product_col || ' FROM ' || input_table ||' GROUP BY 1,2) a' INTO tot_uniq ;  
-  IF (tot_rec <> tot_uniq) AND verbose IS TRUE THEN
+  IF (tot_rec <> tot_uniq) AND p_verbose is TRUE THEN
     RAISE INFO 'Data set was not unique. Data was filtered into unique tuples';
   END IF;
 
@@ -459,26 +459,26 @@ SET client_min_messages= warning;
 -- Product data indexing check (product ids must increment from 1...m) 
   EXECUTE 'SELECT count(distinct '|| product_col ||') from ' || input_table INTO prod_tot;
   EXECUTE 'SELECT count(distinct '|| id_col ||') from ' || input_table INTO id_tot;
-  IF verbose is true THEN 
+  IF p_verbose is true THEN 
     RAISE INFO 'Data set has % unique products.', prod_tot; 
     RAISE INFO 'Data set has % total transaction events.', id_tot; 
   END IF; 
 
 
   EXECUTE 'DROP TABLE IF EXISTS assoc_prod_uniq'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_prod_uniq (prod_id serial, orig_col varchar)';
+  EXECUTE 'CREATE TEMPORARY TABLE assoc_prod_uniq (prod_id serial, orig_col text)';
   EXECUTE 'INSERT INTO assoc_prod_uniq(orig_col)
      SELECT
        distinct ' || product_col || '
      FROM '
       || input_table || ' ORDER BY 1 LIMIT ' || prod_tot ; 
 
-  EXECUTE 'SELECT min( '|| product_col ||') from ' || input_table INTO prod_min;
-  EXECUTE 'SELECT max( '|| product_col ||') from ' || input_table INTO prod_max; 
-  IF prod_min > 1 AND verbose is true THEN
+  EXECUTE 'SELECT min( prod_id) from assoc_prod_uniq' INTO prod_min;
+  EXECUTE 'SELECT max( prod_id) from assoc_prod_uniq' INTO prod_max; 
+  IF prod_min > 1 AND p_verbose is true THEN
     RAISE INFO 'Product ids need to increment from 1. Data will be modified. Please see table assoc_prod_uniq for lookup.'; 
   END IF;
-  IF prod_tot <> prod_max AND verbose is true THEN
+  IF prod_tot <> prod_max AND p_verbose is true THEN
     RAISE INFO 'Product ids need to be consecutive integers from 1 ... n. Data will be modified. Please see table assoc_prod_uniq for lookup.'; 
   END IF;
  
@@ -493,7 +493,7 @@ SET client_min_messages= warning;
 
 -- Unique set of input data  
   EXECUTE 'DROP TABLE IF EXISTS assoc_input_data'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_input_data (trans_id varchar, prod int)'; 
+  EXECUTE 'CREATE TEMPORARY TABLE assoc_input_data (trans_id text, prod int)'; 
 
 -- Join the data in one unique set 
   EXECUTE 'INSERT INTO assoc_input_data
@@ -514,11 +514,11 @@ SET client_min_messages= warning;
    FROM assoc_input_data i
    CROSS JOIN max_p a GROUP BY 1';
 
-   IF verbose is true THEN RAISE INFO 'Transforming all data into svec format';
+   IF p_verbose is true THEN RAISE INFO 'Transforming all data into svec format';
    END IF;  
 
 -- Inserting single dimension rule sets
-   IF verbose is true THEN RAISE INFO 'Beginning iteration #1'; 
+   IF p_verbose is true THEN RAISE INFO 'Beginning iteration #1'; 
    END IF;
 
   EXECUTE 'INSERT INTO assoc_rule_sets 
@@ -534,7 +534,7 @@ SET client_min_messages= warning;
     CROSS JOIN max_t b
     GROUP BY 1, b.tot, a.tot
     HAVING count(*)/b.tot::numeric >=' || i_support;
-  IF verbose is true THEN
+  IF p_verbose is true THEN
     EXECUTE 'SELECT count(*) from assoc_rule_sets where iteration = 1' INTO l;
     RAISE INFO '% Frequent itemsets found in this iteration', l; 
     RAISE INFO 'Completed iteration # 1'; 
@@ -547,7 +547,7 @@ l := 1;
 
 LOOP
    n := n+1;
-   IF verbose is true THEN RAISE INFO 'Beginning iteration # %', n+1;
+   IF p_verbose is true THEN RAISE INFO 'Beginning iteration # %', n+1;
    END IF;
 
 
@@ -581,7 +581,7 @@ LOOP
   GROUP BY 1,2,3
   '; 
 
-  IF verbose is true THEN
+  IF p_verbose is true THEN
     EXECUTE 'SELECT count(*) from list_b' INTO l; 
     RAISE INFO '% potential itemsets found. Filtering out itemsets with infrequent subsets.',l; 
   END IF;  
@@ -622,7 +622,7 @@ LOOP
   m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)') 
   ';
    
-  IF verbose is true THEN
+  IF p_verbose is true THEN
     EXECUTE 'SELECT count(*) from list_c' INTO l; 
     RAISE INFO '% potential itemsets found. Filtering by support.',l; 
   END IF;  
@@ -654,7 +654,7 @@ LOOP
   
   EXECUTE 'SELECT count(*) from assoc_rule_sets where iteration =' || n+1 INTO l; 
 
-  IF verbose is true THEN
+  IF p_verbose is true THEN
     RAISE INFO '% Frequent itemsets found in this iteration', l; 
     RAISE INFO 'Completed iteration # %', n+1;  
   END IF;  
@@ -665,7 +665,7 @@ LOOP
 
   END LOOP; 
 
-  IF ((l = 0) AND (n<2)) AND verbose is true THEN
+  IF ((l = 0) AND (n<2)) AND p_verbose is true THEN
     RAISE INFO 'No association rules found that meet given criteria'; 
   END IF;
 
@@ -703,7 +703,7 @@ LOOP
     c.support_xy/c.support_x >= ' || i_confidence || ' 
      AND MADLIB_SCHEMA.svec_l1norm(c.set_list)>=2'; 
 
-  IF verbose is true THEN 
+  IF p_verbose is true THEN 
     EXECUTE 'SELECT count(*) FROM ' || output_schema || '.assoc_rules' into l; 
     RAISE INFO '% Total association rules found', l; 
   END IF; 
