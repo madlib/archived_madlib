@@ -16,6 +16,7 @@
 
 
 // Import names from Armadillo
+using arma::vec;
 using arma::mat;
 using arma::as_scalar;
 
@@ -187,7 +188,21 @@ AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
     // matrices. We extend the check also to the dependent variables.
     if (!state.X_transp_X.is_finite() || !state.X_transp_Y.is_finite())
         throw std::invalid_argument("Design matrix is not finite.");
+        
+    // FIXME: We have essentially two calls to svd now (pinv calls svd, too).
+    // This is a waste of processor cycles and energy.
+    vec singularValues = svd(state.X_transp_X);
+    double condition_X_transp_X = max(singularValues) / min(singularValues);
 
+    // See:
+    // Lichtblau, Daniel and Weisstein, Eric W. "Condition Number."
+    // From MathWorld--A Wolfram Web Resource.
+    // http://mathworld.wolfram.com/ConditionNumber.html
+    if (condition_X_transp_X > 1000)
+        db.out << "Matrix X^T X is ill-conditioned (condition number "
+            "= " << condition_X_transp_X << "). "
+            "Expect strong multicollinerity." << std::endl;
+    
     // Precompute (X^T * X)^+
     mat inverse_of_X_transp_X = pinv(state.X_transp_X);
 
