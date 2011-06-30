@@ -31,11 +31,11 @@ where:
 - \f$g(x) = \ln\left( \frac{x}{1-x} \right)\f$ is the link function, with
   inverse \f$\sigma(x) := g^{-1}(x) = \frac{1}{1 + \exp(-x)} \f$
 
-For each training data point $i$, we have a vector of
-features $x_i$ and an observed class $y_i$. For ease of notation, let $Z$ be a
-dependent random variable such that $Z = -1$ if $Y = 0$ and $Z = 1$ if $Y = 1$,
+For each training data point \f$i\f$, we have a vector of
+features \f$x_i\f$ and an observed class \f$y_i\f$. For ease of notation, let \f$Z\f$ be a
+dependent random variable such that \f$Z = -1\f$ if \f$Y = 0\f$ and \f$Z = 1\f$ if \f$Y = 1\f$,
 i.e., \f$Z := 2(Y - \frac 12)\f$. By definition,
-\f$P[Z = z_i | X = x_i] = σ(z_i \cdot \boldsymbol c^T x_i)\f$.
+\f$P[Z = z_i | X = x_i] = \sigma(z_i \cdot \boldsymbol c^T x_i)\f$.
 
 Since logistic regression predicts probabilities, we can do maximum-likelihood
 fitting: That is, we want the vector of regression coefficients
@@ -57,47 +57,56 @@ logistic regression in MADlib can use one of two algorithms:
   literature, where we use the Hestenes-Stiefel rule for calculating the step
   size.
 
-
-@prereq
-
-Implemented in C (the computation) and Python (the driver/outer loop) for
-PostgreSQL/Greenplum.
-
 @usage
 
--# The training data is expected to be of the following form:\n
-   <tt>{TABLE|VIEW} <em>sourceName</em> ([...] <em>dependentVariable</em>
-   BOOLEAN, <em>independentVariables</em> DOUBLE PRECISION[], [...])</tt>
--# Run the logistic regression by:\n
-   <tt>SELECT \ref logregr_coef(varchar,varchar,varchar,integer,varchar,float8)
-   "logregr_coef"('<em>sourceName</em>',
-   '<em>dependentVariable</em>', '<em>independentVariables</em>',
-   <em>numIterations</em>, '<em>optimizer</em>', <em>precision</em>)</tt>\n
-   The last three arguments are optional and can be omitted, in which case
-   default values will be used. See logregr_coef().\n
-   Note: In order to model an intercept, set one coordinate in the
-   <tt>independentVariables</tt> array to 1.
-   
+- <strong>Syntax</strong>
+
+<tt>MADlib.logregr(<em>'sourceName','dependentVariable','independentVariables',[optional] numIterations,[optional] 'optimizer',[optional] precision</em>)</tt>
+
+- <strong>Input</strong>
+
+The training data is expected to be of the following form:\n
+<tt>{TABLE|VIEW} <em>sourceName</em> ([...] <em>dependentVariable</em>
+BOOLEAN, <em>independentVariables</em> DOUBLE PRECISION[], [...])</tt>
+
+- <strong>Output</strong>
+
+The output is a custom type <em>logregr_result</em> with the following fields:
+- <em>coef</em>: The estimated coefficients \f$\boldsymbol c\f$ of type float[].
+- <em>logl_ikelihood</em>: The maximized log-likelihood \f$l(\boldsymbol c)\f$ of type float.
+- <em>std_err</em>: The standard error of the fit for each coefficient of type float[].
+- <em>z_stat</em>: The Z-score, which is computed as \f$Z_{score}=\frac{coef}{stderr}\f$ for each coef.
+- <em>p_values</em>: The p-value of the significance of fit for each coef based on the Z-score. A low p-value suggests that the null hypothesis (i.e. the coef is actually 0) should be rejected.
+- <em>odd_ratio</em>: An estimate of the conditional odds ratio: \f$OddsRatio=exp(coef)\f$ for each coef.
+
+- <strong>Notes</strong>
+
+In order to model an intercept, set one coordinate in the <tt>independentVariables</tt> array to 1.
+
+The last three arguments are optional and can be omitted, in which case
+   default values will be used. See logistic.sql_in.  
    
 @examp
 
-@verbatim
-# select * from artificiallogreg;
- y |                           x                           
----+-------------------------------------------------------
- t | {-1.19845,1.15366,0.941779,-0.23669,-0.711024}
- f | {-0.0680205,-0.716733,-0.149781,-0.410448,-0.0843123}
- f | {-0.330021,0.222596,-0.976091,0.773816,-1.06238}
- f | {0.648293,0.286225,0.524144,-0.141286,-1.41774}
- f | {0.859484,-0.412929,-0.273368,-0.243059,0.714789}
+@verbatim 
+# SELECT * FROM data;
+                     r1                      | val 
+---------------------------------------------+-----
+ {1,-0.537208849564195,0.0507612079381943}   | t
+ {1,-1.83960389345884,0.0875045731663704}    | t
+ {1,-4.28730633109808,0.839790890924633}     | t
+ {1,2.4249863717705,0.499282206874341}       | t
+ {1,-4.41880372352898,0.883616517763585}     | t
+ {1,4.16272420901805,0.598018785007298}      | t
 [...]
 
-# select madlib.logregr_coef(
-#     'artificiallogreg', 'y', 'x', 20, 'irls', 0.001
-# )::REAL[];
-                logregr_coef                 
----------------------------------------------
- {-3.0307,3.63312,0.714105,-1.72496,1.37484}
+# SELECT * FROM madlib.logregr('data','val','r1',100,'irls',0.001); 
+ 
+                          coef                          |  log_likelihood   |                         std_err                          |                        z_stats                        |                           p_values                            |                      odd_ratios                      
+--------------------------------------------------------+-------------------+----------------------------------------------------------+-------------------------------------------------------+---------------------------------------------------------------+------------------------------------------------------
+ {4.93532185789865,0.469393180445221,0.432089528467682} | -173.514819452336 | {0.407205759965291,0.0881607217787946,0.591853189786052} | {12.1199706465825,5.32428921830951,0.730062008492135} | {8.27887853333452e-34,1.01348545192981e-07,0.465352282469966} | {139.117911525733,1.59902357997671,1.54047302517705}
+(1 row)
+ 
 @endverbatim
 
 @sa file logistic.sql_in (documenting the SQL functions)
