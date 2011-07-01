@@ -413,7 +413,7 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 	float8 cap = 0.1 + 1 / (1 - eta * slambda);
 
 	if (error > epsilon) {
-		// unlike the original algorithm in Kivinen et at, this 
+		// unlike the original algorithm in Kivinen et al, this 
 		// rescaling is only done when we make a large enough error
 		for (i=0; i!=nsvs; i++) {
 			// we need to avoid underflows; cap is designed to 
@@ -564,13 +564,16 @@ Datum svm_cls_update(PG_FUNCTION_ARGS)
 
 	// This is the nu-SV classification update algorithm.
 	p = svm_predict_eval(koid,weights,supp_vecs_arr,ind_arr,nsvs,ind_dim) + b; 
+	// elog(NOTICE, "%f \t %f \t %d", label, p, nsvs);
+
 	p = label * p;
+
 
 	inds++;
 	if (p < 0) cum_err++;
 
 	if (p <= rho) {
-		// unlike the original algorithm in Kivinen et at, this 
+		// unlike the original algorithm in Kivinen et al, this 
 		// rescaling is only done when we make a large enough error
 		for (i=0; i!=nsvs; i++) {
 			// we need to avoid underflows; the weight discounting
@@ -726,7 +729,7 @@ Datum svm_nd_update(PG_FUNCTION_ARGS)
 	inds++;
 
 	if (p < rho) {
-		// unlike the original algorithm in Kivinen et at, this 
+		// unlike the original algorithm in Kivinen et al, this 
 		// rescaling is only done when we make a large enough error
 		for (i=0; i!=nsvs; i++) {
 			// we need to avoid underflows; the weight discounting
