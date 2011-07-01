@@ -1,11 +1,8 @@
---------------------------------------------------------------------------------
--- Linear Regression tests
---------------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
+CREATE SCHEMA madlib_installcheck;
 
-DROP SCHEMA IF EXISTS madlib_regress_installcheck CASCADE;
-CREATE SCHEMA madlib_regress_installcheck;
-
-SET search_path TO madlib_regress_installcheck;
+-- Adjust SEARCH_PATH
+set search_path=madlib_installcheck,MADLIB_SCHEMA,"$user",public;
 
 --------------------------------------------------------------------------------
 -- Test 1: Random data
@@ -252,7 +249,57 @@ SELECT
 FROM
     crime;
 
---------------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- Test
+---------------------------------------------------------------------------
+-- test function
+CREATE OR REPLACE FUNCTION install_test() RETURNS VOID AS $$ 
+declare
+	
+	result_ll float;
+	lgres logregr_result;
+	
+begin
+	DROP TABLE IF EXISTS data_pre;
+	CREATE TABLE data_pre(x1 float, x2 float, noise float);
+	INSERT INTO data_pre SELECT random()*10-5,random(),random() FROM generate_series(1,3000);
+
+	DROP TABLE IF EXISTS data CASCADE;
+	CREATE TABLE data(r1 float[],val boolean);
+	INSERT INTO data SELECT array[1,data_pre.x1,data_pre.x2], (1/(1 + exp(-(2*data_pre.x1+5)))) > data_pre.noise FROM data_pre;
+
+ 	SELECT INTO lgres (t).* from (SELECT * from MADLIB_SCHEMA.logregr('data','val','r1',100,'irls',0.001)) as t;
+
+ 	IF (abs(lgres.coef[1]-5) > 0.5) OR (abs(lgres.coef[2]-2) > 0.5) OR abs(lgres.coef[3]) > 0.5 THEN
+		RAISE EXCEPTION 'Incorrect coefficients, got %',lgres.coef;
+	END IF;
+
+	IF (lgres.p_values[1] > 0.01) OR (lgres.p_values[2] > 0.01) OR (lgres.p_values[3]) < 0.05 THEN
+		RAISE EXCEPTION 'Incorrect p_values, got %',lgres.p_values;
+	END IF;
+
+	DROP VIEW IF EXISTS fitdata CASCADE;
+	EXECUTE 'CREATE VIEW fitdata AS
+		SELECT data.val,
+		(data.val::INT)*ln(1/(1+exp(-array_dot(data.r1, array[' ||array_to_string(lgres.coef,',')|| ']::float[])))) 
+		+ (1-data.val::INT)*ln(1-(1/(1+exp(-array_dot(data.r1, array[' ||array_to_string(lgres.coef,',')|| ']::float[])))))
+		as LL FROM data';
+
+	SELECT INTO result_ll sum(ll) from fitdata;	
+ 	
+	IF (round(result_ll*100 - lgres.log_likelihood*100) != 0) THEN
+		RAISE EXCEPTION 'Incorrect loglikelihood, got %, expected %',lgres.log_likelihood,result_ll;
+	END IF;
+	
+	RAISE INFO 'Logistic regression install checks passed';
+	RETURN;
+	
+end 
+$$ language plpgsql;
+
+SELECT install_test();
+
+---------------------------------------------------------------------------
 -- Cleanup
---------------------------------------------------------------------------------
-DROP SCHEMA IF EXISTS madlib_regress_installcheck CASCADE;
+---------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;

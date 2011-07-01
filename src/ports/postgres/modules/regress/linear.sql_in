@@ -78,31 +78,35 @@ is therefore
 \f]
 where \f$ T \f$ is a student-t distributed random variable with mean 0.
 
-@prereq
-
-Implemented in C for PostgreSQL/Greenplum.
-
 @usage
 
--# The data set is expected to be of the following form:\n
-   <tt>{TABLE|VIEW} <em>sourceName</em> ([...] <em>dependentVariable</em>
-   DOUBLE PRECISION, <em>independentVariables</em> DOUBLE PRECISION[],
-   [...])</tt>  
--# Run the linear regression by:\n
-   <tt>SELECT (\ref linregr(float8,float8[]) "linregr"(<em>dependentVariable</em>,
-   <em>independentVariables</em>)).* FROM <em>sourceName</em></tt>\n
-   Note: In order to model an intercept, set one coordinate in the
-   <tt>independentVariables</tt> array to 1. (See below for an example.)
+-   <b>Input</b>\n\n
+    The data set is expected to be of the following form:\n\n
+    <tt>{TABLE|VIEW} <em>sourceName</em> (\n
+        &nbsp;&nbsp;&nbsp;...\n
+        &nbsp;&nbsp;&nbsp;<em>dependentVariable</em> DOUBLE PRECISION\n 
+        &nbsp;&nbsp;&nbsp;<em>independentVariables</em> DOUBLE PRECISION[]\n
+        &nbsp;&nbsp;&nbsp;...\n
+    )</tt>
+    \n\n
+-   <b>Syntax</b>\n\n
+    To see the complete set of coeficients and the diagnositc metrics the
+    <strong><tt>\ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>)</tt></strong>
+    user defined aggregate function can be called in the following way:\n\n
+    <tt>SELECT (madlib.linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).* FROM <em>sourceName</em>;</tt>
+    \n\n
+-   <b>Note</b>\n\n
+    In order to model an intercept, set one coordinate in the
+    <tt>independentVariables</tt> array to 1 (see example below). 
 
 @examp
 
-The following examples is taken from
-http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
+The following example is taken from http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
 
-@verbatim
-# select * from houses;
- id | tax  | bedroom | bath | price  | size |  lot  
-----+------+---------+------+--------+------+-------
+-#  Create the sample data set:
+\verbatim
+sql> CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT, size INT, lot INT);
+sql> COPY houses FROM STDIN WITH DELIMITER '|';
   1 |  590 |       2 |    1 |  50000 |  770 | 22100
   2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
   3 |   20 |       3 |    1 |  22500 | 1060 |  3500
@@ -118,27 +122,52 @@ http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
  13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
  14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
  15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
-(15 rows)
-
-# select (madlib.linregr(price, array[1, bedroom, bath, size])).coef from houses;
+\.
+\endverbatim
+\n
+-#  You can call the linreg() function for an individual metric:
+\verbatim
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).coef FROM houses;
                                   coef                                  
 ------------------------------------------------------------------------
- {27923.4332082674,-35524.7752262529,2269.34397934633,130.793920087895}
+ {27923.4332080858,-35524.7752261679,2269.34397934866,130.793920087862}
 (1 row)
 
-# select (madlib.linregr(price, array[1, bedroom, bath, size])).r2 from houses;
-        r2         
--------------------
- 0.745374009992022
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).r2 FROM houses;
+        r2        
+------------------
+ 0.74537400999234
 (1 row)
-@endverbatim
 
-The complete output of \ref linregr(float8,float8[]) "linregr" is available by:
-@verbatim
-# select (madlib.linregr(price, array[1, bedroom, bath, size])).* from houses;
-@endverbatim
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).std_err FROM houses;
+                               std_err                                
+----------------------------------------------------------------------
+ {56306.482134735,25036.6536954409,22208.6687273202,36.2086422648744}
+(1 row)
 
-@sa file linear.sql_in (documenting the SQL functions)
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).t_stats FROM houses;
+                                t_stats                                
+-----------------------------------------------------------------------
+ {0.49591862516412,-1.4189106762553,0.102182801104013,3.6122293437869}
+(1 row)
+
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).p_values FROM houses;
+                                  p_values                                   
+-----------------------------------------------------------------------------
+ {0.629711071585906,0.183633156540304,0.920450512607465,0.00408159080204573}
+(1 row)
+\endverbatim
+\n
+-#  Alternatively you can call the linreg() function for the full record:
+\verbatim
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).* FROM houses;
+                                  coef                                  |        r2        |                               std_err                                |                                t_stats                                |                                  p_values                                   
+------------------------------------------------------------------------+------------------+----------------------------------------------------------------------+-----------------------------------------------------------------------+-----------------------------------------------------------------------------
+ {27923.4332080858,-35524.7752261679,2269.34397934866,130.793920087862} | 0.74537400999234 | {56306.482134735,25036.6536954409,22208.6687273202,36.2086422648744} | {0.49591862516412,-1.4189106762553,0.102182801104013,3.6122293437869} | {0.629711071585906,0.183633156540304,0.920450512607465,0.00408159080204573}
+(1 row)
+\endverbatim
+
+@sa File linear.sql_in documenting the SQL functions.
 
 @internal
 @sa file linear.cpp (documenting the implementation in C++), function
@@ -148,7 +177,7 @@ The complete output of \ref linregr(float8,float8[]) "linregr" is available by:
 
 @literature
 
-[1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 21 October
+- [1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 21 October
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/17/lecture-17.pdf
 
 */
@@ -170,7 +199,6 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE STRICT;
 
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_merge_states(
     state1 DOUBLE PRECISION[],
     state2 DOUBLE PRECISION[])
@@ -179,15 +207,12 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE STRICT;
 
-
 -- Final functions
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_final(
     state DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.linregr_result
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
-
 
 /**
  * @brief Compute linear regression coefficients and diagnostic statistics.
@@ -196,12 +221,12 @@ LANGUAGE C IMMUTABLE STRICT;
  * <tt>independentVariables</tt> array to 1.
  *
  * @return A tuple containing:
- *     - \c coef Array of coefficients, which has the same length as the array of
- *     independent variables.
- *     - \c r2 Coefficient of determination, \f$ R^2 \f$
- *     - \c std_err Array of standard errors for each coefficient
- *     - \c t_stats Array of t-statistics for each coefficient
- *     - \c p_values Array of p-values, for every coefficient
+ *  - \c coef - Array of coefficients, which has the same length as the array of
+ *    independent variables.
+ *  - \c r2 - Coefficient of determination, \f$ R^2 \f$
+ *  - \c std_err - Array of standard errors for each coefficient
+ *  - \c t_stats - Array of t-statistics for each coefficient
+ *  - \c p_values - Array of p-values, for every coefficient
  *
  * @examp <tt>SELECT (linregr(y, array[1, x1, x2])).* FROM data;</tt>
  */
