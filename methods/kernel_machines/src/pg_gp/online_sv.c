@@ -402,7 +402,7 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 	float8 * weights = (float8 *)ARR_DATA_PTR(weights_arr);
 
 	// This is the main regression update algorithm
-	p = svm_predict_eval(koid,weights,supp_vecs_arr,ind_arr,nsvs,ind_dim); 
+	p = svm_predict_eval(koid,weights,supp_vecs_arr,ind_arr,nsvs,ind_dim) + b; 
 
 	diff = label - p;
 	error = fabs(diff);
@@ -429,6 +429,7 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 		weights_arr = addNewWeight(weights_arr,weight,nsvs);
 	        supp_vecs_arr = addNewSV(supp_vecs_arr,ind,nsvs,ind_dim);
 		nsvs++;
+		b = b + weight;
 		epsilon = epsilon + (1 - nu) * eta;
 	} else {
 		epsilon = epsilon - eta * nu;
@@ -567,7 +568,6 @@ Datum svm_cls_update(PG_FUNCTION_ARGS)
 	// elog(NOTICE, "%f \t %f \t %d", label, p, nsvs);
 
 	p = label * p;
-
 
 	inds++;
 	if (p < 0) cum_err++;
