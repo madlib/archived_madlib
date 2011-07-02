@@ -16,11 +16,11 @@ namespace dbconnector {
 /**
  * @brief PostgreSQL abstract value class
  * 
- * A PGAbstractValue can either be the list of function arguments
- * (PGValue<FunctionCallInfo>) or a record type (PGValue<HeapTupleHeader>).
- * By only using the interface presented by PGAbstractValue, it is possible to
- * treat the list of function arguments as just one tuple value (which is a
- * recursive structure and its elements can again be tuples).
+ * PGValue<FunctionCallInfo> objects are instantiated for the "virtual"
+ * composite value consisting of all function arguments.
+ * PGvalue<HeapTupleHeader> objects are instantiated for "normal" composite
+ * values.
+ * PGAbstractValue is the common superclass that contains common parts.
  */
 class PGAbstractValue : public AbstractValue {
 protected:

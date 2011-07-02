@@ -49,6 +49,12 @@ private:
     public:
         PGOutputStreamBuffer(int inErrorLevel) : mErrorLevel(inErrorLevel) { }
     
+        /**
+         * @brief Output a null-terminated C string.
+         *
+         * @param inMsg Null-terminated C string
+         * @param inLength length of inMsg
+         */
         void output(char *inMsg, uint32_t inLength);
         
     private:

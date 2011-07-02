@@ -9,6 +9,11 @@
 /**
  * @brief A thin wrapper around boost::multi_array_ref, the Boost class for
  *     multi-dimensional arrays
+ *
+ * @internal Inheritance is not without issues here, and in a future version
+ *     we might want to switch to composition instead of inheritance (in order
+ *     to make it less likely that changes in the superclass break our
+ *     implementation).
  */
 template <typename T, std::size_t NumDims>
 class Array : public multi_array_ref<T, NumDims> {

@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief The most simple handle type -- a normal pointer
+ */
 class TransparentHandle : public AbstractHandle {
 public:
     static MemHandleSPtr create(void *inPtr) {

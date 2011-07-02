@@ -11,9 +11,9 @@
  * A handle is an opaque reference to a block of memory. An example might
  * be an array handle: It points to a contiguous block of memory containing
  * raw data. The meta data (array size, element type, etc.), however,
- * might be stored separately, in a port-specific fashion. The
- * platform-independent code will only work with the interface provided by
- * this acstract base class.
+ * might be stored separately, in an implementation-specific fashion. The
+ * implementation-independent code will only use the interface provided by
+ * this abstract base class.
  */
 class AbstractHandle {
 public:

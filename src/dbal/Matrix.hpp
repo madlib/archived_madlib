@@ -10,7 +10,7 @@
  * @brief MADlib mutable matrix class -- a thin wrapper around arma::Mat
  *
  * Armadillo does not provide a public interface to rebind the chunk of memory 
- * an arma::Mat<eT> object is using. We therefore need this sublcass to 
+ * an arma::Mat<eT> object is using. We therefore need this subclass to 
  * make matrix objects first-class citizen in the C++ DBAL.
  *
  * @internal Inheritance is not without issues here, and in a future version

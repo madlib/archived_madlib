@@ -7,7 +7,8 @@
 /**
  * @brief Template class that wraps arbitrary types
  *
- * ConcreteValue<T> implements the AbstractValue interface.
+ * ConcreteValue<T> implements the AbstractValue interface. It can contain
+ * values of arbitrary type.
  * 
  * @internal The main benefit of wrapping arbitrary types with this class is to
  *     support NULL values and providing a unified interface for both primitive

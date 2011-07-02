@@ -4,6 +4,15 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief The default Value-conversion callback.
+ *
+ * This class is initialized with an AbstractValue. It provides conversion to
+ * the type specified as template argument. It does so by calling
+ * AbstractValue::convert and providing this instance as callback object.
+ * In detail, AbstractValue::convert will call back convert(const T&). In
+ * essence, we are using the vtable for dynamic type dispatching.
+ */
 template <typename T>
 class ValueConverter : public AbstractValueConverter {
 public:

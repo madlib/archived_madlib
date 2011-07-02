@@ -11,6 +11,14 @@ namespace madlib {
 
 namespace utils {
 
+/**
+ * @brief A reference to type T that masquerades as being of type U.
+ *
+ * An an example, a masqueading reference could be used to use a double variable
+ * to store an integer value (which might be the most efficient solution to
+ * store a composite type of floating-point and integer values as a double
+ * array).
+ */
 template <typename T, typename U = T>
 class Reference {
 public:
@@ -23,6 +31,9 @@ public:
         return *this;
     }
 
+    /**
+     * @brief Return the value pointed to by the reference as type U
+     */
     operator U() const {
         return static_cast<U>(*mPtr);
     }

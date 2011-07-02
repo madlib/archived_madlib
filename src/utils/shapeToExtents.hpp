@@ -13,6 +13,15 @@ namespace madlib {
 
 namespace utils {
 
+/**
+ * @internal
+ * @brief Helper struct for converting a size_type (an array of sizes) to Boost
+ *        extents
+ * 
+ * There is no need to use this struct directly. User code should call
+ * shapeToExtents(const boost::multi_array_types::size_type *inSizeList)
+ * for conversion.
+ */
 template <std::size_t NumDims, std::size_t Dim>
 struct internal_shapeToExtents {
     typedef boost::detail::multi_array::extent_gen<Dim + 1> type;
@@ -36,27 +45,8 @@ struct internal_shapeToExtents<NumDims, 0> {
 
 
 /**
- * This class proved a convenient way to convert a size_list into a type which
- * is suitable for use with multi_array constructors.
-template <std::size_t NumDims>
-class shapeToExtents {
-    typedef boost::multi_array_types::extent_gen::gen_type<NumDims> type;
-    typedef boost::array< boost::multi_array_types::size_type , NumDims> SizeList;
-
-public:
-    shapeToExtents(const SizeList &inSizeList)
-        : mExtents(
-            internal_shapeToExtents<NumDims, NumDims - 1>::get(inSizeList))
-        { }
-    
-    operator const type&() const {
-        return mExtents;
-    }
-    
-protected:
-    const type mExtents;
-}; */
-
+ * @brief convert a size_type (an array of sizes) to Boost extents
+ */
 template <std::size_t NumDims>
 boost::detail::multi_array::extent_gen<NumDims>
 shapeToExtents(const boost::multi_array_types::size_type *inSizeList) {

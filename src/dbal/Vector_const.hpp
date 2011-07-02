@@ -4,13 +4,16 @@
  *
  * @brief MADlib immutable vector class -- a thin wrapper around arma::Col or arma::Row
  *
- * @internal Unfortunately, we have some code duplication from Vector.hpp. Also
+ *//* ----------------------------------------------------------------------- */
+
+/**
+ * @brief MADlib immutable vector class -- a thin wrapper around arma::Col or arma::Row
+ *
+ * @internal Unfortunately, we have some code duplication from Vector.hpp. Also,
  *      we need to define a proxy for all const operators and methods of
  *      arma::Col and arma::Row. This includes, e.g., operator(), operator[] and
  *      a few others.
- *
- *//* ----------------------------------------------------------------------- */
-
+ */
 template<template <class> class T, typename eT>
 class Vector_const : public arma::Base< eT, Vector_const<T, eT> > {
     friend class arma::unwrap< Vector_const<T,eT> >;

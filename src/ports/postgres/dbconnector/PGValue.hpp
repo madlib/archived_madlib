@@ -31,8 +31,8 @@ class PGValue;
 /**
  * @brief PostgreSQL function-argument value class
  *
- * Implements PGAbstractValue for values that are a function argument
- * (as opposed to being a tuple element).
+ * Implements PGAbstractValue for the "virtual" composite value consisting of
+ * all function arguments (as opposed "normal" composite values).
  */
 template <>
 class PGValue<FunctionCallInfo> : public PGAbstractValue {
@@ -58,8 +58,8 @@ private:
 /**
  * @brief PostgreSQL tuple-element value class
  *
- * Implements PGAbstractValue for values that are a tuple element
- * (as opposed to being a function argument).
+ * Implements PGAbstractValue for "normal" composite values (as opposed to the
+ * "virtual" composite value consisting of all function arguments).
  */
 template <>
 class PGValue<HeapTupleHeader> : public PGAbstractValue {
