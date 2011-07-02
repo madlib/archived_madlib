@@ -16,13 +16,13 @@ Build-time Requirements:
 
 - LAPACK and BLAS libraries as above plus their header files.
   
-  Platform notes:
-  + Mac OS X comes with LAPACK and BLAS preinstalled (as part of the Accelerate
-    framework)
-  + On RedHat/CentOS, LAPACK and BLAS come with with the lapack-devel and
-    blas-devel packages. When compiling against PostgreSQL, other "\*.-devel"
-    packages might be needed (e.g., openssl-devel).
-  + On Solaris, LAPACK and BLAS come with the Orcale Performance Studio
+    Platform notes:
+    + Mac OS X comes with LAPACK and BLAS preinstalled (as part of the
+      Accelerate framework)
+    + On RedHat/CentOS, LAPACK and BLAS come with with the lapack-devel and
+      blas-devel packages. When compiling against PostgreSQL, other "\*.-devel"
+      packages might be needed (e.g., openssl-devel).
+    + On Solaris, LAPACK and BLAS come with the Orcale Performance Studio
 
 - Internet connection to automatically download MADlib's dependencies if needed
   (Boost, Armadillo). See configuration options below.
@@ -184,7 +184,7 @@ For debugging it is helpful to generate an IDE project (e.g., XCode) with cmake
 and then connect to the running database process:
 
 0. Generate XCode project with CMake (in MADlib root directory):
-   `mkdir XCode && cmake -G Xcode ../src`
+   `mkdir -p build/Xcode && cd build/Xcode && cmake -G Xcode ../..`
 1. Add an executable in XCode that points to the postgres binary
    (e.g., `/usr/local/bin/postgres`)
 2. Do a `select pg_backend_pid();` in psql
