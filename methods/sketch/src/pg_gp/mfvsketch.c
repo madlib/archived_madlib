@@ -452,7 +452,9 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
 {
     mfvtransval *transval1 = (mfvtransval *)VARDATA(transblob1);
     mfvtransval *transval2 = (mfvtransval *)VARDATA(transblob2);
-    uint32       i, j;
+    void        *newblob;
+    mfvtransval *newval;
+    uint32       i, j, cnt;
 
     /* handle uninitialized args */
     if (VARSIZE(transblob1) <= sizeof(MFV_TRANSVAL_SZ(0))
@@ -467,55 +469,75 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
         transval2 = (mfvtransval *)VARDATA(transblob2);
     }
 
+    /* initialize output */
+    newblob   = mfv_init_transval(transval1->max_mfvs, transval1->typOid);
+    newval    = (mfvtransval *)VARDATA(newblob);
+
     /* combine sketches */
     for (i = 0; i < DEPTH; i++)
         for (j = 0; j < NUMCOUNTERS; j++)
-            transval1->sketch[i][j] += transval2->sketch[i][j];
+            newval->sketch[i][j] = transval1->sketch[i][j] 
+                                   + transval2->sketch[i][j];
 
     /* recompute the counts using the merged sketch */
     for (i = 0; i < transval1->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob1,i);
         Datum dat = PointerExtractDatum(tmpp, transval1->typByVal);
 
-        transval1->mfvs[i].cnt = cmsketch_count_c(transval1->sketch,
+        transval1->mfvs[i].cnt = cmsketch_count_c(newval->sketch,
                                                   dat,
-                                                  transval1->outFuncOid,
-                                                  transval1->typOid);
+                                                  newval->outFuncOid,
+                                                  newval->typOid);
     }
     for (i = 0; i < transval2->next_mfv; i++) {
         void *tmpp = mfv_transval_getval(transblob2,i);
         Datum dat = PointerExtractDatum(tmpp, transval2->typByVal);
 
-        transval2->mfvs[i].cnt = cmsketch_count_c(transval2->sketch,
+        transval2->mfvs[i].cnt = cmsketch_count_c(newval->sketch,
                                                   dat,
-                                                  transval2->outFuncOid,
-                                                  transval2->typOid);
+                                                  newval->outFuncOid,
+                                                  newval->typOid);
     }
 
     /* now take maxes on mfvs in a sort-merge style, copying into transval1  */
     qsort(transval1->mfvs, transval1->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
     qsort(transval2->mfvs, transval2->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
 
-    /* scan through transval1, replace as we find bigger things in transval2 */
-    for (i = j = 0;
-         j < transval2->next_mfv && i < transval1->max_mfvs;
-         i++) {
-        void *tmpp = mfv_transval_getval(transblob2, j);
-        Datum jDatum = PointerExtractDatum(tmpp, transval2->typByVal);
+    /* choose top k from transval1 and transval2 */
+    for (i = j = cnt = 0;
+         cnt < newval->max_mfvs
+         && (j < transval2->next_mfv || i < transval1->next_mfv);
+         cnt++) {
+        void *tmppi, *tmppj;
+        Datum iDatum, jDatum;
 
-        if (i == transval1->next_mfv && (mfv_find(transblob1, jDatum) == -1)
-            /* && i < transval1->max_mfvs from for loop */) {
-            transblob1 = mfv_transval_append(transblob1, jDatum);
-            transval1 = (mfvtransval *)VARDATA(transblob1);
-            j++;
+        if (i < transval1->next_mfv) {
+          tmppi = mfv_transval_getval(transblob1, i);
+          iDatum = PointerExtractDatum(tmppi, transval1->typByVal);
         }
-        else if (transval1->mfvs[i].cnt < transval2->mfvs[j].cnt
-                 && mfv_find(transblob1, jDatum) == -1) {
-            /* copy into transval1 and advance both  */
-            transblob1 = mfv_transval_replace(transblob1, jDatum, i);
-            transval1 = (mfvtransval *)VARDATA(transblob1);
-            j++;
+        if (j < transval2->next_mfv) {
+          tmppj = mfv_transval_getval(transblob2, j);
+          jDatum = PointerExtractDatum(tmppj, transval2->typByVal);
+        }
+
+	if (i < transval1->next_mfv &&
+            (j == transval2->next_mfv
+             || transval1->mfvs[i].cnt >= transval2->mfvs[j].cnt)) {
+          /* next item comes from transval1 */
+          newblob = mfv_transval_append(newblob, iDatum);
+          newval = (mfvtransval *)VARDATA(newblob);
+          newval->mfvs[cnt].cnt = transval1->mfvs[i].cnt;
+          i++;
+        }
+        else if (j < transval2->next_mfv &&
+                 (i == transval1->next_mfv 
+                  || transval1->mfvs[i].cnt < transval2->mfvs[j].cnt)) {
+          /* next item comes from transval2 */
+          newblob = mfv_transval_append(newblob, jDatum);
+          newval = (mfvtransval *)VARDATA(newblob);
+          newval->mfvs[cnt].cnt = transval2->mfvs[j].cnt;
+          j++;
         }
     }
-    return(transblob1);
+    return(newblob);
 }
