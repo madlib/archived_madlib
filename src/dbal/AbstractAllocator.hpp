@@ -39,11 +39,6 @@ public:
         double * = NULL /* ignored */) const = 0;
     
     /**
-     * @brief Deallocate a memory handle
-     */
-    virtual void deallocateHandle(MemHandleSPtr inMemoryHandle) const = 0;
-
-    /**
      * @brief Allocate a block of memory. Throw if allocation fails.
      */
     virtual void *allocate(const uint32_t inSize) const throw(std::bad_alloc) = 0;

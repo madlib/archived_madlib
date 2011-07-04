@@ -25,14 +25,36 @@ namespace dbconnector {
  */
 AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
     Oid inTypeID, Datum inDatum) const {
+    
+    /*
+     * See PGNewDelete::allocate(const uint32_t, const std::nothrow_t&) why we
+     * disable processing of interrupts.
+     */
+    bool isTuple;
+    bool isArray;
+    HeapTupleHeader pgTuple;
+    ArrayType *pgArray;
+    bool errorOccurred = false;
+    
+    PG_TRY(); {
+        isTuple = type_is_rowtype(inTypeID);
+        isArray = type_is_array(inTypeID);
         
+        if (isTuple)
+            pgTuple = DatumGetHeapTupleHeader(inDatum);
+        else if (isArray)
+            pgArray = DatumGetArrayTypeP(inDatum);
+    } PG_CATCH(); {
+        errorOccurred = true;
+    } PG_END_TRY();
+    
+    BOOST_ASSERT_MSG(errorOccurred == false, "An exception occurred while "
+        "converting a PostgreSQL datum to DBAL object.");
+
     // First check if datum is rowtype
-    if (type_is_rowtype(inTypeID)) {
-        HeapTupleHeader pgTuple = DatumGetHeapTupleHeader(inDatum);
+    if (isTuple) {
         return AbstractValueSPtr(new PGValue<HeapTupleHeader>(pgTuple));
-    } else if (type_is_array(inTypeID)) {
-        ArrayType *pgArray = DatumGetArrayTypeP(inDatum);
-        
+    } else if (isArray) {
         if (ARR_NDIM(pgArray) != 1)
             throw std::invalid_argument("Multidimensional arrays not yet supported");
         

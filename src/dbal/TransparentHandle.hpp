@@ -6,6 +6,9 @@
 
 /**
  * @brief The most simple handle type -- a normal pointer
+ *
+ * A transparent handle is used where a handle is required but a normal pointer
+ * is sufficient. A transparent handle never owns the memory it points to.
  */
 class TransparentHandle : public AbstractHandle {
 public:
@@ -20,19 +23,7 @@ public:
     MemHandleSPtr clone() const {
         return MemHandleSPtr( new TransparentHandle(*this) );
     }
-    
-    /**
-     * Do nothing.
-     */
-    void retain() {
-    }
-    
-    /**
-     * Do nothing.
-     */
-    void release() {
-    }
-    
+        
 protected:
     TransparentHandle(void *inPtr)
         : mPtr(inPtr) { }

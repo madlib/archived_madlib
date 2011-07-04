@@ -14,6 +14,8 @@ namespace madlib {
 
 namespace dbconnector {
 
+
+
 /**
  * @brief Allocate a double array
  */
@@ -22,18 +24,6 @@ MemHandleSPtr PGAllocator::allocateArray(uint32_t inNumElements,
     
     return MemHandleSPtr(new PGArrayHandle(
         internalAllocateForArray(FLOAT8OID, inNumElements, sizeof(double))));
-}
-
-/**
- * @brief Deallocate an AbstractHandle
- */
-void PGAllocator::deallocateHandle(MemHandleSPtr inHandle) const {
-    shared_ptr<PGArrayHandle> arrayPtr = dynamic_pointer_cast<PGArrayHandle>(inHandle);
-    
-    if (arrayPtr)
-        free(arrayPtr->mArray);
-    else
-        throw std::logic_error("Tried to deallocate invalid handle");
 }
 
 /**
@@ -70,54 +60,57 @@ ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
  * layer, another PostgreSQL error will be raised (i.e., there will be at least
  * two errors on the PostgreSQL error handling stack).
  *
- * Important:
- * We call back into the database backend here, and these calls might cause
- * exceptions (e.g., an out-of-memory error). Exceptions in PostgreSQL/Greenplum
- * are implemented using longjmp. Since we do not want to leave the confines of
- * C++'s defined behavior, we insist on proper stack unwinding and thus
- * surround any access of the database backend with PG_TRY()/PG_CATCH() macros.
- *
  * By default, PostgreSQL's memory allocation happens in AllocSetAlloc from
  * utils/mmgr/aset.c.
+ *
+ * @see PGInterface for information on necessary precautions when writing
+ *      PostgreSQL plug-in code in C++.
  */
 void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
-    
     void *ptr;
     bool errorOccurred = false;
     MemoryContext oldContext = NULL;
     MemoryContext aggContext = NULL;
- 
+
     PG_TRY(); {
         if (mContext == kAggregate) {
             if (!AggCheckCallContext(mPGInterface->fcinfo, &aggContext))
-                throw std::logic_error("Internal error: Tried to allocate "
-                    "memory in aggregate context while not in aggregate");
-
-            oldContext = MemoryContextSwitchTo(aggContext);
-            ptr = palloc(inSize);
-            MemoryContextSwitchTo(oldContext);
+                errorOccurred = true;
+            else {
+                oldContext = MemoryContextSwitchTo(aggContext);
+                ptr = palloc(inSize);
+                MemoryContextSwitchTo(oldContext);
+            }
         } else {
             ptr = palloc(inSize);
         }
     } PG_CATCH(); {
-        // Probably not necessary but we clean up after ourselves
-        if (oldContext != NULL)
-            MemoryContextSwitchTo(oldContext);
-        
+        /*
+         * PostgreSQL error messages can be stacked. So, it doesn't hurt to add
+         * our own message. After unwinding the C++ stack, the PostgreSQL
+         * exception will be re-thrown into the PostgreSQL C code.
+         *
+         * Throwing C++ exceptions inside a PG_CATCH block is not problematic
+         * per se, but it is good practise to keep the exception mechanisms clearly
+         * separated.
+         */
+
         errorOccurred = true;
     } PG_END_TRY();
 
-    /*
-     * PostgreSQL error messages can be stacked. So, it doesn't hurt to add
-     * our own message. After unwinding the C++ stack, the PostgreSQL
-     * exception will be re-thrown into the PostgreSQL C code.
-     *
-     * Throwing C++ exceptions inside a PG_CATCH block is not problematic
-     * per se, but it does not hurt to keep the exception mechanisms clearly
-     * separated.
-     */
-    if (errorOccurred)
+    if (errorOccurred) {
+        PG_TRY(); {
+            // Probably not necessary but we clean up after ourselves
+            if (oldContext != NULL)
+                MemoryContextSwitchTo(oldContext);
+        } PG_CATCH(); {
+            // Do nothing. We will add a bad-allocation exception on top of
+            // the existing PostgreSQL exception stack.
+        }; PG_END_TRY();
+        
+        // We do not want to interleave PG exceptions and C++ exceptions.
         throw std::bad_alloc();
+    }
     
     return ptr;
 }
@@ -151,6 +144,7 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
     throw() {
     
     void *ptr = NULL;
+    MemoryContext aggContext = NULL;
     
     /*
      * HOLD_INTERRUPTS() and RESUME_INTERRUPTS() only change the value of a
@@ -161,7 +155,11 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
     
     HOLD_INTERRUPTS();
     PG_TRY(); {
-        ptr = palloc(inSize);
+        if (mContext != kAggregate ||
+            AggCheckCallContext(mPGInterface->fcinfo, &aggContext)) {
+        
+            ptr = palloc(inSize);
+        }
     } PG_CATCH(); {
         /*
          * This cannot be due to an interrupt, so it's reasonably safe

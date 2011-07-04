@@ -158,25 +158,6 @@ directory) for more options, after having run `cmake` the first time.
     this tarball is used.
 
 
-Madlib C++ Code
-===============
-
-Current Ingredients:
-
-1. Database Abstraction Layer (DBAL)
-2. Ports
-   - PostgreSQL
-   - Greenplum
-
-
-To Do
-=====
-
-- C++ Library:
-  + For DBMSs other than PG/GP, we need some proper reference counting for
-    AbstractHandles. Perhaps wrapping shared_ptr will already work
-
-
 Debugging
 =========
 
