@@ -10,7 +10,7 @@ add_custom_command(
     COMMAND ${DOXYGEN_EXECUTABLE} -w html /dev/null /dev/null doxygen.css
         developer.doxyfile
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../patch/doxygen.css.sh
-    DEPENDS developer.doxyfile.in
+    DEPENDS developer.doxyfile.in ../patch/doxygen.css.sh
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     COMMENT "Patching doxygen style sheet..."
 )
