@@ -17,38 +17,58 @@ m4_include(`SQLCommon.m4')
 
 @about
 
-Linear regression refers to a stochastic model, in which the conditional mean
-of the dependent variable (usually denoted \f$ y \f$) is an affine function of
-the vector of independent variables (usually denoted \f$ \boldsymbol x \f$):
+Ordinary least-squares (OLS) linear regression refers to a stochastic model in
+which the conditional mean of the dependent variable (usually denoted \f$ Y \f$)
+is an affine function of the vector of independent variables (usually denoted
+\f$ \boldsymbol x \f$). That is,
 \f[
-    E[y \mid \boldsymbol x] = \boldsymbol c^T \boldsymbol x
+    E[Y \mid \boldsymbol x] = \boldsymbol c^T \boldsymbol x
 \f]
-for some unknown vector of coefficients \f$ \boldsymbol c \f$.
+for some unknown vector of coefficients \f$ \boldsymbol c \f$. The assumption is
+that the residuals are i.i.d. distributed Gaussians. That is, the (conditional)
+probability density of \f$ Y \f$ is given by
+\f[
+    f(y \mid \boldsymbol x)
+    =   \frac{1}{\sqrt{2 \pi \sigma^2}}
+        \cdot \exp\left(-\frac{1}{2 \sigma^2}
+            \cdot (y - \boldsymbol x^T \boldsymbol c)^2 \right)
+    \,.
+\f]
+OLS linear regression finds the vector of coefficients \f$ \boldsymbol c \f$
+that maximizes the likelihood of the observations.
 
-We fit the model with the ordinary-least-squares method. That is, the vector of
-regression coefficients \f$ \boldsymbol c \f$ is estimated as:
-\f[
-    \boldsymbol c = (X^T X)^+ X^T \boldsymbol y = X^+ \boldsymbol y
-\f]
-where
-- \f$ X \f$ is the design matrix with \f$ k \f$ columns and \f$ n \f$ rows,
+Let
+- \f$ \boldsymbol y \in \mathbf R^n \f$ denote the vector of observed dependent variables, with
+  \f$ n \f$ rows, containing the observed values of the dependent variable,
+- \f$ X \in \mathbf R^{n \times k} \f$ denote the design matrix with \f$ k \f$ columns and \f$ n \f$ rows,
   containing all observed vectors of independent variables
-  \f$ \boldsymbol x_i \f$ as rows
-- \f$ X^T \f$ denotes the transpose of \f$ X \f$
-- \f$ X^+ \f$ denotes the pseudo-inverse of \f$ X \f$.
-Note: The identity \f$ X^+ = (X^T X)^+ X^T \f$ holds for all matrices \f$ X \f$.
-A proof can be found, e.g., at:
-http://en.wikipedia.org/wiki/Proofs_involving_the_Moore%2DPenrose_pseudoinverse
+  \f$ \boldsymbol x_i \f$ as rows,
+- \f$ X^T \f$ denote the transpose of \f$ X \f$,
+- \f$ X^+ \f$ denote the pseudo-inverse of \f$ X \f$.
+
+Maximizing the likelihood is equivalent to maximizing the log-likelihood
+\f$ \sum_{i=1}^n \log f(y_i \mid \boldsymbol x_i) \f$, which simplifies to
+maximizing the <b>residual sum of squares</b> \f$ RSS \f$ (also called sum of
+squared residuals or sum of squared errors of prediction),
+\f[
+    RSS = \sum_{i=1}^n ( y_i - \boldsymbol c^T \boldsymbol x_i )^2
+        = (\boldsymbol y - X \boldsymbol c)^T (\boldsymbol y - X \boldsymbol c)
+    \,.
+\f]
+The first-order conditions yield that the \f$ RSS \f$ is maximized at
+\f[
+    \boldsymbol c = (X^T X)^+ X^T \boldsymbol y
+    \,.
+\f]
 
 Computing the <b>total sum of squares</b> \f$ TSS \f$, the <b>explained
 sum of squares</b> \f$ ESS \f$ (also called the regression sum of
-squares), and the <b>residual sum of squares</b> \f$ RSS \f$ (also called sum of
-squared residuals or sum of squared errors of prediction) is
+squares), and the <b>coefficient of determination</b> \f$ R^2 \f$ is
 done according to the following formulas:
 \f{align*}{
     ESS & = \boldsymbol y^T X \boldsymbol c
         -   \frac{ \| y \|_1^2 }{n} \\
-    TSS & = \sum_{i=1}^k y_i^2
+    TSS & = \sum_{i=1}^n y_i^2
         -   \frac{ \| y \|_1^2 }{n} \\
     R^2 & = \frac{ESS}{TSS}
 \f}
@@ -58,13 +78,14 @@ Note: The last equality follows from the definition
 http://en.wikipedia.org/wiki/Sum_of_squares
 
 We estimate the variance
-\f$ Var[y - \boldsymbol c^T \boldsymbol x \mid \boldsymbol x] \f$ as
+\f$ Var[Y - \boldsymbol c^T \boldsymbol x \mid \boldsymbol x] \f$ as
 \f[
     \sigma^2 = \frac{RSS}{n - k}
 \f]
 and compute the t-statistic for coefficient \f$ i \f$ as
 \f[
     t_i = \frac{c_i}{\sqrt{\sigma^2 \cdot \left( (X^T X)^{-1} \right)_{ii} }}
+    \,.
 \f]
 
 The \f$ p \f$-value for coefficient \f$ i \f$ gives the probability that the
@@ -74,30 +95,43 @@ cumulative density function of student-t with \f$ \nu \f$ degrees of freedom,
 the \f$ p \f$-value for coefficient \f$ i \f$
 is therefore
 \f[
-    p_i = P(|T| \geq |t_i|) = 2 \cdot (1 - F_{n - k}( |t_i| ))
+    p_i = \Pr(|T| \geq |t_i|) = 2 \cdot (1 - F_{n - k}( |t_i| ))
 \f]
 where \f$ T \f$ is a student-t distributed random variable with mean 0.
 
+@input
+
+The training data is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>dependentVariable</em> FLOAT8,
+    <em>independentVariables</em> FLOAT8[],
+    ...
+)</pre>
+
 @usage
 
--   <b>Input</b>\n\n
-    The data set is expected to be of the following form:\n\n
-    <tt>{TABLE|VIEW} <em>sourceName</em> (\n
-        &nbsp;&nbsp;&nbsp;...\n
-        &nbsp;&nbsp;&nbsp;<em>dependentVariable</em> DOUBLE PRECISION\n 
-        &nbsp;&nbsp;&nbsp;<em>independentVariables</em> DOUBLE PRECISION[]\n
-        &nbsp;&nbsp;&nbsp;...\n
-    )</tt>
-    \n\n
--   <b>Syntax</b>\n\n
-    To see the complete set of coeficients and the diagnositc metrics the
-    <strong><tt>\ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>)</tt></strong>
-    user defined aggregate function can be called in the following way:\n\n
-    <tt>SELECT (madlib.linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).* FROM <em>sourceName</em>;</tt>
-    \n\n
--   <b>Note</b>\n\n
-    In order to model an intercept, set one coordinate in the
-    <tt>independentVariables</tt> array to 1 (see example below). 
+- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic statistics:
+<pre>SELECT (\ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).*
+FROM <em>sourceName</em>;</pre>
+  .
+  Output:
+  <pre>coef | r2 | std_err | t_stats | p_values
+-----+----+---------+---------+---------
+                   ...                  
+(1 row)</pre>
+.
+- Get vector of coefficients \f$ \boldsymbol c \f$:\n
+  <pre>SELECT (\ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).coef
+FROM <em>sourceName</em>;</pre>
+.
+- Get array of coefficients \f$ \boldsymbol c \f$, coefficient of
+  determination \f$ R^2 \f$, and array of p-values \f$ \boldsymbol p \f$:
+      <pre>SELECT (lr).coef, (lr).r2, (lr).p_values
+FROM (
+    SELECT \ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>) AS lr
+    FROM <em>sourceName</em>
+) AS subq;</pre>
 
 @examp
 
@@ -125,33 +159,33 @@ sql> COPY houses FROM STDIN WITH DELIMITER '|';
 \.
 \endverbatim
 \n
--#  You can call the linreg() function for an individual metric:
+-#  You can call the linregr() function for an individual metric:
 \verbatim
-sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).coef FROM houses;
+sql> SELECT (linregr(price, array[1, bedroom, bath, size])).coef FROM houses;
                                   coef                                  
 ------------------------------------------------------------------------
  {27923.4332080858,-35524.7752261679,2269.34397934866,130.793920087862}
 (1 row)
 
-sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).r2 FROM houses;
+sql> SELECT (linregr(price, array[1, bedroom, bath, size])).r2 FROM houses;
         r2        
 ------------------
  0.74537400999234
 (1 row)
 
-sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).std_err FROM houses;
+sql> SELECT (linregr(price, array[1, bedroom, bath, size])).std_err FROM houses;
                                std_err                                
 ----------------------------------------------------------------------
  {56306.482134735,25036.6536954409,22208.6687273202,36.2086422648744}
 (1 row)
 
-sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).t_stats FROM houses;
+sql> SELECT (linregr(price, array[1, bedroom, bath, size])).t_stats FROM houses;
                                 t_stats                                
 -----------------------------------------------------------------------
  {0.49591862516412,-1.4189106762553,0.102182801104013,3.6122293437869}
 (1 row)
 
-sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).p_values FROM houses;
+sql> SELECT (linregr(price, array[1, bedroom, bath, size])).p_values FROM houses;
                                   p_values                                   
 -----------------------------------------------------------------------------
  {0.629711071585906,0.183633156540304,0.920450512607465,0.00408159080204573}
@@ -160,7 +194,7 @@ sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).p_values FROM
 \n
 -#  Alternatively you can call the linreg() function for the full record:
 \verbatim
-sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).* FROM houses;
+sql> SELECT (linregr(price, array[1, bedroom, bath, size])).* FROM houses;
                                   coef                                  |        r2        |                               std_err                                |                                t_stats                                |                                  p_values                                   
 ------------------------------------------------------------------------+------------------+----------------------------------------------------------------------+-----------------------------------------------------------------------+-----------------------------------------------------------------------------
  {27923.4332080858,-35524.7752261679,2269.34397934866,130.793920087862} | 0.74537400999234 | {56306.482134735,25036.6536954409,22208.6687273202,36.2086422648744} | {0.49591862516412,-1.4189106762553,0.102182801104013,3.6122293437869} | {0.629711071585906,0.183633156540304,0.920450512607465,0.00408159080204573}
@@ -217,18 +251,36 @@ LANGUAGE C IMMUTABLE STRICT;
 /**
  * @brief Compute linear regression coefficients and diagnostic statistics.
  *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ *
+ * @par
  * To include an intercept in the model, set one coordinate in the
  * <tt>independentVariables</tt> array to 1.
  *
- * @return A tuple containing:
- *  - \c coef - Array of coefficients, which has the same length as the array of
- *    independent variables.
- *  - \c r2 - Coefficient of determination, \f$ R^2 \f$
- *  - \c std_err - Array of standard errors for each coefficient
- *  - \c t_stats - Array of t-statistics for each coefficient
- *  - \c p_values - Array of p-values, for every coefficient
+ * @return A composite value:
+ *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
+ *  - <tt>r2 FLOAT8</tt> - Coefficient of determination, \f$ R^2 \f$
+ *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>t_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
  *
- * @examp <tt>SELECT (linregr(y, array[1, x1, x2])).* FROM data;</tt>
+ * @usage
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+ *    statistics:\n
+ *    <pre>SELECT (linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).*
+ *FROM <em>sourceName</em>;</pre>
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
+ *    <pre>SELECT (linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).coef
+ *FROM <em>sourceName</em>;</pre>
+ *  - Get array of coefficients \f$ \boldsymbol c \f$, coefficient of
+ *    determination \f$ R^2 \f$, and array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT (lr).coef, (lr).r2, (lr).p_values
+ *FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>) AS lr
+ *    FROM <em>sourceName</em>
+ *) AS subq;</pre>
  */
 CREATE AGGREGATE MADLIB_SCHEMA.linregr(
     /*+ "dependentVariable" */ DOUBLE PRECISION,

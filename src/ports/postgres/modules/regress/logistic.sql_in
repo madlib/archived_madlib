@@ -17,39 +17,52 @@ m4_include(`SQLCommon.m4')
 
 @about
 
-Logistic regression is used to estimate probabilities of a dependent binary
-variable, by fitting a stochastic model. It is one of the most commonly used
-tools for applied statistics and data mining [1].
-
-Logistic regression assumes a generalized linear model:
+(Binomial) Logistic regression refers to a stochastic model in which the
+conditional mean of the dependent dichotomous variable (usually denoted
+\f$ Y \in \{ 0,1 \} \f$) is the logistic function of an affine function of the
+vector of independent variables (usually denoted \f$ \boldsymbol x \f$). That
+is,
 \f[
-    E[Y] = g^{-1}(\boldsymbol c^T X)
+    E[Y \mid \boldsymbol x] = \sigma(\boldsymbol c^T \boldsymbol x)
 \f]
-where:
-- $Y$ is the dependent variable
-- \f$\boldsymbol c^T X\f$ is the linear predictor
-- \f$g(x) = \ln\left( \frac{x}{1-x} \right)\f$ is the link function, with
-  inverse \f$\sigma(x) := g^{-1}(x) = \frac{1}{1 + \exp(-x)} \f$
+for some unknown vector of coefficients \f$ \boldsymbol c \f$ and where
+\f$ \sigma(x) = \frac{1}{1 + \exp(-x)} \f$ is the logistic function. Logistic
+regression finds the vector of coefficients \f$ \boldsymbol c \f$ that maximizes
+the likelihood of the observations.
 
-For each training data point \f$i\f$, we have a vector of
-features \f$x_i\f$ and an observed class \f$y_i\f$. For ease of notation, let \f$Z\f$ be a
-dependent random variable such that \f$Z = -1\f$ if \f$Y = 0\f$ and \f$Z = 1\f$ if \f$Y = 1\f$,
-i.e., \f$Z := 2(Y - \frac 12)\f$. By definition,
-\f$P[Z = z_i | X = x_i] = \sigma(z_i \cdot \boldsymbol c^T x_i)\f$.
+Let
+- \f$ \boldsymbol y \in \{ 0,1 \}^n \f$ denote the vector of observed dependent
+  variables, with \f$ n \f$ rows, containing the observed values of the
+  dependent variable,
+- \f$ X \in \mathbf R^{n \times k} \f$ denote the design matrix with \f$ k \f$
+  columns and \f$ n \f$ rows, containing all observed vectors of independent
+  variables \f$ \boldsymbol x_i \f$ as rows.
 
-Since logistic regression predicts probabilities, we can do maximum-likelihood
-fitting: That is, we want the vector of regression coefficients
-\f$\boldsymbol c\f$ to maximize
+By definition,
 \f[
-    \prod_{i=1}^n \sigma(z_i \cdot \boldsymbol c^T \boldsymbol x_i)
+    P[Y = y_i | \boldsymbol x_i]
+    =   \sigma((-1)^{y_i} \cdot \boldsymbol c^T \boldsymbol x_i)
+    \,.
 \f]
-or, equivalently, to maximize the objective
+Maximizing the likelihood
+\f$ \prod_{i=1}^n \Pr(Y = y_i \mid \boldsymbol x_i) \f$
+is equivalent to maximizing the log-likelihood
+\f$ \sum_{i=1}^n \log \Pr(Y = y_i \mid \boldsymbol x_i) \f$, which simplifies to
 \f[
     l(\boldsymbol c) =
-        -\sum_{i=1}^n \ln(1 + \exp(-z_i \cdot \boldsymbol c^T \boldsymbol x_i))
+        -\sum_{i=1}^n \log(1 + \exp((-1)^{y_i}
+            \cdot \boldsymbol c^T \boldsymbol x_i))
+    \,.
 \f]
-By looking at the Hessian, we can verify that \f$l(\boldsymbol c)\f$ is convex.
-
+The Hessian of this objective is \f$ H = -X^T A X \f$ where
+\f$ A = \text{diag}(a_1, \dots, a_n) \f$ is the diagonal matrix with
+\f$
+    a_i = \sigma(\boldsymbol c^T \boldsymbol x)
+          \cdot
+          \sigma(-\boldsymbol c^T \boldsymbol x)
+    \,.
+\f$
+Since \f$ H \f$ is non-positive definite, \f$ l(\boldsymbol c) \f$ is convex.
 There are many techniques for solving convex optimization problems. Currently,
 logistic regression in MADlib can use one of two algorithms:
 - Iteratively Reweighted Least Squares
@@ -57,35 +70,58 @@ logistic regression in MADlib can use one of two algorithms:
   literature, where we use the Hestenes-Stiefel rule for calculating the step
   size.
 
-@usage
+We estimate the standard error for coefficient \f$ i \f$ as
+\f[
+    \mathit{se}(c_i) = \left( (X^T A X)^{-1} \right)_{ii}
+    \,.
+\f]
+The Wald z-statistic is
+\f[
+    z_i = \frac{c_i}{\mathit{se}(c_i)}
+    \,.
+\f]
 
-- <strong>Syntax</strong>
+The Wald \f$ p \f$-value for coefficient \f$ i \f$ gives the probability (under
+the assumptions inherent in the Wald test) that the null hypothesis
+(\f$ c_i = 0 \f$) is false, i.e., the probability that \f$ c_i \f$ differs
+significantly from 0. Letting \f$ F \f$ denote the cumulative density
+function of a standard normal distribution, the Wald \f$ p \f$-value for
+coefficient \f$ i \f$ is therefore
+\f[
+    p_i = \Pr(|Z| \geq |z_i|) = 2 \cdot (1 - F( |z_i| ))
+\f]
+where \f$ Z \f$ is a standard normally distributed random variable.
 
-<tt>MADlib.logregr(<em>'sourceName','dependentVariable','independentVariables',[optional] numIterations,[optional] 'optimizer',[optional] precision</em>)</tt>
+The odds ratio for coefficient \f$ i \f$ is estimated as \f$ \exp(c_i) \f$.
 
-- <strong>Input</strong>
+
+@input
 
 The training data is expected to be of the following form:\n
-<tt>{TABLE|VIEW} <em>sourceName</em> ([...] <em>dependentVariable</em>
-BOOLEAN, <em>independentVariables</em> DOUBLE PRECISION[], [...])</tt>
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>dependentVariable</em> BOOLEAN,
+    <em>independentVariables</em> FLOAT8[],
+    ...
+)</pre>
 
-- <strong>Output</strong>
+@usage
+- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+  statistics:\n
+  <pre>SELECT * FROM \ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+  .
+  Output:
+  <pre>coef | log_likelihood | std_err | z_stats | p_values | odd_ratios
+-----+----------------+---------+---------+----------+-----------
+                               ...
+(1 row)</pre>
+- Get vector of coefficients \f$ \boldsymbol c \f$:\n
+  <pre>SELECT (\ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
+- Get array of coefficients \f$ \boldsymbol c \f$, log-likelihood of
+  determination \f$ l(\boldsymbol c) \f$, and array of p-values \f$ \boldsymbol p \f$:
+  <pre>SELECT coef, log_likelihood, p_values
+FROM \ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
 
-The output is a custom type <em>logregr_result</em> with the following fields:
-- <em>coef</em>: The estimated coefficients \f$\boldsymbol c\f$ of type float[].
-- <em>logl_ikelihood</em>: The maximized log-likelihood \f$l(\boldsymbol c)\f$ of type float.
-- <em>std_err</em>: The standard error of the fit for each coefficient of type float[].
-- <em>z_stat</em>: The Z-score, which is computed as \f$Z_{score}=\frac{coef}{stderr}\f$ for each coef.
-- <em>p_values</em>: The p-value of the significance of fit for each coef based on the Z-score. A low p-value suggests that the null hypothesis (i.e. the coef is actually 0) should be rejected.
-- <em>odd_ratio</em>: An estimate of the conditional odds ratio: \f$OddsRatio=exp(coef)\f$ for each coef.
-
-- <strong>Notes</strong>
-
-In order to model an intercept, set one coordinate in the <tt>independentVariables</tt> array to 1.
-
-The last three arguments are optional and can be omitted, in which case
-   default values will be used. See logistic.sql_in.  
-   
 @examp
 
 @verbatim 
@@ -100,7 +136,7 @@ The last three arguments are optional and can be omitted, in which case
  {1,4.16272420901805,0.598018785007298}      | t
 [...]
 
-# SELECT * FROM madlib.logregr('data','val','r1',100,'irls',0.001); 
+# SELECT * FROM madlib.logregr('data', 'val', 'r1', 100, 'irls', 0.001); 
  
                           coef                          |  log_likelihood   |                         std_err                          |                        z_stats                        |                           p_values                            |                      odd_ratios                      
 --------------------------------------------------------+-------------------+----------------------------------------------------------+-------------------------------------------------------+---------------------------------------------------------------+------------------------------------------------------
@@ -288,18 +324,36 @@ LANGUAGE plpythonu VOLATILE;
  *        PRECISION[])
  * @param numIterations The maximum number of iterations
  * @param optimizer The optimizer to use (either
- *        <tt>'ilrs'</tt>/<tt>'newton'</tt> for iteratively reweighted least
+ *        <tt>'irls'</tt>/<tt>'newton'</tt> for iteratively reweighted least
  *        squares or <tt>'cg'</tt> for conjugent gradient)
  * @param precision The difference between log-likelihood values in successive
  *        iterations that should indicate convergence, or 0 indicating that
  *        log-likelihood values should be ignored
  *
+ * @return A composite value:
+ *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
+ *  - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
+ *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *  - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
+ *    \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
+ *
+ * @usage
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+ *    statistics:\n
+ *    <pre>SELECT * FROM logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
+ *    <pre>SELECT (logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
+ *  - Get array of coefficients \f$ \boldsymbol c \f$, log-likelihood of
+ *    determination \f$ l(\boldsymbol c) \f$, and array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT coef, log_likelihood, p_values
+ *FROM logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+ *
  * @note This function starts an iterative algorithm. It is not an aggregate
  *       function. Source and column names have to be passed as strings (due to
  *       limitations of the SQL syntax).
- *
- * @examp <tt>CREATE VIEW data AS SELECT y, array[1, x1, x2] AS x FROM source;<br>
- *        SELECT * FROM logregr('data', 'y', 'x', 20, 'cg', 0.001);</tt>
  *
  * @internal
  * @sa This function is a wrapper for logistic::compute_logregr(), which
