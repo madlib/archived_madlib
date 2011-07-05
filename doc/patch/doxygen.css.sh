@@ -21,4 +21,25 @@ pre.fragment {
     word-wrap: normal;
 }
 
+dl {
+    padding-left: 0;
+}
+
+dt {
+    font-size: 120%;
+    margin-bottom: 1em;
+}
+
+dd {
+    margin-left: 0;
+}
+
+table.params {
+    border-spacing: 0;
+}
+
+td.paramname {
+    padding: 1px 1em 1px 0;
+}
+
 EOF
