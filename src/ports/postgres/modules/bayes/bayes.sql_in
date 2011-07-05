@@ -17,19 +17,35 @@ m4_include(`SQLCommon.m4')
 
 @about
 
-This is a Naive Bayes classification module with user-defined smoothing factor 
-(the default is "Laplacian smoothing").
+Naive Bayes refers to a stochastic model where all independent variables
+\f$ a_1, \dots, a_n \f$ (often referred to as attributes in this context)
+independently contribute to the probability that a data point belongs to a
+certain class \f$ c \f$. In detail, \b Bayes' theorem states that
+\f[
+    \Pr(C = c \mid A_1 = a_1, \dots, A_n = a_n)
+    =   \frac{\Pr(C = c) \cdot \Pr(A_1 = a_1, \dots, A_n = a_n \mid C = c)}
+             {\Pr(A_1 = a_1, \dots, A_n = a_n)}
+    \,,
+\f]
+and the \b naive assumption is that
+\f[
+    \Pr(A_1 = a_1, \dots, A_n = a_n \mid C = c)
+    =   \prod_{i=1}^n \Pr(A_i = a_i \mid C = c)
+    \,.
+\f]
+Naives Bayes classification estimates feature probabilities and class priors
+using maximum likelihood or Laplacian smoothing. These parameters are then used
+to classifying new data.
 
 A Naive Bayes classifier computes the following formula:
 \f[
     \text{classify}(a_1, ..., a_n)
     =   \arg\max_c \left\{
-            P(C = c) \cdot \prod_{i=1}^n P(A_i = a_i \mid C = c)
+            \Pr(C = c) \cdot \prod_{i=1}^n \Pr(A_i = a_i \mid C = c)
         \right\}
 \f]
 where \f$ c \f$ ranges over all classes in the training data and probabilites
 are estimated with relative frequencies from the training set.
-
 There are different ways to estimate the feature probabilities
 \f$ P(A_i = a \mid C = c) \f$.  The maximum likelihood estimate takes the
 relative frequencies. That is:
@@ -58,151 +74,80 @@ where
 The case \f$ s = 1 \f$ is known as "Laplace smoothing". The case \f$ s = 0 \f$
 trivially reduces to maximum-likelihood estimates.
 
-@usage
+@input
 
--   <b>Input</b>\n\n
-    The <b>training data</b> is expected to be of the following form:\n\n 
-    <tt>{TABLE|VIEW} <em>trainingSource</em> (\n
-        &nbsp;&nbsp;&nbsp;...\n
-        &nbsp;&nbsp;&nbsp;<em>trainingClassColumn</em> INTEGER\n 
-        &nbsp;&nbsp;&nbsp;<em>trainingAttrColumn</em> INTEGER[]\n
-        &nbsp;&nbsp;&nbsp;...\n
-    )</tt>\n\n
-    The <b>data to classify</b> is expected to be of the following form:\n\n
-    <tt>{TABLE|VIEW} <em>classifySource</em> (\n
-        &nbsp;&nbsp;&nbsp;...\n
-        &nbsp;&nbsp;&nbsp;<em>classifyKeyColumn</em> ANYTYPE\n
-        &nbsp;&nbsp;&nbsp;<em>classifyAttrColumn</em> INTEGER[]\n
-        &nbsp;&nbsp;&nbsp;...\n
-    )</tt>\n\n
+The <b>training data</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>trainingSource</em> (
+    ...
+    <em>trainingClassColumn</em> INTEGER,
+    <em>trainingAttrColumn</em> INTEGER[],
+    ...
+)</pre>
+
+The <b>data to classify</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>classifySource</em> (
+    ...
+    <em>classifyKeyColumn</em> ANYTYPE,
+    <em>classifyAttrColumn</em> INTEGER[],
+    ...
+)</pre>
+
+@usage
     
--   <b>Option #1 (with pre-computation step)</b>
-    \n\n
-    -# For faster classification in the following steps you can run the 
-    <tt>\ref create_nb_prepared_data_tables(
-    '<em>trainingSource</em>', 
-    '<em>trainingClassColumn</em>', 
-    '<em>trainingAttrColumn</em>',
-    <em>numAttrs</em>, 
-    '<em>featureProbsName</em>', 
-    '<em>classPriorsName</em>')</tt>
-    function to create tables of pre-computed feature probabilities 
-    and class priors of the following structure:
-    \n\n
-    <tt>TABLE <em>featureProbsName</em> (\n
-        &nbsp;&nbsp;&nbsp;class INTEGER,\n
-        &nbsp;&nbsp;&nbsp;attr INTEGER,\n 
-        &nbsp;&nbsp;&nbsp;value INTEGER,\n 
-        &nbsp;&nbsp;&nbsp;cnt INTEGER,\n 
-        &nbsp;&nbsp;&nbsp;attr_cnt INTEGER\n
-    )</tt>\n\n
-    <tt>TABLE <em>classPriorsName</em> (\n
-        &nbsp;&nbsp;&nbsp;class INTEGER,\n
-        &nbsp;&nbsp;&nbsp;class_cnt INTEGER,\n
-        &nbsp;&nbsp;&nbsp;all_cnt INTEGER\n
-    )</tt>
-    \n\n
-    -# To create the Naive-Bayes classification view for the source data (based 
-    on the pre-computed <em>featureProbsName</em> and <em>classPriorsName</em> 
-    tables) run
-    <tt>\ref create_nb_classify_view (
-    '<em>featureProbsName</em>',
-    '<em>classPriorsName</em>',
-    '<em>classifySource</em>',
-    '<em>classifyKeyColumn</em>',
-    '<em>classifyAttrColumn</em>',
-    <em>numAttrs</em>,
-    '<em>destView</em>')</tt>. 
-    The output view (<em>destView</em>) will contain one row for every value of 
-    <tt><em>classifyKeyColumn</em></tt> in <tt><em>classifySource</em></tt> table:\n\n
-    <tt>VIEW <em>destView</em> (\n
-        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
-        &nbsp;&nbsp;&nbsp;nb_classification INTEGER\n
-    )</tt>
-    \n\n
-    -# To create the view with classification probabilities 
-    (based on the pre-computed <em>featureProbsName</em> 
-    and <em>classPriorsName</em> tables) run
-    <tt>\ref create_nb_probs_view (
-    '<em>featureProbsName</em>',
-    '<em>classPriorsName</em>',
-    '<em>classifySource</em>',
-    '<em>classifyKeyColumn</em>',
-    '<em>classifyAttrColumn</em>',
-    <em>numAttrs</em>,
-    '<em>destView</em>')</tt>. 
-    The output view (<em>destView</em>) will contain one row for every (key,class) 
-    pair:\n\n
-    <tt>VIEW <em>destView</em> (\n
-        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
-        &nbsp;&nbsp;&nbsp;class INTEGER,\n
-        &nbsp;&nbsp;&nbsp;nb_prob FLOAT\n
-    )</tt>\n
-       
--   <b>Option #2 (w/o pre-computation step)</b>
-    \n\n
-    -# This option is does not include the creating of the pre-computed 
-    feature probabilities and class priors tables.
-    \n\n
-    -# To create the Naive-Bayes classification view for the source data run
-    <tt>\ref create_nb_classify_view (
-    '<em>trainingSource</em>',
-    '<em>trainingClassColumn</em>',
-    '<em>trainingAttrColumn</em>',
-    '<em>classifySource</em>',
-    '<em>classifyKeyColumn</em>',
-    '<em>classifyAttrColumn</em>',
-    <em>numAttrs</em>,
-    '<em>destView</em>')</tt>. 
-    The output view (<em>destView</em>) will contain one row for every value of 
-    <tt><em>classifyKeyColumn</em></tt> in <tt><em>classifySource</em></tt> table:\n\n
-    <tt>VIEW <em>destView</em> (\n
-        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
-        &nbsp;&nbsp;&nbsp;nb_classification INTEGER\n
-    )</tt>
-    \n\n
-    -# To create the view with the classification probabilities run
-    <tt>\ref create_nb_probs_view (
-    '<em>trainingSource</em>',
-    '<em>trainingClassColumn</em>',
-    '<em>trainingAttrColumn</em>',
-    '<em>classifySource</em>',
-    '<em>classifyKeyColumn</em>',
-    '<em>classifyAttrColumn</em>',
-    <em>numAttrs</em>,
-    '<em>destView</em>')</tt>. 
-    The output view (<em>destView</em>) will contain one row for every (key,class) 
-    pair:\n\n
-    <tt>VIEW <em>destView</em> (\n
-        &nbsp;&nbsp;&nbsp;key ANYTYPE,\n
-        &nbsp;&nbsp;&nbsp;class INTEGER,\n
-        &nbsp;&nbsp;&nbsp;nb_prob FLOAT\n
-    )</tt>\n
+- Precompute feature probabilities and class priors:
+  <pre>SELECT \ref create_nb_prepared_data_tables(
+    '<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>',
+    <em>numAttrs</em>, '<em>featureProbsName</em>', '<em>classPriorsName</em>'
+);</pre>
+  .
+  This creates the tables <em>featureProbsName</em> for storing feature
+  probabilities and <em>classPriorsName</em> for storing the class priors.
+  .
+- Perform Naive Bayes classification:
+  <pre>SELECT \ref create_nb_classify_view(
+    '<em>featureProbsName</em>', '<em>classPriorsName</em>',
+    '<em>classifySource</em>', '<em>classifyKeyColumn</em>', '<em>classifyAttrColumn</em>',
+    <em>numAttrs</em>, '<em>destName</em>'
+);</pre>
+  .
+  This creates the view <tt><em>destName</em></tt> mapping
+  <em>classifyKeyColumn</em> to the Naive Bayes classification:\n
+  .
+  Output of <tt>SELECT * FROM <em>destName</em></tt>:
+  <pre>key | nb_classification
+----+------------------
+     ...</pre>
+  .
+- Compute Naive Bayes probabilities:
+  <pre>SELECT \ref create_nb_probs_view(
+    '<em>featureProbsName</em>', '<em>classPriorsName</em>',
+    '<em>classifySource</em>', '<em>classifyKeyColumn</em>', '<em>classifyAttrColumn</em>',
+    <em>numAttrs</em>, '<em>destName</em>'
+);</pre>
+  .
+  This creates the view <tt><em>destName</em></tt> mapping
+  <em>classifyKeyColumn</em> and every single class to the Naive Bayes
+  probability.\n
+  .
+  Output of <tt>SELECT * FROM <em>destName</em></tt>:
+  <pre>key | class | nb_prob
+----+-------+--------
+        ...</pre>
+  .
+- Ad-hoc execution (no precomputation):
+  The functions \ref create_nb_classify_view and
+  \ref create_nb_probs_view can be used in an ad-hoc fashion without the above
+  precomputation step: In this case, replace the function arguments
+  <pre>'<em>featureProbsName</em>', '<em>classPriorsName</em>'</pre>
+  by
+  <pre>'<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>'</pre>
 
 @examp
 
 The following is an extremely simplified example of the above option #1 which
 can by verified by hand.
 
--#  Create the training and the to-be-classified data sets:
-\verbatim
-sql> CREATE TABLE training (id INT, class INT, attributes INT[]);
-sql> COPY training FROM STDIN WITH DELIMITER '|';
-    1 |     1 | {1,2,3}
-    2 |     1 | {1,2,1}
-    3 |     1 | {1,4,3}
-    4 |     2 | {1,2,2}
-    5 |     2 | {0,2,2}
-    6 |     2 | {0,1,3}
-\.
-sql> CREATE TABLE toclassify (id INT, attributes INT[]);
-sql> COPY toclassify FROM STDIN WITH DELIMITER '|';
-  1 | {0,2,1}
-  2 | {1,2,3}
-\.
-\endverbatim
-\n
--#  Make sure they look good:
+-#  The training and the classification data:
 \verbatim
 sql> SELECT * FROM training;
  id | class | attributes 
@@ -374,11 +319,21 @@ CREATE AGGREGATE MADLIB_SCHEMA.argmax(/*+ key */ INTEGER, /*+ value */ DOUBLE PR
 /**
  * @brief Precompute all class priors and feature probabilities
  *
- * Feature probabilities are stored in a table with columns
- * (class, attr, value, cnt, attr_cnt)
+ * Feature probabilities are stored in a table of format
+ * <pre>TABLE <em>featureProbsDestName</em> (
+ *    class INTEGER,
+ *    attr INTEGER,
+ *    value INTEGER,
+ *    cnt INTEGER,
+ *    attr_cnt INTEGER
+ *)</pre>
  *
- * Class priors are stored in a relation with columns
- * (class, class_cnt, all_cnt).
+ * Class priors are stored in a table of format
+ * <pre>TABLE <em>classPriorsDestName</em> (
+ *    class INTEGER,
+ *    class_cnt INTEGER,
+ *    all_cnt INTEGER
+ *)</pre>
  *
  * @param trainingSource Name of relation containing the training data
  * @param trainingClassColumn Name of class column in training data
@@ -386,6 +341,14 @@ CREATE AGGREGATE MADLIB_SCHEMA.argmax(/*+ key */ INTEGER, /*+ value */ DOUBLE PR
  * @param numAttrs Number of attributes to use for classification
  * @param featureProbsDestName Name of feature-probabilities table to create
  * @param classPriorsDestName Name of class-priors table to create
+ *
+ * @usage
+ *
+ * Precompute feature probabilities and class priors:
+ * <pre>SELECT \ref create_nb_prepared_data_tables(
+ *    '<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>',
+ *    <em>numAttrs</em>, '<em>featureProbsName</em>', '<em>classPriorsName</em>'
+ *);</pre>
  *
  * @internal
  * @sa This function is a wrapper for bayes::create_prepared_data().
@@ -402,8 +365,14 @@ AS $$PythonFunction(bayes, bayes, create_prepared_data_table)$$
 LANGUAGE plpythonu VOLATILE;
 
 /**
- * @brief Create view that contains all keys of the source relation and the
- *        respective naive Bayes classifications
+ * @brief Create a view with columns <tt>(key, nb_classification)</tt>
+ *
+ * The created relation will be
+ *
+ * <tt>{TABLE|VIEW} <em>destName</em> (key, nb_classification)</tt>
+ *
+ * where \c nb_classification is an array containing the most likely
+ * class(es) of the record in \em classifySource identified by \c key.
  *
  * @param featureProbsSource Name of table with precomputed feature
  *        probabilities, as created with create_nb_prepared_data_tables()
@@ -415,6 +384,21 @@ LANGUAGE plpythonu VOLATILE;
  * @param classifyAttrColumn Name of attributes-array column in \em classifySource
  * @param numAttrs Number of attributes to use for classification
  * @param destName Name of the view to create
+ *
+ * @note \c create_nb_classify_view can be called in an ad-hoc fashion. See
+ * \ref grp_bayes for instructions.
+ *
+ * @usage
+ *
+ * -# Create Naive Bayes classifications view:
+ *  <pre>SELECT \ref create_nb_classify_view(
+ *    '<em>featureProbsName</em>', '<em>classPriorsName</em>',
+ *    '<em>classifySource</em>', '<em>classifyKeyColumn</em>', '<em>classifyAttrColumn</em>',
+ *    <em>numAttrs</em>, '<em>destName</em>'
+ *);</pre>
+ *    .
+ * -# Show Naive Bayes classifications:
+ *    <pre>SELECT * FROM <em>destName</em>;</pre>  
  *
  * @internal
  * @sa This function is a wrapper for bayes::create_classification(). See there
@@ -432,33 +416,6 @@ RETURNS VOID
 AS $$PythonFunction(bayes, bayes, create_classification_view)$$
 LANGUAGE plpythonu VOLATILE;
 
-
-/**
- * @brief Create a view with columns <tt>(key, nb_classification)</tt>
- *
- * The created relation will be
- *
- * <tt>{TABLE|VIEW} <em>destName</em> (key, nb_classification)</tt>
- *  
- * where \c nb_classification is an array containing the most likely
- * class(es) of the record in \em classifySource identified by \c key.
- *
- * @param trainingSource
- *        Name of relation containing the training data
- * @param trainingClassColumn
- *        Name of class column in training data
- * @param trainingAttrColumn
- *        Name of attributes-array column in \em trainingSource 
- * @param classifySource Name of the relation that contains data to be classified
- * @param classifyKeyColumn Name of column in \em classifySource that can
- *        serve as unique identifier (the key of the source relation)
- * @param classifyAttrColumn Name of attributes-array column in \em classifySource
- * @param numAttrs Number of attributes to use for classification
- * @param destName Name of the view to create
- *
- * @internal
- * @sa This function is a wrapper for bayes::create_classification().
- */
 CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
@@ -476,19 +433,21 @@ LANGUAGE plpythonu VOLATILE;
 /**
  * @brief Create view with columns <tt>(key, class, nb_prob)</tt>
  * 
- * The created view will be
+ * The created view will be of the following form:
  * 
- * <tt>VIEW <em>destName</em> (key, class, nb_prob)</tt>
+ * <pre>VIEW <em>destName</em> (
+ *    key ANYTYPE,
+ *    class INTEGER,
+ *    nb_prob FLOAT8
+ *)</pre>
  * 
  * where \c nb_prob is the Naive-Bayes probability that \c class is the true
  * class of the record in \em classifySource identified by \c key.
  * 
- * @param trainingSource
- *        Name of relation containing the training data
- * @param trainingClassColumn
- *        Name of class column in training data
- * @param trainingAttrColumn
- *        Name of attributes-array column in \em trainingSource 
+ * @param featureProbsSource Name of table with precomputed feature
+ *        probabilities, as created with create_nb_prepared_data_tables()
+ * @param classPriorsSource Name of table with precomputed class priors, as
+ *        created with create_nb_prepared_data_tables()
  * @param classifySource Name of the relation that contains data to be classified
  * @param classifyKeyColumn Name of column in \em classifySource that can
  *        serve as unique identifier (the key of the source relation)
@@ -496,9 +455,36 @@ LANGUAGE plpythonu VOLATILE;
  * @param numAttrs Number of attributes to use for classification
  * @param destName Name of the view to create
  *
+ * @note \c create_nb_probs_view can be called in an ad-hoc fashion. See
+ * \ref grp_bayes for instructions.
+ *
+ * @usage
+ *
+ * -# Create Naive Bayes probabilities view:
+ *  <pre>SELECT \ref create_nb_probs_view(
+ *    '<em>featureProbsName</em>', '<em>classPriorsName</em>',
+ *    '<em>classifySource</em>', '<em>classifyKeyColumn</em>', '<em>classifyAttrColumn</em>',
+ *    <em>numAttrs</em>, '<em>destName</em>'
+ *);</pre>
+ *    .
+ * -# Show Naive Bayes probabilities:
+ *    <pre>SELECT * FROM <em>destName</em>;</pre>  
+ *
  * @internal
  * @sa This function is a wrapper for bayes::create_bayes_probabilities().
  */
+CREATE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
+    "featureProbsSource" VARCHAR,
+    "classPriorsSource" VARCHAR,
+    "classifySource" VARCHAR,
+    "classifyKeyColumn" VARCHAR,
+    "classifyAttrColumn" VARCHAR,
+    "numAttrs" INTEGER,
+    "destName" VARCHAR)
+RETURNS VOID
+AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
+LANGUAGE plpythonu VOLATILE;
+
 CREATE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
@@ -514,61 +500,44 @@ LANGUAGE plpythonu VOLATILE;
 
 
 /**
- * @brief Create view with columns <tt>(key, class, nb_prob)</tt>
- * 
- * The created view will be
- * 
- * <tt>VIEW <em>destName</em> (key, class, nb_prob)</tt>
- * 
- * where \c nb_prob is the Naive-Bayes probability that \c class is the true
- * class of the record in \em classifySource identified by \c key.
- * 
- * @param featureProbsSource Name of table with precomputed feature
- *        probabilities, as created with create_nb_prepared_data_tables()
- * @param classPriorsSource Name of table with precomputed class priors, as
- *        created with create_nb_prepared_data_tables()
- * @param classifySource Name of the relation that contains data to be classified
- * @param classifyKeyColumn Name of column in \em classifySource that can
- *        serve as unique identifier (the key of the source relation)
- * @param classifyAttrColumn Name of attributes-array column in \em classifySource
- * @param numAttrs Number of attributes to use for classification
- * @param destName Name of the view to create
- *
- * @internal
- * @sa This function is a wrapper for bayes::create_bayes_probabilities().
- */
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
-    "featureProbsSource" VARCHAR,
-    "classPriorsSource" VARCHAR,
-    "classifySource" VARCHAR,
-    "classifyKeyColumn" VARCHAR,
-    "classifyAttrColumn" VARCHAR,
-    "numAttrs" INTEGER,
-    "destName" VARCHAR)
-RETURNS VOID
-AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
-LANGUAGE plpythonu VOLATILE;
-
-
-/**
  * @brief Create a SQL function mapping arrays of attribute values to the Naive
  *        Bayes classification.
  * 
- * The created SQL function will be:
- *  
+ * The created SQL function is bound to the given feature probabilities and
+ * class priors. Its declaration will be:
+ * 
  * <tt>
  * FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
  * RETURNS INTEGER[]</tt>
- * 
- * @note
- * On Greenplum, the generated SQL function can only be called on the master.
  *
+ * The return type is \c INTEGER[] because the Naive Bayes classification might
+ * be ambiguous (in which case all of the most likely candiates are returned).
+ * 
  * @param featureProbsSource Name of table with precomputed feature
  *        probabilities, as created with create_nb_prepared_data_tables()
  * @param classPriorsSource Name of table with precomputed class priors, as
  *        created with create_nb_prepared_data_tables()
  * @param numAttrs Number of attributes to use for classification
  * @param destName Name of the function to create
+ *
+ * @note
+ * Just like \ref create_nb_classify_view and \ref create_nb_probs_view,
+ * also \c create_nb_classify_fn can be called in an ad-hoc fashion. See
+ * \ref grp_bayes for instructions.
+ *
+ * @usage 
+ * 
+ * -# Create classification function:
+ *    <pre>SELECT create_nb_classify_fn(
+ *    '<em>featureProbsSource</em>', '<em>classPriorsSource</em>',
+ *    <em>numAttrs</em>, '<em>destName</em>'
+ *);</pre>
+ *    .
+ * -# Run classification function:
+ *    <pre>SELECT <em>destName</em>(<em>attributes</em>, <em>smoothingFactor</em>);</pre>
+ *
+ * @note
+ * On Greenplum, the generated SQL function can only be called on the master.
  *
  * @internal
  * @sa This function is a wrapper for bayes::create_classification_function().
@@ -582,32 +551,6 @@ RETURNS VOID
 AS $$PythonFunction(bayes, bayes, create_classification_function)$$
 LANGUAGE plpythonu VOLATILE;
 
-
-/**
- * @brief Create a SQL function mapping arrays of attribute values to the Naive
- *        Bayes classification.
- * 
- * The created SQL function will be:
- *  
- * <tt>
- * FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
- * RETURNS INTEGER[]</tt>
- * 
- * @note
- * On Greenplum, the generated SQL function can only be called on the master.
- *
- * @param trainingSource
- *        Name of relation containing the training data
- * @param trainingClassColumn
- *        Name of class column in training data
- * @param trainingAttrColumn
- *        Name of attributes-array column in \em trainingSource 
- * @param numAttrs Number of attributes to use for classification
- * @param destName Name of the function to create
- *
- * @internal
- * @sa This function is a wrapper for bayes::create_classification_function().
- */
 CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_fn(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
