@@ -26,10 +26,6 @@ namespace dbconnector {
 AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
     Oid inTypeID, Datum inDatum) const {
     
-    /*
-     * See PGNewDelete::allocate(const uint32_t, const std::nothrow_t&) why we
-     * disable processing of interrupts.
-     */
     bool isTuple;
     bool isArray;
     HeapTupleHeader pgTuple;

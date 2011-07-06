@@ -14,14 +14,15 @@
  *
  * Example: For some functions used by MADlib (such as dlange, which is called
  * from dgesvd, which is called from arma::pinv) the definition first loaded is
- * in the GPDB binary, for some other function (say, dgesvd, which is not
- * contained in the GPDB image) this would be /usr/lib/liblapack.so. Clearly,
- * mixing implementations from potentially different versions of a third-party
- * library almost certainly calls for trouble.
+ * in the GPDB binary, while for some other function (say, dgesvd, which is not
+ * contained in the GPDB image) the dfinition first loaded would be
+ * /usr/lib/liblapack.so. Clearly, mixing implementations from potentially
+ * different versions of a third-party library almost certainly calls for
+ * trouble.
  *
  * In MADlib, we want to use the system-provided version of LAPACK and BLAS
  * (because these are probably tuned and optimized). One option would be to
- * dynamically load the core library on OR in RTLD_DEEPBIND to the second
+ * dynamically load the core library and OR in RTLD_DEEPBIND to the second
  * argument [2]. Unfortunately, this is also a bad idea because, due to the GCC
  * C++ ABI, there would be ugly side-effects on C++ semanticss [3].
  *
