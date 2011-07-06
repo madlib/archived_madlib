@@ -17,6 +17,14 @@ cat - >> doxygen.css <<'EOF'
 /* No automtic line wrapping at white spaces in <pre> or \verbatim
    environments. */
 
+p,pre {  
+    padding-left: 1.8em;  
+}  
+    
+li {
+    margin-bottom: 1em;
+}
+
 pre.fragment {
     word-wrap: normal;
 }
@@ -28,6 +36,7 @@ dl {
 dt {
     font-size: 120%;
     margin-bottom: 1em;
+    margin-top: 2em;
 }
 
 dd {
