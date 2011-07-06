@@ -6,6 +6,19 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief MADlib mutable matrix class -- a thin wrapper around arma::Col or
+ *        arma::Row
+ *
+ * Armadillo does not provide a public interface to rebind the chunk of memory 
+ * an arma::Mat<eT> object is using. We therefore need this subclass to 
+ * make matrix objects first-class citizen in the C++ DBAL.
+ *
+ * @internal Inheritance is not without issues here, and in a future version
+ *     we might want to switch to composition instead of inheritance (in order
+ *     to make it less likely that changes in the superclass break our
+ *     implementation).
+ */
 template<template <class> class T, typename eT>
 class Vector : public T<eT> {
 public:

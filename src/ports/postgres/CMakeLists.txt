@@ -26,6 +26,7 @@ if(POSTGRESQL_FOUND)
         dbconnector/PGAbstractValue.hpp
         dbconnector/PGAllocator.cpp
         dbconnector/PGAllocator.hpp
+        dbconnector/PGArrayHandle.cpp
         dbconnector/PGArrayHandle.hpp
         dbconnector/PGCommon.hpp
         dbconnector/PGCompatibility.cpp

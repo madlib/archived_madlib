@@ -10,12 +10,6 @@
 
 using madlib::dbconnector::PGAllocator;
 
-/**
- * The default allocator used by operator new and operator delete. It is not
- * supposed to be used directly or by any other function.
- */
-static PGAllocator sDefaultAllocator;
-
 /*
  * We override global storage allocation and deallocation functions. See header
  * file <new> and §18.4.1 of the C++ Standard.
@@ -29,7 +23,7 @@ static PGAllocator sDefaultAllocator;
  * that size.
  */
 void *operator new(std::size_t size) throw (std::bad_alloc) {
-    return sDefaultAllocator.allocate(size);
+    return PGAllocator::defaultAllocator().allocate(size);
 }
 
 /*
@@ -50,7 +44,7 @@ void *operator new(std::size_t size) throw (std::bad_alloc) {
  * the value of ptr invalid.
  */
 void operator delete(void *ptr) throw() {
-    sDefaultAllocator.free(ptr);
+    PGAllocator::defaultAllocator().free(ptr);
 }
 
 /**
@@ -61,12 +55,12 @@ void operator delete(void *ptr) throw() {
  * indication, instead of a bad_alloc exception.
  */
 void *operator new(std::size_t size, const std::nothrow_t &ignored) throw() {
-    return sDefaultAllocator.allocate(size, ignored);
+    return PGAllocator::defaultAllocator().allocate(size, ignored);
 }
 
 /**
  * @brief operator delete for PostgreSQL. Never throws.
  */
 void operator delete(void *ptr, const std::nothrow_t&) throw() {
-    sDefaultAllocator.free(ptr);
+    PGAllocator::defaultAllocator().free(ptr);
 }

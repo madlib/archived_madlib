@@ -41,6 +41,7 @@ set(DOXYGEN_HTML_OUTPUT html CACHE STRING
     "Path (relative to \${DOXYGEN_OUTPUT_<config>} where HTML docs will be put."
 )
 
+
 # -- Build doxysql (the SQL parser) using flex and bison -----------------------
 
 find_package(FLEX 2.5.33)
@@ -85,14 +86,16 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
     add_custom_target(doc
         COMMAND ${DOXYGEN_EXECUTABLE} etc/user.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        DEPENDS doxysql doxyBinFiles ${_MATHJAX_DEPENDENCY_USER}
+        DEPENDS doxysql doxyBinFiles doxygen_css ${_MATHJAX_DEPENDENCY_USER}
+        COMMENT "Generating user-level documentation..."
         VERBATIM
     )
     
     add_custom_target(devdoc
         COMMAND ${DOXYGEN_EXECUTABLE} etc/developer.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        DEPENDS doxysql doxyBinFiles update_mathjax
+        DEPENDS doxysql doxyBinFiles doxygen_css update_mathjax
+        COMMENT "Generating developer documentation..."
         VERBATIM
     )
     

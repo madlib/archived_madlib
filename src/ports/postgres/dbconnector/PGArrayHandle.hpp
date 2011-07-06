@@ -16,8 +16,10 @@ namespace dbconnector {
  */
 class PGArrayHandle : public AbstractHandle {
 friend class PGAllocator;
-public:    
-    PGArrayHandle(ArrayType *inArray) : mArray(inArray) { }
+public:
+    PGArrayHandle(ArrayType *inArray, bool inCopyMem = false);
+        
+    ~PGArrayHandle();
 
     virtual void *ptr() {
         return ARR_DATA_PTR(mArray);
@@ -28,16 +30,12 @@ public:
     }
     
     virtual MemHandleSPtr clone() const {
-        // Use operator new to allocate memory (this will allocate memory in
-        // the default postgres context)
-        ArrayType   *newArray =
-            static_cast<ArrayType *>( ::operator new(VARSIZE(mArray)) );
-        std::memcpy(newArray, mArray, VARSIZE(mArray));
-        return MemHandleSPtr( new PGArrayHandle(newArray) );
+        return MemHandleSPtr( new PGArrayHandle(mArray, true) );
     }
     
 protected:
     ArrayType *mArray;
+    bool mOwnsArray;
 };
 
 } // namespace dbconnector

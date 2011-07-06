@@ -6,6 +6,15 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief A thin wrapper around boost::multi_array_ref, the Boost class for
+ *     multi-dimensional arrays
+ *
+ * @internal Inheritance is not without issues here, and in a future version
+ *     we might want to switch to composition instead of inheritance (in order
+ *     to make it less likely that changes in the superclass break our
+ *     implementation).
+ */
 template <typename T, std::size_t NumDims>
 class Array : public multi_array_ref<T, NumDims> {
 public:
@@ -79,7 +88,16 @@ public:
         
         this->set_base_ptr(mMemoryHandle->ptr());
     }
-*/    
+*/   
+
+    /**
+     * @brief Rebind the array to a different chunk of memory (referred to by a
+     *     memory handle)
+     *
+     * @param inHandle the memory handle
+     * @param ranges the extent for each dimensions, of form
+     *     <tt>boost::extents[ dim1 ][ dim2 ][ ... ]</tt>
+     */
     inline Array &rebind(
         const MemHandleSPtr inHandle,
         const extent_gen &ranges) {
@@ -88,6 +106,14 @@ public:
         return internalRebind(ranges);
     }
     
+    /**
+     * @brief Rebind the array to a new chunk of memory, to be allocated by the
+     *     given allocator
+     *
+     * @param inAllocator the memory allocator to use
+     * @param ranges the extent for each dimensions, of form
+     *     <tt>boost::extents[ dim1 ][ dim2 ][ ... ]</tt>
+     */
     inline Array &rebind(
         AllocatorSPtr inAllocator,
         const extent_gen &ranges) {

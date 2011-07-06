@@ -23,6 +23,9 @@ namespace dbconnector {
 
 using namespace dbal;
 
+/**
+ * @brief Convert the <tt>inID</tt>-th function argument to a DBAL object
+ */
 AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) const {
     if (fcinfo == NULL)
         throw std::invalid_argument("fcinfo is NULL");
@@ -33,17 +36,29 @@ AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) con
     if (PG_ARGISNULL(inID))
         return AbstractValueSPtr(new AnyValue(Null()));
     
-    Oid typeID = get_fn_expr_argtype(fcinfo->flinfo, inID);
-    if (typeID == InvalidOid)
-        throw std::invalid_argument("Cannot determine argument type");
+    bool exceptionOccurred = false;
+    Oid typeID;
+    bool writable;
+    
+    PG_TRY(); {
+        typeID = get_fn_expr_argtype(fcinfo->flinfo, inID);
 
-    // If we are called as an aggregate function, the first argument is the
-    // transition state. In that case, we are free to modify the data.
-    // In fact, for performance reasons, we *should* even do all modifications
-    // in-place. In all other cases, directly modifying memory is dangerous.
-    // See warning at:
-    // http://www.postgresql.org/docs/current/static/xfunc-c.html#XFUNC-C-BASETYPE
-    bool writable = (inID == 0 && AggCheckCallContext(fcinfo, NULL));
+        // If we are called as an aggregate function, the first argument is the
+        // transition state. In that case, we are free to modify the data.
+        // In fact, for performance reasons, we *should* even do all modifications
+        // in-place. In all other cases, directly modifying memory is dangerous.
+        // See warning at:
+        // http://www.postgresql.org/docs/current/static/xfunc-c.html#XFUNC-C-BASETYPE
+        writable = (inID == 0 && AggCheckCallContext(fcinfo, NULL));
+    } PG_CATCH(); {
+        exceptionOccurred = true;
+    } PG_END_TRY();
+    
+    BOOST_ASSERT_MSG(exceptionOccurred == false, "An exception occurred while "
+        "gathering inormation about PostgreSQL function arguments");
+    
+    if (typeID == InvalidOid)
+        throw std::invalid_argument("Cannot determine function argument type");
 
     AbstractValueSPtr value = DatumToValue(writable, typeID, PG_GETARG_DATUM(inID));
     if (!value)
@@ -53,6 +68,9 @@ AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) con
     return value;
 }
 
+/**
+ * @brief Convert the <tt>inID</tt>-th tuple element to a DBAL object
+ */
 AbstractValueSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) const {
     if (mTuple == NULL)
         throw std::invalid_argument("Pointer to tuple data is invalid");
@@ -60,22 +78,31 @@ AbstractValueSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) cons
     if (inID >= HeapTupleHeaderGetNatts(mTuple))
         throw std::out_of_range("Access behind end of tuple");
     
-//    if (att_isnull(inID, mTuple->t_bits))
-//        throw std::invalid_argument("Tuple item is NULL");
-
-    Oid tupType = HeapTupleHeaderGetTypeId(mTuple);
-	int32 tupTypmod = HeapTupleHeaderGetTypMod(mTuple);
-    TupleDesc tupDesc = lookup_rowtype_tupdesc(tupType, tupTypmod);
-    Oid typeID = tupDesc->attrs[inID]->atttypid;
-
-    bool isNull;
-    Datum datum = GetAttributeByNum(mTuple, inID, &isNull);
+    bool exceptionOccurred = false;
+    Oid tupType;
+	int32 tupTypmod;
+    TupleDesc tupDesc;
+    Oid typeID;
+    bool isNull = false;
+    Datum datum;
+    
+    PG_TRY(); {
+        tupType = HeapTupleHeaderGetTypeId(mTuple);
+        tupTypmod = HeapTupleHeaderGetTypMod(mTuple);
+        tupDesc = lookup_rowtype_tupdesc(tupType, tupTypmod);
+        typeID = tupDesc->attrs[inID]->atttypid;
+        ReleaseTupleDesc(tupDesc);
+        datum = GetAttributeByNum(mTuple, inID, &isNull);
+    } PG_CATCH(); {
+        exceptionOccurred = true;
+    } PG_END_TRY();
+    
+    BOOST_ASSERT_MSG(exceptionOccurred == false, "An exception occurred while "
+        "gathering inormation about a PostgreSQL tuple value");
 
     if (isNull)
         throw std::invalid_argument("Tuple item is NULL");
     
-    ReleaseTupleDesc(tupDesc);
-
     AbstractValueSPtr value = DatumToValue(false /* memory is not writable */,
         typeID, datum);
     if (!value)

@@ -24,11 +24,18 @@ public:
           mPGInterface(NULL)
         { }
 
+    /**
+     * @brief Return the default allocator used by operator new and operator delete.
+     */
+    static PGAllocator &defaultAllocator() {
+        static PGAllocator sDefaultAllocator;
+        
+        return sDefaultAllocator;
+    }
+
     MemHandleSPtr allocateArray(
         uint32_t inNumElements, double * /* ignored */) const;
     
-    void deallocateHandle(MemHandleSPtr inHandle) const;
-
     void *allocate(const uint32_t inSize) const throw(std::bad_alloc);
 
     void *allocate(const uint32_t inSize, const std::nothrow_t&) const

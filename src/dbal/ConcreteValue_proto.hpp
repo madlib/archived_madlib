@@ -4,6 +4,16 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Template class that wraps arbitrary types
+ *
+ * ConcreteValue<T> implements the AbstractValue interface. It can contain
+ * values of arbitrary type.
+ * 
+ * @internal The main benefit of wrapping arbitrary types with this class is to
+ *     support NULL values and providing a unified interface for both primitive
+ *     types and composite types.
+ */
 template <typename T>
 class ConcreteValue : public AbstractValue {
     friend class AnyValue;
@@ -28,7 +38,10 @@ public:
     }
     
     /**
-     * This function will be specialized for immutable types.
+     * @brief Return whether this variable is mutable. Modifications to an
+     *     immutable variable will cause an exception.
+     *
+     * This function must be specialized for immutable types.
      */
     inline bool isMutable() const {
         return true;

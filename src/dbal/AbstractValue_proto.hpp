@@ -10,9 +10,9 @@
  * This class provides the interface that MADlib modules use for accessing input
  * and returning output values.
  *
- * Subclasses of AbstractValue can be recursive structures. In this case, values
- * are called \em compounds and are made up of several elements. Each of these
- * elements is again an AbstractValue (and can again be a compound).
+ * Instances of AbstractValue can be recursive tree structures. In this case,
+ * values are called \em compounds and are made up of several elements. Each of
+ * these elements is again of type AbstractValue (and can again be a compound).
  */
 class AbstractValue {
     friend class AnyValue;
@@ -20,18 +20,37 @@ class AbstractValue {
 public:
     virtual ~AbstractValue() { }
 
+    /**
+     * @brief Return the number of elements in this compound value (only
+     *     counting direct children)
+     */
     virtual unsigned int size() const {
         return 1;
     }
     
+    /**
+     * @brief Return whether this variable contains a true compound value (a
+     *     record in SQL terminology, equivalent to a \c struct in C).
+     */
     virtual bool isCompound() const {
         return false;
     }
     
+    /**
+     * @brief Return whether this variable is Null (as in SQL, do not confuse
+     *     with NULL pointers in C).
+     */
     virtual bool isNull() const {
         return false;
     }
     
+    /**
+     * @brief Return whether this variable is mutable. Modifications to an
+     *     immutable variable will cause an exception.
+     *
+     * @internal Immutable variables are key to avoiding unnecessary copying of
+     *     internal data structures.
+     */
     virtual bool isMutable() const {
         return true;
     }
@@ -57,14 +76,23 @@ protected:
     AbstractValue() {
     }
     
+    /**
+     * @brief Get the element at the given position (0-based).
+     */
     virtual AbstractValueSPtr getValueByID(unsigned int inID) const {
         return AbstractValueSPtr();
     }
     
+    /**
+     * @brief Return a deep copy of this variable.
+     */
     virtual AbstractValueSPtr clone() const {
         return AbstractValueSPtr();
     }
     
+    /**
+     * @brief Return a mutable copy of this variable.
+     */
     virtual AbstractValueSPtr mutableClone() const {
         return AbstractValueSPtr();
     }

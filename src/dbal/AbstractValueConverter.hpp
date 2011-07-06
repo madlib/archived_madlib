@@ -4,6 +4,12 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Interface for value-conversion call back
+ *
+ * This class declares a conversion functions for all types supported by the
+ * MADlib DB abstraction layer.
+ */
 class AbstractValueConverter {
 public:
     virtual ~AbstractValueConverter() { }

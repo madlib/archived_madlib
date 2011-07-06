@@ -7,10 +7,13 @@
 /**
  * @brief Class for representing any type.
  *
- * Instances of this class are a proxy to ConcreteValue.
+ * Instances of this class act a proxy to any arbitrary ConcreteValue<T>.
  */
 class AnyValue : public AbstractValue {
 public:
+    /**
+     * @brief Iterator for walking through the elements of a compund AnyValue.
+     */
     class iterator : public std::iterator<std::input_iterator_tag, AnyValue> {
     public:
         iterator(const AbstractValue &inValue)
@@ -112,6 +115,10 @@ public:
         return AbstractValue::size();
     }
     
+    /**
+     * @brief Perform a deep copy if this variable is not mutable, otherwise
+     *     return this
+     */
     AnyValue copyIfImmutable() const {
         // FIXME: Necessary to test: if (mDelegate)?
         if (mDelegate->isMutable())
@@ -125,6 +132,9 @@ public:
             mDelegate->convert(inConverter);
     }
     
+    /**
+     * @brief Access elements of a compound value
+     */
     AnyValue operator[](uint16_t inID) {
         AbstractValueSPtr valuePtr = getValueByID(inID);
         shared_ptr<const AnyValue> anyValuePtr(
@@ -141,11 +151,14 @@ public:
     
 protected:
     /**
-     * Cannot be instantiated directly.
+     * @internal Cannot be instantiated directly.
      */
     AnyValue() {
     }
     
+    /**
+     * @brief Perform a shallow copy.
+     */
     AbstractValueSPtr clone() const {
         return AbstractValueSPtr( new AnyValue(*this) );
     }

@@ -27,6 +27,7 @@ if(GREENPLUM_FOUND)
         ../postgres/dbconnector/PGAbstractValue.hpp
         ../postgres/dbconnector/PGAllocator.cpp
         ../postgres/dbconnector/PGAllocator.hpp
+        ../postgres/dbconnector/PGArrayHandle.cpp
         ../postgres/dbconnector/PGArrayHandle.hpp
         ../postgres/dbconnector/PGCommon.hpp
         dbconnector/GPCompatibility.cpp

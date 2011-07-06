@@ -5,13 +5,17 @@
  * @brief The MADlib Array class -- a thin wrapper around
  *        boost::const_multi_array_ref
  *
- * @internal Unfortunately, we have some duplicate code from Array.hpp. 
- *      A clean solution would to have Array_const a superclass of Array.
- *      However, \c const_multi_array_ref is not a virtual superclass of
- *      \c multi_array_ref, so this is not feasible.
- *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief A thin wrapper around boost::multi_array_ref, the Boost class for
+ *     multi-dimensional arrays
+ *
+ * @internal Unfortunately, we have some duplicate code from Array. 
+ *      A clean solution would be to have Array_const a superclass of Array.
+ *      However, \c const_multi_array_ref is not a virtual superclass of
+ *      \c multi_array_ref, so this is not feasible.
+ */
 template <typename T, std::size_t NumDims>
 class Array_const : public const_multi_array_ref<T, NumDims> {
 public:
