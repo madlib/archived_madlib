@@ -42,4 +42,14 @@ td.paramname {
     padding: 1px 1em 1px 0;
 }
 
+dl.literature dt {
+    clear: left;
+    float: left;
+    font-size: 100%;
+    font-weight: normal;
+    padding-right: 10px;
+    text-align: right;
+    width: 30px;
+}
+
 EOF
