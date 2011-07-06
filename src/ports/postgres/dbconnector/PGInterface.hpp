@@ -37,12 +37,12 @@ namespace dbconnector {
  *    call, current aggregate function, or current transaction. Memory
  *    allocation using \c palloc() always occurs within a specific memory
  *    context -- and once a memory context goes out of scope all memory
- *    associated with will be deallocated (garbage collected).\n
+ *    associated with it will be deallocated (garbage collected).\n
  *    .
  *    As a second safety measure we therefore redefine <tt>operator new</tt> and
- *    <tt>operator delete</tt> to call \c palloc() and \c pfree(). (Note,
- *    however, that this is a protection against leaking C++ code. Given 1., no
- *    C++ destructor call will ever be missed.)
+ *    <tt>operator delete</tt> to call \c palloc() and \c pfree(). (This is
+ *    essentially an \b additional protection against leaking C++ code. Given
+ *    1., no C++ destructor call will ever be missed.)
  *
  * @see PGAllocator
  */

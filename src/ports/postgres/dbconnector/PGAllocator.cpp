@@ -100,7 +100,7 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
 
     if (errorOccurred) {
         PG_TRY(); {
-            // Probably not necessary but we clean up after ourselves
+            // Clean up after ourselves
             if (oldContext != NULL)
                 MemoryContextSwitchTo(oldContext);
         } PG_CATCH(); {
@@ -119,12 +119,11 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
 /**
  * @brief Allocate memory in "our" PostgreSQL memory context. Never throw.
  *
- * In case allocation fails, do not throw an exception. Choosing a memory
- * context is not currently supported for
- * PGAllocator(const uint32_t, const std::nothrow_t&).
+ * In case allocation fails, do not throw an exception. ALso, make sure we do
+ * not leave in an error state. Instead, we just return NULL.
  *
  * We will hold back interrupts while in this function because we do not want
- * to flush the postgres error state, unless it is related to memory allocation.
+ * to flush the postgres error state unless it is related to memory allocation.
  * (We have to flush the error state because we cannot throw exceptions within
  * allocate).
  *
@@ -144,6 +143,8 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
     throw() {
     
     void *ptr = NULL;
+    bool errorOccurred = false;
+    MemoryContext oldContext = NULL;
     MemoryContext aggContext = NULL;
     
     /*
@@ -155,9 +156,15 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
     
     HOLD_INTERRUPTS();
     PG_TRY(); {
-        if (mContext != kAggregate ||
-            AggCheckCallContext(mPGInterface->fcinfo, &aggContext)) {
-        
+        if (mContext == kAggregate) {
+            if (!AggCheckCallContext(mPGInterface->fcinfo, &aggContext))
+                errorOccurred = true;
+            else {
+                oldContext = MemoryContextSwitchTo(aggContext);
+                ptr = palloc(inSize);
+                MemoryContextSwitchTo(oldContext);
+            }
+        } else {
             ptr = palloc(inSize);
         }
     } PG_CATCH(); {
@@ -171,6 +178,18 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
         FlushErrorState();
         ptr = NULL;
     } PG_END_TRY();
+    
+    if (errorOccurred) {
+        PG_TRY(); {
+            // Clean up after ourselves
+            if (oldContext != NULL)
+                MemoryContextSwitchTo(oldContext);
+        } PG_CATCH(); {
+            // We tried to clean up after ourselves. If this fails, we can only
+            // ignore the issue.
+            FlushErrorState();
+        }; PG_END_TRY();
+    }
     RESUME_INTERRUPTS();
     
     return ptr;
