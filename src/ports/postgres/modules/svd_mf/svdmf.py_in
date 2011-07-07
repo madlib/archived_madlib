@@ -126,37 +126,37 @@ def svdmf_run_full( madlib_schema, input_matrix, col_name, row_name, value, num_
 		row_num INT, 
 		col_num INT,
 		val FLOAT
-	) m4_ifdef( `GREENPLUM', `WITH (appendonly=True) DISTRIBUTED BY (row_num, col_num)');
+	) m4_ifdef( `GREENPLUM', `DISTRIBUTED BY (row_num, col_num)');
 	DROP TABLE IF EXISTS S1;
 	CREATE TEMP TABLE S1(
 		col_num INT,
 		row_num INT,
 		val FLOAT
-	) m4_ifdef( `GREENPLUM', `WITH (appendonly=True) DISTRIBUTED BY (col_num)');
+	) m4_ifdef( `GREENPLUM', `DISTRIBUTED BY (col_num)');
 	DROP TABLE IF EXISTS S2;
 	CREATE TEMP TABLE S2(
 		col_num INT,
 		row_num INT,
 		val FLOAT
-	) m4_ifdef( `GREENPLUM', `WITH (appendonly=True) DISTRIBUTED BY (col_num)');
+	) m4_ifdef( `GREENPLUM', `DISTRIBUTED BY (col_num)');
 	DROP TABLE IF EXISTS D1;
 	CREATE TEMP TABLE D1(
 		row_num INT,
 		col_num INT,
 		val FLOAT
-	) m4_ifdef( `GREENPLUM', `WITH (appendonly=True) DISTRIBUTED BY (row_num)');
+	) m4_ifdef( `GREENPLUM', `DISTRIBUTED BY (row_num)');
 	DROP TABLE IF EXISTS D2;
 	CREATE TEMP TABLE D2(
 		row_num INT,
 		col_num INT,
 		val FLOAT
-	) m4_ifdef( `GREENPLUM', `WITH (appendonly=True) DISTRIBUTED BY (row_num)');
+	) m4_ifdef( `GREENPLUM', `DISTRIBUTED BY (row_num)');
 	DROP TABLE IF EXISTS e;
 	CREATE TABLE e(
 		row_num INT, 
 		col_num INT,
 		val FLOAT
-	) m4_ifdef( `GREENPLUM', `WITH (appendonly=True) DISTRIBUTED BY (row_num,col_num)');
+	) m4_ifdef( `GREENPLUM', `DISTRIBUTED BY (row_num,col_num)');
 	''';
 	plpy.execute(sql);
 
@@ -192,7 +192,8 @@ def svdmf_run_full( madlib_schema, input_matrix, col_name, row_name, value, num_
 		plpy.execute(sql);
 		
 		# Create current predictions for the values and compute error per term
-		plpy.execute('INSERT INTO e SELECT a.row_num, a.col_num, a.val-o.prod FROM (SELECT s.row_num, d.col_num, '+madlib_schema+'.array_dot(d.val,s.val) AS prod FROM (SELECT row_num, array_agg(val ORDER BY col_num) AS val FROM S'+str(SD_ind)+' GROUP BY row_num) AS s CROSS JOIN (SELECT col_num, array_agg(val ORDER BY row_num) AS val FROM D'+str(SD_ind)+' GROUP BY col_num) AS d) as o, e1 as a WHERE a.row_num=o.row_num AND a.col_num=o.col_num;');
+		#plpy.execute('INSERT INTO e SELECT a.row_num, a.col_num, a.val-o.prod FROM (SELECT s.row_num, d.col_num, '+madlib_schema+'.array_dot(d.val,s.val) AS prod FROM (SELECT row_num, array_agg(val ORDER BY col_num) AS val FROM S'+str(SD_ind)+' GROUP BY row_num) AS s CROSS JOIN (SELECT col_num, array_agg(val ORDER BY row_num) AS val FROM D'+str(SD_ind)+' GROUP BY col_num) AS d) as o, e1 as a WHERE a.row_num=o.row_num AND a.col_num=o.col_num;');
+		plpy.execute('INSERT INTO e SELECT a.row_num, a.col_num, a.val-o.prod FROM (SELECT s.row_num, d.col_num, sum(s.val*d.val) AS prod FROM S'+str(SD_ind)+' AS s JOIN D'+str(SD_ind)+' AS d ON d.row_num = s.col_num GROUP BY s.row_num, d.col_num) AS o, e1 AS a WHERE a.row_num=o.row_num AND a.col_num=o.col_num');
 		old_error = error;
 				
 		res = plpy.execute('SELECT sqrt(sum(val*val)) AS c FROM e;');
@@ -222,9 +223,13 @@ def svdmf_run_full( madlib_schema, input_matrix, col_name, row_name, value, num_
 		plpy.execute('TRUNCATE TABLE S'+str(SD_ind%2+1)+';');
 		plpy.execute('TRUNCATE TABLE D'+str(SD_ind%2+1)+';');
 	
-		# Update values of the vectors    
-		plpy.execute('INSERT INTO S'+str(SD_ind%2+1)+' SELECT s.col_num, s.row_num, s.val+'+str(step)+'*o.prod FROM (SELECT e.row_num, d.row_num as col_num, '+madlib_schema+'.array_dot(d.val,e.val) AS prod FROM (SELECT row_num, array_agg(val ORDER BY col_num) AS val FROM e GROUP BY row_num) AS e CROSS JOIN (SELECT row_num, array_agg(val ORDER BY col_num) AS val FROM D'+str(SD_ind)+' GROUP BY row_num) AS d) as o, S'+str(SD_ind)+' as s WHERE s.col_num = o.col_num AND s.row_num = o.row_num;');
-		plpy.execute('INSERT INTO D'+str(SD_ind%2+1)+' SELECT d.row_num, d.col_num, d.val+'+str(step)+'*o.prod FROM (SELECT s.col_num AS row_num, e.col_num, '+madlib_schema+'.array_dot(e.val,s.val) AS prod FROM (SELECT col_num, array_agg(val ORDER BY row_num) AS val FROM S'+str(SD_ind)+' GROUP BY col_num) AS s CROSS JOIN (SELECT col_num, array_agg(val ORDER BY row_num) AS val FROM e GROUP BY col_num) AS e) as o, D'+str(SD_ind)+' as d WHERE d.col_num = o.col_num AND d.row_num = o.row_num;');  
+		# Update values of the vectors   
+		# The commented out line are an implementation that uses ordered aggrigates that we chose to avoid for compatibility reasons 
+		#plpy.execute('INSERT INTO S'+str(SD_ind%2+1)+' SELECT s.col_num, s.row_num, s.val+'+str(step)+'*o.prod FROM (SELECT e.row_num, d.row_num as col_num, '+madlib_schema+'.array_dot(d.val,e.val) AS prod FROM (SELECT row_num, array_agg(val ORDER BY col_num) AS val FROM e GROUP BY row_num) AS e CROSS JOIN (SELECT row_num, array_agg(val ORDER BY col_num) AS val FROM D'+str(SD_ind)+' GROUP BY row_num) AS d) as o, S'+str(SD_ind)+' as s WHERE s.col_num = o.col_num AND s.row_num = o.row_num;');
+		#plpy.execute('INSERT INTO D'+str(SD_ind%2+1)+' SELECT d.row_num, d.col_num, d.val+'+str(step)+'*o.prod FROM (SELECT s.col_num AS row_num, e.col_num, '+madlib_schema+'.array_dot(e.val,s.val) AS prod FROM (SELECT col_num, array_agg(val ORDER BY row_num) AS val FROM S'+str(SD_ind)+' GROUP BY col_num) AS s CROSS JOIN (SELECT col_num, array_agg(val ORDER BY row_num) AS val FROM e GROUP BY col_num) AS e) as o, D'+str(SD_ind)+' as d WHERE d.col_num = o.col_num AND d.row_num = o.row_num;');
+		
+		plpy.execute('INSERT INTO S'+str(SD_ind%2+1)+' SELECT s.col_num, s.row_num, s.val+'+str(step)+'*o.prod FROM (SELECT e.row_num, d.row_num AS col_num, sum(e.val*d.val) AS prod FROM e JOIN D'+str(SD_ind)+' AS d ON e.col_num = d.col_num GROUP BY e.row_num, d.row_num) AS o, S'+str(SD_ind)+' AS s WHERE s.row_num=o.row_num AND s.col_num=o.col_num');  
+		plpy.execute('INSERT INTO D'+str(SD_ind%2+1)+' SELECT d.row_num, d.col_num, d.val+'+str(step)+'*o.prod FROM (SELECT s.col_num AS row_num, e.col_num, sum(e.val*s.val) AS prod FROM e JOIN S'+str(SD_ind)+' AS s ON s.row_num = e.row_num GROUP BY e.col_num, s.col_num) AS o, D'+str(SD_ind)+' AS d WHERE d.row_num=o.row_num AND d.col_num=o.col_num');
 		
 		SD_ind = SD_ind%2+1;
 		
