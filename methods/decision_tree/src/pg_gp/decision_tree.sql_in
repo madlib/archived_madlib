@@ -3,208 +3,145 @@
  * @file decision_tree.sql_in
  *
  * @brief SQL implementation of a decision tree
- * @date   January 2011
- *
+ * @date January 2011
  *
  *//* ----------------------------------------------------------------------- */
 
 /**
 @addtogroup grp_dectree
 
-
 @about
 
-This module provides a version of decision tree based on C4.5 decision tree algorithm, but with several modifications. 
-It uses sparse vectors for storage of data. Algorithm assumes that:
-1) The data set is very large
-2) It is sparse
-3) Data features come from a discrete set of variables, example: {1,2,3,4,5} 
+This module provides an implementation of the C4.5 decision tree algorithm, 
+but with several modifications. It assumes that:
+- The data set is very large.
+- It is sparse (that's why it uses sparse vector data type for storage).
+- Data features come from a discrete set of variables, example: {1,2,3,4,5}. 
 
-Given assumption of very large amount of data sparse data (as the input) the algorithm implements several additional steps: 
-It starts by eliminating all the redundant points, producing a smaller subset of unique, weighted points.
-Further assuming a very large number of features at each step algorithm test only a subset of features to find the best split criteria,
-not all possible features. 
+Because we assume very large amount of sparse data as input the following 
+additional steps have been implemented: 
+- The algorithm starts by eliminating all redundant points, 
+by producing a smaller subset of unique, weighted points.
+- Further assuming a very large number of features at each step 
+algorithm test only a subset of features (instead of all possible features) 
+to find the best split criteria.
 
-@prereq
+@input
 
-None.
+The <b>training data</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>trainingSource</em> (
+    ...
+    <em>id</em> INTEGER,
+    <em>features</em> SVEC,
+    <em>class</em> INTEGER,
+    ...
+)</pre>
+
+The <b>data to classify</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>classifySource</em> (
+    ...
+    <em>id</em> INTEGER,
+    <em>features</em> SVEC,
+    ...
+)</pre>
 
 @usage
 
-Algorithm assume that each table to be classified has the following columns:
-id INT - unique identifier of each point
-feature SVEC - sparse vector representing observed features of a point
-class INT - (for training data only) true class of the data point
-
-Function: <tt>Train_Tree('<em>table_input</em>', '<em>id_col_name</em>', '<em>feature_col_name</em>', '<em>class_col_name</em>', '<em>num_values</em>', '<em>max_num_iter</em>')
-
-Parameters:
-    - <em>table_input</em> :     name of the table/view with the source data
-    - <em>id_col_name</em> :     name of the column containing id of each point
-    - <em>feature_col_name</em> :name of the column containing feature vector of each point
-    - <em>class_col_name</em> :  name of the column containing correct class of each point
-    - <em>num_values</em> :      max number of classes that may be encountered 
-    - <em>max_num_iter</em> :    max number of branches to follow (eg. 2000)
+- Run the training algorithm on the source data:
+  <pre>SELECT * FROM \ref train_tree(
+    '<em>table_input</em>', '<em>id_col_name</em>', '<em>feature_col_name</em>', 
+    '<em>class_col_name</em>', '<em>num_values</em>', '<em>max_num_iter</em>'
+    );</pre>
+  This will create the MADLIB_SCHEMA.tree table storing an abstract object 
+  (representing the model) used for further classification. Column names:
+  <pre> id | tree_location | hash | feature | probability | chisq | maxclass | infogain | live | cat_size | parent_id | jump     
+----+---------------+------+---------+-------------+-------+----------+----------+------+----------+-----------+------
+                                                     ...</pre>    
     
-Resulting tree is stored into:
-
-\code
-CREATE TABLE MADLIB_SCHEMA.tree(
-	id SERIAL,
-	tree_location INT[],
-	hash INT,
-	feature INT,
-	probability FLOAT,
-	chisq FLOAT,
-	maxclass INTEGER,
-	infogain FLOAT,
-	live INT,
-	cat_size INT,
-	parent_id INT,
-	jump INT[]
-) DISTRIBUTED BY (id);
-\endcode
-
-Meaning of the values explained in detail in the example below. You can think of this as an abstract object containing model for further classification.  
-    
-Function: <tt>Classify_Tree('<em>table_name</em>', '<em>id_col_name</em>', '<em>feature_col_name</em>', '<em>num_values</em>')
-
-Parameters:
-    - <em>table_input</em> :     name of the table/view with the source data
-    - <em>id_col_name</em> :     name of the column containing id of each point
-    - <em>feature_col_name</em> :name of the column containing feature vector of each point
-    - <em>num_values</em> :      max number of classes that may be encountered 
-    
-Resulting classification is stored into:
-
-\code
-CREATE TABLE MADLIB_SCHEMA.classified_points(
-		id INT,	-- point id
-		feature MADLIB_SCHEMA.svec, -- point feature vector
-		jump INT, -- intermediate value used to distinguish leaf nodes
-		class INT, -- predicted class
-		prob FLOAT -- probability of the class label
-	) DISTRIBUTED BY (jump);
-\endcode
+- Run the classification function using the learned model: 
+  <pre>SELECT * FROM \ref classify_tree(
+    '<em>table_name</em>', '<em>id_col_name</em>', '<em>feature_col_name</em>', 
+    '<em>num_values</em>');</pre>
+  This will create the MADLIB_SCHEMA.classified_points table with the 
+  classification results. Column names:
+  <pre> id | feature | jump | class | prob 
+----+---------+------+-------+------
+               ...</pre> 
 
 @examp
 
-1) Prepare an input table/view:
-
-\code
-CREATE TABLE decision_tree_data (
- id INT,
- class INT,
- feature SVEC
-);
-\endcode
-     
-2) Populate the input table with some data. For example:   
-3) To train call:  Train_Tree('decision_tree_data','id','class','feature',5, 5000)   
-
-\code
-psql:INFO:  INPUT TABLE SIZE: 5000
-psql:INFO:  TABLE SIZE AFTER COMPRESSION: 8
-psql:INFO:  NUMBER OF CLASSES IN THE TRAINING SET 5
-psql:INFO:  CURRENT SELECTION 1 CATEGORY SIZE 5000
-psql:INFO:  CURRENT SELECTION 3 CATEGORY SIZE 2500
-psql:INFO:  CURRENT SELECTION 4 CATEGORY SIZE 2500
-psql:INFO:  CURRENT SELECTION 14 CATEGORY SIZE 1500
-psql:INFO:  CURRENT SELECTION 15 CATEGORY SIZE 1000
-psql:INFO:  CURRENT SELECTION 26 CATEGORY SIZE 2500
-psql:INFO:  CURRENT SELECTION 36 CATEGORY SIZE 1500
-psql:INFO:  CURRENT SELECTION 58 CATEGORY SIZE 1000
-psql:INFO:  CURRENT SELECTION 59 CATEGORY SIZE 1500
-psql:INFO:  CURRENT SELECTION 82 CATEGORY SIZE 1000
-psql:INFO:  CURRENT SELECTION 94 CATEGORY SIZE 1500
-psql:INFO:  CURRENT SELECTION 118 CATEGORY SIZE 1500
-psql:INFO:  EXIT: LIMIT 2859 OR NO NODES LEFT
-psql:INFO:  -------> FINAL TIME 00:00:01.66803
-\endcode
-
-4) check the tree format: SELECT * FROM MADLIB_SCHEMA.tree ORDER BY id;
-
-\code
- id |  tree_location  |    hash     | feature | probability |        chisq         | maxclass |     infogain      | live | cat_size | parent_id |     jump      
-----+-----------------+-------------+---------+-------------+----------------------+----------+-------------------+------+----------+-----------+---------------
-  1 | {0}             |    12459841 |       1 |       0.125 |                    0 |        1 | 0.554517744447956 |    0 |     5000 |         0 | [2:3]={2,3}
-  2 | {0,1}           |  2106753344 |       3 |        0.25 |                    0 |        1 | 0.395752794785278 |    0 |     2500 |         1 | [2:3]={4,5}
-  3 | {0,2}           |  2106753345 |       1 |         0.5 |             0.999999 |        4 |                 0 |    0 |     2500 |         1 | [3:3]={6}
-  4 | {0,1,1}         |  -856809791 |       3 |         0.5 |             0.999999 |        1 |                 0 |    0 |     1500 |         2 | [2:2]={7}
-  5 | {0,1,2}         |  -856809790 |       5 |         0.5 | 8.5601192559365e-210 |        2 | 0.693147180559945 |    0 |     1000 |         2 | [2:3]={8,9}
-  6 | {0,2,2}         |  -856744127 |       5 |         0.5 |                    0 |        4 | 0.395752794785278 |    0 |     2500 |         3 | [2:3]={10,11}
-  7 | {0,1,1,1}       |  -924696128 |       5 |         0.5 |                    0 |        1 | 0.636514168294813 |    0 |     1500 |         4 | [2:3]={12,13}
-  8 | {0,1,2,1}       |  -924630465 |       1 |           1 |                    1 |        2 |                 0 |    0 |      500 |         5 | 
-  9 | {0,1,2,2}       |  -924630464 |       1 |           1 |                    1 |        3 |                 0 |    0 |      500 |         5 | 
- 10 | {0,2,2,1}       |  -907968192 |       5 |         0.5 |             0.999999 |        3 |                 0 |    0 |     1000 |         6 | [2:2]={14}
- 11 | {0,2,2,2}       |  -907968191 |       5 |         0.5 |             0.999999 |        5 |                 0 |    0 |     1500 |         6 | [3:3]={15}
- 12 | {0,1,1,1,1}     |  -369189311 |       1 |           1 |                    1 |        1 |                 0 |    0 |     1000 |         7 | 
- 13 | {0,1,1,1,2}     |  -369189310 |       1 |           1 |                    1 |        2 |                 0 |    0 |      500 |         7 | 
- 14 | {0,2,2,1,1}     | -1474355519 |       3 |         0.5 | 8.5601192559365e-210 |        3 | 0.693147180559945 |    0 |     1000 |        10 | [2:3]={16,17}
- 15 | {0,2,2,2,2}     | -1474289855 |       5 |         0.5 |             0.999999 |        5 |                 0 |    0 |     1500 |        11 | [3:3]={18}
- 16 | {0,2,2,1,1,1}   | -2043592256 |       1 |           1 |                    1 |        3 |                 0 |    0 |      500 |        14 | 
- 17 | {0,2,2,1,1,2}   | -2043592255 |       1 |           1 |                    1 |        4 |                 0 |    0 |      500 |        14 | 
- 18 | {0,2,2,2,2,2}   | -2026864319 |       3 |         0.5 |                    0 |        5 | 0.636514168294813 |    0 |     1500 |        15 | [2:3]={19,20}
- 19 | {0,2,2,2,2,2,1} | -1840177344 |       1 |           1 |                    1 |        4 |                 0 |    0 |      500 |        18 | 
- 20 | {0,2,2,2,2,2,2} | -1840177343 |       1 |           1 |                    1 |        5 |                 0 |    0 |     1000 |        18 | 
-(20 rows)
-\endcode
-
-This table includes a lot of information that us hard to read, but it is necessary when such tree is used as a model for classification task. Here is a brief 
-description of the fields:
-	- <em>id<\em>:				id of branching point of a tree
-	- <em>tree_location<\em>:	set of values that lead to this branch. 0 is the initial point (no value), then set of value. But this path does not specify which feature was used for the branching.
-	- <em>hash<\em>:			hash value of the path. Unique for quick unique identification
-	- <em>feature<\em>:			which feature in the feature vector was used for branching at this split. Notice that this feature is not used in the current tree_location, it will be used in the next step.
-	- <em>probability<\em>:		if forced to make a call for a dominant class at the given point this would be the confidence of the call. Due to the execution this is only an estimated value
-	- <em>chisq<\em>:			chisq value of the branching significance, used to determine termination of the branch
-	- <em>maxclass<\em>:		if forced to make a call for a dominant class at the given point this would be the class
-	- <em>infogain<\em>:		information gain computed using entropy at this point, also used to determine termination of the branch
-	- <em>live<\em>:			indication if the branch is still growing. Live means 1. Exit value may be 1 is number of branches reached before termination condition is met
-	- <em>cat_size<\em>:		number of data point at this branch point
-	- <em>parent_id<\em>:		id of the parent branch  	
-	- <em>jump<\em>:			location of children for each feature value. Notice that assuming that the data is sparse we can have value 0 - representing no value
-	Result such as [2:3]={2,3}, should be read: jump['feature value'+1], so in this case there were no 0-value points for this feature. For value 1 jump to 2; for value 2 jump to 3;   
-	
-5) to classify some other data, stored in this case in table also called points call: MADLIB_SCHEMA.Classify_Tree('Points','id','feature',10)
-
-\code
-psql:INFO:  CLASSIFICATION STEP [1] CLASSIFIED: <NULL> TO BE CLASSIFIED: <NULL>
-psql:INFO:  CLASSIFICATION STEP [2] CLASSIFIED: 0 TO BE CLASSIFIED: 5000
-….
-psql:INFO:  CLASSIFICATION STEP [20] CLASSIFIED: 2500 TO BE CLASSIFIED: 2500
-psql:INFO:  CLASSIFICATION STEP [<NULL>] CLASSIFIED: 2500 TO BE CLASSIFIED: 2500
+-# Prepare an input table/view, e.g.:
+\verbatim
+sql> SELECT * FROM data.training LIMIT 10;
+ id |           feature           | class 
+----+-----------------------------+-------
+  1 | {1,1,1,1,1,5}:{1,0,1,0,1,0} |     1
+  3 | {1,1,1,1,1,5}:{1,0,2,0,2,0} |     3
+  5 | {1,1,1,1,1,5}:{2,0,2,0,2,0} |     5
+  7 | {1,1,1,1,1,5}:{1,0,1,0,2,0} |     2
+  9 | {1,1,1,1,1,5}:{2,0,2,0,1,0} |     4
+ 11 | {1,1,1,1,1,5}:{1,0,1,0,1,0} |     1
+ 13 | {1,1,1,1,1,5}:{1,0,2,0,2,0} |     3
+ 15 | {1,1,1,1,1,5}:{2,0,2,0,2,0} |     5
+ 17 | {1,1,1,1,1,5}:{1,0,1,0,2,0} |     2
+ 19 | {1,1,1,1,1,5}:{2,0,2,0,1,0} |     4
+(10 rows)
+\endverbatim
+-# Train the decision tree model, e.g.:
+\verbatim
+sql> SELECT * FROM train_tree( 'data.training', 'id', 'feature', 'class', 5, 5000);   
+INFO:  selected_dimensions = {1,2,3,4,5,6,7,8,9,10} , sample dimentions = 10
+CONTEXT:  PL/pgSQL function "train_tree" line 71 at assignment
+SQL statement "SELECT  mad.Train_Tree( $1 ,  $2 ,  $3 ,  $4 ,  $5 ,  $6 , 0)"
+...
+ train_tree 
+------------
+ 
+(1 row)
+\endverbatim
+-# Check few rows from the tree model table:
+\verbatim
+sql> SELECT * FROM MADLIB_SCHEMA.tree ORDER BY id LIMIT 10;
+ id | tree_location |    hash    | feature |    probability    |         chisq         | maxclass |     infogain      | live | cat_size | parent_id |     jump      
+----+---------------+------------+---------+-------------------+-----------------------+----------+-------------------+------+----------+-----------+---------------
+  1 | {0}           |   12459841 |       1 |               0.2 |                     0 |        1 | 0.554517744447956 |    0 |     5000 |         0 | [2:3]={2,3}
+  2 | {0,1}         | 2106753344 |       5 |               0.4 |                     0 |        1 | 0.395752794785278 |    0 |     2500 |         1 | [2:3]={4,5}
+  3 | {0,2}         | 2106753345 |       5 |               0.4 |                     0 |        4 | 0.395752794785278 |    0 |     2500 |         1 | [2:3]={6,7}
+  4 | {0,1,1}       | -856809791 |       3 | 0.666666666666667 |                     0 |        1 | 0.636514168294813 |    0 |     1500 |         2 | [2:3]={8,9}
+  5 | {0,1,2}       | -856809790 |       3 |               0.5 | 1.78114410168526e-215 |        2 | 0.693147180559945 |    0 |     1000 |         2 | [2:3]={10,11}
+  6 | {0,2,1}       | -856744128 |       3 |               0.5 | 1.78114410168526e-215 |        3 | 0.693147180559945 |    0 |     1000 |         3 | [2:3]={12,13}
+  7 | {0,2,2}       | -856744127 |       3 | 0.666666666666667 |                     0 |        5 | 0.636514168294813 |    0 |     1500 |         3 | [2:3]={14,15}
+  8 | {0,1,1,1}     | -924696128 |       1 |                 1 |                     1 |        1 |                 0 |    0 |     1000 |         4 | 
+  9 | {0,1,1,2}     | -924696127 |       1 |                 1 |                     1 |        2 |                 0 |    0 |      500 |         4 | 
+ 10 | {0,1,2,1}     | -924630465 |       1 |                 1 |                     1 |        2 |                 0 |    0 |      500 |         5 | 
+(10 rows)
+\endverbatim
+-# To classify the new data points run:
+\verbatim
+sql> SELECT * FROM classify_tree( 'toclassify', 'id', 'feature', 10);
  classify_tree 
 ---------------
  
 (1 row)
-\endcode
+\endverbatim
+-# Check classification results: 
+\verbatim
+SELECT * FROM MADLIB_SCHEMA.classified_points ORDER BY id LIMIT 4;
+ id |           feature           | jump | class |       prob        
+----+-----------------------------+------+-------+-------------------
+  1 | {1,1,1,1,1,5}:{3,3,3,3,3,3} |    0 |     5 | 0.207920792079208
+  2 | {1,1,1,1,1,5}:{1,0,1,0,4,4} |    0 |     5 | 0.207920792079208
+  3 | {1,1,1,1,1,5}:{1,3,1,0,0,0} |    0 |     5 | 0.207920792079208
+  4 | {1,1,1,1,1,5}:{0,0,0,0,1,1} |    0 |     1 | 0.333333333333333
+(4 rows)
+\endverbatim
 
-6) check classification: SELECT * FROM MADLIB_SCHEMA.classified_points ORDER BY id LIMIT 10;
+@literature
 
-\code
- id  |           feature           | jump | class | prob 
------+-----------------------------+------+-------+------
-   1 | {1,1,1,1,1,5}:{1,0,1,0,1,0} |    0 |     1 |    1
-   2 | {1,1,1,1,1,5}:{1,0,1,0,2,0} |    0 |     2 |    1
-   3 | {1,1,1,1,1,5}:{1,0,2,0,2,0} |    0 |     3 |    1
-   4 | {1,1,1,1,1,5}:{2,0,2,0,1,0} |    0 |     4 |    1
-   5 | {1,1,1,1,1,5}:{2,0,2,0,2,0} |    0 |     5 |    1
-   6 | {1,1,1,1,1,5}:{1,0,1,0,1,0} |    0 |     1 |    1
-   7 | {1,1,1,1,1,5}:{1,0,1,0,2,0} |    0 |     2 |    1
-   8 | {1,1,1,1,1,5}:{1,0,2,0,2,0} |    0 |     3 |    1
-   9 | {1,1,1,1,1,5}:{2,0,2,0,1,0} |    0 |     4 |    1
-  10 | {1,1,1,1,1,5}:{2,0,2,0,2,0} |    0 |     5 |    1
- \endcode
+[1] http://en.wikipedia.org/wiki/C4.5_algorithm
 
-@sa file decision-tree.sql_in (documenting the SQL functions)
+@sa File decision_tree.sql_in documenting the SQL functions.
 */
-
-/**
- * @brief Sparse decision tree
- *
- * Takes as the input an input a table containing a decision tree. 
- */
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.hash_array(INT4[]);
 CREATE FUNCTION MADLIB_SCHEMA.hash_array(INT4[]) RETURNS INT4 
@@ -732,6 +669,26 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.declare_tree_tables() RETURNS void AS $
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 end $$ LANGUAGE plpgsql;
 
+/**
+ * @brief Classify data points using trained decision tree model
+ *
+ * @param table_name Name of the table/view with the source data
+ * @param id_col_name Name of the column containing id of each point
+ * @param feature_col_name Name of the column containing feature vector of each point
+ * @param num_values Max number of classes that may be encountered
+ * @param verbosity If set to 1 will use verbose mode
+ *
+ * @return Table MADLIB_SCHEMA.classified_points:
+ *  - <tt>id INT</tt> - Point id.
+ *  - <tt>feature MADLIB_SCHEMA.SVEC</tt> - Point feature vector. 
+ *  - <tt>jump INT</tt> - Intermediate value used to distinguish leaf nodes.
+ *  - <tt>class INT</tt> - Class prediction. 
+ *  - <tt>prob FLOAT</tt> - Probability of the predicted class.
+ *
+ * @note This function starts an iterative algorithm. It is not an aggregate
+ *       function. Source and column names have to be passed as strings (due to
+ *       limitations of the SQL syntax).
+ */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.Classify_Tree(TEXT, TEXT, TEXT, INT, INT);
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.Classify_Tree(table_name TEXT, id_col_name TEXT, feature_col_name TEXT, num_values INT, verbosity INT) RETURNS void AS $$
 declare
@@ -828,7 +785,49 @@ begin
 end
 $$ language plpgsql;
 
-DROP FUNCTION IF EXISTS  MADLIB_SCHEMA.Train_Tree(TEXT, TEXT, TEXT, TEXT, INT, INT, INT);
+/**
+ * @brief Train a decision tree model
+ *
+ * @param table_input Name of the table/view with the source data
+ * @param id_col_name Name of the column containing id of each point
+ * @param feature_col_name Name of the column containing feature vector of each point
+ * @param class_col_name Name of the column containing correct class of each point
+ * @param num_values Max number of classes that may be encountered
+ * @param max_num_iter Max number of branches to follow (e.g. 2000)
+ * @param verbosity If True (or 1) will run in verbose mode
+ *
+ * @return Table MADLIB_SCHEMA.tree:
+ *  - <tt>id SERIAL</tt> - Tree node id
+ *  - <tt>tree_location INT[]</tt> - Set of values that lead to this branch. 
+ *     0 is the initial point (no value). But this path does not specify which 
+ *     feature was used for the branching.
+ *  - <tt>hash INT</tt>: Hash value of the path. For quick unique identification.
+ *  - <tt>feature INT</tt>: Which element of the feature vector was used for 
+ *     branching at this node. Notice that this feature is not used in the current 
+ *     <tt>tree_location</tt>, it will be added in the next step.
+ *  - <tt>probability FLOAT</tt> - If forced to make a call for a dominant class 
+ *     at a given point this would be the confidence of the call (this is only an 
+ *     estimated value).
+ *  - <tt>chisq FLOAT</tt> - Chi-square value of the branching significance, 
+ *     used to determine termination of the branch.
+ *  - <tt>maxclass INTEGER</tt> - If forced to make a call for a dominant class 
+ *     at a given point this is the selected class.
+ *  - <tt>infogain FLOAT</tt> - Information gain computed using entropy (at this 
+ *     node), also used to determine termination of the branch.
+ *  - <tt>live INT</tt> - Indication that the branch is still growing. 1 means "live". 
+ *     Exit value may be 1 if number of branches reached before termination condition is met.
+ *  - <tt>cat_size INT</tt> - Number of data point at this node.
+ *  - <tt>parent_id INT</tt> - Id of the parent branch.
+ *  - <tt>jump INT[]</tt> - Location of children for each feature value. Notice 
+ *     that assuming that the data is sparse we can have value 0 - representing 
+ *     no value. Result such as [2:3]={2,3}, should be read: 
+ *     jump['feature value'+1], so in this case there were no 0-value points for 
+ *     this feature. For value 1 jump to 2; for value 2 jump to 3;
+ *
+ * @note This function starts an iterative algorithm. It is not an aggregate
+ *       function. Source and column names have to be passed as strings (due to
+ *       limitations of the SQL syntax).
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.Train_Tree(table_input TEXT, id_col_name TEXT, feature_col_name TEXT, class_col_name TEXT, num_values INT, max_num_iter INT, verbosity INT) RETURNS void AS $$
 declare
 	feature_dimention INT;
@@ -944,7 +943,6 @@ begin
 end
 $$ language plpgsql;
 
-DROP FUNCTION IF EXISTS  MADLIB_SCHEMA.Train_Tree(TEXT, TEXT, TEXT, TEXT, INT, INT);
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.Train_Tree(table_input TEXT, id_col_name TEXT, feature_col_name TEXT, class_col_name TEXT, num_values INT, max_num_iter INT) RETURNS void AS $$
 begin
 	PERFORM MADLIB_SCHEMA.Train_Tree(table_input, id_col_name, feature_col_name, class_col_name, num_values, max_num_iter, 0);
