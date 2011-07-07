@@ -841,6 +841,12 @@ def main( argv):
     ###
     elif args.command[0] == 'install' or args.command[0] == 'update':
 
+        if not portid: 
+            __error( "Missing -p/--platform parameter.", True)
+
+        if not con_args:
+            __error( "Unknown problem with database connection string: %s" % con_args, True)
+        
         # 1) Compare OS and DB versions. Continue if OS > DB.
         __print_revs( rev, dbrev, con_args, schema)
         if __get_rev_num( dbrev) >= __get_rev_num( rev):
