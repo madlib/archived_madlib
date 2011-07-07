@@ -21,7 +21,7 @@ Association rule mining is a widely used technique for discovering relationships
 
 This type of data mining algorithm uses transactional data. Every transaction event has a unique identification, and each transaction consists of a set of items (or itemset). Purchases are considered binary (either it was purchased or not), and this implementation does not take into consideration the quantity of each item. For the MADlib association rules function, it is assumed that the data is stored in two columns with one item and transaction id per row. Transactions with multiple items will span multiple rows with one row per item. 
 
-\code 
+<pre>
 	 tran_id | product 
 	---------+---------
 	       1 |       1
@@ -34,7 +34,8 @@ This type of data mining algorithm uses transactional data. Every transaction ev
 	       3 |       1
 	       3 |       4
 	       3 |       6
-\endcode  
+	...
+</pre>  
 
 \b Rules  
 
@@ -82,43 +83,27 @@ Although there are many algorithms that generate association rules, the classic 
 
 Given a frequent itemset \f$ A \f$ generated from the Apriori algorithm, and all subsets \f$ B \f$ , we generate rules such that \f$ B \Rightarrow (A - B) \f$ meets minimum confidence requirements. 
 
+@input
+
+The input data is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (    
+    <em>trans_id</em> INTEGER,
+    <em>product</em> TEXT
+)</pre>
+
+The algorithm will map the product names to consective integer ids starting at 1. If they are already structured this way, then the ids will not change. 
 
 @usage
-Function: \ref assoc_rules( <em>i_support</em>, <em>i_confidence</em>,'<em>id_col</em>','<em>product_col</em>','<em>input_table</em>','<em>output_schema</em>', <em> p_verbose </em>)
-
-- \b Syntax 
-
-An example of the syntax for calling the association rules function is below: 
-
-\code
-
-	select * from MADLIB_SCHEMA.assoc_rules(.01,.75.'user_id', 'product', 'my_schema.my_data', 'myoutput_schema', true); 
-
-\endcode
-
-- \b Input 
-
-The following code will generate all association rules from 'my_schema.my_data' (with transaction id being 'user_id', and items in 'product') that meet a minimum support of .01 and confidence .75. The function will return a table name and schema where results are stored, as well as the total number of results. The results containing the rules, support, confidence, lift, and conviction will be stored in the table myoutput_schema.assoc_rules.
-
-The input data should be stored in two columns as mentioned in about section, with one row per transaction id and product pair. The transaction ids are expected to be integers, and the products are accepted as text. The algorithm will map the product names to consective integer ids starting at 1. If they are already structured this way, then the ids will not change.  
-
-The support and confidence variables should be \c float8 value between 0 and 1. The remaining input variables are expected as text. There is a final optional variable \c p_verbose is expected as a boolean. If 'p_verbose' is set to true, then the output of function includes iteration steps and comments on Apriori algorithm steps. If no variable is given, then the function will assume \c p_verbose is false. 
-
-- \b Output 
-
-The result for this function will the output schema, output table, and total number of records of the table containing all the association rules: 
-
-\code 
-	    output_schema    | output_table | total_rules 
-	---------------------+--------------+-------------
-	 madlib_installcheck | assoc_rules  |           7
-\endcode 
-
-The association rules table has the following columns: 
-
-\code 
-
-	 Table "madlib_installcheck.assoc_rules"
+- Association rules can be called by:
+  <pre>SELECT \ref assoc_rules(
+    <em>i_support</em>, <em>i_confidence</em>,'<em>id_col</em>','<em>product_col</em>',
+    '<em>input_table</em>','<em>output_schema</em>', <em> p_verbose </em>
+    );</pre>
+  This will generate all association rules that meet a minimum support of <em>i_support</em> and confidence of <em>i_confidence</em>. 
+  
+- The results containing the rules, support, confidence, lift, and conviction are stored in the table assoc_rules in the schema specified by <em>output_schema</em>.
+<pre>
+	 Table "output_schema.assoc_rules"
 	    Column     |    Type     | Modifiers 
 	---------------+-------------+-----------
 	 set_list      | madlib.svec | 
@@ -130,12 +115,10 @@ The association rules table has the following columns:
 	 lift_xy       | numeric     | 
 	 conviction_xy | numeric     | 
 	Distributed by: (hash_key)
+</pre>
+	The \c set_list is the frequent itemset, and \c subset_x and \c subset_y are the itemsets of left and right hand sides of the association rule respectively. The \c hash_key is a hash of the \c set_list column, and the table is distributed by this key. The \c support_xy, \c confidence_xy, \c lift_xy, and \c conviction_xy columns are calculated as mentioned in the about section. 
 
-\endcode 
-
-The \c set_list is the frequent itemset, and \c subset_x and \c subset_y are the itemsets of left and right hand sides of the association rule respectively. The \c hash_key is a hash of the \c set_list column, and the table is distributed by this key. The \c support_xy, \c confidence_xy, \c lift_xy, and \c conviction_xy columns are calculated as mentioned in the about section. 
-
-- \b Notes: 
+@implementation
 
 All the underlying tables created by this function are temporary tables. Please make a copy of any tables that have information you would like to persist (e.g. assoc_prod_uniq) 
 
@@ -148,27 +131,27 @@ The association rules function will always create a table named assoc_rules. Ple
 Let us take a look at some sample transactional data and generate association rules: 
 
 \code 
-	DROP TABLE IF EXISTS test_data; 
-	CREATE TABLE test_data (
-		trans_id INT
-		, product text
-	); 
+DROP TABLE IF EXISTS test_data; 
+CREATE TABLE test_data (
+	trans_id INT
+	, product text
+); 
 
-	INSERT INTO test_data VALUES (1, 'beer'); 
-	INSERT INTO test_data VALUES (1, 'diapers'); 
-	INSERT INTO test_data VALUES (1, 'chips'); 
-	INSERT INTO test_data VALUES (2, 'beer'); 
-	INSERT INTO test_data VALUES (2, 'diapers'); 
-	INSERT INTO test_data VALUES (3, 'beer'); 
-	INSERT INTO test_data VALUES (3, 'diapers');
-	INSERT INTO test_data VALUES (4, 'beer'); 
-	INSERT INTO test_data VALUES (4, 'chips'); 
-	INSERT INTO test_data VALUES (5, 'beer');
-	INSERT INTO test_data VALUES (6, 'beer'); 
-	INSERT INTO test_data VALUES (6, 'diapers'); 
-	INSERT INTO test_data VALUES (6, 'chips'); 
-	INSERT INTO test_data VALUES (7, 'beer'); 
-	INSERT INTO test_data VALUES (7, 'diapers'); 
+INSERT INTO test_data VALUES (1, 'beer'); 
+INSERT INTO test_data VALUES (1, 'diapers'); 
+INSERT INTO test_data VALUES (1, 'chips'); 
+INSERT INTO test_data VALUES (2, 'beer'); 
+INSERT INTO test_data VALUES (2, 'diapers'); 
+INSERT INTO test_data VALUES (3, 'beer'); 
+INSERT INTO test_data VALUES (3, 'diapers');
+INSERT INTO test_data VALUES (4, 'beer'); 
+INSERT INTO test_data VALUES (4, 'chips'); 
+INSERT INTO test_data VALUES (5, 'beer');
+INSERT INTO test_data VALUES (6, 'beer'); 
+INSERT INTO test_data VALUES (6, 'diapers'); 
+INSERT INTO test_data VALUES (6, 'chips'); 
+INSERT INTO test_data VALUES (7, 'beer'); 
+INSERT INTO test_data VALUES (7, 'diapers'); 
 
 \endcode 
 
@@ -184,69 +167,68 @@ This should generate this output:
 
 \code 
 
-	INFO:  Data set has 3 unique products.
-	INFO:  Data set has 7 total transaction events.
-	INFO:  Product ids need to increment from 1. Data will be modified. Please see table assoc_prod_uniq for lookup.
-	INFO:  Product ids need to be consecutive integers from 1 ... n. Data will be modified. Please see table assoc_prod_uniq for lookup.
-	INFO:  Transforming all data into svec format
-	INFO:  Beginning iteration #1
-	INFO:  3 Frequent itemsets found in this iteration
-	INFO:  Completed iteration # 1
-	INFO:  Beginning iteration # 2
-	INFO:  3 potential itemsets found. Filtering out itemsets with infrequent subsets.
-	INFO:  3 potential itemsets found. Filtering by support.
-	INFO:  3 Frequent itemsets found in this iteration
-	INFO:  Completed iteration # 2
-	INFO:  Beginning iteration # 3
-	INFO:  1 potential itemsets found. Filtering out itemsets with infrequent subsets.
-	INFO:  1 potential itemsets found. Filtering by support.
-	INFO:  1 Frequent itemsets found in this iteration
-	INFO:  Completed iteration # 3
-	INFO:  Beginning iteration # 4
-	INFO:  0 potential itemsets found. Filtering out itemsets with infrequent subsets.
-	INFO:  0 potential itemsets found. Filtering by support.
-	INFO:  0 Frequent itemsets found in this iteration
-	INFO:  Completed iteration # 4
-	INFO:  7 Total association rules found
-	    output_schema    | output_table | total_rules 
-	---------------------+--------------+-------------
-	 madlib_installcheck | assoc_rules  |           7
+INFO:  Data set has 3 unique products.
+INFO:  Data set has 7 total transaction events.
+INFO:  Product ids need to increment from 1. Data will be modified. Please see table assoc_prod_uniq for lookup.
+INFO:  Product ids need to be consecutive integers from 1 ... n. Data will be modified. Please see table assoc_prod_uniq for lookup.
+INFO:  Transforming all data into svec format
+INFO:  Beginning iteration #1
+INFO:  3 Frequent itemsets found in this iteration
+INFO:  Completed iteration # 1
+INFO:  Beginning iteration # 2
+INFO:  3 potential itemsets found. Filtering out itemsets with infrequent subsets.
+INFO:  3 potential itemsets found. Filtering by support.
+INFO:  3 Frequent itemsets found in this iteration
+INFO:  Completed iteration # 2
+INFO:  Beginning iteration # 3
+INFO:  1 potential itemsets found. Filtering out itemsets with infrequent subsets.
+INFO:  1 potential itemsets found. Filtering by support.
+INFO:  1 Frequent itemsets found in this iteration
+INFO:  Completed iteration # 3
+INFO:  Beginning iteration # 4
+INFO:  0 potential itemsets found. Filtering out itemsets with infrequent subsets.
+INFO:  0 potential itemsets found. Filtering by support.
+INFO:  0 Frequent itemsets found in this iteration
+INFO:  Completed iteration # 4
+INFO:  7 Total association rules found
+	output_schema   | output_table | total_rules 
+--------------------+--------------+-------------
+      myschema      | assoc_rules  |           7
 
 \endcode 
 
 The table assoc_prod_uniq is a temporary table generated by the function to map all names of the items into integers. 
 
 \code 
-	select * from assoc_prod_uniq order by 1;
-	
-	 prod_id | orig_col 
-	---------+----------
-	       1 | beer
-	       2 | chips
-	       3 | diapers
+select * from assoc_prod_uniq order by 1;
+
+ prod_id | orig_col 
+---------+----------
+	   1 | beer
+	   2 | chips
+	   3 | diapers
 
 \endcode 
 
-The association rules are stored in the myoutput_schema.assoc_rules: 
+The association rules are stored in the myschema.assoc_rules: 
 
 \code 
-	select * from myoutput_schema.assoc_rules order by support_xy desc; 
+select * from myschema.assoc_rules order by support_xy desc; 
 
-	    set_list     |  hash_key   |    subset_x     |    subset_y     |     support_xy     |   confidence_xy    |      lift_xy       |   conviction_xy    
-	-----------------+-------------+-----------------+-----------------+--------------------+--------------------+--------------------+-------------------
-	 {1,1,1}:{1,0,1} |  -640301634 | {2,1}:{0,1}     | {1,2}:{1,0}     | 0.7142857142857142 | 1.0000000000000000 | 1.0000000000000000 |                  0 
-	 {1,1,1}:{1,0,1} |  -640301634 | {1,2}:{1,0}     | {2,1}:{0,1}     | 0.7142857142857142 | 0.7142857142857571 | 1.0000000000000000 | 1.0000000000000000
-	 {2,1}:{1,0}     |  1126614205 | {1,1,1}:{0,1,0} | {1,2}:{1,0}     | 0.4285714285714285 | 1.0000000000000000 | 1.0000000000000000 |                  0
-	 {3}:{1}         |  2106950333 | {2,1}:{1,0}     | {2,1}:{0,1}     | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
-	 {3}:{1}         |  2106950333 | {1,1,1}:{0,1,0} | {1,1,1}:{1,0,1} | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
-	 {3}:{1}         |  2106950333 | {1,2}:{0,1}     | {1,2}:{1,0}     | 0.2857142857142857 | 1.0000000000000000 | 1.0000000000000000 |                  0 
-	 {1,2}:{0,1}     | -2063121219 | {1,1,1}:{0,1,0} | {2,1}:{0,1}     | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
+	set_list     |  hash_key   |    subset_x     |    subset_y     |     support_xy     |   confidence_xy    |      lift_xy       |   conviction_xy    
+-----------------+-------------+-----------------+-----------------+--------------------+--------------------+--------------------+-------------------
+ {1,1,1}:{1,0,1} |  -640301634 | {2,1}:{0,1}     | {1,2}:{1,0}     | 0.7142857142857142 | 1.0000000000000000 | 1.0000000000000000 |                  0 
+ {1,1,1}:{1,0,1} |  -640301634 | {1,2}:{1,0}     | {2,1}:{0,1}     | 0.7142857142857142 | 0.7142857142857571 | 1.0000000000000000 | 1.0000000000000000
+ {2,1}:{1,0}     |  1126614205 | {1,1,1}:{0,1,0} | {1,2}:{1,0}     | 0.4285714285714285 | 1.0000000000000000 | 1.0000000000000000 |                  0
+ {3}:{1}         |  2106950333 | {2,1}:{1,0}     | {2,1}:{0,1}     | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
+ {3}:{1}         |  2106950333 | {1,1,1}:{0,1,0} | {1,1,1}:{1,0,1} | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
+ {3}:{1}         |  2106950333 | {1,2}:{0,1}     | {1,2}:{1,0}     | 0.2857142857142857 | 1.0000000000000000 | 1.0000000000000000 |                  0 
+ {1,2}:{0,1}     | -2063121219 | {1,1,1}:{0,1,0} | {2,1}:{0,1}     | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
 
 
 \endcode 
 
-@sa file assoc_rules.sql_in (documenting the SQL function),
-    module grp_assoc_rules 
+@sa File assoc_rules.sql_in documenting the SQL function.
 
 */
 
