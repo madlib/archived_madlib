@@ -20,7 +20,9 @@ include(ExternalProject)
 # The default MADlib root directory should be "/usr/local/madlib" and not
 # "/usr/local" (which is the CMake default)
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "/usr/local/madlib")
+    set(CMAKE_INSTALL_PREFIX "/usr/local/madlib" CACHE PATH
+        "Install path prefix, prepended onto install directories." FORCE
+    )
 endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 
 set(MADLIB_VERSION_YML ${CMAKE_CURRENT_SOURCE_DIR}/src/config/Version.yml)
