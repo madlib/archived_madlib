@@ -49,6 +49,18 @@ find_package(BISON 2.4)
 find_package(Doxygen)
 
 if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
+    # The FindFLEX module by cmake unfortunately does not cover the
+    # case when FlexLexer.h is in a non-standard location.
+    get_dir_name(_FLEX_BASE "${FLEX_EXECUTABLE}")
+    get_dir_name(_FLEX_BASE "${_FLEX_BASE}")
+    find_path(_FLEX_INCLUDE_DIR
+        NAMES "FlexLexer.h"
+        HINTS "${_FLEX_BASE}/include"
+    )
+    if(_FLEX_INCLUDE_DIR)
+        include_directories(BEFORE "${_FLEX_INCLUDE_DIR}")
+    endif(_FLEX_INCLUDE_DIR)
+
     BISON_TARGET(doxysqlParser src/sql.yy ${CMAKE_CURRENT_BINARY_DIR}/sql.parser.cc)
     FLEX_TARGET(doxysqlScanner src/sql.ll ${CMAKE_CURRENT_BINARY_DIR}/sql.scanner.cc)
     ADD_FLEX_BISON_DEPENDENCY(doxysqlScanner doxysqlParser)
