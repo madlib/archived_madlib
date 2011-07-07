@@ -164,6 +164,23 @@ data points.
   If the parallel parameter is true, then each data point in the input table will have multiple 
   predicted values corresponding to the number of models learned in parallel.
 
+<strong>Notes:</strong>
+
+Currently, three kernel functions have been implemented: dot product ('svm_dot'), polynomial ('svm_polynomial') and Gaussian ('svm_gaussian') kernels. To use the dot product kernel function,
+simply use '<madlib_schema>.svm_dot' as the <tt>kernel_func</tt> argument, which accepts any function that takes in two float[] and returns a float. To use the polynomial or Gaussian kernels,
+a wrapper function is needed since these kernels require additional input parameters (see online_sv.sql_in for input parameters).
+
+For example, to use the polynomial kernel with degree 2, first create a wrapper function:
+\code
+CREATE OR REPLACE FUNCTION mykernel(FLOAT[],FLOAT[]) RETURNS FLOAT AS $$
+SELECT madlib_schema.svm_polynomial($1,$2,2)
+$$ language sql;
+\endcode
+Then call the SVM learning functions with <tt>mykernel</tt> as the argument to <tt>kernel_func</tt>.
+\code
+select MADLIB_SCHEMA.svm_regression('my_schema.my_train_data', 'mymodel', false, 'mykernel');
+\endcode
+
 To drop a table, we use
 \code
 MADLIB_SCHEMA.svm_drop_model(model_table text)
@@ -343,12 +360,38 @@ CREATE TYPE MADLIB_SCHEMA.svm_support_vector AS ( id text, weight float8, sv flo
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
 -- Here are a few standard kernels: dot product, polynomial kernel, Gaussian kernel.
 --
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_dot(float8[], float8[]) RETURNS float8 
+/**
+ * @brief Dot product kernel function
+ *
+ * @param x The data point \f$ \boldsymbol x \f$
+ * @param y The data point \f$ \boldsymbol y \f$
+ * @return Returns dot product of the two data points.
+ *      
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_dot(x float8[], y float8[]) RETURNS float8 
 AS 'MODULE_PATHNAME', 'svm_dot' LANGUAGE C IMMUTABLE STRICT;
 
+/**
+ * @brief Polynomial kernel function
+ *
+ * @param x The data point \f$ \boldsymbol x \f$
+ * @param y The data point \f$ \boldsymbol y \f$
+ * @param degree The degree \f$ d \f$
+ * @return Returns \f$ K(\boldsymbol x,\boldsymbol y)=(\boldsymbol x \cdot \boldsymbol y)^d \f$
+ *      
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_polynomial(x float8[], y float8[], degree float8) RETURNS float8 
 AS 'MODULE_PATHNAME', 'svm_polynomial' LANGUAGE C IMMUTABLE STRICT;
 
+/**
+ * @brief Gaussian kernel function
+ *
+ * @param x The data point \f$ \boldsymbol x \f$
+ * @param y The data point \f$ \boldsymbol y \f$
+ * @param gamma The spread \f$ \gamma \f$
+ * @return Returns \f$ K(\boldsymbol x,\boldsymbol y)=exp(-\gamma || \boldsymbol x \cdot \boldsymbol y ||^2 ) \f$
+ *      
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_gaussian(x float8[], y float8[], gamma float8) RETURNS float8 
 AS 'MODULE_PATHNAME', 'svm_gaussian' LANGUAGE C IMMUTABLE STRICT; 
 
