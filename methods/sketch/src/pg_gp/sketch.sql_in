@@ -35,206 +35,210 @@ This module currently implements user-defined aggregates based on three main ske
  - <i>Most Frequent Value (MFV)</i> sketches, which output the most 
 frequently-occuring values in a column, along with their associated counts.
 
- <i>Note:</i> Features marked with a single star (*) only work for discrete types that can be cast to int8.
-
-@prereq
-Because sketches are essentially a high-performance compression technique, the sketch-formation code was custom-coded for efficiency in C for PostgreSQL/Greenplum.
+ <i>Note:</i> Features marked with a star (*) only work for discrete types that 
+ can be cast to int8.
  
-@usage
-The sketch method consists of a number of SQL UDAs and UDFs, to be used
-directly in SQL queries.
+@implementation
+The sketch methods consists of a number of SQL UDAs (user defined aggregates) 
+and UDFs (user defined functions), to be used directly in SQL queries.
 */
 
 /**
- @addtogroup grp_fmsketch
+@addtogroup grp_fmsketch
  
- @about
- Flajolet-Martin's distinct count estimation
- implemented as a user-defined aggregate.
+@about
+Flajolet-Martin's distinct count estimation
+implemented as a user-defined aggregate.
 
+@usage
+- Get the number of distinct values in a designated column.
+  <pre>SELECT \ref fmsketch_dcount(<em>col_name</em>) FROM table_name;</pre>
 
- @usage
- <strong><tt>fmsketch_dcount('<em>col_name</em>')</tt></strong>\n
- Returns the number of distinct values in the designated column.
- 
-   <c>fmsketch_dcount</c> can be run on any column of any type.  
-   It returns an approximation to the number of distinct values in the column 
-   (a la <c>COUNT(DISTINCT x)</c>, but faster and approximate).  Like any aggregate, it can be combined with a GROUP BY clause to do distinct counts per group.  
+@implementation
+\ref fmsketch_dcount can be run on a column of any type.  
+It returns an approximation to the number of distinct values 
+(a la <c>COUNT(DISTINCT x)</c>), but faster and approximate.  
+Like any aggregate, it can be combined with a GROUP BY clause to do distinct 
+counts per group.  
 
-   @examp
-   @code
-   -- Generate some data
- CREATE TABLE data(class INT, a1 INT); 
- INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
- INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
- INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
- INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
- INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+@examp
+-# Generate some data:
+\verbatim
+sql> CREATE TABLE data(class INT, a1 INT); 
+sql> INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
+sql> INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
+sql> INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
+sql> INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
+sql> INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+\endverbatim
+-# Find distinct number of values for each class
+\verbatim
+sql> SELECT class,fmsketch_dcount(a1) FROM data GROUP BY data.class;
+class | fmsketch_dcount 
+-------+-----------------
+    2 |               2
+    1 |               3
+(2 rows)
+\endverbatim
 
- -- Find distinct number of values for each class
- SELECT class,fmsketch_dcount(a1)
- FROM data GROUP BY data.class;
+@literature
+[1] P. Flajolet and N.G. Martin.  Probabilistic counting algorithms for data base applications, Journal of Computer and System Sciences 31(2), pp 182-209, 1985.  http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
 
-  class | fmsketch_dcount 
- -------+-----------------
-      2 |               2
-      1 |               3
- (2 rows)
+@sa File sketch.sql_in documenting the SQL function.
 
-@endcode
-
-@sa file sketch.sql_in (documenting the SQL function)
-
- @literature
- [1] P. Flajolet and N.G. Martin.  Probabilistic counting algorithms for data base applications, Journal of Computer and System Sciences 31(2), pp 182-209, 1985.  http://algo.inria.fr/flajolet/Publications/FlMa85.pdf
 */
 
 /** 
 @addtogroup grp_countmin
 
- @about
- This module implements Cormode-Muthukrishnan <i>CountMin</i> sketches
- on integer values, implemented as a user-defined aggregate.  It also provides scalar functions over the sketches to produce approximate counts, order statistics, and histograms.
+@about
+This module implements Cormode-Muthukrishnan <i>CountMin</i> sketches
+on integer values, implemented as a user-defined aggregate.  It also provides 
+scalar functions over the sketches to produce approximate counts, order 
+statistics, and histograms.
 
- @usage
- <strong><tt>cmsketch('<em>col_name</em>')</tt></strong>\n
- Returns a sketch of the column specified by <em>col_name</em>. 
- 
- <strong><tt>cmsketch_count('<em>cmsketch</em>',<em>p</em>)</tt></strong>\n
- Returns the number of rows where <em>col_name = p</em>, computed from the sketch obtained from <tt>cmsketch</tt>.
- 
- <strong><tt>cmsketch_rangecount('<em>cmsketch</em>',<em>m</em>,<em>n</em>)</tt></strong>\n
- Returns the number of rows where <em>col_name</em> is between <em>m</em> and <em>n</em> inclusive.
- 
- <strong><tt>cmsketch_centile('<em>cmsketch</em>',<em>k</em>,<em>count</em>)</tt></strong>\n
- Returns the <em>k</em>th percentile of <em>col_name</em> where <em>count</em> specifies number of rows. <em>k</em> should be an integer between 1 to 99.
- 
- <strong><tt>cmsketch_median('<em>cmsketch</em>',<em>count</em>)</tt></strong>\n
- Returns the median of <em>col_name</em> where <em>count</em> specifies number of rows. This is equivalent to <tt>cmsketch_centile('<em>cmsketch</em>',50,'<em>count</em>')</tt>.
- 
- <strong><tt>cmsketch_width_histogram('<em>cmsketch</em>',<em>min</em>,<em>max</em>,<em>n</em>)</tt></strong>\n
- Produces an n-bucket histogram for values between min and max for the column where each bucket has approximately the same width. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.
- 
- <strong><tt>cmsketch_depth_histogram('<em>cmsketch</em>',<em>n</em>)</tt></strong>\n
- Produces an n-bucket histogram for the column where each bucket has approximately the same count. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles. 
- 
- @examp
- @code
- -- Generate some data
- CREATE TABLE data(class INT, a1 INT); 
- INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
- INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
- INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
- INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
- INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+@usage
 
- -- Count number of rows where a1 = 2 in each class
- SELECT class,cmsketch_count(cmsketch(a1),2) 
- FROM data GROUP BY data.class;
+- Get a sketch of a selected column specified by <em>col_name</em>. 
+  <pre>SELECT \ref cmsketch(<em>col_name</em>) FROM table_name;</pre>
 
- -- Count number of rows where a1 is between 3 and 6
- SELECT class,cmsketch_rangecount(cmsketch(a1),3,6)
- FROM data GROUP BY data.class;
+- Get the number of rows where <em>col_name = p</em>, computed from the sketch 
+  obtained from <tt>cmsketch</tt>.
+  <pre>SELECT \ref cmsketch_count(<em>cmsketch</em>,<em>p</em>) FROM table_name;</pre>
+ 
+- Get the number of rows where <em>col_name</em> is between <em>m</em> and <em>n</em> inclusive.
+  <pre>SELECT \ref cmsketch_rangecount(<em>cmsketch</em>,<em>m</em>,<em>n</em>) FROM table_name;</pre>
+ 
+- Get the <em>k</em>th percentile of <em>col_name</em> where <em>count</em> specifies number of rows. <em>k</em> should be an integer between 1 to 99.
+  <pre>SELECT \ref cmsketch_centile(<em>cmsketch</em>,<em>k</em>,<em>count</em>) FROM table_name;</pre>
+ 
+- Get the median of <em>col_name</em> where <em>count</em> specifies number of rows. This is equivalent to <tt>\ref cmsketch_centile(<em>cmsketch</em>,50,<em>count</em>)</tt>.
+  <pre>SELECT \ref cmsketch_median(<em>cmsketch</em>,<em>count</em>) FROM table_name;</pre>
+ 
+- Get an n-bucket histogram for values between min and max for the column where each bucket has approximately the same width. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.
+  <pre>SELECT \ref cmsketch_width_histogram(<em>cmsketch</em>,<em>min</em>,<em>max</em>,<em>n</em>) FROM table_name;</pre>
+ 
+- Get an n-bucket histogram for the column where each bucket has approximately the same count. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles. 
+  <pre>SELECT \ref cmsketch_depth_histogram(<em>cmsketch</em>,<em>n</em>) FROM table_name;</pre>
+ 
+@examp
 
- -- Compute the 90th percentile of all of a1
- SELECT cmsketch_centile(cmsketch(a1),90,count(*))
- FROM data;
-
- -- Produce an equi-width histogram with 2 bins between 0 and 10
- SELECT cmsketch_width_histogram(cmsketch(a1),0,10,2)
- FROM data;
-
- -- Produce an equi-depth histogram of a1 with 2 bins of approximately equal depth
- SELECT cmsketch_depth_histogram(cmsketch(a1),2)
- FROM data;
-
-  class | cmsketch_count 
+-# Generate some data
+\verbatim
+sql> CREATE TABLE data(class INT, a1 INT); 
+sql> INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
+sql> INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
+sql> INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
+sql> INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
+sql> INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+\endverbatim
+-# Count number of rows where a1 = 2 in each class
+\verbatim
+sql> SELECT class,cmsketch_count(cmsketch(a1),2) FROM data GROUP BY data.class;
+ class | cmsketch_count 
 -------+----------------
      2 |              0
      1 |          15000
 (2 rows)
-
+\endverbatim
+-# Count number of rows where a1 is between 3 and 6
+\verbatim
+sql> SELECT class,cmsketch_rangecount(cmsketch(a1),3,6) FROM data GROUP BY data.class;
  class | cmsketch_rangecount 
 -------+---------------------
      2 |                2000
      1 |               10000
 (2 rows)
-
+\endverbatim
+-# Compute the 90th percentile of all of a1
+\verbatim
+sql> SELECT cmsketch_centile(cmsketch(a1),90,count(*)) FROM data;
  cmsketch_centile 
 ------------------
                 3
 (1 row)
-
+\endverbatim
+-# Produce an equi-width histogram with 2 bins between 0 and 10
+\verbatim
+sql> SELECT cmsketch_width_histogram(cmsketch(a1),0,10,2) FROM data;
       cmsketch_width_histogram      
 ------------------------------------
  [[0L, 4L, 35000], [5L, 10L, 2000]]
 (1 row)
-
+\endverbatim
+-# Produce an equi-depth histogram of a1 with 2 bins of approximately equal depth
+\verbatim
+sql> SELECT cmsketch_depth_histogram(cmsketch(a1),2) FROM data;
                        cmsketch_depth_histogram                        
 -----------------------------------------------------------------------
  [[-9223372036854775807L, 1, 10000], [2, 9223372036854775807L, 27000]]
 (1 row)
+\endverbatim
 
- @endcode
+@literature
 
- @sa file sketch.sql_in (documenting the SQL functions)
-
- @literature
-  [1] G. Cormode and S. Muthukrishnan. An improved data stream summary: The count-min sketch and its applications.  LATIN 2004, J. Algorithm 55(1): 58-75 (2005) .  http://dimacs.rutgers.edu/~graham/pubs/html/CormodeMuthukrishnan04CMLatin.html
+[1] G. Cormode and S. Muthukrishnan. An improved data stream summary: The count-min sketch and its applications.  LATIN 2004, J. Algorithm 55(1): 58-75 (2005) .  http://dimacs.rutgers.edu/~graham/pubs/html/CormodeMuthukrishnan04CMLatin.html
   
-  [2] G. Cormode. Encyclopedia entry on 'Count-Min Sketch'. In L. Liu and M. T. Ozsu, editors, Encyclopedia of Database Systems, pages 511-516. Springer, 2009. http://dimacs.rutgers.edu/~graham/pubs/html/Cormode09b.html
+[2] G. Cormode. Encyclopedia entry on 'Count-Min Sketch'. In L. Liu and M. T. Ozsu, editors, Encyclopedia of Database Systems, pages 511-516. Springer, 2009. http://dimacs.rutgers.edu/~graham/pubs/html/Cormode09b.html
 
- @sa module grp_quantile
+@sa File sketch.sql_in documenting the SQL functions.
+\n\n Module grp_quantile for a different implementation of quantile function.
+
 */
 
 /**
- @addtogroup grp_mfvsketch
- 
- @about
- MFVSketch: Most Frequent Values variant of CountMin sketch, implemented
- as a UDA.
+@addtogroup grp_mfvsketch
 
- \usage
- <strong><tt>mfv_top_histogram('<em>col_name</em>',n)</tt></strong>\n
- <strong><tt>mfv_quick_histogram('<em>col_name</em>',n)</tt></strong>\n
- Produces an n-bucket histogram for a column where each bucket counts one of the most frequent values in the column. The output is an array of doubles {value, count}
- in descending order of frequency; counts are approximated via CountMin sketches. Ties are handled arbitrarily.
- 
- The MFV frequent-value UDA comes in two different versions: a faithful implementation that preserves the
- approximation guarantees of Cormode/Muthukrishnan, and a "quick and dirty"
- version that can do parallel aggregation in Greenplum at the expense
- of missing some of the most frequent values.  
- In PostgreSQL the two UDAs are identical.
- In Greenplum, the quick version should 
- produce good results unless the number of values requested is very small,
- or the distribution is very flat.
+@about
+MFVSketch: Most Frequent Values variant of CountMin sketch, implemented
+as a UDA.
 
- @examp
-  @code
- -- Generate some data
- CREATE TABLE data(class INT, a1 INT); 
- INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
- INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
- INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
- INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
- INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+@usage
+Produces an n-bucket histogram for a column where each bucket counts one of the 
+most frequent values in the column. The output is an array of doubles {value, count}
+in descending order of frequency; counts are approximated via CountMin sketches. 
+Ties are handled arbitrarily.
+<pre>SELECT \ref mfvsketch_top_histogram(<em>col_name</em>,n) FROM table_name;</pre>
+<pre>SELECT \ref mfvsketch_top_histogram(<em>col_name</em>,n) FROM table_name;</pre>
 
- -- Produce histogram of 5 bins and return the most frequent value and associated count in each bin
- SELECT mfvsketch_top_histogram(a1,5) FROM data;
+The MFV frequent-value UDA comes in two different versions: 
+- a faithful implementation that preserves the approximation guarantees 
+of Cormode/Muthukrishnan, 
+- and a "quick and dirty" version that can do parallel aggregation in Greenplum 
+at the expense of missing some of the most frequent values.  
 
-                   mfvsketch_top_histogram                    
+In PostgreSQL the two UDAs are identical. In Greenplum, the quick version should 
+produce good results unless the number of values requested is very small,
+or the distribution is very flat.
+
+@examp
+
+-# Generate some data
+\verbatim
+sql> CREATE TABLE data(class INT, a1 INT); 
+sql> INSERT INTO data SELECT 1,1 FROM generate_series(1,10000);
+sql> INSERT INTO data SELECT 1,2 FROM generate_series(1,15000);
+sql> INSERT INTO data SELECT 1,3 FROM generate_series(1,10000);
+sql> INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
+sql> INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
+\endverbatim
+-# Produce histogram of 5 bins and return the most frequent value and associated 
+count in each bin:
+\verbatim
+sql> SELECT mfvsketch_top_histogram(a1,5) FROM data;
+
+                mfvsketch_top_histogram                    
 --------------------------------------------------------------
- [0:4][0:1]={{2,15000},{1,10000},{3,10000},{5,1000},{6,1000}}
+[0:4][0:1]={{2,15000},{1,10000},{3,10000},{5,1000},{6,1000}}
 (1 row)
+\endverbatim
 
- @endcode
+@literature
+This method is not usually called an MFV sketch in the literature; it
+is a natural extension of the CountMin sketch. 
 
- @sa file sketch.sql_in (documenting the SQL functions)
-
- \literature
- This method is not usually called an MFV sketch in the literature; it
- is a natural extension of the CountMin sketch. 
- \sa file sketch.sql_in (documenting the SQL functions), module grp_countmin
+@sa File sketch.sql_in documenting the SQL functions.
+\n\n Module grp_countmin.
 */
 
 -- FM Sketch Functions
@@ -329,10 +333,12 @@ LANGUAGE C STRICT;
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.cmsketch(int8);
 /**
- @brief <c>cmsketch</c> is a UDA that can be run on columns of type int8, or any column that can be cast to an int8.  It produces a base64 string
-representing a CountMin sketch: a large array of counters that is intended to be passed into a UDF like <c>cmsketch_width_histogram</c> described below.
-*/
-CREATE AGGREGATE MADLIB_SCHEMA.cmsketch(/*+ column */ int8)
+ *@brief <c>cmsketch</c> is a UDA that can be run on columns of type int8, 
+ * or any column that can be cast to an int8.  It produces a base64 string
+ * representing a CountMin sketch: a large array of counters that is intended 
+ * to be passed into a UDF like <c>cmsketch_width_histogram</c> described below.
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.cmsketch(/*+ column */ INT8)
 (
     sfunc = MADLIB_SCHEMA.__cmsketch_int8_trans,
     stype = bytea, 
@@ -449,11 +455,12 @@ RETURNS bytea
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.mfvsketch_top_histogram(anyelement, int4);
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.mfvsketch_top_histogram( anyelement, int4);
 /**
-<c>mfvsketch_top_histogram</c> produces an n-bucket histogram for a 
-column where each bucket counts one of the most frequent values in the column. The output is an array of doubles {value, count}
- in descending order of frequency; counts are approximated via CountMin sketches. Ties are handled arbitrarily.
+ * @brief Produces an n-bucket histogram for a column where each bucket counts 
+ * one of the most frequent values in the column. The output is an array of 
+ * doubles {value, count} in descending order of frequency; counts are 
+ * approximated via CountMin sketches. Ties are handled arbitrarily.
 */
 CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_top_histogram(/*+ column */ anyelement, /*+ number_of_buckets */ int4)
 (
@@ -465,11 +472,10 @@ CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_top_histogram(/*+ column */ anyelement,
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.mfvsketch_quick_histogram(anyelement, int4);
 /**
-<c>mfvsketch_quick_histogram</c> is the same as the above
-but, in Greenplum it does parallel aggregation to provide a "quick and dirty"
-answer.  In Postgres it is identical to <c>mfvsketch_top_histogram</c>.
+ * @brief On Postgres it works the same way as \ref mfvsketch_top_histogram but, 
+ * in Greenplum it does parallel aggregation to provide a "quick and dirty" answer.  
 */
-CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_quick_histogram(anyelement, int4)
+CREATE AGGREGATE MADLIB_SCHEMA.mfvsketch_quick_histogram(/*+ column */ anyelement, /*+ number_of_buckets */ int4)
 (
     sfunc = MADLIB_SCHEMA.__mfvsketch_trans,
     stype = bytea, 
