@@ -1739,7 +1739,7 @@ svec_nonbase_positions(PG_FUNCTION_ARGS) {
 		{
 			if(memcmp(&base_val,&vals[i],sizeof(float8))){
 				for(int j = 0; j < rle_index[i]; ++j){
-					result[fill_count] = size_tracker;
+					result[fill_count] = size_tracker+1;
 					fill_count++;
 					size_tracker++;
 				}

@@ -829,6 +829,14 @@ def main( argv):
     # print "OS rev: " + str(rev) + " > " + str(__get_rev_num( rev))
     # print "DB rev: " + str(dbrev) + " > " + str(__get_rev_num( dbrev))        
 
+    # Make sure we have the necessary paramaters to continue
+    if args.command[0] != 'version':
+        if not portid: 
+            __error( "Missing -p/--platform parameter.", True)
+        if not con_args:
+            __error( "Unknown problem with database connection string: %s" % con_args, True)
+   
+
     ###
     # COMMAND: version
     ###
@@ -840,7 +848,7 @@ def main( argv):
     # COMMAND: install/update
     ###
     elif args.command[0] == 'install' or args.command[0] == 'update':
-
+        
         # 1) Compare OS and DB versions. Continue if OS > DB.
         __print_revs( rev, dbrev, con_args, schema)
         if __get_rev_num( dbrev) >= __get_rev_num( rev):
