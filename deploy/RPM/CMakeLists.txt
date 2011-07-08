@@ -25,14 +25,6 @@ else()
     set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.6, ${_PACKAGE_REQUIRES}" PARENT_SCOPE)
 endif()
 
-if(EXISTS "/etc/rpm/macros.python26")
-    # On RH 5/CentOS 5, /usr/bin/python is Python 2.4. Unfortunately,
-    # /usr/lib/rpm/redhat/macros defines __os_install_post to call
-    # /usr/lib/rpm/brp-python-bytecompile without any argument, which then leads
-    # to /usr/bin/python being used for byte-compiling. If the python26 package
-    # from EPEL is installed, we provide an autmatic fix, so that the RPM build
-    # process uses Python 2.6.
-    # See https://bugzilla.redhat.com/show_bug.cgi?id=573151#c9 for more
-    # information.
-    set(CPACK_RPM_SPEC_MORE_DEFINE "%define __os_install_post %{__python26_os_install_post}" PARENT_SCOPE)
-endif(EXISTS "/etc/rpm/macros.python26")
+# We do all deployment preparation with our CMake build script, so we do
+# not want to do any post-processing as part of the RPM generation.
+set(CPACK_RPM_SPEC_MORE_DEFINE "%undefine __os_install_post" PARENT_SCOPE)

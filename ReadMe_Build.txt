@@ -45,8 +45,6 @@ Optional:
   + PostgreSQL 9.x
   + Greenplum 4.x
   + All requirements for generating user-level documentation (see above)
-  + Platform-specific requirements:
-      * RedHat/CentOS: python26 package from the EPEL repository
 
 
 ** Build instructions (required read):
