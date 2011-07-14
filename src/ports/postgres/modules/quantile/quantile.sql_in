@@ -52,7 +52,7 @@ Function: <tt>quantile( '<em>table_name</em>', '<em>col_name</em>',
  * table, the specific column, and computes the quantile value based on the
  * fraction specified as the third argument.
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile_large(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
 declare
   size FLOAT[];
   increment INT := 0;
@@ -156,13 +156,15 @@ $$ LANGUAGE plpgsql;
  * table, the specific column, and computes the quantile value based on the
  * fraction specified as the third argument.
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile_simple(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
 declare
-	size BIGINT;
-	result FLOAT;
+	size FLOAT;
+	result FLOAT[];
+	res FLOAT;
 begin
-	EXECUTE 'SELECT COUNT(*) FROM '||table_name||' ' INTO size;
-	EXECUTE 'SELECT MAX('||col_name||') FROM (SELECT '||col_name||' FROM '||table_name||' ORDER BY '||col_name||' LIMIT '||size||'*'||quantile||') AS g' INTO result;
-	RETURN result;
+	EXECUTE 'SELECT COUNT(*)*'||quantile||' FROM '||table_name||' ' INTO size;
+	EXECUTE 'SELECT ARRAY(SELECT '||col_name||' FROM (SELECT '||col_name||' FROM '||table_name||' ORDER BY '||col_name||' OFFSET '||size||'-1 LIMIT 2) AS g)' INTO result;
+	EXECUTE 'SELECT '||result[2]||'*('||size||'%1)+'||result[1]||'*(1-'||size||'%1)' INTO res;
+	return res;
 end
 $$ LANGUAGE plpgsql;
