@@ -255,7 +255,14 @@ AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
     DoubleCol stdErr(db.allocator(), state.widthOfX);
     DoubleCol tStats(db.allocator(), state.widthOfX);
     for (int i = 0; i < state.widthOfX; i++) {
-        stdErr(i) = std::sqrt( variance * inverse_of_X_transp_X(i,i) );
+        // In an abundance of caution, we see a tiny possibility that numerical
+        // instabilities in the pinv operation can lead to negative values on
+        // the main diagonal of even a SPD matrix
+        if (inverse_of_X_transp_X(i,i) < 0) {
+            stdErr(i) = 0;
+        } else {
+            stdErr(i) = std::sqrt( variance * inverse_of_X_transp_X(i,i) );
+        }
         
         if (coef(i) == 0 && stdErr(i) == 0) {
             // In this special case, 0/0 should be interpreted as 0:
