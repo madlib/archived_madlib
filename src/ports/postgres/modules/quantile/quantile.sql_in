@@ -41,7 +41,7 @@ Function: <tt>quantile( '<em>table_name</em>', '<em>col_name</em>',
 
 
 /**
- * @brief Compute a quantile approximation
+ * @brief Compute a quantile
  * 
  * @param table_name name of the table from which quantile is to be taken
  * @param col_name name of the column that is to be used for quantile calculation
@@ -52,33 +52,117 @@ Function: <tt>quantile( '<em>table_name</em>', '<em>col_name</em>',
  * table, the specific column, and computes the quantile value based on the
  * fraction specified as the third argument.
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile( table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
 declare
   size FLOAT[];
-  curr FLOAT;
   increment INT := 0;
   curr_old FLOAT;
-Begin
-EXECUTE	'SELECT ARRAY[COUNT(*), MIN( ' || col_name || ' ), MAX(' || col_name || ' ), AVG( ' || col_name || ' )] FROM ' || table_name || ';' INTO size;
-	size[1] = size[1]*quantile;
+  last_values FLOAT[];
+  last_values1 FLOAT[];
+  last_values2 FLOAT[];
+  quantile_size FLOAT;
+  full_size FLOAT;
+  delta FLOAT;
+ Begin
+ 	/*
+ 		This portion computes basic statistics on the table, finding: 
+ 			MIN value
+ 			AVG value
+ 			MAX value
+ 			COOUNT of the elemens
+ 		Which at stored in that order into 'size' object
+ 		'quantile_size' is computed in terms of element count
+ 	*/
+	EXECUTE 'SELECT array[MIN('||col_name||'), AVG('||col_name||'), MAX('||col_name||'), COUNT(*)] FROM '||table_name||' ' INTO size;
+	quantile_size = size[4]*quantile;
+	full_size = size[4];
 
+	/*
+		This is the main loop of the algorithm. Its goal is to do a binarry search over the table to find the value that is the closest to the position corresponding to the 
+		quantile size.
+		
+		In each itteration for a given value 'size[2]' following are computed:
+			MIN value less than or equal to 'size[2]'
+			AVERAGE value less than or equal to 'size[2]'
+			MAX value less than or equal to 'size[2]'
+			COUNT of the values less than or equal to 'size[2]'
+		This results are stored into 'last_values' in that order
+	*/
     LOOP
-    	EXECUTE 'SELECT COUNT(*) FROM '|| table_name || ' WHERE ' || col_name  || ' <= ' || size[4] || ';'  INTO curr;
-    	IF((increment > 0)AND(curr_old = curr)) THEN
-    		RETURN size[4];
-    	ELSIF((curr - size[1]) > 1) THEN
-    		size[3] = size[4];
-    		size[4] = (size[2]+size[4])/2.0;
-    	ELSIF((size[1] - curr) > 1) THEN
-    		size[2] = size[4];
-    		size[4] = (size[3]+size[4])/2.0;
+    	EXECUTE 'SELECT ARRAY[MIN(a_min),AVG(a_avg),MAX(a_max),SUM(a_count)] FROM (SELECT COUNT(*) AS a_count, MIN('||col_name||') a_min, AVG('||col_name||') a_avg, MAX('||col_name||') AS a_max FROM '||table_name||' WHERE '||col_name||' <= '||size[2]||' GROUP BY gp_segment_id ORDER BY a_max DESC) AS k' INTO last_values;  
+    	
+    	IF((increment > 0)AND(curr_old = last_values[4])) THEN
+    		/*
+    			We will exit the loop if there was not change in the count from previous itteration
+    			which mean that process will make no further progress.
+    		*/
+    		EXIT;
+    	ELSIF((last_values[4] - quantile_size) > 1) THEN
+    		/*
+    			If current COUNT is greater than 'size[2]' we will reduce the value of 'size[2]'
+    			in binarry search fashion. And then update upper limit to our search the max value observed in this round 
+    		*/
+    		size[2] =  (last_values[3]+size[1])/2.0;
+    		size[3] = last_values[3];
+    	ELSIF((quantile_size - last_values[4]) > 1) THEN
+    		/*
+    			If current COUNT is less than 'size[2]' we will increse the value of 'size[2]'
+    			in binarry search fashion. And then update lower limit to our search the max value observed in this round 
+    		*/
+    		size[1] = last_values[3];
+    		size[2] = (last_values[3]+size[3])/2.0;
     	ELSE
-    		RETURN size[4];
+    		/*
+    			EXIT since we are closer than 1 element away from the quantile size
+    		*/
+    		IF((quantile_size - last_values[4]) < 0)THEN
+    			size[2] = last_values[4];
+    		END IF;
+    		EXIT;
     	END IF;
     	increment = increment+1;
-    	curr_old = curr;
+    	curr_old = last_values[4];
     END LOOP;
+    
+    /*
+    	At this point we terminated the binary search but we do not know what the reason why no progress could be made
+    	following is the code that determines what is the reason for the termination, and finds the exact solution depending on the reason
+    */
+    EXECUTE 'SELECT ARRAY[MAX(a_max),SUM(a_count)] FROM (SELECT COUNT(*) AS a_count, MAX('||col_name||') AS a_max FROM '||table_name||' WHERE '||col_name||' <'||size[2]||' GROUP BY gp_segment_id ORDER BY a_max DESC) AS k' INTO last_values1; 
+    IF(last_values1[2] >= quantile_size) THEN
+    	RETURN last_values1[1]; 
+    END IF;
+    	
+    EXECUTE 'SELECT ARRAY[MIN(a_min),'||full_size||'-SUM(a_count)+1] FROM (SELECT COUNT(*) AS a_count, MIN('||col_name||') a_min FROM '||table_name||' WHERE '||col_name||' > '||size[2]||' GROUP BY gp_segment_id ORDER BY a_min DESC) AS k' INTO last_values2; 
+    last_values = last_values[3:4];
+   	
+   	 IF(last_values[2] >= quantile_size) THEN
+   	 	RETURN last_values[1]*(quantile_size-last_values1[2])/(last_values[2]-last_values1[2])+last_values1[1]*(last_values[2]-quantile_size)/(last_values[2]-last_values1[2]); 
+   	 ELSE
+   	 	RETURN last_values2[1]*(quantile_size-last_values[2])/(last_values2[2]-last_values[2])+last_values[1]*(last_values2[2]-quantile_size)/(last_values2[2]-last_values[2]);
+   	 END IF;
+end
+$$ LANGUAGE plpgsql;
 
-    RETURN size[4];
+/**
+ * @brief Compute a simple quantile
+ * 
+ * @param table_name name of the table from which quantile is to be taken
+ * @param col_name name of the column that is to be used for quantile calculation
+ * @param quantile desired quantile value \f$ \in (0,1) \f$
+ * @returns The quantile value
+ *
+ * This function computes the specified quantile value. It reads the name of the
+ * table, the specific column, and computes the quantile value based on the
+ * fraction specified as the third argument.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile_simple(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
+declare
+	size BIGINT;
+	result FLOAT;
+begin
+	EXECUTE 'SELECT COUNT(*) FROM '||table_name||' ' INTO size;
+	EXECUTE 'SELECT MAX('||col_name||') FROM (SELECT '||col_name||' FROM '||table_name||' ORDER BY '||col_name||' LIMIT '||size||'*'||quantile||') AS g' INTO result;
+	RETURN result;
 end
 $$ LANGUAGE plpgsql;
