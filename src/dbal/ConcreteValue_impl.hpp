@@ -5,42 +5,35 @@
  *//* ----------------------------------------------------------------------- */
 
 template <typename T>
-inline ConcreteValue<T>::ConcreteValue(const T &inValue)
-: mValue(inValue), mIsNull(false) { }
+inline ConcreteType<T>::ConcreteType(const T &inValue)
+: mValue(inValue) { }
 
 template <typename T>
-inline AbstractValueSPtr ConcreteValue<T>::getValueByID(unsigned int inID) const {
-    using utils::memory::NoDeleter;
-
-    if (inID != 0)
-        throw std::out_of_range("Tried to access non-zero index of non-tuple type");
-
-    return AbstractValueSPtr(this, NoDeleter<const AbstractValue>());
+inline const AnyType &ConcreteType<T>::getValueByID(uint16_t inID) const {
+    throw std::logic_error("getValueByID() should never be called for ConcreteType<T>.");
 }
 
 
-// Spezializations for ConcreteValue<AnyValueVector>
+// Spezializations for ConcreteValue<AnyTypeVector>
 
 template <>
-inline unsigned int ConcreteValue<AnyValueVector>::size() const {
+inline unsigned int ConcreteType<AnyTypeVector>::size() const {
     return mValue.size();
 }
 
 template <>
-inline bool ConcreteValue<AnyValueVector>::isCompound() const {
+inline bool ConcreteType<AnyTypeVector>::isCompound() const {
     return true;
 }
 
 template <>
-inline AbstractValueSPtr ConcreteValue<AnyValueVector>::getValueByID(
-    unsigned int inID) const {
+inline const AnyType &ConcreteType<AnyTypeVector>::getValueByID(
+    uint16_t inID) const {
 
-    using utils::memory::NoDeleter;
-    
     if (inID >= mValue.size())
         throw std::out_of_range("Index out of bounds when accessing tuple");
     
-    return AbstractValueSPtr( &mValue[inID], NoDeleter<const AbstractValue>() );
+    return mValue[inID];
 }
 
 
@@ -48,7 +41,7 @@ inline AbstractValueSPtr ConcreteValue<AnyValueVector>::getValueByID(
 
 #define DECLARE_OR_DEFINE_STD_CONVERSION(x,y) \
     template <> \
-    inline y ConcreteValue<x >::getAs(y* /* pure type parameter */) const { \
+    inline y ConcreteType<x >::getAs(y* /* pure type parameter */) const { \
         return mValue; \
     }
 
@@ -138,14 +131,15 @@ inline DoubleRow_const ConcreteValue<Array<double> >::getAs(DoubleRow_const*) co
 */
 
 template <>
-inline bool ConcreteValue<Array_const<double> >::isMutable() const {
+inline bool ConcreteType<Array_const<double> >::isMutable() const {
     return false;
 }
 
 template <>
-inline AbstractValueSPtr ConcreteValue<Array_const<double> >::mutableClone() const {
-    return AbstractValueSPtr(
-        new ConcreteValue<Array<double> >(
+inline AbstractTypeSPtr ConcreteType<Array_const<double> >::clone() const {
+    return
+        AbstractTypeSPtr(
+            new ConcreteType<Array<double> >(
                 Array<double>(
                     mValue.memoryHandle()->clone(), 
                     utils::shapeToExtents<1>(mValue.shape())

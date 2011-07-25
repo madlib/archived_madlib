@@ -22,6 +22,14 @@
 template<template <class> class T, typename eT>
 class Vector : public T<eT> {
 public:
+    inline Vector()
+        : T<eT>(
+            NULL,
+            0,
+            false /* copy_aux_mem */,
+            true /* strict */),
+          mMemoryHandle() { }
+
     inline Vector(
         AllocatorSPtr inAllocator,
         const uint32_t inNumElem)

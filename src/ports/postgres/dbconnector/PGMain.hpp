@@ -44,8 +44,8 @@ inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
             if (result.isNull())
                 PG_RETURN_NULL();
             
-            datum = PGToDatumConverter(fcinfo, result);
-            return datum;
+            PGToDatumConverter converter(fcinfo);
+            return converter.toDatum(result);
         } catch (std::exception &exc) {
             sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
             const char *error = exc.what();

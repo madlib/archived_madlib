@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractValueConverter.hpp
+ * @file AbstractTypeConverter.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -10,14 +10,21 @@
  * This class declares a conversion functions for all types supported by the
  * MADlib DB abstraction layer.
  */
-class AbstractValueConverter {
+class AbstractTypeConverter {
 public:
-    virtual ~AbstractValueConverter() { }
+    virtual ~AbstractTypeConverter() = 0;
 
     #define EXPAND_TYPE(T) \
-        virtual void convert(const T &inValue) = 0;
+        void convert(const T &inValue) { \
+            throwError(); \
+        }
     
     EXPAND_FOR_ALL_TYPES
     
     #undef EXPAND_TYPE
+
+private:
+    void throwError() {
+        throw std::logic_error("Internal type conversion error");
+    }
 };

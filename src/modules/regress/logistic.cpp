@@ -40,7 +40,7 @@ namespace modules {
 namespace regress {
 
 // Local functions
-AnyValue stateToResult(AbstractDBInterface &db,
+AnyType stateToResult(AbstractDBInterface &db,
     const DoubleCol &inCoef,
     const double &inLogLikelihood,
     const mat &inInverse_of_X_transp_AX);
@@ -75,8 +75,8 @@ AnyValue stateToResult(AbstractDBInterface &db,
  */
 class LogisticRegressionCG::State {
 public:
-    State(AnyValue inArg)
-        : mStorage(inArg.copyIfImmutable()),
+    State(AnyType inArg)
+        : mStorage(inArg.cloneIfImmutable()),
           iteration(&mStorage[0]),
           widthOfX(&mStorage[1]),
           coef(TransparentHandle::create(&mStorage[2]),
@@ -99,7 +99,7 @@ public:
      * We define this function so that we can use State in the
      * argument list and as a return type.
      */
-    inline operator AnyValue() const {
+    inline operator AnyType() const {
         return mStorage;
     }
     
@@ -196,8 +196,8 @@ static double sigma(double x) {
 /**
  * @brief Perform the logistic-regression transition step
  */
-AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args) {
-    AnyValue::iterator arg(args);
+AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) {
+    AnyType::iterator arg(args);
     
     // Initialize Arguments from SQL call
     State state = *arg++;
@@ -217,7 +217,6 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
     state.numRows++;
 	
     double xc = as_scalar( x * state.coef );
-	double xd = as_scalar( x * state.dir );
     
     state.gradNew += sigma(-y * xc) * y * trans(x);
 
@@ -238,8 +237,8 @@ AnyValue LogisticRegressionCG::transition(AbstractDBInterface &db, AnyValue args
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyValue LogisticRegressionCG::mergeStates(AbstractDBInterface &db, AnyValue args) {
-    State stateLeft = args[0].copyIfImmutable();
+AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface &db, AnyType args) {
+    State stateLeft = args[0].cloneIfImmutable();
     const State stateRight = args[1];
 
     // We first handle the trivial case where this function is called with one
@@ -257,9 +256,9 @@ AnyValue LogisticRegressionCG::mergeStates(AbstractDBInterface &db, AnyValue arg
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
+AnyType LogisticRegressionCG::final(AbstractDBInterface &db, AnyType args) {
     // Argument from SQL call
-    State state = args[0].copyIfImmutable();
+    State state = args[0].cloneIfImmutable();
     
     // Note: k = state.iteration
     if (state.iteration == 0) {
@@ -318,7 +317,7 @@ AnyValue LogisticRegressionCG::final(AbstractDBInterface &db, AnyValue args) {
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyValue LogisticRegressionCG::distance(AbstractDBInterface &db, AnyValue args) {
+AnyType LogisticRegressionCG::distance(AbstractDBInterface &db, AnyType args) {
     const State stateLeft = args[0];
     const State stateRight = args[1];
 
@@ -328,7 +327,7 @@ AnyValue LogisticRegressionCG::distance(AbstractDBInterface &db, AnyValue args) 
 /**
  * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyValue LogisticRegressionCG::result(AbstractDBInterface &db, AnyValue args) {
+AnyType LogisticRegressionCG::result(AbstractDBInterface &db, AnyType args) {
     const State state = args[0];
 
     // Compute (X^T * A * X)^+
@@ -363,8 +362,8 @@ AnyValue LogisticRegressionCG::result(AbstractDBInterface &db, AnyValue args) {
  */
 class LogisticRegressionIRLS::State {
 public:
-    State(AnyValue inArg)
-        : mStorage(inArg.copyIfImmutable()),
+    State(AnyType inArg)
+        : mStorage(inArg.cloneIfImmutable()),
           widthOfX(&mStorage[0]),
           coef(TransparentHandle::create(&mStorage[1]),
                widthOfX),
@@ -381,7 +380,7 @@ public:
      * We define this function so that we can use State in the
      * argument list and as a return type.
      */
-    inline operator AnyValue() const {
+    inline operator AnyType() const {
         return mStorage;
     }
     
@@ -457,9 +456,9 @@ public:
     Reference<double> logLikelihood;
 };
 
-AnyValue LogisticRegressionIRLS::transition(AbstractDBInterface &db,
-    AnyValue args) {
-    AnyValue::iterator arg(args);
+AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
+    AnyType args) {
+    AnyType::iterator arg(args);
     
     // Initialize Arguments from SQL call
     State state = *arg++;
@@ -516,8 +515,8 @@ AnyValue LogisticRegressionIRLS::transition(AbstractDBInterface &db,
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyValue LogisticRegressionIRLS::mergeStates(AbstractDBInterface &db, AnyValue args) {
-    State stateLeft = args[0].copyIfImmutable();
+AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface &db, AnyType args) {
+    State stateLeft = args[0].cloneIfImmutable();
     const State stateRight = args[1];
     
     // We first handle the trivial case where this function is called with one
@@ -535,9 +534,9 @@ AnyValue LogisticRegressionIRLS::mergeStates(AbstractDBInterface &db, AnyValue a
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyValue LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyValue args) {
+AnyType LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyType args) {
     // Argument from SQL call
-    State state = args[0].copyIfImmutable();
+    State state = args[0].cloneIfImmutable();
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
@@ -553,7 +552,7 @@ AnyValue LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyValue args) {
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyValue LogisticRegressionIRLS::distance(AbstractDBInterface &db, AnyValue args) {
+AnyType LogisticRegressionIRLS::distance(AbstractDBInterface &db, AnyType args) {
     const State stateLeft = args[0];
     const State stateRight = args[1];
 
@@ -563,7 +562,7 @@ AnyValue LogisticRegressionIRLS::distance(AbstractDBInterface &db, AnyValue args
 /**
  * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyValue LogisticRegressionIRLS::result(AbstractDBInterface &db, AnyValue args) {
+AnyType LogisticRegressionIRLS::result(AbstractDBInterface &db, AnyType args) {
     const State state = args[0];
 
     // Compute (X^T * A * X)^+
@@ -579,7 +578,7 @@ AnyValue LogisticRegressionIRLS::result(AbstractDBInterface &db, AnyValue args) 
  * This function wraps the common parts of computing the results for both the
  * CG and the IRLS method.
  */
-AnyValue stateToResult(AbstractDBInterface &db,
+AnyType stateToResult(AbstractDBInterface &db,
     const DoubleCol &inCoef,
     const double &inLogLikelihood,
     const mat &inInverse_of_X_transp_AX) {
@@ -597,7 +596,7 @@ AnyValue stateToResult(AbstractDBInterface &db,
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
-    AnyValueVector tuple;
+    AnyTypeVector tuple;
     ConcreteRecord::iterator tupleElement(tuple);
     
     tupleElement++ = inCoef;

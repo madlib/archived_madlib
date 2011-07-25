@@ -22,9 +22,9 @@ namespace utils {
 template <typename T, typename U = T>
 class Reference {
 public:
-    Reference(T *inPtr) {
-        mPtr = inPtr;
-    }
+    Reference() : mPtr(NULL) { }
+
+    Reference(T *inPtr) : mPtr(inPtr) { }
     
     Reference &rebind(T *inPtr) {
         mPtr = inPtr;

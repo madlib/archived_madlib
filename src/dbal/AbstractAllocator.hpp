@@ -21,6 +21,7 @@ public:
      * supports it).
      */
     enum Context { kFunction, kAggregate };
+    enum ZeroMemory { kDoNotZero, kZero };
 
     virtual ~AbstractAllocator() { }
 

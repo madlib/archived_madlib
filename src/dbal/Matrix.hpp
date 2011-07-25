@@ -21,6 +21,15 @@
 template<typename eT>
 class Matrix : public arma::Mat<eT> {
 public:
+    inline Matrix()
+        : arma::Mat<eT>(
+            NULL,
+            0,
+            0,
+            false /* copy_aux_mem */,
+            true /* strict */),
+          mMemoryHandle() { }
+
     inline Matrix(
         AllocatorSPtr inAllocator,
         const uint32_t inNumRows,

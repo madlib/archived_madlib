@@ -101,7 +101,8 @@ public:
      *     not declare it as const.
      */
     virtual AllocatorSPtr allocator(
-        AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction)
+        AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction,
+        AbstractAllocator::ZeroMemory inZeroMemory = AbstractAllocator::kDoNotZero)
         = 0;
     
     /**

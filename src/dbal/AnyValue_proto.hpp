@@ -1,99 +1,73 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AnyValue_proto.hpp
+ * @file AnyType_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
 /**
  * @brief Class for representing any type.
  *
- * Instances of this class act a proxy to any arbitrary ConcreteValue<T>.
+ * Instances of this class act a proxy to any arbitrary ConcreteType<T>.
  */
-class AnyValue : public AbstractValue {
+class AnyType : public AbstractType {
 public:
-    /**
-     * @brief Iterator for walking through the elements of a compund AnyValue.
-     */
-    class iterator : public std::iterator<std::input_iterator_tag, AnyValue> {
-    public:
-        iterator(const AbstractValue &inValue)
-            : mValue(inValue), mCurrentID(0) {
-        }
-        
-        iterator &operator++() {
-            ++mCurrentID;
-            return *this;
-        }
-        
-        // Post-increment operator
-        iterator operator++(int) {
-            iterator temp(*this);
-            operator++();
-            return temp;
-        }
-        
-        bool operator==(const iterator &inRHS) {
-            return mCurrentID == inRHS.mCurrentID;
-        }
-        
-        bool operator!=(const iterator &inRHS) {
-            return mCurrentID != inRHS.mCurrentID;
-        }
-        
-        bool operator<(const iterator &inRHS) {
-            return mCurrentID < inRHS.mCurrentID;
-        }
-        
-        AnyValue operator*() {
-            // FIXME: This could be more efficient, operator->() creates AnyValue
-            // which is then deleted again
-            return *this->operator->();
-        }
-        
-        shared_ptr<const AnyValue> operator->() {
-            AbstractValueSPtr valuePtr = mValue.getValueByID(mCurrentID);
-            shared_ptr<const AnyValue> anyValuePtr(
-                dynamic_pointer_cast<const AnyValue>( valuePtr ));
-            
-            if (anyValuePtr)
-                return anyValuePtr;
-            else
-                // Return an AnyValue by value (which uses the Value returned
-                // by getValueByID as delegate)
-                return shared_ptr<AnyValue>( new AnyValue(valuePtr) );
-        }
-            
-    private:
-        const AbstractValue &mValue;
-        int mCurrentID;
-    };
-
+    class iterator;
+    
     /**
      * @internal
      * This constructor will only be generated if \c T is not a subclass of
-     * \c AbstractValue (in which case the other constructor will be used).
-     * We use boost's \c enable_if here, because for subclasses of AbstractValue
+     * \c AbstractType (in which case the other constructor will be used).
+     * We use boost's \c enable_if here, because for subclasses of AbstractType
      * this template constructor would take precedence over the constructor
-     * having AbstractValue as argument.
+     * having AbstractType as argument.
+     */
+//    template <typename T>
+//    AnyType(const T &inValue,
+//        typename disable_if<boost::is_base_of<AbstractType, T> >::type *dummy = NULL)
+
+    /**
+     * @brief Template conversion constructor
+     *
+     * @note When overload resolution takes place, a template function has lower
+     *       precedence than non-template functions:
+     *       http://publib.boulder.ibm.com/infocenter/compbgpl/v9v111/topic/com.ibm.xlcpp9.bg.doc/language_ref/overloading_function_templates.htm
      */
     template <typename T>
-    AnyValue(const T &inValue,
-        typename disable_if<boost::is_base_of<AbstractValue, T> >::type *dummy = NULL)
-        : mDelegate(new ConcreteValue<T>(inValue)) { }
+    AnyType(const T &inValue)
+        : mDelegate(new ConcreteType<T>(inValue)) { }
     
     /**
-     * This copy constructor will only by called if inValue is *not* of type
-     * AnyValue (in which case the implicit copy constructor would be called
-     * instead). This behavior is desired here!
+     *
      */
-    AnyValue(const AbstractValue &inValue) : mDelegate(inValue.clone()) {
-    }
-    
-    /**
-     * We want to allow the notation anyValue = Null();
-     */
-    AnyValue(const Null &inValue) { }
+    AnyType(AbstractTypeSPtr inDelegate) : mDelegate(inDelegate) { }
 
+    /**
+     * This constructor will only by called if inValue is *not* of type
+     * AnyType (in which case the copy constructor would be called
+     * instead).
+     */
+//    AnyType(const AbstractType &inValue) : mDelegate(inValue) {
+//    }
+    
+    /**
+     * @brief The copy constructor: Perform a shallow copy, i.e., copy only
+     *        reference to delegate
+     */
+    AnyType(const AnyType &inValue) : mDelegate(inValue.mDelegate) { };
+        
+    /**
+     * We want to allow the notation anyType = Null();
+     */
+    AnyType(const Null &inValue) { }
+
+    /**
+     * @brief Template conversion operator
+     *
+     * @internal
+     *     A template conversion operator is not without issues. In particular,
+     *     non-sense operations are now syntactically correct. E.g.,
+     *     if (anyType1 == anyType2)
+     */
     template <class T>
     operator T() const;
     
@@ -101,84 +75,88 @@ public:
         if (mDelegate)
             return mDelegate->isCompound();
         
-        return AbstractValue::isCompound();
+        return AbstractType::isCompound();
     }
-            
+    
     bool isNull() const {
         return !mDelegate;
+    }
+    
+    bool isMutable() const {
+        if (mDelegate)
+            return mDelegate->isMutable();
+        
+        return AbstractType::isMutable();
     }
     
     unsigned int size() const {
         if (mDelegate)
             return mDelegate->size();
         
-        return AbstractValue::size();
+        return AbstractType::size();
     }
     
     /**
-     * @brief Perform a deep copy if this variable is not mutable, otherwise
-     *     return this
+     * @brief Get the element at the given position (0-based).
+     *
+     * This function is a convenience wrapper around getValueByID(uint16_t).
      */
-    AnyValue copyIfImmutable() const {
-        // FIXME: Necessary to test: if (mDelegate)?
-        if (mDelegate->isMutable())
+    const AnyType &operator[](uint16_t inID) const {
+        return getValueByID(inID);
+    }
+    
+    /**
+     * @brief The default implementation returns an empty smart pointer
+     */
+    const AnyType &getValueByID(uint16_t inID) const {
+        if (mDelegate) {
+            if (mDelegate->isCompound() && inID < mDelegate->size())
+                return dynamic_cast<const AnyType&>(mDelegate->getValueByID(inID));
+            else if (inID == 0)
+                return *this;
+        }
+        
+        if (inID != 0)
+            throw std::out_of_range("Tried to access non-zero index of non-tuple type");
+        
+        return *this;
+    }
+
+    /**
+     * @brief Clone this instance if it is not mutable, otherwise return this
+     */
+    AnyType cloneIfImmutable() const {
+        if (isMutable() || !mDelegate)
             return *this;
         
-        return AnyValue( mDelegate->mutableClone() );
+        return AnyType(mDelegate->clone());
     }
 
-    void convert(AbstractValueConverter &inConverter) const {
+    void performCallback(AbstractTypeConverter &inConverter) const {
         if (mDelegate)
-            mDelegate->convert(inConverter);
+            return mDelegate->performCallback(inConverter);
+        
+        return AbstractType::performCallback(inConverter);
+    }
+        
+    /**
+     * @brief Return a mutable copy of this variable.
+     */
+    AbstractTypeSPtr clone() const {
+        if (mDelegate)
+            return AbstractTypeSPtr(new AnyType(mDelegate->clone()));
+        
+        return AbstractTypeSPtr(new AnyType(Null()));
     }
     
-    /**
-     * @brief Access elements of a compound value
-     */
-    AnyValue operator[](uint16_t inID) {
-        AbstractValueSPtr valuePtr = getValueByID(inID);
-        shared_ptr<const AnyValue> anyValuePtr(
-            dynamic_pointer_cast<const AnyValue>( valuePtr ));
-
-        // FIXME: Null!
-        if (anyValuePtr)
-            return *anyValuePtr;
-        else
-            // Return an AnyValue by value (which uses the Value returned
-            // by getValueByID as delegate)
-            return AnyValue(valuePtr);
-    }
     
 protected:
     /**
      * @internal Cannot be instantiated directly.
      */
-    AnyValue() {
-    }
-    
-    /**
-     * @brief Perform a shallow copy.
-     */
-    AbstractValueSPtr clone() const {
-        return AbstractValueSPtr( new AnyValue(*this) );
+    AnyType() {
     }
         
-    /**
-     * The default implementation returns an empty smart pointer
-     */
-    AbstractValueSPtr getValueByID(unsigned int inID) const {
-        if (mDelegate)
-            return mDelegate->getValueByID(inID);
-        
-        return AbstractValueSPtr();
-    };
-
-private:
-    /**
-     * Constructor is private -- it is only used by the friend class Record, in
-     * Record::getValueByID(). Derived classes cannot call this constructor.
-     */
-    AnyValue(AbstractValueSPtr inDelegate) : mDelegate(inDelegate) { }
-    
-    AbstractValueSPtr mDelegate;
+private:    
+    AbstractTypeSPtr mDelegate;
 };

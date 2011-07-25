@@ -23,9 +23,9 @@ struct LinearRegression {
     
     class TransitionState;
     
-    static AnyValue transition(AbstractDBInterface &db, AnyValue args);
-    static AnyValue mergeStates(AbstractDBInterface &db, AnyValue args);
-    static AnyValue final(AbstractDBInterface &db, AnyValue args);
+    static AnyType transition(AbstractDBInterface &db, AnyType args);
+    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
+    static AnyType final(AbstractDBInterface &db, AnyType args);
 };
 
 } // namespace regress

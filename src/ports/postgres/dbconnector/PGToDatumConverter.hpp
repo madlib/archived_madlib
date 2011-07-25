@@ -26,19 +26,22 @@ namespace dbconnector {
 /**
  * @brief Convert DBAL types into PostgreSQL Datum
  *
- * @internal This class makes frequent calls into the PostgreSQL backend. 
+ * @internal This class makes frequent calls into the PostgreSQL backend.
+ *     This class is not thread-safe. This should never be an issue, though,
+ *     because PostgreSQL does not use threads.
  */
-class PGToDatumConverter : public ValueConverter<Datum> {
+class PGToDatumConverter : public AbstractValueConverter {
 public:
-    PGToDatumConverter(const FunctionCallInfo inFCInfo,
-        const AbstractValue &inValue);
+    PGToDatumConverter(const FunctionCallInfo inFCInfo);
     
-    PGToDatumConverter(Oid inTypeID, const AbstractValue &inValue);
+    PGToDatumConverter(Oid inTypeID);
     
     ~PGToDatumConverter() {
         if (mTupleDesc != NULL)
             ReleaseTupleDesc(mTupleDesc);
     }
+    
+    Datumm convertToDatum(const AbstractValue &inValue);
     
     void convert(const double &inValue);
     void convert(const float &inValue);
@@ -57,6 +60,11 @@ public:
 protected:
     TupleDesc mTupleDesc;
     Oid mTypeID;
+    
+    /**
+     * @brief PostgreSQL Datum value used during the convertToDatum call
+     */
+    Datum mConvertedValue;
     
     void convertArray(const MemHandleSPtr &inHandle, uint32_t inNumElements);
 };

@@ -23,14 +23,21 @@ namespace madlib {
 namespace dbconnector {
 
 /**
+ * @brief Convert an arbitrary value to PostgreSQL Datum type
+ */
+Datum PGToDatumConverter::convertToDatum(const AbstractValue &inValue) {
+    inValue.convert(*this);
+    return mConvertedValue;
+}
+
+/**
  * @brief Constructor: Initialize conversion of function return value.
  *
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo,
-    const AbstractValue &inValue)
-    : ValueConverter<Datum>(inValue), mTupleDesc(NULL), mTypeID(0) {
+PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo)
+    : mTupleDesc(NULL), mTypeID(0) {
     
     bool exceptionOccurred = false;
     TypeFuncClass funcClass;
@@ -61,9 +68,8 @@ PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo,
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-PGToDatumConverter::PGToDatumConverter(Oid inTypeID,
-    const AbstractValue &inValue)
-    : ValueConverter<Datum>(inValue), mTupleDesc(NULL), mTypeID(inTypeID) {
+PGToDatumConverter::PGToDatumConverter(Oid inTypeID)
+    : mTupleDesc(NULL), mTypeID(inTypeID) {
     
     bool exceptionOccurred = false;
     bool isTuple;
