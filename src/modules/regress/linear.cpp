@@ -222,9 +222,24 @@ AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
     double tss
         = state.y_square_sum
             - ((state.y_sum * state.y_sum) / state.numRows);
+    
+    // With infinite precision, the following checks are pointless. But due to
+    // floating-point arithmetic, this need not hold at this point.
+    // Without a formal proof convincing us of the contrary, we should
+    // anticipate that numerical peculiarities might occur.
+    if (tss < 0)
+        tss = 0;
+    if (ess < 0)
+        ess = 0;
+    // Since we know tss with greater accuracy than ess, we do the following
+    // sanity adjustment to ess:
+    if (ess > tss)
+        ess = tss;
 
     // coefficient of determination
-    double r2 = ess / tss;
+    // If tss == 0, then the regression perfectly fits the data, so the
+    // coefficient of determination is 1.
+    double r2 = (tss == 0 ? 1 : ess / tss);
 
     // In the case of linear regression:
     // residual sum of squares (rss) = total sum of squares (tss) - explained
@@ -240,8 +255,25 @@ AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
     DoubleCol stdErr(db.allocator(), state.widthOfX);
     DoubleCol tStats(db.allocator(), state.widthOfX);
     for (int i = 0; i < state.widthOfX; i++) {
-        stdErr(i) = std::sqrt( variance * inverse_of_X_transp_X(i,i) );
-        tStats(i) = coef(i) / stdErr(i);
+        // In an abundance of caution, we see a tiny possibility that numerical
+        // instabilities in the pinv operation can lead to negative values on
+        // the main diagonal of even a SPD matrix
+        if (inverse_of_X_transp_X(i,i) < 0) {
+            stdErr(i) = 0;
+        } else {
+            stdErr(i) = std::sqrt( variance * inverse_of_X_transp_X(i,i) );
+        }
+        
+        if (coef(i) == 0 && stdErr(i) == 0) {
+            // In this special case, 0/0 should be interpreted as 0:
+            // We know that 0 is the exact value for the coefficient, so
+            // the t-value should be 0 (corresponding to a p-value of 1)
+            tStats(i) = 0;
+        } else {
+            // If stdErr(i) == 0 then abs(tStats(i)) will be infinity, which is
+            // what we need.
+            tStats(i) = coef(i) / stdErr(i);
+        }
     }
     
     // Vector of p-values: For efficiency reasons, we want to return this

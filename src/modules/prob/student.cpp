@@ -132,6 +132,10 @@ double studentT_cdf(int64_t nu, double t) {
 	 
 	if (nu <= 0)
 		return NAN;
+    else if (t == INFINITY)
+        return 1;
+    else if (t == -INFINITY)
+        return 0;
 	else if (nu >= 1000000)
 		return normal_cdf(t);
 	else if (nu >= 200)
