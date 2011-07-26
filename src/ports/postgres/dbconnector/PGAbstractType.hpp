@@ -1,11 +1,11 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGAbstractValue.cpp
+ * @file PGAbstractType.cpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_PGABSTRACTVALUE_HPP
-#define MADLIB_POSTGRES_PGABSTRACTVALUE_HPP
+#ifndef MADLIB_POSTGRES_PGABSTRACTTYPE_HPP
+#define MADLIB_POSTGRES_PGABSTRACTTYPE_HPP
 
 #include <dbconnector/PGCommon.hpp>
 
@@ -20,12 +20,11 @@ namespace dbconnector {
  * composite value consisting of all function arguments.
  * PGvalue<HeapTupleHeader> objects are instantiated for "normal" composite
  * values.
- * PGAbstractValue is the common superclass that contains common parts.
+ * PGAbstractType is the common superclass that contains common parts.
  */
-class PGAbstractValue : public AbstractValue {
+class PGAbstractType : public AbstractType {
 protected:
-    AbstractValueSPtr getValueByID(unsigned int inID) const = 0;
-    AbstractValueSPtr DatumToValue(bool inMemoryIsWritable, Oid inTypeID, Datum inDatum) const;
+    AbstractTypeSPtr DatumToValue(bool inMemoryIsWritable, Oid inTypeID, Datum inDatum) const;
 };
 
 } // namespace dbconnector

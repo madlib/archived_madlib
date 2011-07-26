@@ -19,11 +19,6 @@ namespace dbconnector {
 class PGAllocator : public AbstractAllocator {
 friend class PGInterface;
 public:
-    PGAllocator()
-        : mContext(kFunction),
-          mPGInterface(NULL)
-        { }
-
     /**
      * @brief Return the default allocator used by operator new and operator delete.
      */
@@ -44,14 +39,22 @@ public:
     void free(void *inPtr) const throw();
 
 protected:
-    PGAllocator(const PGInterface *const inPGInterface, Context inContext)
-        : mContext(inContext), mPGInterface(inPGInterface)
+    PGAllocator()
+        : mContext(kFunction),
+          mPGInterface(NULL)
+        { }
+
+    PGAllocator(const PGInterface *const inPGInterface, Context inContext,
+        ZeroMemory inZeroMemory)
+        : mContext(inContext), mPGInterface(inPGInterface),
+          mZeroMemory(inZeroMemory == kZero)
         { }
 
     ArrayType *internalAllocateForArray(Oid inElementType,
         uint32_t inNumElements, size_t inElementSize) const;
         
     Context mContext;
+    bool mZeroMemory;
     const PGInterface *const mPGInterface;    
 };
 

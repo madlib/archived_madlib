@@ -30,7 +30,7 @@ namespace dbconnector {
  *     This class is not thread-safe. This should never be an issue, though,
  *     because PostgreSQL does not use threads.
  */
-class PGToDatumConverter : public AbstractValueConverter {
+class PGToDatumConverter : public AbstractTypeConverter {
 public:
     PGToDatumConverter(const FunctionCallInfo inFCInfo);
     
@@ -41,21 +41,21 @@ public:
             ReleaseTupleDesc(mTupleDesc);
     }
     
-    Datumm convertToDatum(const AbstractValue &inValue);
+    Datum convertToDatum(const AbstractType &inValue);
     
-    void convert(const double &inValue);
-    void convert(const float &inValue);
-    void convert(const int32_t &inValue);
+    void callbackWithValue(const double &inValue);
+    void callbackWithValue(const float &inValue);
+    void callbackWithValue(const int32_t &inValue);
     
-    void convert(const Array<double> &inValue) {
+    void callbackWithValue(const Array<double> &inValue) {
         convertArray(inValue.memoryHandle(), inValue.num_elements());
     }
     
-    void convert(const DoubleCol &inValue) {
+    void callbackWithValue(const DoubleCol &inValue) {
         convertArray(inValue.memoryHandle(), inValue.n_elem);
     }
     
-    void convert(const AnyValueVector &inRecord);
+    void callbackWithValue(const AnyTypeVector &inRecord);
     
 protected:
     TupleDesc mTupleDesc;

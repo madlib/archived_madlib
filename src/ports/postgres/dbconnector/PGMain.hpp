@@ -39,7 +39,7 @@ inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
         PGInterface db(fcinfo);
         
         try {
-            AnyValue result = f(db, PGValue<FunctionCallInfo>(fcinfo));
+            AnyType result = f(db, PGValue<FunctionCallInfo>(fcinfo));
 
             if (result.isNull())
                 PG_RETURN_NULL();

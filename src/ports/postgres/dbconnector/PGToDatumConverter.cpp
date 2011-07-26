@@ -25,7 +25,7 @@ namespace dbconnector {
 /**
  * @brief Convert an arbitrary value to PostgreSQL Datum type
  */
-Datum PGToDatumConverter::convertToDatum(const AbstractValue &inValue) {
+Datum PGToDatumConverter::convertToDatum(const AbstractType &inValue) {
     inValue.convert(*this);
     return mConvertedValue;
 }
@@ -105,7 +105,7 @@ PGToDatumConverter::PGToDatumConverter(Oid inTypeID)
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-void PGToDatumConverter::convert(const AnyValueVector &inRecord) {
+void PGToDatumConverter::convert(const AnyTypeVector &inRecord) {
     if (!mValue.isCompound())
         throw std::logic_error("Internal MADlib error, got internal compound "
             "type where not expected");

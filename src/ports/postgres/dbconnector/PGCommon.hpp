@@ -29,7 +29,7 @@ namespace dbconnector {
 using namespace dbal;
 using namespace utils::memory;
 
-typedef AnyValue (MADFunction)(AbstractDBInterface &, AnyValue);
+typedef AnyType (MADFunction)(AbstractDBInterface &, AnyType);
 
 // Forward declarations
 // ====================

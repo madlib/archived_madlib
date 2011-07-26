@@ -78,11 +78,11 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
                 errorOccurred = true;
             else {
                 oldContext = MemoryContextSwitchTo(aggContext);
-                ptr = palloc(inSize);
+                ptr = mZeroMemory ? palloc0(inSize) : palloc(inSize);
                 MemoryContextSwitchTo(oldContext);
             }
         } else {
-            ptr = palloc(inSize);
+            ptr = mZeroMemory ? palloc0(inSize) ? palloc(inSize);
         }
     } PG_CATCH(); {
         /*
@@ -161,11 +161,11 @@ void *PGAllocator::allocate(const uint32_t inSize, const std::nothrow_t&) const
                 errorOccurred = true;
             else {
                 oldContext = MemoryContextSwitchTo(aggContext);
-                ptr = palloc(inSize);
+                ptr = mZeroMemory ? palloc0(inSize) : palloc(inSize);
                 MemoryContextSwitchTo(oldContext);
             }
         } else {
-            ptr = palloc(inSize);
+            ptr = mZeroMemory ? palloc0(inSize) : palloc(inSize);
         }
     } PG_CATCH(); {
         /*
