@@ -55,12 +55,13 @@ public:
      * @brief The copy constructor: Perform a shallow copy, i.e., copy only
      *        reference to delegate
      */
-    AnyType(const AnyType &inValue) : mDelegate(inValue.mDelegate) { }
+    AnyType(const AnyType &inValue)
+        : AbstractType(inValue), mDelegate(inValue.mDelegate) { }
         
     /**
      * We want to allow the notation anyType = Null();
      */
-    AnyType(const Null &inValue) { }
+    AnyType(const Null & /* inValue */) { }
 
     /**
      * @brief Template conversion operator

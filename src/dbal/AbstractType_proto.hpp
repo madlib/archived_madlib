@@ -74,8 +74,8 @@ public:
      * This allows relying on the vtable of AbstractTypeConverter for
      * dispatching conversion requests.
      */
-    virtual void performCallback(AbstractTypeConverter &inConverter) const {
-    }
+    virtual void performCallback(AbstractTypeConverter & /* inConverter */)
+        const { }
     
     #define EXPAND_TYPE(T) \
         inline virtual T getAs(T* /* pure type parameter */) const;

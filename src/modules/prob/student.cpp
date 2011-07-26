@@ -219,7 +219,7 @@ static double studentT_cdf_approx(int64_t nu, double t)
 /**
  * @brief Student-t cumulative distribution function: In-database interface
  */
-AnyType student_t_cdf(AbstractDBInterface &db, AnyType args) {
+AnyType student_t_cdf(AbstractDBInterface & /* db */, AnyType args) {
     AnyType::iterator arg(args);
 
     // Arguments from SQL call

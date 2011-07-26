@@ -23,7 +23,7 @@ public:
     ConcreteType(const T &inValue);
 
     void performCallback(AbstractTypeConverter &inConverter) const {
-        inConverter.convert(mValue);
+        inConverter.callbackWithValue(mValue);
     }
     
     inline unsigned int size() const {

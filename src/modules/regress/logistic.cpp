@@ -237,7 +237,7 @@ AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) 
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface &db, AnyType args) {
+AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
     State stateLeft = args[0].cloneIfImmutable();
     const State stateRight = args[1];
 
@@ -256,7 +256,7 @@ AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface &db, AnyType args)
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyType LogisticRegressionCG::final(AbstractDBInterface &db, AnyType args) {
+AnyType LogisticRegressionCG::final(AbstractDBInterface & /* db */, AnyType args) {
     // Argument from SQL call
     State state = args[0].cloneIfImmutable();
     
@@ -317,7 +317,7 @@ AnyType LogisticRegressionCG::final(AbstractDBInterface &db, AnyType args) {
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyType LogisticRegressionCG::distance(AbstractDBInterface &db, AnyType args) {
+AnyType LogisticRegressionCG::distance(AbstractDBInterface & /* db */, AnyType args) {
     const State stateLeft = args[0];
     const State stateRight = args[1];
 
@@ -515,7 +515,7 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface &db, AnyType args) {
+AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
     State stateLeft = args[0].cloneIfImmutable();
     const State stateRight = args[1];
     
@@ -534,7 +534,7 @@ AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface &db, AnyType arg
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyType LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyType args) {
+AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */, AnyType args) {
     // Argument from SQL call
     State state = args[0].cloneIfImmutable();
 
@@ -552,7 +552,7 @@ AnyType LogisticRegressionIRLS::final(AbstractDBInterface &db, AnyType args) {
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyType LogisticRegressionIRLS::distance(AbstractDBInterface &db, AnyType args) {
+AnyType LogisticRegressionIRLS::distance(AbstractDBInterface & /* db */, AnyType args) {
     const State stateLeft = args[0];
     const State stateRight = args[1];
 

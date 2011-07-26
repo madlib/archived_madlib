@@ -12,11 +12,3 @@
 EXPAND_FOR_ALL_TYPES
 
 #undef EXPAND_TYPE
-
-//AnyType AbstractType::clone() const {
-//    return AnyType();
-//}
-
-//AnyType AbstractType::getValueByID(uint16_t inID) const {
-//    return AnyType();
-//}

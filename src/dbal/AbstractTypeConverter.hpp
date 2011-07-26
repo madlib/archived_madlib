@@ -15,7 +15,7 @@ public:
     virtual ~AbstractTypeConverter() = 0;
 
     #define EXPAND_TYPE(T) \
-        void callbackWithValue(const T &inValue) { \
+        void callbackWithValue(const T & /* inValue */ ) { \
             throwError(); \
         }
     
@@ -28,3 +28,6 @@ private:
         throw std::logic_error("Internal type conversion error");
     }
 };
+
+// We need to provide an implementation
+inline AbstractTypeConverter::~AbstractTypeConverter() { }
