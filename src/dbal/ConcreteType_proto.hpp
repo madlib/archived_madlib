@@ -44,12 +44,7 @@ public:
         return true;
     }
 
-    /*
-     * This function is implemented (specialized) only for
-     * ConcreteValue<AnyTypeVector>, hence we declare the return type as
-     * AnyType
-     */
-    const AnyType &getValueByID(uint16_t inID) const;
+    AbstractTypeSPtr getValueByID(uint16_t inID) const;
 
     const T &get() const {
         return mValue;

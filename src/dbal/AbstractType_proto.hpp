@@ -56,9 +56,7 @@ public:
     /**
      * @brief Get the element at the given position (0-based).
      */
-    virtual const AbstractType &getValueByID(uint16_t inID) const {
-        return *this;
-    }
+    virtual AbstractTypeSPtr getValueByID(uint16_t inID) const = 0;
     
     /**
      * @brief Return a mutable copy of this variable.

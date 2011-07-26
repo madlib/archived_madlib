@@ -9,8 +9,12 @@ inline ConcreteType<T>::ConcreteType(const T &inValue)
 : mValue(inValue) { }
 
 template <typename T>
-inline const AnyType &ConcreteType<T>::getValueByID(uint16_t inID) const {
-    throw std::logic_error("getValueByID() should never be called for ConcreteType<T>.");
+inline AbstractTypeSPtr ConcreteType<T>::getValueByID(uint16_t inID) const {
+    if (inID > 0)
+        throw std::out_of_range("Index out of bounds while accessing "
+            "non-composite value");
+    
+    return AbstractTypeSPtr(new ConcreteType<T>(*this));
 }
 
 
@@ -27,13 +31,14 @@ inline bool ConcreteType<AnyTypeVector>::isCompound() const {
 }
 
 template <>
-inline const AnyType &ConcreteType<AnyTypeVector>::getValueByID(
+inline AbstractTypeSPtr ConcreteType<AnyTypeVector>::getValueByID(
     uint16_t inID) const {
 
     if (inID >= mValue.size())
-        throw std::out_of_range("Index out of bounds when accessing tuple");
+        throw std::out_of_range("Index out of bounds while accessing "
+            "composite value");
     
-    return mValue[inID];
+    return mValue[inID].mDelegate;
 }
 
 

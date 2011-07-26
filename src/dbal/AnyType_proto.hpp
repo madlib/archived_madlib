@@ -10,6 +10,8 @@
  * Instances of this class act a proxy to any arbitrary ConcreteType<T>.
  */
 class AnyType : public AbstractType {
+    friend class ConcreteType<AnyTypeVector>;
+
 public:
     class iterator;
     
@@ -53,7 +55,7 @@ public:
      * @brief The copy constructor: Perform a shallow copy, i.e., copy only
      *        reference to delegate
      */
-    AnyType(const AnyType &inValue) : mDelegate(inValue.mDelegate) { };
+    AnyType(const AnyType &inValue) : mDelegate(inValue.mDelegate) { }
         
     /**
      * We want to allow the notation anyType = Null();
@@ -101,25 +103,18 @@ public:
      *
      * This function is a convenience wrapper around getValueByID(uint16_t).
      */
-    const AnyType &operator[](uint16_t inID) const {
-        return getValueByID(inID);
+    AnyType operator[](uint16_t inID) const {
+        return AnyType(getValueByID(inID));
     }
     
     /**
      * @brief The default implementation returns an empty smart pointer
      */
-    const AnyType &getValueByID(uint16_t inID) const {
-        if (mDelegate) {
-            if (mDelegate->isCompound() && inID < mDelegate->size())
-                return dynamic_cast<const AnyType&>(mDelegate->getValueByID(inID));
-            else if (inID == 0)
-                return *this;
-        }
-        
-        if (inID != 0)
-            throw std::out_of_range("Tried to access non-zero index of non-tuple type");
-        
-        return *this;
+    AbstractTypeSPtr getValueByID(uint16_t inID) const {
+        if (mDelegate)
+            return mDelegate->getValueByID(inID);
+            
+        return AbstractTypeSPtr();
     }
 
     /**
