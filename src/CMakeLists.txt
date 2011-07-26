@@ -165,7 +165,10 @@ set_target_properties(armadillo PROPERTIES
 )
 
 set(ARMADILLO_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/include)
-include_directories(${ARMADILLO_INCLUDE_DIRS})
+
+# We treat Armadillo as a system header. This means, e.g., that warnings are not
+# being shown (which is what we want).
+include_directories(SYSTEM ${ARMADILLO_INCLUDE_DIRS})
 
 
 # -- Macros to be used by ports ------------------------------------------------

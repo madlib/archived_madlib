@@ -44,6 +44,36 @@ if(NOT CMAKE_BUILD_TYPE)
       FORCE)
 endif(NOT CMAKE_BUILD_TYPE)
 
+if(CMAKE_COMPILER_IS_GNUCC)
+    # A useful summary of warning options can be found here:
+    # http://developer.apple.com/tools/xcode/compilercodewarnings.html
+    set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra" CACHE STRING
+        "Flags used by the compiler during all build types." FORCE)
+    
+    # See comments below for C++:
+    # Weird enough, the following property is set only for C++ but not for C
+    # http://stackoverflow.com/questions/3371127/use-isystem-instead-of-i-with-cmake
+    set(CMAKE_INCLUDE_SYSTEM_FLAG_C "-isystem ")
+endif(CMAKE_COMPILER_IS_GNUCC)
+
+if(CMAKE_COMPILER_IS_GNUCXX)
+    # We need the 1998 standard plus amendments (ISO/IEC 14882:2003) plus TR1
+    # Unfortunately, we only get this with gnu++98
+    # Special notes:
+    # - long long is not part of the C++ 1998/2003 standard, but it is such a
+    # common (and useful) extension that we do not want to hear warnings about
+    # it.
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long" CACHE STRING
+        "Flags used by the compiler during all build types." FORCE)
+    
+    # We want to include some header files as system header files in order to
+    # disable warnings. However, on Mac OS X, a CMake variable is not set
+    # correctly on Mac OS X. http://www.cmake.org/Bug/view.php?id=10837
+    if(APPLE)
+        set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-isystem ")
+    endif(APPLE)
+endif(CMAKE_COMPILER_IS_GNUCXX)
+
 set(M4_ARGUMENTS
     # force a `m4_' prefix to all builtins
     "--prefix-builtins"
