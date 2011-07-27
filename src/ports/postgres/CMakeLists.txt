@@ -51,9 +51,6 @@ if(POSTGRESQL_FOUND)
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
     
-        if(${CMAKE_COMPILER_IS_GNUCC})
-            set(CMAKE_C_FLAGS "-std=gnu99")
-        endif(${CMAKE_COMPILER_IS_GNUCC})
         file(GLOB_RECURSE LEGACY_C_FILES_POSTGRES RELATIVE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 

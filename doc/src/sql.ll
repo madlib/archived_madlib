@@ -105,7 +105,7 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
      * - labeling arguments of aggregate functions,
      * - default arguments
      * we will simply uncomment C style comments in argument lists when they
-     * begin with "/*+". */
+     * begin with BEGIN_SPECIAL_COMMENT. */
 <sFUNC_ARGLIST,sAGG_ARGLIST>{
     {BEGIN_SPECIAL_COMMENT} { return token::BEGIN_SPECIAL; }
     {END_SPECIAL_COMMENT} { return token::END_SPECIAL; }
@@ -272,8 +272,8 @@ char *SQLScanner::strlowerdup(const char *inString) {
 	return returnStr;
 }
 
-void SQLScanner::preScannerAction(SQLParser::semantic_type *yylval,
-	SQLParser::location_type *yylloc, SQLDriver *driver) {
+void SQLScanner::preScannerAction(SQLParser::semantic_type * /* yylval */,
+	SQLParser::location_type *yylloc, SQLDriver * /* driver */) {
 	
 	yylloc->step();
     
