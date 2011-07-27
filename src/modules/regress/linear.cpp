@@ -93,9 +93,21 @@ private:
         return 4 + inWidthOfX + inWidthOfX * inWidthOfX;
     }
     
-    void rebind(const uint16_t inWidthOfX = -1) {
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX If this value is positive, use it as the number of
+     *     independent variables. This is needed during initialization, when
+     *     the storage array is still all zero, but we do already know the
+     *     with of the design matrix.
+     */
+    void rebind(uint16_t inWidthOfX = 0) {
         numRows.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
+        
+        if (inWidthOfX == 0)
+            inWidthOfX = widthOfX;
+        
         y_sum.rebind(&mStorage[2]);
         y_square_sum.rebind(&mStorage[3]);
         X_transp_Y.rebind(
@@ -290,11 +302,11 @@ AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
     AnyTypeVector tuple;
     ConcreteRecord::iterator tupleElement(tuple);
     
-    tupleElement++ = coef;
-    tupleElement++ = r2;
-    tupleElement++ = stdErr;
-    tupleElement++ = tStats;
-    tupleElement++ = pValues;
+    *tupleElement++ = coef;
+    *tupleElement++ = r2;
+    *tupleElement++ = stdErr;
+    *tupleElement++ = tStats;
+    *tupleElement   = pValues;
     
     return tuple;
 }
