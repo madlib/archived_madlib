@@ -1,13 +1,13 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGValue.hpp
+ * @file PGType.hpp
  *
  * @brief Header file for automatic conversion of PostgreSQL Datums into values
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_PGVALUE_HPP
-#define MADLIB_POSTGRES_PGVALUE_HPP
+#ifndef MADLIB_POSTGRES_PGTYPE_HPP
+#define MADLIB_POSTGRES_PGTYPE_HPP
 
 #include <dbconnector/PGCommon.hpp>
 #include <dbconnector/PGAbstractType.hpp>
@@ -26,7 +26,7 @@ using dbal::AbstractTypeSPtr;
 
 
 template <typename T>
-class PGValue;
+class PGType;
 
 /**
  * @brief PostgreSQL function-argument value class
@@ -35,16 +35,16 @@ class PGValue;
  * all function arguments (as opposed "normal" composite values).
  */
 template <>
-class PGValue<FunctionCallInfo> : public PGAbstractType {
+class PGType<FunctionCallInfo> : public PGAbstractType {
 public:
-    PGValue<FunctionCallInfo>(const FunctionCallInfo inFCinfo)
+    PGType<FunctionCallInfo>(const FunctionCallInfo inFCinfo)
         : fcinfo(inFCinfo) { }
     
 protected:
-    AbstractTypeSPtr getValueByID(unsigned int inID) const;
+    AbstractTypeSPtr getValueByID(uint16_t inID) const;
     
     AbstractTypeSPtr clone() const {
-        return AbstractTypeSPtr( new PGValue<FunctionCallInfo>(*this) );
+        return AbstractTypeSPtr( new PGType<FunctionCallInfo>(*this) );
     }
     
 private:
@@ -62,16 +62,16 @@ private:
  * "virtual" composite value consisting of all function arguments).
  */
 template <>
-class PGValue<HeapTupleHeader> : public PGAbstractType {
+class PGType<HeapTupleHeader> : public PGAbstractType {
 public:    
-    PGValue<HeapTupleHeader>(HeapTupleHeader inTuple)
+    PGType<HeapTupleHeader>(HeapTupleHeader inTuple)
         : mTuple(inTuple) { }
 
 protected:
-    AbstractTypeSPtr getValueByID(unsigned int inID) const;
+    AbstractTypeSPtr getValueByID(uint16_t inID) const;
 
     AbstractTypeSPtr clone() const {
-        return AbstractTypeSPtr( new PGValue<HeapTupleHeader>(*this) );
+        return AbstractTypeSPtr( new PGType<HeapTupleHeader>(*this) );
     }
 
 private:    

@@ -40,22 +40,21 @@ public:
 
 protected:
     PGAllocator()
-        : mContext(kFunction),
-          mPGInterface(NULL)
+        : mPGInterface(NULL), mContext(kFunction), mZeroMemory(false)
         { }
 
     PGAllocator(const PGInterface *const inPGInterface, Context inContext,
         ZeroMemory inZeroMemory)
-        : mContext(inContext), mPGInterface(inPGInterface),
+        : mPGInterface(inPGInterface), mContext(inContext),
           mZeroMemory(inZeroMemory == kZero)
         { }
 
     ArrayType *internalAllocateForArray(Oid inElementType,
         uint32_t inNumElements, size_t inElementSize) const;
         
+    const PGInterface *const mPGInterface;    
     Context mContext;
     bool mZeroMemory;
-    const PGInterface *const mPGInterface;    
 };
 
 } // namespace dbconnector

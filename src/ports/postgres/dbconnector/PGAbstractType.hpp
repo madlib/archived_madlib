@@ -16,9 +16,9 @@ namespace dbconnector {
 /**
  * @brief PostgreSQL abstract value class
  * 
- * PGValue<FunctionCallInfo> objects are instantiated for the "virtual"
+ * PGType<FunctionCallInfo> objects are instantiated for the "virtual"
  * composite value consisting of all function arguments.
- * PGvalue<HeapTupleHeader> objects are instantiated for "normal" composite
+ * PGType<HeapTupleHeader> objects are instantiated for "normal" composite
  * values.
  * PGAbstractType is the common superclass that contains common parts.
  */

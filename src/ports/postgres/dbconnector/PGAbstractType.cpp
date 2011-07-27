@@ -7,7 +7,7 @@
 #include <dbconnector/PGCompatibility.hpp>
 #include <dbconnector/PGAbstractType.hpp>
 #include <dbconnector/PGArrayHandle.hpp>
-#include <dbconnector/PGValue.hpp>
+#include <dbconnector/PGType.hpp>
 
 extern "C" {
     #include <catalog/pg_type.h>
@@ -21,15 +21,15 @@ namespace madlib {
 namespace dbconnector {
 
 /**
- * @brief Convert postgres Datum into a ConcreteValue object.
+ * @brief Convert postgres Datum into a ConcreteType object.
  */
 AbstractTypeSPtr PGAbstractType::DatumToValue(bool inMemoryIsWritable,
     Oid inTypeID, Datum inDatum) const {
     
-    bool isTuple;
-    bool isArray;
-    HeapTupleHeader pgTuple;
-    ArrayType *pgArray;
+    bool isTuple = false;
+    bool isArray = false;
+    HeapTupleHeader pgTuple = NULL;
+    ArrayType *pgArray = NULL;
     bool errorOccurred = false;
     
     PG_TRY(); {
@@ -49,7 +49,7 @@ AbstractTypeSPtr PGAbstractType::DatumToValue(bool inMemoryIsWritable,
 
     // First check if datum is rowtype
     if (isTuple) {
-        return AbstractTypeSPtr(new PGValue<HeapTupleHeader>(pgTuple));
+        return AbstractTypeSPtr(new PGType<HeapTupleHeader>(pgTuple));
     } else if (isArray) {
         if (ARR_NDIM(pgArray) != 1)
             throw std::invalid_argument("Multidimensional arrays not yet supported");
@@ -63,14 +63,14 @@ AbstractTypeSPtr PGAbstractType::DatumToValue(bool inMemoryIsWritable,
                 
                 if (inMemoryIsWritable) {
                     return AbstractTypeSPtr(
-                        new ConcreteValue<Array<double> >(
+                        new ConcreteType<Array<double> >(
                             Array<double>(memoryHandle,
                                 boost::extents[ ARR_DIMS(pgArray)[0] ])
                             )
                         );
                 } else {
                     return AbstractTypeSPtr(
-                        new ConcreteValue<Array_const<double> >(
+                        new ConcreteType<Array_const<double> >(
                             Array_const<double>(memoryHandle,
                                 boost::extents[ ARR_DIMS(pgArray)[0] ])
                             )
@@ -83,17 +83,17 @@ AbstractTypeSPtr PGAbstractType::DatumToValue(bool inMemoryIsWritable,
 
     switch (inTypeID) {
         case BOOLOID: return AbstractTypeSPtr(
-            new ConcreteValue<bool>( DatumGetBool(inDatum) ));
+            new ConcreteType<bool>( DatumGetBool(inDatum) ));
         case INT2OID: return AbstractTypeSPtr(
-            new ConcreteValue<int16_t>( DatumGetInt16(inDatum) ));
+            new ConcreteType<int16_t>( DatumGetInt16(inDatum) ));
         case INT4OID: return AbstractTypeSPtr(
-            new ConcreteValue<int32_t>( DatumGetInt32(inDatum) ));
+            new ConcreteType<int32_t>( DatumGetInt32(inDatum) ));
         case INT8OID: return AbstractTypeSPtr(
-            new ConcreteValue<int64_t>( DatumGetInt64(inDatum) ));
+            new ConcreteType<int64_t>( DatumGetInt64(inDatum) ));
         case FLOAT4OID: return AbstractTypeSPtr(
-            new ConcreteValue<float>( DatumGetFloat4(inDatum) ));
+            new ConcreteType<float>( DatumGetFloat4(inDatum) ));
         case FLOAT8OID: return AbstractTypeSPtr(
-            new ConcreteValue<double>( DatumGetFloat8(inDatum) ));
+            new ConcreteType<double>( DatumGetFloat8(inDatum) ));
     }
     
     return AbstractTypeSPtr();

@@ -23,8 +23,8 @@ if(GREENPLUM_FOUND)
     )
 
     set(MAD_DBAL_SOURCES_GREENPLUM
-        ../postgres/dbconnector/PGAbstractValue.cpp
-        ../postgres/dbconnector/PGAbstractValue.hpp
+        ../postgres/dbconnector/PGAbstractType.cpp
+        ../postgres/dbconnector/PGAbstractType.hpp
         ../postgres/dbconnector/PGAllocator.cpp
         ../postgres/dbconnector/PGAllocator.hpp
         ../postgres/dbconnector/PGArrayHandle.cpp
@@ -39,8 +39,8 @@ if(GREENPLUM_FOUND)
         ../postgres/dbconnector/PGNewDelete.cpp
         ../postgres/dbconnector/PGToDatumConverter.cpp
         ../postgres/dbconnector/PGToDatumConverter.hpp
-        ../postgres/dbconnector/PGValue.cpp
-        ../postgres/dbconnector/PGValue.hpp
+        ../postgres/dbconnector/PGType.cpp
+        ../postgres/dbconnector/PGType.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM

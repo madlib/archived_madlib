@@ -43,6 +43,8 @@ public:
     
     Datum convertToDatum(const AbstractType &inValue);
     
+    void callbackWithValue(const AnyTypeVector &inRecord);
+
     void callbackWithValue(const double &inValue);
     void callbackWithValue(const float &inValue);
     void callbackWithValue(const int32_t &inValue);
@@ -54,13 +56,13 @@ public:
     void callbackWithValue(const DoubleCol &inValue) {
         convertArray(inValue.memoryHandle(), inValue.n_elem);
     }
-    
-    void callbackWithValue(const AnyTypeVector &inRecord);
-    
+        
 protected:
     TupleDesc mTupleDesc;
     Oid mTypeID;
     
+    bool mTargetIsComposite;
+        
     /**
      * @brief PostgreSQL Datum value used during the convertToDatum call
      */

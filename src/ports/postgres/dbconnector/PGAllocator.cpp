@@ -82,7 +82,7 @@ void *PGAllocator::allocate(const uint32_t inSize) const throw(std::bad_alloc) {
                 MemoryContextSwitchTo(oldContext);
             }
         } else {
-            ptr = mZeroMemory ? palloc0(inSize) ? palloc(inSize);
+            ptr = mZeroMemory ? palloc0(inSize) : palloc(inSize);
         }
     } PG_CATCH(); {
         /*

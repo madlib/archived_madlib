@@ -1,13 +1,13 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGValue.cpp
+ * @file PGType.cpp
  *
  * @brief Automatic conversion of PostgreSQL Datums into values
  *
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/PGCompatibility.hpp>
-#include <dbconnector/PGValue.hpp>
+#include <dbconnector/PGType.hpp>
 
 #include <stdexcept>
 
@@ -26,7 +26,7 @@ using namespace dbal;
 /**
  * @brief Convert the <tt>inID</tt>-th function argument to a DBAL object
  */
-AbstractTypeSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) const {
+AbstractTypeSPtr PGType<FunctionCallInfo>::getValueByID(uint16_t inID) const {
     if (fcinfo == NULL)
         throw std::invalid_argument("fcinfo is NULL");
 
@@ -37,8 +37,8 @@ AbstractTypeSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) cons
         return AbstractTypeSPtr(new AnyType(Null()));
     
     bool exceptionOccurred = false;
-    Oid typeID;
-    bool writable;
+    Oid typeID = 0;
+    bool writable = false;
     
     PG_TRY(); {
         typeID = get_fn_expr_argtype(fcinfo->flinfo, inID);
@@ -71,7 +71,7 @@ AbstractTypeSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) cons
 /**
  * @brief Convert the <tt>inID</tt>-th tuple element to a DBAL object
  */
-AbstractTypeSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) const {
+AbstractTypeSPtr PGType<HeapTupleHeader>::getValueByID(uint16_t inID) const {
     if (mTuple == NULL)
         throw std::invalid_argument("Pointer to tuple data is invalid");
     
@@ -82,9 +82,9 @@ AbstractTypeSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) const
     Oid tupType;
 	int32 tupTypmod;
     TupleDesc tupDesc;
-    Oid typeID;
+    Oid typeID = 0;
     bool isNull = false;
-    Datum datum;
+    Datum datum = 0;
     
     PG_TRY(); {
         tupType = HeapTupleHeaderGetTypeId(mTuple);

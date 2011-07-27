@@ -12,7 +12,7 @@
 #include <dbconnector/PGCommon.hpp>
 #include <dbconnector/PGToDatumConverter.hpp>
 #include <dbconnector/PGInterface.hpp>
-#include <dbconnector/PGValue.hpp>
+#include <dbconnector/PGType.hpp>
 
 extern "C" {
     #include <funcapi.h>
@@ -33,19 +33,24 @@ namespace dbconnector {
 inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
     int sqlerrcode;
     char msg[2048];
-    Datum datum;
 
     try {
         PGInterface db(fcinfo);
         
         try {
-            AnyType result = f(db, PGValue<FunctionCallInfo>(fcinfo));
+            PGType<FunctionCallInfo> arg(fcinfo);
+            AnyType result = f(db,
+                    AnyType(
+                        AbstractTypeSPtr(
+                            &arg,
+                            NoDeleter<AbstractType>()
+                        )
+                    ));
 
             if (result.isNull())
                 PG_RETURN_NULL();
             
-            PGToDatumConverter converter(fcinfo);
-            return converter.toDatum(result);
+            return PGToDatumConverter(fcinfo).convertToDatum(result);
         } catch (std::exception &exc) {
             sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
             const char *error = exc.what();
