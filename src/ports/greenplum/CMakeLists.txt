@@ -73,8 +73,8 @@ if(GREENPLUM_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
-    include_directories(${GREENPLUM_SERVER_INCLUDE_DIR})
-    include_directories(${GREENPLUM_ADDITIONAL_INCLUDE_DIRS})
+    include_directories(SYSTEM ${GREENPLUM_SERVER_INCLUDE_DIR})
+    include_directories(SYSTEM ${GREENPLUM_ADDITIONAL_INCLUDE_DIRS})
 
 
 # -- 3. Build MADlib connector -------------------------------------------------
@@ -140,7 +140,7 @@ if(GREENPLUM_FOUND)
         add_subdirectory(patch)
         add_custom_target(greenplumPatches ALL DEPENDS ${GREENPLUM_PATCH_FILES})
         # Append directory with patched header file at beginning
-        include_directories(BEFORE ${PATCH_DIR}/server)
+        include_directories(BEFORE SYSTEM ${PATCH_DIR}/server)
         add_dependencies(madlib_greenplum greenplumPatches)
     endif(GREENPLUM_PATCH_FILES)
         
