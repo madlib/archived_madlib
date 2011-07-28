@@ -599,12 +599,12 @@ AnyType stateToResult(AbstractDBInterface &db,
     AnyTypeVector tuple;
     ConcreteRecord::iterator tupleElement(tuple);
     
-    tupleElement++ = inCoef;
-    tupleElement++ = inLogLikelihood;
-    tupleElement++ = stdErr;
-    tupleElement++ = waldZStats;
-    tupleElement++ = waldPValues;
-    tupleElement++ = oddRatios;
+    *tupleElement++ = inCoef;
+    *tupleElement++ = inLogLikelihood;
+    *tupleElement++ = stdErr;
+    *tupleElement++ = waldZStats;
+    *tupleElement++ = waldPValues;
+    *tupleElement   = oddRatios;
     
     return tuple;
 }

@@ -114,7 +114,6 @@ typedef ConcreteType<AnyTypeVector> ConcreteRecord;
 #include <dbal/AbstractDBInterface.hpp>
 #include <dbal/AbstractType_proto.hpp>
 #include <dbal/AbstractTypeConverter.hpp>
-#include <dbal/Convertible.hpp>
 
 // Type Classes
 

@@ -66,12 +66,16 @@ public:
     
     /**
      * @brief Initialize the transition state. Only called for first row.
+     * 
+     * @param inAllocator Will be used to allocate the memory for the
+     *     transition state. Must fill the memory block with zeros.
      */
     inline void initialize(AllocatorSPtr inAllocator,
         const uint16_t inWidthOfX) {
         
         mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
         rebind(inWidthOfX);
+        widthOfX = inWidthOfX;
     }
         
     /**
@@ -107,8 +111,6 @@ private:
         
         if (inWidthOfX == 0)
             inWidthOfX = widthOfX;
-        else
-            widthOfX = inWidthOfX;
         
         y_sum.rebind(&mStorage[2]);
         y_square_sum.rebind(&mStorage[3]);
