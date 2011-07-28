@@ -34,7 +34,6 @@ if(POSTGRESQL_FOUND)
         dbconnector/PGInterface.cpp
         dbconnector/PGInterface.hpp
         dbconnector/PGMain.cpp
-        dbconnector/PGMain.hpp
         dbconnector/PGNewDelete.cpp
         dbconnector/PGToDatumConverter.cpp
         dbconnector/PGToDatumConverter.hpp

@@ -35,7 +35,6 @@ if(GREENPLUM_FOUND)
         ../postgres/dbconnector/PGInterface.cpp
         ../postgres/dbconnector/PGInterface.hpp
         ../postgres/dbconnector/PGMain.cpp
-        ../postgres/dbconnector/PGMain.hpp
         ../postgres/dbconnector/PGNewDelete.cpp
         ../postgres/dbconnector/PGToDatumConverter.cpp
         ../postgres/dbconnector/PGToDatumConverter.hpp
