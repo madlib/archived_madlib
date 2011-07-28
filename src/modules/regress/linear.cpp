@@ -107,6 +107,8 @@ private:
         
         if (inWidthOfX == 0)
             inWidthOfX = widthOfX;
+        else
+            widthOfX = inWidthOfX;
         
         y_sum.rebind(&mStorage[2]);
         y_square_sum.rebind(&mStorage[3]);
@@ -215,7 +217,7 @@ AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
     if (condition_X_transp_X > 1000)
         db.out << "Matrix X^T X is ill-conditioned (condition number "
             "= " << condition_X_transp_X << "). "
-            "Expect strong multicollinerity." << std::endl;
+            "Expect strong multicollinearity." << std::endl;
     
     // Precompute (X^T * X)^+
     mat inverse_of_X_transp_X = pinv(state.X_transp_X);

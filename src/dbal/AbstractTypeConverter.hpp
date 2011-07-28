@@ -15,7 +15,7 @@ public:
     virtual ~AbstractTypeConverter() = 0;
 
     #define EXPAND_TYPE(T) \
-        void callbackWithValue(const T & /* inValue */ ) { \
+        virtual void callbackWithValue(const T & /* inValue */ ) { \
             throwError(); \
         }
     
