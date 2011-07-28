@@ -34,7 +34,7 @@ AbstractTypeSPtr PGType<FunctionCallInfo>::getValueByID(uint16_t inID) const {
         throw std::out_of_range("Access behind end of argument list");
 
     if (PG_ARGISNULL(inID))
-        return AbstractTypeSPtr(new AnyType(Null()));
+        return AbstractTypeSPtr();
     
     bool exceptionOccurred = false;
     Oid typeID = 0;
