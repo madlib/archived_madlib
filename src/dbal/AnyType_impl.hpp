@@ -67,13 +67,20 @@ private:
 
 /**
  * @brief Try to convert this variable into whatever type is requested
+ *
+ * @note A templated conversion operator is not without issues, and makes it
+ *     possible to use AnyType values in abusive ways. For instance,
+ *     <tt>if(anyValue)</tt> will convert anyValue into bool, which is probably
+ *     not the intended semantic. See, e.g.,
+ *     http://www.artima.com/cppsource/safebool.html for how this problem is
+ *     usually dealt with when only <tt>operator bool</tt> is needed. Here,
+ *     we assume the benefit of a universal conversion operator is higher than
+ *     the danger of misuse. In general, AnyType should only be used for
+ *     retrieving function arguments and return values. They are not designed
+ *     to be used within algorithms.
  */
-// FIXME: Think whether we need to use a safe conversion idiom like
-// http://www.artima.com/cppsource/safebool.html
 template <class T>
 AnyType::operator T() const {
-    AbstractTypeSPtr lastDelegate;
-    
     if (!mDelegate)
         throw std::logic_error("Cannot typecast Null.");
     

@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file ConcreteValue_impl.hpp
+ * @file ConcreteType_impl.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -18,7 +18,7 @@ inline AbstractTypeSPtr ConcreteType<T>::getValueByID(uint16_t inID) const {
 }
 
 
-// Spezializations for ConcreteValue<AnyTypeVector>
+// Spezializations for ConcreteType<AnyTypeVector>
 
 template <>
 inline unsigned int ConcreteType<AnyTypeVector>::size() const {
@@ -102,38 +102,6 @@ DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, DoubleRow_const)
 // into mutable type. Right now, the standard error msg will be displayed.
 
 #undef DECLARE_OR_DEFINE_STD_CONVERSION
-
-/*
-// Conversion of mutable arrays to immutable arrays and vectors (no copying
-// needed)
-template <>
-inline DoubleCol ConcreteValue<Array<double> >::getAs(DoubleCol*) const {
-    return DoubleCol(mValue.memoryHandle(), mValue.size());
-}
-
-template <>
-inline DoubleCol_const ConcreteValue<Array<double> >::getAs(DoubleCol_const*) const {
-    return DoubleCol_const(
-        TransparentHandle::create(const_cast<double*>(mValue.data())),
-        mValue.size());
-}
-
-template <>
-inline DoubleRow ConcreteValue<Array<double> >::getAs(DoubleRow*) const {
-    return DoubleRow(
-        TransparentHandle::create(const_cast<double*>(mValue.data())),
-        mValue.size());
-}
-
-template <>
-inline DoubleRow_const ConcreteValue<Array<double> >::getAs(DoubleRow_const*) const {
-    return DoubleRow_const(
-        TransparentHandle::create(const_cast<double*>(mValue.data())),
-        mValue.size());
-}
-
-// Conversion of immutable arrays to mutable arrays and vectors (copying needed)
-*/
 
 template <>
 inline bool ConcreteType<Array_const<double> >::isMutable() const {

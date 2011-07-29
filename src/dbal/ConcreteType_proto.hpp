@@ -1,13 +1,13 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file ConcreteValue_proto.hpp
+ * @file ConcreteType_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
 /**
  * @brief Template class that wraps arbitrary types
  *
- * ConcreteValue<T> implements the AbstractType interface. It can contain
+ * ConcreteType<T> implements the AbstractType interface. It can contain
  * values of arbitrary type.
  * 
  * @internal The main benefit of wrapping arbitrary types with this class is to

@@ -70,7 +70,7 @@ public:
     /**
      * @brief Call AbstractTypeConverter::convert() with this as argument
      *
-     * This function performs a callback to the specified ValueConverter.
+     * This function performs a callback to the specified TypeConverter.
      * This allows relying on the vtable of AbstractTypeConverter for
      * dispatching conversion requests.
      */

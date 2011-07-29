@@ -10,23 +10,15 @@
  * Instances of this class act a proxy to any arbitrary ConcreteType<T>.
  */
 class AnyType : public AbstractType {
+    // ConcreteType<AnyTypeVector>::getValueByID() accesses mDelegate, so we
+    // make it a friend
     friend class ConcreteType<AnyTypeVector>;
 
 public:
     class iterator;
     
-    /**
-     * @internal
-     * This constructor will only be generated if \c T is not a subclass of
-     * \c AbstractType (in which case the other constructor will be used).
-     * We use boost's \c enable_if here, because for subclasses of AbstractType
-     * this template constructor would take precedence over the constructor
-     * having AbstractType as argument.
-     */
-//    template <typename T>
-//    AnyType(const T &inValue,
-//        typename disable_if<boost::is_base_of<AbstractType, T> >::type *dummy = NULL)
-
+    typedef std::back_insert_iterator<AnyTypeVector> insertIterator;
+    
     /**
      * @brief Template conversion constructor
      *
@@ -39,18 +31,10 @@ public:
         : mDelegate(new ConcreteType<T>(inValue)) { }
     
     /**
-     *
+     * @brief Constructor for initalization with delegate
      */
     AnyType(AbstractTypeSPtr inDelegate) : mDelegate(inDelegate) { }
 
-    /**
-     * This constructor will only by called if inValue is *not* of type
-     * AnyType (in which case the copy constructor would be called
-     * instead).
-     */
-//    AnyType(const AbstractType &inValue) : mDelegate(inValue) {
-//    }
-    
     /**
      * @brief The copy constructor: Perform a shallow copy, i.e., copy only
      *        reference to delegate
@@ -148,7 +132,10 @@ public:
     
 protected:
     /**
-     * @internal Cannot be instantiated directly.
+     * @brief Protected default constructor
+     *
+     * We do not want AnyType to be used without explicit initalization in user
+     * code.
      */
     AnyType() {
     }
