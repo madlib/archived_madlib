@@ -2,6 +2,13 @@
 # MADlib CMake Build Script
 # ------------------------------------------------------------------------------
 
+# -- Initializations that need to run even before project()
+
+# For Solaris, we want to use the Sun compiler
+# See http://www.cmake.org/Bug/view.php?id=8530
+set(CMAKE_GENERATOR_CC  suncc gcc)
+set(CMAKE_GENERATOR_CXX sunCC g++)
+
 # -- CMake setup ---------------------------------------------------------------
 
 project(MADlib)
@@ -37,6 +44,10 @@ set(EXTERNALPROJECT_LIST_SEPARATOR "~!~")
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     set(LINUX TRUE)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+
+if(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
+    set(SOLARIS TRUE)
+endif(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING

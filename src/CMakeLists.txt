@@ -134,15 +134,30 @@ endif(Boost_FOUND)
 # -- Third-party dependencies: Download Armadillo. It provides an umbrella
 #    library for LAPACK, BLAS, and ATLAS ---------------------------------------
 
+join_strings(_CMAKE_PREFIX_PATH
+    ${EXTERNALPROJECT_LIST_SEPARATOR} "${CMAKE_PREFIX_PATH}")
+
 # For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
 # (and not ${MAD_THIRD_PARTY}/lib64), even if building on a 64-bit architecture
 # Note: INSTALL_LIB_DIR was previously LIB_INSTALL_DIR in Armadillo. We might
 # want to anticipate further changes...
 list(APPEND ARMADILLO_CMAKE_ARGS
     -DCMAKE_BUILD_TYPE=Release
+    "-DCMAKE_PREFIX_PATH=${_CMAKE_PREFIX_PATH}"
+    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
     "-DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}"
     -DINSTALL_LIB_DIR=lib
 )
+
+# On Solaris, LAPACK and BLAS are part of the Sun Performance library
+# BLAS_NAMES and LAPACK_NAMES are variables used by the Armadillo
+# build script
+if(SOLARIS)
+    list(APPEND ARMADILLO_CMAKE_ARGS
+        -DBLAS_NAMES=sunperf
+        -DLAPACK_NAMES=sunperf
+    )
+endif(SOLARIS)
 
 ExternalProject_Add(EP_armadillo
     DEPENDS ${ARMADILLO_DEPENDS}
