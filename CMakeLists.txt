@@ -58,7 +58,11 @@ endif(NOT CMAKE_BUILD_TYPE)
 if(CMAKE_COMPILER_IS_GNUCC)
     # A useful summary of warning options can be found here:
     # http://developer.apple.com/tools/xcode/compilercodewarnings.html
-    set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra" CACHE STRING
+    # Note: gcc does not implicitly set _POSIX_C_SOURCE when using -std=c99.
+    # http://pubs.opengroup.org/onlinepubs/9699919799/functions/V2_chap02.html#tag_15_02_01_01
+    # We specify that we are POSIX.1-2001 compliant.
+    set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra -D_POSIX_C_SOURCE=200112L"
+        CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
     
     # See comments below for C++:

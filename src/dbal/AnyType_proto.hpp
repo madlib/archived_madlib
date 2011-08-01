@@ -7,7 +7,7 @@
 /**
  * @brief Class for representing any type.
  *
- * Instances of this class act a proxy to any arbitrary ConcreteType<T>.
+ * Instances of this class act a proxy for any arbitrary ConcreteType<T>.
  */
 class AnyType : public AbstractType {
     // ConcreteType<AnyTypeVector>::getValueByID() accesses mDelegate, so we
@@ -20,15 +20,14 @@ public:
     typedef std::back_insert_iterator<AnyTypeVector> insertIterator;
     
     /**
-     * @brief Template conversion constructor
-     *
-     * @note When overload resolution takes place, a template function has lower
-     *       precedence than non-template functions:
-     *       http://publib.boulder.ibm.com/infocenter/compbgpl/v9v111/topic/com.ibm.xlcpp9.bg.doc/language_ref/overloading_function_templates.htm
-     */
-    template <typename T>
-    AnyType(const T &inValue)
-        : mDelegate(new ConcreteType<T>(inValue)) { }
+     * @brief Conversion constructors
+     */        
+    #define EXPAND_TYPE(T) \
+        AnyType(const T &inValue);
+
+    EXPAND_FOR_ALL_TYPES
+
+    #undef EXPAND_TYPE
     
     /**
      * @brief Constructor for initalization with delegate
@@ -43,20 +42,25 @@ public:
         : AbstractType(inValue), mDelegate(inValue.mDelegate) { }
         
     /**
-     * We want to allow the notation anyType = Null();
+     * @brief Constructor for initializing as Null
      */
     AnyType(const Null & /* inValue */) { }
 
     /**
-     * @brief Template conversion operator
+     * @brief Conversion operators
      *
      * @internal
-     *     A template conversion operator is not without issues. In particular,
-     *     non-sense operations are now syntactically correct. E.g.,
-     *     if (anyType1 == anyType2)
+     *     Conversion operators for primitive data types are not without issues.
+     *     In particular, non-sense operations are now syntactically correct.
+     *     E.g., if (anyType1 == anyType2)
      */
-    template <class T>
-    operator T() const;
+    #define EXPAND_TYPE(T) \
+        operator T() const;
+
+    EXPAND_FOR_ALL_TYPES
+
+    #undef EXPAND_TYPE
+
     
     bool isCompound() const {
         if (mDelegate)
