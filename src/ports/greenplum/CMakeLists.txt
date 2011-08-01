@@ -47,6 +47,11 @@ if(GREENPLUM_FOUND)
         )
         include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
     endif(LINUX)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "SunPro")
+        # In syncbitvector.h, an array has zero length. This is non-standard,
+        # but most compilers allow it. SunPro needs an extra option.
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -features=zla")
+    endif(CMAKE_CXX_COMPILER_ID STREQUAL "SunPro")
 
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code

@@ -42,7 +42,11 @@ public:
     }
     
     Datum convertToDatum(const AbstractType &inValue);
-    
+
+    // We do not override all overloads. So we want to unhide the
+    // inherited non-overridden overloads
+    using AbstractTypeConverter::callbackWithValue;
+
     void callbackWithValue(const AnyTypeVector &inRecord);
 
     void callbackWithValue(const double &inValue);
