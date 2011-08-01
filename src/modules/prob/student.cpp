@@ -144,7 +144,7 @@ double studentT_cdf(int64_t nu, double t) {
 	/* Handle main case (nu < 200) in the rest of the function. */
 
 	z = 1. + t * t / nu;
-	t_by_sqrt_nu = std::fabs(t) / std::sqrt(nu);
+	t_by_sqrt_nu = std::fabs(t) / std::sqrt(static_cast<double>(nu));
 	
 	if (nu == 1)
 	{
