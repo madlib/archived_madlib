@@ -30,12 +30,6 @@ maddir = os.path.abspath( os.path.dirname( os.path.realpath(
     __file__)) + "/..")   # MADlib root dir
 sys.path.append( maddir + "/madpack")
 
-# Following lines are for development/testing only, so madpack.py can be run
-# from the SRC directory tree
-# maddir = os.path.abspath( os.path.dirname( os.path.realpath(__file__)) + "/../..")   # MADlib root dir
-# sys.path.append( maddir + "/src/madpack")
-# END - For development/testing only
-
 # Import MADlib python modules
 import argparse
 import configyml
@@ -95,17 +89,14 @@ def __log_close():
 # @param stop program exit flag
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __error( msg, stop):
-    # Print stack trace
-    if stop == True:
-        # traceback.print_exc()
-        log.write( traceback.format_exc())
     # Print to stdout
     print this + ' : ERROR : ' + msg
     # Write to log file
     log.write( this + ' : ERROR : ' + msg + '\n')
-    # Stop script
+    # Print stack trace
     if stop == True:
-        # __log_close()
+        # log.write( traceback.format_exc())
+        # traceback.print_exc()
         exit(2)
 
 #class MadpackError( Exception):
@@ -124,17 +115,154 @@ def __info( msg, verbose):
     log.write( this + ' : INFO : ' + msg + '\n')
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Try importing specified dbapi module
-# If success: return module handle
-# @param api module name for database connection
+# Runs a SQL query on the target platform DB
+# using the default command-line utility.
+# Very limited: 
+#   - no text output with "new line" characters allowed
+# @param sql query text to execute
+# @param show_error displays the SQL error msg
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __import_dbapi( api):
-    try:       
-        dbapi2 = __import__( api, globals(), locals(), ['']);
+def __run_sql_query( sql, show_error):
+
+    # Postgres & Greenplum
+    if portid == 'greenplum' or portid == 'postgres':
+    
+        # Define sqlcmd
+        sqlcmd = 'psql'
+        delimiter = '|'
+        
+        # Test the DB cmd line utility
+        std, err = subprocess.Popen( ['which', sqlcmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        if std == '':
+            __error( "Command not found: %s" % sqlcmd, True)
+        
+        # Run the query
+        runcmd = [ sqlcmd,
+                    #'-v', 'ON_ERROR_STOP=1',
+                    #'-v', 'CLIENT_MIN_MESSAGES=error',
+                    '-h', con_args['host'].split(':')[0],
+                    '-p', con_args['host'].split(':')[1],
+                    '-d', con_args['database'],
+                    '-U', con_args['user'],
+                    '-F', delimiter,
+                    '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
+        runenv = os.environ
+        runenv["PGPASSWORD"] = con_args['password']
+        std, err = subprocess.Popen( runcmd, env=runenv, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        if err:
+            if show_error:
+                __error( "SQL command failed: \nSQL: %s \n%s" % (sql, err), False)
+            raise Exception
+        
+        # Convert the delimited output into a dictionary
+        results = [] # list of rows
+        i = 0
+        for line in std.splitlines():
+            if i == 0:
+                cols = [name for name in line.split( delimiter)]
+            else:
+                row = {} # dict of col_name:col_value pairs
+                c = 0
+                for val in line.split( delimiter):
+                    row[cols[c]] = val
+                    c += 1
+                results.insert(i,row)
+            i += 1
+        # Drop the last row: "(X rows)"
+        try:
+            results.pop()
+        except:
+            pass
+    
+    #print sql
+    #print runcmd
+    #print results    
+    return results
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Run SQL file
+# @param schema name of the target schema  
+# @param maddir_mod name of the module dir with Python code
+# @param module name of the module 
+# @param sqlfile name of the file to parse  
+# @param tmpfile name of the temp file to run
+# @param logfile name of the log file (stdout)    
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __run_sql_file( schema, maddir_mod, module, sqlfile, tmpfile, logfile):       
+
+    # Check if the SQL file exists     
+    if not os.path.isfile( sqlfile):
+        __error("Missing module SQL file (%s)" % sqlfile, False)
+        raise Exception      
+    
+    # Prepare the file using M4
+    try:
+        f = open(tmpfile, 'w')
+        
+        # Find the madpack dir (platform specific or generic)
+        if os.path.isdir( maddir + "/ports/" + portid + "/madpack"):
+            maddir_madpack  = maddir + "/ports/" + portid + "/madpack"
+        else:        
+            maddir_madpack  = maddir + "/madpack"
+
+        m4args = [ 'm4', 
+                    '-P', 
+                    '-DMADLIB_SCHEMA=' + schema, 
+                    '-DPLPYTHON_LIBDIR=' + maddir_mod, 
+                    '-DMODULE_PATHNAME=' + maddir_lib, 
+                    '-DMODULE_NAME=' + module, 
+                    '-I' + maddir_madpack,
+                    '-D' + portid.upper(), 
+                    sqlfile ]
+
+        __info("> ... parsing: " + " ".join(m4args), verbose )
+                    
+        subprocess.call( m4args, stdout=f)  
+        f.close()         
     except:
-        if api.rfind('.') > 0:
-            dbapi2 = __import__( api[api.rfind('.')+1:], globals(), locals(), [''])
-    return dbapi2
+        __error("Failed executing m4 on %s" % sqlfile, False)
+        raise Exception
+
+    # Run the SQL using DB command-line utility
+    if portid == 'greenplum' or portid == 'postgres':
+
+        # Define sqlcmd
+        sqlcmd = 'psql'
+        
+        # Test the DB cmd line utility
+        std, err = subprocess.Popen( ['which', sqlcmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        if std == '':
+            __error( "Command not found: %s" % sqlcmd, True)
+                            
+        runcmd = [ sqlcmd, '-a',
+                    '-v', 'ON_ERROR_STOP=1',
+                    # '-v', 'CLIENT_MIN_MESSAGES=error',
+                    '-h', con_args['host'].split(':')[0],
+                    '-p', con_args['host'].split(':')[1],
+                    '-d', con_args['database'],
+                    '-U', con_args['user'],
+                    '-f', tmpfile]
+        runenv = os.environ
+        runenv["PGPASSWORD"] = con_args['password']
+        
+    # Open log file
+    try:
+        log = open( logfile, 'w') 
+    except:
+        __error( "Cannot create log file %s" % logfile, False)
+        raise Exception    
+        
+    # Run the SQL
+    try:
+        __info("> ... executing " + tmpfile, verbose ) 
+        retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log) 
+    except:            
+        __error( "Failed executing %s." % tmpfile, False)  
+        raise Exception    
+    finally:
+        log.close()
+
+    return retval
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Read MADlib version from database
@@ -142,42 +270,40 @@ def __import_dbapi( api):
 # @param schema MADlib schema name
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __get_madlib_dbver( schema):
-    cur = dbconn.cursor()
     try:
-        cur.execute( "SELECT version FROM %s.migrationhistory ORDER BY applied DESC LIMIT 1" % schema)
-        row = cur.fetchone()
-        if row == None:
-            return None
-        else:
-            return row[0]
+        row = __run_sql_query( """SELECT count(*) AS cnt FROM pg_tables 
+            WHERE schemaname='%s' AND tablename='migrationhistory'""" % (schema), True)
+        if int(row[0]['cnt']) > 0:
+            row = __run_sql_query( """SELECT version FROM %s.migrationhistory 
+                ORDER BY applied DESC LIMIT 1""" % schema, True)
+            if row:
+                return row[0]['version']
     except:
-        dbconn.rollback()
-        return None
+        __error( "Failed reading MADlib db version.", True)
+        
+    return None
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Make sure we are connected to the expected db platform
+# Make sure we are connected to the expected DB platform
 # @param portid expected DB port id - to be validates
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __check_db_port( portid):
-    cur = dbconn.cursor()
-    # PostgerSQL
+    # Postgres
     if portid == 'postgres':
         try:
-            cur.execute( "SELECT version() AS version")        
-            row = cur.fetchone()
-            if row[0].lower().find( portid) >= 0 and row[0].lower().find( 'greenplum') < 0:
-                return True
+            row = __run_sql_query( "SELECT version() AS version", True)  
         except:
-            dbconn.rollback()
+            __error( "Error validating DB platform type.", True)
+        if row[0]['version'].lower().find( portid) >= 0 and row[0].lower().find( 'greenplum') < 0:
+            return True
     # Greenplum
     if portid == 'greenplum':
         try:
-            cur.execute( "SELECT version() AS version")        
-            row = cur.fetchone()
-            if row[0].lower().find( portid) >= 0:
-                return True
+            row = __run_sql_query( "SELECT version() AS version", True)  
         except:
-            dbconn.rollback()
+            __error( "Error validating DB platform type.", True)
+        if row[0]['version'].lower().find( portid) >= 0:
+            return True            
     return False
                 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -220,46 +346,43 @@ def __print_revs( rev, dbrev, con_args, schema):
 def __plpy_check( py_min_ver):
 
     __info( "Testing PL/Python environment...", True)
-    cur = dbconn.cursor()
 
     # Check PL/Python existence
-    cur.execute( "SET client_min_messages=WARNING")
-    cur.execute( "SELECT count(*) AS CNT FROM pg_language WHERE lanname = 'plpythonu'")
-    rv = cur.fetchall()
-    if rv[0][0] > 0:
+    rv = __run_sql_query( "SELECT count(*) AS CNT FROM pg_language WHERE lanname = 'plpythonu'", True)
+    if int(rv[0]['cnt']) > 0:
         __info( "> PL/Python already installed", verbose)            
     else:
         __info( "> PL/Python not installed", verbose)            
         __info( "> Creating language PL/Python...", True)            
         try:
-            cur.execute( "CREATE LANGUAGE plpythonu;")            
-            dbconn.commit()
+            __run_sql_query( "CREATE LANGUAGE plpythonu;", True)
         except:
             __error( 'Cannot create language plpythonu. Stopping installation...', False)
-            raise                
+            raise Exception                
 
     # Check PL/Python version
-    cur.execute( "SET client_min_messages=WARNING;")
-    cur.execute( "DROP FUNCTION IF EXISTS plpy_version_for_madlib();")
-    cur.execute( """CREATE OR REPLACE FUNCTION plpy_version_for_madlib() 
-                    RETURNS TEXT AS 
-                    $$
-                        import sys
-                        return '.'.join(str(item) for item in sys.version_info[:3])
-                    $$
-                    LANGUAGE plpythonu;""")
-    cur.execute( "SELECT plpy_version_for_madlib() AS ver;")
-    rv = cur.fetchall()
-    py_cur_ver = [int(i) for i in rv[0][0].split('.')]
+    __run_sql_query( "DROP FUNCTION IF EXISTS plpy_version_for_madlib();", False)
+    __run_sql_query( """
+        CREATE OR REPLACE FUNCTION plpy_version_for_madlib() 
+        RETURNS TEXT AS 
+        $$
+            import sys
+            return '.'.join(str(item) for item in sys.version_info[:3])
+        $$
+        LANGUAGE plpythonu;
+    """, True)
+    rv = __run_sql_query( "SELECT plpy_version_for_madlib() AS ver;", True)
+    python = rv[0]['ver']
+    py_cur_ver = [int(i) for i in python.split('.')]
     if py_cur_ver >= py_min_ver:
-        __info( "> PL/Python version: %s" % rv[0][0], verbose)            
+        __info( "> PL/Python version: %s" % python, verbose)            
     else:
         __error( "PL/Python version too old: %s. You need %s or greater" \
-                % (rv[0][0], '.'.join(str(i) for i in py_min_ver)) 
+                % (python, '.'.join(str(i) for i in py_min_ver)) 
                 , False)            
-        raise
+        raise Exception
 
-    __info( "> PL/Python environment OK (version: %s)" % rv[0][0], True)            
+    __info( "> PL/Python environment OK (version: %s)" % python, True)            
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Install MADlib
@@ -282,13 +405,10 @@ def __db_install( schema, dbrev):
 
     # Test if schema is writable
     try:
-        cur = dbconn.cursor()
-        cur.execute( "SET client_min_messages=WARNING;")
-        cur.execute( "CREATE TABLE %s.__madlib_test_table (A INT);" % schema)
-        cur.execute( "DROP TABLE %s.__madlib_test_table;" % schema)
+        __run_sql_query( "CREATE TABLE %s.__madlib_test_table (A INT);" % schema, False)
+        __run_sql_query( "DROP TABLE %s.__madlib_test_table;" % schema, False)
         schema_writable = True
     except:
-        dbconn.rollback()
         schema_writable = False
         
     # Some debugging
@@ -300,7 +420,17 @@ def __db_install( schema, dbrev):
     ##
     if schema_writable == True and madlib_exists == True:
 
-        __info( "> Schema %s exists with MADlib objects" % schema.upper(), verbose)
+        __info( "***************************************************************************", True)
+        __info( "* Schema %s already exists" % schema.upper(), True)
+        __info( "* Installer will rename it to %s" % temp_schema.upper(), True)
+        __info( "***************************************************************************", True)
+        __info( "Would you like to continue? [Y/N]", True)
+        go = raw_input( '>>> ').upper()
+        while go != 'Y' and go != 'N':
+            go = raw_input( 'Yes or No >>> ').upper()
+        if go == 'N':            
+            __info( 'Installation stopped.', True)
+            return
     
         # Rename MADlib schema
         __db_rename_schema( schema, temp_schema)
@@ -362,13 +492,10 @@ def __db_rename_schema( from_schema, to_schema):
 
     __info( "> Renaming schema %s to %s" % (from_schema.upper(), to_schema.upper()), True)        
     try:
-        cur = dbconn.cursor()
-        cur.execute( "SET client_min_messages=WARNING;")
-        cur.execute( "ALTER SCHEMA %s RENAME TO %s;" % (from_schema, to_schema))
-        dbconn.commit();
+        __run_sql_query( "ALTER SCHEMA %s RENAME TO %s;" % (from_schema, to_schema), True)
     except:
         __error( 'Cannot rename schema. Stopping installation...', False)
-        raise
+        raise Exception
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Create schema
@@ -379,11 +506,7 @@ def __db_create_schema( schema):
 
     __info( "> Creating %s schema" % schema.upper(), True)        
     try:
-        cur = dbconn.cursor()
-        cur.execute( "SET client_min_messages=WARNING;")
-        cur.execute( "CREATE SCHEMA " + schema + ";")
-        cur.close()
-        dbconn.commit();
+        __run_sql_query( "CREATE SCHEMA %s;" % schema, True)
     except:
         __info( 'Cannot create new schema. Rolling back installation...', True)
         pass
@@ -397,16 +520,13 @@ def __db_create_objects( schema, old_schema):
     # Create MigrationHistory table
     try:
         __info( "> Creating %s.MigrationHistory table" % schema.upper(), True)
-        cur = dbconn.cursor()
-        cur.execute( "SET client_min_messages=WARNING;")
-        cur.execute( "DROP TABLE IF EXISTS %s.migrationhistory" % schema)
+        __run_sql_query( "DROP TABLE IF EXISTS %s.migrationhistory;" % schema, True)
         sql = """CREATE TABLE %s.migrationhistory 
                (id serial, version varchar(255), applied timestamp default current_timestamp);""" % schema
-        cur.execute( sql)
-        dbconn.commit();    
+        __run_sql_query( sql, True);
     except:
         __error( "Cannot crate MigrationHistory table", False)
-        raise
+        raise Exception
     
     # Copy MigrationHistory table for record keeping purposes
     if old_schema:
@@ -415,23 +535,18 @@ def __db_create_objects( schema, old_schema):
             sql = """INSERT INTO %s.migrationhistory (version, applied) 
                    SELECT version, applied FROM %s.migrationhistory 
                    ORDER BY id;""" % (schema, old_schema)
-            cur.execute( "SET client_min_messages=WARNING;")
-            cur.execute( sql)
-            dbconn.commit();    
+            __run_sql_query( sql, True);
         except:
             __error( "Cannot copy MigrationHistory table", False)
-            raise
+            raise Exception
 
     # Stamp the DB installation
     try:
         __info( "> Writing version info in MigrationHistory table", True)
-        cur = dbconn.cursor()
-        cur.execute( "SET client_min_messages=WARNING;")
-        cur.execute( "INSERT INTO %s.migrationhistory(version) VALUES('%s')" % (schema, rev))
-        dbconn.commit();    
+        __run_sql_query( "INSERT INTO %s.migrationhistory(version) VALUES('%s')" % (schema, rev), True);
     except:
         __error( "Cannot insert data into %s.migrationhistory table" % schema, False)
-        raise
+        raise Exception
     
     # Run migration SQLs    
     __info( "> Creating objects for modules:", True)  
@@ -443,140 +558,41 @@ def __db_create_objects( schema, old_schema):
         module = moduleinfo['name']
         __info("> - %s" % module, True)        
         
-        # Make a temp dir for this module 
-        cur_tmpdir = tmpdir + "/" + module
-        __make_log_dir( cur_tmpdir)
-
         # Find the module dir (platform specific or generic)
         if os.path.isdir( maddir + "/ports/" + portid + "/modules/" + module):
             maddir_mod  = maddir + "/ports/" + portid + "/modules"
         else:        
             maddir_mod  = maddir + "/modules"
 
+        # Make a temp dir for log files 
+        cur_tmpdir = tmpdir + "/" + module
+        __make_log_dir( cur_tmpdir)
+
         # Loop through all SQL files for this module
-        sql_files = maddir_mod + '/' + module + '/*.sql_in'
-        for sqlfile in glob.glob( sql_files):
-        
+        mask = maddir_mod + '/' + module + '/*.sql_in'
+        sql_files = glob.glob( mask)
+
+        if not sql_files:
+            __error( "No files found at: %s" % mask, True)
+
+        # Execute all SQL files for the module
+        for sqlfile in sql_files:
+
             # Set file names
             tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
             logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
             
             # Run the SQL
             try:
-                retval = __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile)
+                retval = __run_sql_file( schema, maddir_mod, module, sqlfile, tmpfile, logfile)
             except:
-                raise
+                raise Exception
                 
-            # If PSQL returned error
+            # If SQLcmd returned error
             if retval == 3:
                 __error( "Failed executing: %s" % tmpfile, False)  
-                __error( "For details check: %s" % logfile, False) 
-                raise    
-
-    
-            # Check the output
-            #log = open( logfile, 'r')
-            #try:
-            #    for line in log:
-            #        if line.upper().find( 'ERROR') >= 0:
-            #            print line,
-            #            __error( "Problem running %s. Check %s for details." % (tmpfile, logfile), False)
-            #            raise
-            #finally:
-            #    log.close() 
-
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Run SQL file
-# @param schema name of the target schema  
-# @param maddir_mod name of the module dir with Python code
-# @param module name of the module 
-# @param sqlfile name of the file to parse  
-# @param tmpfile name of the temp file to run
-# @param logfile name of the log file (stdout)    
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile):       
-
-    # Check if the SQL file exists     
-    if not os.path.isfile( sqlfile):
-        __error("Missing module SQL file (%s)" % sqlfile, False)
-        raise      
-    
-    # Prepare the file using M4
-    try:
-        f = open(tmpfile, 'w')
-        
-        # Find the madpack dir (platform specific or generic)
-        if os.path.isdir( maddir + "/ports/" + portid + "/madpack"):
-            maddir_madpack  = maddir + "/ports/" + portid + "/madpack"
-        else:        
-            maddir_madpack  = maddir + "/madpack"
-
-        m4args = [ 'm4', 
-                    '-P', 
-                    '-DMADLIB_SCHEMA=' + schema, 
-                    '-DPLPYTHON_LIBDIR=' + maddir_mod, 
-                    '-DMODULE_PATHNAME=' + maddir_lib, 
-                    '-DMODULE_NAME=' + module, 
-                    '-I' + maddir_madpack,
-                    '-D' + portid.upper(), 
-                    sqlfile ]
-
-        __info("> ... parsing: " + " ".join(m4args), verbose )
-                    
-        subprocess.call( m4args, stdout=f)  
-        f.close()         
-    except:
-        __error("Failed executing m4 on %s" % sqlfile, False)
-        raise
-
-    # Run the SQL using DB command-line utility
-    if portid == 'greenplum' or portid == 'postgres':
-    
-        if subprocess.call(['which', 'psql'], stdout=subprocess.PIPE, stderr=subprocess.PIPE) != 0:
-            __error( "Can not find: psql", False)
-            raise
-            
-        runcmd = [ 'psql', '-a',
-                    '-v', 'ON_ERROR_STOP=1',
-                    # '-v', 'CLIENT_MIN_MESSAGES=error',
-                    '-h', con_args['host'].split(':')[0],
-                    '-p', con_args['host'].split(':')[1],
-                    '-d', con_args['database'],
-                    '-U', con_args['user'],
-                    '-f', tmpfile]
-        runenv = os.environ
-        runenv["PGPASSWORD"] = con_args['password']
-    # Open log file
-    try:
-        log = open( logfile, 'w') 
-    except:
-        __error( "Cannot create log file %s" % logfile, False)
-        raise    
-    # Run the SQL
-    try:
-        __info("> ... executing " + tmpfile, verbose ) 
-        retval = subprocess.call( runcmd , env=runenv, stdout=log, stderr=log) 
-    except:            
-        __error( "Failed executing %s." % tmpfile, False)  
-        raise    
-    finally:
-        log.close()
-
-    return retval
-
-    # Run the SQL using DBAPI2 & SQLParse
-    #import sqlparse
-    #try:
-    #    f = open(tmpfile)
-    #    sqltext = "".join(f.readlines())
-    #    stmts = sqlparse.split(sqltext)
-    #    cur = dbconn.cursor()
-    #    for s in stmts:
-    #        if s.strip() != "":
-    #            cur.execute( s.strip())
-    #    dbconn.commit()            
-    #except:
-    #    __error( "Error while executing %s" % tmpfile, True)    
+                __error( "Check the log at: %s" % logfile, False) 
+                raise Exception    
                        
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Rollback installation
@@ -593,10 +609,7 @@ def __db_rollback( drop_schema, keep_schema):
     # Drop the current schema
     __info( "> Dropping schema %s" % drop_schema.upper(), verbose)        
     try:
-        cur = dbconn.cursor()
-        cur.execute( "SET client_min_messages=WARNING;")
-        cur.execute( "DROP SCHEMA %s CASCADE;" % (drop_schema))
-        dbconn.commit();
+        __run_sql_query( "DROP SCHEMA %s CASCADE;" % (drop_schema), True)
     except:
         __error( "Cannot drop schema %s. Stopping rollback..." % drop_schema.upper(), True)        
 
@@ -605,7 +618,7 @@ def __db_rollback( drop_schema, keep_schema):
         __db_rename_schema( keep_schema, drop_schema)   
 
     __info( "Rollback finished OK.", True)
-    raise
+    raise Exception
             
 
 def unescape(string):
@@ -666,9 +679,6 @@ def main( argv):
                               + "  version        : compare and print MADlib version (binaries vs database objects)\n"
                               + "  install-check  : test all installed modules\n")
   
-    parser.add_argument( '-a', '--api', nargs=1, dest='api', metavar='API', 
-                         help="DBAPI2 compliant Python module name")
-
     parser.add_argument( '-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
                          help= "Connection string of the following syntax:\n"
                              + "  [user[/password]@][host][:port][/database]\n" 
@@ -698,22 +708,6 @@ def main( argv):
     global verbose
     verbose = args.verbose
     __info( "Arguments: " + str(args), verbose);    
-
-    ##
-    # Parse DBAPI2 overwrite
-    ##
-    try:
-        # Get the module name
-        api = args.api[0] 
-    except:
-        api = None
-    # And try importing it
-    if api != None:
-        try:
-            dbapi2 = __import_dbapi( api)
-            __info( "Imported user defined dbapi2 module (%s)." % (api), verbose)
-        except:
-            __error( "cannot import python module: %s. Try using the deafult one by skipping option -a/--api." % (args.api[0]), True)
         
     ##
     # Parse SCHEMA
@@ -734,8 +728,6 @@ def main( argv):
             # Loop through available db ports 
             for port in ports['ports']:                
                 if portid == port['id']:
-                    # Get the Python DBAPI2 module
-                    portapi = port['dbapi2'] 
                     # Adjust MADlib directories for this port (if they exist)
                     global maddir_conf 
                     if os.path.isdir( maddir + "/ports/" + portid + "/config"):
@@ -754,22 +746,11 @@ def main( argv):
             __error( "Can not find specs for port %s" % (args.platform[0]), True)
     else:
         portid = None
-        portapi = None
-
-    ##
-    # If no API defined yet (try the default API - from Ports.yml)
-    ##
-    if api is None and portapi:
-        try:
-            dbapi2 = __import_dbapi( portapi)
-            __info( "Imported dbapi2 module (%s) defined in Ports.yml." % (portapi), verbose)
-        except:
-            __error( "cannot import python module: %s. You can try importing another one using -a/--api option (see --help for details)." % (portapi), True)    
 
     ##
     # Parse CONNSTR (only if PLATFORM and DBAPI2 are defined)
     ##
-    if portid and dbapi2:
+    if portid:
         connStr = "" if args.connstr is None else args.connstr[0]
         (c_user, c_pass, c_host, c_port, c_db) = parseConnectionStr(connStr)
         
@@ -802,11 +783,6 @@ def main( argv):
         con_args['user'] = c_user
         con_args['password'] = c_pass    
 
-        # Open connection
-        global dbconn
-        dbconn = dbapi2.connect( **con_args)
-        __info( 'Database connection successful: %s@%s/%s' % (c_user, c_host + ':' + c_port, c_db), verbose)
-
         # Get MADlib version in DB
         dbrev = __get_madlib_dbver( schema)
         
@@ -814,13 +790,10 @@ def main( argv):
         if __check_db_port( portid) == False:
             __error( "invalid database platform selected", True)
                    
-        # Close connection
-        dbconn.close()
-        
     else:
         con_args = None
         dbrev = None
-        
+            
     ##
     # Parse COMMAND argument and compare with Ports.yml
     ## 
@@ -856,21 +829,16 @@ def main( argv):
             return
 
         # 2) Run installation 
-        dbconn = dbapi2.connect( **con_args)
         try:
             __plpy_check( py_min_ver)
             __db_install( schema, dbrev)
         except:
             __error( "MADlib installation failed.", True)
-        dbconn.close()     
 
     ###
     # COMMAND: uninstall (drops the schema)
     ###
     if args.command[0] == 'uninstall':
-
-        # 1) Check versions and confirm deletion
-        # __print_revs( rev, dbrev, con_args, schema)
 
         if __get_rev_num( dbrev) == ['0']:
             __info( "Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
@@ -891,16 +859,12 @@ def main( argv):
             return
             
         elif go == 'Y':
-            dbconn = dbapi2.connect( **con_args)
             __info( "> dropping schema %s" % schema.upper(), verbose)        
             try:
-                cur = dbconn.cursor()
-                cur.execute( "SET client_min_messages=WARNING;")
-                cur.execute( "DROP SCHEMA %s CASCADE;" % (schema))
-                dbconn.commit();
+                __run_sql_query( "DROP SCHEMA %s CASCADE;" % (schema), True)
             except:
                 __error( "Cannot drop schema %s." % schema.upper(), True)         
-            dbconn.close() 
+
             __info( 'Schema %s (and all dependent objects) has been dropped.' % schema.upper(), True)
             __info( 'MADlib is uninstalled.', True)
             
@@ -948,7 +912,7 @@ def main( argv):
                             
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                retval = __db_run_sql( schema, maddir_mod, module, sqlfile, tmpfile, logfile)
+                retval = __run_sql_file( schema, maddir_mod, module, sqlfile, tmpfile, logfile)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 milliseconds = round( (run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
