@@ -40,31 +40,6 @@ def get_version(configdir):
         
     return str( conf['version'])
 
-## 
-# Load Install.yml file.
-# @param configdir the directory where we can find Version.yml
-##
-#def get_module_spec( moduledir):
-#
-#    try:
-#        install = yaml.load(open(moduledir + '/Install.yml'))
-#    except:
-#        print "configyml : ERROR : missing or malformed Install.yml"
-#        exit(2)
-#
-#    try:
-#        install['module']
-#    except:
-#        print "configyml : ERROR : missing 'module' section in Install.yml"
-#        exit(2)
-#
-#    try:
-#        install['create']
-#    except:
-#        print "configyml : ERROR : missing 'create' section in Install.yml"
-#        exit(2)
-#        
-#    return install
     
 ## 
 # Load Ports.yml file
@@ -90,20 +65,10 @@ def get_ports(configdir):
         except:
             print "configyml : ERROR : malformed Ports.yml: missing name element"
             exit(2)
-        #try:
-        #    port['src']
-        #except:
-        #    print "configyml : ERROR : malformed Ports.yml: no SRC element for port " + port['name']
-        #    exit(2)
         try:
             port['id']
         except:
             print "configyml : ERROR : malformed Ports.yml: no ID element for port " + port['name']
-            exit(2)
-        try:
-            port['dbapi2']
-        except:
-            print "configyml : ERROR : malformed Ports.yml: no DBAPI2 element for port " + port['name']
             exit(2)
         
     return conf
@@ -124,12 +89,6 @@ def get_modules( confdir):
     except:
         print "configyml : ERROR : missing or malformed " + confdir + '/' + fname
         raise Exception
-
-    #try:
-    #    conf['env']
-    #except:
-    #    print "configyml : ERROR : missing env section in " + fname
-    #    exit(2)
 
     try:
         conf['modules']
