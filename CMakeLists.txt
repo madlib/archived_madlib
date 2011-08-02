@@ -69,7 +69,9 @@ if(CMAKE_COMPILER_IS_GNUCC)
     # Weird enough, the following property is set only for C++ but not for C
     # http://stackoverflow.com/questions/3371127/use-isystem-instead-of-i-with-cmake
     set(CMAKE_INCLUDE_SYSTEM_FLAG_C "-isystem ")
-endif(CMAKE_COMPILER_IS_GNUCC)
+elseif(CMAKE_C_COMPILER_ID STREQUAL "SunPro")
+    set(CMAKE_C_FLAGS "-xc99=%all")
+endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX)
     # We need the 1998 standard plus amendments (ISO/IEC 14882:2003) plus TR1
