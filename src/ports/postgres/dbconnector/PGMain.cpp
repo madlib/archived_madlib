@@ -9,6 +9,20 @@
  * Postgres is a platform where the C interface supports reflection, so all we
  * need to do is to include the PostgreSQL database abstraction layer and the
  * default declarations.
+ *
+ * @par Platform notes
+ * We can be sure that all code in the core library will use our overloads:
+ * - With the normal POSIX linking (e.g., on Linux), there is only one namespace
+ *   for symbols. Since the connector library is loaded before the core library.
+ * - On Mac OS X, operator new and delete are exempt from the usual two-level
+ *   namespace. See:
+ *   http://developer.apple.com/library/mac/#documentation/DeveloperTools/Conceptual/CppRuntimeEnv/Articles/LibCPPDeployment.html
+ *   We can therefore be sure that all code in the core library will use our
+ *   overloads.
+ * - FIXME: Check!
+ *   On Solaris, we use direct binding in general, but mark
+ *   <tt>operator new</tt> and <tt>delete</tt> as exempt.
+ *   http://download.oracle.com/docs/cd/E19253-01/817-1984/aehzq/index.html
  */
 
 #include <dbconnector/PGCommon.hpp>
