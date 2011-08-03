@@ -117,7 +117,7 @@ Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 {
 	SvecType *returnval;
 	char **features, **document;
-	int num_features, num_words;
+	int num_features, num_words, result;
 
         if (PG_ARGISNULL(0)) PG_RETURN_NULL();
 
@@ -129,9 +129,22 @@ Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 	/* Retrieve the C text array equivalents from the PG text[][] inputs */
 	features = get_text_array_contents(PG_GETARG_ARRAYTYPE_P(0),&num_features);
 	document = get_text_array_contents(PG_GETARG_ARRAYTYPE_P(1),&num_words);
+	
+	// Check if dictionary is sorted
+	for (int i=0; i<num_features-1; i++) {
+		
+		result = strcmp(*(features+i),*(features+i+1));
+		
+		if (result > 0) {
+			elog(ERROR,"Dictionary is unsorted: '%s' is out of order.\n",*(features+i+1));
+		}else if (result == 0) {
+			elog(ERROR,"Dictionary has duplicated word: '%s'\n",*(features+i+1));
+		}
 
-	// elog(NOTICE,"Number of items in the feature array is: %d\n",num_features);
-	// elog(NOTICE,"Number of items in the document array is: %d\n",num_words);
+	}
+
+	//elog(NOTICE,"Number of items in the feature array is: %d\n",num_features);
+	//elog(NOTICE,"Number of items in the document array is: %d\n",num_words);
 
        	returnval = classify_document(features,num_features,document,num_words);
 
