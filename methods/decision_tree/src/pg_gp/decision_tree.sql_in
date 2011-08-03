@@ -548,8 +548,6 @@ begin
 	-- .999 probability.
 	sample_dimentions = MADLIB_SCHEMA.min(floor(-ln(1-(.999)^(1/CAST(feature_dimentions AS FLOAT)))*feature_dimentions),feature_dimentions);
 	selected_dimentions = MADLIB_SCHEMA.WeightedNoReplacement(sample_dimentions, feature_dimentions);
-
-	RAISE INFO 'selected_dimensions = % , sample dimentions = %',selected_dimentions,sample_dimentions;
 	
 	EXECUTE 'SELECT count(*) FROM ' || table_name || ' WHERE selection = ' || selection || ';' INTO total_size;
 	IF (new_sample_limit = 0) THEN
@@ -701,6 +699,7 @@ declare
 	remains_to_classify INT;
 	size_finished INT;
 begin
+	DROP TABLE IF EXISTS classified_points1;
 	CREATE TEMP TABLE classified_points1(
 		id INT,
 		feature MADLIB_SCHEMA.svec,
@@ -709,6 +708,7 @@ begin
 		prob FLOAT
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (jump)');
 	
+	DROP TABLE IF EXISTS classified_points2;
 	CREATE TEMP TABLE classified_points2(
 		id INT,
 		feature MADLIB_SCHEMA.svec,
@@ -733,7 +733,13 @@ begin
 			RAISE INFO 'CLASSIFICATION STEP [%] CLASSIFIED: % TO BE CLASSIFIED: %', jump_so_far, size_finished, remains_to_classify;
 		END IF;
 		
-		SELECT INTO new_depth array_upper(tree_location, 1) FROM MADLIB_SCHEMA.tree WHERE id = jump_so_far;
+		--SELECT INTO new_depth array_upper(tree_location, 1) FROM MADLIB_SCHEMA.tree WHERE id = jump_so_far;
+		IF (jump_so_far IS NULL) THEN
+			new_depth = NULL;
+		ELSE
+			EXECUTE 'SELECT array_upper(tree_location, 1) FROM MADLIB_SCHEMA.tree WHERE id = ' ||jump_so_far|| ';' INTO new_depth;
+		END IF;
+
 		IF(new_depth > old_depth) THEN
 			EXECUTE 'INSERT INTO MADLIB_SCHEMA.classified_points SELECT * FROM '|| table_names[(table_pick)%2+1] ||' WHERE jump = 0;';
 			EXECUTE 'TRUNCATE '|| table_names[(table_pick)%2+1] ||';';
@@ -769,18 +775,27 @@ declare
 begin
 	TRUNCATE finaltree;
 	TRUNCATE finaltree2;
-	DELETE FROM tree2 WHERE COALESCE(cat_size,0) = 0;
-	SELECT INTO tree_size count(*) FROM tree2;
-	INSERT INTO finaltree (id, parent_id, new_id) SELECT id, MAX(parent_id), (tree_size+1) - count(1) OVER(ORDER BY id DESC ROWS UNBOUNDED PRECEDING) FROM tree2 GROUP BY id;
-	INSERT INTO finaltree2 (id, parent_id, new_id) SELECT  g2.id,g.new_id,g2.new_id FROM finaltree g, finaltree g2  WHERE g.id = g2.parent_id;
+	
+	--DELETE FROM tree2 WHERE COALESCE(cat_size,0) = 0;
+	EXECUTE 'DELETE FROM tree2 WHERE COALESCE(cat_size,0) = 0';
+	
+	--SELECT INTO tree_size count(*) FROM tree2;
+	--INSERT INTO finaltree (id, parent_id, new_id) SELECT id, MAX(parent_id), (tree_size+1) - count(1) OVER(ORDER BY id DESC ROWS UNBOUNDED PRECEDING) FROM tree2 GROUP BY id;
+	--INSERT INTO finaltree2 (id, parent_id, new_id) SELECT  g2.id,g.new_id,g2.new_id FROM finaltree g, finaltree g2  WHERE g.id = g2.parent_id;
+	
+	EXECUTE 'SELECT count(*) FROM tree2' INTO tree_size;
+	EXECUTE 'INSERT INTO finaltree (id, parent_id, new_id) SELECT id, MAX(parent_id), ('||tree_size||'+1) - count(1) OVER(ORDER BY id DESC ROWS UNBOUNDED PRECEDING) FROM tree2 GROUP BY id';
+	EXECUTE 'INSERT INTO finaltree2 (id, parent_id, new_id) SELECT  g2.id,g.new_id,g2.new_id FROM finaltree g, finaltree g2  WHERE g.id = g2.parent_id';
+	
 	TRUNCATE finaltree;
 	TRUNCATE MADLIB_SCHEMA.tree;
-	INSERT INTO MADLIB_SCHEMA.tree SELECT n.new_id, g.tree_location, g.hash, g.feature, g.probability, g.chisq, g.maxclass, g.infogain, g.live, g.cat_size, n.parent_id, g.jump FROM tree2 g, finaltree2 n WHERE n.id = g.id;
-	INSERT INTO MADLIB_SCHEMA.tree SELECT * FROM tree2 WHERE id = 1;
+	
+	EXECUTE 'INSERT INTO MADLIB_SCHEMA.tree SELECT n.new_id, g.tree_location, g.hash, g.feature, g.probability, g.chisq, g.maxclass, g.infogain, g.live, g.cat_size, n.parent_id, g.jump FROM tree2 g, finaltree2 n WHERE n.id = g.id';
+	EXECUTE 'INSERT INTO MADLIB_SCHEMA.tree SELECT * FROM tree2 WHERE id = 1';
 	TRUNCATE tree2;
-	INSERT INTO tree2 (id, jump) SELECT parent_id, MADLIB_SCHEMA.JumpCalc(tree_location[array_upper(tree_location,1)], id) FROM MADLIB_SCHEMA.tree GROUP BY parent_id;
+	EXECUTE 'INSERT INTO tree2 (id, jump) SELECT parent_id, MADLIB_SCHEMA.JumpCalc(tree_location[array_upper(tree_location,1)], id) FROM MADLIB_SCHEMA.tree GROUP BY parent_id';
 	TRUNCATE finaltree2;
-	UPDATE MADLIB_SCHEMA.tree k SET jump = g.jump FROM tree2 g WHERE g.id = k.id;
+	EXECUTE 'UPDATE MADLIB_SCHEMA.tree k SET jump = g.jump FROM tree2 g WHERE g.id = k.id';
 	TRUNCATE tree2;
 end
 $$ language plpgsql;
@@ -877,7 +892,8 @@ begin
 	location_size = 0;
 	
 	LOOP
-		SELECT INTO lifenodes COUNT(*) FROM tree2 WHERE live = 1;
+		--SELECT INTO lifenodes COUNT(*) FROM tree2 WHERE live = 1;
+		EXECUTE 'SELECT COUNT(*) FROM tree2 WHERE live = 1' INTO lifenodes;
 		IF((max_iter = 0) OR (lifenodes < 1)) THEN
 			IF(verbosity > 0) THEN
 				RAISE INFO 'EXIT: LIMIT % OR NO NODES LEFT', max_iter;
@@ -885,9 +901,14 @@ begin
 			EXIT;
 		END IF;
 		max_iter = max_iter-1;
-		SELECT INTO selection id FROM tree2 WHERE live = 1 ORDER BY id LIMIT 1;
-		SELECT INTO max_id id FROM tree2 WHERE live = 1 ORDER BY id DESC LIMIT 1;
-		SELECT INTO location gt.tree_location FROM tree2 gt WHERE gt.id = selection;
+		--SELECT INTO selection id FROM tree2 WHERE live = 1 ORDER BY id LIMIT 1;
+		--SELECT INTO max_id id FROM tree2 WHERE live = 1 ORDER BY id DESC LIMIT 1;
+		--SELECT INTO location gt.tree_location FROM tree2 gt WHERE gt.id = selection;
+		
+		EXECUTE 'SELECT id FROM tree2 WHERE live = 1 ORDER BY id LIMIT 1' INTO selection;
+		EXECUTE 'SELECT id FROM tree2 WHERE live = 1 ORDER BY id DESC LIMIT 1' INTO max_id;
+		EXECUTE 'SELECT gt.tree_location FROM tree2 gt WHERE gt.id =' || selection ||';' INTO location;
+		
 		IF(location_size < array_upper(location,1)) THEN
 			flip = (flip)%2+1;
 			location_size = array_upper(location,1);
@@ -901,14 +922,23 @@ begin
 			END IF;
 			answer = MADLIB_SCHEMA.find_best_split(feature_dimention, num_classes, num_values, selection, sample_limit, table_names[(flip)%2+1]);
 			time_stamp = clock_timestamp();
-		 
-			UPDATE tree2 SET feature = answer.feature WHERE id = selection;
-			UPDATE tree2 SET probability = answer.probability WHERE id = selection;
-			UPDATE tree2 SET maxclass = answer.maxclass WHERE id = selection;
-			UPDATE tree2 SET infogain = answer.infogain WHERE id = selection;
-			UPDATE tree2 SET cat_size = category_size[2] WHERE id = selection; 
-			UPDATE tree2 SET live = 0 WHERE id = selection; 
-			UPDATE tree2 SET chisq = answer.chisq WHERE id = selection; 
+			
+			EXECUTE 'UPDATE tree2 SET	feature = '||answer.feature||',
+										probability = '|| answer.probability||',
+										maxclass = '||answer.maxclass||',
+										infogain = '||answer.infogain||',
+										cat_size = '||category_size[2]||',
+										live = 0,
+										chisq = '||answer.chisq||'										
+								WHERE id =' || selection || ';';
+			
+			/*
+			EXECUTE 'UPDATE tree2 SET probability = '|| answer.probability|| ' WHERE id = '||selection||';';
+			EXECUTE 'UPDATE tree2 SET maxclass = '||answer.maxclass||' WHERE id = '||selection||';';
+			EXECUTE 'UPDATE tree2 SET infogain = '||answer.infogain||' WHERE id = '||selection||';';
+			EXECUTE 'UPDATE tree2 SET cat_size = '||category_size[2]||' WHERE id = '||selection||';'; 
+			EXECUTE 'UPDATE tree2 SET live = 0 WHERE id = '||selection||';'; 
+			EXECUTE 'UPDATE tree2 SET chisq = '||answer.chisq||' WHERE id = '||selection||';'; */
 		 
 			IF (answer.live > 0) THEN --here insert live determination function 
 				FOR i IN 0..num_values LOOP
@@ -920,19 +950,31 @@ begin
 		 		table_names[(flip%2)+1] || ' WHERE selection = ' || selection || ';';
 			END IF; 
 		ELSE
-			UPDATE tree2 SET live = 0 WHERE id = selection; 
+			--UPDATE tree2 SET live = 0 WHERE id = selection; 
+			EXECUTE 'UPDATE tree2 SET live = 0 WHERE id = '||selection||';'; 
 			IF (category_size[2] > num_classes) THEN
 				EXECUTE 'SELECT max(class) FROM ' || table_names[(flip%2)+1] || ' WHERE selection = ' || selection || ';' INTO category_class; 
-				INSERT INTO tree2 (tree_location, hash, feature, probability, maxclass, infogain, live, parent_id) VALUES(location,
-			 		 MADLIB_SCHEMA.hash_array(temp_location), 0, 1, 1, 1, 1,selection);
-				UPDATE tree2 SET feature = 1 WHERE id = selection;
-				UPDATE tree2 SET probability = 1.0 WHERE id = selection;
-				UPDATE tree2 SET chisq = 1.0 WHERE id = selection;
-				UPDATE tree2 SET maxclass = category_class WHERE id = selection;
-				UPDATE tree2 SET infogain = 0 WHERE id = selection; 
-				UPDATE tree2 SET cat_size = category_size[2] WHERE id = selection;
+				
+				EXECUTE 'INSERT INTO tree2 (tree_location, hash, feature, probability, maxclass, infogain, live, parent_id) VALUES(ARRAY['|| array_to_string(location,',') ||'],
+			 		 MADLIB_SCHEMA.hash_array(ARRAY['|| array_to_string(temp_location,',') ||']), 0, 1, 1, 1, 1,'||selection||')';
+				
+				EXECUTE 'UPDATE tree2 SET	feature = 1,
+											probability = 1.0,
+											maxclass = '||category_class||',
+											infogain = 0,
+											cat_size = '||category_size[2]||'								
+						WHERE id = '|| selection||';';
+				
+				/*
+				EXECUTE 'UPDATE tree2 SET probability = 1.0 WHERE id = '||selection||';';
+				EXECUTE 'UPDATE tree2 SET chisq = 1.0 WHERE id = '||selection||';';
+				EXECUTE 'UPDATE tree2 SET maxclass = '||category_class||' WHERE id = '||selection||';';
+				EXECUTE 'UPDATE tree2 SET infogain = 0 WHERE id = '||selection||';'; 
+				EXECUTE 'UPDATE tree2 SET cat_size = '||category_size[2]||' WHERE id = '||selection||';';*/
+				
 			ELSE
-				DELETE FROM tree2 WHERE id = selection;
+				--DELETE FROM tree2 WHERE id = selection;
+				EXECUTE 'DELETE FROM tree2 WHERE id = '||selection||';';
 			END IF;
 		END IF;
 	END LOOP;
