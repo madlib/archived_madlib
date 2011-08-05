@@ -215,7 +215,6 @@ def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile):
                             
         runcmd = [ sqlcmd, '-a',
                     '-v', 'ON_ERROR_STOP=1',
-                    # '-v', 'CLIENT_MIN_MESSAGES=error',
                     '-h', con_args['host'].split(':')[0],
                     '-p', con_args['host'].split(':')[1],
                     '-d', con_args['database'],
@@ -568,8 +567,8 @@ def __db_create_objects(schema, old_schema):
             except:
                 raise Exception
                 
-            # If SQLcmd returned error
-            if retval == 3:
+            # Check the exit status
+            if retval != 0:
                 __error("Failed executing: %s" % tmpfile, False)  
                 __error("Check the log at: %s" % logfile, False) 
                 raise Exception    
@@ -903,11 +902,10 @@ def main(argv):
                 run_end = datetime.datetime.now()
                 milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
         
-                # Analyze the output
-                # If DB cmd line returned error
-                if retval == 3:
+                # Check the exit status
+                if retval != 0:
                     __error("Failed executing: %s" % tmpfile, False)  
-                    __error("For details check: %s" % logfile, False) 
+                    __error("Check the log at: %s" % logfile, False) 
                     result = 'FAIL'
                 # If error log file exists
                 elif os.path.getsize(logfile) > 0:
