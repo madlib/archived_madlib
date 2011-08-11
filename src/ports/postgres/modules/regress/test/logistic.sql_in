@@ -1,12 +1,15 @@
-DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
-CREATE SCHEMA madlib_installcheck;
+---------------------------------------------------------------------------
+-- Rules: 
+-- ------
+-- 1) Any DB objects should be created w/o schema prefix,
+--    since this file is executed in a separate schema context.
+-- 2) There should be no DROP statements in this script, since
+--    all objects created in the default schema will be cleaned-up outside.
+---------------------------------------------------------------------------
 
--- Adjust SEARCH_PATH
-set search_path=madlib_installcheck,MADLIB_SCHEMA,"$user",public;
-
---------------------------------------------------------------------------------
--- Test 1: Random data
---------------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- Setup: 
+---------------------------------------------------------------------------
 -- Creating artificial random data =============================
 -- For the model
 --   E[y] = logit^(-1) ( x^T * [10, -2.4, 3.1, 0.6, -1.6, 1.3] )
@@ -260,15 +263,15 @@ declare
 	lgres logregr_result;
 	
 begin
-	DROP TABLE IF EXISTS data_pre;
-	CREATE TABLE data_pre(x1 float, x2 float, noise float);
-	INSERT INTO data_pre SELECT random()*10-5,random(),random() FROM generate_series(1,3000);
+	-- DROP TABLE IF EXISTS data_pre;
+	CREATE TABLE log_data_pre(x1 float, x2 float, noise float);
+	INSERT INTO log_data_pre SELECT random()*10-5,random(),random() FROM generate_series(1,3000);
 
-	DROP TABLE IF EXISTS data CASCADE;
-	CREATE TABLE data(r1 float[],val boolean);
-	INSERT INTO data SELECT array[1,data_pre.x1,data_pre.x2], (1/(1 + exp(-(2*data_pre.x1+5)))) > data_pre.noise FROM data_pre;
+	-- DROP TABLE IF EXISTS data CASCADE;
+	CREATE TABLE log_data(r1 float[],val boolean);
+	INSERT INTO log_data SELECT array[1,x1,x2], (1/(1 + exp(-(2*x1+5)))) > noise FROM log_data_pre;
 
- 	SELECT INTO lgres (t).* from (SELECT * from MADLIB_SCHEMA.logregr('data','val','r1',100,'irls',0.001)) as t;
+ 	SELECT INTO lgres (t).* from (SELECT * from MADLIB_SCHEMA.logregr('log_data','val','r1',100,'irls',0.001)) as t;
 
  	IF (abs(lgres.coef[1]-5) > 0.7) OR (abs(lgres.coef[2]-2) > 0.7) OR abs(lgres.coef[3]) > 0.7 THEN
 		RAISE EXCEPTION 'Incorrect coefficients, got %',lgres.coef;
@@ -278,12 +281,12 @@ begin
 		RAISE EXCEPTION 'Incorrect p_values, got %',lgres.p_values;
 	END IF;
 
-	DROP VIEW IF EXISTS fitdata CASCADE;
+	-- DROP VIEW IF EXISTS fitdata CASCADE;
 	EXECUTE 'CREATE VIEW fitdata AS
-		SELECT data.val,
-		(data.val::INT)*ln(1/(1+exp(-array_dot(data.r1, array[' ||array_to_string(lgres.coef,',')|| ']::float[])))) 
-		+ (1-data.val::INT)*ln(1-(1/(1+exp(-array_dot(data.r1, array[' ||array_to_string(lgres.coef,',')|| ']::float[])))))
-		as LL FROM data';
+		SELECT val,
+		(val::INT)*ln(1/(1+exp(-array_dot(r1, array[' ||array_to_string(lgres.coef,',')|| ']::float[])))) 
+		+ (1-val::INT)*ln(1-(1/(1+exp(-array_dot(r1, array[' ||array_to_string(lgres.coef,',')|| ']::float[])))))
+		as LL FROM log_data';
 
 	SELECT INTO result_ll sum(ll) from fitdata;	
  	
@@ -297,9 +300,7 @@ begin
 end 
 $$ language plpgsql;
 
-SELECT install_test();
-
 ---------------------------------------------------------------------------
 -- Cleanup
 ---------------------------------------------------------------------------
-DROP SCHEMA IF EXISTS madlib_installcheck CASCADE;
+SELECT install_test();
