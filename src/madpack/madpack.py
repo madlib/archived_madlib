@@ -117,8 +117,6 @@ def __run_sql_query(sql, show_error):
         
         # Run the query
         runcmd = [ sqlcmd,
-                    #'-v', 'ON_ERROR_STOP=1',
-                    #'-v', 'CLIENT_MIN_MESSAGES=error',
                     '-h', con_args['host'].split(':')[0],
                     '-p', con_args['host'].split(':')[1],
                     '-d', con_args['database'],
@@ -166,8 +164,9 @@ def __run_sql_query(sql, show_error):
 # @param sqlfile name of the file to parse  
 # @param tmpfile name of the temp file to run
 # @param logfile name of the log file (stdout)    
+# @param pre_sql optional SQL to run before executing the file
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile):       
+def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql):       
 
     # Check if the SQL file exists     
     if not os.path.isfile(sqlfile):
@@ -177,6 +176,11 @@ def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile):
     # Prepare the file using M4
     try:
         f = open(tmpfile, 'w')
+        
+        # Add the before SQL
+        if pre_sql:
+            f.writelines([pre_sql, '\n\n'])
+            f.flush()
         
         # Find the madpack dir (platform specific or generic)
         if os.path.isdir(maddir + "/ports/" + portid + "/madpack"):
@@ -567,14 +571,14 @@ def __db_create_objects(schema, old_schema):
             
             # Run the SQL
             try:
-                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile)
+                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, None)
             except:
                 raise Exception
                 
             # Check the exit status
             if retval != 0:
-                __error("Failed executing: %s" % tmpfile, False)  
-                __error("Check the log at: %s" % logfile, False) 
+                __error("Failed executing %s" % tmpfile, False)  
+                __error("Check the log at %s" % logfile, False) 
                 raise Exception    
                        
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -702,9 +706,9 @@ def main(argv):
     # Parse SCHEMA
     ##
     if len(args.schema[0]) > 1:
-        schema = args.schema[0]
+        schema = args.schema[0].lower()
     else:    
-        schema = args.schema
+        schema = args.schema.lower()
 
     ##
     # Parse DB Platform (== PortID) and compare with Ports.yml
@@ -870,6 +874,20 @@ def main(argv):
             __print_revs(rev, dbrev, con_args, schema)
             __info("Versions do not match. Install-check stopped.", True)
             return
+
+        # Create install-check user
+        test_user = 'madlib_' + rev.replace('.','') + '_installcheck'
+        try:
+            __run_sql_query("DROP USER IF EXISTS %s;" % (test_user), False)
+        except:
+            __run_sql_query("DROP OWNED BY %s CASCADE;" % (test_user), True)
+            __run_sql_query("DROP USER IF EXISTS %s;" % (test_user), True)            
+        __run_sql_query("CREATE USER %s;" % (test_user), True)
+        # TO DO:
+        # Change ALL to USAGE in the below GRANT command
+        # and fix the failing modules which still write to MADLIB schema.
+        __run_sql_query("GRANT ALL ON SCHEMA %s TO %s;" 
+                        % (schema, test_user), True)
          
         # 2) Run test SQLs 
         __info("> Running test scripts for:", verbose)   
@@ -890,29 +908,50 @@ def main(argv):
                 maddir_mod  = maddir + "/ports/" + portid + "/modules"
             else:        
                 maddir_mod  = maddir + "/modules"      
+
+            # Prepare test schema
+            test_schema = "madlib_installcheck_%s" % (module)
+            __run_sql_query("DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s;" 
+                            % (test_schema, test_schema), True)
+            __run_sql_query("GRANT ALL ON SCHEMA %s TO %s;" 
+                            % (test_schema, test_user), True)
+
+            # Switch to test user and prepare the search_path
+            pre_sql = '-- Switch to test user:\n' \
+                      'SET ROLE %s;\n' \
+                      '-- Set SEARCH_PATH for install-check:\n' \
+                      'SET search_path=%s,%s;\n' \
+                      % (test_user, test_schema, schema)
     
             # Loop through all test SQL files for this module
             sql_files = maddir_mod + '/' + module + '/test/*.sql_in'
             for sqlfile in glob.glob(sql_files):
             
+                result = 'PASS'
+
                 # Set file names
                 tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
                 logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
-                            
+                
+                # If there is no problem with the SQL file
+                milliseconds = 0
+
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile)
+                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
-        
+
                 # Check the exit status
                 if retval != 0:
-                    __error("Failed executing: %s" % tmpfile, False)  
-                    __error("Check the log at: %s" % logfile, False) 
+                    __error("Failed executing %s" % tmpfile, False)  
+                    __error("Check the log at %s" % logfile, False) 
                     result = 'FAIL'
-                # If error log file exists
-                elif os.path.getsize(logfile) > 0:
+                    keeplogs = True
+                # Since every single statement in the test file gets logged, 
+                # an empty log file indicates an empty or a failed test
+                elif os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
                     result = 'PASS'
                 # Otherwise                   
                 else:
@@ -922,6 +961,14 @@ def main(argv):
                 print "TEST CASE RESULT|Module: " + module + \
                     "|" + os.path.basename(sqlfile) + "|" + result + \
                     "|Time: %d milliseconds" % (milliseconds)           
+
+            # Cleanup test schema for the module
+            __run_sql_query( "DROP SCHEMA IF EXISTS %s CASCADE;" % (test_schema), True)
+
+        # Drop install-check user
+        __run_sql_query( "DROP OWNED BY %s CASCADE;" % (test_user), True)
+        __run_sql_query( "DROP USER %s;" % (test_user), True)
+            
     
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Start Here
