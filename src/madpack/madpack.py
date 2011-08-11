@@ -117,8 +117,6 @@ def __run_sql_query(sql, show_error):
         
         # Run the query
         runcmd = [ sqlcmd,
-                    #'-v', 'ON_ERROR_STOP=1',
-                    #'-v', 'CLIENT_MIN_MESSAGES=error',
                     '-h', con_args['host'].split(':')[0],
                     '-p', con_args['host'].split(':')[1],
                     '-d', con_args['database'],
@@ -166,8 +164,9 @@ def __run_sql_query(sql, show_error):
 # @param sqlfile name of the file to parse  
 # @param tmpfile name of the temp file to run
 # @param logfile name of the log file (stdout)    
+# @param pre_sql optional SQL to run before executing the file
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile):       
+def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql):       
 
     # Check if the SQL file exists     
     if not os.path.isfile(sqlfile):
@@ -177,6 +176,11 @@ def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile):
     # Prepare the file using M4
     try:
         f = open(tmpfile, 'w')
+        
+        # Add the before SQL
+        if pre_sql:
+            f.writelines(['-- Set SEARCH_PATH for install-check:\n', pre_sql, '\n\n'])
+            f.flush()
         
         # Find the madpack dir (platform specific or generic)
         if os.path.isdir(maddir + "/ports/" + portid + "/madpack"):
@@ -563,14 +567,14 @@ def __db_create_objects(schema, old_schema):
             
             # Run the SQL
             try:
-                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile)
+                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, None)
             except:
                 raise Exception
                 
             # Check the exit status
             if retval != 0:
-                __error("Failed executing: %s" % tmpfile, False)  
-                __error("Check the log at: %s" % logfile, False) 
+                __error("Failed executing %s" % tmpfile, False)  
+                __error("Check the log at %s" % logfile, False) 
                 raise Exception    
                        
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -886,29 +890,54 @@ def main(argv):
                 maddir_mod  = maddir + "/ports/" + portid + "/modules"
             else:        
                 maddir_mod  = maddir + "/modules"      
+
+            # Prepare test schema
+            test_schema = "madlib_installcheck_%s" % (module)
+            __run_sql_query( "DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s;" % (test_schema, test_schema), True)
+
+            # Prepare the search_path
+            pre_sql = 'SET search_path=%s,%s;' % (test_schema, schema)
     
             # Loop through all test SQL files for this module
             sql_files = maddir_mod + '/' + module + '/test/*.sql_in'
             for sqlfile in glob.glob(sql_files):
             
+                result = 'PASS'
+
+                # Check if the SQL file is safe (= has no DROP statements)
+                f = open(sqlfile, 'r')
+                lines = f.readlines()
+                for line in lines:
+                    if re.search(r"\s*DROP\s+", line, re.IGNORECASE) \
+                       and not re.search(r".*--.*DROP\s+", line, re.IGNORECASE):
+                        __error("Test not executed. Found uncommented DROP statement in %s" % sqlfile, False)  
+                        result = 'ERROR'
+                        retval = 0
+                        break;
+                f.close()
+                
                 # Set file names
                 tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
                 logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
-                            
-                # Run the SQL
-                run_start = datetime.datetime.now()
-                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile)
-                # Runtime evaluation
-                run_end = datetime.datetime.now()
-                milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
-        
+                
+                # If there is no problem with the SQL file
+                milliseconds = 0
+                if result != 'ERROR':                            
+                    # Run the SQL
+                    run_start = datetime.datetime.now()
+                    retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql)
+                    # Runtime evaluation
+                    run_end = datetime.datetime.now()
+                    milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
+
                 # Check the exit status
                 if retval != 0:
-                    __error("Failed executing: %s" % tmpfile, False)  
-                    __error("Check the log at: %s" % logfile, False) 
+                    __error("Failed executing %s" % tmpfile, False)  
+                    __error("Check the log at %s" % logfile, False) 
                     result = 'FAIL'
+                    keeplogs = True
                 # If error log file exists
-                elif os.path.getsize(logfile) > 0:
+                elif os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
                     result = 'PASS'
                 # Otherwise                   
                 else:
@@ -918,6 +947,10 @@ def main(argv):
                 print "TEST CASE RESULT|Module: " + module + \
                     "|" + os.path.basename(sqlfile) + "|" + result + \
                     "|Time: %d milliseconds" % (milliseconds)           
+
+            # Cleanup test schema for the module
+            __run_sql_query( "DROP SCHEMA IF EXISTS %s CASCADE;" % (test_schema), True)
+            
     
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Start Here
