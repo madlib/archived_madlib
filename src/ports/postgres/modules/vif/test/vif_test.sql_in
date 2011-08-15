@@ -1,0 +1,42 @@
+---------------------------------------------------------------------------
+-- Setup
+---------------------------------------------------------------------------
+-- test function
+CREATE OR REPLACE FUNCTION install_test() RETURNS VOID AS $$ 
+declare
+	
+	res MADLIB_SCHEMA.vif_return;
+	vifres float;
+	
+begin
+	CREATE TABLE data_pre (x1 float, x2 float, x3 float, x4 float, noise float, noise2 float);
+	INSERT INTO data_pre SELECT random(),random(),random(),random(),random(),random() FROM generate_series(1,1000);
+
+	CREATE TABLE data (y float, p0 float, p1 float, p2 float, p3 float, p4 float, p5 float);
+	INSERT INTO data SELECT noise, 2*x1+3*x2+noise*2, x1, x2, x3, x4, x4+noise2 FROM data_pre;
+
+	EXECUTE 'SELECT * from MADLIB_SCHEMA.vif(''vif_table'',''data'',''y'')' INTO res;
+ 	
+	IF (res.columns_analyzed != 6) OR (res.colinear_columns_found != 5) THEN
+		RAISE EXCEPTION 'Variance inflation factor install check failed, incorrect number of columns found';
+	END IF;
+	
+	EXECUTE 'SELECT vif FROM vif_table WHERE colname = ''p3'';' INTO vifres;
+	
+	IF (vifres > 5) THEN
+		RAISE EXCEPTION 'Variance inflation factor install check failed, incorrect output found';
+	END IF;
+	
+	EXECUTE 'SELECT * from MADLIB_SCHEMA.vif(''vif_table2'',''data'')' INTO res;
+	
+	IF (res.columns_analyzed != 7) OR (res.colinear_columns_found != 6) THEN
+		RAISE EXCEPTION 'Variance inflation factor install check failed, incorrect columns found';
+	END IF;	
+	
+	RAISE INFO 'Variance inflation factor install checks passed';
+	RETURN;
+	
+end 
+$$ language plpgsql;
+
+SELECT install_test();

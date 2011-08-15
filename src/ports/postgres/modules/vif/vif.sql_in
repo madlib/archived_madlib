@@ -1,0 +1,277 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file vif.sql_in
+ *
+ * @brief SQL function computing Variance Inflation Factors
+ * @date   August 2011
+ *
+ *
+ *//* ----------------------------------------------------------------------- */
+
+/**
+@addtogroup grp_vif
+
+@about
+This function checks the co-linearity of independent variables to be used in regression by computing the variance inflation factor (VIF) [1] for each variable. Formally
+the VIF is defined as:
+
+\f[ VIF(X_j) = \frac{1}{1-R_{j}^2} \f]
+
+where \f$ X_j \f$ refers to the \f$ j\f$th independent variable, and \f$R_{j}^2\f$ is the coefficient of determination for the regression of \f$ X_j \f$ using
+all the other independent variables.
+This function also provides an estimate of the specific co-linear variables associated with each variable by looking at the variables that were significant in the regression (i.e. p-value < 1e-4).
+
+@input
+The input table is assumed to be of the form:
+<pre>{TABLE|VIEW} <em>input_name</em> (
+    <em>var1</em> FLOAT,
+    <em>var2</em> FLOAT,
+	...
+	<em>depvar</em> FLOAT
+)</pre>
+where <em>var1,...,varK</em> are the independent variables. Note that ALL columns (except if a depedent variable is specified) in the table will be assumed to be an independent variable. Also, there
+should be at least two independent variables.
+
+@usage
+- Variance Inflation Factor can be called as follows:
+<pre>SELECT * FROM \ref vif('<em>result_table</em>','<em>schema.table_name</em>','<em>depvar</em>');</pre>
+This will generate the VIF and co-linear variables for each variable in <em>table_name</em>. If the table schema is not specified and there are multiple tables with the same name in different schemas, then
+a random one will be chosen.
+
+- The results are stored in the table specified by <em>result_table</em>.
+<pre>
+ colname | colinear_columns | p_value |       vif        
+---------+------------------+---------+------------------
+						...
+</pre>
+where <em>p_value</em> refers to the p-value each colinear column in the regression.
+
+@examp
+-# Generate some sample data:
+\code
+sql> SELECT * FROM public.data;
+
+          y          |        p0        |        p1         |        p2         |         p3         |          p4          |        p5         
+---------------------+------------------+-------------------+-------------------+--------------------+----------------------+-------------------
+   0.120414986740798 | 2.85281939804554 | 0.516861528623849 | 0.526088789105415 |  0.314938614144921 |    0.183359444607049 |  0.40791612258181
+ 0.00825035991147161 | 3.72416626103222 | 0.439415954053402 | 0.942944544367492 |  0.883867170661688 |    0.879188869148493 |  1.31307618366554
+   0.370062484871596 | 4.95253919903189 | 0.839711130131036 | 0.844330656342208 | 0.0815221248194575 |    0.507118432316929 | 0.781217900104821
+   0.772907383739948 | 2.61410578712821 | 0.342079389840364 | 0.128044079989195 |  0.523407225962728 |    0.542745699174702 | 0.927105828654021
+  0.0560409659519792 | 3.16476934822276 | 0.656534564681351 | 0.579872762318701 |  0.974525625351816 |    0.376712080556899 | 0.802455344237387
+...
+\endcode
+-# Run VIF function, specifying y as the dependent variable (which will remove it from the analysis):
+\code
+sql> SELECT * from MADLIB_SCHEMA.vif('public.vif_table','public.data','y');
+
+ columns_analyzed | colinear_columns_found | output_schema | output_table 
+------------------+------------------------+---------------+--------------
+                6 |                      5 | public        | vif_table
+\endcode
+-# The following table is then created:
+\code
+sql> SELECT * FROM public.vif_table ORDER BY colname;
+
+ colname | colinear_columns | p_value |       vif        
+---------+------------------+---------+------------------
+ p0      | {p2,p1}          | {0,0}   | 4.23284763054078
+ p1      | {p2,p0}          | {0,0}   |   1.951954256006
+ p2      | {p1,p0}          | {0,0}   |  3.1592917680424
+ p3      |                  |         | 1.00498307781993
+ p4      | {p5}             | {0}     | 2.01270147121425
+ p5      | {p4}             | {0}     |  2.0079874880621
+\endcode
+
+@literature
+[1] "Variance inflation factor" Wikipedia - http://en.wikipedia.org/wiki/Variance_inflation_factor
+
+@sa File vif.sql_in documenting the SQL function.
+*/
+
+
+/*
+DROP TYPE IF EXISTS vif_result CASCADE;
+CREATE TYPE vif_result AS(
+	colname TEXT,
+	co_col TEXT[],
+	p float[],
+	vif float
+);
+*/
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.vif_return CASCADE;
+CREATE TYPE MADLIB_SCHEMA.vif_return AS(
+	columns_analyzed INT,
+	colinear_columns_found INT,
+	output_schema TEXT,
+	output_table TEXT
+);
+
+/**
+ * @brief Checks co-linearity and computes the VIF of each column in a design matrix for regression
+ * 
+ * @param mytable Name of table you wish the results to be stored in. You can also specify the schema name.
+ * @param input_name Name of table containing columns corresponding to the independent variables (minimum 2 columns).
+ * @param indep_var <optional> If the table also contains the dependent variable, specifying the column name here will remove it from the check.
+ * @returns Summary of number of columns analyzed and found to be co-linear, and schema and name of results table.
+ *
+ */
+--CREATE OR REPLACE FUNCTION vif(mytable TEXT, input_name TEXT, indep_var TEXT) RETURNS SETOF vif_result AS $$
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.vif(mytable TEXT, input_name TEXT, indep_var TEXT) RETURNS MADLIB_SCHEMA.vif_return AS $$
+declare
+	num_columns INT;
+	cur_col INT;
+	cur_name text;
+	table_name text;
+	schema_name text;
+	results_name text;
+	results_schema text;
+	
+	
+	dot INT;
+	ind INT := 0;
+	arg TEXT[];
+	argid INT[];
+	--res vif_result;
+	ret MADLIB_SCHEMA.vif_return;
+	lr MADLIB_SCHEMA.linregr_result;
+	
+begin
+	--Parse input
+	--Check if schema name is provided	
+	SELECT INTO dot POSITION('.' in input_name);
+	IF (dot != 0 ) THEN
+		--schema specified, parse schema name
+		schema_name = substring(input_name from 1 for dot-1);
+		table_name = substring(input_name from dot+1 for char_length(input_name));		
+		
+		--check that this schema.table does exist
+		EXECUTE 'SELECT COUNT(*) FROM information_schema.columns WHERE table_name = '''||table_name||''' AND table_schema = '''||schema_name||''';' INTO dot;
+		
+		IF (dot = 0) THEN
+			RAISE EXCEPTION 'Table and/or schema does not exist';
+		END IF;	
+						
+	ELSE
+		--schema not specified, search for schema name
+		--if there are multiple, just pick one
+		table_name = input_name;
+		EXECUTE 'SELECT table_schema from information_schema.columns where table_name = '''||table_name||''' GROUP BY table_schema LIMIT 1;' INTO schema_name;		
+		
+		IF (schema_name IS NULL) THEN
+			RAISE EXCEPTION 'Table does not exist';
+		END IF;		
+		
+	END IF;
+	
+	SELECT INTO dot POSITION('.' in mytable);
+	IF (dot != 0 ) THEN
+		--schema specified, parse schema name
+		results_schema = substring(mytable from 1 for dot-1);
+		results_name = substring(mytable from dot+1 for char_length(mytable));		
+						
+	ELSE
+		--schema not specified, make table in current schema
+		results_schema = '';
+		results_name = mytable;	
+		
+	END IF;	
+	
+	--Get list of column names from table
+	EXECUTE 'CREATE TEMP TABLE colnames AS SELECT row_number() OVER() AS id, column_name FROM information_schema.columns WHERE table_name = '''||table_name||''' AND table_schema = '''||schema_name||''' AND column_name <> '''||indep_var||''''; 
+	EXECUTE 'CREATE TEMP TABLE colrem( nameid INT, pval FLOAT, coef FLOAT)';
+	EXECUTE 'CREATE TEMP TABLE colrem_full( column_name TEXT, nameid INT, pval FLOAT, coef FLOAT)';
+
+	--Get number of columns
+	EXECUTE 'SELECT COUNT(*) FROM colnames' INTO num_columns;	
+	--check if there are any columns in the table aside from the indep variable	
+	IF (num_columns <= 1) THEN
+		RAISE EXCEPTION 'Fewer than two columns found';
+	END IF;
+	
+	--use only because of Greenplum bug which does not allow to return setof records
+	EXECUTE 'CREATE TABLE '||mytable||'(colname TEXT, colinear_columns TEXT[], p_value FLOAT[], vif FLOAT)'; 	
+	
+	--loop through each column
+	LOOP			
+		ind = ind + 1;
+		IF (ind > num_columns) THEN
+			EXIT;
+		END IF;
+
+		--pick a column
+		EXECUTE 'SELECT id,column_name FROM colnames WHERE id = '||ind INTO cur_col,cur_name;
+		--res.colname = cur_name;
+
+		--compose array of dependent variables	
+		--EXECUTE 'SELECT array_agg( column_name::text ),array_agg(id) FROM (SELECT column_name,id FROM colnames WHERE id <> '||cur_col||') AS T' INTO arg,argid;
+		EXECUTE 'SELECT array( SELECT column_name::text FROM (SELECT column_name,id FROM colnames WHERE id <> '||cur_col||' ORDER BY id LIMIT 10000) AS T),
+				array( SELECT id FROM (SELECT column_name,id FROM colnames WHERE id <> '||cur_col||' ORDER BY id LIMIT 10000) AS G)' INTO arg,argid;
+
+		--run linear regression
+		EXECUTE 'SELECT (MADLIB_SCHEMA.linregr('||cur_name||',array[1,'|| array_to_string(arg,',') ||'])).* FROM '||table_name INTO lr;
+
+		--determine which parameters are collinear
+		EXECUTE 'TRUNCATE TABLE colrem';		
+		EXECUTE 'INSERT INTO colrem SELECT unnest(array['||array_to_string(argid,',')||']), unnest(array['||array_to_string(lr.p_values[2:num_columns],',')||']), unnest(array['||array_to_string(lr.coef[2:num_columns],',')||'])';
+
+		EXECUTE 'TRUNCATE TABLE colrem_full';
+		EXECUTE 'INSERT INTO colrem_full SELECT column_name, id, pval, coef FROM colrem JOIN colnames ON (colrem.nameid = colnames.id)';
+
+		--EXECUTE 'SELECT array_agg(column_name), array_agg(pval) FROM colrem_full WHERE pval < 1e-5 AND coef > 1e-14' INTO res.co_col,res.p;
+		--EXECUTE 'SELECT array(SELECT column_name FROM colrem_full WHERE pval < 1e-4 AND abs(coef) > 1e-14 ORDER BY nameid LIMIT 10000)' INTO res.co_col;
+		--EXECUTE 'SELECT array(SELECT pval FROM colrem_full WHERE pval < 1e-4 AND abs(coef) > 1e-14 ORDER BY nameid LIMIT 10000)' INTO res.p;
+
+		--calculate the VIF		
+		--res.vif = 1/(1-lr.r2+1e-15);				
+		
+		--use only because of Greenplum bug which does not allow to return setof records
+		EXECUTE 'INSERT INTO '||mytable||' SELECT '''||cur_name||''' AS colname, 
+					array(SELECT column_name FROM colrem_full WHERE pval < 1e-4 AND abs(coef) > 1e-14 ORDER BY nameid LIMIT 10000) AS collinear_columns,
+					array(SELECT pval FROM colrem_full WHERE pval < 1e-4 AND abs(coef) > 1e-14 ORDER BY nameid LIMIT 10000) AS p_value,
+					1/(1-'||lr.r2||'+1e-15) AS vif';	
+		
+		
+		--RETURN NEXT res;	
+		
+	END LOOP;
+	
+	--Summary statistics return
+	ret.columns_analyzed = num_columns;
+	EXECUTE 'SELECT COUNT(*) FROM '||mytable||' WHERE colinear_columns IS NOT NULL' INTO ret.colinear_columns_found;
+	ret.output_schema = results_schema;
+	ret.output_table = results_name;	
+	
+	--Cleanup
+	EXECUTE 'DROP TABLE IF EXISTS colnames';
+	EXECUTE 'DROP TABLE IF EXISTS colrem';
+	EXECUTE 'DROP TABLE IF EXISTS colrem_full';
+	
+	RETURN ret;
+
+end
+$$ language plpgsql;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.vif(myschema TEXT,input_name TEXT) RETURNS MADLIB_SCHEMA.vif_return AS $$
+declare
+	ret MADLIB_SCHEMA.vif_return;
+begin
+	ret = MADLIB_SCHEMA.vif(myschema,input_name,' ');
+	RETURN ret;
+	
+end
+$$ language plpgsql;
+
+/*
+-- Sample usage:
+drop table if exists data_pre;
+create table data_pre (x1 float, x2 float, x3 float, x4 float, noise float, noise2 float);
+INSERT INTO data_pre SELECT random(),random(),random(),random(),random(),random() FROM generate_series(1,1000);
+
+drop table if exists data;
+create table data (y float, p0 float, p1 float, p2 float, p3 float, p4 float, p5 float);
+INSERT INTO data SELECT noise, 2*x1+3*x2+noise*2, x1, x2, x3, x4, x4+noise2 FROM data_pre;
+--create table data(y float);
+
+SELECT * from MADLIB_SCHEMA.vif('vif2','public.data','y');
+*/
