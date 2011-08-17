@@ -409,26 +409,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], text, float8, float8) (
        initcond = '(0,0,0,0,0,0,0,{},{},0)'
 );
 
--- This function transforms a MADLIB_SCHEMA.svm_model_rec into a set of (weight, support_vector) values for the purpose of storage in a table.
--- This is currently written as a plpgsql function because we cannot pass array arguments in plpython functions.
---
-CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.__svm_transform_rec(modelname text, ind_dim int, nsvs int, weights float8[], individuals float8[]) 
-RETURNS SETOF MADLIB_SCHEMA.svm_support_vector AS $$
-DECLARE
-	idx INT := 0;
-	sv MADLIB_SCHEMA.svm_support_vector;
-BEGIN
-	FOR i IN 1..nsvs LOOP 
-        sv.id := modelname;
-        sv.weight := weights[i];
-        idx := ind_dim * (i-1);
-        sv.sv := individuals[(idx+1):(idx+ind_dim)]; 
-        RETURN NEXT sv;
-    END LOOP;
-END;
-$$ LANGUAGE plpgsql;
-
 -- This function stores a MADLIB_SCHEMA.svm_model_rec stored in model_temp_table into the model_table.
 --
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_store_model(model_temp_table TEXT, model_name TEXT, model_table TEXT) RETURNS VOID AS $$
@@ -438,28 +418,23 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_store_model(model_temp_table TEXT, 
 	if (temp[0]['count'] == 0):
 	    plpy.error("No support vector model with name " + model_name + " found.");
 
-	sql = "SELECT (model).ind_dim, (model).nsvs, (model).weights, (model).individuals" \
+	sql = "SELECT (model).ind_dim, (model).nsvs" \
 	       + " FROM " + model_temp_table + " WHERE id = '" + model_name + "'";
 	rv = plpy.execute(sql);
 	myind_dim = rv[0]['ind_dim'];
 	mynsvs = rv[0]['nsvs'];
-	myweights = rv[0]['weights'];
-	myindividuals = rv[0]['individuals'];
 
 	if (mynsvs == 0):
 	    plpy.error("The specified model has no support vectors and therefore not processed");
 
-	sql =  "INSERT INTO " + model_table + " \
-            SELECT * \
-            FROM \
-                MADLIB_SCHEMA.__svm_transform_rec ( \
-                    '" + model_name + "' \
-                    , (SELECT (model).ind_dim FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
-                    , (SELECT (model).nsvs FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
-                    , (SELECT (model).weights FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
-                    , (SELECT (model).individuals FROM " + model_temp_table + " WHERE id = '" + model_name + "' LIMIT 1) \
-                )"
-	plpy.execute(sql);
+	idx = 0;    
+	for i in range(1,mynsvs+1):
+	    idx = myind_dim * (i-1);
+	    sql = "INSERT INTO " + model_table \
+	    	      + " SELECT \'" + model_name + "\', (model).weights[" + str(i) + "], " \
+	    	      + "            (model).individuals[(" + str(idx+1) + "):(" + str(idx) + "+" + str(myind_dim) + ")] " \
+	    	      + " FROM " + model_temp_table + " WHERE id = \'" + model_name + "\' LIMIT 1";	    
+	    plpy.execute(sql);		      
 
 $$ LANGUAGE plpythonu;
 
