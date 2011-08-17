@@ -570,7 +570,7 @@ Datum svm_cls_update(PG_FUNCTION_ARGS)
 	p = label * p;
 
 	inds++;
-	if (p < 0) cum_err++;
+	if (p <= 0) cum_err++;
 
 	if (p <= rho) {
 		// unlike the original algorithm in Kivinen et al, this 
