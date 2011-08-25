@@ -1,0 +1,133 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file compatibility.sql_in
+ *
+ * @brief SQL functions for Greenplum compatibility
+ *
+ * @sa For a brief overview of Greenplum compatibility functions, see the
+ *     module description \ref grp_gp_compat.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+/**
+@addtogroup grp_gp_compat
+
+@about
+
+The Greenplum compatibility module privdes Greenplum-specific implementations
+for functionality that cannot be implemented using standard SQL -- be it due to
+limitations in SQL support, known limitations, or bugs.
+
+These function are not installed on other DBMSs (and not needed there).
+
+@literature
+
+[1] Greenplum Admin Guide, <tt>$GPHOME/docs/GPAdminGuide.pdf</tt>.
+
+@sa File greenplum/modules/compatibility/compatibility.sql_in (documenting the
+    SQL functions)
+
+*/
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.create_table_as("inTableName" VARCHAR,
+    "inSQL" VARCHAR, "inDistributed" VARCHAR);
+
+/**
+ * @brief Mimick <tt>CREATE TABLE AS</tt>. Create a table and fill it with data
+ *     computed by a \c SELECT command.
+ *
+ * @param inTableName The name (optionally schema-qualified) of the table to be
+ *     created.
+ * @param inSQL A SELECT command.
+ * @param inDistributed The Greenplum Database distribution policy for the
+ *     table. This can be either \c RANDOMLY, which is the default, or
+ *     <tt>BY (<em>column</em>, [...])</tt>.
+ *
+ * @usage
+ * Use in the same way as the <tt>CREATE TABLE AS</tt> statement:
+ * <pre>SELECT create_table_as('<em>table_name</em>', $$
+ *    <em>query</em>
+ *$$, 'BY (<em>column</em>, [...]) | RANDOMLY');</pre>
+ * 
+ * @examp
+ * <pre>SELECT create_table_as('public.test', $$
+ *    SELECT * FROM generate_series(1,10) AS id
+ *$$, 'BY (id)');\n
+ *SELECT create_table_as('logregr_result', $$
+ *    SELECT * FROM logregr('data', 'y', 'x')
+ *$$, 'RANDOMLY');</pre>
+ */
+CREATE FUNCTION MADLIB_SCHEMA.create_table_as("inTableName" VARCHAR,
+    "inSQL" VARCHAR, "inDistributed" VARCHAR /*+ = 'RANDOMLY' */)
+RETURNS VOID
+LANGUAGE plpgsql
+VOLATILE
+RETURNS NULL ON NULL INPUT
+AS $$
+DECLARE
+    oldClientMinMessages TEXT;
+BEGIN
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    
+    IF (SELECT count(*)
+        FROM unnest(pg_catalog.current_schemas(TRUE)) AS schema_name
+        WHERE schema_name ~ '^pg_temp') = 0 THEN
+        
+        -- The pg_temp schema does not exist, yet. Creating a temporary table
+        -- will create it.
+        EXECUTE 'CREATE TEMPORARY TABLE _madlib_temp_table AS SELECT 1;
+            DROP TABLE pg_temp._madlib_temp_table CASCADE;';
+    END IF;
+    
+    -- We separate the following EXECUTE statement because it is prone
+    -- to generate an exception -- e.g., if the table already exists
+    -- In that case we want to keep the context in the error message short
+    EXECUTE
+        'CREATE TABLE ' || "inTableName" || '
+        AS SELECT * FROM (' || "inSQL" || ') AS _madlib_ignore
+        WHERE FALSE
+        DISTRIBUTED ' || "inDistributed";
+    
+    EXECUTE
+        'DROP FUNCTION IF EXISTS pg_temp._madlib_temp_function();
+        CREATE FUNCTION pg_temp._madlib_temp_function()
+            RETURNS VOID
+            LANGUAGE plpgsql
+            AS $_madlib_temp_function$
+            DECLARE
+                result ' || "inTableName" || '%ROWTYPE;
+            BEGIN
+                FOR result IN EXECUTE
+                    $_madlib_temp_function_string$
+                    ' || "inSQL" || '
+                    $_madlib_temp_function_string$
+                    LOOP
+
+                    INSERT INTO ' || "inTableName" || ' VALUES (result.*);
+                END LOOP;
+            END;
+            $_madlib_temp_function$';
+
+    -- We call _madlib_temp_function() in a separate
+    -- EXECUTE statement because it is not yet visible before
+    -- (we would see "ERROR: function _madlib_temp_function() does not exist")
+    EXECUTE
+        'SELECT pg_temp._madlib_temp_function();
+        SET client_min_messages TO ' || oldClientMinMessages || ';';
+END;
+$$;
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.create_table_as("inTableName" VARCHAR,
+    "inSQL" VARCHAR);
+
+CREATE FUNCTION MADLIB_SCHEMA.create_table_as("inTableName" VARCHAR,
+    "inSQL" VARCHAR)
+RETURNS VOID
+LANGUAGE sql
+VOLATILE
+RETURNS NULL ON NULL INPUT
+AS $$
+    SELECT MADLIB_SCHEMA.create_table_as($1, $2, 'RANDOMLY');
+$$;
