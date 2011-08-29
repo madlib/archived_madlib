@@ -193,6 +193,13 @@ if(GREENPLUM_FOUND)
         "../postgres/modules"
         "${CMAKE_CURRENT_BINARY_DIR}/modules"
     )
+    # Add Greenplum-specific modules. Files will be appended to
+    # SQL_TARGET_FILES_GREENPLUM.
+    add_sql_files(
+        SQL_TARGET_FILES_GREENPLUM
+        "modules"
+        "${CMAKE_CURRENT_BINARY_DIR}/modules"
+    )
     # FIXME: Check legacy code for compliance with new architecture
     # BEGIN Legacy Code
         
