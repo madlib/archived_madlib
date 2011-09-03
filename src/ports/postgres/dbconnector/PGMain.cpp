@@ -69,6 +69,14 @@ inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
                 PG_RETURN_NULL();
             
             return PGToDatumConverter(fcinfo).convertToDatum(result);
+        } catch (std::bad_alloc &) {
+            sqlerrcode = ERRCODE_OUT_OF_MEMORY;
+            strncpy(msg,
+                "Memory allocation failed. Typically, this indicates that "
+                PACKAGE_NAME
+                " limits the available memory to less than what is needed for this "
+                "input.",
+                sizeof(msg));
         } catch (std::exception &exc) {
             sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
             const char *error = exc.what();
@@ -76,7 +84,7 @@ inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
             // If there is a pending error, we report this instead.
             if (db.lastError())
                 error = db.lastError();
-                
+            
             strncpy(msg, error, sizeof(msg));
         }
     } catch (std::exception &exc) {
@@ -85,8 +93,8 @@ inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
     } catch (...) {
         sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
         strncpy(msg,
-                "Unknown exception was raised.",
-                sizeof(msg));
+            "Unknown exception was raised.",
+            sizeof(msg));
     }
     
     // This code will only be reached in case of error.

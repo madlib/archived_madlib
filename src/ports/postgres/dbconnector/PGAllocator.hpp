@@ -29,11 +29,11 @@ public:
     }
 
     MemHandleSPtr allocateArray(
-        uint32_t inNumElements, double * /* ignored */) const;
+        uint64_t inNumElements, double * /* ignored */) const;
     
-    void *allocate(const uint32_t inSize) const throw(std::bad_alloc);
+    void *allocate(const size_t inSize) const throw(std::bad_alloc);
 
-    void *allocate(const uint32_t inSize, const std::nothrow_t&) const
+    void *allocate(const size_t inSize, const std::nothrow_t&) const
         throw();
     
     void free(void *inPtr) const throw();
@@ -50,7 +50,11 @@ protected:
         { }
 
     ArrayType *internalAllocateForArray(Oid inElementType,
-        uint32_t inNumElements, size_t inElementSize) const;
+        uint64_t inNumElements, size_t inElementSize) const;
+    
+    static void *internalPalloc(size_t inSize, bool inZero = false);
+    
+    static void internalPfree(void *inPtr);
         
     const PGInterface *const mPGInterface;    
     Context mContext;

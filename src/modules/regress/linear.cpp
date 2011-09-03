@@ -160,13 +160,18 @@ AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
         throw std::invalid_argument("Design matrix is not finite.");
     
     // Now do the transition step.
-    if (state.numRows == 0)
+    if (state.numRows == 0) {
+        if (x.n_elem > std::numeric_limits<uint16_t>)
+            throw std::domain_error("Number of independent variables cannot be "
+                "larger than 65535.");
+        
         state.initialize(
             db.allocator(
                 AbstractAllocator::kAggregate,
                 AbstractAllocator::kZero
             ),
             x.n_elem);
+    }
     state.numRows++;
     state.y_sum += y;
     state.y_square_sum += y * y;

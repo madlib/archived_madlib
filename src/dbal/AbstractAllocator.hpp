@@ -36,18 +36,18 @@ public:
      * 
      * Note: The second argument is purely a type parameter.
      */
-    virtual MemHandleSPtr allocateArray(uint32_t inNumElements,
+    virtual MemHandleSPtr allocateArray(uint64_t inNumElements,
         double * = NULL /* ignored */) const = 0;
     
     /**
      * @brief Allocate a block of memory. Throw if allocation fails.
      */
-    virtual void *allocate(const uint32_t inSize) const throw(std::bad_alloc) = 0;
+    virtual void *allocate(const size_t inSize) const throw(std::bad_alloc) = 0;
 
     /**
      * @brief Allocate a block of memory. Return NULL if allocation fails.
      */
-    virtual void *allocate(const uint32_t inSize, const std::nothrow_t&) const
+    virtual void *allocate(const size_t inSize, const std::nothrow_t&) const
         throw() = 0;
     
     /**
