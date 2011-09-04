@@ -26,8 +26,15 @@ namespace dbconnector {
 /**
  * @brief Convert DBAL types into PostgreSQL Datum
  *
- * @internal This class makes frequent calls into the PostgreSQL backend.
- *     This class is not thread-safe. This should never be an issue, though,
+ * This class is responsible for converting DBAL types into Datum suitable to
+ * return to the PostgreSQL backend. This may involve reliquishing ownership
+ * of memory (provided it is guaranteed that the memory will be cleaned up by
+ * the backend), copying data that would otherwise go out of scope, etc.
+ * The assumption is that after convertToDatum(const AbstractType &) has been
+ * called, the respective DBAL object will not be used any more.
+ *
+ * @note This class makes frequent calls into the PostgreSQL backend.
+ *     It is not thread-safe. This should never be an issue, though,
  *     because PostgreSQL does not use threads.
  */
 class PGToDatumConverter : public AbstractTypeConverter {

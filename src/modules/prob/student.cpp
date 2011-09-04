@@ -116,7 +116,7 @@ static double studentT_cdf_approx(int64_t nu, double t);
  * @param nu Degree of freedom (>= 1)
  * @param t Argument to cdf.
  *
- * Note: The running time of calculating the series is proportional to nu. This
+ * Note: The running time of calculating the series is proportional to nu.
  * We therefore use the normal distribution as an approximation for large nu.
  * Another idea for handling this case can be found in reference [8].
  */
@@ -169,7 +169,7 @@ double studentT_cdf(int64_t nu, double t) {
 		A = t_by_sqrt_nu / std::sqrt(z) * sum;
 	}
 	
-	/* A should obviously lie withing the interval [0,1] plus minus (hopefully
+	/* A should obviously be within the interval [0,1] plus minus (hopefully
 	 * small) rounding errors. */
 	if (A > 1.)
 		A = 1.;

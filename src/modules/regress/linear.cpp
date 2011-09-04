@@ -161,7 +161,7 @@ AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
     
     // Now do the transition step.
     if (state.numRows == 0) {
-        if (x.n_elem > std::numeric_limits<uint16_t>)
+        if (x.n_elem > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
                 "larger than 65535.");
         

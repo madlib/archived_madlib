@@ -35,11 +35,13 @@ ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
     uint64_t inNumElements, size_t inElementSize) const {
     
     /*
-     * Check precondition for avoiding that size exceeds addressable memory.
-     * ((SIZE_MAX - ARR_OVERHEAD_NONULLS(1)) / inElementSize > inNumElements)
-     * which is sufficient that the alloacted memory can be addressed.
+     * Check that the size will not exceed addressable memory. Therefore, the
+     * following precondition has to hold:
+     * ((std::numeric_limits<size_t>::max() - ARR_OVERHEAD_NONULLS(1)) /
+     *     inElementSize >= inNumElements)
      */
-    if ((SIZE_MAX - ARR_OVERHEAD_NONULLS(1)) / inElementSize > inNumElements)
+    if ((std::numeric_limits<size_t>::max() - ARR_OVERHEAD_NONULLS(1)) /
+            inElementSize < inNumElements)
         throw std::bad_alloc();
     
     size_t		size = inElementSize * inNumElements + ARR_OVERHEAD_NONULLS(1);
@@ -77,10 +79,10 @@ void *PGAllocator::internalPalloc(size_t inSize, bool inZero) {
 #if MAXIMUM_ALIGNOF >= 16
     return inZero ? palloc0(inSize) : palloc(inSize);
 #else
-    if (inSize > SIZE_MAX - 16)
+    if (inSize > std::numeric_limits<size_t>::max() - 16)
         return NULL;
     
-    /* Precondition: inSize <= SIZE_MAX - 16 */
+    /* Precondition: inSize <= std::numeric_limits<size_t>::max() - 16 */
     const size_t size = inSize + 16;
     void *raw = inZero ? palloc0(size) : palloc(size);
     if (raw == 0) return 0;

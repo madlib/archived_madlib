@@ -257,11 +257,17 @@ void PGToDatumConverter::convertArray(const MemHandleSPtr &inHandle,
             
             PG_TRY(); {
                 if (arrayHandle) {
+                    // We will not deallocate the storage used by the Array
+                    // because we are returning a pointer to this storage!
+                    // We are guaranteed that backend code will take care of
+                    // deallocation. See MADLIB-250.
+                    arrayHandle->release();
                     mConvertedValue = PointerGetDatum(arrayHandle->array());
                 } else {
+                    // FIXME: Check whether this code is used at all.
                     // If the Array does not use a PostgreSQL array
                     // as its storage, we have to create a new PostgreSQL array
-                    // and copy the values.
+                    // and copy the values (contruct_array() will do a copy).
                     mConvertedValue =
                         PointerGetDatum(
                             construct_array(
