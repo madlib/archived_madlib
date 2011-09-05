@@ -541,8 +541,12 @@ def __db_create_objects(schema, old_schema):
         # Find the module dir (platform specific or generic)
         if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
             maddir_mod  = maddir + "/ports/" + portid + "/modules"
-        else:        
+        elif os.path.isdir(maddir + "/modules/" + module):
             maddir_mod  = maddir + "/modules"
+        else:
+            # This was a platform-specific module, for which no default exists.
+            # We can just skip this module.
+            continue
 
         # Make a temp dir for log files 
         cur_tmpdir = tmpdir + "/" + module
