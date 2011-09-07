@@ -33,8 +33,17 @@
 
 /* We really use yymore, but only in more(). We need to provide this option
  * because flex with otherwise complain:
- * "error: ‘yymore_used_but_not_detected’ was not declared in this scope */
+ * "error: 'yymore_used_but_not_detected' was not declared in this scope */
 %option yymore
+
+/* instructs flex to generate a scanner which never considers its input
+ * interactive. Normally, on each new input file the scanner calls isatty() in
+ * an attempt to determine whether the scanner's input source is interactive and
+ * thus should be read a character at a time. When this option is used, however,
+ * then no such call is made.
+ * We declare this option because otherwise flex will generate a redundant
+ * declaration of isatty(), which may lead to compile errors. */
+%option never-interactive
 
 
 /* C++ Code */
