@@ -50,6 +50,16 @@ if(POSTGRESQL_FOUND)
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
     
+        if(CMAKE_COMPILER_IS_GNUCC)
+            # FIXME: In the C code, we have several places where strict aliasing
+            # rules are violated. See this web page for some background:
+            # http://dbp-consulting.com/tutorials/StrictAliasing.html
+            # For now, we tell GCC that it cannot rely on strict aliasing rules.
+            # Downside: We forgo some potential optimization.
+            # The warning GCC would output without -fno-strict-aliasing is:
+            # dereferencing type-punned pointer will break strict-aliasing rules
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-strict-aliasing")
+        endif(CMAKE_COMPILER_IS_GNUCC)
         file(GLOB_RECURSE LEGACY_C_FILES_POSTGRES RELATIVE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 

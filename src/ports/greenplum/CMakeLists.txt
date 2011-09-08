@@ -64,12 +64,19 @@ if(GREENPLUM_FOUND)
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
     
-        if(${CMAKE_COMPILER_IS_GNUCC})
+        if(CMAKE_COMPILER_IS_GNUCC)
             # FIXME: Is there a portable (not just for gcc) way of including a header file?
             # Due to Greenplum bug MPP-13254, we need to include <sys/time.h>
             # before <postgres.h>
-            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -include sys/time.h")
-        endif(${CMAKE_COMPILER_IS_GNUCC})
+            # FIXME: In the C code, we have several places where strict aliasing
+            # rules are violated. See this web page for some background:
+            # http://dbp-consulting.com/tutorials/StrictAliasing.html
+            # For now, we tell GCC that it cannot rely on strict aliasing rules.
+            # Downside: We forgo some potential optimization.
+            # The warning GCC would output without -fno-strict-aliasing is:
+            # dereferencing type-punned pointer will break strict-aliasing rules
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -include sys/time.h -fno-strict-aliasing")
+        endif(CMAKE_COMPILER_IS_GNUCC)
         file(GLOB_RECURSE LEGACY_C_FILES_GREENPLUM RELATIVE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 
