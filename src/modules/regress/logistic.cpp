@@ -586,13 +586,13 @@ AnyType stateToResult(AbstractDBInterface &db,
     DoubleCol stdErr(db.allocator(), inCoef.n_elem);
     DoubleCol waldZStats(db.allocator(), inCoef.n_elem);
     DoubleCol waldPValues(db.allocator(), inCoef.n_elem);
-    DoubleCol oddRatios(db.allocator(), inCoef.n_elem);
+    DoubleCol oddsRatios(db.allocator(), inCoef.n_elem);
     for (unsigned int i = 0; i < inCoef.n_elem; i++) {
         stdErr(i) = std::sqrt(inInverse_of_X_transp_AX(i,i));
         waldZStats(i) = inCoef(i) / stdErr(i);
         waldPValues(i) = 2. *  ( boost::math::cdf(boost::math::normal(),
             -std::abs( waldZStats(i) )) );
-        oddRatios(i) = std::exp( inCoef(i) );
+        oddsRatios(i) = std::exp( inCoef(i) );
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
@@ -604,7 +604,7 @@ AnyType stateToResult(AbstractDBInterface &db,
     *tupleElement++ = stdErr;
     *tupleElement++ = waldZStats;
     *tupleElement++ = waldPValues;
-    *tupleElement   = oddRatios;
+    *tupleElement   = oddsRatios;
     
     return tuple;
 }

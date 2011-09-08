@@ -98,20 +98,18 @@ set(MAD_MODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/modules)
 find_package(Boost 1.46)
 
 # We use BOOST_ASSERT_MSG, which only exists in Boost 1.46 and later.
-# FIXME: Think whether we really need the latest 1.46 (and BOOST_ASSERT_MSG).
-# We need Boost >= 1.34. Unfortunately, the FindBoost module seems to be broken
-# with respect to version checking, so we will set Boost_FOUND to FALSE if the
-# version is too old.
+# Unfortunately, the FindBoost module seems to be broken with respect to version
+# checking, so we will set Boost_FOUND to FALSE if the version is too old.
 if(Boost_FOUND)
-    if(Boost_VERSION LESS 103400)
+    if(Boost_VERSION LESS 104600)
         set(Boost_FOUND FALSE)
-    endif(Boost_VERSION LESS 103400 )
+    endif(Boost_VERSION LESS 104600 )
 endif(Boost_FOUND)
 
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
 else(Boost_FOUND)
-    message(STATUS "No sufficiently recent version (>= 1.34) of Boost was found. Will download.")
+    message(STATUS "No sufficiently recent version (>= 1.46) of Boost was found. Will download.")
 
     ExternalProject_Add(EP_boost
         PREFIX ${MAD_THIRD_PARTY}
