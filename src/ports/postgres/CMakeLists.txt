@@ -22,8 +22,8 @@ if(POSTGRESQL_FOUND)
     )
 
     set(MAD_DBAL_SOURCES_POSTGRES
-        dbconnector/PGAbstractValue.cpp
-        dbconnector/PGAbstractValue.hpp
+        dbconnector/PGAbstractType.cpp
+        dbconnector/PGAbstractType.hpp
         dbconnector/PGAllocator.cpp
         dbconnector/PGAllocator.hpp
         dbconnector/PGArrayHandle.cpp
@@ -34,12 +34,11 @@ if(POSTGRESQL_FOUND)
         dbconnector/PGInterface.cpp
         dbconnector/PGInterface.hpp
         dbconnector/PGMain.cpp
-        dbconnector/PGMain.hpp
         dbconnector/PGNewDelete.cpp
         dbconnector/PGToDatumConverter.cpp
         dbconnector/PGToDatumConverter.hpp
-        dbconnector/PGValue.cpp
-        dbconnector/PGValue.hpp
+        dbconnector/PGType.cpp
+        dbconnector/PGType.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_POSTGRES
@@ -51,9 +50,6 @@ if(POSTGRESQL_FOUND)
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
     
-        if(${CMAKE_COMPILER_IS_GNUCC})
-            set(CMAKE_C_FLAGS "-std=gnu99")
-        endif(${CMAKE_COMPILER_IS_GNUCC})
         file(GLOB_RECURSE LEGACY_C_FILES_POSTGRES RELATIVE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 

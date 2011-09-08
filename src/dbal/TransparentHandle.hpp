@@ -7,8 +7,11 @@
 /**
  * @brief The most simple handle type -- a normal pointer
  *
- * A transparent handle is used where a handle is required but a normal pointer
- * is sufficient. A transparent handle never owns the memory it points to.
+ * A TransparentHandle is simply a pointer that never owns the memory it points
+ * to. As such, the clone() operation is not supported. The main use for a
+ * TransparentHandle is for referring to memory that is controlled below the
+ * the DB abstraction layer (and any functionality implemented on top of the
+ * DBAL).
  */
 class TransparentHandle : public AbstractHandle {
 public:
@@ -19,9 +22,15 @@ public:
     void *ptr() {
         return mPtr;
     }
-    
+
+    void release() { };
+   
+    /**
+     * @brief Report an error because a TransparentHandle cannot be cloned.
+     */
     MemHandleSPtr clone() const {
-        return MemHandleSPtr( new TransparentHandle(*this) );
+        throw std::logic_error("Internal error: TransparentHandle::clone() "
+            "called.");
     }
         
 protected:

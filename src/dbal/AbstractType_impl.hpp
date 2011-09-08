@@ -1,11 +1,11 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractValue_impl.hpp
+ * @file AbstractType_impl.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
 #define EXPAND_TYPE(T) \
-    T AbstractValue::getAs(T* /* pure type parameter */) const { \
+    T AbstractType::getAs(T* /* pure type parameter */) const { \
         throw std::logic_error("Internal error: Unsupported type conversion requested"); \
     }
 

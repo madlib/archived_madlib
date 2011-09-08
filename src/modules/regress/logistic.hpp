@@ -21,12 +21,12 @@ namespace regress {
 struct LogisticRegressionCG {
     class State;
     
-    static AnyValue transition(AbstractDBInterface &db, AnyValue args);
-    static AnyValue mergeStates(AbstractDBInterface &db, AnyValue args);
-    static AnyValue final(AbstractDBInterface &db, AnyValue args);
+    static AnyType transition(AbstractDBInterface &db, AnyType args);
+    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
+    static AnyType final(AbstractDBInterface &db, AnyType args);
     
-    static AnyValue distance(AbstractDBInterface &db, AnyValue args);
-    static AnyValue result(AbstractDBInterface &db, AnyValue args);
+    static AnyType distance(AbstractDBInterface &db, AnyType args);
+    static AnyType result(AbstractDBInterface &db, AnyType args);
 };
 
 /**
@@ -36,12 +36,12 @@ struct LogisticRegressionCG {
 struct LogisticRegressionIRLS {
     class State;
     
-    static AnyValue transition(AbstractDBInterface &db, AnyValue args);
-    static AnyValue mergeStates(AbstractDBInterface &db, AnyValue args);
-    static AnyValue final(AbstractDBInterface &db, AnyValue args);
+    static AnyType transition(AbstractDBInterface &db, AnyType args);
+    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
+    static AnyType final(AbstractDBInterface &db, AnyType args);
     
-    static AnyValue distance(AbstractDBInterface &db, AnyValue args);
-    static AnyValue result(AbstractDBInterface &db, AnyValue args);
+    static AnyType distance(AbstractDBInterface &db, AnyType args);
+    static AnyType result(AbstractDBInterface &db, AnyType args);
 };
 
 } // namespace regress

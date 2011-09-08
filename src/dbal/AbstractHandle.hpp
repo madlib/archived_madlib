@@ -18,9 +18,15 @@
  *
  * In a handle's destructor, all memory blocks owned by the handle must be
  * deallocated. A handle is said to own a memory block, if
- * (a) it allocated the memory block itself or
- * (b) the memory block was allocated during the clone() operation that created
- *     the handle.
+ * -# One of the following two condition holds:
+ *     - It allocated the memory block itself.
+ *     - The memory block was allocated during the clone() operation that
+ *       created the handle.
+ * -# release() has not been called before. Implementations must detail how
+ *    memory is to be deallocated manually if release() has been called before.
+ *
+ * @note There is a 1-to-1 relationship between a handle and the memory blocks
+ *     it owns. There is \b no shared ownership.
  */
 class AbstractHandle {
 public:
@@ -32,7 +38,12 @@ public:
     virtual void *ptr() = 0;
     
     /**
-     * @brief Return a copy of this memory handle.
+     * @brief Relinquish ownership of the memory blocks owned by this handle
+     */
+    virtual void release() = 0;
+    
+    /**
+     * @brief Return a deep (and fully independent) copy of this memory handle.
      */
     virtual MemHandleSPtr clone() const = 0;
 };

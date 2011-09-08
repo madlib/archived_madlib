@@ -29,6 +29,10 @@ public:
         return mArray;
     }
     
+    virtual void release() {
+        mOwnsArray = false;
+    }
+    
     virtual MemHandleSPtr clone() const {
         return MemHandleSPtr( new PGArrayHandle(mArray, true) );
     }

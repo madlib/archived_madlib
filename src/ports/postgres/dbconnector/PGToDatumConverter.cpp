@@ -23,17 +23,32 @@ namespace madlib {
 namespace dbconnector {
 
 /**
+ * @brief Convert an arbitrary value to PostgreSQL Datum type
+ */
+Datum PGToDatumConverter::convertToDatum(const AbstractType &inValue) {
+    if (!inValue.isCompound() && mTargetIsComposite)
+        throw std::logic_error("Internal function does not provide compound "
+            "type expected by SQL function");
+    
+    if (inValue.isCompound() && !mTargetIsComposite)
+        throw std::logic_error("SQL function or context does not accept "
+            "compound type");
+
+    inValue.performCallback(*this);
+    return mConvertedValue;
+}
+
+/**
  * @brief Constructor: Initialize conversion of function return value.
  *
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo,
-    const AbstractValue &inValue)
-    : ValueConverter<Datum>(inValue), mTupleDesc(NULL), mTypeID(0) {
+PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo)
+    : mTupleDesc(NULL), mTypeID(0) {
     
     bool exceptionOccurred = false;
-    TypeFuncClass funcClass;
+    TypeFuncClass funcClass = TYPEFUNC_OTHER;
     
     PG_TRY(); {
         // FIXME: (Or Note:) get_call_result_type is tagged as expensive in funcapi.c
@@ -45,13 +60,7 @@ PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo,
     BOOST_ASSERT_MSG(exceptionOccurred == false, "An exception occurred while "
         "converting a DBAL object to a PostgreSQL datum.");
     
-    if (!mValue.isCompound() && funcClass == TYPEFUNC_COMPOSITE)
-        throw std::logic_error("Internal function does not provide compound "
-            "type expected by SQL function");
-    
-    if (mValue.isCompound() && funcClass != TYPEFUNC_COMPOSITE)
-        throw std::logic_error("SQL function or context does not accept "
-            "compound type");
+    mTargetIsComposite = (funcClass == TYPEFUNC_COMPOSITE);
 }
 
 /**
@@ -61,17 +70,15 @@ PGToDatumConverter::PGToDatumConverter(const FunctionCallInfo inFCInfo,
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-PGToDatumConverter::PGToDatumConverter(Oid inTypeID,
-    const AbstractValue &inValue)
-    : ValueConverter<Datum>(inValue), mTupleDesc(NULL), mTypeID(inTypeID) {
+PGToDatumConverter::PGToDatumConverter(Oid inTypeID)
+    : mTupleDesc(NULL), mTypeID(inTypeID) {
     
     bool exceptionOccurred = false;
-    bool isTuple;
     
     PG_TRY(); {
-        isTuple = type_is_rowtype(inTypeID);
+        mTargetIsComposite = type_is_rowtype(inTypeID);
         
-        if (isTuple) {
+        if (mTargetIsComposite) {
             // Don't ereport errors. We set typmod < 0, and this should not cause
             // an error because compound types in another compund can never be
             // transient. (I think)
@@ -84,13 +91,6 @@ PGToDatumConverter::PGToDatumConverter(Oid inTypeID,
 
     BOOST_ASSERT_MSG(exceptionOccurred == false, "An exception occurred while "
         "converting a DBAL object to a PostgreSQL datum.");
-    
-    if (isTuple && !mValue.isCompound())
-        throw std::logic_error("Internal function does not return "
-            "compound value expected by SQL function");
-    else if (!isTuple && mValue.isCompound())
-        throw std::logic_error("SQL function or context does not accept "
-            "compound return type");
 }
 
 /**
@@ -99,8 +99,8 @@ PGToDatumConverter::PGToDatumConverter(Oid inTypeID,
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-void PGToDatumConverter::convert(const AnyValueVector &inRecord) {
-    if (!mValue.isCompound())
+void PGToDatumConverter::callbackWithValue(const AnyTypeVector &inRecord) {
+    if (!mTargetIsComposite)
         throw std::logic_error("Internal MADlib error, got internal compound "
             "type where not expected");
 
@@ -115,7 +115,7 @@ void PGToDatumConverter::convert(const AnyValueVector &inRecord) {
 
     for (int i = 0; i < mTupleDesc->natts; i++) {
         resultDatum.get()[i] = PGToDatumConverter(
-            mTupleDesc->attrs[i]->atttypid, inRecord[i]);
+            mTupleDesc->attrs[i]->atttypid).convertToDatum(inRecord[i]);
         resultDatumIsNull.get()[i] = inRecord[i].isNull();
     }
     
@@ -133,8 +133,6 @@ void PGToDatumConverter::convert(const AnyValueVector &inRecord) {
 
     BOOST_ASSERT_MSG(exceptionOccurred == false, "An exception occurred while "
         "converting a DBAL object to a PostgreSQL datum.");
-    
-    mDatumInitialized = true;
 }
 
 /**
@@ -143,7 +141,7 @@ void PGToDatumConverter::convert(const AnyValueVector &inRecord) {
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-void PGToDatumConverter::convert(const double &inValue) {
+void PGToDatumConverter::callbackWithValue(const double &inValue) {
     bool exceptionOccurred = false;
     bool conversionErrorOccurred = false;
 
@@ -172,7 +170,7 @@ void PGToDatumConverter::convert(const double &inValue) {
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-void PGToDatumConverter::convert(const float &inValue) {
+void PGToDatumConverter::callbackWithValue(const float &inValue) {
     bool exceptionOccurred = false;
     bool conversionErrorOccurred = false;
 
@@ -206,7 +204,7 @@ void PGToDatumConverter::convert(const float &inValue) {
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-void PGToDatumConverter::convert(const int32_t &inValue) {
+void PGToDatumConverter::callbackWithValue(const int32_t &inValue) {
     bool exceptionOccurred = false;
     bool conversionErrorOccurred = false;
 
@@ -241,7 +239,7 @@ void PGToDatumConverter::convertArray(const MemHandleSPtr &inHandle,
     uint32_t inNumElements) {
 
     bool exceptionOccurred = false;
-    Oid elementTypeID;
+    Oid elementTypeID = 0;
 
     PG_TRY(); {
         elementTypeID = get_element_type(mTypeID);
@@ -259,11 +257,17 @@ void PGToDatumConverter::convertArray(const MemHandleSPtr &inHandle,
             
             PG_TRY(); {
                 if (arrayHandle) {
+                    // We will not deallocate the storage used by the Array
+                    // because we are returning a pointer to this storage!
+                    // We are guaranteed that backend code will take care of
+                    // deallocation. See MADLIB-250.
+                    arrayHandle->release();
                     mConvertedValue = PointerGetDatum(arrayHandle->array());
                 } else {
+                    // FIXME: Check whether this code is used at all.
                     // If the Array does not use a PostgreSQL array
                     // as its storage, we have to create a new PostgreSQL array
-                    // and copy the values.
+                    // and copy the values (contruct_array() will do a copy).
                     mConvertedValue =
                         PointerGetDatum(
                             construct_array(

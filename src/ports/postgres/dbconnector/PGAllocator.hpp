@@ -19,11 +19,6 @@ namespace dbconnector {
 class PGAllocator : public AbstractAllocator {
 friend class PGInterface;
 public:
-    PGAllocator()
-        : mContext(kFunction),
-          mPGInterface(NULL)
-        { }
-
     /**
      * @brief Return the default allocator used by operator new and operator delete.
      */
@@ -34,25 +29,36 @@ public:
     }
 
     MemHandleSPtr allocateArray(
-        uint32_t inNumElements, double * /* ignored */) const;
+        uint64_t inNumElements, double * /* ignored */) const;
     
-    void *allocate(const uint32_t inSize) const throw(std::bad_alloc);
+    void *allocate(const size_t inSize) const throw(std::bad_alloc);
 
-    void *allocate(const uint32_t inSize, const std::nothrow_t&) const
+    void *allocate(const size_t inSize, const std::nothrow_t&) const
         throw();
     
     void free(void *inPtr) const throw();
 
 protected:
-    PGAllocator(const PGInterface *const inPGInterface, Context inContext)
-        : mContext(inContext), mPGInterface(inPGInterface)
+    PGAllocator()
+        : mPGInterface(NULL), mContext(kFunction), mZeroMemory(false)
+        { }
+
+    PGAllocator(const PGInterface *const inPGInterface, Context inContext,
+        ZeroMemory inZeroMemory)
+        : mPGInterface(inPGInterface), mContext(inContext),
+          mZeroMemory(inZeroMemory == kZero)
         { }
 
     ArrayType *internalAllocateForArray(Oid inElementType,
-        uint32_t inNumElements, size_t inElementSize) const;
+        uint64_t inNumElements, size_t inElementSize) const;
+    
+    static void *internalPalloc(size_t inSize, bool inZero = false);
+    
+    static void internalPfree(void *inPtr);
         
-    Context mContext;
     const PGInterface *const mPGInterface;    
+    Context mContext;
+    bool mZeroMemory;
 };
 
 } // namespace dbconnector

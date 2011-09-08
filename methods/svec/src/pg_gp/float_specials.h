@@ -135,7 +135,7 @@ typedef enum
 #define NEGINF_i  	NEG_INFINITY_MIN64
 #define NVP_i		NEG_QUIET_NAN_MIN64
 
-static const int64 COMPVEC_I[] = {5,ZERO_i,INF_i,NEGINF_i,NVP_i};
+static const uint64 COMPVEC_I[] = {5,ZERO_i,INF_i,NEGINF_i,NVP_i};
 static const double *COMPVEC = (double *)COMPVEC_I; //This initializes the double array to the literals properly
 
 static inline double _LAL_for_compiler_unused_warning(void) {return(COMPVEC[0]);}

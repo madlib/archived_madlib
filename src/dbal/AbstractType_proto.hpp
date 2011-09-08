@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractValue_proto.hpp
+ * @file AbstractType_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -10,15 +10,13 @@
  * This class provides the interface that MADlib modules use for accessing input
  * and returning output values.
  *
- * Instances of AbstractValue can be recursive tree structures. In this case,
+ * Instances of AbstractType can be recursive tree structures. In this case,
  * values are called \em compounds and are made up of several elements. Each of
- * these elements is again of type AbstractValue (and can again be a compound).
+ * these elements is again of type AbstractType (and can again be a compound).
  */
-class AbstractValue {
-    friend class AnyValue;
-
+class AbstractType {
 public:
-    virtual ~AbstractValue() { }
+    virtual ~AbstractType() { }
 
     /**
      * @brief Return the number of elements in this compound value (only
@@ -54,16 +52,30 @@ public:
     virtual bool isMutable() const {
         return true;
     }
-        
+    
     /**
-     * @brief Call AbstractValueConverter::convert() with this as argument
+     * @brief Get the element at the given position (0-based).
+     */
+    virtual AbstractTypeSPtr getValueByID(uint16_t inID) const = 0;
+    
+    /**
+     * @brief Return a mutable copy of this variable.
      *
-     * This function performs a callback to the specified ValueConverter.
-     * This allows relying on the vtable of AbstractValueConverter for
+     * A copy is \em mutable if is entirely represented with memory that is
+     * allowed to be changed. This is not necessarily a deep copy.
+     * Note: Overrides use a covariant return type.
+     */
+    virtual AbstractTypeSPtr clone() const = 0;
+
+    /**
+     * @brief Call AbstractTypeConverter::convert() with this as argument
+     *
+     * This function performs a callback to the specified TypeConverter.
+     * This allows relying on the vtable of AbstractTypeConverter for
      * dispatching conversion requests.
      */
-    virtual void convert(AbstractValueConverter &inConverter) const {
-    }
+    virtual void performCallback(AbstractTypeConverter & /* inConverter */)
+        const { }
     
     #define EXPAND_TYPE(T) \
         inline virtual T getAs(T* /* pure type parameter */) const;
@@ -73,27 +85,6 @@ public:
     #undef EXPAND_TYPE
     
 protected:
-    AbstractValue() {
-    }
-    
-    /**
-     * @brief Get the element at the given position (0-based).
-     */
-    virtual AbstractValueSPtr getValueByID(unsigned int inID) const {
-        return AbstractValueSPtr();
-    }
-    
-    /**
-     * @brief Return a deep copy of this variable.
-     */
-    virtual AbstractValueSPtr clone() const {
-        return AbstractValueSPtr();
-    }
-    
-    /**
-     * @brief Return a mutable copy of this variable.
-     */
-    virtual AbstractValueSPtr mutableClone() const {
-        return AbstractValueSPtr();
+    AbstractType() {
     }
 };

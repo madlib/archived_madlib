@@ -17,7 +17,7 @@ namespace modules {
 
 namespace prob {
 
-AnyValue chi_squared_cdf(AbstractDBInterface &db, AnyValue args);
+AnyType chi_squared_cdf(AbstractDBInterface &db, AnyType args);
 
 } // namespace prob
 

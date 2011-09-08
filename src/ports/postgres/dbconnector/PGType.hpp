@@ -1,16 +1,16 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGValue.hpp
+ * @file PGType.hpp
  *
  * @brief Header file for automatic conversion of PostgreSQL Datums into values
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_PGVALUE_HPP
-#define MADLIB_POSTGRES_PGVALUE_HPP
+#ifndef MADLIB_POSTGRES_PGTYPE_HPP
+#define MADLIB_POSTGRES_PGTYPE_HPP
 
 #include <dbconnector/PGCommon.hpp>
-#include <dbconnector/PGAbstractValue.hpp>
+#include <dbconnector/PGAbstractType.hpp>
 
 extern "C" {
     #include <fmgr.h>           // for FunctionCallInfo
@@ -21,30 +21,30 @@ namespace madlib {
 
 namespace dbconnector {
 
-using dbal::AbstractValue;
-using dbal::AbstractValueSPtr;
+using dbal::AbstractType;
+using dbal::AbstractTypeSPtr;
 
 
 template <typename T>
-class PGValue;
+class PGType;
 
 /**
  * @brief PostgreSQL function-argument value class
  *
- * Implements PGAbstractValue for the "virtual" composite value consisting of
+ * Implements PGAbstractType for the "virtual" composite value consisting of
  * all function arguments (as opposed "normal" composite values).
  */
 template <>
-class PGValue<FunctionCallInfo> : public PGAbstractValue {
+class PGType<FunctionCallInfo> : public PGAbstractType {
 public:
-    PGValue<FunctionCallInfo>(const FunctionCallInfo inFCinfo)
+    PGType<FunctionCallInfo>(const FunctionCallInfo inFCinfo)
         : fcinfo(inFCinfo) { }
     
 protected:
-    AbstractValueSPtr getValueByID(unsigned int inID) const;
+    AbstractTypeSPtr getValueByID(uint16_t inID) const;
     
-    AbstractValueSPtr clone() const {
-        return AbstractValueSPtr( new PGValue<FunctionCallInfo>(*this) );
+    AbstractTypeSPtr clone() const {
+        return AbstractTypeSPtr( new PGType<FunctionCallInfo>(*this) );
     }
     
 private:
@@ -58,20 +58,20 @@ private:
 /**
  * @brief PostgreSQL tuple-element value class
  *
- * Implements PGAbstractValue for "normal" composite values (as opposed to the
+ * Implements PGAbstractType for "normal" composite values (as opposed to the
  * "virtual" composite value consisting of all function arguments).
  */
 template <>
-class PGValue<HeapTupleHeader> : public PGAbstractValue {
+class PGType<HeapTupleHeader> : public PGAbstractType {
 public:    
-    PGValue<HeapTupleHeader>(HeapTupleHeader inTuple)
+    PGType<HeapTupleHeader>(HeapTupleHeader inTuple)
         : mTuple(inTuple) { }
 
 protected:
-    AbstractValueSPtr getValueByID(unsigned int inID) const;
+    AbstractTypeSPtr getValueByID(uint16_t inID) const;
 
-    AbstractValueSPtr clone() const {
-        return AbstractValueSPtr( new PGValue<HeapTupleHeader>(*this) );
+    AbstractTypeSPtr clone() const {
+        return AbstractTypeSPtr( new PGType<HeapTupleHeader>(*this) );
     }
 
 private:    

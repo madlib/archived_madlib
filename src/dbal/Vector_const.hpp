@@ -89,7 +89,7 @@ public:
     inline Vector_const(const ArrayType &inArray,
         typename enable_if<
                 boost::is_base_of< const_multi_array_ref<eT, 1>, ArrayType >
-            >::type *dummy = NULL)
+            >::type * /* dummy */ = NULL)
         : mMemoryHandle(inArray.memoryHandle()),
           mVector(
             const_cast<eT*>(inArray.data()),

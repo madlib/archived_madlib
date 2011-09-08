@@ -19,7 +19,7 @@ namespace prob {
 
 double studentT_cdf(int64_t nu, double t);
 
-AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args);
+AnyType student_t_cdf(AbstractDBInterface &db, AnyType args);
 
 } // namespace prob
 

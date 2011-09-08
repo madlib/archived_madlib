@@ -23,8 +23,8 @@ if(GREENPLUM_FOUND)
     )
 
     set(MAD_DBAL_SOURCES_GREENPLUM
-        ../postgres/dbconnector/PGAbstractValue.cpp
-        ../postgres/dbconnector/PGAbstractValue.hpp
+        ../postgres/dbconnector/PGAbstractType.cpp
+        ../postgres/dbconnector/PGAbstractType.hpp
         ../postgres/dbconnector/PGAllocator.cpp
         ../postgres/dbconnector/PGAllocator.hpp
         ../postgres/dbconnector/PGArrayHandle.cpp
@@ -35,12 +35,11 @@ if(GREENPLUM_FOUND)
         ../postgres/dbconnector/PGInterface.cpp
         ../postgres/dbconnector/PGInterface.hpp
         ../postgres/dbconnector/PGMain.cpp
-        ../postgres/dbconnector/PGMain.hpp
         ../postgres/dbconnector/PGNewDelete.cpp
         ../postgres/dbconnector/PGToDatumConverter.cpp
         ../postgres/dbconnector/PGToDatumConverter.hpp
-        ../postgres/dbconnector/PGValue.cpp
-        ../postgres/dbconnector/PGValue.hpp
+        ../postgres/dbconnector/PGType.cpp
+        ../postgres/dbconnector/PGType.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_GREENPLUM
@@ -48,14 +47,28 @@ if(GREENPLUM_FOUND)
         )
         include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
     endif(LINUX)
+    if(CMAKE_COMPILER_IS_GNUCXX)
+        # The source code specifies that we are POSIX.1-2001 compliant:
+        # On the Mac, this is done in $GP_HOME/include/pg_config_manual.h.
+        # On Linux, gcc predefines _GNU_SOURCE, which leads to
+        # _POSIX_C_SOURCE being defined in /usr/include/features.h
+        # We therefore define HAVE_ERAND48, so that lrand48 is not redeclared
+        # in $GP_HOME/include/postgresql/server/port.h.
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DHAVE_ERAND48")
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "SunPro")
+        # In syncbitvector.h, an array has zero length. This is non-standard,
+        # but most compilers allow it. SunPro needs an extra option.
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -features=zla")
+    endif()
 
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
     
         if(${CMAKE_COMPILER_IS_GNUCC})
+            # FIXME: Is there a portable (not just for gcc) way of including a header file?
             # Due to Greenplum bug MPP-13254, we need to include <sys/time.h>
             # before <postgres.h>
-            set(CMAKE_C_FLAGS "-std=gnu99 -include sys/time.h")
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -include sys/time.h")
         endif(${CMAKE_COMPILER_IS_GNUCC})
         file(GLOB_RECURSE LEGACY_C_FILES_GREENPLUM RELATIVE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
@@ -73,8 +86,8 @@ if(GREENPLUM_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/../postgres
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
-    include_directories(${GREENPLUM_SERVER_INCLUDE_DIR})
-    include_directories(${GREENPLUM_ADDITIONAL_INCLUDE_DIRS})
+    include_directories(SYSTEM ${GREENPLUM_SERVER_INCLUDE_DIR})
+    include_directories(SYSTEM ${GREENPLUM_ADDITIONAL_INCLUDE_DIRS})
 
 
 # -- 3. Build MADlib connector -------------------------------------------------
@@ -140,7 +153,7 @@ if(GREENPLUM_FOUND)
         add_subdirectory(patch)
         add_custom_target(greenplumPatches ALL DEPENDS ${GREENPLUM_PATCH_FILES})
         # Append directory with patched header file at beginning
-        include_directories(BEFORE ${PATCH_DIR}/server)
+        include_directories(BEFORE SYSTEM ${PATCH_DIR}/server)
         add_dependencies(madlib_greenplum greenplumPatches)
     endif(GREENPLUM_PATCH_FILES)
         

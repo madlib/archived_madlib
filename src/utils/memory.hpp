@@ -22,7 +22,7 @@ struct ArrayDeleter {
 
 template <class T>
 struct NoDeleter {
-    void operator()(T *p) { }
+    void operator()(T * /* p */) { }
 };
 
 } // namespace prob

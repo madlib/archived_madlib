@@ -1,13 +1,13 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file ConcreteValue_proto.hpp
+ * @file ConcreteType_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
 /**
  * @brief Template class that wraps arbitrary types
  *
- * ConcreteValue<T> implements the AbstractValue interface. It can contain
+ * ConcreteType<T> implements the AbstractType interface. It can contain
  * values of arbitrary type.
  * 
  * @internal The main benefit of wrapping arbitrary types with this class is to
@@ -15,26 +15,23 @@
  *     types and composite types.
  */
 template <typename T>
-class ConcreteValue : public AbstractValue {
-    friend class AnyValue;
-
+class ConcreteType : public AbstractType {
 public:
     typedef std::back_insert_iterator<T> iterator;
 
-    ConcreteValue()
-        : mIsNull(true) { }
-    ConcreteValue(const T &inValue);
+    ConcreteType() { }
+    ConcreteType(const T &inValue);
 
-    void convert(AbstractValueConverter &inConverter) const {
-        inConverter.convert(mValue);
+    void performCallback(AbstractTypeConverter &inConverter) const {
+        inConverter.callbackWithValue(mValue);
     }
     
     inline unsigned int size() const {
-        return AbstractValue::size();
+        return AbstractType::size();
     }
     
     inline bool isCompound() const {
-        return AbstractValue::isCompound();
+        return AbstractType::isCompound();
     }
     
     /**
@@ -47,35 +44,33 @@ public:
         return true;
     }
 
+    AbstractTypeSPtr getValueByID(uint16_t inID) const;
+
     const T &get() const {
         return mValue;
     }
-    
+            
     #define EXPAND_TYPE(T) \
         inline T getAs(T* ignoredTypeParameter) const { \
-            return AbstractValue::getAs(ignoredTypeParameter); \
+            return AbstractType::getAs(ignoredTypeParameter); \
         }
 
     EXPAND_FOR_ALL_TYPES
 
     #undef EXPAND_TYPE
 
-
-protected:
-    AbstractValueSPtr getValueByID(unsigned int inID) const;
-
-    AbstractValueSPtr clone() const {
-        return AbstractValueSPtr( new ConcreteValue<T>(*this) );
-    }
-    
     /**
+     * @brief Return a mutable copy of this variable.
+     *
      * This function will be specialized for immutable types.
      */
-    AbstractValueSPtr mutableClone() const {
-        return clone();
+    AbstractTypeSPtr clone() const {
+        return AbstractTypeSPtr(new ConcreteType(*this));
     }
 
+
+protected:
+    
 protected:
     const T mValue;
-    const bool mIsNull;
 };

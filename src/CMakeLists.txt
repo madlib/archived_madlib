@@ -98,20 +98,18 @@ set(MAD_MODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/modules)
 find_package(Boost 1.46)
 
 # We use BOOST_ASSERT_MSG, which only exists in Boost 1.46 and later.
-# FIXME: Think whether we really need the latest 1.46 (and BOOST_ASSERT_MSG).
-# We need Boost >= 1.34. Unfortunately, the FindBoost module seems to be broken
-# with respect to version checking, so we will set Boost_FOUND to FALSE if the
-# version is too old.
+# Unfortunately, the FindBoost module seems to be broken with respect to version
+# checking, so we will set Boost_FOUND to FALSE if the version is too old.
 if(Boost_FOUND)
-    if(Boost_VERSION LESS 103400)
+    if(Boost_VERSION LESS 104600)
         set(Boost_FOUND FALSE)
-    endif(Boost_VERSION LESS 103400 )
+    endif(Boost_VERSION LESS 104600 )
 endif(Boost_FOUND)
 
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
 else(Boost_FOUND)
-    message(STATUS "No sufficiently recent version (>= 1.34) of Boost was found. Will download.")
+    message(STATUS "No sufficiently recent version (>= 1.46) of Boost was found. Will download.")
 
     ExternalProject_Add(EP_boost
         PREFIX ${MAD_THIRD_PARTY}
@@ -134,15 +132,30 @@ endif(Boost_FOUND)
 # -- Third-party dependencies: Download Armadillo. It provides an umbrella
 #    library for LAPACK, BLAS, and ATLAS ---------------------------------------
 
+join_strings(_CMAKE_PREFIX_PATH
+    ${EXTERNALPROJECT_LIST_SEPARATOR} "${CMAKE_PREFIX_PATH}")
+
 # For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
 # (and not ${MAD_THIRD_PARTY}/lib64), even if building on a 64-bit architecture
 # Note: INSTALL_LIB_DIR was previously LIB_INSTALL_DIR in Armadillo. We might
 # want to anticipate further changes...
 list(APPEND ARMADILLO_CMAKE_ARGS
     -DCMAKE_BUILD_TYPE=Release
+    "-DCMAKE_PREFIX_PATH=${_CMAKE_PREFIX_PATH}"
+    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
     "-DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}"
     -DINSTALL_LIB_DIR=lib
 )
+
+# On Solaris, LAPACK and BLAS are part of the Sun Performance library
+# BLAS_NAMES and LAPACK_NAMES are variables used by the Armadillo
+# build script
+if(SOLARIS)
+    list(APPEND ARMADILLO_CMAKE_ARGS
+        -DBLAS_NAMES=sunperf
+        -DLAPACK_NAMES=sunperf
+    )
+endif(SOLARIS)
 
 ExternalProject_Add(EP_armadillo
     DEPENDS ${ARMADILLO_DEPENDS}
@@ -165,7 +178,10 @@ set_target_properties(armadillo PROPERTIES
 )
 
 set(ARMADILLO_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/include)
-include_directories(${ARMADILLO_INCLUDE_DIRS})
+
+# We treat Armadillo as a system header. This means, e.g., that warnings are not
+# being shown (which is what we want).
+include_directories(SYSTEM ${ARMADILLO_INCLUDE_DIRS})
 
 
 # -- Macros to be used by ports ------------------------------------------------
