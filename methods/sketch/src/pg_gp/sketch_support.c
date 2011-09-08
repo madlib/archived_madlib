@@ -56,6 +56,7 @@ uint32 rightmost_one(uint8 *bits,
                      size_t sketchsz_bits,
                      size_t sketchnum)
 {
+    (void) numsketches; /* avoid warning about unused parameter */
     uint8 *s =
         &(((uint8 *)(bits))[sketchnum*sketchsz_bits/8]);
     int    i;
@@ -329,6 +330,15 @@ Datum sketch_rightmost_one(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(sketch_leftmost_zero);
 Datum sketch_leftmost_zero(PG_FUNCTION_ARGS);
 
+#if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6))
+/*
+ * Unfortunately, the VARSIZE_ANY_EXHDR macro produces a warning because of the
+ * way type promotion and artihmetic conversions works in C99. See §6.1.3.8 of
+ * the C99 standard.
+ */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
 Datum sketch_rightmost_one(PG_FUNCTION_ARGS)
 {
     bytea *bitmap = (bytea *)PG_GETARG_BYTEA_P(0);
@@ -350,6 +360,9 @@ Datum sketch_leftmost_zero(PG_FUNCTION_ARGS)
 
     return leftmost_zero((uint8 *)bits, len, sketchsz, sketchnum);
 }
+#if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6))
+#pragma GCC diagnostic pop
+#endif
 
 Datum sketch_array_set_bit_in_place(PG_FUNCTION_ARGS)
 {
@@ -379,6 +392,7 @@ int4 safe_log2(int64 x)
 
 size_t ExtractDatumLen(Datum x, int len, bool byVal)
 {
+    (void) byVal; /* avoid warning about unused parameter */
     if (len > 0) 
         return len;
     else if (len == -1) 

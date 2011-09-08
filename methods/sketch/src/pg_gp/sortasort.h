@@ -28,7 +28,7 @@ typedef struct {
     int    typLen;         /*! length of this Postgres type (-1 for bytea, -2 for cstring) */
     size_t typByVal;       /*! Postgres typByVal flag */
     unsigned storage_cur;  /*! offset after the directory to do the next insertion */
-    unsigned dir[0];       /*! storage of the strings */
+    unsigned dir[];        /*! storage of the strings */
 } sortasort;
 
 #define SORTASORT_DATA(s)  (((char *)(s->dir)) + \

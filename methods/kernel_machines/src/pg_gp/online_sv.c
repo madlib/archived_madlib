@@ -228,7 +228,7 @@ Datum svm_predict_sub(PG_FUNCTION_ARGS)
 	ArrayType * ind_arr = PG_GETARG_ARRAYTYPE_P(4);
 	text * kernel = PG_GETARG_TEXT_P(5);
 
-	float8 * weights, * supp_vecs, * ind;
+	float8 * weights;
 
 	// input error checking 
 	if (ARR_NULLBITMAP(weights_arr) || ARR_NDIM(weights_arr) != 1 ||
@@ -464,7 +464,7 @@ Datum svm_reg_update(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			errmsg("function \"%s\" produced null results",
-			       format_procedure(fcinfo->flinfo->fn_oid),i)));
+			       format_procedure(fcinfo->flinfo->fn_oid))));
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(ret));
 }

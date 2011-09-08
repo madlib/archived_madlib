@@ -231,7 +231,7 @@ static int32 sampleTopic
 		topic_prs[j] = topic_prs[j] / total_unpr;
 
 	/* Draw a topic at random */
-	r = (random() * 1.0) / RAND_MAX;
+	r = drand48();
 	ret = 1;
 	while (true) {
 		if (ret == numtopics || r < topic_prs[ret-1]) break;
@@ -347,7 +347,7 @@ Datum sampleNewTopics(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("function \"%s\" produced null results",
-				format_procedure(fcinfo->flinfo->fn_oid),i)));
+				format_procedure(fcinfo->flinfo->fn_oid))));
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(ret));
 }
@@ -406,7 +406,7 @@ Datum randomTopics(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("function \"%s\" produced null results",
-				format_procedure(fcinfo->flinfo->fn_oid),i)));
+				format_procedure(fcinfo->flinfo->fn_oid))));
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(ret));
 }

@@ -254,7 +254,6 @@ int compar(const void *i, const void *j){
 
 SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end, char *base_val){
 	char *run_val=array;
-	char *curr_val;
 	int64 run_len;
 	SparseData sdata = makeSparseData();
 	
@@ -433,7 +432,6 @@ void printSparseData(SparseData sdata) {
 double sd_proj(SparseData sdata, int idx) {
 	char * ix = sdata->index->data;
 	double * vals = (double *)sdata->vals->data;
-	float8 ret;
 	int read, i;
 
 	/* error checking */

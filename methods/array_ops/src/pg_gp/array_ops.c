@@ -92,14 +92,18 @@ Datum array_of_bigint(PG_FUNCTION_ARGS){
 }
 
 Datum noop_finalize(Datum elt,int size,Oid element_type){
+	(void) size; /* avoid warning about unused parameter */
+	(void) element_type; /* avoid warning about unused parameter */
 	return elt;
 }
 
 Datum average_finalize(Datum elt,int size,Oid element_type){
+	(void) element_type; /* avoid warning about unused parameter */
 	return Float8GetDatum(DatumGetFloat8(elt)/(float8)size);
 }
 
 Datum average_root_finalize(Datum elt,int size,Oid element_type){
+	(void) element_type; /* avoid warning about unused parameter */
 	return Float8GetDatum(sqrt(DatumGetFloat8(elt)/(float8)size));
 }
 
@@ -125,6 +129,7 @@ Datum element_diff(Datum elt1, Datum *elt2, Oid element_type, Datum result){
 }
 
 Datum element_sum(Datum elt1, Datum *flag, Oid element_type, Datum result){
+	(void) flag; /* avoid warning about unused parameter */
 	switch(element_type){
 		case INT2OID:
 			return Int16GetDatum(DatumGetInt16(elt1) + DatumGetInt16(result));break;
@@ -259,6 +264,7 @@ Datum element_contains(Datum elt1, Datum elt2, Oid element_type, Datum result){
 }
 
 inline char* element_set(Datum elt1, Datum elt2, Oid element_type, char* result){
+	(void) elt1; /* avoid warning about unused parameter */
 	switch(element_type){
 		case INT2OID:
 			*((int16*)(result)) = DatumGetInt16(elt2);break;
@@ -389,6 +395,7 @@ char* element_div(Datum elt1, Datum elt2, Oid element_type, char* result){
 }
 
 char* element_sqrt(Datum elt1, Datum elt2, Oid element_type, char* result){
+	(void) elt2; /* avoid warning about unused parameter */
 	switch(element_type){
 		case INT2OID:
 			*((int16*)(result)) = sqrt(DatumGetInt16(elt1));break;

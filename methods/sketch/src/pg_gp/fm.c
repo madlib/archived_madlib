@@ -76,7 +76,7 @@ typedef struct {
     Oid      funcOid;
     int16    typLen;
     bool     typByVal;   
-    char storage[0];
+    char storage[];
 } fmtransval;
 
 Datum __fmsketch_trans_c(bytea *, Datum);

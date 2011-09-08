@@ -209,7 +209,7 @@ void *mfv_transval_getval(bytea *blob, uint32 i)
     void *       retval = (void *)(((char*)tvp) + tvp->mfvs[i].offset);
     Datum        dat = PointerExtractDatum(retval, tvp->typByVal);
 
-    if (i > tvp->next_mfv || i < 0)
+    if (i > tvp->next_mfv)
         elog(ERROR,
              "attempt to get frequent value at illegal index %d in mfv sketch",
              i);
@@ -264,7 +264,7 @@ bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, uint32 i)
     bytea *      tmpblob;
     size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal);
 
-    if (i > transval->next_mfv || i < 0)
+    if (i > transval->next_mfv)
         elog(
             ERROR,
             "attempt to insert frequent value at illegal index %d in mfv sketch",
@@ -508,22 +508,14 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
          cnt < newval->max_mfvs
          && (j < transval2->next_mfv || i < transval1->next_mfv);
          cnt++) {
-        void *tmppi, *tmppj;
         Datum iDatum, jDatum;
-
-        if (i < transval1->next_mfv) {
-          tmppi = mfv_transval_getval(transblob1, i);
-          iDatum = PointerExtractDatum(tmppi, transval1->typByVal);
-        }
-        if (j < transval2->next_mfv) {
-          tmppj = mfv_transval_getval(transblob2, j);
-          jDatum = PointerExtractDatum(tmppj, transval2->typByVal);
-        }
 
 	if (i < transval1->next_mfv &&
             (j == transval2->next_mfv
              || transval1->mfvs[i].cnt >= transval2->mfvs[j].cnt)) {
           /* next item comes from transval1 */
+          iDatum = PointerExtractDatum(mfv_transval_getval(transblob1, i),
+                                       transval1->typByVal);
           newblob = mfv_transval_append(newblob, iDatum);
           newval = (mfvtransval *)VARDATA(newblob);
           newval->mfvs[cnt].cnt = transval1->mfvs[i].cnt;
@@ -533,6 +525,8 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
                  (i == transval1->next_mfv 
                   || transval1->mfvs[i].cnt < transval2->mfvs[j].cnt)) {
           /* next item comes from transval2 */
+          jDatum = PointerExtractDatum(mfv_transval_getval(transblob2, j),
+                                       transval2->typByVal);
           newblob = mfv_transval_append(newblob, jDatum);
           newval = (mfvtransval *)VARDATA(newblob);
           newval->mfvs[cnt].cnt = transval2->mfvs[j].cnt;
