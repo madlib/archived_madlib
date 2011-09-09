@@ -105,7 +105,7 @@ if(POSTGRESQL_FOUND)
                 "${POSTGRESQL_SERVER_INCLUDE_DIR}/utils/builtins.h"
                 "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_8_4_and_below.sh"
             WORKING_DIRECTORY "${PATCH_DIR}"
-            COMMENT "Patching parsenodes.h, primnodes.h, builtins.h: Renaming identifiers that are C++ keywords."
+            COMMENT "Patching parsenodes.h, primnodes.h, builtins.h, memnodes.h: Renaming identifiers that are C++ keywords."
         )
         list(APPEND POSTGRESQL_PATCH_FILES
             "${PATCH_DIR}/server/nodes/parsenodes.h"
