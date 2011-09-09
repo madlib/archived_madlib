@@ -937,7 +937,8 @@ def main(argv):
                     __error("Check the log at %s" % logfile, False) 
                     result = 'FAIL'
                     keeplogs = True
-                # If error log file exists
+                # Since every single statement in the test file gets logged, 
+                # an empty log file indicates an empty or a failed test
                 elif os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
                     result = 'PASS'
                 # Otherwise                   
