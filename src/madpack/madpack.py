@@ -702,9 +702,9 @@ def main(argv):
     # Parse SCHEMA
     ##
     if len(args.schema[0]) > 1:
-        schema = args.schema[0]
+        schema = args.schema[0].lower()
     else:    
-        schema = args.schema
+        schema = args.schema.lower()
 
     ##
     # Parse DB Platform (== PortID) and compare with Ports.yml
