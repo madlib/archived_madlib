@@ -179,7 +179,7 @@ def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sq
         
         # Add the before SQL
         if pre_sql:
-            f.writelines(['-- Set SEARCH_PATH for install-check:\n', pre_sql, '\n\n'])
+            f.writelines([pre_sql, '\n\n'])
             f.flush()
         
         # Find the madpack dir (platform specific or generic)
@@ -896,7 +896,8 @@ def main(argv):
             __run_sql_query( "DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s;" % (test_schema, test_schema), True)
 
             # Prepare the search_path
-            pre_sql = 'SET search_path=%s,%s;' % (test_schema, schema)
+            pre_sql = '-- Set SEARCH_PATH for install-check: \n' \
+                      'SET search_path=%s,%s;' % (test_schema, schema)
     
             # Loop through all test SQL files for this module
             sql_files = maddir_mod + '/' + module + '/test/*.sql_in'
