@@ -30,8 +30,12 @@
      * 2) ignoring return value of '...', declared with attribute
      *    warn_unused_result
      */
-	#pragma GCC diagnostic ignored "-Wwrite-strings"
-    #pragma GCC diagnostic ignored "-Wunused-result"
+	#if defined(__GNUC__)
+        #pragma GCC diagnostic ignored "-Wwrite-strings"
+        #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
+            #pragma GCC diagnostic ignored "-Wunused-result"
+        #endif
+    #endif
 	
 	#ifdef COMPILING_SCANNER
 		/* Flex expects the signature of yylex to be defined in the macro
