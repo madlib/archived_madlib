@@ -76,24 +76,10 @@ AnyType stateToResult(AbstractDBInterface &db,
 class LogisticRegressionCG::State {
 public:
     State(AnyType inArg)
-        : mStorage(inArg.cloneIfImmutable()),
-          iteration(&mStorage[0]),
-          widthOfX(&mStorage[1]),
-          coef(TransparentHandle::create(&mStorage[2]),
-               widthOfX),
-          dir(TransparentHandle::create(&mStorage[2 + widthOfX]),
-              widthOfX),
-          grad(TransparentHandle::create(&mStorage[2 + 2 * widthOfX]),
-              widthOfX),
-          beta(&mStorage[2 + 3 * widthOfX]),
-          
-          numRows(&mStorage[3 + 3 * widthOfX]),
-          gradNew(TransparentHandle::create(&mStorage[4 + 3 * widthOfX]),
-                  widthOfX),
-          X_transp_AX(TransparentHandle::create(&mStorage[4 + 4 * widthOfX]),
-              widthOfX, widthOfX),
-          logLikelihood(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX])
-        { }
+        : mStorage(inArg.cloneIfImmutable()) {
+        
+        rebind();
+    }
     
     /**
      * We define this function so that we can use State in the
@@ -112,23 +98,7 @@ public:
         const uint16_t inWidthOfX) {
         
         mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
-        iteration.rebind(&mStorage[0]) = 0;
-        widthOfX.rebind(&mStorage[1]) = inWidthOfX;
-        coef.rebind(TransparentHandle::create(&mStorage[2]),
-                    widthOfX).zeros();
-        dir.rebind(TransparentHandle::create(&mStorage[2 + widthOfX]),
-                   widthOfX).zeros();
-        grad.rebind(TransparentHandle::create(&mStorage[2 + 2 * widthOfX]),
-                    widthOfX).zeros();
-        beta.rebind(&mStorage[2 + 3 * widthOfX]) = 0;
-
-        numRows.rebind(&mStorage[3 + 3 * widthOfX]);
-        gradNew.rebind(TransparentHandle::create(&mStorage[4 + 3 * widthOfX]),
-                       widthOfX);
-        X_transp_AX.rebind(TransparentHandle::create(&mStorage[4 + 4 * widthOfX]),
-              widthOfX, widthOfX);
-        logLikelihood.rebind(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX]);
-        reset();
+        rebind(inWidthOfX);
     }
     
     /**
@@ -165,8 +135,58 @@ public:
     }
 
 private:
-    static inline uint32_t arraySize(const uint16_t inWidthOfX) {
+    static inline uint64_t arraySize(const uint16_t inWidthOfX) {
         return 5 + inWidthOfX * inWidthOfX + 4 * inWidthOfX;
+    }
+    
+    /**
+     * @brief Who should own TransparentHandles pointing to slices of mStorage?
+     */
+    AbstractHandle::MemoryController memoryController() const {
+        AbstractHandle::MemoryController ctrl =
+            mStorage.memoryHandle()->memoryController();
+        
+        return (ctrl == AbstractHandle::kSelf ? AbstractHandle::kLocal : ctrl);
+    }
+
+    /**
+     * @brief Rebind vector to a particular position in storage array
+     */
+    void inline rebindToPos(DoubleCol &inVec, size_t inPos) {
+        inVec.rebind(
+            TransparentHandle::create(&mStorage[inPos],
+                widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX);
+    }
+    
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX If this value is positive, use it as the number of
+     *     independent variables. This is needed during initialization, when
+     *     the storage array is still all zero, but we do already know the
+     *     with of the design matrix.
+     */
+    void rebind(uint16_t inWidthOfX = 0) {
+        iteration.rebind(&mStorage[0]);
+        widthOfX.rebind(&mStorage[1]);
+        
+        if (inWidthOfX != 0)
+            widthOfX = inWidthOfX;
+        
+        rebindToPos(coef, 2);
+        rebindToPos(dir, 2 + widthOfX);
+        rebindToPos(grad, 2 + 2 * widthOfX);
+        beta.rebind(&mStorage[2 + 3 * widthOfX]);
+        numRows.rebind(&mStorage[3 + 3 * widthOfX]);
+        rebindToPos(gradNew, 4 + 3 * widthOfX);
+        X_transp_AX.rebind(
+            TransparentHandle::create(&mStorage[4 + 4 * widthOfX],
+                widthOfX * widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX, widthOfX);
+        logLikelihood.rebind(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX]);
     }
 
     Array<double> mStorage;
@@ -183,13 +203,12 @@ public:
     DoubleCol gradNew;
     DoubleMat X_transp_AX;
     Reference<double> logLikelihood;
-//    Reference<double> dTHd;
 };
 
 /**
  * @brief Logistic function
  */
-static double sigma(double x) {
+static inline double sigma(double x) {
 	return 1. / (1. + std::exp(-x));
 }
 
@@ -204,7 +223,12 @@ AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) 
     double y = *arg++ ? 1. : -1.;
     DoubleRow_const x = *arg++;
     if (state.numRows == 0) {
-        state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
+        state.initialize(
+            db.allocator(
+                AbstractAllocator::kAggregate,
+                AbstractAllocator::kZero
+            ),
+            x.n_elem);
         if (!arg->isNull()) {
             const State previousState = *arg;
             
@@ -363,18 +387,10 @@ AnyType LogisticRegressionCG::result(AbstractDBInterface &db, AnyType args) {
 class LogisticRegressionIRLS::State {
 public:
     State(AnyType inArg)
-        : mStorage(inArg.cloneIfImmutable()),
-          widthOfX(&mStorage[0]),
-          coef(TransparentHandle::create(&mStorage[1]),
-               widthOfX),
+        : mStorage(inArg.cloneIfImmutable()) {
         
-          numRows(&mStorage[1 + widthOfX]),
-          X_transp_Az(TransparentHandle::create(&mStorage[2 + widthOfX]),
-              widthOfX),
-          X_transp_AX(TransparentHandle::create(&mStorage[2 + 2 * widthOfX]),
-              widthOfX, widthOfX),
-          logLikelihood(&mStorage[2 + widthOfX * widthOfX + 2 * widthOfX])
-        { }
+        rebind();
+    }
     
     /**
      * We define this function so that we can use State in the
@@ -385,7 +401,7 @@ public:
     }
     
     /**
-     * @brief Initialize the conjugate-gradient state.
+     * @brief Initialize the iteratively-reweighted-least-squares state.
      * 
      * This function is only called for the first iteration, for the first row.
      */
@@ -393,17 +409,7 @@ public:
         const uint16_t inWidthOfX) {
         
         mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
-        widthOfX.rebind(&mStorage[0]) = inWidthOfX;
-        coef.rebind(TransparentHandle::create(&mStorage[1]),
-                    widthOfX).zeros();
-        
-        numRows.rebind(&mStorage[1 + widthOfX]);
-        X_transp_Az.rebind(TransparentHandle::create(&mStorage[2 + widthOfX]),
-                           widthOfX);
-        X_transp_AX.rebind(TransparentHandle::create(&mStorage[2 + 2 * widthOfX]),
-                           widthOfX, widthOfX);
-        logLikelihood.rebind(&mStorage[2 + widthOfX * widthOfX + 2 * widthOfX]);
-        reset();
+        rebind(inWidthOfX);
     }
     
     /**
@@ -415,18 +421,66 @@ public:
     }
     
     /**
-     * @brief Merge with another State object by copying the intra-iteration fields
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
      */
     State &operator+=(const State &inOtherState) {
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
-            throw std::logic_error("Internal error: Incompatible transition states");
+            throw std::logic_error("Internal error: Incompatible transition "
+                "states");
         
         numRows += inOtherState.numRows;
         X_transp_Az += inOtherState.X_transp_Az;
         X_transp_AX += inOtherState.X_transp_AX;
         logLikelihood += inOtherState.logLikelihood;
         return *this;
+    }
+    
+    /**
+     * @brief Who should own TransparentHandles pointing to slices of mStorage?
+     */
+    AbstractHandle::MemoryController memoryController() const {
+        AbstractHandle::MemoryController ctrl =
+            mStorage.memoryHandle()->memoryController();
+        
+        return (ctrl == AbstractHandle::kSelf ? AbstractHandle::kLocal : ctrl);
+    }
+
+    /**
+     * @brief Rebind vector to a particular position in storage array
+     */
+    void inline rebindToPos(DoubleCol &inVec, size_t inPos) {
+        inVec.rebind(
+            TransparentHandle::create(&mStorage[inPos],
+                widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX);
+    }    
+    
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX If this value is positive, use it as the number of
+     *     independent variables. This is needed during initialization, when
+     *     the storage array is still all zero, but we do already know the
+     *     with of the design matrix.
+     */
+    void rebind(uint16_t inWidthOfX = 0) {
+        widthOfX.rebind(&mStorage[0]);
+        if (inWidthOfX != 0)
+            widthOfX = inWidthOfX;
+        
+        rebindToPos(coef, 1);
+        
+        numRows.rebind(&mStorage[1 + widthOfX]);
+        rebindToPos(X_transp_Az, 2 + widthOfX);
+        X_transp_AX.rebind(
+            TransparentHandle::create(&mStorage[2 + 2 * widthOfX],
+                widthOfX * widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX, widthOfX);
+        logLikelihood.rebind(&mStorage[2 + widthOfX * widthOfX + 2 * widthOfX]);
     }
     
     /**
@@ -474,7 +528,11 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
         throw std::invalid_argument("Design matrix is not finite.");
 
     if (state.numRows == 0) {
-        state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
+        state.initialize(
+            db.allocator(
+                AbstractAllocator::kAggregate,
+                AbstractAllocator::kZero),
+            x.n_elem);
         if (!arg->isNull()) {
             const State previousState = *arg;
             
@@ -515,7 +573,9 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
+AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */,
+    AnyType args) {
+    
     State stateLeft = args[0].cloneIfImmutable();
     const State stateRight = args[1];
     
@@ -534,7 +594,9 @@ AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */, AnyT
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */, AnyType args) {
+AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */,
+    AnyType args) {
+    
     // Argument from SQL call
     State state = args[0].cloneIfImmutable();
 
@@ -552,7 +614,9 @@ AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */, AnyType ar
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyType LogisticRegressionIRLS::distance(AbstractDBInterface & /* db */, AnyType args) {
+AnyType LogisticRegressionIRLS::distance(AbstractDBInterface & /* db */,
+    AnyType args) {
+    
     const State stateLeft = args[0];
     const State stateRight = args[1];
 

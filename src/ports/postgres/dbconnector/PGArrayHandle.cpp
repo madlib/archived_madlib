@@ -14,13 +14,13 @@ namespace dbconnector {
  * @brief Constructor
  * 
  * @param inArray PostgreSQL ArrayType struct
- * @param inCopyMem Copy array? If yes, the handle owns the memory and will
+ * @param inCtrl Copy array? If yes, the handle owns the memory and will
  *                  take care of cleaning up.
  */
-PGArrayHandle::PGArrayHandle(ArrayType *inArray, bool inCopyMem)
-    : mArray(inArray), mOwnsArray(inCopyMem) {
+PGArrayHandle::PGArrayHandle(ArrayType *inArray, MemoryController inCtrl)
+    : AbstractHandle(inCtrl), mArray(inArray) {
     
-    if (inCopyMem) {
+    if (inCtrl == kSelf) {
         // Use default allocator (this will allocate memory in the default
         // postgres context, i.e., the function-call context)
 
@@ -31,7 +31,7 @@ PGArrayHandle::PGArrayHandle(ArrayType *inArray, bool inCopyMem)
 }
 
 PGArrayHandle::~PGArrayHandle() {
-    if (mOwnsArray)
+    if (memoryController() == kSelf)
         PGAllocator::defaultAllocator().free(mArray);
 }
 

@@ -26,9 +26,8 @@ public:
 
     inline Array(
         const Array<T, NumDims> &inArray)
-        : multi_array_ref<T, NumDims>(
-            inArray),
-          mMemoryHandle(inArray.mMemoryHandle)
+        : multi_array_ref<T, NumDims>(inArray),
+          mMemoryHandle(AbstractHandle::cloneIfNotGlobal(inArray.mMemoryHandle))
         { }
         
     inline Array(
@@ -75,21 +74,6 @@ public:
         return *this;
     }
     
-    // FIXME: We might "own" the cloned memory handle, so we should release it.
-    // This is not a problem for PostgreSQL, but we need to implement reference
-    // counting. Either based on shared_ptr or our own.
-/*    inline Array(
-        const Array_const<T, NumDims> &inArray)
-        : multi_array_ref<T, NumDims>(
-            NULL,
-            utils::shapeToExtents<NumDims>(inArray.shape())),
-          mMemoryHandle(
-            inArray.memoryHandle().clone()) {
-        
-        this->set_base_ptr(mMemoryHandle->ptr());
-    }
-*/   
-
     /**
      * @brief Rebind the array to a different chunk of memory (referred to by a
      *     memory handle)

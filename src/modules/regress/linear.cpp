@@ -67,8 +67,11 @@ public:
     /**
      * @brief Initialize the transition state. Only called for first row.
      * 
-     * @param inAllocator Will be used to allocate the memory for the
-     *     transition state. Must fill the memory block with zeros.
+     * @param inAllocator Allocator for the memory transition state. Must fill
+     *     the memory block with zeros.
+     * @param inWidthOfX Number of independent variables. The first row of data
+     *     determines the size of the transition state. This size is a quadratic
+     *     function of inWidthOfX.
      */
     inline void initialize(AllocatorSPtr inAllocator,
         const uint16_t inWidthOfX) {
@@ -98,6 +101,16 @@ private:
     }
     
     /**
+     * @brief Who should own TransparentHandles pointing to slices of mStorage?
+     */
+    AbstractHandle::MemoryController memoryController() const {
+        AbstractHandle::MemoryController ctrl =
+            mStorage.memoryHandle()->memoryController();
+        
+        return (ctrl == AbstractHandle::kSelf ? AbstractHandle::kLocal : ctrl);
+    }
+    
+    /**
      * @brief Rebind to a new storage array
      *
      * @param inWidthOfX If this value is positive, use it as the number of
@@ -109,17 +122,20 @@ private:
         numRows.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
         
-        if (inWidthOfX == 0)
-            inWidthOfX = widthOfX;
+        if (inWidthOfX != 0)
+            widthOfX = inWidthOfX;
         
         y_sum.rebind(&mStorage[2]);
         y_square_sum.rebind(&mStorage[3]);
         X_transp_Y.rebind(
-            TransparentHandle::create(&mStorage[4]),
-            inWidthOfX);
+            TransparentHandle::create(&mStorage[4], widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX);
         X_transp_X.rebind(
-            TransparentHandle::create(&mStorage[4 + inWidthOfX]),
-            inWidthOfX, inWidthOfX);
+            TransparentHandle::create(&mStorage[4 + widthOfX],
+                widthOfX * widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX, widthOfX);
     }
 
     Array<double> mStorage;

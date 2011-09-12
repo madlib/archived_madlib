@@ -22,7 +22,7 @@ public:
     /**
      * @brief Return the default allocator used by operator new and operator delete.
      */
-    static PGAllocator &defaultAllocator() {
+    static inline PGAllocator &defaultAllocator() {
         static PGAllocator sDefaultAllocator;
         
         return sDefaultAllocator;

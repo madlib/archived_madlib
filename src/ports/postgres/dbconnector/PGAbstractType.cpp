@@ -59,7 +59,8 @@ AbstractTypeSPtr PGAbstractType::DatumToValue(bool inMemoryIsWritable,
         
         switch (ARR_ELEMTYPE(pgArray)) {
             case FLOAT8OID: {
-                MemHandleSPtr memoryHandle(new PGArrayHandle(pgArray));
+                MemHandleSPtr memoryHandle(
+                    new PGArrayHandle(pgArray, AbstractHandle::kGlobal));
                 
                 if (inMemoryIsWritable) {
                     return AbstractTypeSPtr(

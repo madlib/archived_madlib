@@ -11,7 +11,7 @@
 #ifndef MADLIB_POSTGRES_COMMON_HPP
 #define MADLIB_POSTGRES_COMMON_HPP
 
-// Handle faist Boost assertions in a sophisticated way. The handler is
+// Handle failed Boost assertions in a sophisticated way. The handler is
 // implemented in the MADlib core library.
 #define BOOST_ENABLE_ASSERT_HANDLER
 

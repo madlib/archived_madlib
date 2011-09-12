@@ -55,3 +55,10 @@ public:
      */
     virtual void free(void *inPtr) const throw() = 0;
 };
+
+/**
+ * @brief Return the default allocator
+ *
+ * This needs to be defined in the DBMS-specific part.
+ */
+AbstractAllocator &defaultAllocator();

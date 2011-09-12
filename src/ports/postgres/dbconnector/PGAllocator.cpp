@@ -284,7 +284,17 @@ void PGAllocator::free(void *inPtr) const throw() {
     RESUME_INTERRUPTS();
 }
 
-
 } // namespace dbconnector
+
+namespace dbal {
+
+/**
+ * @brief Return the default allocator used by operator new and operator delete.
+ */
+AbstractAllocator &defaultAllocator() {
+    return dbconnector::PGAllocator::defaultAllocator();
+}
+
+} // namespace dbal
 
 } // namespace madlib

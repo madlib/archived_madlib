@@ -43,10 +43,8 @@ public:
                 inNumElem,
                 static_cast<eT*>(NULL) /* pure type parameter */)) {
         
-        using arma::access;
-        using arma::Mat;
-        
-        access::rw(Mat<eT>::mem) = static_cast<eT*>(mMemoryHandle->ptr());
+        arma::access::rw(arma::Mat<eT>::mem) =
+            static_cast<eT*>(mMemoryHandle->ptr());
     }
 
     inline Vector(
@@ -63,22 +61,30 @@ public:
     inline Vector(
         const Vector<T, eT> &inVec)
         : T<eT>(
-            const_cast<eT*>(inVec.memptr()),
+            NULL,
             inVec.n_elem,
             false /* copy_aux_mem */,
             true /* strict */),
-          mMemoryHandle(inVec.mMemoryHandle)
-        { }
+          mMemoryHandle(
+            AbstractHandle::cloneIfNotGlobal(inVec.mMemoryHandle)) {
+        
+        arma::access::rw(arma::Mat<eT>::mem) =
+            static_cast<eT*>(mMemoryHandle->ptr());
+    }
     
     inline Vector(
         const Array<eT> &inArray)
         : T<eT>(
-            const_cast<eT*>(inArray.data()),
+            NULL,
             inArray.size(),
             false /* copy_aux_mem */,
             true /* strict */),
-          mMemoryHandle(inArray.memoryHandle())
-        { }
+          mMemoryHandle(
+            AbstractHandle::cloneIfNotGlobal(inArray.memoryHandle())) {
+        
+        arma::access::rw(arma::Mat<eT>::mem) =
+            static_cast<eT*>(mMemoryHandle->ptr());
+    }
     
     template<typename T1>
     inline const Vector &operator=(const arma::Base<eT,T1>& X) {

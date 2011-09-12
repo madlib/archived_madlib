@@ -29,7 +29,7 @@ public:
         const Array_const<T, NumDims> &inArray)
         : const_multi_array_ref<T, NumDims>(
             inArray),
-          mMemoryHandle(inArray.mMemoryHandle)
+          mMemoryHandle(AbstractHandle::cloneIfNotGlobal(inArray.mMemoryHandle))
         { }
 
     inline Array_const(

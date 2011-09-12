@@ -7,7 +7,7 @@
 /**
  * @brief Class for representing any type.
  *
- * Instances of this class act a proxy for any arbitrary ConcreteType<T>.
+ * Instances of this class act a proxy for any arbitrary \ref ConcreteType.
  */
 class AnyType : public AbstractType {
     // ConcreteType<AnyTypeVector>::getValueByID() accesses mDelegate, so we

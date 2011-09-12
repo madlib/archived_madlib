@@ -44,7 +44,7 @@ public:
         const uint32_t inNumElem)
         : mMemoryHandle(inHandle),
           mVector(
-            static_cast<eT*>(inHandle->ptr()),
+            static_cast<eT*>(mMemoryHandle->ptr()),
             inNumElem,
             false /* copy_aux_mem */,
             true /* strict */),
@@ -55,9 +55,10 @@ public:
 
     inline Vector_const(
         const Vector<T, eT> &inVec)
-        : mMemoryHandle(inVec.mMemoryHandle),
+        : mMemoryHandle(
+            AbstractHandle::cloneIfNotGlobal(inVec.mMemoryHandle)),
           mVector(
-            const_cast<eT*>(inVec.memptr()),
+            const_cast<eT*>(mMemoryHandle->ptr()),
             inVec.n_elem,
             false /* copy_aux_mem */,
             true /* strict */),
@@ -68,9 +69,10 @@ public:
     
     inline Vector_const(
         const Array<eT> &inArray)
-        : mMemoryHandle(inArray.memoryHandle()),
+        : mMemoryHandle(
+            AbstractHandle::cloneIfNotGlobal(inArray.memoryHandle())),
           mVector(
-            const_cast<eT*>(inArray.data()),
+            static_cast<eT*>(mMemoryHandle->ptr()),
             inArray.size(),
             false /* copy_aux_mem */,
             true /* strict */),
@@ -78,21 +80,13 @@ public:
           n_cols(mVector.n_cols),
           n_elem(mVector.n_elem)
         { }
-    
    
-    /**
-     * @internal
-     * This constructor will only be generated if \c T is a subclass of
-     * \c const_multi_array_ref. This applies to Array<eT> and Array_const<eT>.
-     */
-    template <typename ArrayType>
-    inline Vector_const(const ArrayType &inArray,
-        typename enable_if<
-                boost::is_base_of< const_multi_array_ref<eT, 1>, ArrayType >
-            >::type * /* dummy */ = NULL)
-        : mMemoryHandle(inArray.memoryHandle()),
+    inline Vector_const(
+        const Array_const<eT> &inArray)
+        : mMemoryHandle(
+            AbstractHandle::cloneIfNotGlobal(inArray.memoryHandle())),
           mVector(
-            const_cast<eT*>(inArray.data()),
+            static_cast<eT*>(mMemoryHandle->ptr()),
             inArray.size(),
             false /* copy_aux_mem */,
             true /* strict */),

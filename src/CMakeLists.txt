@@ -330,8 +330,13 @@ if(APPLE)
     message(STATUS "Will build madlib for same architecture as detected in "
         "${ACCELERATE_FRAMEWORK}, which has architectures "
         "${ACCELERATE_ARCHS}")
+    # FIXME: __ZN6madlib4dbal16defaultAllocatorEv is the mangled name of
+    # madlib::dbal::defaultAllocator().
+    # A better way would be do find out the mangled name at compile time, even
+    # better yet this option should not be necessary.
     set_target_properties(madlib PROPERTIES
-        OSX_ARCHITECTURES "${ACCELERATE_ARCHS}")
+        OSX_ARCHITECTURES "${ACCELERATE_ARCHS}"
+        LINK_FLAGS "-Wl,-U,__ZN6madlib4dbal16defaultAllocatorEv")
     
     # On the Mac, the Accelerate framework is already an umbrella for everything
     # we need for Armadillo
