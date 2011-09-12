@@ -925,31 +925,19 @@ def main(argv):
             
                 result = 'PASS'
 
-                # Check if the SQL file is safe (= has no DROP statements)
-                f = open(sqlfile, 'r')
-                lines = f.readlines()
-                for line in lines:
-                    if re.search(r"\s*DROP\s+", line, re.IGNORECASE) \
-                       and not re.search(r".*--.*DROP\s+", line, re.IGNORECASE):
-                        __error("Test not executed. Found uncommented DROP statement in %s" % sqlfile, False)  
-                        result = 'ERROR'
-                        retval = 0
-                        break;
-                f.close()
-                
                 # Set file names
                 tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
                 logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
                 
                 # If there is no problem with the SQL file
                 milliseconds = 0
-                if result != 'ERROR':                            
-                    # Run the SQL
-                    run_start = datetime.datetime.now()
-                    retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql)
-                    # Runtime evaluation
-                    run_end = datetime.datetime.now()
-                    milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
+
+                # Run the SQL
+                run_start = datetime.datetime.now()
+                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql)
+                # Runtime evaluation
+                run_end = datetime.datetime.now()
+                milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
 
                 # Check the exit status
                 if retval != 0:
