@@ -350,7 +350,6 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     ArrayType *  retval;
     uint32       i;
-    Datum        histo[transval->max_mfvs][2];
     int          dims[2], lbs[2];
     /* Oid     typInput, typIOParam; */
     Oid          outFuncOid;
@@ -365,6 +364,14 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
 
     if (PG_ARGISNULL(0)) PG_RETURN_NULL();
     if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
+
+    /*
+     * We only declare the variable-length array histo here after some sanity
+     * checking. We risk a stack overflow otherwise. In particular, we need to
+     * make sure that transval->max_mfvs is initialized. It might not be if the
+     * (strict) transition function is never called. (MADLIB-254)
+     */
+    Datum        histo[transval->max_mfvs][2];
 
     transval = (mfvtransval *)VARDATA(transblob);
 
