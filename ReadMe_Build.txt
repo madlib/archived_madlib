@@ -5,14 +5,14 @@ background information.
 Building and Installing from Source
 ===================================
 
-Run-time Requirements:
-----------------------
+** Run-time Requirements (required read):
+-----------------------------------------
 
 - LAPACK and BLAS libraries
 
 
-Build-time Requirements:
-------------------------
+** Build-time Requirements (required read):
+-------------------------------------------
 
 - LAPACK and BLAS libraries as above plus their header files.
   

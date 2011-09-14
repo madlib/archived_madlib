@@ -31,7 +31,9 @@
      *    warn_unused_result
      */
 	#if defined(__GNUC__)
-        #pragma GCC diagnostic ignored "-Wwrite-strings"
+        #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 2))
+            #pragma GCC diagnostic ignored "-Wwrite-strings"
+        #endif
         #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
             #pragma GCC diagnostic ignored "-Wunused-result"
         #endif
