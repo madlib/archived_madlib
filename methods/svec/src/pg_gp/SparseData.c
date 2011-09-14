@@ -80,6 +80,13 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 	SparseData sdata = makeEmptySparseData();
 	sdata->unique_value_count = unique_value_count;
 	sdata->total_value_count  = total_value_count;
+	
+	/*
+	 * Note: We are disobeying the constraints demanded in lib/stringinfo.h:
+	 * We do not use terminating NULL characters for the data field of
+	 * struct StringInfoData, i.e., sparse-vector code will not rely on
+	 * data[len] == '\0'
+	 */
 	sdata->vals->data = vals;
 	sdata->vals->len = datasize;
 	sdata->vals->maxlen = sdata->vals->len;

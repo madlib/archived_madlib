@@ -427,8 +427,6 @@ SvecType *reallocSvec(SvecType *source)
 	 */
 	memcpy(newvals ,sdata->vals->data ,sdata->vals->len);
 	memcpy(newindex,sdata->index->data,sdata->index->len);
-	sdata->vals->data [sdata->vals->len]  = '\0';
-	sdata->index->data[sdata->index->len] = '\0';
 	sdata->vals->data    = newvals;
 	sdata->vals->maxlen  = val_newmaxlen;
 	sdata->index->data   = newindex;
