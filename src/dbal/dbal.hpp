@@ -34,7 +34,7 @@
 #include <utils/memory.hpp>
 #include <utils/shapeToExtents.hpp>
 
-// All data types for which ConcreteValue<T> classes should be created and
+// All data types for which ConcreteType<T> classes should be created and
 // for which conversion functions have to be supplied
 
 #define EXPAND_FOR_PRIMITIVE_TYPES \
@@ -55,7 +55,7 @@
     EXPAND_TYPE(DoubleMat) \
     EXPAND_TYPE(DoubleRow) \
     EXPAND_TYPE(DoubleRow_const) \
-    EXPAND_TYPE(AnyValueVector)
+    EXPAND_TYPE(AnyTypeVector)
 
 namespace madlib {
 
@@ -72,12 +72,12 @@ namespace dbal {
 class AbstractAllocator;
 class AbstractHandle;
 class AbstractDBInterface;
-class AbstractValue;
-class AbstractValueConverter;
+class AbstractType;
+class AbstractTypeConverter;
 
 typedef shared_ptr<AbstractAllocator> AllocatorSPtr;
 typedef shared_ptr<AbstractHandle> MemHandleSPtr;
-typedef shared_ptr<const AbstractValue> AbstractValueSPtr;
+typedef shared_ptr<const AbstractType> AbstractTypeSPtr;
 
 // Type Classes
 
@@ -95,12 +95,12 @@ typedef Vector_const<arma::Row, double> DoubleRow_const;
 
 // Implementation Classes
 
-class AnyValue;
+class AnyType;
 struct Null { };
-template <typename T> class ConcreteValue;
+template <typename T> class ConcreteType;
 
-typedef std::vector<AnyValue> AnyValueVector;
-typedef ConcreteValue<AnyValueVector> ConcreteRecord;
+typedef std::vector<AnyType> AnyTypeVector;
+typedef ConcreteType<AnyTypeVector> ConcreteRecord;
 
 
 // Includes
@@ -112,8 +112,8 @@ typedef ConcreteValue<AnyValueVector> ConcreteRecord;
 #include <dbal/AbstractHandle.hpp>
 #include <dbal/AbstractOutputStreamBuffer.hpp>
 #include <dbal/AbstractDBInterface.hpp>
-#include <dbal/AbstractValue_proto.hpp>
-#include <dbal/AbstractValueConverter.hpp>
+#include <dbal/AbstractType_proto.hpp>
+#include <dbal/AbstractTypeConverter.hpp>
 
 // Type Classes
 
@@ -151,16 +151,14 @@ namespace dbal {
 
 // Implementation Classes (Headers)
 
-#include <dbal/AnyValue_proto.hpp>
-#include <dbal/ConcreteValue_proto.hpp>
-#include <dbal/ValueConverter_proto.hpp>
+#include <dbal/AnyType_proto.hpp>
+#include <dbal/ConcreteType_proto.hpp>
 
 // Implementation Classes
 
-#include <dbal/AbstractValue_impl.hpp>
-#include <dbal/AnyValue_impl.hpp>
-#include <dbal/ConcreteValue_impl.hpp>
-#include <dbal/ValueConverter_impl.hpp>
+#include <dbal/AbstractType_impl.hpp>
+#include <dbal/AnyType_impl.hpp>
+#include <dbal/ConcreteType_impl.hpp>
 
 
 } // namespace dbal

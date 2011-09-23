@@ -418,17 +418,15 @@ SvecType *reallocSvec(SvecType *source)
 {
 	SvecType *svec;
 	SparseData sdata = sdata_from_svec(source);
-	int val_newmaxlen = Max(2*sizeof(float8)+1,2*(sdata->vals->maxlen));
+	int val_newmaxlen = Max(2*sizeof(float8)+1, 2 * (Size) sdata->vals->maxlen);
 	char *newvals = (char *)palloc(val_newmaxlen);
-	int ind_newmaxlen = Max(2*sizeof(int8)+1,2*(sdata->index->maxlen));
+	int ind_newmaxlen = Max(2*sizeof(int8)+1, 2 * (Size) sdata->index->maxlen);
 	char *newindex = (char *)palloc(ind_newmaxlen);
 	/*
 	 * This space was never allocated with palloc, so we can't repalloc it!
 	 */
 	memcpy(newvals ,sdata->vals->data ,sdata->vals->len);
 	memcpy(newindex,sdata->index->data,sdata->index->len);
-	sdata->vals->data [sdata->vals->len]  = '\0';
-	sdata->index->data[sdata->index->len] = '\0';
 	sdata->vals->data    = newvals;
 	sdata->vals->maxlen  = val_newmaxlen;
 	sdata->index->data   = newindex;

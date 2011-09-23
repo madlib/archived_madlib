@@ -126,7 +126,7 @@ typedef struct {
      * convention is followed by the values themselves as text Datums,
      * accessible via the offsets
      */
-    offsetcnt mfvs[0];
+    offsetcnt mfvs[];
 } mfvtransval;
 
 /*! base size of an MFV transval */

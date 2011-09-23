@@ -101,7 +101,8 @@ public:
      *     not declare it as const.
      */
     virtual AllocatorSPtr allocator(
-        AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction)
+        AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction,
+        AbstractAllocator::ZeroMemory inZeroMemory = AbstractAllocator::kDoNotZero)
         = 0;
     
     /**
@@ -110,7 +111,7 @@ public:
      * Subclasses should call this methods as first step, and only if the return
      * value is NULL, they may report own last errors.
      *
-     * The implementation in AbstractDBInterface only cheks for errors
+     * The implementation in AbstractDBInterface only checks for errors
      * reported by Armadillo.
      *
      * @see ArmadilloOutputStreamBuffer

@@ -19,13 +19,25 @@
 %require "2.4"
 
 %code requires {
-//	#include <stdio.h>
 	#include <map>
 	#include <fstream>
-	#include <string>
+	#include <cstring>
 	
-	/* FIXME: We should not disable warning. Problem, however: asprintf */
-	#pragma GCC diagnostic ignored "-Wwrite-strings"
+	/*
+     * FIXME: We should not disable warnings. Without this option, we would
+     * get the following warnings:
+     * 1) deprecated conversion from string constant to 'char*'
+     * 2) ignoring return value of '...', declared with attribute
+     *    warn_unused_result
+     */
+	#if defined(__GNUC__)
+        #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 2))
+            #pragma GCC diagnostic ignored "-Wwrite-strings"
+        #endif
+        #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
+            #pragma GCC diagnostic ignored "-Wunused-result"
+        #endif
+    #endif
 	
 	#ifdef COMPILING_SCANNER
 		/* Flex expects the signature of yylex to be defined in the macro
@@ -258,7 +270,6 @@ qualifiedIdent:
 	  IDENTIFIER
 	| IDENTIFIER '.' IDENTIFIER {
 		$$ = $3;
-		/* asprintf(&($$), "%s::%s", $1, $3); */
 	}
 ;
 
@@ -273,6 +284,8 @@ optAggArgList:
 
 fnArgList:
 	  fnArgList ',' fnArgument {
+        /* Yes, we'll leak memory. And we'll fail if there is not enough.
+         * We ignore all that here and below. */
 		asprintf(&($$), "%s, %s", $1, $3);
 	}
 	| fnArgument

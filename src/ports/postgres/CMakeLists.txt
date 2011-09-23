@@ -22,8 +22,8 @@ if(POSTGRESQL_FOUND)
     )
 
     set(MAD_DBAL_SOURCES_POSTGRES
-        dbconnector/PGAbstractValue.cpp
-        dbconnector/PGAbstractValue.hpp
+        dbconnector/PGAbstractType.cpp
+        dbconnector/PGAbstractType.hpp
         dbconnector/PGAllocator.cpp
         dbconnector/PGAllocator.hpp
         dbconnector/PGArrayHandle.cpp
@@ -34,12 +34,11 @@ if(POSTGRESQL_FOUND)
         dbconnector/PGInterface.cpp
         dbconnector/PGInterface.hpp
         dbconnector/PGMain.cpp
-        dbconnector/PGMain.hpp
         dbconnector/PGNewDelete.cpp
         dbconnector/PGToDatumConverter.cpp
         dbconnector/PGToDatumConverter.hpp
-        dbconnector/PGValue.cpp
-        dbconnector/PGValue.hpp
+        dbconnector/PGType.cpp
+        dbconnector/PGType.hpp
     )
     if(LINUX)
         list(APPEND MAD_DBAL_SOURCES_POSTGRES
@@ -51,9 +50,16 @@ if(POSTGRESQL_FOUND)
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
     
-        if(${CMAKE_COMPILER_IS_GNUCC})
-            set(CMAKE_C_FLAGS "-std=gnu99")
-        endif(${CMAKE_COMPILER_IS_GNUCC})
+        if(CMAKE_COMPILER_IS_GNUCC)
+            # FIXME: In the C code, we have several places where strict aliasing
+            # rules are violated. See this web page for some background:
+            # http://dbp-consulting.com/tutorials/StrictAliasing.html
+            # For now, we tell GCC that it cannot rely on strict aliasing rules.
+            # Downside: We forgo some potential optimization.
+            # The warning GCC would output without -fno-strict-aliasing is:
+            # dereferencing type-punned pointer will break strict-aliasing rules
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-strict-aliasing")
+        endif(CMAKE_COMPILER_IS_GNUCC)
         file(GLOB_RECURSE LEGACY_C_FILES_POSTGRES RELATIVE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 
@@ -109,7 +115,7 @@ if(POSTGRESQL_FOUND)
                 "${POSTGRESQL_SERVER_INCLUDE_DIR}/utils/builtins.h"
                 "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_8_4_and_below.sh"
             WORKING_DIRECTORY "${PATCH_DIR}"
-            COMMENT "Patching parsenodes.h, primnodes.h, builtins.h: Renaming identifiers that are C++ keywords."
+            COMMENT "Patching parsenodes.h, primnodes.h, builtins.h, memnodes.h: Renaming identifiers that are C++ keywords."
         )
         list(APPEND POSTGRESQL_PATCH_FILES
             "${PATCH_DIR}/server/nodes/parsenodes.h"

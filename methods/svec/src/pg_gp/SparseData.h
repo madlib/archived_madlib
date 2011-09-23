@@ -299,6 +299,7 @@ static inline int64 compword_to_int8(const char *entry)
 static inline void printout_double(double *vals, int num_values, int stop);
 static inline void printout_double(double *vals, int num_values, int stop)
 {
+	(void) stop; /* avoid warning about unused parameter */
 	char *output_str = (char *)palloc(sizeof(char)*(num_values*(6+18+2))+1);
 	char *str = output_str;
 	int numout;
@@ -313,6 +314,7 @@ static inline void printout_double(double *vals, int num_values, int stop)
 static inline void printout_index(char *ix, int num_values, int stop);
 static inline void printout_index(char *ix, int num_values, int stop)
 {
+	(void) stop; /* avoid warning about unused parameter */
 	char *output_str = (char *)palloc(sizeof(char)*((num_values*7)+1));
 	char *str = output_str;
 	int numout;
@@ -743,7 +745,6 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 	
 	char * rix = right->index->data;
 	double* rvals = (double *)right->vals->data;
-	char* result;
 	
 	int read = 0, rread = 0;
 	int i=-1, j=-1, minimum = 0;
@@ -797,7 +798,6 @@ static inline bool sparsedata_contains(SparseData left, SparseData right)
 	
 	char * rix = right->index->data;
 	double* rvals = (double *)right->vals->data;
-	char* result;
 	
 	int read = 0, rread = 0;
 	int i=-1, j=-1, minimum = 0;

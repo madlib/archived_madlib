@@ -116,7 +116,7 @@ static double studentT_cdf_approx(int64_t nu, double t);
  * @param nu Degree of freedom (>= 1)
  * @param t Argument to cdf.
  *
- * Note: The running time of calculating the series is proportional to nu. This
+ * Note: The running time of calculating the series is proportional to nu.
  * We therefore use the normal distribution as an approximation for large nu.
  * Another idea for handling this case can be found in reference [8].
  */
@@ -131,10 +131,10 @@ double studentT_cdf(int64_t nu, double t) {
 	/* Handle extreme cases. See above. */
 	 
 	if (nu <= 0)
-		return NAN;
-    else if (t == INFINITY)
+		return arma::math::nan();
+    else if (t == arma::math::inf())
         return 1;
-    else if (t == -INFINITY)
+    else if (t == -arma::math::inf())
         return 0;
 	else if (nu >= 1000000)
 		return normal_cdf(t);
@@ -144,7 +144,7 @@ double studentT_cdf(int64_t nu, double t) {
 	/* Handle main case (nu < 200) in the rest of the function. */
 
 	z = 1. + t * t / nu;
-	t_by_sqrt_nu = std::fabs(t) / std::sqrt(nu);
+	t_by_sqrt_nu = std::fabs(t) / std::sqrt(static_cast<double>(nu));
 	
 	if (nu == 1)
 	{
@@ -169,7 +169,7 @@ double studentT_cdf(int64_t nu, double t) {
 		A = t_by_sqrt_nu / std::sqrt(z) * sum;
 	}
 	
-	/* A should obviously lie withing the interval [0,1] plus minus (hopefully
+	/* A should obviously be within the interval [0,1] plus minus (hopefully
 	 * small) rounding errors. */
 	if (A > 1.)
 		A = 1.;
@@ -219,8 +219,8 @@ static double studentT_cdf_approx(int64_t nu, double t)
 /**
  * @brief Student-t cumulative distribution function: In-database interface
  */
-AnyValue student_t_cdf(AbstractDBInterface &db, AnyValue args) {
-    AnyValue::iterator arg(args);
+AnyType student_t_cdf(AbstractDBInterface & /* db */, AnyType args) {
+    AnyType::iterator arg(args);
 
     // Arguments from SQL call
     const int64_t nu = *arg++;

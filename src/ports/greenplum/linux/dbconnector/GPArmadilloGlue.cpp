@@ -98,11 +98,16 @@ static void *getFnHandle(const char *inFnName) {
 #define STRINGIFY_INTERMEDIATE(s) #s
 #define STRINGIFY(s) STRINGIFY_INTERMEDIATE(s)
 
+// We have two reinterpret_casts here because ISO C++ forbids conversion from
+// object pointers to function pointers. However, the POSIX function dlsym
+// returns (void*), i.e., an object pointer, thus requiring these to be freely
+// convertible.
 #define MADLIB_FORTRAN_INIT(madlib_function, function) \
     static __typeof__(madlib_function) *f = NULL; \
     if (f == NULL) { \
         f = reinterpret_cast<__typeof__(madlib_function) *>( \
-            getFnHandle(STRINGIFY(arma_fortran2(function))) \
+            reinterpret_cast<uintptr_t>( \
+            getFnHandle(STRINGIFY(arma_fortran2(function)))) \
         ); \
     }
 

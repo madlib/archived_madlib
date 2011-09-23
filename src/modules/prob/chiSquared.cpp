@@ -20,8 +20,8 @@ namespace prob {
 /**
  * @brief Chi-squared cumulative distribution function: In-database interface
  */
-AnyValue chi_squared_cdf(AbstractDBInterface &db, AnyValue args) {
-    AnyValue::iterator arg(args);
+AnyType chi_squared_cdf(AbstractDBInterface & /* db */, AnyType args) {
+    AnyType::iterator arg(args);
 
     // Arguments from SQL call
     const int64_t nu = *arg++;

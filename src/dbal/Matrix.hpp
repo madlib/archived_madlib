@@ -21,6 +21,15 @@
 template<typename eT>
 class Matrix : public arma::Mat<eT> {
 public:
+    inline Matrix()
+        : arma::Mat<eT>(
+            NULL,
+            0,
+            0,
+            false /* copy_aux_mem */,
+            true /* strict */),
+          mMemoryHandle() { }
+
     inline Matrix(
         AllocatorSPtr inAllocator,
         const uint32_t inNumRows,
@@ -36,10 +45,7 @@ public:
                 inNumRows * inNumCols,
                 static_cast<eT*>(NULL) /* pure type parameter */)) {
         
-        using arma::access;
-        using arma::Mat;
-        
-        access::rw(Mat<eT>::mem) = mMemoryHandle->ptr();
+        arma::access::rw(arma::Mat<eT>::mem) = mMemoryHandle->ptr();
     }
 
     inline Matrix(
@@ -58,13 +64,16 @@ public:
     inline Matrix(
         const Matrix<eT> &inMat)
         : arma::Mat<eT>(
-            const_cast<eT*>(inMat.memptr()),
+            NULL,
             inMat.n_rows,
             inMat.n_cols,
             false /* copy_aux_mem */,
             true /* strict */),
-          mMemoryHandle(inMat.mMemoryHandle)
-        { }
+          mMemoryHandle(AbstractHandle::cloneIfNotGlobal(inMat.mMemoryHandle)) {
+    
+        arma::access::rw(arma::Mat<eT>::mem) = static_cast<eT*>(
+            mMemoryHandle->ptr());
+    }
     
     template<typename T1>
     inline const Matrix &operator=(const arma::Base<eT,T1>& X) {

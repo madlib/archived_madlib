@@ -1,13 +1,13 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGValue.cpp
+ * @file PGType.cpp
  *
  * @brief Automatic conversion of PostgreSQL Datums into values
  *
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/PGCompatibility.hpp>
-#include <dbconnector/PGValue.hpp>
+#include <dbconnector/PGType.hpp>
 
 #include <stdexcept>
 
@@ -26,7 +26,7 @@ using namespace dbal;
 /**
  * @brief Convert the <tt>inID</tt>-th function argument to a DBAL object
  */
-AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) const {
+AbstractTypeSPtr PGType<FunctionCallInfo>::getValueByID(uint16_t inID) const {
     if (fcinfo == NULL)
         throw std::invalid_argument("fcinfo is NULL");
 
@@ -34,11 +34,11 @@ AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) con
         throw std::out_of_range("Access behind end of argument list");
 
     if (PG_ARGISNULL(inID))
-        return AbstractValueSPtr(new AnyValue(Null()));
+        return AbstractTypeSPtr();
     
     bool exceptionOccurred = false;
-    Oid typeID;
-    bool writable;
+    Oid typeID = 0;
+    bool writable = false;
     
     PG_TRY(); {
         typeID = get_fn_expr_argtype(fcinfo->flinfo, inID);
@@ -60,7 +60,7 @@ AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) con
     if (typeID == InvalidOid)
         throw std::invalid_argument("Cannot determine function argument type");
 
-    AbstractValueSPtr value = DatumToValue(writable, typeID, PG_GETARG_DATUM(inID));
+    AbstractTypeSPtr value = DatumToValue(writable, typeID, PG_GETARG_DATUM(inID));
     if (!value)
         throw std::invalid_argument(
             "Internal argument type does not match SQL argument type");
@@ -71,7 +71,7 @@ AbstractValueSPtr PGValue<FunctionCallInfo>::getValueByID(unsigned int inID) con
 /**
  * @brief Convert the <tt>inID</tt>-th tuple element to a DBAL object
  */
-AbstractValueSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) const {
+AbstractTypeSPtr PGType<HeapTupleHeader>::getValueByID(uint16_t inID) const {
     if (mTuple == NULL)
         throw std::invalid_argument("Pointer to tuple data is invalid");
     
@@ -82,9 +82,9 @@ AbstractValueSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) cons
     Oid tupType;
 	int32 tupTypmod;
     TupleDesc tupDesc;
-    Oid typeID;
+    Oid typeID = 0;
     bool isNull = false;
-    Datum datum;
+    Datum datum = 0;
     
     PG_TRY(); {
         tupType = HeapTupleHeaderGetTypeId(mTuple);
@@ -103,7 +103,7 @@ AbstractValueSPtr PGValue<HeapTupleHeader>::getValueByID(unsigned int inID) cons
     if (isNull)
         throw std::invalid_argument("Tuple item is NULL");
     
-    AbstractValueSPtr value = DatumToValue(false /* memory is not writable */,
+    AbstractTypeSPtr value = DatumToValue(false /* memory is not writable */,
         typeID, datum);
     if (!value)
         throw std::invalid_argument(

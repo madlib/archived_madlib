@@ -17,8 +17,10 @@ namespace dbconnector {
 class PGArrayHandle : public AbstractHandle {
 friend class PGAllocator;
 public:
-    PGArrayHandle(ArrayType *inArray, bool inCopyMem = false);
-        
+    using AbstractHandle::MemoryController;
+
+    PGArrayHandle(ArrayType *inArray, MemoryController inCtrl = kLocal);
+    
     ~PGArrayHandle();
 
     virtual void *ptr() {
@@ -30,12 +32,11 @@ public:
     }
     
     virtual MemHandleSPtr clone() const {
-        return MemHandleSPtr( new PGArrayHandle(mArray, true) );
+        return MemHandleSPtr( new PGArrayHandle(mArray, kSelf) );
     }
     
 protected:
     ArrayType *mArray;
-    bool mOwnsArray;
 };
 
 } // namespace dbconnector

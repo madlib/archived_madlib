@@ -1,13 +1,13 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGAbstractValue.cpp
+ * @file PGAbstractType.cpp
  *
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/PGCompatibility.hpp>
-#include <dbconnector/PGAbstractValue.hpp>
+#include <dbconnector/PGAbstractType.hpp>
 #include <dbconnector/PGArrayHandle.hpp>
-#include <dbconnector/PGValue.hpp>
+#include <dbconnector/PGType.hpp>
 
 extern "C" {
     #include <catalog/pg_type.h>
@@ -21,15 +21,15 @@ namespace madlib {
 namespace dbconnector {
 
 /**
- * @brief Convert postgres Datum into a ConcreteValue object.
+ * @brief Convert postgres Datum into a ConcreteType object.
  */
-AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
+AbstractTypeSPtr PGAbstractType::DatumToValue(bool inMemoryIsWritable,
     Oid inTypeID, Datum inDatum) const {
     
-    bool isTuple;
-    bool isArray;
-    HeapTupleHeader pgTuple;
-    ArrayType *pgArray;
+    bool isTuple = false;
+    bool isArray = false;
+    HeapTupleHeader pgTuple = NULL;
+    ArrayType *pgArray = NULL;
     bool errorOccurred = false;
     
     PG_TRY(); {
@@ -49,7 +49,7 @@ AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
 
     // First check if datum is rowtype
     if (isTuple) {
-        return AbstractValueSPtr(new PGValue<HeapTupleHeader>(pgTuple));
+        return AbstractTypeSPtr(new PGType<HeapTupleHeader>(pgTuple));
     } else if (isArray) {
         if (ARR_NDIM(pgArray) != 1)
             throw std::invalid_argument("Multidimensional arrays not yet supported");
@@ -59,18 +59,19 @@ AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
         
         switch (ARR_ELEMTYPE(pgArray)) {
             case FLOAT8OID: {
-                MemHandleSPtr memoryHandle(new PGArrayHandle(pgArray));
+                MemHandleSPtr memoryHandle(
+                    new PGArrayHandle(pgArray, AbstractHandle::kGlobal));
                 
                 if (inMemoryIsWritable) {
-                    return AbstractValueSPtr(
-                        new ConcreteValue<Array<double> >(
+                    return AbstractTypeSPtr(
+                        new ConcreteType<Array<double> >(
                             Array<double>(memoryHandle,
                                 boost::extents[ ARR_DIMS(pgArray)[0] ])
                             )
                         );
                 } else {
-                    return AbstractValueSPtr(
-                        new ConcreteValue<Array_const<double> >(
+                    return AbstractTypeSPtr(
+                        new ConcreteType<Array_const<double> >(
                             Array_const<double>(memoryHandle,
                                 boost::extents[ ARR_DIMS(pgArray)[0] ])
                             )
@@ -82,21 +83,21 @@ AbstractValueSPtr PGAbstractValue::DatumToValue(bool inMemoryIsWritable,
     }
 
     switch (inTypeID) {
-        case BOOLOID: return AbstractValueSPtr(
-            new ConcreteValue<bool>( DatumGetBool(inDatum) ));
-        case INT2OID: return AbstractValueSPtr(
-            new ConcreteValue<int16_t>( DatumGetInt16(inDatum) ));
-        case INT4OID: return AbstractValueSPtr(
-            new ConcreteValue<int32_t>( DatumGetInt32(inDatum) ));
-        case INT8OID: return AbstractValueSPtr(
-            new ConcreteValue<int64_t>( DatumGetInt64(inDatum) ));
-        case FLOAT4OID: return AbstractValueSPtr(
-            new ConcreteValue<float>( DatumGetFloat4(inDatum) ));
-        case FLOAT8OID: return AbstractValueSPtr(
-            new ConcreteValue<double>( DatumGetFloat8(inDatum) ));
+        case BOOLOID: return AbstractTypeSPtr(
+            new ConcreteType<bool>( DatumGetBool(inDatum) ));
+        case INT2OID: return AbstractTypeSPtr(
+            new ConcreteType<int16_t>( DatumGetInt16(inDatum) ));
+        case INT4OID: return AbstractTypeSPtr(
+            new ConcreteType<int32_t>( DatumGetInt32(inDatum) ));
+        case INT8OID: return AbstractTypeSPtr(
+            new ConcreteType<int64_t>( DatumGetInt64(inDatum) ));
+        case FLOAT4OID: return AbstractTypeSPtr(
+            new ConcreteType<float>( DatumGetFloat4(inDatum) ));
+        case FLOAT8OID: return AbstractTypeSPtr(
+            new ConcreteType<double>( DatumGetFloat8(inDatum) ));
     }
     
-    return AbstractValueSPtr();
+    return AbstractTypeSPtr();
 }
 
 } // namespace dbconnector

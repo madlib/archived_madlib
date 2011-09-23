@@ -69,7 +69,8 @@ public:
     }
     
     AllocatorSPtr allocator(
-        AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction);
+        AbstractAllocator::Context inMemContext = AbstractAllocator::kFunction,
+        AbstractAllocator::ZeroMemory inZeroMemory = AbstractAllocator::kDoNotZero);
     
 private:
     /**

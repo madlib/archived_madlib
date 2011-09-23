@@ -196,7 +196,6 @@ Datum WeightedNoReplacement(PG_FUNCTION_ARGS) {
 	int32 i = 0;
 	int32 k = 0;
 	ArrayType *pgarray;
-	float prob = 1.0;	
 	float to_select = value1;
 
    	for(;i < value2; i++){

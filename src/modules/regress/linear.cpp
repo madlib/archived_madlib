@@ -50,46 +50,37 @@ public:
      *      init list is irrelevant. It is important that mStorage gets
      *      initialized before the other members!
      */
-    TransitionState(AnyValue inArg)
-        : mStorage(inArg.copyIfImmutable()),
-          numRows(&mStorage[0]),
-          widthOfX(&mStorage[1]),
-          y_sum(&mStorage[2]),
-          y_square_sum(&mStorage[3]),
-          X_transp_Y(
-            TransparentHandle::create(&mStorage[4]),
-            widthOfX),
-          X_transp_X(
-            TransparentHandle::create(&mStorage[4 + widthOfX]),
-            widthOfX, widthOfX) { }
+    TransitionState(AnyType inArg)
+        : mStorage(inArg.cloneIfImmutable()) {
+        
+        rebind();
+    }
 
     /**
      * We define this function so that we can use TransitionState in the argument
      * list and as a return type.
      */
-    inline operator AnyValue() const {
+    inline operator AnyType() const {
         return mStorage;
     }
     
     /**
      * @brief Initialize the transition state. Only called for first row.
+     * 
+     * @param inAllocator Allocator for the memory transition state. Must fill
+     *     the memory block with zeros.
+     * @param inWidthOfX Number of independent variables. The first row of data
+     *     determines the size of the transition state. This size is a quadratic
+     *     function of inWidthOfX.
      */
     inline void initialize(AllocatorSPtr inAllocator,
         const uint16_t inWidthOfX) {
         
         mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
-        numRows.rebind(&mStorage[0]) = 0;
-        widthOfX.rebind(&mStorage[1]) = inWidthOfX;
-        y_sum.rebind(&mStorage[2]) = 0;
-        y_square_sum.rebind(&mStorage[3]) = 0;
-        X_transp_Y.rebind(
-            TransparentHandle::create(&mStorage[4]),
-            inWidthOfX);
-        X_transp_X.rebind(
-            TransparentHandle::create(&mStorage[4 + inWidthOfX]),
-            inWidthOfX, inWidthOfX);
+        rebind(inWidthOfX);
+        widthOfX = inWidthOfX;
     }
-    
+        
     /**
      * @brief Merge with another TransitionState object
      */
@@ -107,6 +98,44 @@ public:
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
         return 4 + inWidthOfX + inWidthOfX * inWidthOfX;
+    }
+    
+    /**
+     * @brief Who should own TransparentHandles pointing to slices of mStorage?
+     */
+    AbstractHandle::MemoryController memoryController() const {
+        AbstractHandle::MemoryController ctrl =
+            mStorage.memoryHandle()->memoryController();
+        
+        return (ctrl == AbstractHandle::kSelf ? AbstractHandle::kLocal : ctrl);
+    }
+    
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX If this value is positive, use it as the number of
+     *     independent variables. This is needed during initialization, when
+     *     the storage array is still all zero, but we do already know the
+     *     with of the design matrix.
+     */
+    void rebind(uint16_t inWidthOfX = 0) {
+        numRows.rebind(&mStorage[0]);
+        widthOfX.rebind(&mStorage[1]);
+        
+        if (inWidthOfX != 0)
+            widthOfX = inWidthOfX;
+        
+        y_sum.rebind(&mStorage[2]);
+        y_square_sum.rebind(&mStorage[3]);
+        X_transp_Y.rebind(
+            TransparentHandle::create(&mStorage[4], widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX);
+        X_transp_X.rebind(
+            TransparentHandle::create(&mStorage[4 + widthOfX],
+                widthOfX * widthOfX * sizeof(double),
+                memoryController()),
+            widthOfX, widthOfX);
     }
 
     Array<double> mStorage;
@@ -127,8 +156,8 @@ public:
  * \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
  * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
  */
-AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
-    AnyValue::iterator arg(args);
+AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
+    AnyType::iterator arg(args);
     
     // Arguments from SQL call. Immutable values passed by reference should be
     // instantiated from the respective <tt>_const</tt> class. Otherwise, the
@@ -147,8 +176,18 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
         throw std::invalid_argument("Design matrix is not finite.");
     
     // Now do the transition step.
-    if (state.numRows == 0)
-        state.initialize(db.allocator(AbstractAllocator::kAggregate), x.n_elem);
+    if (state.numRows == 0) {
+        if (x.n_elem > std::numeric_limits<uint16_t>::max())
+            throw std::domain_error("Number of independent variables cannot be "
+                "larger than 65535.");
+        
+        state.initialize(
+            db.allocator(
+                AbstractAllocator::kAggregate,
+                AbstractAllocator::kZero
+            ),
+            x.n_elem);
+    }
     state.numRows++;
     state.y_sum += y;
     state.y_square_sum += y * y;
@@ -161,8 +200,8 @@ AnyValue LinearRegression::transition(AbstractDBInterface &db, AnyValue args) {
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyValue LinearRegression::mergeStates(AbstractDBInterface &db, AnyValue args) {
-    TransitionState stateLeft = args[0].copyIfImmutable();
+AnyType LinearRegression::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
+    TransitionState stateLeft = args[0].cloneIfImmutable();
     const TransitionState stateRight = args[1];
     
     // We first handle the trivial case where this function is called with one
@@ -180,7 +219,7 @@ AnyValue LinearRegression::mergeStates(AbstractDBInterface &db, AnyValue args) {
 /**
  * @brief Perform the linear-regression final step
  */
-AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
+AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
     const TransitionState state = args[0];
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
@@ -201,7 +240,7 @@ AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
     if (condition_X_transp_X > 1000)
         db.out << "Matrix X^T X is ill-conditioned (condition number "
             "= " << condition_X_transp_X << "). "
-            "Expect strong multicollinerity." << std::endl;
+            "Expect strong multicollinearity." << std::endl;
     
     // Precompute (X^T * X)^+
     mat inverse_of_X_transp_X = pinv(state.X_transp_X);
@@ -285,14 +324,14 @@ AnyValue LinearRegression::final(AbstractDBInterface &db, AnyValue args) {
                                     std::fabs( tStats(i) )));
     
     // Return all coefficients, standard errors, etc. in a tuple
-    AnyValueVector tuple;
+    AnyTypeVector tuple;
     ConcreteRecord::iterator tupleElement(tuple);
     
-    tupleElement++ = coef;
-    tupleElement++ = r2;
-    tupleElement++ = stdErr;
-    tupleElement++ = tStats;
-    tupleElement++ = pValues;
+    *tupleElement++ = coef;
+    *tupleElement++ = r2;
+    *tupleElement++ = stdErr;
+    *tupleElement++ = tStats;
+    *tupleElement   = pValues;
     
     return tuple;
 }

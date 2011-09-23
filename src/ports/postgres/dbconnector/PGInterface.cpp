@@ -6,9 +6,10 @@ namespace madlib {
 namespace dbconnector {
 
 inline AllocatorSPtr PGInterface::allocator(
-    AbstractAllocator::Context inMemContext) {
+    AbstractAllocator::Context inMemContext,
+    AbstractAllocator::ZeroMemory inZeroMemory) {
     
-    return AllocatorSPtr(new PGAllocator(this, inMemContext));
+    return AllocatorSPtr(new PGAllocator(this, inMemContext, inZeroMemory));
 }
 
 inline void PGInterface::PGOutputStreamBuffer::output(

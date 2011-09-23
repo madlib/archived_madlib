@@ -40,10 +40,10 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
     """
 
-    state = "(st.state)"
+    state = "(st._madlib_state)"
     sourceAlias = "src"
-    oldState = "(older.state)"
-    newState = "(newer.state)"
+    oldState = "(older._madlib_state)"
+    newState = "(newer._madlib_state)"
     
     updateExpr = updateExpr.format(**locals())
     terminateExpr = terminateExpr.format(**locals())
@@ -57,31 +57,32 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             _madlib_iterative_alg AS st,
             {source} AS src
         WHERE
-            st.iteration = {iteration} - 1
+            st._madlib_iteration = {iteration} - 1
         """    
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
         FROM    
         (
-            SELECT state
+            SELECT _madlib_state
             FROM _madlib_iterative_alg
-            WHERE iteration = {iteration} - {cyclesPerIteration}
+            WHERE _madlib_iteration = {iteration} - {cyclesPerIteration}
         ) AS older,
         (
-            SELECT state
+            SELECT _madlib_state
             FROM _madlib_iterative_alg
-            WHERE iteration = {iteration}
+            WHERE _madlib_iteration = {iteration}
         ) AS newer
         """
 
-    oldMsgLevel = plpy.execute("SHOW client_min_messages")[0]['client_min_messages']
+    oldMsgLevel = plpy.execute("SELECT setting FROM pg_settings WHERE name='client_min_messages'"
+        )[0]['setting']
     plpy.execute("""
         SET client_min_messages = error;
         DROP TABLE IF EXISTS _madlib_iterative_alg;
         CREATE TEMPORARY TABLE _madlib_iterative_alg (
-            iteration INTEGER PRIMARY KEY,
-            state {stateType}
+            _madlib_iteration INTEGER PRIMARY KEY,
+            _madlib_state {stateType}
         );
         SET client_min_messages = {oldMsgLevel};
         """.format(**locals()))
@@ -122,8 +123,8 @@ def __cg_logregr(**kwargs):
     # substituted there
     updateExpr = """
         {MADlibSchema}.logregr_cg_step(
-            {{sourceAlias}}.{depColumn},
-            {{sourceAlias}}.{indepColumn},
+            {depColumn},
+            {indepColumn},
             {{state}}
         )
         """.format(**kwargs)
@@ -155,8 +156,8 @@ def __irls__logregr(**kwargs):
     source = kwargs['source']
     updateExpr = """
         {MADlibSchema}.logregr_irls_step(
-            {{sourceAlias}}.{depColumn},
-            {{sourceAlias}}.{indepColumn},
+            {depColumn},
+            {indepColumn},
             {{state}}
         )
         """.format(**kwargs)

@@ -167,6 +167,7 @@ void countmin_dyadic_trans_c(cmtransval *transval, Datum input)
  */
 Datum countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid, Oid typOid)
 {
+	(void) outFuncOid; /* avoid warning about unused parameter */
     bytea *nhash;
 
     nhash = sketch_md5_bytea(dat, typOid);
@@ -278,6 +279,7 @@ int64 cmsketch_count_c(countmin sketch, Datum arg, Oid funcOid, Oid typOid)
 
 int64 cmsketch_count_md5_datum(countmin sketch, bytea *md5_bytea, Oid funcOid)
 {
+	(void) funcOid; /* avoid warning about unused parameter */
     /* iterate through the sketches, finding the min counter associated with this hash */
     return(hash_counters_iterate(md5_bytea, sketch, INT64_MAX,
                                           &min_counter));
@@ -363,6 +365,7 @@ int64 increment_counter(uint32 i,
                         countmin sketch,
                         int64 transval)
 {
+	(void) transval; /* avoid warning about unused parameter */
     int64 oldval = sketch[i][col];
     if (sketch[i][col] == (INT64_MAX))
         elog(ERROR, "maximum count exceeded in sketch");

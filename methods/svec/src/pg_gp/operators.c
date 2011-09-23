@@ -1340,8 +1340,8 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 	 * First check to see if there is room in both the data area and index
 	 * and if there isn't, re-alloc and recreate the svec
 	 */
-	if (   ((sdata->vals->len + sizeof(float8)+1) > sdata->vals->maxlen)
-	    || ((sdata->index->len + 9 +1)            > sdata->index->maxlen) )
+	if (   ((Size) (sdata->vals->len + sizeof(float8)+1) > (Size) sdata->vals->maxlen)
+	    || ((Size) (sdata->index->len + 9 +1)            > (Size) sdata->index->maxlen) )
 	{
 		svec = reallocSvec(svec);
 		sdata = sdata_from_svec(svec);
@@ -1413,13 +1413,13 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec);
 }
 
-#define RANDOM_RANGE	(((double)random())/(2147483647.+1))
+#define RANDOM_RANGE	drand48()
 #define RANDOM_INT(x,y)	((int)(x)+(int)(((y+1)-(x))*RANDOM_RANGE))
 #define SWAPVAL(x,y,temp)	{ (temp) = (x); (x) = (y); (y) = (temp); }
 #define SWAP(x,y,tmp,size)	{ memcpy((tmp),(x),(size)); memcpy((x),(y),(size)); memcpy((y),(tmp),(size)); }
 #define SWAPN(lists,nlists,widths,tmp,I,J) \
 { \
-	for (int III=0;III<nlists;III++) /* This should be unrolled as nlists will be small */ \
+	for (uint64 III=0;III<nlists;III++) /* This should be unrolled as nlists will be small */ \
 	{ \
 	  	memcpy((tmp)[III]                  ,(lists)[III]+I*(widths)[III],(widths)[III]); \
 		memcpy((lists)[III]+I*(widths)[III],(lists)[III]+J*(widths)[III],(widths)[III]); \
@@ -1514,7 +1514,7 @@ partition_select (char **lists, size_t nlists, size_t *widths,
 	 * Allocate memory for the temporary variables
 	 */
 	tmp = (char **)palloc(nlists*sizeof(char *));
-	for (int i=0;i<nlists;i++)
+	for (uint64 i=0;i<nlists;i++)
 	{
 		tmp[i] = (void *)palloc(widths[i]);
 	}
@@ -1551,7 +1551,7 @@ partition_select (char **lists, size_t nlists, size_t *widths,
 	/*
 	 * Free temporary variables
 	 */
-	for (int i=0;i<nlists;i++)
+	for (uint64 i=0;i<nlists;i++)
 		pfree(tmp[i]);
 	pfree(tmp);
 	pfree(pvalue);
@@ -1568,11 +1568,19 @@ compar_float8(const void *left,const void *right)
 }
 
 static int
-real_index_calc_dense(const int idx,const char **lists,const size_t nlists,const size_t *widths) {return idx;}
+real_index_calc_dense(const int idx,const char **lists,const size_t nlists,const size_t *widths)
+{
+	(void) lists; /* avoid warning about unused parameter */
+	(void) nlists; /* avoid warning about unused parameter */
+	(void) widths; /* avoid warning about unused parameter */
+	return idx;
+}
 
 static int
 real_index_calc_sparse_RLE(const int idx,const char **lists,const size_t nlists,const size_t *widths)
 {
+	(void) nlists; /* avoid warning about unused parameter */
+	(void) widths; /* avoid warning about unused parameter */
 	int index=0;
 	for (int i=0;i<idx;i++)
 	{
