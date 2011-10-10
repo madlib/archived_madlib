@@ -20,15 +20,23 @@ known limitations in support of the SQL standard or bugs.
 
 This module contains workarounds for the following issues:
 
-- Using <tt>CREATE TABLE AS</tt> with the output of certain MADlib functions
-  fails with the error “function cannot execute on segment because it issues a
-  non-SELECT statement”. The workaround is:
+- <tt>CREATE TABLE <em>table_name</em> AS <em>query</em></tt> statements where
+  <em>query</em> contains certain MADlib functions fails with the error
+  “function cannot execute on segment because it issues a non-SELECT statement”.
+  The workaround is:
   <pre>SELECT \ref create_table_as('<em>table_name</em>', $$
     <em>query</em>
 $$, 'BY (<em>column</em>, [...]) | RANDOMLY');</pre>
+- <tt>INSERT INTO <em>table_name</em> <em>query</em></tt> where <em>query</em>
+  contains certain MADlib functions fails with the error “function cannot
+  execute on segment because it issues a non-SELECT statement”. The workaround
+  is:
+  <pre>SELECT \ref insert_into('<em>table_name</em>', $$
+    <em>query</em>
+$$);</pre>
 
 @note
-These function are not installed on other DBMSs (and not needed there).
+These functions are not installed on other DBMSs (and not needed there).
 Workarounds should be used only when necessary. For portability and best
 performance, standard SQL should be prefered whenever possible.
 
@@ -41,7 +49,22 @@ performance, standard SQL should be prefered whenever possible.
 
 */
 
-CREATE FUNCTION MADLIB_SCHEMA.internal_create_table_as(
+CREATE FUNCTION MADLIB_SCHEMA.create_schema_pg_temp()
+RETURNS VOID
+LANGUAGE plpgsql
+VOLATILE
+AS $$
+BEGIN
+    IF pg_my_temp_schema() = 0 THEN
+        -- The pg_temp schema does not exist, yet. Creating a temporary table
+        -- will create it.
+        EXECUTE 'CREATE TEMPORARY TABLE _madlib_temp_table AS SELECT 1;
+            DROP TABLE pg_temp._madlib_temp_table CASCADE;';
+    END IF;
+END;
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_create_empty_table_as(
     "inTemporary" BOOLEAN,
     "inTableName" VARCHAR,
     "inSQL" VARCHAR,
@@ -52,20 +75,8 @@ VOLATILE
 RETURNS NULL ON NULL INPUT
 AS $$
 DECLARE
-    oldClientMinMessages VARCHAR;
     whatToCreate VARCHAR;
 BEGIN
-    oldClientMinMessages :=
-        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
-    EXECUTE 'SET client_min_messages TO warning';
-    
-    IF pg_my_temp_schema() = 0 THEN
-        -- The pg_temp schema does not exist, yet. Creating a temporary table
-        -- will create it.
-        EXECUTE 'CREATE TEMPORARY TABLE _madlib_temp_table AS SELECT 1;
-            DROP TABLE pg_temp._madlib_temp_table CASCADE;';
-    END IF;
-    
     IF "inTemporary" = TRUE THEN
         whatToCreate := 'TEMPORARY TABLE';
     ELSE
@@ -80,7 +91,55 @@ BEGIN
         AS SELECT * FROM (' || "inSQL" || ') AS _madlib_ignore
         WHERE FALSE
         DISTRIBUTED ' || "inDistributed";
-    
+END;
+$$;
+
+
+/**
+ * @brief Mimick <tt>INSERT INTO</tt>. Create new rows in a table.
+ *
+ * @param inTableName The name (optionally schema-qualified) of an existing
+ *     table.
+ * @param inSQL A SELECT command.
+ *
+ * @usage
+ * Use in the same way as the <tt>INSERT INTO</tt> statement:
+ * <pre>SELECT insert_into('<em>table_name</em>', $$
+ *    <em>query</em>
+ *$$);</pre>
+ * 
+ * @examp
+ * <pre>SELECT insert_into('public.test', $$
+ *    SELECT * FROM generate_series(1,10) AS id
+ *$$);\n
+ *SELECT insert_into('logregr_results', $$
+ *    SELECT * FROM logregr('data', 'y', 'x')
+ *$$);</pre>
+ *
+ * @note This function is a workaround. For compliance with the SQL standard and
+ *     for optimal performance, please use the normal <tt>INSERT INTO</tt>
+ *     statement whenever possible.
+ *     Known caveats of this workaround:
+ *     - For queries returning a large number of rows, this function will be
+ *       significantly slower than the <tt>INSERT INTO</tt> statement.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.insert_into(
+    "inTableName" VARCHAR,
+    "inSQL" VARCHAR)
+RETURNS VOID
+LANGUAGE plpgsql
+VOLATILE
+RETURNS NULL ON NULL INPUT
+AS $$
+DECLARE
+    oldClientMinMessages VARCHAR;
+BEGIN
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+        
     EXECUTE
         'DROP FUNCTION IF EXISTS pg_temp._madlib_temp_function();
         CREATE FUNCTION pg_temp._madlib_temp_function()
@@ -152,7 +211,9 @@ LANGUAGE sql
 VOLATILE
 RETURNS NULL ON NULL INPUT
 AS $$
-    SELECT MADLIB_SCHEMA.internal_create_table_as(FALSE, $1, $2, $3);
+    SELECT MADLIB_SCHEMA.internal_create_empty_table_as(FALSE,
+        $1, $2, $3);
+    SELECT MADLIB_SCHEMA.insert_into($1, $2);
 $$;
 
 
@@ -164,7 +225,9 @@ LANGUAGE sql
 VOLATILE
 RETURNS NULL ON NULL INPUT
 AS $$
-    SELECT MADLIB_SCHEMA.internal_create_table_as(FALSE, $1, $2, 'RANDOMLY');
+    SELECT MADLIB_SCHEMA.internal_create_empty_table_as(FALSE,
+        $1, $2, 'RANDOMLY');
+    SELECT MADLIB_SCHEMA.insert_into($1, $2);
 $$;
 
 
@@ -183,7 +246,9 @@ LANGUAGE sql
 VOLATILE
 RETURNS NULL ON NULL INPUT
 AS $$
-    SELECT MADLIB_SCHEMA.internal_create_table_as(TRUE, $1, $2, $3);
+    SELECT MADLIB_SCHEMA.internal_create_empty_table_as(TRUE,
+        $1, $2, $3);
+    SELECT MADLIB_SCHEMA.insert_into($1, $2);
 $$;
 
 
@@ -195,7 +260,9 @@ LANGUAGE sql
 VOLATILE
 RETURNS NULL ON NULL INPUT
 AS $$
-    SELECT MADLIB_SCHEMA.internal_create_table_as(TRUE, $1, $2, 'RANDOMLY');
+    SELECT MADLIB_SCHEMA.internal_create_empty_table_as(TRUE,
+        $1, $2, 'RANDOMLY');
+    SELECT MADLIB_SCHEMA.insert_into($1, $2);
 $$;
 
 
@@ -212,7 +279,9 @@ LANGUAGE sql
 VOLATILE
 RETURNS NULL ON NULL INPUT
 AS $$
-    SELECT MADLIB_SCHEMA.internal_create_table_as(TRUE, $1, $2, $3);
+    SELECT MADLIB_SCHEMA.internal_create_empty_table_as(TRUE,
+        $1, $2, $3);
+    SELECT MADLIB_SCHEMA.insert_into($1, $2);
 $$;
 
 
@@ -224,5 +293,7 @@ LANGUAGE sql
 VOLATILE
 RETURNS NULL ON NULL INPUT
 AS $$
-    SELECT MADLIB_SCHEMA.internal_create_table_as(TRUE, $1, $2, 'RANDOMLY');
+    SELECT MADLIB_SCHEMA.internal_create_empty_table_as(TRUE,
+        $1, $2, 'RANDOMLY');
+    SELECT MADLIB_SCHEMA.insert_into($1, $2);
 $$;
