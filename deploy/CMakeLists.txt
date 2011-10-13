@@ -64,8 +64,10 @@ if(GPPKG_BUILD)
     add_custom_target(gppkg 
                       COMMAND make package 
                       COMMAND cp -rf ${CMAKE_SOURCE_DIR}/deploy/package .
-                      COMMAND mv lapack-*-*.rpm package/gppkg/
-                      COMMAND mv blas-*-*.rpm package/gppkg/
+                      COMMAND rm -rf package/gppkg/deps
+                      COMMAND mkdir package/gppkg/deps
+                      COMMAND mv lapack-*-*.rpm package/gppkg/deps/
+                      COMMAND mv blas-*-*.rpm package/gppkg/deps/
                       COMMAND cp ${CMAKE_SOURCE_DIR}/build/madlib-*.rpm package/gppkg/
                       COMMAND sed -i".bk" 's/os/${CMAKE_SYSTEM_NAME}/g' package/gppkg/gppkg_spec.yml
                       COMMAND rm -f package/gppkg/gppkg_spec.yml.bk
