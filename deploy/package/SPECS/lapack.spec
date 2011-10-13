@@ -1,8 +1,8 @@
 %define lapack_dir %(echo `cd ..;pwd`)
 %define _topdir     %(echo `pwd`) 
 %define name        lapack 
-%define release     37 
-%define version     3.0
+%define release     %{lapackrel}
+%define version     %{lapackver} 
 %define buildroot   %{_topdir}/install
 %define buildarch   %(uname -p)
 %define __os_install_post    %{nil}

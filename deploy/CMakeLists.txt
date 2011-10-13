@@ -15,8 +15,13 @@ elseif(UNIX)
     )
 endif()
 
-set(LAPACK_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/50/x86_64/SL/lapack-3.0-37.el5.x86_64.rpm")
-set(BLAS_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/54/x86_64/SL/blas-3.0-37.el5.x86_64.rpm")
+set(LAPACK_VERSION "3.0")
+set(LAPACK_RELEASE "37")
+set(BLAS_VERSION "3.0")
+set(BLAS_RELEASE "37")
+
+set(LAPACK_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/50/x86_64/SL/lapack-${LAPACK_VERSION}-${LAPACK_RELEASE}.el5.x86_64.rpm")
+set(BLAS_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/54/x86_64/SL/blas-${BLAS_VERSION}-${BLAS_RELEASE}.el5.x86_64.rpm")
 
 OPTION(GPPKG_BUILD "Enable gppkg build" OFF)
 
@@ -74,7 +79,7 @@ if(GPPKG_BUILD)
                       COMMAND rm -rf SPECS RPMS BUILD
                       COMMAND mkdir BUILD SPECS RPMS 
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/lapack.spec SPECS/
-                      COMMAND rpmbuild -bb SPECS/lapack.spec
+                      COMMAND rpmbuild -bb SPECS/lapack.spec --define "lapackver ${LAPACK_VERSION}" --define "lapackrel ${LAPACK_RELEASE}"
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/lapack*.rpm .
                      )
 
@@ -84,7 +89,7 @@ if(GPPKG_BUILD)
                       COMMAND rm -rf SPECS RPMS BUILD
                       COMMAND mkdir SPECS RPMS BUILD
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/blas.spec SPECS/
-                      COMMAND rpmbuild -bb SPECS/blas.spec
+                      COMMAND rpmbuild -bb SPECS/blas.spec --define "blasver ${BLAS_VERSION}" --define "blasrel ${BLAS_RELEASE}"
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/blas*.rpm . 
                      )
 

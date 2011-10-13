@@ -1,8 +1,8 @@
 %define blas_dir %(echo `cd ..;pwd`)
 %define _topdir     %(echo `pwd`) 
 %define name        blas 
-%define release     37
-%define version     3.0 
+%define release     %{blasrel} 
+%define version     %{blasver}
 %define buildroot   %{_topdir}/install
 %define buildarch   %(uname -p)
 %define __os_install_post    %{nil}
