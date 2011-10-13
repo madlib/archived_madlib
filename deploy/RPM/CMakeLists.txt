@@ -16,15 +16,26 @@ set(CPACK_RPM_PACKAGE_LICENSE "New BSD License" PARENT_SCOPE)
 set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries" PARENT_SCOPE)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local/madlib" PARENT_SCOPE)
 
-set(_PACKAGE_REQUIRES "lapack >= 3.0, m4 >= 1.4")
-if(RH_VERSION AND RH_VERSION VERSION_LESS "6.0")
-    # on RH/CentOS 5, there is no Python 2.6 or higher in the defaul
-    # repositories.
-    set(CPACK_RPM_PACKAGE_REQUIRES "python, ${_PACKAGE_REQUIRES}" PARENT_SCOPE)
-else()
-    set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.6, ${_PACKAGE_REQUIRES}" PARENT_SCOPE)
+if(GPPKG_BUILD)
+    set(CPACK_RPM_PACKAGE_PROVIDES "/bin/sh" PARENT_SCOPE)
+    set(CPACK_RPM_PACKAGE_REQUIRES "lapack-3.0-37.x86_64.rpm blas-3.0-37.x86_64.rpm" PARENT_SCOPE)
+endif()
+
+if(NOT GPPKG_BUILD)
+    set(_PACKAGE_REQUIRES "lapack >= 3.0, m4 >= 1.4")
+    if(RH_VERSION AND RH_VERSION VERSION_LESS "6.0")
+        # on RH/CentOS 5, there is no Python 2.6 or higher in the defaul
+        # repositories.
+        set(CPACK_RPM_PACKAGE_REQUIRES "python, ${_PACKAGE_REQUIRES}" PARENT_SCOPE)
+    else()
+        set(CPACK_RPM_PACKAGE_REQUIRES "python >= 2.6, ${_PACKAGE_REQUIRES}" PARENT_SCOPE)
+    endif()
 endif()
 
 # We do all deployment preparation with our CMake build script, so we do
 # not want to do any post-processing as part of the RPM generation.
-set(CPACK_RPM_SPEC_MORE_DEFINE "%undefine __os_install_post" PARENT_SCOPE)
+if(GPPKG_BUILD)
+   set(CPACK_RPM_SPEC_MORE_DEFINE "%undefine __os_install_post\nAutoReq:no" PARENT_SCOPE)
+else()
+   set(CPACK_RPM_SPEC_MORE_DEFINE "%undefine __os_install_post" PARENT_SCOPE)
+endif()

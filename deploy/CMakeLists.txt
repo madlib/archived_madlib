@@ -15,6 +15,11 @@ elseif(UNIX)
     )
 endif()
 
+set(LAPACK_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/50/x86_64/SL/lapack-3.0-37.el5.x86_64.rpm")
+set(BLAS_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/54/x86_64/SL/blas-3.0-37.el5.x86_64.rpm")
+
+OPTION(GPPKG_BUILD "Enable gppkg build" OFF)
+
 
 # -- General settings for all/multiple packages generators ---------------------
 
@@ -41,6 +46,50 @@ set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 # section!
 
 # -- Set settings for specific package generators ------------------------------
+
+if(GPPKG_BUILD)
+    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deploy/lapack.rpm)
+        FILE(DOWNLOAD ${LAPACK_URL} ${CMAKE_SOURCE_DIR}/deploy/lapack.rpm)
+    endif()
+
+    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deploy/blas.rpm)
+        FILE(DOWNLOAD ${BLAS_URL} ${CMAKE_SOURCE_DIR}/deploy/blas.rpm)
+    endif()
+
+    add_custom_target(gppkg 
+                      COMMAND make package 
+                      COMMAND cp -rf ${CMAKE_SOURCE_DIR}/deploy/package .
+                      COMMAND mv lapack-*-*.rpm package/gppkg/
+                      COMMAND mv blas-*-*.rpm package/gppkg/
+                      COMMAND cp ${CMAKE_SOURCE_DIR}/build/madlib-*.rpm package/gppkg/
+                      COMMAND sed -i".bk" 's/os/${CMAKE_SYSTEM_NAME}/g' package/gppkg/gppkg_spec.yml
+                      COMMAND rm -f package/gppkg/gppkg_spec.yml.bk
+                      COMMAND gppkg --build package/gppkg 
+                      COMMAND mv *.gppkg ${CMAKE_SOURCE_DIR}/build
+                     )   
+
+    add_custom_target(lapack_rpm
+                      COMMAND cp ${CMAKE_SOURCE_DIR}/deploy/lapack.rpm .
+                      COMMAND rpm2cpio lapack.rpm | cpio -divu
+                      COMMAND rm -rf SPECS RPMS BUILD
+                      COMMAND mkdir BUILD SPECS RPMS 
+                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/lapack.spec SPECS/
+                      COMMAND rpmbuild -bb SPECS/lapack.spec
+                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/lapack*.rpm .
+                     )
+
+    add_custom_target(blas_rpm
+                      COMMAND cp ${CMAKE_SOURCE_DIR}/deploy/blas.rpm .
+                      COMMAND rpm2cpio blas.rpm | cpio -divu
+                      COMMAND rm -rf SPECS RPMS BUILD
+                      COMMAND mkdir SPECS RPMS BUILD
+                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/blas.spec SPECS/
+                      COMMAND rpmbuild -bb SPECS/blas.spec
+                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/blas*.rpm . 
+                     )
+
+    add_dependencies(gppkg lapack_rpm blas_rpm)
+endif()
 
 add_subdirectory(PackageMaker)
 add_subdirectory(RPM)
