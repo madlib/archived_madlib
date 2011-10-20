@@ -6,16 +6,16 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <modules/prob/chiSquared.hpp>
-
+#include <dbal/dbal.hpp>
 #include <boost/math/distributions/chi_squared.hpp>
-
 
 namespace madlib {
 
 namespace modules {
 
 namespace prob {
+
+#include <modules/prob/chiSquared.hpp>
 
 /**
  * @brief Chi-squared cumulative distribution function: In-database interface

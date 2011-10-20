@@ -55,7 +55,7 @@
  *      Statistician, Vol. 38, No. 4, 1984
  */
 
-#include <modules/prob/student.hpp>
+#include <dbal/dbal.hpp>
 
 // The error function is in C99 and TR1, but not in the official C++ Standard
 // (before C++0x). We therefore use the Boost implementation
@@ -67,6 +67,8 @@ namespace madlib {
 namespace modules {
 
 namespace prob {
+
+#include <modules/prob/student.hpp>
 
 /* Prototypes of internal functions */
 
