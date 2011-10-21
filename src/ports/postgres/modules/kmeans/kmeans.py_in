@@ -1,47 +1,71 @@
-#!/usr/bin/env python
+# coding=utf-8
 
-"""@namespace kmeans 
-
-
+"""
 @file kmeans.py_in
-@brief k-Means Clustering with k-means++ centroid seeding
+
+@brief k-Means Clustering module
+
+@namespace kmeans
 """
 
 import datetime
 import plpy
 from math import floor, log, pow
+import os
 
 # ----------------------------------------
 # K-means global variables
 # ----------------------------------------
-global output_points, output_centroids
+global verbose, output_points, output_centroids
 
 # ----------------------------------------
 # Logging
 # ----------------------------------------
 def info( msg):
-    plpy.info( msg);
+    if verbose: 
+        plpy.info( msg)
    
 # ----------------------------------------
 # Quotes a string to be used as an identifier 
 # ----------------------------------------
-def quote_ident(val):
-    return '"' + val.replace('"', '""') + '"';
+#def quote_ident(val):
+#    return '"' + val.replace('"', '""') + '"'
 
 # ----------------------------------------
 # Quotes a string to be used as a literal 
 # ----------------------------------------
-def quote_literal(val):
-    return "'" + val.replace("'", "''") + "'";
-     
+#def quote_literal(val):
+#    return "'" + val.replace("'", "''") + "'"
+
 # ----------------------------------------
-# Function to initialize K centroids
+# Run SQL in ERROR only message mode
 # ----------------------------------------
-def __kmeans_init( madlib_schema, input_view, k):
+def __run_quietly(sql):
+
+    # Remember current message level and set it to ERROR
+    prev_msg_level = plpy.execute("SELECT setting FROM pg_settings " \
+        + " WHERE name='client_min_messages'")[0]['setting']
+    plpy.execute("SET client_min_messages = error;")
+
+    # Run...
+    rv = plpy.execute(sql)
+
+    # Restrore previous message level
+    plpy.execute("SET client_min_messages = %s;" % prev_msg_level)
+    
+    return rv
+
+# ----------------------------------------
+# Centroid initialization using kmeans++
+# ----------------------------------------
+def __init_plusplus( madlib_schema, src_view, src_col_data, src_col_id, k):
     """
     Creates the initial set of centroids.
 
-    @param input_table Name of relation containing the input data points
+    XXX - to cleanup
+
+    @param madlib_schema MADlib objects schema
+    @param src_view Name of relation containing the input data points
     @param k Number of centroids to generate
     """
 	
@@ -52,56 +76,35 @@ def __kmeans_init( madlib_schema, input_view, k):
     # we have seen a point from each cluster 
     numCentroids = floor( - log( 1 - pow( 0.999, 1/float(k))) * k);
 
-    # Create output tables - Points
-    plpy.execute( 'DROP TABLE IF EXISTS ' + output_points);
-    sql = '''
-        CREATE TABLE ''' + output_points + ''' (
-            pid BIGINT, 
-            position ''' + madlib_schema + '''.SVEC, 
-            cid BIGINT
-        ) 
-    ''';
-    plpy.execute( sql);
-
-    # Create output tables - Centroids
-    plpy.execute( 'DROP TABLE IF EXISTS ' + output_centroids);
-    sql = '''
-        CREATE TABLE ''' + output_centroids + ''' (
-            cid INT, 
-            position ''' + madlib_schema + '''.SVEC
-        ) 
-    ''';
-    plpy.execute( sql);
-
     # Find the 1st centroid
-    info( 'Seeding ' + str(k) + ' centroids...');
+    info( 'Seeding ' + str(k) + ' centroid(s)...');
     sql = '''    
-        INSERT INTO ''' + output_centroids + ''' (cid, position) 
-        SELECT 1, position::''' + madlib_schema + '''.SVEC 
-        FROM ''' + input_view + '''
+        INSERT INTO ''' + output_centroids + ''' (cid, coords) 
+        SELECT 1, coords::''' + madlib_schema + '''.SVEC 
+        FROM ''' + src_view + '''
         ORDER BY random() DESC 
         LIMIT 1
         ''';
     plpy.execute( sql);
 
-    # Find the remaining centroids
+    # Find remaining centroids
     i = 1
     while (i < k):
         i = i + 1;
         sql = '''
-            INSERT INTO ''' + output_centroids + ''' (cid, position) 
-            SELECT ''' + str(i) + ''', pt.position 
+            INSERT INTO ''' + output_centroids + ''' (cid, coords) 
+            SELECT ''' + str(i) + ''', pt.coords 
             FROM 
-                ''' + input_view + ''' pt,
+                ''' + src_view + ''' pt,
                 ( 
                 -- Q1: Find a random point
                 -- (that is furthest away from current Centroids)
                 --
-                SELECT p.pid, min( ''' + madlib_schema + '''.svec_l2norm(p.position - c.position)) * (random()^(0.2)) AS distance 
+                SELECT p.pid, min( ''' + madlib_schema + '.svec_l2norm(p.coords operator(''' + madlib_schema + '''.-) c.coords)) * (random()^(0.2)) AS distance 
                 FROM
-                    (SELECT position, pid FROM ''' + input_view + ''' ORDER BY random() LIMIT ''' + str(numCentroids) + ''') AS p -- K random points
+                    (SELECT coords, pid FROM ''' + src_view + ''' ORDER BY random() LIMIT ''' + str(numCentroids) + ''') AS p -- K random points
                     CROSS JOIN 
-                    (SELECT position FROM ''' + output_centroids + ''') AS c -- current centroids
+                    (SELECT coords FROM ''' + output_centroids + ''') AS c -- current centroids
                 GROUP BY p.pid ORDER BY distance DESC LIMIT 1
                 ) AS pc 
                 --
@@ -110,46 +113,53 @@ def __kmeans_init( madlib_schema, input_view, k):
             WHERE pc.pid = pt.pid
         ''';
         plpy.execute( sql);
-        # info( "Centroid " + str(i) + " seeded.");
 
     # Runtime evaluation
     end = datetime.datetime.now();
     minutes, seconds = divmod( (end - start).seconds, 60)
     microsec = (end - start).microseconds
     
-    if ('caller' in globals()):
-        # If called from KMEANS_RUN
-        if ( caller == 'kmeans_run'): return i;
-    else:
-        # If called directly
-        return '''        
-Finished seeding %d centroids for %s table/view.
-Time elapsed: %d minutes %d.%d seconds.
-    ''' % (i, input_view, minutes, seconds, microsec)
-
-
+    # Return # of created centroids
+    return i, microsec
+    
 # ----------------------------------------
 # Function to run the k-means algorithm
 # ----------------------------------------
-def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
+def kmeans( madlib_schema
+            , src_relation, src_col_data, src_col_id
+            , k, gof
+            , out_points, out_centroids, overwrite
+            , p_verbose):
+            
     """
     Executes the k-means clustering algorithm.
     
-    @param input_table Name of relation containing the input data points
+    XXX - to cleanup
+    
+    @param src_relation Name of relation containing the input data points
     @param k Number of centroids to generate
-    @param goodness Goodness of fit test flag (allowed values: 0,1)
+    @param gof Goodness of fit test flag (allowed values: 0,1)
     @param run_id Name/ID of the execution
     @param output_schema Target schema for the output tables.
     """
 
+    # Global variables
+    global verbose, output_points, output_centroids
+    verbose = p_verbose
+    output_points = out_points
+    output_centroids = out_centroids
+    
     # Record the time
     start = datetime.datetime.now()
 
     #
     # Adjustable Variables 	
     #
-    sampling = 1;               # if set to 1 core sampling is on otherwise algorithm will be executed on the full data set
-    sampling_size = 100;        # make the sample size sufficient to have at least 'sampling_size' elements from each cluster with p = .999
+    sampling = 1;               # If set to 1 core sampling is on otherwise 
+                                # algorithm will be executed on the full data set
+    sampling_size = 100;        # Make the sample size sufficient to have 
+                                # at least 'sampling_size' elements from each 
+                                # cluster with p = .999
     max_sample_size = 10000000; # maximum sample size 
     change_pct_limit = 0.001;   # % of points to change assigment
     max_iterations = 20;        # Maximum number of allowed iterations 
@@ -157,146 +167,151 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
     #
     # Non-Adjustable Variables 	
     #
-    p_count = 0;            # number of input points
-    c_count = 0;            # number of initial centroids
-    c_count_final = 0;      # number of final centroids
+    point_count = 0;        # number of input points
+    centr_count = 0;        # number of initial centroids
+    centr_final_count = 0;  # number of final centroids
     change_pct = [100.0];   # error array
     sample_size = 0;        # sample size - auto generated
+    used_sample_size = None;# used sample size 
     expand = 0;             # set to 1 if the k-means was executed on a sample set
     done = 0;               # loop control variable
     gfit = '';              # goodness of fit description
-         
+
+    info( 'Started K-means Clustering:')
+
     #   
     # Validate all parameters
     #
-    info( 'Started kmeans_run() with parameters:');
-
-    # Validate parameter: k (positive integer)
-    if not(k>0):
-        plpy.error( "number of centroids must a positive integer (" + str(k) + ")\n");
-    else:
-        info( ' * k = %s (number of centroids)' % k);
     
-    # Validate parameter: input_table
-    if ( input_table.find('.') < 0):
-        plpy.error( "input table/view is missing a schema prefix (" + input_table + ")\n");
-    else:
-        input_schemaname, input_tablename = input_table.split('.');
-    # Does it exist?
-    rv = plpy.execute( "SELECT count(*) as cnt FROM information_schema.columns WHERE "
-                       + "table_schema =" + quote_literal( input_schemaname) 
-                       + " AND table_name =" + quote_literal( input_tablename));
-    if (rv[0]['cnt'] == 0):
-        plpy.error( "input table/view does not exists (" + input_table + ")\n");
-    # Does it have PID column
-    rv = plpy.execute( "SELECT count(*) as cnt FROM information_schema.columns WHERE "
-                       + "table_schema = " + quote_literal( input_schemaname) 
-                       + " AND table_name = " + quote_literal( input_tablename) 
-                       + " AND column_name = 'pid'");
-    has_pid = 1;
-    if (rv[0]['cnt'] == 0):
+    # Validate: src_relation
+    try:
+        plpy.execute( "SELECT * FROM " + src_relation + " LIMIT 1")
+    except:
+        plpy.error( "source relation (%s) does not exist" % src_relation )
+    info( ' * src_relation = %s' % src_relation)
+
+    # Validate: src_col_data
+    try:
+        plpy.execute( "SELECT " + src_col_data + " FROM " + src_relation + " LIMIT 1")
+    except:
+        plpy.error( "data column (%s) not found in relation %s" 
+                    % (src_col_data, src_relation) )
+    info( ' * src_col_data = %s' % src_col_data)
+
+    # Validate: src_col_id
+    try:
+        plpy.execute( "SELECT " + src_col_id + " FROM " + src_relation + " LIMIT 1")
+        has_pid = 1
+        info( ' * src_col_id = %s' % (src_col_id) )
+    except:
         has_pid = 0
-    # Does it have POSITION column
-    rv = plpy.execute( "SELECT count(*) as cnt FROM information_schema.columns WHERE "
-                       + "table_schema = " + quote_literal( input_schemaname) 
-                       + " AND table_name = " + quote_literal( input_tablename) 
-                       + " AND column_name = 'position'");
-    if (rv[0]['cnt'] == 0):
-        plpy.error( "input table/view does not have a POSITION column (" + input_table + ")\n");
-    # Input table is OK
-    if (has_pid == 0):
-        plpy.info( ' * input_table = %s (missing PID column, so autogenerating one)' % input_table)
-    else:
-        info( ' * input_table = %s' % input_table)
-    input_table = quote_ident( input_schemaname) + '.' + quote_ident( input_tablename);
-    # But does it have more rows than requested number of centroids ?
-    rv = plpy.execute( "SELECT count(*) as cnt FROM " + input_table);
-    p_count = rv[0]['cnt'];
-    if (p_count == 0):
-        plpy.error( "input table is empty (" + input_table + ")\n");
-    elif (p_count <= k):
-        plpy.error( "input table has less points (" + str(p_count) + ") "
-                    + "than requested number of centroids (" + str(k) + ")\n");
-        
-    # Validate parameter: goodness
-    if (goodness == 1):
-        plpy.info( ' * goodness = %s (GOF test on)' % str(goodness));
-    elif (goodness == 0):
-        plpy.info( ' * goodness = %s (GOF test off)' % str(goodness));
-    else:
-        plpy.error( 'incorrect value for goodness: ' + str(goodness) + '\n');
-        
-    # Validate parameter: run_id
-    if (run_id == ''):
-        rv = plpy.execute( 'SELECT pg_backend_pid() as pid');
-        run_id = str( rv[0]['pid']);
-        info( ' * run_id = %s (autogenerated)' % run_id);
-    else:
-        info( ' * run_id = %s' % run_id);
+        info( ' * src_col_id = (not found, will auto-generate)')
 
-    # Validate parameter: output_schema
-    if (output_schema == ''):
-        output_schema = 'public'
-        info( ' * output_schema = %s' % output_schema);
+    # Validate: k (positive integer)
+    if not(k>0):
+        plpy.error( "number of centroids must be a positive integer (" + str(k) + ")")
     else:
-        rv = plpy.execute( "SELECT count(*) as cnt FROM pg_namespace WHERE nspname = '%s'" % output_schema);
-        if (rv[0]['cnt'] > 0):
-            info( ' * output_schema = %s' % output_schema);
+        info( ' * k = %s (number of centroids)' % k)
+
+    # # Validate: k (and number of input rows)
+    rv = plpy.execute( "SELECT count(*) as cnt FROM " + src_relation);
+    point_count = rv[0]['cnt'];
+    if (point_count == 0):
+        plpy.error( "source relation is empty (" + src_relation + ")");
+    elif (point_count < k):
+        plpy.error( "input table has less points (" + str(point_count) + ") "
+                    + "than requested number of clusters (" + str(k) + ")");
+        
+    # Validate: gof
+    if (gof == True):
+        info( ' * gof = %s (GOF test on)' % str(gof));
+    elif (gof == False):
+        info( ' * gof = %s (GOF test off)' % str(gof));
+    else:
+        plpy.error( 'incorrect value for gof: ' + str(gof) );
+        
+    # Validate: output_points
+    if overwrite == True:
+        __run_quietly( 'DROP TABLE IF EXISTS ' + output_points + ' CASCADE')
+    try:
+        sql = "CREATE TABLE " + output_points + " (" + \
+              " pid BIGINT," + \
+              " coords " + madlib_schema + ".SVEC," + \
+              " cid INT )";
+        __run_quietly( sql)
+    except:
+        plpy.error( "output table %s already exists\n" % output_points )
+    info( ' * output_points = %s' % output_points)
+
+    # Validate: output_centroids
+    if overwrite == True:
+        __run_quietly( 'DROP TABLE IF EXISTS ' + output_centroids + ' CASCADE')
+    try:
+        sql = "CREATE TABLE " + output_centroids + " (" \
+              + " cid INT," \
+              + " coords " + madlib_schema + ".SVEC )" 
+        __run_quietly( sql)
+    except:
+        if overwrite == True:
+            __run_quietly( 'DROP TABLE ' + output_centroids + ' CASCADE')
+            __run_quietly( sql)        
         else:
-            plpy.error( "output_schema does not exists (" + output_schema + ")\n");
+            plpy.error( "output table %s already exists\n" % output_centroids )
+    info( ' * output_centroids = %s' % output_centroids)
 
-    # Make sure input_table has PID column
-    input_view = madlib_schema + '.' + quote_ident( 'input_view_' + run_id);
-    input_type = madlib_schema + '.svec';
+    # Create a view with PID and COORDS columns
+    src_view = 'tmp_madlib_view_' + str(os.getpid());
+    src_type = madlib_schema + '.svec';
+    # Depending on existence of source ID column
     if (has_pid == 0):
-        # If PID column does not exist - auto generate the IDs        
-        rv = plpy.execute( "CREATE VIEW " + input_view + " AS SELECT row_number() over() as pid, position::" + input_type + " FROM " + input_table);  
+        # Generate a new one        
+        sql =   "CREATE VIEW " + src_view \
+                + " AS SELECT row_number() over() AS pid, " \
+                + src_col_data +  "::" + src_type + " AS coords" \
+                + " FROM " + src_relation 
+        __run_quietly( sql)
     else:
-        # If PID column exists, just cast position as svec
-	rv = plpy.execute("CREATE VIEW " + input_view + " AS SELECT pid, position::" + input_type + " FROM " + input_table);
-
-    # Global variables
-    global output_points, output_centroids
-
-    # Set Output tables 
-    output_points = quote_ident( output_schema) + '.' + quote_ident( 'kmeans_out_points_' + run_id);
-    output_centroids = quote_ident( output_schema) + '.' + quote_ident( 'kmeans_out_centroids_' + run_id);
-
+        # Use the current one
+        sql =   "CREATE VIEW " + src_view \
+                + " AS SELECT " + src_col_id + " as pid, " \
+                + src_col_data +  "::" + src_type + " AS coords" \
+                + " FROM " + src_relation
+        __run_quietly( sql)
+    
     # Initialize centroids
-    global caller;  # set variable to indicate that kmeans_init is called from kmeans_run
-    caller = 'kmeans_run';  # as above
-    c_count = __kmeans_init( madlib_schema, input_view, k);
-    if (c_count != k):
-        info( 'Requested %d centroids, but %d have been seeded.' % k, c_count);
+    centr_count, time_for_init = __init_plusplus( madlib_schema, src_view, src_col_data, src_col_id, k);
+    if (centr_count != k):
+        info( 'Requested %d centroids, but %d have been seeded.' % (k, centr_count) );
             
     # Calculate the sample size
     sample_size = min( int( sampling_size * floor( - log( 1 - pow( 0.999, 1/float(k))) * k)), max_sample_size);
 	
 	# Prepare either the sample or the full data set
-    plpy.execute( 'DROP TABLE IF EXISTS TempTable0');	    
+    __run_quietly( 'DROP TABLE IF EXISTS TempTable0');	    
     sql = '''
         CREATE TEMP TABLE TempTable0(
             pid BIGINT, 
-            position ''' + madlib_schema + '''.SVEC, 
+            coords ''' + madlib_schema + '''.SVEC, 
             cid INTEGER
         )
     ''';
-    plpy.execute( sql);
-    if (sampling == 1 and sample_size < p_count):
-        info( 'Using sample data set for analysis... (' + str(sample_size) + ' out of ' + str(p_count) + ' points)');
-        result_analysis = 'analysis based on a sample (' + str(sample_size) + ' out of ' + str(p_count) + ' points)'
+    __run_quietly( sql);
+    if (sampling == 1 and sample_size < point_count):
+        info( 'Using sample data set for analysis... (' + str(sample_size) + ' out of ' + str(point_count) + ' points)');
+        result_analysis = 'analysis based on a sample (' + str(sample_size) + ' out of ' + str(point_count) + ' points)'
         sql = '''
             INSERT INTO TempTable0 
-            SELECT pid, position, 0 FROM ''' + input_view + ''' 
+            SELECT pid, coords, 0 FROM ''' + src_view + ''' 
             ORDER BY random() 
             LIMIT ''' + str( sample_size);
         expand = 1;
+        used_sample_size = sample_size;
     else:
-        info( 'Using full data set for analysis (' + str(p_count) + ' points)');
-        result_analysis = 'analysis based on full data set (' + str(p_count) + ' points)'
+        info( 'Using full data set for analysis (' + str(point_count) + ' points)');
+        result_analysis = 'analysis based on full data set (' + str(point_count) + ' points)'
         sql = '''
             INSERT INTO TempTable0 
-            SELECT pid, position, 0 FROM ''' + input_view;
+            SELECT pid, coords, 0 FROM ''' + src_view;
         expand = 0;
     plpy.execute( sql);	    
 	
@@ -309,11 +324,11 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
         info( '...Iteration ' + str(i));
            
         # Create a temporary array of current cetroids
-        plpy.execute( 'DROP TABLE IF EXISTS ArrayOfCentroids');	
+        __run_quietly( 'DROP TABLE IF EXISTS ArrayOfCentroids');	
         sql = '''
             CREATE TEMP TABLE ArrayOfCentroids AS
             SELECT array( 
-                SELECT position 
+                SELECT coords 
                 FROM
                     (SELECT x FROM generate_series( 1, ''' + str(k) + ''') x) x 
                     LEFT OUTER JOIN ''' + output_centroids + ''' c
@@ -322,19 +337,19 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
                 LIMIT ''' + str(k) + '''
             ) as arr
         ''';
-        plpy.execute( sql);	    
+        __run_quietly( sql);	    
 		
 		# Create new temp table (i)
-        plpy.execute( 'DROP TABLE IF EXISTS TempTable' + str(i));
-        plpy.execute( 'CREATE TEMP TABLE TempTable' + str(i) + '(like TempTable' + str(i-1) + ')');
+        __run_quietly( 'DROP TABLE IF EXISTS TempTable' + str(i));
+        __run_quietly( 'CREATE TEMP TABLE TempTable' + str(i) + '(like TempTable' + str(i-1) + ')');
 
 		# For each point assign the closest centroid
         sql = '''
             INSERT INTO TempTable''' + str(i) + '''	
             SELECT
                 p.pid, 
-                p.position, 
-                ''' + madlib_schema + '''.__kmeans_closestID( p.position, arr.arr) as cid 
+                p.coords, 
+                ''' + madlib_schema + '''.__kmeans_closestID( p.coords, arr.arr) as cid 
             FROM 
                 TempTable''' + str(i-1) + ''' p CROSS JOIN ArrayOfCentroids arr
         ''';
@@ -344,11 +359,11 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
         plpy.execute( 'TRUNCATE TABLE ' + output_centroids);
         sql = '''
             INSERT INTO ''' + output_centroids + '''
-            SELECT t.cid, t.position 
+            SELECT t.cid, t.coords 
             FROM 
             (
                 SELECT 
-                    ''' + madlib_schema + '''.__kmeans_meanPosition( position) AS position
+                    ''' + madlib_schema + '''.__kmeans_meanPosition( coords) AS coords
                     , cid AS cid 
                 FROM TempTable''' + str(i) + ''' 
                 GROUP BY cid
@@ -367,21 +382,21 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
         rv = plpy.execute( sql);
         
 		# Drop previous temp table (i-1)
-        plpy.execute( 'DROP TABLE TempTable' + str(i-1));
+        __run_quietly( 'DROP TABLE TempTable' + str(i-1));
         
         # Add it to the tracking variable
-        if (i>1): change_pct.append( rv[0]['sum'] / p_count);
+        if (i>1): change_pct.append( rv[0]['sum'] / point_count);
 
         # Exit conditions:
         if (i>3) and (change_pct[i-4] - change_pct[i-1] < 0): 
             done = 1;
-            info( 'Exit reason: fraction of reassigned nodes has stabilized around ' + str(( change_pct[i-4] + change_pct[i-3] + change_pct[i-2] + change_pct[i-1]) / 4.0));            
+            info( 'Exit condition: fraction of reassigned nodes has stabilized around ' + str(( change_pct[i-4] + change_pct[i-3] + change_pct[i-2] + change_pct[i-1]) / 4.0));            
         elif (change_pct[i-1] < change_pct_limit):
             done = 1;
-            info( 'Exit reason: fraction of reassigned nodes is smaller than the limit: ' + str(change_pct_limit));
+            info( 'Exit condition: fraction of reassigned nodes is smaller than the limit: ' + str(change_pct_limit));
         elif (i==max_iterations):
             done = 1;
-            info( 'Exit reason: reached the maximum number of allowed iterations: ' + str(max_iterations));
+            info( 'Exit condition: reached the maximum number of allowed iterations: ' + str(max_iterations));
         
     # Main Loop - END
             
@@ -392,10 +407,10 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
             INSERT INTO ''' + output_points + '''	
             SELECT
                 p.pid, 
-                p.position, 
-                ''' + madlib_schema + '''.__kmeans_closestID( p.position, arr.arr) as cid 
+                p.coords, 
+                ''' + madlib_schema + '''.__kmeans_closestID( p.coords, arr.arr) as cid 
             FROM 
-                ''' + input_view + ''' p CROSS JOIN ArrayOfCentroids arr
+                ''' + src_view + ''' p CROSS JOIN ArrayOfCentroids arr
         ''';
     # Fill the output table
     else:
@@ -409,10 +424,10 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
     # Calculate Goodness of fit
     # This version uses sum( l2norm())/count(*)
     # It would be better to do sum( l2norm(p,c)) / max( avg(points) - point)
-    if (goodness==1):
+    if gof == True :
         info( 'Calculating goodness of fit...');
         sql = '''
-            SELECT sum( ''' + madlib_schema + '''.svec_l2norm(p.position - c.position)) / count(*) as gfit
+            SELECT sum( ''' + madlib_schema + '''.svec_l2norm(p.coords operator(''' + madlib_schema + '''.-) c.coords)) / count(*) as gfit
             FROM ''' + output_points + ''' p, ''' + output_centroids + ''' c
             WHERE p.cid = c.cid
         ''';
@@ -420,35 +435,30 @@ def kmeans_run( madlib_schema, input_table, k, goodness, run_id, output_schema):
         gfit = '%s' % rv[0]['gfit'];
     else:
         gfit = 'not computed';
-
+        
     # Count final number of centroids        
     rv = plpy.execute( 'SELECT count(*) as count FROM ' + output_centroids);
-    c_count_final = rv[0]['count'];
+    centr_final_count = rv[0]['count'];
         
     # Cleanup
     # if (has_pid == 0):
     # Drop the input view
-    rv = plpy.execute( "DROP VIEW " + input_view );  
+    rv = plpy.execute( "DROP VIEW " + src_view );  
 
     # Runtime evaluation
     end = datetime.datetime.now();
-    minutes, seconds = divmod( (end - start).seconds, 60)
-    microsec = (end - start).microseconds
+    #minutes, seconds = divmod( (end - start).seconds, 60)
+    #microsec = (end - start).microseconds
+    time_seconds = round( (end - start).microseconds / 100000.0, 3)
 
-    return '''
-K-Means Clustering has completed.
-Parameters:
- - k = %d (number of centroids)
- - input_table = %s
- - goodness = %d (GOF test on/off)
- - run_id = %s
- - output_schema = %s
-Results: 
- - %s
- - generated %s centroids (goodness of fit = %s)
- - table: %s
- - table: %s
-Time elapsed: %d minutes %d.%d seconds.
-    ''' % ( k, input_table, goodness, run_id, output_schema, 
-    result_analysis, c_count_final, gfit, output_centroids, output_points, 
-    minutes, seconds, microsec)
+    # Return output result
+    return ( 
+        src_relation,
+        point_count, 
+        centr_final_count, 
+        used_sample_size, 
+        gfit,
+        output_points, 
+        output_centroids,
+        time_seconds       
+    )

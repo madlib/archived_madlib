@@ -158,11 +158,11 @@ BEGIN
         RETURN null;
     END IF;
 
-    min_val = MADLIB_SCHEMA.svec_l2norm( p_point - p_centroids[1]);
+    min_val = MADLIB_SCHEMA.svec_l2norm( p_point operator(MADLIB_SCHEMA.-) p_centroids[1]);
 
     FOR i IN 2..array_upper( p_centroids, 1) 
     LOOP
-        temp_val = MADLIB_SCHEMA.svec_l2norm( p_point - p_centroids[i]);
+        temp_val = MADLIB_SCHEMA.svec_l2norm( p_point operator(MADLIB_SCHEMA.-) p_centroids[i]);
         IF ( temp_val < coalesce( min_val, temp_val + 1) ) THEN
             min_val = temp_val;
             minCID = i;
@@ -198,7 +198,7 @@ DECLARE
 BEGIN
     new_location = MADLIB_SCHEMA.SVEC_concat($2,MADLIB_SCHEMA.SVEC_cast_float8(1.0));
     IF ($1 IS NOT NULL) THEN
-        new_location = $1 + new_location;
+        new_location = $1 operator(MADLIB_SCHEMA.+) new_location;
     END IF;
     RETURN new_location;
 END
@@ -235,6 +235,40 @@ CREATE AGGREGATE MADLIB_SCHEMA.__kmeans_meanPosition( MADLIB_SCHEMA.SVEC )
 );
 
 /**
+ * @internal
+ * @brief Data domain for goodness of fit: <0.0,1.0>
+ */
+CREATE DOMAIN MADLIB_SCHEMA.gof AS FLOAT
+CHECK(
+   VALUE >= 0.0 AND VALUE <= 1.0
+);
+
+/**
+ * @internal
+ * @brief Data domain for percent: <0.0,100.0>
+ */
+CREATE DOMAIN MADLIB_SCHEMA.percent AS FLOAT
+CHECK(
+   VALUE >= 0.0 AND VALUE <= 100.0
+);
+
+/**
+ * @internal
+ * @brief Kmeans result data type
+ */
+DROP TYPE IF EXISTS MADLIB_SCHEMA.kmeans_result;
+CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
+    src_relation    TEXT,
+    points          BIGINT,
+    clusters        BIGINT,
+    sample_size     MADLIB_SCHEMA.percent,
+    gof             MADLIB_SCHEMA.gof,
+    out_points      TEXT,
+    out_centorids   TEXT,
+    time_seconds    FLOAT
+);
+
+/**
  * @brief Compute a k-means clustering
  *
  * @param input_table Name of relation containing the input data points
@@ -249,13 +283,29 @@ CREATE AGGREGATE MADLIB_SCHEMA.__kmeans_meanPosition( MADLIB_SCHEMA.SVEC )
  * @sa This function is a wrapper for kmeans::kmeans()
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans( 
-  input_table text, k int, goodness int, run_id text, output_schema text
-) RETURNS text
+--  input_table text, k int, goodness int, run_id text, output_schema text
+  src_relation TEXT
+  , src_col_data TEXT
+  , src_col_id TEXT
+  , k INT 
+  , gof BOOLEAN 
+  , out_points TEXT 
+  , out_centroids TEXT
+  , overwrite BOOLEAN
+  , verbose BOOLEAN
+) 
+RETURNS MADLIB_SCHEMA.kmeans_result
 AS $$
 
     PythonFunctionBodyOnly(`kmeans', `kmeans')
     
     # MADlibSchema comes from PythonFunctionBodyOnly
-    return kmeans.kmeans_run( MADlibSchema, input_table, k, goodness, run_id, output_schema);
+    return kmeans.kmeans( 
+        MADlibSchema
+        , src_relation, src_col_data, src_col_id
+        , k, gof
+        , out_points, out_centroids, overwrite
+        , verbose
+    );
 
 $$ LANGUAGE plpythonu;
