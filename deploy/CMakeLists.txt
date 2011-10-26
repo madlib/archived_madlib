@@ -15,16 +15,12 @@ elseif(UNIX)
     )
 endif()
 
+OPTION(GPPKG_BUILD "Enable gppkg build" OFF)
+
 set(LAPACK_VERSION "3.0")
 set(LAPACK_RELEASE "37")
 set(BLAS_VERSION "3.0")
 set(BLAS_RELEASE "37")
-
-set(LAPACK_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/50/x86_64/SL/lapack-${LAPACK_VERSION}-${LAPACK_RELEASE}.el5.x86_64.rpm")
-set(BLAS_URL "ftp://ftp.sunet.se/pub/Linux/distributions/scientific/54/x86_64/SL/blas-${BLAS_VERSION}-${BLAS_RELEASE}.el5.x86_64.rpm")
-
-OPTION(GPPKG_BUILD "Enable gppkg build" OFF)
-
 
 # -- General settings for all/multiple packages generators ---------------------
 
@@ -35,10 +31,8 @@ else(PACKAGE_SUFFIX)
 endif(PACKAGE_SUFFIX)
 
 set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/description.txt")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
-    "Open-Source Library for Scalable in-Database Analytics")
-set(CPACK_PACKAGE_FILE_NAME
-    "madlib${_PACKAGE_SUFFIX}-${MADLIB_VERSION_STRING}-${CMAKE_SYSTEM_NAME}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY  "Open-Source Library for Scalable in-Database Analytics")
+set(CPACK_PACKAGE_FILE_NAME "madlib${_PACKAGE_SUFFIX}-${MADLIB_VERSION_STRING}-${CMAKE_SYSTEM_NAME}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "madlib")
 set(CPACK_PACKAGE_NAME "MADlib${_PACKAGE_SUFFIX}")
 set(CPACK_PACKAGE_VENDOR "MADlib")
@@ -47,20 +41,13 @@ set(CPACK_PACKAGE_VERSION_MAJOR ${MADLIB_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${MADLIB_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 
+
 # CPACK_PACKAGING_INSTALL_PREFIX has to be set in the generator-specific
 # section!
 
 # -- Set settings for specific package generators ------------------------------
 
 if(GPPKG_BUILD)
-    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deploy/lapack.rpm)
-        FILE(DOWNLOAD ${LAPACK_URL} ${CMAKE_SOURCE_DIR}/deploy/lapack.rpm)
-    endif()
-
-    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deploy/blas.rpm)
-        FILE(DOWNLOAD ${BLAS_URL} ${CMAKE_SOURCE_DIR}/deploy/blas.rpm)
-    endif()
-
     add_custom_target(gppkg 
                       COMMAND make package 
                       COMMAND cp -rf ${CMAKE_SOURCE_DIR}/deploy/package .
@@ -76,20 +63,22 @@ if(GPPKG_BUILD)
                      )   
 
     add_custom_target(lapack_rpm
-                      COMMAND cp ${CMAKE_SOURCE_DIR}/deploy/lapack.rpm .
-                      COMMAND rpm2cpio lapack.rpm | cpio -divu
+                      COMMAND rm -rf lib
+                      COMMAND mkdir lib
+                      COMMAND cp /usr/lib/liblapack.so* lib/
                       COMMAND rm -rf SPECS RPMS BUILD
-                      COMMAND mkdir BUILD SPECS RPMS 
+                      COMMAND mkdir  SPECS RPMS BUILD
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/lapack.spec SPECS/
                       COMMAND rpmbuild -bb SPECS/lapack.spec --define "lapackver ${LAPACK_VERSION}" --define "lapackrel ${LAPACK_RELEASE}"
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/lapack*.rpm .
                      )
 
     add_custom_target(blas_rpm
-                      COMMAND cp ${CMAKE_SOURCE_DIR}/deploy/blas.rpm .
-                      COMMAND rpm2cpio blas.rpm | cpio -divu
+                      COMMAND rm -rf lib
+                      COMMAND mkdir lib
+                      COMMAND cp /usr/lib/libblas.so* lib/
                       COMMAND rm -rf SPECS RPMS BUILD
-                      COMMAND mkdir SPECS RPMS BUILD
+                      COMMAND mkdir  SPECS RPMS BUILD
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/blas.spec SPECS/
                       COMMAND rpmbuild -bb SPECS/blas.spec --define "blasver ${BLAS_VERSION}" --define "blasrel ${BLAS_RELEASE}"
                       COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/blas*.rpm . 
