@@ -15,8 +15,6 @@ elseif(UNIX)
     )
 endif()
 
-OPTION(GPPKG_BUILD "Enable gppkg build" OFF)
-
 set(LAPACK_VERSION "3.0")
 set(LAPACK_RELEASE "37")
 set(BLAS_VERSION "3.0")
@@ -47,49 +45,9 @@ set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 
 # -- Set settings for specific package generators ------------------------------
 
-if(GPPKG_BUILD)
-    add_custom_target(gppkg 
-                      COMMAND make package 
-                      COMMAND cp -rf ${CMAKE_SOURCE_DIR}/deploy/package .
-                      COMMAND rm -rf package/gppkg/deps
-                      COMMAND mkdir package/gppkg/deps
-                      COMMAND mv lapack-*-*.rpm package/gppkg/deps/
-                      COMMAND mv blas-*-*.rpm package/gppkg/deps/
-                      COMMAND cp ${CMAKE_SOURCE_DIR}/build/madlib-*.rpm package/gppkg/
-                      COMMAND sed -i".bk" 's/os/${CMAKE_SYSTEM_NAME}/g' package/gppkg/gppkg_spec.yml
-                      COMMAND rm -f package/gppkg/gppkg_spec.yml.bk
-                      COMMAND gppkg --build package/gppkg 
-                      COMMAND mv *.gppkg ${CMAKE_SOURCE_DIR}/build
-                     )   
-
-    add_custom_target(lapack_rpm
-                      COMMAND rm -rf lib
-                      COMMAND mkdir lib
-                      COMMAND cp /usr/lib/liblapack.so* lib/
-                      COMMAND rm -rf SPECS RPMS BUILD
-                      COMMAND mkdir  SPECS RPMS BUILD
-                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/lapack.spec SPECS/
-                      COMMAND rpmbuild -bb SPECS/lapack.spec --define "lapackver ${LAPACK_VERSION}" --define "lapackrel ${LAPACK_RELEASE}"
-                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/lapack*.rpm .
-                     )
-
-    add_custom_target(blas_rpm
-                      COMMAND rm -rf lib
-                      COMMAND mkdir lib
-                      COMMAND cp /usr/lib/libblas.so* lib/
-                      COMMAND rm -rf SPECS RPMS BUILD
-                      COMMAND mkdir  SPECS RPMS BUILD
-                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/deploy/SPECS/blas.spec SPECS/
-                      COMMAND rpmbuild -bb SPECS/blas.spec --define "blasver ${BLAS_VERSION}" --define "blasrel ${BLAS_RELEASE}"
-                      COMMAND cp -f ${CMAKE_SOURCE_DIR}/build/deploy/RPMS/*/blas*.rpm . 
-                     )
-
-    add_dependencies(gppkg lapack_rpm blas_rpm)
-endif()
-
 add_subdirectory(PackageMaker)
 add_subdirectory(RPM)
-
+add_subdirectory(package)   #gppkg
 
 # -- Finally do the packaging! -------------------------------------------------
 
