@@ -659,24 +659,28 @@ def main(argv):
   
 """)
             
-    parser.add_argument('command', metavar='COMMAND', nargs=1, 
-                         choices=['install','update','uninstall','version','install-check'], 
-                         help = "One of the following options:\n"
-                              + "  install/update : run sql scripts to load into DB\n"
-                              + "  uninstall      : run sql scripts to uninstall from DB\n"
-                              + "  version        : compare and print MADlib version (binaries vs database objects)\n"
-                              + "  install-check  : test all installed modules\n")
+    parser.add_argument(
+        'command', metavar='COMMAND', nargs=1, 
+        choices=['install','update','uninstall','reinstall','version','install-check'], 
+        help = "One of the following options:\n"
+            + "  install/update : run sql scripts to load into DB\n"
+            + "  uninstall      : run sql scripts to uninstall from DB\n"
+            + "  reinstall      : performs uninstall and install\n"
+            + "  version        : compare and print MADlib version (binaries vs database objects)\n"
+            + "  install-check  : test all installed modules\n"
+    )
   
-    parser.add_argument('-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
-                         help= "Connection string of the following syntax:\n"
-                             + "  [user[/password]@][host][:port][/database]\n" 
-                             + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
-                             + "- user: PGUSER or USER env variable or OS username\n"
-                             + "- pass: PGPASSWORD env variable or runtime prompt\n"
-                             + "- host: PGHOST env variable or 'localhost'\n"
-                             + "- port: PGPORT env variable or '5432'\n"
-                             + "- db: PGDATABASE env variable or OS username\n"
-                             )
+    parser.add_argument(
+        '-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
+        help= "Connection string of the following syntax:\n"
+            + "  [user[/password]@][host][:port][/database]\n" 
+            + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
+            + "- user: PGUSER or USER env variable or OS username\n"
+            + "- pass: PGPASSWORD env variable or runtime prompt\n"
+            + "- host: PGHOST env variable or 'localhost'\n"
+            + "- port: PGPORT env variable or '5432'\n"
+            + "- db: PGDATABASE env variable or OS username\n"
+            )
 
     parser.add_argument('-s', '--schema', nargs=1, dest='schema', 
                          metavar='SCHEMA', default='madlib',
@@ -802,40 +806,23 @@ def main(argv):
         if not con_args:
             __error("Unknown problem with database connection string: %s" % con_args, True)
    
-
     ###
     # COMMAND: version
     ###
     if args.command[0] == 'version':
 
         __print_revs(rev, dbrev, con_args, schema)
-        
+                
     ###
-    # COMMAND: install/update
+    # COMMAND: uninstall/reinstall 
     ###
-    elif args.command[0] == 'install' or args.command[0] == 'update':
-        
-        # 1) Compare OS and DB versions. Continue if OS > DB.
-        __print_revs(rev, dbrev, con_args, schema)
-        if __get_rev_num(dbrev) >= __get_rev_num(rev):
-            __info("Current MADlib version already up to date.", True)
-            return
-
-        # 2) Run installation 
-        try:
-            __plpy_check(py_min_ver)
-            __db_install(schema, dbrev)
-        except:
-            __error("MADlib installation failed.", True)
-
-    ###
-    # COMMAND: uninstall (drops the schema)
-    ###
-    if args.command[0] == 'uninstall':
+    if args.command[0] == 'uninstall' or args.command[0] == 'reinstall':
 
         if __get_rev_num(dbrev) == ['0']:
             __info("Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
             return
+
+        __info("*** Uninstalling MADlib ***", True)
 
         __info("***************************************************************************", True)
         __info("* Schema %s and all database objects depending on it will be dropped!" % schema.upper(), True)
@@ -863,6 +850,33 @@ def main(argv):
             
         else:
             return
+
+    ###
+    # COMMAND: install/update/reinstall
+    ###
+    if ( args.command[0] == 'install' 
+         or args.command[0] == 'update'
+         or args.command[0] == 'reinstall'):
+        
+        # Refresh MADlib version in DB
+        if args.command[0] == 'reinstall': 
+            dbrev = __get_madlib_dbver(schema)
+            print ""
+
+        __info("*** Installing MADlib ***", True)
+        
+        # 1) Compare OS and DB versions. Continue if OS > DB.
+        __print_revs(rev, dbrev, con_args, schema)
+        if __get_rev_num(dbrev) >= __get_rev_num(rev):
+            __info("Current MADlib version already up to date.", True)
+            return
+
+        # 2) Run installation 
+        try:
+            __plpy_check(py_min_ver)
+            __db_install(schema, dbrev)
+        except:
+            __error("MADlib installation failed.", True)
            
     ###
     # COMMAND: install-check
@@ -893,7 +907,7 @@ def main(argv):
         __info("> Running test scripts for:", verbose)   
         
         # Loop through all modules 
-        for moduleinfo in portspecs['modules']:    
+        for moduleinfo in portspecs['modules']:
         
             # Get module name
             module = moduleinfo['name']
