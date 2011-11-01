@@ -15,10 +15,6 @@ elseif(UNIX)
     )
 endif()
 
-set(LAPACK_VERSION "3.0")
-set(LAPACK_RELEASE "37")
-set(BLAS_VERSION "3.0")
-set(BLAS_RELEASE "37")
 
 # -- General settings for all/multiple packages generators ---------------------
 
@@ -29,8 +25,10 @@ else(PACKAGE_SUFFIX)
 endif(PACKAGE_SUFFIX)
 
 set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/description.txt")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY  "Open-Source Library for Scalable in-Database Analytics")
-set(CPACK_PACKAGE_FILE_NAME "madlib${_PACKAGE_SUFFIX}-${MADLIB_VERSION_STRING}-${CMAKE_SYSTEM_NAME}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY 
+    "Open-Source Library for Scalable in-Database Analytics")
+set(CPACK_PACKAGE_FILE_NAME 
+    "madlib${_PACKAGE_SUFFIX}-${MADLIB_VERSION_STRING}-${CMAKE_SYSTEM_NAME}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "madlib")
 set(CPACK_PACKAGE_NAME "MADlib${_PACKAGE_SUFFIX}")
 set(CPACK_PACKAGE_VENDOR "MADlib")
@@ -39,7 +37,6 @@ set(CPACK_PACKAGE_VERSION_MAJOR ${MADLIB_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${MADLIB_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 
-
 # CPACK_PACKAGING_INSTALL_PREFIX has to be set in the generator-specific
 # section!
 
@@ -47,7 +44,7 @@ set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 
 add_subdirectory(PackageMaker)
 add_subdirectory(RPM)
-add_subdirectory(package)   #gppkg
+add_subdirectory(gppkg) 
 
 # -- Finally do the packaging! -------------------------------------------------
 
