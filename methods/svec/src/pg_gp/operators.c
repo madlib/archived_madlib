@@ -1846,3 +1846,72 @@ Datum svec_hash( PG_FUNCTION_ARGS)
 	PG_RETURN_INT32(hash);
 }
 
+/**
+ *  svec_avg_transition (svec, svec):
+ *
+ *		Adds 2nd svec (n-dim) to the 1st one (element-wise) 
+ *		and increments the last element (n+1) of the first svec 
+ */
+PG_FUNCTION_INFO_V1( svec_avg_transition );
+Datum svec_avg_transition(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	
+	/* Test the input */
+	if (IS_SCALAR(svec1)) {
+		/*
+		 * If the left argument is {1}:{0}, this is the first call to 
+		 * the routine, and we need to initiate the state vector
+		 * with the number of dimensions from the 2nd arg + 1 (for the counter).
+		 */
+		double * left_vals = (double *)(left->vals->data);
+		if (left_vals[0] == 0)
+			left = makeSparseDataFromDouble(0.,right->total_value_count+1);
+	} else {
+		/*
+		 * This is not a first call so make sure: dim1 == dim2 + 1;
+		 */
+		if ((!IS_SCALAR(svec1)) &&
+			(!IS_SCALAR(svec2)) &&
+			(svec1->dimension != (svec2->dimension+1))) {
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("%s: input dimensions should be dim1=dim2+1, but are: dim1=%d, dim2=%d\n",
+							"svec_avg_transition", svec1->dimension, svec2->dimension)));
+		}
+	}
+
+	/* Make the transition */
+	SparseData sdata_result = op_sdata_by_sdata( add, left,
+												 concat(right, makeSparseDataFromDouble(1.,1))
+												);
+	
+	/* Create the output SVEC */
+	PG_RETURN_SVECTYPE_P( svec_from_sparsedata(sdata_result,true));
+	
+}
+
+/**
+ *  svec_avg_final (svec):
+ *
+ *		Divides all elements of the input SVEC by its last element
+ *		and returns n-1 element SVEC 
+ */
+PG_FUNCTION_INFO_V1( svec_avg_final );
+Datum svec_avg_final( PG_FUNCTION_ARGS)
+{
+	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
+	SparseData sdata = sdata_from_svec(svec);	
+	
+	/* Find svec size and divisor */
+	int n = svec->dimension;
+	double *div = (double *)(sdata->vals->data);  
+	
+	/* Divide */
+	op_sdata_by_scalar_inplace( 3, (char *)&div[n-1], sdata, 2);
+	
+	PG_RETURN_SVECTYPE_P( svec_from_sparsedata( subarr( sdata, 1, n-1), true));	
+}
