@@ -115,7 +115,7 @@ def __init_plusplus( madlib_schema, src_view, src_col_data, src_col_id, k):
 # ----------------------------------------
 def kmeans( madlib_schema
             , src_relation, src_col_data, src_col_id
-            , k, gof
+            , k, max_iter, gof
             , out_points, out_centroids, overwrite
             , p_verbose):
             
@@ -141,7 +141,12 @@ def kmeans( madlib_schema
                                 # cluster with p = .999
     max_sample_size = 10000000; # maximum sample size 
     change_pct_limit = 0.001;   # % of points to change assigment
-    max_iterations = 20;        # Maximum number of allowed iterations 
+    
+    # Maximum number of iterations
+    if max_iter > 0:
+        max_iterations = max_iter;        
+    else:
+        max_iterations = 0;     
 
     #
     # Non-Adjustable Variables 	
@@ -374,9 +379,9 @@ def kmeans( madlib_schema
         elif (change_pct[i-1] < change_pct_limit):
             done = 1;
             info( 'Exit condition: fraction of reassigned nodes is smaller than the limit: ' + str(change_pct_limit));
-        elif (i==max_iterations):
+        elif (i == max_iterations):
             done = 1;
-            info( 'Exit condition: reached the maximum number of allowed iterations: ' + str(max_iterations));
+            info( 'Exit condition: reached maximum number of iterations = ' + str(max_iterations));
         
     # Main Loop - END
             
@@ -402,14 +407,25 @@ def kmeans( madlib_schema
     plpy.execute( sql);	  
             
     # Calculate Goodness of fit
-    # This version uses sum( l2norm())/count(*)
-    # It would be better to do sum( l2norm(p,c)) / max( avg(points) - point)
+    # Defined as = (BaseFit - ModelFit) / BaseFit
+    # where: BaseFit = sum( l2norm( p, avg(p)) 
+    #        ModelFit = sum( l2nrm( p, c)
+    # Previous method:  sum( l2norm(p,c)) / count(*)
+    # Suggested by Eugene:  sum( l2norm(p,c)) / max( avg(p) - p)
     if gof == True :
         info( 'Calculating goodness of fit...');
         sql = '''
-            SELECT sum( ''' + madlib_schema + '''.svec_l2norm(p.coords operator(''' + madlib_schema + '''.-) c.coords)) / count(*) as gfit
-            FROM ''' + output_points + ''' p, ''' + output_centroids + ''' c
-            WHERE p.cid = c.cid
+            SELECT ( BaseFit - ModelFit) / BaseFit as gfit
+            FROM
+                (
+                SELECT 
+                    sum( ''' + madlib_schema + '''.svec_l2norm( p.coords operator(''' + madlib_schema + '''.-) c.coords)) as ModelFit
+                    , sum( ''' + madlib_schema + '''.svec_l2norm( p.coords operator(''' + madlib_schema + '''.-) a.mean)) as BaseFit
+                FROM 
+                    ''' + output_points + ''' p, ''' + output_centroids + ''' c
+                    , (SELECT ''' + madlib_schema + '''.avg(coords) as mean FROM ''' + output_points + ''') a
+                WHERE p.cid = c.cid
+                ) x
         ''';
         rv = plpy.execute( sql);
         gfit = '%s' % rv[0]['gfit'];
@@ -420,8 +436,6 @@ def kmeans( madlib_schema
     rv = plpy.execute( 'SELECT count(*) as count FROM ' + output_centroids);
     centr_final_count = rv[0]['count'];
         
-    # Cleanup
-    # if (has_pid == 0):
     # Drop the input view
     rv = plpy.execute( "DROP VIEW " + src_view );  
 
@@ -430,6 +444,7 @@ def kmeans( madlib_schema
         src_relation,
         point_count, 
         centr_final_count, 
+        i,
         (used_sample_size*100.0)/point_count, 
         gfit,
         output_points, 
