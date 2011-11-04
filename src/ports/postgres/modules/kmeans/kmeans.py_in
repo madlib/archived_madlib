@@ -62,16 +62,9 @@ def __init_plusplus( madlib_schema, src_view, src_col_data, src_col_id, k):
     """
     Creates the initial set of centroids.
 
-    XXX - to cleanup
-
-    @param madlib_schema MADlib objects schema
-    @param src_view Name of relation containing the input data points
-    @param k Number of centroids to generate
+    XXX - add parameters info
     """
 	
-    # Record the time
-    start = datetime.datetime.now();
-            
     # Find how many points we need to look through to be 99.9% sure that
     # we have seen a point from each cluster 
     numCentroids = floor( - log( 1 - pow( 0.999, 1/float(k))) * k);
@@ -114,13 +107,8 @@ def __init_plusplus( madlib_schema, src_view, src_col_data, src_col_id, k):
         ''';
         plpy.execute( sql);
 
-    # Runtime evaluation
-    end = datetime.datetime.now();
-    minutes, seconds = divmod( (end - start).seconds, 60)
-    microsec = (end - start).microseconds
-    
     # Return # of created centroids
-    return i, microsec
+    return i
     
 # ----------------------------------------
 # Function to run the k-means algorithm
@@ -134,13 +122,7 @@ def kmeans( madlib_schema
     """
     Executes the k-means clustering algorithm.
     
-    XXX - to cleanup
-    
-    @param src_relation Name of relation containing the input data points
-    @param k Number of centroids to generate
-    @param gof Goodness of fit test flag (allowed values: 0,1)
-    @param run_id Name/ID of the execution
-    @param output_schema Target schema for the output tables.
+    XXX - add parameters info
     """
 
     # Global variables
@@ -149,9 +131,6 @@ def kmeans( madlib_schema
     output_points = out_points
     output_centroids = out_centroids
     
-    # Record the time
-    start = datetime.datetime.now()
-
     #
     # Adjustable Variables 	
     #
@@ -177,7 +156,7 @@ def kmeans( madlib_schema
     done = 0;               # loop control variable
     gfit = '';              # goodness of fit description
 
-    info( 'Started K-means Clustering:')
+    info( 'Started K-means clustering:')
 
     #   
     # Validate all parameters
@@ -279,7 +258,7 @@ def kmeans( madlib_schema
         __run_quietly( sql)
     
     # Initialize centroids
-    centr_count, time_for_init = __init_plusplus( madlib_schema, src_view, src_col_data, src_col_id, k);
+    centr_count = __init_plusplus( madlib_schema, src_view, src_col_data, src_col_id, k);
     if (centr_count != k):
         info( 'Requested %d centroids, but %d have been seeded.' % (k, centr_count) );
             
@@ -313,6 +292,7 @@ def kmeans( madlib_schema
             INSERT INTO TempTable0 
             SELECT pid, coords, 0 FROM ''' + src_view;
         expand = 0;
+        used_sample_size = 0;
     plpy.execute( sql);	    
 	
     # Main Loop
@@ -349,7 +329,7 @@ def kmeans( madlib_schema
             SELECT
                 p.pid, 
                 p.coords, 
-                ''' + madlib_schema + '''.__kmeans_closestID( p.coords, arr.arr) as cid 
+                ''' + madlib_schema + '''.internal_kmeans_closest_cid( p.coords, arr.arr) as cid 
             FROM 
                 TempTable''' + str(i-1) + ''' p CROSS JOIN ArrayOfCentroids arr
         ''';
@@ -363,7 +343,7 @@ def kmeans( madlib_schema
             FROM 
             (
                 SELECT 
-                    ''' + madlib_schema + '''.__kmeans_meanPosition( coords) AS coords
+                    ''' + madlib_schema + '''.avg( coords) AS coords
                     , cid AS cid 
                 FROM TempTable''' + str(i) + ''' 
                 GROUP BY cid
@@ -408,7 +388,7 @@ def kmeans( madlib_schema
             SELECT
                 p.pid, 
                 p.coords, 
-                ''' + madlib_schema + '''.__kmeans_closestID( p.coords, arr.arr) as cid 
+                ''' + madlib_schema + '''.internal_kmeans_closest_cid( p.coords, arr.arr) as cid 
             FROM 
                 ''' + src_view + ''' p CROSS JOIN ArrayOfCentroids arr
         ''';
@@ -445,20 +425,13 @@ def kmeans( madlib_schema
     # Drop the input view
     rv = plpy.execute( "DROP VIEW " + src_view );  
 
-    # Runtime evaluation
-    end = datetime.datetime.now();
-    #minutes, seconds = divmod( (end - start).seconds, 60)
-    #microsec = (end - start).microseconds
-    time_seconds = round( (end - start).microseconds / 100000.0, 3)
-
     # Return output result
     return ( 
         src_relation,
         point_count, 
         centr_final_count, 
-        used_sample_size, 
+        (used_sample_size*100.0)/point_count, 
         gfit,
         output_points, 
         output_centroids,
-        time_seconds       
     )

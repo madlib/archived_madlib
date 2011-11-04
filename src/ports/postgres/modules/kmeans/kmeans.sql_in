@@ -142,7 +142,7 @@ INFO: Calculating goodness of fit...
  * Support function: takes a single SVEC (A) and an array of SVECs (B)
  * and returns the index of (B) with the shortest distance to (A).
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_closestID( 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_closest_cid( 
     p_point MADLIB_SCHEMA.SVEC, p_centroids MADLIB_SCHEMA.SVEC[]
 ) 
 RETURNS INTEGER
@@ -173,74 +173,14 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
--- Finalize function for _kmeans_meanPosition() aggregate.
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_mean_finalize( p_centroid MADLIB_SCHEMA.SVEC) 
-RETURNS MADLIB_SCHEMA.SVEC AS $$
-DECLARE
-    new_location FLOAT[];
-    new_location2 FLOAT[];
-    sum FLOAT;
-BEGIN
-    new_location = MADLIB_SCHEMA.SVEC_return_array(p_centroid);
-    sum = new_location[array_upper(new_location, 1)];
-    FOR i in 1..(array_upper(new_location, 1)-1) LOOP
-        new_location2[i] = new_location[i]/sum;
-    END LOOP;
-    RETURN MADLIB_SCHEMA.SVEC_cast_float8arr(new_location2);
-END
-$$ LANGUAGE plpgsql;
-
--- Sfunc function for _kmeans_meanPosition() aggregate.
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_mean_product(MADLIB_SCHEMA.SVEC, MADLIB_SCHEMA.SVEC) 
-RETURNS MADLIB_SCHEMA.SVEC AS $$
-DECLARE
-    new_location MADLIB_SCHEMA.SVEC;
-BEGIN
-    new_location = MADLIB_SCHEMA.SVEC_concat($2,MADLIB_SCHEMA.SVEC_cast_float8(1.0));
-    IF ($1 IS NOT NULL) THEN
-        new_location = $1 operator(MADLIB_SCHEMA.+) new_location;
-    END IF;
-    RETURN new_location;
-END
-$$ LANGUAGE plpgsql;
-
--- Prefunc function for _kmeans_meanPosition() aggregate.
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_mean_aggr( 
- MADLIB_SCHEMA.SVEC, MADLIB_SCHEMA.SVEC
-) RETURNS MADLIB_SCHEMA.SVEC AS $$
-DECLARE
-BEGIN
-    IF (($1 IS NOT NULL) AND ($2 IS NOT NULL)) THEN
-        RETURN $1 + $2;
-    END IF;
-    IF ($1 IS NOT NULL) THEN
-        RETURN $1;
-    END IF;
-    IF ($2 IS NOT NULL) THEN
-        RETURN $2;
-    END IF;
-END
-$$ LANGUAGE plpgsql;
-
-/**
- * @internal
- * @brief Compute a mean position for a set of SVECs.
- */
-CREATE AGGREGATE MADLIB_SCHEMA.__kmeans_meanPosition( MADLIB_SCHEMA.SVEC ) 
-(
-  stype = MADLIB_SCHEMA.SVEC,
-  sfunc = MADLIB_SCHEMA.__kmeans_mean_product,
-  m4_ifdef(`GREENPLUM',`prefunc = MADLIB_SCHEMA.__kmeans_mean_aggr,')
-  finalfunc = MADLIB_SCHEMA.__kmeans_mean_finalize
-);
-
 /**
  * @internal
  * @brief Data domain for goodness of fit: <0.0,1.0>
  */
 CREATE DOMAIN MADLIB_SCHEMA.gof AS FLOAT
 CHECK(
-   VALUE >= 0.0 AND VALUE <= 1.0
+   ( VALUE >= 0.0 AND VALUE <= 1.0 )
+   OR VALUE is NULL
 );
 
 /**
@@ -259,25 +199,27 @@ CHECK(
 DROP TYPE IF EXISTS MADLIB_SCHEMA.kmeans_result;
 CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
     src_relation    TEXT,
-    points          BIGINT,
-    clusters        BIGINT,
+    point_count     BIGINT,
+    k               BIGINT,
     sample_size     MADLIB_SCHEMA.percent,
     gof             MADLIB_SCHEMA.gof,
     out_points      TEXT,
-    out_centorids   TEXT,
-    time_seconds    FLOAT
+    out_centorids   TEXT
 );
 
 /**
  * @brief Compute a k-means clustering
  *
- * @param input_table Name of relation containing the input data points
+ * @param src_relation Name of relation containing the input data 
+ * @param src_col_data Name of the column containing the point coordinates 
+ * @param src_col_id Name of the column containing the point ids (optional)
  * @param k Number of centroids to generate
- * @param goodness Goodness of fit test flag (allowed values: 0, 1)
- * @param run_id Name/ID of the execution
- * @param output_schema Target schema for the output tables
- * @return Textual summary of the algorithm run, including the names of the
- *     created tables and run time statistics
+ * @param gof Goodness of fit test flag 
+ * @param out_points Output relation for point/centroids assignments
+ * @param out_centroids Output relation for list of centroids 
+ * @param overwrite Overwrite target relations (if exist)
+ * @param verbose Generate detailed info during execution.
+ * @return kmeans_result Summary result set
  *
  * @internal
  * @sa This function is a wrapper for kmeans::kmeans()
