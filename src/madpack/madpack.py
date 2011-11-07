@@ -1026,3 +1026,5 @@ if __name__ == "__main__":
     # Optional log files cleanup    
     if keeplogs is False:
         shutil.rmtree(tmpdir)
+    else:
+        print "INFO: Log files saved in " + tmpdir
