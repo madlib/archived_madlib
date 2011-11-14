@@ -143,39 +143,73 @@ INFO: Calculating goodness of fit...
 
 /**
  * @internal
- * Support function: takes a single SVEC (A) and an array of SVECs (B)
+ * Support function: takes a single SVEC (A) and an ordered array of SVECs (B)
  * and returns the index of (B) with the shortest distance to (A).
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_closest_cid( 
-    p_point MADLIB_SCHEMA.SVEC, p_centroids MADLIB_SCHEMA.SVEC[]
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_closest_center( 
+    p_point         MADLIB_SCHEMA.SVEC
+    , p_centroids   MADLIB_SCHEMA.SVEC[]
+    , p_dist_metric TEXT
 ) 
 RETURNS INTEGER
 AS $$
 DECLARE
-    minCID      INTEGER := 1;
-    min_val     FLOAT;
-    temp_val    FLOAT;
+    min_cid         INTEGER := 1;
+    min_val         FLOAT := NULL;
+    temp_val        FLOAT;
 BEGIN
 
-    -- Check the arguments
-    IF p_point is NULL or p_centroids is NULL THEN
+    -- Validate: p_point, p_centroids
+    IF p_point is NULL or p_centroids is NULL or p_dist_metric is NULL THEN
         RETURN null;
     END IF;
 
-    min_val = MADLIB_SCHEMA.svec_l2norm( p_point operator(MADLIB_SCHEMA.-) p_centroids[1]);
-
-    FOR i IN 2..array_upper( p_centroids, 1) 
-    LOOP
-        temp_val = MADLIB_SCHEMA.svec_l2norm( p_point operator(MADLIB_SCHEMA.-) p_centroids[i]);
-        IF ( temp_val < coalesce( min_val, temp_val + 1) ) THEN
-            min_val = temp_val;
-            minCID = i;
-        END IF;
-    END LOOP;
+    --
+    -- Loop over all centroids
+    --
+    -- Implementation comment:
+    -- IF statement is outside the loop in order to have a static SQL call to
+    -- the distance function. This is in turn required to avoid SVEC parameters
+    -- serialization.
+    IF p_dist_metric = 'l1norm' THEN
+        FOR i IN 1..array_upper( p_centroids, 1) LOOP        
+            temp_val := MADLIB_SCHEMA.l1norm( p_point, p_centroids[i]);
+            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
+                min_val := temp_val;
+                min_cid := i;
+            END IF;
+        END LOOP;
+    ELSIF p_dist_metric = 'l2norm' THEN
+        FOR i IN 1..array_upper( p_centroids, 1) LOOP        
+            temp_val := MADLIB_SCHEMA.l2norm( p_point, p_centroids[i]);
+            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
+                min_val := temp_val;
+                min_cid := i;
+            END IF;
+        END LOOP;
+    ELSIF p_dist_metric = 'cosine' THEN
+        FOR i IN 1..array_upper( p_centroids, 1) LOOP 
+            temp_val := acos( MADLIB_SCHEMA.cosine( p_point, p_centroids[i]));
+            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
+                min_val := temp_val;
+                min_cid := i;
+            END IF;
+        END LOOP;
+    ELSIF p_dist_metric = 'tanimoto' THEN
+        FOR i IN 1..array_upper( p_centroids, 1) LOOP        
+            temp_val := acos( MADLIB_SCHEMA.tanimoto( p_point, p_centroids[i]));
+            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
+                min_val := temp_val;
+                min_cid := i;
+            END IF;
+        END LOOP;
+    ELSE
+        RAISE EXCEPTION 'Unknown distance function: %', p_dist_metric;
+    END IF;            
     
-    RETURN minCID;
+    RETURN min_cid;
 END
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql STRICT;
 
 /**
  * @internal
@@ -207,9 +241,8 @@ CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
     init_cset_rel   TEXT,
     init_k          INT,
     init_method     TEXT,
+    dist_metric     TEXT,
     iterations      INT,
-    -- sample_pct      MADLIB_SCHEMA.percent,
-    -- sample_size     BIGINT,
     final_k         BIGINT,
     gof             MADLIB_SCHEMA.gof,
     out_points      TEXT,
@@ -241,10 +274,10 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans(
   , init_cset_rel   TEXT
   , init_cset_col   TEXT
   , k               INT 
-  , init_method     TEXT
+  , init_method     TEXT /* random, kmeans++ */
+  , dist_metric     TEXT /* euclidean/l2norm, manhattan/l1norm, cosine, tanimoto */
   , max_iter        INT
   , conv_threshold  FLOAT
-  --, sample_pct      MADLIB_SCHEMA.percent 
   , gof             BOOLEAN 
   , out_points      TEXT 
   , out_centroids   TEXT
@@ -261,7 +294,7 @@ AS $$
         MADlibSchema
         , src_relation, src_col_data, src_col_id
         , init_cset_rel, init_cset_col
-        , k, init_method
+        , k, init_method, dist_metric
         , max_iter, conv_threshold, gof
         , out_points, out_centroids, overwrite
         , verbose
