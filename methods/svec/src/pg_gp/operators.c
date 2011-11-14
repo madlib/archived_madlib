@@ -672,6 +672,115 @@ Datum svec_l2norm(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(accum);
 }
 
+PG_FUNCTION_INFO_V1( l2norm_two_svecs );
+/**
+ *  l2norm_two - Computes the l2norm distance between two SVECs.
+ */
+Datum l2norm_two_svecs(PG_FUNCTION_ARGS)
+{	
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	
+	check_dimension(svec1,svec2,"l2norm");
+	SvecType *result = op_svec_by_svec_internal(subtract,svec1,svec2);
+	
+	SparseData sdata  = sdata_from_svec(result);
+	double accum;
+	accum = l2norm_sdata_values_double(sdata);
+	
+	if (IS_NVP(accum)) PG_RETURN_NULL();
+	
+	PG_RETURN_FLOAT8(accum);
+}
+
+PG_FUNCTION_INFO_V1( l1norm_two_svecs );
+/**
+ *  l1norm_two - Computes the l1norm distance between two SVECs.
+ */
+Datum l1norm_two_svecs(PG_FUNCTION_ARGS)
+{	
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	
+	check_dimension(svec1,svec2,"l1norm");
+	SvecType *result = op_svec_by_svec_internal(subtract,svec1,svec2);
+	
+	SparseData sdata = sdata_from_svec(result);
+	double accum;
+	accum = l1norm_sdata_values_double(sdata);
+	
+	if (IS_NVP(accum)) PG_RETURN_NULL();
+	
+	PG_RETURN_FLOAT8(accum);
+}
+
+PG_FUNCTION_INFO_V1( cosine );
+/**
+ *  cosine - Computes the cosine similarity between two SVECs.
+ */
+Datum cosine(PG_FUNCTION_ARGS)
+{	
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	double dot, m1, m2;
+	
+	check_dimension(svec1,svec2,"cosine");
+	SparseData mult = op_sdata_by_sdata(multiply,left,right);
+	dot = sum_sdata_values_double(mult);
+	freeSparseDataAndData(mult);
+
+	m1 = l2norm_sdata_values_double(left);
+	m2 = l2norm_sdata_values_double(right);
+
+	if (IS_NVP(dot) || IS_NVP(m1) || IS_NVP(m2)) PG_RETURN_NULL();
+	
+	PG_RETURN_FLOAT8(dot/(m1*m2));
+}
+
+PG_FUNCTION_INFO_V1( tanimoto );
+/**
+ *  tanimoto - Computes the Tanimoto similarity between two SVECs.
+ */
+Datum tanimoto(PG_FUNCTION_ARGS)
+{	
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	double dot, m1, m2;
+	
+	check_dimension(svec1,svec2,"cosine");
+	SparseData mult = op_sdata_by_sdata(multiply,left,right);
+	dot = sum_sdata_values_double(mult);
+	freeSparseDataAndData(mult);
+	
+	m1 = l2norm_sdata_values_double(left);
+	m2 = l2norm_sdata_values_double(right);
+	
+	if (IS_NVP(dot) || IS_NVP(m1) || IS_NVP(m2)) PG_RETURN_NULL();
+	
+	PG_RETURN_FLOAT8(dot / (m1*m1 + m2*m2 - dot));
+}
+
+PG_FUNCTION_INFO_V1( normalize );
+/**
+ *  normalize - Computes a normalized SVEC. 
+ */
+Datum normalize(PG_FUNCTION_ARGS)
+{	
+	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
+	SparseData sdata = sdata_from_svec(svec);
+	double norm;
+		
+	norm = l2norm_sdata_values_double(sdata);
+	
+	op_sdata_by_scalar_inplace( 3, (char *)&norm, sdata, 2);
+	
+	PG_RETURN_SVECTYPE_P( svec_from_sparsedata( sdata, true));
+}
+
 PG_FUNCTION_INFO_V1( svec_l1norm );
 /**
  *  svec_l1norm - computes the l1 norm of an svec
