@@ -110,6 +110,15 @@ public:
     inline MemHandleSPtr memoryHandle() const {
         return mMemoryHandle;
     }
+    
+    inline Matrix &noalias() {
+        // Do nothing. This function is only for API compatibility with Eigen.
+        return *this;
+    }
+    
+    inline uint64_t size() const {
+        return arma::Mat<eT>::n_elem;
+    }
 
 protected:
     MemHandleSPtr mMemoryHandle;

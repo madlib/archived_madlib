@@ -89,14 +89,26 @@ DECLARE_OR_DEFINE_STD_CONVERSION(bool, int8_t)
 
 // Additional implicit conversion from Array<double>
 DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, Array_const<double>)
-DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleCol)
-DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleCol_const)
-DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleRow)
-DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, DoubleRow_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, ArmadilloTypes::DoubleCol)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, ArmadilloTypes::DoubleCol_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, ArmadilloTypes::DoubleRow)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, ArmadilloTypes::DoubleRow_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Unaligned>::DoubleCol)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Unaligned>::DoubleCol_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Unaligned>::DoubleRow)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Unaligned>::DoubleRow_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Aligned>::DoubleCol)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Aligned>::DoubleCol_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Aligned>::DoubleRow)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array<double>, EigenTypes<Eigen::Aligned>::DoubleRow_const)
 
 // Additional implicit conversion from Array_const<double>
-DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, DoubleCol_const)
-DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, DoubleRow_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, ArmadilloTypes::DoubleCol_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, ArmadilloTypes::DoubleRow_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, EigenTypes<Eigen::Unaligned>::DoubleCol_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, EigenTypes<Eigen::Unaligned>::DoubleRow_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, EigenTypes<Eigen::Aligned>::DoubleCol_const)
+DECLARE_OR_DEFINE_STD_CONVERSION(Array_const<double>, EigenTypes<Eigen::Aligned>::DoubleRow_const)
 
 // FIXME: We might want to add detailed error messages when converting immutable
 // into mutable type. Right now, the standard error msg will be displayed.

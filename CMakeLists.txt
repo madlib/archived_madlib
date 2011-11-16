@@ -56,13 +56,17 @@ if(NOT CMAKE_BUILD_TYPE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 if(CMAKE_COMPILER_IS_GNUCC)
+    # Let's store the gcc version in a variable
+    execute_process(COMMAND ${CMAKE_C_COMPILER} -dumpversion
+        OUTPUT_VARIABLE GNUCC_VERSION)
+
     # A useful summary of warning options can be found here:
     # http://developer.apple.com/tools/xcode/compilercodewarnings.html
     # Note: gcc does not implicitly set _POSIX_C_SOURCE or _XOPEN_SOURCE when using -std=c99.
     # http://pubs.opengroup.org/onlinepubs/9699919799/functions/V2_chap02.html#tag_15_02_01_01
     # We specify that we are POSIX.1-2001 compliant and XSI-conforming. We only
     # need to specify _XOPEN_SOURCE as _POSIX_C_SOURCE will be set implicitly.
-    set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra -D_XOPEN_SOURCE=600"
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -pedantic -Wall -Wextra -D_XOPEN_SOURCE=600"
         CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
     
@@ -75,13 +79,18 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "SunPro")
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX)
+    # Let's store the gcc version in a variable
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -dumpversion
+        OUTPUT_VARIABLE GNUCXX_VERSION)
+
     # We need the 1998 standard plus amendments (ISO/IEC 14882:2003) plus TR1
     # Unfortunately, we only get this with gnu++98
     # Special notes:
     # - long long is not part of the C++ 1998/2003 standard, but it is such a
     # common (and useful) extension that we do not want to hear warnings about
     # it.
-    set(CMAKE_CXX_FLAGS "-std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long" CACHE STRING
+    # FIXME: -msse2 should only be added on i386
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long -msse2" CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
     
     # We want to include some header files as system header files in order to

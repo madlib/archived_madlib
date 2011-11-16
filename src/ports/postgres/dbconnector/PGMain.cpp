@@ -30,7 +30,8 @@
 #include <dbconnector/PGInterface.hpp>
 #include <dbconnector/PGType.hpp>
 
-#include <modules/modules.hpp>
+#include <dbal/dbal.hpp>
+#include <modules/declarations.hpp>
 
 extern "C" {
     #include <funcapi.h>
@@ -116,28 +117,57 @@ inline static Datum call(MADFunction &f, PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
 }
 
+template <template <class Policy> class Functor>
+inline static Datum call(PG_FUNCTION_ARGS) {
+//    return call(Functor<ArmadilloTypes>::eval, fcinfo);
+    return call(Functor<EigenTypes<Eigen::Unaligned> >::eval, fcinfo);
+}
+
+//template <>
+//inline static Datum call<madlib::modules::regress::linregr_transition>(PG_FUNCTION_ARGS) {
+//    return call(madlib::modules::regress::linregr_transition<EigenTypes<Eigen::Aligned> >::eval, fcinfo);
+//}
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+
 extern "C" {
     PG_MODULE_MAGIC;
 } // extern "C"
 
-#define DECLARE_UDF(NameSpace, Function) DECLARE_UDF_EXT(Function, NameSpace, Function)
 
-#define DECLARE_UDF_EXT(SQLName, NameSpace, Function) \
+// Now go on and declare the exported symbols
+
+#undef DECLARE_UDF
+#undef DECLARE_UDF_WITH_POLICY
+#undef MADLIB_DECLARE_NAMESPACES
+
+namespace external {
+
+#define DECLARE_UDF(ExportedName) \
     extern "C" { \
-        Datum SQLName(PG_FUNCTION_ARGS); \
-        PG_FUNCTION_INFO_V1(SQLName); \
-        Datum SQLName(PG_FUNCTION_ARGS) { \
-            return call( \
-                modules::NameSpace::Function, \
+        PG_FUNCTION_INFO_V1(ExportedName); \
+        Datum ExportedName(PG_FUNCTION_ARGS) { \
+            return madlib::dbconnector::call( \
+                MADLIB_CURRENT_NAMESPACE::ExportedName, \
+                fcinfo); \
+        } \
+    }
+
+#define DECLARE_UDF_WITH_POLICY(ExportedName) \
+    extern "C" { \
+        PG_FUNCTION_INFO_V1(ExportedName); \
+        Datum ExportedName(PG_FUNCTION_ARGS) { \
+            return madlib::dbconnector::call<MADLIB_CURRENT_NAMESPACE::ExportedName>( \
                 fcinfo); \
         } \
     }
 
 #include <modules/declarations.hpp>
 
-#undef DECLARE_UDF_EXT
+#undef DECLARE_UDF_WITH_POLICY
 #undef DECLARE_UDF
 
-} // namespace dbconnector
-
-} // namespace madlib
+}

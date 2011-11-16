@@ -64,7 +64,7 @@ public:
         convertArray(inValue.memoryHandle(), inValue.num_elements());
     }
     
-    void callbackWithValue(const DoubleCol &inValue) {
+    void callbackWithValue(const ArmadilloTypes::DoubleCol &inValue) {
         convertArray(inValue.memoryHandle(), inValue.n_elem);
     }
         

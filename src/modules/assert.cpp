@@ -14,7 +14,9 @@
  *
  */
 
-#include <modules/common.hpp>
+#include <boost/assert.hpp>
+#include <stdexcept>
+#include <sstream>
 
 namespace boost
 {

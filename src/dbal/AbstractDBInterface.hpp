@@ -34,7 +34,6 @@ protected:
          * whether we have an error message available.
          */
         void output(char *inMsg, uint32_t inLength) {
-            bool isRunTimeError = false;
             const char *kRunTimeErrStr = "run-time error: ";
             char *strStart = inMsg;
             char *strEnd;
@@ -45,7 +44,6 @@ protected:
             if (std::strncmp(strStart, kRunTimeErrStr,
                     std::strlen(kRunTimeErrStr)) == 0) {
                 
-                isRunTimeError = true;
                 for (strEnd = &inMsg[inLength - 1];
                     std::isspace(*strEnd, std::locale::classic());
                     strEnd--) ;

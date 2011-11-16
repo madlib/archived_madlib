@@ -44,11 +44,23 @@ public:
      */
     virtual void *allocate(const size_t inSize) const throw(std::bad_alloc) = 0;
 
+    /*
+     * @brief Reallocate a block of memory. Throw if allocation fails.
+     */
+    virtual void *reallocate(void *inPtr, const size_t inSize) const
+        throw(std::bad_alloc) = 0;
+
     /**
      * @brief Allocate a block of memory. Return NULL if allocation fails.
      */
     virtual void *allocate(const size_t inSize, const std::nothrow_t&) const
         throw() = 0;
+
+    /**
+     * @brief Reallocate a block of memory. Return NULL if reallocation fails.
+     */
+    virtual void *reallocate(void *inPtr, const size_t inSize,
+        const std::nothrow_t&) const throw() = 0;
     
     /**
      * @brief Free a block of memory previously allocated with allocate()

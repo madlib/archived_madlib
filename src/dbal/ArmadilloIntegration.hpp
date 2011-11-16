@@ -10,9 +10,9 @@
  *//* ----------------------------------------------------------------------- */
 
 template<template <class> class T, typename eT>
-class unwrap< madlib::dbal::Vector_const<T,eT> > {
+class unwrap< madlib::dbal::ArmadilloTypes::Vector_const<T,eT> > {
 public:
-    inline unwrap(const madlib::dbal::Vector_const<T,eT> &inVector)
+    inline unwrap(const madlib::dbal::ArmadilloTypes::Vector_const<T,eT> &inVector)
         : M(inVector.mVector) {
         
         arma_extra_debug_sigprint();
@@ -22,7 +22,7 @@ public:
 };
 
 template<template <class> class T, typename eT>
-class Proxy< madlib::dbal::Vector_const<T,eT> > {
+class Proxy< madlib::dbal::ArmadilloTypes::Vector_const<T,eT> > {
 public:
     typedef eT                                       elem_type;
     typedef typename get_pod_type<elem_type>::result pod_type;
@@ -31,7 +31,8 @@ public:
 
     arma_aligned const T<eT>& Q;
 
-    inline explicit Proxy(const madlib::dbal::Vector_const<T,eT>& inVector)
+    inline explicit Proxy(
+        const madlib::dbal::ArmadilloTypes::Vector_const<T,eT>& inVector)
         : Q(inVector.mVector) {
 
         arma_extra_debug_sigprint();

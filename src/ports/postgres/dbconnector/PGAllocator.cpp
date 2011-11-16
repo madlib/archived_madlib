@@ -71,11 +71,8 @@ ArrayType *PGAllocator::internalAllocateForArray(Oid inElementType,
  * Unless <tt>MAXIMUM_ALIGNOF >= 16</tt>, we waste 16 additional bytes of
  * memory. The call to \c palloc() might throw a PostgreSQL exception. Thus,
  * this function should only be used inside a \c PG_TRY() block.
- *
- * We store the address returned by the call to \c palloc() in the word
- * immediately before the aligned pointer that we return.
  */
-void *PGAllocator::internalPalloc(size_t inSize, bool inZero) {
+void *PGAllocator::internalPalloc(size_t inSize, bool inZero) const {
 #if MAXIMUM_ALIGNOF >= 16
     return inZero ? palloc0(inSize) : palloc(inSize);
 #else
@@ -85,8 +82,42 @@ void *PGAllocator::internalPalloc(size_t inSize, bool inZero) {
     /* Precondition: inSize <= std::numeric_limits<size_t>::max() - 16 */
     const size_t size = inSize + 16;
     void *raw = inZero ? palloc0(size) : palloc(size);
-    if (raw == 0) return 0;
+    return makeAligned(raw);
+#endif
+}
+
+/**
+ * @internal
+ * @brief Thin wrapper around \c repalloc() that returns a 16-byte-aligned
+ *     pointer.
+ * 
+ * Unless <tt>MAXIMUM_ALIGNOF >= 16</tt>, we waste 16 additional bytes of
+ * memory. The call to \c repalloc() might throw a PostgreSQL exception. Thus,
+ * this function should only be used inside a \c PG_TRY() block.
+ */
+void *PGAllocator::internalRePalloc(void *inPtr, size_t inSize) const {
+#if MAXIMUM_ALIGNOF >= 16
+    return repalloc(inPtr, inSize);
+#else
+    if (inSize > std::numeric_limits<size_t>::max() - 16) {
+        free(inPtr);
+        return NULL;
+    }
     
+    /* Precondition: inSize <= std::numeric_limits<size_t>::max() - 16 */
+    const size_t size = inSize + 16;
+    void *raw = repalloc(inPtr, size);
+    return makeAligned(raw);
+#endif
+}
+
+/**
+ * @brief Return next 16-byte boundary after inPtr and store inPtr in word
+ *     immediately before that
+ */
+void *PGAllocator::makeAligned(void *inPtr) {
+    if (inPtr == NULL) return NULL;
+
     /*
      * Precondition: reinterprete_cast<size_t>(raw) % sizeof(void**) == 0,
      * i.e., the memory returned by palloc is at least aligned on word size
@@ -94,24 +125,23 @@ void *PGAllocator::internalPalloc(size_t inSize, bool inZero) {
      * to us an can be written to safely.
      */
     void *aligned = reinterpret_cast<void*>(
-        (reinterpret_cast<uintptr_t>(raw) & ~(uintptr_t(15))) + 16);
-    *(reinterpret_cast<void**>(aligned) - 1) = raw;
+        (reinterpret_cast<uintptr_t>(inPtr) & ~(uintptr_t(15))) + 16);
+    *(reinterpret_cast<void**>(aligned) - 1) = inPtr;
     return aligned;
-#endif
 }
 
 /**
- * @internal
- * @brief Thin wrapper around \c pfree() that frees 16-byte allocated memory.
+ * @brief Return the address of memory block that corresponds to the given
+ *     16-byte aligned address
  *
  * Unless <tt>MAXIMUM_ALIGNOF >= 16</tt>, we free the block of memory pointed to
  * by the word immediately in front of the memory pointed to by \c inPtr.
  */
-void PGAllocator::internalPfree(void *inPtr) {
+void *PGAllocator::unaligned(void *inPtr) {
 #if MAXIMUM_ALIGNOF >= 16
-    pfree(inPtr);
+    return inPtr;
 #else
-    pfree(*(reinterpret_cast<void**>(inPtr) - 1));    
+    return (*(reinterpret_cast<void**>(inPtr) - 1));
 #endif
 }
 
@@ -128,7 +158,13 @@ void PGAllocator::internalPfree(void *inPtr) {
  * @see PGInterface for information on necessary precautions when writing
  *      PostgreSQL plug-in code in C++.
  */
-void *PGAllocator::allocate(const size_t inSize) const throw(std::bad_alloc) {
+template <bool Reallocate>
+void *PGAllocator::internalAllocate(void *inPtr, const size_t inSize)
+    const throw(std::bad_alloc) {
+    
+    // Avoid warning that inPtr is not used if Reallocate == true
+    (void) inPtr;
+    
     void *ptr;
     bool errorOccurred = false;
     MemoryContext oldContext = NULL;
@@ -140,11 +176,13 @@ void *PGAllocator::allocate(const size_t inSize) const throw(std::bad_alloc) {
                 errorOccurred = true;
             else {
                 oldContext = MemoryContextSwitchTo(aggContext);
-                ptr = internalPalloc(inSize, mZeroMemory);
+                ptr = Reallocate ? internalRePalloc(inPtr, inSize)
+                                 : internalPalloc(inSize, mZeroMemory);
                 MemoryContextSwitchTo(oldContext);
             }
         } else {
-            ptr = internalPalloc(inSize, mZeroMemory);
+            ptr = Reallocate ? internalRePalloc(inPtr, inSize)
+                             : internalPalloc(inSize, mZeroMemory);
         }
     } PG_CATCH(); {
         /*
@@ -178,7 +216,6 @@ void *PGAllocator::allocate(const size_t inSize) const throw(std::bad_alloc) {
     return ptr;
 }
 
-
 /**
  * @brief Allocate memory in "our" PostgreSQL memory context. Never throw.
  *
@@ -202,9 +239,13 @@ void *PGAllocator::allocate(const size_t inSize) const throw(std::bad_alloc) {
  *
  * @see See also the notes for allocate(allocate(const size_t)
  */
-void *PGAllocator::allocate(const size_t inSize, const std::nothrow_t&) const
-    throw() {
+template <bool Reallocate>
+void *PGAllocator::internalAllocate(void *inPtr, const size_t inSize,
+    const std::nothrow_t&) const throw() {
     
+    // Avoid warning that inPtr is not used if Reallocate == true
+    (void) inPtr;
+
     void *ptr = NULL;
     bool errorOccurred = false;
     MemoryContext oldContext = NULL;
@@ -224,11 +265,13 @@ void *PGAllocator::allocate(const size_t inSize, const std::nothrow_t&) const
                 errorOccurred = true;
             else {
                 oldContext = MemoryContextSwitchTo(aggContext);
-                ptr = internalPalloc(inSize, mZeroMemory);
+                ptr = Reallocate ? internalRePalloc(inPtr, inSize)
+                                 : internalPalloc(inSize, mZeroMemory);
                 MemoryContextSwitchTo(oldContext);
             }
         } else {
-            ptr = internalPalloc(inSize, mZeroMemory);
+            ptr = Reallocate ? internalRePalloc(inPtr, inSize)
+                             : internalPalloc(inSize, mZeroMemory);
         }
     } PG_CATCH(); {
         /*
@@ -267,17 +310,24 @@ void *PGAllocator::allocate(const size_t inSize, const std::nothrow_t&) const
  * This function is also called by operator delete (),
  * which must not throw *any* exceptions.
  *
+ * @param inPtr Pointer to a memory block previously allocated with allocate,
+ *     reallocate or allocateArray to be deallocated. If a null pointer is
+ *     passed as argument, no action occurs. (std::free has the same behavior.)
+ *
  * @see See also the notes for PGAllocator::allocate(const size_t) and
  *      PGAllocator::allocate(const size_t, const std::nothrow_t&)
  */
 void PGAllocator::free(void *inPtr) const throw() {
+    if (inPtr == NULL)
+        return;
+        
     /*
      * See allocate(const size_t, const std::nothrow_t&) why we disable
      * processing of interrupts.
      */
     HOLD_INTERRUPTS();
     PG_TRY(); {
-        internalPfree(inPtr);
+        pfree(unaligned(inPtr));
     } PG_CATCH(); {
         FlushErrorState();
     } PG_END_TRY();

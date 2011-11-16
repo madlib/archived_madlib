@@ -133,6 +133,10 @@ public:
         return mMemoryHandle;
     }
     
+    inline uint64_t size() const {
+        return mVector.n_elem;
+    }
+    
 protected:
     MemHandleSPtr mMemoryHandle;
     const T<eT> mVector;

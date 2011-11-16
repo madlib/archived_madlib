@@ -115,6 +115,15 @@ public:
         return mMemoryHandle;
     }
 
+    inline Vector &noalias() {
+        // Do nothing. This function is only for API compatibility with Eigen.
+        return *this;
+    }
+    
+    inline uint64_t size() const {
+        return arma::Mat<eT>::n_elem;
+    }
+
 protected:
     MemHandleSPtr mMemoryHandle;
 };

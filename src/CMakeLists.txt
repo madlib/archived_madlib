@@ -5,10 +5,13 @@
 # -- Paths and MD5 hashes of third-party downloadable source code (third-party
 #    components needed only by specific ports are downloaded there) ------------
 
-# For in-house testing, we might want to change the base URL to something local
+# For in-house testing, we might want to change the base URLs of code-hosting
+# sites to something local
 # "-DSOURCEFORGE_BASE_URL=http://test.local/projects"
 set(SOURCEFORGE_BASE_URL "http://sourceforge.net/projects" CACHE STRING
     "Base URL for Sourceforge projects. May be overridden for testing purposes.")
+set(BITBUCKET_BASE_URL "https://bitbucket.org" CACHE STRING
+    "Base URL for Bitbucket projects. May be overridden for testing purposes.")
 
 # Boost might not be present on the system (or simply too old). In this case, we
 # download the following version (unless it is already present in
@@ -53,6 +56,26 @@ if(NOT ARMADILLO_TAR_SOURCE)
     set(ARMADILLO_TAR_SOURCE ${ARMADILLO_URL})
 endif (NOT ARMADILLO_TAR_SOURCE)
 
+# We always download Eigen (unless it is already present in
+# ${CMAKE_CURRENT_BINARY_DIR}/third_party/downloads). It is also possible to
+# specify an alternative path to the Eigen tarball:
+# -DEIGEN_TAR_SOURCE=/path/to/eigen-x.x.x.tar.gz
+
+set(EIGEN_VERSION "3.0.3")
+set(EIGEN_TAR_MD5 0d2d94c347f6433ce4526c58b69bec0e)
+
+set(EIGEN_TAR "eigen-${EIGEN_VERSION}.tar.gz")
+set(EIGEN_URL "${BITBUCKET_BASE_URL}/eigen/eigen/get/${EIGEN_VERSION}.tar.gz")
+set(EIGEN_SVN "${BITBUCKET_BASE_URL}/eigen/eigen/tags/${EIGEN_VERSION}")
+
+if(NOT EIGEN_TAR_SOURCE)
+    find_file(EIGEN_TAR_SOURCE ${EIGEN_TAR}
+        PATHS ${MAD_THIRD_PARTY}/downloads)
+endif(NOT EIGEN_TAR_SOURCE)
+
+if(NOT EIGEN_TAR_SOURCE)
+    set(EIGEN_TAR_SOURCE ${EIGEN_URL})
+endif (NOT EIGEN_TAR_SOURCE)
 
 # -- Paths for madpack third-party components (those that are used by multiple
 #    ports) -------------------------------------------------------------------- 
@@ -184,6 +207,40 @@ set(ARMADILLO_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/include)
 include_directories(SYSTEM ${ARMADILLO_INCLUDE_DIRS})
 
 
+# -- Third-party dependencies: Download the C++ linear-algebra library Eigen ---
+
+string(REGEX MATCH "^[a-zA-Z]+" _EIGEN_PROTOCOL ${EIGEN_TAR_SOURCE})
+if(_EIGEN_PROTOCOL STREQUAL "https")
+    # FIXME: This is somewhat ugly
+    # Unfortunately, CMake does not come with SSL support for file downloads.
+    # See: http://www.cmake.org/pipermail/cmake/2009-November/thread.html#33589
+    # Bitbucket on the other hand only provides SSL downloads
+    # We therefore assume that a "https" protocol refers to a SVN repository
+    set(_EIGEN_SOURCE
+        SVN_REPOSITORY ${EIGEN_SVN} UPDATE_COMMAND /usr/bin/env echo Ignored: svn update
+    )
+else(_EIGEN_PROTOCOL STREQUAL "https")
+    set(_EIGEN_SOURCE
+        URL ${EIGEN_TAR_SOURCE} URL_MD5 ${EIGEN_TAR_MD5}
+    )
+endif(_EIGEN_PROTOCOL STREQUAL "https")
+
+# FIXME: Eigen is a third-party source that is patched in-place. Other
+# third-party headers are patched in the patch directory.
+ExternalProject_Add(EP_eigen
+    PREFIX ${MAD_THIRD_PARTY}
+    DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
+    ${_EIGEN_SOURCE}
+    PATCH_COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/Eigen.sh"
+    CMAKE_COMMAND /usr/bin/env echo Ignored: cmake
+    BUILD_COMMAND /usr/bin/env echo Ignored: make
+    INSTALL_COMMAND /usr/bin/env echo Ignored: make
+    BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_eigen
+)
+
+include_directories(${MAD_THIRD_PARTY}/src/EP_eigen)
+
+
 # -- Macros to be used by ports ------------------------------------------------
 
 # Get the architectures in a Mac OS X binary
@@ -270,7 +327,7 @@ macro(add_madlib_connector_library IN_DBMS IN_OSX_BUNDLE_LOADER OUT_TARGET_NAME)
             "architectures as detected in ${IN_OSX_BUNDLE_LOADER}, which has "
             "architectures ${_MAD_ARCHITECTURES}")
         set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
-            OSX_ARCHITECTURES "${_MAD_ARCHITECTURES}"
+#            OSX_ARCHITECTURES "${_MAD_ARCHITECTURES}"
             LINK_FLAGS "-bundle_loader ${IN_OSX_BUNDLE_LOADER} -Wl,-rpath -Wl,@loader_path/../../../lib")
 
         # The MADlib connector library for port xyz resides in
@@ -317,7 +374,7 @@ add_library(
     SHARED
     ${MAD_SOURCES}
 )
-add_dependencies(madlib EP_armadillo)
+add_dependencies(madlib EP_armadillo EP_eigen)
 
 # INSTALL_NAME_DIR is a Mac OS X only property
 set_target_properties(madlib PROPERTIES
@@ -325,17 +382,20 @@ set_target_properties(madlib PROPERTIES
     INSTALL_NAME_DIR "@rpath")
 
 if(APPLE)
-    find_library(ACCELERATE_FRAMEWORK Accelerate)
-    osx_archs(${ACCELERATE_FRAMEWORK}/Accelerate ACCELERATE_ARCHS)
-    message(STATUS "Will build madlib for same architecture as detected in "
-        "${ACCELERATE_FRAMEWORK}, which has architectures "
-        "${ACCELERATE_ARCHS}")
+    # FIXME: Or maybe not? We get an "internal compiler" error when compiling for
+    # PowerPC, hence we do not build for it any more.
+    # find_library(ACCELERATE_FRAMEWORK Accelerate)
+    # osx_archs(${ACCELERATE_FRAMEWORK}/Accelerate ACCELERATE_ARCHS)
+    # message(STATUS "Will build madlib for same architecture as detected in "
+    #     "${ACCELERATE_FRAMEWORK}, which has architectures "
+    #    "${ACCELERATE_ARCHS}")
+    
     # FIXME: __ZN6madlib4dbal16defaultAllocatorEv is the mangled name of
     # madlib::dbal::defaultAllocator().
     # A better way would be do find out the mangled name at compile time, even
     # better yet this option should not be necessary.
     set_target_properties(madlib PROPERTIES
-        OSX_ARCHITECTURES "${ACCELERATE_ARCHS}"
+#        OSX_ARCHITECTURES "x86_64;i386"
         LINK_FLAGS "-Wl,-U,__ZN6madlib4dbal16defaultAllocatorEv")
     
     # On the Mac, the Accelerate framework is already an umbrella for everything
@@ -367,48 +427,48 @@ else(APPLE)
         INSTALL_RPATH "\$ORIGIN")
 endif(APPLE)
 
+if(CMAKE_COMPILER_IS_GNUCXX)
+    if(GNUCXX_VERSION VERSION_GREATER 4.4 OR GNUCXX_VERSION VERSION_EQUAL 4.4)
+        if(_AUTOINCLUDE_LIBSTDCXX)
+            # FIXME: The following only takes care of the symbolic link
+            # Need to implement copying of files containing version numbers in
+            # file name
+            
+            # Both CentOS/RH 5 ship with old versions of libstdc++
+            # Starging with gcc 4.4, C++ code may therefore not run any more on
+            # vanilla installations of CentOS/RH 5. We therefore include libstdc++
+            # in this case and install it in $MADLIB_ROOT/lib
+            set(_LIBSTDCXX_FILENAME
+                "${CMAKE_SHARED_LIBRARY_PREFIX}stdc++${CMAKE_SHARED_LIBRARY_SUFFIX}")
+            execute_process(
+                COMMAND ${CMAKE_C_COMPILER}
+                    "-print-file-name=${_LIBSTDCXX_FILENAME}"
+                OUTPUT_VARIABLE _LIBSTDCXX_PATH
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+            add_custom_command(
+                OUTPUT
+                    "${CMAKE_CURRENT_BINARY_DIR}/lib/${_LIBSTDCXX_FILENAME}"
+                COMMAND "${CMAKE_COMMAND}" -E copy ${_LIBSTDCXX_PATH}
+                    "${CMAKE_CURRENT_BINARY_DIR}/lib/${_LIBSTDCXX_FILENAME}"
+                COMMENT "Copying libstdc++ to lib directory."
+                )
+            add_custom_target(copyLibStdCXX ALL DEPENDS
+                "${CMAKE_CURRENT_BINARY_DIR}/lib/${_LIBSTDCXX_FILENAME}")
+        endif(_AUTOINCLUDE_LIBSTDCXX)
+        
+        # Also install it
+        install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib
+            DESTINATION .
+            COMPONENT core
+            FILES_MATCHING REGEX "^.*/[^/]*stdc\\+\\+[^/]*\$"
+        )
+    endif(GNUCXX_VERSION VERSION_GREATER 4.4 OR GNUCXX_VERSION VERSION_EQUAL 4.4)
+endif(CMAKE_COMPILER_IS_GNUCXX)
+
 install(TARGETS madlib
     LIBRARY DESTINATION lib
     COMPONENT core
 )
-
-
-# -- On platforms with a flat namespace for symbols in executables, patch
-#    Armadillo so that it calls madlib_{LAPACK/BLAS function} instead of
-#    {LAPACK/BLAS function}. This is necessary because some DBMSs contain
-#    LAPACK/BLAS symbols, which we do not want to use. Instead, the connector
-#    libraries will define madlib_{LAPACK/BLAS function} to look up
-#    {LAPACK/BLAS function} dynamically with dlsym() ---------------------------
-
-if(LINUX)
-    file(MAKE_DIRECTORY "${MAD_PATCH_DIR}")
-    add_custom_command(
-        OUTPUT
-            "${MAD_PATCH_DIR}/armadillo"
-            "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
-        COMMAND ${CMAKE_COMMAND} -E copy
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo"
-            "${MAD_PATCH_DIR}/armadillo"
-        COMMAND ${CMAKE_COMMAND} -E copy
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo_bits/compiler_setup.hpp"
-            "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/Armadillo.sh"
-        DEPENDS
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo"
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo_bits/compiler_setup.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/patch/Armadillo.sh"
-        WORKING_DIRECTORY "${MAD_PATCH_DIR}"
-        COMMENT "Patching armadillo_bits/compiler_setup.hpp: Route LAPACK/BLAS calls through MADlib connector."
-    )
-    list(APPEND MADLIB_TARGET_PATCH_FILES
-        "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
-    )
-    add_custom_target(madlibPatches ALL DEPENDS ${MADLIB_TARGET_PATCH_FILES})
-    include_directories(BEFORE "${MAD_PATCH_DIR}")
-
-    add_dependencies(madlibPatches EP_armadillo)
-    add_dependencies(madlib madlibPatches)
-endif(LINUX)
 
 # -- Preprocess/copy all Python/SQL files --------------------------------------
 
@@ -432,9 +492,14 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
     REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
 )
 
+# -- Use all necessary patches directory ---------------------------------------
+
+include_directories(BEFORE "${MAD_PATCH_DIR}")
+
 
 # -- Add subdirectories --------------------------------------------------------
 
+add_subdirectory(patch)
 add_subdirectory(bin)
 add_subdirectory(config)
 add_subdirectory(madpack)
