@@ -9,12 +9,7 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <modules/regress/logistic.hpp>
-#include <utils/Reference.hpp>
-
-// Floating-point classification functions are in C99 and TR1, but not in the
-// official C++ Standard (before C++0x). We therefore use the Boost implementation
-#include <boost/math/special_functions/fpclassify.hpp>
+#include <dbal/dbal.hpp>
 
 // z values are normally distributed
 #include <boost/math/distributions/normal.hpp>
@@ -38,6 +33,11 @@ using utils::Reference;
 namespace modules {
 
 namespace regress {
+
+#include <modules/regress/logistic.hpp>
+
+// Import derived Armadillo types (like DoubleCol etc.)
+USE_ARMADILLO_TYPES;
 
 // Local functions
 AnyType stateToResult(AbstractDBInterface &db,
@@ -73,9 +73,9 @@ AnyType stateToResult(AbstractDBInterface &db,
  * - 4 + widthOfX * widthOfX + 4 * widthOfX: logLikelihood ( ln(l(c)) )
 // * - 5 + widthOfX * widthOfX + 4 * widthOfX: dTHd (intermediate value for d^T * H * d)
  */
-class LogisticRegressionCG::State {
+class LogRegrCGTransitionState {
 public:
-    State(AnyType inArg)
+    LogRegrCGTransitionState(AnyType inArg)
         : mStorage(inArg.cloneIfImmutable()) {
         
         rebind();
@@ -104,7 +104,9 @@ public:
     /**
      * @brief We need to support assigning the previous state
      */
-    State &operator=(const State &inOtherState) {
+    LogRegrCGTransitionState &operator=(
+        const LogRegrCGTransitionState &inOtherState) {
+        
         mStorage = inOtherState.mStorage;
         return *this;
     }
@@ -112,7 +114,9 @@ public:
     /**
      * @brief Merge with another State object by copying the intra-iteration fields
      */
-    State &operator+=(const State &inOtherState) {
+    LogRegrCGTransitionState &operator+=(
+        const LogRegrCGTransitionState &inOtherState) {
+        
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition states");
@@ -215,11 +219,12 @@ static inline double sigma(double x) {
 /**
  * @brief Perform the logistic-regression transition step
  */
-AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) {
+AnyType
+logregr_cg_step_transition(AbstractDBInterface &db, AnyType args) {
     AnyType::iterator arg(args);
     
     // Initialize Arguments from SQL call
-    State state = *arg++;
+    LogRegrCGTransitionState state = *arg++;
     double y = *arg++ ? 1. : -1.;
     DoubleRow_const x = *arg++;
     if (state.numRows == 0) {
@@ -230,7 +235,7 @@ AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) 
             ),
             x.n_elem);
         if (!arg->isNull()) {
-            const State previousState = *arg;
+            const LogRegrCGTransitionState previousState = *arg;
             
             state = previousState;
             state.reset();
@@ -261,9 +266,10 @@ AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) 
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
-    State stateLeft = args[0].cloneIfImmutable();
-    const State stateRight = args[1];
+AnyType
+logregr_cg_step_merge_states(AbstractDBInterface & /* db */, AnyType args) {
+    LogRegrCGTransitionState stateLeft = args[0].cloneIfImmutable();
+    const LogRegrCGTransitionState stateRight = args[1];
 
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -280,9 +286,10 @@ AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface & /* db */, AnyTyp
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyType LogisticRegressionCG::final(AbstractDBInterface & /* db */, AnyType args) {
+AnyType
+logregr_cg_step_final(AbstractDBInterface & /* db */, AnyType args) {
     // Argument from SQL call
-    State state = args[0].cloneIfImmutable();
+    LogRegrCGTransitionState state = args[0].cloneIfImmutable();
     
     // Note: k = state.iteration
     if (state.iteration == 0) {
@@ -341,9 +348,10 @@ AnyType LogisticRegressionCG::final(AbstractDBInterface & /* db */, AnyType args
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyType LogisticRegressionCG::distance(AbstractDBInterface & /* db */, AnyType args) {
-    const State stateLeft = args[0];
-    const State stateRight = args[1];
+AnyType
+internal_logregr_cg_step_distance(AbstractDBInterface & /* db */, AnyType args) {
+    const LogRegrCGTransitionState stateLeft = args[0];
+    const LogRegrCGTransitionState stateRight = args[1];
 
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
@@ -351,8 +359,9 @@ AnyType LogisticRegressionCG::distance(AbstractDBInterface & /* db */, AnyType a
 /**
  * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyType LogisticRegressionCG::result(AbstractDBInterface &db, AnyType args) {
-    const State state = args[0];
+AnyType
+internal_logregr_cg_result(AbstractDBInterface &db, AnyType args) {
+    const LogRegrCGTransitionState state = args[0];
 
     // Compute (X^T * A * X)^+
     mat inverse_of_X_transp_AX = pinv(state.X_transp_AX);
@@ -384,9 +393,9 @@ AnyType LogisticRegressionCG::result(AbstractDBInterface &db, AnyType args) {
  * - 2 + 2 * widthOfX: X_transp_AX (X^T A X)
  * - 2 + widthOfX^2 + 2 * widthOfX: logLikelihood ( ln(l(c)) )
  */
-class LogisticRegressionIRLS::State {
+class LogRegrIRLSTransitionState {
 public:
-    State(AnyType inArg)
+    LogRegrIRLSTransitionState(AnyType inArg)
         : mStorage(inArg.cloneIfImmutable()) {
         
         rebind();
@@ -415,7 +424,9 @@ public:
     /**
      * @brief We need to support assigning the previous state
      */
-    State &operator=(const State &inOtherState) {
+    LogRegrIRLSTransitionState &operator=(
+        const LogRegrIRLSTransitionState &inOtherState) {
+        
         mStorage = inOtherState.mStorage;
         return *this;
     }
@@ -424,7 +435,9 @@ public:
      * @brief Merge with another State object by copying the intra-iteration
      *     fields
      */
-    State &operator+=(const State &inOtherState) {
+    LogRegrIRLSTransitionState &operator+=(
+        const LogRegrIRLSTransitionState &inOtherState) {
+        
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition "
@@ -510,12 +523,12 @@ public:
     Reference<double> logLikelihood;
 };
 
-AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
-    AnyType args) {
+AnyType
+logregr_irls_step_transition(AbstractDBInterface &db, AnyType args) {
     AnyType::iterator arg(args);
     
     // Initialize Arguments from SQL call
-    State state = *arg++;
+    LogRegrIRLSTransitionState state = *arg++;
     double y = *arg++ ? 1. : -1.;
     DoubleRow_const x = *arg++;
 
@@ -534,7 +547,7 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
                 AbstractAllocator::kZero),
             x.n_elem);
         if (!arg->isNull()) {
-            const State previousState = *arg;
+            const LogRegrIRLSTransitionState previousState = *arg;
             
             state = previousState;
             state.reset();
@@ -573,11 +586,10 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */,
-    AnyType args) {
-    
-    State stateLeft = args[0].cloneIfImmutable();
-    const State stateRight = args[1];
+AnyType
+logregr_irls_step_merge_states(AbstractDBInterface & /* db */, AnyType args) {
+    LogRegrIRLSTransitionState stateLeft = args[0].cloneIfImmutable();
+    const LogRegrIRLSTransitionState stateRight = args[1];
     
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -594,11 +606,10 @@ AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */,
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */,
-    AnyType args) {
-    
+AnyType
+logregr_irls_step_final(AbstractDBInterface & /* db */, AnyType args) {
     // Argument from SQL call
-    State state = args[0].cloneIfImmutable();
+    LogRegrIRLSTransitionState state = args[0].cloneIfImmutable();
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
@@ -614,11 +625,13 @@ AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */,
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyType LogisticRegressionIRLS::distance(AbstractDBInterface & /* db */,
+AnyType
+internal_logregr_irls_step_distance(
+    AbstractDBInterface & /* db */,
     AnyType args) {
     
-    const State stateLeft = args[0];
-    const State stateRight = args[1];
+    const LogRegrIRLSTransitionState stateLeft = args[0];
+    const LogRegrIRLSTransitionState stateRight = args[1];
 
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
@@ -626,8 +639,9 @@ AnyType LogisticRegressionIRLS::distance(AbstractDBInterface & /* db */,
 /**
  * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyType LogisticRegressionIRLS::result(AbstractDBInterface &db, AnyType args) {
-    const State state = args[0];
+AnyType
+internal_logregr_irls_result(AbstractDBInterface &db, AnyType args) {
+    const LogRegrIRLSTransitionState state = args[0];
 
     // Compute (X^T * A * X)^+
     mat inverse_of_X_transp_AX = pinv(state.X_transp_AX);

@@ -4,50 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_REGRESS_LOGISTIC_H
-#define MADLIB_REGRESS_LOGISTIC_H
+DECLARE_UDF(logregr_cg_step_transition)
+DECLARE_UDF(logregr_cg_step_merge_states)
+DECLARE_UDF(logregr_cg_step_final)
+DECLARE_UDF(internal_logregr_cg_step_distance)
+DECLARE_UDF(internal_logregr_cg_result)
 
-#include <modules/common.hpp>
-
-namespace madlib {
-
-namespace modules {
-
-namespace regress {
-
-/**
- * @brief Functions for logistic regression, using the conjugate-gradient method
- */
-struct LogisticRegressionCG {
-    class State;
-    
-    static AnyType transition(AbstractDBInterface &db, AnyType args);
-    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
-    static AnyType final(AbstractDBInterface &db, AnyType args);
-    
-    static AnyType distance(AbstractDBInterface &db, AnyType args);
-    static AnyType result(AbstractDBInterface &db, AnyType args);
-};
-
-/**
- * @brief Functions for logistic regression, using the
- *        iteratively-reweighted-least-squares method
- */
-struct LogisticRegressionIRLS {
-    class State;
-    
-    static AnyType transition(AbstractDBInterface &db, AnyType args);
-    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
-    static AnyType final(AbstractDBInterface &db, AnyType args);
-    
-    static AnyType distance(AbstractDBInterface &db, AnyType args);
-    static AnyType result(AbstractDBInterface &db, AnyType args);
-};
-
-} // namespace regress
-
-} // namespace modules
-
-} // namespace regress
-
-#endif
+DECLARE_UDF(logregr_irls_step_transition)
+DECLARE_UDF(logregr_irls_step_merge_states)
+DECLARE_UDF(logregr_irls_step_final)
+DECLARE_UDF(internal_logregr_irls_step_distance)
+DECLARE_UDF(internal_logregr_irls_result)
