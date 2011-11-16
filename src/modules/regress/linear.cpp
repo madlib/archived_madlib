@@ -6,19 +6,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <modules/regress/linear.hpp>
-#include <modules/prob/student.hpp>
-#include <utils/Reference.hpp>
-
-// Floating-point classification functions are in C99 and TR1, but not in the
-// official C++ Standard (before C++0x). We therefore use the Boost implementation
-#include <boost/math/special_functions/fpclassify.hpp>
-
-
-// Import names from Armadillo
-using arma::vec;
-using arma::mat;
-using arma::as_scalar;
+#include <dbal/dbal.hpp>
+#include <modules/prob/prob.hpp>
 
 namespace madlib {
 
@@ -31,10 +20,15 @@ using prob::studentT_cdf;
 
 namespace regress {
 
+#include <modules/regress/linear.hpp>
+
+// Import derived Armadillo types (like DoubleCol etc.)
+USE_ARMADILLO_TYPES;
+
 /**
  * @brief Transition state for linear-regression functions
  *
- * TransitionState encapsualtes the transition state during the
+ * TransitionState encapsulates the transition state during the
  * linear-regression aggregate functions. To the database, the state is exposed
  * as a single DOUBLE PRECISION array, to the C++ code it is a proper object
  * containing scalars, a vector, and a matrix.
@@ -42,15 +36,20 @@ namespace regress {
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 5, and all elemenets are 0.
  */
-class LinearRegression::TransitionState {
+template <class Policy>
+class LinRegrTransitionState : public Policy {
 public:
+    typedef typename Policy::DoubleMat DoubleMat;
+    typedef typename Policy::DoubleCol DoubleCol;
+    typedef typename Policy::DoubleRow DoubleRow;
+
     /**
      * @internal Member initalization occurs in the order of declaration in the
      *      class (see ISO/IEC 14882:2003, Section 12.6.2). The order in the
      *      init list is irrelevant. It is important that mStorage gets
      *      initialized before the other members!
      */
-    TransitionState(AnyType inArg)
+    LinRegrTransitionState(AnyType inArg)
         : mStorage(inArg.cloneIfImmutable()) {
         
         rebind();
@@ -84,7 +83,9 @@ public:
     /**
      * @brief Merge with another TransitionState object
      */
-    TransitionState &operator+=(const TransitionState &inOtherState) {
+    LinRegrTransitionState &operator+=(
+        const LinRegrTransitionState &inOtherState) {
+        
         if (mStorage.size() != inOtherState.mStorage.size())
             throw std::logic_error("Internal error: Incompatible transition states");
             
@@ -97,7 +98,7 @@ public:
         
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
-        return 4 + inWidthOfX + inWidthOfX * inWidthOfX;
+        return 4 + inWidthOfX + inWidthOfX % 2 + inWidthOfX * inWidthOfX;
     }
     
     /**
@@ -117,6 +118,17 @@ private:
      *     independent variables. This is needed during initialization, when
      *     the storage array is still all zero, but we do already know the
      *     with of the design matrix.
+     *
+     * @internal Array layout ():
+     * - 0: numRows (number of rows seen so far)
+     * - 1: widthOfX (number of coefficients)
+     * - 2: y_sum (sum of independent variables seen so far)
+     * - 3: y_square_sum (sum of squares of independent variables seen so far)
+     * - 4: X_transp_Y (X^T y, for that parts of X and y seen so far)
+     * - 4 + widthOfX + widthOfX % 2: (X^T X, as seen so far)
+     *
+     * Note that we want 16-byte alignment for all vectors and matrices. We
+     * therefore ensure that X_transp_Y and X_transp_X begin at even positions.
      */
     void rebind(uint16_t inWidthOfX = 0) {
         numRows.rebind(&mStorage[0]);
@@ -132,7 +144,7 @@ private:
                 memoryController()),
             widthOfX);
         X_transp_X.rebind(
-            TransparentHandle::create(&mStorage[4 + widthOfX],
+            TransparentHandle::create(&mStorage[4 + widthOfX + (widthOfX % 2)],
                 widthOfX * widthOfX * sizeof(double),
                 memoryController()),
             widthOfX, widthOfX);
@@ -156,16 +168,18 @@ public:
  * \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
  * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
  */
-AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
+template <class Policy>
+AnyType
+linregr_transition<Policy>::eval(AbstractDBInterface &db, AnyType args) {
     AnyType::iterator arg(args);
     
     // Arguments from SQL call. Immutable values passed by reference should be
     // instantiated from the respective <tt>_const</tt> class. Otherwise, the
     // abstraction layer will perform a deep copy (i.e., waste unnecessary
     // processor cycles).
-    TransitionState state = *arg++;
+    LinRegrTransitionState<Policy> state = *arg++;
     double y = *arg++;
-    DoubleRow_const x = *arg++;
+    DoubleCol_const x = *arg++;
     
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
@@ -177,7 +191,7 @@ AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
     
     // Now do the transition step.
     if (state.numRows == 0) {
-        if (x.n_elem > std::numeric_limits<uint16_t>::max())
+        if (x.size() > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
                 "larger than 65535.");
         
@@ -186,13 +200,13 @@ AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
                 AbstractAllocator::kAggregate,
                 AbstractAllocator::kZero
             ),
-            x.n_elem);
+            x.size());
     }
     state.numRows++;
     state.y_sum += y;
     state.y_square_sum += y * y;
-    state.X_transp_Y += trans(x) * y;
-    state.X_transp_X += trans(x) * x;
+    state.X_transp_Y.noalias() += x * y;
+    state.X_transp_X.noalias() += x * trans(x);
         
     return state;
 }
@@ -200,9 +214,10 @@ AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LinearRegression::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
-    TransitionState stateLeft = args[0].cloneIfImmutable();
-    const TransitionState stateRight = args[1];
+AnyType
+linregr_merge_states(AbstractDBInterface & /* db */, AnyType args) {
+    LinRegrTransitionState<ArmadilloTypes> stateLeft = args[0].cloneIfImmutable();
+    const LinRegrTransitionState<ArmadilloTypes> stateRight = args[1];
     
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -219,8 +234,14 @@ AnyType LinearRegression::mergeStates(AbstractDBInterface & /* db */, AnyType ar
 /**
  * @brief Perform the linear-regression final step
  */
-AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
-    const TransitionState state = args[0];
+AnyType
+linregr_final(AbstractDBInterface &db, AnyType args) {
+    const LinRegrTransitionState<ArmadilloTypes> state = args[0];
+
+    // Import names from Armadillo
+    using arma::vec;
+    using arma::mat;
+    using arma::as_scalar;
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
@@ -230,17 +251,17 @@ AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
         
     // FIXME: We have essentially two calls to svd now (pinv calls svd, too).
     // This is a waste of processor cycles and energy.
-    vec singularValues = svd(state.X_transp_X);
-    double condition_X_transp_X = max(singularValues) / min(singularValues);
+//    vec singularValues = svd(state.X_transp_X);
+//    double condition_X_transp_X = max(singularValues) / min(singularValues);
 
     // See:
     // Lichtblau, Daniel and Weisstein, Eric W. "Condition Number."
     // From MathWorld--A Wolfram Web Resource.
     // http://mathworld.wolfram.com/ConditionNumber.html
-    if (condition_X_transp_X > 1000)
-        db.out << "Matrix X^T X is ill-conditioned (condition number "
-            "= " << condition_X_transp_X << "). "
-            "Expect strong multicollinearity." << std::endl;
+//    if (condition_X_transp_X > 1000)
+//        db.out << "Matrix X^T X is ill-conditioned (condition number "
+//            "= " << condition_X_transp_X << "). "
+//            "Expect strong multicollinearity." << std::endl;
     
     // Precompute (X^T * X)^+
     mat inverse_of_X_transp_X = pinv(state.X_transp_X);
@@ -335,6 +356,12 @@ AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
     
     return tuple;
 }
+
+// Template instantiations
+
+template struct linregr_transition<ArmadilloTypes>;
+template struct linregr_transition<EigenTypes<Eigen::Unaligned> >;
+template struct linregr_transition<EigenTypes<Eigen::Aligned> >;
 
 } // namespace regress
 
