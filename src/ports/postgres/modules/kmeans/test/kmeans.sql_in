@@ -10,30 +10,22 @@
 ---------------------------------------------------------------------------
 SELECT setseed( extract( epoch from current_timestamp)-floor( extract( epoch from current_timestamp)));
 
-DROP TABLE IF EXISTS km_testdata;
-CREATE TABLE km_testdata as 
-SELECT
-    m.m * 1000000 + cid as pid, array[ round(x + random()::numeric*15,2), round(y + random()::numeric*15,2)]::float[]::svec as position
-FROM
-    (
-    SELECT
-        round( random()::numeric * 100, 2) as x
-        , round( random()::numeric * 100, 2) as y
-        , x.x as cid
-    FROM
-        (SELECT generate_series(1,10) x) x -- number of planned centroids
-    ) xy
-    , (SELECT generate_series(1,100) m) as m -- nr of points per cluster
-;
+SELECT * FROM MADLIB_SCHEMA.kmeans_sample_data( 
+    2,      -- # of dimensions
+    10,     -- # of clusters
+    100,    -- # of points per cluster
+    1000,   -- max value of a cluster coordinate
+    10,     -- average width of a cluster in every dimension
+    'km_testdata'
+);
 
 ---------------------------------------------------------------
 -- Test
 ---------------------------------------------------------------
--- Run k-means using random() seeding
+-- Run k-means using random() seeding 
 SELECT * FROM MADLIB_SCHEMA.kmeans( 
-    'km_testdata', 'position', 'pid'
-    , NULL, NULL
-    , 10, 'random', 'l1norm'
+    'km_testdata', 'coords', null
+    , 10, 'random', 'l2norm'
     , 10, 0.001, True
     , 'km_points', 'km_centroids', True
     , True
@@ -43,13 +35,15 @@ SELECT * FROM MADLIB_SCHEMA.kmeans(
 SELECT cid, count(*) FROM km_points GROUP BY 1;
 
 -- Try a view with FLOAT[]
-CREATE VIEW km_testdata_float123 AS SELECT position::float[] FROM km_testdata;
+CREATE VIEW km_testdata_float123 
+AS SELECT coords::float[] AS coords FROM km_testdata;
 
--- Rerun k-means using kmeans++() seeding
+CREATE TABLE mycents AS SELECT * FROM km_centroids;
+
+-- Rerun k-means using provided centroid set
 SELECT * FROM MADLIB_SCHEMA.kmeans( 
-    'km_testdata', 'position', 'pid'
-    , NULL, NULL
-    , 10, 'kmeans++', 'l2norm'
+    'km_testdata_float123', 'coords', null
+    , 'mycents', 'coords', 'cosine'
     , 10, 0.001, True
     , 'km_points', 'km_centroids', True
     , True

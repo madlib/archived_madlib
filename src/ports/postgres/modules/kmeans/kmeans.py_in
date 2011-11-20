@@ -8,7 +8,7 @@
 @namespace kmeans
 """
 
-import datetime
+import time
 import plpy
 from math import floor, log, pow
 import os
@@ -159,7 +159,7 @@ def kmeans( madlib_schema
             , src_relation, src_col_data, src_col_id
             , init_cset_rel, init_cset_col
             , k, init_method, dist_metric
-            , max_iter, conv_threshold, gof 
+            , max_iter, conv_threshold, evaluate 
             , out_points, out_centroids, overwrite
             , p_verbose):
             
@@ -171,7 +171,12 @@ def kmeans( madlib_schema
 
     # Global variables
     global verbose, output_points, output_centroids
-    verbose = p_verbose
+    
+    # Some defaults
+    if p_verbose is None:
+        verbose = False;
+    else:
+        verbose = p_verbose;
     output_points = out_points
     output_centroids = out_centroids
 
@@ -179,7 +184,7 @@ def kmeans( madlib_schema
     if max_iter > 0:
         max_iterations = max_iter;        
     else:
-        max_iterations = 0;     
+        max_iterations = 20;     
 
     # Convergence threshold (% of points that changed assignments)
     convergence_log = [100.0];
@@ -207,37 +212,43 @@ def kmeans( madlib_schema
     try:
         plpy.execute( "SELECT * FROM " + src_relation + " LIMIT 1")
     except:
-        plpy.error( "source relation %s does not exist" % src_relation )
+        plpy.error( 'source relation "%s" does not exist' % src_relation )
     info( ' * src_relation = %s' % src_relation)
 
     # Validate: src_col_data
     try:
         plpy.execute( "SELECT %s FROM %s LIMIT 1" % (src_col_data, src_relation))
     except:
-        plpy.error( "data column %s not found in relation %s" 
+        plpy.error( 'column "%s" not found in relation "%s"'
                     % (src_col_data, src_relation) )
     info( ' * src_col_data = %s' % src_col_data)
 
     # Validate: src_col_id
-    try:
-        plpy.execute( "SELECT %s FROM %s LIMIT 1" % (src_col_id, src_relation))
-        has_pid = 1
-        info( ' * src_col_id = %s' % (src_col_id) )
-    except:
-        has_pid = 0
-        info( ' * src_col_id = (not found, will auto-generate)')
+    if src_col_id is not None:
+        try:
+            plpy.execute( "SELECT %s FROM %s LIMIT 1" % (src_col_id, src_relation))
+            has_pid = 1;
+            info( ' * src_col_id = %s' % (src_col_id) )
+        except:
+            plpy.error( 'column "%s" not found in relation "%s"' 
+                        % (src_col_id, src_relation) )
+    else:
+        has_pid = 0;
+        info( ' * src_col_id = None (will be auto-generated)')
+    
         
     # Validate: init_cset_rel and init_cset_col
     if (init_cset_rel is not None) and (init_cset_col is not None):
         try:
             plpy.execute( "SELECT * FROM %s LIMIT 1" % init_cset_rel)
         except:
-            plpy.error( "relation %s does not exist" % init_cset_rel )
+            plpy.error( 'relation "%s" does not exist' % init_cset_rel )
+        
         info( ' * init_cset_rel = %s' % init_cset_rel)
         try:
             rv = plpy.execute( "SELECT count(" + init_cset_col + ") FROM " + init_cset_rel)
         except:
-            plpy.error( "column %s not found in relation %s" 
+            plpy.error( 'column "%s" not found in relation "%s"' 
                         % (init_cset_col, init_cset_rel) )
         if rv[0]['count'] > 0:
             cset_count = rv[0]['count']        
@@ -308,15 +319,15 @@ def kmeans( madlib_schema
         plpy.error( "more initial centroids specified () than data points" 
                     % (k, point_count));
         
-    # Validate: gof
-    if (gof == True):
-        info( ' * gof = %s (GOF test on)' % str(gof));
-    elif (gof == False):
-        info( ' * gof = %s (GOF test off)' % str(gof));
-    else:
-        plpy.error( 'incorrect value for gof: ' + str(gof) );
+    # Validate: evaluate
+    if evaluate is None: evaluate == True; 
+    if (evaluate == True):
+        info( ' * evaluate = %s (model coefficient calculation)' % str(evaluate));
+    elif (evaluate == False):
+        info( ' * evaluate = %s (model coefficient evaluation)' % str(evaluate));
         
     # Validate: output_points
+    if overwrite is None: overwrite = False;
     if overwrite == True:
         __run_quietly( 'DROP TABLE IF EXISTS ' + output_points + ' CASCADE')
     try:
@@ -344,6 +355,10 @@ def kmeans( madlib_schema
         else:
             plpy.error( "output table %s already exists\n" % output_centroids )
     info( ' * output_centroids = %s' % output_centroids)
+
+    # Validate: verbose 
+    if verbose:
+        info( ' * verbose = True')
 
     # Create a view with PID and COORDS columns
     src_view = 'tmp_madlib_view_' + str(os.getpid());
@@ -398,22 +413,23 @@ def kmeans( madlib_schema
     if cset_count > 0:
         info( ' * centroids: %s provided in %s' % (cset_count, init_cset_rel));
         sql = 'INSERT INTO ' + output_centroids + ' (cid, coords) ' \
-              + ' SELECT row_number() OVER () AS cid, ' + init_cset_col \
+              + ' SELECT row_number() OVER () AS cid, ' \
+              + init_cset_col + '::' + madlib_schema + '.SVEC ' \
               + ' AS coords FROM ' + init_cset_rel
         plpy.execute( sql); 
         centr_count = cset_count;
         
     elif k > 0 and init_method == 'kmeans++':        
-        start = datetime.datetime.now();
+        start = time.time()
         centr_count = __init_plusplus( madlib_schema, src_view, k, point_count, dist_func);
-        time_sec = (datetime.datetime.now() - start).seconds
+        time_sec = round( time.time() - start, 3)
         info( ' * centroids: %s seeded using %s method (time: %s sec)' 
                % (centr_count, init_method, str(time_sec)));
         
     elif k > 0 and init_method == 'random':
-        start = datetime.datetime.now();
+        start = time.time();
         centr_count = __init_random( madlib_schema, src_view, k, point_count);
-        time_sec = (datetime.datetime.now() - start).seconds
+        time_sec = round( time.time() - start, 3)
         info( ' * centroids: %s seeded using %s method (time: %s sec)' 
                % (centr_count, init_method, str(time_sec)));
         
@@ -426,7 +442,7 @@ def kmeans( madlib_schema
     i = 0;
     while (done == False):	
 
-        start = datetime.datetime.now();
+        start = time.time();
 
         # Loop index
         i = i + 1;        
@@ -491,7 +507,7 @@ def kmeans( madlib_schema
                 ) t 
         ''';
         rv = plpy.execute( sql);
-        time_sec = (datetime.datetime.now() - start).seconds
+        time_sec = round( time.time() - start, 3)
         info( '... Iteration %s: updated %s points (time: %s sec)' \
                 % (str(i), str(rv[0]['sum']), str(time_sec)));
         
@@ -528,25 +544,61 @@ def kmeans( madlib_schema
     #           ModelFit = sum( distance_func( p, c)
     # Previous method:  sum( distance_func(p,c)) / count(*)
     # Suggested by Eugene:  sum( distance_func(p,c)) / max( avg(p) - p)
-    if gof == True :
-        info( 'Calculating goodness of fit measure...');
-        sql = '''
-            SELECT CASE WHEN ( BaseFit - ModelFit) / BaseFit < 0 THEN 0 ELSE ( BaseFit - ModelFit) / BaseFit END as gfit
-            FROM
-                (
-                SELECT 
-                    sum( ''' + dist_func.replace( '&&&', 'p.coords, c.coords') + ''') as ModelFit
-                    , sum( ''' + dist_func.replace( '&&&', 'p.coords, a.mean') + ''') as BaseFit
-                FROM 
-                    ''' + output_points + ''' p, ''' + output_centroids + ''' c
-                    , (SELECT ''' + dist_aggr.replace( '&&&', 'coords') + ' as mean FROM ' + output_points + ''') a
-                WHERE p.cid = c.cid
-                ) x
-        ''';
+    #if gof == True :
+    #    sql = '''
+    #        SELECT CASE WHEN ( BaseFit - ModelFit) / BaseFit < 0 THEN 0 ELSE ( BaseFit - ModelFit) / BaseFit END as gfit
+    #        FROM
+    #            (
+    #            SELECT 
+    #                sum( ''' + dist_func.replace( '&&&', 'p.coords, c.coords') + ''') as ModelFit
+    #                , sum( ''' + dist_func.replace( '&&&', 'p.coords, a.mean') + ''') as BaseFit
+    #            FROM 
+    #                ''' + output_points + ''' p, ''' + output_centroids + ''' c
+    #                , (SELECT ''' + dist_aggr.replace( '&&&', 'coords') + ' as mean FROM ' + output_points + ''') a
+    #            WHERE p.cid = c.cid
+    #            ) x
+    #    ''';
+    #    start = time.time();
+    #    rv = plpy.execute( sql);
+    #    time_sec = round( time.time() - start, 3)
+    #    info( 'Calculated goodness of fit (time: %s sec)' % time_sec);
+    #    gfit = '%s' % rv[0]['gfit'];
+    #else:
+    #    gfit = None;
+
+    # Calculate simplified Silhouette coefficient:
+    # For details see: http://airccse.org/journal/ijdms/papers/3111ijdms03.pdf
+    if evaluate == True :
+        sql =   ' SELECT' \
+              + '   avg( (b-a)/denom ) AS scoef' \
+              + ' FROM' \
+              + '   ( SELECT' \
+              + '       a, b' \
+              + '       , CASE WHEN a > b THEN a ELSE b END AS denom' \
+              + '     FROM' \
+              + '       ( SELECT ' \
+              + '           pid, max(a) AS a, min(b) AS b' \
+              + '         FROM' \
+              + '           ( SELECT ' \
+              + '               pid' \
+              + '               , CASE WHEN p.cid = c.cid THEN ' \
+              +                     dist_func.replace( '&&&', 'p.coords, c.coords') \
+              + '                   ELSE null END AS a' \
+              + '               , CASE WHEN p.cid != c.cid THEN ' \
+              +                     dist_func.replace( '&&&', 'p.coords, c.coords') \
+              + '                   ELSE null END AS b' \
+              + '             FROM ' + output_points + ' p, ' + output_centroids + ' c' \
+              + '           ) q1' \
+              + '         GROUP BY pid' \
+              + '       ) q2' \
+              + '   ) q3';        
+        start = time.time();
         rv = plpy.execute( sql);
-        gfit = '%s' % rv[0]['gfit'];
+        time_sec = round( time.time() - start, 3)
+        info( 'Calculated simplified Silhouette coefficient (time: %s sec)' % time_sec);
+        scoef = '%s' % rv[0]['scoef'];
     else:
-        gfit = None;
+        scoef = None;        
         
     # Count final number of centroids        
     rv = plpy.execute( 'SELECT count(*) as count FROM ' + output_centroids);
@@ -555,17 +607,21 @@ def kmeans( madlib_schema
     # Drop the input view
     rv = plpy.execute( "DROP VIEW " + src_view );  
 
+    # Set some output values for provided centroid sets
+    if init_method is None:
+        k = cset_count;
+        init_method = 'provided set';
+    
     # Return output result
     return ( 
         src_relation,   
         point_count, 
-        init_cset_rel,
-        k,
         init_method,
+        k,
         dist_metric,
         i,
         centr_final_count, 
-        gfit,
+        scoef,
         output_points, 
-        output_centroids,
+        output_centroids
     )
