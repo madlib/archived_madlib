@@ -12,81 +12,76 @@
 
 template <int MapOptions>
 struct EigenTypes {
-
+protected:
+    template <
+        class EigenType,
+        bool EigenTypeIsConst = boost::is_const<EigenType>::value
+    > struct DefaultHandle;
+    
     template <class EigenType>
+    struct DefaultHandle<EigenType, true> {
+        typedef AbstractionLayer::ArrayHandle<typename EigenType::Scalar> type;
+    };
+    template <class EigenType>
+    struct DefaultHandle<EigenType, false> {
+        typedef AbstractionLayer::MutableArrayHandle<typename EigenType::Scalar> type;
+    };
+    
+public:
+    template <class EigenType, class Handle = typename DefaultHandle<EigenType>::type >
     class HandleMap
       : public Eigen::Map<EigenType, MapOptions> {
     public:
         typedef Eigen::Map<EigenType, MapOptions> Base;
         typedef typename Base::Scalar Scalar;
         typedef typename Base::Index Index;
+        
+//        using Base::operator=;
 
         inline HandleMap()
-          : Base(NULL, 1, 1) { }
+          : Base(NULL, 1, 1), mMemoryHandle(NULL) { }
 
         inline HandleMap(
-            AllocatorSPtr inAllocator,
-            const uint32_t inNumElem)
-          : Base(NULL, 1, 1),
-            mMemoryHandle(
-                inAllocator->allocateArray(
-                    inNumElem,
-                    static_cast<Scalar*>(NULL) /* pure type parameter */)) {
-            
-            new (this) HandleMap(mMemoryHandle, inNumElem);
+            const Handle &inHandle)
+          : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
+            mMemoryHandle(inHandle) {
         }
-        
+
         inline HandleMap(
-            MemHandleSPtr inHandle,
+            const Handle &inHandle,
             Index inNumElem)
-          : Base(static_cast<Scalar*>(inHandle->ptr()), inNumElem),
+          : Base(const_cast<Scalar*>(inHandle.ptr()), inNumElem),
             mMemoryHandle(inHandle) { }
         
+        /**
+         * @internal
+         *     We need to do a const cast here: There is no alternative to
+         *     initializing from "const Handle&", but the base class constructor
+         *     needs a non-const value. We therefore make sure that a
+         *     non-mutable handle can only be assigned if EigenType is a
+         *     constant type. See the static assert below.
+         */
         inline HandleMap(
-            MemHandleSPtr inHandle,
+            const Handle &inHandle,
             Index inNumRows,
             Index inNumCols)
-          : Base(static_cast<Scalar*>(inHandle->ptr()), inNumRows, inNumCols),
+          : Base(const_cast<Scalar*>(inHandle.ptr()), inNumRows, inNumCols),
             mMemoryHandle(inHandle) { }
         
-        inline HandleMap(
-            const HandleMap& inMat)
-          : Base(NULL, 1, 1),
-            mMemoryHandle(
-                AbstractHandle::cloneIfNotGlobal(inMat.mMemoryHandle)) {
-            
-            new (this) HandleMap(mMemoryHandle, inMat.rows(), inMat.cols());
-        }
-        
-        inline HandleMap(
-            const Array<Scalar> &inArray)
-          : Base(NULL, 1, 1),
-            mMemoryHandle(
-                AbstractHandle::cloneIfNotGlobal(inArray.memoryHandle())) {
-            
-            new (this) HandleMap(mMemoryHandle, inArray.size());
-        }
-
-        inline HandleMap(
-            const Array_const<Scalar> &inArray)
-          : Base(NULL, 1, 1),
-            mMemoryHandle(
-                AbstractHandle::cloneIfNotGlobal(inArray.memoryHandle())) {
-            
-            // FIXME: A compile-time error would be nicer!
-            if (!boost::is_const<EigenType>::value)
-                throw std::runtime_error("Internal error: Cannot initialize "
-                    "mutable vector with immutable array.");
-            
-            new (this) HandleMap(mMemoryHandle, inArray.size());
+        operator AbstractionLayer::AnyType() const {
+            return mMemoryHandle;
         }
         
         inline HandleMap& operator=(const HandleMap& other) {
-            this->Base::operator=(other);
+            Base::operator=(other);
             return *this;
         }
         
-        inline HandleMap& rebind(const MemHandleSPtr inHandle,
+        inline HandleMap& rebind(const Handle &inHandle) {
+            return rebind(inHandle, inHandle.size());
+        }
+        
+        inline HandleMap& rebind(const Handle &inHandle,
             const Index inSize) {
             
             new (this) HandleMap(inHandle, inSize);
@@ -94,7 +89,7 @@ struct EigenTypes {
             return *this;
         }
         
-        inline HandleMap& rebind(const MemHandleSPtr inHandle,
+        inline HandleMap& rebind(const Handle &inHandle,
             const Index inRows, const Index inCols) {
             
             new (this) HandleMap(inHandle, inRows, inCols);
@@ -102,25 +97,142 @@ struct EigenTypes {
             return *this;
         }
 
-        inline MemHandleSPtr memoryHandle() const {
+        inline const Handle &memoryHandle() const {
             return mMemoryHandle;
         }
 
     protected:
-        MemHandleSPtr mMemoryHandle;
+        Handle mMemoryHandle;
+        
+    private:
+        BOOST_STATIC_ASSERT_MSG(
+            Handle::isMutable || boost::is_const<EigenType>::value,
+            "non-const matrix cannot be backed by immutable handle");
     };
 
-    typedef HandleMap<Eigen::MatrixXd> DoubleMat;
-    typedef HandleMap<const Eigen::MatrixXd> DoubleMat_const;
-    typedef HandleMap<Eigen::VectorXd> DoubleCol;
-    typedef HandleMap<const Eigen::VectorXd> DoubleCol_const;
-    typedef HandleMap<Eigen::RowVectorXd> DoubleRow;
-    typedef HandleMap<const Eigen::RowVectorXd> DoubleRow_const;
- 
+    typedef Eigen::VectorXd ColumnVector;
+    typedef Eigen::RowVectorXd RowVector;
+    typedef Eigen::MatrixXd Matrix;
+     
     template <typename Derived>
     inline
     typename Eigen::MatrixBase<Derived>::ConstTransposeReturnType
     static trans(const Eigen::MatrixBase<Derived>& mat) {
         return mat.transpose();
     }
+    
+    template <typename Derived, typename OtherDerived>
+    inline
+    typename Eigen::internal::scalar_product_traits<
+        typename Eigen::internal::traits<Derived>::Scalar,
+        typename Eigen::internal::traits<OtherDerived>::Scalar
+    >::ReturnType
+    static dot(
+        const Eigen::MatrixBase<Derived>& mat,
+        const Eigen::MatrixBase<OtherDerived>& other) {
+        return mat.dot(other);
+    }
+    
+    template <typename Derived>
+    bool
+    static isfinite(const Eigen::MatrixBase<Derived>& mat) {
+        return mat.is_finite();
+    }
+    
+    enum DecompositionOptions {
+        ComputeEigenvectors = Eigen::ComputeEigenvectors,
+        EigenvaluesOnly = Eigen::EigenvaluesOnly
+    };
+    
+    enum SPDDecompositionExtras {
+        ComputePseudoInverse = 0x01
+    };
+
+    template <class MatrixType>
+    class SymmetricPositiveDefiniteEigenDecomposition
+      : public Eigen::SelfAdjointEigenSolver<MatrixType> {
+      
+        typedef Eigen::SelfAdjointEigenSolver<MatrixType> Base;
+        typedef typename Base::Scalar Scalar;
+
+    public:    
+        typedef typename Base::RealVectorType RealVectorType;
+    
+        using Base::eigenvalues;
+
+        SymmetricPositiveDefiniteEigenDecomposition(const MatrixType &inMatrix,
+            int inOptions = ComputeEigenvectors, int inExtras = 0)
+          : Base(inMatrix, inOptions) {
+            
+            computeExtras(inMatrix, inExtras);
+        }
+        
+        double conditionNo() const {
+            const RealVectorType& ev = eigenvalues();
+            
+            double numerator = ev(ev.size() - 1);
+            double denominator = ev(0);
+            
+            // All eigenvalues of a positive semi-definite matrix are
+            // non-negative, so in theory no need to take absolute values.
+            // Unfortunately, numerical instabilities can cause eigenvalues to
+            // be slightly negative. We should interprete that as 0.
+            if (denominator < 0)
+                denominator = 0;
+            
+            return numerator <= 0 ? std::numeric_limits<double>::infinity()
+                                  : numerator / denominator;
+        }
+        
+        const MatrixType &pseudoInverse() const {
+            return mPinv;
+        }
+        
+    protected:
+        void computeExtras(const MatrixType &inMatrix, int inExtras) {
+            if (inExtras & ComputePseudoInverse) {
+                /**
+                 * If the matrix is well-conditioned, we just call the inverse
+                 * function. Otherwise, we use the eigen decomposition:
+                 * Since the eigenvectors returned by Eigen form an orthogonal
+                 * matrix (the columns/rows are orthonormal), the decomposition
+                 *
+                 *     \f$ M = V * D * V^T \f$
+                 *
+                 * is also a singular value decomposition (where M is the
+                 * original symmetric positive semi-definite matrix, D is the
+                 * diagonal matrix with eigenvectors, and V is the matrix
+                 * containing normalized eigenvectors).
+                 */
+                mPinv.resize(inMatrix.rows(), inMatrix.cols());
+
+                // FIXME: No hard-coded constant here
+                if (conditionNo() < 1000) {
+                    mPinv = inMatrix.inverse();
+                } else {
+                    if (!Base::m_eigenvectorsOk)
+                        Base::compute(inMatrix, Eigen::ComputeEigenvectors);
+                    
+                    const RealVectorType& ev = eigenvalues();
+                    
+                    // The eigenvalue are sorted in increasing order
+                    Scalar epsilon = inMatrix.rows()
+                                   * ev(ev.size() - 1)
+                                   * std::numeric_limits<Scalar>::epsilon();
+                    
+                    RealVectorType eigenvectorsInverted(ev.size());
+                    for (Index i = 0; i < ev.size(); i++) {
+                        eigenvectorsInverted(i) = ev(i) < epsilon
+                                                ? Scalar(0)
+                                                : Scalar(1) / ev(i);
+                    }
+                    mPinv = Base::eigenvectors()
+                          * eigenvectorsInverted.asDiagonal()
+                          * Base::eigenvectors().transpose();
+                }
+            }            
+        }
+
+        MatrixType mPinv;
+    };
 };

@@ -22,30 +22,32 @@ if(POSTGRESQL_FOUND)
     )
 
     set(MAD_DBAL_SOURCES_POSTGRES
-        dbconnector/PGAbstractType.cpp
-        dbconnector/PGAbstractType.hpp
-        dbconnector/PGAllocator.cpp
-        dbconnector/PGAllocator.hpp
-        dbconnector/PGArrayHandle.cpp
-        dbconnector/PGArrayHandle.hpp
-        dbconnector/PGCommon.hpp
-        dbconnector/PGCompatibility.cpp
-        dbconnector/PGCompatibility.hpp
-        dbconnector/PGInterface.cpp
-        dbconnector/PGInterface.hpp
-        dbconnector/PGMain.cpp
-        dbconnector/PGNewDelete.cpp
-        dbconnector/PGToDatumConverter.cpp
-        dbconnector/PGToDatumConverter.hpp
-        dbconnector/PGType.cpp
-        dbconnector/PGType.hpp
+        "/Users/schopf/Documents/Development/fschopp-madlib/src/modules/regress/linear.cpp")
+    list(APPEND MAD_DBAL_SOURCES_POSTGRES
+        dbconnector/AbstractionLayer_proto.hpp
+        dbconnector/Allocator_impl.hpp
+        dbconnector/Allocator_proto.hpp
+        dbconnector/AnyType_impl.hpp
+        dbconnector/AnyType_proto.hpp
+        dbconnector/ArrayHandle_impl.hpp
+        dbconnector/ArrayHandle_proto.hpp
+        dbconnector/Compatibility.cpp
+        dbconnector/Compatibility.hpp
+        dbconnector/dbconnector.hpp
+        dbconnector/main.cpp
+        dbconnector/PGException.hpp
+        dbconnector/TransparentHandle_impl.hpp
+        dbconnector/TransparentHandle_proto.hpp
+        dbconnector/Types.hpp
+        dbconnector/UDF_impl.hpp
+        dbconnector/UDF_proto.hpp
     )
-    if(LINUX)
-        list(APPEND MAD_DBAL_SOURCES_POSTGRES
-            linux/dbconnector/PGArmadilloGlue.cpp
-        )
-        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
-    endif(LINUX)
+#    if(LINUX)
+#        list(APPEND MAD_DBAL_SOURCES_POSTGRES
+#            linux/dbconnector/PGArmadilloGlue.cpp
+#        )
+#        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
+#    endif(LINUX)
     
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
@@ -81,12 +83,11 @@ if(POSTGRESQL_FOUND)
     add_madlib_connector_library(postgres "${POSTGRESQL_EXECUTABLE}"
         MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
     )
-    target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} madlib)
-    if(LINUX)
-        # On Linux, we declare Armadillo a dependency of the connector not the
-        # core library. See main CMakeLists.txt file why.
-        target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} armadillo)
-    endif(LINUX)
+#    if(LINUX)
+#        # On Linux, we declare Armadillo a dependency of the connector not the
+#        # core library. See main CMakeLists.txt file why.
+#        target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} armadillo)
+#    endif(LINUX)
 
 
 # -- 4. Old versions of PostgreSQL ship with header files that need a patch to

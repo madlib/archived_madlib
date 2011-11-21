@@ -306,7 +306,7 @@ macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
 endmacro(add_sql_files)
 
 # Add a connector library for a specific DBMS port
-macro(add_madlib_connector_library IN_DBMS IN_OSX_BUNDLE_LOADER OUT_TARGET_NAME)
+macro(add_madlib_connector_library IN_DBMS IN_LIB_LOADER OUT_TARGET_NAME)
     set(IN_LIBRARY_SOURCES ${ARGN})
 
     set(${OUT_TARGET_NAME} "madlib_${IN_DBMS}")
@@ -315,31 +315,16 @@ macro(add_madlib_connector_library IN_DBMS IN_OSX_BUNDLE_LOADER OUT_TARGET_NAME)
         MODULE
         ${IN_LIBRARY_SOURCES}
     )
-    add_dependencies(${${OUT_TARGET_NAME}} madlib)
+    add_dependencies(${${OUT_TARGET_NAME}} EP_eigen)
     set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY lib
         BUILD_WITH_INSTALL_RPATH YES
+        COMPILE_DEFINITIONS "MADLIB_DBCONNECTOR_HEADER=<dbconnector/dbconnector.hpp>"
     )
     
     if(APPLE)
-        osx_archs("${IN_OSX_BUNDLE_LOADER}" _MAD_ARCHITECTURES)
-        message(STATUS "Will build MADlib ${IN_DBMS} connector for same "
-            "architectures as detected in ${IN_OSX_BUNDLE_LOADER}, which has "
-            "architectures ${_MAD_ARCHITECTURES}")
         set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
-#            OSX_ARCHITECTURES "${_MAD_ARCHITECTURES}"
-            LINK_FLAGS "-bundle_loader ${IN_OSX_BUNDLE_LOADER} -Wl,-rpath -Wl,@loader_path/../../../lib")
-
-        # The MADlib connector library for port xyz resides in
-        # $MADLIB_ROOT/ports/xyz/lib. The MADlib core library is in
-        # $MADLIB_ROOT/lib, hence we set the RPATH to "@loader_path/../../../lib"
-        set_target_properties(${${OUT_TARGET_NAME}}
-            PROPERTIES INSTALL_RPATH "@loader_path/../../../lib")
-    else(APPLE)
-        # See comment above. On UNIX/Linux, \$ORIGIN has essentially the same
-        # menaing as @loader_path on Mac OS X
-        set_target_properties(${${OUT_TARGET_NAME}}
-            PROPERTIES INSTALL_RPATH "\$ORIGIN/../../../lib")
+            LINK_FLAGS "-bundle_loader ${IN_LIB_LOADER}")
     endif(APPLE)
 endmacro(add_madlib_connector_library)
 
@@ -365,67 +350,6 @@ list(APPEND MAD_SOURCES
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-
-# -- Build and install MADlib core library -------------------------------------
-
-# Create library
-add_library(
-    madlib
-    SHARED
-    ${MAD_SOURCES}
-)
-add_dependencies(madlib EP_armadillo EP_eigen)
-
-# INSTALL_NAME_DIR is a Mac OS X only property
-set_target_properties(madlib PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY lib
-    INSTALL_NAME_DIR "@rpath")
-
-if(APPLE)
-    # FIXME: Or maybe not? We get an "internal compiler" error when compiling for
-    # PowerPC, hence we do not build for it any more.
-    # find_library(ACCELERATE_FRAMEWORK Accelerate)
-    # osx_archs(${ACCELERATE_FRAMEWORK}/Accelerate ACCELERATE_ARCHS)
-    # message(STATUS "Will build madlib for same architecture as detected in "
-    #     "${ACCELERATE_FRAMEWORK}, which has architectures "
-    #    "${ACCELERATE_ARCHS}")
-    
-    # FIXME: __ZN6madlib4dbal16defaultAllocatorEv is the mangled name of
-    # madlib::dbal::defaultAllocator().
-    # A better way would be do find out the mangled name at compile time, even
-    # better yet this option should not be necessary.
-    set_target_properties(madlib PROPERTIES
-#        OSX_ARCHITECTURES "x86_64;i386"
-        LINK_FLAGS "-Wl,-U,__ZN6madlib4dbal16defaultAllocatorEv")
-    
-    # On the Mac, the Accelerate framework is already an umbrella for everything
-    # we need for Armadillo
-    target_link_libraries(madlib "-framework Accelerate")
-else(APPLE)
-    # On other platforms with dreict binding, we dynamically link to the
-    # armadillo library
-    if(NOT LINUX)
-        # When running on Linux / systems with a flat namespace, there are DBMSs
-        # that need to load Armadillo with dlopen, where RTLD_DEEPBIND is ORed
-        # in for the second argument (to ensure that all LAPACK/BLAS symbols are
-        # resolved properly and do not interference with symbols of the same
-        # name in the main executable). Hence, we cannot declare librarmadillo
-        # a dependency of the core library.
-        target_link_libraries(madlib armadillo)
-    endif(NOT LINUX)
-    
-    install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib
-        DESTINATION .
-        COMPONENT core
-        FILES_MATCHING REGEX "^.*/[^/]*armadillo[^/]*\$"
-    )
-    
-    # the RPATH to be used when installing. This is set to "$ORIGIN" because
-    # the armadillo library will reside in the same directory as the MADlib
-    # library
-    set_target_properties(madlib PROPERTIES
-        INSTALL_RPATH "\$ORIGIN")
-endif(APPLE)
 
 if(CMAKE_COMPILER_IS_GNUCXX)
     if(GNUCXX_VERSION VERSION_GREATER 4.4 OR GNUCXX_VERSION VERSION_EQUAL 4.4)
@@ -465,10 +389,6 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     endif(GNUCXX_VERSION VERSION_GREATER 4.4 OR GNUCXX_VERSION VERSION_EQUAL 4.4)
 endif(CMAKE_COMPILER_IS_GNUCXX)
 
-install(TARGETS madlib
-    LIBRARY DESTINATION lib
-    COMPONENT core
-)
 
 # -- Preprocess/copy all Python/SQL files --------------------------------------
 

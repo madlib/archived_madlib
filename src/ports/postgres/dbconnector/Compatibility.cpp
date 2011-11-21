@@ -7,16 +7,19 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <dbconnector/PGCompatibility.hpp>
-
 extern "C" {
+    #include <postgres.h>
     #include <funcapi.h>
     #include <nodes/execnodes.h>
 } // extern "C"
 
+#include "Compatibility.hpp"
+
 namespace madlib {
 
 namespace dbconnector {
+
+namespace postgres {
 
 #if PG_VERSION_NUM < 90000
 
@@ -53,6 +56,8 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 }
 
 #endif
+
+} // namespace postgres
 
 } // namespace dbconnector
 

@@ -1,16 +1,15 @@
-#ifndef MADLIB_POSTGRES_PGCOMPATIBILITY_HPP
-#define MADLIB_POSTGRES_PGCOMPATIBILITY_HPP
-
-#include <dbconnector/PGCommon.hpp>
-
-extern "C" {
-    #include <fmgr.h>
-    #include <utils/lsyscache.h>    // because of type_is_array
-} // extern "C"
+#ifndef MADLIB_POSTGRES_COMPATIBILITY_HPP
+#define MADLIB_POSTGRES_COMPATIBILITY_HPP
 
 namespace madlib {
 
 namespace dbconnector {
+
+namespace postgres {
+
+#ifndef FLOAT8ARRAYOID
+    #define FLOAT8ARRAYOID 1022
+#endif
 
 #if PG_VERSION_NUM < 90000
 
@@ -36,6 +35,8 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext);
 #endif
 
 #endif // PG_VERSION_NUM < 90000
+
+} // namespace postgres
 
 } // namespace dbconnector
 
