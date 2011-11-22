@@ -54,17 +54,6 @@ def __run_quietly(sql):
     plpy.execute("SET client_min_messages = %s;" % prev_msg_level)
     
     return rv
-
-# ----------------------------------------
-# Prepare distance function string
-# ----------------------------------------
-#def __distance_func( madlib_schema, method, p1, p2):#
-#
-#    # L1norm
-#    if method == 'l1norm':
-#        return madlib_schema + '.svec_l1norm( p.coords operator(' + madlib_schema + '''.-) c.coords)
-#    
-#    return rv
     
 # ----------------------------------------
 # Centroid initialization using random()
@@ -73,7 +62,6 @@ def __init_random( madlib_schema, src_view, k, p):
     """
     Creates the initial set of centroids using random().
 
-    XXX - add parameters info
     """
 	
     # Find k random points
@@ -103,7 +91,6 @@ def __init_plusplus( madlib_schema, src_view, k, p, dist_func):
     """
     Creates the initial set of centroids using kmeans++.
 
-    XXX - add parameters info
     """
 	
     # Find how many points we need to look through to be 99.9% sure that
@@ -151,9 +138,31 @@ def __init_plusplus( madlib_schema, src_view, k, p, dist_func):
     # Return # of created centroids
     rv = plpy.execute( 'SELECT count(*) AS cnt FROM ' + output_centroids);
     return rv[0]['cnt']
+
+# ----------------------------------------
+# Centroid initialization using Canopy clustering
+# ----------------------------------------
+def __init_canopy( madlib_schema
+            , src_view, src_col_data, src_col_id
+            , out_canopy_rel, out_canopy_cluster_rel 
+            , T1, T2, dist_metric
+            , overwrite):
+    """
+    Creates the initial set of centroids using Canopy clustering.
+
+    """
+    #select madlib.canopy_cluster('canopy_data', 'position', 'pid', 'null', 2, 0.5, 'public', 'outpu_canopy_data', 'abc');
+    #select MADLIB.canopy_cluster('km_svec_data', 'coords', 'pid', 'null', 2, 0.5, 'public', 'outpu_canopy_data', 'abc');
+    
+    sql = 'select '+ madlib_schema + ".canopy_cluster('" + src_view + "', '" + src_col_data + "', '" + src_col_id + \
+        "', 'null'" + ', ' + str(T1) + ', ' + str(T2) + ", 'public', " + "'" + out_canopy_rel + "', '" + out_canopy_cluster_rel + "' ) as cnt";
+    info(sql)
+    # Return # of created canopy
+    rv = __run_quietly( sql);
+    return rv[0]['cnt']
     
 # ----------------------------------------
-# Function to run the k-means algorithm
+# Main function to run the k-means algorithm
 # ----------------------------------------
 def kmeans( madlib_schema
             , src_relation, src_col_data, src_col_id
@@ -166,7 +175,6 @@ def kmeans( madlib_schema
     """
     Executes the k-means clustering algorithm.
     
-    XXX - add parameters info
     """
 
     # Global variables
@@ -536,48 +544,16 @@ def kmeans( madlib_schema
         INSERT INTO ''' + output_points + '''	
         SELECT * FROM TempTable''' + str(i);    
     
-    plpy.execute( sql);	  
-            
-    # Calculate Goodness of fit
-    # Defined as = (BaseFit - ModelFit) / BaseFit
-    #   where:  BaseFit = sum( distance_func( p, avg(p)) 
-    #           ModelFit = sum( distance_func( p, c)
-    # Previous method:  sum( distance_func(p,c)) / count(*)
-    # Suggested by Eugene:  sum( distance_func(p,c)) / max( avg(p) - p)
-    #if gof == True :
-    #    sql = '''
-    #        SELECT CASE WHEN ( BaseFit - ModelFit) / BaseFit < 0 THEN 0 ELSE ( BaseFit - ModelFit) / BaseFit END as gfit
-    #        FROM
-    #            (
-    #            SELECT 
-    #                sum( ''' + dist_func.replace( '&&&', 'p.coords, c.coords') + ''') as ModelFit
-    #                , sum( ''' + dist_func.replace( '&&&', 'p.coords, a.mean') + ''') as BaseFit
-    #            FROM 
-    #                ''' + output_points + ''' p, ''' + output_centroids + ''' c
-    #                , (SELECT ''' + dist_aggr.replace( '&&&', 'coords') + ' as mean FROM ' + output_points + ''') a
-    #            WHERE p.cid = c.cid
-    #            ) x
-    #    ''';
-    #    start = time.time();
-    #    rv = plpy.execute( sql);
-    #    time_sec = round( time.time() - start, 3)
-    #    info( 'Calculated goodness of fit (time: %s sec)' % time_sec);
-    #    gfit = '%s' % rv[0]['gfit'];
-    #else:
-    #    gfit = None;
+    plpy.execute( sql);	           
 
     # Calculate simplified Silhouette coefficient:
     # For details see: http://airccse.org/journal/ijdms/papers/3111ijdms03.pdf
     if evaluate == True :
         sql =   ' SELECT' \
-              + '   avg( (b-a)/denom ) AS scoef' \
+              + '   avg( (b-a) / float8larger(a,b) ) AS scoef' \
               + ' FROM' \
-              + '   ( SELECT' \
-              + '       a, b' \
-              + '       , CASE WHEN a > b THEN a ELSE b END AS denom' \
-              + '     FROM' \
               + '       ( SELECT ' \
-              + '           pid, max(a) AS a, min(b) AS b' \
+              + '           pid, max(a)::float AS a, min(b)::float AS b' \
               + '         FROM' \
               + '           ( SELECT ' \
               + '               pid' \
@@ -590,8 +566,7 @@ def kmeans( madlib_schema
               + '             FROM ' + output_points + ' p, ' + output_centroids + ' c' \
               + '           ) q1' \
               + '         GROUP BY pid' \
-              + '       ) q2' \
-              + '   ) q3';        
+              + '       ) q2';
         start = time.time();
         rv = plpy.execute( sql);
         time_sec = round( time.time() - start, 3)
