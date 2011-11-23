@@ -13,6 +13,7 @@
 // Floating-point classification functions are in C99 and TR1, but not in the
 // official C++ Standard (before C++0x). We therefore use the Boost implementation
 #include <boost/math/special_functions/fpclassify.hpp>
+#include <boost/math/distributions/students_t.hpp>
 
 
 // Import names from Armadillo
@@ -25,9 +26,6 @@ namespace madlib {
 using utils::Reference;
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::studentT_cdf;
 
 namespace regress {
 
@@ -318,10 +316,9 @@ AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
     DoubleCol pValues(db.allocator(), state.widthOfX);
+	boost::math::students_t dist(state.numRows - state.widthOfX);
     for (int i = 0; i < state.widthOfX; i++)
-        pValues(i) = 2. * (1. - studentT_cdf(
-                                    state.numRows - state.widthOfX,
-                                    std::fabs( tStats(i) )));
+	    pValues(i) = 2. * (1. - boost::math::cdf(dist, std::fabs( tStats(i) )));
     
     // Return all coefficients, standard errors, etc. in a tuple
     AnyTypeVector tuple;

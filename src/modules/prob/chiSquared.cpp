@@ -13,31 +13,67 @@
 
 namespace madlib {
 
-namespace modules {
+  namespace modules {
 
-namespace prob {
+    namespace prob {
 
-/**
- * @brief Chi-squared cumulative distribution function: In-database interface
- */
-AnyType chi_squared_cdf(AbstractDBInterface & /* db */, AnyType args) {
-    AnyType::iterator arg(args);
-
-    // Arguments from SQL call
-    const int64_t nu = *arg++;
-    const double t = *arg;
+      /**
+       * @brief Chi-squared cumulative distribution function: In-database interface
+       */
+      AnyType chi_squared_cdf(AbstractDBInterface & /* db */, AnyType args) {
+        AnyType::iterator   arg(args);
+        const double        x  = *arg++;
+        const double        df = *arg;
         
-    /* We want to ensure nu > 0 */
-    if (nu <= 0)
-        throw std::domain_error("Chi Squared distribution undefined for "
-            "degree of freedom <= 0");
+        /* We want to ensure df > 0 */
+        if (df <= 0)
+          throw std::domain_error("Chi Squared distribution undefined for "
+                                  "degree of freedom <= 0");
 
-    return boost::math::cdf( boost::math::chi_squared(nu), t );
-}
+        return boost::math::cdf( boost::math::chi_squared(df), x );
+      }
 
 
-} // namespace prob
+      /**
+       * @brief Chi-squared probability density function: In-database interface
+       */
+      AnyType chi_squared_pdf(AbstractDBInterface & /* db */, AnyType args) {
+        AnyType::iterator   arg(args);
+        const double        x  = *arg++;
+        const double        df = *arg;
+  
+        /* We want to ensure df > 0 */
+        if (df <= 0)
+          throw std::domain_error("Chi Squared distribution undefined for "
+                                  "degree of freedom <= 0");
 
-} // namespace modules
+        return boost::math::pdf( boost::math::chi_squared(df), x );
+      }
+
+
+      /**
+       * @brief Chi-squared quantile function: In-database interface
+       */
+      AnyType chi_squared_quantile(AbstractDBInterface & /* db */, AnyType args) 
+      {
+        AnyType::iterator   arg(args);
+        const double        p  = *arg++;
+        const double        df = *arg;
+        
+        /* We want to ensure df > 0 */
+        if (df <= 0)
+          throw std::domain_error("Chi Squared distribution undefined for "
+                                  "degree of freedom <= 0");
+        if (p < 0 || p > 1)
+          throw std::domain_error("Chi Squared probability must be in the "
+                                  "range [0,1]");
+
+        return boost::math::quantile( boost::math::chi_squared(df), p );
+      }
+
+
+    } // namespace prob
+
+  } // namespace modules
 
 } // namespace regress

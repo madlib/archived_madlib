@@ -18,6 +18,8 @@ namespace modules {
 namespace prob {
 
 AnyType chi_squared_cdf(AbstractDBInterface &db, AnyType args);
+AnyType chi_squared_pdf(AbstractDBInterface &db, AnyType args);
+AnyType chi_squared_quantile(AbstractDBInterface &db, AnyType args);
 
 } // namespace prob
 

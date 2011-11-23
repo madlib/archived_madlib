@@ -26,10 +26,23 @@
 
 // prob/chiSquared.hpp
 DECLARE_UDF(prob, chi_squared_cdf)
+DECLARE_UDF(prob, chi_squared_pdf)
+DECLARE_UDF(prob, chi_squared_quantile)
 
 // prob/student.hpp
-DECLARE_UDF(prob, student_t_cdf)
+DECLARE_UDF(prob, students_t_cdf)
+DECLARE_UDF(prob, students_t_pdf)
+DECLARE_UDF(prob, students_t_quantile)
 
+// prob/gamma.hpp
+DECLARE_UDF(prob, gamma_cdf)
+DECLARE_UDF(prob, gamma_pdf)
+DECLARE_UDF(prob, gamma_quantile)
+
+// prob/beta.hpp
+DECLARE_UDF(prob, beta_cdf)
+DECLARE_UDF(prob, beta_pdf)
+DECLARE_UDF(prob, beta_quantile)
 
 // regress/linear.hpp
 DECLARE_UDF_EXT(linregr_transition, regress, LinearRegression::transition)

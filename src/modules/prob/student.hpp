@@ -17,9 +17,9 @@ namespace modules {
 
 namespace prob {
 
-double studentT_cdf(int64_t nu, double t);
-
-AnyType student_t_cdf(AbstractDBInterface &db, AnyType args);
+AnyType students_t_cdf(AbstractDBInterface &db, AnyType args);
+AnyType students_t_pdf(AbstractDBInterface &db, AnyType args);
+AnyType studentv_t_quantile(AbstractDBInterface &db, AnyType args);
 
 } // namespace prob
 
