@@ -1565,7 +1565,7 @@ declare
     classified_tree TEXT := validation_table || '_classified_temp';
     is_sparse_vector BOOLEAN := 'f';
     svec_name TEXT;
-    mete_table_name TEXT := '';
+    meta_table_name TEXT := '';
     curStmt TEXT;
 begin
     SELECT MADLIB_SCHEMA.__get_input_format(tree_table_name) INTO is_sparse_vector;
@@ -2925,26 +2925,27 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__c45_classify_internal
 RETURNS TEXT AS $$
 declare
     table_names TEXT[] = '{classified_instance1,classified_instance2}';
-    jump_so_far INT := 0;
-    is_feature_cont boolean := 'f';
-    old_jump_so_far INT := 0;
     table_pick INT := 1;
-    old_depth INT := 0;
-    new_depth INT := 0;
     remains_to_classify INT;
     size_finished INT;
     time_stamp TIMESTAMP;
     svec_name TEXT := classification_table_name || '_svec_temp';
-    mete_table_name TEXT := '';
+    meta_table_name TEXT := '';
     id_col_name TEXT := 'id';
     feature_col_name TEXT := 'feature';
+    curr_level INT := 1;
+    max_level INT := 0;
 begin
     time_stamp = clock_timestamp();
     
-    SELECT MADLIB_SCHEMA.__get_conversion_metatable_name(tree_table_name) INTO mete_table_name;
+    SELECT MADLIB_SCHEMA.__get_conversion_metatable_name(tree_table_name) INTO meta_table_name;
     
     IF (NOT is_sparse_vector) THEN
-        PERFORM MADLIB_SCHEMA.__mad_convert_tbl_to_svec(classification_table_name, svec_name, mete_table_name, 't');
+        PERFORM MADLIB_SCHEMA.__mad_convert_tbl_to_svec(
+                classification_table_name, 
+                svec_name, 
+                meta_table_name, 
+                't');
     ELSE
         svec_name = classification_table_name;
     END IF;
@@ -2984,74 +2985,60 @@ begin
 
     EXECUTE 'INSERT INTO classified_instance1 (id, feature, jump, class, prob) SELECT '
         ||id_col_name||', '||feature_col_name||', 1, 0, 0 FROM ' || svec_name || ';';  
-    LOOP
-        EXECUTE 'SELECT id,is_feature_cont FROM '||tree_table_name||' WHERE id > '
-            || jump_so_far ||' ORDER BY id LIMIT 1' INTO jump_so_far,is_feature_cont;
+
+    
+    EXECUTE 'SELECT max(array_upper(tree_location,1)) FROM '||tree_table_name||';' 
+        INTO max_level;
+
+    FOR curr_level IN 1..max_level LOOP
         IF(verbosity) THEN  
-            RAISE INFO 'CLASSIFICATION STEP [%] CLASSIFIED: % TO BE CLASSIFIED: %, is_feature_cont %', 
-                jump_so_far, size_finished, remains_to_classify, is_feature_cont;
-        END IF;
-        
-        --SELECT INTO new_depth array_upper(tree_location, 1) FROM '||tree_table_name||' WHERE id = jump_so_far;
-        IF (jump_so_far IS NULL) THEN
-            new_depth = NULL;
-        ELSE
-            EXECUTE 'SELECT array_upper(tree_location, 1) FROM '||tree_table_name||' WHERE id = ' 
-                ||jump_so_far|| ';' INTO new_depth;
+            RAISE INFO 'new_depth: %', curr_level;
         END IF;
 
+        EXECUTE 'INSERT INTO ' || result_table_name ||' SELECT * FROM '|| 
+            table_names[(table_pick)%2+1] ||' WHERE jump = 0;';
+        EXECUTE 'TRUNCATE '|| table_names[(table_pick)%2+1] ||';';
+        EXECUTE 'SELECT count(*) FROM '||result_table_name||';' INTO size_finished;
         IF(verbosity) THEN  
-            RAISE INFO 'new_depth: %, old_depth %', new_depth, old_depth;
-        END IF;
-        IF(new_depth > old_depth) THEN
-            EXECUTE 'INSERT INTO ' || result_table_name ||' SELECT * FROM '|| 
-                table_names[(table_pick)%2+1] ||' WHERE jump = 0;';
-            EXECUTE 'TRUNCATE '|| table_names[(table_pick)%2+1] ||';';
-            EXECUTE 'SELECT count(*) FROM '||result_table_name||';' INTO size_finished;
-            IF(verbosity) THEN  
-                RAISE INFO 'size_finished %', size_finished;
-            END IF;            
-            table_pick = table_pick%2+1; 
-        END IF;
-        old_depth = new_depth;
+            RAISE INFO 'size_finished %', size_finished;
+        END IF;            
+        table_pick = table_pick%2+1; 
         
-        EXECUTE 'SELECT count(*) FROM '|| table_names[(table_pick)%2+1] ||';' INTO remains_to_classify;
-        IF ((jump_so_far IS NULL) OR (jump_so_far = old_jump_so_far) OR (remains_to_classify = 0)) THEN
+        EXECUTE 'SELECT count(*) FROM '|| table_names[(table_pick)%2+1] ||';' 
+            INTO remains_to_classify;
+        IF (remains_to_classify = 0) THEN
             IF(verbosity) THEN  
-                RAISE INFO 'jump_so_far [%] old_jump_so_far [%] size_finished: % remains_to_classify: %', 
-                    jump_so_far, old_jump_so_far, size_finished, remains_to_classify;
+                RAISE INFO 'size_finished: % remains_to_classify: %', 
+                    size_finished, remains_to_classify;
             END IF;        
             EXIT;
         END IF;
-        old_jump_so_far = jump_so_far;
 
-        -- discrete feature processing
-        IF ( is_feature_cont != 't' ) THEN
-            IF(verbosity) THEN  
-                RAISE INFO 'discrete feature classification';
-            END IF;         
-            EXECUTE 'INSERT INTO '|| table_names[table_pick] ||
-                ' SELECT pt.id, pt.feature, 
-                COALESCE(gt.jump[MADLIB_SCHEMA.svec_proj(pt.feature, gt.feature)+1],0), 
-                gt.maxclass, gt.probability, gt.parent_id, gt.id FROM (SELECT * FROM '|| 
-                table_names[(table_pick)%2+1] ||' WHERE  jump = '|| jump_so_far || 
-                E') AS pt, (SELECT * FROM '||tree_table_name||E' WHERE is_feature_cont != \'t\' and id = '
-                || jump_so_far||') AS gt;';
+        IF(verbosity) THEN  
+            RAISE INFO 'discrete feature classification';
+        END IF;         
+        EXECUTE 'INSERT INTO '|| table_names[table_pick] ||
+            ' SELECT pt.id, pt.feature, 
+            COALESCE(gt.jump[MADLIB_SCHEMA.svec_proj(pt.feature, gt.feature)+1],0), 
+            gt.maxclass, gt.probability, gt.parent_id, gt.id FROM 
+                (SELECT * FROM '||table_names[(table_pick)%2+1] || E') AS pt, 
+                (SELECT * FROM '||tree_table_name||E' WHERE is_feature_cont != \'t\' 
+                    and array_upper(tree_location,1) = '||curr_level ||') AS gt 
+                where pt.jump = gt.id ;';
 
-        -- continuous feature processing
-        ELSE
-            IF(verbosity) THEN  
-                RAISE INFO 'continuous feature classification';
-            END IF;           
-            EXECUTE 'INSERT INTO '|| table_names[table_pick] ||
-                ' SELECT pt.id, pt.feature, 
-                COALESCE(gt.jump[MADLIB_SCHEMA.__is_less(gt.split_value,MADLIB_SCHEMA.svec_proj(pt.feature, gt.feature))+2],0), 
-                gt.maxclass, gt.probability,gt.parent_id, gt.id  FROM (SELECT * FROM '|| 
-                table_names[(table_pick)%2+1] ||' WHERE jump = '|| jump_so_far || E') AS pt, 
-                (SELECT * FROM '||tree_table_name||E' WHERE is_feature_cont = \'t\' and id = '|| jump_so_far||') AS gt;'; 
-        END IF;
-
+        IF(verbosity) THEN  
+            RAISE INFO 'continuous feature classification';
+        END IF;           
+        EXECUTE 'INSERT INTO '|| table_names[table_pick] ||
+            ' SELECT pt.id, pt.feature, 
+            COALESCE(gt.jump[MADLIB_SCHEMA.__is_less(gt.split_value,MADLIB_SCHEMA.svec_proj(pt.feature, gt.feature))+2],0), 
+            gt.maxclass, gt.probability,gt.parent_id, gt.id  FROM 
+            (SELECT * FROM '|| table_names[(table_pick)%2+1] ||E') AS pt, 
+            (SELECT * FROM '||tree_table_name||E' WHERE is_feature_cont = \'t\' 
+                and array_upper(tree_location,1) = '||curr_level ||') AS gt 
+            where pt.jump = gt.id ;'; 
     END LOOP;
+
     EXECUTE 'INSERT INTO '||result_table_name||' SELECT * FROM '|| 
         table_names[table_pick] ||' WHERE jump = 0;';
     EXECUTE 'INSERT INTO '||result_table_name||' SELECT * FROM '|| 
