@@ -151,9 +151,6 @@ def __run_sql_query(sql, show_error):
         except:
             pass
     
-    #print sql
-    #print runcmd
-    #print results    
     return results
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -822,12 +819,39 @@ def main(argv):
             __info("Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
             return
 
-        __info("*** Uninstalling MADlib ***", True)
-
-        __info("***************************************************************************", True)
+        # Find any potential data to lose
+        affected_objects = __run_sql_query("""
+            SELECT 
+                n1.nspname AS schema,
+                relname AS relation, 
+                attname AS column, 
+                typname AS type
+            FROM 
+                pg_attribute a, 
+                pg_class c, 
+                pg_type t, 
+                pg_namespace n, 
+                pg_namespace n1     
+            WHERE 
+                n.nspname = '%s'
+                AND t.typnamespace = n.oid 
+                AND a.atttypid = t.oid 
+                AND c.oid = a.attrelid 
+                AND c.relnamespace = n1.oid
+                AND c.relkind = 'r'
+            ORDER BY 
+                n1.nspname, relname, attname, typname""" % schema.lower()
+                , True
+        );
+                
+        __info("*** Uninstalling MADlib ***", True)        
+        __info("***********************************************************************************", True)
         __info("* Schema %s and all database objects depending on it will be dropped!" % schema.upper(), True)
-        __info("* This is potentially very dangerous operation!                      ", True)
-        __info("***************************************************************************", True)
+        if affected_objects:
+            __info("* If you continue the following data will be lost (schema : table.column : type):", True)
+            for ao in affected_objects:
+                __info ( '* - ' + ao['schema'] + ' : ' + ao['relation'] + '.' + ao['column'] + ' : ' + ao['type'], True);
+        __info("***********************************************************************************", True)
         __info("Would you like to continue? [Y/N]", True)
         go = raw_input('>>> ').upper()
         while go != 'Y' and go != 'N':
