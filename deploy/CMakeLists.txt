@@ -44,7 +44,7 @@ set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 
 add_subdirectory(PackageMaker)
 add_subdirectory(RPM)
-
+add_subdirectory(gppkg) 
 
 # -- Finally do the packaging! -------------------------------------------------
 
