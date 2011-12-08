@@ -6,16 +6,14 @@
  *
  * -------------------------------------------------------------------------- */
 
-//#ifndef MADLIB_DONT_DECLARE_NAMESPACES
-    namespace madlib {
+namespace madlib {
 
-    namespace modules {
+namespace modules {
 
-    /**
-     * @brief Linear/logistic regression functions
-     */
-    namespace regress {
-//#endif
+/**
+ * @brief Linear/logistic regression functions
+ */
+namespace regress {
 
 #ifdef MADLIB_CURRENT_NAMESPACE
     #undef MADLIB_CURRENT_NAMESPACE
@@ -23,12 +21,11 @@
 
 #define MADLIB_CURRENT_NAMESPACE madlib::modules::regress
 
-#include <modules/regress/linear.hpp>
+#include "linear.hpp"
+#include "logistic.hpp"
 
-//#ifndef MADLIB_DONT_DECLARE_NAMESPACES
-    } // namespace regress
+} // namespace regress
 
-    } // namespace modules
+} // namespace modules
 
-    } // namespace madlib
-//#endif
+} // namespace madlib

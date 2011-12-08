@@ -6,9 +6,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include MADLIB_DBCONNECTOR_HEADER
-
-// #include <modules/prob/prob.hpp>
+#include <dbconnector/dbconnector.hpp>
+#include <modules/prob/prob.hpp>
 
 namespace madlib {
 
@@ -17,13 +16,12 @@ using utils::MutableReference;
 
 namespace modules {
 
+// Import names from other MADlib modules
+using prob::studentT_cdf;
+
 namespace regress {
 
 #include "linear.hpp"
-
-
-// Import names from other MADlib modules
-//using prob::studentT_cdf;
 
 /**
  * @brief Define types depending on whether transition state is mutable or
@@ -242,7 +240,10 @@ linregr_transition::run(AnyType &args) {
     state.y_sum += y;
     state.y_square_sum += y * y;
     state.X_transp_Y.noalias() += x * y;
-    state.X_transp_X.noalias() += x * trans(x);
+    // FIXME: The following line is Eigen-specific
+    // X^T X is symmetric, so it is sufficient to only fill a triangular part
+    // of the matrix
+    state.X_transp_X.triangularView<Eigen::Lower>() += x * trans(x);
     
     return state;
 }
@@ -357,10 +358,10 @@ linregr_final::run(AnyType &args) {
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
     HandleMap<ColumnVector> pValues(allocateArray<double>(state.widthOfX));
-//    for (int i = 0; i < state.widthOfX; i++)
-//        pValues(i) = 2. * (1. - studentT_cdf(
-//                                    state.numRows - state.widthOfX,
-//                                    std::fabs( tStats(i) )));
+    for (int i = 0; i < state.widthOfX; i++)
+        pValues(i) = 2. * (1. - studentT_cdf(
+                                    state.numRows - state.widthOfX,
+                                    std::fabs( tStats(i) )));
     
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
