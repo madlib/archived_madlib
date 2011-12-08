@@ -1,4 +1,6 @@
 /**
+ * @brief The PostgreSQL memory allocator
+ *
  * @internal
  *     To avoid name conflicts, we do not import namespace dbal
  */

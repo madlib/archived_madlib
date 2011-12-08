@@ -35,7 +35,6 @@ AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
     
     size_t		size = sizeof(T) * inNumElements + ARR_OVERHEAD_NONULLS(1);
     ::ArrayType	*array;
-    void		*arrayData;
 
     // Note: Except for the allocate call, the following statements do not call
     // into the PostgreSQL backend. We are only using macros here.
@@ -47,10 +46,9 @@ AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
     SET_VARSIZE(array, size);
     array->ndim = 1;
     array->dataoffset = 0;
-    array->elemtype = TypeBridge<T>::oid;
+    array->elemtype = TypeTraits<T>::oid;
     ARR_DIMS(array)[0] = inNumElements;
     ARR_LBOUND(array)[0] = 1;
-    arrayData = ARR_DATA_PTR(array);
     
     return MutableArrayHandle<T>(array);
 }
@@ -122,7 +120,7 @@ inline
 void *
 AbstractionLayer::Allocator::internalPalloc(size_t inSize) const {
 #if MAXIMUM_ALIGNOF >= 16
-    return (ZM == DoZero) ? palloc0(inSize) : palloc(inSize);
+    return (ZM == dbal::DoZero) ? palloc0(inSize) : palloc(inSize);
 #else
     if (inSize > std::numeric_limits<size_t>::max() - 16)
         return NULL;
@@ -138,6 +136,8 @@ AbstractionLayer::Allocator::internalPalloc(size_t inSize) const {
  * @internal
  * @brief Thin wrapper around \c repalloc() that returns a 16-byte-aligned
  *     pointer.
+ *
+ * @tparam ZM Initialize memory block by overwriting with zeros?
  * 
  * Unless <tt>MAXIMUM_ALIGNOF >= 16</tt>, we waste 16 additional bytes of
  * memory. The call to \c repalloc() might throw a PostgreSQL exception. Thus,

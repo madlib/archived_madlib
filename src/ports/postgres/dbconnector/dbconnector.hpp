@@ -1,3 +1,15 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file dbconnector.hpp
+ *
+ * 
+ *
+ *//* ----------------------------------------------------------------------- */
+
+
+#ifndef MADLIB_POSTGRES_DBCONNECTOR_HPP
+#define MADLIB_POSTGRES_DBCONNECTOR_HPP
+
 extern "C" {
     #include <postgres.h>
     #include <funcapi.h>
@@ -12,13 +24,20 @@ extern "C" {
 
 #include "Compatibility.hpp"
 
-#include <boost/utility/enable_if.hpp>
+#include <boost/unordered_map.hpp> // For Oid to bool map (if types are tuples)
 #include <boost/type_traits/is_const.hpp>
 #include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/logic/tribool.hpp>
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#include <fstream>
+
+// FIXME: For now we make use of TR1 but not of C++11. Import all TR1 names into std.
+namespace std {
+    using boost::unordered_map;
+    using boost::hash;
+}
 
 #define MADLIB_DEFAULT_EXCEPTION std::runtime_error("Internal error")
 #define madlib_assert(_cond, _exception) \
@@ -29,6 +48,7 @@ extern "C" {
 
 #include <dbal/dbal.hpp>
 #include <utils/Reference.hpp>
+#include <utils/MallocAllocator.hpp> // for hash map of which type is a tuple
 
 namespace madlib {
     namespace dbconnector {
@@ -42,13 +62,13 @@ namespace madlib {
             #include "AnyType_proto.hpp"
             #include "TransparentHandle_proto.hpp"
             #include "PGException.hpp"
+            #include "OutputStream_proto.hpp"
             #include "UDF_proto.hpp"
         }
     }
 
     // Import required names into the madlib namespace
     using dbconnector::postgres::AbstractionLayer;
-    using dbconnector::postgres::UDF;
     typedef AbstractionLayer::AnyType AnyType; // Needed for defining UDFs
     
     inline AbstractionLayer::Allocator &defaultAllocator() {
@@ -67,19 +87,20 @@ namespace madlib {
 
     namespace dbconnector {
         namespace postgres {
-            #include "Types.hpp"
+            #include "TypeTraits.hpp"
             #include "Allocator_impl.hpp"
             #include "AnyType_impl.hpp"
             #include "ArrayHandle_impl.hpp"
             #include "TransparentHandle_impl.hpp"
+            #include "OutputStream_impl.hpp"
             #include "UDF_impl.hpp"
         }
     }
 }
 
 #define DECLARE_UDF(name) \
-    struct name : public UDF, public DefaultLinAlgTypes { \
-        inline name(FunctionCallInfo fcinfo) : UDF(fcinfo) { }  \
+    struct name : public madlib::dbconnector::postgres::UDF, public DefaultLinAlgTypes { \
+        inline name(FunctionCallInfo fcinfo) : madlib::dbconnector::postgres::UDF(fcinfo) { }  \
         AnyType run(AnyType &args); \
     };
 
@@ -89,7 +110,9 @@ namespace madlib {
         extern "C" { \
             PG_FUNCTION_INFO_V1(name); \
             Datum name(PG_FUNCTION_ARGS) { \
-                return UDF::call<MADLIB_CURRENT_NAMESPACE::name>(fcinfo); \
+                return madlib::dbconnector::postgres::UDF::call<MADLIB_CURRENT_NAMESPACE::name>(fcinfo); \
             } \
         } \
     }
+
+#endif

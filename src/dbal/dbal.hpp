@@ -17,6 +17,11 @@ enum TypeClass {
     CompositeType
 };
 
+enum Mutability {
+    Immutable = 0,
+    Mutable
+};
+
 enum MemoryContext {
     FunctionContext,
     AggregateContext
@@ -31,6 +36,8 @@ enum OnMemoryAllocationFailure {
     ReturnNULL,
     ThrowBadAlloc
 };
+
+#include "OutputStreamBase.hpp"
 
 }
 

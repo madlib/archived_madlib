@@ -25,21 +25,52 @@ protected:
     // (AnyType) of its super class (AbstractionLayer)
     friend class UDF;
 
-    AnyType(HeapTupleHeader inTuple, Oid inTypeID);
+    /**
+     * @brief Type of the value of the current AnyType object
+     */
+    enum Content {
+        Null,
+        Scalar,
+        FunctionComposite,
+        NativeComposite,
+        ReturnComposite
+    };
+
+    /**
+     * @brief RAII encapsulation of a TupleDesc. Calls ReleaseTupleDesc() when
+     *     necessary.
+     */
+    struct TupleHandle {
+        TupleHandle(TupleDesc inTargetTupleDesc)
+          : desc(inTargetTupleDesc), shouldReleaseDesc(false) { }
+        ~TupleHandle();
+        
+        TupleDesc desc;
+        bool shouldReleaseDesc;
+    };
+
+    AnyType(HeapTupleHeader inTuple, Datum inDatum, Oid inTypeID);
     AnyType(Datum inDatum, Oid inTypeID, bool inIsMutable);
     void consistencyCheck() const;
+    
+    void backendGetTypeIDForFunctionArg(uint16_t inID, Oid &outTypeID,
+        bool &outIsMutable) const;
+    void backendGetTypeIDAndDatumForTupleElement(uint16_t inID, Oid &outTypeID,
+        Datum &outDatum) const;
+    void backendGetIsCompositeTypeAndHeapTupleHeader(Oid inTypeID,
+        Datum inDatum, bool &outIsTuple, HeapTupleHeader &outTupleHeader) const;
+    void backendGetIsCompositeTypeAndTupleHandle(Oid inTargetTypeID,
+        boost::tribool &ioTargetIsComposite, TupleHandle &outTupleHandle) const;
+    
+    boost::tribool isRowTypeInCache(Oid inTypeID,
+        boost::tribool inIsRowType = boost::indeterminate) const;
+    
     Datum getAsDatum(const FunctionCallInfo inFCInfo);
-    template <dbal::TypeClass TC> void typeClassCheck() const;
-    void throwWrongType() const;
     Datum getAsDatum(Oid inTargetTypeID,
         boost::tribool inIsComposite = boost::indeterminate,
-        TupleDesc inTupleDesc = NULL);
-    void getFnExprArgType(FunctionCallInfo fcinfo, uint16_t inID,
-        Oid &outTypeID, bool &outIsMutable) const;
-    void getTupleDatum(uint16_t inID, Oid &outTypeID, Datum &outDatum) const;
-    void getIsRowTypeAndTupleHeader(Oid inTypeID, Datum inDatum,
-        bool &outIsTuple, HeapTupleHeader &outTupleHeader) const;
+        TupleDesc inTupleDesc = NULL) const;
 
+    Content mContent;
     Datum mDatum;
     FunctionCallInfo fcinfo;
     HeapTupleHeader mTupleHeader;

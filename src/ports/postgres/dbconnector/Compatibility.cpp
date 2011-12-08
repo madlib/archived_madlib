@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file PGCompatibility.cpp
+ * @file Compatibility.cpp
  *
  * This file is only used in the PostgreSQL port, not derived ports (like
  * Greenplum).

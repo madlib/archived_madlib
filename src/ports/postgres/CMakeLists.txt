@@ -22,7 +22,7 @@ if(POSTGRESQL_FOUND)
     )
 
     set(MAD_DBAL_SOURCES_POSTGRES
-        "/Users/schopf/Documents/Development/fschopp-madlib/src/modules/regress/linear.cpp")
+        ${MAD_SOURCES})
     list(APPEND MAD_DBAL_SOURCES_POSTGRES
         dbconnector/AbstractionLayer_proto.hpp
         dbconnector/Allocator_impl.hpp
@@ -35,10 +35,13 @@ if(POSTGRESQL_FOUND)
         dbconnector/Compatibility.hpp
         dbconnector/dbconnector.hpp
         dbconnector/main.cpp
+        dbconnector/NewDelete.cpp
+        dbconnector/OutputStream_impl.hpp
+        dbconnector/OutputStream_proto.hpp
         dbconnector/PGException.hpp
         dbconnector/TransparentHandle_impl.hpp
         dbconnector/TransparentHandle_proto.hpp
-        dbconnector/Types.hpp
+        dbconnector/TypeTraits.hpp
         dbconnector/UDF_impl.hpp
         dbconnector/UDF_proto.hpp
     )

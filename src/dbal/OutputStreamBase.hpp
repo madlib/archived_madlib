@@ -1,12 +1,12 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractOutputStreamBuffer.hpp
+ * @file OutputStreamBase.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
 
 /**
- * @brief Abstract base class for an output stream buffer
+ * @brief Base class for an output stream buffer
  *
  * We start out with a 1K buffer that can grow up to 16K. After that, all input
  * is ignored until the next pubsync() call. A convenient way to implicitly call
@@ -15,11 +15,11 @@
  * Use this class by passing the pointer of an instance to the
  * ostream constructor. Example: ostream derr(new DerivedOutputStreamBuffer());
  */
-template <typename _CharT = char>
-class AbstractOutputStreamBuffer : public std::basic_streambuf<_CharT> {
+template <class Derived, typename C = char>
+class OutputStreamBase : public std::basic_streambuf<C> {
 public:
-    typedef typename std::basic_streambuf<_CharT>::int_type int_type;
-    typedef typename std::basic_streambuf<_CharT>::traits_type traits_type;
+    typedef typename std::basic_streambuf<C>::int_type int_type;
+    typedef typename std::basic_streambuf<C>::traits_type traits_type;
 
     static const uint32_t kInitialBufferSize = 1024;
     static const uint32_t kMaxBufferSize = 16384;
@@ -27,14 +27,14 @@ public:
     /**
      * @internal One extra byte is allocated for the terminating null character.
      */
-    AbstractOutputStreamBuffer()
+    OutputStreamBase()
     :   mStorageSize(kInitialBufferSize),
-        mStorage(new _CharT[kInitialBufferSize + 1]) {
+        mStorage(new C[kInitialBufferSize + 1]) {
         
         setp(mStorage, mStorage + mStorageSize);
     }
 
-    virtual ~AbstractOutputStreamBuffer() {
+    ~OutputStreamBase() {
         delete mStorage;
     }
     
@@ -46,7 +46,9 @@ public:
      * @param inMsg Null-terminated string to be output.
      * @param inLength Length of inMsg (for convenience).
      */
-    virtual void output(_CharT *inMsg, uint32_t inLength) = 0;
+    void output(C* inMsg, uint32_t inLength) const {
+        static_cast<const Derived*>(this)->output(inMsg, inLength);
+    }
 
 protected:
     /**
@@ -57,21 +59,21 @@ protected:
      * the buffer has already the maximum size kMaxBufferSize, eof is returned
      * to indicate that the buffer cannot take any more input before a flush.
      */
-    virtual int_type overflow(int_type c = traits_type::eof()) {
+    int_type overflow(int_type c = traits_type::eof()) {
         if (this->pptr() >= this->epptr()) {
             if (mStorageSize >= kMaxBufferSize)
                 return traits_type::eof();
             
             uint32_t newStorageSize = mStorageSize * 2;
-            _CharT *newStorage = new _CharT[newStorageSize + 1];
+            C* newStorage = new C[newStorageSize + 1];
             std::memcpy(newStorage, mStorage, mStorageSize);
             delete mStorage;
             mStorage = newStorage;
             
-            BOOST_ASSERT_MSG(
+            madlib_assert(
                 this->pptr() == this->epptr() &&
                 this->pptr() - this->pbase() == static_cast<int64_t>(mStorageSize),
-                "Internal error: Logging buffer has become inconsistent");
+                std::logic_error("Internal error: Logging buffer has become inconsistent"));
             
             setp(mStorage, mStorage + newStorageSize);
             this->pbump(mStorageSize);
@@ -87,7 +89,7 @@ protected:
     /**
      * @brief Flush and reset buffer.
      */
-    virtual int sync() {
+    int sync() {
         int length = this->pptr() - this->pbase();
         
         mStorage[length] = '\0';
@@ -99,5 +101,5 @@ protected:
         
     private:
         uint32_t mStorageSize;
-        _CharT *mStorage;
+        C* mStorage;
 };

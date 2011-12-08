@@ -148,6 +148,15 @@ public:
         ComputePseudoInverse = 0x01
     };
 
+    /**
+     * @brief Computes eigenvalues, eigenvectors, and pseudo-inverse of
+     *     symmetric positive semi-definite matrices
+     *
+     * A matrix is symmetric if it equals its transpose. It is positive
+     * semi-definite if all its eigenvalues are non-negative. This class
+     * computes the eigenvalues, the eigenvectors, and the Moore-Penrose
+     * pseudo-inverse of a symmetric positive semi-definite matrix.
+     */
     template <class MatrixType>
     class SymmetricPositiveDefiniteEigenDecomposition
       : public Eigen::SelfAdjointEigenSolver<MatrixType> {
@@ -203,12 +212,19 @@ public:
                  * original symmetric positive semi-definite matrix, D is the
                  * diagonal matrix with eigenvectors, and V is the matrix
                  * containing normalized eigenvectors).
+                 *
+                 * Only the <b>lower triangular part</b> of the input matrix
+                 * is referenced.
                  */
                 mPinv.resize(inMatrix.rows(), inMatrix.cols());
 
                 // FIXME: No hard-coded constant here
                 if (conditionNo() < 1000) {
-                    mPinv = inMatrix.inverse();
+                    // We are doing a Cholesky decomposition of a matrix with
+                    // pivoting. This is faster than the PartialPivLU that
+                    // Eigen's inverse() method would use
+                    mPinv = inMatrix.template selfadjointView<Eigen::Lower>().ldlt().solve(
+                        MatrixType::Identity(inMatrix.rows(), inMatrix.cols()));
                 } else {
                     if (!Base::m_eigenvectorsOk)
                         Base::compute(inMatrix, Eigen::ComputeEigenvectors);

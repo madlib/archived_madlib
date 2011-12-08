@@ -319,7 +319,6 @@ macro(add_madlib_connector_library IN_DBMS IN_LIB_LOADER OUT_TARGET_NAME)
     set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY lib
         BUILD_WITH_INSTALL_RPATH YES
-        COMPILE_DEFINITIONS "MADLIB_DBCONNECTOR_HEADER=<dbconnector/dbconnector.hpp>"
     )
     
     if(APPLE)
