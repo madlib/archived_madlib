@@ -55,10 +55,10 @@
  *      Statistician, Vol. 38, No. 4, 1984
  */
 
-#include <dbal/dbal.hpp>
+#include <dbconnector/dbconnector.hpp>
 
 // The error function is in C99 and TR1, but not in the official C++ Standard
-// (before C++0x). We therefore use the Boost implementation
+// (before C++11). We therefore use the Boost implementation
 #include <boost/math/special_functions/erf.hpp>
 
 
@@ -68,12 +68,14 @@ namespace modules {
 
 namespace prob {
 
-#include <modules/prob/student.hpp>
+#include "student.hpp"
 
-/* Prototypes of internal functions */
-
-static inline double normal_cdf(double t);
-static double studentT_cdf_approx(int64_t nu, double t);
+namespace {
+    // Anonymous namespace for internal functions
+    
+    inline double normal_cdf(double t);
+    double studentT_cdf_approx(int64_t nu, double t);
+}
 
 
 /**
@@ -133,10 +135,10 @@ double studentT_cdf(int64_t nu, double t) {
 	/* Handle extreme cases. See above. */
 	 
 	if (nu <= 0)
-		return arma::math::nan();
-    else if (t == arma::math::inf())
+		return std::numeric_limits<double>::quiet_NaN();
+    else if (t == std::numeric_limits<double>::infinity())
         return 1;
-    else if (t == -arma::math::inf())
+    else if (t == -std::numeric_limits<double>::infinity())
         return 0;
 	else if (nu >= 1000000)
 		return normal_cdf(t);
@@ -185,6 +187,8 @@ double studentT_cdf(int64_t nu, double t) {
 		return 1. - .5 * (1. - A);
 }
 
+namespace {
+
 /**
  * @brief Compute the normal distribution function using the library error function.
  *
@@ -193,7 +197,7 @@ double studentT_cdf(int64_t nu, double t) {
  * for all nu >= 1000000. (Tested on Mac OS X 10.6, gcc-4.2.)
  */
 
-static inline double normal_cdf(double t)
+inline double normal_cdf(double t)
 {
 	return .5 + .5 * boost::math::erf(t / std::sqrt(2.));
 }
@@ -207,7 +211,7 @@ static inline double normal_cdf(double t)
  * rel_error < 0.0001 || abs_error < 0.00000001
  * for all nu >= 200. (Tested on Mac OS X 10.6, gcc-4.2.)
  */
-static double studentT_cdf_approx(int64_t nu, double t)
+double studentT_cdf_approx(int64_t nu, double t)
 {
 	double	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
 			z = std::sqrt( std::log(1. + t * t / nu) / g );
@@ -218,24 +222,23 @@ static double studentT_cdf_approx(int64_t nu, double t)
 	return normal_cdf(z);
 }
 
+}
+
 /**
  * @brief Student-t cumulative distribution function: In-database interface
  */
-AnyType student_t_cdf(AbstractDBInterface & /* db */, AnyType args) {
-    AnyType::iterator arg(args);
-
-    // Arguments from SQL call
-    const int64_t nu = *arg++;
-    const double t = *arg;
+AnyType
+student_t_cdf::run(AnyType &args) {
+    int64_t nu = args[0].getAs<int64_t>();
+    double t = args[1].getAs<double>();
         
     /* We want to ensure nu > 0 */
     if (nu <= 0)
         throw std::domain_error("Student-t distribution undefined for "
             "degree of freedom <= 0");
 
-    return studentT_cdf(nu, t);    
+    return studentT_cdf(nu, t);
 }
-
 
 } // namespace prob
 

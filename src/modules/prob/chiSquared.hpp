@@ -5,3 +5,5 @@
  *//* ----------------------------------------------------------------------- */
 
 DECLARE_UDF(chi_squared_cdf)
+
+double chiSquared_cdf(int64_t nu, double t);
