@@ -62,8 +62,41 @@ static bool array_is_null
  */
 static bool is_float_zero(float8 value)
 {
-    float8 margin_value = 0.00000000000001;
+    //double only has up to 15 valid digits
+    float8 margin_value = 1E-13;
+    //margin_value *= margin_value;
+
+    //elog(WARNING,"margin_value:%lf",margin_value);
     if( value < margin_value && value > -margin_value )
+        return true;
+    else
+        return false;
+}
+
+/*
+ * For float value, we cannot directly compare two float values.
+ * This function is used to compare them.
+ *
+ * Parameters:
+ *      value1:      a float value
+ *      value2:      a float value
+ *
+ * Return:
+ *      True:       a<b.
+ *      False:      a>=b.
+ *
+ */
+static bool is_float_less
+        (
+            float8 value1,
+            float8 value2
+        )
+{
+    //double only has up to 15 valid digits
+    float8 margin_value = 1E-13;
+    //margin_value *= margin_value;
+
+    if( value1-value2 < margin_value )
         return true;
     else
         return false;
@@ -677,8 +710,11 @@ static float8 compute_split_info
     )
 {
     float8 sp_info = 0;
-    float8 total = vals_state[totalPos];
-    float8 counter = total;
+    float8 total = vals_state[0];
+    float8 numOfNullValues = total - vals_state[totalPos];
+    float8 counter = vals_state[totalPos];
+    float8 ratio = 0;
+
     if( is_float_zero(total) )
     {
         elog(ERROR, "total records of train set is: %lf", total);
@@ -695,10 +731,18 @@ static float8 compute_split_info
         }
         else if(!is_float_zero(fract))
         {
-            float8 ratio = fract/total;
+            ratio = fract/total;
             sp_info -= (ratio)*log(ratio);
         }
     }
+
+    // process null values
+    if(!is_float_zero(numOfNullValues))
+    {
+		ratio = numOfNullValues / total;
+		sp_info -= (ratio)*log(ratio);
+    }
+
     if( ! is_float_zero(counter))
     {
         elog(WARNING,"In compute_split_info. accumulation of part not equal to toal. counter is: %lf",counter);
@@ -959,6 +1003,7 @@ static float8* compute_split_gain
     int k = 0;
     int j = 0;
 
+    float8 nullCoeff = 1.0 / vals_state[0];
     float8 total = 0;
     int32 numOfValues = 0;
 
@@ -968,7 +1013,6 @@ static float8* compute_split_gain
     float8 totalentro = 0;
 
     float8 tot = 0;
-    result[0] = -1.0;
     int32 numOfContFeatures = 0;
     bool* isContFeatureArray = 0;
     int64 splitBegin = 0;
@@ -1001,7 +1045,8 @@ static float8* compute_split_gain
     }
 
 
-    //elog(NOTICE, "numOfClasses:%d numOfColValCnt:%d confLevel: %f split_criterion: %d", numOfClasses, numOfColValCnt, confLevel, split_criterion);
+    //elog(NOTICE, "numOfClasses:%d numOfColValCnt:%d confLevel: %f 
+    //  split_criterion: %d", numOfClasses, numOfColValCnt, confLevel, split_criterion);
     for (iFeature = 0; iFeature < numOfColValCnt; ++iFeature )
     {
 
@@ -1020,7 +1065,8 @@ static float8* compute_split_gain
     			continue;
 
 			total = vals_state[totalBegin];
-			totalentro = get_impurity_value(vals_state + totalBegin, 1, numOfClasses, total, total, split_criterion);
+			totalentro = get_impurity_value(vals_state + totalBegin, 1, 
+                    numOfClasses, total, total, split_criterion);
 
 			for (j = 0; j < numOfValues; ++j)
 			{
@@ -1039,6 +1085,10 @@ static float8* compute_split_gain
 									split_criterion
 							);
 				}
+
+				tot = tot * total * nullCoeff;
+				//elog(NOTICE, "compute_infogain(cont): %f, %d, %d, %f, %d, %f, %f", nullCoeff, iFeature + 1, numOfValues, tot, numOfClasses, total, contSplitVals[splitBegin]);
+
                 if( !is_float_zero(counter) )
                 {
                     elog(WARNING, "in compute_split_gain, counter:%lf, total:%lf,"
@@ -1047,7 +1097,8 @@ static float8* compute_split_gain
                             iFeature);
                 }
 				/*
-				elog(NOTICE, 'tot: %f, fract: %f, total: %f', tot, vals_state[(int64)(begin + (j << 1) + k)], total);
+				elog(NOTICE, 'tot: %f, fract: %f, total: %f', tot, 
+                    vals_state[(int64)(begin + (j << 1) + k)], total);
 				for(z = 0; z < numOfClasses; ++z)
 				{
 					elog(NOTICE, 'count: %f', vals_state[(int)(begin + (numOfValues << 1)  + z)]);
@@ -1064,11 +1115,8 @@ static float8* compute_split_gain
 								2
 							);
 				}
-                //If equal gain, we will use a feature
-                //with less missing values.				
-				if (result[0] < tot||
-	        		(is_float_zero(result[0]-tot) && 
-                  	max_total < total))
+
+	            if (is_float_less(result[0],tot))
 				{
 				    //just book marking. 
                     //Only need compute once for chisq 
@@ -1095,7 +1143,8 @@ static float8* compute_split_gain
     	{
     		numOfValues = colValCnt[iFeature];
 			total = vals_state[totalBegin];
-			totalentro = get_impurity_value(vals_state + totalBegin, 1, numOfClasses, total, total, split_criterion);
+			totalentro = get_impurity_value(vals_state + totalBegin, 
+                    1, numOfClasses, total, total, split_criterion);
 			tot = totalentro;
 
             float8 counter = total;
@@ -1112,6 +1161,10 @@ static float8* compute_split_gain
 						split_criterion
 						);
 			}
+
+			tot = tot * total * nullCoeff;
+	        //elog(NOTICE, "compute_infogain:  %f, %d, %d, %f, %d, %f", nullCoeff, iFeature + 1, numOfValues, tot, numOfClasses, total);
+
             if( !is_float_zero(counter) )
             {
                     elog(WARNING, "in compute_split_gain, counter:%lf, total:%lf,"
@@ -1131,12 +1184,10 @@ static float8* compute_split_gain
 						);
 			}
 
-	        //elog(NOTICE, "compute_infogain_2: %f, %d, %f, %d, %f", totalentro, numOfValues, tot, numOfClasses, total);
-	        //If equal gain, we will use a feature
-            //with less missing values.
-	        if ((result[0] < tot) ||
-	        	(is_float_zero(result[0]-tot) && 
-                  max_total < total))
+	        //elog(NOTICE, "compute_infogain_2: %f, %d, %f, %d, %f", 
+            //  totalentro, numOfValues, tot, numOfClasses, total);
+	        if (is_float_less(result[0],tot))
+
 	        {
 	            //just book marking. 
                 //Only need compute once for chisq 
@@ -1413,7 +1464,7 @@ Datum is_less(PG_FUNCTION_ARGS) {
     float8 y = PG_GETARG_FLOAT8(1);
 
     int32 ret = 0;
-    if( x < y )
+    if( is_float_less(x, y) )
         ret = 1;
 
     PG_RETURN_INT32(ret);

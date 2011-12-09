@@ -40,7 +40,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
 RETURNS TEXT AS $$
 DECLARE 
 BEGIN
-    return '' || val || '';
+    return val || '';
 END
 $$ LANGUAGE plpgsql;
 
@@ -60,7 +60,6 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
     ) 
 RETURNS TEXT AS $$
 DECLARE 
-    result TEXT := '';
 BEGIN
     IF (val) THEN
         return 't';
@@ -456,6 +455,38 @@ $$ LANGUAGE plpgsql;
 
 
 /**
+ * @brief get the unknown values processing routine id 
+ * @param tree_table tree table name         
+ *  
+ * @return 't' means sparse vector input. 'f' means tabular input 
+ * @note currently, we only support 'ignore' or 'explicity'
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_unknown_routine_id
+    (
+    tree_table TEXT 
+    );            
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_unknown_routine_id
+    (
+    tree_table TEXT 
+    ) 
+RETURNS INT AS $$
+declare
+    id INT;
+    name TEXT;
+begin
+    SELECT unknown_routine_name from MADLIB_SCHEMA.training_info 
+        where tree_table_name = tree_table INTO name;
+    
+    IF (name = 'ignore') THEN
+        RETURN 1;
+    ELSE
+        RETURN 2;
+    END IF;
+    
+end
+$$ LANGUAGE plpgsql;
+
+/**
  * @brief get the input table format 
  * @param tree_table tree table name         
  *  
@@ -473,11 +504,83 @@ RETURNS boolean AS $$
 declare
     input_format boolean := 't';
 begin
-    SELECT is_svec_format from MADLIB_SCHEMA.training_info where tree_table_name = tree_table INTO input_format;
+    SELECT is_svec_format from MADLIB_SCHEMA.training_info 
+        where tree_table_name = tree_table INTO input_format;
     return input_format;
 end
 $$ LANGUAGE plpgsql;
 
+/**
+ * @brief get the name of column containing ID
+ * @param tree_table tree table name         
+ *  
+ * @return the name of column containing ID
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_id_column_name
+    (
+    tree_table TEXT
+    );            
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_id_column_name
+    (
+    tree_table TEXT
+    ) 
+RETURNS TEXT AS $$
+declare
+    id_name TEXT;
+begin
+    SELECT id_col_name from MADLIB_SCHEMA.training_info 
+        where tree_table_name = tree_table INTO id_name;
+    RETURN id_name;
+end
+$$ LANGUAGE plpgsql;
+
+/**
+ * @brief get the name of column containing feature
+ * @param tree_table tree table name         
+ *  
+ * @return the name of column containing feature
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_feature_column_name
+    (
+    tree_table TEXT
+    );            
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_column_name
+    (
+    tree_table TEXT
+    ) 
+RETURNS TEXT AS $$
+declare
+    feature_name TEXT;
+begin
+    SELECT feature_col_names from MADLIB_SCHEMA.training_info 
+        where tree_table_name = tree_table INTO feature_name;
+    RETURN feature_name;
+end
+$$ LANGUAGE plpgsql;
+
+/**
+ * @brief get the name of column containing class
+ * @param tree_table tree table name         
+ *  
+ * @return the name of column containing class
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_class_column_name
+    (
+    tree_table TEXT
+    );            
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_column_name
+    (
+    tree_table TEXT
+    ) 
+RETURNS TEXT AS $$
+declare
+    class_name TEXT;
+begin
+    SELECT class_col_name from MADLIB_SCHEMA.training_info 
+        where tree_table_name = tree_table INTO class_name;
+    RETURN class_name;
+end
+$$ LANGUAGE plpgsql;
 
 /**
  * @brief create the training info table 
@@ -504,6 +607,7 @@ begin
             training_svec_table_name TEXT,
             continuous_feature_names TEXT,
             validation_table_name TEXT,
+            unknown_routine_name TEXT,
             PRIMARY KEY (tree_table_name)
         ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (tree_table_name)');
     END IF;
@@ -557,7 +661,8 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__insert_record_to_global_metatable
           training_meta_table_name TEXT,
           training_svec_table_name TEXT,
           continuous_feature_names TEXT,
-          validation_table_name TEXT   
+          validation_table_name TEXT,
+          unknown_routine_name TEXT  
     );
                
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__insert_record_to_global_metatable
@@ -571,7 +676,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__insert_record_to_global_metatable
           training_meta_table_name TEXT,
           training_svec_table_name TEXT,
           continuous_feature_names TEXT,
-          validation_table_name TEXT   
+          validation_table_name TEXT,
+          unknown_routine_name TEXT   
     ) 
 RETURNS void AS $$
 begin
@@ -585,7 +691,8 @@ begin
                         training_meta_table_name,
                         training_svec_table_name,
                         continuous_feature_names,
-                        validation_table_name);
+                        validation_table_name,
+                        unknown_routine_name);
 end
 $$ LANGUAGE plpgsql;
 
@@ -865,7 +972,7 @@ BEGIN
                         SELECT DISTINCT selection, MADLIB_SCHEMA.svec_proj(w.feature, %) as contVal  
                         FROM % w 
                         ORDER BY selection, contVal  
-                     )  p where (p.contVal is not null) OR (p.contVal <> ''NAN'') ORDER BY selection',
+                     )  p where (p.contVal is not null) AND (p.contVal <> ''NAN'') ORDER BY selection',
                  MADLIB_SCHEMA.__to_char(id_num),
                  selected_table_name
              )
@@ -1140,7 +1247,10 @@ BEGIN
     END IF;
 
     EXECUTE curStmt INTO result;
-            
+    
+    IF (result IS NULL) THEN
+        result = 'NULL';
+    END IF;
     return result;
 END
 $$ LANGUAGE plpgsql;
@@ -1258,7 +1368,7 @@ $$ LANGUAGE plpgsql;
  *
  * @note  feature names are not specified, use all the table's columns as feature
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     idColumnName TEXT, 
@@ -1266,9 +1376,10 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svec
     contColumnNames TEXT[], 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     idColumnName TEXT, 
@@ -1276,6 +1387,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mad_convert_tbl_to_svec
     contColumnNames TEXT[], 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     ) 
 RETURNS TEXT AS $$
@@ -1283,7 +1395,7 @@ DECLARE
     result TEXT := '';
 begin
     
-    SELECT MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+    SELECT MADLIB_SCHEMA.__convert_tbl_to_svec
         (
         inputTableName, 
         idColumnName, 
@@ -1292,6 +1404,7 @@ begin
         contColumnNames, 
         svecTableName,
         metaTableName,
+        unknown_routine_id,
         verbosity
         ) 
         INTO result;
@@ -1313,23 +1426,25 @@ $$ LANGUAGE plpgsql;
  * @note  Feature names are not specified, use all the table's columns as feature
  *        No continuous features
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     idColumnName TEXT, 
     classColumnName TEXT, 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     ); 
     
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     idColumnName TEXT, 
     classColumnName TEXT, 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     ) 
 RETURNS TEXT AS $$
@@ -1337,7 +1452,7 @@ DECLARE
     result TEXT := '';
 begin
     
-    SELECT MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+    SELECT MADLIB_SCHEMA.__convert_tbl_to_svec
         (
         inputTableName, 
         idColumnName, 
@@ -1346,6 +1461,7 @@ begin
         null, 
         svecTableName,
         metaTableName,
+        unknown_routine_id,
         verbosity
         ) 
         INTO result;
@@ -1369,7 +1485,7 @@ $$ LANGUAGE plpgsql;
  * @param verbosity ture if print the debug info 
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     idColumnName TEXT, 
@@ -1378,9 +1494,10 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svec
     contColumnNames TEXT[], 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     idColumnName TEXT, 
@@ -1389,6 +1506,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mad_convert_tbl_to_svec
     contColumnNames TEXT[], 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     ) 
 RETURNS TEXT AS $$
@@ -1433,6 +1551,7 @@ BEGIN
                 ) INTO curStmt;
         
             dropColStmt = dropColStmt || curStmt; 
+            
         END LOOP; 
     END IF;
     
@@ -1444,7 +1563,7 @@ BEGIN
             svecTableName,
             verbosity
         );
-       
+
     contColstmtQuote = contColstmtQuote || '''' || idColumnlowerName || '''';
      
     IF (featureNames IS NULL) THEN
@@ -1468,6 +1587,7 @@ BEGIN
                         colTableName ,
                         svecTableName,
                         metaTableName,
+                        unknown_routine_id,
                         't',
                         verbosity
                     )
@@ -1493,6 +1613,7 @@ BEGIN
                         colTableName ,
                         svecTableName,
                         metaTableName,
+                        unknown_routine_id,
                         't',
                         verbosity
                     )
@@ -1524,7 +1645,7 @@ BEGIN
     svecColstmt = contColstmt || svecColstmt;
     svecColstmt = ltrim(svecColstmt, ',') ;
     
-    SELECT MADLIB_SCHEMA.__mad_convert_tbl_to_svecPost
+    SELECT MADLIB_SCHEMA.__convert_tbl_to_svec_post
         (
             idColumnlowerName,
             svecTableName,
@@ -1540,7 +1661,7 @@ BEGIN
         RAISE INFO 'Conversion time:%', clock_timestamp() - execBegin;
     END IF;
         
-    return curStmt;
+    return svecTableName;
 END
 $$ LANGUAGE plpgsql;    
 
@@ -1554,19 +1675,21 @@ $$ LANGUAGE plpgsql;
  *
  * @note    feature (discrete or continuous) names and keys were retrieved from meta table
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     );
     
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mad_convert_tbl_to_svec
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__convert_tbl_to_svec
     (
     inputTableName TEXT, 
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     verbosity BOOLEAN
     ) 
 RETURNS TEXT AS $$
@@ -1577,6 +1700,7 @@ DECLARE
     resultRec RECORD;
     contColstmt TEXT := '';
     dropColStmt TEXT := '';
+    tempDropColStmt TEXT := '';
     svecColstmt TEXT := '';
     execBegin TIMESTAMP;
 BEGIN
@@ -1595,6 +1719,7 @@ BEGIN
         
     FOR temp IN EXECUTE curStmt LOOP
         contColstmt = contColstmt || ',' || temp;
+        
         SELECT MADLIB_SCHEMA.__process_cont_column
             (
                 inputTableName, 
@@ -1604,9 +1729,9 @@ BEGIN
                 metaTableName,
                 'f',
                 verbosity
-            ) INTO curStmt;
+            ) INTO tempDropColStmt;
     
-        dropColStmt = dropColStmt || curStmt; 
+        dropColStmt = dropColStmt || tempDropColStmt; 
         
     END LOOP;
     
@@ -1618,7 +1743,6 @@ BEGIN
             svecTableName,
             verbosity
         );
-            
     
     SELECT MADLIB_SCHEMA.__format('SELECT columnName, columnType, isCont, tableName 
                         FROM MADLIB_SCHEMA.% 
@@ -1637,6 +1761,7 @@ BEGIN
                         resultRec.tableName,
                         svecTableName,
                         metaTableName,
+                        unknown_routine_id,
                         'f',
                         verbosity
                     )
@@ -1665,7 +1790,7 @@ BEGIN
     svecColstmt = contColstmt || svecColstmt;
     svecColstmt = ltrim(svecColstmt, ',') ;
     
-    SELECT MADLIB_SCHEMA.__mad_convert_tbl_to_svecPost
+    SELECT MADLIB_SCHEMA.__convert_tbl_to_svec_post
         (
             idColumnName,
             svecTableName,
@@ -1681,7 +1806,7 @@ BEGIN
         RAISE INFO 'Conversion time:%', clock_timestamp() - execBegin;
     END IF;
         
-    return curStmt;
+    return svecTableName;
 END
 $$ LANGUAGE plpgsql;
    
@@ -1704,7 +1829,7 @@ $$ LANGUAGE plpgsql;
  * @param verbosity ture if print the debug info 
  *
  */   
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svecPost
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__convert_tbl_to_svec_post
     (
     idColumnName TEXT,
     svecTableName TEXT,
@@ -1715,7 +1840,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__mad_convert_tbl_to_svecPost
     verbosity BOOLEAN
     );
     
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mad_convert_tbl_to_svecPost
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__convert_tbl_to_svec_post
     (
     idColumnName TEXT,
     svecTableName TEXT,
@@ -1785,6 +1910,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_svec_table
 RETURNS TEXT AS $$
 declare
     curStmt TEXT := '';
+    rec RECORD;
 begin
     --RAISE INFO 'continuous columns:%', contColstmt;
     -- create result table, and get all the id and continuous columns' value
@@ -1798,7 +1924,7 @@ begin
         INTO curStmt;
             
     EXECUTE curStmt;
-                       
+     
     return  svecTableName ;
 END
 $$ LANGUAGE plpgsql;
@@ -1841,16 +1967,24 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__process_cont_column
 RETURNS TEXT AS $$
 declare
     curStmt TEXT := '';
+    num INT := 0;
 begin
+    
     -- insert the continuous features
         -- insert the continuous features
     IF (isPersistent) THEN
-        PERFORM MADLIB_SCHEMA.__insert_into_meta_table(metaTableName, columnName, 'f', 't', '', 2);
+        SELECT MADLIB_SCHEMA.__format(
+            'SELECT COUNT(DISTINCT %) FROM %',
+            columnName, inputTableName)
+            INTO curStmt;
+        
+        EXECUTE curStmt INTO num;
+        
+        PERFORM MADLIB_SCHEMA.__insert_into_meta_table(metaTableName, columnName, 'f', 't', '', num);
     END IF;
     
     SELECT MADLIB_SCHEMA.__format('ALTER TABLE % DROP COLUMN % CASCADE;', svecTableName, columnName) 
         INTO curStmt;
-    
     
     return curStmt;
 
@@ -1909,6 +2043,7 @@ begin
         colTableName,
         svecTableName,
         metaTableName,
+        1,
         isPersistent,
         verbosity
     );
@@ -1950,6 +2085,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__process_discrete_column
     colTableName TEXT,
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     isPersistent BOOLEAN,
     verbosity BOOLEAN
     );
@@ -1962,6 +2098,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__process_discrete_column
     colTableName TEXT,
     svecTableName TEXT,
     metaTableName TEXT,
+    unknown_routine_id INT,
     isPersistent BOOLEAN,
     verbosity BOOLEAN
     ) 
@@ -1970,51 +2107,69 @@ declare
     curStmt TEXT := '';
     index INT := 1;
     name TEXT := '';
+    temp TEXT;
 begin
     -- For each column, we will create a table for it. 
     -- The table stores the key->value, and distributed by value for parallelism                            
     IF (isPersistent) THEN
-    
         EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.' || colTableName || ';';
                 
         -- create table with columns: key, value
         SELECT MADLIB_SCHEMA.__format(
-            'CREATE TABLE MADLIB_SCHEMA.% (key INT, % TEXT) DISTRIBUTED BY(%);', 
-            ARRAY[colTableName, columnName, columnName]) 
+            'CREATE TABLE MADLIB_SCHEMA.% (%, key)  
+            AS SELECT DISTINCT %, 1 FROM %   
+            DISTRIBUTED BY(%);', 
+            ARRAY[
+            colTableName, 
+            columnName,
+            columnName, 
+            inputTableName,
+            columnName
+            ]) 
             INTO curStmt;
             
         --RAISE INFO 'Create table: %', curStmt;
         EXECUTE curStmt;
         
-        -- where btrim(%, '' '') != ''?'' and length(btrim(%, '' '')) != 0 and % is not null;
         SELECT MADLIB_SCHEMA.__format(
-            'SELECT DISTINCT % FROM % ORDER BY %;', 
-            columnName, 
-            inputTableName,
-            columnName
-            ) 
+            'SELECT % FROM MADLIB_SCHEMA.% ORDER BY %',
+            columnName,
+            colTableName,
+            columnName)
             INTO curStmt;
-        
-        index = 1;
-        FOR name IN EXECUTE (curStmt) LOOP
+            
+       index = 1;
+       FOR name IN EXECUTE (curStmt) LOOP
             IF ((name IS null) OR (name = '?') OR (length(btrim(name, ' ')) = 0)) THEN
+                temp = 'null';
+                IF (unknown_routine_id = 2) THEN
+                    temp = MADLIB_SCHEMA.__to_char(index);
+                    index = index + 1;
+                END IF;
+                
                 IF (name IS NULL) THEN
                     SELECT MADLIB_SCHEMA.__format(
-                        'INSERT INTO MADLIB_SCHEMA.% VALUES(null, null);',
-                        colTableName)
-                        INTO curStmt;                    
+                    'UPDATE MADLIB_SCHEMA.%  SET key=% WHERE % IS NULL',
+                    colTableName, temp, columnName)
+                    INTO curStmt;
                 ELSE
                     SELECT MADLIB_SCHEMA.__format(
-                        'INSERT INTO MADLIB_SCHEMA.% VALUES(null, ''%'');',
+                        'UPDATE MADLIB_SCHEMA.% SET key = % WHERE %=''%'';',
                         colTableName,
+			             temp,
+                        columnName,
                         name)
                         INTO curStmt;
                 END IF;
+		
+		      EXECUTE curStmt;
+		      
             ELSE
                 SELECT MADLIB_SCHEMA.__format(
-                    'INSERT INTO MADLIB_SCHEMA.% VALUES(%, ''%'');',
+                    'UPDATE MADLIB_SCHEMA.% SET key=% WHERE %=''%'';',
                     colTableName,
                     MADLIB_SCHEMA.__to_char(index),
+                    columnName,
                     replace(name, '''', ''''''))
                     INTO curStmt;
                 index = index + 1;
@@ -2032,12 +2187,15 @@ begin
     EXECUTE curStmt;
     
     -- update result table (value -> key)
-    SELECT MADLIB_SCHEMA.__format('UPDATE % SET %=s.key FROM MADLIB_SCHEMA.% s, % p WHERE s.% = p.% AND %.id=p.%;',
+    SELECT MADLIB_SCHEMA.__format('UPDATE % SET %=s.key FROM MADLIB_SCHEMA.% s, % p 
+                            WHERE (s.% = p.% OR (s.% is NULL AND p.% is NULL)) AND %.id=p.%;',
                       ARRAY[
                       svecTableName,
                       columnName,
                       colTableName,
                       inputTableName,
+                      columnName,
+                      columnName,
                       columnName,
                       columnName,
                       svecTableName,
@@ -2079,16 +2237,14 @@ DECLARE
     str_val TEXT;
     index INTEGER;
 BEGIN
-    index = 1;
-    str_val = lower(trim(both ' ' from split_part(csvString, ',', index)));
-    IF (str_val is null or str_val = '') THEN
-        ret= null;
+    ret = string_to_array(lower(csvString), ',');
+    
+    IF (ret IS NOT NULL) THEN
+        FOR index IN 1..array_upper(ret, 1) LOOP
+            ret[index] = btrim(ret[index], ' ');
+        END LOOP;
     END IF;
-    WHILE ( str_val is not null and str_val <> '' ) LOOP
-        ret[index] = str_val;
-        index = index +1;
-        str_val =lower(trim(both ' ' from split_part(csvString, ',', index)));
-    END LOOP;
+
     return ret;
 END
 $$ LANGUAGE plpgsql;

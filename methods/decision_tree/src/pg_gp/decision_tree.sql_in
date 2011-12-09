@@ -187,8 +187,8 @@ testdb=# select madlib.c45_display('madlib.trained_tree_infogain');
 \verbatim
 testdb=# select * from  madlib.c45_classify
 testdb-#     (
-testdb(#     'golf_data', 
 testdb(#     'madlib.trained_tree_infogain', 
+testdb(#     'golf_data', 
 testdb(#     'madlib.classification_result'); 
 PL/pgSQL function "c45_classify" line 2 at perform
  c45_classify 
@@ -284,7 +284,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__aggr_infogain
     FLOAT8, 
     INT4,
     INT4, 
-    boolean
+    BOOLEAN
     ); 
 
 CREATE FUNCTION MADLIB_SCHEMA.__aggr_infogain
@@ -296,7 +296,7 @@ CREATE FUNCTION MADLIB_SCHEMA.__aggr_infogain
     FLOAT8, 
     INT4,
     INT4, 
-    boolean
+    BOOLEAN
     ) 
 RETURNS FLOAT8[] 
 AS 'MODULE_PATHNAME', 'aggr_infogain'
@@ -671,44 +671,68 @@ $$ LANGUAGE 'plpgsql';
  *                      which contains all the values of that record.
  *      class_col_name: The name of the column used to store the class
  *                      that record belongs to.
+ *      out_table_name: The name of the table containing the training set
+ *      enable_sampling:It specifies whether we should sample part of the data  
+ *                      from the original table for processing.
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__remove_set_redundant
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_set
     (
     table_input     TEXT, 
     id_col_name     TEXT, 
     id_feature_name TEXT, 
     class_col_name  TEXT,
-    out_table_name  TEXT
+    out_table_name  TEXT,
+    enable_sampling BOOLEAN
     );
     
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__remove_set_redundant
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_set
     (
     table_input     TEXT, 
     id_col_name     TEXT, 
     id_feature_name TEXT, 
     class_col_name  TEXT,
-    out_table_name  TEXT
+    out_table_name  TEXT,
+    enable_sampling BOOLEAN
     )
 RETURNS void AS $$
 DECLARE
     curStmt TEXT := '';
 BEGIN
 	
-	SELECT MADLIB_SCHEMA.__format
-	   (
-	   'INSERT INTO % SELECT (MADLIB_SCHEMA.__create_hash(id, feature, class)).* 
-	   FROM (SELECT % as id, % as feature, % as class, MADLIB_SCHEMA.svec_hash(%) as hash FROM %) as A 
-	   GROUP BY A.hash,A.class;',
-	   ARRAY[
-	   out_table_name,
-	   id_col_name,
-	   id_feature_name,
-	   class_col_name,
-	   id_feature_name,
-	   table_input
-	   ]
-	   )
-	   INTO curStmt;
+    IF (enable_sampling) THEN
+	    SELECT MADLIB_SCHEMA.__format
+	        (
+	        'INSERT INTO % SELECT (MADLIB_SCHEMA.__create_hash(id, feature, class)).* 
+	        FROM 
+                (SELECT % as id, % as feature, % as class, 
+                    MADLIB_SCHEMA.svec_hash(%) as hash FROM %) as A 
+	        GROUP BY A.hash,A.class;',
+	        ARRAY[
+	        out_table_name,
+	        id_col_name,
+	        id_feature_name,
+	        class_col_name,
+	        id_feature_name,
+	        table_input
+	        ]
+	        )
+	    INTO curStmt;
+    ELSE
+	    SELECT MADLIB_SCHEMA.__format
+	        (
+	        'INSERT INTO % (SELECT % as id,% as feature,% as class, 1, 1  
+	        FROM %) 
+	        ;',
+	        ARRAY[
+	        out_table_name,
+	        id_col_name,
+	        id_feature_name,
+	        class_col_name,
+	        table_input
+	        ]
+	        )
+	    INTO curStmt;
+    END IF;
 
     EXECUTE curStmt;
 END
@@ -839,7 +863,7 @@ CREATE TYPE MADLIB_SCHEMA.__find_infogain_type AS
     contSplitVals     FLOAT[],
     num_class         INT,
     conflevel         FLOAT,
-    is_cont           boolean,
+    is_cont           BOOLEAN,
     sp_val            FLOAT,
     sp_criterion      INT
     );
@@ -872,7 +896,7 @@ CREATE TYPE MADLIB_SCHEMA.__find_infogain_result AS
     relativeSize  FLOAT,
     totalSize     FLOAT,
     ebp_coeff     FLOAT,  
-    is_cont_feature   boolean,
+    is_cont_feature   BOOLEAN,
     split_value       FLOAT,
     distinct_features INT
     );
@@ -915,7 +939,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__find_infogain_sfunc
     numOfClasses    INT, 
     classVal        INT, 
     conflevel       FLOAT,
-    is_cont         boolean,
+    is_cont         BOOLEAN,
     sp_criterion    INT
     );
 
@@ -930,7 +954,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_infogain_sfunc
     numOfClasses    INT, 
     classVal        INT, 
     conflevel       FLOAT,
-    is_cont         boolean,
+    is_cont         BOOLEAN,
     sp_criterion    INT
     ) 
 RETURNS MADLIB_SCHEMA.__find_infogain_type AS $$
@@ -1083,7 +1107,7 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__find_infogain
     INT,   
     INT,    
     FLOAT,  
-    boolean,
+    BOOLEAN,
     INT     
     );
 CREATE AGGREGATE MADLIB_SCHEMA.__find_infogain
@@ -1095,7 +1119,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__find_infogain
     INT,    -- numOfClasses
     INT,    -- class
     FLOAT,  -- conflevel
-    boolean,-- is cont
+    BOOLEAN,-- is cont
     INT     -- sp_criterion
     ) 
 (
@@ -1134,7 +1158,7 @@ CREATE TYPE MADLIB_SCHEMA.__best_split_result AS
 	live                INT,
 	chisq               FLOAT,
 	ebp_coeff           FLOAT,
-    is_cont_feature     boolean,
+    is_cont_feature     BOOLEAN,
     split_value         FLOAT,
     distinct_features   INT,
     totalSize           INT
@@ -1184,7 +1208,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__find_best_split
     feature_table_name      TEXT, 
     sp_criterion            INT, 
     continue_gow            INT, 
-    enable_chisq_pruning    boolean
+    enable_chisq_pruning    BOOLEAN
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
@@ -1200,7 +1224,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
     feature_table_name      TEXT, 
     sp_criterion            INT, 
     continue_gow            INT, 
-    enable_chisq_pruning    boolean
+    enable_chisq_pruning    BOOLEAN
     ) 
 RETURNS SETOF MADLIB_SCHEMA.__best_split_result AS $$
 declare
@@ -1289,13 +1313,14 @@ begin
             -- continuous features should use the real number of distinct
             -- values rather than 2.
             -- For discrete features, we already get the real number. No-op.
-            EXECUTE 'select distinct_values from feature_attr_table where id =' 
+            EXECUTE 'select distinct_values from feature_attr_store where id =' 
                 ||best_answer.dim||';' INTO best_answer.distinct_features;
         END IF;
         
         result.chisq = MADLIB_SCHEMA.chi2pdf(best_answer.gainSign, best_answer.distinct_features - 1);  
         
-        IF (result.probability > 0.999999999 ) THEN
+        IF (result.probability > 0.999999999 
+            OR result.infogain = 0 ) THEN
             result.live = 0;
         ELSIF ( enable_chisq_pruning ) THEN
             temp_float_val = best_answer.relativeSize-total_size;
@@ -1424,19 +1449,7 @@ BEGIN
         selection   INTEGER
     ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (selection)');
 
-    -- The table below stores the meta data for each feature.
-    --  Columns:
-    --      id:                 It is used to uniquely identify one feature.
-    --      is_continuous:      It specifies whether that feature is 
-    --                          continuous or not.
-    --      distinct_values:    It specifies the number of distinct values
-    --                          for that feature.
-	DROP TABLE IF EXISTS feature_attr_table CASCADE;
-    CREATE TEMP TABLE feature_attr_table(
-		id              INTEGER,
-        is_continuous   boolean,
-        distinct_values INT
-	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
+
     
     -- The table below stores the decision tree information just constructed.
     -- It is an internal table, which contains some redundant nodes. 
@@ -1489,7 +1502,7 @@ BEGIN
 		cat_size        INT,
 		parent_id       INT,
 		jump            INT[],
-        is_feature_cont boolean,
+        is_feature_cont BOOLEAN,
         split_value     FLOAT
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
@@ -1511,7 +1524,7 @@ BEGIN
 		cat_size        INT,
 		parent_id       INT,
 		jump            INT[],
-        is_feature_cont boolean,
+        is_feature_cont BOOLEAN,
         split_value     FLOAT    
 	) m4_ifdef(\`GREENPLUM\',\`DISTRIBUTED BY (id)\');';
 
@@ -1560,28 +1573,42 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__prune_tree_rep
 RETURNS void AS $$
 declare
     numOfParentIds INTEGER;
-    id_col_name TEXT := 'id';
-    feature_col_name TEXT :='feature';
-    classified_tree TEXT := validation_table || '_classified_temp';
+    classification_result TEXT := '_classified_temp';
     is_sparse_vector BOOLEAN := 'f';
     svec_name TEXT;
     meta_table_name TEXT := '';
     curStmt TEXT;
+    str_val TEXT;
+    str_val2 TEXT;
+    id_col_name  TEXT := 'id';
+    class_col_name TEXT := 'class';
 begin
-    SELECT MADLIB_SCHEMA.__get_input_format(tree_table_name) INTO is_sparse_vector;
-    
+    SELECT MADLIB_SCHEMA.__get_input_format(tree_table_name) 
+        INTO is_sparse_vector;
+
+    IF ( is_sparse_vector ) THEN
+        id_col_name = MADLIB_SCHEMA.__get_id_column_name(tree_table_name);
+        class_col_name = 
+            MADLIB_SCHEMA.__get_class_column_name(tree_table_name);
+    END IF;
+
+    str_val = MADLIB_SCHEMA.__strip_schema_name(tree_table_name);
+    str_val2 = MADLIB_SCHEMA.__get_schema_name(tree_table_name);
+    classification_result = str_val2 || str_val || classification_result;
     SELECT MADLIB_SCHEMA.__c45_classify_internal
     (
         validation_table, 
         tree_table_name, 
-        classified_tree, 
+        classification_result, 
         is_sparse_vector,
-        't'
+        't',
+        'f'
     ) INTO svec_name;
                             
     LOOP
         DROP TABLE IF EXISTS selectedParentIds_rep;
-        CREATE TEMP TABLE selectedParentIds_rep(parent_id BIGINT) DISTRIBUTED BY(parent_id);
+        CREATE TEMP TABLE selectedParentIds_rep(parent_id BIGINT) 
+            m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (parent_id)');
        
         SELECT MADLIB_SCHEMA.__format
             (
@@ -1591,9 +1618,9 @@ begin
                 (
                     SELECT parent_id, 
                            MADLIB_SCHEMA.__rep_compute_errors
-                                (c.class, s.class, % + 1) as g 
+                                (c.class, s.%, % ) as g 
                     FROM % c, % s 
-                    WHERE c.id=s.id 
+                    WHERE c.id=s.% 
                     GROUP BY parent_id
                 ) t 
                 WHERE (t.g).isreplace >= 0 AND 
@@ -1605,12 +1632,14 @@ begin
                                   Select parent_id  
                                   FROM % 
                                   WHERE jump IS NOT NULL
-                              )
+                              ) and id <> 1
                       );',
                   ARRAY[
+                      class_col_name,
                       MADLIB_SCHEMA.__to_char(maxNumOfClasses),
-                      classified_tree,
+                      classification_result,
                       svec_name,
+                      id_col_name,
                       tree_table_name,
                       tree_table_name
                   ]
@@ -1623,7 +1652,18 @@ begin
         IF (numOfParentIds is NULL)  THEN
             EXIT;
         END IF;
-        
+
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'UPDATE % m set class=t.maxclass, parent_id=t.parent_id,leaf_id=t.id  FROM % t
+                    WHERE t.id IN (SELECT parent_id FROM selectedParentIds_rep) and
+                    m.parent_id=t.id',
+                classification_result,
+                tree_table_name
+            )
+            INTO curStmt;
+        EXECUTE curStmt;
+
         SELECT MADLIB_SCHEMA.__format
             (
                 'DELETE FROM % WHERE parent_id IN (SELECT parent_id FROM selectedParentIds_rep)',
@@ -1643,8 +1683,9 @@ begin
         EXECUTE curStmt;
         
     END LOOP;
-    
-    EXECUTE 'DROP TABLE IF EXISTS ' || svec_name || ' CASCADE;';
+    IF ( NOT is_sparse_vector ) THEN
+        EXECUTE 'DROP TABLE IF EXISTS ' || svec_name || ' CASCADE;';
+    END IF;
 end
 $$ language plpgsql;
 
@@ -1687,7 +1728,7 @@ begin
                         WHERE parent_id NOT IN 
                             (
                             Select parent_id  FROM % WHERE jump IS NOT NULL
-                            )
+                            )  and id <> 1
                     ) m 
                     GROUP BY m.parent_id
                  ) s 
@@ -1789,7 +1830,43 @@ $$ language plpgsql;
 
 
 /**
+ * construct the feature attribute view based on meta table generated during
+ * tabular to svec conversion.
+ *
+ *    For tabular input, we will create a view to leverage the existing meta 
+ *    data table. For svec input, please refer to __construct_feature_attr_table.
+ *  
+ * Parameters:
+ *      meta_table_name:       The name of the meta table
+ *
+ * Return:
+ *      The feature attribute view. 
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__construct_feature_attr_view
+    (
+    meta_table_name     TEXT 
+    ) 
+RETURNS void AS $$
+DECLARE
+    is_feature_cont BOOLEAN[];
+    index INT := 0;
+begin   
+    DROP VIEW IF EXISTS feature_attr_store CASCADE;
+	DROP TABLE IF EXISTS feature_attr_store CASCADE;
+    EXECUTE 'CREATE TEMP VIEW feature_attr_store as SELECT id, 
+        isCont as is_continuous, numOfDistValue as distinct_values
+        from ' || meta_table_name || E' where columnType=\'f\'';                        
+end
+$$ language plpgsql;
+
+
+/**
  * construct the feature attribute table based on training table
+ *    For svec input, there is no procedure for conversion. Thus, there is no 
+ *    meta table generated. So we need create such a table below. 
+
+ *    For tabular input, we will create a view to leverage the existing meta 
+ *    data table. Please refer to __construct_feature_attr_view
  *  
  * Parameters:
  *      feature_dimension:       The total count of different features.
@@ -1797,8 +1874,7 @@ $$ language plpgsql;
  *      training_table:          The name of the table containing training set.
  *
  * Return:
- *      The feature attribute table. Please refer to its definition in the 
- *      function of '__create_tree_tables'.
+ *      The feature attribute table. 
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__construct_feature_attr_table
     (
@@ -1808,9 +1884,24 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__construct_feature_attr_table
     ) 
 RETURNS void AS $$
 DECLARE
-    is_feature_cont boolean[];
+    is_feature_cont BOOLEAN[];
     index INT := 0;
 begin   
+    -- The table below stores the attribute for each feature.
+    --  Columns:
+    --      id:                 It is used to uniquely identify one feature.
+    --      is_continuous:      It specifies whether that feature is 
+    --                          continuous or not.
+    --      distinct_values:    It specifies the number of distinct values
+    --                          for that feature.
+	DROP TABLE IF EXISTS feature_attr_store CASCADE;
+    DROP VIEW IF EXISTS feature_attr_store CASCADE;
+    CREATE TEMP TABLE feature_attr_store(
+		id              INTEGER,
+        is_continuous   BOOLEAN,
+        distinct_values INT
+	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
+
     FOR index in 1..feature_dimension LOOP
         is_feature_cont[index] = 'f';
     END LOOP;
@@ -1828,18 +1919,27 @@ begin
 
     WHILE( index <= array_upper( is_feature_cont, 1) ) LOOP
         IF( is_feature_cont[index] ) THEN
-            EXECUTE 'insert into feature_attr_table(id,is_continuous) values('||index||E',\'t\');';
+            EXECUTE 'insert into feature_attr_store(id,is_continuous) values('||index||E',\'t\');';
         ELSE
-            EXECUTE 'insert into feature_attr_table(id,is_continuous) values('||index||E',\'f\');';
+            EXECUTE 'insert into feature_attr_store(id,is_continuous) values('||index||E',\'f\');';
         END IF;
         index = index +1;
     END LOOP;
 
-    EXECUTE 'update feature_attr_table set distinct_values = dt.distinct_feature_value from 
+    EXECUTE 'update feature_attr_store set distinct_values = dt.distinct_feature_value from 
               (select dt2.dim as dim, count(dt2.value)::integer as distinct_feature_value from 
                 (SELECT distinct s_dim.id as dim, MADLIB_SCHEMA.svec_proj(tb.feature, s_dim.id) as value 
-                    FROM feature_attr_table s_dim,' || training_table || ' tb) 
-                        as dt2 group by dt2.dim) as dt where dt.dim = feature_attr_table.id;';
+                    FROM feature_attr_store s_dim,' || training_table || E' tb where s_dim.is_continuous=\'t\') 
+                        as dt2 group by dt2.dim) as dt where dt.dim = feature_attr_store.id;';
+
+    -- After sampling, we cannot guarantee the encoding for discrete features to be contiguous.
+    -- As a result, we must get the maximum value instead of the count here.
+    EXECUTE 'update feature_attr_store set distinct_values = dt.max_feature_value from 
+              (select dt2.dim as dim, max(dt2.value)::integer as max_feature_value from 
+                (SELECT s_dim.id as dim, MADLIB_SCHEMA.svec_proj(tb.feature, s_dim.id) as value 
+                    FROM feature_attr_store s_dim,' || training_table || E' tb where s_dim.is_continuous=\'f\') 
+                        as dt2 group by dt2.dim) as dt where dt.dim = feature_attr_store.id;';
+                        
 end
 $$ language plpgsql;
 
@@ -1858,6 +1958,8 @@ $$ language plpgsql;
  *      id_col_name:                Name of the column containing id of each point.
  *      class_col_name:             Name of the column containing correct class of each point.
  *      conflevel:                  A statistical confidence interval of the resubstitution error.
+ *      enable_sampling:            It specifies whether we should sample part of the data from 
+ *                                  training table for processing.
  *      max_num_iter:               Max number of branches to follow (e.g. 2000)
  *      max_tree_depth:             Maximum decision tree depth 
  *      min_percent_mode:           Specifies the minimum number of cases required in a child node
@@ -1881,11 +1983,12 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__train_tree_svec
     id_col_name             TEXT, 
     class_col_name          TEXT, 
     conflevel               FLOAT, 
+    enable_sampling         BOOLEAN,
     max_num_iter            INT, 
     max_tree_depth          INT,
     min_percent_mode        FLOAT,
     min_percent_split       FLOAT,
-    enable_chisq_pruning    boolean,
+    enable_chisq_pruning    BOOLEAN,
     verbosity               INT
     ) 
 RETURNS MADLIB_SCHEMA.c45_train_result AS $$
@@ -1927,6 +2030,7 @@ DECLARE
     table_names TEXT[] := '{weighted_instance1,weighted_instance2}';
     table_index INT := 1;
     best_time_cmp BOOLEAN := 'f';
+    meta_table TEXT := NULL;
 begin   
     execBegin = clock_timestamp();
     findbesttime = execBegin - execBegin;
@@ -1950,29 +2054,41 @@ begin
 
     PERFORM MADLIB_SCHEMA.__create_tree_tables(result_tree_table_name);
     
-    
-    EXECUTE 'SELECT count(id) FROM '|| training_table_name ||';' INTO total_size;
+    EXECUTE 'SELECT count(*) FROM '|| training_table_name ||';' INTO total_size;
     IF(verbosity > 0) THEN
         RAISE INFO 'INPUT TABLE SIZE: %', total_size;
     END IF;
     ret.training_set_size = total_size;
     
-    PERFORM MADLIB_SCHEMA.__remove_set_redundant(
+    PERFORM MADLIB_SCHEMA.__generate_training_set(
             training_table_name, 
             id_col_name, 
             feature_col_name, 
             class_col_name,
-            table_names[table_index]);
+            table_names[table_index],
+            enable_sampling);
     
     EXECUTE 'SELECT count(selection) FROM ' || table_names[table_index] || ';' INTO misc_size;
     IF(verbosity > 0) THEN
         RAISE INFO 'TABLE SIZE AFTER COMPRESSION: %', misc_size;
     END IF;
     
-    EXECUTE 'SELECT MADLIB_SCHEMA.svec_dimension(feature) FROM ' || table_names[table_index]  || ' LIMIT 1;' INTO feature_dimension;
+    EXECUTE 'SELECT MADLIB_SCHEMA.svec_dimension(feature) FROM ' 
+        || table_names[table_index]  || ' LIMIT 1;' INTO feature_dimension;
 
-    PERFORM MADLIB_SCHEMA.__construct_feature_attr_table(feature_dimension, cont_dimensions, table_names[table_index]); 
-    featureCountArrayStr = MADLIB_SCHEMA.__get_feature_count_array('feature_attr_table');
+    meta_table = MADLIB_SCHEMA.__get_conversion_metatable_name( result_tree_table_name );
+    
+    IF( meta_table is NULL ) THEN
+        -- construct the feature attribute table for svec format
+        PERFORM MADLIB_SCHEMA.__construct_feature_attr_table(feature_dimension, 
+            cont_dimensions, table_names[table_index]); 
+    ELSE
+        -- for tabular format, we can leverage the existing meta table.
+        meta_table = 'MADLIB_SCHEMA.'||meta_table;
+        PERFORM MADLIB_SCHEMA.__construct_feature_attr_view(meta_table); 
+    END IF;
+
+    featureCountArrayStr = MADLIB_SCHEMA.__get_feature_count_array('feature_attr_store');
     --RAISE INFO 'featureCountArrayStr:%', featureCountArrayStr;
 
     EXECUTE 'SELECT COUNT(DISTINCT class) FROM ' || table_names[table_index] || ';' INTO num_classes; 
@@ -2025,7 +2141,7 @@ begin
         best_time_cmp = 't';
         
         FOR answer IN (SELECT * FROM MADLIB_SCHEMA.__find_best_split(feature_dimension, featureCountArrayStr, num_classes, 
-                        selection, max_id - selection + 1, sample_limit, 'weighted_instance',conflevel,'feature_attr_table',
+                        selection, max_id - selection + 1, sample_limit, 'weighted_instance',conflevel,'feature_attr_store',
                         sp_crit,grow_tree,enable_chisq_pruning )) LOOP
             
             IF (0 = answer.feature) THEN
@@ -2201,9 +2317,38 @@ begin
     EXECUTE 'select count(*) from '||result_tree_table_name||';' into ret.tree_nodes;
     EXECUTE 'select max(array_upper(tree_location,1)) from '||result_tree_table_name||';' into ret.tree_depth;
     IF(verbosity > 0) THEN
+        /*
+        I measured the time with the dataset of adult, which can be found at
+        http://archive.ics.uci.edu/ml/machine-learning-databases/adult/.
+        I used adult.data for training and adult.test for validation/post-pruning.
+        I run at the machine of gpdb3.delta.sm.greenplum.com with 16 cpus.
+        I configured 8 segments for that gpdb cluster under test.
+        The test results are as follows:
+        Conversion time:        00:00:01.105518
+        find best time:         00:04:54.50118
+        data transfer time:     00:00:00.189899
+        pruning time:           00:00:01.229677
+        __train_tree_svec time: 00:04:56.574159
+
+        For the find best time, we have more detailed timing here.
+        The trained tree only has sevel levels. Since there is just one
+        node in the first level, the calculation is not distributed well.
+        With the nodes proliferating with the increase of depth, there is  
+        more and more opportunity for us to distribute the calculation to  
+        the cluster for parallel computation.
+        computation time in the first level:    00:02:12.359976
+        computation time in the second level:   00:00:52.77536
+        computation time in the third level:    00:00:39.566798
+        computation time in the fourth level:   00:00:25.626023
+        computation time in the fifth level:    00:00:23.790907
+        computation time in the sixth level:    00:00:17.544945
+        computation time in the seventh level:  00:00:02.836655
+        */
         RAISE INFO 'total of find best time: %', findbesttime;
         RAISE INFO 'total of data transfer time: %', datatransfertime;
-        RAISE INFO 'total of training time: %', clock_timestamp() - execBegin;        
+        RAISE INFO 'total of pruning time: %', (clock_timestamp() - begin_datatransfer
+            -findbesttime-datatransfertime);
+        RAISE INFO 'total of __train_tree_svec time: %', clock_timestamp() - execBegin;        
     END IF;
     
     ret.cost_time = clock_timestamp() - execBegin;
@@ -2230,6 +2375,8 @@ $$ language plpgsql;
  *      id_col_name:                Name of the column containing id of each point.
  *      class_col_name:             Name of the column containing correct class of each point.
  *      conflevel:                  A statistical confidence interval of the resubstitution error.
+ *      enable_sampling:            It specifies whether we should sample part of the data from 
+ *                                  training table for processing.
  *      max_num_iter:               Max number of branches to follow (e.g. 2000)
  *      max_tree_depth:             Maximum decision tree depth 
  *      min_percent_mode:           Specifies the minimum number of cases required in a child node
@@ -2253,11 +2400,13 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__train_tree_tabular
     id_col_name             TEXT, 
     class_col_name          TEXT, 
     conflevel               FLOAT,
+    unknow_routine_id       INT,
+    enable_sampling         BOOLEAN,
     max_num_iter            INT, 
     max_tree_depth          INT, 
     min_percent_mode        FLOAT,
     min_percent_split       FLOAT, 
-    enable_chisq_pruning    boolean,
+    enable_chisq_pruning    BOOLEAN,
     verbosity               INT
     ) 
 RETURNS MADLIB_SCHEMA.c45_train_result AS $$
@@ -2286,7 +2435,7 @@ begin
     END IF; 
         
     IF ( feature_col_names is not NULL ) THEN
-        PERFORM MADLIB_SCHEMA.__mad_convert_tbl_to_svec(
+        PERFORM MADLIB_SCHEMA.__convert_tbl_to_svec(
             training_table_name,
             id_col_name,
             feature_col_names,
@@ -2294,15 +2443,17 @@ begin
             cont_feature_col_names,
             training_table_name_svec,
             training_table_name_meta,
+            unknow_routine_id,
             't');
     ELSE
-        PERFORM MADLIB_SCHEMA.__mad_convert_tbl_to_svec(
+        PERFORM MADLIB_SCHEMA.__convert_tbl_to_svec(
             training_table_name,
             id_col_name,
             class_col_name,
             cont_feature_col_names,
             training_table_name_svec,
             training_table_name_meta,
+            unknow_routine_id,
             't');
     END IF;
 
@@ -2342,6 +2493,7 @@ begin
             'id', 
             'class', 
             conflevel ,
+            enable_sampling,
             max_num_iter , 
             max_tree_depth , 
             min_percent_mode ,
@@ -2364,7 +2516,7 @@ $$ language plpgsql;
  *
  * @param split_criterion_name This parameter specifies which split criterion 
  *          should be used for tree construction and pruning. 
- *          The valid values are ‘gain’, ‘gainratio’ and ‘gini’.
+ *          The valid values are infogain, gainratio, or gini.
  * @param training_table_name Name of the table/view with the source data
  * @param result_tree_table_name The name of the table where the resulting DT will be stored.
  * @param validation_table_name The validation table used for pruning tree. 
@@ -2375,6 +2527,9 @@ $$ language plpgsql;
  * @param id_col_name Name of the column containing id of each point.
  * @param class_col_name Name of the column containing correct class of each point.
  * @param confidence_level A  statistical  confidence  interval of  the   resubstitution  error.
+ * @param unknown_routine_name A routine name for unknown discrete attribute value processing for tabular format.
+ *         the possible values are: ignore, explicit. 
+ * @param enable_sampling It specifies whether we should sample part of the data from training table for processing.
  * @param max_num_iter Max number of branches to follow (e.g. 2000)
  * @param max_tree_depth Maximum decision tree depth 
  * @param min_percent_mode Specifies the minimum number of cases required in a child node
@@ -2409,7 +2564,7 @@ $$ language plpgsql;
  *     no value. Result such as [2:3]={2,3}, should be read: 
  *     jump['feature value'+1], so in this case there were no 0-value points for 
  *     this feature. For value 1 jump to 2; for value 2 jump to 3;
- *  - <tt>is_feature_cont boolean</tt> - It specifies whether the selected feature is a continuous feature.
+ *  - <tt>is_feature_cont BOOLEAN</tt> - It specifies whether the selected feature is a continuous feature.
  *  - <tt>split_value FLOAT</tt> - For continuous feature, it specifies the split value. Otherwise, 
  *     it is fixed to 0.
  *
@@ -2423,12 +2578,14 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     training_table_name         TEXT, 
     result_tree_table_name      TEXT,
     validation_table_name       TEXT, 
-    is_svec_format              boolean,
+    is_svec_format              BOOLEAN,
     continuous_feature_names    TEXT, 
     feature_col_names           TEXT, 
     id_col_name                 TEXT, 
     class_col_name              TEXT, 
     conflevel                   FLOAT,
+    unknown_routine_name        TEXT, 
+    enable_sampling             BOOLEAN,
     max_num_iter                INT, 
     max_tree_depth              INT, 
     min_percent_mode            FLOAT,
@@ -2443,8 +2600,22 @@ declare
     index INT;
     str_val TEXT;
     int_val INT;
+    unknow_routine_id INT;
     ret MADLIB_SCHEMA.c45_train_result;
 begin   
+    
+    PERFORM MADLIB_SCHEMA.assert
+        (
+            unknown_routine_name = 'ignore' OR
+            unknown_routine_name = 'explicit',
+            'The parameter unknown_routine_name must be ''ignore'', ''explicit''.'
+        );
+       
+    IF (unknown_routine_name = 'ignore') THEN
+        unknow_routine_id = 1;
+    ELSE
+        unknow_routine_id = 2;
+    END IF;
     
     PERFORM MADLIB_SCHEMA.__create_global_metatable();
 
@@ -2458,7 +2629,8 @@ begin
                         null,
                         null,
                         continuous_feature_names,
-                        validation_table_name);
+                        validation_table_name,
+                        unknown_routine_name);
 
     
     cont_feature_col_names = MADLIB_SCHEMA.__convert_csv_to_array(continuous_feature_names);
@@ -2494,6 +2666,7 @@ begin
             id_col_name , 
             class_col_name , 
             conflevel ,
+            enable_sampling,
             max_num_iter , 
             max_tree_depth , 
             min_percent_mode ,
@@ -2515,6 +2688,8 @@ begin
             id_col_name , 
             class_col_name , 
             conflevel ,
+            unknow_routine_id,
+            enable_sampling,
             max_num_iter , 
             max_tree_depth , 
             min_percent_mode ,
@@ -2528,11 +2703,12 @@ $$ language plpgsql;
 
 
 /**
- * @brief   C45 train algorithm in short form
+ * @brief Train a decision tree model. User must specify all those data with that 
+ *        long form function except the unknown_routine_name (default 'ignore').
  *
  * @param split_criterion_name This parameter specifies which split criterion 
  *          should be used for tree construction and pruning. 
- *          The valid values are ‘gain’, ‘gainratio’ and ‘gini’.
+ *          The valid values are infogain, gainratio, or gini.
  * @param training_table_name Name of the table/view with the source data
  * @param result_tree_table_name The name of the table where the resulting DT will be stored.
  *
@@ -2563,7 +2739,7 @@ $$ language plpgsql;
  *     no value. Result such as [2:3]={2,3}, should be read: 
  *     jump['feature value'+1], so in this case there were no 0-value points for 
  *     this feature. For value 1 jump to 2; for value 2 jump to 3;
- *  - <tt>is_feature_cont boolean</tt> - It specifies whether the selected feature is a continuous feature.
+ *  - <tt>is_feature_cont BOOLEAN</tt> - It specifies whether the selected feature is a continuous feature.
  *  - <tt>split_value FLOAT</tt> - For continuous feature, it specifies the split value. Otherwise, 
  *     it is fixed to 0.
  *
@@ -2575,6 +2751,8 @@ $$ language plpgsql;
  *      id_col_name Name:           'id'
  *      class_col_name Name:        'class'
  *      confidence_level:           25
+ *      unknown_routine_name        'ignore'
+ *      enable_sampling:            'f'
  *      max_num_iter:               2000
  *      max_tree_depth:             10 
  *      min_percent_mode:           0.001
@@ -2598,12 +2776,14 @@ begin
         training_table_name, 
         result_tree_table_name,
         null,
-        null,
         't',
+        null,       
         'feature',
         'ID',
         'class',
         25,
+        'ignore',
+        'f',
         2000,
         10,
         0.001,
@@ -2658,16 +2838,18 @@ $$ language plpgsql;
  *     no value. Result such as [2:3]={2,3}, should be read: 
  *     jump['feature value'+1], so in this case there were no 0-value points for 
  *     this feature. For value 1 jump to 2; for value 2 jump to 3;
- *  - <tt>is_feature_cont boolean</tt> - It specifies whether the selected feature is a continuous feature.
+ *  - <tt>is_feature_cont BOOLEAN</tt> - It specifies whether the selected feature is a continuous feature.
  *  - <tt>split_value FLOAT</tt> - For continuous feature, it specifies the split value. Otherwise, 
  *     it is fixed to 0.
  *
  * @note Some parameters are fixed as below. Please refer to the long form definition.    
- *      max_num_iter:       2000
- *      max_tree_depth:     10 
- *      min_percent_mode:   0.001
- *      min_percent_split:  0.01 
- *      verbosity:          0
+ *      unknown_routine_name        'ignore'
+ *      enable_sampling:    		'f'
+ *      max_num_iter:      			2000
+ *      max_tree_depth:     		10 
+ *      min_percent_mode:   		0.001
+ *      min_percent_split:  		0.01 
+ *      verbosity:          		0
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     (
@@ -2675,7 +2857,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     training_table_name         TEXT, 
     result_tree_table_name      TEXT,
     validation_table_name       TEXT, 
-    is_svec_format              boolean,
+    is_svec_format              BOOLEAN,
     continuous_feature_names    TEXT, 
     feature_col_names           TEXT, 
     id_col_name                 TEXT, 
@@ -2698,6 +2880,8 @@ begin
         id_col_name , 
         class_col_name , 
         conflevel,
+        'ignore',
+        'f',
         2000,
         10,
         0.001,
@@ -2737,9 +2921,9 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__display_tree
     id              INT, 
     feature_id      INT, 
     depth           INT, 
-    is_cont         boolean, 
+    is_cont         BOOLEAN, 
     sp_val          FLOAT,
-    is_svec_format  boolean, 
+    is_svec_format  BOOLEAN, 
     meta_table      TEXT
     );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__display_tree
@@ -2748,9 +2932,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__display_tree
     id              INT, 
     feature_id      INT, 
     depth           INT, 
-    is_cont         boolean, 
+    is_cont         BOOLEAN, 
     sp_val          FLOAT,
-    is_svec_format  boolean, 
+    is_svec_format  BOOLEAN, 
     meta_table      TEXT
     ) 
 RETURNS TEXT AS $$ 
@@ -2761,7 +2945,7 @@ declare
     jump            INT[];
     maxclass        INT;
     cat_size        INT;
-    is_feature_cont boolean;
+    is_feature_cont BOOLEAN;
     sp_value        FLOAT;
     index           INT;
     curr_value      INT;
@@ -2778,11 +2962,11 @@ begin
 
     curr_value = tree_location[array_upper(tree_location,1)];
 
+    for index in 0..depth loop
+        ret = ret || '    ';
+    end loop;
+    
     if( id > 1 ) then
-        for index in 0..depth loop
-            ret = ret || '    ';
-        end loop;
-
         if( is_svec_format ) then
             ret = ret || 'Feature ID:' || feature_id ||' ';
         else
@@ -2807,17 +2991,19 @@ begin
                         meta_table);
             end if;
         end if;
-
-        if( is_svec_format ) then
-            ret = ret || ' : class(' || maxclass || ')   num_elements(' || 
-                cat_size || ')  predict_prob('||probability||')';
-        else
-            ret = ret || ' : class(' ||  MADLIB_SCHEMA.__get_class_value(maxclass,meta_table) 
-                || ')   num_elements(' || cat_size || ')  predict_prob('||probability||')';
-        end if;
-
-        ret = ret || E'\n';
+    else
+        ret = 'Root Node ';
     end if;
+
+    if( is_svec_format ) then
+        ret = ret || ' : class(' || maxclass || ')   num_elements(' || 
+            cat_size || ')  predict_prob('||probability||')';
+    else
+        ret = ret || ' : class(' ||  MADLIB_SCHEMA.__get_class_value(maxclass,meta_table) 
+            || ')   num_elements(' || cat_size || ')  predict_prob('||probability||')';
+    end if;
+
+    ret = ret || E'\n';
 
     index = array_lower(jump,1);
     WHILE index <= array_upper(jump,1) LOOP
@@ -2900,6 +3086,8 @@ end $$ LANGUAGE plpgsql;
  *                                  result.
  *      is_sparse_vector:           Whether the classification set is in
  *                                  sparse vector format.
+ *      is_result_temp              It specifies whether the result_table should
+ *                                  be temporary.
  *      verbosity:                  Whether printing those debug information.
  *  Return:
  *      The name of the table containing classification set in sparse vector
@@ -2911,6 +3099,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__c45_classify_internal
     tree_table_name             TEXT, 
     result_table_name           TEXT, 
     is_sparse_vector            BOOLEAN,
+    is_result_temp              BOOLEAN,
     verbosity                   BOOLEAN
     );
     
@@ -2920,6 +3109,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__c45_classify_internal
     tree_table_name             TEXT, 
     result_table_name           TEXT, 
     is_sparse_vector            BOOLEAN,
+    is_result_temp              BOOLEAN,
     verbosity                   BOOLEAN
     ) 
 RETURNS TEXT AS $$
@@ -2935,19 +3125,36 @@ declare
     feature_col_name TEXT := 'feature';
     curr_level INT := 1;
     max_level INT := 0;
+    create_text TEXT := '';
+    unknown_routine_id INT := 0;
 begin
     time_stamp = clock_timestamp();
     
-    SELECT MADLIB_SCHEMA.__get_conversion_metatable_name(tree_table_name) INTO meta_table_name;
+    SELECT MADLIB_SCHEMA.__get_conversion_metatable_name(tree_table_name) 
+        INTO meta_table_name;
+
+    SELECT MADLIB_SCHEMA.__get_unknown_routine_id(tree_table_name) INTO unknown_routine_id;
     
     IF (NOT is_sparse_vector) THEN
-        PERFORM MADLIB_SCHEMA.__mad_convert_tbl_to_svec(
+        PERFORM MADLIB_SCHEMA.__convert_tbl_to_svec(
                 classification_table_name, 
                 svec_name, 
                 meta_table_name, 
+                unknown_routine_id,
                 't');
+        IF ( verbosity ) THEN
+            RAISE INFO 'tabular format. id_col_name: %, feature_col_name:%', 
+                id_col_name,feature_col_name;
+        END IF;        
     ELSE
         svec_name = classification_table_name;
+        id_col_name =MADLIB_SCHEMA.__get_id_column_name(tree_table_name);
+        feature_col_name = 
+            MADLIB_SCHEMA.__get_feature_column_name(tree_table_name);
+        IF ( verbosity ) THEN
+            RAISE INFO 'svec format. id_col_name: %, feature_col_name:%', 
+                id_col_name,feature_col_name;
+        END IF;
     END IF;
     
     DROP TABLE IF EXISTS classified_instance1;
@@ -2972,8 +3179,14 @@ begin
         leaf_id INT
     ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (jump)');
     
-    execute 'DROP TABLE IF EXISTS ' || result_table_name ||' cascade;';
-    execute 'CREATE TABLE ' || result_table_name || E'(
+    --execute 'DROP TABLE IF EXISTS ' || result_table_name ||' cascade;';
+
+    IF ( is_result_temp ) THEN
+        create_text = 'CREATE TEMP TABLE ';
+    ELSE
+        create_text = 'CREATE TABLE ';
+    END IF;
+    EXECUTE create_text || result_table_name || E'(
         id INT,
         feature MADLIB_SCHEMA.svec,
         jump INT,
@@ -2981,7 +3194,8 @@ begin
         prob FLOAT,
         parent_id INT,
         leaf_id INT
-    ) m4_ifdef(\`GREENPLUM\',\`DISTRIBUTED BY (jump)\');';
+    ) m4_ifdef(\`GREENPLUM\',\`DISTRIBUTED BY (id)\');';
+
 
     EXECUTE 'INSERT INTO classified_instance1 (id, feature, jump, class, prob) SELECT '
         ||id_col_name||', '||feature_col_name||', 1, 0, 0 FROM ' || svec_name || ';';  
@@ -2989,6 +3203,10 @@ begin
     
     EXECUTE 'SELECT max(array_upper(tree_location,1)) FROM '||tree_table_name||';' 
         INTO max_level;
+
+    IF( max_level is NULL ) THEN
+        RAISE EXCEPTION 'tree should not be empty';
+    END IF;
 
     FOR curr_level IN 1..max_level LOOP
         IF(verbosity) THEN  
@@ -3044,6 +3262,8 @@ begin
     EXECUTE 'INSERT INTO '||result_table_name||' SELECT * FROM '|| 
         table_names[table_pick%2+1] ||' WHERE jump = 0;';
     
+
+        
     IF(verbosity) THEN  
         RAISE INFO 'final classification time:%', clock_timestamp()-time_stamp;
     END IF;
@@ -3074,16 +3294,16 @@ $$ language plpgsql;
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
-    classification_table_name   TEXT, 
     tree_table_name             TEXT, 
+    classification_table_name   TEXT, 
     result_table_name           TEXT, 
     verbosity                   BOOLEAN
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_classify
     (
-    classification_table_name   TEXT, 
     tree_table_name             TEXT, 
+    classification_table_name   TEXT, 
     result_table_name           TEXT, 
     verbosity                   BOOLEAN
     ) 
@@ -3103,13 +3323,28 @@ begin
         tree_table_name, 
         result_table_name, 
         is_sparse_vector,
+        'f',
         verbosity
     ) INTO svec_table_name;
     
+    EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN feature;';
+    EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN jump;';
+    EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN parent_id;';
+    EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN leaf_id;';
+
     IF (NOT is_sparse_vector) THEN
         EXECUTE 'DROP TABLE IF EXISTS ' || svec_table_name || ';';
     END IF;
     EXECUTE 'SELECT COUNT(*) FROM ' ||classification_table_name||';' INTO ret.input_set_size;
+    /*
+        I measured the time with the dataset of adult, which can be found at
+        http://archive.ics.uci.edu/ml/machine-learning-databases/adult/.
+        I used adult.data for training and adult.test for classification.
+        I run at the machine of gpdb3.delta.sm.greenplum.com with 16 cpus.
+        I configured 8 segments for that gpdb cluster under test.
+        The test results are as follows:
+        classification time:           00:00:03.270666    
+    */
     ret.cost_time = clock_timestamp()-begin_time;
     RETURN ret;
 end
@@ -3136,14 +3371,14 @@ $$ language plpgsql;
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
-    classification_table_name   TEXT, 
     tree_table_name             TEXT, 
+    classification_table_name   TEXT, 
     result_table_name           TEXT
     );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_classify
     (
-    classification_table_name   TEXT, 
     tree_table_name             TEXT, 
+    classification_table_name   TEXT, 
     result_table_name           TEXT
     ) 
 RETURNS MADLIB_SCHEMA.c45_classify_result AS $$
@@ -3152,8 +3387,8 @@ declare
 begin
 	ret = MADLIB_SCHEMA.c45_classify
 	   (
-	       classification_table_name, 
 	       tree_table_name,
+	       classification_table_name, 
 	       result_table_name,
 	       'f'
 	   );
@@ -3165,22 +3400,22 @@ end $$ LANGUAGE plpgsql;
 /**
  * @brief   Check the accuracy of the decision tree alogrithom 
  * 
- * @param classification_table_name Name of the table/view with the source data
  * @param tree_table_name Name of trained tree
+ * @param classification_table_name Name of the table/view with the source data
  * @param verbosity If set to 't' will use verbose mode 
  * @return The estimated accuracy information.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_score
     (
-    classification_table_name   TEXT, 
     tree_table_name             TEXT, 
+    classification_table_name   TEXT, 
     verbosity                   BOOLEAN
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_score
     (
-    classification_table_name   TEXT, 
     tree_table_name             TEXT, 
+    classification_table_name   TEXT, 
     verbosity                   BOOLEAN
     ) 
 RETURNS FLOAT AS $$
@@ -3192,21 +3427,35 @@ declare
     num_of_row FLOAT := 0.0;
     mis_of_row FLOAT := 0.0;
     svec_table_name TEXT := '';
-    is_sparse_vector BOOLEAN := 'f';    
+    is_sparse_vector BOOLEAN := 'f';
+    str_val TEXT;
+    str_val2 TEXT;
 begin
-    SELECT MADLIB_SCHEMA.__get_input_format(tree_table_name) INTO is_sparse_vector;
+    is_sparse_vector= MADLIB_SCHEMA.__get_input_format(tree_table_name);
     
+    IF ( verbosity ) THEN
+        RAISE INFO 'is_sparse_vector_format:%',is_sparse_vector;
+    END IF;
+
+    str_val = MADLIB_SCHEMA.__strip_schema_name(tree_table_name);
+    str_val2 = MADLIB_SCHEMA.__get_schema_name(tree_table_name);
+    result_table_name = str_val2 || str_val || result_table_name;
     SELECT MADLIB_SCHEMA.__c45_classify_internal
     (
         classification_table_name, 
         tree_table_name, 
         result_table_name, 
         is_sparse_vector,
+        't',
         verbosity
     ) INTO svec_table_name;
     
-    SELECT MADLIB_SCHEMA.__format('SELECT count(%) FROM %;',
-        id_col_name,
+    IF ( is_sparse_vector ) THEN
+        id_col_name = MADLIB_SCHEMA.__get_id_column_name(tree_table_name);
+        class_col_name = MADLIB_SCHEMA.__get_class_column_name(tree_table_name);
+    END IF;
+
+    SELECT MADLIB_SCHEMA.__format('SELECT count(id) FROM %;',
         result_table_name) INTO curStmt;
     
     --RAISE INFO '%', curStmt;
@@ -3236,7 +3485,7 @@ $$ LANGUAGE plpgsql;
  *
  * @param result_tree_table_name Name of the table containing the tree's information
  *
- * @return boolean value indicating the status of that cleanup operation.
+ * @return BOOLEAN value indicating the status of that cleanup operation.
  *
  */
 DROP FUNCTION IF EXISTS  MADLIB_SCHEMA.c45_clean(TEXT);

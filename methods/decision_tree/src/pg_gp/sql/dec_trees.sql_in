@@ -83,12 +83,13 @@ declare
 	result TEXT;
     cont_features INT[];
     index  INT;
+    score INT;
 begin 
 
 	CREATE TEMP TABLE Points(
-		id INTEGER,
-		feature MADLIB_SCHEMA.svec,
-		class INTEGER
+		id_col INTEGER,
+		feature_col MADLIB_SCHEMA.svec,
+		class_col INTEGER
 	);
 
 	CREATE TEMP TABLE Speedup(
@@ -99,13 +100,15 @@ begin
     
 	INSERT INTO Speedup SELECT G.a FROM generate_series(1, 5000) AS G(a);
 	
-	INSERT INTO Points (id, feature, class) SELECT id, (g.t).* 
+	INSERT INTO Points (id_col, feature_col, class_col) SELECT id, (g.t).* 
 	    FROM (SELECT id, dectree_CreateTreePoint(id) AS t FROM Speedup) As g;
 
+	PERFORM MADLIB_SCHEMA.c45_train('infogain','Points','MADLIB_SCHEMA.trained_tree'
+        ,'Points','t','7','feature_col','id_col','class_col', 
+        100,'ignore','t',3000,10,0.001,0.01,1);
 
-	PERFORM MADLIB_SCHEMA.c45_train('infogain','Points','madlib.trained_tree',null,'t','7','feature','id','class', 25,3000,10,0.001,0.01,1);
-
-	PERFORM MADLIB_SCHEMA.C45_Classify('Points', 'madlib.trained_tree','madlib.classified_points','t');
+	PERFORM MADLIB_SCHEMA.c45_classify('MADLIB_SCHEMA.trained_tree',
+        'Points','MADLIB_SCHEMA.classified_points','t');
 
 	SELECT INTO result CASE WHEN(sum((id+4)%5+1-class)=0) THEN 'PASS' ELSE 'FAIL' END 
 	    FROM MADLIB_SCHEMA.classified_points;
@@ -114,6 +117,13 @@ begin
 	   RAISE EXCEPTION 'Install check failed.';
 	END IF;
 	
+    score = MADLIB_SCHEMA.c45_score('MADLIB_SCHEMA.trained_tree',
+        'Points','t');
+
+    IF (score <> 1) THEN
+	   RAISE EXCEPTION 'Install check failed.';
+	END IF;
+    
 	RETURN result;
 end
 $$ language plpgsql;	
