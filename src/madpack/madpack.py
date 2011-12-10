@@ -122,6 +122,7 @@ def __run_sql_query(sql, show_error):
                     '-d', con_args['database'],
                     '-U', con_args['user'],
                     '-F', delimiter,
+                    '-X',
                     '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
@@ -223,6 +224,7 @@ def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sq
                     '-p', con_args['host'].split(':')[1],
                     '-d', con_args['database'],
                     '-U', con_args['user'],
+                    '-X',
                     '-f', tmpfile]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
