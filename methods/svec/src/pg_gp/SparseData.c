@@ -37,10 +37,14 @@ SparseData makeSparseData(void) {
 	/* Allocate the included elements */
 	sdata->vals  = makeStringInfo();
 	sdata->index = makeStringInfo();
-	sdata->vals->len = 0;
-	sdata->index->len = 0;
-	sdata->vals->cursor = 0;
-	sdata->index->cursor = 0;
+
+	Assert(sdata->vals->len == 0);
+	Assert(sdata->index->len == 0);
+	Assert(sdata->vals->cursor == 0);
+	Assert(sdata->index->cursor == 0);
+	Assert(sdata->vals->data[0] == '\0');
+	Assert(sdata->index->data[0] == '\0');
+	
 	sdata->unique_value_count=0;
 	sdata->total_value_count=0;
 	sdata->type_of_data = FLOAT8OID;
@@ -59,8 +63,16 @@ SparseData makeEmptySparseData(void) {
 	pfree(sdata->index->data);
 	sdata->vals->data  = palloc(1);
 	sdata->index->data = palloc(1);
-	sdata->vals->maxlen=0;
-	sdata->index->maxlen=0;
+
+	// -- KS fix
+	sdata->vals->data[0] = '\0';
+	sdata->index->data[0] = '\0';
+	sdata->vals->maxlen = 1;
+	sdata->index->maxlen = 1;
+
+	// sdata->vals->maxlen=0;
+	// sdata->index->maxlen=0;
+
 	return sdata;
 }
 
@@ -94,7 +106,18 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 	sdata->index->len = indexsize;
 	sdata->index->maxlen = sdata->index->len;
 	sdata->type_of_data = datatype;
+
+	// These will fail for sure
+	Assert(sdata->vals->maxlen > sdata->vals->len);
+	Assert(sdata->index->maxlen > sdata-index->len);
+
 	return sdata;
+
+	/*
+	 * Note: If we can ensure the input vals and index always terminate
+	 * with a null, then we can retain the code, changing only 
+	 * maxlen = len + 1
+	 */
 }
 
 /**
@@ -129,6 +152,12 @@ SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 		ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			       errmsg("Internal error")));
 	}
+
+	Assert(sdata->index->maxlen > sdata->index->len &&
+	       sdata->index[sdata->index->len] == '\0');
+	Assert(sdata->vals->maxlen > sdata->vals->len &&
+	       sdata->vals[sdata->vals->len] == '\0');
+
 	return sdata;
 }
 
@@ -159,6 +188,7 @@ StringInfo copyStringInfo(StringInfo sinfo) {
 	char *data;
 	if (sinfo->data == NULL) {
 		data = NULL;
+		Assert(sinfo->len == 0);
 	} else {
 		data   = (char *)palloc(sizeof(char)*(sinfo->len+1));
 		memcpy(data,sinfo->data,sinfo->len);
@@ -175,10 +205,14 @@ StringInfo copyStringInfo(StringInfo sinfo) {
  */
 StringInfo makeStringInfoFromData(char *data,int len) {
 	StringInfo sinfo;
+
+	// We assume data is a length len+1 array terminated by a null
+	Assert(data[len] == '\0');
+
 	sinfo = (StringInfo)palloc(sizeof(StringInfoData));
 	sinfo->data   = data;
 	sinfo->len    = len;
-	sinfo->maxlen = len;
+	sinfo->maxlen = len+1; // KS fix
 	sinfo->cursor = 0;
 	return sinfo;
 }
@@ -241,6 +275,11 @@ SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
 	/* Add the final tallies */
 	sdata->unique_value_count = sdata->vals->len/width;
 	sdata->total_value_count = count;
+
+	Assert(sdata->index->maxlen > sdata->index->len &&
+	       sdata->index[sdata->index->len] == '\0');
+	Assert(sdata->vals->maxlen > sdata->vals->len &&
+	       sdata->vals[sdata->vals->len] == '\0');
 
 	return sdata;
 }
@@ -317,8 +356,15 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 	
 	/* Add the final tallies */
 	sdata->unique_value_count = sdata->vals->len/width;
-	sdata->total_value_count = count;
+	// sdata->total_value_count = count;
+	sdata->total_value_count = end;
 	pfree(index);
+
+	Assert(sdata->index->maxlen > sdata->index->len &&
+	       sdata->index[sdata->index->len] == '\0');
+	Assert(sdata->vals->maxlen > sdata->vals->len &&
+	       sdata->vals[sdata->vals->len] == '\0');
+
 	return sdata;
 }
 
@@ -506,6 +552,12 @@ SparseData subarr(SparseData sdata, int start, int end) {
 		read += esize;
 		if (read == end) break;
 	}
+
+	Assert(ret->index->maxlen > ret->index->len &&
+	       ret->index[ret->index->len] == '\0');
+	Assert(ret->vals->maxlen > ret->vals->len &&
+	       ret->vals[ret->vals->len] == '\0');
+
 	return ret;
 }
 
@@ -528,6 +580,12 @@ SparseData reverse(SparseData sdata) {
 		add_run_to_sdata((char *)(&vals[j]),compword_to_int8(ix),w,ret);
 		ix -= int8compstoragesize(ix);
 	}
+
+	Assert(ret->index->maxlen > ret->index->len &&
+	       ret->index[ret->index->len] == '\0');
+	Assert(ret->vals->maxlen > ret->vals->len &&
+	       ret->vals[ret->vals->len] == '\0');
+
 	return ret;
 }
 
@@ -553,13 +611,16 @@ SparseData concat(SparseData left, SparseData right) {
 	int val_len=l_val_len+r_val_len;
 	int ind_len=l_ind_len+r_ind_len;
 	
-	vals = (char *)palloc(sizeof(char)*val_len);
-	index = (char *)palloc(sizeof(char)*ind_len);
+	vals = (char *)palloc(sizeof(char)*(val_len+1)); // KS fix
+	index = (char *)palloc(sizeof(char)*(ind_len+1)); // KS fix
 	
 	memcpy(vals          ,left->vals->data,l_val_len);
 	memcpy(vals+l_val_len,right->vals->data,r_val_len);
 	memcpy(index,          left->index->data,l_ind_len);
 	memcpy(index+l_ind_len,right->index->data,r_ind_len);
+
+	vals[val_len] = '\0'; // KS fix
+	index[ind_len] = '\0'; // KS fix
 	
 	sdata->vals  = makeStringInfoFromData(vals,val_len);
 	sdata->index = makeStringInfoFromData(index,ind_len);
@@ -568,6 +629,12 @@ SparseData concat(SparseData left, SparseData right) {
 		right->unique_value_count;
 	sdata->total_value_count  = left->total_value_count+
 		right->total_value_count;
+
+	Assert(sdata->index->maxlen > sdata->index->len &&
+	       sdata->index[sdata->index->len] == '\0');
+	Assert(sdata->vals->maxlen > sdata->vals->len &&
+	       sdata->vals[sdata->vals->len] == '\0');
+
 	return sdata;
 }
 
@@ -594,6 +661,12 @@ SparseData lapply(text * func, SparseData sdata) {
 		    DatumGetFloat8(
 		      OidFunctionCall1(foid,
 				    Float8GetDatum(valref(float8,sdata,i))));
+
+	Assert(result->index->maxlen > result->index->len &&
+	       result->index[result->index->len] == '\0');
+	Assert(result->vals->maxlen > result->vals->len &&
+	       result->vals[result->vals->len] == '\0');
+
 	return result;
 }
 
