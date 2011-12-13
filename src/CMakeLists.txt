@@ -36,26 +36,6 @@ if(NOT BOOST_TAR_SOURCE)
     set(BOOST_TAR_SOURCE ${BOOST_URL})
 endif (NOT BOOST_TAR_SOURCE)
 
-# We always download Armadillo (unless it is already present in
-# ${CMAKE_CURRENT_BINARY_DIR}/third_party/downloads). It is also possible to
-# specify an alternative path to the Armadillo tarball:
-# -DARMADILLO_TAR_SOURCE=/path/to/armadillo-x.x.x.tar.gz
-
-set(ARMADILLO_TAR_VERSION "1.2.0")
-set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
-
-set(ARMADILLO_TAR "armadillo-${ARMADILLO_TAR_VERSION}.tar.gz")
-set(ARMADILLO_URL "${SOURCEFORGE_BASE_URL}/arma/files/${ARMADILLO_TAR}")
-
-if(NOT ARMADILLO_TAR_SOURCE)
-    find_file(ARMADILLO_TAR_SOURCE ${ARMADILLO_TAR}
-        PATHS ${MAD_THIRD_PARTY}/downloads)
-endif(NOT ARMADILLO_TAR_SOURCE)
-
-if(NOT ARMADILLO_TAR_SOURCE)
-    set(ARMADILLO_TAR_SOURCE ${ARMADILLO_URL})
-endif (NOT ARMADILLO_TAR_SOURCE)
-
 # We always download Eigen (unless it is already present in
 # ${CMAKE_CURRENT_BINARY_DIR}/third_party/downloads). It is also possible to
 # specify an alternative path to the Eigen tarball:
@@ -144,67 +124,8 @@ else(Boost_FOUND)
         INSTALL_COMMAND /usr/bin/env echo Ignored: make
         BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_boost
     )
-    list(APPEND ARMADILLO_DEPENDS
-        EP_boost)
-    list(APPEND ARMADILLO_CMAKE_ARGS
-        -DCMAKE_INCLUDE_PATH=${MAD_THIRD_PARTY}/src/EP_boost)
     include_directories(BEFORE ${MAD_THIRD_PARTY}/src/EP_boost)
 endif(Boost_FOUND)
-
-
-# -- Third-party dependencies: Download Armadillo. It provides an umbrella
-#    library for LAPACK, BLAS, and ATLAS ---------------------------------------
-
-join_strings(_CMAKE_PREFIX_PATH
-    ${EXTERNALPROJECT_LIST_SEPARATOR} "${CMAKE_PREFIX_PATH}")
-
-# For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
-# (and not ${MAD_THIRD_PARTY}/lib64), even if building on a 64-bit architecture
-# Note: INSTALL_LIB_DIR was previously LIB_INSTALL_DIR in Armadillo. We might
-# want to anticipate further changes...
-list(APPEND ARMADILLO_CMAKE_ARGS
-    -DCMAKE_BUILD_TYPE=Release
-    "-DCMAKE_PREFIX_PATH=${_CMAKE_PREFIX_PATH}"
-    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-    "-DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}"
-    -DINSTALL_LIB_DIR=lib
-)
-
-# On Solaris, LAPACK and BLAS are part of the Sun Performance library
-# BLAS_NAMES and LAPACK_NAMES are variables used by the Armadillo
-# build script
-if(SOLARIS)
-    list(APPEND ARMADILLO_CMAKE_ARGS
-        -DBLAS_NAMES=sunperf
-        -DLAPACK_NAMES=sunperf
-    )
-endif(SOLARIS)
-
-ExternalProject_Add(EP_armadillo
-    DEPENDS ${ARMADILLO_DEPENDS}
-    PREFIX ${MAD_THIRD_PARTY}
-    LIST_SEPARATOR ${EXTERNALPROJECT_LIST_SEPARATOR}
-    DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
-    URL ${ARMADILLO_TAR_SOURCE}
-    URL_MD5 ${ARMADILLO_TAR_MD5}
-    CMAKE_ARGS ${ARMADILLO_CMAKE_ARGS}
-    BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_armadillo
-)
-add_library(armadillo SHARED IMPORTED)
-
-# The Armadillo CMake script uses the default settings for 
-# a shared library. We can therefore know what the installed library
-# path will be.
-set_target_properties(armadillo PROPERTIES
-    IMPORTED_LOCATION
-        "${CMAKE_CURRENT_BINARY_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}"
-)
-
-set(ARMADILLO_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/include)
-
-# We treat Armadillo as a system header. This means, e.g., that warnings are not
-# being shown (which is what we want).
-include_directories(SYSTEM ${ARMADILLO_INCLUDE_DIRS})
 
 
 # -- Third-party dependencies: Download the C++ linear-algebra library Eigen ---

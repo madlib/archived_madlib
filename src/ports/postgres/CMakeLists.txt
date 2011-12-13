@@ -16,7 +16,7 @@ if(POSTGRESQL_FOUND)
     message(STATUS "*** Adding PostgreSQL to target list...")
     message(STATUS "***")
 
-    add_library(postgres STATIC IMPORTED)
+    add_executable(postgres IMPORTED)
     set_target_properties(postgres PROPERTIES
         IMPORTED_LOCATION "${POSTGRESQL_EXECUTABLE}"
     )
@@ -45,12 +45,6 @@ if(POSTGRESQL_FOUND)
         dbconnector/UDF_impl.hpp
         dbconnector/UDF_proto.hpp
     )
-#    if(LINUX)
-#        list(APPEND MAD_DBAL_SOURCES_POSTGRES
-#            linux/dbconnector/PGArmadilloGlue.cpp
-#        )
-#        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
-#    endif(LINUX)
     
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
@@ -86,11 +80,6 @@ if(POSTGRESQL_FOUND)
     add_madlib_connector_library(postgres "${POSTGRESQL_EXECUTABLE}"
         MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
     )
-#    if(LINUX)
-#        # On Linux, we declare Armadillo a dependency of the connector not the
-#        # core library. See main CMakeLists.txt file why.
-#        target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} armadillo)
-#    endif(LINUX)
 
 
 # -- 4. Old versions of PostgreSQL ship with header files that need a patch to

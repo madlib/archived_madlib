@@ -4,19 +4,24 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Include the PostgreSQL header
-#include <dbconnector/PGCompatibility.hpp>
-
 extern "C" {
+    #include <postgres.h>
     #include <funcapi.h>
     #include <nodes/execnodes.h>
 } // extern "C"
+
+// Include the header from the PostgreSQL port
+#include <dbconnector/Compatibility.hpp>
 
 namespace madlib {
 
 namespace dbconnector {
 
+namespace postgres {
+
 /**
+ * @brief Test whether we are currently in an aggregate calling context.
+ *
  * This function is essentially a copy of AggCheckCallContext from
  * backend/executor/nodeAgg.c, which is part of PostgreSQL >= 9.0.
  */
@@ -37,6 +42,8 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 		*aggcontext = NULL;
 	return 0;
 }
+
+} // namespace postgres
 
 } // namespace dbconnector
 
