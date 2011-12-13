@@ -1,17 +1,24 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file ArrayHandle_proto.hpp
+ *
+ *//* ----------------------------------------------------------------------- */
+ 
 template <typename T>
 class AbstractionLayer::ArrayHandle {
 public:
     enum { isMutable = false };
 
-    ArrayHandle(const ::ArrayType *inArray);
+    ArrayHandle(const ArrayType *inArray);
     
     const T* ptr() const;
     size_t size() const;
-    const ::ArrayType *array() const;    
+    const ArrayType *array() const;    
     const T& operator[](size_t inIndex) const;
 
 protected:
-    const ::ArrayType *mArray;
+    const ArrayType *mArray;
+    static size_t internalArraySize(const ArrayType *inArray);
 };
 
 
@@ -24,13 +31,14 @@ class AbstractionLayer::MutableArrayHandle
 public:
     enum { isMutable = true };
 
-    MutableArrayHandle(::ArrayType *inArray)
+    MutableArrayHandle(const ArrayType *inArray);
+    MutableArrayHandle(ArrayType *inArray)
       : Base(inArray) { }
     
     using Base::ptr;
     using Base::array;
     
     T* ptr();
-    ::ArrayType *array();
+    ArrayType *array();
     T& operator[](size_t inIndex);
 };

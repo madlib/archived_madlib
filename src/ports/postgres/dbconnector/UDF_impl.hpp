@@ -1,3 +1,6 @@
+/**
+ * @brief Each exported C function calls this method (and nothing else)
+ */
 template <class Function>
 inline
 Datum
@@ -25,11 +28,7 @@ UDF::call(FunctionCallInfo fcinfo) {
         } catch (std::exception &exc) {
             sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
             const char *error = exc.what();
-            
-//            // If there is a pending error, we report this instead.
-//            if (db.lastError())
-//                error = db.lastError();
-            
+                        
             strncpy(msg, error, sizeof(msg));
         }
     } catch (std::exception &exc) {

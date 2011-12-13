@@ -36,7 +36,7 @@ namespace boost
         std::stringstream tmp;
         tmp << inMsg
             << "\nDetails (for developers): \n"
-            "Failed assertion: " << inExpr <<
+            "Failed BOOST_ASSERT: " << inExpr <<
             "\nFunction: " << inFunction <<
             "\nFile: " << inFile << ":" << inLine;
         

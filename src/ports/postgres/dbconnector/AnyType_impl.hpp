@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AnyType.hpp
+ * @file AnyType_impl.hpp
  *
  * @brief Convert between PostgreSQL types and C++ types
  *
@@ -40,6 +40,24 @@ AbstractionLayer::AnyType::AnyType(Datum inDatum, Oid inTypeID,
     mTypeID(inTypeID),
     mIsMutable(inIsMutable)
     { }
+
+/**
+ * @brief Copy constructor
+ * 
+ * We need to provide a copy constructor because otherwise the template
+ * constructor would be used.
+ 
+inline
+AbstractionLayer::AnyType::AnyType(const AnyType &inOriginal)
+  : mContent(inOriginal.mContent),
+    mDatum(inOriginal.mDatum),
+    fcinfo(inOriginal.fcinfo),
+    mTupleHeader(inOriginal.mTupleHeader),
+    mChildren(inOriginal.mChildren),
+    mTypeID(inOriginal.mTypeID),
+    mIsMutable(inOriginal.mIsMutable)
+    { }
+*/
 
 template <typename T>
 inline
@@ -83,6 +101,11 @@ AbstractionLayer::AnyType::consistencyCheck() const {
         std::logic_error(kMsg));
 }
 
+/**
+ * @brief Convert object to the type specified as template argument
+ *
+ * @tparam T Type to convert object to
+ */
 template <typename T>
 T AbstractionLayer::AnyType::getAs() const {
     consistencyCheck();
@@ -101,19 +124,24 @@ T AbstractionLayer::AnyType::getAs() const {
             "Invalid type conversion requested. PostgreSQL type does not match "
                 "C++ type.");
     
-    if (TypeTraits<T>::isMutable && !mIsMutable)
-        throw std::invalid_argument(
-            "Expected argument to be mutable, but it is not.");
-
-    return TypeTraits<T>::toCXXType(mDatum);
+    bool needMutableClone = (TypeTraits<T>::isMutable && !mIsMutable);
+    
+    return TypeTraits<T>::toCXXType(mDatum, needMutableClone);
 }
 
+/**
+ * @brief Return if object is Null
+ */
 inline
 bool
 AbstractionLayer::AnyType::isNull() const {
     return mContent == Null;
 }
 
+/**
+ * @brief Return if object is of composite type (also called row type or
+ *     user-defined type)
+ */
 inline
 bool
 AbstractionLayer::AnyType::isComposite() const {
@@ -449,17 +477,22 @@ AbstractionLayer::AnyType::getAsDatum(Oid inTargetTypeID,
         }
         
         if (inTargetIsComposite && !isComposite())
-            throw std::logic_error("Invalid type conversion requested. "
+            throw std::runtime_error("Invalid type conversion requested. "
                 "Simple type supplied but PostgreSQL expects composite type.");
 
         if (!inTargetIsComposite && isComposite())
-            throw std::logic_error("Invalid type conversion requested. "
+            throw std::runtime_error("Invalid type conversion requested. "
                 "Composite type supplied but PostgreSQL expects simple type.");
         
         madlib_assert(inTargetIsComposite == (tupleHandle.desc != NULL),
             MADLIB_DEFAULT_EXCEPTION);
         
         if (inTargetIsComposite) {
+            if (static_cast<size_t>(tupleHandle.desc->natts) != mChildren.size())
+                throw std::runtime_error("Invalid type conversion requested. "
+                    "PostgreSQL composite type has different number of "
+                    "elements.");
+
             std::vector<Datum> values;
             std::vector<char> nulls;
 

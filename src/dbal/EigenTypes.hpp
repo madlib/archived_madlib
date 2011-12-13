@@ -36,7 +36,7 @@ public:
         typedef typename Base::Scalar Scalar;
         typedef typename Base::Index Index;
         
-//        using Base::operator=;
+        using Base::operator=;
 
         inline HandleMap()
           : Base(NULL, 1, 1), mMemoryHandle(NULL) { }
@@ -131,6 +131,13 @@ public:
         const Eigen::MatrixBase<Derived>& mat,
         const Eigen::MatrixBase<OtherDerived>& other) {
         return mat.dot(other);
+    }
+    
+    template <typename Derived>
+    inline
+    typename Eigen::MatrixBase<Derived>::CoeffReturnType
+    static as_scalar(const Eigen::MatrixBase<Derived>& mat) {
+        return mat.value();
     }
     
     template <typename Derived>

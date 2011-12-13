@@ -1,3 +1,15 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file TransparentHandle_proto.hpp
+ *
+ *//* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Handle without any meta data (essentially, a constant pointer)
+ *
+ * A TransparentHandle is simply a (constant) pointer. It is used whenever we
+ * need a type that conforms to the handle policy, but no meta data is required.
+ */
 template <typename T>
 class AbstractionLayer::TransparentHandle {
 public:
@@ -12,7 +24,9 @@ protected:
     T *mPtr;
 };
 
-
+/**
+ * @brief Mutable handle without any meta data (essentially, a pointer)
+ */
 template <typename T>
 class AbstractionLayer::MutableTransparentHandle
   : public AbstractionLayer::TransparentHandle<T> {

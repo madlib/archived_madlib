@@ -2,6 +2,8 @@
  *
  * @file Compatibility.cpp
  *
+ * @brief Compatibility with old PostgreSQL versions
+ *
  * This file is only used in the PostgreSQL port, not derived ports (like
  * Greenplum).
  *

@@ -11,7 +11,8 @@
         static inline Datum toDatum(const _type &value) { \
             return _convertToPG; \
         }; \
-        static inline _type toCXXType(Datum value) { \
+        static inline _type toCXXType(Datum value, bool needMutableClone) { \
+            (void) needMutableClone; \
             return _convertToCXX; \
         }; \
     }
@@ -59,12 +60,20 @@ DECLARE_OID_TO_TYPE_MAPPING(
     DatumGetInt32(value)
 );
 DECLARE_OID_TO_TYPE_MAPPING(
+    BOOLOID,
+    bool,
+    dbal::SimpleType,
+    dbal::Immutable,
+    BoolGetDatum(value),
+    DatumGetBool(value)
+);
+DECLARE_OID_TO_TYPE_MAPPING(
     FLOAT8ARRAYOID,
     AbstractionLayer::ArrayHandle<double>,
     dbal::ArrayType,
     dbal::Immutable,
     PointerGetDatum(value.array()),
-    reinterpret_cast< ::ArrayType* >(DatumGetPointer(value))
+    reinterpret_cast<ArrayType*>(DatumGetPointer(value))
 );
 DECLARE_CXX_TYPE(
     FLOAT8ARRAYOID,
@@ -72,7 +81,13 @@ DECLARE_CXX_TYPE(
     dbal::ArrayType,
     dbal::Mutable,
     PointerGetDatum(value.array()),
-    reinterpret_cast< ::ArrayType* >(DatumGetPointer(value))
+    needMutableClone
+      ? AbstractionLayer::MutableArrayHandle<double>(
+            reinterpret_cast<const ArrayType*>(DatumGetPointer(value))
+        )
+      : AbstractionLayer::MutableArrayHandle<double>(
+            reinterpret_cast<ArrayType*>(DatumGetPointer(value))
+        )
 );
 
 #undef DECLARE_OID_TO_TYPE_MAPPING

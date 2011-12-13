@@ -2,7 +2,7 @@
  *
  * @file dbconnector.hpp
  *
- * 
+ * @brief This file should be included by user code (and nothing else)
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -61,7 +61,7 @@ namespace madlib {
             #include "ArrayHandle_proto.hpp"
             #include "AnyType_proto.hpp"
             #include "TransparentHandle_proto.hpp"
-            #include "PGException.hpp"
+            #include "PGException_proto.hpp"
             #include "OutputStream_proto.hpp"
             #include "UDF_proto.hpp"
         }
@@ -71,6 +71,9 @@ namespace madlib {
     using dbconnector::postgres::AbstractionLayer;
     typedef AbstractionLayer::AnyType AnyType; // Needed for defining UDFs
     
+    /**
+     * @brief Get the default allocator
+     */
     inline AbstractionLayer::Allocator &defaultAllocator() {
         static AbstractionLayer::Allocator sDefaultAllocator(NULL);
         return sDefaultAllocator;
@@ -100,6 +103,7 @@ namespace madlib {
 
 #define DECLARE_UDF(name) \
     struct name : public madlib::dbconnector::postgres::UDF, public DefaultLinAlgTypes { \
+        typedef DefaultLinAlgTypes LinAlgTypes; \
         inline name(FunctionCallInfo fcinfo) : madlib::dbconnector::postgres::UDF(fcinfo) { }  \
         AnyType run(AnyType &args); \
     };

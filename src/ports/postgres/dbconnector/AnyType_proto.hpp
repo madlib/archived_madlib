@@ -2,13 +2,15 @@
  *
  * @file AnyType_proto.hpp
  *
- * @brief Convert PostgreSQL types into C++ types
- *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Proxy for PostgreSQL objects
+ */
 class AbstractionLayer::AnyType {
 public:
     AnyType();
+//    AnyType(const AnyType &inOriginal);
     template <typename T> AnyType(const T &inValue);
     template <typename T> T getAs() const;
     AbstractionLayer::AnyType operator[](uint16_t inID) const;

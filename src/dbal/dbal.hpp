@@ -9,6 +9,9 @@
 
 namespace madlib {
 
+/**
+ * @brief Database-abstraction layer
+ */
 namespace dbal {
 
 enum TypeClass {

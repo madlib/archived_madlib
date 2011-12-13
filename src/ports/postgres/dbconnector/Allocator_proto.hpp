@@ -1,5 +1,28 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file Allocator_proto.hpp
+ *
+ *//* ----------------------------------------------------------------------- */
+
 /**
- * @brief The PostgreSQL memory allocator
+ * @brief PostgreSQL memory allocator
+ *
+ * The main issue consideration for memory allocation in PostgreSQL is:
+ * -# Memory leaks are only guaranteed not to occur if PostgreSQL memory
+ *    allocation functions are used\n
+ *    .
+ *    PostgreSQL knows the concept of "memory contexts" such as current function
+ *    call, current aggregate function, or current transaction. Memory
+ *    allocation using \c palloc() always occurs within a specific memory
+ *    context -- and once a memory context goes out of scope all memory
+ *    associated with it will be deallocated (garbage collected).\n
+ *    .
+ *    As a second safety measure we therefore redefine <tt>operator new</tt> and
+ *    <tt>operator delete</tt> to call \c palloc() and \c pfree(). (This is
+ *    essentially an \b additional protection against leaking C++ code. Given
+ *    1., no C++ destructor call will ever be missed.)
+ *
+ * @see AbstractionLayer::Allocator::internalAllocate, NewDelete.cpp
  *
  * @internal
  *     To avoid name conflicts, we do not import namespace dbal

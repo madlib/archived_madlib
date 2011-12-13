@@ -1,3 +1,9 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file Compatibility.hpp
+ *
+ *//* ----------------------------------------------------------------------- */
+
 #ifndef MADLIB_POSTGRES_COMPATIBILITY_HPP
 #define MADLIB_POSTGRES_COMPATIBILITY_HPP
 
