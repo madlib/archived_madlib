@@ -32,12 +32,11 @@ chi_squared_cdf::run(AnyType &args) {
         throw std::domain_error("Chi Squared distribution undefined for "
             "degree of freedom <= 0");
 
-    return chiSquared_cdf(nu, t);
+    return chiSquaredCDF(nu, t);
 }
 
-inline
 double
-chiSquared_cdf(int64_t nu, double t) {
+chiSquaredCDF(int64_t nu, double t) {
     return boost::math::cdf( boost::math::chi_squared(nu), t );
 }
 

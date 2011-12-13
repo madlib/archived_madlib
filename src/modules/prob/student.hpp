@@ -6,4 +6,4 @@
 
 DECLARE_UDF(student_t_cdf)
 
-double studentT_cdf(int64_t nu, double t);
+double studentT_CDF(int64_t nu, double t);

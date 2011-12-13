@@ -21,8 +21,9 @@ namespace prob {
 
 #define MADLIB_CURRENT_NAMESPACE madlib::modules::prob
 
-#include <modules/prob/chiSquared.hpp>
-#include <modules/prob/student.hpp>
+#include "chiSquared.hpp"
+#include "normal.hpp"
+#include "student.hpp"
 
 } // namespace prob
 

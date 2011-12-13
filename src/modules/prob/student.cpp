@@ -125,7 +125,7 @@ namespace {
  * Another idea for handling this case can be found in reference [8].
  */
 
-double studentT_cdf(int64_t nu, double t) {
+double studentT_CDF(int64_t nu, double t) {
 	double		z,
 				t_by_sqrt_nu;
 	double		A, /* contains A(t|nu) */
@@ -237,7 +237,7 @@ student_t_cdf::run(AnyType &args) {
         throw std::domain_error("Student-t distribution undefined for "
             "degree of freedom <= 0");
 
-    return studentT_cdf(nu, t);
+    return studentT_CDF(nu, t);
 }
 
 } // namespace prob

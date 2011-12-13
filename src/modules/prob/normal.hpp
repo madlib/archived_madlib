@@ -1,9 +1,9 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file chiSquared.hpp
+ * @file normal.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
-DECLARE_UDF(chi_squared_cdf)
+DECLARE_UDF(normal_cdf)
 
-double chiSquaredCDF(int64_t nu, double t);
+double normalCDF(double t);
