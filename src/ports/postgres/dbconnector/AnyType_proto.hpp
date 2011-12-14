@@ -6,6 +6,9 @@
 
 /**
  * @brief Proxy for PostgreSQL objects
+ *
+ * AnyType objects are used by user-defined code to both retrieve and return
+ * values from the backend.
  */
 class AbstractionLayer::AnyType {
 public:

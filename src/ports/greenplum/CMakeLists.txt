@@ -37,8 +37,8 @@ if(GREENPLUM_FOUND)
         ../postgres/dbconnector/dbconnector.hpp
         ../postgres/dbconnector/main.cpp
         ../postgres/dbconnector/NewDelete.cpp
-        ../postgres/dbconnector/OutputStream_impl.hpp
-        ../postgres/dbconnector/OutputStream_proto.hpp
+        ../postgres/dbconnector/OutputStreamBuffer_impl.hpp
+        ../postgres/dbconnector/OutputStreamBuffer_proto.hpp
         ../postgres/dbconnector/PGException_proto.hpp
         ../postgres/dbconnector/TransparentHandle_impl.hpp
         ../postgres/dbconnector/TransparentHandle_proto.hpp

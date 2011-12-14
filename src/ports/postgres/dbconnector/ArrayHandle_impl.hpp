@@ -1,3 +1,9 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file ArrayHandle_impl.hpp
+ *
+ *//* ----------------------------------------------------------------------- */
+
 template <typename T>
 inline
 AbstractionLayer::ArrayHandle<T>::ArrayHandle(const ArrayType *inArray)

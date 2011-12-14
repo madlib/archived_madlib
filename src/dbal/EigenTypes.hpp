@@ -10,6 +10,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Wrapper class for linear-algebra types based on Eigen
+ */
 template <int MapOptions>
 struct EigenTypes {
 protected:
@@ -205,24 +208,38 @@ public:
         }
         
     protected:
+        /**
+         * @brief Perform extra computations after the decomposition
+         *
+         * If the matrix has a condition number of less than 1000 (currently
+         * this is hard-coded), it necessarily has full rank and is invertible. 
+         * The Moore-Penrose pseudo-inverse coincides with the inverse and we
+         * compute it directly, using a L D L^T Cholesky decomposition.
+         *
+         * If the matrix has a condition number of more than 1000, we are on the
+         * safe side and use the eigen decomposition for computing the
+         * pseudo-inverse.
+         * 
+         * Since the eigenvectors of a symmtric positive semi-definite matrix
+         * are orthogonal, and Eigen moreover scales them to have norm 1 (i.e.,
+         * the eigenvectors returned by Eigen are orthonormal), the Eigen
+         * decomposition
+         *
+         *     \f$ M = V * D * V^T \f$
+         *
+         * is also a singular value decomposition (where M is the
+         * original symmetric positive semi-definite matrix, D is the
+         * diagonal matrix with eigenvectors, and V is the unitary
+         * matrix containing normalized eigenvectors). In particular,
+         * V is unitary, so the inverse can be computed as
+         *
+         *     \f$ M^{-1} = V * D^{-1} * V^T \f$.
+         *
+         * Only the <b>lower triangular part</b> of the input matrix
+         * is referenced.
+         */
         void computeExtras(const MatrixType &inMatrix, int inExtras) {
             if (inExtras & ComputePseudoInverse) {
-                /**
-                 * If the matrix is well-conditioned, we just call the inverse
-                 * function. Otherwise, we use the eigen decomposition:
-                 * Since the eigenvectors returned by Eigen form an orthogonal
-                 * matrix (the columns/rows are orthonormal), the decomposition
-                 *
-                 *     \f$ M = V * D * V^T \f$
-                 *
-                 * is also a singular value decomposition (where M is the
-                 * original symmetric positive semi-definite matrix, D is the
-                 * diagonal matrix with eigenvectors, and V is the matrix
-                 * containing normalized eigenvectors).
-                 *
-                 * Only the <b>lower triangular part</b> of the input matrix
-                 * is referenced.
-                 */
                 mPinv.resize(inMatrix.rows(), inMatrix.cols());
 
                 // FIXME: No hard-coded constant here

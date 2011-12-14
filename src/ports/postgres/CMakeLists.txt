@@ -36,8 +36,8 @@ if(POSTGRESQL_FOUND)
         dbconnector/dbconnector.hpp
         dbconnector/main.cpp
         dbconnector/NewDelete.cpp
-        dbconnector/OutputStream_impl.hpp
-        dbconnector/OutputStream_proto.hpp
+        dbconnector/OutputStreamBuffer_impl.hpp
+        dbconnector/OutputStreamBuffer_proto.hpp
         dbconnector/PGException_proto.hpp
         dbconnector/TransparentHandle_impl.hpp
         dbconnector/TransparentHandle_proto.hpp

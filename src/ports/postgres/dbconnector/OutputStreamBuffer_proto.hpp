@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file OutputStream_proto.hpp
+ * @file OutputStreamBuffer_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -9,8 +9,8 @@
  *        function
  */
 template <int ErrorLevel>
-class AbstractionLayer::OutputStream
-  : public dbal::OutputStreamBase<OutputStream<ErrorLevel>, char> {
+class AbstractionLayer::OutputStreamBuffer
+  : public dbal::OutputStreamBufferBase<OutputStreamBuffer<ErrorLevel>, char> {
 
 public:
     void output(char *inMsg, uint32_t inLength) const;

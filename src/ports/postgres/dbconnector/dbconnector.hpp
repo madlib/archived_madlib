@@ -62,7 +62,7 @@ namespace madlib {
             #include "AnyType_proto.hpp"
             #include "TransparentHandle_proto.hpp"
             #include "PGException_proto.hpp"
-            #include "OutputStream_proto.hpp"
+            #include "OutputStreamBuffer_proto.hpp"
             #include "UDF_proto.hpp"
         }
     }
@@ -95,7 +95,7 @@ namespace madlib {
             #include "AnyType_impl.hpp"
             #include "ArrayHandle_impl.hpp"
             #include "TransparentHandle_impl.hpp"
-            #include "OutputStream_impl.hpp"
+            #include "OutputStreamBuffer_impl.hpp"
             #include "UDF_impl.hpp"
         }
     }

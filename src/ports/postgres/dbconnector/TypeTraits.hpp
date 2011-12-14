@@ -1,3 +1,9 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file TypeTraits.hpp
+ *
+ *//* ----------------------------------------------------------------------- */
+
 /*
  * Mutable means in this context that the value of a variable can be changed and
  * that it would change the value for the backend

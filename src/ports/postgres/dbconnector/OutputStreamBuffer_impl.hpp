@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file OutputStream_impl.hpp
+ * @file OutputStreamBuffer_impl.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -13,7 +13,7 @@
 template <int ErrorLevel>
 inline
 void
-AbstractionLayer::OutputStream<ErrorLevel>::output(char *inMsg,
+AbstractionLayer::OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
     uint32_t /* inLength */) const {
     
     bool errorOccurred = false;

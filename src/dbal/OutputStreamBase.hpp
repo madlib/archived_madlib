@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file OutputStreamBase.hpp
+ * @file OutputStreamBufferBase.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -16,7 +16,7 @@
  * ostream constructor. Example: ostream derr(new DerivedOutputStreamBuffer());
  */
 template <class Derived, typename C = char>
-class OutputStreamBase : public std::basic_streambuf<C> {
+class OutputStreamBufferBase : public std::basic_streambuf<C> {
 public:
     typedef typename std::basic_streambuf<C>::int_type int_type;
     typedef typename std::basic_streambuf<C>::traits_type traits_type;
@@ -27,14 +27,14 @@ public:
     /**
      * @internal One extra byte is allocated for the terminating null character.
      */
-    OutputStreamBase()
+    OutputStreamBufferBase()
     :   mStorageSize(kInitialBufferSize),
         mStorage(new C[kInitialBufferSize + 1]) {
         
         setp(mStorage, mStorage + mStorageSize);
     }
 
-    ~OutputStreamBase() {
+    ~OutputStreamBufferBase() {
         delete mStorage;
     }
     

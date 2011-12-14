@@ -19,8 +19,8 @@ public:
     static inline Datum call(FunctionCallInfo fcinfo);
 
 private:
-    OutputStream<INFO> mOutStreamBuffer;
-    OutputStream<WARNING> mErrStreamBuffer;
+    OutputStreamBuffer<INFO> mOutStreamBuffer;
+    OutputStreamBuffer<WARNING> mErrStreamBuffer;
 
 protected:
     /**

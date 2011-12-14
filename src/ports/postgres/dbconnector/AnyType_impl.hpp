@@ -2,11 +2,6 @@
  *
  * @file AnyType_impl.hpp
  *
- * @brief Convert between PostgreSQL types and C++ types
- *
- * AnyType objects are used by user-defined code to both retrieve and return
- * values from the backend.
- *
  *//* ----------------------------------------------------------------------- */
 
 inline

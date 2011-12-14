@@ -27,7 +27,7 @@ class AbstractionLayer {
 public:
     class Allocator;
     class AnyType;
-    template <int ErrorLevel> class OutputStream;
+    template <int ErrorLevel> class OutputStreamBuffer;
     template <typename T> class ArrayHandle;
     template <typename T> class MutableArrayHandle;
     template <typename T> class MutableTransparentHandle;

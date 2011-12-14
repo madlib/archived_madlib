@@ -1,10 +1,14 @@
-/**
- * @brief C++ entry point for calls from the database
+/* ----------------------------------------------------------------------- *//**
  *
- * The DBMS calls an export "C" function defined in PGMain.cpp, which calls
- * this function.
- */
+ * @file Allocator_impl.hpp
+ *
+ *//* ----------------------------------------------------------------------- */
 
+/**
+ * @brief Construct an empty postgres array of a given size.
+ * 
+ * Set the length of the varlena header, set the element type, etc.
+ */
 template <typename T>
 inline
 AbstractionLayer::MutableArrayHandle<T>
@@ -34,7 +38,7 @@ AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
         throw std::bad_alloc();
     
     size_t		size = sizeof(T) * inNumElements + ARR_OVERHEAD_NONULLS(1);
-    ::ArrayType	*array;
+    ArrayType	*array;
 
     // Note: Except for the allocate call, the following statements do not call
     // into the PostgreSQL backend. We are only using macros here.
