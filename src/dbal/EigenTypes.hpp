@@ -116,6 +116,7 @@ public:
     typedef Eigen::VectorXd ColumnVector;
     typedef Eigen::RowVectorXd RowVector;
     typedef Eigen::MatrixXd Matrix;
+    typedef EIGEN_DEFAULT_DENSE_INDEX_TYPE Index;
     
     enum ViewMode {
         Lower = Eigen::Lower,
@@ -273,7 +274,7 @@ public:
                                    * std::numeric_limits<Scalar>::epsilon();
                     
                     RealVectorType eigenvectorsInverted(ev.size());
-                    for (Index i = 0; i < ev.size(); i++) {
+                    for (Index i = 0; i < static_cast<Index>(ev.size()); ++i) {
                         eigenvectorsInverted(i) = ev(i) < epsilon
                                                 ? Scalar(0)
                                                 : Scalar(1) / ev(i);

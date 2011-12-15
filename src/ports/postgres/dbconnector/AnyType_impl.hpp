@@ -483,10 +483,10 @@ AbstractionLayer::AnyType::getAsDatum(Oid inTargetTypeID,
             MADLIB_DEFAULT_EXCEPTION);
         
         if (inTargetIsComposite) {
-            if (static_cast<size_t>(tupleHandle.desc->natts) != mChildren.size())
+            if (static_cast<size_t>(tupleHandle.desc->natts) < mChildren.size())
                 throw std::runtime_error("Invalid type conversion requested. "
-                    "PostgreSQL composite type has different number of "
-                    "elements.");
+                    "Internal composite type has more elements than PostgreSQL "
+                    "composite type.");
 
             std::vector<Datum> values;
             std::vector<char> nulls;
@@ -496,6 +496,14 @@ AbstractionLayer::AnyType::getAsDatum(Oid inTargetTypeID,
                                     
                 values.push_back(mChildren[pos].getAsDatum(targetTypeID));
                 nulls.push_back(mChildren[pos].isNull());
+            }
+            // All elements that have not been initialized will be set to Null
+            for (uint16_t pos = mChildren.size();
+                pos < static_cast<size_t>(tupleHandle.desc->natts);
+                ++pos) {
+                
+                values.push_back(Datum(0));
+                nulls.push_back(true);
             }
             
             Datum returnValue;

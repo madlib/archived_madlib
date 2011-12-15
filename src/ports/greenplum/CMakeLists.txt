@@ -22,9 +22,10 @@ if(GREENPLUM_FOUND)
         IMPORTED_LOCATION "${GREENPLUM_EXECUTABLE}"
     )
 
-    set(MAD_DBAL_SOURCES_POSTGRES
-        ${MAD_SOURCES})
     set(MAD_DBAL_SOURCES_GREENPLUM
+        ${MAD_SOURCES})
+    list(APPEND MAD_DBAL_SOURCES_GREENPLUM
+        ../postgres/dbconnector/AbstractionLayer_impl.hpp
         ../postgres/dbconnector/AbstractionLayer_proto.hpp
         ../postgres/dbconnector/Allocator_impl.hpp
         ../postgres/dbconnector/Allocator_proto.hpp
@@ -47,6 +48,12 @@ if(GREENPLUM_FOUND)
         ../postgres/dbconnector/UDF_proto.hpp
     )
     if(CMAKE_COMPILER_IS_GNUCXX)
+        if(APPLE)
+            # FIXME: This should be handled in a better way. 
+            # Greenplum is 32bit on the Mac.
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
+        endif(APPLE)
+        
         # The source code specifies that we are POSIX.1-2001 compliant:
         # On the Mac, this is done in $GP_HOME/include/pg_config_manual.h.
         # On Linux, gcc predefines _GNU_SOURCE, which leads to
@@ -64,6 +71,12 @@ if(GREENPLUM_FOUND)
     # BEGIN Legacy Code
     
         if(CMAKE_COMPILER_IS_GNUCC)
+            if(APPLE)
+                # FIXME: This should be handled in a better way. 
+                # Greenplum is 32bit on the Mac.
+                set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32")
+            endif(APPLE)        
+        
             # FIXME: Is there a portable (not just for gcc) way of including a header file?
             # Due to Greenplum bug MPP-13254, we need to include <sys/time.h>
             # before <postgres.h>

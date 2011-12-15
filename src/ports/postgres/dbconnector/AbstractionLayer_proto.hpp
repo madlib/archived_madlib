@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file AbstractionLayer.hpp
+ * @file AbstractionLayer_proto.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -32,6 +32,7 @@ public:
     template <typename T> class MutableArrayHandle;
     template <typename T> class MutableTransparentHandle;
     template <typename T> class TransparentHandle;
+    static AnyType Null();
 
 protected:
     class PGException;

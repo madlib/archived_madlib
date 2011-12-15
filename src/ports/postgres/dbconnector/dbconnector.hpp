@@ -10,6 +10,17 @@
 #ifndef MADLIB_POSTGRES_DBCONNECTOR_HPP
 #define MADLIB_POSTGRES_DBCONNECTOR_HPP
 
+// Include C++ headers first because PostgreSQL headers might define some
+// conflicting macros (see also end of file)
+#include <boost/unordered_map.hpp> // For Oid to bool map (if types are tuples)
+#include <boost/type_traits/is_const.hpp>
+#include <boost/math/special_functions/fpclassify.hpp>
+#include <boost/logic/tribool.hpp>
+#include <limits>
+#include <stdexcept>
+#include <vector>
+#include <fstream>
+
 extern "C" {
     #include <postgres.h>
     #include <funcapi.h>
@@ -23,15 +34,6 @@ extern "C" {
 } // extern "C"
 
 #include "Compatibility.hpp"
-
-#include <boost/unordered_map.hpp> // For Oid to bool map (if types are tuples)
-#include <boost/type_traits/is_const.hpp>
-#include <boost/math/special_functions/fpclassify.hpp>
-#include <boost/logic/tribool.hpp>
-#include <limits>
-#include <stdexcept>
-#include <vector>
-#include <fstream>
 
 // FIXME: For now we make use of TR1 but not of C++11. Import all TR1 names into std.
 namespace std {
@@ -99,6 +101,7 @@ namespace madlib {
 
     namespace dbconnector {
         namespace postgres {
+            #include "AbstractionLayer_impl.hpp"
             #include "TypeTraits.hpp"
             #include "Allocator_impl.hpp"
             #include "AnyType_impl.hpp"
@@ -127,5 +130,23 @@ namespace madlib {
             } \
         } \
     }
+
+// Unfortunately, we have to clean up some #defines in PostgreSQL headers
+// From c.h 
+#ifdef gettext
+#undef gettext
+#endif
+
+#ifdef dgettext
+#undef dgettext
+#endif
+
+#ifdef ngettext
+#undef ngettext
+#endif
+
+#ifdef dngettext
+#undef dngettext
+#endif
 
 #endif

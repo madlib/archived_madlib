@@ -24,6 +24,7 @@ if(POSTGRESQL_FOUND)
     set(MAD_DBAL_SOURCES_POSTGRES
         ${MAD_SOURCES})
     list(APPEND MAD_DBAL_SOURCES_POSTGRES
+        dbconnector/AbstractionLayer_impl.hpp
         dbconnector/AbstractionLayer_proto.hpp
         dbconnector/Allocator_impl.hpp
         dbconnector/Allocator_proto.hpp
