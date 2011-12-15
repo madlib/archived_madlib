@@ -167,10 +167,9 @@ linregr_transition::run(AnyType &args) {
     state.y_sum += y;
     state.y_square_sum += y * y;
     state.X_transp_Y.noalias() += x * y;
-    // FIXME: The following line is Eigen-specific
     // X^T X is symmetric, so it is sufficient to only fill a triangular part
     // of the matrix
-    state.X_transp_X.triangularView<Eigen::Lower>() += x * trans(x);
+    triangularView<Lower>(state.X_transp_X) += x * trans(x);
     
     return state;
 }
