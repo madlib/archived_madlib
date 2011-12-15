@@ -100,7 +100,8 @@ public:
     }
     
     /**
-     * @brief Merge with another State object by copying the intra-iteration fields
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
      */
     template <class OtherHandle>
     LogRegrCGTransitionState &operator+=(
@@ -215,12 +216,12 @@ logregr_cg_step_transition::run(AnyType &args) {
     // Now do the transition step
     state.numRows++;
     double xc = dot(x, state.coef);
-    state.gradNew += sigma(-y * xc) * y * trans(x);
+    state.gradNew.noalias() += sigma(-y * xc) * y * trans(x);
     
     // Note: sigma(-x) = 1 - sigma(x).
     // a_i = sigma(x_i c) sigma(-x_i c)
     double a = sigma(xc) * sigma(-xc);
-    state.X_transp_AX += x * trans(x) * a;
+    triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
 
     //          n
     //         --
@@ -506,8 +507,8 @@ logregr_irls_step_transition::run(AnyType &args) {
     //                     a_i
     double z = xc + sigma(-y * xc) * y / a;
 
-    state.X_transp_Az += x * a * z;
-    state.X_transp_AX += x * trans(x) * a;
+    state.X_transp_Az.noalias() += x * a * z;
+    triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
         
     // We use state.sumy to store the log likelihood.
     //          n
@@ -592,6 +593,240 @@ internal_logregr_irls_result::run(AnyType &args) {
 
     return internal<LinAlgTypes>::stateToResult(*this, state.coef,
         state.X_transp_Az, state.logLikelihood, state.X_transp_AX(0,0));
+}
+
+/**
+ * @brief Inter- and intra-iteration state for incremental gradient
+ *        method for logistic regression
+ *
+ * TransitionState encapsualtes the transition state during the
+ * logistic-regression aggregate function. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars, a vector, and a matrix.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 4, and all elemenets are 0.
+ */
+template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
+class LogRegrIGDTransitionState : public AbstractionLayer {
+    template <class OtherHandle, class OtherLinAlgTypes>
+    friend class LogRegrIGDTransitionState;
+
+public:
+    LogRegrIGDTransitionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
+        
+        rebind(mStorage[0]);
+    }
+    
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+    
+    /**
+     * @brief Initialize the conjugate-gradient state.
+     * 
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
+        mStorage = inAllocator.allocateArray<double>(arraySize(inWidthOfX));
+        rebind(inWidthOfX);
+        widthOfX = inWidthOfX;
+    }
+    
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    LogRegrIGDTransitionState &operator=(
+        const LogRegrIGDTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
+        return *this;
+    }
+    
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
+     */
+    template <class OtherHandle>
+    LogRegrIGDTransitionState &operator+=(
+        const LogRegrIGDTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX != inOtherState.widthOfX)
+            throw std::logic_error("Internal error: Incompatible transition "
+                "states");
+        
+		// Compute the average of the models. Note: The following remains an
+        // invariant, also after more than one merge:
+        // The model is a linear combination of the per-segment models
+        // where the coefficient (weight) for each per-segment model is the
+        // ratio "# rows in segment / total # rows of all segments merged so
+        // far".
+		double totalNumRows = numRows + inOtherState.numRows;
+		coef = double(numRows) / totalNumRows * coef
+			+ double(inOtherState.numRows) / totalNumRows * inOtherState.coef;
+
+        numRows += inOtherState.numRows;
+        X_transp_AX += inOtherState.X_transp_AX;
+        logLikelihood += inOtherState.logLikelihood;
+        return *this;
+    }
+            
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+		// FIXME: HAYING: stepsize if hard-coded here now
+        stepsize = .1;
+        numRows = 0;
+        X_transp_AX.fill(0);
+        logLikelihood = 0;
+    }
+    
+private:
+    static inline uint32_t arraySize(const uint16_t inWidthOfX) {
+        return 4 + inWidthOfX * inWidthOfX + inWidthOfX;
+    }
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX The number of independent variables.
+     *
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: widthOfX (number of coefficients)
+     * - 1: stepsize (step size of gradient steps)
+     * - 2: coef (vector of coefficients)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 2 + widthOfX: numRows (number of rows already processed in this iteration)
+     * - 3 + widthOfX: X_transp_AX (X^T A X)
+     * - 3 + widthOfX * widthOfX + widthOfX: logLikelihood ( ln(l(c)) )     
+     */
+    void rebind(uint16_t inWidthOfX) {
+        widthOfX.rebind(&mStorage[0]);
+        stepsize.rebind(&mStorage[1]);
+        coef.rebind(&mStorage[2], inWidthOfX);
+        numRows.rebind(&mStorage[2 + inWidthOfX]);
+        X_transp_AX.rebind(&mStorage[3 + inWidthOfX], inWidthOfX, inWidthOfX);
+        logLikelihood.rebind(&mStorage[3 + inWidthOfX * inWidthOfX + inWidthOfX]);
+    }
+
+    Handle mStorage;
+
+public:
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble stepsize;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap coef;
+
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
+	typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble logLikelihood;
+};
+
+AnyType
+logregr_igd_step_transition::run(AnyType &args) {
+    LogRegrIGDTransitionState<MutableArrayHandle<double> > state = args[0];
+    double y = args[1].getAs<bool>() ? 1. : -1.;
+    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
+
+    // The following check was added with MADLIB-138.
+    if (!x.is_finite())
+        throw std::invalid_argument("Design matrix is not finite.");
+
+	// We only know the number of independent variables after seeing the first
+    // row.
+    if (state.numRows == 0) {
+        state.initialize(*this, x.size());
+
+		// For the first iteration, the previous state is NULL
+        if (!args[3].isNull()) {
+			LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
+            
+            state = previousState;
+            state.reset();
+        }
+    }
+    
+    // Now do the transition step
+    state.numRows++;
+
+    // xc = x^T_i c
+    double xc = dot(x, state.coef);
+    double scale = state.stepsize * sigma(-xc * y) * y;
+	state.coef += scale * x;
+
+    // Note: previous coefficients are used for Hessian and log likelihood
+	if (!args[3].isNull()) {
+		LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
+        
+		double previous_xc = dot(x, previousState.coef);
+		
+        // a_i = sigma(x_i c) sigma(-x_i c)
+		double a = sigma(previous_xc) * sigma(-previous_xc);
+		triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+			
+		// We use state.sumy to store the negative log likelihood (minimizing).
+		// l_i(c) = - ln(1 + exp(-y_i * c^T x_i))
+		state.logLikelihood -= std::log( 1. + std::exp(-y * previous_xc) );
+	}
+
+    return state;
+}
+
+/**
+ * @brief Perform the perliminary aggregation function: Merge transition states
+ */
+AnyType
+logregr_igd_step_merge_states::run(AnyType &args) {    
+    LogRegrIGDTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    LogRegrIGDTransitionState<ArrayHandle<double> > stateRight = args[1];
+    
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
+    
+    // Merge states together and return
+    stateLeft += stateRight;
+    return stateLeft;
+}
+
+/**
+ * @brief Return the difference in log-likelihood between two states
+ */
+AnyType
+internal_logregr_igd_step_distance::run(AnyType &args) {
+    LogRegrIGDTransitionState<ArrayHandle<double> > stateLeft = args[0];
+    LogRegrIGDTransitionState<ArrayHandle<double> > stateRight = args[1];
+
+    return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
+}
+
+/**
+ * @brief Return the coefficients and diagnostic statistics of the state
+ */
+AnyType
+internal_logregr_igd_result::run(AnyType &args) {
+    LogRegrIGDTransitionState<ArrayHandle<double> > state = args[0];
+    
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
+    
+    return internal<LinAlgTypes>::stateToResult(*this, state.coef,
+        decomposition.pseudoInverse().diagonal(), state.logLikelihood,
+        decomposition.conditionNo());
 }
 
 /**
