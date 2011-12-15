@@ -51,66 +51,11 @@ static ArrayType *construct_zero_array(int inNumElements,
 static float8 apply_kernel(Oid foid, ArrayType * x1, ArrayType * x2) 
 {
 	float8 ret = 
-	DatumGetFloat8(
-				   OidFunctionCall2(foid,PointerGetDatum(x1),PointerGetDatum(x2)));
+	DatumGetFloat8(OidFunctionCall2(foid,PointerGetDatum(x1),PointerGetDatum(x2)));
 	return ret;
 }
 
-/*
- * This function computes the inner product of two points.
- */
-/*
- static float8 apply_kernel(Oid foid, ArrayType * x1, ArrayType * x2) 
- {
- float8 * arr1 = (float8 *)ARR_DATA_PTR(x1);
- float8 * arr2 = (float8 *)ARR_DATA_PTR(x2);
- float ret = 0;
- for (int i=0; i!=ARR_DIMS(x1)[0]; i++)
- ret += arr1[i] * arr2[i];
- return ret;
- }
- */
 
-Datum svm_normalization(PG_FUNCTION_ARGS);
-PG_FUNCTION_INFO_V1(svm_normalization);
-
-/*
- * This function normalizes a vector.
- */
-Datum svm_normalization(PG_FUNCTION_ARGS)
-{
-	ArrayType * arg = PG_GETARG_ARRAYTYPE_P(0);
-	
-	if (ARR_NDIM(arg) != 1 || ARR_ELEMTYPE(arg) != FLOAT8OID)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("function \"%s\" called with invalid parameters",
-						format_procedure(fcinfo->flinfo->fn_oid))));
-	
-	float8 * x = (float8 *)ARR_DATA_PTR(arg);
-	int dim = ARR_DIMS(arg)[0];
-	
-	float8 d = 0; 
-	for (int i=0; i!=dim; i++)
-		d += x[i] * x[i];
-	
-	if (d > 0 && d != 1.0) {
-		/* Allocate memory for return value */
-		Datum * array = palloc0(dim*sizeof(Datum));
-		ArrayType * ret = construct_array(array,dim,FLOAT8OID,sizeof(float8),true,'i');
-		float8 * ret_v = (float8 *)ARR_DATA_PTR(ret);
-		
-		float8 sqrtd = sqrt(d);
-
-		for (int i=0; i!=dim; i++)
-			ret_v[i] = x[i] / sqrtd;
-		
-		PG_RETURN_ARRAYTYPE_P(ret);
-	} else {
-		PG_RETURN_ARRAYTYPE_P(arg);
-	}	
-
-}
 
 
 Datum svm_dot(PG_FUNCTION_ARGS);
@@ -606,14 +551,12 @@ Datum svm_cls_update(PG_FUNCTION_ARGS)
 	
 	// This is the nu-SV classification update algorithm.
 	p = svm_predict_eval(koid,weights,supp_vecs_arr,ind_arr,nsvs,ind_dim) + b; 
-	// elog(NOTICE, "%f \t %f \t %d", label, p, nsvs);
 	
 	p = label * p;
 	
 	inds++;
 	
 	eta = eta / sqrt(inds*1.0);
-	// elog(NOTICE, "eta = %f", eta);
 	
 	if (p <= 0) cum_err++;
 	
@@ -638,11 +581,8 @@ Datum svm_cls_update(PG_FUNCTION_ARGS)
 		nsvs++;
 		b = b + eta * label;
 		rho = rho - eta * (1 - nu);
-		// update rho in log space
-		//rho = rho * exp(-eta * rho * (1-nu));
 	} else {
 		rho = rho + eta * nu; 
-		//rho = rho * exp(eta * rho * nu);
 	}
 	
 	// Package up the attributes and return the resultant composite object
@@ -848,7 +788,11 @@ PG_FUNCTION_INFO_V1(lsvm_sgd_update);
 
 /**
  * This is the stochastic gradient descent algorithm for linear SVM in the
- * primal space.
+ * primal space. The implementation is based on Leon Bottou's sgd package
+ * (http://leon.bottou.org/projects/sgd); for more details, please see
+ * Leon Bottou. Large-Scale Machine Learning with Stochastic Gradient Descent, 
+ * Proceedings of the 19th International Conference on Computational Statistics, 
+ * Springer, 2010. 
  */ 
 Datum lsvm_sgd_update(PG_FUNCTION_ARGS)
 {
