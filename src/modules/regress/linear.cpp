@@ -43,7 +43,7 @@ public:
     LinRegrTransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()) {
         
-        rebind(mStorage[1]);
+        rebind(static_cast<uint16_t>(mStorage[1]));
     }
     
     /**
@@ -200,6 +200,10 @@ linregr_merge_states::run(AnyType &args) {
 AnyType
 linregr_final::run(AnyType &args) {
     LinRegrTransitionState<ArrayHandle<double> > state = args[0];
+
+    // If we haven't seen any data, just return Null
+    if (state.numRows == 0)
+        return Null();
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
