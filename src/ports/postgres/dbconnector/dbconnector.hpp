@@ -46,6 +46,15 @@ namespace std {
             throw _exception; \
     } while(false)
 
+#define eigen_assert(x) \
+    do { \
+        if(!Eigen::internal::copy_bool(x)) \
+            throw std::runtime_error(std::string( \
+                "Internal error. Eigen assertion failed (" \
+                EIGEN_MAKESTRING(x) ") in function ") + __PRETTY_FUNCTION__ + \
+                " at " __FILE__ ":" EIGEN_MAKESTRING(__LINE__)); \
+    } while(false)
+
 #include <dbal/dbal.hpp>
 #include <utils/Reference.hpp>
 #include <utils/MallocAllocator.hpp> // for hash map of which type is a tuple

@@ -116,7 +116,21 @@ public:
     typedef Eigen::VectorXd ColumnVector;
     typedef Eigen::RowVectorXd RowVector;
     typedef Eigen::MatrixXd Matrix;
-     
+    
+    enum ViewMode {
+        Lower = Eigen::Lower,
+        Upper = Eigen::Upper
+    };
+    
+    enum DecompositionOptions {
+        ComputeEigenvectors = Eigen::ComputeEigenvectors,
+        EigenvaluesOnly = Eigen::EigenvaluesOnly
+    };
+    
+    enum SPDDecompositionExtras {
+        ComputePseudoInverse = 0x01
+    };    
+    
     template <typename Derived>
     inline
     typename Eigen::MatrixBase<Derived>::ConstTransposeReturnType
@@ -143,21 +157,19 @@ public:
         return mat.value();
     }
     
+    template <ViewMode Mode, typename Derived>
+    inline
+    typename Eigen::MatrixBase<Derived>::template TriangularViewReturnType<Mode>::Type
+    static triangularView(Eigen::MatrixBase<Derived>& mat) {
+        return mat.triangularView<Mode>();
+    }
+    
     template <typename Derived>
     bool
     static isfinite(const Eigen::MatrixBase<Derived>& mat) {
         return mat.is_finite();
     }
     
-    enum DecompositionOptions {
-        ComputeEigenvectors = Eigen::ComputeEigenvectors,
-        EigenvaluesOnly = Eigen::EigenvaluesOnly
-    };
-    
-    enum SPDDecompositionExtras {
-        ComputePseudoInverse = 0x01
-    };
-
     /**
      * @brief Computes eigenvalues, eigenvectors, and pseudo-inverse of
      *     symmetric positive semi-definite matrices
