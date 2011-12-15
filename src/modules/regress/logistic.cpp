@@ -32,6 +32,7 @@ struct internal : public AbstractionLayer {
     typedef typename LinAlgTypes::ColumnVector ColumnVector;
     typedef typename LinAlgTypes::template HandleMap<ColumnVector>
         ColumnVectorArrayHandleMap;
+    typedef typename LinAlgTypes::Index Index;
 
     static AnyType stateToResult(
         const Allocator &inAllocator,
@@ -63,7 +64,7 @@ public:
     LogRegrCGTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
         
-        rebind(mStorage[1]);
+        rebind(static_cast<uint16_t>(mStorage[1]));
     }
     
     /**
@@ -363,7 +364,7 @@ public:
     LogRegrIRLSTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
         
-        rebind(mStorage[0]);
+        rebind(static_cast<uint16_t>(mStorage[0]));
     }
     
     /**
@@ -616,7 +617,7 @@ public:
     LogRegrIGDTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
         
-        rebind(mStorage[0]);
+        rebind(static_cast<uint16_t>(mStorage[0]));
     }
     
     /**
@@ -858,7 +859,7 @@ AnyType internal<LinAlgTypes>::stateToResult(
     ColumnVectorArrayHandleMap oddsRatios(
         inAllocator.allocateArray<double>(coef.size()));
     
-    for (unsigned int i = 0; i < coef.size(); i++) {
+    for (Index i = 0; i < coef.size(); ++i) {
         stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
         waldZStats(i) = coef(i) / stdErr(i);
         waldPValues(i) = 2. * normalCDF( -std::abs(waldZStats(i)) );
