@@ -241,7 +241,8 @@ Datum svec_change(PG_FUNCTION_ARGS)
 	int midlen = middle->total_value_count;
 	SparseData head = NULL, tail = NULL, ret = NULL;
 
-	Assert(midlen == changed->dimension);
+	Assert((IS_SCALAR(changed) && midlen == 1) ||
+		   (midlen == changed->dimension));
 
 	if (idx < 1 || idx > inlen) 
 		ereport(ERROR,
