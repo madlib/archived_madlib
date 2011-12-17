@@ -31,7 +31,6 @@ class AbstractionLayer::MutableArrayHandle
 public:
     enum { isMutable = true };
 
-    MutableArrayHandle(const ArrayType *inArray);
     MutableArrayHandle(ArrayType *inArray)
       : Base(inArray) { }
     

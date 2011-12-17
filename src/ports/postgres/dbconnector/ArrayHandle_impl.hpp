@@ -45,26 +45,6 @@ AbstractionLayer::ArrayHandle<T>::internalArraySize(const ArrayType *inArray) {
     return ARR_DIMS(inArray)[0];
 }
 
-/**
- * @brief Constructor with immutable native PosgreSQL array
- *
- * Performs a copy of the PostgreSQL array.
- */
-template <typename T>
-inline 
-AbstractionLayer::MutableArrayHandle<T>::MutableArrayHandle(
-    const ArrayType *inArray)
-  : Base(static_cast<ArrayType*>(
-        defaultAllocator().allocate<
-            dbal::FunctionContext,
-            dbal::DoNotZero,
-            dbal::ThrowBadAlloc>(VARSIZE(inArray))
-    )) {
-    
-    std::memcpy(array(), inArray, VARSIZE(inArray));
-}
-
-
 template <typename T>
 inline 
 T*

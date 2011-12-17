@@ -79,21 +79,21 @@ DECLARE_OID_TO_TYPE_MAPPING(
     dbal::ArrayType,
     dbal::Immutable,
     PointerGetDatum(value.array()),
-    reinterpret_cast<ArrayType*>(DatumGetPointer(value))
+    reinterpret_cast<ArrayType*>(DatumGetArrayTypeP(value))
 );
+// Note: See the comment for PG_FREE_IF_COPY in fmgr.h. Essentially, when
+// writing UDFs, we do not have to worry about deallocating copies of immutable
+// arrays. They will simply be garbage collected.
 DECLARE_CXX_TYPE(
     FLOAT8ARRAYOID,
     AbstractionLayer::MutableArrayHandle<double>,
     dbal::ArrayType,
     dbal::Mutable,
     PointerGetDatum(value.array()),
-    needMutableClone
-      ? AbstractionLayer::MutableArrayHandle<double>(
-            reinterpret_cast<const ArrayType*>(DatumGetPointer(value))
-        )
-      : AbstractionLayer::MutableArrayHandle<double>(
-            reinterpret_cast<ArrayType*>(DatumGetPointer(value))
-        )
+    reinterpret_cast<ArrayType*>(
+        needMutableClone
+          ? DatumGetArrayTypePCopy(value)
+          : DatumGetArrayTypeP(value))
 );
 
 #undef DECLARE_OID_TO_TYPE_MAPPING
