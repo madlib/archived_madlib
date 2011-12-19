@@ -7,7 +7,7 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
-#include <modules/shared/HandleTraits_proto.hpp>
+#include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/prob.hpp>
 
 namespace madlib {
@@ -19,6 +19,8 @@ using prob::studentT_CDF;
 
 namespace regress {
 
+// Workaround for Doxygen: Only ignore header file if processed stand-alone
+#define MADLIB_REGRESS_LINEAR_CPP
 #include "linear.hpp"
 
 /**
@@ -134,9 +136,9 @@ public:
 
 /**
  * @brief Perform the linear-regression transition step
- * 
- * We update: the number of rows \f$ n \f$, the partial sums
- * \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
+ *
+ * We update in the transition state: The number of rows \f$ n \f$, the partial
+ * sums \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
  * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
  */
 AnyType
@@ -196,6 +198,12 @@ linregr_merge_states::run(AnyType &args) {
 
 /**
  * @brief Perform the linear-regression final step
+ *
+ * The result of the aggregation phase is \f$ X^T X \f$ and
+ * \f$ X^T \boldsymbol y \f$. We first compute the pseudo-inverse, then the
+ * regression coefficients, the model statistics, etc.
+ * 
+ * @sa For the mathematical description, see \ref grp_linreg.
  */
 AnyType
 linregr_final::run(AnyType &args) {
