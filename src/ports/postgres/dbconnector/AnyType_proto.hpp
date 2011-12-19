@@ -4,11 +4,22 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /**
  * @brief Proxy for PostgreSQL objects
  *
  * AnyType objects are used by user-defined code to both retrieve and return
  * values from the backend.
+ *
+ * The content of an AnyType object is specified by mContent. It can be:
+ * - Null
+ * - A scalar value, which is just a PostgreSQL Datum
+ * - A function composite value, which is a virtual composite value consisting
+ *   of all function arguments
+ * - A native composite value, which is a PostgreSQL HeapTupleHeader
+ * - A return composite value, which is a vector of PostgreSQL datums
  */
 class AbstractionLayer::AnyType {
 public:
@@ -83,3 +94,5 @@ protected:
     Oid mTypeID;
     bool mIsMutable;
 };
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

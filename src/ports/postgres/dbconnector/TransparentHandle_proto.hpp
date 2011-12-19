@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /**
  * @brief Handle without any meta data (essentially, a constant pointer)
  *
@@ -46,3 +49,5 @@ public:
 protected:
     using Base::mPtr;
 };
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

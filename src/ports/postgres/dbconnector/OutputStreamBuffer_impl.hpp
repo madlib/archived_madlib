@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /**
  * @brief Output a null-terminated C string.
  *
@@ -28,3 +31,5 @@ AbstractionLayer::OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
     if (errorOccurred)
         throw std::runtime_error("An exception occured during message output.");
 }
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

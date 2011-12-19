@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 template <typename T>
 inline
 AbstractionLayer::ArrayHandle<T>::ArrayHandle(const ArrayType *inArray)
@@ -67,3 +70,5 @@ AbstractionLayer::MutableArrayHandle<T>::operator[](size_t inIndex) {
         static_cast<const ArrayHandle<T>*>(this)->operator[](inIndex)
     );
 }
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

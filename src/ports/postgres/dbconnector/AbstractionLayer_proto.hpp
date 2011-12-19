@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /**
  * @brief PostgreSQL database interface
  *
@@ -39,3 +42,5 @@ protected:
     template <typename T> struct TypeTraits;
     template <Oid O> struct TypeForOid;
 };
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /**
  * @brief Each exported C function calls this method (and nothing else)
  */
@@ -66,3 +69,4 @@ UDF::call(FunctionCallInfo fcinfo) {
     PG_RETURN_NULL();
 }
 
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 inline
 AbstractionLayer::AnyType::AnyType(FunctionCallInfo inFnCallInfo)
   : mContent(FunctionComposite),
@@ -37,23 +40,16 @@ AbstractionLayer::AnyType::AnyType(Datum inDatum, Oid inTypeID,
     { }
 
 /**
- * @brief Copy constructor
- * 
- * We need to provide a copy constructor because otherwise the template
- * constructor would be used.
- 
-inline
-AbstractionLayer::AnyType::AnyType(const AnyType &inOriginal)
-  : mContent(inOriginal.mContent),
-    mDatum(inOriginal.mDatum),
-    fcinfo(inOriginal.fcinfo),
-    mTupleHeader(inOriginal.mTupleHeader),
-    mChildren(inOriginal.mChildren),
-    mTypeID(inOriginal.mTypeID),
-    mIsMutable(inOriginal.mIsMutable)
-    { }
-*/
-
+ * @brief Template constructor (will \b not be used as copy constructor)
+ *
+ * This constructor will be invoked when initializing an AnyType object with
+ * any scalar value (including arrays, but excluding composite types). This will
+ * typically only happen for preparing the return value of a user-defined
+ * function.
+ * This constructor immediately converts the object into a PostgreSQL Datum
+ * using the TypeTraits class. If memory has to be retained, it has to be done
+ * there.
+ */
 template <typename T>
 inline
 AbstractionLayer::AnyType::AnyType(const T &inValue)
@@ -65,6 +61,13 @@ AbstractionLayer::AnyType::AnyType(const T &inValue)
     mIsMutable(false)
     { }
 
+/**
+ * @brief Default constructor, initializes AnyType object as Null
+ *
+ * This constructor initializes the object as Null. It must also be used for
+ * building a composite type. After construction, use operator<<() to append
+ * values to the composite object.
+ */
 inline
 AbstractionLayer::AnyType::AnyType()
   : mContent(Null),
@@ -76,7 +79,7 @@ AbstractionLayer::AnyType::AnyType()
     { }
 
 /**
- * @brief Verify consistency. Throw exception if not.
+ * @brief Verify consistency of AnyType object. Throw exception if not.
  */
 inline
 void
@@ -147,8 +150,15 @@ AbstractionLayer::AnyType::isComposite() const {
 /**
  * @brief Internal function for determining the type of a function argument
  *
+ * @param inID Number of function argument
+ * @param[out] outTypeID PostgreSQL OID of the function argument's type
+ * @param[out] outIsMutable True if the data structure of this function argument
+ *     can be safely modified. For objects passed by reference (like arrays)
+ *     this is only true when passed as the first argument of a transition
+ *     function.
+ *
  * @internal
- *     Haveing this as separate function isolates the PG_TRY block. Otherwise,
+ *     Having this as separate function isolates the PG_TRY block. Otherwise,
  *     the compiler might warn that the longjmp could clobber local variables.
  */
 inline
@@ -183,8 +193,12 @@ AbstractionLayer::AnyType::backendGetTypeIDForFunctionArg(uint16_t inID,
  * @brief Internal function for retrieving the type ID and datum for an element
  *     of a native composite type
  *
+ * @param inID Number of function argument
+ * @param[out] outTypeID PostgreSQL OID of the function argument's type
+ * @param[out] outDatum PostgreSQL Datum for the function argument
+ *
  * @internal
- *     Haveing this as separate function isolates the PG_TRY block. Otherwise,
+ *     Having this as separate function isolates the PG_TRY block. Otherwise,
  *     the compiler might warn that the longjmp could clobber local variables.
  */
 inline
@@ -220,6 +234,15 @@ AbstractionLayer::AnyType::backendGetTypeIDAndDatumForTupleElement(
  * @brief Internal function for retrieving if the type is composite and, if
  *     yes, the PostgreSQL HeapTupleHeader
  *
+ * @param inTypeID PostgreSQL OID for the type
+ * @param inDatum PostgreSQL Datum
+ * @param[out] outIsTuple True if the type is a composite type
+ * @param[out] outTupleHeader A PostgreSQL HeapTupleHeader that will be updated
+ *     if type is composite
+ *
+ * @internal
+ *     Having this as separate function isolates the PG_TRY block. Otherwise,
+ *     the compiler might warn that the longjmp could clobber local variables. 
  */
 inline
 void
@@ -252,6 +275,16 @@ AbstractionLayer::AnyType::backendGetIsCompositeTypeAndHeapTupleHeader(
 /**
  * @brief Internal function for retrieving if the type is composite and, if
  *     yes, the PostgreSQL TupleDesc
+ *
+ * @param inTargetTypeID PostgreSQL OID for the type
+ * @param[in,out] ioTargetIsComposite On input, whether the type is composite.
+ *     \c indeterminate if unknown. On return, the updated boolean value.
+ * @param[out] outTupleHandle TupleHandle that will be updated if type is
+ *     composite
+ *
+ * @internal
+ *     Having this as separate function isolates the PG_TRY block. Otherwise,
+ *     the compiler might warn that the longjmp could clobber local variables.
  */
 inline
 void
@@ -285,6 +318,11 @@ AbstractionLayer::AnyType::backendGetIsCompositeTypeAndTupleHandle(
 
 /**
  * @brief Return the n-th element from a composite value
+ *
+ * To the user, AnyType is a fully recursive type: Each AnyType object can be a
+ * composite object and be composed of a number of other AnyType objects.
+ * On top of the C++ abstraction layer, function have a single-top level
+ * AnyType object as parameter.
  */
 inline
 AbstractionLayer::AnyType
@@ -332,7 +370,7 @@ AbstractionLayer::AnyType::operator[](uint16_t inID) const {
 
     return isTuple ?
         AnyType(pgTuple, datum, typeID) :
-        AnyType(PG_GETARG_DATUM(inID), typeID, isMutable);
+        AnyType(datum, typeID, isMutable);
 }
 
 /**
@@ -444,7 +482,17 @@ AbstractionLayer::AnyType::getAsDatum(const FunctionCallInfo inFCInfo) {
 }
 
 /**
- * @brief Convert the current object to a PostbreSQL Datum
+ * @brief Return a PostbreSQL Datum representing the current object
+ *
+ * The only *conversion* taking place in this function is *combining* Datums
+ * into a tuple. At this place, we do not have to worry any more about retaining
+ * memory.
+ *
+ * @param inTargetTypeID PostgreSQL OID of the target type to convert to
+ * @param inTargetIsComposite Whether the target type is composite.
+ *     \c indeterminate if unknown.
+ * @param inTargetTupleDesc If target type is known to be composite, then
+ *     (optionally) the PostgreSQL TupleDesc. NULL is always a valid argument.
  *
  * @see getAsDatum(const FunctionCallInfo)
  */
@@ -532,3 +580,5 @@ AbstractionLayer::AnyType::getAsDatum(Oid inTargetTypeID,
     
     return mDatum;
 }
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

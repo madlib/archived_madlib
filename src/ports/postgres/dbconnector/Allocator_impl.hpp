@@ -4,23 +4,19 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-/**
- * @brief Construct an empty postgres array of a given size.
- * 
- * Set the length of the varlena header, set the element type, etc.
- */
-template <typename T>
-inline
-AbstractionLayer::MutableArrayHandle<T>
-AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
-    return allocateArray<T, dbal::FunctionContext, dbal::DoZero,    
-        dbal::ThrowBadAlloc>(inNumElements);
-}
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
 
 /**
- * @brief Construct an empty postgres array of a given size.
+ * @brief Construct an empty postgres array of the given size.
  * 
- * Set the length of the varlena header, set the element type, etc.
+ * This calls allocate() to allocate a block of memory and then initializes 
+ * PostgreSQL meta information.
+ *
+ * @note
+ *     There is a template-overloaded version with defaults
+ *     <tt>MC = dbal::FunctionContext</tt>, <tt>ZM = dbal::DoZero</tt>,
+ *     <tt>F = dbal::ThrowBadAlloc</tt>
  */
 template <typename T, dbal::MemoryContext MC, dbal::ZeroMemory ZM,
     dbal::OnMemoryAllocationFailure F>
@@ -57,7 +53,21 @@ AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
     return MutableArrayHandle<T>(array);
 }
 
+template <typename T>
+inline
+AbstractionLayer::MutableArrayHandle<T>
+AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
+    return allocateArray<T, dbal::FunctionContext, dbal::DoZero,    
+        dbal::ThrowBadAlloc>(inNumElements);
+}
 
+/**
+ * @brief Allocate a block of memory
+ *
+ * @return The address of a 16-byte aligned block of memory large enough to hold
+ *     \c inSize bytes. On all supported platforms, 16-byte alignment is enough
+ *     for any arbitrary operation.
+ */
 template <dbal::MemoryContext MC, dbal::ZeroMemory ZM,
     dbal::OnMemoryAllocationFailure F>
 inline
@@ -66,6 +76,20 @@ AbstractionLayer::Allocator::allocate(size_t inSize) const {
     return internalAllocate<MC, ZM, F, NewAllocation>(NULL, inSize);
 }
 
+/**
+ * @brief Change the size of a block of memory previously allocated with
+ *     AbstractionLayer::Allocator allocation functions
+ *
+ * There is no guerantee that the returned pointer is the same as \c inPtr.
+ *
+ * @param inPtr Pointer to a memory block previously allocated with allocate or
+ *     reallocate.
+ * @param inSize Requested size for the reallocated memory block
+ *
+ * @return The address of a 16-byte aligned block of memory large enough to hold
+ *     \c inSize bytes. On all supported platforms, 16-byte alignment is enough
+ *     for any arbitrary operation.
+ */
 template <dbal::MemoryContext MC, dbal::ZeroMemory ZM,
     dbal::OnMemoryAllocationFailure F>
 inline
@@ -76,16 +100,21 @@ AbstractionLayer::Allocator::reallocate(void *inPtr, const size_t inSize) const 
 
 
 /**
- * @brief Free a block of memory previously allocated with allocate
- * 
- * The default implementation calls AllocSetFree() from utils/mmgr/aset.c.
+ * @brief Free a block of memory previously allocated with
+ *     AbstractionLayer::Allocator allocation functions
+ *
+ * @internal 
+ *     This function uses the PostgreSQL pfree() macro. This calls
+ *     MemoryContextFreeImpl, which again calls, by default, AllocSetFree() from
+ *     utils/mmgr/aset.c.
+ *
  * We must not throw errors, so we are essentially ignoring all errors.
- * This function is also called by operator delete (),
+ * This function is also called by operator delete(),
  * which must not throw *any* exceptions.
  *
  * @param inPtr Pointer to a memory block previously allocated with allocate,
- *     reallocate or allocateArray to be deallocated. If a null pointer is
- *     passed as argument, no action occurs. (std::free has the same behavior.)
+ *     reallocate or allocateArray. If a null pointer is passed as argument, no
+ *     action occurs. (std::free has the same behavior.)
  *
  * @see See also the notes for PGAllocator::allocate(const size_t) and
  *      PGAllocator::allocate(const size_t, const std::nothrow_t&)
@@ -111,10 +140,15 @@ AbstractionLayer::Allocator::free(void *inPtr) const {
 }
 
 /**
- * @internal
  * @brief Thin wrapper around \c palloc() that returns a 16-byte-aligned
  *     pointer.
- * 
+ *
+ * @internal 
+ *     This function uses the PostgreSQL palloc() and palloc0() macros. They
+ *     call MemoryContextAllocImpl() or MemoryContextAllocZeroImpl(),
+ *     respectively, which then call, by default, AllocSetAlloc() from
+ *     utils/mmgr/aset.c.
+ *
  * Unless <tt>MAXIMUM_ALIGNOF >= 16</tt>, we waste 16 additional bytes of
  * memory. The call to \c palloc() might throw a PostgreSQL exception. Thus,
  * this function should only be used inside a \c PG_TRY() block.
@@ -137,12 +171,16 @@ AbstractionLayer::Allocator::internalPalloc(size_t inSize) const {
 }
 
 /**
- * @internal
  * @brief Thin wrapper around \c repalloc() that returns a 16-byte-aligned
  *     pointer.
  *
  * @tparam ZM Initialize memory block by overwriting with zeros?
  * 
+ * @internal 
+ *     This function uses the PostgreSQL repalloc() macro. This calls
+ *     MemoryContextReallocImpl, which again calls, by default,
+ *     AllocSetRealloc() from utils/mmgr/aset.c.
+ *
  * Unless <tt>MAXIMUM_ALIGNOF >= 16</tt>, we waste 16 additional bytes of
  * memory. The call to \c repalloc() might throw a PostgreSQL exception. Thus,
  * this function should only be used inside a \c PG_TRY() block.
@@ -343,3 +381,5 @@ AbstractionLayer::Allocator::internalAllocate(void *inPtr, const size_t inSize) 
    
     return ptr;
 }
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

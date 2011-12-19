@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
  
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 template <typename T>
 class AbstractionLayer::ArrayHandle {
 public:
@@ -41,3 +44,5 @@ public:
     ArrayType *array();
     T& operator[](size_t inIndex);
 };
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

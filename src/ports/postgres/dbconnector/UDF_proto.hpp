@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /**
  * @brief User-defined function
  */
@@ -33,3 +36,5 @@ protected:
      */
     std::ostream dberr;
 };
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

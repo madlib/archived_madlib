@@ -48,4 +48,4 @@ int AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext);
 
 } // namespace madlib
 
-#endif
+#endif // defined(MADLIB_POSTGRES_COMPATIBILITY_HPP)

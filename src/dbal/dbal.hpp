@@ -7,10 +7,16 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#ifndef MADLIB_DBAL_HPP
+// Note: We also use MADLIB_DBAL_HPP for a workaround for Doxygen:
+// *_{impl|proto}.hpp files should be ingored if not included by
+// EigenLinAlgTypes.hpp
+#define MADLIB_DBAL_HPP
+
 namespace madlib {
 
 /**
- * @brief Database-abstraction layer
+ * @brief Database-independent abstractions
  */
 namespace dbal {
 
@@ -40,8 +46,11 @@ enum OnMemoryAllocationFailure {
     ThrowBadAlloc
 };
 
-#include "OutputStreamBase.hpp"
+#include "OutputStreamBufferBase_proto.hpp"
+#include "OutputStreamBufferBase_impl.hpp"
 
-}
+} // namespace dbal
 
-}
+} // namespace madlib
+
+#endif // defined(MADLIB_DBAL_HPP)

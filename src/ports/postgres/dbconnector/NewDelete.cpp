@@ -7,7 +7,7 @@
  * We override the C++ global memory allocation and deallocation functions. We
  * map them to ultimately use the PostgreSQL memory routines to protect against
  * memory leaks.
- * See header file <new> and §18.4.1 of the C++ Standard.
+ * See header file \c <new> and §18.4.1 of the C++ Standard.
  *
  * @note
  *     This is merely a precaution. C++ objects should still be properly

@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /*
  * Mutable means in this context that the value of a variable can be changed and
  * that it would change the value for the backend
@@ -99,3 +102,5 @@ DECLARE_CXX_TYPE(
 #undef DECLARE_OID_TO_TYPE_MAPPING
 #undef DECLARE_CXX_TYPE
 #undef DECLARE_OID
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

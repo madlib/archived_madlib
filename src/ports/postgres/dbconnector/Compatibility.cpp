@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file Compatibility.cpp
+ * @file postgres/dbconnector/Compatibility.cpp
  *
  * @brief Compatibility with old PostgreSQL versions
  *

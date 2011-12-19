@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
+#ifdef MADLIB_DBCONNECTOR_HPP
+
 /**
  * @brief Return the (constant) pointer of this handle
  */
@@ -23,3 +26,5 @@ T*
 AbstractionLayer::MutableTransparentHandle<T>::ptr() {
     return mPtr;
 }
+
+#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)

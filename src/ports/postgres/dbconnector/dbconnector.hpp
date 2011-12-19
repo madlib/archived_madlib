@@ -6,9 +6,10 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-
-#ifndef MADLIB_POSTGRES_DBCONNECTOR_HPP
-#define MADLIB_POSTGRES_DBCONNECTOR_HPP
+#ifndef MADLIB_DBCONNECTOR_HPP
+// Note: We also use MADLIB_DBCONNECTOR_HPP for a workaround for Doxygen:
+// *_{impl|proto}.hpp files should be ingored if not included by dbconnector.hpp
+#define MADLIB_DBCONNECTOR_HPP
 
 // Include C++ headers first because PostgreSQL headers might define some
 // conflicting macros (see also end of file)
@@ -63,10 +64,11 @@ namespace std {
 
 namespace madlib {
     namespace dbconnector {
+    
+        /**
+         * @brief C++ abstraction layer for PostgreSQL
+         */
         namespace postgres {
-            template <int MapOptions>
-            struct EigenTypes;
-
             #include "AbstractionLayer_proto.hpp"
             #include "Allocator_proto.hpp"
             #include "ArrayHandle_proto.hpp"
@@ -75,8 +77,8 @@ namespace madlib {
             #include "PGException_proto.hpp"
             #include "OutputStreamBuffer_proto.hpp"
             #include "UDF_proto.hpp"
-        }
-    }
+        } // namespace postgres
+    } // namespace dbconnector
 
     // Import required names into the madlib namespace
     using dbconnector::postgres::AbstractionLayer;
@@ -89,15 +91,12 @@ namespace madlib {
         static AbstractionLayer::Allocator sDefaultAllocator(NULL);
         return sDefaultAllocator;
     }
-}
+} // namespace madlib
 
-#define EIGEN_MATRIXBASE_PLUGIN <dbal/EigenPlugin.hpp>
-#include <Eigen/Dense>
+#include <dbal/EigenLinAlgTypes/EigenLinAlgTypes.hpp>
 
 namespace madlib {
-    #include <dbal/EigenTypes.hpp>
-
-    typedef EigenTypes<Eigen::Unaligned> DefaultLinAlgTypes;
+    typedef dbal::EigenTypes<Eigen::Unaligned> DefaultLinAlgTypes;
 
     namespace dbconnector {
         namespace postgres {
@@ -109,9 +108,10 @@ namespace madlib {
             #include "TransparentHandle_impl.hpp"
             #include "OutputStreamBuffer_impl.hpp"
             #include "UDF_impl.hpp"
-        }
-    }
-}
+        } // namespace postgres
+    } // namespace dbconnector
+} // namespace madlib
+
 
 #define DECLARE_UDF(name) \
     struct name : public madlib::dbconnector::postgres::UDF, public DefaultLinAlgTypes { \
@@ -149,4 +149,4 @@ namespace madlib {
 #undef dngettext
 #endif
 
-#endif
+#endif // defined(MADLIB_DBCONNECTOR_HPP)
