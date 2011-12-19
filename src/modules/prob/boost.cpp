@@ -1,8 +1,8 @@
 /* ----------------------------------------------------------------------- *//** 
  *
- * @file chiSquared.cpp
+ * @file boost.cpp
  *
- * @brief Evaluate the chi-squared distribution function using the boost library.
+ * @brief Probability density and distribution functions imported from Boost.
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -10,6 +10,7 @@
 
 // We use the Boost implementation
 #include <boost/math/distributions/chi_squared.hpp>
+#include <boost/math/distributions/normal.hpp>
 
 namespace madlib {
 
@@ -17,7 +18,9 @@ namespace modules {
 
 namespace prob {
 
-#include "chiSquared.hpp"
+// Workaround for Doxygen: Only ignore header file if processed stand-alone
+#define MADLIB_PROB_BOOST_CPP
+#include "boost.hpp"
 
 /**
  * @brief Chi-squared cumulative distribution function: In-database interface
@@ -38,6 +41,19 @@ chi_squared_cdf::run(AnyType &args) {
 double
 chiSquaredCDF(int64_t nu, double t) {
     return boost::math::cdf( boost::math::chi_squared(nu), t );
+}
+
+/**
+ * @brief Normal cumulative distribution function: In-database interface
+ */
+AnyType
+normal_cdf::run(AnyType &args) {
+    return normalCDF(args[0].getAs<double>());
+}
+
+double
+normalCDF(double t) {
+    return boost::math::cdf( boost::math::normal(), t );
 }
 
 } // namespace prob
