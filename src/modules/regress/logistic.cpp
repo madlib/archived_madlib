@@ -10,7 +10,7 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
-#include <modules/shared/HandleTraits_proto.hpp>
+#include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/prob.hpp>
 
 namespace madlib {
@@ -22,6 +22,8 @@ using prob::normalCDF;
 
 namespace regress {
 
+// Workaround for Doxygen: Only ignore header file if processed stand-alone
+#define MADLIB_REGRESS_LOGISTIC_CPP
 #include "logistic.hpp"
 
 // Internal functions
