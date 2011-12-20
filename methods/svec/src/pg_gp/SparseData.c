@@ -37,14 +37,13 @@ SparseData makeSparseData(void) {
 	/* Allocate the included elements */
 	sdata->vals  = makeStringInfo();
 	sdata->index = makeStringInfo();
-	sdata->vals->len = 0;
-	sdata->index->len = 0;
-	sdata->vals->cursor = 0;
-	sdata->index->cursor = 0;
+
 	sdata->unique_value_count=0;
 	sdata->total_value_count=0;
 	sdata->type_of_data = FLOAT8OID;
 	return sdata;
+
+	// makeStringInfo ensures vals and index each has a trailing '\0'
 }
 
 /** 
@@ -52,15 +51,27 @@ SparseData makeSparseData(void) {
  */
 SparseData makeEmptySparseData(void) {
 	/* Allocate the struct */
-	SparseData sdata = makeSparseData();
+	SparseData sdata = (SparseData)palloc(sizeof(SparseDataStruct)); 
 
-	/* Free the data area */
-	pfree(sdata->vals->data);
-	pfree(sdata->index->data);
-	sdata->vals->data  = palloc(1);
-	sdata->index->data = palloc(1);
-	sdata->vals->maxlen=0;
-	sdata->index->maxlen=0;
+	/* Set up the data area */
+	sdata->vals = (StringInfo)palloc(sizeof(StringInfoData));
+	sdata->vals->data = (char *)palloc(1);
+	sdata->vals->maxlen = 1;
+	sdata->vals->data[0] = '\0';
+	sdata->vals->len = 0;
+	sdata->vals->cursor = 0;
+
+	sdata->index = (StringInfo)palloc(sizeof(StringInfoData));
+	sdata->index->data = (char *)palloc(1);
+	sdata->index->maxlen = 1;
+	sdata->index->data[0] = '\0';
+	sdata->index->len = 0;
+	sdata->index->cursor = 0;
+
+	sdata->unique_value_count = 0;
+	sdata->total_value_count = 0;
+	sdata->type_of_data = FLOAT8OID;
+
 	return sdata;
 }
 
@@ -80,19 +91,31 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 	SparseData sdata = makeEmptySparseData();
 	sdata->unique_value_count = unique_value_count;
 	sdata->total_value_count  = total_value_count;
-	
+
 	/*
-	 * Note: We are disobeying the constraints demanded in lib/stringinfo.h:
-	 * We do not use terminating NULL characters for the data field of
-	 * struct StringInfoData, i.e., sparse-vector code will not rely on
-	 * data[len] == '\0'
+	 * To be safe, we obey the constraint demanded in lib/stringinfo.h that
+	 * the data field of StringInfoData is always terminated with a null.
 	 */
+	if (vals != NULL && vals[datasize] != '\0') {
+		char * vals_temp = (char *)palloc(datasize+1);
+		memcpy(vals_temp, vals, datasize);
+		vals_temp[datasize] = '\0';
+		vals = vals_temp;
+	}
+
+	if (index != NULL && index[indexsize] != '\0') {
+		char * index_temp = (char *)palloc(indexsize+1);
+		memcpy(index_temp, index, indexsize);
+		index_temp[indexsize] = '\0';
+		index = index_temp;
+	}
+
 	sdata->vals->data = vals;
 	sdata->vals->len = datasize;
-	sdata->vals->maxlen = sdata->vals->len;
+	sdata->vals->maxlen = datasize+1;
 	sdata->index->data = index;
 	sdata->index->len = indexsize;
-	sdata->index->maxlen = sdata->index->len;
+	sdata->index->maxlen = indexsize+1;
 	sdata->type_of_data = datatype;
 	return sdata;
 }
