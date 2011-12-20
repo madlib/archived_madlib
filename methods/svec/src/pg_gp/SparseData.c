@@ -242,7 +242,6 @@ int compar(const void *i, const void *j){
 /**
  * @param array_val The array of values to be converted to values in SparseData
  * @param array_pos The array of positions to be converted to runs in SparseData
- * @param width The size of the element in the array
  * @param type_of_data type of the value element
  * @param count The (common) size of array and array_pos
  * @param end The size of the desired SparseData
@@ -250,11 +249,12 @@ int compar(const void *i, const void *j){
  * @return A SparseData representation of an input array of doubles
  */
 SparseData position_to_sdata(double *array_val, int64 *array_pos, 
-			     size_t width, Oid type_of_data, 
+			     Oid type_of_data, 
 			     int count, int64 end, double default_val) {
 
 	char * array = (char *)array_val;
 	char * base_val = (char *)&default_val;
+	size_t width = size_of_type(type_of_data);
 	char *run_val=array;
 	int64 run_len;
 	SparseData sdata = makeSparseData();

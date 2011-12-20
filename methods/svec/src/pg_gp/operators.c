@@ -902,7 +902,7 @@ Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
 	}
 	
 	/* Create the output SVEC */
-	SparseData sdata = position_to_sdata(array,array_pos,sizeof(float8),FLOAT8OID,dimension,size,base_value); 
+	SparseData sdata = position_to_sdata(array,array_pos,FLOAT8OID,dimension,size,base_value); 
 	output_svec = svec_from_sparsedata(sdata,true);
 	
 	PG_RETURN_SVECTYPE_P(output_svec);
