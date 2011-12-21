@@ -85,7 +85,8 @@ public:
      * This function is only called for the first iteration, for the first row.
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
-        mStorage = inAllocator.allocateArray<double>(arraySize(inWidthOfX));
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
@@ -385,7 +386,8 @@ public:
      * This function is only called for the first iteration, for the first row.
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
-        mStorage = inAllocator.allocateArray<double>(arraySize(inWidthOfX));
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
@@ -638,7 +640,8 @@ public:
      * This function is only called for the first iteration, for the first row.
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
-        mStorage = inAllocator.allocateArray<double>(arraySize(inWidthOfX));
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
