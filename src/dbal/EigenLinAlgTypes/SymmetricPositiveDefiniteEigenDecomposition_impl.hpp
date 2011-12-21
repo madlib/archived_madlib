@@ -10,7 +10,11 @@
 /**
  * @brief Constructor that invokes the computation
  *
- * @param inMatrix Matrix to operate on
+ * @param inMatrix Matrix to operate on. Note that the type is
+ *     <tt>const MatrixType&</tt>, meaning that a temporary object will be
+ *     created if the actual parameter is not of a subclass type. This means
+ *     that memory will be copied -- on the positive side, this ensures memory
+ *     will be aligned!
  * @param inOptions A combination of DecompositionOptions
  * @param inExtras A combination of SPDDecompositionExtras
  */
