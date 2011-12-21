@@ -114,9 +114,13 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 	sdata->vals->len = datasize;
 	sdata->vals->maxlen = datasize+1;
 	sdata->index->data = index;
+
 	sdata->index->len = indexsize;
-	sdata->index->maxlen = indexsize+1;
+	sdata->index->maxlen = index == NULL ? 0 : indexsize+1; 
+	   // here we are taking care of the special case of null index, which
+	   // represents uncompressed sparsedata; see SparseDataStruct defn
 	sdata->type_of_data = datatype;
+
 	return sdata;
 }
 
@@ -144,14 +148,13 @@ SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 	SparseData sdata = float8arr_to_sdata(&constant,1);
 	int8_to_compword(dimension,bytestore); /* create compressed version of
 					          int8 value */
-	pfree(sdata->index->data);
-	sdata->index->data = bytestore;
-	sdata->index->len = int8compstoragesize(bytestore);
-	sdata->total_value_count=dimension;
-	if (sdata->index->maxlen < int8compstoragesize(bytestore)) {
-		ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			       errmsg("Internal error")));
-	}
+
+	int newlen = int8compstoragesize(bytestore);
+	sdata->index->len = 0; // write over existing value
+	appendBinaryStringInfo(sdata->index, bytestore, newlen);
+
+	sdata->total_value_count = dimension;
+
 	return sdata;
 }
 
@@ -199,9 +202,17 @@ StringInfo copyStringInfo(StringInfo sinfo) {
 StringInfo makeStringInfoFromData(char *data,int len) {
 	StringInfo sinfo;
 	sinfo = (StringInfo)palloc(sizeof(StringInfoData));
+
+	if (data != NULL && data[len] != '\0') {
+		char * data_temp = (char *)palloc(len+1);
+		memcpy(data_temp, data, len);
+		data_temp[len] = '\0';
+		data = data_temp;
+	}
+
 	sinfo->data   = data;
 	sinfo->len    = len;
-	sinfo->maxlen = len;
+	sinfo->maxlen = len+1;
 	sinfo->cursor = 0;
 	return sinfo;
 }
@@ -572,24 +583,62 @@ SparseData concat(SparseData left, SparseData right) {
 	int r_val_len = right->vals->len;
 	int l_ind_len = left->index->len;
 	int r_ind_len = right->index->len;
-	int val_len=l_val_len+r_val_len;
-	int ind_len=l_ind_len+r_ind_len;
+	int val_len = l_val_len + r_val_len;
+	int ind_len = l_ind_len + r_ind_len;
 	
-	vals = (char *)palloc(sizeof(char)*val_len);
-	index = (char *)palloc(sizeof(char)*ind_len);
+	vals = (char *)palloc(sizeof(char)*val_len + 1);
+	index = (char *)palloc(sizeof(char)*ind_len + 1);
 	
-	memcpy(vals          ,left->vals->data,l_val_len);
+	memcpy(vals, left->vals->data,l_val_len);
 	memcpy(vals+l_val_len,right->vals->data,r_val_len);
-	memcpy(index,          left->index->data,l_ind_len);
+	vals[val_len] = '\0';
+
+	memcpy(index, left->index->data,l_ind_len);
 	memcpy(index+l_ind_len,right->index->data,r_ind_len);
+	index[ind_len] = '\0';
 	
 	sdata->vals  = makeStringInfoFromData(vals,val_len);
 	sdata->index = makeStringInfoFromData(index,ind_len);
+
 	sdata->type_of_data = left->type_of_data;
-	sdata->unique_value_count = left->unique_value_count+
-		right->unique_value_count;
-	sdata->total_value_count  = left->total_value_count+
-		right->total_value_count;
+	sdata->unique_value_count = left->unique_value_count +
+		                    right->unique_value_count;
+	sdata->total_value_count  = left->total_value_count +
+		                    right->total_value_count;
+	return sdata;
+}
+
+/** 
+ * @param rep The SparseData to be replicated
+ * @param multiplier The number of times to replicate rep
+ * @return The input rep SparseData replicated multiplier times.
+ */
+SparseData concat_replicate(SparseData rep, int multiplier) {
+	if (rep == NULL) return NULL;
+
+	SparseData sdata = makeEmptySparseData();
+	char *vals,*index;
+	int l_val_len = rep->vals->len;
+	int l_ind_len = rep->index->len;
+	int val_len = l_val_len*multiplier;
+	int ind_len = l_ind_len*multiplier;
+
+	vals = (char *)palloc(sizeof(char)*val_len + 1);
+	index = (char *)palloc(sizeof(char)*ind_len + 1);
+
+	for (int i=0;i<multiplier;i++) {
+		memcpy(vals+i*l_val_len,rep->vals->data,l_val_len);
+		memcpy(index+i*l_ind_len,rep->index->data,l_ind_len);
+	}
+	vals[val_len] = '\0';
+	index[ind_len] = '\0';
+
+	sdata->vals  = makeStringInfoFromData(vals,val_len);
+	sdata->index = makeStringInfoFromData(index,ind_len);
+	sdata->type_of_data = rep->type_of_data;
+	sdata->unique_value_count = multiplier * rep->unique_value_count;
+	sdata->total_value_count  = multiplier * rep->total_value_count;	
+
 	return sdata;
 }
 

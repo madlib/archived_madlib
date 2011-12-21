@@ -158,6 +158,7 @@ double sd_proj(SparseData sdata, int idx);
 SparseData subarr(SparseData sdata, int start, int end);
 SparseData reverse(SparseData sdata);
 SparseData concat(SparseData left, SparseData right);
+SparseData concat_replicate(SparseData rep, int multiplier);
 
 /* Returns the size of each basic type 
  */
