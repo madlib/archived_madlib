@@ -427,3 +427,26 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr(
 RETURNS MADLIB_SCHEMA.logregr_result AS
 $$SELECT MADLIB_SCHEMA.logregr($1, $2, $3, $4, $5, 0.0001);$$
 LANGUAGE sql VOLATILE;
+
+/**
+ * @brief Evaluate the usual logistic function in an under-/overflow-safe way
+ *
+ * In order for the outcome of exp(x) to be within the range of the minimum
+ * positive double-precision number (i.e., 2^(-1074)) and the maximum positive
+ * double-precision number (i.e., (1 + (1 - 2^52)) * 2^1023), x has to be within
+ * the natural logarithm of these numbers, so roughly in between -744 and 709.
+ * However, 1 + exp(x) will just evaluate to 1 if exp(x) is less than the
+ * machine epsilon (i.e., 2^(-52)) or, equivalently, if x is less than the
+ * natural logarithm of that; i.e., in any case if x is less than -37.
+ * Note that taking the reciprocal of the largest double-precision number will
+ * not cause an underflow. Hence, no further checks are necessary.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logistic(x DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION
+LANGUAGE sql
+AS $$
+   SELECT CASE WHEN -$1 < -37 THEN 1
+               WHEN -$1 > 709 THEN 0
+               ELSE 1 / (1 + exp(-$1))
+          END;
+$$
