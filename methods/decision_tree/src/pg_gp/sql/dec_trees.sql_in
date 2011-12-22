@@ -25,43 +25,51 @@ declare
 begin
 	class = (pre_class+4)%5+1;
 	
-	feature = ARRAY[0,0,0,0,0,0,0,0,0,0];
+	feature = ARRAY[1,1,1,1,1,1,1,1,1,1];
 	IF(class = 1) THEN
 		feature[1] = 1;
 		feature[3] = 1;
 		feature[5] = 1;
+        feature[7] = 2.0;
 	ELSIF(class = 2) THEN
 		feature[1] = 1;
 		IF(pre_class < 2500) THEN
 			feature[3] = 1;
 			feature[5] = 2;
+            feature[7] = 5.0;
 		ELSE
 			feature[3] = 2;
 			feature[5] = 1;
+            feature[7] = 11.5;
 		END IF;
 	ELSIF(class = 3) THEN
 		IF(pre_class < 2500) THEN
 			feature[1] = 1;
 			feature[3] = 2;
 			feature[5] = 2;
+            feature[7] = 11.5;
 		ELSE
 			feature[1] = 2;
 			feature[3] = 1;
 			feature[5] = 1;
+            feature[7] = 13.5;
 		END IF;
 	ELSIF(class = 4) THEN
 		feature[1] = 2;
 		IF(pre_class < 2500) THEN
 			feature[3] = 2;
 			feature[5] = 1;
+            feature[7] = 16.5;
 		ELSE
 			feature[3] = 1;
 			feature[5] = 2;
+            feature[7] = 19.5;
 		END IF;
 	ELSIF(class = 5) THEN
 		feature[1] = 2;
 		feature[3] = 2;
 		feature[5] = 2;
+        feature[7] = 29.5;
 	END IF;
 	
 	result.feature = MADLIB_SCHEMA.svec_cast_float8arr(feature);
@@ -73,34 +81,49 @@ $$ language plpgsql;
 CREATE OR REPLACE FUNCTION dectree_install_test() RETURNS TEXT AS $$
 declare
 	result TEXT;
+    cont_features INT[];
+    index  INT;
+    score INT;
 begin 
 
 	CREATE TEMP TABLE Points(
-		id INTEGER,
-		feature MADLIB_SCHEMA.svec,
-		class INTEGER
+		id_col INTEGER,
+		feature_col MADLIB_SCHEMA.svec,
+		class_col INTEGER
 	);
 
 	CREATE TEMP TABLE Speedup(
 		id INTEGER
 	);
 	
+    cont_features = ARRAY[ 7 ];
+    
 	INSERT INTO Speedup SELECT G.a FROM generate_series(1, 5000) AS G(a);
 	
-	INSERT INTO Points (id, feature, class) SELECT id, (g.t).* 
+	INSERT INTO Points (id_col, feature_col, class_col) SELECT id, (g.t).* 
 	    FROM (SELECT id, dectree_CreateTreePoint(id) AS t FROM Speedup) As g;
 
-	PERFORM MADLIB_SCHEMA.Train_Tree('Points','id','feature','class',10, 3000);
+	PERFORM MADLIB_SCHEMA.c45_train('infogain','Points','MADLIB_SCHEMA.trained_tree'
+        ,'Points','t','7','feature_col','id_col','class_col', 
+        100,'ignore','t',3000,10,0.001,0.01,1);
 
-	PERFORM MADLIB_SCHEMA.Classify_Tree('Points','id','feature',10);
+	PERFORM MADLIB_SCHEMA.c45_classify('MADLIB_SCHEMA.trained_tree',
+        'Points','MADLIB_SCHEMA.classified_points','t');
 
 	SELECT INTO result CASE WHEN(sum((id+4)%5+1-class)=0) THEN 'PASS' ELSE 'FAIL' END 
-	    FROM classified_points;
+	    FROM MADLIB_SCHEMA.classified_points;
 	
 	IF result = 'FAIL' THEN
 	   RAISE EXCEPTION 'Install check failed.';
 	END IF;
 	
+    score = MADLIB_SCHEMA.c45_score('MADLIB_SCHEMA.trained_tree',
+        'Points','t');
+
+    IF (score <> 1) THEN
+	   RAISE EXCEPTION 'Install check failed.';
+	END IF;
+    
 	RETURN result;
 end
 $$ language plpgsql;	
