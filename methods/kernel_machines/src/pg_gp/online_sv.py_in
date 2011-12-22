@@ -120,6 +120,7 @@ def svm_classification( madlib_schema, input_table, model_table, parallel, kerne
 
         # Start learning process
         sql = 'insert into svm_temp_result (select \'' + model_table + '\' || m4_ifdef(`GREENPLUM', `gp_segment_id', `0'), ' + madlib_schema + '.svm_cls_agg(ind, label,\'' + kernel_func + '\',' + str(eta) + ',' + str(nu) + ') from ' + input_table + ' group by 1)';
+
         plpy.execute(sql);
 
         # Store the models learned
@@ -336,4 +337,189 @@ def svm_predict_batch( input_table, data_col, id_col, model_table, output_table,
 
     return '''Finished processing data points in %s table; results are stored in %s table. 
            ''' % (input_table,output_table)
+           
+
+
+# ---------------------------------------------------
+# Function to run the linear classification algorithm
+# ---------------------------------------------------
+def lsvm_classification( madlib_schema, input_table, model_table, parallel, verbose=False, eta=0.1, reg=0.001):
+    """
+    Executes the linear support vector classification algorithm.
+
+    @param input_table Name of table/view containing the training data
+    @param model_table Name under which we want to store the learned model 
+    @param parallel A flag indicating whether the system should learn multiple models in parallel
+    @param verbose Verbosity of reporting
+    @param eta Initial learning rate in (0,1] (default value is 0.1)
+    @param reg Regularization parameter, often chosen by cross-validation (default value is 0.001)
+    
+    """
+    plpy.execute('CREATE TABLE ' + model_table + ' (id text, weights float8[], wdiv float8, wbias float8) m4_ifdef(`GREENPLUM', `DISTRIBUTED RANDOMLY')');
+    plpy.execute('CREATE TEMP TABLE svm_temp_result ( id text, model ' + madlib_schema + '.lsvm_sgd_model_rec ) m4_ifdef(`GREENPLUM', `DISTRIBUTED RANDOMLY')');
+
+    if (verbose):
+        plpy.info("Parameters:");
+        plpy.info(" * input_table = %s" % input_table);
+        plpy.info(" * model_table = " + model_table);
+        plpy.info(" * parallel = " + str(parallel));
+        plpy.info(" * eta = " + str(eta));
+        plpy.info(" * reg = " + str(reg));
+
+    if (parallel) :
+        # Learning multiple models in parallel
+        
+        # Start learning process
+        sql = 'INSERT INTO svm_temp_result (SELECT \'' + model_table + '\' || m4_ifdef(`GREENPLUM', `gp_segment_id', `0'), ' + madlib_schema + '.lsvm_sgd_agg(ind, label, ' + str(eta) + ',' + str(reg) + ') FROM ' + input_table + ' group by 1)';
+        plpy.execute(sql);
+
+        # Store the model learned
+        plpy.execute('INSERT INTO ' + model_table + ' SELECT id, (model).weights, (model).wdiv, (model).wbias From svm_temp_result');
+        
+    else :
+        # Learning multiple models in parallel
+        
+        # Start learning a single model    
+        sql = 'INSERT INTO svm_temp_result (SELECT \'' + model_table + '\',' + madlib_schema + '.lsvm_sgd_agg(ind, label,' + str(eta) + ',' + str(reg) + ') FROM ' + input_table + ')';
+        plpy.execute(sql);
+
+        # Store the model learned
+        plpy.execute('INSERT INTO ' + model_table + ' SELECT id, (model).weights, (model).wdiv, (model).wbias FROM svm_temp_result');
+
+    # Retrieve and return the summary for each model learned    
+    if parallel:
+        where_cond = "position('" + model_table + "' in id) > 0 AND '" + model_table + "' <> id";
+    else:
+        where_cond = "id = '" + model_table + "'";
+
+    summary = plpy.execute("SELECT id, (model).inds, (model).ind_dim, (model).cum_err, (model).wbias, (model).wdiv from svm_temp_result where " + where_cond);
+
+    result = [];
+    for i in range(0,summary.nrows()):
+        result = result + [(model_table, summary[i]['id'], summary[i]['inds'], summary[i]['ind_dim'], summary[i]['cum_err'], summary[i]['wbias'], summary[i]['wdiv'])];
+
+    # Clean up temp storage of models
+    plpy.execute('drop table svm_temp_result');
+
+    return result;
+
+
+# ----------------------------------------------------------------------------------
+# Function to predict the labels of a data point using a linear support vector model
+# ----------------------------------------------------------------------------------
+def lsvm_predict(madlib_schema, model_table, ind):
+    """
+    Scores a data point using a learned linear support vector model.
+
+    @param model_table The table storing the learned model to be used
+    @param ind The data point to be scored
+    
+    """
+    
+    nmodels_rec = plpy.execute("SELECT count(distinct id) FROM " + model_table)
+
+    if (nmodels_rec[0]['count'] <> 1):
+        plpy.error("Error in lsvm_predict(): the table contains an ensemble of models")
+
+    param_t = plpy.execute('SELECT * FROM ' + model_table);
+    weights = param_t[0]['weights']
+    wdiv = param_t[0]['wdiv']
+    wbias = param_t[0]['wbias']
+    
+    sql = 'SELECT ' + madlib_schema + '.svm_dot(\'' + str(weights) + '\', \'' + str(ind) +'\') /' + str(wdiv) + ' + ' + str(wbias) + ' AS sum FROM ' + model_table
+    ret = plpy.execute(sql);
+
+    if (ret.nrows() == 0):
+       plpy.error("Error executing lsvm_predict()");    
+
+    return ret[0]['sum'];
+
+    
+# ------------------------------------------------------------------------------------------
+# Function to predict the labels of a data point using a set of linear support vector models
+# ------------------------------------------------------------------------------------------
+def lsvm_predict_combo( madlib_schema, model_table, ind):
+    """
+    Scores a data point using an ensemble of support vector models.
+
+    @param model_table The table storing the learned model to be used
+    @param ind The data point to be scored
+    
+    """
+
+    nmodels_rec = plpy.execute("select count(distinct id) from " + model_table);
+    nmodels = nmodels_rec[0]['count'];
+
+    if (nmodels <= 1):
+        plpy.info("lsvm_predict_combo(): not an ensemble of models, will use a single prediction");
+        pred = plpy.execute("SELECT * from " + madlib_schema + ".lsvm_predict('" + model_table + "', array[" + str(ind)[1:-1] + "])")
+        return [( model_table, pred[0]['lsvm_predict'] )]
+
+    sumpr = 0.0;
+    ret = [];
+
+    for i in range(0,nmodels):
+        param_t = plpy.execute("SELECT * FROM " + model_table + " WHERE id = '" + model_table + str(i) + "'")
+        weights = param_t[0]['weights']
+        wdiv = param_t[0]['wdiv']
+        wbias = param_t[0]['wbias']
+
+        sql = 'SELECT ' + madlib_schema + '.svm_dot(\'' + str(weights) + '\', \'' + str(ind) +'\') /' + str(wdiv) + ' + ' + str(wbias) + ' AS sum FROM ' + model_table + ' WHERE id = \'' +  model_table + str(i) + '\''
+        pred = plpy.execute(sql);
+        if (pred.nrows() == 0):
+            plpy.error("lsvm_predict_combo(): failed to compute prediction for model '" + model_table + str(i) + "'.");
+
+        prediction = pred[0]['sum'];
+        sumpr = sumpr + prediction;
+        ret = ret + [(model_table + str(i), prediction)];
+
+    ret = ret + [('avg', sumpr/nmodels)];	
+    return ret;
+
+
+# ------------------------------------------------------------------------------
+# Function to predict the labels of points in a table using a linear classifier
+# ------------------------------------------------------------------------------
+def lsvm_predict_batch( madlib_schema, input_table, data_col, id_col, model_table, output_table, parallel):
+    """
+    Scores the data points stored in a table using a learned support vector model.
+
+    @param input_table Name of table/view containing the data points to be scored
+    @param data_col Name of column in input_table containing the data points
+    @param id_col Name of column in input_table containing (integer) identifier for data point
+    @param model_table Name of learned model 
+    @param output_table Name of table to store the results 
+    @param parallel A flag indicating whether the system should learn multiple models in parallel
+    
+    """
+
+    plpy.execute('DROP TABLE IF EXISTS ' + output_table);
+    plpy.execute('CREATE TABLE ' + output_table + ' ( id int, prediction float8 ) m4_ifdef(`GREENPLUM', `distributed by (id)')');
+        
+    if (parallel) :
+        num_models_t = plpy.execute('SELECT COUNT(DISTINCT(id)) n FROM ' + model_table + ' WHERE position(\'' + model_table + '\' in id) > 0 AND \'' + model_table + '\' <> id;'); 
+        num_models = num_models_t[0]['n'];
+        if (num_models == 0) :
+            plpy.error("lsvm_predict_batch(): the specified model table does not contain parallelly learned models.");
+            
+        for i in range(0,num_models):
+            param_t = plpy.execute('SELECT * FROM ' + model_table + ' WHERE id = \'' + model_table + str(i) + '\'')
+            weights = param_t[0]['weights']
+            wdiv = param_t[0]['wdiv']
+            wbias = param_t[0]['wbias']
+
+            sql = 'INSERT INTO ' + output_table + ' (SELECT ' + id_col + ',' + madlib_schema + '.svm_dot(\'' + str(weights) + '\', ind)/' + str(wdiv) + '+' + str(wbias) + ' FROM ' + input_table + ')';
+            plpy.execute(sql);
+    else :
+        param_t = plpy.execute('SELECT * FROM ' + model_table);
+        weights = param_t[0]['weights']
+        wdiv = param_t[0]['wdiv']
+        wbias = param_t[0]['wbias']
+        sql = 'INSERT INTO ' + output_table + ' (SELECT ' + id_col + ', ' +  madlib_schema + '.svm_dot(\'' + str(weights) + '\', ind) /' + str(wdiv) + ' + ' + str(wbias) + ' FROM ' + input_table + ')';
+
+        plpy.execute(sql);
+
+    return '''Finished processing data points in %s table; results are stored in %s table. 
+           ''' % (input_table,output_table)
+           
 

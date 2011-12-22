@@ -19,7 +19,7 @@ Support vector machines (SVMs) and related kernel methods have been one of
 the most popular and well-studied machine learning techniques of the 
 past 15 years, with an amazing number of innovations and applications.
 
-In a nutshell, an SVM model $f(x)$ takes the form of
+In a nutshell, an SVM model \f$f(x)\f$ takes the form of
 \f[
     f(x) = \sum_i \alpha_i k(x_i,x),
 \f]
@@ -29,7 +29,7 @@ data point from the training set (called a support vector), and
 objects are. In regression, \f$ f(\boldsymbol x) \f$ is the regression function
 we seek. In classification, \f$ f(\boldsymbol x) \f$ serves as
 the decision boundary; so for example in binary classification, the predictor 
-can output class 1 for object $x$ if \f$ f(\boldsymbol x) \geq 0 \f$, and class
+can output class 1 for object \f$x\f$ if \f$ f(\boldsymbol x) \geq 0 \f$, and class
 2 otherwise.
 
 In the case when the kernel function \f$ k(\cdot, \cdot) \f$ is the standard
@@ -51,18 +51,22 @@ space:
 where \f$ \phi(\boldsymbol x) \f$ projects \f$ \boldsymbol x \f$ into a
 (possibly infinite-dimensional) feature space.
 
-There are many algorithms for learning kernel machines. This module 
-implements the class of online learning with kernels algorithms 
-described in Kivinen et al. [1]. See also the book Scholkopf and Smola [2]
-for much more details.
+There are many algorithms for learning kernel machines. This module
+implements the class of online learning with kernels algorithms
+described in Kivinen et al. [1]. It also includes the Stochastic
+Gradient Descent (SGD) method [3] for learning linear SVMs with the Hinge
+loss \f$l(z) = \max(0, 1-z)\f$. See also the book Scholkopf and Smola [2] for much more
+details.
 
-The implementation follows the original description in the Kivinen et al 
-paper faithfully, except that we only update the support vector model 
-when we make a significant error. The original algorithms update the 
-support vector model at every step, even when no error was made, in the 
-name of regularisation. For practical purposes, and this is verified 
-empirically to a certain degree, updating only when necessary is both 
-faster and better from a learning-theoretic point of view, at least in 
+The SGD implementation is based on L&eacute;on Bottou's SGD package
+(http://leon.bottou.org/projects/sgd). The methods introduced in [1]
+are implemented according to their original descriptions, except that
+we only update the support vector model when we make a significant
+error. The original algorithms in [1] update the support vector model at
+every step, even when no error was made, in the name of
+regularisation. For practical purposes, and this is verified
+empirically to a certain degree, updating only when necessary is both
+faster and better from a learning-theoretic point of view, at least in
 the i.i.d. setting.
 
 Methods for classification, regression and novelty detection are 
@@ -93,8 +97,15 @@ For novelty detection, the label field is not required.
     <em>verbose DEFAULT false</em>, <em>eta DEFAULT 0.1</em>, <em>nu DEFAULT 0.005</em>, <em>slambda DEFAULT 0.05</em>
     );</pre>   
 
--  Classification learning is achieved through the following function:
-	<pre>SELECT \ref svm_classification(
+-  Classification learning is achieved through the following two
+   functions:
+     -# Learn linear SVM(s) using SGD [3]:
+     <pre>SELECT \ref lsvm_classification(
+    '<em>input_table</em>', '<em>model_table</em>', <em>parallel</em>, 
+    <em>verbose DEFAULT false</em>, <em>eta DEFAULT 0.1</em>, <em>reg DEFAULT 0.001</em>
+    );</pre>   
+     -# Learn linear or non-linear SVM(s) using the method described in [1]:
+     <pre>SELECT \ref svm_classification(
     '<em>input_table</em>', '<em>model_table</em>', <em>parallel</em>, '<em>kernel_func</em>', 
     <em>verbose DEFAULT false</em>, <em>eta DEFAULT 0.1</em>, <em>nu DEFAULT 0.005</em>
     );</pre>   
@@ -112,22 +123,39 @@ For novelty detection, the label field is not required.
 
 - To make predictions on a single data point x using a single model
   learned previously, we use the function
-  <pre>SELECT \ref svm_predict('<em>model_table</em>',<em>x</em>);</pre>
+  <pre>SELECT \ref
+  svm_predict('<em>model_table</em>',<em>x</em>);</pre>
+  If the model is produced by the lsvm_classification() function, use
+  the following prediction function instead
+  <pre>SELECT \ref
+  lsvm_predict('<em>model_table</em>',<em>x</em>);</pre>
 
 - To make predictions on new data points using multiple models
   learned in parallel, we use the function
-  <pre>SELECT \ref svm_predict_combo('<em>model_table</em>',<em>x</em>);</pre>
+  <pre>SELECT \ref
+  svm_predict_combo('<em>model_table</em>',<em>x</em>);</pre>
+  If the models are produced by the lsvm_classification() function, use
+  the following prediction function instead
+  <pre>SELECT \ref
+  lsvm_predict_combo('<em>model_table</em>',<em>x</em>);</pre>
+
 
 - Note that, at the moment, we cannot use MADLIB_SCHEMA.svm_predict() and MADLIB_SCHEMA.svm_predict_combo()
   on multiple data points. For example, something like the following will fail:
   <pre>SELECT \ref svm_predict('<em>model_table</em>',<em>x</em>) FROM data_table;</pre>
   Instead, to make predictions on new data points stored in a table using
   previously learned models, we use the function:
-  <pre>SELECT \ref svm_predict_batch('<em>input_table</em>', '<em>data_col</em>', '<em>id</em>', '<em>model_table</em>', '<em>output_table</em>', <em>parallel</em>);</pre>
+  <pre>SELECT \ref svm_predict_batch('<em>input_table</em>', '<em>data_col</em>', '<em>id_col</em>', '<em>model_table</em>', '<em>output_table</em>', <em>parallel</em>);</pre>
   The output_table is created during the function call; an existing table with 
   the same name will be dropped.
   If the parallel parameter is true, then each data point in the input table will have multiple 
-  predicted values corresponding to the number of models learned in parallel.
+  predicted values corresponding to the number of models learned in
+  parallel.\n\n
+  Similarly, use the following function for batch prediction if the
+  model(s) is produced by the lsvm_classification() function:
+  <pre>SELECT \ref lsvm_predict_batch('<em>input_table</em>', '<em>data_col</em>', '<em>id_col</em>', '<em>model_table</em>','<em>output_table</em>', <em>parallel</em>);</pre>
+  
+  
 
 @implementation
 
@@ -224,6 +252,16 @@ sql> select MADLIB_SCHEMA.svm_predict('myexpc', '{10,-2,4,20,10}');
 sql> select MADLIB_SCHEMA.svm_classification('my_schema.my_train_data', 'myexpc', true, 'MADLIB_SCHEMA.svm_dot');
 sql> select * from MADLIB_SCHEMA.svm_predict_combo('myexpc', '{10,-2,4,20,10}');
 \endcode
+-# To learn a linear support vector model using SGD, replace the model-building and prediction steps above by 
+\code
+sql> select MADLIB_SCHEMA.lsvm_classification('my_schema.my_train_data', 'myexpc', false);
+sql> select MADLIB_SCHEMA.lsvm_predict('myexpc', '{10,-2,4,20,10}');
+\endcode
+-# To learn multiple linear support vector models using SGD, replace the model-building and prediction steps above by 
+\code
+sql> select MADLIB_SCHEMA.lsvm_classification('my_schema.my_train_data', 'myexpc', true);
+sql> select MADLIB_SCHEMA.lsvm_predict_combo('myexpc', '{10,-2,4,20,10}');
+\endcode
 
 <strong>Example usage for novelty detection:</strong>
 -# We can randomly generate 100 2-dimensional data (the normal cases)
@@ -254,6 +292,10 @@ sql> select * from MADLIB_SCHEMA.svm_predict_combo('myexpnd', '{-1,-1}');
 [2] Bernhard Scholkopf and Alexander J. Smola: <em>Learning with Kernels:
     Support Vector Machines, Regularization, Optimization, and Beyond</em>, 
     MIT Press, 2002.
+
+[3] L&eacute;on Bottou: <em>Large-Scale Machine Learning with Stochastic
+Gradient Descent</em>, Proceedings of the 19th International
+Conference on Computational Statistics, Springer, 2010.
 	
 @sa File online_sv.sql_in documenting the SQL functions.
 
@@ -281,6 +323,18 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
        kernel_oid oid   -- OID of kernel function
 );
 
+-- The following is the structure to record the results of the linear SVM sgd algorithm
+--
+CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_model_rec AS (
+       weights float8[], -- the weight vector
+       wdiv float8,      -- scaling factor for the weights
+       wbias float8, 	 -- offset/bias of the linear model
+       ind_dim int,      -- the dimension of the individuals
+       inds int,         -- number of individuals processed 
+       cum_err int	 -- cumulative error
+);
+
+
 -- The following is the return type of a regression learning process
 --
 CREATE TYPE MADLIB_SCHEMA.svm_reg_result AS (
@@ -305,6 +359,18 @@ CREATE TYPE MADLIB_SCHEMA.svm_cls_result AS (
        nsvs int          -- number of support vectors
 );
 
+-- The following is the return type of a linear classifier learning process
+--
+CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_result AS (
+       model_table text, -- table where the model is stored
+       model_name text,  -- model name
+       inds int,         -- number of individuals processed 
+       ind_dim int,      -- the dimension of the individuals
+       cum_err float8,   -- cumulative error
+       wdiv float8,      -- scaling factor for the weights
+       wbias float8      -- classifier offset
+);
+
 -- The following is the return type of a novelty detection learning process
 --
 CREATE TYPE MADLIB_SCHEMA.svm_nd_result AS (
@@ -318,6 +384,8 @@ CREATE TYPE MADLIB_SCHEMA.svm_nd_result AS (
 -- The type for representing support vectors
 --
 CREATE TYPE MADLIB_SCHEMA.svm_support_vector AS ( id text, weight float8, sv float8[] );
+
+
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
@@ -409,6 +477,21 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], text, float8, float8) (
        initcond = '(0,0,0,0,0,0,0,{},{},0)'
 );
 
+-- This is the SGD algorithm for linear SVMs. 
+-- The function updates the support vector model as it processes each new training example.
+-- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
+--
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.lsvm_sgd_update(svs MADLIB_SCHEMA.lsvm_sgd_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, reg FLOAT8)
+RETURNS MADLIB_SCHEMA.lsvm_sgd_model_rec AS 'MODULE_PATHNAME', 'lsvm_sgd_update' LANGUAGE C STRICT;   
+
+CREATE AGGREGATE MADLIB_SCHEMA.lsvm_sgd_agg(float8[], float8, float8, float8) (
+       sfunc = MADLIB_SCHEMA.lsvm_sgd_update,
+       stype = MADLIB_SCHEMA.lsvm_sgd_model_rec,
+       initcond = '({},1,0,0,0,0)'
+);
+
+
 -- This function stores a MADLIB_SCHEMA.svm_model_rec stored in model_temp_table into the model_table.
 --
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_store_model(model_temp_table TEXT, model_name TEXT, model_table TEXT) RETURNS VOID AS $$
@@ -433,7 +516,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_store_model(model_temp_table TEXT, 
 	    sql = "INSERT INTO " + model_table \
 	    	      + " SELECT \'" + model_name + "\', (model).weights[" + str(i) + "], " \
 	    	      + "            (model).individuals[(" + str(idx+1) + "):(" + str(idx) + "+" + str(myind_dim) + ")] " \
-	    	      + " FROM " + model_temp_table + " WHERE id = \'" + model_name + "\' LIMIT 1";	    
+	    	      + " FROM " + model_temp_table + " WHERE id = \'" + model_name + "\' LIMIT 1";
 	    plpy.execute(sql);		      
 
 $$ LANGUAGE plpythonu;
@@ -746,3 +829,131 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_generate_nd_data(output_table text,
     plpy.execute("INSERT INTO " + output_table + " SELECT a.val, MADLIB_SCHEMA.__svm_random_ind2(" + str(dim) + ") FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
 $$ LANGUAGE 'plpythonu';
 
+
+/**
+ * @brief Normalizes the data stored in a table, and save the normalized data in a new table. 
+ *
+ * @param input_table Name of table/view containing the data points to be scored
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_data_normalization(input_table TEXT) RETURNS VOID AS $$
+    output_table = input_table + "_scaled";
+    plpy.execute("DROP TABLE IF EXISTS " + output_table);
+    plpy.execute("CREATE TABLE " + output_table + " ( id int, ind float8[], label int ) m4_ifdef(`GREENPLUM', `distributed by (id)')");
+    plpy.execute("INSERT INTO " + output_table + " SELECT id, MADLIB_SCHEMA.svm_normalization(ind), label FROM " + input_table);
+    plpy.info("output table: %s" % output_table)
+$$ LANGUAGE plpythonu;
+
+
+/**
+ * @brief This is the linear support vector classification function
+ *
+ * @param input_table The name of the table/view with the training data
+ * @param model_table The name of the table under which we want to store the learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @return A summary of the learning process
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::lsvm_classification().
+*/ 
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.lsvm_classification(input_table text, model_table text, parallel bool) 
+RETURNS SETOF MADLIB_SCHEMA.lsvm_sgd_result
+AS $$
+    PythonFunctionBodyOnly(`kernel_machines', `online_sv')
+    # MADlibSchema comes from PythonFunctionBodyOnly
+    return online_sv.lsvm_classification( MADlibSchema, input_table, model_table, parallel);
+$$ LANGUAGE 'plpythonu';
+
+
+
+/**
+ * @brief This is the linear support vector classification function
+ *
+ * @param input_table The name of the table/view with the training data
+ * @param model_table The name of the table under which we want to store the learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel
+ * @param verbose Verbosity of reporting
+ * @param eta Initial learning rate in (0,1]
+ * @param reg Regularization parameter, often chosen by cross-validation
+ * @return A summary of the learning process
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::lsvm_classification().
+*/ 
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.lsvm_classification(input_table text, model_table text, parallel bool, verbose bool, eta float8, reg float8)
+RETURNS SETOF MADLIB_SCHEMA.lsvm_sgd_result
+AS $$
+
+    PythonFunctionBodyOnly(`kernel_machines', `online_sv')
+    
+    # MADlibSchema comes from PythonFunctionBodyOnly
+    return online_sv.lsvm_classification( MADlibSchema, input_table, model_table, parallel, verbose, eta, reg);
+
+$$ LANGUAGE 'plpythonu';
+
+
+/**
+ * @brief Scores the data points stored in a table using a learned linear support-vector model
+ *
+ * @param input_table Name of table/view containing the data points to be scored
+ * @param data_col Name of column in input_table containing the data points
+ * @param id_col Name of column in input_table containing the integer identifier of data points
+ * @param model_table Name of table where the learned model to be used is stored
+ * @param output_table Name of table to store the results 
+ * @param parallel A flag indicating whether the model to be used was learned in parallel
+ * @return Textual summary of the algorithm run
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::lsvm_predict_batch().
+ */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lsvm_predict_batch(input_table text, data_col text, id_col text, model_table text, output_table text, parallel bool)
+RETURNS TEXT
+AS $$
+
+    PythonFunctionBodyOnly(`kernel_machines', `online_sv')
+    
+    # MADlibSchema comes from PythonFunctionBodyOnly
+    return online_sv.lsvm_predict_batch( MADlibSchema, input_table, data_col, id_col, model_table, output_table, parallel);
+    
+$$ LANGUAGE 'plpythonu';
+
+
+/**
+ * @brief Evaluates a linear support-vector model on a given data point
+ *
+ * @param model_table The table storing the learned model \f$ f \f$ to be used
+ * @param ind The data point \f$ \boldsymbol x \f$
+ * @return This function returns \f$ f(\boldsymbol x) \f$
+ */
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.lsvm_predict(model_table text, ind float8[]) RETURNS FLOAT8 AS $$
+
+    PythonFunctionBodyOnly(`kernel_machines', `online_sv')
+    
+    # MADlibSchema comes from PythonFunctionBodyOnly
+    return online_sv.lsvm_predict(MADlibSchema, model_table, ind);
+
+$$ LANGUAGE plpythonu;
+
+/**
+ * @brief Evaluates multiple linear support-vector models on a data point
+ *
+ * @param model_table The table storing the learned models to be used.
+ * @param ind The data point \f$ \boldsymbol x \f$
+ * @return This function returns a table, a row for each model.
+ *      Moreover, the last row contains the average value, over all models.
+ *
+ * The different models are assumed to be named <tt><em>model_table</em>0</tt>,
+ * <tt><em>model_table</em>1</tt>, ....
+ */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lsvm_predict_combo(model_table text, ind float8[]) RETURNS SETOF MADLIB_SCHEMA.svm_model_pr AS $$
+
+    PythonFunctionBodyOnly(`kernel_machines', `online_sv')
+    
+    # MADlibSchema comes from PythonFunctionBodyOnly
+    return online_sv.lsvm_predict_combo( MADlibSchema, model_table, ind);
+
+$$ LANGUAGE plpythonu;
