@@ -412,20 +412,6 @@ AS 'MODULE_PATHNAME', 'svec_count' STRICT LANGUAGE C IMMUTABLE;
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_plus(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME', 'svec_plus' STRICT LANGUAGE C IMMUTABLE; 
 
---! Adds 2nd (n-dimensional) SVEC to the 1st one (element-wise) 
---! and increments the last element (n+1) of the first SVEC
---!
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_avg_transition( MADLIB_SCHEMA.svec, MADLIB_SCHEMA.svec) 
-RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT; 
-
---! Divides all elements of the input SVEC by its last element
---! and returns n-1 element SVEC
---!
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_avg_final( MADLIB_SCHEMA.svec) 
-RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT; 
-
 --! Minus second SVEC from the first, element by element.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME', 'svec_minus' STRICT LANGUAGE C IMMUTABLE; 
@@ -537,12 +523,12 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l2norm(float8[]) RETURNS float8 AS
 --! Computes the l2norm distance between two SVECs.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.l2norm(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
-RETURNS float8 AS 'MODULE_PATHNAME', 'l2norm_two_svecs' LANGUAGE C STRICT IMMUTABLE;
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_l2norm' LANGUAGE C STRICT IMMUTABLE;
 
 --! Computes the l1norm distance between two SVECs.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.l1norm(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
-RETURNS float8 AS 'MODULE_PATHNAME', 'l1norm_two_svecs' LANGUAGE C STRICT IMMUTABLE;
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_l1norm' LANGUAGE C STRICT IMMUTABLE;
 
 --! Computes the l1norm of an SVEC.
 --!
@@ -554,13 +540,13 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l1norm(float8[]) RETURNS float8 AS
 
 --! Computes the Cosine distance between two SVECs.
 --!
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cosine(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
-RETURNS float8 AS 'MODULE_PATHNAME', 'cosine' LANGUAGE C STRICT IMMUTABLE;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cosine_distance(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_cosine_distance' LANGUAGE C STRICT IMMUTABLE;
 
 --! Computes the Tanimoto distance between two SVECs.
 --!
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tanimoto(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
-RETURNS float8 AS 'MODULE_PATHNAME', 'tanimoto' LANGUAGE C STRICT IMMUTABLE;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tanimoto_distance(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_tanimoto_distance' LANGUAGE C STRICT IMMUTABLE;
 
 --! Unnests an SVEC into a table of uncompressed values  
 --!
@@ -921,15 +907,31 @@ CREATE OPERATOR MADLIB_SCHEMA.= (
 	restrict = eqsel, join = eqjoinsel
 );
 
---! Aggregate that computes the element-wise avg of a list of vectors.
+--! Transition function for mean(svec) aggregate
 --!
--- DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.avg( MADLIB_SCHEMA.svec);
-CREATE AGGREGATE MADLIB_SCHEMA.avg( MADLIB_SCHEMA.svec) (
-	SFUNC = MADLIB_SCHEMA.svec_avg_transition,
-	m4_ifdef(`GREENPLUM',`prefunc = MADLIB_SCHEMA.svec_plus,')
-	FINALFUNC = MADLIB_SCHEMA.svec_avg_final,
-	INITCOND = '{1}:{0.}', -- Zero
-	STYPE = MADLIB_SCHEMA.svec
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_mean_transition( FLOAT[], MADLIB_SCHEMA.svec) 
+RETURNS FLOAT[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE; 
+
+--! Preliminary merge function for mean(svec) aggregate
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_mean_prefunc( FLOAT[], FLOAT[]) 
+RETURNS FLOAT[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE; 
+
+--! Final function for mean(svec) aggregate
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_mean_final( FLOAT[]) 
+RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE; 
+
+--! Aggregate that computes the element-wise mean of a list of vectors.
+--!
+CREATE AGGREGATE MADLIB_SCHEMA.mean( MADLIB_SCHEMA.svec) (
+	SFUNC = MADLIB_SCHEMA.svec_mean_transition,
+	m4_ifdef(`GREENPLUM',`prefunc = MADLIB_SCHEMA.svec_mean_prefunc,')
+	FINALFUNC = MADLIB_SCHEMA.svec_mean_final,
+	STYPE = FLOAT[]
 );
 
 --! Aggregate that provides the element-wise sum of a list of vectors.
@@ -1003,7 +1005,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l2_cmp(MADLIB_SCHEMA.svec,MADLIB_S
 --! Normalizes an SVEC that is divides all elements by its norm/magnitude.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.normalize(MADLIB_SCHEMA.svec) 
-RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME', 'normalize' LANGUAGE C IMMUTABLE STRICT;
+RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME', 'svec_normalize' LANGUAGE C IMMUTABLE STRICT;
 
 /*
 DROP OPERATOR IF EXISTS < (MADLIB_SCHEMA.svec, MADLIB_SCHEMA.svec) CASCADE ;
