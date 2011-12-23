@@ -46,7 +46,7 @@ static float CONFIDENCE_DEV[]   = {4.0, 3.09, 2.58, 2.33, 1.65, 1.28, 0.84, 0.25
 #define MAX_CONFIDENCE_LEVEL 1.0
 
 
-float ebp_calc_coeff_internal
+float ebp_calc_errors_internal
 (
 	float total_cases,
 	float num_errors,
@@ -67,23 +67,32 @@ float ebp_calc_coeff_internal
  * Return:
  *      The computed total error
  */
-Datum ebp_calc_coeff(PG_FUNCTION_ARGS)
+Datum ebp_calc_errors(PG_FUNCTION_ARGS)
 {
     float8 total 		= PG_GETARG_FLOAT8(0);
     float8 probability 	= PG_GETARG_FLOAT8(1);
     float8 conf_level 	= PG_GETARG_FLOAT8(2);
     float8 result 		= 1;
     float8 coeff 		= 0;
+    int i 				= 0;
 
     if (!is_float_zero(1 - conf_level))
     {
+		/* calculate the coeff */
+		while (conf_level > CONFIDENCE_LEVEL[i]) i++;
+
+		coeff = CONFIDENCE_DEV[i-1] +
+				(CONFIDENCE_DEV[i] - CONFIDENCE_DEV[i-1]) *
+				(conf_level - CONFIDENCE_LEVEL[i-1]) /
+				(CONFIDENCE_LEVEL[i] - CONFIDENCE_LEVEL[i-1]);
+
     	float8 num_errors = total * (1 - probability);
-		result = ebp_calc_coeff_internal(total, num_errors, conf_level, coeff) + num_errors;
+		result = ebp_calc_errors_internal(total, num_errors, conf_level, coeff * coeff) + num_errors;
     }
 
 	PG_RETURN_FLOAT8((float8)result);
 }
-PG_FUNCTION_INFO_V1(ebp_calc_coeff);
+PG_FUNCTION_INFO_V1(ebp_calc_errors);
 
 /*
  * This function calculates the additional errors for EBP.
@@ -100,7 +109,7 @@ PG_FUNCTION_INFO_V1(ebp_calc_coeff);
  *      The additional errors if we prune the node being processed.
  *
  */
-float ebp_calc_coeff_internal
+float ebp_calc_errors_internal
     (
 	float total_cases,
 	float num_errors,
@@ -108,23 +117,17 @@ float ebp_calc_coeff_internal
 	float coeff
     )
 {
-	Assert(total_cases > 0);
-	Assert(num_errors >= 0);
-	Assert(conf_level >= MIN_CONFIDENCE_LEVEL && conf_level <= MAX_CONFIDENCE_LEVEL);
-	Assert(coeff >= 0);
+	if (!(total_cases > 0))
+        elog(ERROR, "total_cases should be greater than zero");
+	
+    if (num_errors < 0)
+        elog(ERROR, "num_errors is less than zero");
+	if (!(conf_level >= MIN_CONFIDENCE_LEVEL && 
+                conf_level <= MAX_CONFIDENCE_LEVEL))
+        elog(ERROR,"invalid conf_level: %lf",conf_level);
 
-    if (is_float_zero(coeff))
-    {
-        int i = 0;
-        while (conf_level > CONFIDENCE_LEVEL[i]) i++;
-
-        coeff = CONFIDENCE_DEV[i-1] +
-                (CONFIDENCE_DEV[i] - CONFIDENCE_DEV[i-1]) *
-                (conf_level - CONFIDENCE_LEVEL[i-1]) /
-                (CONFIDENCE_LEVEL[i] - CONFIDENCE_LEVEL[i-1]);
-
-        coeff = coeff * coeff;
-    }
+    if(coeff <= 0)
+        elog(ERROR,"invalid coeff: %lf",coeff);
 
     if (num_errors < 1E-6)
     {
@@ -135,7 +138,7 @@ float ebp_calc_coeff_internal
     {
         float tmp = total_cases * (1 - exp(log(conf_level) / total_cases));
         return tmp + num_errors * 
-            (ebp_calc_coeff_internal(total_cases, 1.0, conf_level, coeff) - tmp);
+            (ebp_calc_errors_internal(total_cases, 1.0, conf_level, coeff) - tmp);
     }
     else
     if (num_errors + 0.5 >= total_cases)
@@ -166,14 +169,15 @@ float ebp_calc_coeff_internal
  *      The int64 array allocated on current memory context.
  */
 
-int64* alloc_int64_array(int size, int value)
+static int64* alloc_int64_array(int size, int value)
 {
-    Assert(size > 0);
+    if(size <= 0)
+        elog(ERROR,"invalid array size:%d",size);
 
     int64 *result   = (int64*)palloc(sizeof(int64) * size);
 
     if (!result)
-        elog(ERROR, "Memory allocation failure");
+        elog(ERROR, "memory allocation failure");
 
     memset(result, value, sizeof(int64) * size);
     return result;
@@ -202,9 +206,18 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     int classified_class    		= PG_GETARG_INT32(1);
     int original_class      		= PG_GETARG_INT32(2);
     int max_num_of_classes  		= PG_GETARG_INT32(3);
+    bool need_reconstruct_array     = false;
 
-    Assert(original_class > 0 && original_class <= max_num_of_classes);
-    Assert(classified_class > 0 && classified_class <= max_num_of_classes);
+
+    if (!(original_class > 0 && 
+          original_class <= max_num_of_classes))
+        elog(ERROR,"original_class:%d,max_num_of_classes:%d",
+            original_class,max_num_of_classes);
+    
+    if(!(classified_class > 0 && 
+         classified_class <= max_num_of_classes))
+        elog(ERROR,"classified_class:%d,max_num_of_classes:%d",
+            classified_class,max_num_of_classes);
 
     /* test if the first argument (class count array) is null */
     if (PG_ARGISNULL(0))
@@ -213,36 +226,33 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     	 * We assume the maximum number of classes is limited (up to millions),
     	 * so that the allocated array won't break our memory limitation.
     	 */
-        class_count_data	= alloc_int64_array(max_num_of_classes + 1, 0);
-        array_length 		= max_num_of_classes + 1;
+        class_count_data		= alloc_int64_array(max_num_of_classes + 1, 0);
+        array_length 			= max_num_of_classes + 1;
+        need_reconstruct_array 	= true;
 
-        /* construct a new array to keep the aggr states. */
-        class_count_array =
-        	construct_array(
-        		(Datum *)class_count_data,
-                array_length,
-                FLOAT8OID,
-                sizeof(int64),
-                true,
-                'd'
-                );
-
-        if(!class_count_array)
-            elog(ERROR, "Array construction failure.");
     }
     else
     {
-        class_count_array = PG_GETARG_ARRAYTYPE_P(0);
+        if (fcinfo->context && IsA(fcinfo->context, AggState))
+            class_count_array = PG_GETARG_ARRAYTYPE_P(0);
+        else
+            class_count_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
+        
         if (!class_count_array)
-        	elog(ERROR, "Invalid class count array.");
+        	elog(ERROR, "invalid class count array.");
 
         array_dim           = ARR_NDIM(class_count_array);
+
+        if (array_dim != 1)
+        {
+        	elog(ERROR, "array_dim is not 1.");
+        }
         p_array_dim         = ARR_DIMS(class_count_array);
         array_length        = ArrayGetNItems(array_dim,p_array_dim);
         class_count_data    = (int64 *)ARR_DATA_PTR(class_count_array);
 
         if (array_length != max_num_of_classes + 1)
-        	elog(ERROR, "Bad class count data.");
+        	elog(ERROR, "bad class count data.");
     }
 
     /*
@@ -255,6 +265,22 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     /* In any case, we will update the original class count */
     ++class_count_data[original_class];
 
+    if( need_reconstruct_array )
+    {
+        /* construct a new array to keep the aggr states. */
+        class_count_array =
+        	construct_array(
+        		(Datum *)class_count_data,
+                array_length,
+                FLOAT8OID,
+                sizeof(int64),
+                true,
+                'd'
+                );
+
+        if(!class_count_array)
+            elog(ERROR, "array construction failure.");   
+    }
     PG_RETURN_ARRAYTYPE_P(class_count_array);
 }
 PG_FUNCTION_INFO_V1(rep_aggr_class_count_sfunc);
@@ -284,7 +310,9 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
     int64 *class_count_data2        = NULL;
 
     if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
+    {
         PG_RETURN_NULL();
+    }
     else
     if (PG_ARGISNULL(1) || PG_ARGISNULL(0))
     {
@@ -296,20 +324,34 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
         /*
          *  If both arrays are not null, we will merge them together.
          */
-        class_count_array       = PG_GETARG_ARRAYTYPE_P(0);
-        array_dim               = ARR_NDIM(class_count_array);
+        if (fcinfo->context && IsA(fcinfo->context, AggState))
+            class_count_array = PG_GETARG_ARRAYTYPE_P(0);
+        else
+            class_count_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
+        
+        if (!class_count_array)
+        	elog(ERROR, "invalid class count array.");
+
+        array_dim           = ARR_NDIM(class_count_array);
+
+        if (array_dim != 1)
+        	elog(ERROR, "array_dim is not 1.");
+
         p_array_dim             = ARR_DIMS(class_count_array);
         array_length            = ArrayGetNItems(array_dim,p_array_dim);
         class_count_data        = (int64 *)ARR_DATA_PTR(class_count_array);
 
         class_count_array2      = PG_GETARG_ARRAYTYPE_P(1);
         array_dim2              = ARR_NDIM(class_count_array2);
+        if (array_dim2 != 1)
+        	elog(ERROR, "array_dim2 is not 1.");
+
         p_array_dim2            = ARR_DIMS(class_count_array2);
         array_length2           = ArrayGetNItems(array_dim2,p_array_dim2);
         class_count_data2       = (int64 *)ARR_DATA_PTR(class_count_array2);
 
         if (array_length != array_length2)
-            elog(ERROR, "The size of the two arrays must be the same.");
+            elog(ERROR, "the size of the two arrays must be the same.");
 
         for (int index =0; index < array_length; index++)
             class_count_data[index] += class_count_data2[index];
@@ -337,18 +379,21 @@ Datum rep_aggr_class_count_ffunc(PG_FUNCTION_ARGS)
 {
     ArrayType *class_count_array    = PG_GETARG_ARRAYTYPE_P(0);
     int array_dim                   = ARR_NDIM(class_count_array);
+    if (array_dim != 1)
+    {
+    	elog(ERROR, "array_dim is not 1.");
+    }      
     int *p_array_dim                = ARR_DIMS(class_count_array);
     int array_length                = ArrayGetNItems(array_dim,p_array_dim);
     int64 *class_count_data         = (int64 *)ARR_DATA_PTR(class_count_array);
     int64 *result                   = palloc(sizeof(int64)*2);
 
     if (!result)
-        elog(ERROR, "Memory allocation failure");
+        elog(ERROR, "memory allocation failure");
 
     int64 max = class_count_data[1];
     int64 sum = max;
     int maxid = 1;
-
     for(int i = 2; i < array_length; ++i)
     {
         if(max < class_count_data[i])
@@ -381,7 +426,7 @@ Datum rep_aggr_class_count_ffunc(PG_FUNCTION_ARGS)
         );
 
     if(!result_array)
-        elog(ERROR, "Array construction failure.");
+        elog(ERROR, "array construction failure.");
 
     PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -427,7 +472,7 @@ enum SCV_STATE_ARRAY_INDEX
     /* whether the selected feature is continuous or discrete*/
     SCV_STATE_IS_CONT,
     /* init value of entropy/gini before split */
-    SCV_STATE_INIT_IMPURITY_VAL,
+    SCV_STATE_INIT_SCV,
     /* 
      * It specifies the total number of records in training set.
      * 
@@ -560,11 +605,20 @@ enum SCV_FINAL_ARRAY_INDEX
  */
 Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 {
-    ArrayType*	scv_state_array	= PG_GETARG_ARRAYTYPE_P(0);
+    ArrayType*	scv_state_array	= NULL;
+    if (fcinfo->context && IsA(fcinfo->context, AggState))
+        scv_state_array = PG_GETARG_ARRAYTYPE_P(0);
+    else
+        scv_state_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
+
     if (!scv_state_array)
-    	elog(ERROR, "Invalid aggregation state.");
+    	elog(ERROR, "invalid aggregation state.");
 
     int	 array_dim 		= ARR_NDIM(scv_state_array);
+    
+    if (array_dim != 1)
+    	elog(ERROR, "array_dim is not 1.");
+
     int* p_array_dim	= ARR_DIMS(scv_state_array);
     int  array_length	= ArrayGetNItems(array_dim, p_array_dim);
     if (array_length != SCV_STATE_MAX_CLASS_ELEM_COUNT + 1)
@@ -572,7 +626,7 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 
     float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
     if (!scv_state_data)
-    	elog(ERROR, "Invalid aggregation data array.");
+    	elog(ERROR, "invalid aggregation data array.");
 
     int    split_criterion		= PG_GETARG_INT32(1);
     float8 feature_val			= PG_GETARG_FLOAT8(2);
@@ -580,13 +634,14 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
     bool   is_cont_feature 		= PG_ARGISNULL(4) ? false : PG_GETARG_BOOL(4);
     float8 less					= PG_ARGISNULL(5) ? 0 : PG_GETARG_FLOAT8(5);
     float8 great				= PG_ARGISNULL(6) ? 0 : PG_GETARG_FLOAT8(6);
-    float8 init_impurity_val 	= PG_ARGISNULL(7) ? 0 : PG_GETARG_FLOAT8(7);
+    float8 init_scv 	        = PG_ARGISNULL(7) ? 0 : PG_GETARG_FLOAT8(7);
     float8 true_total_count 	= PG_ARGISNULL(8) ? 0 : PG_GETARG_FLOAT8(8);
 
-    Assert(SC_INFOGAIN  == split_criterion ||
-    	   SC_GAINRATIO == split_criterion ||
-    	   SC_GINI      == split_criterion
-    	  );
+    if(!(SC_INFOGAIN  == split_criterion ||
+    	 SC_GAINRATIO == split_criterion ||
+    	 SC_GINI      == split_criterion
+        ))
+        elog(ERROR,"invalid split_criterion:%d",split_criterion);
 
     /*
      *  If the count for total element is still zero
@@ -597,7 +652,7 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
     if (is_float_zero(scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]))
     {
         scv_state_data[SCV_STATE_SPLIT_CRIT] 		= split_criterion;
-        scv_state_data[SCV_STATE_INIT_IMPURITY_VAL] = init_impurity_val;
+        scv_state_data[SCV_STATE_INIT_SCV] 			= init_scv;
         scv_state_data[SCV_STATE_IS_CONT] 			= is_cont_feature ? 1 : 0;
         scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT] 	= true_total_count;
         
@@ -732,99 +787,34 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(scv_aggr_sfunc);
 
 
-Datum scv_aggr_prefunc(PG_FUNCTION_ARGS)
-{
-    ArrayType *scv_state_array  	= PG_GETARG_ARRAYTYPE_P(0);
-    if (!scv_state_array)
-    	elog(ERROR, "Invalid aggregation state.");
-
-    int array_dim 		= ARR_NDIM(scv_state_array);
-    int *p_array_dim 	= ARR_DIMS(scv_state_array);
-    int array_length 	= ArrayGetNItems(array_dim, p_array_dim);
-    if (array_length != SCV_STATE_MAX_CLASS_ELEM_COUNT+1)
-        elog(WARNING, "scv_aggr_prefunc array_length:%d",array_length);
-
-    /* the scv state data from a segment */
-    float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
-    if (!scv_state_data)
-    	elog(ERROR, "Invalid aggregation data array.");
-
-    ArrayType* scv_state_array2	= PG_GETARG_ARRAYTYPE_P(1);
-    if (!scv_state_array2)
-    	elog(ERROR, "Invalid aggregation state.");
-
-    array_dim 		= ARR_NDIM(scv_state_array2);
-    p_array_dim 	= ARR_DIMS(scv_state_array2);
-    array_length 	= ArrayGetNItems(array_dim, p_array_dim);
-    if (array_length != SCV_STATE_MAX_CLASS_ELEM_COUNT+1)
-        elog(WARNING, "scv_aggr_prefunc array_length:%d",array_length);
-
-    /* the scv state data from another segment */
-    float8 *scv_state_data2 = (float8 *)ARR_DATA_PTR(scv_state_array2);
-    if (!scv_state_data2)
-    	elog(ERROR, "Invalid aggregation data array.");
-
-    /*
-     * For the following data, such as entropy, gini and split info, we need to combine
-     * the accumulated value from multiple segments.
-     */ 
-    scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]	+= scv_state_data2[SCV_STATE_TOTAL_ELEM_COUNT];
-    scv_state_data[SCV_STATE_ENTROPY_DATA] 		+= scv_state_data2[SCV_STATE_ENTROPY_DATA];
-    scv_state_data[SCV_STATE_SPLIT_INFO_DATA]	+= scv_state_data2[SCV_STATE_SPLIT_INFO_DATA];
-    scv_state_data[SCV_STATE_GINI_DATA]			+= scv_state_data2[SCV_STATE_GINI_DATA];
-
-    /*
-     *  The following elements are just initialized once. If the first scv_state is not initialized,
-     *  we copy them from the second scv_state.
-     */ 
-    if (is_float_zero(scv_state_data[SCV_STATE_SPLIT_CRIT]))
-    {
-        scv_state_data[SCV_STATE_SPLIT_CRIT]		= scv_state_data2[SCV_STATE_SPLIT_CRIT];
-        scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT]	= scv_state_data2[SCV_STATE_TRUE_TOTAL_COUNT];
-        scv_state_data[SCV_STATE_INIT_IMPURITY_VAL] = scv_state_data2[SCV_STATE_INIT_IMPURITY_VAL];
-        scv_state_data[SCV_STATE_IS_CONT]			= scv_state_data2[SCV_STATE_IS_CONT];
-        scv_state_data[SCV_STATE_IS_CALC_PRE_SPLIT] = scv_state_data2[SCV_STATE_IS_CALC_PRE_SPLIT];
-    }
-    
-    /*
-     *  We should compare the results from different segments and find the class with maximum cases.
-     */ 
-    if (scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] < scv_state_data2[SCV_STATE_MAX_CLASS_ELEM_COUNT])
-    {
-        scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT]	= scv_state_data2[SCV_STATE_MAX_CLASS_ELEM_COUNT];
-        scv_state_data[SCV_STATE_MAX_CLASS_ID]			= scv_state_data2[SCV_STATE_MAX_CLASS_ID];
-    }
-
-    PG_RETURN_ARRAYTYPE_P(scv_state_array);
-}
-PG_FUNCTION_INFO_V1(scv_aggr_prefunc);
-
-
 Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
 {
     ArrayType*	scv_state_array	= PG_GETARG_ARRAYTYPE_P(0);
     if (!scv_state_array)
-    	elog(ERROR, "Invalid aggregation state.");
+    	elog(ERROR, "invalid aggregation state.");
 
     int	 array_dim		= ARR_NDIM(scv_state_array);
+    if (array_dim != 1)
+    	elog(ERROR, "array_dim is not 1.");
+
     int* p_array_dim 	= ARR_DIMS(scv_state_array);
     int  array_length 	= ArrayGetNItems(array_dim, p_array_dim);
 
     if (array_length != SCV_STATE_MAX_CLASS_ELEM_COUNT+1)
-        elog(ERROR, "Bad array length:%d",array_length);
+        elog(ERROR, "bad array length:%d",array_length);
 
     dtelog(NOTICE, "scv_aggr_ffunc array_length:%d",array_length);
 
     float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
     if (!scv_state_data)
-    	elog(ERROR, "Invalid aggregation data array.");
+    	elog(ERROR, "invalid aggregation data array.");
 
-    float8 init_impurity_val = scv_state_data[SCV_STATE_INIT_IMPURITY_VAL];
+    float8 init_scv = scv_state_data[SCV_STATE_INIT_SCV];
 
     int result_size = 12;
     float8 *result = palloc(sizeof(float8) * result_size);
     if (!result)
-    	elog(ERROR, "Memory allocation failure.");
+    	elog(ERROR, "memory allocation failure.");
 
     memset(result, 0, sizeof(float8) * result_size);
 
@@ -855,7 +845,7 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
             /* Get the entropy value */
             result[SCV_FINAL_ENTROPY]   = scv_state_data[SCV_STATE_ENTROPY_DATA]/scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
             /* Get infogain based on initial entropy and current one */
-            result[SCV_FINAL_INFO_GAIN] = (init_impurity_val - result[SCV_FINAL_ENTROPY]) * ratio;
+            result[SCV_FINAL_INFO_GAIN] = (init_scv - result[SCV_FINAL_ENTROPY]) * ratio;
 
             if (SC_GAINRATIO == (int)result[SCV_FINAL_SPLIT_CRITERION])
             {
@@ -877,13 +867,13 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
             result[SCV_FINAL_GINI]      = 1 - scv_state_data[SCV_STATE_GINI_DATA] / scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
 
             /* Get gain based on initial gini and current gini value */
-            result[SCV_FINAL_GINI_GAIN] = (init_impurity_val - result[SCV_FINAL_GINI]) * ratio;
+            result[SCV_FINAL_GINI_GAIN] = (init_scv - result[SCV_FINAL_GINI]) * ratio;
         }
         else
-            elog(ERROR,"Bad split criteria : %d", (int)result[SCV_FINAL_SPLIT_CRITERION]);
+            elog(ERROR,"bad split criteria : %d", (int)result[SCV_FINAL_SPLIT_CRITERION]);
     }
     else
-        elog(ERROR,"Bad number of total element counts : %lld", (int64)scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]);
+        elog(ERROR,"bad number of total element counts : %lld", (int64)scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]);
 
     ArrayType* result_array =
         construct_array(
@@ -895,7 +885,7 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
             'd'
             );
     if (!result_array)
-        elog(ERROR, "Array construction failure.");
+        elog(ERROR, "array construction failure.");
 
     PG_RETURN_ARRAYTYPE_P(result_array);
 }

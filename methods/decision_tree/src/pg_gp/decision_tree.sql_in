@@ -62,7 +62,8 @@ of the following form:
     '<em>max_num_iter</em>',
     '<em>max_tree_depth</em>',
     '<em>min_percent_mode</em>',
-    '<em>min_percent_split</em>');
+    '<em>min_percent_split</em>'
+    '<em>verbosity</em>');
   </pre>
   This will create the MADLIB_SCHEMA.tree table storing an abstract object 
   (representing the model) used for further classification. Column names:
@@ -119,7 +120,7 @@ testdb=# select * from golf_data order by id;
 -# Train the decision tree model, e.g.:
 \verbatim
 sql> SELECT * FROM MADLIB.c45_train('infogain','golf_data','madlib.trained_tree_infogain',null,'f',
-    'temperature,humidity',null,'id','class', 100,3000,10,0.001,0.001);   
+    'temperature,humidity',null,'id','class', 100,3000,10,0.001,0.001,0);   
 CONTEXT:  PL/pgSQL function "c45_train" line 70 at assignment
  training_set_size | tree_nodes | tree_depth |    cost_time    | split_criterion 
 -------------------+------------+------------+-----------------+-----------------
@@ -155,8 +156,8 @@ testdb=# select madlib.c45_display('madlib.trained_tree_infogain');
              windy:  =  false : class( Play)   num_elements(3)  predict_prob(1)        
              windy:  =  true : class(do not play)   num_elements(2)  predict_prob(1)   
          outlook:  = sunny : class(do not play)   num_elements(5)  predict_prob(0.6)   
-             humidity:  <= 77.5 : class( Play)   num_elements(2)  predict_prob(1)      
-             humidity:  > 77.5 : class(do not play)   num_elements(3)  predict_prob(1) 
+             humidity:  <= 70 : class( Play)   num_elements(2)  predict_prob(1)      
+             humidity:  > 70 : class(do not play)   num_elements(3)  predict_prob(1) 
  
 (1 row)
 
@@ -255,8 +256,8 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__scv_aggr_sfunc
     feature_value       FLOAT8,
     class               FLOAT8,
     is_cont             boolean,
-    less                FLOAT8,
-    great               FLOAT8,
+    le                  FLOAT8,
+    gt                  FLOAT8,
     init_impurity_val   FLOAT8,
     true_total_count    FLOAT8
     )CASCADE;
@@ -267,27 +268,13 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__scv_aggr_sfunc
     feature_value       FLOAT8,
     class               FLOAT8,
     is_cont             boolean,
-    less                FLOAT8,
-    great               FLOAT8,
+    le                  FLOAT8,
+    gt                  FLOAT8,
     init_impurity_val   FLOAT8,
     true_total_count    FLOAT8
     ) 
 RETURNS FLOAT8[]  
 AS 'MODULE_PATHNAME', 'scv_aggr_sfunc'
-LANGUAGE C IMMUTABLE;
-
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__scv_aggr_prefunc
-    (
-    FLOAT8[],
-    FLOAT8[]
-    ) CASCADE;
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__scv_aggr_prefunc
-    (
-    arg1 FLOAT8[], 
-    arg2 FLOAT8[]
-    ) 
-RETURNS FLOAT8[] 
-AS 'MODULE_PATHNAME', 'scv_aggr_prefunc'
 LANGUAGE C IMMUTABLE;
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__scv_aggr_ffunc
@@ -300,7 +287,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__scv_aggr_ffunc
     ) 
 RETURNS FLOAT8[]
 AS 'MODULE_PATHNAME', 'scv_aggr_ffunc'
-LANGUAGE C IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE;
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__scv_aggr_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__scv_aggr_result AS
@@ -323,7 +310,7 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__scv_aggr
     FLOAT8,
     FLOAT8
     ) CASCADE;
-CREATE AGGREGATE MADLIB_SCHEMA.__scv_aggr
+CREATE ORDERED AGGREGATE MADLIB_SCHEMA.__scv_aggr
     (
     INT,
     FLOAT8,
@@ -336,10 +323,8 @@ CREATE AGGREGATE MADLIB_SCHEMA.__scv_aggr
     ) 
 (
   SFUNC=MADLIB_SCHEMA.__scv_aggr_sfunc,
-  m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.__scv_aggr_prefunc,')
   FINALFUNC=MADLIB_SCHEMA.__scv_aggr_ffunc,
   STYPE=FLOAT8[],
-  --BASETYPE=FLOAT8,
   initcond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
 
@@ -448,12 +433,91 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * generate the training instances for current leaf nodes
  * Parameters:
- *      input_table_name:    The name of the original table containing all
- *                           the records in training set.
- *                           uniquely identify one record.
+ *      cycle                   If the cycle is 1, then we will add the (), (assigned_nid), (class, assigned_nid) into the grouping sets
+ *      feature_stmt            The feature statement, used to construct the grouping set statement
+ *      bracket_stmt            The bracket statement, used to construct the grouping set statement
+ *      group_stmt              The group stmt statement, used to construct the grouping set statement
+ *      input_table_name:       The name of the original table containing all the records in training set.
+ *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
+ *                              Each record will be assigned to a node.
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_grouping_stmt
+    (
+    cycle                INT,
+    feature_stmt         TEXT,
+    bracket_stmt         TEXT,
+    group_stmt           TEXT,    
+    input_table_name     TEXT, 
+    selection_table_name TEXT
+    ) CASCADE;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_grouping_stmt
+    (
+    cycle                INT,
+    feature_stmt         TEXT,
+    bracket_stmt         TEXT,
+    group_stmt           TEXT,    
+    input_table_name     TEXT, 
+    selection_table_name TEXT
+    )
+RETURNS TEXT AS $$
+DECLARE
+    group_result_stmt   TEXT := '';
+BEGIN
+    -- Due to the limitation of grouping sets (currently, the number of grouping sets  
+    -- components can not exceed 70) we will use 'UNION ALL' to combine all the columns' 
+    -- result together. Once the limitation is removed, we should only use one 
+    -- SQL statement to get the grouping sets result. 
+    IF (cycle = 1) THEN
+        SELECT MADLIB_SCHEMA.__format
+            (
+            '(SELECT ((%, null%)::MADLIB_SCHEMA.__attr_info).*, class, COUNT(*), assigned_nid
+            FROM 
+                (SELECT t1.*, assigned_nid FROM % t1, % t2 WHERE t1.id = t2.id) s
+            GROUP BY GROUPING SETS((), assigned_nid, (class, assigned_nid),%)
+            HAVING assigned_nid IS NOT NULL)',
+            ARRAY[
+            feature_stmt,
+            bracket_stmt,
+            input_table_name,
+            selection_table_name,
+            group_stmt
+            ]
+        ) INTO group_result_stmt;    
+    ELSE
+        SELECT MADLIB_SCHEMA.__format
+            (
+            ' UNION ALL (SELECT ((%, null%)::MADLIB_SCHEMA.__attr_info).*, class, COUNT(*), assigned_nid
+            FROM 
+                (SELECT t1.*, assigned_nid FROM % t1, % t2 WHERE t1.id = t2.id) s
+            GROUP BY GROUPING SETS(%)
+            HAVING assigned_nid IS NOT NULL)',
+            ARRAY[
+            feature_stmt,
+            bracket_stmt,
+            input_table_name,
+            selection_table_name,
+            group_stmt
+            ]
+        ) INTO group_result_stmt;    
+    END IF;        
+    
+    RETURN group_result_stmt;     
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * generate the training instances for current leaf nodes
+ * Parameters:
+ *      input_table_name:       The name of the original table containing all the records in training set.
+ *      metatable_name:         Contains the relevant information of the input table
+ *      instance_table_name:    The output table name, which contains all the training set for current leaf nodes.
+ *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
+ *                              Each record will be assigned to a node.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance
     (
@@ -471,13 +535,18 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance
     )
 RETURNS void AS $$
 DECLARE
-    curstmt TEXT := '';
-    result_rec RECORD;
-    feature_stmt TEXT := '';
-    group_stmt TEXT := 'GROUP BY GROUPING SETS((), selection, (class, selection),';
-    bracket_stmt TEXT := '';
-    class_table_name TEXT := '';
-    group_table_name TEXT := 'training_instance_aux';
+    curstmt             TEXT := '';
+    result_rec          RECORD;
+    feature_stmt        TEXT := '';
+    bracket_stmt        TEXT := '';
+    group_stmt          TEXT := '';
+    group_result_stmt   TEXT := '';
+    class_table_name    TEXT := '';
+    group_table_name    TEXT := 'training_instance_aux';
+    max_num_col_group   INT  := 30;
+    index               INT  := 1;
+    cycle_end           INT  := 1;
+    
 BEGIN
     EXECUTE 'TRUNCATE ' || instance_table_name;
     EXECUTE 'TRUNCATE ' || group_table_name;
@@ -503,6 +572,7 @@ BEGIN
         INTO curstmt;
     
     FOR result_rec IN EXECUTE (curstmt) LOOP
+        
         feature_stmt = feature_stmt || 
                         'MADLIB_SCHEMA.__tfc((' || 
                         result_rec.id || 
@@ -512,40 +582,64 @@ BEGIN
                         MADLIB_SCHEMA.__to_char(result_rec.is_cont) ||
                         ''')::MADLIB_SCHEMA.__attr_info,';
         
-        group_stmt =  group_stmt || 
+        group_stmt = group_stmt || 
                     '(' ||
                     result_rec.column_name || 
-                    ', selection)' || 
+                    ', assigned_nid)' || 
                     ',(' || 
                     result_rec.column_name || 
-                    ',class, selection),';
+                    ',class, assigned_nid),';
                     
         bracket_stmt = bracket_stmt || ')';
+        
+        cycle_end = index % max_num_col_group;
+        IF (cycle_end = 0) THEN
+            group_result_stmt = 
+                group_result_stmt || 
+                MADLIB_SCHEMA.__generate_grouping_stmt
+                    (
+                    (index / max_num_col_group)::INT4,
+                    rtrim(feature_stmt, ','),
+                    bracket_stmt,
+                    rtrim(group_stmt, ','),                 
+                    input_table_name,
+                    selection_table_name
+                    );
+                    
+            feature_stmt = '';
+            bracket_stmt = '';
+            group_stmt   = '';
+            
+        END IF;
+        
+        index = index + 1;
     END LOOP;
 
-    SELECT MADLIB_SCHEMA.__format
-        (
-            'INSERT INTO % 
-                SELECT ((%, null%)::MADLIB_SCHEMA.__attr_info).*, class, COUNT(*), selection
-                FROM 
-                    (SELECT t1.*, selection FROM % t1, % t2 WHERE t1.id = t2.id) s
-                %)
-                HAVING selection IS NOT NULL',
-            ARRAY[
-            group_table_name,
+    group_result_stmt = 
+        group_result_stmt || 
+        MADLIB_SCHEMA.__generate_grouping_stmt
+            (
+            (index / max_num_col_group)::INT4 + 1,
             rtrim(feature_stmt, ','),
             bracket_stmt,
+            rtrim(group_stmt, ','),                 
             input_table_name,
-            selection_table_name,
-            rtrim(group_stmt, ',')
-            ]
+            selection_table_name
+            );      
+    
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'INSERT INTO % %',
+            group_table_name,
+            group_result_stmt
+            
         ) INTO curstmt;
         
     EXECUTE curstmt;
     
     SELECT MADLIB_SCHEMA.__format
         (
-            'INSERT INTO %(fid, fval, class, is_cont, split_value, less, great, selection)  
+            'INSERT INTO %(fid, fval, class, is_cont, split_value, le, gt, assigned_nid)  
             SELECT fid, fval, class, is_cont,
                 CASE WHEN (is_cont) THEN 
                         fval::float8 
@@ -555,29 +649,29 @@ BEGIN
                 CASE WHEN (is_cont) THEN 
                         sum(count) OVER 
                             (
-                            PARTITION BY selection,class,fid ORDER BY fval 
+                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
                             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                             ) 
                         ELSE 
                             count 
-                        END AS less, 
+                        END AS le, 
                 CASE WHEN (is_cont) THEN 
                         sum(count) OVER
                             ( 
-                            PARTITION BY selection,class,fid ORDER BY fval 
+                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
                             ROWS BETWEEN 1 FOLLOWING AND  UNBOUNDED FOLLOWING) 
                         ELSE 
                             NULL 
-                        END AS great,
-                selection
+                        END AS gt,
+                assigned_nid
             FROM (
-                SELECT DISTINCT n1.fid, n1.fval, n1.is_cont, n1.class, n2.count, n1.selection 
+                SELECT DISTINCT n1.fid, n1.fval, n1.is_cont, n1.class, n2.count, n1.assigned_nid 
                 FROM 
                     (
-                    SELECT fid, fval, is_cont, key as class, count, selection 
+                    SELECT fid, fval, is_cont, key as class, count, assigned_nid 
                     FROM 
                         (
-                        SELECT DISTINCT fval, count, fid, is_cont, selection 
+                        SELECT DISTINCT fval, count, fid, is_cont, assigned_nid 
                         FROM %
                         ) AS t1
                     CROSS JOIN
@@ -587,7 +681,7 @@ BEGIN
                 ) AS n1 
                 LEFT JOIN % n2   
                 ON coalesce(n2.class,0) = coalesce(n1.class,0) AND
-                    coalesce(n2.selection,0) = coalesce(n1.selection,0) AND
+                    coalesce(n2.assigned_nid,0) = coalesce(n1.assigned_nid,0) AND
                     coalesce(n2.fid,0)= coalesce (n1.fid,0) AND
                     coalesce(n2.fval,0) = coalesce(n1.fval,0)  
             ) t;',
@@ -611,8 +705,8 @@ CREATE TYPE MADLIB_SCHEMA.__rep_type AS
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__rep_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__rep_result AS
     (
-    maxClass  INT,
-    isReplace INT
+    maxclass  INT,
+    isreplace INT
     );
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__rep_aggr_class_count_sfunc
@@ -657,7 +751,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__rep_aggr_class_count_ffunc
     ) 
 RETURNS BIGINT[]
 AS 'MODULE_PATHNAME', 'rep_aggr_class_count_ffunc'
-LANGUAGE C IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE;
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__rep_aggr_class_count_wrapper
     (
@@ -672,11 +766,11 @@ DECLARE
     result MADLIB_SCHEMA.__rep_result;
 BEGIN
     IF(internal_result IS NOT NULL) THEN
-       result.maxClass = internal_result[1];
-       result.isReplace = internal_result[2];        
+       result.maxclass = internal_result[1];
+       result.isreplace = internal_result[2];        
     ELSE
-       result.maxClass = -1;
-       result.isReplace = -1;
+       result.maxclass = -1;
+       result.isreplace = -1;
     END IF;
     RETURN result;
 END
@@ -742,7 +836,7 @@ CREATE TYPE MADLIB_SCHEMA.__best_split_result AS
  *                          a numeric value equal to the count of 
  *                          distinct features for each feature.
  *  distinct_classes:       Total number of different classes.
- *  selection:              It specifies which part of records should 
+ *  assigned_nid:              It specifies which part of records should 
  *                          be used to calculate the best split.
  *  table_name:             The name of the table containing the training
  *                          set.
@@ -802,17 +896,17 @@ BEGIN
 	SELECT MADLIB_SCHEMA.__format
         (
         'INSERT INTO info_impurity 
-        SELECT selection, 
+        SELECT assigned_nid, 
             (MADLIB_SCHEMA.__scv_aggr_wrapper(
                     MADLIB_SCHEMA.__scv_aggr
-                        (%,fval,class,is_cont,less,great, 0, 0)
+                        (%, fval, class, is_cont, le, gt, 0, 0
+                         order by fval,class desc)
                     )::MADLIB_SCHEMA.__scv_aggr_result).* 
         FROM (
             SELECT * FROM % 
-            WHERE fid IS NULL AND selection IS NOT NULL
-            ORDER BY selection,fid,fval,split_value,class desc
+            WHERE fid IS NULL AND assigned_nid IS NOT NULL
             ) y 
-        GROUP BY selection,fid,split_value',
+        GROUP BY assigned_nid, fid, split_value',
         MADLIB_SCHEMA.__to_char(sp_criterion),
         table_name
         )
@@ -822,25 +916,25 @@ BEGIN
         
 	SELECT MADLIB_SCHEMA.__format
         (
-        'SELECT s1.selection, 
+        'SELECT s1.assigned_nid, 
             MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s2.class_prob, s2.class_id, s1.total_size]::FLOAT8[]) as info
         FROM (
-            SELECT selection,fid,split_value,
+            SELECT assigned_nid,fid,split_value,
                 (MADLIB_SCHEMA.__scv_aggr_wrapper(
                     MADLIB_SCHEMA.__scv_aggr
-                        (%,fval,class,is_cont,less,great, impurity, total_size)
+                        (%,fval,class,is_cont,le,gt, impurity, total_size
+						 order by fval,class desc)
                     )::MADLIB_SCHEMA.__scv_aggr_result).*
             FROM (
                 SELECT t1.*, t2.impurity, t2.total_size FROM % t1, info_impurity t2
-                WHERE t1.selection = t2.selection AND 
-                        (t1.fid IS NOT NULL) AND (t1.selection IS NOT NULL AND t2.selection IS NOT NULL)
-                ORDER BY t1.selection, t1.fid, t1.fval, t1.split_value, t1.class desc
+                WHERE t1.assigned_nid = t2.assigned_nid AND 
+                        (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
                 ) y 
-            GROUP BY selection,fid,split_value 
+            GROUP BY assigned_nid,fid,split_value 
             ) s1, info_impurity s2
-        WHERE s1.selection = s2.selection
-        GROUP BY s1.selection
-        ORDER BY s1.selection;',
+        WHERE s1.assigned_nid = s2.assigned_nid
+        GROUP BY s1.assigned_nid
+        ORDER BY s1.assigned_nid;',
         MADLIB_SCHEMA.__to_char(sp_criterion),
         table_name
         )
@@ -849,7 +943,7 @@ BEGIN
     -- s1.info_impurity[1], s1.fid[2], s1.split_value[3], 
     -- s2.class_prob[4], s2.class_id[5], s1.total_size[6]
     FOR result_rec IN EXECUTE (curstmt) LOOP
-        result.node_id = result_rec.selection;
+        result.node_id = result_rec.assigned_nid;
         best_answer = result_rec.info;
         result.feature = best_answer[2];
         result.maxclass = best_answer[5];
@@ -859,13 +953,13 @@ BEGIN
         result.distinct_features = MADLIB_SCHEMA.__distinct_feature_value(feature_table_name, result.feature);
         
         IF (result.probability > 0.999999999 
-            OR result.infogain = 0 ) THEN
+            OR result.infogain <= 0 ) THEN
             result.live = 0;
         ELSE
             result.live = 1;
         END IF;
         
-        result.ebp_coeff = MADLIB_SCHEMA.__ebp_calc_coeff(result.total_size, result.probability, confidence_level); 
+        result.ebp_coeff = MADLIB_SCHEMA.__ebp_calc_errors(result.total_size, result.probability, confidence_level); 
         
         result.split_value = best_answer[3];
         result.is_cont_feature = (result.split_value IS NOT NULL);
@@ -944,50 +1038,50 @@ BEGIN
     --                  record.
     --      class:      The class of that record.
     --      weight:     The count of such a record.
-    --      selection:  This field is not used while removing redundant records.
+    --      assigned_nid:  This field is not used while removing redundant records.
     --                  It is used to train a decision tree.
 
 	DROP TABLE IF EXISTS training_instance CASCADE;
 	CREATE TEMP TABLE training_instance
 	(
-    	fid         INTEGER,
-    	fval        FLOAT8,
-    	class       INTEGER,
-    	is_cont     BOOLEAN,
-    	split_value FLOAT8,
-    	less        BIGINT,
-    	great       BIGINT,
-    	selection   BIGINT
+    	fid            INTEGER,
+    	fval           FLOAT8,
+    	class          INTEGER,
+    	is_cont        BOOLEAN,
+    	split_value    FLOAT8,
+    	le             BIGINT,
+    	gt             BIGINT,
+    	assigned_nid   BIGINT
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (fid, fval)');
 	
     DROP TABLE IF EXISTS training_instance_aux CASCADE;
     CREATE TEMP TABLE training_instance_aux
     (
-        fid         INTEGER,
-        fval        FLOAT8,
-        is_cont     BOOLEAN,
-        class       INTEGER,
-        count       INTEGER,
-        selection   BIGINT
+        fid             INTEGER,
+        fval            FLOAT8,
+        is_cont         BOOLEAN,
+        class           INTEGER,
+        count           INTEGER,
+        assigned_nid    BIGINT
     ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (fid, fval)');
 
     CREATE TEMP TABLE instance_selection
     (
-        id SERIAL,
-        selection BIGINT
+        id              SERIAL,
+        assigned_nid    BIGINT
     )m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
 
-    CREATE INDEX instance_selection_selection_index ON instance_selection (selection);
+    CREATE INDEX instance_selection_selection_index ON instance_selection (assigned_nid);
     
     CREATE TEMP TABLE info_impurity
     (
-        selection            BIGINT,
+        assigned_nid         BIGINT,
         impurity             FLOAT8,
         class_prob           FLOAT8,
         class_id             INT,
         total_size           FLOAT8,
         is_cont              BOOLEAN
-    )m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (selection)');
+    )m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (assigned_nid)');
     
     -- The table below stores the decision tree information just constructed.
     -- It is an internal table, which contains some redundant nodes. 
@@ -1107,7 +1201,7 @@ RETURNS void AS $$
 DECLARE
     num_parent_ids INTEGER;
     classification_result TEXT := '_classified_temp';
-    encode_table_name TEXT;
+    encoded_table_name TEXT;
     metatable_name TEXT := '';
     curstmt TEXT;
     id_col_name  TEXT := 'id';
@@ -1124,17 +1218,20 @@ BEGIN
         classification_result, 
         't',
         'f'
-    ) INTO encode_table_name;
+    ) INTO encoded_table_name;
                             
     LOOP
         DROP TABLE IF EXISTS selected_parent_ids_rep;
-        CREATE TEMP TABLE selected_parent_ids_rep(parent_id BIGINT) 
-            m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (parent_id)');
+        CREATE TEMP TABLE selected_parent_ids_rep
+        (
+            parent_id BIGINT,
+            maxclass  INT
+        ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (parent_id)');
        
         SELECT MADLIB_SCHEMA.__format
             (
                 'INSERT INTO selected_parent_ids_rep 
-                SELECT parent_id 
+                SELECT parent_id, (t.g).maxclass as maxclass 
                 FROM 
                 (
                     SELECT parent_id, 
@@ -1159,7 +1256,7 @@ BEGIN
                       class_col_name,
                       MADLIB_SCHEMA.__to_char(max_num_classes),
                       classification_result,
-                      encode_table_name,
+                      encoded_table_name,
                       id_col_name,
                       tree_table_name,
                       tree_table_name
@@ -1177,7 +1274,7 @@ BEGIN
         SELECT MADLIB_SCHEMA.__format
             (
                 'UPDATE % m set class = t.maxclass, parent_id = t.parent_id,leaf_id = t.id  FROM % t
-                    WHERE t.id IN (SELECT parent_id FROM selected_parent_ids_rep) and
+                    WHERE t.id IN (SELECT parent_id FROM selected_parent_ids_rep) AND
                     m.parent_id=t.id',
                 classification_result,
                 tree_table_name
@@ -1196,7 +1293,9 @@ BEGIN
 
         SELECT MADLIB_SCHEMA.__format
             (
-                'UPDATE % set jump = NULL WHERE id IN (SELECT parent_id FROM selected_parent_ids_rep)',
+                'UPDATE % t1 SET jump = NULL, maxclass = t2.maxclass 
+                FROM selected_parent_ids_rep t2
+                WHERE t1.id = t2.parent_id;',
                 tree_table_name
             )
             INTO curstmt;
@@ -1205,25 +1304,25 @@ BEGIN
         
     END LOOP;
     
-    EXECUTE 'DROP TABLE IF EXISTS ' || encode_table_name || ' CASCADE;';
+    EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ' CASCADE;';
 END
 $$ LANGUAGE PLPGSQL;
 
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__ebp_calc_coeff
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__ebp_calc_errors
     (
     total            FLOAT8,
     prob             FLOAT8,
     confidence_level FLOAT8
     );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ebp_calc_coeff
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ebp_calc_errors
     (
     total               FLOAT8,
     prob                FLOAT8,
     confidence_level    FLOAT8
     ) RETURNS FLOAT8 
-AS 'MODULE_PATHNAME', 'ebp_calc_coeff'
-LANGUAGE C IMMUTABLE;
+AS 'MODULE_PATHNAME', 'ebp_calc_errors'
+LANGUAGE C STRICT IMMUTABLE;
 
 /*
  * Prune the trained tree with " Error based Pruning" algorithm
@@ -1404,31 +1503,31 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__train_tree
     ) 
 RETURNS MADLIB_SCHEMA.c45_train_result AS $$
 DECLARE
-    feature_dimension INT;
-    num_live_nodes INT;
-    selection INT;
-    location INT[];
-    temp_location INT[];
-    num_classes INT;
-    max_iter INT = max_num_iter;
-    max_depth INT := max_tree_depth;
-    answer MADLIB_SCHEMA.__best_split_result;
-    location_size INT;
-    max_id INT;
-    exec_begin TIMESTAMP;
-    find_best_time INTERVAL;
-    begin_find_best_time TIMESTAMP;
-    data_transfer_time INTERVAL;
-    begin_data_transfer TIMESTAMP;
-    total_size FLOAT;
-    sp_crit   INT := 1;
-    curstmt TEXT := '';
-    grow_tree INT := 0;
-    ret MADLIB_SCHEMA.c45_train_result;
-    selection_visit BOOLEAN[];
-    selection_index INT := 1;
-    select_max_id INT := 0;
-    best_time_cmp BOOLEAN := 'f';
+    feature_dimension           INT;
+    num_live_nodes              INT;
+    assigned_nid                INT;
+    location                    INT[];
+    temp_location               INT[];
+    num_classes                 INT;
+    max_iter                    INT := max_num_iter;
+    max_depth                   INT := max_tree_depth;
+    answer                      MADLIB_SCHEMA.__best_split_result;
+    location_size               INT;
+    max_id                      INT;
+    exec_begin                  TIMESTAMP;
+    find_best_time              INTERVAL;
+    begin_find_best_time        TIMESTAMP;
+    data_transfer_time          INTERVAL;
+    begin_data_transfer         TIMESTAMP;
+    total_size                  FLOAT;
+    sp_crit                     INT := 1;
+    curstmt                     TEXT := '';
+    grow_tree                   INT := 0;
+    ret                         MADLIB_SCHEMA.c45_train_result;
+    selection_visit             BOOLEAN[];
+    selection_index             INT := 1;
+    select_max_id               INT := 0;
+    best_time_cmp               BOOLEAN := 'f';
 BEGIN   
     exec_begin = clock_timestamp();
     find_best_time = exec_begin - exec_begin;
@@ -1465,8 +1564,8 @@ BEGIN
         RAISE INFO 'NUMBER OF CLASSES IN THE TRAINING SET %', num_classes;
     END IF;
     
-    IF(num_classes < 2 OR num_classes > (1024 * 1024 * 8))THEN
-        RAISE EXCEPTION 'The number of classes must be in range 2 to 8million!';
+    IF(num_classes < 2 OR num_classes > 8000000)THEN
+        RAISE EXCEPTION 'The number of classes must be in range 2 to 8,000,000!';
     END IF;
     
     INSERT INTO tree_internal (tree_location, feature, probability, maxclass, 
@@ -1493,10 +1592,10 @@ BEGIN
             RAISE INFO 'current level: %', max_tree_depth - max_depth;
         END IF;
 
-        SELECT id FROM tree_internal WHERE live = 1 ORDER BY id LIMIT 1 INTO selection;
+        SELECT id FROM tree_internal WHERE live = 1 ORDER BY id LIMIT 1 INTO assigned_nid;
         SELECT id FROM tree_internal WHERE live = 1 ORDER BY id DESC LIMIT 1 INTO max_id;
         
-        FOR selection_index IN 1..(max_id - selection + 1) LOOP
+        FOR selection_index IN 1..(max_id - assigned_nid + 1) LOOP
             selection_visit[selection_index] = 'f';
         END LOOP;
         
@@ -1520,8 +1619,8 @@ BEGIN
                         (
                         feature_dimension, 
                         num_classes, 
-                        selection, 
-                        max_id - selection + 1, 
+                        assigned_nid, 
+                        max_id - assigned_nid + 1, 
                         'training_instance',
                         confidence_level,
                         training_table_meta,
@@ -1535,7 +1634,7 @@ BEGIN
             END IF;
             
             -- mark this node id was visited
-            selection_visit[answer.node_id - selection + 1] = 't';
+            selection_visit[answer.node_id - assigned_nid + 1] = 't';
             
             IF (answer.is_cont_feature) THEN
                 IF(verbosity > 0) THEN
@@ -1601,15 +1700,19 @@ BEGIN
                     temp_location[array_upper(temp_location,1)+1] = i;
                     EXECUTE 'INSERT INTO tree_internal (tree_location, feature, probability, 
                         maxclass, split_gain, live, parent_id) 
-                        VALUES(ARRAY['||array_to_string(temp_location, ',')||'], 0, 1, 1, 1, 1, '|| answer.node_id ||');';
+                        VALUES(ARRAY['                          || 
+                            array_to_string(temp_location, ',') ||
+                            '], 0, 1, 1, 1, 1, '                || 
+                            answer.node_id                      ||
+                          ');';
                 END LOOP;
                 
                 SELECT MADLIB_SCHEMA.__format
                     (
                     'UPDATE instance_selection s
-                    SET selection = % + %
+                    SET assigned_nid = % + %
                     FROM % t
-                    WHERE selection = % and t.id = s.id;',
+                    WHERE assigned_nid = % and t.id = s.id;',
                     ARRAY[
                         MADLIB_SCHEMA.__get_feature_name(answer.feature,training_table_meta),
                         MADLIB_SCHEMA.__to_char(select_max_id),
@@ -1632,14 +1735,18 @@ BEGIN
                     temp_location[array_upper(temp_location,1)+1] = i;
                     EXECUTE 'INSERT INTO tree_internal (tree_location, feature, probability, 
                         maxclass, split_gain, live, parent_id) 
-                        VALUES(ARRAY['||array_to_string(temp_location, ',')||'], 0, 1, 1, 1, 1, '|| answer.node_id ||');';
+                        VALUES(ARRAY['                          ||
+                            array_to_string(temp_location, ',') ||
+                            '], 0, 1, 1, 1, 1, '                || 
+                            answer.node_id                      ||
+                         ');';
                     
                 END LOOP;
 
                 SELECT MADLIB_SCHEMA.__format
                     (
                     'UPDATE instance_selection s
-                    SET selection = (
+                    SET assigned_nid = (
                                     CASE WHEN (% < %) THEN
                                         2
                                     ELSE
@@ -1648,7 +1755,7 @@ BEGIN
                                     )
                                     + %
                     FROM % t
-                    WHERE selection = % and t.id = s.id;',
+                    WHERE assigned_nid = % and t.id = s.id;',
                     ARRAY[
                         MADLIB_SCHEMA.__to_char(answer.split_value),
                         MADLIB_SCHEMA.__get_feature_name(answer.feature, training_table_meta),
@@ -1673,8 +1780,8 @@ BEGIN
         END LOOP;
         
         -- Remove the nodes which contains no data
-        FOR selection_index IN selection..max_id  LOOP
-            IF (NOT selection_visit[selection_index - selection + 1]) THEN
+        FOR selection_index IN assigned_nid..max_id  LOOP
+            IF (NOT selection_visit[selection_index - assigned_nid + 1]) THEN
                 --RAISE NOTICE '%, %', 'unneccesary node!', selection_index;
                 EXECUTE 'DELETE FROM tree_internal WHERE id = '|| selection_index ||';';
             END IF;
@@ -1810,7 +1917,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     id_col_name                 TEXT, 
     class_col_name              TEXT, 
     confidence_level            FLOAT,
-    how2handle_missing_value   TEXT, 
+    how2handle_missing_value    TEXT, 
     max_num_iter                INT, 
     max_tree_depth              INT, 
     min_percent_mode            FLOAT,
@@ -1819,15 +1926,15 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     ) 
 RETURNS MADLIB_SCHEMA.c45_train_result AS $$
 DECLARE
-    cont_feature_col_names TEXT[];
-    feature_name_array TEXT[];
-    exec_begin TIMESTAMP;
-    tree_schema_name TEXT;
-    tree_table_name TEXT;
-    training_encoded_table_name TEXT;
-    training_metatable_name TEXT;
-    h2hmv_routine_id INT := 1;  
-    ret MADLIB_SCHEMA.c45_train_result;
+    cont_feature_col_names          TEXT[];
+    feature_name_array              TEXT[];
+    exec_begin                      TIMESTAMP;
+    tree_schema_name                TEXT;
+    tree_table_name                 TEXT;
+    training_encoded_table_name     TEXT;
+    training_metatable_name         TEXT;
+    h2hmv_routine_id                INT := 1;  
+    ret                             MADLIB_SCHEMA.c45_train_result;
 BEGIN   
     exec_begin = clock_timestamp();
 
@@ -1907,7 +2014,8 @@ BEGIN
                 null,
                 null,
                 validation_table_name,
-                how2handle_missing_value
+                how2handle_missing_value,
+                split_criterion
                 );
 
     cont_feature_col_names = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
@@ -1930,33 +2038,18 @@ BEGIN
         RAISE INFO 'Before encoding: %', clock_timestamp() - exec_begin;
     END IF; 
         
-    IF ( feature_col_names IS NOT NULL ) THEN
-        PERFORM MADLIB_SCHEMA.__encode_tabular_table
-            (
-            training_table_name,
-            id_col_name,
-            feature_col_names,
-            class_col_name,
-            cont_feature_col_names,
-            training_encoded_table_name,
-            training_metatable_name,
-            h2hmv_routine_id,
-            't'
-            );
-    ELSE
-        PERFORM MADLIB_SCHEMA.__encode_tabular_table
-            (
-            training_table_name,
-            id_col_name,
-            class_col_name,
-            cont_feature_col_names,
-            training_encoded_table_name,
-            training_metatable_name,
-            h2hmv_routine_id,
-            't'
-            );
-    END IF;
-
+    PERFORM MADLIB_SCHEMA.__encode_tabular_table
+        (
+        training_table_name,
+        lower(id_col_name),
+        MADLIB_SCHEMA.__csvstr_to_array(feature_col_names),
+        lower(class_col_name),
+        cont_feature_col_names,
+        training_encoded_table_name,
+        training_metatable_name,
+        h2hmv_routine_id,
+        't'
+        );
     
     PERFORM  MADLIB_SCHEMA.__set_encode_and_metatable_name
                 ( 
@@ -2034,7 +2127,7 @@ BEGIN
         'id',
         'class',
         25,
-        'ignore',
+        'explicit',
         2000,
         10,
         0.001,
@@ -2297,7 +2390,7 @@ DECLARE
     create_text             TEXT := '';
     h2hmv_routine_id        INT := 0;
     curstmt                 TEXT := '';
-    encode_table_name       TEXT := classification_table_name || '_encoded_temp';
+    encoded_table_name      TEXT := classification_table_name || '_encoded_temp';
     table_names             TEXT[] = '{classified_instance_ping,classified_instance_pong}';
 BEGIN
     time_stamp = clock_timestamp();
@@ -2330,7 +2423,7 @@ BEGIN
     PERFORM MADLIB_SCHEMA.__encode_tabular_table
         (
             classification_table_name, 
-            encode_table_name, 
+            encoded_table_name, 
             metatable_name, 
             h2hmv_routine_id,
             't'
@@ -2376,11 +2469,11 @@ BEGIN
         prob        FLOAT,
         parent_id   INT,
         leaf_id     INT
-    ) m4_ifdef(\`GREENPLUM\',\`DISTRIBUTED BY (id)\');';
+    )m4_ifdef(\`GREENPLUM\',\`DISTRIBUTED BY (id)\');';
 
 
     EXECUTE 'INSERT INTO classified_instance_ping (id, jump, class, prob) SELECT '
-        ||id_col_name||', 1, 0, 0 FROM ' || encode_table_name || ';';  
+        ||id_col_name||', 1, 0, 0 FROM ' || encoded_table_name || ';';  
 
     
     EXECUTE 'SELECT max(array_upper(tree_location,1)) FROM '||tree_table_name||';'  INTO max_level;
@@ -2446,7 +2539,7 @@ BEGIN
                 table_names[table_pick],
                 MADLIB_SCHEMA.__get_feature_name_list(metatable_name),
                 table_names[(table_pick) % 2 + 1],
-                encode_table_name,
+                encoded_table_name,
                 tree_table_name,
                 MADLIB_SCHEMA.__to_char(curr_level)
             ]
@@ -2465,7 +2558,7 @@ BEGIN
         RAISE INFO 'final classification time:%', clock_timestamp() - time_stamp;
     END IF;
     
-    RETURN encode_table_name;
+    RETURN encoded_table_name;
 END
 $$ LANGUAGE PLPGSQL;
    
@@ -2478,16 +2571,10 @@ $$ LANGUAGE PLPGSQL;
  * @param result_table_name Name of result table
  * @param verbosity If set to 't' will use verbose mode
  *
- * @return Table MADLIB_SCHEMA.classified_points:
+ * @return Table columns:
  *  - <tt>id INT</tt> - Point id.
- *  - <tt>feature MADLIB_SCHEMA.SVEC</tt> - Point feature vector. 
- *  - <tt>jump INT</tt> - Intermediate value used to distinguish leaf nodes.
  *  - <tt>class INT</tt> - Class prediction. 
  *  - <tt>prob FLOAT</tt> - Probability of the predicted class.
- *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source and column names have to be passed as strings (due to
- *       limitations of the SQL syntax).
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
@@ -2506,7 +2593,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_classify
     ) 
 RETURNS MADLIB_SCHEMA.c45_classify_result AS $$
 DECLARE
-    encode_table_name TEXT := '';
+    encoded_table_name TEXT := '';
     begin_time  TIMESTAMP;
     ret MADLIB_SCHEMA.c45_classify_result;
 BEGIN
@@ -2519,12 +2606,12 @@ BEGIN
         result_table_name, 
         'f',
         verbosity
-        )  INTO encode_table_name;
+        )  INTO encoded_table_name;
     
     EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN jump;';
     EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN parent_id;';
     EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN leaf_id;';
-    EXECUTE 'DROP TABLE IF EXISTS ' || encode_table_name || ';';
+    EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ';';
     EXECUTE 'SELECT COUNT(*) FROM ' ||classification_table_name||';' INTO ret.input_set_size;
     
     ret.cost_time = clock_timestamp() - begin_time;
@@ -2542,14 +2629,8 @@ $$ LANGUAGE PLPGSQL;
  *
  * @return Table MADLIB_SCHEMA.classified_points:
  *  - <tt>id INT</tt> - Point id.
- *  - <tt>feature MADLIB_SCHEMA.SVEC</tt> - Point feature vector. 
- *  - <tt>jump INT</tt> - Intermediate value used to distinguish leaf nodes.
  *  - <tt>class INT</tt> - Class prediction. 
  *  - <tt>prob FLOAT</tt> - Probability of the predicted class.
- *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source and column names have to be passed as strings (due to
- *       limitations of the SQL syntax).   
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
@@ -2601,17 +2682,13 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_score
     ) 
 RETURNS FLOAT AS $$
 DECLARE
-    
-    result_table_name TEXT = 'c45_score_table_temp';
-    
-    id_col_name TEXT := 'id';
-    class_col_name TEXT := 'class';
-    curstmt TEXT := '';
-    
-    num_of_row FLOAT := 0.0;
-    mis_of_row FLOAT := 0.0;
-    
-    encode_table_name TEXT := '';
+    result_table_name   TEXT = 'c45_score_table_temp';
+    id_col_name         TEXT := 'id';
+    class_col_name      TEXT := 'class';
+    curstmt             TEXT := '';
+    num_of_row          FLOAT := 0.0;
+    mis_of_row          FLOAT := 0.0;
+    encoded_table_name  TEXT := '';
 BEGIN
     
     result_table_name = MADLIB_SCHEMA.__get_schema_name(tree_table_name) || 
@@ -2626,7 +2703,7 @@ BEGIN
         't',
         verbosity
         ) 
-    INTO encode_table_name;
+    INTO encoded_table_name;
     
 
     SELECT MADLIB_SCHEMA.__format
@@ -2641,7 +2718,7 @@ BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
         'SELECT count(b.id) FROM % a, % b WHERE a.%=b.id and a.%<>b.class',
-        encode_table_name,
+        encoded_table_name,
         result_table_name,
         id_col_name,
         class_col_name
@@ -2650,7 +2727,7 @@ BEGIN
      
     EXECUTE curstmt INTO mis_of_row;
      
-    EXECUTE 'DROP TABLE IF EXISTS ' || encode_table_name || ';';
+    EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ';';
     
     RETURN (num_of_row - mis_of_row) / num_of_row;
     
