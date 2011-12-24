@@ -76,8 +76,13 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
     float8 coeff 		= 0;
     int i 				= 0;
 
+
     if (!is_float_zero(1 - conf_level))
     {
+		if (!(conf_level >= MIN_CONFIDENCE_LEVEL &&
+              conf_level <= MAX_CONFIDENCE_LEVEL))
+       		elog(ERROR,"invalid conf_level: %lf",conf_level);
+
 		/* calculate the coeff */
 		while (conf_level > CONFIDENCE_LEVEL[i]) i++;
 
@@ -122,6 +127,7 @@ float ebp_calc_errors_internal
 	
     if (num_errors < 0)
         elog(ERROR, "num_errors is less than zero");
+
 	if (!(conf_level >= MIN_CONFIDENCE_LEVEL && 
                 conf_level <= MAX_CONFIDENCE_LEVEL))
         elog(ERROR,"invalid conf_level: %lf",conf_level);
@@ -239,20 +245,20 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
             class_count_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
         
         if (!class_count_array)
-        	elog(ERROR, "invalid class count array.");
+        	elog(ERROR, "invalid class count array");
 
         array_dim           = ARR_NDIM(class_count_array);
 
         if (array_dim != 1)
         {
-        	elog(ERROR, "array_dim is not 1.");
+        	elog(ERROR, "array_dim is not 1");
         }
         p_array_dim         = ARR_DIMS(class_count_array);
         array_length        = ArrayGetNItems(array_dim,p_array_dim);
         class_count_data    = (int64 *)ARR_DATA_PTR(class_count_array);
 
         if (array_length != max_num_of_classes + 1)
-        	elog(ERROR, "bad class count data.");
+        	elog(ERROR, "bad class count data");
     }
 
     /*
@@ -279,7 +285,7 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
                 );
 
         if(!class_count_array)
-            elog(ERROR, "array construction failure.");   
+            elog(ERROR, "array construction failure");
     }
     PG_RETURN_ARRAYTYPE_P(class_count_array);
 }
@@ -310,9 +316,7 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
     int64 *class_count_data2        = NULL;
 
     if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
-    {
         PG_RETURN_NULL();
-    }
     else
     if (PG_ARGISNULL(1) || PG_ARGISNULL(0))
     {
@@ -330,12 +334,12 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
             class_count_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
         
         if (!class_count_array)
-        	elog(ERROR, "invalid class count array.");
+        	elog(ERROR, "invalid class count array");
 
         array_dim           = ARR_NDIM(class_count_array);
 
         if (array_dim != 1)
-        	elog(ERROR, "array_dim is not 1.");
+        	elog(ERROR, "array_dim is not 1");
 
         p_array_dim             = ARR_DIMS(class_count_array);
         array_length            = ArrayGetNItems(array_dim,p_array_dim);
@@ -344,14 +348,14 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
         class_count_array2      = PG_GETARG_ARRAYTYPE_P(1);
         array_dim2              = ARR_NDIM(class_count_array2);
         if (array_dim2 != 1)
-        	elog(ERROR, "array_dim2 is not 1.");
+        	elog(ERROR, "array_dim2 is not 1");
 
         p_array_dim2            = ARR_DIMS(class_count_array2);
         array_length2           = ArrayGetNItems(array_dim2,p_array_dim2);
         class_count_data2       = (int64 *)ARR_DATA_PTR(class_count_array2);
 
         if (array_length != array_length2)
-            elog(ERROR, "the size of the two arrays must be the same.");
+            elog(ERROR, "the size of the two arrays must be the same");
 
         for (int index =0; index < array_length; index++)
             class_count_data[index] += class_count_data2[index];
@@ -380,9 +384,8 @@ Datum rep_aggr_class_count_ffunc(PG_FUNCTION_ARGS)
     ArrayType *class_count_array    = PG_GETARG_ARRAYTYPE_P(0);
     int array_dim                   = ARR_NDIM(class_count_array);
     if (array_dim != 1)
-    {
-    	elog(ERROR, "array_dim is not 1.");
-    }      
+    	elog(ERROR, "array_dim is not 1");
+
     int *p_array_dim                = ARR_DIMS(class_count_array);
     int array_length                = ArrayGetNItems(array_dim,p_array_dim);
     int64 *class_count_data         = (int64 *)ARR_DATA_PTR(class_count_array);
@@ -426,7 +429,7 @@ Datum rep_aggr_class_count_ffunc(PG_FUNCTION_ARGS)
         );
 
     if(!result_array)
-        elog(ERROR, "array construction failure.");
+        elog(ERROR, "array construction failure");
 
     PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -612,12 +615,12 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
         scv_state_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
 
     if (!scv_state_array)
-    	elog(ERROR, "invalid aggregation state.");
+    	elog(ERROR, "invalid aggregation state");
 
     int	 array_dim 		= ARR_NDIM(scv_state_array);
     
     if (array_dim != 1)
-    	elog(ERROR, "array_dim is not 1.");
+    	elog(ERROR, "array_dim is not 1");
 
     int* p_array_dim	= ARR_DIMS(scv_state_array);
     int  array_length	= ArrayGetNItems(array_dim, p_array_dim);
@@ -626,7 +629,7 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 
     float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
     if (!scv_state_data)
-    	elog(ERROR, "invalid aggregation data array.");
+    	elog(ERROR, "invalid aggregation data array");
 
     int    split_criterion		= PG_GETARG_INT32(1);
     float8 feature_val			= PG_GETARG_FLOAT8(2);
@@ -791,11 +794,11 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
 {
     ArrayType*	scv_state_array	= PG_GETARG_ARRAYTYPE_P(0);
     if (!scv_state_array)
-    	elog(ERROR, "invalid aggregation state.");
+    	elog(ERROR, "invalid aggregation state");
 
     int	 array_dim		= ARR_NDIM(scv_state_array);
     if (array_dim != 1)
-    	elog(ERROR, "array_dim is not 1.");
+    	elog(ERROR, "array_dim is not 1");
 
     int* p_array_dim 	= ARR_DIMS(scv_state_array);
     int  array_length 	= ArrayGetNItems(array_dim, p_array_dim);
@@ -807,14 +810,14 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
 
     float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
     if (!scv_state_data)
-    	elog(ERROR, "invalid aggregation data array.");
+    	elog(ERROR, "invalid aggregation data array");
 
     float8 init_scv = scv_state_data[SCV_STATE_INIT_SCV];
 
     int result_size = 12;
     float8 *result = palloc(sizeof(float8) * result_size);
     if (!result)
-    	elog(ERROR, "memory allocation failure.");
+    	elog(ERROR, "memory allocation failure");
 
     memset(result, 0, sizeof(float8) * result_size);
 
@@ -885,7 +888,7 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
             'd'
             );
     if (!result_array)
-        elog(ERROR, "array construction failure.");
+        elog(ERROR, "array construction failure");
 
     PG_RETURN_ARRAYTYPE_P(result_array);
 }
