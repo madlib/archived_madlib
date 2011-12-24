@@ -72,3 +72,27 @@ SELECT MADLIB_SCHEMA.create_temporary_table_as(
     $$ SELECT * FROM run_some_non_select_stmnts() as x $$,
     'by (x)'
 );
+
+--
+-- Test with logistic regression
+--
+CREATE TABLE __madlib_gp_logreg_data AS
+SELECT
+    random() < 1 / (1 + exp(-MADLIB_SCHEMA.array_dot(
+        array[0.4, -1.0, 0.7]::DOUBLE PRECISION[], x))
+    ) AS y, x
+FROM (
+    SELECT
+        array[1, random(), random()]::DOUBLE PRECISION[] AS x
+    FROM generate_series(0,9) AS i
+) AS q
+DISTRIBUTED RANDOMLY;
+
+SELECT MADLIB_SCHEMA.create_temporary_table_as(
+    '__madlib_gp_compat_temporary_table_3', $$
+    SELECT * FROM MADLIB_SCHEMA.logregr('__madlib_gp_logreg_data', 'y', 'x')
+$$);
+
+SELECT MADLIB_SCHEMA.insert_into('__madlib_gp_compat_temporary_table_3', $$
+    SELECT * FROM MADLIB_SCHEMA.logregr('__madlib_gp_logreg_data', 'y', 'x')
+$$);
