@@ -79,9 +79,9 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
 
     if (!is_float_zero(1 - conf_level))
     {
-		if (!(conf_level >= MIN_CONFIDENCE_LEVEL &&
-              conf_level <= MAX_CONFIDENCE_LEVEL))
-       		elog(ERROR,"invalid conf_level: %lf",conf_level);
+    	if (!(conf_level >= MIN_CONFIDENCE_LEVEL &&
+                    conf_level <= MAX_CONFIDENCE_LEVEL))
+            elog(ERROR,"invalid conf_level: %lf",conf_level * 100);
 
 		/* calculate the coeff */
 		while (conf_level > CONFIDENCE_LEVEL[i]) i++;
@@ -128,10 +128,6 @@ float ebp_calc_errors_internal
     if (num_errors < 0)
         elog(ERROR, "num_errors is less than zero");
 
-	if (!(conf_level >= MIN_CONFIDENCE_LEVEL && 
-                conf_level <= MAX_CONFIDENCE_LEVEL))
-        elog(ERROR,"invalid conf_level: %lf",conf_level);
-
     if(coeff <= 0)
         elog(ERROR,"invalid coeff: %lf",coeff);
 
@@ -165,31 +161,6 @@ float ebp_calc_errors_internal
 }
 
 /*
- * This function allocate int64 array.
- * Parameters:
- *       size:    the size of array.
- *       value:   the initial value. All the
- *                elements of that array are initialized
- *                with that value.
- * Return:
- *      The int64 array allocated on current memory context.
- */
-
-static int64* alloc_int64_array(int size, int value)
-{
-    if(size <= 0)
-        elog(ERROR,"invalid array size:%d",size);
-
-    int64 *result   = (int64*)palloc(sizeof(int64) * size);
-
-    if (!result)
-        elog(ERROR, "memory allocation failure");
-
-    memset(result, value, sizeof(int64) * size);
-    return result;
-}
-
-/*
  * The step function for aggregating the class counts while doing Reduce Error Pruning (REP).
  *
  * Parameters:
@@ -215,6 +186,9 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     bool need_reconstruct_array     = false;
 
 
+    if (max_num_of_classes < 2)
+    	elog(ERROR, "the number of classes: (%d) should be greater than 2", max_num_of_classes);
+
     if (!(original_class > 0 && 
           original_class <= max_num_of_classes))
         elog(ERROR,"original_class:%d,max_num_of_classes:%d",
@@ -232,7 +206,7 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     	 * We assume the maximum number of classes is limited (up to millions),
     	 * so that the allocated array won't break our memory limitation.
     	 */
-        class_count_data		= alloc_int64_array(max_num_of_classes + 1, 0);
+        class_count_data		= palloc0(sizeof(int64) * max_num_of_classes + 1);
         array_length 			= max_num_of_classes + 1;
         need_reconstruct_array 	= true;
 
@@ -278,14 +252,12 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
         	construct_array(
         		(Datum *)class_count_data,
                 array_length,
-                FLOAT8OID,
+                INT8OID,
                 sizeof(int64),
                 true,
                 'd'
                 );
 
-        if(!class_count_array)
-            elog(ERROR, "array construction failure");
     }
     PG_RETURN_ARRAYTYPE_P(class_count_array);
 }
@@ -422,21 +394,18 @@ Datum rep_aggr_class_count_ffunc(PG_FUNCTION_ARGS)
     	construct_array(
          (Datum *)result,
          2,
-         FLOAT8OID,
+         INT8OID,
          sizeof(int64),
          true,
          'd'
         );
-
-    if(!result_array)
-        elog(ERROR, "array construction failure");
 
     PG_RETURN_ARRAYTYPE_P(result_array);
 }
 PG_FUNCTION_INFO_V1(rep_aggr_class_count_ffunc);
 
 /*
- * We use a 15-element array to keep the state of the
+ * We use a 14-element array to keep the state of the
  * aggregate for calculating splitting criteria values (SCVs).
  * The enum types defines which element of that array is used
  * for which purpose.
@@ -487,11 +456,6 @@ enum SCV_STATE_ARRAY_INDEX
      */
     SCV_STATE_TRUE_TOTAL_COUNT,
     /*
-     * 1 We are computing initial entropy before split.
-     * 0 We are computing the gain for certain split.
-     */ 
-    SCV_STATE_IS_CALC_PRE_SPLIT,
-    /*
      * The ID of the class with the most elements.
      */ 
     SCV_STATE_MAX_CLASS_ID,
@@ -500,7 +464,7 @@ enum SCV_STATE_ARRAY_INDEX
 };
 
 /*
- * We use a 12-element array to keep the final result of the
+ * We use a 11-element array to keep the final result of the
  * aggregate for calculating splitting criteria values (SCVs).
  * The enum types defines which element of that array is used
  * for which purpose.
@@ -524,11 +488,6 @@ enum SCV_FINAL_ARRAY_INDEX
     /* whether the selected feature is continuous or discrete*/
     SCV_FINAL_IS_CONT_FEATURE,
     /*
-     * 1 We are computing initial entropy before split.
-     * 0 We are computing the gain for certain split.
-     */     
-    SCV_FINAL_CALC_PRE_SPLIT,
-    /*
      * The ID of the class with the most elements.
      */     
     SCV_FINAL_CLASS_ID,
@@ -546,35 +505,104 @@ enum SCV_FINAL_ARRAY_INDEX
 /*
  * 	The step function for aggregating splitting criteria values based on our touched-up
  * 	(attribute, class) distribution information:
+ *  
+ *  The following table contains the original data used for the first  
+ *  calculation of golf dataset.
  *
- *	  fid | fval | class | iscont | splitvalue | less | great | selection
- *	-----+------+-------+--------+------------+------+-------+-----------
- *		 |      |       |        |            |   14 |       |         1
- *		 |      |     2 |        |            |    9 |       |         1
- *		 |      |     1 |        |            |    5 |       |         1
- *	   4 |    2 |       | f      |            |    6 |       |         1
- *	   4 |    2 |     2 | f      |            |    3 |       |         1
- *	   4 |    2 |     1 | f      |            |    3 |       |         1
- *	   4 |    1 |       | f      |            |    8 |       |         1
- *	   4 |    1 |     2 | f      |            |    6 |       |         1
- *	   4 |    1 |     1 | f      |            |    2 |       |         1
- *	   3 |    3 |       | f      |            |    5 |       |         1
- *	   3 |    3 |     2 | f      |            |    2 |       |         1
- *	   3 |    3 |     1 | f      |            |    3 |       |         1
- *	   3 |    2 |       | f      |            |    5 |       |         1
- *	   3 |    2 |     2 | f      |            |    3 |       |         1
- *	   3 |    2 |     1 | f      |            |    2 |       |         1
- *	   3 |    1 |       | f      |            |    4 |       |         1
- *	   3 |    1 |     2 | f      |            |    4 |       |         1
- *	   3 |    1 |     1 | f      |            |      |       |         1
- *	   2 |   96 |       | t      |         96 |   14 |       |         1
- *	   2 |   96 |     2 | t      |         96 |    9 |       |         1
- *	   2 |   96 |     1 | t      |         96 |    5 |       |         1
- *	   2 |   95 |       | t      |         95 |   13 |     1 |         1
- *	   2 |   95 |     2 | t      |         95 |    8 |     1 |         1
- *	   2 |   95 |     1 | t      |         95 |    5 |       |         1
+ *  fid | fval | class | is_cont | split_value | le | gt | assigned_nid 
+ * -----+------+-------+---------+-------------+----+----+--------------
+ *      |      |       |         |             | 14 |    |            1
+ *      |      |     2 |         |             |  9 |    |            1
+ *      |      |     1 |         |             |  5 |    |            1
+ *    4 |      |       |         |             | 14 |    |            1
+ *    4 |      |     2 |         |             |  9 |    |            1
+ *    4 |      |     1 |         |             |  5 |    |            1
+ *    4 |    2 |       | f       |             |  6 |    |            1
+ *    4 |    2 |     2 | f       |             |  3 |    |            1
+ *    4 |    2 |     1 | f       |             |  3 |    |            1
+ *    4 |    1 |       | f       |             |  8 |    |            1
+ *    4 |    1 |     2 | f       |             |  6 |    |            1
+ *    4 |    1 |     1 | f       |             |  2 |    |            1
+ *    3 |      |       |         |             | 14 |    |            1
+ *    3 |      |     2 |         |             |  9 |    |            1
+ *    3 |      |     1 |         |             |  5 |    |            1
+ *    3 |    3 |       | f       |             |  5 |    |            1
+ *    3 |    3 |     2 | f       |             |  2 |    |            1
+ *    3 |    3 |     1 | f       |             |  3 |    |            1
+ *    3 |    2 |       | f       |             |  5 |    |            1
+ *    3 |    2 |     2 | f       |             |  3 |    |            1
+ *    3 |    2 |     1 | f       |             |  2 |    |            1
+ *    3 |    1 |       | f       |             |  4 |    |            1
+ *    3 |    1 |     2 | f       |             |  4 |    |            1
+ *    3 |    1 |     1 | f       |             |    |    |            1
+ *    2 |   96 |       | t       |          96 | 14 |    |            1
+ *    2 |   96 |     2 | t       |          96 |  9 |    |            1
+ *    2 |   96 |     1 | t       |          96 |  5 |    |            1
+ *    2 |   95 |       | t       |          95 | 13 |  1 |            1
+ *    2 |   95 |     2 | t       |          95 |  8 |  1 |            1
+ *    2 |   95 |     1 | t       |          95 |  5 |    |            1
+ *    2 |   90 |       | t       |          90 | 12 |  2 |            1
+ *    2 |   90 |     2 | t       |          90 |  8 |  1 |            1
+ *    2 |   90 |     1 | t       |          90 |  4 |  1 |            1
+ *    2 |   85 |       | t       |          85 | 10 |  4 |            1
+ *    2 |   85 |     2 | t       |          85 |  7 |  2 |            1
+ *    2 |   85 |     1 | t       |          85 |  3 |  2 |            1
+ *    2 |   80 |       | t       |          80 |  9 |  5 |            1
+ *    2 |   80 |     2 | t       |          80 |  7 |  2 |            1
+ *    2 |   80 |     1 | t       |          80 |  2 |  3 |            1
+ *    2 |   78 |       | t       |          78 |  6 |  8 |            1
+ *    2 |   78 |     2 | t       |          78 |  5 |  4 |            1
+ *    2 |   78 |     1 | t       |          78 |  1 |  4 |            1
+ *    2 |   75 |       | t       |          75 |  5 |  9 |            1
+ *    2 |   75 |     2 | t       |          75 |  4 |  5 |            1
+ *    2 |   75 |     1 | t       |          75 |  1 |  4 |            1
+ *    2 |   70 |       | t       |          70 |  4 | 10 |            1
+ *    2 |   70 |     2 | t       |          70 |  3 |  6 |            1
+ *    2 |   70 |     1 | t       |          70 |  1 |  4 |            1
+ *    2 |   65 |       | t       |          65 |  1 | 13 |            1
+ *    2 |   65 |     2 | t       |          65 |  1 |  8 |            1
+ *    2 |   65 |     1 | t       |          65 |    |  5 |            1
+ *    1 |   85 |       | t       |          85 | 14 |    |            1
+ *    1 |   85 |     2 | t       |          85 |  9 |    |            1
+ *    1 |   85 |     1 | t       |          85 |  5 |    |            1
+ *    1 |   83 |       | t       |          83 | 13 |  1 |            1
+ *    1 |   83 |     2 | t       |          83 |  9 |    |            1
+ *    1 |   83 |     1 | t       |          83 |  4 |  1 |            1
+ *    1 |   81 |       | t       |          81 | 12 |  2 |            1
+ *    1 |   81 |     2 | t       |          81 |  8 |  1 |            1
+ *    1 |   81 |     1 | t       |          81 |  4 |  1 |            1
+ *    1 |   80 |       | t       |          80 | 11 |  3 |            1
+ *    1 |   80 |     2 | t       |          80 |  7 |  2 |            1
+ *    1 |   80 |     1 | t       |          80 |  4 |  1 |            1
+ *    1 |   75 |       | t       |          75 | 10 |  4 |            1
+ *    1 |   75 |     2 | t       |          75 |  7 |  2 |            1
+ *    1 |   75 |     1 | t       |          75 |  3 |  2 |            1
+ *    1 |   72 |       | t       |          72 |  8 |  6 |            1
+ *    1 |   72 |     2 | t       |          72 |  5 |  4 |            1
+ *    1 |   72 |     1 | t       |          72 |  3 |  2 |            1
+ *    1 |   71 |       | t       |          71 |  6 |  8 |            1
+ *    1 |   71 |     2 | t       |          71 |  4 |  5 |            1
+ *    1 |   71 |     1 | t       |          71 |  2 |  3 |            1
+ *    1 |   70 |       | t       |          70 |  5 |  9 |            1
+ *    1 |   70 |     2 | t       |          70 |  4 |  5 |            1
+ *    1 |   70 |     1 | t       |          70 |  1 |  4 |            1
+ *    1 |   69 |       | t       |          69 |  4 | 10 |            1
+ *    1 |   69 |     2 | t       |          69 |  3 |  6 |            1
+ *    1 |   69 |     1 | t       |          69 |  1 |  4 |            1
+ *    1 |   68 |       | t       |          68 |  3 | 11 |            1
+ *    1 |   68 |     2 | t       |          68 |  2 |  7 |            1
+ *    1 |   68 |     1 | t       |          68 |  1 |  4 |            1
+ *    1 |   65 |       | t       |          65 |  2 | 12 |            1
+ *    1 |   65 |     2 | t       |          65 |  1 |  8 |            1
+ *    1 |   65 |     1 | t       |          65 |  1 |  4 |            1
+ *    1 |   64 |       | t       |          64 |  1 | 13 |            1
+ *    1 |   64 |     2 | t       |          64 |  1 |  8 |            1
+ *    1 |   64 |     1 | t       |          64 |    |  5 |            1
+ * (87 rows)
+ * 
+
  *
- * The rows are grouped by (selection, fid, splitvalue). For each group, we will
+ * The rows are grouped by (assigned_nid, fid, splitvalue). For each group, we will
  * calculate a SCV based on the specified splitting criteria. For discrete attributes,
  * only less is used. Both less and great will be used for continuous values.
  *
@@ -606,6 +634,79 @@ enum SCV_FINAL_ARRAY_INDEX
  * As a result, in final function, we can calculate 1-(accumulated value)/TC to get gini. 
  *
  */
+
+/*
+ * The function is used to calculate pre-split splitting criteria value. 
+ *
+ * Parameters:
+ *      scv_state_array     The array containing all the information for the 
+ *                          calculation of splitting criteria values. 
+ *      curr_class_count    Total count of elements belonging to current class.
+ *      total_elem_count    Total count of elements.
+ *      split_criterion     1- infogain; 2- gainratio; 3- gini.
+ */
+static void accumulate_pre_split_scv
+    (
+    float8*     scv_state_array,
+    float8      curr_class_count,
+    float8      total_elem_count,
+    int         split_criterion
+    )
+{
+    if (scv_state_array == NULL)
+        elog(ERROR, "scv_state_array should not be NULL");
+
+    if(!(SC_INFOGAIN  == split_criterion ||
+         SC_GAINRATIO == split_criterion ||
+         SC_GINI      == split_criterion
+        ))
+        elog(ERROR,"invalid split_criterion:%d",split_criterion);
+
+    if (total_elem_count<=0 || 
+        curr_class_count<0)
+        elog(ERROR,"invalid total_elem_count:%lf,curr_class_count:%lf",
+            total_elem_count,curr_class_count);
+
+    float8 temp_float = curr_class_count/total_elem_count;
+    if (SC_INFOGAIN  == split_criterion ||
+        SC_GAINRATIO == split_criterion )
+    {
+        if (temp_float>0)
+            temp_float = temp_float*log(1/temp_float);
+        else
+            temp_float = 0;
+        scv_state_array[SCV_STATE_INIT_SCV] += temp_float;
+    }
+    else
+    {
+        temp_float *= temp_float;
+        scv_state_array[SCV_STATE_INIT_SCV] -= temp_float;
+    }
+}
+
+/*
+ * The step function for the aggregation of splitting criteria values. It accumulates
+ * all the information for scv calculation and stores to a fourteen element array.  
+ *
+ * Parameters:
+ *      scv_state_array    The array used to accumulate all the information for the 
+ *                         calculation of splitting criteria values. Please refer to
+ *                         the definition of SCV_STATE_ARRAY_INDEX.
+ *      split_criterion    1- infogain; 2- gainratio; 3- gini.
+ *      feature_val        The feature value of current record under processing.
+ *      class              The class of current record under processing.
+ *      is_cont_feature    True- The feature is continuous. False- The feature is
+ *                         discrete.
+ *      less               Count of elements less than or equal to feature_val.
+ *      great              Count of elements greater than feature_val.
+ *      true_total_count   If there is any missing value, true_total_count is larger than
+ *                         the total count computed in the aggregation. Thus, we should  
+ *                         multiply a ratio for the computed gain.
+ * Return:
+ *      A fourteen element array. Please refer to the definition of 
+ *      SCV_STATE_ARRAY_INDEX for the detailed information of this
+ *      array.
+ */
 Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 {
     ArrayType*	scv_state_array	= NULL;
@@ -615,12 +716,12 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
         scv_state_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
 
     if (!scv_state_array)
-    	elog(ERROR, "invalid aggregation state");
+        elog(ERROR, "invalid aggregation state");
 
     int	 array_dim 		= ARR_NDIM(scv_state_array);
-    
+
     if (array_dim != 1)
-    	elog(ERROR, "array_dim is not 1");
+        elog(ERROR, "array_dim is not 1");
 
     int* p_array_dim	= ARR_DIMS(scv_state_array);
     int  array_length	= ArrayGetNItems(array_dim, p_array_dim);
@@ -629,20 +730,20 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 
     float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
     if (!scv_state_data)
-    	elog(ERROR, "invalid aggregation data array");
+        elog(ERROR, "invalid aggregation data array");
 
     int    split_criterion		= PG_GETARG_INT32(1);
+    bool   is_null_fval         = PG_ARGISNULL(2);
     float8 feature_val			= PG_GETARG_FLOAT8(2);
     float8 class				= PG_ARGISNULL(3) ? -1 : PG_GETARG_FLOAT8(3);
     bool   is_cont_feature 		= PG_ARGISNULL(4) ? false : PG_GETARG_BOOL(4);
     float8 less					= PG_ARGISNULL(5) ? 0 : PG_GETARG_FLOAT8(5);
     float8 great				= PG_ARGISNULL(6) ? 0 : PG_GETARG_FLOAT8(6);
-    float8 init_scv 	        = PG_ARGISNULL(7) ? 0 : PG_GETARG_FLOAT8(7);
-    float8 true_total_count 	= PG_ARGISNULL(8) ? 0 : PG_GETARG_FLOAT8(8);
+    float8 true_total_count 	= PG_ARGISNULL(7) ? 0 : PG_GETARG_FLOAT8(7);
 
     if(!(SC_INFOGAIN  == split_criterion ||
-    	 SC_GAINRATIO == split_criterion ||
-    	 SC_GINI      == split_criterion
+                SC_GAINRATIO == split_criterion ||
+                SC_GINI      == split_criterion
         ))
         elog(ERROR,"invalid split_criterion:%d",split_criterion);
 
@@ -655,131 +756,157 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
     if (is_float_zero(scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]))
     {
         scv_state_data[SCV_STATE_SPLIT_CRIT] 		= split_criterion;
-        scv_state_data[SCV_STATE_INIT_SCV] 			= init_scv;
+        if (SC_GINI      == split_criterion)
+        {
+            scv_state_data[SCV_STATE_INIT_SCV] 	    = 1;
+        }
+        else
+        {
+            scv_state_data[SCV_STATE_INIT_SCV] 	    = 0;
+        }
         scv_state_data[SCV_STATE_IS_CONT] 			= is_cont_feature ? 1 : 0;
         scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT] 	= true_total_count;
-        
-        /*
-         * If feature value is null, we are calculating the entropy/gini 
-         * before split. Otherwise, we are calculating the entropy/gini 
-         * for certain split.
-         */ 
-        scv_state_data[SCV_STATE_IS_CALC_PRE_SPLIT] = PG_ARGISNULL(2) ? 1 : 0;
+        dtelog(NOTICE,"true_total_count:%lf",true_total_count);
     }
 
     float8 temp_float = 0;
 
-    /*
-     * For the current input row, if the class column is NULL,
-     * the variable class will be assigned -1
-     */
-    if (class < 0)
+    if( is_null_fval )
     {
-    	/* a -1 means the current input row contains the
-    	 * total number of (attribute, class) pairs
-    	 */
-        if (!is_cont_feature)
+        dtelog(NOTICE,"is_null_fval:%d",is_null_fval);
+        if( !is_cont_feature ) 
         {
-            /* This block calculates for discrete features, which only use the column of less. */
-            scv_state_data[SCV_STATE_CURR_FEATURE_VALUE] 		= feature_val;
-            scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT]	= less;
-
-            dtelog(NOTICE,"feature_val:%lf,feature_elem_count:%lf", feature_val, less);
-
-            if (SC_GAINRATIO == split_criterion)
+            if(  class <0 )
             {
-                temp_float = scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT];
-                if (! is_float_zero(temp_float))
-                    scv_state_data[SCV_STATE_SPLIT_INFO_DATA] += temp_float*log(temp_float);
+                scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT] = less;
+                dtelog(NOTICE,"SCV_STATE_TOTAL_ELEM_COUNT:%lf",less);
             }
-
-            dtelog(NOTICE, "scv_aggr_sfunc before SCV_STATE_TOTAL_ELEM_COUNT:%lf",scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]);
-
-            scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT] += scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT];
-
-            dtelog(NOTICE, "scv_aggr_sfunc after SCV_STATE_TOTAL_ELEM_COUNT:%lf",scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]);
+            else
+            {
+                if (scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] < less)
+                {
+                    scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] = less;
+                    scv_state_data[SCV_STATE_MAX_CLASS_ID] = class;
+                }
+                accumulate_pre_split_scv(
+                        scv_state_data, 
+                        less, 
+                        scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT],
+                        split_criterion);
+            }
         }
         else
         {
-            /* This block calculates for continuous features, which the columns of less/great. */
-            scv_state_data[SCV_STATE_LESS_ELEM_COUNT]	= less;
-            scv_state_data[SCV_STATE_GREAT_ELEM_COUNT]	= great;
-
-            if (SC_GAINRATIO == split_criterion)
-            {
-                for (int index=SCV_STATE_LESS_ELEM_COUNT; index <=SCV_STATE_GREAT_ELEM_COUNT; index++)
-                {
-                    temp_float = scv_state_data[index];
-                    if (! is_float_zero(temp_float))
-                    {
-                        scv_state_data[SCV_STATE_SPLIT_INFO_DATA] += temp_float * log(temp_float);
-                    }
-                }
-            }
-            scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT] += scv_state_data[SCV_STATE_LESS_ELEM_COUNT] + scv_state_data[SCV_STATE_GREAT_ELEM_COUNT];
+            elog(ERROR,"continuous features should not have null feature_val");
         }
     }
     else
     {
-        /* If the class exists, we start to accumulate the value for entropy/gini */
-        if (scv_state_data[SCV_STATE_IS_CALC_PRE_SPLIT] > 0)
+        /*
+         * For the current input row, if the class column is NULL,
+         * the variable class will be assigned -1
+         */
+        if (class < 0)
         {
-            /* 
-             *  For pre-split calculation, we need to find MAX class. 
-             *  Otherwise, we are unable to locate max class. We have
-             *  already initialized them to zero.
+            /* a -1 means the current input row contains the
+             * total number of (attribute, class) pairs
              */
-            if (scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] < less + great)
+            if (!is_cont_feature)
             {
-                scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] = less + great;
-                scv_state_data[SCV_STATE_MAX_CLASS_ID] = class;
-            }
-        }
+                /* This block calculates for discrete features, which only use the column of less. */
+                scv_state_data[SCV_STATE_CURR_FEATURE_VALUE] 		= feature_val;
+                scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT]	= less;
 
-        if (!is_cont_feature)
-        {
-            /* This block accumulates entropy/gini for discrete features.*/
-            if (SC_GAINRATIO == split_criterion ||
-                SC_INFOGAIN  == split_criterion)
-            {
-                if (! is_float_zero(less - scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT])
-                        && less > 0
-                        && scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT] > 0)
-                    scv_state_data[SCV_STATE_ENTROPY_DATA] +=
-                    		less * log(scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT]/less);
+                dtelog(NOTICE,"feature_val:%lf,feature_elem_count:%lf", feature_val, less);
+
+                if (SC_GAINRATIO == split_criterion)
+                {
+                    temp_float = scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT];
+                    if (! is_float_zero(temp_float))
+                        scv_state_data[SCV_STATE_SPLIT_INFO_DATA] += temp_float*log(temp_float);
+                }
             }
             else
-            if (SC_GINI == split_criterion)
             {
-                if (scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT] > 0)
-                    scv_state_data[SCV_STATE_GINI_DATA] +=
-                    		less * less / scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT];
+                /* This block calculates for continuous features, which the columns of less/great. */
+                scv_state_data[SCV_STATE_LESS_ELEM_COUNT]	= less;
+                scv_state_data[SCV_STATE_GREAT_ELEM_COUNT]	= great;
+
+                if (SC_GAINRATIO == split_criterion)
+                {
+                    for (int index=SCV_STATE_LESS_ELEM_COUNT; index <=SCV_STATE_GREAT_ELEM_COUNT; index++)
+                    {
+                        temp_float = scv_state_data[index];
+                        if (! is_float_zero(temp_float))
+                        {
+                            scv_state_data[SCV_STATE_SPLIT_INFO_DATA] += temp_float * log(temp_float);
+                        }
+                    }
+                }
+                scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT] = less+great;
+                dtelog(NOTICE,"cont SCV_STATE_TOTAL_ELEM_COUNT:%lf",less+great);
             }
         }
         else
         {
-            /* This block accumulates entropy/gini for continuous features.*/
-            float8 temp_array[]	 = {less, great};
-            float8 count_array[] = {scv_state_data[SCV_STATE_LESS_ELEM_COUNT],
-            						scv_state_data[SCV_STATE_GREAT_ELEM_COUNT]};
-
-            for(int index =0; index <2; index++)
+            if (!is_cont_feature)
             {
-                temp_float = temp_array[index];
-
+                /* This block accumulates entropy/gini for discrete features.*/
                 if (SC_GAINRATIO == split_criterion ||
-                    SC_INFOGAIN  == split_criterion)
+                        SC_INFOGAIN  == split_criterion)
                 {
-                    if (!is_float_zero(temp_float - count_array[index]) &&
-                        temp_float > 0									&&
-                        count_array[index] > 0)
-                        scv_state_data[SCV_STATE_ENTROPY_DATA] += temp_float * log(count_array[index]/temp_float);
+                    if (! is_float_zero(less - scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT])
+                            && less > 0
+                            && scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT] > 0)
+                        scv_state_data[SCV_STATE_ENTROPY_DATA] +=
+                            less * log(scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT]/less);
                 }
                 else
-                if (SC_GINI == split_criterion)
+                    if (SC_GINI == split_criterion)
+                    {
+                        if (scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT] > 0)
+                            scv_state_data[SCV_STATE_GINI_DATA] +=
+                                less * less / scv_state_data[SCV_STATE_CURR_FEATURE_ELEM_COUNT];
+                    }
+            }
+            else
+            {
+                temp_float = less+great;
+                if (scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] < temp_float)
                 {
-                    if (count_array[index] > 0)
-                        scv_state_data[SCV_STATE_GINI_DATA] += temp_float * temp_float / count_array[index];
+                    scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] = temp_float;
+                    scv_state_data[SCV_STATE_MAX_CLASS_ID] = class;
+                }
+
+                accumulate_pre_split_scv(
+                        scv_state_data, 
+                        temp_float, 
+                        scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT],
+                        split_criterion);
+
+                /* This block accumulates entropy/gini for continuous features.*/
+                float8 temp_array[]	 = {less, great};
+                float8 count_array[] = {scv_state_data[SCV_STATE_LESS_ELEM_COUNT],
+                    scv_state_data[SCV_STATE_GREAT_ELEM_COUNT]};
+
+                for(int index =0; index <2; index++)
+                {
+                    temp_float = temp_array[index];
+
+                    if (SC_GAINRATIO == split_criterion ||
+                            SC_INFOGAIN  == split_criterion)
+                    {
+                        if (!is_float_zero(temp_float - count_array[index]) &&
+                                temp_float > 0									&&
+                                count_array[index] > 0)
+                            scv_state_data[SCV_STATE_ENTROPY_DATA] += temp_float * log(count_array[index]/temp_float);
+                    }
+                    else
+                        if (SC_GINI == split_criterion)
+                        {
+                            if (count_array[index] > 0)
+                                scv_state_data[SCV_STATE_GINI_DATA] += temp_float * temp_float / count_array[index];
+                        }
                 }
             }
         }
@@ -789,7 +916,18 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 }
 PG_FUNCTION_INFO_V1(scv_aggr_sfunc);
 
-
+/*
+ * The final function for the aggregation of splitting criteria values. It takes the 
+ * state array produced by the sfunc and produces an eleven-element array.  
+ *
+ * Parameters:
+ *      scv_state_array    The array containing all the information for the 
+ *                         calculation of splitting criteria values. 
+ * Return:
+ *      An eleven element array. Please refer to the definition of 
+ *      SCV_FINAL_ARRAY_INDEX for the detailed information of this
+ *      array.
+ */
 Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
 {
     ArrayType*	scv_state_array	= PG_GETARG_ARRAYTYPE_P(0);
@@ -814,14 +952,15 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
 
     float8 init_scv = scv_state_data[SCV_STATE_INIT_SCV];
 
-    int result_size = 12;
+    int result_size = 11;
     float8 *result = palloc(sizeof(float8) * result_size);
     if (!result)
     	elog(ERROR, "memory allocation failure");
 
     memset(result, 0, sizeof(float8) * result_size);
 
-    dtelog(NOTICE, "scv_aggr_ffunc SCV_STATE_TOTAL_ELEM_COUNT:%lf",scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]);
+    dtelog(NOTICE, "scv_aggr_ffunc SCV_STATE_TOTAL_ELEM_COUNT:%lf",
+            scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]);
 
     /* 
      * For the following elements, such as max class id, we should copy them from step function array
@@ -829,7 +968,6 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
      */
     result[SCV_FINAL_SPLIT_CRITERION]   = scv_state_data[SCV_STATE_SPLIT_CRIT];
     result[SCV_FINAL_IS_CONT_FEATURE]	= scv_state_data[SCV_STATE_IS_CONT];
-    result[SCV_FINAL_CALC_PRE_SPLIT]	= scv_state_data[SCV_STATE_IS_CALC_PRE_SPLIT];
     result[SCV_FINAL_CLASS_ID]			= scv_state_data[SCV_STATE_MAX_CLASS_ID];
     result[SCV_FINAL_CLASS_COUNT]		= scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT];
     result[SCV_FINAL_TOTAL_COUNT]		= scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
@@ -846,7 +984,8 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
             SC_GAINRATIO == (int)result[SCV_FINAL_SPLIT_CRITERION])
         {
             /* Get the entropy value */
-            result[SCV_FINAL_ENTROPY]   = scv_state_data[SCV_STATE_ENTROPY_DATA]/scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
+            result[SCV_FINAL_ENTROPY]  = 
+                scv_state_data[SCV_STATE_ENTROPY_DATA]/scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
             /* Get infogain based on initial entropy and current one */
             result[SCV_FINAL_INFO_GAIN] = (init_scv - result[SCV_FINAL_ENTROPY]) * ratio;
 
@@ -858,10 +997,19 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
                         scv_state_data[SCV_STATE_SPLIT_INFO_DATA] / scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
 
                 /* Based on infogain and split info, we can compute gainratio. */
-                if (!is_float_zero(result[SCV_FINAL_SPLIT_INFO]))
+                if (!is_float_zero(result[SCV_FINAL_SPLIT_INFO]) &&
+                    !is_float_zero(result[SCV_FINAL_INFO_GAIN]))
+                {
+                    dtelog(NOTICE,"SCV_FINAL_SPLIT_INFO:%lf,SCV_FINAL_INFO_GAIN:%lf",
+                        result[SCV_FINAL_SPLIT_INFO],result[SCV_FINAL_INFO_GAIN]);
                     result[SCV_FINAL_GAIN_RATIO] = result[SCV_FINAL_INFO_GAIN] / result[SCV_FINAL_SPLIT_INFO];
+                }
                 else
+                {
+                    dtelog(NOTICE,"zero SCV_FINAL_SPLIT_INFO:%lf,SCV_FINAL_INFO_GAIN:%lf",
+                        result[SCV_FINAL_SPLIT_INFO],result[SCV_FINAL_INFO_GAIN]);                    
                     result[SCV_FINAL_GAIN_RATIO] = 0;
+                }
             }
         }
         else if (SC_GINI == (int)result[SCV_FINAL_SPLIT_CRITERION])
@@ -887,8 +1035,6 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
             true,
             'd'
             );
-    if (!result_array)
-        elog(ERROR, "array construction failure");
 
     PG_RETURN_ARRAYTYPE_P(result_array);
 }
