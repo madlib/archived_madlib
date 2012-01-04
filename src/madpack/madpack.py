@@ -692,6 +692,9 @@ def main(argv):
     parser.add_argument('-l', '--keeplogs', dest='keeplogs', default=False, 
                          action="store_true", help="Do not remove installation log files.")
 
+    parser.add_argument('-d', '--directory', dest='tmpdir', default = '/tmp/',
+                         help="Temporary directory location for installation log files.")
+
     ##
     # Get the arguments
     ##
@@ -701,6 +704,14 @@ def main(argv):
     __info("Arguments: " + str(args), verbose);    
     global keeplogs
     keeplogs = args.keeplogs
+
+    global tmpdir
+    try:
+        tmpdir = tempfile.mkdtemp('', 'madlib.', args.tmpdir)
+    except OSError, e:
+        tmpdir = e.filename
+        __error("cannot create temporary directory: '%s'." % tmpdir, True)
+
         
     ##
     # Parse SCHEMA
@@ -975,13 +986,6 @@ def main(argv):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 if __name__ == "__main__":
 
-    # Create temp dir
-    try:
-        tmpdir = tempfile.mkdtemp('','madlib.','/tmp/')
-    except:
-        print "ERROR: cannot create temp directory: %s." % tmpdir
-        exit(1)   
-        
     # Run main
     main(sys.argv[1:])
 
