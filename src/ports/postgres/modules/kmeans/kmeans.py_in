@@ -437,7 +437,8 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
     __run_quietly( 'CREATE TEMP TABLE TempPoints0_Canopies (LIKE TempPoints0)')
     sql = '''
         INSERT INTO TempPoints0_Canopies
-        SELECT p.pid, p.coords, p.cid, array_agg(c.cid)
+        SELECT p.pid, p.coords, p.cid, 
+            m4_ifdef( `GREENPLUM_PRE_41', `{madlib_schema}.')m4_ifdef( `POSTGRES_PRE_90', `{madlib_schema}.')array_agg(c.cid)
         FROM TempPoints0 p, {output_centroids} c 
         WHERE {dist_func} < {t2}
         GROUP BY p.pid, p.coords, p.cid
@@ -445,6 +446,7 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
         output_centroids = output_centroids
         , dist_func = dist_func.replace( '&&&', 'p.coords, c.coords')
         , t2 = str(t2)
+        , madlib_schema = madlib_schema
     );            
     plpy.execute( sql);
     plpy.execute( 'DROP TABLE IF EXISTS TempPoints0');
@@ -844,12 +846,22 @@ def kmeans( madlib_schema
         __run_quietly( 'DROP TABLE IF EXISTS TempArrayOfCentroids');    
         sql = '''
             CREATE TEMP TABLE TempArrayOfCentroids AS
-            SELECT 
-                array_agg(cid ORDER BY cid) as cids
-                , array_agg(coords ORDER BY cid) as ccoords 
-            FROM ''' + output_centroids;
-        __run_quietly( sql);    
-            
+            SELECT
+                m4_ifdef( `GREENPLUM_PRE_41',
+                     `array(SELECT cid FROM {output_centroids} ORDER BY cid LIMIT ALL) as cids,
+                      array(SELECT coords FROM {output_centroids} ORDER BY cid LIMIT ALL) as ccoords'
+                    , `m4_ifdef( `POSTGRES_PRE_90',
+                         `array(SELECT cid FROM {output_centroids} ORDER BY cid LIMIT ALL) as cids,
+                          array(SELECT coords FROM {output_centroids} ORDER BY cid LIMIT ALL) as ccoords'
+                       , `array_agg(cid ORDER BY cid) as cids,
+                          array_agg(coords ORDER BY cid) as ccoords
+                      FROM {output_centroids}')'
+                )                
+            '''.format(
+                output_centroids = output_centroids
+            );
+        __run_quietly( sql);         
+
         # Create new temp table (i)
         __run_quietly( 'DROP TABLE IF EXISTS TempPoints' + str(i));
         __run_quietly( 'CREATE TEMP TABLE TempPoints%s (like TempPoints%s)' 
