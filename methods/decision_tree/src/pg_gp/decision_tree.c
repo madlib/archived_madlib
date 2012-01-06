@@ -42,9 +42,13 @@ PG_MODULE_MAGIC;
 static float CONFIDENCE_LEVEL[] = {0, 0.001, 0.005, 0.01, 0.05, 0.10, 0.20, 0.40, 1.00};
 static float CONFIDENCE_DEV[]   = {4.0, 3.09, 2.58, 2.33, 1.65, 1.28, 0.84, 0.25, 0.00};
 
-#define MIN_CONFIDENCE_LEVEL 0.00001
-#define MAX_CONFIDENCE_LEVEL 1.0
+#define MIN_CONFIDENCE_LEVEL 0.001
+#define MAX_CONFIDENCE_LEVEL 100.0
 
+#define check_conf_level(cf) \
+			cf = (cf) * 100; \
+			if ((cf) < MIN_CONFIDENCE_LEVEL || (cf) > MAX_CONFIDENCE_LEVEL) \
+				elog(ERROR,"invalid conf_level: %lf",cf);
 
 float ebp_calc_errors_internal
 (
@@ -76,12 +80,9 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
     float8 coeff 		= 0;
     int i 				= 0;
 
-
     if (!is_float_zero(1 - conf_level))
     {
-    	if (!(conf_level >= MIN_CONFIDENCE_LEVEL &&
-                    conf_level <= MAX_CONFIDENCE_LEVEL))
-            elog(ERROR,"invalid conf_level: %lf",conf_level * 100);
+    	check_conf_level(conf_level);
 
 		/* calculate the coeff */
 		while (conf_level > CONFIDENCE_LEVEL[i]) i++;
@@ -130,6 +131,8 @@ float ebp_calc_errors_internal
 
     if(coeff <= 0)
         elog(ERROR,"invalid coeff: %lf",coeff);
+
+    check_conf_level(conf_level);
 
     if (num_errors < 1E-6)
     {
@@ -206,7 +209,7 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     	 * We assume the maximum number of classes is limited (up to millions),
     	 * so that the allocated array won't break our memory limitation.
     	 */
-        class_count_data		= palloc0(sizeof(int64) * max_num_of_classes + 1);
+        class_count_data		= palloc0(sizeof(int64) * (max_num_of_classes + 1));
         array_length 			= max_num_of_classes + 1;
         need_reconstruct_array 	= true;
 

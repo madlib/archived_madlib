@@ -428,27 +428,32 @@ $$ LANGUAGE PLPGSQL;
  *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
  *                              Each record will be assigned to a node.
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_grouping_stmt
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__execute_grouping_stmt
     (
     cycle                INT,
     feature_stmt         TEXT,
     bracket_stmt         TEXT,
     group_stmt           TEXT,    
     input_table_name     TEXT, 
-    selection_table_name TEXT
+    selection_table_name TEXT,
+    group_table_name     TEXT,
+    verbosity            INT
     ) CASCADE;
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_grouping_stmt
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__execute_grouping_stmt
     (
     cycle                INT,
     feature_stmt         TEXT,
     bracket_stmt         TEXT,
     group_stmt           TEXT,    
     input_table_name     TEXT, 
-    selection_table_name TEXT
+    selection_table_name TEXT,
+    group_table_name     TEXT,
+    verbosity            INT
     )
-RETURNS TEXT AS $$
+RETURNS void AS $$
 DECLARE
     group_result_stmt   TEXT := '';
+    curstmt             TEXT;
 BEGIN
     -- Due to the limitation of grouping sets (currently, the number of grouping sets  
     -- components can not exceed 70) we will use 'UNION ALL' to combine all the columns' 
@@ -461,7 +466,7 @@ BEGIN
             FROM 
                 (SELECT t1.*, assigned_nid FROM % t1 LEFT JOIN % t2 ON t1.id = t2.id) s
             WHERE assigned_nid IS NOT NULL 
-            GROUP BY GROUPING SETS((), assigned_nid, (class, assigned_nid),%))',
+            GROUP BY GROUPING SETS(assigned_nid, (class, assigned_nid),%))',
             ARRAY[
             feature_stmt,
             bracket_stmt,
@@ -473,7 +478,7 @@ BEGIN
     ELSE
         SELECT MADLIB_SCHEMA.__format
             (
-            ' UNION ALL (SELECT ((%, null%)::MADLIB_SCHEMA.__attr_info).*, class, COUNT(*), assigned_nid
+            '(SELECT ((%, null%)::MADLIB_SCHEMA.__attr_info).*, class, COUNT(*), assigned_nid
             FROM 
                 (SELECT t1.*, assigned_nid FROM % t1, % t2 WHERE t1.id = t2.id) s
             WHERE assigned_nid IS NOT NULL 
@@ -488,7 +493,25 @@ BEGIN
         ) INTO group_result_stmt;    
     END IF;        
     
-    RETURN group_result_stmt;     
+    IF(verbosity > 0) THEN
+        RAISE INFO 'group stmt:%', group_result_stmt;
+    END IF;
+        
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'INSERT INTO % %',
+            ARRAY[
+            group_table_name,
+            group_result_stmt
+            ]
+        ) INTO curstmt;
+    
+    IF(verbosity > 0) THEN
+        RAISE INFO 'Inser into auxiliary table stmt: %', curstmt;
+    END IF;
+            
+    EXECUTE curstmt;
+        
 END
 $$ LANGUAGE PLPGSQL;
 
@@ -577,16 +600,16 @@ BEGIN
         bracket_stmt = bracket_stmt || ')';
         
         IF ((index % max_num_col_group) = 0) THEN
-            group_result_stmt = 
-                group_result_stmt || 
-                MADLIB_SCHEMA.__generate_grouping_stmt
+                PERFORM MADLIB_SCHEMA.__execute_grouping_stmt
                     (
                     (index / max_num_col_group)::INT4,
                     rtrim(feature_stmt, ','),
                     bracket_stmt,
                     rtrim(group_stmt, ','),                 
                     input_table_name,
-                    selection_table_name
+                    selection_table_name,
+                    group_table_name,
+                    verbosity
                     );
                     
             feature_stmt = '';
@@ -601,36 +624,18 @@ BEGIN
     index = index - 1;
     
     IF ((index % max_num_col_group) != 0) THEN
-        group_result_stmt = 
-            group_result_stmt || 
-            MADLIB_SCHEMA.__generate_grouping_stmt
+        PERFORM MADLIB_SCHEMA.__execute_grouping_stmt
                 (
                 (index / max_num_col_group)::INT4 + 1,
                 rtrim(feature_stmt, ','),
                 bracket_stmt,
                 rtrim(group_stmt, ','),                 
                 input_table_name,
-                selection_table_name
+                selection_table_name,
+                group_table_name,
+                verbosity
                 );  
     END IF;    
-    
-    IF(verbosity > 0) THEN
-        RAISE INFO 'group stmt:%', group_result_stmt;
-    END IF;
-        
-    SELECT MADLIB_SCHEMA.__format
-        (
-            'INSERT INTO % %',
-            group_table_name,
-            group_result_stmt
-            
-        ) INTO curstmt;
-    
-    IF(verbosity > 0) THEN
-        RAISE INFO 'Inser into auxiliary table stmt: %', curstmt;
-    END IF;
-            
-    EXECUTE curstmt;
     
     SELECT MADLIB_SCHEMA.__format
         (
@@ -715,8 +720,8 @@ CREATE TYPE MADLIB_SCHEMA.__rep_type AS
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__rep_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__rep_result AS
     (
-    maxclass  INT,
-    isreplace INT
+    maxclass  BIGINT,
+    isreplace BIGINT
     );
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__rep_aggr_class_count_sfunc
@@ -1014,43 +1019,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.__jump_aggr
 );
 
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__jump_aggr_sfunc
-    (
-    result  INT[], 
-    val     INT[]
-    ) CASCADE;
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__leaves_aggr_sfunc
-    (
-    result  INT[], 
-    val     INT[]
-    ) 
-RETURNS INT[] AS $$
-DECLARE
-BEGIN
-    IF (val IS NOT NULL AND result IS NOT NULL) THEN
-        RETURN result || val;
-    ELSIF (val IS NOT NULL) THEN
-        return val;
-    ELSE  -- result IS NOT NULL
-        return result;
-    END IF;
-    
-    RETURN NULL;
-END
-$$ LANGUAGE PLPGSQL;
-
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__leaves_aggr
-    (
-    INT[] 
-    );
-CREATE AGGREGATE MADLIB_SCHEMA.__leaves_aggr
-    (
-    INT[]
-    ) 
-(
-  SFUNC=MADLIB_SCHEMA.__leaves_aggr_sfunc,
-  STYPE=INT[]
-);
 
 /*
  *   For training one decision tree, we need some internal tables
@@ -1107,14 +1075,6 @@ BEGIN
         assigned_nid    BIGINT
     ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (fid, fval)');
 
-    DROP TABLE IF EXISTS instance_selection CASCADE;
-    CREATE TEMP TABLE instance_selection
-    (
-        id              BIGINT,
-        assigned_nid    BIGINT
-    )m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
-
-    CREATE INDEX instance_selection_selection_index ON instance_selection (assigned_nid);
     DROP TABLE IF EXISTS info_impurity CASCADE;
     CREATE TEMP TABLE info_impurity
     (
@@ -1212,25 +1172,7 @@ BEGIN
 		new_id      INT,
 		parent_id   INT
 	) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
- 
-    -- This table is used for tree display.
-    -- It is filled with the original information before
-    -- encoding to facilitate the display procedure.
-    DROP TABLE IF EXISTS auxiliary_tree_display;
-    CREATE TEMP TABLE auxiliary_tree_display
-    (
-        id                      INT,
-        tree_location           INT[],
-        probability             FLOAT8, 
-        maxclass                TEXT,
-        cat_size                INT,
-        parent_id               INT,
-        curr_value              TEXT,
-        parent_feature_id       INT,
-        is_parent_feature_cont  BOOLEAN,
-        parent_split_value      FLOAT8,
-        parent_feature_name     TEXT
-    ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
+
 END 
 $$ LANGUAGE PLPGSQL;
 
@@ -1402,7 +1344,7 @@ DECLARE
 BEGIN
     LOOP
         DROP TABLE IF EXISTS selected_parent_ids_ebp;
-        CREATE TEMP TABLE selected_parent_ids_ebp(parent_id BIGINT) DISTRIBUTED BY(parent_id);
+        CREATE TEMP TABLE selected_parent_ids_ebp(parent_id BIGINT) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY(parent_id)');
         
         SELECT MADLIB_SCHEMA.__format
             (
@@ -1612,8 +1554,14 @@ BEGIN
     
     ret.training_set_size = total_size;
     
-    EXECUTE 'INSERT INTO instance_selection SELECT id, 1 FROM ' || training_table_name;
+    EXECUTE 'DROP TABLE IF EXISTS instance_selection CASCADE';
+    EXECUTE 'CREATE TEMP TABLE instance_selection AS SELECT id, 1::BIGINT as assigned_nid FROM ' || 
+	     training_table_name || 
+            ' m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)')';
     
+    EXECUTE 'CREATE INDEX instance_selection_selection_index ON instance_selection (assigned_nid)';
+
+
     feature_dimension = MADLIB_SCHEMA.__num_of_feature(training_table_meta);
 
     num_classes = MADLIB_SCHEMA.__num_of_class(training_table_meta); 
@@ -2065,7 +2013,6 @@ BEGIN
         h2hmv_routine_id = 2;
     END IF;
     
-    PERFORM MADLIB_SCHEMA.__create_traininginfo();
     PERFORM MADLIB_SCHEMA.__insert_into_traininginfo
                 (
                 result_tree_table_name,
@@ -2303,6 +2250,17 @@ BEGIN
     -- get metatable and classtable name given the tree table name
     metatable_name = MADLIB_SCHEMA.__get_metatable_name(tree_table_name);
     classtable_name = MADLIB_SCHEMA.__get_classtable_name(metatable_name);
+
+    EXECUTE 'SELECT id, maxclass, probability, cat_size, jump FROM ' || tree_table_name || ' WHERE id = 1' 
+    INTO rec;
+    
+    -- in case the root node is leaf
+    IF (rec.jump IS NULL) THEN
+        RETURN NEXT 'All instances will be classified to class ' || 
+                     MADLIB_SCHEMA.__get_class_value(rec.maxclass, metatable_name) ||
+                     ' [' || (rec.probability * rec.cat_size)::BIGINT || '/' || rec.cat_size || ']'; 
+        RETURN;       
+    END IF;
     
     -- get the meta info for features in the tree table (as best split)
     SELECT MADLIB_SCHEMA.__format
@@ -2370,7 +2328,7 @@ BEGIN
         'CREATE TEMP TABLE c45_gen_rules_leaves as
          SELECT 
             id, 
-            ''  then class '' || class || ''['' || (probability * cat_size)::BIGINT || ''/'' || cat_size || '']'' as str,
+            ''  then class '' || class || '' ['' || (probability * cat_size)::BIGINT || ''/'' || cat_size || '']'' as str,
             array_to_string(tree_location, '''') as location,
             1 as rlid
          FROM 
@@ -2384,7 +2342,7 @@ BEGIN
              WHERE key IS NOT NULL
             ) n2
             ON n1.maxclass = n2.key 
-         DISTRIBUTED BY (location)',
+         m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (location)')',
         ARRAY[
             tree_table_name,
             classtable_name
@@ -2408,9 +2366,9 @@ BEGIN
         SELECT 
             jump[key + 1] AS id,
             CASE WHEN (id = 1) THEN
-                    ''  if '' || fname || COALESCE(split_value::TEXT, fval) 
+                    ''  if '' || fname || COALESCE(split_value::TEXT, fval, ''NULL'') 
                  ELSE
-                    ''     '' || fname || COALESCE(split_value::TEXT, fval) 
+                    ''     '' || fname || COALESCE(split_value::TEXT, fval, ''NULL'') 
             END AS str,
             array_to_string(tree_location, '''') || key AS location,
             0  AS rlid                                  
@@ -2422,8 +2380,8 @@ BEGIN
             LEFT JOIN
             (%) n2
             ON n1.feature = n2.fid
-        WHERE n1.jump[n2.key + 1] IS NOT NULL
-        DISTRIBUTED BY (location)',
+        WHERE n1.jump[n2.key + 1] IS NOT NULL 
+        m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (location)')',
         tree_table_name,
         union_stmt
         )
@@ -2545,7 +2503,7 @@ BEGIN
     END LOOP;
     
     IF (depth > 0) THEN
-        ret = ret ||feat_name||': ';
+        ret = ret ||coalesce(feat_name,'null')||': ';
         -- For continuous features, there are two splits.
         -- We will mark curr_val to 1 for '<='. Otherwise, 
         -- we will mark curr_val to 2.
@@ -2555,21 +2513,21 @@ BEGIN
             ELSE
                 ret = ret || ' > ';
             END IF;
-            ret = ret||sp_val||' ';
+            ret = ret||coalesce(sp_val,0)||' ';
         ELSE
-            ret = ret||' = '||curr_val||' ';
+            ret = ret||' = '||coalesce(curr_val,'null')||' ';
         END IF;
     ELSE
         ret = ret||'Root Node ';
     END IF;
 
-    ret = ret                   || 
-          ' : class('           ||  
-          max_class             || 
-          ')   num_elements('   || 
-          cat_size              || 
-          ')  predict_prob('    ||
-          max_prob              ||
+    ret = ret                               || 
+          ' : class('                       ||  
+          coalesce(max_class,null)          || 
+          ')   num_elements('               || 
+          coalesce(cat_size,0)              || 
+          ')  predict_prob('                ||
+          coalesce(max_prob,0)              ||
           ')';
 
     ret = ret || E'\n';
@@ -2647,8 +2605,25 @@ BEGIN
     metatable_name = MADLIB_SCHEMA.__get_metatable_name( tree_table );
     -- We removed the schema when storing the metatable's name. 
     metatable_name = 'MADLIB_SCHEMA.'||metatable_name;
-
-    TRUNCATE auxiliary_tree_display;
+ 
+    -- This table is used for tree display.
+    -- It is filled with the original information before
+    -- encoding to facilitate the display procedure.
+    DROP TABLE IF EXISTS auxiliary_tree_display;
+    CREATE TEMP TABLE auxiliary_tree_display
+    (
+        id                      INT,
+        tree_location           INT[],
+        probability             FLOAT8, 
+        maxclass                TEXT,
+        cat_size                INT,
+        parent_id               INT,
+        curr_value              TEXT,
+        parent_feature_id       INT,
+        is_parent_feature_cont  BOOLEAN,
+        parent_split_value      FLOAT8,
+        parent_feature_name     TEXT
+    ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');
     
     -- We made a self join for the tree table. For each node, we get the 
     -- feature information at its parent node so as to display this node. 

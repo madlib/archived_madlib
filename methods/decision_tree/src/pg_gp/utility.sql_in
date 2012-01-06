@@ -392,16 +392,39 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__assert
     ) 
 RETURNS void AS $$
 DECLARE
+    err_msg     TEXT;
 BEGIN
+    IF (existence) THEN
+        err_msg = 'assertion failure. Table: ''' || table_name || ''' does not exist';
+    ELSE
+        err_msg = 'assertion failure. Table: ''' || table_name || ''' already exists';
+    END IF;
+    
     PERFORM MADLIB_SCHEMA.__assert
         (
         MADLIB_SCHEMA.__table_exists(schema_name, table_name) = existence, 
-        'assert failed!'
+        err_msg
         );
 END
 $$ LANGUAGE PLPGSQL;
 
+/*
+ * This is a global table to store information for various tree training.
+ */
+DROP TABLE IF EXISTS MADLIB_SCHEMA.training_info;
+CREATE TABLE MADLIB_SCHEMA.training_info
+    (
+    tree_table_name TEXT        NOT NULL,
+    training_table_name         TEXT,
+    training_metatable_name     TEXT,
+    training_encoded_table_name TEXT,
+    validation_table_name       TEXT,
+    how2handle_missing_value    TEXT,
+    split_criterion             TEXT,
+    PRIMARY KEY (tree_table_name)
+    ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (tree_table_name)');
 
+GRANT ALL PRIVILEGES ON MADLIB_SCHEMA.training_info TO PUBLIC;
 /*
  * @brief get the meta table name by the tree table name
  * @param tree_table tree table name
@@ -420,6 +443,21 @@ RETURNS TEXT AS $$
 DECLARE
     metatable_name TEXT := '';
 BEGIN
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__get_schema_name(tree_table),
+                MADLIB_SCHEMA.__strip_schema_name(tree_table),
+                't'
+            );     
+    
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                'MADLIB_SCHEMA',
+                'training_info',
+                't'
+            ); 
+            
     SELECT training_metatable_name 
     FROM MADLIB_SCHEMA.training_info 
     WHERE tree_table_name = tree_table 
@@ -447,6 +485,14 @@ RETURNS TEXT AS $$
 DECLARE
     classtable_name TEXT;
 BEGIN
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                'MADLIB_SCHEMA',
+                metatable_name,
+                't'
+            ); 
+            
     EXECUTE ' SELECT table_name 
               FROM MADLIB_SCHEMA.' || metatable_name ||
             ' WHERE column_type = ''c'';'  
@@ -574,34 +620,6 @@ BEGIN
     RETURN class_name;
 end
 $$ LANGUAGE PLPGSQL;
-
-/*
- * @brief create the training info table 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__create_traininginfo
-    (
-    );            
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_traininginfo
-    (
-    ) 
-RETURNS void AS $$
-BEGIN
-    IF ( NOT MADLIB_SCHEMA.__table_exists('MADLIB_SCHEMA', 'training_info') )THEN
-        CREATE TABLE MADLIB_SCHEMA.training_info
-            (
-            tree_table_name TEXT        NOT NULL,
-            training_table_name         TEXT,
-            training_metatable_name     TEXT,
-            training_encoded_table_name TEXT,
-            validation_table_name       TEXT,
-            how2handle_missing_value    TEXT,
-            split_criterion             TEXT,
-            PRIMARY KEY (tree_table_name)
-            ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (tree_table_name)');
-    END IF;
-end
-$$ LANGUAGE PLPGSQL;
-
 
 /*
  * @brief Remove the trained tree from training info table 
@@ -1660,7 +1678,7 @@ BEGIN
     EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ' CASCADE;';
     
     SELECT MADLIB_SCHEMA.__format(
-        'CREATE TABLE %(id %) AS SELECT % % FROM % DISTRIBUTED BY(id);', 
+        'CREATE TABLE %(id %) AS SELECT % % FROM % m4_ifdef(`GREENPLUM',`DISTRIBUTED BY(id)');', 
         ARRAY[
             encoded_table_name, 
             contcol_stmt, 
@@ -1723,7 +1741,7 @@ BEGIN
     IF (is_persistent) THEN
         IF (h2hmv_routine_id = 2) THEN
             SELECT MADLIB_SCHEMA.__format(
-                'SELECT min(%) - 1 FROM %', 
+                'SELECT coalesce(min(%), 1) - 1 FROM %', 
                 column_name,
                 input_table_name) 
                 INTO curstmt;
@@ -1731,7 +1749,7 @@ BEGIN
             EXECUTE curstmt INTO min_val;
     
             SELECT MADLIB_SCHEMA.__format(
-                'CREATE TABLE MADLIB_SCHEMA.%(key) AS SELECT % DISTRIBUTED BY (key)', 
+                'CREATE TABLE MADLIB_SCHEMA.%(key) AS SELECT % m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (key)')', 
                 col_table_name,
                 MADLIB_SCHEMA.__to_char(min_val)) 
                 INTO curstmt;
@@ -1916,7 +1934,7 @@ BEGIN
         SELECT MADLIB_SCHEMA.__format(
             'CREATE TABLE MADLIB_SCHEMA.% (%, key)  
             AS SELECT DISTINCT %, 1 FROM %   
-            DISTRIBUTED BY(%);', 
+            m4_ifdef(`GREENPLUM',`DISTRIBUTED BY(%)');', 
             ARRAY[
             coltable_name, 
             column_name,
@@ -2053,4 +2071,3 @@ BEGIN
     RETURN ret;
 END
 $$ LANGUAGE PLPGSQL;
-          
