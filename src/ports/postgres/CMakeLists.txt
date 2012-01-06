@@ -141,7 +141,21 @@ if(POSTGRESQL_FOUND)
     )
 
 # -- 6. Preprocess/copy all Python/SQL files -----------------------------------
-    
+
+    # Make sure we support older Postgres versions while still using the
+    # latest features of the newer ones
+    if(${_PG_VERSION} VERSION_LESS "9.0")
+        set(M4_ARGUMENTS_GREENPLUM
+            "-DPOSTGRES_PRE_90"
+        )
+    endif(${_PG_VERSION} VERSION_LESS "9.0")
+    add_python_files(
+        PYTHON_TARGET_FILES_GREENPLUM
+        "../postgres/modules"
+        "${CMAKE_CURRENT_BINARY_DIR}/modules"
+        ${M4_ARGUMENTS_GREENPLUM}
+    )
+        
     add_python_files(
         PYTHON_TARGET_FILES_POSTGRES
         "modules"

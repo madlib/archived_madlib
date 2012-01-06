@@ -175,14 +175,26 @@ if(GREENPLUM_FOUND)
 
 # -- 6. Preprocess/copy all Python/SQL files -----------------------------------
 
-    set(M4_ARGUMENTS_GREENPLUM
-        "-DGREENPLUM"
-    )
+    # Make sure we support older Greenplum versions while still using the
+    # latest features of the newer ones
+    if(${_GP_VERSION} VERSION_LESS "4.1")
+        set(M4_ARGUMENTS_GREENPLUM_PRE_41
+            "-DGREENPLUM_PRE_41"
+        )
+        set(M4_ARGUMENTS_GREENPLUM
+            "-DGREENPLUM"
+        )
+    else(${_GP_VERSION} VERSION_LESS "4.1")
+        set(M4_ARGUMENTS_GREENPLUM
+            "-DGREENPLUM"
+        )
+    endif(${_GP_VERSION} VERSION_LESS "4.1")
     add_python_files(
         PYTHON_TARGET_FILES_GREENPLUM
         "../postgres/modules"
         "${CMAKE_CURRENT_BINARY_DIR}/modules"
         ${M4_ARGUMENTS_GREENPLUM}
+        ${M4_ARGUMENTS_GREENPLUM_PRE_41}
     )
     # FIXME: Check legacy code for compliance with new architecture
     # BEGIN Legacy Code
@@ -198,7 +210,8 @@ if(GREENPLUM_FOUND)
             get_dir_name(OUTDIR ${OUTFILE})
             add_custom_command(OUTPUT "${OUTFILE}"
                 COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTDIR}"
-                COMMAND ${M4_BINARY} ${M4_ARGUMENTS} ${M4_ARGUMENTS_GREENPLUM} "${CURRENT_PATH}" > "${OUTFILE}"
+                COMMAND ${M4_BINARY} ${M4_ARGUMENTS} ${M4_ARGUMENTS_GREENPLUM} 
+                        ${M4_ARGUMENTS_GREENPLUM_PRE_41} "${CURRENT_PATH}" > "${OUTFILE}"
                 DEPENDS "${CURRENT_PATH}"
                 COMMENT "Preprocessing ${CURRENT_FILE} with m4."
             )
