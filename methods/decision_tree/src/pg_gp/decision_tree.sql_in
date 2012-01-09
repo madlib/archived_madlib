@@ -2222,6 +2222,7 @@ RETURNS SETOF TEXT AS $$
 DECLARE
     metatable_name          TEXT;
     classtable_name         TEXT;
+    class_column_name       TEXT;
     rec                     RECORD;
     fvalue_stmt             TEXT;
     feature_rule            TEXT;
@@ -2250,7 +2251,8 @@ BEGIN
     -- get metatable and classtable name given the tree table name
     metatable_name = MADLIB_SCHEMA.__get_metatable_name(tree_table_name);
     classtable_name = MADLIB_SCHEMA.__get_classtable_name(metatable_name);
-
+    class_column_name = MADLIB_SCHEMA.__get_class_column_name(metatable_name);
+    
     EXECUTE 'SELECT id, maxclass, probability, cat_size, jump FROM ' || tree_table_name || ' WHERE id = 1' 
     INTO rec;
     
@@ -2337,7 +2339,7 @@ BEGIN
              WHERE jump IS NULL
             ) n1
             LEFT JOIN
-            (SELECT class, key
+            (SELECT % as class, key
              FROM MADLIB_SCHEMA.% 
              WHERE key IS NOT NULL
             ) n2
@@ -2345,6 +2347,7 @@ BEGIN
          m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (location)')',
         ARRAY[
             tree_table_name,
+            class_column_name,
             classtable_name
             ]
         )
@@ -2649,22 +2652,26 @@ BEGIN
     EXECUTE curr_stmt;
 
     -- Get the metatable storing the encoding information of class.
-    EXECUTE 'SELECT table_name FROM '||metatable_name||' WHERE column_type=''c'';'
-        INTO table_name;
-    table_name = 'MADLIB_SCHEMA.'||table_name;
+    EXECUTE 'SELECT column_name,table_name FROM '||metatable_name||
+            ' WHERE column_type=''c'' LIMIT 1;'
+            INTO result_rec;
+    table_name = 'MADLIB_SCHEMA.'||result_rec.table_name;
     
-    -- Convert back for the class column.
-    SELECT MADLIB_SCHEMA.__format(
-        'UPDATE auxiliary_tree_display n SET maxclass=m.class
-        FROM % m 
-        WHERE m.key = n.maxclass::INT
-        ',
-        ARRAY[
-            table_name
-        ]
-        )
-    INTO curr_stmt;  
-    EXECUTE curr_stmt;
+    IF (table_name IS NOT NULL) THEN
+        -- Convert back for the class column.
+        SELECT MADLIB_SCHEMA.__format(
+            'UPDATE auxiliary_tree_display n SET maxclass=m.%
+            FROM % m 
+            WHERE m.key = n.maxclass::INT
+            ',
+            ARRAY[
+                result_rec.column_name,
+                table_name
+            ]
+            )
+        INTO curr_stmt;  
+        EXECUTE curr_stmt;
+    END IF;
 
     -- Get the metatables storing the encoding information for discrete features.
     SELECT MADLIB_SCHEMA.__format(
