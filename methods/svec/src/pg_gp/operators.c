@@ -729,7 +729,7 @@ Datum svec_svec_cosine_distance(PG_FUNCTION_ARGS)
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	SparseData left  = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
-	double dot, m1, m2;
+	double dot, m1, m2, result;
 	
 	dot = svec_svec_dot_product( svec1, svec2);
 
@@ -738,7 +738,16 @@ Datum svec_svec_cosine_distance(PG_FUNCTION_ARGS)
 
 	if (IS_NVP(dot) || IS_NVP(m1) || IS_NVP(m2)) PG_RETURN_NULL();
 	
-	PG_RETURN_FLOAT8(dot/(m1*m2));
+	result = dot/(m1*m2);
+	
+	if (result > 1.0) {
+		result = 1.0;
+	}
+	else if (result < -1.0) {
+		result = -1.0;
+	}
+
+	PG_RETURN_FLOAT8(result);
 }
 
 PG_FUNCTION_INFO_V1( svec_svec_tanimoto_distance );
@@ -751,7 +760,7 @@ Datum svec_svec_tanimoto_distance(PG_FUNCTION_ARGS)
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	SparseData left  = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
-	double dot, m1, m2;
+	double dot, m1, m2, result;
 	
 	dot = svec_svec_dot_product( svec1, svec2);
 	
@@ -760,7 +769,16 @@ Datum svec_svec_tanimoto_distance(PG_FUNCTION_ARGS)
 	
 	if (IS_NVP(dot) || IS_NVP(m1) || IS_NVP(m2)) PG_RETURN_NULL();
 	
-	PG_RETURN_FLOAT8(dot / (m1*m1 + m2*m2 - dot));
+	result = dot / (m1*m1 + m2*m2 - dot);
+	
+	if (result > 1.0) {
+		result = 1.0;
+	}
+	else if (result < 0.0) {
+		result = 0.0;
+	}
+	
+	PG_RETURN_FLOAT8(result);
 }
 
 PG_FUNCTION_INFO_V1( svec_normalize );
