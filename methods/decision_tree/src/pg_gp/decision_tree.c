@@ -14,6 +14,8 @@
 #include "fmgr.h"
 #include "utils/array.h"
 #include "catalog/pg_type.h"
+#include "nodes/execnodes.h"
+#include "nodes/nodes.h"
 
 #ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;

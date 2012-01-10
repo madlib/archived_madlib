@@ -307,7 +307,7 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__scv_aggr
     FLOAT8,
     FLOAT8
     ) CASCADE;
-CREATE ORDERED AGGREGATE MADLIB_SCHEMA.__scv_aggr
+CREATE m4_ifdef(`GREENPLUM',`ORDERED') AGGREGATE MADLIB_SCHEMA.__scv_aggr
     (
     INT,
     FLOAT8,
@@ -427,6 +427,7 @@ $$ LANGUAGE PLPGSQL;
  *      input_table_name:       The name of the original table containing all the records in training set.
  *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
  *                              Each record will be assigned to a node.
+ *      verbosity               ture if print the debug info  
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__execute_grouping_stmt
     (
@@ -515,17 +516,117 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+/*
+ * generate the training instances for current leaf nodes by grouping sets for greenplumn
+ * Parameters:
+ *      instance_table_name:    The output table name, which contains all the training set for current leaf nodes.
+ *      class_table_name:       Name of class table
+ *      group_table_name        The name of table containing grouping data info
+ *      verbosity               ture if print the debug info  
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__create_training_instance
+    (
+    instance_table_name   TEXT,
+    class_table_name      TEXT,
+    group_table_name      TEXT,
+    verbosity             INT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_training_instance
+    (
+    instance_table_name   TEXT,
+    class_table_name      TEXT,
+    group_table_name      TEXT,
+    verbosity             INT
+    )
+RETURNS void AS $$
+DECLARE
+    curstmt             TEXT := '';
+BEGIN
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'INSERT INTO %(fid, fval, class, is_cont, split_value, le, gt, assigned_nid)  
+            SELECT fid, fval, class, is_cont,
+                CASE WHEN (is_cont) THEN 
+                        fval::float8 
+                    ELSE 
+                        NULL 
+                    END AS split_value, 
+                CASE WHEN (is_cont) THEN 
+                        sum(count) OVER 
+                            (
+                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                            ) 
+                        ELSE 
+                            count 
+                        END AS le, 
+                CASE WHEN (is_cont) THEN 
+                        sum(count) OVER
+                            ( 
+                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
+                            ROWS BETWEEN 1 FOLLOWING AND  UNBOUNDED FOLLOWING) 
+                        ELSE 
+                            NULL 
+                        END AS gt,
+                assigned_nid
+            FROM (
+                SELECT DISTINCT n1.fid, n1.fval, n1.is_cont, n1.class, n2.count, n1.assigned_nid 
+                FROM 
+                    (
+                    SELECT fid, fval, is_cont, key as class, count, assigned_nid 
+                    FROM 
+                        (
+                        SELECT DISTINCT fval, count, fid, is_cont, assigned_nid 
+                        FROM %
+                        ) AS t1
+                    CROSS JOIN
+                    (
+                        SELECT key FROM MADLIB_SCHEMA.%
+                    ) as t2
+                ) AS n1 
+                LEFT JOIN % n2   
+                ON coalesce(n2.class,0) = coalesce(n1.class,0) AND
+                    coalesce(n2.assigned_nid,0) = coalesce(n1.assigned_nid,0) AND
+                    coalesce(n2.fid,0)= coalesce (n1.fid,0) AND
+                    coalesce(n2.fval,0) = coalesce(n1.fval,0)  
+            ) t;',
+            instance_table_name,
+            group_table_name,
+            class_table_name,
+            group_table_name
+        ) INTO curstmt;
+
+    IF(verbosity > 0) THEN
+        RAISE INFO 'window function stmt: %', curstmt;
+    END IF;
+            
+    EXECUTE curstmt;
+
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'INSERT INTO %(fid, fval, class, le, gt, assigned_nid)  
+             SELECT fid, null, class, sum(le), null, assigned_nid from
+             % where not is_cont group by fid,class,assigned_nid;',
+            instance_table_name,
+            instance_table_name
+        ) INTO curstmt;
+
+    EXECUTE curstmt;                    
+END
+$$ LANGUAGE PLPGSQL;
+
 
 /*
- * generate the training instances for current leaf nodes
+ * generate the training instances for current leaf nodes by grouping sets for greenplumn
  * Parameters:
  *      input_table_name:       The name of the original table containing all the records in training set.
  *      metatable_name:         Contains the relevant information of the input table
  *      instance_table_name:    The output table name, which contains all the training set for current leaf nodes.
  *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
  *                              Each record will be assigned to a node.
+ *      verbosity               ture if print the debug info 
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance_greenplum
     (
     input_table_name     TEXT, 
     metatable_name       TEXT,
@@ -533,7 +634,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance
     selection_table_name TEXT,
     verbosity            INT
     );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance_greenplum
     (
     input_table_name      TEXT, 
     metatable_name        TEXT,
@@ -637,79 +738,271 @@ BEGIN
                 );  
     END IF;    
     
-    SELECT MADLIB_SCHEMA.__format
+    PERFORM MADLIB_SCHEMA.__create_training_instance
         (
-            'INSERT INTO %(fid, fval, class, is_cont, split_value, le, gt, assigned_nid)  
-            SELECT fid, fval, class, is_cont,
-                CASE WHEN (is_cont) THEN 
-                        fval::float8 
-                    ELSE 
-                        NULL 
-                    END AS split_value, 
-                CASE WHEN (is_cont) THEN 
-                        sum(count) OVER 
-                            (
-                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
-                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                            ) 
-                        ELSE 
-                            count 
-                        END AS le, 
-                CASE WHEN (is_cont) THEN 
-                        sum(count) OVER
-                            ( 
-                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
-                            ROWS BETWEEN 1 FOLLOWING AND  UNBOUNDED FOLLOWING) 
-                        ELSE 
-                            NULL 
-                        END AS gt,
-                assigned_nid
-            FROM (
-                SELECT DISTINCT n1.fid, n1.fval, n1.is_cont, n1.class, n2.count, n1.assigned_nid 
-                FROM 
-                    (
-                    SELECT fid, fval, is_cont, key as class, count, assigned_nid 
-                    FROM 
-                        (
-                        SELECT DISTINCT fval, count, fid, is_cont, assigned_nid 
-                        FROM %
-                        ) AS t1
-                    CROSS JOIN
-                    (
-                        SELECT key FROM MADLIB_SCHEMA.%
-                    ) as t2
-                ) AS n1 
-                LEFT JOIN % n2   
-                ON coalesce(n2.class,0) = coalesce(n1.class,0) AND
-                    coalesce(n2.assigned_nid,0) = coalesce(n1.assigned_nid,0) AND
-                    coalesce(n2.fid,0)= coalesce (n1.fid,0) AND
-                    coalesce(n2.fval,0) = coalesce(n1.fval,0)  
-            ) t;',
-            instance_table_name,
-            group_table_name,
-            class_table_name,
-            group_table_name
-        ) INTO curstmt;
-
-    IF(verbosity > 0) THEN
-        RAISE INFO 'window function stmt: %', curstmt;
-    END IF;
-            
-    EXECUTE curstmt;
-
-    SELECT MADLIB_SCHEMA.__format
-        (
-            'INSERT INTO %(fid, fval, class, le, gt, assigned_nid)  
-             SELECT fid, null, class, sum(le), null, assigned_nid from
-             % where not is_cont group by fid,class,assigned_nid;',
-            instance_table_name,
-            instance_table_name
-        ) INTO curstmt;
-
-    EXECUTE curstmt;                    
+        instance_table_name,
+        class_table_name,
+        group_table_name,
+        verbosity
+        );
 END
 $$ LANGUAGE PLPGSQL;
 	
+
+/*
+ * generate the training instances for current leaf nodes by union all statement for postgres
+ * Parameters:
+ *      input_table_name:       The name of the original table containing all the records in training set.
+ *      metatable_name:         Contains the relevant information of the input table
+ *      instance_table_name:    The output table name, which contains all the training set for current leaf nodes.
+ *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
+ *                              Each record will be assigned to a node.
+ *      verbosity               ture if print the debug info 
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance_postgres
+    (
+    input_table_name     TEXT, 
+    metatable_name       TEXT,
+    instance_table_name  TEXT,
+    selection_table_name TEXT,
+    verbosity            INT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance_postgres
+    (
+    input_table_name      TEXT, 
+    metatable_name        TEXT,
+    instance_table_name   TEXT,
+    selection_table_name  TEXT,
+    verbosity             INT
+    )
+RETURNS void AS $$
+DECLARE
+    curstmt             TEXT := '';
+    result_rec          RECORD;
+    feature_stmt        TEXT := '';
+    bracket_stmt        TEXT := '';
+    group_stmt          TEXT := '';
+    group_result_stmt   TEXT := '';
+    class_table_name    TEXT := '';
+    name                TEXT;
+    null_stmt           TEXT := '';    
+    group_table_name    TEXT := 'training_instance_aux';
+    max_num_col_group   INT  := 30;
+    index               INT  := 1;
+BEGIN
+    EXECUTE 'TRUNCATE ' || instance_table_name;
+    EXECUTE 'TRUNCATE ' || group_table_name;
+    
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'SELECT table_name 
+        FROM MADLIB_SCHEMA.% 
+        WHERE column_type = ''c''',
+        metatable_name
+        )
+    INTO curstmt;
+    
+    EXECUTE curstmt INTO class_table_name;
+
+    EXECUTE 'DROP TABLE IF EXISTS training_instace_with_nid';
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'CREATE TEMP TABLE training_instace_with_nid 
+         AS SELECT %, class, assigned_nid 
+         FROM % t1 
+         LEFT JOIN % t2 
+         ON t1.id = t2.id
+         m4_ifdef(`GREENPLUM',`DISTRIBUTED BY(assigned_nid)')',
+        ARRAY[
+            MADLIB_SCHEMA.__get_feature_name_in_selectstmt(metatable_name),
+            input_table_name,
+            selection_table_name
+            ]
+        )
+    INTO curstmt;
+    
+    IF(verbosity > 0) THEN
+        RAISE INFO 'training_instace_with_nid creation stmt: %', curstmt;
+    END IF;
+            
+    EXECUTE curStmt;
+
+    -- get all the feature names, and default value is null
+    FOR name IN EXECUTE 
+        ('SELECT column_name 
+          FROM   MADLIB_SCHEMA.' || metatable_name || ' ' ||
+         'WHERE  column_type = ''f'' ORDER BY id;'
+        )
+        LOOP
+        null_stmt = null_stmt || 'null as ' || name || ', ';
+    END LOOP;
+    
+    
+    EXECUTE 'DROP TABLE IF EXISTS training_instace_count';
+    
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'CREATE TEMP TABLE training_instace_count 
+         AS 
+         (
+         SELECT % null as class, COUNT(*) as count, assigned_nid
+         FROM training_instace_with_nid
+         GROUP BY assigned_nid
+         UNION ALL
+         SELECT % class, COUNT(*), assigned_nid
+         FROM training_instace_with_nid
+         GROUP BY assigned_nid, class
+         )
+         m4_ifdef(`GREENPLUM',`DISTRIBUTED BY(assigned_nid)')',
+        ARRAY[
+            null_stmt,
+            null_stmt
+            ]
+        )
+    INTO curstmt;
+
+    IF(verbosity > 0) THEN
+        RAISE INFO 'training_instace_count creation stmt: %', curstmt;
+    END IF;
+        
+    EXECUTE curStmt;
+    
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'SELECT id, column_name, is_cont 
+            FROM MADLIB_SCHEMA.% 
+            WHERE column_type = ''f'' ORDER BY id',
+            metatable_name
+        )
+    INTO curstmt;
+    
+    FOR result_rec IN EXECUTE (curstmt) LOOP
+        
+        feature_stmt = feature_stmt || 
+                        'MADLIB_SCHEMA.__tfc((' || 
+                        result_rec.id || 
+                        ',' ||
+                        result_rec.column_name || 
+                        '::FLOAT8,''' || 
+                        MADLIB_SCHEMA.__to_char(result_rec.is_cont) ||
+                        ''')::MADLIB_SCHEMA.__attr_info,';
+        
+        bracket_stmt = bracket_stmt || ')';
+
+       SELECT MADLIB_SCHEMA.__format
+            (
+            'INSERT INTO training_instace_count(%, class, count, assigned_nid) 
+             (
+             SELECT %, null, COUNT(*), assigned_nid
+             FROM training_instace_with_nid
+             GROUP BY assigned_nid, %
+             UNION ALL
+             SELECT %, class, COUNT(*), assigned_nid
+             FROM training_instace_with_nid
+             GROUP BY assigned_nid, %, class
+             )',
+            ARRAY[
+                result_rec.column_name,
+                result_rec.column_name,
+                result_rec.column_name,
+                result_rec.column_name,
+                result_rec.column_name
+                ]
+            )
+        INTO curstmt;
+        
+        IF(verbosity > 0) THEN
+            RAISE INFO 'training_instace_count insertion for each feature stmt: %', curstmt;
+        END IF;
+    
+        EXECUTE curStmt;
+    END LOOP;
+    
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'INSERT INTO %
+        SELECT ((% null%)::MADLIB_SCHEMA.__attr_info).*, class, count, assigned_nid
+        FROM training_instace_count
+        WHERE assigned_nid IS NOT NULL',
+        ARRAY[
+        group_table_name,
+        feature_stmt,
+        bracket_stmt
+        ]
+    ) INTO curstmt;    
+    
+    IF(verbosity > 0) THEN
+        RAISE INFO 'Inser into auxiliary table stmt: %', curstmt;
+    END IF;
+            
+    EXECUTE curstmt;
+      
+    PERFORM MADLIB_SCHEMA.__create_training_instance
+        (
+        instance_table_name,
+        class_table_name,
+        group_table_name,
+        verbosity
+        );
+                         
+END
+$$ LANGUAGE PLPGSQL;
+
+/*
+ * generate the training instances for current leaf nodes
+ * Parameters:
+ *      input_table_name:       The name of the original table containing all the records in training set.
+ *      metatable_name:         Contains the relevant information of the input table
+ *      instance_table_name:    The output table name, which contains all the training set for current leaf nodes.
+ *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
+ *                              Each record will be assigned to a node.
+ *      dbid                    0 means greenplum database, others represents postgres for now
+ *      verbosity               ture if print the debug info 
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance
+    (
+    input_table_name     TEXT, 
+    metatable_name       TEXT,
+    instance_table_name  TEXT,
+    selection_table_name TEXT,
+    dbid                 INT,
+    verbosity            INT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance
+    (
+    input_table_name      TEXT, 
+    metatable_name        TEXT,
+    instance_table_name   TEXT,
+    selection_table_name  TEXT,
+    dbid                  INT,
+    verbosity             INT
+    )
+RETURNS void AS $$
+DECLARE
+BEGIN
+    -- For greenplum, use olap extension: group sets
+    IF (dbid = 10) THEN
+        PERFORM MADLIB_SCHEMA.__generate_training_instance_greenplum
+            (
+            input_table_name,
+            metatable_name,
+            instance_table_name,
+            selection_table_name,
+            verbosity
+            );
+    ELSE
+    -- For postgres, just use union all to do that
+        PERFORM MADLIB_SCHEMA.__generate_training_instance_postgres
+            (
+            input_table_name,
+            metatable_name,
+            instance_table_name,
+            selection_table_name,
+            verbosity
+            );    
+    END IF;
+END
+$$ LANGUAGE PLPGSQL;
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__rep_type CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__rep_type AS
@@ -1574,9 +1867,9 @@ BEGIN
         RAISE EXCEPTION 'The number of classes must be in range 2 to 8,000,000!';
     END IF;
     
-    INSERT INTO tree_internal (tree_location, feature, probability, maxclass, 
+    EXECUTE 'INSERT INTO tree_internal (tree_location, feature, probability, maxclass, 
         split_gain, live, cat_size, parent_id) 
-        VALUES(ARRAY[0], 0, 1, 1, 1, 1, 0, 0);
+        VALUES(ARRAY[0], 0, 1, 1, 1, 1, 0, 0);';
                
     location_size = 0;
     
@@ -1598,8 +1891,8 @@ BEGIN
             RAISE INFO 'current level: %', max_tree_depth - max_depth;
         END IF;
 
-        SELECT id FROM tree_internal WHERE live = 1 ORDER BY id LIMIT 1 INTO assigned_nid;
-        SELECT id FROM tree_internal WHERE live = 1 ORDER BY id DESC LIMIT 1 INTO max_id;
+        EXECUTE 'SELECT id FROM tree_internal WHERE live = 1 ORDER BY id LIMIT 1;' INTO assigned_nid;
+        EXECUTE 'SELECT id FROM tree_internal WHERE live = 1 ORDER BY id DESC LIMIT 1;' INTO max_id;
         
         FOR selection_index IN 1..(max_id - assigned_nid + 1) LOOP
             selection_visit[selection_index] = 'f';
@@ -1613,6 +1906,7 @@ BEGIN
             training_table_meta,
             'training_instance',
             'instance_selection',
+            m4_ifdef(`GREENPLUM',`1')0,
             verbosity
             );
 
@@ -2557,7 +2851,7 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__display_tree_aggr
     TEXT,       -- max_class
     INT         -- cat_size
     ) CASCADE;
-CREATE ORDERED AGGREGATE MADLIB_SCHEMA.__display_tree_aggr
+CREATE m4_ifdef(`GREENPLUM',`ORDERED') AGGREGATE MADLIB_SCHEMA.__display_tree_aggr
     (
     INT,        -- depth
     BOOLEAN,    -- is_cont
@@ -2835,6 +3129,7 @@ BEGIN
     
     IF (is_result_temp) THEN
         create_text = 'CREATE TEMP TABLE ';
+        EXECUTE 'DROP TABLE IF EXISTS '||result_table_name;
     ELSE
         create_text = 'CREATE TABLE ';
     END IF;
