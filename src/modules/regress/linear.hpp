@@ -4,34 +4,22 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_REGRESS_LINEAR_H
-#define MADLIB_REGRESS_LINEAR_H
-
-#include <modules/common.hpp>
-
-namespace madlib {
-
-namespace modules {
-
-namespace regress {
+// Workaround for Doxygen: Ignore if processed as a stand-alone.
+#if !defined(_DOXYGEN) || defined(MADLIB_REGRESS_LINEAR_CPP)
 
 /**
- * @brief Linear-regression functions
+ * @brief Linear regression: Transition function
  */
-struct LinearRegression {
-    enum What { kCoef, kRSquare, kTStats, kPValues };
-    
-    class TransitionState;
-    
-    static AnyType transition(AbstractDBInterface &db, AnyType args);
-    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
-    static AnyType final(AbstractDBInterface &db, AnyType args);
-};
+DECLARE_UDF(linregr_transition)
 
-} // namespace regress
+/**
+ * @brief Linear regression: State merge function
+ */
+DECLARE_UDF(linregr_merge_states)
 
-} // namespace modules
+/**
+ * @brief Linear regression: Final function
+ */
+DECLARE_UDF(linregr_final)
 
-} // namespace regress
-
-#endif
+#endif // workaround for Doxygen

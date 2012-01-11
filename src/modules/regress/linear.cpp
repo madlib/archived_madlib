@@ -6,35 +6,27 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <modules/regress/linear.hpp>
-#include <modules/prob/student.hpp>
-#include <utils/Reference.hpp>
-
-// Floating-point classification functions are in C99 and TR1, but not in the
-// official C++ Standard (before C++0x). We therefore use the Boost implementation
-#include <boost/math/special_functions/fpclassify.hpp>
-
-
-// Import names from Armadillo
-using arma::vec;
-using arma::mat;
-using arma::as_scalar;
+#include <dbconnector/dbconnector.hpp>
+#include <modules/shared/HandleTraits.hpp>
+#include <modules/prob/prob.hpp>
 
 namespace madlib {
-
-using utils::Reference;
 
 namespace modules {
 
 // Import names from other MADlib modules
-using prob::studentT_cdf;
+using prob::studentT_CDF;
 
 namespace regress {
+
+// Workaround for Doxygen: Only ignore header file if processed stand-alone
+#define MADLIB_REGRESS_LINEAR_CPP
+#include "linear.hpp"
 
 /**
  * @brief Transition state for linear-regression functions
  *
- * TransitionState encapsualtes the transition state during the
+ * TransitionState encapsulates the transition state during the
  * linear-regression aggregate functions. To the database, the state is exposed
  * as a single DOUBLE PRECISION array, to the C++ code it is a proper object
  * containing scalars, a vector, and a matrix.
@@ -42,21 +34,23 @@ namespace regress {
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 5, and all elemenets are 0.
  */
-class LinearRegression::TransitionState {
-public:
-    /**
-     * @internal Member initalization occurs in the order of declaration in the
-     *      class (see ISO/IEC 14882:2003, Section 12.6.2). The order in the
-     *      init list is irrelevant. It is important that mStorage gets
-     *      initialized before the other members!
-     */
-    TransitionState(AnyType inArg)
-        : mStorage(inArg.cloneIfImmutable()) {
-        
-        rebind();
-    }
+template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
+class LinRegrTransitionState : public AbstractionLayer {
+    // By §14.5.3/9: "Friend declarations shall not declare partial
+    // specializations." We do access protected members in operator+=().
+    template <class OtherHandle, class OtherLinAlgTypes>
+    friend class LinRegrTransitionState;
 
+public:
+    LinRegrTransitionState(const AnyType &inArray)
+      : mStorage(inArray.getAs<Handle>()) {
+        
+        rebind(static_cast<uint16_t>(mStorage[1]));
+    }
+    
     /**
+     * @brief Convert to backend representation
+     *
      * We define this function so that we can use TransitionState in the argument
      * list and as a return type.
      */
@@ -73,136 +67,123 @@ public:
      *     determines the size of the transition state. This size is a quadratic
      *     function of inWidthOfX.
      */
-    inline void initialize(AllocatorSPtr inAllocator,
-        const uint16_t inWidthOfX) {
-        
-        mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
+    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
-        
+    
     /**
      * @brief Merge with another TransitionState object
      */
-    TransitionState &operator+=(const TransitionState &inOtherState) {
+    template <class OtherHandle>
+    LinRegrTransitionState &operator+=(
+        const LinRegrTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        
         if (mStorage.size() != inOtherState.mStorage.size())
             throw std::logic_error("Internal error: Incompatible transition states");
             
-        for (uint32_t i = 0; i < mStorage.size(); i++)
+        for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] += inOtherState.mStorage[i];
         
+        // Undo the addition of widthOfX
         widthOfX = inOtherState.widthOfX;
         return *this;
     }
-        
+    
 private:
-    static inline uint32_t arraySize(const uint16_t inWidthOfX) {
-        return 4 + inWidthOfX + inWidthOfX * inWidthOfX;
+    static inline size_t arraySize(const uint16_t inWidthOfX) {
+        return 4 + inWidthOfX + inWidthOfX % 2 + inWidthOfX * inWidthOfX;
     }
-    
-    /**
-     * @brief Who should own TransparentHandles pointing to slices of mStorage?
-     */
-    AbstractHandle::MemoryController memoryController() const {
-        AbstractHandle::MemoryController ctrl =
-            mStorage.memoryHandle()->memoryController();
-        
-        return (ctrl == AbstractHandle::kSelf ? AbstractHandle::kLocal : ctrl);
-    }
-    
+
     /**
      * @brief Rebind to a new storage array
      *
-     * @param inWidthOfX If this value is positive, use it as the number of
-     *     independent variables. This is needed during initialization, when
-     *     the storage array is still all zero, but we do already know the
-     *     with of the design matrix.
+     * @param inWidthOfX The number of independent variables.
+     *
+     * Array layout:
+     * - 0: numRows (number of rows seen so far)
+     * - 1: widthOfX (number of coefficients)
+     * - 2: y_sum (sum of independent variables seen so far)
+     * - 3: y_square_sum (sum of squares of independent variables seen so far)
+     * - 4: X_transp_Y (X^T y, for that parts of X and y seen so far)
+     * - 4 + widthOfX + widthOfX % 2: (X^T X, as seen so far)
+     *
+     * Note that we want 16-byte alignment for all vectors and matrices. We
+     * therefore ensure that X_transp_Y and X_transp_X begin at even positions.
      */
-    void rebind(uint16_t inWidthOfX = 0) {
+    void rebind(uint16_t inWidthOfX) {
         numRows.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
-        
-        if (inWidthOfX != 0)
-            widthOfX = inWidthOfX;
-        
         y_sum.rebind(&mStorage[2]);
         y_square_sum.rebind(&mStorage[3]);
-        X_transp_Y.rebind(
-            TransparentHandle::create(&mStorage[4], widthOfX * sizeof(double),
-                memoryController()),
-            widthOfX);
-        X_transp_X.rebind(
-            TransparentHandle::create(&mStorage[4 + widthOfX],
-                widthOfX * widthOfX * sizeof(double),
-                memoryController()),
-            widthOfX, widthOfX);
+        X_transp_Y.rebind(&mStorage[4], inWidthOfX);
+        X_transp_X.rebind(&mStorage[4 + inWidthOfX + (inWidthOfX % 2)],
+            inWidthOfX, inWidthOfX);
     }
 
-    Array<double> mStorage;
+    Handle mStorage;
 
 public:
-    Reference<double, uint64_t> numRows;
-    Reference<double, uint16_t> widthOfX;
-    Reference<double> y_sum;
-    Reference<double> y_square_sum;
-    DoubleCol X_transp_Y;
-    DoubleMat X_transp_X;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble y_sum;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble y_square_sum;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap X_transp_Y;
+    typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_X;
 };
+
 
 /**
  * @brief Perform the linear-regression transition step
- * 
- * We update: the number of rows \f$ n \f$, the partial sums
- * \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
+ *
+ * We update in the transition state: The number of rows \f$ n \f$, the partial
+ * sums \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
  * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
  */
-AnyType LinearRegression::transition(AbstractDBInterface &db, AnyType args) {
-    AnyType::iterator arg(args);
-    
+AnyType
+linregr_transition::run(AnyType &args) {
     // Arguments from SQL call. Immutable values passed by reference should be
     // instantiated from the respective <tt>_const</tt> class. Otherwise, the
     // abstraction layer will perform a deep copy (i.e., waste unnecessary
     // processor cycles).
-    TransitionState state = *arg++;
-    double y = *arg++;
-    DoubleRow_const x = *arg++;
+    LinRegrTransitionState<MutableArrayHandle<double> > state = args[0];
+    double y = args[1].getAs<double>();
+    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
     
-    // See MADLIB-138. At least on certain platforms and with certain versions,
-    // LAPACK will run into an infinite loop if pinv() is called for non-finite
-    // matrices. We extend the check also to the dependent variables.
-    if (!boost::math::isfinite(y))
+    // The following check was added with MADLIB-138.
+    if (!std::isfinite(y))
         throw std::invalid_argument("Dependent variables are not finite.");
-    else if (!x.is_finite())
+    else if (!isfinite(x))
         throw std::invalid_argument("Design matrix is not finite.");
     
     // Now do the transition step.
     if (state.numRows == 0) {
-        if (x.n_elem > std::numeric_limits<uint16_t>::max())
+        if (x.size() > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
                 "larger than 65535.");
         
-        state.initialize(
-            db.allocator(
-                AbstractAllocator::kAggregate,
-                AbstractAllocator::kZero
-            ),
-            x.n_elem);
+        state.initialize(*this, x.size());
     }
     state.numRows++;
     state.y_sum += y;
     state.y_square_sum += y * y;
-    state.X_transp_Y += trans(x) * y;
-    state.X_transp_X += trans(x) * x;
-        
+    state.X_transp_Y.noalias() += x * y;
+    // X^T X is symmetric, so it is sufficient to only fill a triangular part
+    // of the matrix
+    triangularView<Lower>(state.X_transp_X) += x * trans(x);
+    
     return state;
 }
 
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LinearRegression::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
-    TransitionState stateLeft = args[0].cloneIfImmutable();
-    const TransitionState stateRight = args[1];
+AnyType
+linregr_merge_states::run(AnyType &args) {
+    LinRegrTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    LinRegrTransitionState<ArrayHandle<double> > stateRight = args[1];
     
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -218,44 +199,42 @@ AnyType LinearRegression::mergeStates(AbstractDBInterface & /* db */, AnyType ar
 
 /**
  * @brief Perform the linear-regression final step
+ *
+ * The result of the aggregation phase is \f$ X^T X \f$ and
+ * \f$ X^T \boldsymbol y \f$. We first compute the pseudo-inverse, then the
+ * regression coefficients, the model statistics, etc.
+ * 
+ * @sa For the mathematical description, see \ref grp_linreg.
  */
-AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
-    const TransitionState state = args[0];
+AnyType
+linregr_final::run(AnyType &args) {
+    LinRegrTransitionState<ArrayHandle<double> > state = args[0];
+
+    // If we haven't seen any data, just return Null
+    if (state.numRows == 0)
+        return Null();
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
     // matrices. We extend the check also to the dependent variables.
-    if (!state.X_transp_X.is_finite() || !state.X_transp_Y.is_finite())
+    if (!isfinite(state.X_transp_X) || !isfinite(state.X_transp_Y))
         throw std::invalid_argument("Design matrix is not finite.");
-        
-    // FIXME: We have essentially two calls to svd now (pinv calls svd, too).
-    // This is a waste of processor cycles and energy.
-    vec singularValues = svd(state.X_transp_X);
-    double condition_X_transp_X = max(singularValues) / min(singularValues);
-
-    // See:
-    // Lichtblau, Daniel and Weisstein, Eric W. "Condition Number."
-    // From MathWorld--A Wolfram Web Resource.
-    // http://mathworld.wolfram.com/ConditionNumber.html
-    if (condition_X_transp_X > 1000)
-        db.out << "Matrix X^T X is ill-conditioned (condition number "
-            "= " << condition_X_transp_X << "). "
-            "Expect strong multicollinearity." << std::endl;
+    
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        state.X_transp_X, EigenvaluesOnly, ComputePseudoInverse);
     
     // Precompute (X^T * X)^+
-    mat inverse_of_X_transp_X = pinv(state.X_transp_X);
+    Matrix inverse_of_X_transp_X = decomposition.pseudoInverse();
 
     // Vector of coefficients: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    DoubleCol coef(db.allocator(), state.widthOfX);
-    coef = inverse_of_X_transp_X * state.X_transp_Y;
+    HandleMap<ColumnVector> coef(allocateArray<double>(state.widthOfX));
+    coef.noalias() = inverse_of_X_transp_X * state.X_transp_Y;
     
     // explained sum of squares (regression sum of squares)
     double ess
-        = as_scalar(
-            trans(state.X_transp_Y) * coef
-            - ((state.y_sum * state.y_sum) / state.numRows)
-          );
+        = dot(state.X_transp_Y, coef)
+            - ((state.y_sum * state.y_sum) / state.numRows);
 
     // total sum of squares
     double tss
@@ -291,8 +270,8 @@ AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
     
     // Vector of standard errors and t-statistics: For efficiency reasons, we
     // want to return these by reference, so we need to bind to db memory
-    DoubleCol stdErr(db.allocator(), state.widthOfX);
-    DoubleCol tStats(db.allocator(), state.widthOfX);
+    HandleMap<ColumnVector> stdErr(allocateArray<double>(state.widthOfX));
+    HandleMap<ColumnVector> tStats(allocateArray<double>(state.widthOfX));
     for (int i = 0; i < state.widthOfX; i++) {
         // In an abundance of caution, we see a tiny possibility that numerical
         // instabilities in the pinv operation can lead to negative values on
@@ -317,22 +296,16 @@ AnyType LinearRegression::final(AbstractDBInterface &db, AnyType args) {
     
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    DoubleCol pValues(db.allocator(), state.widthOfX);
+    HandleMap<ColumnVector> pValues(allocateArray<double>(state.widthOfX));
     for (int i = 0; i < state.widthOfX; i++)
-        pValues(i) = 2. * (1. - studentT_cdf(
+        pValues(i) = 2. * (1. - studentT_CDF(
                                     state.numRows - state.widthOfX,
                                     std::fabs( tStats(i) )));
     
     // Return all coefficients, standard errors, etc. in a tuple
-    AnyTypeVector tuple;
-    ConcreteRecord::iterator tupleElement(tuple);
-    
-    *tupleElement++ = coef;
-    *tupleElement++ = r2;
-    *tupleElement++ = stdErr;
-    *tupleElement++ = tStats;
-    *tupleElement   = pValues;
-    
+    AnyType tuple;
+    tuple << coef << r2 << stdErr << tStats << pValues
+        << decomposition.conditionNo();
     return tuple;
 }
 
