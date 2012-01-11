@@ -2,29 +2,16 @@
  *
  * @file student.hpp
  *
- * @brief Evaluate the Student-T distribution function.
- *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_PROB_STUDENT_H
-#define MADLIB_PROB_STUDENT_H
+// Workaround for Doxygen: Ignore if processed as a stand-alone.
+#if !defined(_DOXYGEN) || defined(MADLIB_PROB_STUDENT_CPP)
 
-#include <modules/common.hpp>
+/**
+ * @brief Student-t cumulative distribution function
+ */
+DECLARE_UDF(student_t_cdf)
 
-namespace madlib {
+double studentT_CDF(int64_t nu, double t);
 
-namespace modules {
-
-namespace prob {
-
-double studentT_cdf(int64_t nu, double t);
-
-AnyType student_t_cdf(AbstractDBInterface &db, AnyType args);
-
-} // namespace prob
-
-} // namespace modules
-
-} // namespace regress
-
-#endif
+#endif // workaround for Doxygen

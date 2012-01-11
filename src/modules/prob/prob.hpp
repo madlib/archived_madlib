@@ -2,13 +2,30 @@
  *
  * @file prob.hpp
  *
+ * @brief Umbrella header that includes all probability functions
+ *
  * -------------------------------------------------------------------------- */
 
+namespace madlib {
+
+namespace modules {
+
 /**
- * @namespace madlib::modules::prob
- * 
  * @brief Probability functions
  */
+namespace prob {
 
-#include <modules/prob/chiSquared.hpp>
-#include <modules/prob/student.hpp>
+#ifdef MADLIB_CURRENT_NAMESPACE
+    #undef MADLIB_CURRENT_NAMESPACE
+#endif
+
+#define MADLIB_CURRENT_NAMESPACE madlib::modules::prob
+
+#include "boost.hpp"
+#include "student.hpp"
+
+} // namespace prob
+
+} // namespace modules
+
+} // namespace madlib
