@@ -47,10 +47,21 @@ static float CONFIDENCE_DEV[]   = {4.0, 3.09, 2.58, 2.33, 1.65, 1.28, 0.84, 0.25
 #define MIN_CONFIDENCE_LEVEL 0.001
 #define MAX_CONFIDENCE_LEVEL 100.0
 
-#define check_conf_level(cf) \
-			cf = (cf) * 100; \
-			if ((cf) < MIN_CONFIDENCE_LEVEL || (cf) > MAX_CONFIDENCE_LEVEL) \
-				elog(ERROR,"invalid conf_level: %lf",cf);
+#define check_error_value(condition, message, value) \
+			if (!(condition)) \
+				ereport(ERROR, \
+						(errcode(ERRCODE_RAISE_EXCEPTION), \
+						 errmsg(message, (value)) \
+						) \
+					   );
+
+#define check_error(condition, message) \
+			if (!(condition)) \
+				ereport(ERROR, \
+						(errcode(ERRCODE_RAISE_EXCEPTION), \
+						 errmsg(message) \
+						) \
+					   );
 
 float ebp_calc_errors_internal
 (
@@ -75,16 +86,37 @@ float ebp_calc_errors_internal
  */
 Datum ebp_calc_errors(PG_FUNCTION_ARGS)
 {
-    float8 total 		= PG_GETARG_FLOAT8(0);
+    float8 total_cases 	= PG_GETARG_FLOAT8(0);
     float8 probability 	= PG_GETARG_FLOAT8(1);
     float8 conf_level 	= PG_GETARG_FLOAT8(2);
     float8 result 		= 1;
     float8 coeff 		= 0;
     int i 				= 0;
 
-    if (!is_float_zero(1 - conf_level))
+    if (!is_float_zero(100 - conf_level))
     {
-    	check_conf_level(conf_level);
+    	check_error_value
+    		(
+    			!(conf_level < MIN_CONFIDENCE_LEVEL || conf_level > MAX_CONFIDENCE_LEVEL),
+    			"invalid confidence level:  %lf. Confidence level must be in range from 0.001 to 100",
+    			conf_level
+    		);
+
+    	check_error_value
+    		(
+    			total_cases > 0,
+    			"invalid number: %lf. The number of cases must be greater than 0",
+    			total_cases
+    		);
+
+    	check_error_value
+    		(
+    			!(probability < 0 || probability > 1),
+    			"invalid probability: %lf. The probability must be range from 0 to 1",
+    			probability
+    		);
+
+    	conf_level = conf_level * 0.01;
 
 		/* calculate the coeff */
 		while (conf_level > CONFIDENCE_LEVEL[i]) i++;
@@ -94,8 +126,17 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
 				(conf_level - CONFIDENCE_LEVEL[i-1]) /
 				(CONFIDENCE_LEVEL[i] - CONFIDENCE_LEVEL[i-1]);
 
-    	float8 num_errors = total * (1 - probability);
-		result = ebp_calc_errors_internal(total, num_errors, conf_level, coeff * coeff) + num_errors;
+		coeff *= coeff;
+
+		check_error_value
+    		(
+    			coeff > 0,
+    			"invalid coefficiency: %lf. It must be greater than 0",
+    			coeff
+    		);
+
+		float8 num_errors = total_cases * (1 - probability);
+    	result = ebp_calc_errors_internal(total_cases, num_errors, conf_level, coeff) + num_errors;
     }
 
 	PG_RETURN_FLOAT8((float8)result);
@@ -125,17 +166,6 @@ float ebp_calc_errors_internal
 	float coeff
     )
 {
-	if (!(total_cases > 0))
-        elog(ERROR, "total_cases should be greater than zero");
-	
-    if (num_errors < 0)
-        elog(ERROR, "num_errors is less than zero");
-
-    if(coeff <= 0)
-        elog(ERROR,"invalid coeff: %lf",coeff);
-
-    check_conf_level(conf_level);
-
     if (num_errors < 1E-6)
     {
         return total_cases * (1 - exp(log(conf_level) / total_cases));
@@ -191,19 +221,27 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     bool need_reconstruct_array     = false;
 
 
-    if (max_num_of_classes < 2)
-    	elog(ERROR, "the number of classes: (%d) should be greater than 2", max_num_of_classes);
+    check_error_value
+		(
+			max_num_of_classes >= 2,
+			"invalid value: %d. The number of classes must be greater than 2",
+			max_num_of_classes
+		);
 
-    if (!(original_class > 0 && 
-          original_class <= max_num_of_classes))
-        elog(ERROR,"original_class:%d,max_num_of_classes:%d",
-            original_class,max_num_of_classes);
+    check_error_value
+		(
+			original_class > 0 && original_class <= max_num_of_classes,
+			"invalid real class value: %d. It must be less than and equal the number of classes",
+			original_class
+		);
+
+    check_error_value
+		(
+			classified_class > 0 && classified_class <= max_num_of_classes,
+			"invalid classified class value: %d. It must be less than and equal the number of classes",
+			classified_class
+		);
     
-    if(!(classified_class > 0 && 
-         classified_class <= max_num_of_classes))
-        elog(ERROR,"classified_class:%d,max_num_of_classes:%d",
-            classified_class,max_num_of_classes);
-
     /* test if the first argument (class count array) is null */
     if (PG_ARGISNULL(0))
     {
@@ -223,21 +261,31 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
         else
             class_count_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
         
-        if (!class_count_array)
-        	elog(ERROR, "invalid class count array");
+        check_error
+    		(
+    			class_count_array,
+    			"invalid aggregation state array"
+    		);
 
-        array_dim           = ARR_NDIM(class_count_array);
+        array_dim = ARR_NDIM(class_count_array);
 
-        if (array_dim != 1)
-        {
-        	elog(ERROR, "array_dim is not 1");
-        }
+        check_error_value
+    		(
+    			array_dim == 1,
+    			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+    			array_dim
+    		);
+
         p_array_dim         = ARR_DIMS(class_count_array);
         array_length        = ArrayGetNItems(array_dim,p_array_dim);
         class_count_data    = (int64 *)ARR_DATA_PTR(class_count_array);
 
-        if (array_length != max_num_of_classes + 1)
-        	elog(ERROR, "bad class count data");
+        check_error_value
+    		(
+    			array_length == max_num_of_classes + 1,
+    			"invalid array length: %d. The length of class count array must be equal the total number classes + 1",
+    			array_length
+    		);
     }
 
     /*
@@ -310,13 +358,20 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
         else
             class_count_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
         
-        if (!class_count_array)
-        	elog(ERROR, "invalid class count array");
+        check_error
+    		(
+    			class_count_array,
+    			"invalid aggregation state array"
+    		);
 
-        array_dim           = ARR_NDIM(class_count_array);
+        array_dim = ARR_NDIM(class_count_array);
 
-        if (array_dim != 1)
-        	elog(ERROR, "array_dim is not 1");
+        check_error_value
+    		(
+    			array_dim == 1,
+    			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+    			array_dim
+    		);
 
         p_array_dim             = ARR_DIMS(class_count_array);
         array_length            = ArrayGetNItems(array_dim,p_array_dim);
@@ -324,17 +379,24 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
 
         class_count_array2      = PG_GETARG_ARRAYTYPE_P(1);
         array_dim2              = ARR_NDIM(class_count_array2);
-        if (array_dim2 != 1)
-        	elog(ERROR, "array_dim2 is not 1");
+        check_error_value
+    		(
+    			array_dim2 == 1,
+    			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+    			array_dim2
+    		);
 
         p_array_dim2            = ARR_DIMS(class_count_array2);
         array_length2           = ArrayGetNItems(array_dim2,p_array_dim2);
         class_count_data2       = (int64 *)ARR_DATA_PTR(class_count_array2);
 
-        if (array_length != array_length2)
-            elog(ERROR, "the size of the two arrays must be the same");
+        check_error
+    		(
+    			array_length == array_length2,
+    			"the size of the two array must be the same in prefunction"
+    		);
 
-        for (int index =0; index < array_length; index++)
+        for (int index = 0; index < array_length; index++)
             class_count_data[index] += class_count_data2[index];
 
         PG_RETURN_ARRAYTYPE_P(class_count_array);
@@ -360,16 +422,24 @@ Datum rep_aggr_class_count_ffunc(PG_FUNCTION_ARGS)
 {
     ArrayType *class_count_array    = PG_GETARG_ARRAYTYPE_P(0);
     int array_dim                   = ARR_NDIM(class_count_array);
-    if (array_dim != 1)
-    	elog(ERROR, "array_dim is not 1");
+
+    check_error_value
+		(
+			array_dim == 1,
+			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+			array_dim
+		);
 
     int *p_array_dim                = ARR_DIMS(class_count_array);
     int array_length                = ArrayGetNItems(array_dim,p_array_dim);
     int64 *class_count_data         = (int64 *)ARR_DATA_PTR(class_count_array);
     int64 *result                   = palloc(sizeof(int64)*2);
 
-    if (!result)
-        elog(ERROR, "memory allocation failure");
+    check_error
+		(
+			result,
+			"memory allocation failure"
+		);
 
     int64 max = class_count_data[1];
     int64 sum = max;
@@ -658,21 +728,38 @@ static void accumulate_pre_split_scv
     int         split_criterion
     )
 {
-    if (scv_state_array == NULL)
-        elog(ERROR, "scv_state_array should not be NULL");
 
-    if(!(SC_INFOGAIN  == split_criterion ||
-         SC_GAINRATIO == split_criterion ||
-         SC_GINI      == split_criterion
-        ))
-        elog(ERROR,"invalid split_criterion:%d",split_criterion);
+	check_error
+		(
+			scv_state_array,
+			"invalid aggregation state array"
+		);
 
-    if (total_elem_count<=0 || 
-        curr_class_count<0)
-        elog(ERROR,"invalid total_elem_count:%lf,curr_class_count:%lf",
-            total_elem_count,curr_class_count);
+	check_error_value
+		(
+			(SC_INFOGAIN  == split_criterion ||
+			SC_GAINRATIO  == split_criterion ||
+			SC_GINI       == split_criterion),
+			"invalid split criterion: %d. It must be 1, 2 or 3",
+			split_criterion
+		);
 
-    float8 temp_float = curr_class_count/total_elem_count;
+	check_error_value
+		(
+			total_elem_count > 0,
+			"invalid value: %lf. The total element count must be greater than 0",
+			total_elem_count
+		);
+
+	check_error_value
+		(
+			curr_class_count >= 0,
+			"invalid value: %lf. The current class count must be greater than or equal 0",
+			curr_class_count
+		);
+
+    float8 temp_float = curr_class_count / total_elem_count;
+
     if (SC_INFOGAIN  == split_criterion ||
         SC_GAINRATIO == split_criterion )
     {
@@ -720,22 +807,37 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
     else
         scv_state_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
 
-    if (!scv_state_array)
-        elog(ERROR, "invalid aggregation state");
+	check_error
+		(
+			scv_state_array,
+			"invalid aggregation state array"
+		);
 
     int	 array_dim 		= ARR_NDIM(scv_state_array);
 
-    if (array_dim != 1)
-        elog(ERROR, "array_dim is not 1");
+    check_error_value
+		(
+			array_dim == 1,
+			"invalid array dimension: %d. The dimension of scv state array must be equal 1",
+			array_dim
+		);
 
     int* p_array_dim	= ARR_DIMS(scv_state_array);
     int  array_length	= ArrayGetNItems(array_dim, p_array_dim);
-    if (array_length != SCV_STATE_MAX_CLASS_ELEM_COUNT + 1)
-        elog(ERROR, "array_length:%d",array_length);
+
+    check_error_value
+		(
+			array_length == SCV_STATE_MAX_CLASS_ELEM_COUNT + 1,
+			"invalid array length: %d",
+			array_length
+		);
 
     float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
-    if (!scv_state_data)
-        elog(ERROR, "invalid aggregation data array");
+	check_error
+		(
+			scv_state_data,
+			"invalid aggregation data array"
+		);
 
     int    split_criterion		= PG_GETARG_INT32(1);
     bool   is_null_fval         = PG_ARGISNULL(2);
@@ -746,11 +848,14 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
     float8 great				= PG_ARGISNULL(6) ? 0 : PG_GETARG_FLOAT8(6);
     float8 true_total_count 	= PG_ARGISNULL(7) ? 0 : PG_GETARG_FLOAT8(7);
 
-    if(!(SC_INFOGAIN  == split_criterion ||
-                SC_GAINRATIO == split_criterion ||
-                SC_GINI      == split_criterion
-        ))
-        elog(ERROR,"invalid split_criterion:%d",split_criterion);
+	check_error_value
+		(
+			(SC_INFOGAIN  == split_criterion ||
+			SC_GAINRATIO  == split_criterion ||
+			SC_GINI       == split_criterion),
+			"invalid split criterion: %d. It must be 1, 2 or 3",
+			split_criterion
+		);
 
     /*
      *  If the count for total element is still zero
@@ -802,7 +907,11 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
         }
         else
         {
-            elog(ERROR,"continuous features should not have null feature_val");
+        	check_error
+        		(
+        			false,
+        			"continuous features must not have null feature value"
+        		);
         }
     }
     else
@@ -936,31 +1045,48 @@ PG_FUNCTION_INFO_V1(scv_aggr_sfunc);
 Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
 {
     ArrayType*	scv_state_array	= PG_GETARG_ARRAYTYPE_P(0);
-    if (!scv_state_array)
-    	elog(ERROR, "invalid aggregation state");
+	check_error
+		(
+			scv_state_array,
+			"invalid aggregation state array"
+		);
 
     int	 array_dim		= ARR_NDIM(scv_state_array);
-    if (array_dim != 1)
-    	elog(ERROR, "array_dim is not 1");
+    check_error_value
+		(
+			array_dim == 1,
+			"invalid array dimension: %d. The dimension of state array must be equal 1",
+			array_dim
+		);
 
     int* p_array_dim 	= ARR_DIMS(scv_state_array);
     int  array_length 	= ArrayGetNItems(array_dim, p_array_dim);
 
-    if (array_length != SCV_STATE_MAX_CLASS_ELEM_COUNT+1)
-        elog(ERROR, "bad array length:%d",array_length);
+    check_error_value
+		(
+			array_length == SCV_STATE_MAX_CLASS_ELEM_COUNT + 1,
+			"invalid array length: %d",
+			array_length
+		);
 
     dtelog(NOTICE, "scv_aggr_ffunc array_length:%d",array_length);
 
     float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
-    if (!scv_state_data)
-    	elog(ERROR, "invalid aggregation data array");
+    check_error
+    	(
+    		scv_state_data,
+    		"invalid aggregation data array"
+    	);
 
     float8 init_scv = scv_state_data[SCV_STATE_INIT_SCV];
 
     int result_size = 11;
     float8 *result = palloc(sizeof(float8) * result_size);
-    if (!result)
-    	elog(ERROR, "memory allocation failure");
+    check_error
+    	(
+    		result,
+    		"memory allocation failure"
+    	);
 
     memset(result, 0, sizeof(float8) * result_size);
 
@@ -1026,10 +1152,20 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
             result[SCV_FINAL_GINI_GAIN] = (init_scv - result[SCV_FINAL_GINI]) * ratio;
         }
         else
-            elog(ERROR,"bad split criteria : %d", (int)result[SCV_FINAL_SPLIT_CRITERION]);
+            check_error_value
+            	(
+            		false,
+            		"invalid split criterion: %d. It must be 1, 2 or 3",
+            		(int)result[SCV_FINAL_SPLIT_CRITERION]
+            	);
     }
     else
-        elog(ERROR,"bad number of total element counts : %lld", (int64)scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]);
+        check_error_value
+        	(
+        		false,
+        		"number of total element counts: %lld. ",
+        		(int64)scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]
+        	);
 
     ArrayType* result_array =
         construct_array(
