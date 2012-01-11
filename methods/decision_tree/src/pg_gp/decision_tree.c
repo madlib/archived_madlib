@@ -116,6 +116,7 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
     			probability
     		);
 
+    	/* confidence level should be divided by 100 when calculate addition error */
     	conf_level = conf_level * 0.01;
 
 		/* calculate the coeff */
