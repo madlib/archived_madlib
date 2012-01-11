@@ -849,6 +849,13 @@ DECLARE
     curstmt TEXT;
     result  INT := 0;
 BEGIN
+    -- the maximum length of an identifier is 63
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            length(MADLIB_SCHEMA.__strip_schema_name(table_name)) <= 63, 
+            'The maximum length of ' || table_name || ' is 63'
+        );
+        
     -- must not be existence
     PERFORM MADLIB_SCHEMA.__assert('MADLIB_SCHEMA', table_name, 'f');
     -- 'f' for feature, 'c' for class, 'i' for id
@@ -1397,6 +1404,8 @@ $$ LANGUAGE PLPGSQL;
                                 how to handle missing value(h2hmv)
  * @param verbosity             ture if print the debug info 
  *
+ * @note The name convension of the table for a column is: metatable_name || '_' || col_index 
+ *       col_index is start from 1, and end at 9999 
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__encode_tabular_table
     (
@@ -1427,10 +1436,10 @@ DECLARE
     column_name         TEXT :='';
     curstmt             TEXT := '';
     result_rec          RECORD;
-    index               INT := 1;
+    col_index           INT := 1;
     contcol_stmt        TEXT := '';
     contcol_stmt_quote  TEXT := '';
-    coltable_name       TEXT := '';
+    coltable_name       TEXT := rtrim(metatable_name, 'di');
     exec_begin          TIMESTAMP;
 BEGIN
     exec_begin = clock_timestamp();
@@ -1462,19 +1471,21 @@ BEGIN
                     input_table_name, 
                     id_column_name, 
                     cont_column_names[i],
+                    coltable_name || col_index,
                     encoded_table_name,
                     metatable_name,
                     h2hmv_routine_id,
                     't',
                     verbosity
                 );
-        
+            
+            col_index = col_index + 1;
         END LOOP; 
     END IF;
          
     IF (feature_names IS NULL) THEN
         SELECT MADLIB_SCHEMA.__format(
-            'SELECT trim(both '' '' FROM attname) as attname 
+            'SELECT btrim(attname, '' '') as attname 
              FROM   pg_attribute 
              WHERE  attrelid = ''%''::regclass and attnum > 0 AND 
                     (attname NOT IN (%)) AND 
@@ -1485,53 +1496,53 @@ BEGIN
         FOR column_name IN EXECUTE curstmt LOOP
             
             IF (column_name <> class_column_name) THEN
-                coltable_name = metatable_name || '_' || column_name;
-                
                 PERFORM MADLIB_SCHEMA.__encode_discrete_column
                     (
                         input_table_name, 
                         id_column_name, 
                         column_name,
                         'f',
-                        coltable_name ,
+                        coltable_name || col_index,
                         encoded_table_name,
                         metatable_name,
                         h2hmv_routine_id,
                         't',
                         verbosity
                     );
+                
+                col_index = col_index + 1;
             END IF;
         END LOOP;
     ELSE
         FOR i IN 1..array_upper(feature_names, 1) LOOP
             column_name = feature_names[i];
             IF (NOT MADLIB_SCHEMA.__is_continuous(column_name, cont_column_names)) THEN
-                coltable_name = metatable_name || '_' || column_name;    
                 PERFORM MADLIB_SCHEMA.__encode_discrete_column
                     (
                         input_table_name, 
                         id_column_name, 
                         column_name,
                         'f',
-                        coltable_name ,
+                        coltable_name || col_index ,
                         encoded_table_name,
                         metatable_name,
                         h2hmv_routine_id,
                         't',
                         verbosity
                     );
+                    
+                col_index = col_index + 1;
             END IF;    
         END LOOP;
     END IF;
     
     -- class column
-    coltable_name = metatable_name || '_' || class_column_name;
     PERFORM MADLIB_SCHEMA.__encode_class_column
         (
             input_table_name, 
             id_column_name, 
             class_column_name,
-            coltable_name,
+            coltable_name || col_index,
             encoded_table_name,
             metatable_name,
             't',
@@ -1599,12 +1610,12 @@ BEGIN
     EXECUTE curstmt INTO id_column_name;
     
     SELECT MADLIB_SCHEMA.__format
-        ('SELECT column_name FROM MADLIB_SCHEMA.% WHERE is_cont ORDER BY id;',
+        ('SELECT column_name, table_name FROM MADLIB_SCHEMA.% WHERE is_cont ORDER BY id;',
         metatable_name)
         INTO curstmt; 
         
-    FOR temp IN EXECUTE curstmt LOOP
-        contcol_stmt = contcol_stmt || ',' || temp;
+    FOR result_rec IN EXECUTE curstmt LOOP
+        contcol_stmt = contcol_stmt || ',' || result_rec.column_name;
     END LOOP;
     
     PERFORM MADLIB_SCHEMA.__create_encoded_table
@@ -1616,12 +1627,13 @@ BEGIN
             verbosity
         );
 
-    FOR temp IN EXECUTE curstmt LOOP
+    FOR result_rec IN EXECUTE curstmt LOOP
         PERFORM MADLIB_SCHEMA.__encode_cont_column
             (
                 input_table_name, 
                 id_column_name, 
-                temp,
+                result_rec.column_name,
+                result_rec.table_name,
                 encoded_table_name,
                 metatable_name,
                 h2hmv_routine_id,
@@ -1631,14 +1643,14 @@ BEGIN
     END LOOP;
         
     SELECT MADLIB_SCHEMA.__format
-        ('SELECT column_name, column_type, is_cont, table_name 
+        ('SELECT column_name, column_type, table_name 
           FROM   MADLIB_SCHEMA.% 
           WHERE  (column_type <> ''i'') AND (NOT is_cont) ORDER BY id',
         metatable_name)
         INTO curstmt; 
                 
     FOR result_rec IN EXECUTE curstmt LOOP
-        IF (result_rec.column_type = 'f' AND (NOT result_rec.is_cont)) THEN
+        IF (result_rec.column_type = 'f') THEN
                 PERFORM MADLIB_SCHEMA.__encode_discrete_column
                     (
                         input_table_name, 
@@ -1750,6 +1762,15 @@ DECLARE
     curstmt TEXT := '';
     rec     RECORD;
 BEGIN
+
+    -- the maximum length of an identifier is 63
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            length(MADLIB_SCHEMA.__strip_schema_name(encoded_table_name)) <= 63, 
+            'The maximum length of ' || encoded_table_name || ' is 63'
+        );
+        
+        
     IF (verbosity) THEN
         RAISE INFO 'continuous columns:%', contcol_stmt;
     END IF;
@@ -1776,23 +1797,25 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Encode the continuous feature
- * @param input_table_name the input table name
- * @param id_column_name the name of id column 
- * @param column_name name of the column
- * @param encoded_table_name the encoding table name
- * @param metatable_name the meta table name
- * @param h2hmv_routine_id the id of the routine which specifies 
-                            how to handle missing value(h2hmv)
- * @param is_persistent ture if write the column info into meta table
- * @param verbosity ture if print the debug info 
+ * @param input_table_name      the input table name
+ * @param id_column_name        the name of id column 
+ * @param column_name           name of the column
+ * @param coltable_name         the table name for the specified column
+ *                              this table is used to store the minimal value of this column
+ * @param encoded_table_name    the encoding table name
+ * @param metatable_name        the meta table name
+ * @param h2hmv_routine_id      the id of the routine which specifies 
+                                how to handle missing value(h2hmv)
+ * @param is_persistent         ture if write the column info into meta table
+ * @param verbosity             ture if print the debug info 
  *
- * @return the string contains the drop column statement     
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__encode_cont_column
     (
     input_table_name        TEXT, 
     id_column_name          TEXT, 
     column_name             TEXT,
+    coltable_name           TEXT,
     encoded_table_name      TEXT,
     metatable_name          TEXT,
     h2hmv_routine_id        INT,
@@ -1804,6 +1827,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_cont_column
     input_table_name        TEXT, 
     id_column_name          TEXT, 
     column_name             TEXT,
+    coltable_name           TEXT,
     encoded_table_name      TEXT,
     metatable_name          TEXT,
     h2hmv_routine_id        INT,
@@ -1815,7 +1839,7 @@ DECLARE
     curstmt         TEXT := '';
     num             INT := 0;
     min_val         FLOAT8;
-    col_table_name  TEXT := metatable_name || '_' || column_name;
+    coltable_name2  TEXT := coltable_name;
 BEGIN
     -- insert the continuous features
     IF (is_persistent) THEN
@@ -1830,7 +1854,7 @@ BEGIN
     
             SELECT MADLIB_SCHEMA.__format(
                 'CREATE TABLE MADLIB_SCHEMA.%(key) AS SELECT % m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (key)')', 
-                col_table_name,
+                coltable_name2,
                 MADLIB_SCHEMA.__to_char(min_val)) 
                 INTO curstmt;
                 
@@ -1845,7 +1869,7 @@ BEGIN
                  
             EXECUTE curstmt;
         ELSE
-            col_table_name = '';
+            coltable_name2 = '';
         END IF;
         
         SELECT MADLIB_SCHEMA.__format(
@@ -1856,12 +1880,12 @@ BEGIN
         EXECUTE curstmt INTO num;
         
         PERFORM MADLIB_SCHEMA.__insert_into_metatable
-            (metatable_name, column_name, 'f', 't', col_table_name, num);
+            (metatable_name, column_name, 'f', 't', coltable_name2, num);
     ELSE
          IF (h2hmv_routine_id = 2) THEN
              SELECT MADLIB_SCHEMA.__format(
                 'SELECT key FROM MADLIB_SCHEMA.% LIMIT 1', 
-                col_table_name) 
+                coltable_name2) 
                 INTO curstmt;
                 
             EXECUTE curstmt INTO min_val;
@@ -2149,5 +2173,26 @@ BEGIN
     END IF;
 
     RETURN ret;
+END
+$$ LANGUAGE PLPGSQL;
+
+/*
+ * @brief  judge whether the current database support ordered aggregate
+ *
+ * @return 't'- support, 'f'- no support    
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__ordered_aggregate_support
+    (
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordered_aggregate_support 
+    (
+    )
+RETURNS BOOLEAN AS $$
+DECLARE
+    support_status  INT;     
+BEGIN
+    support_status = m4_ifdef(`POSTGRES_PRE_90',`0',
+        `m4_ifdef(`GREENPLUM_PRE_41',`0',`1')');
+    RETURN support_status<>0;
 END
 $$ LANGUAGE PLPGSQL;

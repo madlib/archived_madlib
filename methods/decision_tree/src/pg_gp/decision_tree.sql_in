@@ -275,6 +275,20 @@ RETURNS FLOAT8[]
 AS 'MODULE_PATHNAME', 'scv_aggr_sfunc'
 LANGUAGE C IMMUTABLE;
 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__scv_aggr_prefunc
+    (
+    FLOAT8[], 
+    FLOAT8[]
+    ) CASCADE;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__scv_aggr_prefunc
+    (
+    sfunc1_result     FLOAT8[],
+    sfunc2_result     FLOAT8[]
+    ) 
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'scv_aggr_prefunc'
+LANGUAGE C STRICT IMMUTABLE;
+
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__scv_aggr_ffunc
     (
     FLOAT8[]
@@ -307,7 +321,9 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__scv_aggr
     FLOAT8,
     FLOAT8
     ) CASCADE;
-CREATE m4_ifdef(`GREENPLUM',`ORDERED') AGGREGATE MADLIB_SCHEMA.__scv_aggr
+CREATE 
+m4_ifdef(`GREENPLUM',`m4_ifdef(`GREENPLUM_PRE_41',`',`ORDERED')') 
+AGGREGATE MADLIB_SCHEMA.__scv_aggr
     (
     INT,
     FLOAT8,
@@ -319,6 +335,7 @@ CREATE m4_ifdef(`GREENPLUM',`ORDERED') AGGREGATE MADLIB_SCHEMA.__scv_aggr
     ) 
 (
   SFUNC=MADLIB_SCHEMA.__scv_aggr_sfunc,
+  m4_ifdef( `GREENPLUM_PRE_41',`prefunc=MADLIB_SCHEMA.__scv_aggr_prefunc,')
   FINALFUNC=MADLIB_SCHEMA.__scv_aggr_ffunc,
   STYPE=FLOAT8[],
   initcond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
@@ -1217,30 +1234,60 @@ BEGIN
     
     EXECUTE curstmt;
     
-	SELECT MADLIB_SCHEMA.__format
-        (
-        'SELECT s1.assigned_nid, 
-            MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
-        FROM (
-            SELECT assigned_nid,fid,split_value,
-                (MADLIB_SCHEMA.__scv_aggr_wrapper(
-                    MADLIB_SCHEMA.__scv_aggr
-                        (%,fval,class,is_cont,le,gt, total_size
-						 order by fval desc,class desc)
-                    )::MADLIB_SCHEMA.__scv_aggr_result).*
+    IF (MADLIB_SCHEMA.__ordered_aggregate_support()) THEN
+        -- With ordered aggregate support, we can use this facility.
+	    SELECT MADLIB_SCHEMA.__format
+            (
+            'SELECT s1.assigned_nid, 
+                MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
             FROM (
-                SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
-                WHERE t1.assigned_nid = t2.assigned_nid AND 
-                        (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
-                ) y 
-            GROUP BY assigned_nid,fid,split_value 
-            ) s1  
-        GROUP BY s1.assigned_nid
-        ORDER BY s1.assigned_nid;',
-        MADLIB_SCHEMA.__to_char(sp_criterion),
-        table_name
-        )
-    INTO curstmt;      
+                SELECT assigned_nid,fid,split_value,
+                    (MADLIB_SCHEMA.__scv_aggr_wrapper(
+                        MADLIB_SCHEMA.__scv_aggr
+                            (%,fval,class,is_cont,le,gt, total_size
+						    ORDER BY fval desc,class desc)
+                        )::MADLIB_SCHEMA.__scv_aggr_result).*
+                FROM (
+                    SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
+                    WHERE t1.assigned_nid = t2.assigned_nid AND 
+                            (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
+                    ) y 
+                GROUP BY assigned_nid,fid,split_value 
+                ) s1  
+            GROUP BY s1.assigned_nid
+            ORDER BY s1.assigned_nid;',
+            MADLIB_SCHEMA.__to_char(sp_criterion),
+            table_name
+            )
+        INTO curstmt;   
+    ELSE
+        -- Without ordered aggregate support, we use window function as a workaround.
+        -- The performance is much worse than ordered aggregate.
+	    SELECT MADLIB_SCHEMA.__format
+            (
+            'SELECT s1.assigned_nid, 
+                MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
+            FROM (
+                SELECT assigned_nid,fid,split_value,
+                    (MADLIB_SCHEMA.__scv_aggr_wrapper(
+                        MADLIB_SCHEMA.__scv_aggr
+                            (%,fval,class,is_cont,le,gt, total_size) over
+						    (PARTITION BY assigned_nid,fid,split_value 
+                             ORDER BY fval desc,class desc)
+                        )::MADLIB_SCHEMA.__scv_aggr_result).*
+                FROM (
+                    SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
+                    WHERE t1.assigned_nid = t2.assigned_nid AND 
+                            (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
+                    ) y 
+                ) s1  
+            GROUP BY s1.assigned_nid
+            ORDER BY s1.assigned_nid;',
+            MADLIB_SCHEMA.__to_char(sp_criterion),
+            table_name
+            )
+        INTO curstmt;   
+    END IF;
     
     -- s1.info_impurity[1], s1.fid[2], s1.split_value[3], 
     -- s2.class_prob[4], s2.class_id[5], s1.total_size[6]
@@ -1254,8 +1301,7 @@ BEGIN
         result.total_size           = best_answer[6];
         result.distinct_features    = MADLIB_SCHEMA.__distinct_feature_value(feature_table_name, result.feature);
         
-        IF (result.probability > 0.999999999 
-            OR result.infogain <= 0 ) THEN
+        IF (result.probability > 0.999999999 OR float8le(result.infogain, 0)) THEN
             result.live = 0;
         ELSE
             result.live = 1;
@@ -2241,15 +2287,24 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
         (
-            split_criterion = 'infogain' OR split_criterion = 'gainratio' OR split_criterion = 'gini',
-            'split_criterion must be infogain, gainratio or gini!'
+            (split_criterion IS NOT NULL)   AND
+            (
+             split_criterion = 'infogain'   OR 
+             split_criterion = 'gainratio'  OR 
+             split_criterion = 'gini'
+            ),
+            'split_criterion must be infogain, gainratio or gini'
         );
             
     PERFORM MADLIB_SCHEMA.__assert
         (
-            MADLIB_SCHEMA.__get_schema_name(training_table_name),
-            MADLIB_SCHEMA.__strip_schema_name(training_table_name),
-            't'
+            training_table_name IS NOT NULL AND
+            MADLIB_SCHEMA.__table_exists
+                (
+                    MADLIB_SCHEMA.__get_schema_name(training_table_name),
+                    MADLIB_SCHEMA.__strip_schema_name(training_table_name)
+                ),
+            'the specified training table doesn''t exist'
         );
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -2259,31 +2314,52 @@ BEGIN
                 (
                     MADLIB_SCHEMA.__get_schema_name(validation_table_name),
                     MADLIB_SCHEMA.__strip_schema_name(validation_table_name)
-                )
-             ,
-             'The specified validation table doesnot exist!'
+                ),
+             'the specified validation table doesn''t exist'
         );
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-                MADLIB_SCHEMA.__get_schema_name(result_tree_table_name),
-                MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name),
-                'f'
+                (result_tree_table_name IS NOT NULL) AND
+                (
+                 NOT MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(result_tree_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name)
+                    )
+                ),
+                'the specified result tree table exists'
             );   
-            
+
+    -- the maximum length of an identifier 63
+    -- encoding table name convension:  <tree table schema name>_<tree table name>_ed
+    -- data info table name convension: <tree table schema name>_<tree table name>_di
+    -- the KV table name convension:    <tree table schema name>_<tree table name>_<####>
+    -- therefore, the maximum length of '<tree table schema name>_<tree table name>' is 58
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            length(
+                MADLIB_SCHEMA.__get_schema_name(result_tree_table_name) || 
+                '_'                                                     || 
+                MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name)) <= 58,
+            'the maximum length of ''<tree table schema name>_<tree table name>'' is 58'
+        );
+                    
     PERFORM MADLIB_SCHEMA.__assert
             (
                 id_col_name IS NOT NULL                 AND 
                 class_col_name IS NOT NULL              AND
                 length(btrim(id_col_name, ' ')) > 0     AND 
                 length(btrim(class_col_name, ' ')) > 0, 
-                'id and class column names must be non-empty!'
+                'invalid id column name or class column name'
             );
                                                          
     PERFORM MADLIB_SCHEMA.__assert
             (
-                confidence_level >= 0.001 AND confidence_level <= 100.0, 
-                'Confidence level value should be in range from 0.001 to 100!'
+                (confidence_level IS NOT NULL)      AND 
+                float8ge(confidence_level, 0.001)   AND 
+                float8le(confidence_level, 100), 
+                'confidence level value must be in range from 0.001 to 100'
             );
             
     PERFORM MADLIB_SCHEMA.__assert
@@ -2294,13 +2370,35 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-                max_num_iter        >= 0 AND
-                max_tree_depth      >= 0 AND
-                min_percent_mode    >= 0 AND
-                min_percent_split   >= 0,
-                'Invalid parameters'
+                max_num_iter        IS NOT NULL AND
+                max_tree_depth      IS NOT NULL AND
+                max_num_iter        > 0         AND
+                max_tree_depth      > 0,
+                'invalid parameters value for max_num_iter, max_tree_depth'
             );
-                           
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                min_percent_mode IS NOT NULL    AND
+                float8ge(min_percent_mode, 0)   AND
+                float8le(min_percent_mode, 1),
+                'min_percent_mode value must be in range from 0 to 1'
+            );
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                min_percent_split IS NOT NULL   AND                
+                float8ge(min_percent_split, 0)  AND
+                float8le(min_percent_split, 1),                
+                'min_percent_split value must be in range from 0 to 1'
+            );
+            
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                verbosity IS NOT NULL,                
+                'verbosity must be non-null'
+            );
+                                                   
     IF (how2handle_missing_value = 'ignore') THEN
         h2hmv_routine_id = 1;
     ELSE
@@ -2331,8 +2429,8 @@ BEGIN
         RAISE INFO 'table name after strip schema:%',tree_table_name;
     END IF;
     
-    training_encoded_table_name = 'MADLIB_SCHEMA.' || tree_schema_name || '_' ||tree_table_name || '_encoded';
-    training_metatable_name =  tree_schema_name || '_' || tree_table_name || '_data_info';
+    training_encoded_table_name = 'MADLIB_SCHEMA.' || tree_schema_name || '_' ||tree_table_name || '_ed';
+    training_metatable_name =  tree_schema_name || '_' || tree_table_name || '_di';
  
     IF(verbosity > 0) THEN
         RAISE INFO 'Before encoding: %', clock_timestamp() - exec_begin;
@@ -2530,10 +2628,22 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-                MADLIB_SCHEMA.__get_schema_name(tree_table_name),
-                MADLIB_SCHEMA.__strip_schema_name(tree_table_name),
-                't'
+                (tree_table_name IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(tree_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(tree_table_name)
+                    )
+                ),
+                'the specified tree table doesn''t exists'
             );   
+            
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                verbosity IS NOT NULL,                
+                'verbosity must be non-null'
+            );              
     
     IF (verbosity > 0 ) THEN     
         exec_begin = clock_timestamp();
@@ -2851,7 +2961,9 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__display_tree_aggr
     TEXT,       -- max_class
     INT         -- cat_size
     ) CASCADE;
-CREATE m4_ifdef(`GREENPLUM',`ORDERED') AGGREGATE MADLIB_SCHEMA.__display_tree_aggr
+CREATE 
+m4_ifdef(`GREENPLUM',`m4_ifdef(`GREENPLUM_PRE_41',`',`ORDERED')')  
+AGGREGATE MADLIB_SCHEMA.__display_tree_aggr
     (
     INT,        -- depth
     BOOLEAN,    -- is_cont
@@ -2868,20 +2980,25 @@ CREATE m4_ifdef(`GREENPLUM',`ORDERED') AGGREGATE MADLIB_SCHEMA.__display_tree_ag
 );
 
 /*
- * @brief Display the trained decision tree model with human readable format
- *
- * @param tree_table Name of the table containing the tree's information
- *
- * @return the text representing the tree with human readable format.
- *
+ * Display the trained decision tree model with human readable format.
+ * It use the recursive algorithm, which is slower than the version with 
+ * ordered aggregate.
+ * Parameters:
+ *      tree_table  Name of the table containing the tree's information
+ *      max_depth   The max depth to be displayed. If it is set to null,
+ *                  this function will show all levels.
+ * Return:
+ *      the text representing the tree with human readable format.
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_display
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__c45_display_with_ordered_aggr
     (
-    tree_table TEXT
+    tree_table  TEXT,
+    max_depth   INT
     );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_display
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__c45_display_with_ordered_aggr
     (
-    tree_table TEXT
+    tree_table  TEXT,
+    max_depth   INT
     ) 
 RETURNS TEXT AS $$
 DECLARE
@@ -3002,7 +3119,7 @@ BEGIN
     -- aggregation to show the tree.
     -- If we order by tree_location, we can get the sequence 
     -- of depth first traversal.
-    EXECUTE  'SELECT MADLIB_SCHEMA.__display_tree_aggr(
+    curr_stmt = 'SELECT MADLIB_SCHEMA.__display_tree_aggr(
                 array_upper(tree_location,1)-1,
                 is_parent_feature_cont,
                 parent_feature_name,
@@ -3012,9 +3129,247 @@ BEGIN
                 maxclass,
                 cat_size 
                 order by tree_location)
-         FROM auxiliary_tree_display 
-         ;' INTO result; 
+         FROM auxiliary_tree_display';
+
+    IF (max_depth IS NOT NULL) THEN
+        curr_stmt = curr_stmt                                   ||
+                    ' WHERE array_upper(tree_location,1) - 1 <='  ||
+                    max_depth;
+    END IF;
+
+    EXECUTE curr_stmt INTO result; 
     RETURN result;
+END $$ LANGUAGE PLPGSQL;
+
+
+/*
+ * This is a internal function for displaying the tree in human readable format.
+ * It use the depth-first strategy to traverse a tree and print values.
+ * Parameters:
+ *      tree_table:         The name of the table with information for the 
+ *                          trained tree.
+ *      id:                 The id of current node. This node and all of its  
+ *                          children are displayed.
+ *      feature_id:         The id of a feature, which was used to split in the 
+ *                          parent of current node.
+ *      depth:              The depth of current node.
+ *      is_cont:            It specifies whether the feature denoted by 'feature_id'
+ *                          is continuous or not.
+ *      split_value:        For continuous feature, it specifies the split value. 
+ *                          Otherwise, it is of no meaning.
+ *      metatable_name:     For tabular format, this table contains the meta data
+ *                          to encode the input table.
+ *      max_depth:          The max depth to be displayed. If it is set to null,
+ *                          this function will show all levels. 
+ * Return:
+ *      It returns the text containing the information of human readable tree.
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__display_tree_no_ordered_aggr
+    (
+    tree_table      TEXT, 
+    id              INT, 
+    feature_id      INT, 
+    depth           INT, 
+    is_cont         BOOLEAN, 
+    split_value     FLOAT,
+    metatable_name  TEXT,
+    max_depth       INT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__display_tree_no_ordered_aggr
+    (
+    tree_table      TEXT, 
+    id              INT, 
+    feature_id      INT, 
+    depth           INT, 
+    is_cont         BOOLEAN, 
+    split_value     FLOAT,
+    metatable_name  TEXT,
+    max_depth       INT
+    ) 
+RETURNS TEXT AS $$ 
+DECLARE
+    ret                     TEXT := '';
+    tree_location           INT[];
+    feature                 INT;
+    jump                    INT[];
+    maxclass                INT;
+    cat_size                INT;
+    is_feature_cont         BOOLEAN;
+    temp_split_value        FLOAT;
+    index                   INT;
+    curr_value              INT;
+    probability             FLOAT;
+BEGIN
+    IF (id IS NULL OR id <= 0) THEN
+        RETURN ret;
+    END IF;
+    
+    EXECUTE 'select tree_location, feature, jump,is_feature_cont, split_value,
+        maxclass,cat_size,probability from '
+        || tree_table || ' where id =' || id ||';' INTO tree_location, feature,jump, 
+        is_feature_cont,temp_split_value,maxclass, cat_size, probability; 
+
+    curr_value = tree_location[array_upper(tree_location,1)];
+
+    FOR index IN 0..depth LOOP
+        ret = ret || '    ';
+    END LOOP;
+    
+    IF (id > 1) THEN
+        ret = ret ||MADLIB_SCHEMA.__get_feature_name(feature_id,metatable_name)||': ';
+
+        IF (is_cont) THEN
+            IF (curr_value = 1) THEN
+                ret = ret || ' <= ';
+            ELSE
+                ret = ret || ' > ';
+            END IF;
+            ret = ret || split_value;
+        ELSE
+            ret = ret   || 
+                  ' = ' || 
+                  MADLIB_SCHEMA.__get_feature_value
+                    (
+                    feature_id, 
+                    curr_value, 
+                    metatable_name
+                    );
+        END IF;
+    ELSE
+        ret = ret||'Root Node ';
+    END IF;
+
+    ret = ret                                                       || 
+          ' : class('                                               ||  
+          MADLIB_SCHEMA.__get_class_value(maxclass,metatable_name)  || 
+          ')   num_elements('                                       || 
+          cat_size                                                  || 
+          ')  predict_prob('                                        ||
+          probability                                               ||
+          ')';
+
+    ret = ret || E'\n';
+    
+    IF (max_depth IS NOT NULL AND 
+        depth >= max_depth) THEN
+        RETURN ret;
+    END IF;
+
+    index = array_lower(jump,1);
+    WHILE index <= array_upper(jump,1) LOOP
+        ret = ret || MADLIB_SCHEMA.__display_tree(
+                            tree_table, 
+                            jump[index], 
+                            feature, 
+                            depth+1, 
+                            is_feature_cont, 
+                            temp_split_value, 
+                            metatable_name);
+        index = index +1;
+    END LOOP; 
+
+    RETURN ret;
+END $$ LANGUAGE PLPGSQL;
+
+
+/*
+ * Display the trained decision tree model with human readable format.
+ * It use the recursive algorithm, which is slower than the version with 
+ * ordered aggregate.
+ * Parameters:
+ *      tree_table  Name of the table containing the tree's information
+ *      max_depth   The max depth to be displayed. If it is set to null,
+ *                  this function will show all levels.
+ * Return:
+ *      the text representing the tree with human readable format.
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__c45_display_no_ordered_aggr    
+    (
+    tree_table TEXT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__c45_display_no_ordered_aggr
+    (
+    tree_table TEXT
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+    metatable_name  TEXT := null;
+    curstmt         TEXT := '';
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__get_schema_name(tree_table),
+                MADLIB_SCHEMA.__strip_schema_name(tree_table),
+                't'
+            );   
+            
+    metatable_name = MADLIB_SCHEMA.__get_metatable_name( tree_table );
+    
+    RETURN MADLIB_SCHEMA.__display_tree_no_ordered_aggr(tree_table, 1, 0, 0, 'f', 0, metatable_name);
+END $$ LANGUAGE PLPGSQL;
+
+/*
+ * @brief Display the trained decision tree model with human readable format
+ *
+ * @param tree_table Name of the table containing the tree's information
+ * @param max_depth  The max depth to be displayed. If null, this function will show all levels.
+ *                    
+ * @return the text representing the tree with human readable format.
+ *
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_display
+    (
+    tree_table  TEXT,
+    max_depth   INT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_display
+    (
+    tree_table  TEXT,
+    max_depth   INT
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                (tree_table IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(tree_table),
+                        MADLIB_SCHEMA.__strip_schema_name(tree_table)
+                    )
+                ),
+                'the specified tree table doesn''t exists'
+            );   
+            
+    IF (MADLIB_SCHEMA.__ordered_aggregate_support()) THEN
+        RETURN MADLIB_SCHEMA.__c45_display_with_ordered_aggr(tree_table,max_depth);
+    ELSE
+        RETURN MADLIB_SCHEMA.__c45_display_no_ordered_aggr(tree_table,max_depth);
+    END IF;
+END $$ LANGUAGE PLPGSQL;
+
+/*
+ * @brief Display the whole trained decision tree model with human readable format
+ *
+ * @param tree_table Name of the table containing the tree's information
+ *                    
+ * @return the text representing the tree with human readable format.
+ *
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_display
+    (
+    tree_table  TEXT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_display
+    (
+    tree_table  TEXT
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+BEGIN
+    RETURN MADLIB_SCHEMA.c45_display(tree_table,NULL);
 END $$ LANGUAGE PLPGSQL;
 
 /*
@@ -3062,32 +3417,58 @@ DECLARE
     create_text             TEXT := '';
     h2hmv_routine_id        INT := 0;
     curstmt                 TEXT := '';
-    encoded_table_name      TEXT := classification_table_name || '_encoded_temp';
+    encoded_table_name      TEXT := 'c45_classify_internal_edt';
     table_names             TEXT[] = '{classified_instance_ping,classified_instance_pong}';
 BEGIN
     time_stamp = clock_timestamp();
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-                MADLIB_SCHEMA.__get_schema_name(classification_table_name),
-                MADLIB_SCHEMA.__strip_schema_name(classification_table_name),
-                't'
+                (classification_table_name IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(classification_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(classification_table_name)
+                    )
+                ),
+                'the specified classification table doesn''t exists'
             );   
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-                MADLIB_SCHEMA.__get_schema_name(tree_table_name),
-                MADLIB_SCHEMA.__strip_schema_name(tree_table_name),
-                't'
-            );   
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                MADLIB_SCHEMA.__get_schema_name(result_table_name),
-                MADLIB_SCHEMA.__strip_schema_name(result_table_name),
-                'f'
+                (tree_table_name IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(tree_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(tree_table_name)
+                    )
+                ),
+                'the specified tree table doesn''t exists'
             ); 
-                                        
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                (result_table_name IS NOT NULL) AND
+                (
+                 NOT MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(result_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(result_table_name)
+                    )
+                ),
+                'the specified result table exists'
+            ); 
+                                    
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                verbosity IS NOT NULL,                
+                'verbosity must be non-null'
+            );    
+            
+    EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ' CASCADE';
+                                 
     SELECT MADLIB_SCHEMA.__get_metatable_name(tree_table_name) INTO metatable_name;
 
     SELECT MADLIB_SCHEMA.__get_routine_id(tree_table_name) INTO h2hmv_routine_id;
@@ -3429,10 +3810,17 @@ DECLARE
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert
             (
-                MADLIB_SCHEMA.__get_schema_name(result_tree_table_name),
-                MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name),
-                't'
-            );   
+                (result_tree_table_name IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(result_tree_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name)
+                    )
+                ),
+                'the specified tree table doesn''t exists'
+            ); 
+                                    
                 
     IF (MADLIB_SCHEMA.__table_exists('MADLIB_SCHEMA', 'training_info')) THEN
         metatable_name = MADLIB_SCHEMA.__get_metatable_name(result_tree_table_name);

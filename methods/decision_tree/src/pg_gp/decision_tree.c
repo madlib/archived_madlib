@@ -112,7 +112,7 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
     	check_error_value
     		(
     			!(probability < 0 || probability > 1),
-    			"invalid probability: %lf. The probability must be range from 0 to 1",
+    			"invalid probability: %lf. The probability must be in range from 0 to 1",
     			probability
     		);
 
@@ -121,6 +121,13 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
 
 		/* calculate the coeff */
 		while (conf_level > CONFIDENCE_LEVEL[i]) i++;
+
+    	check_error_value
+    		(
+    			i > 0,
+    			"invalid value: %d. The index of confidence level array must be greater than 0",
+    			i
+    		);
 
 		coeff = CONFIDENCE_DEV[i-1] +
 				(CONFIDENCE_DEV[i] - CONFIDENCE_DEV[i-1]) *
@@ -225,21 +232,21 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     check_error_value
 		(
 			max_num_of_classes >= 2,
-			"invalid value: %d. The number of classes must be greater than 2",
+			"invalid value: %d. The number of classes must be greater than or equal to 2",
 			max_num_of_classes
 		);
 
     check_error_value
 		(
 			original_class > 0 && original_class <= max_num_of_classes,
-			"invalid real class value: %d. It must be less than and equal the number of classes",
+			"invalid real class value: %d. It must be  in range from 1 to the number of classes",
 			original_class
 		);
 
     check_error_value
 		(
 			classified_class > 0 && classified_class <= max_num_of_classes,
-			"invalid classified class value: %d. It must be less than and equal the number of classes",
+			"invalid classified class value: %d. It must be  in range from 1 to the number of classes",
 			classified_class
 		);
     
@@ -273,7 +280,7 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
         check_error_value
     		(
     			array_dim == 1,
-    			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+    			"invalid array dimension: %d. The dimension of class count array must be equal to 1",
     			array_dim
     		);
 
@@ -284,7 +291,7 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
         check_error_value
     		(
     			array_length == max_num_of_classes + 1,
-    			"invalid array length: %d. The length of class count array must be equal the total number classes + 1",
+    			"invalid array length: %d. The length of class count array must be equal to the total number classes + 1",
     			array_length
     		);
     }
@@ -370,7 +377,7 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
         check_error_value
     		(
     			array_dim == 1,
-    			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+    			"invalid array dimension: %d. The dimension of class count array must be equal to 1",
     			array_dim
     		);
 
@@ -383,7 +390,7 @@ Datum rep_aggr_class_count_prefunc(PG_FUNCTION_ARGS)
         check_error_value
     		(
     			array_dim2 == 1,
-    			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+    			"invalid array dimension: %d. The dimension of class count array must be equal to 1",
     			array_dim2
     		);
 
@@ -427,7 +434,7 @@ Datum rep_aggr_class_count_ffunc(PG_FUNCTION_ARGS)
     check_error_value
 		(
 			array_dim == 1,
-			"invalid array dimension: %d. The dimension of class count array must be equal 1",
+			"invalid array dimension: %d. The dimension of class count array must be equal to 1",
 			array_dim
 		);
 
@@ -741,7 +748,7 @@ static void accumulate_pre_split_scv
 			(SC_INFOGAIN  == split_criterion ||
 			SC_GAINRATIO  == split_criterion ||
 			SC_GINI       == split_criterion),
-			"invalid split criterion: %d. It must be 1, 2 or 3",
+			"invalid split criterion: %d. It must be 1(infogain), 2(gainratio) or 3(gini)",
 			split_criterion
 		);
 
@@ -755,7 +762,7 @@ static void accumulate_pre_split_scv
 	check_error_value
 		(
 			curr_class_count >= 0,
-			"invalid value: %lf. The current class count must be greater than or equal 0",
+			"invalid value: %lf. The current class count must be greater than or equal to 0",
 			curr_class_count
 		);
 
@@ -819,7 +826,7 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
     check_error_value
 		(
 			array_dim == 1,
-			"invalid array dimension: %d. The dimension of scv state array must be equal 1",
+			"invalid array dimension: %d. The dimension of scv state array must be equal to 1",
 			array_dim
 		);
 
@@ -854,7 +861,7 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 			(SC_INFOGAIN  == split_criterion ||
 			SC_GAINRATIO  == split_criterion ||
 			SC_GINI       == split_criterion),
-			"invalid split criterion: %d. It must be 1, 2 or 3",
+			"invalid split criterion: %d. It must be 1(infogain), 2(gainratio) or 3(gini)",
 			split_criterion
 		);
 
@@ -1032,6 +1039,116 @@ Datum scv_aggr_sfunc(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(scv_aggr_sfunc);
 
 /*
+ * The pre-function for the aggregation of splitting criteria values. It takes the 
+ * state array produced by two sfunc and combine them together.  
+ *
+ * Parameters:
+ *      scv_state_array    The array from sfunc1
+ *      scv_state_array    The array from sfunc2
+ * Return:
+ *      A fourteen element array. Please refer to the definition of 
+ *      SCV_STATE_ARRAY_INDEX for the detailed information of this
+ *      array.
+ */
+Datum scv_aggr_prefunc(PG_FUNCTION_ARGS)
+{
+    ArrayType *scv_state_array  	= PG_GETARG_ARRAYTYPE_P(0);
+	check_error
+		(
+			scv_state_array,
+			"invalid aggregation state array"
+		);
+
+    int array_dim 		= ARR_NDIM(scv_state_array);
+    check_error_value
+		(
+			array_dim == 1,
+			"invalid array dimension: %d. The dimension of scv state array must be equal to 1",
+			array_dim
+		);
+
+    int *p_array_dim 	= ARR_DIMS(scv_state_array);
+    int array_length 	= ArrayGetNItems(array_dim, p_array_dim);
+    check_error_value
+		(
+			array_length == SCV_STATE_MAX_CLASS_ELEM_COUNT + 1,
+			"invalid array length: %d",
+			array_length
+		);
+
+    /* the scv state data from a segment */
+    float8 *scv_state_data = (float8 *)ARR_DATA_PTR(scv_state_array);
+	check_error
+		(
+			scv_state_data,
+			"invalid aggregation data array"
+		);    
+
+    ArrayType* scv_state_array2	= PG_GETARG_ARRAYTYPE_P(1);
+	check_error
+		(
+			scv_state_array2,
+			"invalid aggregation state array"
+		);
+
+    array_dim 		= ARR_NDIM(scv_state_array2);
+    check_error_value
+		(
+			array_dim == 1,
+			"invalid array dimension: %d. The dimension of scv state array must be equal to 1",
+			array_dim
+		);    
+    p_array_dim 	= ARR_DIMS(scv_state_array2);
+    array_length 	= ArrayGetNItems(array_dim, p_array_dim);
+    check_error_value
+		(
+			array_length == SCV_STATE_MAX_CLASS_ELEM_COUNT + 1,
+			"invalid array length: %d",
+			array_length
+		);
+
+    /* the scv state data from another segment */
+    float8 *scv_state_data2 = (float8 *)ARR_DATA_PTR(scv_state_array2);
+	check_error
+		(
+			scv_state_data2,
+			"invalid aggregation data array"
+		); 
+
+    /*
+     * For the following data, such as entropy, gini and split info, we need to combine
+     * the accumulated value from multiple segments.
+     */ 
+    scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]	+= scv_state_data2[SCV_STATE_TOTAL_ELEM_COUNT];
+    scv_state_data[SCV_STATE_ENTROPY_DATA] 		+= scv_state_data2[SCV_STATE_ENTROPY_DATA];
+    scv_state_data[SCV_STATE_SPLIT_INFO_DATA]	+= scv_state_data2[SCV_STATE_SPLIT_INFO_DATA];
+    scv_state_data[SCV_STATE_GINI_DATA]			+= scv_state_data2[SCV_STATE_GINI_DATA];
+
+    /*
+     *  The following elements are just initialized once. If the first scv_state is not initialized,
+     *  we copy them from the second scv_state.
+     */ 
+    if (is_float_zero(scv_state_data[SCV_STATE_SPLIT_CRIT]))
+    {
+        scv_state_data[SCV_STATE_SPLIT_CRIT]		= scv_state_data2[SCV_STATE_SPLIT_CRIT];
+        scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT]	= scv_state_data2[SCV_STATE_TRUE_TOTAL_COUNT];
+        scv_state_data[SCV_STATE_IS_CONT]			= scv_state_data2[SCV_STATE_IS_CONT];
+    }
+    
+    /*
+     *  We should compare the results from different segments and find the class with maximum cases.
+     */ 
+    if (scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT] < scv_state_data2[SCV_STATE_MAX_CLASS_ELEM_COUNT])
+    {
+        scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT]	= scv_state_data2[SCV_STATE_MAX_CLASS_ELEM_COUNT];
+        scv_state_data[SCV_STATE_MAX_CLASS_ID]			= scv_state_data2[SCV_STATE_MAX_CLASS_ID];
+    }
+
+    PG_RETURN_ARRAYTYPE_P(scv_state_array);
+}
+PG_FUNCTION_INFO_V1(scv_aggr_prefunc);
+
+/*
  * The final function for the aggregation of splitting criteria values. It takes the 
  * state array produced by the sfunc and produces an eleven-element array.  
  *
@@ -1056,7 +1173,7 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
     check_error_value
 		(
 			array_dim == 1,
-			"invalid array dimension: %d. The dimension of state array must be equal 1",
+			"invalid array dimension: %d. The dimension of state array must be equal to 1",
 			array_dim
 		);
 
