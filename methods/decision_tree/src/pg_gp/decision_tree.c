@@ -239,14 +239,14 @@ Datum rep_aggr_class_count_sfunc(PG_FUNCTION_ARGS)
     check_error_value
 		(
 			original_class > 0 && original_class <= max_num_of_classes,
-			"invalid real class value: %d. It must be  in range from 1 to the number of classes",
+			"invalid real class value: %d. It must be in range from 1 to the number of classes",
 			original_class
 		);
 
     check_error_value
 		(
 			classified_class > 0 && classified_class <= max_num_of_classes,
-			"invalid classified class value: %d. It must be  in range from 1 to the number of classes",
+			"invalid classified class value: %d. It must be in range from 1 to the number of classes",
 			classified_class
 		);
     
