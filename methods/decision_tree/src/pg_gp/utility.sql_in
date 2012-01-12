@@ -19,6 +19,37 @@ END
 $$ LANGUAGE PLPGSQL;
 
 
+-- We need create cast from boolean to char if db do not support it.
+-- postgresql 8.4 and beyond already support it.
+m4_ifdef(`GREENPLUM',
+         `DROP CAST IF EXISTS (BOOLEAN AS TEXT) CASCADE;');
+
+/*
+ * @brief Convert boolean to char
+ * @param val boolean value
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__to_char
+    (
+    val BOOLEAN
+    ) CASCADE;
+    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
+    (
+    val BOOLEAN
+    ) 
+RETURNS TEXT AS $$
+BEGIN
+    IF (val) THEN
+        RETURN 'true';
+    ELSE
+        RETURN 'false';
+    END IF;
+END
+$$ LANGUAGE PLPGSQL;
+
+m4_ifdef(`GREENPLUM',
+         `CREATE CAST (BOOLEAN AS TEXT) WITH FUNCTION MADLIB_SCHEMA.__to_char(BOOLEAN) AS IMPLICIT;');
+
 /*
  * @brief Convert float to char
  * @param val float value
@@ -39,30 +70,6 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-
-/*
- * @brief Convert boolean to char
- * @param val boolean value
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__to_char
-    (
-    val BOOLEAN
-    );
-    
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
-    (
-    val BOOLEAN
-    ) 
-RETURNS TEXT AS $$
-DECLARE 
-BEGIN
-    IF (val) THEN
-        RETURN 't';
-    ELSE
-        RETURN 'f';
-    END IF;
-END
-$$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Format a string with the value in allvalues array
@@ -344,7 +351,7 @@ BEGIN
     PERFORM MADLIB_SCHEMA.__assert
         (table_name IS NOT NULL, 'Table name must not be null!');
     
-    IF (length(btrim(lower(schema_name), ' ')) = 0 OR (schema_name IS NULL)) THEN
+    IF (length(btrim(lower(schema_name), ' ')) = 0) THEN
         schema_name_c = 'public';
     ELSE
         schema_name_c = schema_name;
@@ -365,6 +372,60 @@ BEGIN
     EXECUTE curstmt INTO result;
     
     RETURN result >= 1;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__column_exists
+    (
+    schema_name  TEXT,
+    table_name   TEXT,
+    column_name  TEXT
+    );
+    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__column_exists
+    (
+    schema_name  TEXT,
+    table_name   TEXT,
+    column_name  TEXT
+    ) 
+RETURNS BOOLEAN AS $$
+DECLARE
+    curstmt         TEXT := '';
+    result          INT := 0;
+    schema_name_c   TEXT := '';
+    table_name_c    TEXT := '';
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert
+        (schema_name IS NOT NULL, 'schema name must not be null!');
+
+    PERFORM MADLIB_SCHEMA.__assert
+        (table_name IS NOT NULL, 'table name must not be null!');
+                
+    PERFORM MADLIB_SCHEMA.__assert
+        (column_name IS NOT NULL, 'column name must not be null!');
+        
+    IF (length(btrim(lower(schema_name), ' ')) = 0) THEN
+        schema_name_c = 'public';
+    ELSE
+        schema_name_c = schema_name;
+    END IF;
+    
+    table_name_c = btrim(lower(table_name), ' ');
+    
+    IF (MADLIB_SCHEMA.__table_exists(schema_name_c, table_name_c)) THEN
+        EXECUTE 'SELECT COUNT(*) 
+                 FROM pg_catalog.pg_attribute 
+                 WHERE attnum > 0 AND 
+                       (NOT attisdropped) AND
+                       attname = ''' || column_name || ''' AND
+                       attrelid = ''' ||  schema_name_c || '.' || table_name_c || '''::regclass'
+        INTO result;
+        
+        RETURN result >= 1;         
+    END IF;
+    
+    RETURN 'f';
 END
 $$ LANGUAGE PLPGSQL;
 
@@ -424,7 +485,6 @@ CREATE TABLE MADLIB_SCHEMA.training_info
     PRIMARY KEY (tree_table_name)
     ) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (tree_table_name)');
 
-GRANT ALL PRIVILEGES ON MADLIB_SCHEMA.training_info TO PUBLIC;
 /*
  * @brief get the meta table name by the tree table name
  * @param tree_table tree table name
@@ -598,34 +658,6 @@ BEGIN
     INTO   feature_name;
         
     RETURN feature_name;
-end
-$$ LANGUAGE PLPGSQL;
-
-
-/*
- * @brief get the name of column containing class
- * @param tree_table tree table name         
- *  
- * @return the name of column containing class
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_class_column_name
-    (
-    tree_table TEXT
-    );            
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_column_name
-    (
-    tree_table TEXT
-    ) 
-RETURNS TEXT AS $$
-DECLARE
-    class_name TEXT;
-BEGIN
-    SELECT class_col_name 
-    FROM   MADLIB_SCHEMA.training_info 
-    WHERE  tree_table_name = tree_table 
-    INTO   class_name;
-        
-    RETURN class_name;
 end
 $$ LANGUAGE PLPGSQL;
 
@@ -1944,7 +1976,40 @@ RETURNS void AS $$
 DECLARE
     curstmt     TEXT := '';
     column_type CHAR := 'c';
+    n           INT;
 BEGIN
+    
+    IF (
+        NOT MADLIB_SCHEMA.__column_exists
+                    (
+                    MADLIB_SCHEMA.__get_schema_name(input_table_name),
+                    MADLIB_SCHEMA.__strip_schema_name(input_table_name),
+                    column_name
+                    ) 
+       ) THEN
+        
+        RETURN;
+        
+    END IF;
+                
+    SELECT MADLIB_SCHEMA.__format
+            (
+            'SELECT COUNT(*) 
+             FROM %
+             WHERE % IS NULL',
+            input_table_name,
+            column_name
+            )
+    INTO curstmt;
+    
+    EXECUTE curstmt INTO n;
+    
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                n = 0,
+                'class column must not have NULL value'
+            );    
+            
     PERFORM MADLIB_SCHEMA.__encode_discrete_column
     (
         input_table_name, 
@@ -2113,23 +2178,16 @@ BEGIN
             INTO curstmt;
     EXECUTE curstmt;
     
-    -- update result table (value -> key)
-    SELECT MADLIB_SCHEMA.__format
-                    ('UPDATE % SET %=s.key 
-                      FROM MADLIB_SCHEMA.% s, % p 
-                      WHERE (s.% = p.% OR (s.% is NULL AND p.% is NULL)) AND %.id=p.%;',
-                      ARRAY[
-                      encoded_table_name,
-                      column_name,
-                      coltable_name,
-                      input_table_name,
-                      column_name,
-                      column_name,
-                      column_name,
-                      column_name,
-                      encoded_table_name,
-                      id_column_name])
-             INTO curstmt;
+    SELECT MADLIB_SCHEMA.__update_discrete_column_table_stmt
+        (
+            input_table_name, 
+            id_column_name, 
+            column_name,
+            coltable_name,
+            encoded_table_name
+        ) 
+    INTO curstmt;
+             
     IF (verbosity) THEN    
         RAISE INFO 'update stmt: %', curstmt;
     END IF;
@@ -2142,6 +2200,93 @@ BEGIN
     END IF;
 END
 $$ LANGUAGE PLPGSQL;
+
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__update_discrete_column_table_stmt
+    (
+    input_table_name    TEXT, 
+    id_column_name      TEXT, 
+    column_name         TEXT,
+    coltable_name       TEXT,
+    encoded_table_name  TEXT
+    ) CASCADE;
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__update_discrete_column_table_stmt
+    (
+    input_table_name    TEXT, 
+    id_column_name      TEXT, 
+    column_name         TEXT,
+    coltable_name       TEXT,
+    encoded_table_name  TEXT
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+    curstmt TEXT    := '';
+    from_stmt TEXT  := '';
+BEGIN
+    IF (m4_ifdef(`GREENPLUM_PRE_41', `4')0 = 40) THEN
+        EXECUTE 'DROP TABLE IF EXISTS c45_update_discrete_col_table';
+        
+        SELECT MADLIB_SCHEMA.__format
+            ('CREATE TEMP TABLE c45_update_discrete_col_table(id, key) AS
+              SELECT % as id, key
+              FROM % t LEFT JOIN MADLIB_SCHEMA.% k ON (t.% = k.% OR (t.% IS NULL AND k.% IS NULL))
+              DISTRIBUTED BY (id)',
+              ARRAY[
+               id_column_name,
+               input_table_name,
+               coltable_name,
+               column_name,
+               column_name,
+               column_name,
+               column_name
+              ]
+             )
+         INTO curstmt;
+         
+         EXECUTE curstmt;       
+         
+        SELECT MADLIB_SCHEMA.__format
+                (
+                    'FROM c45_update_discrete_col_table s
+                     WHERE %.id = s.id',
+                     ARRAY[
+                     encoded_table_name
+                     ]
+                )
+        INTO from_stmt;          
+    ELSE
+        SELECT MADLIB_SCHEMA.__format
+                    ('FROM MADLIB_SCHEMA.% s, % p 
+                      WHERE (s.% = p.% OR (s.% is NULL AND p.% is NULL)) AND %.id=p.%',
+                      ARRAY[
+                      coltable_name,
+                      input_table_name,
+                      column_name,
+                      column_name,
+                      column_name,
+                      column_name,
+                      encoded_table_name,
+                      id_column_name]
+                     )
+        INTO from_stmt;    
+    END IF;
+    
+    -- update result table (value -> key)
+    SELECT MADLIB_SCHEMA.__format
+                    ('UPDATE % SET %=s.key 
+                      %',
+                      ARRAY[
+                      encoded_table_name,
+                      column_name,
+                      from_stmt
+                      ]
+                     )
+    INTO curstmt;
+             
+    RETURN curstmt;
+END
+$$ LANGUAGE PLPGSQL;
+
 
 /*
  * @brief Convert a string with delimiter ',' to an array 
