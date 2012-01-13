@@ -30,7 +30,9 @@ PG_MODULE_MAGIC;
 /*
  * Postgres8.4 doesn't have such macro, so we add here
  */
+#ifndef ARRAY_SIZE
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+#endif
 
 /*
  * This function is used to test if a float value is 0.
@@ -123,8 +125,8 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
 
     	/*
     	 * confidence level value is in range from 0.001 to 1.0 for API c45_train
-    	 * it should be divided by 100 when calculate addition error, therefore,
-    	 * the range of conf_level here is [0.00001, 1.0].
+    	 * it should be divided by 100 when calculate addition error.
+    	 * Therefore, the range of conf_level here is [0.00001, 1.0].
     	 */
     	conf_level = conf_level * 0.01;
 
@@ -584,7 +586,7 @@ enum SCV_FINAL_ARRAY_INDEX
      */     
     SCV_FINAL_CLASS_ID,
     /* The total number of elements belonging to MAX_CLASS */
-    SCV_FINAL_CLASS_COUNT,
+    SCV_FINAL_CLASS_PROB,
     /* Total count of records whose value is not null */
     SCV_FINAL_TOTAL_COUNT
 };
@@ -1232,14 +1234,24 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
     result[SCV_FINAL_SPLIT_CRITERION]   = scv_state_data[SCV_STATE_SPLIT_CRIT];
     result[SCV_FINAL_IS_CONT_FEATURE]	= scv_state_data[SCV_STATE_IS_CONT];
     result[SCV_FINAL_CLASS_ID]			= scv_state_data[SCV_STATE_MAX_CLASS_ID];
-    result[SCV_FINAL_CLASS_COUNT]		= scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT];
-    result[SCV_FINAL_TOTAL_COUNT]		= scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
 
     float8 ratio = 1;
-    
-    /* If there is any missing value, we should multiply a ratio for the computed gain. */
-    if (!is_float_zero(scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT]))
-        ratio = scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]/scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
+    /* true total count should be greater than 0*/
+    check_error
+    	(
+    		scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT]>0,
+    		"true total count should be greater than 0"
+    	);
+    /* We use the true total count here in case of missing value. */
+    result[SCV_FINAL_TOTAL_COUNT]		= scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
+    /*
+     * If there is any missing value, we should multiply a ratio for the computed gain. 
+     * We already checked scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT] is greater than 0.
+     */
+    ratio = scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]/scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
+    /* We use the true total count to compute the probability*/
+    result[SCV_FINAL_CLASS_PROB] = 
+        scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT]/scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
 
     if (!is_float_zero(scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]))
     {
