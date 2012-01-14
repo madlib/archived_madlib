@@ -177,7 +177,7 @@ endmacro(osx_archs)
 # Add Python files to be preprocessed with m4
 macro(add_python_files OUT_PYTHON_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
     set(IN_M4_ARGUMENTS ${ARGN})
-    
+        
     get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
     get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
     file(GLOB_RECURSE PYTHON_FILES
@@ -227,23 +227,23 @@ macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
 endmacro(add_sql_files)
 
 # Add a connector library for a specific DBMS port
-macro(add_madlib_connector_library IN_DBMS IN_LIB_LOADER OUT_TARGET_NAME)
+macro(add_madlib_connector_library IN_TARGET_NAME IN_LIB_DIR IN_LIB_LOADER)
     set(IN_LIBRARY_SOURCES ${ARGN})
 
-    set(${OUT_TARGET_NAME} "madlib_${IN_DBMS}")
     add_library(
-        ${${OUT_TARGET_NAME}}
+        ${IN_TARGET_NAME}
         MODULE
         ${IN_LIBRARY_SOURCES}
     )
-    add_dependencies(${${OUT_TARGET_NAME}} EP_eigen)
-    set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY lib
+    add_dependencies(${IN_TARGET_NAME} EP_eigen)
+    set_target_properties(${IN_TARGET_NAME} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${IN_LIB_DIR}"
+        OUTPUT_NAME "madlib"
         BUILD_WITH_INSTALL_RPATH YES
     )
     
     if(APPLE)
-        set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
+        set_target_properties(${IN_TARGET_NAME} PROPERTIES
             LINK_FLAGS "-bundle_loader ${IN_LIB_LOADER}")
     endif(APPLE)
 endmacro(add_madlib_connector_library)

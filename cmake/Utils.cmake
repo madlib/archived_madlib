@@ -19,35 +19,41 @@ macro(get_dir_name OUT_DIR IN_PATH)
     endif(${IN_PATH} MATCHES "^.+/[^/]*\$")
 endmacro(get_dir_name)
 
-macro(word_length FILENAME OUT_WORD_LENGTH)
-    if(APPLE)
-        osx_archs(${FILENAME} _ARCHITECTURE)
-        string(REPLACE "ppc" 32 _ARCHITECTURE "${_ARCHITECTURE}")
-        string(REPLACE "ppc64" 64 _ARCHITECTURE "${_ARCHITECTURE}")
-        string(REPLACE "i386" 32 _ARCHITECTURE "${_ARCHITECTURE}")
-        string(REPLACE "x86_64" 64 _ARCHITECTURE "${_ARCHITECTURE}")
+macro(architecture FILENAME OUT_ARCHITECTURE)
+    if (APPLE)
+        # On Mac OS X, "lipo" is a more reliable way of finding out the
+        # architecture of an executable
+        osx_archs("${FILENAME}" _ARCHITECTURE)
     else(APPLE)
         execute_process(
-            COMMAND file ${FILENAME}
+            COMMAND file "${FILENAME}"
             OUTPUT_VARIABLE _FILE_OUTPUT
             OUTPUT_STRIP_TRAILING_WHITESPACE)
-        string(REGEX MATCHALL "([0-9]+)-bit" _ARCHITECTURE "${_FILE_OUTPUT}")
-        string(REGEX REPLACE "([0-9]+)-bit" "\\1" _ARCHITECTURE "${_ARCHITECTURE}")
+        
+        # Filter out known architectures
+        string(REGEX MATCHALL "x86[-_]64|i386|ppc|ppc64" _ARCHITECTURE "${_FILE_OUTPUT}")
+        
+        # Normalize (e.g., some vendors use x86-64 instead of x86_64)
+        string(REGEX REPLACE "x86[-_]64" "x86_64" _ARCHITECTURE "${_ARCHITECTURE}")
     endif(APPLE)
     
     list(REMOVE_DUPLICATES _ARCHITECTURE)
     list(LENGTH _ARCHITECTURE _ARCHITECTURE_LENGTH)
     if(_ARCHITECTURE_LENGTH GREATER 1)
+        join_strings(_ARCHITECTURES_STRING ", " "${_ARCHITECTURE}")
         message(FATAL_ERROR "Unique word length requested, but "
-            "${FILENAME} is fat binary.")
+            "${FILENAME} is fat binary (${_ARCHITECTURES_STRING}).")
     endif(_ARCHITECTURE_LENGTH GREATER 1)
-    set(${OUT_WORD_LENGTH} ${_ARCHITECTURE})
-endmacro(word_length)
+    set(${OUT_ARCHITECTURE} ${_ARCHITECTURE})
+endmacro(architecture)
 
-#marco(map IN_LIST OUT_LIST IN_MAP_FUNCTION)
-#    set(${OUT_LIST} "")
-#    foreach()
-#endmacro(map)
+macro(word_length FILENAME OUT_WORD_LENGTH)
+    architecture(${FILENAME} _ARCHITECTURE)
+    string(REPLACE "ppc" 32 _${OUT_WORD_LENGTH} "${_ARCHITECTURE}")
+    string(REPLACE "ppc64" 64 ${OUT_WORD_LENGTH} "${_ARCHITECTURE}")
+    string(REPLACE "i386" 32 ${OUT_WORD_LENGTH} "${_ARCHITECTURE}")
+    string(REPLACE "x86_64" 64 ${OUT_WORD_LENGTH} "${_ARCHITECTURE}")
+endmacro(word_length)
 
 # Given the length of the parameter list, we require named arguments.
 # IN_COMMAND can contain "\${CURRENT_PATH}" and "\${OUTFILE}"
@@ -120,3 +126,55 @@ macro(add_files OUT_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
         SOURCE_FILE_LIST ${IN_SOURCE_FILE_LIST}
     )
 endmacro(add_files)
+
+macro(get_subdirectories IN_DIRECTORY OUT_SUBDIRS)
+    unset(${OUT_SUBDIRS})
+    file(GLOB ENTRIES "${IN_DIRECTORY}/*")
+    foreach(ITEM ${ENTRIES})
+        if(IS_DIRECTORY "${ITEM}")
+            get_filename_component(ITEM "${ITEM}" NAME)
+            list(APPEND ${OUT_SUBDIRS} "${ITEM}")
+        endif(IS_DIRECTORY "${ITEM}")
+    endforeach(ITEM)
+endmacro(get_subdirectories)
+
+macro(get_min_version OUT_VERSION)
+    set(IN_VERSION_LIST ${ARGN})
+    list(GET IN_VERSION_LIST 0 ${OUT_VERSION})
+    foreach(_VERSION ${IN_VERSION_LIST})
+        if("${_VERSION}" VERSION_LESS "${${OUT_VERSION}}")
+            set(${OUT_VERSION} "${_VERSION}")
+        endif()
+    endforeach(_VERSION)
+endmacro(get_min_version)
+
+macro(get_max_version OUT_VERSION)
+    set(IN_VERSION_LIST ${ARGN})
+    list(GET IN_VERSION_LIST 0 ${OUT_VERSION})
+    foreach(_VERSION ${IN_VERSION_LIST})
+        if("${_VERSION}" VERSION_GREATER "${${OUT_VERSION}}")
+            set(${OUT_VERSION} "${_VERSION}")
+        endif()
+    endforeach(_VERSION)
+endmacro(get_max_version)
+
+macro(get_filtered_list OUT_LIST IN_REGEX)
+    set(IN_LIST ${ARGN})
+    
+    set(${OUT_LIST} "")
+    foreach(ITEM ${IN_LIST})
+        if("${ITEM}" MATCHES "${IN_REGEX}")
+            list(APPEND ${OUT_LIST} "${ITEM}")
+        endif("${ITEM}" MATCHES "${IN_REGEX}")
+    endforeach(ITEM)
+endmacro(get_filtered_list)
+
+macro(list_replace IN_REGEX IN_REPLACE_STRING OUT_LIST)
+    set(IN_LIST ${ARGN})
+    
+    set(${OUT_LIST})
+    foreach(ITEM ${IN_LIST})
+        string(REGEX REPLACE "${IN_REGEX}" "${IN_REPLACE_STRING}" ITEM_REPLACED "${ITEM}")
+        list(APPEND ${OUT_LIST} "${ITEM_REPLACED}")
+    endforeach(ITEM)
+endmacro(list_replace)

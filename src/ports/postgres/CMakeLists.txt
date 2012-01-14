@@ -1,55 +1,139 @@
 # ------------------------------------------------------------------------------
-# Database Connector for PostgreSQL
+# PostgreSQL Port
 # ------------------------------------------------------------------------------
 
+set(PORT "PostgreSQL")
+string(TOUPPER ${PORT} PORT_UC)
+string(TOLOWER ${PORT} PORT_LC)
+set(PORT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+get_filename_component(PORT_DIR_NAME "${PORT_SOURCE_DIR}" NAME)
+set(PORT_DEPLOY_SCRIPT "${CMAKE_BINARY_DIR}/deploy/Component_${PORT}.cmake")
 
-# -- 1. Find PostgreSQL installation. Do nothing if not found ------------------
+list(APPEND CMAKE_MODULE_PATH
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+include(PostgreSQLUtils)
 
-message(STATUS "Trying to find PostgreSQL installation")
-find_package(PostgreSQL)
 
-# -- 2. If PostgreSQL is found, specify files that will be compiled into the
-#       shared library ---------------------------------------------------------
+# -- 1. Specify files that will be compiled into the shared library, for *all*
+#       versions of this port --------------------------------------------------
 
-if(POSTGRESQL_FOUND)
-    message(STATUS "***")
-    message(STATUS "*** Adding PostgreSQL to target list...")
-    message(STATUS "***")
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 
-    add_executable(postgres IMPORTED)
-    set_target_properties(postgres PROPERTIES
-        IMPORTED_LOCATION "${POSTGRESQL_EXECUTABLE}"
-    )
+set(MAD_DBAL_SOURCES
+    ${MAD_SOURCES})
+list(APPEND MAD_DBAL_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AbstractionLayer_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AbstractionLayer_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Allocator_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Allocator_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AnyType_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AnyType_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/dbconnector.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/main.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NewDelete.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/PGException_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TypeTraits.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/UDF_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/UDF_proto.hpp"
+)
 
-    set(MAD_DBAL_SOURCES_POSTGRES
-        ${MAD_SOURCES})
-    list(APPEND MAD_DBAL_SOURCES_POSTGRES
-        dbconnector/AbstractionLayer_impl.hpp
-        dbconnector/AbstractionLayer_proto.hpp
-        dbconnector/Allocator_impl.hpp
-        dbconnector/Allocator_proto.hpp
-        dbconnector/AnyType_impl.hpp
-        dbconnector/AnyType_proto.hpp
-        dbconnector/ArrayHandle_impl.hpp
-        dbconnector/ArrayHandle_proto.hpp
-        dbconnector/Compatibility.cpp
-        dbconnector/Compatibility.hpp
-        dbconnector/dbconnector.hpp
-        dbconnector/main.cpp
-        dbconnector/NewDelete.cpp
-        dbconnector/OutputStreamBuffer_impl.hpp
-        dbconnector/OutputStreamBuffer_proto.hpp
-        dbconnector/PGException_proto.hpp
-        dbconnector/TransparentHandle_impl.hpp
-        dbconnector/TransparentHandle_proto.hpp
-        dbconnector/TypeTraits.hpp
-        dbconnector/UDF_impl.hpp
-        dbconnector/UDF_proto.hpp
-    )
+# FIXME: Convert legacy source code written in C
+# BEGIN Legacy Code
+
+    file(GLOB_RECURSE LEGACY_C_FILES
+        "${CMAKE_SOURCE_DIR}/methods/*.c")
+    list(APPEND MAD_DBAL_SOURCES ${LEGACY_C_FILES})
+
+# END Legacy Code
+
+
+# -- 2. Copy all SQL files. Since SQL files contain file names, they are only
+#       preprocessed at installation time, i.e., by madpack. -------------------
+
+add_sql_files(
+    SQL_TARGET_FILES
+    "modules"
+    "${CMAKE_CURRENT_BINARY_DIR}/modules"
+)
+# FIXME: Check legacy code for compliance with new architecture
+# BEGIN Legacy Code
     
+    file(GLOB_RECURSE LEGACY_SQL_FILES RELATIVE
+        "${CMAKE_SOURCE_DIR}/methods"
+        "${CMAKE_SOURCE_DIR}/methods/*.sql_in")
+    foreach(CURRENT_FILE ${LEGACY_SQL_FILES})
+        get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/methods/${CURRENT_FILE}" ABSOLUTE)
+        set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
+        string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
+        string(REPLACE "/sql/" "/test/" OUTFILE ${OUTFILE})
+        add_custom_command(OUTPUT "${OUTFILE}"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CURRENT_PATH}" "${OUTFILE}"
+            DEPENDS "${CURRENT_PATH}"
+            COMMENT "Copying ${CURRENT_FILE}"
+        )
+        list(APPEND SQL_TARGET_FILES ${OUTFILE})
+    endforeach(CURRENT_FILE ${LEGACY_SQL_FILES})
+    
+# END Legacy Code
+add_custom_target(sqlFiles_${PORT_LC} ALL DEPENDS ${SQL_TARGET_FILES})
+
+
+# -- 3. Install all SQL files --------------------------------------------------
+
+cpack_add_port_group_and_component_for_all_versions()
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
+    DESTINATION ports/${PORT_DIR_NAME}
+    COMPONENT ${PORT_LC}_any
+    REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
+)
+
+
+# -- 4. Building the shared library is specific for each version of
+#       this port --------------------------------------------------------------
+
+function(add_${PORT_LC}_library IN_PORT_VERSION)
+    string(REPLACE "." "_" PORT_VERSION_UNDERSCORE "${IN_PORT_VERSION}")
+    set(DBMS "${PORT_LC}_${PORT_VERSION_UNDERSCORE}")
+    set(DBMS_UC "${PORT_UC}_${PORT_VERSION_UNDERSCORE}")
+
+# -- 4.1. Compile C/C++ files---------------------------------------------------
+
+    message(">> Adding ${PORT} "
+        "${${DBMS_UC}_VERSION_MAJOR}."
+        "${${DBMS_UC}_VERSION_MINOR} "
+        "(${${DBMS_UC}_ARCHITECTURE}) "
+        "to target list...")
+
+    add_executable(${DBMS} IMPORTED)
+    set_target_properties(${DBMS} PROPERTIES
+        IMPORTED_LOCATION "${${DBMS_UC}_EXECUTABLE}"
+    )
+
+    include_directories(SYSTEM
+        ${${DBMS_UC}_SERVER_INCLUDE_DIR}
+    )
+
+    add_madlib_connector_library(madlib_${DBMS}
+        lib
+        "${${DBMS_UC}_EXECUTABLE}"
+        ${MAD_DBAL_SOURCES}
+    )
+
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
-    
+        
+        # From the CMake documentation:
+        # "Source file properties are visible only to targets added in the same
+        # directory (CMakeLists.txt)." We therefore have to set them for each
+        # version of this port!
         if(CMAKE_COMPILER_IS_GNUCC)
             # FIXME: In the C code, we have several places where strict aliasing
             # rules are violated. See this web page for some background:
@@ -58,105 +142,37 @@ if(POSTGRESQL_FOUND)
             # Downside: We forgo some potential optimization.
             # The warning GCC would output without -fno-strict-aliasing is:
             # dereferencing type-punned pointer will break strict-aliasing rules
-            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-strict-aliasing")
+            set_source_files_properties(${LEGACY_C_FILES} PROPERTIES
+                COMPILE_FLAGS "-fno-strict-aliasing")
         endif(CMAKE_COMPILER_IS_GNUCC)
-        file(GLOB_RECURSE LEGACY_C_FILES_POSTGRES RELATIVE
-            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/methods/*.c")
 
         # errOmitLocation is used in legacy C code, but it is Greenplum only
         # we define it so that it has no effect for PostgreSQL.
-        set_source_files_properties(${LEGACY_C_FILES_POSTGRES} PROPERTIES
+        set_source_files_properties(${LEGACY_C_FILES} PROPERTIES
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC;errOmitLocation=(int)"
         )
-        list(APPEND MAD_DBAL_SOURCES_POSTGRES ${LEGACY_C_FILES_POSTGRES})
     
     # END Legacy Code
 
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-    include_directories(${POSTGRESQL_SERVER_INCLUDE_DIR})
 
-
-# -- 3. Build MADlib connector -------------------------------------------------
-
-    add_madlib_connector_library(postgres "${POSTGRESQL_EXECUTABLE}"
-        MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
-    )
-
-
-# -- 4. Old versions of PostgreSQL ship with header files that need a patch to
-#       be compatible with C++ -------------------------------------------------
-
-    # Directory we will use for patches
-    set(PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/patch)
-    set(_PG_VERSION "${POSTGRESQL_VERSION_MAJOR}.${POSTGRESQL_VERSION_MINOR}.${POSTGRESQL_VERSION_PATCH}")
-
-    # Version 8.4 of PostgreSQL and below ship with server/nodes/parsenodes.h
-    # and server/nodes/primnodes.h that have C++ keywords as identifiers.
-    # We need to patch this.
-    if(${_PG_VERSION} VERSION_LESS "9.0")
-        message(STATUS "Installed PostgreSQL version has header files that need a patch for C++ compatibility. Will apply patch for versions below 9.0.")
-        
-        add_custom_command(
-            OUTPUT
-                "${PATCH_DIR}/server/nodes/parsenodes.h"
-                "${PATCH_DIR}/server/nodes/primnodes.h"
-                "${PATCH_DIR}/server/utils/builtins.h"
-            COMMAND
-                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_8_4_and_below.sh"
-            DEPENDS
-                "${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/parsenodes.h"
-                "${POSTGRESQL_SERVER_INCLUDE_DIR}/nodes/primnodes.h"
-                "${POSTGRESQL_SERVER_INCLUDE_DIR}/utils/builtins.h"
-                "${CMAKE_CURRENT_BINARY_DIR}/patch/Versions_8_4_and_below.sh"
-            WORKING_DIRECTORY "${PATCH_DIR}"
-            COMMENT "Patching parsenodes.h, primnodes.h, builtins.h, memnodes.h: Renaming identifiers that are C++ keywords."
-        )
-        list(APPEND POSTGRESQL_PATCH_FILES
-            "${PATCH_DIR}/server/nodes/parsenodes.h"
-            "${PATCH_DIR}/server/nodes/primnodes.h"
-            "${PATCH_DIR}/server/utils/builtins.h"
-        )
-    endif(${_PG_VERSION} VERSION_LESS "9.0")
-
-    if(POSTGRESQL_PATCH_FILES)
-        add_subdirectory(patch)
-        add_custom_target(postgresPatches ALL DEPENDS ${POSTGRESQL_PATCH_FILES})
-        # Append directory with patched header file at beginning
-        include_directories(BEFORE ${PATCH_DIR}/server)
-        add_dependencies(madlib_postgres postgresPatches)
-    endif(POSTGRESQL_PATCH_FILES)
-
-
-# -- 5. Install MADlib connector -----------------------------------------------
-
-    install(TARGETS ${MADLIB_POSTGRES_TARGETNAME}
-        LIBRARY DESTINATION ports/postgres/lib
-        COMPONENT postgres
-    )
-
-# -- 6. Preprocess/copy all Python/SQL files -----------------------------------
-
-    # Make sure we support older Postgres versions while still using the
-    # latest features of the newer ones
-    if(${_PG_VERSION} VERSION_LESS "9.0")
-        set(M4_ARGUMENTS_POSTGRES
-            "-DPOSTGRES_PRE_90"
-        )
-    endif(${_PG_VERSION} VERSION_LESS "9.0")
-
+# -- 4.2. Preprocess all Python files ------------------------------------------
+    
+    define_postgresql_features(${IN_PORT_VERSION} DBMS_FEATURES)
+    define_m4_macros(M4_DEFINES_CMD_LINE M4_DEFINES_CODE ${DBMS_FEATURES})
+    
     add_python_files(
-        PYTHON_TARGET_FILES_POSTGRES
-        "modules"
+        PYTHON_TARGET_FILES
+        "${PORT_SOURCE_DIR}/modules"
         "${CMAKE_CURRENT_BINARY_DIR}/modules"
-        ${M4_ARGUMENTS_POSTGRES}
+        ${M4_DEFINES_CMD_LINE}
     )
     # FIXME: Check legacy code for compliance with new architecture
     # BEGIN Legacy Code
         
-        file(GLOB_RECURSE LEGACY_SQL_FILES_POSTGRES RELATIVE
+        file(GLOB_RECURSE LEGACY_PYTHON_FILES RELATIVE
             "${CMAKE_SOURCE_DIR}/methods"
             "${CMAKE_SOURCE_DIR}/methods/*.py_in")
-        foreach(CURRENT_FILE ${LEGACY_SQL_FILES_POSTGRES})
+        foreach(CURRENT_FILE ${LEGACY_PYTHON_FILES})
             get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/methods/${CURRENT_FILE}" ABSOLUTE)
             set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
             string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
@@ -164,54 +180,67 @@ if(POSTGRESQL_FOUND)
             get_dir_name(OUTDIR ${OUTFILE})
             add_custom_command(OUTPUT "${OUTFILE}"
                 COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTDIR}"
-                COMMAND ${M4_BINARY} ${M4_ARGUMENTS} "${CURRENT_PATH}" > "${OUTFILE}"
+                COMMAND ${M4_BINARY} ${M4_ARGUMENTS} ${M4_DEFINES_CMD_LINE}
+                    "${CURRENT_PATH}" > "${OUTFILE}"
                 DEPENDS "${CURRENT_PATH}"
                 COMMENT "Preprocessing ${CURRENT_FILE} with m4."
             )
-            list(APPEND PYTHON_TARGET_FILES_POSTGRES ${OUTFILE})
-        endforeach(CURRENT_FILE ${LEGACY_SQL_FILES_POSTGRES})
+            list(APPEND PYTHON_TARGET_FILES ${OUTFILE})
+        endforeach(CURRENT_FILE ${LEGACY_PYTHON_FILES})
         
     # END Legacy Code
-    add_custom_target(pythonFiles_Postgres ALL DEPENDS ${PYTHON_TARGET_FILES_POSTGRES})
     
-    add_sql_files(
-        SQL_TARGET_FILES_POSTGRES
-        "modules"
-        "${CMAKE_CURRENT_BINARY_DIR}/modules"
+    configure_file("${PORT_SOURCE_DIR}/madpack/SQLCommon.m4_in"
+        "${CMAKE_CURRENT_BINARY_DIR}/madpack/SQLCommon.m4"
+        @ONLY
     )
-    # FIXME: Check legacy code for compliance with new architecture
-    # BEGIN Legacy Code
-        
-        file(GLOB_RECURSE LEGACY_SQL_FILES_POSTGRES RELATIVE
-            "${CMAKE_SOURCE_DIR}/methods"
-            "${CMAKE_SOURCE_DIR}/methods/*.sql_in")
-        foreach(CURRENT_FILE ${LEGACY_SQL_FILES_POSTGRES})
-            get_filename_component(CURRENT_PATH "${CMAKE_SOURCE_DIR}/methods/${CURRENT_FILE}" ABSOLUTE)
-            set(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/modules/${CURRENT_FILE}")
-            string(REPLACE "/src/pg_gp" "" OUTFILE ${OUTFILE})
-            string(REPLACE "/sql/" "/test/" OUTFILE ${OUTFILE})
-            add_custom_command(OUTPUT "${OUTFILE}"
-                COMMAND ${CMAKE_COMMAND} -E copy "${CURRENT_PATH}" "${OUTFILE}"
-                DEPENDS "${CURRENT_PATH}"
-                COMMENT "Copying ${CURRENT_FILE}"
-            )
-            list(APPEND SQL_TARGET_FILES_POSTGRES ${OUTFILE})
-        endforeach(CURRENT_FILE ${LEGACY_SQL_FILES_POSTGRES})
-        
-    # END Legacy Code
-    add_custom_target(sqlFiles_Postgres ALL DEPENDS ${SQL_TARGET_FILES_POSTGRES})
     
-# -- 7. Install all Python/SQL files -------------------------------------------
+    add_custom_target(pythonFiles_${DBMS} ALL
+        DEPENDS ${PYTHON_TARGET_FILES})
 
+
+# -- 4.3. Install shared library, Python files, and M4 header ------------------
+
+    cpack_add_version_component()
+    install(TARGETS madlib_${DBMS}
+        LIBRARY DESTINATION ports/${PORT_DIR_NAME}/${IN_PORT_VERSION}/lib
+        COMPONENT ${DBMS}
+    )
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
-        DESTINATION ports/postgres
-        COMPONENT postgres
+        DESTINATION ports/${PORT_DIR_NAME}/${IN_PORT_VERSION}
+        COMPONENT ${DBMS}
         REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/madpack/SQLCommon.m4"
+        DESTINATION ports/${PORT_DIR_NAME}/${IN_PORT_VERSION}/madpack
+        COMPONENT ${DBMS}
+    )
+endfunction(add_${PORT_LC}_library)
 
-    add_subdirectory(madpack)
-else(POSTGRESQL_FOUND)
-    message(STATUS "***")
-    message(STATUS "*** No PostgreSQL installation found. Skipping.")
-    message(STATUS "***")
-endif(POSTGRESQL_FOUND)
+
+# -- 5. Provide a macro to be called from CMakeLists.txt in the version
+#       directory. We want these files to be one-liners. -----------------------
+
+# Add the current version as a target. This is a macro because it calls
+# find_package, and we want the side effects (the defined variables) to be
+# visible after the invocation
+# 
+macro(add_current_${PORT_LC}_version)
+    get_filename_component(_VERSION "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
+    string(REPLACE "." "_" _VERSION_UNDERSCORES ${_VERSION})
+    
+    find_package(${PORT}_${_VERSION_UNDERSCORES})
+    if(${PORT_UC}_${_VERSION_UNDERSCORES}_FOUND)
+        add_postgresql_library(${_VERSION})
+    endif(${PORT_UC}_${_VERSION_UNDERSCORES}_FOUND)
+endmacro(add_current_${PORT_LC}_version)
+
+
+# -- 6. Build shared library and copy version-specific file for all
+#       ${PORT_UC}_X_Y_PG_CONFIG macros defined by the user. If none has been
+#       defined, try to find any version this port. ----------------------------
+
+determine_target_versions(VERSIONS)
+foreach(VERSION ${VERSIONS})
+	add_subdirectory(${VERSION})
+endforeach(VERSION)

@@ -18,7 +18,7 @@ set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local/madlib" PARENT_SCOPE)
 
 set(_PACKAGE_REQUIRES "lapack >= 3.0, m4 >= 1.4")
 if(RH_VERSION AND RH_VERSION VERSION_LESS "6.0")
-    # on RH/CentOS 5, there is no Python 2.6 or higher in the defaul
+    # on RH/CentOS 5, there is no Python 2.6 or higher in the default
     # repositories.
     set(CPACK_RPM_PACKAGE_REQUIRES "python, ${_PACKAGE_REQUIRES}" PARENT_SCOPE)
 else()

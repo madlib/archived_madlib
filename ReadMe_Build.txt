@@ -123,18 +123,18 @@ directory) for more options, after having run `cmake` the first time.
     
     For instance, if Boost header files are located under a non-standard
     location like `/opt/local/include/boost`, run
-    `./configure -DCMAKE_PREFIX_PATH=/opt/local` (though
-    `-DCMAKE_PREFIX_PATH=/opt/local/include` works, too, in the case of Boost).
+    `./configure -DCMAKE_PREFIX_PATH=/opt/local`.
     
 - `CMAKE_INSTALL_PREFIX` (default: `/usr/local/madlib`)
 
     Prefix when installing MADlib with `make install`. All files will be
     installed within `${CMAKE_INSTALL_PREFIX}`.
 
-- `POSTGRESQL_PG_CONFIG` (default: `$(command -v pg_config)`)
+- `POSTGRESQL_X_Y_PG_CONFIG` (for X.Y in {8.4, 9.0, 9.1}, default: *empty*)
 
-    Path to `pg_config` of PostgreSQL installation, which is used to determine
-    various PostgreSQL search paths.
+    Path to `pg_config` of PostgreSQL version X.Y. If none is set, the build
+    script will check if `$(command -v pg_config)` points to a PostgreSQL
+    installation.
 
 - `GREENPLUM_PG_CONFIG` (default: `/usr/local/greenplum-db/bin/pg_config` if
    available, otherwise `$(command -v pg_config)`)

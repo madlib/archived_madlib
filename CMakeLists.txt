@@ -13,14 +13,11 @@ set(CMAKE_GENERATOR_CXX sunCC g++)
 
 project(MADlib)
 
-# We automatically download and build missing parts. For that we rely on
-# ExternalProject_Add, which requires CMake 2.8.
-# http://www.kitware.com/news/home/browse/252
-
-cmake_minimum_required(VERSION 2.8)
+# FindPostgreSQL.cmake needs at least 2.8.3. We are on the safe side and require
+# the minimum version tested, which is 2.8.4.
+cmake_minimum_required(VERSION 2.8.4 FATAL_ERROR)
 
 include(ExternalProject)
-
 
 # -- Local definitions (filenames, paths, etc.) --------------------------------
 
@@ -66,7 +63,7 @@ if(CMAKE_COMPILER_IS_GNUCC)
     # http://pubs.opengroup.org/onlinepubs/9699919799/functions/V2_chap02.html#tag_15_02_01_01
     # We specify that we are POSIX.1-2001 compliant and XSI-conforming. We only
     # need to specify _XOPEN_SOURCE as _POSIX_C_SOURCE will be set implicitly.
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -pedantic -Wall -Wextra -D_XOPEN_SOURCE=600"
+    set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra -D_XOPEN_SOURCE=600"
         CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
     
@@ -90,7 +87,7 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # common (and useful) extension that we do not want to hear warnings about
     # it.
     # FIXME: -msse2 should only be added on i386
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long -msse2" CACHE STRING
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long -msse2" CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
     
     # We want to include some header files as system header files in order to
@@ -112,7 +109,11 @@ file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
 string(REGEX REPLACE "^.*version:[ \t]*([^\n]*)\n.*" "\\1" MADLIB_VERSION_STRING "${_MADLIB_VERSION_CONTENTS}")
 string(REGEX REPLACE "([0-9]+).*" "\\1" MADLIB_VERSION_MAJOR "${MADLIB_VERSION_STRING}")
 string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_MINOR "${MADLIB_VERSION_STRING}")
-string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "${MADLIB_VERSION_STRING}")
+if("${MADLIB_VERSION_STRING}" MATCHES "[0-9]+\\.[0-9]+\\.([0-9]+).*")
+    string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "${MADLIB_VERSION_STRING}")
+else()
+    set(MADLIB_VERSION_PATCH 0)
+endif()
 
 
 # -- Third-party dependencies: Find m4 -----------------------------------------
