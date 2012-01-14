@@ -997,62 +997,6 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/*
- * generate the training instances for current leaf nodes
- * Parameters:
- *      input_table_name:       The name of the original table containing all the records in training set.
- *      metatable_name:         Contains the relevant information of the input table
- *      instance_table_name:    The output table name, which contains all the training set for current leaf nodes.
- *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
- *                              Each record will be assigned to a node.
- *      dbid                    0 means greenplum database, others represents postgres for now
- *      verbosity               ture if print the debug info 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance
-    (
-    input_table_name     TEXT, 
-    metatable_name       TEXT,
-    instance_table_name  TEXT,
-    selection_table_name TEXT,
-    dbid                 INT,
-    verbosity            INT
-    );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance
-    (
-    input_table_name      TEXT, 
-    metatable_name        TEXT,
-    instance_table_name   TEXT,
-    selection_table_name  TEXT,
-    dbid                  INT,
-    verbosity             INT
-    )
-RETURNS void AS $$
-DECLARE
-BEGIN
-    -- For greenplum, use olap extension: group sets
-    IF (dbid = 1) THEN
-        PERFORM MADLIB_SCHEMA.__generate_training_instance_greenplum
-            (
-            input_table_name,
-            metatable_name,
-            instance_table_name,
-            selection_table_name,
-            verbosity
-            );
-    ELSE
-    -- For postgres, just use union all to do that
-        PERFORM MADLIB_SCHEMA.__generate_training_instance_postgres
-            (
-            input_table_name,
-            metatable_name,
-            instance_table_name,
-            selection_table_name,
-            verbosity
-            );    
-    END IF;
-END
-$$ LANGUAGE PLPGSQL;
-
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__rep_type CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__rep_type AS
     (
@@ -2069,15 +2013,26 @@ BEGIN
         
         select_max_id = max_id;
         
-        PERFORM MADLIB_SCHEMA.__generate_training_instance
-            (
-            training_table_name,
-            training_table_meta,
-            'training_instance',
-            'instance_selection',
-            m4_ifdef(`GREENPLUM',`1', `0'),
-            verbosity
-            );
+        IF (m4_ifdef(`GREENPLUM',`1',`0') = 1) THEN
+            PERFORM MADLIB_SCHEMA.__generate_training_instance_greenplum
+                (
+                training_table_name,
+                training_table_meta,
+                'training_instance',
+                'instance_selection',
+                verbosity
+                );        
+        ELSE
+            PERFORM MADLIB_SCHEMA.__generate_training_instance_postgres
+                (
+                training_table_name,
+                training_table_meta,
+                'training_instance',
+                'instance_selection',
+                verbosity
+                );        
+        END IF;
+        
         begin_find_best_time = clock_timestamp();
         
         best_time_cmp = 't';
