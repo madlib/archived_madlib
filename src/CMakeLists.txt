@@ -244,7 +244,7 @@ macro(add_madlib_connector_library IN_TARGET_NAME IN_LIB_DIR IN_LIB_LOADER)
     
     if(APPLE)
         set_target_properties(${IN_TARGET_NAME} PROPERTIES
-            LINK_FLAGS "-bundle_loader ${IN_LIB_LOADER}")
+            LINK_FLAGS "-bundle_loader \"${IN_LIB_LOADER}\"")
     endif(APPLE)
 endmacro(add_madlib_connector_library)
 

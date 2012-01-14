@@ -153,11 +153,8 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         # in $GP_HOME/include/postgresql/server/port.h.
         set_source_files_properties(${MAD_DBAL_SOURCES} PROPERTIES
             COMPILE_FLAGS "-DHAVE_ERAND48 ${ADDITIONAL_GCC_FLAGS}")
-        get_target_property(_OLD_VALUE madlib_${DBMS} LINK_FLAGS)
+        get_property(_OLD_VALUE TARGET madlib_${DBMS} PROPERTY LINK_FLAGS)
         # If property has not been initialized, _OLD_VALUE is "_OLD_VALUE-NOTFOUND"
-        if(NOT ${_OLD_VALUE})
-            set(_OLD_VALUE)
-        endif(NOT ${_OLD_VALUE})
         set_target_properties(madlib_${DBMS} PROPERTIES
             LINK_FLAGS "${_OLD_VALUE} ${ADDITIONAL_GCC_FLAGS}")
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "SunPro")
