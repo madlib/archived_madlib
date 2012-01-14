@@ -4,8 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if processed as a stand-alone.
-#if !defined(_DOXYGEN) || defined(MADLIB_PROB_BOOST_CPP)
+// Workaround for Doxygen: A header file that does not declare namespaces is to
+// be ignored if and only if it is processed stand-alone
+#if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
 
 /**
  * @brief Chi-squared cumulative distribution function

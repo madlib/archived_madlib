@@ -68,8 +68,9 @@ namespace modules {
 
 namespace prob {
 
-// Workaround for Doxygen: Only ignore header file if processed stand-alone
-#define MADLIB_PROB_STUDENT_CPP
+// Workaround for Doxygen: A header file that does not declare namespaces is to
+// be ignored if and only if it is processed stand-alone
+#undef _DOXYGEN_IGNORE_HEADER_FILE
 #include "student.hpp"
 
 namespace {

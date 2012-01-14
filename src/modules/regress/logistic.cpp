@@ -22,8 +22,9 @@ using prob::normalCDF;
 
 namespace regress {
 
-// Workaround for Doxygen: Only ignore header file if processed stand-alone
-#define MADLIB_REGRESS_LOGISTIC_CPP
+// Workaround for Doxygen: A header file that does not declare namespaces is to
+// be ignored if and only if it is processed stand-alone
+#undef _DOXYGEN_IGNORE_HEADER_FILE
 #include "logistic.hpp"
 
 // Internal functions
