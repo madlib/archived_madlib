@@ -42,7 +42,7 @@ endif (NOT BOOST_TAR_SOURCE)
 # -DEIGEN_TAR_SOURCE=/path/to/eigen-x.x.x.tar.gz
 
 set(EIGEN_VERSION "3.0.3")
-set(EIGEN_TAR_MD5 0d2d94c347f6433ce4526c58b69bec0e)
+set(EIGEN_TAR_MD5 695f24be85c4fe957ce6a4dd11161f48)
 
 set(EIGEN_TAR "eigen-${EIGEN_VERSION}.tar.gz")
 set(EIGEN_URL "${BITBUCKET_BASE_URL}/eigen/eigen/get/${EIGEN_VERSION}.tar.gz")

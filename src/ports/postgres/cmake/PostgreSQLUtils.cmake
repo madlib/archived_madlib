@@ -19,6 +19,7 @@ function(define_m4_macros OUT_M4_CMD_LINE OUT_M4_CODE)
 
     set(MACROS
         "${PORT_UC}"
+        "__${PORT_UC}__"
         "__PORT__=${PORT_UC}"
         "__DBMS__=${DBMS}"
         "__DBMS_VERSION__=${${DBMS_UC}_VERSION_STRING}"
