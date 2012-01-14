@@ -7,6 +7,8 @@
  * @date Dec. 22 2011
  */
 
+m4_include(`SQLCommon.m4')
+
 /*
 @about
 
@@ -1234,60 +1236,61 @@ BEGIN
     
     EXECUTE curstmt;
     
-    IF (MADLIB_SCHEMA.__ordered_aggregate_support()) THEN
-        -- With ordered aggregate support, we can use this facility.
-	    SELECT MADLIB_SCHEMA.__format
-            (
-            'SELECT s1.assigned_nid, 
-                MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
+m4_changequote(`>>>', `<<<')
+m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'SELECT s1.assigned_nid, 
+            MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
+        FROM (
+            SELECT assigned_nid,fid,split_value,
+                (MADLIB_SCHEMA.__scv_aggr_wrapper(
+                    MADLIB_SCHEMA.__scv_aggr
+                        (%,fval,class,is_cont,le,gt, total_size
+                        ORDER BY fval desc,class desc)
+                    )::MADLIB_SCHEMA.__scv_aggr_result).*
             FROM (
-                SELECT assigned_nid,fid,split_value,
-                    (MADLIB_SCHEMA.__scv_aggr_wrapper(
-                        MADLIB_SCHEMA.__scv_aggr
-                            (%,fval,class,is_cont,le,gt, total_size
-						    ORDER BY fval desc,class desc)
-                        )::MADLIB_SCHEMA.__scv_aggr_result).*
-                FROM (
-                    SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
-                    WHERE t1.assigned_nid = t2.assigned_nid AND 
-                            (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
-                    ) y 
-                GROUP BY assigned_nid,fid,split_value 
-                ) s1  
-            GROUP BY s1.assigned_nid
-            ORDER BY s1.assigned_nid;',
-            MADLIB_SCHEMA.__to_char(sp_criterion),
-            table_name
-            )
-        INTO curstmt;   
-    ELSE
-        -- Without ordered aggregate support, we use window function as a workaround.
-        -- The performance is much worse than ordered aggregate.
-	    SELECT MADLIB_SCHEMA.__format
-            (
-            'SELECT s1.assigned_nid, 
-                MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
+                SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
+                WHERE t1.assigned_nid = t2.assigned_nid AND 
+                        (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
+                ) y 
+            GROUP BY assigned_nid,fid,split_value 
+            ) s1  
+        GROUP BY s1.assigned_nid
+        ORDER BY s1.assigned_nid;',
+        MADLIB_SCHEMA.__to_char(sp_criterion),
+        table_name
+        )
+    INTO curstmt;
+<<<, >>>
+    -- Without ordered aggregate support, we use window function as a workaround.
+    -- The performance is much worse than ordered aggregate.
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'SELECT s1.assigned_nid, 
+            MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
+        FROM (
+            SELECT assigned_nid,fid,split_value,
+                (MADLIB_SCHEMA.__scv_aggr_wrapper(
+                    MADLIB_SCHEMA.__scv_aggr
+                        (%,fval,class,is_cont,le,gt, total_size) over
+                        (PARTITION BY assigned_nid,fid,split_value 
+                         ORDER BY fval desc,class desc)
+                    )::MADLIB_SCHEMA.__scv_aggr_result).*
             FROM (
-                SELECT assigned_nid,fid,split_value,
-                    (MADLIB_SCHEMA.__scv_aggr_wrapper(
-                        MADLIB_SCHEMA.__scv_aggr
-                            (%,fval,class,is_cont,le,gt, total_size) over
-						    (PARTITION BY assigned_nid,fid,split_value 
-                             ORDER BY fval desc,class desc)
-                        )::MADLIB_SCHEMA.__scv_aggr_result).*
-                FROM (
-                    SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
-                    WHERE t1.assigned_nid = t2.assigned_nid AND 
-                            (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
-                    ) y 
-                ) s1  
-            GROUP BY s1.assigned_nid
-            ORDER BY s1.assigned_nid;',
-            MADLIB_SCHEMA.__to_char(sp_criterion),
-            table_name
-            )
-        INTO curstmt;   
-    END IF;
+                SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
+                WHERE t1.assigned_nid = t2.assigned_nid AND 
+                        (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
+                ) y 
+            ) s1  
+        GROUP BY s1.assigned_nid
+        ORDER BY s1.assigned_nid;',
+        MADLIB_SCHEMA.__to_char(sp_criterion),
+        table_name
+        )
+    INTO curstmt;
+<<<)
+m4_changequote(>>>`<<<, >>>'<<<)
     
     -- s1.info_impurity[1], s1.fid[2], s1.split_value[3], 
     -- s2.class_prob[4], s2.class_id[5], s1.total_size[6]
@@ -3342,12 +3345,14 @@ BEGIN
                 ),
                 'the specified tree table doesn''t exists'
             );   
-            
-    IF (MADLIB_SCHEMA.__ordered_aggregate_support()) THEN
-        RETURN MADLIB_SCHEMA.__c45_display_with_ordered_aggr(tree_table,max_depth);
-    ELSE
-        RETURN MADLIB_SCHEMA.__c45_display_no_ordered_aggr(tree_table,max_depth);
-    END IF;
+
+m4_changequote(`>>>', `<<<')
+m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
+    RETURN MADLIB_SCHEMA.__c45_display_with_ordered_aggr(tree_table,max_depth);
+<<<, >>>
+    RETURN MADLIB_SCHEMA.__c45_display_no_ordered_aggr(tree_table,max_depth);
+<<<)
+m4_changequote(>>>`<<<, >>>'<<<)
 END $$ LANGUAGE PLPGSQL;
 
 /*
