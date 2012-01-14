@@ -23,31 +23,37 @@ if(GREENPLUM_FOUND)
     )
 
     set(MAD_DBAL_SOURCES_GREENPLUM
-        ../postgres/dbconnector/PGAbstractType.cpp
-        ../postgres/dbconnector/PGAbstractType.hpp
-        ../postgres/dbconnector/PGAllocator.cpp
-        ../postgres/dbconnector/PGAllocator.hpp
-        ../postgres/dbconnector/PGArrayHandle.cpp
-        ../postgres/dbconnector/PGArrayHandle.hpp
-        ../postgres/dbconnector/PGCommon.hpp
-        dbconnector/GPCompatibility.cpp
-        ../postgres/dbconnector/PGCompatibility.hpp
-        ../postgres/dbconnector/PGInterface.cpp
-        ../postgres/dbconnector/PGInterface.hpp
-        ../postgres/dbconnector/PGMain.cpp
-        ../postgres/dbconnector/PGNewDelete.cpp
-        ../postgres/dbconnector/PGToDatumConverter.cpp
-        ../postgres/dbconnector/PGToDatumConverter.hpp
-        ../postgres/dbconnector/PGType.cpp
-        ../postgres/dbconnector/PGType.hpp
+        ${MAD_SOURCES})
+    list(APPEND MAD_DBAL_SOURCES_GREENPLUM
+        ../postgres/dbconnector/AbstractionLayer_impl.hpp
+        ../postgres/dbconnector/AbstractionLayer_proto.hpp
+        ../postgres/dbconnector/Allocator_impl.hpp
+        ../postgres/dbconnector/Allocator_proto.hpp
+        ../postgres/dbconnector/AnyType_impl.hpp
+        ../postgres/dbconnector/AnyType_proto.hpp
+        ../postgres/dbconnector/ArrayHandle_impl.hpp
+        ../postgres/dbconnector/ArrayHandle_proto.hpp
+        dbconnector/Compatibility.cpp
+        ../postgres/dbconnector/Compatibility.hpp
+        ../postgres/dbconnector/dbconnector.hpp
+        ../postgres/dbconnector/main.cpp
+        ../postgres/dbconnector/NewDelete.cpp
+        ../postgres/dbconnector/OutputStreamBuffer_impl.hpp
+        ../postgres/dbconnector/OutputStreamBuffer_proto.hpp
+        ../postgres/dbconnector/PGException_proto.hpp
+        ../postgres/dbconnector/TransparentHandle_impl.hpp
+        ../postgres/dbconnector/TransparentHandle_proto.hpp
+        ../postgres/dbconnector/TypeTraits.hpp
+        ../postgres/dbconnector/UDF_impl.hpp
+        ../postgres/dbconnector/UDF_proto.hpp
     )
-    if(LINUX)
-        list(APPEND MAD_DBAL_SOURCES_GREENPLUM
-            linux/dbconnector/GPArmadilloGlue.cpp
-        )
-        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
-    endif(LINUX)
     if(CMAKE_COMPILER_IS_GNUCXX)
+        if(APPLE)
+            # FIXME: This should be handled in a better way. 
+            # Greenplum is 32bit on the Mac.
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
+        endif(APPLE)
+        
         # The source code specifies that we are POSIX.1-2001 compliant:
         # On the Mac, this is done in $GP_HOME/include/pg_config_manual.h.
         # On Linux, gcc predefines _GNU_SOURCE, which leads to
@@ -65,6 +71,12 @@ if(GREENPLUM_FOUND)
     # BEGIN Legacy Code
     
         if(CMAKE_COMPILER_IS_GNUCC)
+            if(APPLE)
+                # FIXME: This should be handled in a better way. 
+                # Greenplum is 32bit on the Mac.
+                set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32")
+            endif(APPLE)        
+        
             # FIXME: Is there a portable (not just for gcc) way of including a header file?
             # Due to Greenplum bug MPP-13254, we need to include <sys/time.h>
             # before <postgres.h>
@@ -102,7 +114,6 @@ if(GREENPLUM_FOUND)
     add_madlib_connector_library(greenplum "${GREENPLUM_EXECUTABLE}"
         MADLIB_GREENPLUM_TARGETNAME ${MAD_DBAL_SOURCES_GREENPLUM}
     )
-    target_link_libraries(${MADLIB_GREENPLUM_TARGETNAME} madlib)
 
     
 # -- 4. Some versions of Greenplum ship with header files that need a patch to
