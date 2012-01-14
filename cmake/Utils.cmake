@@ -19,6 +19,31 @@ macro(get_dir_name OUT_DIR IN_PATH)
     endif(${IN_PATH} MATCHES "^.+/[^/]*\$")
 endmacro(get_dir_name)
 
+macro(word_length FILENAME OUT_WORD_LENGTH)
+    if(APPLE)
+        osx_archs(${FILENAME} _ARCHITECTURE)
+        string(REPLACE "ppc" 32 _ARCHITECTURE "${_ARCHITECTURE}")
+        string(REPLACE "ppc64" 64 _ARCHITECTURE "${_ARCHITECTURE}")
+        string(REPLACE "i386" 32 _ARCHITECTURE "${_ARCHITECTURE}")
+        string(REPLACE "x86_64" 64 _ARCHITECTURE "${_ARCHITECTURE}")
+    else(APPLE)
+        execute_process(
+            COMMAND file ${FILENAME}
+            OUTPUT_VARIABLE _FILE_OUTPUT
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        string(REGEX MATCHALL "([0-9]+)-bit" _ARCHITECTURE "${_FILE_OUTPUT}")
+        string(REGEX REPLACE "([0-9]+)-bit" "\\1" _ARCHITECTURE "${_ARCHITECTURE}")
+    endif(APPLE)
+    
+    list(REMOVE_DUPLICATES _ARCHITECTURE)
+    list(LENGTH _ARCHITECTURE _ARCHITECTURE_LENGTH)
+    if(_ARCHITECTURE_LENGTH GREATER 1)
+        message(FATAL_ERROR "Unique word length requested, but "
+            "${FILENAME} is fat binary.")
+    endif(_ARCHITECTURE_LENGTH GREATER 1)
+    set(${OUT_WORD_LENGTH} ${_ARCHITECTURE})
+endmacro(word_length)
+
 #marco(map IN_LIST OUT_LIST IN_MAP_FUNCTION)
 #    set(${OUT_LIST} "")
 #    foreach()

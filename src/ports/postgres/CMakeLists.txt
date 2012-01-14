@@ -16,36 +16,36 @@ if(POSTGRESQL_FOUND)
     message(STATUS "*** Adding PostgreSQL to target list...")
     message(STATUS "***")
 
-    add_library(postgres STATIC IMPORTED)
+    add_executable(postgres IMPORTED)
     set_target_properties(postgres PROPERTIES
         IMPORTED_LOCATION "${POSTGRESQL_EXECUTABLE}"
     )
 
     set(MAD_DBAL_SOURCES_POSTGRES
-        dbconnector/PGAbstractType.cpp
-        dbconnector/PGAbstractType.hpp
-        dbconnector/PGAllocator.cpp
-        dbconnector/PGAllocator.hpp
-        dbconnector/PGArrayHandle.cpp
-        dbconnector/PGArrayHandle.hpp
-        dbconnector/PGCommon.hpp
-        dbconnector/PGCompatibility.cpp
-        dbconnector/PGCompatibility.hpp
-        dbconnector/PGInterface.cpp
-        dbconnector/PGInterface.hpp
-        dbconnector/PGMain.cpp
-        dbconnector/PGNewDelete.cpp
-        dbconnector/PGToDatumConverter.cpp
-        dbconnector/PGToDatumConverter.hpp
-        dbconnector/PGType.cpp
-        dbconnector/PGType.hpp
+        ${MAD_SOURCES})
+    list(APPEND MAD_DBAL_SOURCES_POSTGRES
+        dbconnector/AbstractionLayer_impl.hpp
+        dbconnector/AbstractionLayer_proto.hpp
+        dbconnector/Allocator_impl.hpp
+        dbconnector/Allocator_proto.hpp
+        dbconnector/AnyType_impl.hpp
+        dbconnector/AnyType_proto.hpp
+        dbconnector/ArrayHandle_impl.hpp
+        dbconnector/ArrayHandle_proto.hpp
+        dbconnector/Compatibility.cpp
+        dbconnector/Compatibility.hpp
+        dbconnector/dbconnector.hpp
+        dbconnector/main.cpp
+        dbconnector/NewDelete.cpp
+        dbconnector/OutputStreamBuffer_impl.hpp
+        dbconnector/OutputStreamBuffer_proto.hpp
+        dbconnector/PGException_proto.hpp
+        dbconnector/TransparentHandle_impl.hpp
+        dbconnector/TransparentHandle_proto.hpp
+        dbconnector/TypeTraits.hpp
+        dbconnector/UDF_impl.hpp
+        dbconnector/UDF_proto.hpp
     )
-    if(LINUX)
-        list(APPEND MAD_DBAL_SOURCES_POSTGRES
-            linux/dbconnector/PGArmadilloGlue.cpp
-        )
-        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../linux)
-    endif(LINUX)
     
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
@@ -81,12 +81,6 @@ if(POSTGRESQL_FOUND)
     add_madlib_connector_library(postgres "${POSTGRESQL_EXECUTABLE}"
         MADLIB_POSTGRES_TARGETNAME ${MAD_DBAL_SOURCES_POSTGRES}
     )
-    target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} madlib)
-    if(LINUX)
-        # On Linux, we declare Armadillo a dependency of the connector not the
-        # core library. See main CMakeLists.txt file why.
-        target_link_libraries(${MADLIB_POSTGRES_TARGETNAME} armadillo)
-    endif(LINUX)
 
 
 # -- 4. Old versions of PostgreSQL ship with header files that need a patch to
