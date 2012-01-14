@@ -365,7 +365,7 @@ AbstractionLayer::AnyType::operator[](uint16_t inID) const {
             pgTuple);
     } catch (PGException &e) {
         throw std::invalid_argument("An exception occurred while "
-            "gathering inormation about PostgreSQL function arguments.");
+            "gathering information about PostgreSQL function arguments.");
     }
 
     return isTuple ?
@@ -482,7 +482,7 @@ AbstractionLayer::AnyType::getAsDatum(const FunctionCallInfo inFCInfo) {
 }
 
 /**
- * @brief Return a PostbreSQL Datum representing the current object
+ * @brief Return a PostgreSQL Datum representing the current object
  *
  * The only *conversion* taking place in this function is *combining* Datums
  * into a tuple. At this place, we do not have to worry any more about retaining
