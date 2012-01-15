@@ -197,14 +197,18 @@ def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
         )
     );
     
-    # Allow the user to specify sample size 
+    # Allow user to specify sample size or set the default
     if sample_pct:
         sample_size = floor((n*sample_pct)/100);
     else:
-        sample_size = floor(n/100);    # default 1%
+        sample_size = floor(n/100);    # default := 1%
     
-    # To Sample OR Not To Sample
-    if sample_size > 0 and sample_size < n:
+    # Sample size must be greater than k
+    if sample_pct and sample_size < k:
+        plpy.error( 'sample size (%s) is smaller than specified k (%s)' % (int(sample_size), k))        
+    
+    # If sampling on
+    if sample_pct and sample_size > 0 and sample_size < n:
         plpy.execute('''    
             INSERT INTO {initial_sample} (pid, coords, min_distance) 
             SELECT pid, coords::{madlib_schema}.SVEC, NULL
@@ -279,7 +283,7 @@ def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
                 )
             );
         else:
-            # The other iterations find the minimum 
+            # The other iterations find the minimum distance to current centroids
             plpy.execute( 
                 sql.format(
                     madlib_schema = madlib_schema
@@ -407,18 +411,23 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
         # Cleanup
         plpy.execute( 'DROP TABLE IF EXISTS ' + random_points);        
 
-        # Check canopy thresholds        
-        if t1 is None: 
-            if rv[0]['t1'] is None:
-                plpy.error( 'not enough data to generate canopy T1 threshold (T1<T2)')
-            else:
-                t1 = rv[0]['t1'];
-        if t2 is None: 
-            if rv[0]['t2'] is None:
-                plpy.error( 'not enough data to generate canopy T2 threshold (T1<T2)')
-            else:
-                t2 = rv[0]['t2'];
-    
+    # Check canopy thresholds        
+    if t1 is None: 
+        if rv[0]['t1'] is None:
+            plpy.error( 'not enough data to generate canopy T1 threshold (T1<T2)')
+        else:
+            t1 = rv[0]['t1'];
+    elif t1 <= 0:
+        plpy.error( 'canopy threshold T1 can not be zero or negative')        
+        
+    if t2 is None: 
+        if rv[0]['t2'] is None:
+            plpy.error( 'not enough data to generate canopy T2 threshold (T1<T2)')
+        else:
+            t2 = rv[0]['t2'];
+    elif t2 <= 0:
+        plpy.error( 'canopy threshold T2 can not be zero or negative')        
+        
     # Generate initial centroids using T1 (smaller)
     sql = '''
         INSERT INTO {output_centroids} (cid, coords)
@@ -441,7 +450,7 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
             , src_points = src_points
         );
     plpy.execute( sql);
-
+    
     # Assign points to canopies using T2 (larger)
     __run_quietly( 'CREATE TEMP TABLE TempPoints0_Canopies (LIKE TempPoints0)')
     sql = '''
@@ -604,10 +613,9 @@ def kmeans( madlib_schema
     elif init_method == 'canopy':
         k = None;
         cset_count = None;
-        if init_sample_pct:
-            info( ' * init_method = %s (t1=%s, t2=%s, %s percent sample)' % (init_method, t1, t2, init_sample_pct));
-        else:
-            info( ' * init_method = %s (t1=%s, t2=%s, 1 percent sample)' % (init_method, t1, t2, init_sample_pct));
+        if init_sample_pct is None:
+            init_sample_pct = 1.0;
+        info( ' * init_method = %s (t1=%s, t2=%s, %s pct sample)' % (init_method, t1, t2, init_sample_pct));
 
     # Validate: init_method & k (other methods)
     elif k > 0:
@@ -619,15 +627,15 @@ def kmeans( madlib_schema
             info( ' * init_method = %s' % init_method)
         elif init_method.lower() == 'kmeans++':
             init_method = 'kmeans++';
-            if init_sample_pct:
-                info( ' * init_method = %s (using %s percent sample)' % (init_method, init_sample_pct));
-            else:
-                info( ' * init_method = %s (using full data set)' % init_method);
+            if init_sample_pct is None:
+                init_sample_pct = 1.0;
+            info( ' * init_method = %s (%s pct sample)' % (init_method, init_sample_pct));
         else:
             init_method = 'random';
             info( ' * init_method = Unknown (default: %s)' % init_method)
         info( ' * initial k = %s' % k)
         cset_count = None;
+
     # Otherwise
     elif k <= 0:
         plpy.error( "k value must be positive")
@@ -830,7 +838,7 @@ def kmeans( madlib_schema
                                              dist_func, t1, t2, 
                                              init_sample_pct);
         time_sec = round( time.time() - start, 3)
-        info( ' * centroids: %s seeded using canopy clustering, t1=%s, t2=%s (%s sec)' 
+        info( ' * centroids: %s seeded using canopy clustering with t1=%s and t2=%s (%s sec)' 
                % (centr_count, t1, t2, str(time_sec)));
 
     else:
