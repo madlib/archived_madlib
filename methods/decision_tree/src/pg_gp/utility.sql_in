@@ -1421,6 +1421,9 @@ $$ LANGUAGE PLPGSQL;
 /*
  * @brief check if the input table has unsupported data type or not
  * @param full_table_name <schema name>.<table name> 
+ * @param feature_columns one array including all feature names
+ * @param id_column the name of the id column        
+ * @param class_column the name of the class column        
  *
  * @return if the table has unsupported data types, then raise exception
  *         otherwise return nothing
@@ -1429,54 +1432,79 @@ $$ LANGUAGE PLPGSQL;
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__validate_input_table
     (
-    full_table_name  TEXT
+    full_table_name     TEXT,
+    feature_columns     TEXT[],
+    id_column           TEXT,
+    class_column        TEXT
     );
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_input_table    
     (
-    full_table_name  TEXT
+    full_table_name     TEXT,
+    feature_columns     TEXT[],
+    id_column           TEXT,
+    class_column        TEXT
     )
 RETURNS void AS $$  
 DECLARE
-    rec  RECORD;
+    rec             RECORD;
+    stmt            TEXT;
+    all_columns     TEXT='';
+    index           INT;
 BEGIN
     -- find the first (LIMIT 1) unsupported data type if the input table has.
-    SELECT atttypid 
+    stmt= 'SELECT atttypid 
     FROM pg_attribute 
-    WHERE attrelid = full_table_name::regclass  AND
-          attnum > 0                            AND 
-          (not attisdropped)                    AND
+    WHERE attrelid ='||quote_literal(full_table_name)||'::regclass  AND
+          attnum > 0                                                AND 
+          (not attisdropped)                                        AND
           atttypid NOT IN 
           (
               SELECT unnest
                     (
                         ARRAY[
-                            'SMALLINT'::regtype::oid,
-                            'INT'::regtype::oid, 
-                            'BIGINT'::regtype::oid, 
-                            'FLOAT8'::regtype::oid, 
-                            'REAL'::regtype::oid, 
-                            'NUMERIC'::regtype::oid,
-                            'DECIMAL'::regtype::oid,
-                            'INET'::regtype::oid, 
-                            'CIDR'::regtype::oid, 
-                            'MACADDR'::regtype::oid, 
-                            'BOOLEAN'::regtype::oid, 
-                            'CHAR'::regtype::oid, 
-                            'VARCHAR'::regtype::oid, 
-                            'TEXT'::regtype::oid, 
-                            '"char"'::regtype::oid, 
-                            'DATE'::regtype::oid, 
-                            'TIME'::regtype::oid,
-                            'TIMETZ'::regtype::oid, 
-                            'TIMESTAMP'::regtype::oid, 
-                            'TIMESTAMPTZ'::regtype::oid, 
-                            'INTERVAL'::regtype::oid
+                            ''SMALLINT''::regtype::oid,
+                            ''INT''::regtype::oid, 
+                            ''BIGINT''::regtype::oid, 
+                            ''FLOAT8''::regtype::oid, 
+                            ''REAL''::regtype::oid, 
+                            ''NUMERIC''::regtype::oid,
+                            ''DECIMAL''::regtype::oid,
+                            ''INET''::regtype::oid, 
+                            ''CIDR''::regtype::oid, 
+                            ''MACADDR''::regtype::oid, 
+                            ''BOOLEAN''::regtype::oid, 
+                            ''CHAR''::regtype::oid, 
+                            ''VARCHAR''::regtype::oid, 
+                            ''TEXT''::regtype::oid, 
+                            ''"char"''::regtype::oid, 
+                            ''DATE''::regtype::oid, 
+                            ''TIME''::regtype::oid,
+                            ''TIMETZ''::regtype::oid, 
+                            ''TIMESTAMP''::regtype::oid, 
+                            ''TIMESTAMPTZ''::regtype::oid, 
+                            ''INTERVAL''::regtype::oid
                         ]
                     )
-          )
-    LIMIT 1
-    INTO rec;
+          ) ';
+
+    IF (feature_columns IS NOT NULL) THEN
+        -- If user do not specify feature columns, we use all those columns.
+        -- Otherwise, we just need to check those specified columns.
+        index = array_lower(feature_columns, 1);
+        WHILE (index <= array_upper(feature_columns, 1)) LOOP
+            all_columns = all_columns || quote_literal(feature_columns[index]) || ',';
+            index = index+1;
+        END LOOP; 
+        
+        all_columns = all_columns || quote_literal(id_column) || ',';
+        all_columns = all_columns || quote_literal(class_column);
+        stmt = stmt ||' AND attname IN ('||all_columns||') ';
+    END IF;
+    
+    stmt = stmt||' LIMIT 1;';
+    
+    EXECUTE stmt INTO rec;
             
     IF (rec IS NOT NULL) THEN
         -- Print the first unsupported data type, and supported types.
@@ -1488,6 +1516,38 @@ BEGIN
                          rec.atttypid::regtype;
     END IF;
         
+    RETURN;
+END
+$$ LANGUAGE PLPGSQL;    
+
+
+/*
+ * @brief check if the input table has unsupported data type or not
+ * @param full_table_name <schema name>.<table name> 
+ *
+ * @return if the table has unsupported data types, then raise exception
+ *         otherwise return nothing
+ *
+ * NOTE: All the supported type are hardcoded in the function body     
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__validate_input_table
+    (
+    full_table_name     TEXT
+    );
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_input_table    
+    (
+    full_table_name     TEXT
+    )
+RETURNS void AS $$  
+BEGIN
+    PERFORM MADLIB_SCHEMA.__validate_input_table
+                        (
+                            full_table_name,
+                            NULL,
+                            NULL,
+                            NULL
+                        );     
     RETURN;
 END
 $$ LANGUAGE PLPGSQL;    
@@ -1587,7 +1647,10 @@ BEGIN
         (
             MADLIB_SCHEMA.__get_schema_name(input_table_name)   ||
             '.'                                                 ||
-            MADLIB_SCHEMA.__strip_schema_name(input_table_name)
+            MADLIB_SCHEMA.__strip_schema_name(input_table_name),
+            feature_names,
+            id_column_name,
+            class_column_name
         );
         
     PERFORM MADLIB_SCHEMA.__create_metatable(metatable_name);
