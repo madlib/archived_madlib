@@ -7,8 +7,6 @@
  * @date Dec. 22 2011
  */
 
-m4_include(`SQLCommon.m4')
-
 /*
 @about
 
@@ -323,8 +321,8 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__scv_aggr
     FLOAT8,
     FLOAT8
     ) CASCADE;
-CREATE
-m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `ORDERED'))
+CREATE 
+m4_ifdef(`GREENPLUM',`m4_ifdef(`GREENPLUM_PRE_41',`  ',`ORDERED ')') 
 AGGREGATE MADLIB_SCHEMA.__scv_aggr
     (
     INT,
@@ -337,7 +335,7 @@ AGGREGATE MADLIB_SCHEMA.__scv_aggr
     ) 
 (
   SFUNC=MADLIB_SCHEMA.__scv_aggr_sfunc,
-  m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `', `prefunc=MADLIB_SCHEMA.__scv_aggr_prefunc,'))
+  m4_ifdef(`GREENPLUM_PRE_41',`prefunc=MADLIB_SCHEMA.__scv_aggr_prefunc,')
   FINALFUNC=MADLIB_SCHEMA.__scv_aggr_ffunc,
   STYPE=FLOAT8[],
   initcond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
@@ -368,19 +366,15 @@ BEGIN
         result.info_impurity = internal_result[7];
     END IF;
     
-    result.class_id = internal_result[9];
+    result.class_id   = internal_result[9];
+    result.class_prob = internal_result[10];
     result.total_size = internal_result[11];
-    result.class_prob =0;
     
-    IF ( result.total_size>0 ) THEN
-        IF ( internal_result[10] <= result.total_size ) THEN
-            result.class_prob = internal_result[10]/result.total_size;
-        ELSE
-            RAISE WARNING 'result.total_size is %, max class size%', 
-                result.total_size, internal_result[10];
-        END IF;
-    ELSE
-        RAISE EXCEPTION 'result.total_size is %', result.total_size;
+    IF ((NOT result.total_size>0) OR
+            result.class_prob<0 OR 
+            result.class_prob>1) THEN
+        RAISE EXCEPTION 'total_size is %,class_prob is %', 
+            result.total_size,result.class_prob;
     END IF;
 
     IF (is_cont>0) THEN
@@ -560,17 +554,12 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_training_instance
 RETURNS void AS $$
 DECLARE
     curstmt             TEXT := '';
+    window_func_stmt    TEXT := '';
 BEGIN
-    SELECT MADLIB_SCHEMA.__format
-        (
-            'INSERT INTO %(fid, fval, class, is_cont, split_value, le, gt, assigned_nid)  
-            SELECT fid, fval, class, is_cont,
-                CASE WHEN (is_cont) THEN 
-                        fval::float8 
-                    ELSE 
-                        NULL 
-                    END AS split_value, 
-                CASE WHEN (is_cont) THEN 
+    
+    IF (m4_ifdef(`POSTGRES_PRE_90',`1',`0') = 0) THEN
+        window_func_stmt = 
+                'CASE WHEN (is_cont) THEN 
                         sum(count) OVER 
                             (
                             PARTITION BY assigned_nid,class,fid ORDER BY fval 
@@ -586,7 +575,45 @@ BEGIN
                             ROWS BETWEEN 1 FOLLOWING AND  UNBOUNDED FOLLOWING) 
                         ELSE 
                             NULL 
-                        END AS gt,
+                        END AS gt,';
+    ELSE
+    -- old db version does not support starting from 1 following/curr row.
+        window_func_stmt = 
+                'CASE WHEN (is_cont) THEN 
+                        sum(count) OVER 
+                            (
+                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                            ) 
+                        ELSE 
+                            count 
+                        END AS le, 
+                CASE WHEN (is_cont) THEN 
+                        sum(count) OVER
+                            ( 
+                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND  UNBOUNDED FOLLOWING)
+                        -
+                        sum(count) OVER 
+                            (
+                            PARTITION BY assigned_nid,class,fid ORDER BY fval 
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                            ) 
+                        ELSE 
+                            NULL 
+                        END AS gt,';
+    END IF;
+
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'INSERT INTO %(fid, fval, class, is_cont, split_value, le, gt, assigned_nid)  
+            SELECT fid, fval, class, is_cont,
+                CASE WHEN (is_cont) THEN 
+                        fval::float8 
+                    ELSE 
+                        NULL 
+                    END AS split_value, 
+                %
                 assigned_nid
             FROM (
                 SELECT DISTINCT n1.fid, n1.fval, n1.is_cont, n1.class, n2.count, n1.assigned_nid 
@@ -609,10 +636,13 @@ BEGIN
                     coalesce(n2.fid,0)= coalesce (n1.fid,0) AND
                     coalesce(n2.fval,0) = coalesce(n1.fval,0)  
             ) t;',
-            instance_table_name,
-            group_table_name,
-            class_table_name,
-            group_table_name
+            ARRAY[
+                instance_table_name,
+                window_func_stmt,
+                group_table_name,
+                class_table_name,
+                group_table_name
+            ]
         ) INTO curstmt;
 
     IF(verbosity > 0) THEN
@@ -677,7 +707,7 @@ DECLARE
 BEGIN
     EXECUTE 'TRUNCATE ' || instance_table_name;
     EXECUTE 'TRUNCATE ' || group_table_name;
-    
+   
     SELECT MADLIB_SCHEMA.__format
         (
         'SELECT table_name 
@@ -967,62 +997,6 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/*
- * generate the training instances for current leaf nodes
- * Parameters:
- *      input_table_name:       The name of the original table containing all the records in training set.
- *      metatable_name:         Contains the relevant information of the input table
- *      instance_table_name:    The output table name, which contains all the training set for current leaf nodes.
- *      selection_table_name:   It has two columns: id and assigned_nid. The id column is the same with that in input table.
- *                              Each record will be assigned to a node.
- *      dbid                    0 means greenplum database, others represents postgres for now
- *      verbosity               ture if print the debug info 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance
-    (
-    input_table_name     TEXT, 
-    metatable_name       TEXT,
-    instance_table_name  TEXT,
-    selection_table_name TEXT,
-    dbid                 INT,
-    verbosity            INT
-    );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance
-    (
-    input_table_name      TEXT, 
-    metatable_name        TEXT,
-    instance_table_name   TEXT,
-    selection_table_name  TEXT,
-    dbid                  INT,
-    verbosity             INT
-    )
-RETURNS void AS $$
-DECLARE
-BEGIN
-    -- For greenplum, use olap extension: group sets
-    IF (dbid = 10) THEN
-        PERFORM MADLIB_SCHEMA.__generate_training_instance_greenplum
-            (
-            input_table_name,
-            metatable_name,
-            instance_table_name,
-            selection_table_name,
-            verbosity
-            );
-    ELSE
-    -- For postgres, just use union all to do that
-        PERFORM MADLIB_SCHEMA.__generate_training_instance_postgres
-            (
-            input_table_name,
-            metatable_name,
-            instance_table_name,
-            selection_table_name,
-            verbosity
-            );    
-    END IF;
-END
-$$ LANGUAGE PLPGSQL;
-
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__rep_type CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__rep_type AS
     (
@@ -1151,7 +1125,7 @@ CREATE TYPE MADLIB_SCHEMA.__best_split_result AS
     is_cont_feature     BOOLEAN,
     split_value         FLOAT,
     distinct_features   INT,
-    total_size           INT
+    total_size          INT
     );
 
 /*
@@ -1236,61 +1210,65 @@ BEGIN
     
     EXECUTE curstmt;
     
-m4_changequote(`>>>', `<<<')
-m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
-    SELECT MADLIB_SCHEMA.__format
-        (
-        'SELECT s1.assigned_nid, 
-            MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
-        FROM (
-            SELECT assigned_nid,fid,split_value,
-                (MADLIB_SCHEMA.__scv_aggr_wrapper(
-                    MADLIB_SCHEMA.__scv_aggr
-                        (%,fval,class,is_cont,le,gt, total_size
-                        ORDER BY fval desc,class desc)
-                    )::MADLIB_SCHEMA.__scv_aggr_result).*
+    IF (MADLIB_SCHEMA.__ordered_aggregate_support()) THEN
+        -- With ordered aggregate support, we can use this facility.
+	    SELECT MADLIB_SCHEMA.__format
+            (
+            'SELECT s1.assigned_nid, 
+                MAX(ARRAY[s1.info_impurity, s1.fid, coalesce(s1.split_value, ''NaN''::FLOAT8), s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
             FROM (
-                SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
-                WHERE t1.assigned_nid = t2.assigned_nid AND 
-                        (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
-                ) y 
-            GROUP BY assigned_nid,fid,split_value 
-            ) s1  
-        GROUP BY s1.assigned_nid
-        ORDER BY s1.assigned_nid;',
-        MADLIB_SCHEMA.__to_char(sp_criterion),
-        table_name
-        )
-    INTO curstmt;
-<<<, >>>
-    -- Without ordered aggregate support, we use window function as a workaround.
-    -- The performance is much worse than ordered aggregate.
-    SELECT MADLIB_SCHEMA.__format
-        (
-        'SELECT s1.assigned_nid, 
-            MAX(ARRAY[s1.info_impurity, s1.fid, s1.split_value, s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
-        FROM (
-            SELECT assigned_nid,fid,split_value,
-                (MADLIB_SCHEMA.__scv_aggr_wrapper(
-                    MADLIB_SCHEMA.__scv_aggr
-                        (%,fval,class,is_cont,le,gt, total_size) over
-                        (PARTITION BY assigned_nid,fid,split_value 
-                         ORDER BY fval desc,class desc)
-                    )::MADLIB_SCHEMA.__scv_aggr_result).*
+                SELECT assigned_nid,fid,split_value,
+                    (MADLIB_SCHEMA.__scv_aggr_wrapper(
+                        MADLIB_SCHEMA.__scv_aggr
+                            (%,fval,class,is_cont,le,gt, total_size
+						    ORDER BY fval desc,class desc)
+                        )::MADLIB_SCHEMA.__scv_aggr_result).*
+                FROM (
+                    SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
+                    WHERE t1.assigned_nid = t2.assigned_nid AND 
+                            (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
+                    ) y 
+                GROUP BY assigned_nid,fid,split_value 
+                ) s1  
+            GROUP BY s1.assigned_nid
+            ORDER BY s1.assigned_nid;',
+            MADLIB_SCHEMA.__to_char(sp_criterion),
+            table_name
+            )
+        INTO curstmt;   
+    ELSE
+        -- Without ordered aggregate support, we use window function as a workaround.
+        -- The performance is much worse than ordered aggregate.
+	    SELECT MADLIB_SCHEMA.__format
+            (
+            'SELECT s1.assigned_nid, 
+                MAX(ARRAY[s1.info_impurity, s1.fid, coalesce(s1.split_value, ''NaN''::FLOAT8), s1.class_prob, s1.class_id, s1.total_size]::FLOAT8[]) as info
             FROM (
-                SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
-                WHERE t1.assigned_nid = t2.assigned_nid AND 
-                        (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
-                ) y 
-            ) s1  
-        GROUP BY s1.assigned_nid
-        ORDER BY s1.assigned_nid;',
-        MADLIB_SCHEMA.__to_char(sp_criterion),
-        table_name
-        )
-    INTO curstmt;
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+                SELECT * FROM (
+                  SELECT assigned_nid,fid,split_value,
+                    row_number() over
+						    (PARTITION BY assigned_nid,fid,split_value 
+                             ORDER BY fval asc,class asc) as row_num,
+                    (MADLIB_SCHEMA.__scv_aggr_wrapper(
+                        MADLIB_SCHEMA.__scv_aggr
+                            (%,fval,class,is_cont,le,gt, total_size) over
+						    (PARTITION BY assigned_nid,fid,split_value 
+                             ORDER BY fval desc,class desc)
+                        )::MADLIB_SCHEMA.__scv_aggr_result).*
+                  FROM (
+                    SELECT t1.*, t2.total_size FROM % t1, info_impurity t2
+                    WHERE t1.assigned_nid = t2.assigned_nid AND 
+                            (t1.fid IS NOT NULL) AND (t1.assigned_nid IS NOT NULL AND t2.assigned_nid IS NOT NULL)
+                    ) y 
+                  ) k where row_num =1 
+                ) s1    
+            GROUP BY s1.assigned_nid
+            ORDER BY s1.assigned_nid;',
+            MADLIB_SCHEMA.__to_char(sp_criterion),
+            table_name
+            )
+        INTO curstmt;   
+    END IF;
     
     -- s1.info_impurity[1], s1.fid[2], s1.split_value[3], 
     -- s2.class_prob[4], s2.class_id[5], s1.total_size[6]
@@ -1312,7 +1290,11 @@ m4_changequote(>>>`<<<, >>>'<<<)
         
         result.ebp_coeff = MADLIB_SCHEMA.__ebp_calc_errors(result.total_size, result.probability, confidence_level); 
         
-        result.split_value      = best_answer[3];
+        IF (best_answer[3] = 'NaN'::FLOAT8) THEN
+            result.split_value      = NULL;
+        ELSE
+            result.split_value      = best_answer[3];
+        END IF;
         result.is_cont_feature  = (result.split_value IS NOT NULL);
         
         RETURN next result;
@@ -1361,7 +1343,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.__jump_aggr
 );
 
 
-
 /*
  *   For training one decision tree, we need some internal tables
  *   to store intermediate results. This function creates those
@@ -1385,13 +1366,13 @@ BEGIN
     -- by producing a smaller subset of unique, weighted points,
     -- which was stored by the two tables below.
     --  Columns:
-    --      id:         It is used to uniquely identify one record.
-    --      feature:    It is used to store the value of one unique
-    --                  record.
-    --      class:      The class of that record.
-    --      weight:     The count of such a record.
-    --      assigned_nid:  This field is not used while removing redundant records.
-    --                  It is used to train a decision tree.
+    --      id:             It is used to uniquely identify one record.
+    --      feature:        It is used to store the value of one unique record.
+    --      class:          The class of that record.
+    --      weight:         The count of such a record.
+    --      assigned_nid:   This field is not used while removing redundant records.
+    --                      It is used to train a decision tree.
+
 
 	DROP TABLE IF EXISTS training_instance CASCADE;
 	CREATE TEMP TABLE training_instance
@@ -1540,27 +1521,68 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__rep_prune_tree
     ) 
 RETURNS void AS $$
 DECLARE
-    num_parent_ids INTEGER;
-    classification_result TEXT := '_classified_temp';
-    encoded_table_name TEXT;
-    metatable_name TEXT := '';
-    curstmt TEXT;
-    id_col_name  TEXT := 'id';
-    class_col_name TEXT := 'class';
+    num_parent_ids          INTEGER;
+    cf_table_name           TEXT := '_ct';
+    encoded_table_name      TEXT;
+    metatable_name          TEXT ;
+    curstmt                 TEXT;
+    id_col_name             TEXT;
+    class_col_name          TEXT;
+    classify_result         TEXT;
+    temp_text               TEXT;
+    n                       INT;
 BEGIN
-    classification_result = MADLIB_SCHEMA.__get_schema_name(tree_table_name) ||
-                            MADLIB_SCHEMA.__strip_schema_name(tree_table_name) || 
-                            classification_result;
-                            
+    metatable_name  = MADLIB_SCHEMA.__get_metatable_name(tree_table_name);
+    id_col_name     = MADLIB_SCHEMA.__get_id_column_name(metatable_name);
+    class_col_name  = MADLIB_SCHEMA.__get_class_column_name(metatable_name);
+    
+    -- the value of class column in validation table must in the KV table
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'SELECT COUNT(*) 
+         FROM %
+         WHERE % NOT IN
+            (SELECT % FROM MADLIB_SCHEMA.% WHERE % IS NOT NULL)',
+        ARRAY[
+            validation_table,
+            class_col_name,
+            class_col_name,
+            MADLIB_SCHEMA.__get_classtable_name(metatable_name),
+            class_col_name
+        ]
+        )
+    INTO curstmt;
+    
+    EXECUTE curstmt INTO n;
+    
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                n = 0,
+                'the value of class column in validation table must in training table'
+            ); 
+
+    cf_table_name   = MADLIB_SCHEMA.__get_schema_name(tree_table_name)    ||
+                      MADLIB_SCHEMA.__strip_schema_name(tree_table_name)  || 
+                      cf_table_name;
+    classify_result = cf_table_name;   
+                        
     SELECT MADLIB_SCHEMA.__c45_classify_internal
     (
         validation_table, 
         tree_table_name, 
-        classification_result, 
+        classify_result, 
         't',
         'f'
     ) INTO encoded_table_name;
-                            
+
+    -- after encoding in classification, class_col_name is fixed to class
+    class_col_name  = 'class';
+
+    IF (m4_ifdef(`GREENPLUM_PRE_41', `1', `0') = 1) THEN
+        EXECUTE 'DROP TABLE IF EXISTS c45_rep_pong CASCADE';
+        EXECUTE 'CREATE TEMP TABLE c45_rep_pong AS SELECT * FROM ' || classify_result || ' LIMIT 0 DISTRIBUTED BY(id)';
+    END IF;
+    
     LOOP
         DROP TABLE IF EXISTS selected_parent_ids_rep;
         CREATE TEMP TABLE selected_parent_ids_rep
@@ -1596,7 +1618,7 @@ BEGIN
                   ARRAY[
                       class_col_name,
                       MADLIB_SCHEMA.__to_char(max_num_classes),
-                      classification_result,
+                      classify_result,
                       encoded_table_name,
                       id_col_name,
                       tree_table_name,
@@ -1612,17 +1634,47 @@ BEGIN
             EXIT;
         END IF;
 
-        SELECT MADLIB_SCHEMA.__format
-            (
-                'UPDATE % m set class = t.maxclass, parent_id = t.parent_id,leaf_id = t.id  FROM % t
-                    WHERE t.id IN (SELECT parent_id FROM selected_parent_ids_rep) AND
-                    m.parent_id=t.id',
-                classification_result,
-                tree_table_name
-            )
+        -- for GPDB4.0, update operation can't distribute data across segments
+        -- we use two tables to update the data
+        IF (m4_ifdef(`GREENPLUM_PRE_41', `1', `0') = 1) THEN
+            IF (classify_result = 'c45_rep_pong') THEN
+                temp_text = cf_table_name;
+            ELSE
+                temp_text =  'c45_rep_pong';
+            END IF;
+            
+            EXECUTE 'TRUNCATE ' ||  temp_text;
+            SELECT MADLIB_SCHEMA.__format
+                (
+                'INSERT INTO %(id, class, parent_id, leaf_id)
+                 SELECT m.id,  t.maxclass, t.parent_id, t.id
+                 FROM % m, % t
+                 WHERE t.id IN (SELECT parent_id FROM selected_parent_ids_rep) AND
+                 m.parent_id = t.id',
+                ARRAY[
+                    temp_text,
+                    classify_result,
+                    tree_table_name
+                ]
+                )
             INTO curstmt;
-        EXECUTE curstmt;
-
+            
+            EXECUTE curstmt;
+            
+            classify_result = temp_text;
+        ELSE
+            SELECT MADLIB_SCHEMA.__format
+                (
+                    'UPDATE % m set class = t.maxclass, parent_id = t.parent_id,leaf_id = t.id  FROM % t
+                     WHERE t.id IN (SELECT parent_id FROM selected_parent_ids_rep) AND
+                     m.parent_id=t.id',
+                    classify_result,
+                    tree_table_name
+                )
+            INTO curstmt;
+            EXECUTE curstmt;        
+        END IF;
+            
         SELECT MADLIB_SCHEMA.__format
             (
                 'DELETE FROM % WHERE parent_id IN (SELECT parent_id FROM selected_parent_ids_rep)',
@@ -1635,8 +1687,8 @@ BEGIN
         SELECT MADLIB_SCHEMA.__format
             (
                 'UPDATE % t1 SET jump = NULL, maxclass = t2.maxclass 
-                FROM selected_parent_ids_rep t2
-                WHERE t1.id = t2.parent_id;',
+                 FROM selected_parent_ids_rep t2
+                 WHERE t1.id = t2.parent_id;',
                 tree_table_name
             )
             INTO curstmt;
@@ -1650,6 +1702,18 @@ END
 $$ LANGUAGE PLPGSQL;
 
 
+/*
+ * Calculates the total errors used by Error Based Pruning (EBP).
+ *
+ * Parameters:
+ *      total:              the number of total cases represented by the node being processed.
+ *      prob:               the probability to mis-classify cases represented by the child nodes
+ *                          if they are pruned with EBP.
+ *      confidence_level:   a certainty factor to calculate the confidence limits
+ *                          for the probability of error using the binomial theorem.
+ * Return:
+ *      The computed total error
+ */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__ebp_calc_errors
     (
     total            FLOAT8,
@@ -1809,7 +1873,7 @@ $$ LANGUAGE PLPGSQL;
  * Parameters:
  *      split_criterion:            This parameter specifies which split criterion 
  *                                  should be used for tree construction and pruning. The  
- *                                  valid values are ‘gain’, ‘gainratio’ and ‘gini’.
+ *                                  valid values are infogain, gainratio, and gini.
  *      training_table_name:        Name of the table/view with the source data
  *      result_tree_table_name:     The name of the table where the resulting DT will be stored.
  *      validation_table_name:      The validation table used for pruning tree. 
@@ -1949,16 +2013,26 @@ BEGIN
         
         select_max_id = max_id;
         
-        PERFORM MADLIB_SCHEMA.__generate_training_instance
-            (
-            training_table_name,
-            training_table_meta,
-            'training_instance',
-            'instance_selection',
-            m4_ifdef(`GREENPLUM',`1')0,
-            verbosity
-            );
-
+        IF (m4_ifdef(`GREENPLUM',`1',`0') = 1) THEN
+            PERFORM MADLIB_SCHEMA.__generate_training_instance_greenplum
+                (
+                training_table_name,
+                training_table_meta,
+                'training_instance',
+                'instance_selection',
+                verbosity
+                );        
+        ELSE
+            PERFORM MADLIB_SCHEMA.__generate_training_instance_postgres
+                (
+                training_table_name,
+                training_table_meta,
+                'training_instance',
+                'instance_selection',
+                verbosity
+                );        
+        END IF;
+        
         begin_find_best_time = clock_timestamp();
         
         best_time_cmp = 't';
@@ -2132,7 +2206,10 @@ BEGIN
         -- Remove the nodes which contains no data
         FOR selection_index IN assigned_nid..max_id  LOOP
             IF (NOT selection_visit[selection_index - assigned_nid + 1]) THEN
-                --RAISE NOTICE '%, %', 'unneccesary node!', selection_index;
+                IF (verbosity > 0) THEN
+                    RAISE NOTICE '%, %', 'unneccesary node!', selection_index;
+                END IF;
+                
                 EXECUTE 'DELETE FROM tree_internal WHERE id = '|| selection_index ||';';
             END IF;
         END LOOP;
@@ -2287,7 +2364,12 @@ DECLARE
     ret                             MADLIB_SCHEMA.c45_train_result;
 BEGIN   
     exec_begin = clock_timestamp();
-
+    
+    IF (verbosity < 1) THEN
+        -- get rid of the messages whose severity level is lower than 'WARNING'
+        SET client_min_messages = WARNING;
+    END IF;
+    
     PERFORM MADLIB_SCHEMA.__assert
         (
             (split_criterion IS NOT NULL)   AND
@@ -2309,6 +2391,18 @@ BEGIN
                 ),
             'the specified training table doesn''t exist'
         );
+
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            MADLIB_SCHEMA.__column_exists
+                (
+                    MADLIB_SCHEMA.__get_schema_name(training_table_name),
+                    MADLIB_SCHEMA.__strip_schema_name(training_table_name),
+                    lower(btrim(class_col_name, ' '))
+                ),
+            'the specified training table must have class column'
+        );
+
 
     PERFORM MADLIB_SCHEMA.__assert
         (
@@ -2629,6 +2723,11 @@ DECLARE
     exec_union              INTERVAL;    
 BEGIN
 
+    IF (verbosity < 1) THEN
+        -- get rid of the messages whose severity level is lower than 'WARNING'
+        SET client_min_messages = WARNING;
+    END IF;
+    
     PERFORM MADLIB_SCHEMA.__assert
             (
                 (tree_table_name IS NOT NULL) AND
@@ -2691,29 +2790,35 @@ BEGIN
     FOR rec IN EXECUTE curstmt LOOP
         -- continuous feature will produce two rows
         IF (rec.is_cont) THEN
-            fvalue_stmt = ' SELECT '                            || 
-                            rec.id                              || 
-                            ' as fid, 1 as key, '''             || 
-                            rec.column_name                     || 
-                            ' <= '' as fname, null as fval'     ||
-                          ' UNION ALL '                         ||
-                          ' SELECT '                            || 
-                            rec.id                              || 
-                          ' as fid, 2 as key, '''               || 
-                          rec.column_name                       || 
-                          ' > '' as fname, null as fval';
+            SELECT MADLIB_SCHEMA.__format
+                (
+                'SELECT % as fid, 1 as key, ''% <= ''::TEXT as fname, null::text as fval
+                 UNION ALL 
+                 SELECT % as fid, 2 as key, ''% > ''::TEXT as fname, null::text as fval',
+                ARRAY[
+                    MADLIB_SCHEMA.__to_char(rec.id),
+                    rec.column_name,
+                    MADLIB_SCHEMA.__to_char(rec.id),
+                    rec.column_name
+                    ]
+                )
+            INTO fvalue_stmt;
+            
         -- discrete feature will produce the number of rows which is the same with distinct values
         ELSE
-            fvalue_stmt = ' SELECT '                            || 
-                            rec.id                              || 
-                          ' as fid, key, '''                    || 
-                          rec.column_name                       || 
-                          ' = '' AS fname,'                     || 
-                          rec.column_name                       || 
-                          ' as fval '                           ||
-                          ' FROM MADLIB_SCHEMA.'                || 
-                          rec.table_name                        ||
-                          ' WHERE key IS NOT NULL';
+            SELECT MADLIB_SCHEMA.__format
+                (
+                'SELECT % as fid, key, ''% = ''::TEXT as fname, MADLIB_SCHEMA.__to_char(%) as fval
+                 FROM MADLIB_SCHEMA.%
+                 WHERE key IS NOT NULL',
+                ARRAY[
+                    MADLIB_SCHEMA.__to_char(rec.id),
+                    rec.column_name,
+                    rec.column_name,
+                    rec.table_name
+                    ]
+                )
+            INTO fvalue_stmt;
         END IF;
         
         IF (union_stmt IS NULL) THEN
@@ -2737,7 +2842,14 @@ BEGIN
         'CREATE TEMP TABLE c45_gen_rules_leaves as
          SELECT 
             id, 
-            ''  then class '' || class || '' ['' || (probability * cat_size)::BIGINT || ''/'' || cat_size || '']'' as str,
+                ''  then class ''                   || 
+                MADLIB_SCHEMA.__to_char(class)      || 
+                '' [''                              || 
+                (probability * cat_size)::BIGINT    || 
+                ''/''                               || 
+                cat_size                            || 
+                '']'' 
+            as str,
             array_to_string(tree_location, '''') as location,
             1 as rlid
          FROM 
@@ -2776,9 +2888,9 @@ BEGIN
         SELECT 
             jump[key + 1] AS id,
             CASE WHEN (id = 1) THEN
-                    ''  if '' || fname || COALESCE(split_value::TEXT, fval, ''NULL'') 
+                    ''  if '' || fname || COALESCE(MADLIB_SCHEMA.__to_char(split_value), MADLIB_SCHEMA.__to_char(fval), ''NULL'') 
                  ELSE
-                    ''     '' || fname || COALESCE(split_value::TEXT, fval, ''NULL'') 
+                    ''     '' || fname || COALESCE(MADLIB_SCHEMA.__to_char(split_value), MADLIB_SCHEMA.__to_char(fval), ''NULL'') 
             END AS str,
             array_to_string(tree_location, '''') || key AS location,
             0  AS rlid                                  
@@ -2965,7 +3077,7 @@ DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__display_tree_aggr
     INT         -- cat_size
     ) CASCADE;
 CREATE 
-m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `ORDERED'))
+m4_ifdef(`GREENPLUM',`m4_ifdef(`GREENPLUM_PRE_41',`  ',`ORDERED')')  
 AGGREGATE MADLIB_SCHEMA.__display_tree_aggr
     (
     INT,        -- depth
@@ -3074,9 +3186,10 @@ BEGIN
     IF (table_name IS NOT NULL) THEN
         -- Convert back for the class column.
         SELECT MADLIB_SCHEMA.__format(
-            'UPDATE auxiliary_tree_display n SET maxclass=m.%
-            FROM % m 
-            WHERE m.key = n.maxclass::INT
+            'UPDATE auxiliary_tree_display n 
+             SET maxclass = MADLIB_SCHEMA.__to_char(m.%) 
+             FROM % m 
+             WHERE m.key = n.maxclass::INT
             ',
             ARRAY[
                 result_rec.column_name,
@@ -3103,7 +3216,8 @@ BEGIN
         table_name = result_rec.table_name;
         table_name = 'MADLIB_SCHEMA.'||table_name;
         SELECT MADLIB_SCHEMA.__format(
-            'UPDATE auxiliary_tree_display n SET curr_value=m.% 
+            'UPDATE auxiliary_tree_display n 
+             SET curr_value = MADLIB_SCHEMA.__to_char(m.%) 
              FROM % m 
              WHERE m.key = n.curr_value::INT 
              AND n.parent_feature_name = %
@@ -3260,14 +3374,15 @@ BEGIN
 
     index = array_lower(jump,1);
     WHILE index <= array_upper(jump,1) LOOP
-        ret = ret || MADLIB_SCHEMA.__display_tree(
+        ret = ret || MADLIB_SCHEMA.__display_tree_no_ordered_aggr(
                             tree_table, 
                             jump[index], 
                             feature, 
                             depth+1, 
                             is_feature_cont, 
                             temp_split_value, 
-                            metatable_name);
+                            metatable_name,
+                            max_depth);
         index = index +1;
     END LOOP; 
 
@@ -3288,11 +3403,13 @@ END $$ LANGUAGE PLPGSQL;
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__c45_display_no_ordered_aggr    
     (
-    tree_table TEXT
+    tree_table  TEXT,
+    max_depth   INT
     );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__c45_display_no_ordered_aggr
     (
-    tree_table TEXT
+    tree_table  TEXT,
+    max_depth   INT
     ) 
 RETURNS TEXT AS $$
 DECLARE
@@ -3308,7 +3425,8 @@ BEGIN
             
     metatable_name = MADLIB_SCHEMA.__get_metatable_name( tree_table );
     
-    RETURN MADLIB_SCHEMA.__display_tree_no_ordered_aggr(tree_table, 1, 0, 0, 'f', 0, metatable_name);
+    RETURN MADLIB_SCHEMA.__display_tree_no_ordered_aggr(tree_table, 1, 0, 0, 'f', 
+        0, metatable_name,max_depth);
 END $$ LANGUAGE PLPGSQL;
 
 /*
@@ -3333,6 +3451,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_display
 RETURNS TEXT AS $$
 DECLARE
 BEGIN
+    -- get rid of the messages whose severity level is lower than 'WARNING'
+    SET client_min_messages = WARNING;
+    
     PERFORM MADLIB_SCHEMA.__assert
             (
                 (tree_table IS NOT NULL) AND
@@ -3345,14 +3466,12 @@ BEGIN
                 ),
                 'the specified tree table doesn''t exists'
             );   
-
-m4_changequote(`>>>', `<<<')
-m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
-    RETURN MADLIB_SCHEMA.__c45_display_with_ordered_aggr(tree_table,max_depth);
-<<<, >>>
-    RETURN MADLIB_SCHEMA.__c45_display_no_ordered_aggr(tree_table,max_depth);
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+            
+    IF (MADLIB_SCHEMA.__ordered_aggregate_support()) THEN
+        RETURN MADLIB_SCHEMA.__c45_display_with_ordered_aggr(tree_table,max_depth);
+    ELSE
+        RETURN MADLIB_SCHEMA.__c45_display_no_ordered_aggr(tree_table,max_depth);
+    END IF;
 END $$ LANGUAGE PLPGSQL;
 
 /*
@@ -3652,10 +3771,15 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_classify
     ) 
 RETURNS MADLIB_SCHEMA.c45_classify_result AS $$
 DECLARE
-    encoded_table_name TEXT := '';
-    begin_time  TIMESTAMP;
-    ret MADLIB_SCHEMA.c45_classify_result;
+    encoded_table_name  TEXT := '';
+    begin_time          TIMESTAMP;
+    ret                 MADLIB_SCHEMA.c45_classify_result;
 BEGIN
+    IF (NOT verbosity) THEN
+        -- get rid of the messages whose severity level is lower than 'WARNING'
+        SET client_min_messages = WARNING;
+    END IF;
+    
     begin_time = clock_timestamp();
     
     SELECT MADLIB_SCHEMA.__c45_classify_internal
@@ -3707,6 +3831,9 @@ RETURNS MADLIB_SCHEMA.c45_classify_result AS $$
 DECLARE
     ret MADLIB_SCHEMA.c45_classify_result;
 BEGIN
+    -- get rid of the messages whose severity level is lower than 'WARNING'
+    SET client_min_messages = WARNING;
+    
 	ret = MADLIB_SCHEMA.c45_classify
 	       (
 	       tree_table_name,
@@ -3722,21 +3849,21 @@ END $$ LANGUAGE PLPGSQL;
  * @brief   Check the accuracy of the decision tree alogrithom 
  * 
  * @param tree_table_name           Name of trained tree
- * @param classification_table_name Name of the table/view with the source data
+ * @param scoring_table_name        Name of the table/view with the source data
  * @param verbosity                 If set to 't' will use verbose mode 
  * @return The estimated accuracy information.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_score
     (
     tree_table_name             TEXT, 
-    classification_table_name   TEXT, 
+    scoring_table_name          TEXT, 
     verbosity                   BOOLEAN
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_score
     (
     tree_table_name             TEXT, 
-    classification_table_name   TEXT, 
+    scoring_table_name          TEXT, 
     verbosity                   BOOLEAN
     ) 
 RETURNS FLOAT AS $$
@@ -3749,14 +3876,43 @@ DECLARE
     mis_of_row          FLOAT := 0.0;
     encoded_table_name  TEXT := '';
 BEGIN
+
+    IF (NOT verbosity) THEN
+        -- get rid of the messages whose severity level is lower than 'WARNING'
+        SET client_min_messages = WARNING;
+    END IF;
     
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                (tree_table_name IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(tree_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(tree_table_name)
+                    )
+                ),
+                'the specified tree table doesn''t exists'
+            ); 
+                
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            MADLIB_SCHEMA.__column_exists
+                (
+                    MADLIB_SCHEMA.__get_schema_name(scoring_table_name),
+                    MADLIB_SCHEMA.__strip_schema_name(scoring_table_name),
+                    MADLIB_SCHEMA.__get_class_column_name(MADLIB_SCHEMA.__get_metatable_name(tree_table_name))
+                ),
+            'the scoring table must have class column'
+        );
+            
     result_table_name = MADLIB_SCHEMA.__get_schema_name(tree_table_name) || 
                         MADLIB_SCHEMA.__strip_schema_name(tree_table_name) || 
                         result_table_name;
     
     SELECT MADLIB_SCHEMA.__c45_classify_internal
         (
-        classification_table_name, 
+        scoring_table_name, 
         tree_table_name, 
         result_table_name, 
         't',
@@ -3813,6 +3969,9 @@ RETURNS BOOLEAN AS $$
 DECLARE
     metatable_name TEXT;
 BEGIN
+    -- get rid of the messages whose severity level is lower than 'WARNING'
+    SET client_min_messages = WARNING;
+        
     PERFORM MADLIB_SCHEMA.__assert
             (
                 (result_tree_table_name IS NOT NULL) AND
