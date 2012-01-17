@@ -8,24 +8,16 @@ Building and Installing from Source
 ** Run-time Requirements (required read):
 -----------------------------------------
 
-- LAPACK and BLAS libraries
+- None (except the C++ Standard Library)
 
 
 ** Build-time Requirements (required read):
 -------------------------------------------
 
-- LAPACK and BLAS libraries as above plus their header files.
-  
-    Platform notes:
-    + Mac OS X comes with LAPACK and BLAS preinstalled (as part of the
-      Accelerate framework)
-    + On RedHat/CentOS, LAPACK and BLAS come with with the lapack-devel and
-      blas-devel packages. When compiling against PostgreSQL, other "\*.-devel"
-      packages might be needed (e.g., openssl-devel).
-    + On Solaris, LAPACK and BLAS come with the Orcale Performance Studio
+- CMake >= 2.8.4
 
 - Internet connection to automatically download MADlib's dependencies if needed
-  (Boost, Armadillo). See configuration options below.
+  (Boost, Eigen). See configuration options below.
 
 Optional:
 
@@ -42,8 +34,8 @@ Optional:
 
 - For generating a complete installation package (RPM, Package Maker, etc.; see
   below):
-  + PostgreSQL 9.x
-  + Greenplum 4.x
+  + PostgreSQL 8.4, 9.0, 9.1
+  + Greenplum 4.0, 4.1, 4.2
   + All requirements for generating user-level documentation (see above)
 
 
@@ -77,11 +69,8 @@ Notes:
 - To speed things up, run `make -j X` instead of `make` where X is the number of
   jobs (commands) to run simultaneously. A good choice is the number of
   processor cores in your machine.
-- MADlib depends on the linear-algebra library Armadillo. We always build it
-  during as part of our own build process. On all platforms except Mac OS X, we
-  install the armadillo shared library inside the MADlib directory. (The
-  Armadillo shared library is a mere umbrella library for the lower-level maths
-  libraries LAPACK, BLAS, ...)
+- MADlib depends on the linear-algebra library Eigen. We always copy it into the
+  MADlib build directory during the build process.
 
 
 Building an installation package (RPM, Package Maker, ...)
@@ -96,19 +85,22 @@ To create a binary installation package, run the following sequence of commands:
 
 To create a complete installation package (for all supported DBMSs, equivalent
 to what is offered on the MADlib web site), make sure that the build process is
-able to locate the DBMS installations. For complete control, run `./configure
--DPOSTGRESQL_PG_CONFIG=/path/to/greenplum/pg_config
--DGREENPLUM_PG_CONFIG=/path/to/postgresql/pg_config` instead of just
-`./configure`.
+able to locate the DBMS installations. For complete control, run `./configure`
+with arguments `-D<DBMS>_PG_CONFIG=/path/to/pg_config` for all `<DBMS>` in
+`POSTGRESQL_8_4`, `POSTGRESQL_9_0`, `POSTGRESQL_9_1`, `GREENPLUM_4_0`,
+`GREENPLUM_4_1`, and `GREENPLUM_4_2`.
 
 
 Configuration Options:
 ----------------------
 
 Depending on the environment, `./configure` might have to be called with
-additional configuration parameters. The following provides an overview of the
-most important options. Look at `build/CMakeCache.txt` (relative to MADlib root
-directory) for more options, after having run `cmake` the first time.
+additional configuration parameters. The way to specifiy a parameter `<PARAM>`
+is to add a command-line argument `-D<PARAM>=<value>`.
+
+The following provides an overview of the
+most important options. Look at `build/CMakeCache.txt` (relative to the MADlib
+root directory) for more options, after having run `cmake` the first time.
 
 - `CMAKE_BUILD_TYPE` (default: `RelWithDebInfo`)
 
@@ -130,17 +122,16 @@ directory) for more options, after having run `cmake` the first time.
     Prefix when installing MADlib with `make install`. All files will be
     installed within `${CMAKE_INSTALL_PREFIX}`.
 
-- `POSTGRESQL_X_Y_PG_CONFIG` (for X.Y in {8.4, 9.0, 9.1}, default: *empty*)
+- `<DBMS>_PG_CONFIG` (for `<DBMS>` in `POSTGRESQL_8_4`, `POSTGRESQL_9_0`,
+  `POSTGRESQL_9_1`, `GREENPLUM_4_0`, `GREENPLUM_4_1`, and `GREENPLUM_4_2`,
+  default: *empty*)
 
-    Path to `pg_config` of PostgreSQL version X.Y. If none is set, the build
-    script will check if `$(command -v pg_config)` points to a PostgreSQL
-    installation.
-
-- `GREENPLUM_PG_CONFIG` (default: `/usr/local/greenplum-db/bin/pg_config` if
-   available, otherwise `$(command -v pg_config)`)
+    Path to `pg_config` of the respective DBMS. If none is set, the build
+    script will check if `$(command -v pg_config)` points to a
+    PostgreSQL/Greenplum installation.
     
-    Path to `pg_config` of Greenplum installation, which is used to determine
-    various Greenplum search paths.
+    Note: If no `GREENPLUM<...>_PG_CONFIG` is specified, the build script will
+    look for `/usr/local/greenplum-db/bin/pg_config`.
 
 - `BOOST_TAR_SOURCE` (default: *empty*)
 
@@ -149,10 +140,10 @@ directory) for more options, after having run `cmake` the first time.
     tarball can be specified by calling `./configure` with
     `-DBOOST_TAR_SOURCE=/path/to/boost_x.tar.gz`
 
-- `-DARMADILLO_TAR_SOURCE` (default: *empty*)
+- `EIGEN_TAR_SOURCE` (default: *empty*)
 
-    Armadillo is downloaded automatically, unless the you call `./configure`
-    with `-DARMADILLO_TAR_SOURCE=/path/to/armadillo_x.tar.gz`, in which case
+    Eigen is downloaded automatically, unless the you call `./configure`
+    with `-DEIGEN_TAR_SOURCE=/path/to/eigen_x.tar.gz`, in which case
     this tarball is used.
 
 
