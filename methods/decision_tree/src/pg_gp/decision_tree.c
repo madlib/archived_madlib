@@ -28,6 +28,13 @@ PG_MODULE_MAGIC;
 #endif
 
 /*
+ * Postgres8.4 doesn't have such macro, so we add here
+ */
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+#endif
+
+/*
  * This function is used to test if a float value is 0.
  * Due to the precision of floating numbers, we can not compare them directly with 0.
  */
@@ -41,11 +48,11 @@ PG_MODULE_MAGIC;
  *  (Taken from Documenta Geigy Scientific Tables (Sixth Edition),
  *  p185 (with modifications).)
  */
-static float CONFIDENCE_LEVEL[] = {0, 0.001, 0.005, 0.01, 0.05, 0.10, 0.20, 0.40, 1.00};
-static float CONFIDENCE_DEV[]   = {4.0, 3.09, 2.58, 2.33, 1.65, 1.28, 0.84, 0.25, 0.00};
+static float8 CONFIDENCE_LEVEL[] = {0, 0.001, 0.005, 0.01, 0.05, 0.10, 0.20, 0.40, 1.00};
+static float8 CONFIDENCE_DEV[]   = {4.0, 3.09, 2.58, 2.33, 1.65, 1.28, 0.84, 0.25, 0.00};
 
-#define MIN_CONFIDENCE_LEVEL 0.001
-#define MAX_CONFIDENCE_LEVEL 100.0
+#define MIN_CONFIDENCE_LEVEL 0.001L
+#define MAX_CONFIDENCE_LEVEL 100.0L
 
 #define check_error_value(condition, message, value) \
 			if (!(condition)) \
@@ -63,12 +70,12 @@ static float CONFIDENCE_DEV[]   = {4.0, 3.09, 2.58, 2.33, 1.65, 1.28, 0.84, 0.25
 						) \
 					   );
 
-float ebp_calc_errors_internal
+float8 ebp_calc_errors_internal
 (
-	float total_cases,
-	float num_errors,
-	float conf_level,
-	float coeff
+	float8 total_cases,
+	float8 num_errors,
+	float8 conf_level,
+	float8 coeff
 );
 
 /*
@@ -89,9 +96,9 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
     float8 total_cases 	= PG_GETARG_FLOAT8(0);
     float8 probability 	= PG_GETARG_FLOAT8(1);
     float8 conf_level 	= PG_GETARG_FLOAT8(2);
-    float8 result 		= 1;
-    float8 coeff 		= 0;
-    int i 				= 0;
+    float8 result 		= 1.0L;
+    float8 coeff 		= 0.0L;
+    unsigned int i 		= 0;
 
     if (!is_float_zero(100 - conf_level))
     {
@@ -116,16 +123,20 @@ Datum ebp_calc_errors(PG_FUNCTION_ARGS)
     			probability
     		);
 
-    	/* confidence level should be divided by 100 when calculate addition error */
+    	/*
+    	 * confidence level value is in range from 0.001 to 1.0 for API c45_train
+    	 * it should be divided by 100 when calculate addition error.
+    	 * Therefore, the range of conf_level here is [0.00001, 1.0].
+    	 */
     	conf_level = conf_level * 0.01;
 
-		/* calculate the coeff */
+		/* since the conf_level is in [0.00001, 1.0], the i will be in [1, length(CONFIDENCE_LEVEL) - 1]*/
 		while (conf_level > CONFIDENCE_LEVEL[i]) i++;
 
     	check_error_value
     		(
-    			i > 0,
-    			"invalid value: %d. The index of confidence level array must be greater than 0",
+    			i > 0 && i < ARRAY_SIZE(CONFIDENCE_LEVEL),
+    			"invalid value: %d. The index of confidence level must be in range from 0 to 8",
     			i
     		);
 
@@ -166,12 +177,12 @@ PG_FUNCTION_INFO_V1(ebp_calc_errors);
  *      The additional errors if we prune the node being processed.
  *
  */
-float ebp_calc_errors_internal
+float8 ebp_calc_errors_internal
     (
-	float total_cases,
-	float num_errors,
-	float conf_level,
-	float coeff
+	float8 total_cases,
+	float8 num_errors,
+	float8 conf_level,
+	float8 coeff
     )
 {
     if (num_errors < 1E-6)
@@ -181,7 +192,7 @@ float ebp_calc_errors_internal
     else
     if (num_errors < 0.9999)
     {
-        float tmp = total_cases * (1 - exp(log(conf_level) / total_cases));
+        float8 tmp = total_cases * (1 - exp(log(conf_level) / total_cases));
         return tmp + num_errors * 
             (ebp_calc_errors_internal(total_cases, 1.0, conf_level, coeff) - tmp);
     }
@@ -192,7 +203,7 @@ float ebp_calc_errors_internal
     }
     else
     {
-        float tmp =
+        float8 tmp =
 			(
 			num_errors + 0.5 + coeff/2 +
 			sqrt(coeff * ((num_errors + 0.5) * (1 - (num_errors + 0.5)/total_cases) + coeff/4))
@@ -575,7 +586,7 @@ enum SCV_FINAL_ARRAY_INDEX
      */     
     SCV_FINAL_CLASS_ID,
     /* The total number of elements belonging to MAX_CLASS */
-    SCV_FINAL_CLASS_COUNT,
+    SCV_FINAL_CLASS_PROB,
     /* Total count of records whose value is not null */
     SCV_FINAL_TOTAL_COUNT
 };
@@ -1052,7 +1063,12 @@ PG_FUNCTION_INFO_V1(scv_aggr_sfunc);
  */
 Datum scv_aggr_prefunc(PG_FUNCTION_ARGS)
 {
-    ArrayType *scv_state_array  	= PG_GETARG_ARRAYTYPE_P(0);
+    ArrayType*	scv_state_array	= NULL;
+    if (fcinfo->context && IsA(fcinfo->context, AggState))
+        scv_state_array = PG_GETARG_ARRAYTYPE_P(0);
+    else
+        scv_state_array = PG_GETARG_ARRAYTYPE_P_COPY(0);
+
 	check_error
 		(
 			scv_state_array,
@@ -1218,14 +1234,24 @@ Datum scv_aggr_ffunc(PG_FUNCTION_ARGS)
     result[SCV_FINAL_SPLIT_CRITERION]   = scv_state_data[SCV_STATE_SPLIT_CRIT];
     result[SCV_FINAL_IS_CONT_FEATURE]	= scv_state_data[SCV_STATE_IS_CONT];
     result[SCV_FINAL_CLASS_ID]			= scv_state_data[SCV_STATE_MAX_CLASS_ID];
-    result[SCV_FINAL_CLASS_COUNT]		= scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT];
-    result[SCV_FINAL_TOTAL_COUNT]		= scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT];
 
     float8 ratio = 1;
-    
-    /* If there is any missing value, we should multiply a ratio for the computed gain. */
-    if (!is_float_zero(scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT]))
-        ratio = scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]/scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
+    /* true total count should be greater than 0*/
+    check_error
+    	(
+    		scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT]>0,
+    		"true total count should be greater than 0"
+    	);
+    /* We use the true total count here in case of missing value. */
+    result[SCV_FINAL_TOTAL_COUNT]		= scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
+    /*
+     * If there is any missing value, we should multiply a ratio for the computed gain. 
+     * We already checked scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT] is greater than 0.
+     */
+    ratio = scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]/scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
+    /* We use the true total count to compute the probability*/
+    result[SCV_FINAL_CLASS_PROB] = 
+        scv_state_data[SCV_STATE_MAX_CLASS_ELEM_COUNT]/scv_state_data[SCV_STATE_TRUE_TOTAL_COUNT];
 
     if (!is_float_zero(scv_state_data[SCV_STATE_TOTAL_ELEM_COUNT]))
     {
