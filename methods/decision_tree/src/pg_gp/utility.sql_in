@@ -1,4 +1,278 @@
 /*
+ * @brief 	this is called to check the existence of the table for keeping performance
+ * 			log information. The table has a fixed name as __perf_log_results and is put 
+ * 			under schema MADLIB_SCHEMA. Each performance item will have a record in this 
+ * 			table when perf log functions are called for it during a session. We will 
+ * 			use pg_backend_pid() as the session id to differentiate different sessions. 
+ *			For each item, we record the start time, end time, and real duration build-ups
+ * 			with three interface functions, __perf_log_start, __perf_log_end, and 
+ *		    __perf_log_inc_duration. 
+ *			If the table doesnot exist, it will be created. 
+ * @return 	true	if the table exists or successfully created 
+ *			false	if the table can not be created. 
+ */ 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__perf_log_check_results_table(); 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__perf_log_check_results_table()
+RETURNS BOOLEAN AS $$
+BEGIN 
+
+	-- first, we need to check the existence of the __perf_log_results table 	
+	-- if not, it will be created. On creation failure, we will retrun false 
+    IF (NOT MADLIB_SCHEMA.__table_exists('MADLIB_SCHEMA', '__perf_log_results')) THEN
+    	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.__perf_log_results '|| E'(
+			id 					INT4,		-- use pg_backend_pid() to differentiate different runs 
+	        perf_item_name 		TEXT,		-- name of the perf item to be measured 
+			start_time			TIMESTAMP,  -- when our measurement begins 
+			end_time			TIMESTAMP,  -- when our measurement ends
+			duration			INT8	, 	-- the accumulated duration in ms of the item to be measured 
+        	description			TEXT		-- some description that can be anything 
+		) m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)');';
+	END IF; 
+
+	-- if table creation failed, return false 
+    IF (NOT MADLIB_SCHEMA.__table_exists('MADLIB_SCHEMA', '__perf_log_results')) THEN
+		RETURN FALSE; 
+	END IF; 
+
+	RETURN TRUE; 
+END
+$$ LANGUAGE PLPGSQL; 
+
+/* 
+ * @ brief  this function is called to indicate we will start measuring a specific 
+ * 			performance item. Performance data are kept in a table called __perf_log_results. 
+ *			This table will be created the very first time __perf_log_start is called. 
+ * 			If multiple __perf_log_start is called with the same name, only the last one is 
+ * 			recorded.
+ * @param 	perf_item	name of the performance item 
+ * @param 	comments 	comments of the performanc eitem 
+ * @returns true 		if the start of the measuring is successfully marked
+ * 			false		otherwise (like failed to create the result table) 
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__perf_log_start
+	( 
+	perf_item 	TEXT
+	); 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__perf_log_start 
+	( 
+	perf_item 	TEXT
+	) 
+RETURNS BOOLEAN AS $$
+DECLARE 
+BEGIN 
+	RETURN MADLIB_SCHEMA.__perf_log_start(perf_item, ''); 
+END
+$$ LANGUAGE PLPGSQL; 
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__perf_log_start
+	( 
+	perf_item 	TEXT, 
+	comments	TEXT
+	); 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__perf_log_start 
+	( 
+	perf_item 	TEXT, 
+	comments	TEXT
+	) 
+RETURNS BOOLEAN AS $$
+DECLARE 
+	pid			INT4; 
+BEGIN 
+	-- first, we need to check the existence of the __perf_log_results table 	
+	-- if not, it will be created. On creation failure, we will retrun false 
+	IF (NOT MADLIB_SCHEMA.__perf_log_check_results_table()) THEN 
+		RETURN FALSE; 
+	END IF; 
+
+	-- if the data is already in the table, we just update it to set thenew begining 
+	-- otherwise, we will insert a new record there to indicate the beginning 
+	SELECT 	id 
+	FROM	MADLIB_SCHEMA.__perf_log_results
+	WHERE 	perf_item_name = perf_item 
+	  AND   id = pg_backend_pid()
+	INTO 	pid; 
+
+	IF (pid IS NOT NULL) THEN 
+		UPDATE 	MADLIB_SCHEMA.__perf_log_results
+		SET 	start_time 	= clock_timestamp(), 
+				description	= comments, 
+				duration 	= 0 
+		WHERE 	id = pg_backend_pid()
+		  AND 	perf_item_name = perf_item; 
+	ELSE
+		INSERT INTO MADLIB_SCHEMA.__perf_log_results(id, perf_item_name, start_time, end_time, duration, description)
+			VALUES  (pg_backend_pid(), perf_item, clock_timestamp(), NULL, 0, comments); 
+	END IF;
+
+	RETURN TRUE; 
+	
+END
+$$ LANGUAGE PLPGSQL; 
+
+/*
+ * @brief this is called to indicate the end of the measurement of a specific perform item 
+ * @param perf_item 	name of the performance item 
+ * @param comments		some descritpion 
+ * @returns	true		if the end if successfully marked 
+ *          false 		otherwise
+ */ 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__perf_log_end
+	( 
+	perf_item 	TEXT
+	); 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__perf_log_end
+	( 
+	perf_item 	TEXT
+	) 
+RETURNS BOOLEAN AS $$
+BEGIN 
+	RETURN MADLIB_SCHEMA.__perf_log_end(perf_item, ''); 
+END
+$$ LANGUAGE PLPGSQL; 
+
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__perf_log_end
+	( 
+	perf_item 	TEXT, 
+	comments	TEXT
+	); 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__perf_log_end
+	( 
+	perf_item 	TEXT, 
+	comments	TEXT
+	) 
+RETURNS BOOLEAN AS $$
+DECLARE 
+	pid			INT4; 
+BEGIN 
+	-- first, we need to check the existence of the __perf_log_results table 	
+	-- if not, it will be created. On creation failure, we will retrun false 
+	IF (NOT MADLIB_SCHEMA.__perf_log_check_results_table()) THEN 
+		RETURN FALSE; 
+	END IF; 
+
+	-- if the data is already in the table, we just update it to set thenew begining 
+	-- otherwise, we will insert a new record there to indicate the beginning 
+	SELECT 	id 
+	FROM	MADLIB_SCHEMA.__perf_log_results
+	WHERE 	perf_item_name = perf_item 
+	  AND   id = pg_backend_pid()
+	INTO 	pid; 
+
+	IF (pid IS NOT NULL) THEN 
+		UPDATE 	MADLIB_SCHEMA.__perf_log_results
+		SET 	end_time 	= clock_timestamp(), 
+				description	= description || '\n' ||  comments
+		WHERE 	id = pg_backend_pid()
+		  AND 	perf_item_name = perf_item; 
+	ELSE
+		RETURN FALSE; -- this is a wrong condition. An item can not be marked as end without an existing begin record 
+	END IF;
+
+	RETURN TRUE; 
+	
+END
+$$ LANGUAGE PLPGSQL; 
+
+/*
+ * @brief 	this is called to increase the duration of the specified performan item
+ * 			Note that the duration is not necessarily euqal to (end_time - begin_time), as 
+ *			during that time span, many other things might happen. The real time spent on 
+ * 			doing the performance item is kept in the duration column. 
+ * @param 	perf_item 	name of the performance item 
+ * @param 	byhowmuch	the increacement 	
+ * @returns	true		if the end if successfully marked 
+ *          false 		otherwise
+ */ 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__perf_log_inc_duration
+	( 
+	perf_item 	TEXT, 
+	byhowmuch	INT4
+	); 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__perf_log_inc_duration
+	( 
+	perf_item 	TEXT, 
+	byhowmuch	INT4
+	) 
+RETURNS BOOLEAN AS $$
+DECLARE 
+	pid			INT4; 
+BEGIN 
+	-- first, we need to check the existence of the __perf_log_results table 	
+	-- if not, it will be created. On creation failure, we will retrun false 
+	IF (NOT MADLIB_SCHEMA.__perf_log_check_results_table()) THEN 
+		RETURN FALSE; 
+	END IF; 
+
+	-- if the data is already in the table, we just update it to set thenew begining 
+	-- otherwise, we will insert a new record there to indicate the beginning 
+	SELECT 	id 
+	FROM	MADLIB_SCHEMA.__perf_log_results
+	WHERE 	perf_item_name = perf_item 
+	  AND   id = pg_backend_pid()
+	  AND	end_time IS NULL		-- we won't be able to inc the duration of an item that is already marked as end 
+	INTO 	pid; 
+
+	IF (pid IS NOT NULL) THEN 
+		UPDATE 	MADLIB_SCHEMA.__perf_log_results
+		SET 	duration = duration + byhowmuch 
+		WHERE 	id = pg_backend_pid()
+		  AND 	perf_item_name = perf_item; 
+	ELSE
+		RETURN FALSE; 
+	END IF;
+
+	RETURN TRUE; 
+	
+END
+$$ LANGUAGE PLPGSQL; 
+
+/*
+ * @brief 	this is called to update the comments of a performanc measureing item  
+ * @param 	perf_item 	name of the performance item 
+ * @param 	comment		the comment 
+ * @returns	true		if the end if successfully marked 
+ *          false 		otherwise
+ */ 
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__perf_log_comment
+	( 
+	perf_item 	TEXT, 
+	comments 	TEXT	
+	); 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__perf_log_comment
+	( 
+	perf_item 	TEXT, 
+	comments  	TEXT	
+	) 
+RETURNS BOOLEAN AS $$
+DECLARE 
+	pid			INT4; 
+BEGIN 
+	-- first, we need to check the existence of the __perf_log_results table 	
+	-- if not, it will be created. On creation failure, we will retrun false 
+	IF (NOT MADLIB_SCHEMA.__perf_log_check_results_table()) THEN 
+		RETURN FALSE; 
+	END IF; 
+
+	SELECT 	id 
+	FROM	MADLIB_SCHEMA.__perf_log_results
+	WHERE 	perf_item_name = perf_item 
+	  AND   id = pg_backend_pid()
+	INTO 	pid; 
+
+	IF (pid IS NOT NULL) THEN 
+		UPDATE 	MADLIB_SCHEMA.__perf_log_results
+		SET 	description = description || '\n\n' || comments
+		WHERE 	id = pg_backend_pid()
+		  AND 	perf_item_name = perf_item; 
+	ELSE
+		RETURN FALSE; -- this is a wrong condition. 
+	END IF;
+
+	RETURN TRUE; 
+	
+END
+$$ LANGUAGE PLPGSQL; 
+/*
  * @brief cast any value to text
  * @param val   a value with any specific type
  *

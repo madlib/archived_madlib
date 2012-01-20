@@ -451,6 +451,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__execute_grouping_stmt
     input_table_name     TEXT, 
     selection_table_name TEXT,
     group_table_name     TEXT,
+	current_level		 INT, 
     verbosity            INT
     ) CASCADE;
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__execute_grouping_stmt
@@ -462,6 +463,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__execute_grouping_stmt
     input_table_name     TEXT, 
     selection_table_name TEXT,
     group_table_name     TEXT,
+	current_level		 INT, 
     verbosity            INT
     )
 RETURNS void AS $$
@@ -521,8 +523,12 @@ BEGIN
         ) INTO curstmt;
     
     IF(verbosity > 0) THEN
-        RAISE INFO 'Inser into auxiliary table stmt: %', curstmt;
+        RAISE INFO 'Insert into auxiliary table stmt: %', curstmt;
     END IF;
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_comment('c45_train_grouping_level_' || current_level, curstmt); 
+	END IF; 
             
     EXECUTE curstmt;
         
@@ -542,6 +548,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__create_training_instance
     instance_table_name   TEXT,
     class_table_name      TEXT,
     group_table_name      TEXT,
+	current_level		  INT, 
     verbosity             INT
     );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_training_instance
@@ -549,6 +556,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_training_instance
     instance_table_name   TEXT,
     class_table_name      TEXT,
     group_table_name      TEXT,
+	current_level		  INT, 
     verbosity             INT
     )
 RETURNS void AS $$
@@ -648,8 +656,16 @@ BEGIN
     IF(verbosity > 0) THEN
         RAISE INFO 'window function stmt: %', curstmt;
     END IF;
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_start('c45_train_window_func_level_' || current_level, curstmt); 
+	END IF; 
             
     EXECUTE curstmt;
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_end('c45_train_window_func_level_' || current_level); 
+	END IF; 
 
     SELECT MADLIB_SCHEMA.__format
         (
@@ -660,7 +676,15 @@ BEGIN
             instance_table_name
         ) INTO curstmt;
 
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_start('c45_train_gen_scv_input_level_' || current_level); 
+	END IF; 
+
     EXECUTE curstmt;                    
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_end('c45_train_gen_scv_input_level_' || current_level); 
+	END IF; 
 END
 $$ LANGUAGE PLPGSQL;
 
@@ -681,6 +705,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__generate_training_instance_greenplum
     metatable_name       TEXT,
     instance_table_name  TEXT,
     selection_table_name TEXT,
+	current_level		 INT, 
     verbosity            INT
     );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance_greenplum
@@ -689,6 +714,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_training_instance_greenplum
     metatable_name        TEXT,
     instance_table_name   TEXT,
     selection_table_name  TEXT,
+	current_level		  INT, 
     verbosity             INT
     )
 RETURNS void AS $$
@@ -703,7 +729,6 @@ DECLARE
     group_table_name    TEXT := 'training_instance_aux';
     max_num_col_group   INT  := 30;
     index               INT  := 1;
-    
 BEGIN
     EXECUTE 'TRUNCATE ' || instance_table_name;
     EXECUTE 'TRUNCATE ' || group_table_name;
@@ -727,6 +752,10 @@ BEGIN
             metatable_name
         )
         INTO curstmt;
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_start('c45_train_grouping_level_' || current_level); 
+	END IF; 
     
     FOR result_rec IN EXECUTE (curstmt) LOOP
         
@@ -759,6 +788,7 @@ BEGIN
                     input_table_name,
                     selection_table_name,
                     group_table_name,
+					current_level, 
                     verbosity
                     );
                     
@@ -783,15 +813,21 @@ BEGIN
                 input_table_name,
                 selection_table_name,
                 group_table_name,
+				current_level, 
                 verbosity
                 );  
     END IF;    
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_end('c45_train_grouping_level_' || current_level); 
+	END IF; 
     
     PERFORM MADLIB_SCHEMA.__create_training_instance
         (
         instance_table_name,
         class_table_name,
         group_table_name,
+		current_level, 
         verbosity
         );
 END
@@ -1165,7 +1201,9 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__find_best_split
     confidence_level        FLOAT,
     feature_table_name      TEXT, 
     sp_criterion            INT, 
-    continue_gow            INT
+    continue_gow            INT,
+	current_level			INT, 
+	verbosity				INT
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
@@ -1178,7 +1216,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
     confidence_level        FLOAT,
     feature_table_name      TEXT, 
     sp_criterion            INT, 
-    continue_gow            INT
+    continue_gow            INT,
+	current_level			INT, 
+	verbosity				INT
     ) 
 RETURNS SETOF MADLIB_SCHEMA.__best_split_result AS $$
 DECLARE
@@ -1270,6 +1310,10 @@ BEGIN
         INTO curstmt;   
     END IF;
     
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_start('c45_train_find_best_split_level_' || current_level, curstmt); 
+	END IF; 
+
     -- s1.info_impurity[1], s1.fid[2], s1.split_value[3], 
     -- s2.class_prob[4], s2.class_id[5], s1.total_size[6]
     FOR result_rec IN EXECUTE (curstmt) LOOP
@@ -1299,6 +1343,10 @@ BEGIN
         
         RETURN next result;
     END LOOP;
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_end('c45_train_find_best_split_level_' || current_level, curstmt); 
+	END IF; 
     	
 	RETURN;
 END
@@ -1936,6 +1984,11 @@ DECLARE
     best_time_cmp               BOOLEAN := 'f';
 BEGIN   
     exec_begin = clock_timestamp();
+	--return values of __perf_log fucntions are ignored 
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_start('c45_train_init', 'This is the intialization phase for c45_training'); 
+	END IF; 
+
     find_best_time = exec_begin - exec_begin;
 
     ret.split_criterion = split_criterion;   
@@ -1985,12 +2038,16 @@ BEGIN
         VALUES(ARRAY[0], 0, 1, 1, 1, 1, 0, 0);';
                
     location_size = 0;
+
+    IF (verbosity > 0) THEN
+		PERFORM MADLIB_SCHEMA.__perf_log_end('c45_train_init'); 
+	END IF; 
     
     begin_data_transfer = clock_timestamp();
     
     LOOP
         EXECUTE 'SELECT COUNT(id) FROM tree_internal WHERE live = 1' INTO num_live_nodes;
-        
+       
         IF ((max_depth < 0) OR (num_live_nodes < 1)) THEN
             IF(verbosity > 0) THEN
                 RAISE INFO 'EXIT: LIMIT tree depth: % OR LIMIT iteration: % OR NO NODES LEFT', max_depth, max_iter;
@@ -2003,6 +2060,10 @@ BEGIN
         IF(verbosity > 0) THEN
             RAISE INFO 'current level: %', max_tree_depth - max_depth;
         END IF;
+
+	   	IF (verbosity > 0) THEN 
+			PERFORM MADLIB_SCHEMA.__perf_log_start('c45_train_level_' || (max_tree_depth - max_depth)); 
+		END IF; 
 
         EXECUTE 'SELECT id FROM tree_internal WHERE live = 1 ORDER BY id LIMIT 1;' INTO assigned_nid;
         EXECUTE 'SELECT id FROM tree_internal WHERE live = 1 ORDER BY id DESC LIMIT 1;' INTO max_id;
@@ -2020,6 +2081,7 @@ BEGIN
                 training_table_meta,
                 'training_instance',
                 'instance_selection',
+				max_tree_depth - max_depth, 
                 verbosity
                 );        
         ELSE
@@ -2049,7 +2111,9 @@ BEGIN
                         confidence_level,
                         training_table_meta,
                         sp_crit,
-                        grow_tree
+                        grow_tree, 
+						max_tree_depth - max_depth, 
+						verbosity
                         )
                     ) 
                     LOOP
@@ -2214,6 +2278,10 @@ BEGIN
             END IF;
         END LOOP;
                
+	   	IF (verbosity > 0) THEN 
+			PERFORM MADLIB_SCHEMA.__perf_log_end('c45_train_level_' || (max_tree_depth - max_depth)); 
+		END IF; 
+
         IF(verbosity > 0) THEN
             RAISE INFO 'computation time in this level:%',(clock_timestamp() - begin_find_best_time);
         END IF;
@@ -2228,11 +2296,11 @@ BEGIN
     PERFORM MADLIB_SCHEMA.__generate_final_tree( result_tree_table_name );
     
     IF (confidence_level < 100.0) THEN
-       EXECUTE 'SELECT MADLIB_SCHEMA.__ebp_prune_tree(' || quote_literal(result_tree_table_name) || ');';
+		EXECUTE 'SELECT MADLIB_SCHEMA.__ebp_prune_tree(' || quote_literal(result_tree_table_name) || ');';
     END IF;
     
     IF (validation_table_name IS NOT NULL) THEN
-       PERFORM MADLIB_SCHEMA.__rep_prune_tree(result_tree_table_name, validation_table_name , num_classes);
+		PERFORM MADLIB_SCHEMA.__rep_prune_tree(result_tree_table_name, validation_table_name , num_classes);
     END IF;
     
     EXECUTE 'select count(*) from '||result_tree_table_name||';' into ret.tree_nodes;
@@ -3894,6 +3962,19 @@ BEGIN
                 ),
                 'the specified tree table doesn''t exists'
             ); 
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                (scoring_table_name IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        MADLIB_SCHEMA.__get_schema_name(scoring_table_name),
+                        MADLIB_SCHEMA.__strip_schema_name(scoring_table_name)
+                    )
+                ),
+                'the specified socring table doesn''t exists'
+            ); 
                 
     PERFORM MADLIB_SCHEMA.__assert
         (
@@ -3903,7 +3984,7 @@ BEGIN
                     MADLIB_SCHEMA.__strip_schema_name(scoring_table_name),
                     MADLIB_SCHEMA.__get_class_column_name(MADLIB_SCHEMA.__get_metatable_name(tree_table_name))
                 ),
-            'the scoring table must have class column'
+            'the scoring table must have a column named class'
         );
             
     result_table_name = MADLIB_SCHEMA.__get_schema_name(tree_table_name) || 
