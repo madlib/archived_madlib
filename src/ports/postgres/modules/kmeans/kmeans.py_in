@@ -353,13 +353,13 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
            (e.g. 'cosine')  
     @param dist_func Name of the distance/similarity function 
            (e.g. 'cosine_distance')
-    @param t1 Smaller threshold for canopy clustering 
-    @param t2 Larger threshold for canopy clustering 
+    @param t1 Larger threshold for canopy clustering 
+    @param t2 Smaller threshold for canopy clustering 
     @param sample_pct Percent of the input data points to use for centroid 
            seeding
     """
     
-    # Find thresholds T1 and T2 (T1 < T2)
+    # Find thresholds T1 and T2 (T1 > T2)
     if t1 is None or t2 is None:
     
         # Allow the user to specify sample size 
@@ -396,12 +396,12 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
         plpy.execute( sql);
 
         # Calculate the cross distances >> and derive T1 and T2 
-        # T1 >> is the max value from 1st quantile (10 buckets)
-        # T2 >> is the min value from 10th quantile (10 buckets)
+        # T1 >> is the min value from 10th quantile (10 buckets)
+        # T2 >> is the max value from 1st quantile (10 buckets)
         sql = '''
             SELECT 
-                max( CASE WHEN ntile = 1 THEN dist ELSE null END) as t1 
-                , min( CASE WHEN ntile = 10 THEN dist ELSE null END) as t2 
+                max( CASE WHEN ntile = 10 THEN dist ELSE null END) as t1 
+                , min( CASE WHEN ntile = 1 THEN dist ELSE null END) as t2 
             FROM 
             (
                 SELECT ntile(10) OVER( ORDER BY dist) as ntile, dist FROM 
@@ -424,7 +424,7 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
     # Check canopy thresholds        
     if t1 is None: 
         if rv[0]['t1'] is None:
-            plpy.error( 'not enough data to generate canopy T1 threshold (T1<T2)')
+            plpy.error( 'not enough data to generate canopy T1 threshold (T1>T2)')
         else:
             t1 = rv[0]['t1'];
     elif t1 <= 0:
@@ -432,24 +432,24 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
         
     if t2 is None: 
         if rv[0]['t2'] is None:
-            plpy.error( 'not enough data to generate canopy T2 threshold (T1<T2)')
+            plpy.error( 'not enough data to generate canopy T2 threshold (T1>T2)')
         else:
             t2 = rv[0]['t2'];
     elif t2 <= 0:
         plpy.error( 'canopy threshold T2 can not be zero or negative')
     
-    # Generate initial centroids using T1 (smaller)
+    # Generate initial centroids using T2 (smaller)
     __run_quietly( 'DROP TABLE IF EXISTS TempArrayOfCentroids');
     sql = '''
         CREATE TEMP TABLE TempArrayOfCentroids AS
         SELECT 
-            {madlib_schema}.kmeans_canopy(coords, {metric}, {t1})
+            {madlib_schema}.kmeans_canopy(coords, {metric}, {t2})
                 AS ccoords
         FROM {src_points}
         '''.format(
             madlib_schema = madlib_schema,
             metric = __metric_id(dist_metric),
-            t1 = str(float(t1)),
+            t2 = str(float(t2)),
             src_points = src_points
     )
     __run_quietly( sql);
@@ -467,18 +467,18 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
     )
     plpy.execute( sql);
     
-    # Assign points to canopies using T2 (larger)
+    # Assign points to canopies using T1 (larger)
     __run_quietly( 'CREATE TEMP TABLE TempPoints0_Canopies (LIKE TempPoints0)')
     sql = '''
         INSERT INTO TempPoints0_Canopies
         SELECT p.pid, p.coords, p.cid,
-            {madlib_schema}.internal_get_array_of_close_canopies(p.coords, c.ccoords, {t2}, {metric})
+            {madlib_schema}.internal_get_array_of_close_canopies(p.coords, c.ccoords, {t1}, {metric})
         FROM TempPoints0 p, TempArrayOfCentroids c
     '''.format(
         madlib_schema = madlib_schema,
         output_centroids = output_centroids,
         metric = __metric_id(dist_metric),
-        t2 = str(t2)
+        t1 = str(t1)
     )
     
     plpy.execute( sql);
@@ -515,8 +515,8 @@ def kmeans( madlib_schema
     @param init_sample_pct Percent of the input data points to use for kmeans++ 
            centroid seeding (for kmeans++ only)
     @param k Number of initial centroids
-    @param t1 Smaller threshold for canopy clustering 
-    @param t2 Larger threshold for canopy clustering     
+    @param t1 Larger threshold for canopy clustering 
+    @param t2 Smaller threshold for canopy clustering     
     @param dist_metric Type of the distance/similarity metric (e.g. 'cosine')  
     @param max_iter Maximum number of iterations to execute
     @param conv_threshold Convergence threshold, expressed as percent of points 
