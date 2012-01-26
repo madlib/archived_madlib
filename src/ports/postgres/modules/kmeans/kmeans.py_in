@@ -117,6 +117,16 @@ def __sample_bound( sample_size, population_size):
         
     return (sample_size + 14 + sqrt(196 + 28*sample_size)) / population_size;
 
+
+def __metric_id(dist_metric):
+    return {
+        'l1norm'  : 1,
+        'l2norm'  : 2,
+        'cosine'  : 3,
+        'tanimoto': 4
+    }[dist_metric]
+    
+
 # ----------------------------------------
 # Centroid initialization using random()
 # ----------------------------------------
@@ -426,46 +436,51 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
         else:
             t2 = rv[0]['t2'];
     elif t2 <= 0:
-        plpy.error( 'canopy threshold T2 can not be zero or negative')        
-        
+        plpy.error( 'canopy threshold T2 can not be zero or negative')
+    
     # Generate initial centroids using T1 (smaller)
+    __run_quietly( 'DROP TABLE IF EXISTS TempArrayOfCentroids');
+    sql = '''
+        CREATE TEMP TABLE TempArrayOfCentroids AS
+        SELECT 
+            {madlib_schema}.kmeans_canopy(coords, {metric}, {t1})
+                AS ccoords
+        FROM {src_points}
+        '''.format(
+            madlib_schema = madlib_schema,
+            metric = __metric_id(dist_metric),
+            t1 = str(float(t1)),
+            src_points = src_points
+    )
+    __run_quietly( sql);
+    
+    # unpivot centroids
     sql = '''
         INSERT INTO {output_centroids} (cid, coords)
-        SELECT row_number() OVER () AS cid, coords 
+        SELECT
+            generate_series(array_lower(ccoords, 1), array_upper(ccoords, 1)),
+            unnest(ccoords)
         FROM
-              ( SELECT unnest(canopies) as coords
-                FROM 
-                    ( SELECT 
-                        {madlib_schema}.kmeans_canopy( 
-                            coords, '{dist_metric}', {t1}
-                        ) as canopies
-                      FROM {src_points}
-                     ) q1
-               ) q2
-        '''.format(
+            TempArrayOfCentroids
+    '''.format(
             output_centroids = output_centroids
-            , madlib_schema = madlib_schema
-            , dist_metric = dist_metric
-            , t1 = str(float(t1))
-            , src_points = src_points
-        );
+    )
     plpy.execute( sql);
     
     # Assign points to canopies using T2 (larger)
     __run_quietly( 'CREATE TEMP TABLE TempPoints0_Canopies (LIKE TempPoints0)')
     sql = '''
         INSERT INTO TempPoints0_Canopies
-        SELECT p.pid, p.coords, p.cid, 
-            m4_ifdef(`__HAS_ORDERED_AGGREGATES__',,`{madlib_schema}.')array_agg(c.cid)
-        FROM TempPoints0 p, {output_centroids} c 
-        WHERE {dist_func} < {t2}
-        GROUP BY p.pid, p.coords, p.cid
+        SELECT p.pid, p.coords, p.cid,
+            {madlib_schema}.internal_get_array_of_close_canopies(p.coords, c.ccoords, {t2}, {metric})
+        FROM TempPoints0 p, TempArrayOfCentroids c
     '''.format(
-        output_centroids = output_centroids
-        , dist_func = dist_func.replace( '&&&', 'p.coords, c.coords')
-        , t2 = str(t2)
-        , madlib_schema = madlib_schema
-    );            
+        madlib_schema = madlib_schema,
+        output_centroids = output_centroids,
+        metric = __metric_id(dist_metric),
+        t2 = str(t2)
+    )
+    
     plpy.execute( sql);
     plpy.execute( 'DROP TABLE IF EXISTS TempPoints0');
     plpy.execute( 'ALTER TABLE TempPoints0_Canopies RENAME TO TempPoints0');
@@ -659,12 +674,12 @@ def kmeans( madlib_schema
     # Cosine
     elif dist_metric == 'cosine':
         dist_aggr = '%s.mean(%s.normalize(&&&))' % (madlib_schema, madlib_schema);
-        dist_func = 'acos(%s.cosine_distance(&&&))' % madlib_schema;
+        dist_func = '%s.angle(&&&)' % madlib_schema;
         info( ' * dist_metric = %s' % (dist_metric))
     # Tanimoto
     elif dist_metric == 'tanimoto':
         dist_aggr = '%s.mean(%s.normalize(&&&))' % (madlib_schema, madlib_schema);
-        dist_func = 'acos(%s.tanimoto_distance(&&&))' % madlib_schema;
+        dist_func = '%s.tanimoto_distance(&&&)' % madlib_schema;
         info( ' * dist_metric = %s' % (dist_metric))
     # Other 
     else: 
@@ -865,11 +880,9 @@ def kmeans( madlib_schema
             CREATE TEMP TABLE TempArrayOfCentroids AS
             SELECT
 m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
-                array_agg(cid ORDER BY cid) as cids,
                 array_agg(coords ORDER BY cid) as ccoords
             FROM {output_centroids}
 ', `
-                array(SELECT cid FROM {output_centroids} ORDER BY cid LIMIT ALL) as cids,
                 array(SELECT coords FROM {output_centroids} ORDER BY cid LIMIT ALL) as ccoords
 ')                
             '''.format(
@@ -888,14 +901,14 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
             canopies = 'p.canopies';
         else:
             # Compare with all centroids
-            canopies = 'arr.cids';
-            
+            canopies = 'NULL';
+        
         sql = '''
             INSERT INTO TempPoints{i}    
             SELECT
                 p.pid 
                 , p.coords
-                , {madlib_schema}.internal_kmeans_closest_centroid( p.coords, {canopies}, arr.ccoords, '{dist_metric}') 
+                , {madlib_schema}.internal_kmeans_closest_centroid( p.coords, {canopies}, arr.ccoords, {metric})
                 , p.canopies
             FROM 
                 TempPoints{previous_i} p CROSS JOIN TempArrayOfCentroids arr
@@ -903,7 +916,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
             i = str(i)
             , madlib_schema = madlib_schema
             , canopies = canopies
-            , dist_metric = dist_metric
+            , metric = __metric_id(dist_metric)
             , previous_i = str(i-1)
         );
         plpy.execute( sql);        
@@ -922,6 +935,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
                 GROUP BY cid
             ) AS t ON c.cid = t.cid''';
         __run_quietly( sql);        
+        
         plpy.execute( 'TRUNCATE TABLE ' + output_centroids );
         plpy.execute( 'INSERT INTO ' + output_centroids + ' SELECT * FROM ' \
                         + output_centroids + '_tmp');

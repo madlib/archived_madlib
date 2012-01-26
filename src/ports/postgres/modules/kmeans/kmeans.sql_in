@@ -268,7 +268,7 @@ out_centorids | public.km_c
 
 [3] Omnia Ossama, Hoda M. O. Mokhtar, Mohamed E. El-Sharkawi: Clustering Moving 
     Objects Using Segments Slopes, pp. 43, 
-    http://airccse.org/journal/ijdms/papers/3111ijdms03.pdf	
+    http://airccse.org/journal/ijdms/papers/3111ijdms03.pdf
     
 [4] Andrew McCallum, Kamal Nigam, Lyle H. Ungar: Efﬁcient Clustering of
     High-Dimensional Data Sets with Application to Reference Matching
@@ -283,243 +283,67 @@ out_centorids | public.km_c
 
 /**
  * @internal
- * @brief Centroid assignment function. It computes distances between
- * a point and an array of centroids and returns the ID of the nearest centroid.
+ * @brief Given a point, find all canopies that are closer than threshold
+ * @param point The point
+ * @param allCanopies Array of canopies
+ * @param threshold Threshold distance below which a point is included in the
+ *     output array
+ * @param distMetric ID of the metric to use
+ * @return Array of positions in \c allCanopies that are close to the given
+ *     point
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_closest_centroid( 
-    p_point         MADLIB_SCHEMA.SVEC
-    , p_cids        INTEGER[]
-    , p_ccoords     MADLIB_SCHEMA.SVEC[]
-    , p_dist_metric TEXT
-) 
-RETURNS INTEGER
-AS $$
-DECLARE
-    min_cid         INTEGER := 0;
-    min_val         FLOAT := NULL;
-    temp_val        FLOAT := NULL;
-BEGIN
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_get_array_of_close_canopies( 
+    "point"               MADLIB_SCHEMA.SVEC,
+    "allCanopies"         MADLIB_SCHEMA.SVEC[],
+    "threshold"           FLOAT8,
+    "dist_metric"         INTEGER
+)
+RETURNS INTEGER[] AS
+'MODULE_PATHNAME'
+LANGUAGE c
+IMMUTABLE
+STRICT;
 
-    --
-    -- Pick your distance metrics and Loop over all centroids
-    --
-    -- Implementation comment:
-    -- IF statement is outside the loop in order to have a static SQL call to
-    -- the distance function and to minimize the number of comparisons of P_DIST_METRIC. 
-    -- Static SQL is better because we avoid SVEC parameters serialization, that
-    -- would be necessary with .
-    IF p_dist_metric = 'l1norm' THEN
-        FOR i IN 1..array_upper( p_cids, 1) LOOP        
-            temp_val := MADLIB_SCHEMA.l1norm( p_point, p_ccoords[p_cids[i]]);
-            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
-                min_val := temp_val;
-                min_cid := p_cids[i];
-            END IF;
-        END LOOP;
-    ELSIF p_dist_metric = 'l2norm' THEN
-        FOR i IN 1..array_upper( p_cids, 1) LOOP        
-            temp_val := MADLIB_SCHEMA.l2norm( p_point, p_ccoords[p_cids[i]]);
-            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
-                min_val := temp_val;
-                min_cid := p_cids[i];
-            END IF;
-        END LOOP;
-    ELSIF p_dist_metric = 'cosine' THEN
-        FOR i IN 1..array_upper( p_cids, 1) LOOP        
-            temp_val := acos( MADLIB_SCHEMA.cosine_distance( p_point, p_ccoords[p_cids[i]]));
-            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
-                min_val := temp_val;
-                min_cid := p_cids[i];
-            END IF;
-        END LOOP;
-    ELSIF p_dist_metric = 'tanimoto' THEN
-        FOR i IN 1..array_upper( p_cids, 1) LOOP        
-            temp_val := acos( MADLIB_SCHEMA.tanimoto_distance( p_point, p_ccoords[p_cids[i]]));
-            IF ( temp_val < coalesce( min_val, temp_val + 1.0) ) THEN
-                min_val := temp_val;
-                min_cid := p_cids[i];
-            END IF;
-        END LOOP;
-    ELSE
-        RAISE EXCEPTION 'Unknown distance metric: %', p_dist_metric;
-    END IF;            
-    
-    RETURN min_cid;
-END
-$$ LANGUAGE plpgsql IMMUTABLE;
 
 /**
  * @internal
- * @brief State variable data type for kmeans_canopy() 
+ * @brief Given a point, find the closest centroid
+ * @param point The point
+ * @param closeCentroids List of positions in the \c centroidCoordinates array
+ *     that should be considered. The distance to all other centroids is
+ *     conceptually infinity. If NULL, then all centroids in
+ *     \c centroidCoordinates are considered.
+ * @param centroidCoordinates Array of centroids
+ * @param distMetric ID of the metric to use
+ * @return The position in \c centroidCoordinates that is closest to \c point
  */
-CREATE TYPE MADLIB_SCHEMA.kmeans_canopy_type AS(
-    canopy_coords   MADLIB_SCHEMA.svec[]    -- coordinates of all canopies
-    , dist_metric   TEXT                    -- distance metric
-    , threshold     FLOAT                   -- threshold
-);
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_closest_centroid( 
+    "point"               MADLIB_SCHEMA.SVEC,
+    "closeCentroids"      INTEGER[],
+    "centroidCoordinates" MADLIB_SCHEMA.SVEC[],
+    "dist_metric"         INTEGER
+)
+RETURNS INTEGER AS
+'MODULE_PATHNAME'
+LANGUAGE c
+IMMUTABLE
+STRICT;
 
 /**
  * @internal
  * @brief Transition function for UDA:kmeans_canopy() 
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_canopy_transition(
-    state           MADLIB_SCHEMA.kmeans_canopy_type
+    state           MADLIB_SCHEMA.svec[]
     , pcoords       MADLIB_SCHEMA.svec
-    , dist_metric   TEXT
-    , threshold     FLOAT
+    , dist_metric   INTEGER
+    , threshold     FLOAT8
 )
-RETURNS MADLIB_SCHEMA.kmeans_canopy_type 
-AS $$
-DECLARE 
-    i INTEGER;
-    distance FLOAT;
-BEGIN
-    -- Populate the initial state 
-    IF state is NULL THEN
-       state := ROW( ARRAY[pcoords]::MADLIB_SCHEMA.svec[], dist_metric, threshold);
-       RETURN state;
-    END IF;
-    -- If the new point falls under any existing canopy >> just move on & return current state
-    IF dist_metric = 'l1norm' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state.canopy_coords, 1) LOOP
-            distance := MADLIB_SCHEMA.l1norm( pcoords, state.canopy_coords[i]);
-            IF(distance < threshold) THEN
-                RETURN state;
-            END IF;
-        END LOOP;
-    ELSIF dist_metric = 'l2norm' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state.canopy_coords, 1) LOOP
-            distance := MADLIB_SCHEMA.l2norm( pcoords, state.canopy_coords[i]);
-            IF(distance < threshold) THEN
-                RETURN state;
-            END IF;
-        END LOOP;
-    ELSIF dist_metric = 'cosine' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state.canopy_coords, 1) LOOP
-            distance := acos( MADLIB_SCHEMA.cosine_distance( pcoords, state.canopy_coords[i]));
-            IF(distance < threshold) THEN
-                RETURN state;
-            END IF;
-        END LOOP;
-    ELSIF dist_metric = 'tanimoto' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state.canopy_coords, 1) LOOP
-            distance := acos( MADLIB_SCHEMA.tanimoto_distance( pcoords, state.canopy_coords[i]));
-            IF(distance < threshold) THEN
-                RETURN state;
-            END IF;
-        END LOOP;
-    ELSE
-        RAISE EXCEPTION 'Unknown distance metric: %', dist_metric;
-    END IF;     
-    -- If the new point does not fall under any existing canopy 
-    -- >> add it to the list of canopies
-    state.canopy_coords := ARRAY_APPEND(state.canopy_coords, pcoords);
-    RETURN state;
-END;
-$$ LANGUAGE plpgsql;
-
-/**
- * @internal
- * @brief Merge function for UDA:kmeans_canopy() 
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_canopy_merge(
-    state1      MADLIB_SCHEMA.kmeans_canopy_type
-    , state2    MADLIB_SCHEMA.kmeans_canopy_type
-)
-RETURNS MADLIB_SCHEMA.kmeans_canopy_type 
-AS $$
-DECLARE 
-    i INTEGER;
-    j INTEGER;
-    overlap BOOLEAN;
-    distance DOUBLE PRECISION;
-BEGIN
-    -- If one side is NULL
-    IF ARRAY_UPPER(state1.canopy_coords, 1) IS NULL THEN
-       RETURN state2;
-    END IF;
-    IF ARRAY_UPPER(state2.canopy_coords, 1) IS NULL THEN
-       RETURN state1;
-    END IF;
-    -- Compare all canopies from both states and find overlaps (< 0.5 * threshold)
-    -- Keep track of the new state in STATE2
-    IF state1.dist_metric = 'l1norm' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state1.canopy_coords, 1) LOOP
-            overlap := FALSE;
-            FOR j IN 1 .. ARRAY_UPPER(state2.canopy_coords, 1) LOOP
-                distance := MADLIB_SCHEMA.l1norm(state1.canopy_coords[i], state2.canopy_coords[j]);
-                IF (distance < 0.5 * state1.threshold) THEN
-                    overlap := TRUE;
-                    EXIT;
-                END IF;
-            END LOOP;
-            IF overlap = FALSE THEN
-                state2.canopy_coords := ARRAY_APPEND(state2.canopy_coords, state1.canopy_coords[i]);
-            END IF;
-        END LOOP;
-    ELSIF state1.dist_metric = 'l2norm' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state1.canopy_coords, 1) LOOP
-            overlap := FALSE;
-            FOR j IN 1 .. ARRAY_UPPER(state2.canopy_coords, 1) LOOP
-                distance := MADLIB_SCHEMA.l2norm(state1.canopy_coords[i], state2.canopy_coords[j]);
-                IF (distance < 0.5 * state1.threshold) THEN
-                    overlap := TRUE;
-                    EXIT;
-                END IF;
-            END LOOP;
-            IF overlap = FALSE THEN
-                state2.canopy_coords := ARRAY_APPEND(state2.canopy_coords, state1.canopy_coords[i]);
-            END IF;
-        END LOOP;
-    ELSIF state1.dist_metric = 'cosine' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state1.canopy_coords, 1) LOOP
-            overlap := FALSE;
-            FOR j IN 1 .. ARRAY_UPPER(state2.canopy_coords, 1) LOOP
-                distance := acos( MADLIB_SCHEMA.cosine_distance( state1.canopy_coords[i], state2.canopy_coords[j]));
-                IF (distance < 0.5 * state1.threshold) THEN
-                    overlap := TRUE;
-                    EXIT;
-                END IF;
-            END LOOP;
-            IF overlap = FALSE THEN
-                state2.canopy_coords := ARRAY_APPEND(state2.canopy_coords, state1.canopy_coords[i]);
-            END IF;
-        END LOOP;
-    ELSIF state1.dist_metric = 'tanimoto' THEN
-        FOR i IN 1 .. ARRAY_UPPER(state1.canopy_coords, 1) LOOP
-            overlap := FALSE;
-            FOR j IN 1 .. ARRAY_UPPER(state2.canopy_coords, 1) LOOP
-                distance := acos( MADLIB_SCHEMA.tanimoto_distance( state1.canopy_coords[i], state2.canopy_coords[j]));
-                IF (distance < 0.5 * state1.threshold) THEN
-                    overlap := TRUE;
-                    EXIT;
-                END IF;
-            END LOOP;
-            IF overlap = FALSE THEN
-                state2.canopy_coords := ARRAY_APPEND(state2.canopy_coords, state1.canopy_coords[i]);
-            END IF;
-        END LOOP;
-    ELSE
-        RAISE EXCEPTION 'Unknown distance metric: %', state1.dist_metric;
-    END IF;       -- Done
-    RETURN state2;
-END;
-$$ LANGUAGE plpgsql;
-
-/**
- * @internal
- * @brief Finalize function for UDA:kmeans_canopy() 
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_canopy_finalize(
-    state MADLIB_SCHEMA.kmeans_canopy_type
-)
-RETURNS MADLIB_SCHEMA.svec[] 
-AS $$
-DECLARE 
-BEGIN
-    RETURN state.canopy_coords;
-END;
-$$ LANGUAGE plpgsql;
+RETURNS MADLIB_SCHEMA.svec[] AS 
+'MODULE_PATHNAME'
+LANGUAGE c
+IMMUTABLE
+STRICT;
 
 /**
  * @internal
@@ -527,14 +351,15 @@ $$ LANGUAGE plpgsql;
  */
 CREATE AGGREGATE MADLIB_SCHEMA.kmeans_canopy(
     MADLIB_SCHEMA.svec  -- new point coordinates
-    , TEXT              -- distance metric
-    , FLOAT             -- threshold (T1)
-) 
-(
-    STYPE = MADLIB_SCHEMA.kmeans_canopy_type
-    , SFUNC = MADLIB_SCHEMA.internal_kmeans_canopy_transition
-    m4_ifdef(`GREENPLUM',`,prefunc = MADLIB_SCHEMA.internal_kmeans_canopy_merge')
-    , FINALFUNC = MADLIB_SCHEMA.internal_kmeans_canopy_finalize  
+    , INTEGER           -- distance metric
+    , FLOAT8            -- threshold (T1)
+) (
+    stype = MADLIB_SCHEMA.svec[],
+    sfunc = MADLIB_SCHEMA.internal_kmeans_canopy_transition,
+m4_ifdef(`__GREENPLUM__', `
+    prefunc = array_cat,
+')
+    initcond = '{}'
 );
 
 /**
