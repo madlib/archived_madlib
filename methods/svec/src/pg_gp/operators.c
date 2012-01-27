@@ -721,7 +721,7 @@ Datum svec_svec_l1norm(PG_FUNCTION_ARGS)
 
 PG_FUNCTION_INFO_V1( svec_svec_angle );
 /**
- *  svec_svec_cosine_distance - Computes the cosine similarity between two SVECs.
+ *  svec_svec_angle - Computes the angle between two SVECs.
  */
 Datum svec_svec_angle(PG_FUNCTION_ARGS)
 {	

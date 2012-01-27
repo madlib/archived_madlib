@@ -1,4 +1,5 @@
 #include <postgres.h>
+#include <nodes/execnodes.h>
 #include <utils/builtins.h>
 #include "../../../svec/src/pg_gp/sparse_vector.h"
 #include "../../../svec/src/pg_gp/operators.h"
@@ -41,24 +42,21 @@ get_svec_array_elms(ArrayType *inArrayType, Datum **outSvecArr, int *outLen)
 
 static
 inline
-double
-svec_svec_distance(Datum inVec1, Datum inVec2, KMeansMetric inMetric)
+PGFunction
+get_metric_fn(KMeansMetric inMetric)
 {
-    PGFunction metric_fn = NULL;
-
-    switch (inMetric)
-    {
-        case L1NORM: metric_fn = svec_svec_l1norm; break;
-        case L2NORM: metric_fn = svec_svec_l2norm; break;
-        case COSINE: metric_fn = svec_svec_angle; break;
-        case TANIMOTO: metric_fn = svec_svec_tanimoto_distance; break;
-        default:
-            ereport(ERROR,
+    PGFunction metrics[] = {
+            svec_svec_l1norm,
+            svec_svec_l2norm,
+            svec_svec_angle,
+            svec_svec_tanimoto_distance
+        };
+    
+    if (inMetric < 1 || inMetric > sizeof(metrics)/sizeof(PGFunction))
+        ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                  errmsg("invalid metric")));
-    }
-    
-    return DatumGetFloat8(DirectFunctionCall2(metric_fn, inVec1, inVec2));    
+    return metrics[inMetric - 1];
 }
 
 PG_FUNCTION_INFO_V1(internal_get_array_of_close_canopies);
@@ -69,7 +67,7 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     Datum          *all_canopies;
     int             num_all_canopies;
     float8          threshold;
-    KMeansMetric    metric;
+    PGFunction      metric_fn;
     
     ArrayType      *close_canopies_arr;
     int4           *close_canopies;
@@ -80,15 +78,18 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     get_svec_array_elms(PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 1)),
         &all_canopies, &num_all_canopies);
     threshold = PG_GETARG_FLOAT8(verify_arg_nonnull(fcinfo, 2));
-    metric = PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 3));
+    metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 3)));
     
     close_canopies = (int4 *) palloc(sizeof(int4) * num_all_canopies);
     num_close_canopies = 0;
     for (int i = 0; i < num_all_canopies; i++) {
-        if (svec_svec_distance(PointerGetDatum(svec), all_canopies[i], metric)
-            < threshold)
+        if (DatumGetFloat8(DirectFunctionCall2(
+            metric_fn, PointerGetDatum(svec), all_canopies[i])) < threshold)
             close_canopies[num_close_canopies++] = i + 1 /* lower bound */;
     }
+
+    if (num_close_canopies == 0)
+        PG_RETURN_ARRAYTYPE_P(construct_empty_array(INT4OID));
 
     bytes = ARR_OVERHEAD_NONULLS(1) + sizeof(int4) * num_close_canopies;
     close_canopies_arr = (ArrayType *) palloc0(bytes);
@@ -112,7 +113,7 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
     ArrayType      *centroids_arr;
     Datum          *centroids;
     int             num_centroids;
-    KMeansMetric    metric;
+    PGFunction      metric_fn;
 
     bool            indirect;
     float8          distance, min_distance = INFINITY;
@@ -125,18 +126,21 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
     } else {
         indirect = true;
         canopy_ids_arr = PG_GETARG_ARRAYTYPE_P(1);
+        /* There should always be a close canopy, but let's be on the safe side. */
+        if (ARR_NDIM(canopy_ids_arr) == 0)
+            PG_RETURN_NULL();
         canopy_ids = (int4*) ARR_DATA_PTR(canopy_ids_arr);
     }
     centroids_arr = PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 2));
     get_svec_array_elms(centroids_arr, &centroids, &num_centroids);
     if (!PG_ARGISNULL(1))
         num_centroids = ARR_DIMS(canopy_ids_arr)[0];
-    metric = PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 3));
+    metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 3)));
 
     for (int i = 0; i < num_centroids; i++) {
         cid = indirect ? canopy_ids[i] - ARR_LBOUND(canopy_ids_arr)[0] : i;
-        distance = svec_svec_distance(PointerGetDatum(svec), centroids[cid],
-            metric);
+        distance = DatumGetFloat8(DirectFunctionCall2(
+            metric_fn, PointerGetDatum(svec), centroids[cid]));
         if (distance < min_distance) {
             closest_centroid = cid;
             min_distance = distance;
@@ -153,25 +157,46 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
     Datum          *canopies;
     int             num_canopies;
     SvecType       *point;
-    KMeansMetric    metric;
+    PGFunction      metric_fn;
     float8          threshold;
+    
+    MemoryContext   oldMemContext, aggContext = NULL;
+    Datum           newState;
+    
+    /* Make sure we are only called as a transition function */
+    if (fcinfo->context && IsA(fcinfo->context, AggState))
+        aggContext = ((AggState *) fcinfo->context)->aggcontext;
+    else
+        ereport(ERROR,
+                (errcode(ERRCODE_SQL_ROUTINE_EXCEPTION),
+                 errmsg("function \"%s\" called called outside of aggregate context",
+                    format_procedure(fcinfo->flinfo->fn_oid))));
     
     canopies_arr = PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 0));
     get_svec_array_elms(canopies_arr, &canopies, &num_canopies);
     point = PG_GETARG_SVECTYPE_P(verify_arg_nonnull(fcinfo, 1));
-    metric = PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 2));
+    metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 2)));
     threshold = PG_GETARG_FLOAT8(verify_arg_nonnull(fcinfo, 3));
     
     for (int i = 0; i < num_canopies; i++) {
-        if (svec_svec_distance(PointerGetDatum(point), canopies[i], metric)
-            < threshold)
+        if (DatumGetFloat8(DirectFunctionCall2(
+            metric_fn, PointerGetDatum(point), canopies[i]) < threshold))
             PG_RETURN_ARRAYTYPE_P(canopies_arr);
     }
     
     int idx = (ARR_NDIM(canopies_arr) == 0)
         ? 1
         : ARR_LBOUND(canopies_arr)[0] + ARR_DIMS(canopies_arr)[0];
-    return PointerGetDatum(
+    
+    oldMemContext = MemoryContextSwitchTo(aggContext);
+    /*
+     * We call array_set while the current memory context is set to the
+     * aggregate context. 
+     * We trust that array_set does not leave any stray memory, because it will
+     * only be garbage collected at the end of the aggregate -- so a lot of junk
+     * could pile up in between.
+     */
+    newState = PointerGetDatum(
         array_set(
             canopies_arr, /* array: the initial array object (mustn't be NULL) */
             1, /* nSubscripts: number of subscripts supplied */
@@ -183,4 +208,6 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
             false, /* elmbyval: pg_type.typbyval for the array's element type */
             'd') /* elmalign: pg_type.typalign for the array's element type */
         );
+    MemoryContextSwitchTo(oldMemContext);
+    return newState;
 }
