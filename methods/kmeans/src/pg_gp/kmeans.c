@@ -1,5 +1,4 @@
 #include <postgres.h>
-#include <nodes/execnodes.h>
 #include <utils/builtins.h>
 #include "../../../svec/src/pg_gp/sparse_vector.h"
 #include "../../../svec/src/pg_gp/operators.h"
@@ -88,8 +87,12 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
             close_canopies[num_close_canopies++] = i + 1 /* lower bound */;
     }
 
+    /* If we cannot find any close canopy, return NULL. Note that the result
+     * we return will be passed to internal_kmeans_closest_centroid() and if the
+     * array of close canopies is NULL, then internal_kmeans_closest_centroid()
+     * will consider and compute the distance to all centroids. */
     if (num_close_canopies == 0)
-        PG_RETURN_ARRAYTYPE_P(construct_empty_array(INT4OID));
+        PG_RETURN_NULL();
 
     bytes = ARR_OVERHEAD_NONULLS(1) + sizeof(int4) * num_close_canopies;
     close_canopies_arr = (ArrayType *) palloc0(bytes);
@@ -128,7 +131,9 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
         canopy_ids_arr = PG_GETARG_ARRAYTYPE_P(1);
         /* There should always be a close canopy, but let's be on the safe side. */
         if (ARR_NDIM(canopy_ids_arr) == 0)
-            PG_RETURN_NULL();
+            ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("internal error: array of close canopies cannot be empty")));
         canopy_ids = (int4*) ARR_DATA_PTR(canopy_ids_arr);
     }
     centroids_arr = PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 2));
@@ -160,18 +165,6 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
     PGFunction      metric_fn;
     float8          threshold;
     
-    MemoryContext   oldMemContext, aggContext = NULL;
-    Datum           newState;
-    
-    /* Make sure we are only called as a transition function */
-    if (fcinfo->context && IsA(fcinfo->context, AggState))
-        aggContext = ((AggState *) fcinfo->context)->aggcontext;
-    else
-        ereport(ERROR,
-                (errcode(ERRCODE_SQL_ROUTINE_EXCEPTION),
-                 errmsg("function \"%s\" called called outside of aggregate context",
-                    format_procedure(fcinfo->flinfo->fn_oid))));
-    
     canopies_arr = PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 0));
     get_svec_array_elms(canopies_arr, &canopies, &num_canopies);
     point = PG_GETARG_SVECTYPE_P(verify_arg_nonnull(fcinfo, 1));
@@ -187,16 +180,7 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
     int idx = (ARR_NDIM(canopies_arr) == 0)
         ? 1
         : ARR_LBOUND(canopies_arr)[0] + ARR_DIMS(canopies_arr)[0];
-    
-    oldMemContext = MemoryContextSwitchTo(aggContext);
-    /*
-     * We call array_set while the current memory context is set to the
-     * aggregate context. 
-     * We trust that array_set does not leave any stray memory, because it will
-     * only be garbage collected at the end of the aggregate -- so a lot of junk
-     * could pile up in between.
-     */
-    newState = PointerGetDatum(
+    return PointerGetDatum(
         array_set(
             canopies_arr, /* array: the initial array object (mustn't be NULL) */
             1, /* nSubscripts: number of subscripts supplied */
@@ -208,6 +192,49 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
             false, /* elmbyval: pg_type.typbyval for the array's element type */
             'd') /* elmalign: pg_type.typalign for the array's element type */
         );
-    MemoryContextSwitchTo(oldMemContext);
-    return newState;
+}
+
+PG_FUNCTION_INFO_V1(internal_remove_close_canopies);
+Datum
+internal_remove_close_canopies(PG_FUNCTION_ARGS) {
+    ArrayType      *all_canopies_arr;
+    Datum          *all_canopies;
+    int             num_all_canopies;
+    PGFunction      metric_fn;
+    float8          threshold;
+    
+    Datum          *close_canopies;
+    int             num_close_canopies;
+    bool            addIndexI;
+
+    all_canopies_arr = PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 0));
+    get_svec_array_elms(all_canopies_arr, &all_canopies, &num_all_canopies);
+    metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 1)));
+    threshold = PG_GETARG_FLOAT8(verify_arg_nonnull(fcinfo, 2));
+    
+    close_canopies = (Datum *) palloc(sizeof(Datum) * num_all_canopies);
+    num_close_canopies = 0;
+    for (int i = 0; i < num_all_canopies; i++) {
+        addIndexI = true;
+        for (int j = 0; j < num_close_canopies; j++) {
+            if (DatumGetFloat8(DirectFunctionCall2(
+                metric_fn, all_canopies[i], close_canopies[j]) < threshold)) {
+                
+                addIndexI = false;
+                break;
+            }
+        }
+        if (addIndexI)
+            close_canopies[num_close_canopies++] = all_canopies[i];
+    }
+    
+    PG_RETURN_ARRAYTYPE_P(
+        construct_array(
+            close_canopies, /* elems */
+            num_close_canopies, /* nelems */
+            ARR_ELEMTYPE(all_canopies_arr), /* elmtype */
+            -1, /* elmlen */
+            false, /* elmbyval */
+            'd') /* elmalign */
+        );
 }

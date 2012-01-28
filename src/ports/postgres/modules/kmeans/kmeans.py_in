@@ -443,12 +443,16 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
     sql = '''
         CREATE TEMP TABLE TempArrayOfCentroids AS
         SELECT 
-            {madlib_schema}.kmeans_canopy(coords, {metric}, {t2})
-                AS ccoords
+            {madlib_schema}.internal_remove_close_canopies(
+                {madlib_schema}.kmeans_canopy(coords, {metric}, {t2}),
+                {metric},
+                {t1}
+            ) AS ccoords
         FROM {src_points}
         '''.format(
             madlib_schema = madlib_schema,
             metric = __metric_id(dist_metric),
+            t1 = str(float(t1)),
             t2 = str(float(t2)),
             src_points = src_points
     )
@@ -467,18 +471,30 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
     )
     plpy.execute( sql);
     
-    # Assign points to canopies using T1 (larger)
+    # Assign points to canopies using T1 + T2 (this is a slight deviation from
+    # McCallum et al.)
+    # Note: After combining all canopies from the segments, we removed canopies
+    # that were closer than T1 to some other canopy. With the triangle
+    # inequality, all we can assure afterwards is that no point is farther away
+    # than T1 + T2 from its closest canopy: (In detail: Previously, the closest
+    # canopy was T2 away, and that canopy was -- if it was removed -- at most
+    # T1 away from another canopy.)
     __run_quietly( 'CREATE TEMP TABLE TempPoints0_Canopies (LIKE TempPoints0)')
     sql = '''
         INSERT INTO TempPoints0_Canopies
         SELECT p.pid, p.coords, p.cid,
-            {madlib_schema}.internal_get_array_of_close_canopies(p.coords, c.ccoords, {t1}, {metric})
+            {madlib_schema}.internal_get_array_of_close_canopies(
+                p.coords,
+                c.ccoords,
+                {threshold},
+                {metric}
+            )
         FROM TempPoints0 p, TempArrayOfCentroids c
     '''.format(
         madlib_schema = madlib_schema,
         output_centroids = output_centroids,
         metric = __metric_id(dist_metric),
-        t1 = str(t1)
+        threshold = str(t1 + t2)
     )
     
     plpy.execute( sql);
@@ -922,10 +938,12 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
         plpy.execute( sql);        
 
         # Refresh the Centroids table based on current assignments
+        # Note the coalesce: If there is a centroid which is currently not
+        # the closest centroid to any point, just keep its old position
         __run_quietly( 'DROP TABLE IF EXISTS ' + output_centroids + '_tmp');
         sql = '''
             CREATE TABLE ''' + output_centroids + '''_tmp AS
-            SELECT c.cid AS cid, t.coords AS coords
+            SELECT c.cid AS cid, coalesce(t.coords, c.coords) AS coords
             FROM ''' + output_centroids + ''' c LEFT OUTER JOIN
             (
                 SELECT 
@@ -989,21 +1007,24 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
         sql = '''
         SELECT
             sum(a) AS cost,
-            coalesce( avg( (b-a) / float8larger(a,b) ), 0) AS scoef
-        FROM
-            ( SELECT 
+            coalesce(avg(
+                CASE WHEN float8larger(a,b) = 0 THEN 0
+                     ELSE (b-a) / float8larger(a,b)
+                END), 0) AS scoef
+        FROM (
+            SELECT
                 pid, min(a)::float AS a, min(b)::float AS b
-            FROM
-                ( SELECT 
+            FROM (
+                SELECT
                     pid
                     , CASE WHEN p.cid = c.cid THEN {dist_func}
                       ELSE null END AS a
                     , CASE WHEN p.cid != c.cid THEN {dist_func}
                       ELSE null END AS b
                 FROM {output_points} p, {output_centroids} c
-                ) q1
+            )   q1
             GROUP BY pid
-            ) q2
+        ) q2
         '''.format(
             dist_func = dist_func.replace( '&&&', 'p.coords, c.coords')
             , output_points = output_points
