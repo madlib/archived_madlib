@@ -4,50 +4,89 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_REGRESS_LOGISTIC_H
-#define MADLIB_REGRESS_LOGISTIC_H
-
-#include <modules/common.hpp>
-
-namespace madlib {
-
-namespace modules {
-
-namespace regress {
+// Workaround for Doxygen: A header file that does not declare namespaces is to
+// be ignored if and only if it is processed stand-alone
+#if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
 
 /**
- * @brief Functions for logistic regression, using the conjugate-gradient method
+ * @brief Logistic regression (conjugate-gradient step): Transition function
  */
-struct LogisticRegressionCG {
-    class State;
-    
-    static AnyType transition(AbstractDBInterface &db, AnyType args);
-    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
-    static AnyType final(AbstractDBInterface &db, AnyType args);
-    
-    static AnyType distance(AbstractDBInterface &db, AnyType args);
-    static AnyType result(AbstractDBInterface &db, AnyType args);
-};
+DECLARE_UDF(logregr_cg_step_transition)
 
 /**
- * @brief Functions for logistic regression, using the
- *        iteratively-reweighted-least-squares method
+ * @brief Logistic regression (conjugate-gradient step): State merge function
  */
-struct LogisticRegressionIRLS {
-    class State;
-    
-    static AnyType transition(AbstractDBInterface &db, AnyType args);
-    static AnyType mergeStates(AbstractDBInterface &db, AnyType args);
-    static AnyType final(AbstractDBInterface &db, AnyType args);
-    
-    static AnyType distance(AbstractDBInterface &db, AnyType args);
-    static AnyType result(AbstractDBInterface &db, AnyType args);
-};
+DECLARE_UDF(logregr_cg_step_merge_states)
 
-} // namespace regress
+/**
+ * @brief Logistic regression (conjugate-gradient step): Final function
+ */
+DECLARE_UDF(logregr_cg_step_final)
 
-} // namespace modules
+/**
+ * @brief Logistic regression (conjugate-gradient): Difference in log-likelihood
+ *     between two transition states
+ */
+DECLARE_UDF(internal_logregr_cg_step_distance)
 
-} // namespace regress
+/**
+ * @brief Logistic regression (conjugate-gradient): Convert transition state to 
+ *     result tuple
+ */
+DECLARE_UDF(internal_logregr_cg_result)
 
-#endif
+
+/**
+ * @brief Logistic regression (iteratively-reweighted-lest-squares step):
+ *     Transition function
+ */
+DECLARE_UDF(logregr_irls_step_transition)
+
+/**
+ * @brief Logistic regression (iteratively-reweighted-lest-squares step):
+ *     State merge function
+ */
+DECLARE_UDF(logregr_irls_step_merge_states)
+
+/**
+ * @brief Logistic regression (iteratively-reweighted-lest-squares step):
+ *     Final function
+ */
+DECLARE_UDF(logregr_irls_step_final)
+
+/**
+ * @brief Logistic regression (iteratively-reweighted-lest-squares step):
+ *     Difference in log-likelihood between two transition states
+ */
+DECLARE_UDF(internal_logregr_irls_step_distance)
+
+/**
+ * @brief Logistic regression (iteratively-reweighted-lest-squares step):
+ *     Convert transition state to result tuple
+ */
+DECLARE_UDF(internal_logregr_irls_result)
+
+
+/**
+ * @brief Logistic regression (incremetal-gradient step): Transition function
+ */
+DECLARE_UDF(logregr_igd_step_transition)
+
+/**
+ * @brief Logistic regression (incremetal-gradient step): State merge function
+ */
+DECLARE_UDF(logregr_igd_step_merge_states)
+
+/**
+ * @brief Logistic regression (incremetal-gradient step): Difference in
+ *     log-likelihood between two transition states
+ */
+DECLARE_UDF(internal_logregr_igd_step_distance)
+
+/**
+ * @brief Logistic regression (iteratively-reweighted-lest-squares step):
+ *     Convert transition state to result tuple
+ */
+DECLARE_UDF(internal_logregr_igd_result)
+
+#endif // workaround for Doxygen

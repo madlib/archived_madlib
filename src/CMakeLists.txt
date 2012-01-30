@@ -5,10 +5,13 @@
 # -- Paths and MD5 hashes of third-party downloadable source code (third-party
 #    components needed only by specific ports are downloaded there) ------------
 
-# For in-house testing, we might want to change the base URL to something local
+# For in-house testing, we might want to change the base URLs of code-hosting
+# sites to something local
 # "-DSOURCEFORGE_BASE_URL=http://test.local/projects"
 set(SOURCEFORGE_BASE_URL "http://sourceforge.net/projects" CACHE STRING
     "Base URL for Sourceforge projects. May be overridden for testing purposes.")
+set(BITBUCKET_BASE_URL "https://bitbucket.org" CACHE STRING
+    "Base URL for Bitbucket projects. May be overridden for testing purposes.")
 
 # Boost might not be present on the system (or simply too old). In this case, we
 # download the following version (unless it is already present in
@@ -33,26 +36,26 @@ if(NOT BOOST_TAR_SOURCE)
     set(BOOST_TAR_SOURCE ${BOOST_URL})
 endif (NOT BOOST_TAR_SOURCE)
 
-# We always download Armadillo (unless it is already present in
+# We always download Eigen (unless it is already present in
 # ${CMAKE_CURRENT_BINARY_DIR}/third_party/downloads). It is also possible to
-# specify an alternative path to the Armadillo tarball:
-# -DARMADILLO_TAR_SOURCE=/path/to/armadillo-x.x.x.tar.gz
+# specify an alternative path to the Eigen tarball:
+# -DEIGEN_TAR_SOURCE=/path/to/eigen-x.x.x.tar.gz
 
-set(ARMADILLO_TAR_VERSION "1.2.0")
-set(ARMADILLO_TAR_MD5 856268f9730a3e55db38cbc1b7f8f2bc)
+set(EIGEN_VERSION "3.0.3")
+set(EIGEN_TAR_MD5 695f24be85c4fe957ce6a4dd11161f48)
 
-set(ARMADILLO_TAR "armadillo-${ARMADILLO_TAR_VERSION}.tar.gz")
-set(ARMADILLO_URL "${SOURCEFORGE_BASE_URL}/arma/files/${ARMADILLO_TAR}")
+set(EIGEN_TAR "eigen-${EIGEN_VERSION}.tar.gz")
+set(EIGEN_URL "${BITBUCKET_BASE_URL}/eigen/eigen/get/${EIGEN_VERSION}.tar.gz")
+set(EIGEN_SVN "${BITBUCKET_BASE_URL}/eigen/eigen/tags/${EIGEN_VERSION}")
 
-if(NOT ARMADILLO_TAR_SOURCE)
-    find_file(ARMADILLO_TAR_SOURCE ${ARMADILLO_TAR}
+if(NOT EIGEN_TAR_SOURCE)
+    find_file(EIGEN_TAR_SOURCE ${EIGEN_TAR}
         PATHS ${MAD_THIRD_PARTY}/downloads)
-endif(NOT ARMADILLO_TAR_SOURCE)
+endif(NOT EIGEN_TAR_SOURCE)
 
-if(NOT ARMADILLO_TAR_SOURCE)
-    set(ARMADILLO_TAR_SOURCE ${ARMADILLO_URL})
-endif (NOT ARMADILLO_TAR_SOURCE)
-
+if(NOT EIGEN_TAR_SOURCE)
+    set(EIGEN_TAR_SOURCE ${EIGEN_URL})
+endif (NOT EIGEN_TAR_SOURCE)
 
 # -- Paths for madpack third-party components (those that are used by multiple
 #    ports) -------------------------------------------------------------------- 
@@ -121,67 +124,42 @@ else(Boost_FOUND)
         INSTALL_COMMAND /usr/bin/env echo Ignored: make
         BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_boost
     )
-    list(APPEND ARMADILLO_DEPENDS
-        EP_boost)
-    list(APPEND ARMADILLO_CMAKE_ARGS
-        -DCMAKE_INCLUDE_PATH=${MAD_THIRD_PARTY}/src/EP_boost)
     include_directories(BEFORE ${MAD_THIRD_PARTY}/src/EP_boost)
 endif(Boost_FOUND)
 
 
-# -- Third-party dependencies: Download Armadillo. It provides an umbrella
-#    library for LAPACK, BLAS, and ATLAS ---------------------------------------
+# -- Third-party dependencies: Download the C++ linear-algebra library Eigen ---
 
-join_strings(_CMAKE_PREFIX_PATH
-    ${EXTERNALPROJECT_LIST_SEPARATOR} "${CMAKE_PREFIX_PATH}")
-
-# For now, we want the library in the ${MAD_THIRD_PARTY}/lib directory
-# (and not ${MAD_THIRD_PARTY}/lib64), even if building on a 64-bit architecture
-# Note: INSTALL_LIB_DIR was previously LIB_INSTALL_DIR in Armadillo. We might
-# want to anticipate further changes...
-list(APPEND ARMADILLO_CMAKE_ARGS
-    -DCMAKE_BUILD_TYPE=Release
-    "-DCMAKE_PREFIX_PATH=${_CMAKE_PREFIX_PATH}"
-    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-    "-DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}"
-    -DINSTALL_LIB_DIR=lib
-)
-
-# On Solaris, LAPACK and BLAS are part of the Sun Performance library
-# BLAS_NAMES and LAPACK_NAMES are variables used by the Armadillo
-# build script
-if(SOLARIS)
-    list(APPEND ARMADILLO_CMAKE_ARGS
-        -DBLAS_NAMES=sunperf
-        -DLAPACK_NAMES=sunperf
+string(REGEX MATCH "^[a-zA-Z]+" _EIGEN_PROTOCOL ${EIGEN_TAR_SOURCE})
+if(_EIGEN_PROTOCOL STREQUAL "https")
+    # FIXME: This is somewhat ugly
+    # Unfortunately, CMake does not come with SSL support for file downloads.
+    # See: http://www.cmake.org/pipermail/cmake/2009-November/thread.html#33589
+    # Bitbucket on the other hand only provides SSL downloads
+    # We therefore assume that a "https" protocol refers to a SVN repository
+    set(_EIGEN_SOURCE
+        SVN_REPOSITORY ${EIGEN_SVN} UPDATE_COMMAND /usr/bin/env echo Ignored: svn update
     )
-endif(SOLARIS)
+else(_EIGEN_PROTOCOL STREQUAL "https")
+    set(_EIGEN_SOURCE
+        URL ${EIGEN_TAR_SOURCE} URL_MD5 ${EIGEN_TAR_MD5}
+    )
+endif(_EIGEN_PROTOCOL STREQUAL "https")
 
-ExternalProject_Add(EP_armadillo
-    DEPENDS ${ARMADILLO_DEPENDS}
+# FIXME: Eigen is a third-party source that is patched in-place. Other
+# third-party headers are patched in the patch directory.
+ExternalProject_Add(EP_eigen
     PREFIX ${MAD_THIRD_PARTY}
-    LIST_SEPARATOR ${EXTERNALPROJECT_LIST_SEPARATOR}
     DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
-    URL ${ARMADILLO_TAR_SOURCE}
-    URL_MD5 ${ARMADILLO_TAR_MD5}
-    CMAKE_ARGS ${ARMADILLO_CMAKE_ARGS}
-    BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_armadillo
-)
-add_library(armadillo SHARED IMPORTED)
-
-# The Armadillo CMake script uses the default settings for 
-# a shared library. We can therefore know what the installed library
-# path will be.
-set_target_properties(armadillo PROPERTIES
-    IMPORTED_LOCATION
-        "${CMAKE_CURRENT_BINARY_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}armadillo${CMAKE_SHARED_LIBRARY_SUFFIX}"
+    ${_EIGEN_SOURCE}
+    PATCH_COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/Eigen.sh"
+    CMAKE_COMMAND /usr/bin/env echo Ignored: cmake
+    BUILD_COMMAND /usr/bin/env echo Ignored: make
+    INSTALL_COMMAND /usr/bin/env echo Ignored: make
+    BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_eigen
 )
 
-set(ARMADILLO_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/include)
-
-# We treat Armadillo as a system header. This means, e.g., that warnings are not
-# being shown (which is what we want).
-include_directories(SYSTEM ${ARMADILLO_INCLUDE_DIRS})
+include_directories(${MAD_THIRD_PARTY}/src/EP_eigen)
 
 
 # -- Macros to be used by ports ------------------------------------------------
@@ -199,7 +177,7 @@ endmacro(osx_archs)
 # Add Python files to be preprocessed with m4
 macro(add_python_files OUT_PYTHON_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
     set(IN_M4_ARGUMENTS ${ARGN})
-    
+        
     get_filename_component(SOURCE_DIR_ABS "${IN_SOURCE_DIR}" ABSOLUTE)
     get_filename_component(TARGET_DIR_ABS "${IN_TARGET_DIR}" ABSOLUTE)
     file(GLOB_RECURSE PYTHON_FILES
@@ -249,40 +227,24 @@ macro(add_sql_files OUT_SQL_TARGET_FILES IN_SOURCE_DIR IN_TARGET_DIR)
 endmacro(add_sql_files)
 
 # Add a connector library for a specific DBMS port
-macro(add_madlib_connector_library IN_DBMS IN_OSX_BUNDLE_LOADER OUT_TARGET_NAME)
+macro(add_madlib_connector_library IN_TARGET_NAME IN_LIB_DIR IN_LIB_LOADER)
     set(IN_LIBRARY_SOURCES ${ARGN})
 
-    set(${OUT_TARGET_NAME} "madlib_${IN_DBMS}")
     add_library(
-        ${${OUT_TARGET_NAME}}
+        ${IN_TARGET_NAME}
         MODULE
         ${IN_LIBRARY_SOURCES}
     )
-    add_dependencies(${${OUT_TARGET_NAME}} madlib)
-    set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY lib
+    add_dependencies(${IN_TARGET_NAME} EP_eigen)
+    set_target_properties(${IN_TARGET_NAME} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${IN_LIB_DIR}"
+        OUTPUT_NAME "madlib"
         BUILD_WITH_INSTALL_RPATH YES
     )
     
     if(APPLE)
-        osx_archs("${IN_OSX_BUNDLE_LOADER}" _MAD_ARCHITECTURES)
-        message(STATUS "Will build MADlib ${IN_DBMS} connector for same "
-            "architectures as detected in ${IN_OSX_BUNDLE_LOADER}, which has "
-            "architectures ${_MAD_ARCHITECTURES}")
-        set_target_properties(${${OUT_TARGET_NAME}} PROPERTIES
-            OSX_ARCHITECTURES "${_MAD_ARCHITECTURES}"
-            LINK_FLAGS "-bundle_loader ${IN_OSX_BUNDLE_LOADER} -Wl,-rpath -Wl,@loader_path/../../../lib")
-
-        # The MADlib connector library for port xyz resides in
-        # $MADLIB_ROOT/ports/xyz/lib. The MADlib core library is in
-        # $MADLIB_ROOT/lib, hence we set the RPATH to "@loader_path/../../../lib"
-        set_target_properties(${${OUT_TARGET_NAME}}
-            PROPERTIES INSTALL_RPATH "@loader_path/../../../lib")
-    else(APPLE)
-        # See comment above. On UNIX/Linux, \$ORIGIN has essentially the same
-        # menaing as @loader_path on Mac OS X
-        set_target_properties(${${OUT_TARGET_NAME}}
-            PROPERTIES INSTALL_RPATH "\$ORIGIN/../../../lib")
+        set_target_properties(${IN_TARGET_NAME} PROPERTIES
+            LINK_FLAGS "-bundle_loader \"${IN_LIB_LOADER}\"")
     endif(APPLE)
 endmacro(add_madlib_connector_library)
 
@@ -309,106 +271,44 @@ list(APPEND MAD_SOURCES
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 
-# -- Build and install MADlib core library -------------------------------------
+if(CMAKE_COMPILER_IS_GNUCXX)
+    if(GNUCXX_VERSION VERSION_GREATER 4.4 OR GNUCXX_VERSION VERSION_EQUAL 4.4)
+        if(_AUTOINCLUDE_LIBSTDCXX)
+            # FIXME: The following only takes care of the symbolic link
+            # Need to implement copying of files containing version numbers in
+            # file name
+            
+            # Both CentOS/RH 5 ship with old versions of libstdc++
+            # Starging with gcc 4.4, C++ code may therefore not run any more on
+            # vanilla installations of CentOS/RH 5. We therefore include libstdc++
+            # in this case and install it in $MADLIB_ROOT/lib
+            set(_LIBSTDCXX_FILENAME
+                "${CMAKE_SHARED_LIBRARY_PREFIX}stdc++${CMAKE_SHARED_LIBRARY_SUFFIX}")
+            execute_process(
+                COMMAND ${CMAKE_C_COMPILER}
+                    "-print-file-name=${_LIBSTDCXX_FILENAME}"
+                OUTPUT_VARIABLE _LIBSTDCXX_PATH
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+            add_custom_command(
+                OUTPUT
+                    "${CMAKE_CURRENT_BINARY_DIR}/lib/${_LIBSTDCXX_FILENAME}"
+                COMMAND "${CMAKE_COMMAND}" -E copy ${_LIBSTDCXX_PATH}
+                    "${CMAKE_CURRENT_BINARY_DIR}/lib/${_LIBSTDCXX_FILENAME}"
+                COMMENT "Copying libstdc++ to lib directory."
+                )
+            add_custom_target(copyLibStdCXX ALL DEPENDS
+                "${CMAKE_CURRENT_BINARY_DIR}/lib/${_LIBSTDCXX_FILENAME}")
+        endif(_AUTOINCLUDE_LIBSTDCXX)
+        
+        # Also install it
+        install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib
+            DESTINATION .
+            COMPONENT core
+            FILES_MATCHING REGEX "^.*/[^/]*stdc\\+\\+[^/]*\$"
+        )
+    endif(GNUCXX_VERSION VERSION_GREATER 4.4 OR GNUCXX_VERSION VERSION_EQUAL 4.4)
+endif(CMAKE_COMPILER_IS_GNUCXX)
 
-# Create library
-add_library(
-    madlib
-    SHARED
-    ${MAD_SOURCES}
-)
-add_dependencies(madlib EP_armadillo)
-
-# INSTALL_NAME_DIR is a Mac OS X only property
-set_target_properties(madlib PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY lib
-    INSTALL_NAME_DIR "@rpath")
-
-if(APPLE)
-    find_library(ACCELERATE_FRAMEWORK Accelerate)
-    osx_archs(${ACCELERATE_FRAMEWORK}/Accelerate ACCELERATE_ARCHS)
-    message(STATUS "Will build madlib for same architecture as detected in "
-        "${ACCELERATE_FRAMEWORK}, which has architectures "
-        "${ACCELERATE_ARCHS}")
-    # FIXME: __ZN6madlib4dbal16defaultAllocatorEv is the mangled name of
-    # madlib::dbal::defaultAllocator().
-    # A better way would be do find out the mangled name at compile time, even
-    # better yet this option should not be necessary.
-    set_target_properties(madlib PROPERTIES
-        OSX_ARCHITECTURES "${ACCELERATE_ARCHS}"
-        LINK_FLAGS "-Wl,-U,__ZN6madlib4dbal16defaultAllocatorEv")
-    
-    # On the Mac, the Accelerate framework is already an umbrella for everything
-    # we need for Armadillo
-    target_link_libraries(madlib "-framework Accelerate")
-else(APPLE)
-    # On other platforms with dreict binding, we dynamically link to the
-    # armadillo library
-    if(NOT LINUX)
-        # When running on Linux / systems with a flat namespace, there are DBMSs
-        # that need to load Armadillo with dlopen, where RTLD_DEEPBIND is ORed
-        # in for the second argument (to ensure that all LAPACK/BLAS symbols are
-        # resolved properly and do not interference with symbols of the same
-        # name in the main executable). Hence, we cannot declare librarmadillo
-        # a dependency of the core library.
-        target_link_libraries(madlib armadillo)
-    endif(NOT LINUX)
-    
-    install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib
-        DESTINATION .
-        COMPONENT core
-        FILES_MATCHING REGEX "^.*/[^/]*armadillo[^/]*\$"
-    )
-    
-    # the RPATH to be used when installing. This is set to "$ORIGIN" because
-    # the armadillo library will reside in the same directory as the MADlib
-    # library
-    set_target_properties(madlib PROPERTIES
-        INSTALL_RPATH "\$ORIGIN")
-endif(APPLE)
-
-install(TARGETS madlib
-    LIBRARY DESTINATION lib
-    COMPONENT core
-)
-
-
-# -- On platforms with a flat namespace for symbols in executables, patch
-#    Armadillo so that it calls madlib_{LAPACK/BLAS function} instead of
-#    {LAPACK/BLAS function}. This is necessary because some DBMSs contain
-#    LAPACK/BLAS symbols, which we do not want to use. Instead, the connector
-#    libraries will define madlib_{LAPACK/BLAS function} to look up
-#    {LAPACK/BLAS function} dynamically with dlsym() ---------------------------
-
-if(LINUX)
-    file(MAKE_DIRECTORY "${MAD_PATCH_DIR}")
-    add_custom_command(
-        OUTPUT
-            "${MAD_PATCH_DIR}/armadillo"
-            "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
-        COMMAND ${CMAKE_COMMAND} -E copy
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo"
-            "${MAD_PATCH_DIR}/armadillo"
-        COMMAND ${CMAKE_COMMAND} -E copy
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo_bits/compiler_setup.hpp"
-            "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/Armadillo.sh"
-        DEPENDS
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo"
-            "${MAD_THIRD_PARTY}/src/EP_armadillo/include/armadillo_bits/compiler_setup.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/patch/Armadillo.sh"
-        WORKING_DIRECTORY "${MAD_PATCH_DIR}"
-        COMMENT "Patching armadillo_bits/compiler_setup.hpp: Route LAPACK/BLAS calls through MADlib connector."
-    )
-    list(APPEND MADLIB_TARGET_PATCH_FILES
-        "${MAD_PATCH_DIR}/armadillo_bits/compiler_setup.hpp"
-    )
-    add_custom_target(madlibPatches ALL DEPENDS ${MADLIB_TARGET_PATCH_FILES})
-    include_directories(BEFORE "${MAD_PATCH_DIR}")
-
-    add_dependencies(madlibPatches EP_armadillo)
-    add_dependencies(madlib madlibPatches)
-endif(LINUX)
 
 # -- Preprocess/copy all Python/SQL files --------------------------------------
 
@@ -432,9 +332,14 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
     REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
 )
 
+# -- Use all necessary patches directory ---------------------------------------
+
+include_directories(BEFORE "${MAD_PATCH_DIR}")
+
 
 # -- Add subdirectories --------------------------------------------------------
 
+add_subdirectory(patch)
 add_subdirectory(bin)
 add_subdirectory(config)
 add_subdirectory(madpack)
