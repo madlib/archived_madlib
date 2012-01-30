@@ -1,5 +1,7 @@
 #include <postgres.h>
+#include <nodes/memnodes.h>
 #include <utils/builtins.h>
+#include <utils/memutils.h>
 #include "../../../svec/src/pg_gp/sparse_vector.h"
 #include "../../../svec/src/pg_gp/operators.h"
 
@@ -58,6 +60,48 @@ get_metric_fn(KMeansMetric inMetric)
     return metrics[inMetric - 1];
 }
 
+static
+inline
+double
+compute_metric(PGFunction inMetricFn, MemoryContext inMemContext, Datum inVec1,
+    Datum inVec2) {
+    
+    float8          distance;
+    MemoryContext   oldContext;
+    
+    oldContext = MemoryContextSwitchTo(inMemContext);
+    
+    distance = DatumGetFloat8(DirectFunctionCall2(inMetricFn, inVec1, inVec2));
+    
+#ifdef GP_VERSION_NUM
+    /*
+     * Once the direct function calls have leaked enough memory, let's do some
+     * garbage collection...
+     * The 50k bound here is arbitrary, and motivated by ResetExprContext()
+     * in execUtils.c
+     */
+    if(inMemContext->allBytesAlloc - inMemContext->allBytesFreed > 50000)
+        MemoryContextReset(inMemContext);
+#else
+    /* PostgreSQL does not have the allBytesAlloc and allBytesFreed fields */
+    MemoryContextReset(inMemContext);
+#endif
+    
+    MemoryContextSwitchTo(oldContext);    
+    return distance;
+}
+
+static
+MemoryContext
+setup_mem_context_for_functional_calls() {
+    MemoryContext ctxt = AllocSetContextCreate(CurrentMemoryContext,
+        "kMeansMetricFnCalls",
+        ALLOCSET_DEFAULT_MINSIZE,
+        ALLOCSET_DEFAULT_INITSIZE,
+        ALLOCSET_DEFAULT_MAXSIZE);
+    return ctxt;
+}
+
 PG_FUNCTION_INFO_V1(internal_get_array_of_close_canopies);
 Datum
 internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
@@ -72,6 +116,7 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     int4           *close_canopies;
     int             num_close_canopies;
     size_t          bytes;
+    MemoryContext   mem_context_for_function_calls;
     
     svec = PG_GETARG_SVECTYPE_P(verify_arg_nonnull(fcinfo, 0));
     get_svec_array_elms(PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 1)),
@@ -79,11 +124,12 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     threshold = PG_GETARG_FLOAT8(verify_arg_nonnull(fcinfo, 2));
     metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 3)));
     
+    mem_context_for_function_calls = setup_mem_context_for_functional_calls();
     close_canopies = (int4 *) palloc(sizeof(int4) * num_all_canopies);
     num_close_canopies = 0;
     for (int i = 0; i < num_all_canopies; i++) {
-        if (DatumGetFloat8(DirectFunctionCall2(
-            metric_fn, PointerGetDatum(svec), all_canopies[i])) < threshold)
+        if (compute_metric(metric_fn, mem_context_for_function_calls,
+                PointerGetDatum(svec), all_canopies[i]) < threshold)
             close_canopies[num_close_canopies++] = i + 1 /* lower bound */;
     }
 
@@ -122,6 +168,7 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
     float8          distance, min_distance = INFINITY;
     int             closest_centroid = 0;
     int             cid;
+    MemoryContext   mem_context_for_function_calls;
 
     svec = PG_GETARG_SVECTYPE_P(verify_arg_nonnull(fcinfo, 0));
     if (PG_ARGISNULL(1)) {
@@ -142,10 +189,11 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
         num_centroids = ARR_DIMS(canopy_ids_arr)[0];
     metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 3)));
 
+    mem_context_for_function_calls = setup_mem_context_for_functional_calls();
     for (int i = 0; i < num_centroids; i++) {
         cid = indirect ? canopy_ids[i] - ARR_LBOUND(canopy_ids_arr)[0] : i;
-        distance = DatumGetFloat8(DirectFunctionCall2(
-            metric_fn, PointerGetDatum(svec), centroids[cid]));
+        distance = compute_metric(metric_fn, mem_context_for_function_calls,
+            PointerGetDatum(svec), centroids[cid]);
         if (distance < min_distance) {
             closest_centroid = cid;
             min_distance = distance;
@@ -164,6 +212,8 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
     SvecType       *point;
     PGFunction      metric_fn;
     float8          threshold;
+
+    MemoryContext   mem_context_for_function_calls;
     
     canopies_arr = PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 0));
     get_svec_array_elms(canopies_arr, &canopies, &num_canopies);
@@ -171,9 +221,10 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
     metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 2)));
     threshold = PG_GETARG_FLOAT8(verify_arg_nonnull(fcinfo, 3));
     
+    mem_context_for_function_calls = setup_mem_context_for_functional_calls();
     for (int i = 0; i < num_canopies; i++) {
-        if (DatumGetFloat8(DirectFunctionCall2(
-            metric_fn, PointerGetDatum(point), canopies[i]) < threshold))
+        if (compute_metric(metric_fn, mem_context_for_function_calls,
+            PointerGetDatum(point), canopies[i]) < threshold)
             PG_RETURN_ARRAYTYPE_P(canopies_arr);
     }
     
@@ -206,19 +257,21 @@ internal_remove_close_canopies(PG_FUNCTION_ARGS) {
     Datum          *close_canopies;
     int             num_close_canopies;
     bool            addIndexI;
+    MemoryContext   mem_context_for_function_calls;
 
     all_canopies_arr = PG_GETARG_ARRAYTYPE_P(verify_arg_nonnull(fcinfo, 0));
     get_svec_array_elms(all_canopies_arr, &all_canopies, &num_all_canopies);
     metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 1)));
     threshold = PG_GETARG_FLOAT8(verify_arg_nonnull(fcinfo, 2));
     
+    mem_context_for_function_calls = setup_mem_context_for_functional_calls();
     close_canopies = (Datum *) palloc(sizeof(Datum) * num_all_canopies);
     num_close_canopies = 0;
     for (int i = 0; i < num_all_canopies; i++) {
         addIndexI = true;
         for (int j = 0; j < num_close_canopies; j++) {
-            if (DatumGetFloat8(DirectFunctionCall2(
-                metric_fn, all_canopies[i], close_canopies[j]) < threshold)) {
+            if (compute_metric(metric_fn, mem_context_for_function_calls,
+                all_canopies[i], close_canopies[j]) < threshold) {
                 
                 addIndexI = false;
                 break;
