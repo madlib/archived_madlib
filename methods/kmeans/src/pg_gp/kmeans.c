@@ -132,6 +132,7 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
                 PointerGetDatum(svec), all_canopies[i]) < threshold)
             close_canopies[num_close_canopies++] = i + 1 /* lower bound */;
     }
+    MemoryContextDelete(mem_context_for_function_calls);
 
     /* If we cannot find any close canopy, return NULL. Note that the result
      * we return will be passed to internal_kmeans_closest_centroid() and if the
@@ -199,6 +200,7 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
             min_distance = distance;
         }
     }
+    MemoryContextDelete(mem_context_for_function_calls);
     
     PG_RETURN_INT32(closest_centroid + ARR_LBOUND(centroids_arr)[0]);
 }
@@ -227,6 +229,7 @@ internal_kmeans_canopy_transition(PG_FUNCTION_ARGS) {
             PointerGetDatum(point), canopies[i]) < threshold)
             PG_RETURN_ARRAYTYPE_P(canopies_arr);
     }
+    MemoryContextDelete(mem_context_for_function_calls);
     
     int idx = (ARR_NDIM(canopies_arr) == 0)
         ? 1
@@ -280,6 +283,7 @@ internal_remove_close_canopies(PG_FUNCTION_ARGS) {
         if (addIndexI)
             close_canopies[num_close_canopies++] = all_canopies[i];
     }
+    MemoryContextDelete(mem_context_for_function_calls);
     
     PG_RETURN_ARRAYTYPE_P(
         construct_array(
