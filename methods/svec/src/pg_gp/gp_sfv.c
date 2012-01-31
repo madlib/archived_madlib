@@ -118,6 +118,7 @@ Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 	SvecType *returnval;
 	char **features, **document;
 	int num_features, num_words, result;
+	ArrayType * arr0, * arr1;
 
         if (PG_ARGISNULL(0)) PG_RETURN_NULL();
 
@@ -126,9 +127,21 @@ Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 		gp_extract_feature_histogram_errout(
 	          "gp_extract_feature_histogram called with wrong number of arguments");
 
+	arr0 = PG_GETARG_ARRAYTYPE_P(0);
+	arr1 = PG_GETARG_ARRAYTYPE_P(1);
+
+	/* Error if dictionary is empty or contains a null */
+	if (ARR_HASNULL(arr0))
+		gp_extract_feature_histogram_errout(
+		  "dictionary argument contains a null entry");
+
+	if (ARR_NDIM(arr0) == 0)
+		gp_extract_feature_histogram_errout(
+		  "dictionary argument is empty");
+
 	/* Retrieve the C text array equivalents from the PG text[][] inputs */
-	features = get_text_array_contents(PG_GETARG_ARRAYTYPE_P(0),&num_features);
-	document = get_text_array_contents(PG_GETARG_ARRAYTYPE_P(1),&num_words);
+	features = get_text_array_contents(arr0, &num_features);
+	document = get_text_array_contents(arr1, &num_words);
 	
 	// Check if dictionary is sorted
 	for (int i=0; i<num_features-1; i++) {
