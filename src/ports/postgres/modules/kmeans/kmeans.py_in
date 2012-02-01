@@ -310,18 +310,18 @@ def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
         # 3) Choose next point at random with probability proportional to D(x)^2
         plpy.execute( '''
             INSERT INTO {centroids} (cid, coords) 
-            SELECT {i}, coords
-            FROM
-                (
-                SELECT 
-                    p.pid
-                    , p.coords 
-                    , p.min_distance / total.dist_sqrd as weight
-                FROM 
-                    {temp_target} p, 
-                    (SELECT sum(min_distance^2) as dist_sqrd FROM {temp_target}) total
-                ) q 
-            ORDER BY weight * random() DESC
+            SELECT {i}, coords FROM (
+                SELECT
+                    pid, coords
+                    , sum(min_distance^2) OVER (ORDER BY pid) AS cum_weight
+                    , r
+                FROM
+                    {temp_target} p,
+                    (SELECT sum(min_distance^2) * random() AS r FROM {temp_target}) subquery
+            ) q
+            WHERE
+                  r <= cum_weight
+            ORDER BY pid
             LIMIT 1
             '''.format(
                 centroids = output_centroids
