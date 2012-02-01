@@ -117,6 +117,16 @@ def __sample_bound( sample_size, population_size):
         
     return (sample_size + 14 + sqrt(196 + 28*sample_size)) / population_size;
 
+
+def __metric_id(dist_metric):
+    return {
+        'l1norm'  : 1,
+        'l2norm'  : 2,
+        'cosine'  : 3,
+        'tanimoto': 4
+    }[dist_metric]
+    
+
 # ----------------------------------------
 # Centroid initialization using random()
 # ----------------------------------------
@@ -343,13 +353,13 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
            (e.g. 'cosine')  
     @param dist_func Name of the distance/similarity function 
            (e.g. 'cosine_distance')
-    @param t1 Smaller threshold for canopy clustering 
-    @param t2 Larger threshold for canopy clustering 
+    @param t1 Larger threshold for canopy clustering 
+    @param t2 Smaller threshold for canopy clustering 
     @param sample_pct Percent of the input data points to use for centroid 
            seeding
     """
     
-    # Find thresholds T1 and T2 (T1 < T2)
+    # Find thresholds T1 and T2 (T1 > T2)
     if t1 is None or t2 is None:
     
         # Allow the user to specify sample size 
@@ -386,12 +396,12 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
         plpy.execute( sql);
 
         # Calculate the cross distances >> and derive T1 and T2 
-        # T1 >> is the max value from 1st quantile (10 buckets)
-        # T2 >> is the min value from 10th quantile (10 buckets)
+        # T1 >> is the min value from 10th quantile (10 buckets)
+        # T2 >> is the max value from 1st quantile (10 buckets)
         sql = '''
             SELECT 
-                max( CASE WHEN ntile = 1 THEN dist ELSE null END) as t1 
-                , min( CASE WHEN ntile = 10 THEN dist ELSE null END) as t2 
+                min( CASE WHEN ntile = 10 THEN dist ELSE null END) as t1 
+                , max( CASE WHEN ntile = 1 THEN dist ELSE null END) as t2 
             FROM 
             (
                 SELECT ntile(10) OVER( ORDER BY dist) as ntile, dist FROM 
@@ -414,58 +424,78 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
     # Check canopy thresholds        
     if t1 is None: 
         if rv[0]['t1'] is None:
-            plpy.error( 'not enough data to generate canopy T1 threshold (T1<T2)')
+            plpy.error( 'not enough data to generate canopy T1 threshold (T1>T2)')
         else:
             t1 = rv[0]['t1'];
     elif t1 <= 0:
-        plpy.error( 'canopy threshold T1 can not be zero or negative')        
+        plpy.error( 'canopy threshold T1 cannot be zero or negative')        
         
     if t2 is None: 
         if rv[0]['t2'] is None:
-            plpy.error( 'not enough data to generate canopy T2 threshold (T1<T2)')
+            plpy.error( 'not enough data to generate canopy T2 threshold (T1>T2)')
         else:
             t2 = rv[0]['t2'];
     elif t2 <= 0:
-        plpy.error( 'canopy threshold T2 can not be zero or negative')        
-        
-    # Generate initial centroids using T1 (smaller)
+        plpy.error( 'canopy threshold T2 cannot be zero or negative')
+    
+    # Generate initial centroids using T2 (smaller)
+    __run_quietly( 'DROP TABLE IF EXISTS TempArrayOfCentroids');
+    sql = '''
+        CREATE TEMP TABLE TempArrayOfCentroids AS
+        SELECT 
+            {madlib_schema}.internal_remove_close_canopies(
+                {madlib_schema}.kmeans_canopy(coords, {metric}, {t2}),
+                {metric},
+                {t2}
+            ) AS ccoords
+        FROM {src_points}
+        '''.format(
+            madlib_schema = madlib_schema,
+            metric = __metric_id(dist_metric),
+            t2 = str(float(t2)),
+            src_points = src_points
+    )
+    __run_quietly( sql);
+    
+    # unpivot centroids
     sql = '''
         INSERT INTO {output_centroids} (cid, coords)
-        SELECT row_number() OVER () AS cid, coords 
+        SELECT
+            generate_series(array_lower(ccoords, 1), array_upper(ccoords, 1)),
+            unnest(ccoords)
         FROM
-              ( SELECT unnest(canopies) as coords
-                FROM 
-                    ( SELECT 
-                        {madlib_schema}.kmeans_canopy( 
-                            coords, '{dist_metric}', {t1}
-                        ) as canopies
-                      FROM {src_points}
-                     ) q1
-               ) q2
-        '''.format(
+            TempArrayOfCentroids
+    '''.format(
             output_centroids = output_centroids
-            , madlib_schema = madlib_schema
-            , dist_metric = dist_metric
-            , t1 = str(float(t1))
-            , src_points = src_points
-        );
+    )
     plpy.execute( sql);
     
-    # Assign points to canopies using T2 (larger)
+    # Assign points to canopies using max(T1, 2 * T2) (this is a slight
+    # deviation from McCallum et al.)
+    # Note: After combining all canopies from the segments, we removed canopies
+    # that were closer than T2 to some other canopy. With the triangle
+    # inequality, all we can assure afterwards is that no point is farther away
+    # than 2 * T2 from its closest canopy: (In detail: Previously, the closest
+    # canopy was T2 away, and that canopy was -- if it was removed -- at most
+    # T2 away from another canopy.)
     __run_quietly( 'CREATE TEMP TABLE TempPoints0_Canopies (LIKE TempPoints0)')
     sql = '''
         INSERT INTO TempPoints0_Canopies
-        SELECT p.pid, p.coords, p.cid, 
-            m4_ifdef(`__HAS_ORDERED_AGGREGATES__',,`{madlib_schema}.')array_agg(c.cid)
-        FROM TempPoints0 p, {output_centroids} c 
-        WHERE {dist_func} < {t2}
-        GROUP BY p.pid, p.coords, p.cid
+        SELECT p.pid, p.coords, p.cid,
+            {madlib_schema}.internal_get_array_of_close_canopies(
+                p.coords,
+                c.ccoords,
+                {threshold},
+                {metric}
+            )
+        FROM TempPoints0 p, TempArrayOfCentroids c
     '''.format(
-        output_centroids = output_centroids
-        , dist_func = dist_func.replace( '&&&', 'p.coords, c.coords')
-        , t2 = str(t2)
-        , madlib_schema = madlib_schema
-    );            
+        madlib_schema = madlib_schema,
+        output_centroids = output_centroids,
+        metric = __metric_id(dist_metric),
+        threshold = str(max(t1, 2 * t2))
+    )
+    
     plpy.execute( sql);
     plpy.execute( 'DROP TABLE IF EXISTS TempPoints0');
     plpy.execute( 'ALTER TABLE TempPoints0_Canopies RENAME TO TempPoints0');
@@ -500,8 +530,8 @@ def kmeans( madlib_schema
     @param init_sample_pct Percent of the input data points to use for kmeans++ 
            centroid seeding (for kmeans++ only)
     @param k Number of initial centroids
-    @param t1 Smaller threshold for canopy clustering 
-    @param t2 Larger threshold for canopy clustering     
+    @param t1 Larger threshold for canopy clustering 
+    @param t2 Smaller threshold for canopy clustering     
     @param dist_metric Type of the distance/similarity metric (e.g. 'cosine')  
     @param max_iter Maximum number of iterations to execute
     @param conv_threshold Convergence threshold, expressed as percent of points 
@@ -557,7 +587,7 @@ def kmeans( madlib_schema
     try:
         plpy.execute( "SELECT * FROM " + src_relation + " LIMIT 1")
     except:
-        plpy.error( 'source relation "%s" does not exist or can not be accessed' % src_relation )
+        plpy.error( 'source relation "%s" does not exist or cannot be accessed' % src_relation )
     info( ' * src_relation = %s' % src_relation)
 
     # Validate: src_col_data
@@ -659,12 +689,12 @@ def kmeans( madlib_schema
     # Cosine
     elif dist_metric == 'cosine':
         dist_aggr = '%s.mean(%s.normalize(&&&))' % (madlib_schema, madlib_schema);
-        dist_func = 'acos(%s.cosine_distance(&&&))' % madlib_schema;
+        dist_func = '%s.angle(&&&)' % madlib_schema;
         info( ' * dist_metric = %s' % (dist_metric))
     # Tanimoto
     elif dist_metric == 'tanimoto':
         dist_aggr = '%s.mean(%s.normalize(&&&))' % (madlib_schema, madlib_schema);
-        dist_func = 'acos(%s.tanimoto_distance(&&&))' % madlib_schema;
+        dist_func = '%s.tanimoto_distance(&&&)' % madlib_schema;
         info( ' * dist_metric = %s' % (dist_metric))
     # Other 
     else: 
@@ -865,11 +895,9 @@ def kmeans( madlib_schema
             CREATE TEMP TABLE TempArrayOfCentroids AS
             SELECT
 m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
-                array_agg(cid ORDER BY cid) as cids,
                 array_agg(coords ORDER BY cid) as ccoords
             FROM {output_centroids}
 ', `
-                array(SELECT cid FROM {output_centroids} ORDER BY cid LIMIT ALL) as cids,
                 array(SELECT coords FROM {output_centroids} ORDER BY cid LIMIT ALL) as ccoords
 ')                
             '''.format(
@@ -888,14 +916,14 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
             canopies = 'p.canopies';
         else:
             # Compare with all centroids
-            canopies = 'arr.cids';
-            
+            canopies = 'NULL';
+        
         sql = '''
             INSERT INTO TempPoints{i}    
             SELECT
                 p.pid 
                 , p.coords
-                , {madlib_schema}.internal_kmeans_closest_centroid( p.coords, {canopies}, arr.ccoords, '{dist_metric}') 
+                , {madlib_schema}.internal_kmeans_closest_centroid( p.coords, {canopies}, arr.ccoords, {metric})
                 , p.canopies
             FROM 
                 TempPoints{previous_i} p CROSS JOIN TempArrayOfCentroids arr
@@ -903,16 +931,18 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
             i = str(i)
             , madlib_schema = madlib_schema
             , canopies = canopies
-            , dist_metric = dist_metric
+            , metric = __metric_id(dist_metric)
             , previous_i = str(i-1)
         );
         plpy.execute( sql);        
 
         # Refresh the Centroids table based on current assignments
+        # Note the coalesce: If there is a centroid which is currently not
+        # the closest centroid to any point, just keep its old position
         __run_quietly( 'DROP TABLE IF EXISTS ' + output_centroids + '_tmp');
         sql = '''
             CREATE TABLE ''' + output_centroids + '''_tmp AS
-            SELECT c.cid AS cid, t.coords AS coords
+            SELECT c.cid AS cid, coalesce(t.coords, c.coords) AS coords
             FROM ''' + output_centroids + ''' c LEFT OUTER JOIN
             (
                 SELECT 
@@ -922,6 +952,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
                 GROUP BY cid
             ) AS t ON c.cid = t.cid''';
         __run_quietly( sql);        
+        
         plpy.execute( 'TRUNCATE TABLE ' + output_centroids );
         plpy.execute( 'INSERT INTO ' + output_centroids + ' SELECT * FROM ' \
                         + output_centroids + '_tmp');
@@ -975,21 +1006,24 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
         sql = '''
         SELECT
             sum(a) AS cost,
-            coalesce( avg( (b-a) / float8larger(a,b) ), 0) AS scoef
-        FROM
-            ( SELECT 
+            coalesce(avg(
+                CASE WHEN float8larger(a,b) = 0 THEN 0
+                     ELSE (b-a) / float8larger(a,b)
+                END), 0) AS scoef
+        FROM (
+            SELECT
                 pid, min(a)::float AS a, min(b)::float AS b
-            FROM
-                ( SELECT 
+            FROM (
+                SELECT
                     pid
                     , CASE WHEN p.cid = c.cid THEN {dist_func}
                       ELSE null END AS a
                     , CASE WHEN p.cid != c.cid THEN {dist_func}
                       ELSE null END AS b
                 FROM {output_points} p, {output_centroids} c
-                ) q1
+            )   q1
             GROUP BY pid
-            ) q2
+        ) q2
         '''.format(
             dist_func = dist_func.replace( '&&&', 'p.coords, c.coords')
             , output_points = output_points

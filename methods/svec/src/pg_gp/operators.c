@@ -719,11 +719,11 @@ Datum svec_svec_l1norm(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(accum);
 }
 
-PG_FUNCTION_INFO_V1( svec_svec_cosine_distance );
+PG_FUNCTION_INFO_V1( svec_svec_angle );
 /**
- *  svec_svec_cosine_distance - Computes the cosine similarity between two SVECs.
+ *  svec_svec_angle - Computes the angle between two SVECs.
  */
-Datum svec_svec_cosine_distance(PG_FUNCTION_ARGS)
+Datum svec_svec_angle(PG_FUNCTION_ARGS)
 {	
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
@@ -747,7 +747,7 @@ Datum svec_svec_cosine_distance(PG_FUNCTION_ARGS)
 		result = -1.0;
 	}
 
-	PG_RETURN_FLOAT8(result);
+	PG_RETURN_FLOAT8(acos(result));
 }
 
 PG_FUNCTION_INFO_V1( svec_svec_tanimoto_distance );
@@ -778,7 +778,7 @@ Datum svec_svec_tanimoto_distance(PG_FUNCTION_ARGS)
 		result = 0.0;
 	}
 	
-	PG_RETURN_FLOAT8(result);
+	PG_RETURN_FLOAT8(1. - result);
 }
 
 PG_FUNCTION_INFO_V1( svec_normalize );
