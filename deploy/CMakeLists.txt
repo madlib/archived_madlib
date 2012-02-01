@@ -66,20 +66,11 @@ cpack_add_component(core
 
 cpack_add_component_group(ports
     DISPLAY_NAME "DBMS-Specific Components"
-    DESCRIPTION "DBMS-specific files and connector libraries."
+    DESCRIPTION "DBMS-specific files and libraries."
     EXPANDED
 )
 
-# FIXME: Think whether port-specific definitions can be made in the src/ports
-# hierarchy
-cpack_add_component(postgres
-    DISPLAY_NAME "PostgreSQL 9.x Connector"
-    DESCRIPTION "MADlib connector for PostgreSQL, plus PostgreSQL-specific files. Supports PostgreSQL 9.x."
-    GROUP ports
-)
-
-cpack_add_component(greenplum
-    DISPLAY_NAME "Greenplum 4.x Connector"
-    DESCRIPTION "MADlib connector for Greenplum, plus Greenplum-specific files. Supports Greenplum 4.x."
-    GROUP ports
-)
+file(GLOB PORT_COMPONENTS "${CMAKE_CURRENT_BINARY_DIR}/Component_*.cmake")
+foreach(PORT_COMPONENT ${PORT_COMPONENTS})
+    include("${PORT_COMPONENT}")
+endforeach(PORT_COMPONENT)

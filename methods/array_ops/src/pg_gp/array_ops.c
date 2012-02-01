@@ -70,6 +70,8 @@ Datum array_of_bigint(PG_FUNCTION_ARGS);
 Datum array_fill(PG_FUNCTION_ARGS);
 Datum array_scalar_mult(PG_FUNCTION_ARGS);
 Datum array_sqrt(PG_FUNCTION_ARGS);
+Datum array_normalize(PG_FUNCTION_ARGS);
+
 
 PG_FUNCTION_INFO_V1(array_of_float);
 Datum array_of_float(PG_FUNCTION_ARGS){
@@ -1207,4 +1209,45 @@ Datum General_Array_to_Array(ArrayType *v1, Datum elt2, char*(*element_function)
 	
 	pgarray->ndim = ndims;
 	PG_RETURN_ARRAYTYPE_P(pgarray);
+}
+
+
+
+/*
+ * This function normalizes an array.
+ */
+PG_FUNCTION_INFO_V1(array_normalize);
+Datum array_normalize(PG_FUNCTION_ARGS)
+{
+	ArrayType * arg = PG_GETARG_ARRAYTYPE_P(0);
+	
+	if (ARR_NDIM(arg) != 1 || ARR_ELEMTYPE(arg) != FLOAT8OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("function \"%s\" called with invalid parameters",
+						format_procedure(fcinfo->flinfo->fn_oid))));
+	
+	float8 * x = (float8 *)ARR_DATA_PTR(arg);
+	int dim = ARR_DIMS(arg)[0];
+	
+	float8 d = 0; 
+	for (int i=0; i!=dim; i++)
+		d += x[i] * x[i];
+	
+	if (d > 0 && d != 1.0) {
+		/* Allocate memory for return value */
+		Datum * array = palloc0(dim*sizeof(Datum));
+		ArrayType * ret = construct_array(array,dim,FLOAT8OID,sizeof(float8),true,'i');
+		float8 * ret_v = (float8 *)ARR_DATA_PTR(ret);
+		
+		float8 sqrtd = sqrt(d);
+
+		for (int i=0; i!=dim; i++)
+			ret_v[i] = x[i] / sqrtd;
+		
+		PG_RETURN_ARRAYTYPE_P(ret);
+	} else {
+		PG_RETURN_ARRAYTYPE_P(arg);
+	}	
+
 }

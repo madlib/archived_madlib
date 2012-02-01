@@ -64,11 +64,13 @@ The Hessian of this objective is \f$ H = -X^T A X \f$ where
 \f$
 Since \f$ H \f$ is non-positive definite, \f$ l(\boldsymbol c) \f$ is convex.
 There are many techniques for solving convex optimization problems. Currently,
-logistic regression in MADlib can use one of two algorithms:
+logistic regression in MADlib can use one of three algorithms:
 - Iteratively Reweighted Least Squares
 - A conjugate-gradient approach, also known as Fletcher-Reeves method in the
   literature, where we use the Hestenes-Stiefel rule for calculating the step
   size.
+- Incremental gradient descent, also known as incremental gradient methods or
+  stochastic gradient descent in the literature.
 
 We estimate the standard error for coefficient \f$ i \f$ as
 \f[
@@ -82,11 +84,11 @@ The Wald z-statistic is
 \f]
 
 The Wald \f$ p \f$-value for coefficient \f$ i \f$ gives the probability (under
-the assumptions inherent in the Wald test) that the null hypothesis
-(\f$ c_i = 0 \f$) is false, i.e., the probability that \f$ c_i \f$ differs
-significantly from 0. Letting \f$ F \f$ denote the cumulative density
-function of a standard normal distribution, the Wald \f$ p \f$-value for
-coefficient \f$ i \f$ is therefore
+the assumptions inherent in the Wald test) of seeing a value at least as extreme
+as the one observed, provided that the null hypothesis (\f$ c_i = 0 \f$) is
+true. Letting \f$ F \f$ denote the cumulative density function of a standard
+normal distribution, the Wald \f$ p \f$-value for coefficient \f$ i \f$ is
+therefore
 \f[
     p_i = \Pr(|Z| \geq |z_i|) = 2 \cdot (1 - F( |z_i| ))
 \f]
@@ -108,7 +110,10 @@ The training data is expected to be of the following form:\n
 @usage
 - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
   statistics:\n
-  <pre>SELECT * FROM \ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+  <pre>SELECT * FROM \ref logregr(
+    '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
+    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
+);</pre>
   Output:
   <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios
 -----+----------------+---------+---------+----------+------------
@@ -161,6 +166,15 @@ further literature:
 [3] Paul Komarek, Andrew W. Moore: Making Logistic Regression A Core Data Mining
     Tool With TR-IRLS, IEEE International Conference on Data Mining 2005,
     pp. 685-688, http://komarix.org/ac/papers/tr-irls.short.pdf
+    
+[4] D. P. Bertsekas: Incremental gradient, subgradient, and proximal methods for
+    convex optimization: a survey, Technical report, Laboratory for Information
+    and Decision Systems, 2010,
+    http://web.mit.edu/dimitrib/www/Incremental_Survey_LIDS.pdf
+    
+[5] A. Nemirovski, A. Juditsky, G. Lan, and A. Shapiro: Robust stochastic 
+    approximation approach to stochastic programming, SIAM Journal on 
+    Optimization, 19(4), 2009, http://www2.isye.gatech.edu/~nemirovs/SIOPT_RSA_2009.pdf
 
 @sa File logistic.sql_in (documenting the SQL functions)
 
@@ -182,7 +196,9 @@ CREATE TYPE MADLIB_SCHEMA.logregr_result AS (
     std_err DOUBLE PRECISION[],
     z_stats DOUBLE PRECISION[],
     p_values DOUBLE PRECISION[],
-    odds_ratios DOUBLE PRECISION[]
+    odds_ratios DOUBLE PRECISION[],
+    condition_no DOUBLE PRECISION,
+    num_iterations INTEGER
 );
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_transition(
@@ -248,7 +264,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.logregr_cg_step(
     SFUNC=MADLIB_SCHEMA.logregr_cg_step_transition,
     m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.logregr_cg_step_merge_states,')
     FINALFUNC=MADLIB_SCHEMA.logregr_cg_step_final,
-	INITCOND='{0,0,0,0,0,0}'
+    INITCOND='{0,0,0,0,0,0}'
 );
 
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_irls_step(
@@ -270,7 +286,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.logregr_irls_step(
     SFUNC=MADLIB_SCHEMA.logregr_irls_step_transition,
     m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.logregr_irls_step_merge_states,')
     FINALFUNC=MADLIB_SCHEMA.logregr_irls_step_final,
-	INITCOND='{0,0,0}'
+    INITCOND='{0,0,0}'
 );
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_logregr_cg_step_distance(
@@ -294,6 +310,60 @@ RETURNS DOUBLE PRECISION AS
 LANGUAGE c IMMUTABLE STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_logregr_irls_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.logregr_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+--------------------------------------------------------------------------
+-- create SQL functions for IGD optimizer
+--------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_igd_step_transition(
+    DOUBLE PRECISION[],
+    BOOLEAN,
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_igd_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_igd_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]);
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing logistic regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.logregr_igd_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.logregr_igd_step_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.logregr_igd_step_merge_states,')
+    INITCOND='{0,0,0,0}'
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_logregr_igd_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_logregr_igd_result(
     /*+ state */ DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.logregr_result AS
 'MODULE_PATHNAME'
@@ -341,6 +411,10 @@ LANGUAGE plpythonu VOLATILE;
  *  - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
  *  - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
  *    \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
+ *  - <tt>condition_no FLOAT8</tt> - The condition number of matrix
+ *    \f$ X^T A X \f$.
+ *  - <tt>num_iterations INTEGER</tt> - The number of iterations before the
+ *    algorithm terminated
  *
  * @usage
  *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
@@ -383,8 +457,12 @@ BEGIN
     -- function in a subquery
     IF optimizer = 'irls' OR optimizer = 'newton' THEN
         fnName := 'internal_logregr_irls_result';
-    ELSE
+    ELSIF optimizer = 'cg' THEN
         fnName := 'internal_logregr_cg_result';
+    ELSEIF optimizer = 'igd' THEN
+        fnName := 'internal_logregr_igd_result';
+    ELSE
+        RAISE EXCEPTION 'Unknown optimizer (''%'')', optimizer;
     END IF;
     EXECUTE
         $sql$
@@ -397,6 +475,8 @@ BEGIN
             ) subq
         $sql$
         INTO theResult;
+    -- The number of iterations are not updated in the C++ code. We do it here.
+    theResult.num_iterations = theIteration;
     RETURN theResult;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -427,3 +507,26 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr(
 RETURNS MADLIB_SCHEMA.logregr_result AS
 $$SELECT MADLIB_SCHEMA.logregr($1, $2, $3, $4, $5, 0.0001);$$
 LANGUAGE sql VOLATILE;
+
+/**
+ * @brief Evaluate the usual logistic function in an under-/overflow-safe way
+ *
+ * In order for the outcome of exp(x) to be within the range of the minimum
+ * positive double-precision number (i.e., 2^(-1074)) and the maximum positive
+ * double-precision number (i.e., (1 + (1 - 2^52)) * 2^1023), x has to be within
+ * the natural logarithm of these numbers, so roughly in between -744 and 709.
+ * However, 1 + exp(x) will just evaluate to 1 if exp(x) is less than the
+ * machine epsilon (i.e., 2^(-52)) or, equivalently, if x is less than the
+ * natural logarithm of that; i.e., in any case if x is less than -37.
+ * Note that taking the reciprocal of the largest double-precision number will
+ * not cause an underflow. Hence, no further checks are necessary.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logistic(x DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION
+LANGUAGE sql
+AS $$
+   SELECT CASE WHEN -$1 < -37 THEN 1
+               WHEN -$1 > 709 THEN 0
+               ELSE 1 / (1 + exp(-$1))
+          END;
+$$;

@@ -24,10 +24,12 @@ class Reference {
 public:
     Reference() : mPtr(NULL) { }
 
-    Reference(T *inPtr) : mPtr(inPtr) { }
+    // FIXME: Is it better to have the const_cast in the mutable class
+    // and declare mPtr as const?
+    Reference(const T *inPtr) : mPtr(const_cast<T*>(inPtr)) { }
     
-    Reference &rebind(T *inPtr) {
-        mPtr = inPtr;
+    Reference &rebind(const T *inPtr) {
+        mPtr = const_cast<T*>(inPtr);
         return *this;
     }
 
@@ -38,6 +40,29 @@ public:
         return static_cast<U>(*mPtr);
     }
     
+    const T* ptr() const {
+        return mPtr;
+    }
+    
+protected:
+    /**
+     * Defined but protected.
+     */
+    Reference &operator=(const Reference &inReference) {
+        return *this;
+    }
+
+    T *mPtr;
+};
+
+template <typename T, typename U = T>
+class MutableReference : public Reference<T, U> {
+    typedef Reference<T, U> Base;
+public:
+    MutableReference() { }
+
+    MutableReference(T *inPtr) : Base(inPtr) { }
+
     /**
      * @internal
      * It is important to define this operator because C++ will otherwise
@@ -45,22 +70,22 @@ public:
      * operator= would be used even though there is a conversion path
      * through dest.operator=(orig.operator U())
      */
-    Reference &operator=(const Reference &inReference) {
-        *mPtr = *inReference.mPtr;
+    MutableReference &operator=(const Base &inReference) {
+        *mPtr = *inReference.ptr();
         return *this;
     }
     
-    Reference &operator=(const U &inValue) {
+    MutableReference &operator=(const U &inValue) {
         *mPtr = inValue;
         return *this;
     }
     
-    Reference &operator+=(const U &inValue) {
+    MutableReference &operator+=(const U &inValue) {
         *mPtr += inValue;
         return *this;
     }
 
-    Reference &operator-=(const U &inValue) {
+    MutableReference &operator-=(const U &inValue) {
         *mPtr -= inValue;
         return *this;
     }
@@ -71,13 +96,13 @@ public:
         return returnValue;
     }
     
-    Reference &operator++() {
+    MutableReference &operator++() {
         *mPtr += 1;
         return *this;
     }
-        
+    
 protected:
-    T *mPtr;
+    using Base::mPtr;
 };
 
 

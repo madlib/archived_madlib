@@ -6,11 +6,26 @@
  *
  * -------------------------------------------------------------------------- */
 
+namespace madlib {
+
+namespace modules {
+
 /**
- * @namespace madlib::modules::regress
- * 
  * @brief Linear/logistic regression functions
  */
+namespace regress {
 
-#include <modules/regress/linear.hpp>
-#include <modules/regress/logistic.hpp>
+#ifdef MADLIB_CURRENT_NAMESPACE
+    #undef MADLIB_CURRENT_NAMESPACE
+#endif
+
+#define MADLIB_CURRENT_NAMESPACE madlib::modules::regress
+
+#include "linear.hpp"
+#include "logistic.hpp"
+
+} // namespace regress
+
+} // namespace modules
+
+} // namespace madlib
