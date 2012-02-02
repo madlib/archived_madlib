@@ -1,0 +1,174 @@
+-- Create the necessary tables for storing training data
+
+-- document representations
+DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_documents CASCADE;
+CREATE TABLE MADLIB_SCHEMA.textfex_documents (id integer,text text);
+
+-- tokenized documents
+DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segmenttbl CASCADE;
+CREATE TABLE MADLIB_SCHEMA.textfex_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer);
+
+-- CRF features
+DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_dictionary CASCADE;
+CREATE TABLE MADLIB_SCHEMA.textfex_dictionary (token text,token_id integer,label text,count integer,total integer);
+ 
+DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_features CASCADE;
+CREATE TABLE MADLIB_SCHEMA.textfex_features (id integer,name text,prev_label_id integer,label_id integer,weight float);
+
+-- label space
+DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_labels CASCADE;
+CREATE TABLE MADLIB_SCHEMA.textfex_labels (id integer,label character varying);
+
+-- lexicon table
+DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_lexicons CASCADE;
+CREATE TABLE MADLIB_SCHEMA.textfex_lexicons (id integer,filename text,lexicon text);
+
+-- regex table
+DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_regex CASCADE;
+CREATE TABLE MADLIB_SCHEMA.textfex_regex (pattern text,name text);
+
+-- factor table
+DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_mrtbl CASCADE;
+CREATE TABLE MADLIB_SCHEMA.viterbi_mrtbl (seg_id integer,label integer,prev_label integer,score integer);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.textfex_generatemrtbl(integer, boolean) RETURNS void AS $$
+BEGIN
+        
+        DROP TABLE IF EXISTS temp_textfex_segment_hashtbl;
+	CREATE TEMP TABLE temp_textfex_segment_hashtbl(seg_text text);
+        IF $2 = TRUE THEN 
+		INSERT INTO temp_textfex_segment_hashtbl(seg_text)
+		((SELECT DISTINCT seg_text
+		  FROM   textfex_segmenttbl
+		  WHERE  doc_id = $1)
+		 EXCEPT
+		 (SELECT DISTINCT seg_text
+		  FROM   textfex_segmenttbl
+		  WHERE  doc_id <> $1)
+		);
+        ELSE 
+		INSERT INTO temp_textfex_segment_hashtbl(seg_text)
+		SELECT DISTINCT seg_text
+		FROM   textfex_segmenttbl;
+        END IF; 
+
+        DROP TABLE IF EXISTS temp_textfex_labels;
+        CREATE TEMP TABLE temp_textfex_labels(id integer,label character varying);
+        INSERT INTO temp_textfex_labels
+        SELECT  id, label
+        FROM    textfex_labels;
+        INSERT INTO temp_textfex_labels VALUES(-1,'NO LABEL'); 
+         
+	DROP TABLE IF EXISTS temp_textfex_mrtbl;
+	CREATE TEMP TABLE temp_textfex_mrtbl (
+			seg_text text NOT NULL,
+			label integer,
+			prev_label integer,
+			value double precision
+			);
+
+	-- generate a sparse matrix
+	INSERT INTO temp_textfex_mrtbl(seg_text, label, prev_label, value)
+	SELECT segment_hashtbl.seg_text, labels.id, prev_labels.id, 0
+	FROM   temp_textfex_segment_hashtbl segment_hashtbl, 
+	       textfex_labels as labels,
+	       temp_textfex_labels as prev_labels
+	GROUP BY segment_hashtbl.seg_text,prev_labels.id, labels.id;
+
+	-- edgeFeature and startFeature
+	INSERT INTO temp_textfex_mrtbl(seg_text, label, prev_label, value)
+	SELECT segment_hashtbl.seg_text, features.label_id, features.prev_label_id, features.weight
+	FROM   temp_textfex_segment_hashtbl AS segment_hashtbl, 
+	       textfex_features AS features
+	WHERE  features.prev_label_id<>-1 OR features.name = 'S.'
+	GROUP BY segment_hashtbl.seg_text, features.label_id, features.prev_label_id, features.weight;
+
+	-- RegExFeature
+	INSERT INTO temp_textfex_mrtbl(seg_text, label, prev_label, value)
+	SELECT segment_hashtbl.seg_text, features.label_id, labels.id, features.weight
+	FROM   temp_textfex_segment_hashtbl AS segment_hashtbl, 
+	       temp_textfex_labels AS labels,
+	       textfex_features AS features, 
+	       textfex_regex AS regex
+	WHERE  segment_hashtbl.seg_text ~ regex.pattern
+	       AND features.name||'%' ='R_' || regex.name
+	GROUP BY segment_hashtbl.seg_text, features.label_id, labels.id, features.weight;
+
+        -- LexiconFeature
+       INSERT INTO temp_textfex_mrtbl(seg_text, label, prev_label, value)
+       SELECT segment_hashtbl.seg_text, features.label_id, labels.id, features.weight
+       FROM   temp_textfex_segment_hashtbl AS segment_hashtbl, 
+              temp_textfex_labels AS labels, 
+              textfex_features AS features
+       WHERE  features.name = 'L_' || (SELECT filename FROM textfex_lexicons WHERE lexicon = upper(segment_hashtbl.seg_text) ORDER BY filename ASC LIMIT 1)
+       GROUP BY segment_hashtbl.seg_text, features.label_id, labels.id, features.weight;
+       
+        IF $2 = TRUE THEN
+		-- unknownFeature
+		INSERT INTO temp_textfex_mrtbl(seg_text, label, prev_label, value)
+		SELECT segment_hashtbl.seg_text, features.label_id, labels.id, features.weight
+		FROM   temp_textfex_segment_hashtbl AS segment_hashtbl,
+		       temp_textfex_labels AS labels,
+		       textfex_features AS features
+		WHERE  features.name = 'U'
+		GROUP BY segment_hashtbl.seg_text, features.label_id, labels.id, features.weight;
+        
+        ELSE
+		-- create a temp partial dictionary table which stores the words whose occurance 
+                -- is below certain threshold.
+		-- refer to the CRF Package
+		DROP TABLE IF EXISTS textfex_partial_dictionary;
+		CREATE TEMP TABLE textfex_partial_dictionary (
+				token text NOT NULL
+				);
+
+		INSERT INTO textfex_partial_dictionary(token)
+		SELECT DISTINCT token
+		FROM   textfex_dictionary
+		WHERE  textfex_dictionary.total<=1;
+
+		-- unknownFeature
+		INSERT INTO temp_textfex_mrtbl(seg_text, label, prev_label, value)
+		SELECT segment_hashtbl.seg_text, features.label_id, labels.id, features.weight
+		FROM   temp_textfex_segment_hashtbl AS segment_hashtbl,
+		       temp_textfex_labels AS labels,
+		       textfex_features AS features
+		WHERE  features.name = 'U'
+		       AND lower(segment_hashtbl.seg_text) in (select token from textfex_partial_dictionary)
+		GROUP BY segment_hashtbl.seg_text, features.label_id, labels.id, features.weight;
+
+		-- wordFeature
+		INSERT INTO temp_textfex_mrtbl(seg_text, label, prev_label, value)
+		SELECT segment_hashtbl.seg_text, features.label_id, labels.id, features.weight
+		FROM   temp_textfex_segment_hashtbl AS segment_hashtbl, 
+		       temp_textfex_labels AS labels,
+		       textfex_features AS features
+		WHERE  features.name = 'W_' || segment_hashtbl.seg_text
+		GROUP BY segment_hashtbl.seg_text, features.label_id, labels.id, features.weight;
+        END IF;
+
+	-- Factor table
+	INSERT INTO viterbi_mrtbl(seg_text, label, prev_label, score)
+	SELECT seg_text,label,prev_label, CAST(SUM(value) AS Integer)
+	FROM   temp_textfex_mrtbl as mrtbl
+	GROUP BY seg_text,label,prev_label;
+
+        IF $2 = TRUE THEN
+		-- insert the new sentence to the viterbi_segmenttbl
+		INSERT INTO viterbi_segmenttbl(doc_id, seg_id, start_pos, seg_text)
+		SELECT doc_id,-1,start_pos,seg_text 
+		FROM   textfex_segmenttbl
+		WHERE  doc_id = $1;
+		analyze viterbi_segmenttbl;
+        ELSE
+		-- insert the all sentences in the training dataset to the viterbi_segmenttbl
+		INSERT INTO viterbi_segmenttbl(doc_id, seg_id, start_pos, seg_text)
+		SELECT doc_id,-1,start_pos,seg_text
+		FROM   textfex_segmenttbl;
+		analyze viterbi_segmenttbl;
+        END IF;
+	DROP TABLE IF EXISTS temp_textfex_mrtbl;
+	DROP TABLE IF EXISTS temp_textfex_segment_hashtbl; 
+
+END
+$$ LANGUAGE plpgsql;
