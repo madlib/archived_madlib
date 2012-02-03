@@ -13,7 +13,7 @@ Logistic Regression: Driver functions
 import plpy
 
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
-    terminateExpr, cyclesPerIteration, maxNumIterations):
+    terminateExpr, maxNumIterations, cyclesPerIteration = 1):
     """
     Driver for an iterative algorithm
     
@@ -35,30 +35,22 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         terminate. The expression may use the replacement fields
         <tt>"{oldState}"</tt>, <tt>"{newState}"</tt>, and
         <tt>"{iteration}"</tt>. It must return a BOOLEAN value.
-    @param cyclesPerIteration Number of aggregate function calls per iteration.
     @param maxNumIterations Maximum number of iterations. Algorithm will then
         terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
+    @param cyclesPerIteration Number of aggregate function calls per iteration.
     """
-
-    state = "(st._madlib_state)"
-    sourceAlias = "src"
-    oldState = "(older._madlib_state)"
-    newState = "(newer._madlib_state)"
     
-    updateExpr = updateExpr.format(**locals())
-    terminateExpr = terminateExpr.format(**locals())
-
     updateSQL = """
         INSERT INTO _madlib_iterative_alg
         SELECT
-            {iteration},
+            {{iteration}},
             {updateExpr}
         FROM
             _madlib_iterative_alg AS st,
-            {source} AS src
+            {{source}} AS src
         WHERE
-            st._madlib_iteration = {iteration} - 1
-        """    
+            st._madlib_iteration = {{iteration}} - 1
+        """.format(updateExpr = updateExpr)
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
@@ -66,13 +58,18 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         (
             SELECT _madlib_state
             FROM _madlib_iterative_alg
-            WHERE _madlib_iteration = {iteration} - {cyclesPerIteration}
+            WHERE _madlib_iteration = {{iteration}} - {{cyclesPerIteration}}
         ) AS older,
         (
             SELECT _madlib_state
             FROM _madlib_iterative_alg
-            WHERE _madlib_iteration = {iteration}
+            WHERE _madlib_iteration = {{iteration}}
         ) AS newer
+        """.format(terminateExpr = terminateExpr)
+    checkForNullStateSQL = """
+        SELECT _madlib_state IS NULL AS should_terminate
+        FROM _madlib_iterative_alg
+        WHERE _madlib_iteration = {iteration}
         """
 
     oldMsgLevel = plpy.execute("SELECT setting FROM pg_settings WHERE name='client_min_messages'"
@@ -85,128 +82,36 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             _madlib_state {stateType}
         );
         SET client_min_messages = {oldMsgLevel};
-        """.format(**locals()))
+        """.format(stateType = stateType, oldMsgLevel = oldMsgLevel))
     
     iteration = 0
     plpy.execute("""
         INSERT INTO _madlib_iterative_alg VALUES ({iteration}, {initialState})
-        """.format(**locals()))
+        """.format(iteration = iteration, initialState = initialState))
     while True:
         iteration = iteration + 1
-        plpy.execute(updateSQL.format(**locals()))
-        if iteration > cyclesPerIteration and (
+        plpy.execute(updateSQL.format(
+            source = source,
+            state = "(st._madlib_state)",
+            iteration = iteration,
+            sourceAlias = "src"))
+        if plpy.execute(checkForNullStateSQL.format(
+                iteration = iteration))[0]['should_terminate'] or (
+            iteration > cyclesPerIteration and (
             iteration >= cyclesPerIteration * maxNumIterations or
-            plpy.execute(terminateSQL.format(**locals()))[0]['should_terminate']
-                == True):
+            plpy.execute(terminateSQL.format(
+                iteration = iteration,
+                cyclesPerIteration = cyclesPerIteration,
+                oldState = "(older._madlib_state)",
+                newState = "(newer._madlib_state)"))[0]['should_terminate'])):
             break
     
     # Note: We do not drop the temporary table
     return iteration
 
 
-def __cg_logregr(**kwargs):
-    """
-    Logistic regression algorithm with the conjugate-gradient method
-    
-    The parameters are the same as for compute_logregr(), except that
-    <tt>optimizer</tt> should not be set. This function sets up all SQL
-    expression as needed for the conjugate-gradient method and then calls
-    __runIterativeAlg().
-    """
-    
-    stateType = "FLOAT8[]"
-    initialState = "NULL"
-    source = kwargs['source']
-    
-    # "{state}", "{sourceAlias}", "{oldState}", and "{newState}" will not be
-    # substituted here but will be passed on to __runIterativeAlg and
-    # substituted there
-    updateExpr = """
-        {MADlibSchema}.logregr_cg_step(
-            {depColumn},
-            {indepColumn},
-            {{state}}
-        )
-        """.format(**kwargs)
-    if kwargs['precision'] == 0.:
-        terminateExpr = "FALSE"
-    else:
-        terminateExpr = """
-            {MADlibSchema}.internal_logregr_cg_step_distance({{newState}}, {{oldState}}) < {precision}
-            """.format(**kwargs)
-    
-    cyclesPerIteration = 1
-    maxNumIterations = kwargs['numIterations']
-    return __runIterativeAlg(stateType, initialState, source, updateExpr,
-        terminateExpr, cyclesPerIteration, maxNumIterations)
-
-
-def __irls__logregr(**kwargs):
-    """
-    Logistic regression algorithm with the iteratively-reweighted-least-squares method
-    
-    The parameters are the same as for compute_logregr(), except that
-    <tt>optimizer</tt> should not be set. This function sets up all SQL
-    expression as needed for the iteratively-reweighted-least-squares method and
-    then calls __runIterativeAlg().
-    """
-    
-    stateType = "FLOAT8[]"
-    initialState = "NULL"
-    source = kwargs['source']
-    updateExpr = """
-        {MADlibSchema}.logregr_irls_step(
-            {depColumn},
-            {indepColumn},
-            {{state}}
-        )
-        """.format(**kwargs)
-    if kwargs['precision'] == 0.:
-        terminateExpr = "FALSE"
-    else:
-        terminateExpr = """
-            {MADlibSchema}.internal_logregr_irls_step_distance({{newState}}, {{oldState}}) < {precision}
-            """.format(**kwargs)
-
-    cyclesPerIteration = 1
-    maxNumIterations = kwargs['numIterations']
-    return __runIterativeAlg(stateType, initialState, source, updateExpr,
-        terminateExpr, cyclesPerIteration, maxNumIterations)
-    
-def __igd_logregr(**kwargs):
-    """
-    Logistic regression algorithm with the incremental gradient method
-    
-    The parameters are the same as for compute_logregr(), except that
-    <tt>optimizer</tt> should not be set. This function sets up all SQL
-    expression as needed for the incremental gradient method and
-    then calls __runIterativeAlg().
-    """
-    
-    stateType = "FLOAT8[]"
-    initialState = "NULL"
-    source = kwargs['source']
-    updateExpr = """
-        {MADlibSchema}.logregr_igd_step(
-            {depColumn},
-            {indepColumn},
-            {{state}}
-        )
-        """.format(**kwargs)
-    if kwargs['precision'] == 0.:
-        terminateExpr = "FALSE"
-    else:
-        terminateExpr = """
-            {MADlibSchema}.internal_logregr_igd_step_distance({{newState}}, {{oldState}}) < {precision}
-            """.format(**kwargs)
-
-    cyclesPerIteration = 1
-    maxNumIterations = kwargs['numIterations']
-    return __runIterativeAlg(stateType, initialState, source, updateExpr,
-        terminateExpr, cyclesPerIteration, maxNumIterations)
-    
-
-def compute_logregr(**kwargs):
+def compute_logregr(MADlibSchema, source, depColumn, indepColumn, optimizer,
+    maxNumIterations, precision, **kwargs):
     """
     Compute logistic regression coefficients
     
@@ -214,40 +119,58 @@ def compute_logregr(**kwargs):
     By default, iteratively reweighted least squares is used, but for data with
     a lot of columns the conjugate-gradient method might perform better.
     
+    @param MADlibSchema Name of the MADlib schema, properly escaped/quoted
     @param source Name of relation containing the training data
     @param depColumn Name of dependent column in training data (of type BOOLEAN)
     @param indepColumn Name of independent column in training data (of type
            DOUBLE PRECISION[])
-    
-    Optionally also provide the following:
     @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
         reweighted least squares, 'cg': conjugate gradient or 'igd': 
-        incremental gradient descent (default = 'irls')
-    @param numIterations Maximum number of iterations (default = 20)
+        incremental gradient descent
+    @param maxNumIterations Maximum number of iterations
     @param precision Terminate if two consecutive iterations have a difference 
            in the log-likelihood of less than <tt>precision</tt>. In other
            words, we terminate if the objective function value has converged.
-           If this parameter is 0.0, then the algorithm will not check for
-           convergence and only terminate after <tt>numIterations</tt>
-           iterations.
+           This convergence criterion can be disabled by specifying a negative
+           value.
+    @param kwargs We allow the caller to specify additional arguments (all of
+           which will be ignored though). The purpose of this is to allow the
+           caller to unpack a dictionary whose element set is a superset of 
+           the required arguments by this function.
     
     @return array with coefficients in case of convergence, otherwise None
-    
     """
-    if not 'optimizer' in kwargs:
-        kwargs.update(optimizer = 'irls')
-    if not 'numIterations' in kwargs:
-        kwargs.update(numIterations = 20)
-    if not 'precision' in kwargs:
-        kwargs.update(precision = 0.0001)
-        
-    if kwargs['optimizer'] in ['irls', 'newton']:
-        return __irls__logregr(**kwargs)
-    elif kwargs['optimizer'] == 'cg':
-        return __cg_logregr(**kwargs)
-    elif kwargs['optimizer'] == 'igd':
-        return __igd_logregr(**kwargs)
-    else:
-        plpy.error("Unknown optimizer requested. Must be 'newton'/'irls', 'cg', or 'igd'")
     
-    return None
+    if maxNumIterations < 1:
+        plpy.error("Number of iterations must be positive")
+    
+    if optimizer == 'newton':
+        optimizer = 'irls'
+    elif optimizer not in ['irls', 'cg', 'igd']:
+        plpy.error("Unknown optimizer requested. Must be 'newton'/'irls', "
+            "'cg', or 'igd'")
+    
+    return __runIterativeAlg(
+        stateType = "FLOAT8[]",
+        initialState = "NULL",
+        source = source,
+        updateExpr = """
+            {MADlibSchema}.logregr_{optimizer}_step(
+                ({depColumn})::BOOLEAN,
+                ({indepColumn})::FLOAT8[],
+                {{state}}
+            )
+            """.format(
+                MADlibSchema = MADlibSchema,
+                depColumn = depColumn,
+                indepColumn = indepColumn,
+                optimizer = optimizer),
+        terminateExpr = """
+            {MADlibSchema}.internal_logregr_{optimizer}_step_distance(
+                {{newState}}, {{oldState}}
+            ) < {precision}
+            """.format(
+                MADlibSchema = MADlibSchema,
+                optimizer = optimizer,
+                precision = precision),
+        maxNumIterations = maxNumIterations)
