@@ -48,6 +48,7 @@ enum OnMemoryAllocationFailure {
 
 #include "OutputStreamBufferBase_proto.hpp"
 #include "OutputStreamBufferBase_impl.hpp"
+#include "Exceptions/NoSolutionFoundException_proto.hpp"
 
 } // namespace dbal
 

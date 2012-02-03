@@ -180,11 +180,8 @@ further literature:
 
 @internal
 @sa Namespace logistic (documenting the driver/outer loop implemented in
-    Python), Classes
-    \ref madlib::modules::regress::LogisticRegressionIRLS "LogisticRegressionIRLS"
-    and
-    \ref madlib::modules::regress::LogisticRegressionCG "LogisticRegressionCG"
-    documenting the implementation in C++
+    Python), Namespace
+    \ref madlib::modules::regress documenting the implementation in C++
 @endinternal
 
 */
@@ -219,6 +216,15 @@ RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE;
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_igd_step_transition(
+    DOUBLE PRECISION[],
+    BOOLEAN,
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_merge_states(
     state1 DOUBLE PRECISION[],
     state2 DOUBLE PRECISION[])
@@ -227,6 +233,13 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_irls_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_igd_step_merge_states(
     state1 DOUBLE PRECISION[],
     state2 DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
@@ -245,10 +258,11 @@ RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_cg_step(
-    /*+ y */ BOOLEAN,
-    /*+ x */ DOUBLE PRECISION[],
-    /*+ previous_state" */ DOUBLE PRECISION[]);
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_igd_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
 
 /**
  * @internal
@@ -267,11 +281,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.logregr_cg_step(
     INITCOND='{0,0,0,0,0,0}'
 );
 
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_irls_step(
-    /*+ y */ BOOLEAN,
-    /*+ x */ DOUBLE PRECISION[],
-    /*+ previous_state */ DOUBLE PRECISION[]);
-
 /**
  * @internal
  * @brief Perform one iteration of the iteratively-reweighted-least-squares
@@ -288,6 +297,23 @@ CREATE AGGREGATE MADLIB_SCHEMA.logregr_irls_step(
     FINALFUNC=MADLIB_SCHEMA.logregr_irls_step_final,
     INITCOND='{0,0,0}'
 );
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing logistic regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.logregr_igd_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.logregr_igd_step_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.logregr_igd_step_merge_states,')
+    INITCOND='{0,0,0,0}'
+);
+
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_logregr_cg_step_distance(
     /*+ state1 */ DOUBLE PRECISION[],
@@ -315,47 +341,6 @@ RETURNS MADLIB_SCHEMA.logregr_result AS
 'MODULE_PATHNAME'
 LANGUAGE c IMMUTABLE STRICT;
 
---------------------------------------------------------------------------
--- create SQL functions for IGD optimizer
---------------------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_igd_step_transition(
-    DOUBLE PRECISION[],
-    BOOLEAN,
-    DOUBLE PRECISION[],
-    DOUBLE PRECISION[])
-RETURNS DOUBLE PRECISION[]
-AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE;
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_igd_step_merge_states(
-    state1 DOUBLE PRECISION[],
-    state2 DOUBLE PRECISION[])
-RETURNS DOUBLE PRECISION[]
-AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT;
-
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.logreg_igd_step(
-    /*+ y */ BOOLEAN,
-    /*+ x */ DOUBLE PRECISION[],
-    /*+ previous_state */ DOUBLE PRECISION[]);
-
-/**
- * @internal
- * @brief Perform one iteration of the incremental gradient
- *        method for computing logistic regression
- */
-CREATE AGGREGATE MADLIB_SCHEMA.logregr_igd_step(
-    /*+ y */ BOOLEAN,
-    /*+ x */ DOUBLE PRECISION[],
-    /*+ previous_state */ DOUBLE PRECISION[]) (
-    
-    STYPE=DOUBLE PRECISION[],
-    SFUNC=MADLIB_SCHEMA.logregr_igd_step_transition,
-    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.logregr_igd_step_merge_states,')
-    INITCOND='{0,0,0,0}'
-);
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_logregr_igd_step_distance(
     /*+ state1 */ DOUBLE PRECISION[],
     /*+ state2 */ DOUBLE PRECISION[])
@@ -370,16 +355,15 @@ RETURNS MADLIB_SCHEMA.logregr_result AS
 LANGUAGE c IMMUTABLE STRICT;
 
 
--- begin functions for logistic-regression coefficients
 -- We only need to document the last one (unfortunately, in Greenplum we have to
 -- use function overloading instead of default arguments).
 CREATE FUNCTION MADLIB_SCHEMA.compute_logregr(
     "source" VARCHAR,
     "depColumn" VARCHAR,
     "indepColumn" VARCHAR,
-    "numIterations" INTEGER /*+ DEFAULT 20 */,
-    "optimizer" VARCHAR /*+ DEFAULT 'irls' */,
-    "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
+    "maxNumIterations" INTEGER,
+    "optimizer" VARCHAR,
+    "precision" DOUBLE PRECISION)
 RETURNS INTEGER
 AS $$PythonFunction(regress, logistic, compute_logregr)$$
 LANGUAGE plpythonu VOLATILE;
@@ -394,13 +378,14 @@ LANGUAGE plpythonu VOLATILE;
  * @param depColumn Name of the dependent column (of type BOOLEAN)
  * @param indepColumn Name of the independent column (of type DOUBLE
  *        PRECISION[])
- * @param numIterations The maximum number of iterations
+ * @param maxNumIterations The maximum number of iterations
  * @param optimizer The optimizer to use (either
  *        <tt>'irls'</tt>/<tt>'newton'</tt> for iteratively reweighted least
  *        squares or <tt>'cg'</tt> for conjugent gradient)
  * @param precision The difference between log-likelihood values in successive
- *        iterations that should indicate convergence, or 0 indicating that
- *        log-likelihood values should be ignored
+ *        iterations that should indicate convergence. Note that a non-positive
+ *        value here disables the convergence criterion, and execution will only
+ *        stop after \c maxNumIterations iterations.
  *
  * @return A composite value:
  *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
@@ -439,7 +424,7 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr(
     "source" VARCHAR,
     "depColumn" VARCHAR,
     "indepColumn" VARCHAR,
-    "numIterations" INTEGER /*+ DEFAULT 20 */,
+    "maxNumIterations" INTEGER /*+ DEFAULT 20 */,
     "optimizer" VARCHAR /*+ DEFAULT 'irls' */,
     "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
 RETURNS MADLIB_SCHEMA.logregr_result AS $$
@@ -476,7 +461,9 @@ BEGIN
         $sql$
         INTO theResult;
     -- The number of iterations are not updated in the C++ code. We do it here.
-    theResult.num_iterations = theIteration;
+    IF NOT (theResult IS NULL) THEN
+        theResult.num_iterations = theIteration;
+    END IF;
     RETURN theResult;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -493,7 +480,7 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr(
     "source" VARCHAR,
     "depColumn" VARCHAR,
     "indepColumn" VARCHAR,
-    "numIterations" INTEGER)
+    "maxNumIterations" INTEGER)
 RETURNS MADLIB_SCHEMA.logregr_result AS
 $$SELECT MADLIB_SCHEMA.logregr($1, $2, $3, $4, 'irls', 0.0001);$$
 LANGUAGE sql VOLATILE;
@@ -502,7 +489,7 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr(
     "source" VARCHAR,
     "depColumn" VARCHAR,
     "indepColumn" VARCHAR,
-    "numIterations" INTEGER,
+    "maxNumIterations" INTEGER,
     "optimizer" VARCHAR)
 RETURNS MADLIB_SCHEMA.logregr_result AS
 $$SELECT MADLIB_SCHEMA.logregr($1, $2, $3, $4, $5, 0.0001);$$
@@ -511,13 +498,22 @@ LANGUAGE sql VOLATILE;
 /**
  * @brief Evaluate the usual logistic function in an under-/overflow-safe way
  *
- * In order for the outcome of exp(x) to be within the range of the minimum
- * positive double-precision number (i.e., 2^(-1074)) and the maximum positive
- * double-precision number (i.e., (1 + (1 - 2^52)) * 2^1023), x has to be within
- * the natural logarithm of these numbers, so roughly in between -744 and 709.
- * However, 1 + exp(x) will just evaluate to 1 if exp(x) is less than the
- * machine epsilon (i.e., 2^(-52)) or, equivalently, if x is less than the
- * natural logarithm of that; i.e., in any case if x is less than -37.
+ * @param x
+ * @returns \f$ \frac{1}{1 + \exp(-x)} \f$
+ *
+ * Evaluating this expression directly can lead to under- or overflows.
+ * This function performs the evaluation in a safe manner, making use of the
+ * following observations:
+ * 
+ * In order for the outcome of \f$ \exp(x) \f$ to be within the range of the
+ * minimum positive double-precision number (i.e., \f$ 2^{-1074} \f$) and the
+ * maximum positive double-precision number (i.e.,
+ * \f$ (1 + (1 - 2^{52})) * 2^{1023}) \f$, \f$ x \f$ has to be within the
+ * natural logarithm of these numbers, so roughly in between -744 and 709.
+ * However, \f$ 1 + \exp(x) \f$ will just evaluate to 1 if \f$ \exp(x) \f$ is
+ * less than the machine epsilon (i.e., \f$ 2^{-52} \f$) or, equivalently, if
+ * \f$ x \f$ is less than the natural logarithm of that; i.e., in any case if
+ * \f$ x \f$ is less than -37.
  * Note that taking the reciprocal of the largest double-precision number will
  * not cause an underflow. Hence, no further checks are necessary.
  */

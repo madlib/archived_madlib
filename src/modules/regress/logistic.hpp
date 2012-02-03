@@ -78,6 +78,11 @@ DECLARE_UDF(logregr_igd_step_transition)
 DECLARE_UDF(logregr_igd_step_merge_states)
 
 /**
+ * @brief Logistic regression (incremetal-gradient step): Final function
+ */
+DECLARE_UDF(logregr_igd_step_final)
+
+/**
  * @brief Logistic regression (incremetal-gradient step): Difference in
  *     log-likelihood between two transition states
  */

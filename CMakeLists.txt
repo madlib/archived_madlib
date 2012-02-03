@@ -55,7 +55,8 @@ endif(NOT CMAKE_BUILD_TYPE)
 if(CMAKE_COMPILER_IS_GNUCC)
     # Let's store the gcc version in a variable
     execute_process(COMMAND ${CMAKE_C_COMPILER} -dumpversion
-        OUTPUT_VARIABLE GNUCC_VERSION)
+        OUTPUT_VARIABLE GNUCC_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
 
     # A useful summary of warning options can be found here:
     # http://developer.apple.com/tools/xcode/compilercodewarnings.html
@@ -78,7 +79,8 @@ endif()
 if(CMAKE_COMPILER_IS_GNUCXX)
     # Let's store the gcc version in a variable
     execute_process(COMMAND ${CMAKE_CXX_COMPILER} -dumpversion
-        OUTPUT_VARIABLE GNUCXX_VERSION)
+        OUTPUT_VARIABLE GNUCXX_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
 
     # We need the 1998 standard plus amendments (ISO/IEC 14882:2003) plus TR1
     # Unfortunately, we only get this with gnu++98
@@ -115,6 +117,31 @@ else()
     set(MADLIB_VERSION_PATCH 0)
 endif()
 
+# Save build time
+execute_process(
+    COMMAND date -u
+    OUTPUT_VARIABLE MADLIB_BUILD_TIME
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+# Save git revision
+execute_process(
+    COMMAND git describe
+    OUTPUT_VARIABLE MADLIB_GIT_REVISION
+    ERROR_QUIET
+    RESULT_VARIABLE _RESULT
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _RESULT EQUAL 0)
+    set(MADLIB_GIT_REVISION "unknown")
+endif(NOT _RESULT EQUAL 0)
+if(CMAKE_COMPILER_IS_GNUCC)
+    set(MADLIB_C_COMPILER "gcc ${GNUCC_VERSION}")
+else(CMAKE_COMPILER_IS_GNUCC)
+    set(MADLIB_C_COMPILER "unknown")
+endif(CMAKE_COMPILER_IS_GNUCC)
+if(CMAKE_COMPILER_IS_GNUCXX)
+    set(MADLIB_CXX_COMPILER "gcc ${GNUCC_VERSION}")
+else(CMAKE_COMPILER_IS_GNUCXX)
+    set(MADLIB_CXX_COMPILER "unknown")
+endif(CMAKE_COMPILER_IS_GNUCXX)
 
 # -- Third-party dependencies: Find m4 -----------------------------------------
 
