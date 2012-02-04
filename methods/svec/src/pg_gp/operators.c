@@ -933,10 +933,7 @@ PG_FUNCTION_INFO_V1( svec_cast_float8arr );
 Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 	ArrayType *A_PG = PG_GETARG_ARRAYTYPE_P(0);
 	SvecType *output_svec;
-	float8 *array_temp;
-	bits8 *bitmap;
-	int bitmask;
-	int i,j;
+	SparseData sdata;
 
 	if (ARR_ELEMTYPE(A_PG) != FLOAT8OID)
 		ereport(ERROR,
@@ -951,38 +948,20 @@ Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 	int dimension = ARR_DIMS(A_PG)[0];
 	float8 *array = (float8 *)ARR_DATA_PTR(A_PG);
 
-	/* If the data array has NULLs, then we need to create an array to
-	 * store the NULL values as NVP values defined in float_specials.h.
+	/*
+	 * If Array contains NULLs, then let arr_to_sdata deal with it.
 	 */
-	if (ARR_HASNULL(A_PG)) {
-		array_temp = array;
-		array = (double *)palloc(sizeof(float8) * dimension);
-		bitmap = ARR_NULLBITMAP(A_PG);
-		bitmask = 1;
-		j = 0;
-		for (i=0; i<dimension; i++) {
-			if (bitmap && (*bitmap & bitmask) == 0) // if NULL
-				array[i] = NVP;
-			else {
-				array[i] = array_temp[j];
-				j++;
-			}
-			if (bitmap) { // advance bitmap pointer
-				bitmask <<= 1;
-				if (bitmask == 0x100) {
-					bitmap++;
-					bitmask = 1;
-				}
-			}
-		}
-	 }
+	if (ARR_HASNULL(A_PG))
+		sdata = arr_to_sdata((char *) array,
+							 sizeof(float8),
+							 FLOAT8OID,
+							 dimension,
+							 ARR_NULLBITMAP(A_PG));
+	else
+		sdata = float8arr_to_sdata(array, dimension);
 
 	/* Create the output SVEC */
-	SparseData sdata = float8arr_to_sdata(array,dimension);
 	output_svec = svec_from_sparsedata(sdata,true);
-	
-	if (ARR_HASNULL(A_PG))
-		pfree(array);
 
 	PG_RETURN_SVECTYPE_P(output_svec);
 }
