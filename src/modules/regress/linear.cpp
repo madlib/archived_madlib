@@ -155,9 +155,9 @@ linregr_transition::run(AnyType &args) {
     
     // The following check was added with MADLIB-138.
     if (!std::isfinite(y))
-        throw std::invalid_argument("Dependent variables are not finite.");
+        throw std::domain_error("Dependent variables are not finite.");
     else if (!isfinite(x))
-        throw std::invalid_argument("Design matrix is not finite.");
+        throw std::domain_error("Design matrix is not finite.");
     
     // Now do the transition step.
     if (state.numRows == 0) {
@@ -211,7 +211,9 @@ AnyType
 linregr_final::run(AnyType &args) {
     LinRegrTransitionState<ArrayHandle<double> > state = args[0];
 
-    // If we haven't seen any data, just return Null
+    // If we haven't seen any data, just return Null. This is the standard
+    // behavior of aggregate function on empty data sets (compare, e.g.,
+    // how PostgreSQL handles sum or avg on empty inputs)
     if (state.numRows == 0)
         return Null();
 
@@ -219,7 +221,7 @@ linregr_final::run(AnyType &args) {
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
     // matrices. We extend the check also to the dependent variables.
     if (!isfinite(state.X_transp_X) || !isfinite(state.X_transp_Y))
-        throw std::invalid_argument("Design matrix is not finite.");
+        throw std::domain_error("Design matrix is not finite.");
     
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_X, EigenvaluesOnly, ComputePseudoInverse);

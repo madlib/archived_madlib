@@ -54,7 +54,9 @@ normal_cdf::run(AnyType &args) {
 
 double
 normalCDF(double t) {
-    return boost::math::cdf( boost::math::normal(), t );
+    return std::isnan(t)
+        ? std::numeric_limits<double>::quiet_NaN()
+        : boost::math::cdf( boost::math::normal(), t );
 }
 
 } // namespace prob

@@ -18,6 +18,7 @@ namespace madlib {
 namespace modules {
 
 // Import names from other MADlib modules
+using dbal::NoSolutionFoundException;
 using prob::normalCDF;
 
 namespace regress {
@@ -206,7 +207,7 @@ logregr_cg_step_transition::run(AnyType &args) {
     
     // The following check was added with MADLIB-138.
     if (!isfinite(x))
-        throw std::invalid_argument("Design matrix is not finite.");
+        throw std::domain_error("Design matrix is not finite.");
     
     if (state.numRows == 0) {
         state.initialize(*this, x.size());
@@ -267,6 +268,10 @@ logregr_cg_step_final::run(AnyType &args) {
     // a deep copy.
     LogRegrCGTransitionState<MutableArrayHandle<double> > state = args[0];
     
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+
     // Note: k = state.iteration
     if (state.iteration == 0) {
 		// Iteration computes the gradient
@@ -485,7 +490,7 @@ logregr_irls_step_transition::run(AnyType &args) {
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite())
-        throw std::invalid_argument("Design matrix is not finite.");
+        throw std::domain_error("Design matrix is not finite.");
 
     if (state.numRows == 0) {
         state.initialize(*this, x.size());
@@ -511,12 +516,14 @@ logregr_irls_step_transition::run(AnyType &args) {
     //             sigma(-y_i x_i c) y_i
     // z = x_i c + ---------------------
     //                     a_i
-    double z = xc + sigma(-y * xc) * y / a;
+    //
+    // To avoid overflows if a_i is close to 0, we do not compute z directly,
+    // but instead compute a * z.
+    double az = xc * a + sigma(-y * xc) * y;
 
-    state.X_transp_Az.noalias() += x * a * z;
+    state.X_transp_Az.noalias() += x * az;
     triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
         
-    // We use state.sumy to store the log likelihood.
     //          n
     //         --
     // l(c) = -\  ln(1 + exp(-y_i * c^T x_i))
@@ -555,11 +562,16 @@ logregr_irls_step_final::run(AnyType &args) {
     // a deep copy.
     LogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
 
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
     // matrices. We extend the check also to the dependent variables.
     if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite())
-        throw std::invalid_argument("Design matrix is not finite.");
+        throw NoSolutionFoundException("Over- or underflow in intermediate "
+            "calulation. Input data is likely of poor numerical condition.");
     
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
@@ -568,6 +580,10 @@ logregr_irls_step_final::run(AnyType &args) {
     Matrix inverse_of_X_transp_AX = decomposition.pseudoInverse();
     
     state.coef.noalias() = inverse_of_X_transp_AX * state.X_transp_Az;
+    if(!state.coef.is_finite())
+        throw NoSolutionFoundException("Over- or underflow in Newton step, "
+            "while updating coefficients. Input data is likely of poor "
+            "numerical condition.");
 
     // We use the intra-iteration field X_transp_Az for storing the diagonal
     // of X^T A X, so that we don't have to recompute it in the result function.
@@ -748,7 +764,7 @@ logregr_igd_step_transition::run(AnyType &args) {
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite())
-        throw std::invalid_argument("Design matrix is not finite.");
+        throw std::domain_error("Design matrix is not finite.");
 
 	// We only know the number of independent variables after seeing the first
     // row.
@@ -781,8 +797,7 @@ logregr_igd_step_transition::run(AnyType &args) {
         // a_i = sigma(x_i c) sigma(-x_i c)
 		double a = sigma(previous_xc) * sigma(-previous_xc);
 		triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
-			
-		// We use state.sumy to store the negative log likelihood (minimizing).
+        
 		// l_i(c) = - ln(1 + exp(-y_i * c^T x_i))
 		state.logLikelihood -= std::log( 1. + std::exp(-y * previous_xc) );
 	}
@@ -808,6 +823,23 @@ logregr_igd_step_merge_states::run(AnyType &args) {
     // Merge states together and return
     stateLeft += stateRight;
     return stateLeft;
+}
+
+/**
+ * @brief Perform the logistic-regression final step
+ *
+ * All that we do here is to test whether we have seen any data. If not, we
+ * return NULL. Otherwise, we return the transition state unaltered.
+ */
+AnyType
+logregr_igd_step_final::run(AnyType &args) {
+    LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
+
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+    
+    return state;
 }
 
 /**
