@@ -148,7 +148,7 @@ StringInfo makeStringInfoFromData(char *data,int len);
 double *sdata_to_float8arr(SparseData sdata);
 int64 *sdata_index_to_int64arr(SparseData sdata);
 SparseData float8arr_to_sdata(double *array, int count);
-SparseData position_to_sdata(double *array, int64 *array_pos, int count, int64 end, double base_val);
+SparseData position_to_sdata(double *array_val, int64 *array_pos, Oid type_of_data, int count, int64 end, double default_val);
 SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count);
 SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end, char *base_val);
 
@@ -158,6 +158,7 @@ double sd_proj(SparseData sdata, int idx);
 SparseData subarr(SparseData sdata, int start, int end);
 SparseData reverse(SparseData sdata);
 SparseData concat(SparseData left, SparseData right);
+SparseData concat_replicate(SparseData rep, int multiplier);
 
 /* Returns the size of each basic type 
  */
@@ -177,6 +178,8 @@ size_of_type(Oid type)
 }
 
 /* Appends a count to the count array 
+ * The function appendBinaryStringInfo always make sure to attach a trailing '\0'
+ * to the data array of the index StringInfo.
  */
 static inline void append_to_rle_index(StringInfo index, int64 run_len)
 {
@@ -188,6 +191,8 @@ static inline void append_to_rle_index(StringInfo index, int64 run_len)
 }
 
 /* Adds a new block to a SparseData
+ * The function appendBinaryStringInfo always make sure to attach a trailing '\0'
+ * to the data array of the vals StringInfo.
  */
 static inline void add_run_to_sdata(char *run_val, int64 run_len, size_t width,
 		SparseData sdata)
@@ -200,6 +205,7 @@ static inline void add_run_to_sdata(char *run_val, int64 run_len, size_t width,
 	sdata->unique_value_count++;
 	sdata->total_value_count+=run_len;
 }
+
 /*------------------------------------------------------------------------------
  * Each integer count in the RLE index is stored in a number of bytes determined
  * by its size.  The larger the integer count, the larger the size of storage.
@@ -734,7 +740,7 @@ static inline bool sparsedata_eq(SparseData left, SparseData right)
  * the right SparseData that overlaps with x and check that they are equal.
  *
  * Unlike sparsedata_eq, this function assumes that any zero represents a 
- * mission data and hence still implyies equality
+ * missing data and hence still implies equality
  *
  * Note: This function only works on SparseData of float8s at present.
  */ 
@@ -748,31 +754,35 @@ static inline bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right
 	
 	int read = 0, rread = 0;
 	int i=-1, j=-1, minimum = 0;
-	minimum = (left->total_value_count > right->total_value_count)?right->total_value_count:left->total_value_count;
+	minimum = (left->total_value_count > right->total_value_count) ?
+		  right->total_value_count : left->total_value_count;
 	
 	for (;(read < minimum)||(rread < minimum);) {
-		if(read < rread){
+		if (read < rread) {
 			read += (int)compword_to_int8(ix);
 			ix +=int8compstoragesize(ix);
 			i++;
-			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
+			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0) &&
+			    (vals[i]!=0.0)&&(rvals[j]!=0.0)) {
 				return false;
 			}
-		}else if(read > rread){
+		} else if (read > rread){
 			rread += (int)compword_to_int8(rix);
 			rix+=int8compstoragesize(rix);
 			j++;
-			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
+			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0) &&
+			    (vals[i]!=0.0)&&(rvals[j]!=0.0)) {
 				return false;
 			}
-		}else{
+		} else {
 			read += (int)compword_to_int8(ix);
 			rread += (int)compword_to_int8(rix);
 			ix +=int8compstoragesize(ix);
 			rix+=int8compstoragesize(rix);
 			i++;
 			j++;
-			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0)&&(vals[i]!=0.0)&&(rvals[j]!=0.0)){
+			if ((memcmp(&(vals[i]),&(rvals[j]),sizeof(float8))!=0) &&
+			    (vals[i]!=0.0)&&(rvals[j]!=0.0)) {
 				return false;
 			}
 		}		
