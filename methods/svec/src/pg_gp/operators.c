@@ -933,6 +933,7 @@ PG_FUNCTION_INFO_V1( svec_cast_float8arr );
 Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 	ArrayType *A_PG = PG_GETARG_ARRAYTYPE_P(0);
 	SvecType *output_svec;
+	SparseData sdata;
 
 	if (ARR_ELEMTYPE(A_PG) != FLOAT8OID)
 		ereport(ERROR,
@@ -942,20 +943,26 @@ Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("svec_cast_float8arr only defined over 1 dimensional arrays")));
-	
-	if (ARR_NULLBITMAP(A_PG))
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("svec_cast_float8arr does not allow null bitmaps on arrays")));
 
 	/* Extract array */
 	int dimension = ARR_DIMS(A_PG)[0];
 	float8 *array = (float8 *)ARR_DATA_PTR(A_PG);
-		
+
+	/*
+	 * If Array contains NULLs, then let arr_to_sdata deal with it.
+	 */
+	if (ARR_HASNULL(A_PG))
+		sdata = arr_to_sdata((char *) array,
+							 sizeof(float8),
+							 FLOAT8OID,
+							 dimension,
+							 ARR_NULLBITMAP(A_PG));
+	else
+		sdata = float8arr_to_sdata(array, dimension);
+
 	/* Create the output SVEC */
-	SparseData sdata = float8arr_to_sdata(array,dimension);
 	output_svec = svec_from_sparsedata(sdata,true);
-	
+
 	PG_RETURN_SVECTYPE_P(output_svec);
 }
 

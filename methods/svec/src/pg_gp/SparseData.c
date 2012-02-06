@@ -24,6 +24,8 @@
 #include "access/htup.h"
 #include "catalog/pg_proc.h"
 
+#include "float_specials.h"
+
 void* array_pos_ref = NULL;
 
 /** 
@@ -189,7 +191,7 @@ StringInfo makeStringInfoFromData(char *data,int len) {
  * @return A SparseData representation of an input array of doubles
  */
 SparseData float8arr_to_sdata(double *array, int count) {
-	return arr_to_sdata((char *)array, sizeof(float8), FLOAT8OID, count);
+	return arr_to_sdata((char *)array, sizeof(float8), FLOAT8OID, count, NULL);
 }
 
 /**
@@ -207,18 +209,50 @@ SparseData position_to_sdata(double *array,int64 *array_pos, int count, int64 en
  * @param width The size of the elements in array
  * @param type_of_data The object ID of the elements in array
  * @param count The size of array
+ * @param bitmap The NULL bitmap, can be NULL
  * @return A SparseData representation of an input array
  */
-SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count){
-	char *run_val=array;
+SparseData arr_to_sdata(char *array, size_t width, Oid type_of_data, int count, bits8 *bitmap){
+	char *run_val;
 	int64 run_len=1;
 	SparseData sdata = makeSparseData();
+	int bitmask;
+	int i, j;
 
 	sdata->type_of_data=type_of_data;
 
-	for (int i=1; i<count; i++) {
-		char *curr_val=array+ (i*size_of_type(type_of_data));
+	if (bitmap && (*bitmap & 1) == 0)
+	{
+		run_val = (char *) &NVP;
+		j = 0;
+	}
+	else
+	{
+		run_val = array;
+		j = 1;
+	}
 
+	bitmask = 1 << 1;
+	for (i=1; i<count; i++) {
+		char *curr_val;
+
+		/* If supplied, we take care of NULL bitmap */
+		if (bitmap && (*bitmap & bitmask) == 0)
+			curr_val = (char *) &NVP;
+		else
+		{
+			curr_val = array + (j * size_of_type(type_of_data));
+			j++;
+		}
+		if (bitmap)
+		{
+			bitmask <<= 1;
+			if (bitmask == 0x100)
+			{
+				bitmap++;
+				bitmask = 1;
+			}
+		}
 		/*
 		 * Note that special double values like denormalized numbers and exceptions
 		 * like NaN are treated like any other value - if there are duplicates, the
