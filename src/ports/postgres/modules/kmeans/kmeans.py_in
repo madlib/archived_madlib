@@ -163,7 +163,7 @@ def __init_random( madlib_schema, src_points, k, n):
 # ----------------------------------------
 # Centroid initialization using kmeans++
 # ----------------------------------------
-def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
+def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_frac):
     """
     Creates the initial set of centroids using kmeans++ [1].
 
@@ -181,8 +181,8 @@ def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
     @param k Number of initial centroids
     @param n Total number of input data points 
     @param dist_func Name of the distance function (e.g. 'l2norm')
-    @param sample_pct Percent of the input data points to use for centroid 
-           seeding
+    @param sample_frac Fraction of the input data points to use for centroid 
+           seeding, \f$[0,1]\f$
     """
     
     # Temporary data point tables
@@ -208,17 +208,17 @@ def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
     );
     
     # Allow user to specify sample size or set the default
-    if sample_pct:
-        sample_size = floor((n*sample_pct)/100);
+    if sample_frac:
+        sample_size = floor(n*sample_frac);
     else:
-        sample_size = floor(n/100);    # default := 1%
+        sample_size = floor(n/100);    # default := 0.01
     
     # Sample size must be greater than k
-    if sample_pct and sample_size < k:
+    if sample_frac and sample_size < k:
         plpy.error( 'sample size (%s) is smaller than specified k (%s)' % (int(sample_size), k))        
     
     # If sampling on
-    if sample_pct and sample_size > 0 and sample_size < n:
+    if sample_frac and sample_size > 0 and sample_size < n:
         plpy.execute('''    
             INSERT INTO {initial_sample} (pid, coords, min_distance) 
             SELECT pid, coords::{madlib_schema}.SVEC, NULL
@@ -310,18 +310,18 @@ def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
         # 3) Choose next point at random with probability proportional to D(x)^2
         plpy.execute( '''
             INSERT INTO {centroids} (cid, coords) 
-            SELECT {i}, coords
-            FROM
-                (
-                SELECT 
-                    p.pid
-                    , p.coords 
-                    , p.min_distance / total.dist_sqrd as weight
-                FROM 
-                    {temp_target} p, 
-                    (SELECT sum(min_distance^2) as dist_sqrd FROM {temp_target}) total
-                ) q 
-            ORDER BY weight * random() DESC
+            SELECT {i}, coords FROM (
+                SELECT
+                    pid, coords
+                    , sum(min_distance^2) OVER (ORDER BY pid) AS cum_weight
+                    , r
+                FROM
+                    {temp_target} p,
+                    (SELECT sum(min_distance^2) * random() AS r FROM {temp_target}) subquery
+            ) q
+            WHERE
+                  r <= cum_weight
+            ORDER BY pid
             LIMIT 1
             '''.format(
                 centroids = output_centroids
@@ -342,7 +342,7 @@ def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_pct):
 # Centroid initialization using canopy
 # ----------------------------------------
 def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func, 
-                    t1, t2, sample_pct):
+                    t1, t2):
     """
     Creates the initial set of centroids using canopy clustering.
 
@@ -355,18 +355,16 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
            (e.g. 'cosine_distance')
     @param t1 Larger threshold for canopy clustering 
     @param t2 Smaller threshold for canopy clustering 
-    @param sample_pct Percent of the input data points to use for centroid 
-           seeding
     """
     
     # Find thresholds T1 and T2 (T1 > T2)
     if t1 is None or t2 is None:
     
-        # Allow the user to specify sample size 
-        if sample_pct:
-            sample_size = floor((n*sample_pct)/100);
+        # Set the sample limit for T1/T2 value analysis
+        if n < 1000:
+            sample_size = n;
         else:
-            sample_size = floor(n/100); # default 1%
+            sample_size = 1000;
         
         # Temp table for random points
         random_points = 'kmeans_random_points'
@@ -510,10 +508,10 @@ def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func,
 def kmeans( madlib_schema
             , src_relation, src_col_data, src_col_id
             , init_cset_rel, init_cset_col
-            , init_method, init_sample_pct
+            , init_method, sample_frac
             , k, t1, t2, dist_metric
             , max_iter, conv_threshold, evaluate 
-            , out_points, out_centroids, overwrite
+            , out_points, out_centroids
             , p_verbose):
             
     """
@@ -527,21 +525,19 @@ def kmeans( madlib_schema
     @param init_cset_col Name of the column with initial centroid coordinates
     @param init_method Name of the centroid initialization method 
            (e.g. 'kmeans++', 'random')
-    @param init_sample_pct Percent of the input data points to use for kmeans++ 
-           centroid seeding (for kmeans++ only)
+    @param sample_frac Fraction of the input data points to use for kmeans++ 
+           centroid seeding, \f$[0,1]\f$
     @param k Number of initial centroids
     @param t1 Larger threshold for canopy clustering 
     @param t2 Smaller threshold for canopy clustering     
     @param dist_metric Type of the distance/similarity metric (e.g. 'cosine')  
     @param max_iter Maximum number of iterations to execute
-    @param conv_threshold Convergence threshold, expressed as percent of points 
+    @param conv_threshold Convergence threshold, expressed as a fraction of points 
            that changed centroid assignment in the recent iteration
     @param evaluate Boolean flag indicating whether to compute some model 
            evaluation coefficients
     @param out_points Name of the table with data points and assigned centroids
     @param out_centroids Name of the table with discovered centroids
-    @param overwrite Boolean flag indicating weather to overwrite the output 
-           relations, if they exist
     @param p_verbose Boolean flag indicating weather to display INFO messages 
            during the execution           
     """
@@ -562,7 +558,7 @@ def kmeans( madlib_schema
         max_iterations = 20;   # default
 
     # Convergence threshold (% of points that changed assignments)
-    convergence_log = [100.0];
+    convergence_log = [1.0];
     if conv_threshold > 0:
         convergence_threshold = conv_threshold;
     else:
@@ -573,7 +569,6 @@ def kmeans( madlib_schema
     #
     point_count = 0;            # number of input points
     centr_count = 0;            # initial number of centroids
-    centr_final_count = 0;      # final number of centroids
     done = False;               # loop control variable
     gfit = 0;                   # goodness of fit measure
 
@@ -643,9 +638,7 @@ def kmeans( madlib_schema
     elif init_method == 'canopy':
         k = None;
         cset_count = None;
-        if init_sample_pct is None:
-            init_sample_pct = 1.0;
-        info( ' * init_method = %s (t1=%s, t2=%s, %s pct sample)' % (init_method, t1, t2, init_sample_pct));
+        info( ' * init_method = %s (t1=%s, t2=%s)' % (init_method, t1, t2));
 
     # Validate: init_method & k (other methods)
     elif k > 0:
@@ -657,9 +650,9 @@ def kmeans( madlib_schema
             info( ' * init_method = %s' % init_method)
         elif init_method.lower() == 'kmeans++':
             init_method = 'kmeans++';
-            if init_sample_pct is None:
-                init_sample_pct = 1.0;
-            info( ' * init_method = %s (%s pct sample)' % (init_method, init_sample_pct));
+            if sample_frac is None:
+                sample_frac = 0.01;
+            info( ' * init_method = %s (sample=%s)' % (init_method, sample_frac));
         else:
             init_method = 'random';
             info( ' * init_method = Unknown (default: %s)' % init_method)
@@ -722,9 +715,6 @@ def kmeans( madlib_schema
         plpy.error( "invalid value for evaluate: %s, should be True or False" % evaluate )
                 
     # Validate: output_points
-    if overwrite is None: overwrite = False;    # default
-    if overwrite == True:
-        __run_quietly( 'DROP TABLE IF EXISTS ' + output_points + ' CASCADE')
     try:
         sql = 'CREATE TABLE ' + output_points + ''' (
                 pid BIGINT,
@@ -732,19 +722,17 @@ def kmeans( madlib_schema
                 cid INT )''';
         __run_quietly( sql)
     except:
-        plpy.error( "output table %s already exists\n" % output_points )
+        plpy.error( 'output table "%s" already exists\n' % output_points )
     info( ' * output_points = %s' % output_points)
 
     # Validate: output_centroids
-    if overwrite == True:
-        __run_quietly( 'DROP TABLE IF EXISTS ' + output_centroids + ' CASCADE')
     try:
         sql = 'CREATE TABLE ' + output_centroids + ''' (
                 cid INT,
                 coords ''' + madlib_schema + '.SVEC )'; 
         __run_quietly( sql)
     except:
-        plpy.error( "output table %s already exists\n" % output_centroids )
+        plpy.error( 'output table "%s" already exists\n' % output_centroids )
     info( ' * output_centroids = %s' % output_centroids)
 
     # Validate: verbose 
@@ -847,7 +835,7 @@ def kmeans( madlib_schema
         start = time.time()
         centr_count = __init_plusplus( madlib_schema, 'TempPoints0', k, 
                                        point_count, dist_func, 
-                                       init_sample_pct);
+                                       sample_frac);
         time_sec = round( time.time() - start, 3)
         info( ' * centroids: %s seeded using kmeans++ (%s sec)' 
                % (centr_count, str(time_sec)));
@@ -865,8 +853,7 @@ def kmeans( madlib_schema
         start = time.time();
         centr_count, t1, t2 = __init_canopy( madlib_schema, 'TempPoints0', 
                                              point_count, dist_metric, 
-                                             dist_func, t1, t2, 
-                                             init_sample_pct);
+                                             dist_func, t1, t2)
         time_sec = round( time.time() - start, 3)
         info( ' * centroids: %s seeded using canopy clustering with t1=%s and t2=%s (%s sec)' 
                % (centr_count, t1, t2, str(time_sec)));
@@ -1037,10 +1024,6 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
         cost = None;
         scoef = None;        
         
-    # Count final number of centroids        
-    rv = plpy.execute( 'SELECT count(*) as count FROM ' + output_centroids);
-    centr_final_count = rv[0]['count'];
-        
     # Cleanup
     plpy.execute( "DROP VIEW IF EXISTS " + src_view );  
 
@@ -1057,7 +1040,6 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
         k,
         dist_metric,
         i,
-        centr_final_count, 
         cost,
         scoef,
         output_points, 
