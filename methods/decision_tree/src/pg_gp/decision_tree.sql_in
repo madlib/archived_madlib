@@ -1477,25 +1477,6 @@ BEGIN
         split_value     FLOAT    
 	) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');';
 
-    -- These two auxiliary internal tables help to
-    -- remove redundant tree nodes and move the useful
-    -- node to the final tree table.
-	DROP TABLE IF EXISTS auxiliary_tree_info CASCADE;
-	CREATE TEMP TABLE auxiliary_tree_info
-	(
-		id          INT,
-		new_id      INT,
-		parent_id   INT
-	) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');
-
-	DROP TABLE IF EXISTS auxiliary_tree_info2 CASCADE;
-	CREATE TEMP TABLE auxiliary_tree_info2
-	(
-		id          INT,
-		new_id      INT,
-		parent_id   INT
-	) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');
-
 END 
 $$ LANGUAGE PLPGSQL;
 
@@ -3774,44 +3755,15 @@ BEGIN
         IF(verbosity) THEN  
             RAISE INFO 'new_depth: %', curr_level;
         END IF;
-
-        -- if the node (whose id is "jump") doesn't exist, 
-        -- then insert them into result table 
-        -- (be classified to max_class of its corrsponding node)
-        SELECT MADLIB_SCHEMA.__format(
-            'INSERT INTO %(id, jump, class, prob, parent_id, leaf_id) 
-             SELECT id, 0, class, prob, parent_id, leaf_id
-             FROM %
-             WHERE jump NOT IN (SELECT id FROM %)',
-            ARRAY[
-                result_table_name,
-                table_names[table_pick],
-                tree_table_name
-                ]
-            ) 
-        INTO curstmt;
-        EXECUTE curstmt;
         
-        -- delete from the being classified data table
-        SELECT MADLIB_SCHEMA.__format(
-            'DELETE FROM %
-             WHERE jump NOT IN (SELECT id FROM %)',
-            ARRAY[
-                table_names[table_pick],
-                tree_table_name
-                ]
-            ) 
-        INTO curstmt;
-        EXECUTE curstmt;
-                
-        EXECUTE 'INSERT INTO ' || result_table_name || ' SELECT * FROM ' || 
-            table_names[(table_pick) % 2 + 1] ||' WHERE jump = 0;';
-        EXECUTE 'TRUNCATE '|| table_names[(table_pick) % 2 + 1] ||';';
+        table_pick = table_pick % 2 + 1; 
+        
+        EXECUTE 'TRUNCATE '|| table_names[table_pick] ||';';
         EXECUTE 'SELECT count(id) FROM '||result_table_name||';' INTO size_finished;
+        
         IF(verbosity) THEN  
             RAISE INFO 'size_finished %', size_finished;
-        END IF;            
-        table_pick = table_pick % 2 + 1; 
+        END IF;       
         
         EXECUTE 'SELECT count(*) FROM '|| table_names[(table_pick) % 2 + 1] ||';' 
             INTO remains_to_classify;
@@ -3868,6 +3820,34 @@ BEGIN
         INTO curstmt;     
         EXECUTE curstmt;
 
+        -- if the node (whose id is "jump") doesn't exist, 
+        -- then insert them into result table 
+        -- (be classified to max_class of its corrsponding node)
+        SELECT MADLIB_SCHEMA.__format(
+            'INSERT INTO %(id, jump, class, prob, parent_id, leaf_id) 
+             SELECT id, 0, class, prob, parent_id, leaf_id
+             FROM %
+             WHERE jump NOT IN (SELECT id FROM %)',
+            ARRAY[
+                result_table_name,
+                table_names[table_pick],
+                tree_table_name
+                ]
+            ) 
+        INTO curstmt;
+        EXECUTE curstmt;
+        
+        -- delete from the being classified data table
+        SELECT MADLIB_SCHEMA.__format(
+            'DELETE FROM %
+             WHERE jump NOT IN (SELECT id FROM %)',
+            ARRAY[
+                table_names[table_pick],
+                tree_table_name
+                ]
+            ) 
+        INTO curstmt;
+        EXECUTE curstmt;
     END LOOP;
 
     EXECUTE 'INSERT INTO '||result_table_name||' SELECT * FROM '|| 
