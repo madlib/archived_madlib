@@ -1,14 +1,11 @@
-/* ----------------------------------------------------------------------- *//** 
+/*
  *
  * @file decision_tree.sql_in
  *
  * @brief decision tree APIs and main controller written in PL/PGSQL
+ *
  * @date Dec. 22 2011
- *
- * @sa For a brief introduction to decision trees, see the
- *     module description \ref grp_dectree.
- *
- *//* ----------------------------------------------------------------------- */
+ */
 
 m4_include(`SQLCommon.m4')
 
@@ -28,9 +25,7 @@ m4_ifelse(
     `m4_define(`__POSTGRESQL_PRE_9_0__')'
 )
 
-/**
-@addtogroup grp_dectree
-
+/*
 @about
 
 This module provides an implementation of the C4.5 decision tree algorithm. 
@@ -91,8 +86,8 @@ of the following form:
   This will create the MADLIB_SCHEMA.tree table storing an abstract object 
   (representing the model) used for further classification. Column names:
   <pre>    
- id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |    split_gain     | live | cat_size | parent_id |     jump      | is_feature_cont | split_value 
-----+---------------+---------+-------------------+------------------+----------+-------------------+------+----------+-----------+---------------+-----------------+-------------
+ id | tree_location | feature |    probability    | ebp_coeff | maxclass |    split_gain     | live | cat_size | parent_id | lmc_nid | lmc_fval | is_feature_cont | split_value 
+----+---------------+---------+-------------------+-----------+----------+-------------------+------+----------+-----------+---------+----------+-----------------+-------------
                                                      ...</pre>    
     
 - Run the classification function using the learned model: 
@@ -156,16 +151,16 @@ CONTEXT:  PL/pgSQL function "c45_train" line 70 at assignment
 -# Check few rows from the tree model table:
 \verbatim
 testdb=# select * from madlib.trained_tree_infogain order by id;
- id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |    split_gain     | live | cat_size | parent_id |     jump      | is_feature_cont | split_value 
-----+---------------+---------+-------------------+------------------+----------+-------------------+------+----------+-----------+---------------+-----------------+-------------
-  1 | {0}           |       3 | 0.642857142857143 | 7.87584209442139 |        2 | 0.171033941880327 |    0 |       14 |         0 | [2:4]={2,3,4} | f               |            
-  2 | {0,1}         |       4 |                 1 | 1.75063467025757 |        2 |                 0 |    0 |        4 |         1 |               | f               |            
-  3 | {0,2}         |       4 |               0.6 | 3.74199032783508 |        2 | 0.673011667009257 |    0 |        5 |         1 | [2:3]={5,6}   | f               |            
-  4 | {0,3}         |       2 |               0.6 | 3.74199032783508 |        1 | 0.673011667009257 |    0 |        5 |         1 | [2:3]={7,8}   | t               |          70
-  5 | {0,2,1}       |       4 |                 1 | 1.60752332210541 |        2 |                 0 |    0 |        3 |         3 |               | f               |            
-  6 | {0,2,2}       |       4 |                 1 | 1.36754441261292 |        1 |                 0 |    0 |        2 |         3 |               | f               |            
-  7 | {0,3,1}       |       4 |                 1 | 1.36754441261292 |        2 |                 0 |    0 |        2 |         4 |               | f               |            
-  8 | {0,3,2}       |       4 |                 1 | 1.60752332210541 |        1 |                 0 |    0 |        3 |         4 |               | f               |            
+ id | tree_location | feature |    probability    | ebp_coeff | maxclass |    split_gain     | live | cat_size | parent_id | lmc_nid | lmc_fval | is_feature_cont | split_value 
+----+---------------+---------+-------------------+-----------+----------+-------------------+------+----------+-----------+---------+----------+-----------------+-------------
+  1 | {0}           |       3 | 0.642857142857143 |         1 |        2 | 0.171033941880327 |    0 |       14 |         0 |       2 |        1 | f               |            
+  2 | {0,1}         |       4 |                 1 |         1 |        2 |                 0 |    0 |        4 |         1 |         |          | f               |            
+  3 | {0,2}         |       4 |               0.6 |         1 |        2 | 0.673011667009257 |    0 |        5 |         1 |       5 |        1 | f               |            
+  4 | {0,3}         |       2 |               0.6 |         1 |        1 | 0.673011667009257 |    0 |        5 |         1 |       7 |        1 | t               |          70
+  5 | {0,2,1}       |       4 |                 1 |         1 |        2 |                 0 |    0 |        3 |         3 |         |          | f               |            
+  6 | {0,2,2}       |       4 |                 1 |         1 |        1 |                 0 |    0 |        2 |         3 |         |          | f               |            
+  7 | {0,3,1}       |       4 |                 1 |         1 |        2 |                 0 |    0 |        2 |         4 |         |          | f               |            
+  8 | {0,3,2}       |       4 |                 1 |         1 |        1 |                 0 |    0 |        3 |         4 |         |          | f               |            
 (8 rows)
 
 \endverbatim
@@ -1330,44 +1325,6 @@ m4_changequote(>>>`<<<, >>>'<<<)
 END
 $$ LANGUAGE PLPGSQL;
 
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__jump_aggr_sfunc
-    (
-    INT[], 
-    INT, 
-    INT
-    ) CASCADE;
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__jump_aggr_sfunc
-    (
-    INT[], 
-    INT, 
-    INT
-    ) 
-RETURNS INT[] AS $$
-DECLARE
-	temp INT[];
-BEGIN
-	temp = $1;
-	temp[$2+1] = $3;
-	
-	RETURN temp;
-END
-$$ LANGUAGE PLPGSQL;
-
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__jump_aggr
-    (
-    INT, 
-    INT
-    );
-CREATE AGGREGATE MADLIB_SCHEMA.__jump_aggr
-    (
-    INT, 
-    INT
-    ) 
-(
-  SFUNC=MADLIB_SCHEMA.__jump_aggr_sfunc,
-  STYPE=INT[]
-);
-
 
 /*
  *   For training one decision tree, we need some internal tables
@@ -1455,11 +1412,21 @@ BEGIN
     --      live:           Indication that the branch is still growing. 1 means "live". 
     --      cat_size:       Number of data point at this node.
     --      parent_id:      Id of the parent branch.
-    --      jump:           Location of children for each feature value. 
-    --                      Result such as [2:3]={2,3}, should be read: 
-    --                      jump['feature value'+1], so in this case there were no 
-    --                      0-value points for this feature. For value 1 jump to 2; 
-    --                      for value 2 jump to 3;
+    --      lmc_nid:        Leftmost child (lmc) node id of the node represented by the current row.
+    --      lmc_fval:       The feature value which leads to the lmc node.    
+    --                      An example of getting all the child nodes' ids and condition values
+    --                      1. Get the right most node id
+    --                      SELECT DISTINCT ON(parent_id) id FROM tree_table WHERE parent_id = $pid ORDER BY parent_id, id desc
+    --                      INTO max_child_nid;
+    --                      2. Get child nodes' ids and condition values by a while loop
+    --                      node_count = 1;
+    --                      WHILE (lmc_nid IS NOT NULL) AND (0 < node_count AND lmc_nid <= max_child_nid) LOOP
+    --                          ...
+    --                          lmc_nid  = lmc_nid  + 1;
+    --                          lmc_fval = lmc_fval + 1; 
+    --                          SELECT COUNT(id) FROM tree_table WHERE id = $lmc_nid AND parent_id = $pid 
+    --                          INTO node_count;        
+    --                      END LOOP;
     --      is_feature_cont: It specifies whether the selected feature is a continuous feature.
     --      split_value:    For continuous feature, it specifies the split value. Otherwise, 
     --                      it is of no meaning and fixed to 0.    
@@ -1477,7 +1444,8 @@ BEGIN
     	live            INT,
     	cat_size        INT,
     	parent_id       INT,
-    	jump            INT[],
+    	lmc_nid         INT,
+    	lmc_fval        INT,
         is_feature_cont BOOLEAN,
         split_value     FLOAT
 	) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');
@@ -1498,7 +1466,8 @@ BEGIN
     	live            INT,
     	cat_size        INT,
     	parent_id       INT,
-    	jump            INT[],
+        lmc_nid         INT,
+        lmc_fval        INT,
         is_feature_cont BOOLEAN,
         split_value     FLOAT    
 	) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');';
@@ -1640,7 +1609,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                               (
                                   Select parent_id  
                                   FROM % 
-                                  WHERE jump IS NOT NULL
+                                  WHERE lmc_nid IS NOT NULL
                               ) and id <> 1
                       );',
                   ARRAY[
@@ -1716,7 +1685,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
 
         SELECT MADLIB_SCHEMA.__format
             (
-                'UPDATE % t1 SET jump = NULL, maxclass = t2.maxclass 
+                'UPDATE % t1 SET lmc_nid = NULL, lmc_fval = NULL, maxclass = t2.maxclass 
                  FROM selected_parent_ids_rep t2
                  WHERE t1.id = t2.parent_id;',
                 tree_table_name
@@ -1795,7 +1764,7 @@ BEGIN
                         FROM % 
                         WHERE parent_id NOT IN 
                             (
-                            Select parent_id  FROM % WHERE jump IS NOT NULL
+                            Select parent_id  FROM % WHERE lmc_nid IS NOT NULL
                             )  and id <> 1
                     ) m 
                     GROUP BY m.parent_id
@@ -1831,7 +1800,7 @@ BEGIN
         SELECT MADLIB_SCHEMA.__format
             (
                 'UPDATE %  
-                SET jump = NULL 
+                SET lmc_nid = NULL, lmc_fval = NULL 
                 WHERE id IN 
                     (SELECT parent_id FROM selected_parent_ids_ebp)',
                 tree_table_name
@@ -1857,43 +1826,38 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__generate_final_tree
     ) 
 RETURNS void AS $$
 DECLARE
-    tree_size INTEGER;
+    tree_size   INTEGER;
+    curstmt     TEXT;
 BEGIN
-    TRUNCATE auxiliary_tree_info;
-    TRUNCATE auxiliary_tree_info2;
-    
-    EXECUTE 'DELETE FROM tree_internal WHERE COALESCE(cat_size,0) = 0';
-    
-    EXECUTE 'SELECT count(*) FROM tree_internal' INTO tree_size;
-    EXECUTE 'INSERT INTO auxiliary_tree_info (id, parent_id, new_id) SELECT id, 
-            MAX(parent_id), ('||tree_size||'+1) - count(1) 
-            OVER(ORDER BY id DESC ROWS UNBOUNDED PRECEDING) FROM tree_internal GROUP BY id';
-            
-    EXECUTE 'INSERT INTO auxiliary_tree_info2 (id, parent_id, new_id) 
-            SELECT  g2.id,g.new_id,g2.new_id FROM auxiliary_tree_info g, 
-            auxiliary_tree_info g2  WHERE g.id = g2.parent_id';
-    
-    TRUNCATE auxiliary_tree_info;
     EXECUTE 'TRUNCATE '||result_tree_table_name||';';
     
-    EXECUTE 'INSERT INTO '|| result_tree_table_name||' SELECT n.new_id, 
-            g.tree_location, g.feature, g.probability, 
-            g.ebp_coeff,g.maxclass, g.split_gain, g.live, g.cat_size, 
-            n.parent_id, g.jump, g.is_feature_cont, g.split_value 
-            FROM tree_internal g, auxiliary_tree_info2 n WHERE n.id = g.id';
-            
-    EXECUTE 'INSERT INTO '||result_tree_table_name
-            ||' SELECT * FROM tree_internal WHERE id = 1';
-            
-    TRUNCATE tree_internal;
-    EXECUTE 'INSERT INTO tree_internal (id, jump) SELECT parent_id, 
-            MADLIB_SCHEMA.__jump_aggr(tree_location[array_upper(tree_location,1)], id) FROM '
-            ||result_tree_table_name||' GROUP BY parent_id';
-            
-    TRUNCATE auxiliary_tree_info2;
-    EXECUTE 'UPDATE '||result_tree_table_name||' k 
-            SET jump = g.jump FROM tree_internal g WHERE g.id = k.id';
-    TRUNCATE tree_internal;
+    -- populate result tree table with the rows in tree_internal
+    EXECUTE ' INSERT INTO ' || 
+            result_tree_table_name || 
+            ' SELECT *  FROM tree_internal WHERE COALESCE(cat_size,0) > 0';
+    
+    -- for each node, find the left most child node id and the feature value, and
+    -- update the node's lmc_nid and lmc_fval column     
+    SELECT MADLIB_SCHEMA.__format
+            (
+                'UPDATE % k
+                 SET lmc_nid = g.lmc_nid, lmc_fval = g.lmc_fval
+                 FROM  
+                    (
+                    SELECT DISTINCT ON(parent_id) parent_id,
+                           id as lmc_nid, 
+                           tree_location[array_upper(tree_location,1)] as lmc_fval
+                    FROM %
+                    ORDER BY parent_id, id
+                    ) g
+                WHERE k.id = g.parent_id',
+                ARRAY[
+                    result_tree_table_name,
+                    result_tree_table_name
+                    ]
+            )
+    INTO curstmt;   
+    EXECUTE curstmt;
 END
 $$ LANGUAGE PLPGSQL;
 
@@ -2311,7 +2275,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
 END
 $$ LANGUAGE PLPGSQL;
 
-/**
+/*
  * @brief Train a decision tree model. User must specify all those data with that 
  *        long form function.
  *
@@ -2352,11 +2316,12 @@ $$ LANGUAGE PLPGSQL;
  *                                      Exit value may be 1 if number of branches reached before termination condition is met.
  *  - <tt>cat_size INT</tt>             Number of data point at this node.
  *  - <tt>parent_id INT</tt>            Id of the parent branch.
- *  - <tt>jump INT[]</tt>               Location of children for each feature value. Notice 
- *                                      that assuming that the data is sparse we can have value 0 - representing 
- *                                      no value. Result such as [2:3]={2,3}, should be read: 
- *                                      jump['feature value'+1], so in this case there were no 0-value points for 
- *                                      this feature. For value 1 jump to 2; for value 2 jump to 3;
+ *  - <tt>lmc_nid</tt>                  Leftmost child (lmc) node id of the node represented by the current row.
+ *  - <tt>lmc_fval</tt>                 The feature value which leads to the leftmost child (lmc) node.
+                                        Since the child nodes' ids are continuous integer values, they can be deduced 
+                                        by the lmc_nid and lmc_fval. For example, assume that the left most child node id is i (lmc_nid = i), 
+                                        and the feature value which leads to the lmc is j (lmc_fval = j). Given a feature value x, then it will
+                                        lead to the node whose id is i + x - j.
  *  - <tt>is_feature_cont BOOLEAN</tt>  It specifies whether the selected feature is a continuous feature.
  *  - <tt>split_value FLOAT</tt>        For continuous feature, it specifies the split value. Otherwise, 
  *     it is fixed to 0.
@@ -2616,7 +2581,7 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/**
+/*
  * @brief Another C45 train algorithm in short form
  *
  * @param the same as the ones accepted by the long form 
@@ -2667,7 +2632,7 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/**
+/*
  * @brief Another C45 train algorithm in short form
  *
  * @param the same as the ones accepted by the long form 
@@ -2720,7 +2685,7 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/**
+/*
  * @brief   Display the trained decision tree model with rules
  *
  * @param   tree_table_name     Name of the table containing the tree's information
@@ -2791,11 +2756,11 @@ BEGIN
     classtable_name = MADLIB_SCHEMA.__get_classtable_name(metatable_name);
     class_column_name = MADLIB_SCHEMA.__get_class_column_name(metatable_name);
     
-    EXECUTE 'SELECT id, maxclass, probability, cat_size, jump FROM ' || tree_table_name || ' WHERE id = 1' 
+    EXECUTE 'SELECT id, maxclass, probability, cat_size, lmc_nid, lmc_fval FROM ' || tree_table_name || ' WHERE id = 1' 
     INTO rec;
     
     -- in case the root node is leaf
-    IF (rec.jump IS NULL) THEN
+    IF (rec.lmc_nid IS NULL) THEN
         RETURN NEXT 'All instances will be classified to class ' || 
                      MADLIB_SCHEMA.__get_class_value(rec.maxclass, metatable_name) ||
                      ' [' || (rec.probability * rec.cat_size)::BIGINT || '/' || rec.cat_size || ']'; 
@@ -2811,7 +2776,7 @@ BEGIN
          WHERE id IN
             (SELECT DISTINCT feature
              FROM %
-             WHERE jump IS NOT NULL
+             WHERE lmc_nid IS NOT NULL
             )',
         metatable_name,
         tree_table_name
@@ -2887,7 +2852,7 @@ BEGIN
          FROM 
             (SELECT id, maxclass, tree_location, probability, cat_size
              FROM %
-             WHERE jump IS NULL
+             WHERE lmc_nid IS NULL
             ) n1
             LEFT JOIN
             (SELECT % as class, key
@@ -2918,7 +2883,7 @@ BEGIN
         (
         'CREATE TEMP TABLE c45_gen_rules_internode AS
         SELECT 
-            jump[key + 1] AS id,
+            lmc_nid + (key - lmc_fval) AS id,
             CASE WHEN (id = 1) THEN
                     ''  if '' || fname || COALESCE(MADLIB_SCHEMA.__to_char(split_value), MADLIB_SCHEMA.__to_char(fval), ''NULL'') 
                  ELSE
@@ -2927,17 +2892,21 @@ BEGIN
             array_to_string(tree_location, '''') || key AS location,
             0  AS rlid                                  
         FROM
-            (SELECT id, feature, tree_location, jump, split_value 
+            (SELECT id, feature, tree_location, lmc_nid, lmc_fval, split_value 
              FROM %
-             WHERE jump IS NOT NULL
+             WHERE lmc_nid IS NOT NULL
             ) n1
             LEFT JOIN
             (%) n2
             ON n1.feature = n2.fid
-        WHERE n1.jump[n2.key + 1] IS NOT NULL 
+        WHERE
+            (lmc_nid + key - lmc_fval) IN (SELECT id from %)
         m4_ifdef(`GREENPLUM', `DISTRIBUTED BY (location)')',
-        tree_table_name,
-        union_stmt
+        ARRAY[
+            tree_table_name,
+            union_stmt,
+            tree_table_name
+            ]
         )
     INTO curstmt;    
     EXECUTE curstmt;
@@ -2970,7 +2939,7 @@ BEGIN
     RETURN;
 END $$ LANGUAGE PLPGSQL;
 
-/**
+/*
  * @brief   Display the trained decision tree model with rules
  *
  * @param   tree_table_name     Name of the table containing the tree's information
@@ -3340,23 +3309,38 @@ DECLARE
     ret                     TEXT := '';
     tree_location           INT[];
     feature                 INT;
-    jump                    INT[];
+    lmc_nid                 INT;
+    lmc_fval                INT;
     maxclass                INT;
     cat_size                INT;
     is_feature_cont         BOOLEAN;
     temp_split_value        FLOAT;
     index                   INT;
     curr_value              INT;
+    node_count              INT;
+    max_child_nid           INT;
     probability             FLOAT;
+    curstmt                 TEXT;
 BEGIN
     IF (id IS NULL OR id <= 0) THEN
         RETURN ret;
     END IF;
+
+    SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT tree_location, feature, lmc_nid, lmc_fval,is_feature_cont, 
+                        split_value, maxclass,cat_size,probability
+                 FROM %
+                 WHERE id = %',
+                 ARRAY[
+                    tree_table,
+                    MADLIB_SCHEMA.__to_char(id)
+                 ]
+             )
+    INTO curstmt;
     
-    EXECUTE 'select tree_location, feature, jump,is_feature_cont, split_value,
-        maxclass,cat_size,probability from '
-        || tree_table || ' where id =' || id ||';' INTO tree_location, feature,jump, 
-        is_feature_cont,temp_split_value,maxclass, cat_size, probability; 
+    EXECUTE curstmt INTO tree_location, feature, lmc_nid, lmc_fval, is_feature_cont, 
+                         temp_split_value, maxclass, cat_size, probability;  
 
     curr_value = tree_location[array_upper(tree_location,1)];
 
@@ -3403,20 +3387,40 @@ BEGIN
         depth >= max_depth) THEN
         RETURN ret;
     END IF;
-
-    index = array_lower(jump,1);
-    WHILE index <= array_upper(jump,1) LOOP
+    
+    SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT DISTINCT ON(parent_id) id
+                 FROM %
+                 WHERE parent_id = %
+                 ORDER BY parent_id, id desc',
+                ARRAY[
+                    tree_table,
+                    MADLIB_SCHEMA.__to_char(id)
+                    ]
+            )
+    INTO curstmt;   
+    EXECUTE curstmt INTO max_child_nid;
+    
+    -- if current node has children, then recursively display
+    node_count = 1;
+    WHILE (lmc_nid IS NOT NULL) AND (0 < node_count AND lmc_nid <= max_child_nid) LOOP
         ret = ret || MADLIB_SCHEMA.__display_tree_no_ordered_aggr(
                             tree_table, 
-                            jump[index], 
+                            lmc_nid, 
                             feature, 
-                            depth+1, 
+                            depth + 1, 
                             is_feature_cont, 
                             temp_split_value, 
                             metatable_name,
                             max_depth);
-        index = index +1;
-    END LOOP; 
+                                    
+        lmc_nid = lmc_nid + 1;
+        
+        EXECUTE ' SELECT COUNT(id) FROM ' || tree_table ||
+                ' WHERE id = ' || lmc_nid || ' AND parent_id = ' || id
+                INTO node_count;        
+    END LOOP;
 
     RETURN ret;
 END $$ LANGUAGE PLPGSQL;
@@ -3506,6 +3510,7 @@ m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
     RETURN MADLIB_SCHEMA.__c45_display_no_ordered_aggr(tree_table,max_depth);
 <<<)
 m4_changequote(>>>`<<<, >>>'<<<)
+
 END $$ LANGUAGE PLPGSQL;
 
 /*
@@ -3699,7 +3704,36 @@ BEGIN
             RAISE INFO 'new_depth: %', curr_level;
         END IF;
 
-        EXECUTE 'INSERT INTO ' || result_table_name ||' SELECT * FROM '|| 
+        -- if the node (whose id is "jump") doesn't exist, 
+        -- then insert them into result table 
+        -- (be classified to max_class of its corrsponding node)
+        SELECT MADLIB_SCHEMA.__format(
+            'INSERT INTO %(id, jump, class, prob, parent_id, leaf_id) 
+             SELECT id, 0, class, prob, parent_id, leaf_id
+             FROM %
+             WHERE jump NOT IN (SELECT id FROM %)',
+            ARRAY[
+                result_table_name,
+                table_names[table_pick],
+                tree_table_name
+                ]
+            ) 
+        INTO curstmt;
+        EXECUTE curstmt;
+        
+        -- delete from the being classified data table
+        SELECT MADLIB_SCHEMA.__format(
+            'DELETE FROM %
+             WHERE jump NOT IN (SELECT id FROM %)',
+            ARRAY[
+                table_names[table_pick],
+                tree_table_name
+                ]
+            ) 
+        INTO curstmt;
+        EXECUTE curstmt;
+                
+        EXECUTE 'INSERT INTO ' || result_table_name || ' SELECT * FROM ' || 
             table_names[(table_pick) % 2 + 1] ||' WHERE jump = 0;';
         EXECUTE 'TRUNCATE '|| table_names[(table_pick) % 2 + 1] ||';';
         EXECUTE 'SELECT count(id) FROM '||result_table_name||';' INTO size_finished;
@@ -3724,15 +3758,19 @@ BEGIN
             'INSERT INTO %
             SELECT pt.id, 
             CASE WHEN (is_feature_cont) THEN 
-                    COALESCE(gt.jump[
-                                     CASE WHEN (gt.split_value < farray[gt.feature]) THEN
-                                        3
-                                     ELSE
-                                        2
-                                     END
-                                    ], 0)
+                    CASE WHEN (gt.lmc_nid IS NULL) THEN
+                        0
+                    ELSE
+                        gt.lmc_nid + 
+                        float8lt(gt.split_value, farray[gt.feature])::INT4 + 1 -
+                        gt.lmc_fval
+                    END
                 ELSE 
-                    COALESCE(gt.jump[farray[gt.feature] + 1],0) 
+                    CASE WHEN (gt.lmc_nid IS NULL) THEN
+                        0
+                    ELSE                    
+                        gt.lmc_nid + farray[gt.feature] - gt.lmc_fval
+                    END
                 END as newjump,
             gt.maxclass, gt.probability, gt.parent_id, gt.id 
             FROM (
@@ -3742,7 +3780,7 @@ BEGIN
                 ON t1.id = t2.id
             ) AS pt,
             (
-                SELECT jump, maxclass,feature, probability, parent_id, id, is_feature_cont, split_value
+                SELECT lmc_nid, lmc_fval, maxclass,feature, probability, parent_id, id, is_feature_cont, split_value
                 FROM % 
                 WHERE array_upper(tree_location,1) = %
             ) AS gt
@@ -3758,7 +3796,7 @@ BEGIN
             )
         INTO curstmt;     
         EXECUTE curstmt;
-         
+
     END LOOP;
 
     EXECUTE 'INSERT INTO '||result_table_name||' SELECT * FROM '|| 
