@@ -2281,8 +2281,7 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Train a decision tree model. User must specify all those data with that 
- *        long form function.
+ * @brief This is the long form API of training tree with all specified parameters. 
  *
  * @param split_criterion_name      This parameter specifies which split criterion 
  *                                  should be used for tree construction and pruning. 
@@ -2295,6 +2294,7 @@ $$ LANGUAGE PLPGSQL;
  * @param id_col_name               Name of the column containing id of each point.
  * @param class_col_name            Name of the column containing correct class of each point.
  * @param confidence_level          A statistical confidence interval of the resubstitution error.
+ * @param how2handle_missing_value  The way to handle missing value. The valid value is 'explicit' or 'ignore'. 
  * @param max_num_iter              Max number of branches to follow (e.g. 2000)
  * @param max_tree_depth            Maximum decision tree depth 
  * @param min_percent_mode          Specifies the minimum number of cases required in a child node
@@ -2302,38 +2302,35 @@ $$ LANGUAGE PLPGSQL;
  *                                  a further split to be possible.
  * @param verbosity                 If True (or 1) will run in verbose mode
  *
- * @return Table MADLIB_SCHEMA.tree:
- *  - <tt>id SERIAL</tt> - Tree node id
- *  - <tt>tree_location INT[]</tt>      Set of values that lead to this branch. 
+ * @return The columns of trained tree table:
+ *  - <tt>id SERIAL</tt>              - Tree node id
+ *  - <tt>tree_location INT[]</tt>    - Set of values that lead to this branch. 
  *                                      0 is the initial point (no value). But this path does not specify which 
  *                                      feature was used for the branching.
- *  - <tt>feature INT</tt>              Which element of the feature vector was used for 
+ *  - <tt>feature INT</tt>            - Which element of the feature vector was used for 
  *                                      branching at this node. Notice that this feature is not used in the current 
- *     <tt>tree_location</tt>           it will be added in the next step.
- *  - <tt>probability FLOAT</tt>        If forced to make a call for a dominant class 
+ *     <tt>tree_location</tt>         - it will be added in the next step.
+ *  - <tt>probability FLOAT</tt>      - If forced to make a call for a dominant class 
  *                                      at a given point this would be the confidence of the call  
  *                                      (this is only an estimated value).
- *  - <tt>maxclass INTEGER</tt>         If forced to make a call for a dominant class 
+ *  - <tt>maxclass INTEGER</tt>       - If forced to make a call for a dominant class 
  *                                      at a given point this is the selected class.
- *  - <tt>split_gain FLOAT</tt>         Information gain computed using entropy (at this 
+ *  - <tt>split_gain FLOAT</tt>       - Information gain computed using entropy (at this 
  *                                      node), also used to determine termination of the branch.
- *  - <tt>live INT</tt>                 Indication that the branch is still growing. 1 means "live". 
+ *  - <tt>live INT</tt>               - Indication that the branch is still growing. 1 means "live". 
  *                                      Exit value may be 1 if number of branches reached before termination condition is met.
- *  - <tt>cat_size INT</tt>             Number of data point at this node.
- *  - <tt>parent_id INT</tt>            Id of the parent branch.
- *  - <tt>lmc_nid</tt>                  Leftmost child (lmc) node id of the node represented by the current row.
- *  - <tt>lmc_fval</tt>                 The feature value which leads to the leftmost child (lmc) node.
+ *  - <tt>cat_size INT</tt>           - Number of data point at this node.
+ *  - <tt>parent_id INT</tt>          - Id of the parent branch.
+ *  - <tt>lmc_nid</tt>                - Leftmost child (lmc) node id of the node represented by the current row.
+ *  - <tt>lmc_fval</tt>               - The feature value which leads to the leftmost child (lmc) node.
                                         Since the child nodes' ids are continuous integer values, they can be deduced 
                                         by the lmc_nid and lmc_fval. For example, assume that the left most child node id is i (lmc_nid = i), 
                                         and the feature value which leads to the lmc is j (lmc_fval = j). Given a feature value x, then it will
                                         lead to the node whose id is i + x - j.
- *  - <tt>is_feature_cont BOOLEAN</tt>  It specifies whether the selected feature is a continuous feature.
- *  - <tt>split_value FLOAT</tt>        For continuous feature, it specifies the split value. Otherwise, 
- *     it is fixed to 0.
+ *  - <tt>is_feature_cont BOOLEAN</tt>- It specifies whether the selected feature is a continuous feature.
+ *  - <tt>split_value FLOAT</tt>      - For continuous feature, it specifies the split value. Otherwise, 
+ *                                      it is fixed to 0.
  *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source and column names have to be passed as strings (due to
- *       limitations of the SQL syntax).
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     (
@@ -2587,23 +2584,54 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Another C45 train algorithm in short form
+ * @brief C45 train algorithm in short form.
  *
- * @param the same as the ones accepted by the long form 
+ * @param split_criterion_name      This parameter specifies which split criterion 
+ *                                  should be used for tree construction and pruning. 
+ *                                  The valid values are infogain, gainratio, or gini.
+ * @param training_table_name       Name of the table/view with the source data
+ * @param result_tree_table_name    The name of the table where the resulting DT will be stored.
  *
- * @return the same as the one returned by the long form
- *
- * @note  
- *      validation_table_name:      NULL 
- *      continuous_feature_names:   NULL
- *      id_col_name Name:           'id'
- *      class_col_name Name:        'class'
- *      confidence_level:           25
- *      max_num_iter:               2000
- *      max_tree_depth:             10 
- *      min_percent_mode:           0.001
- *      min_percent_split:          0.01 
- *      verbosity:                  0
+ * @return The columns of trained tree table:
+ *  - <tt>id SERIAL</tt>              - Tree node id
+ *  - <tt>tree_location INT[]</tt>    - Set of values that lead to this branch. 
+ *                                      0 is the initial point (no value). But this path does not specify which 
+ *                                      feature was used for the branching.
+ *  - <tt>feature INT</tt>            - Which element of the feature vector was used for 
+ *                                      branching at this node. Notice that this feature is not used in the current 
+ *     <tt>tree_location</tt>         - it will be added in the next step.
+ *  - <tt>probability FLOAT</tt>      - If forced to make a call for a dominant class 
+ *                                      at a given point this would be the confidence of the call  
+ *                                      (this is only an estimated value).
+ *  - <tt>maxclass INTEGER</tt>       - If forced to make a call for a dominant class 
+ *                                      at a given point this is the selected class.
+ *  - <tt>split_gain FLOAT</tt>       - Information gain computed using entropy (at this 
+ *                                      node), also used to determine termination of the branch.
+ *  - <tt>live INT</tt>               - Indication that the branch is still growing. 1 means "live". 
+ *                                      Exit value may be 1 if number of branches reached before termination condition is met.
+ *  - <tt>cat_size INT</tt>           - Number of data point at this node.
+ *  - <tt>parent_id INT</tt>          - Id of the parent branch.
+ *  - <tt>lmc_nid</tt>                - Leftmost child (lmc) node id of the node represented by the current row.
+ *  - <tt>lmc_fval</tt>               - The feature value which leads to the leftmost child (lmc) node.
+                                        Since the child nodes' ids are continuous integer values, they can be deduced 
+                                        by the lmc_nid and lmc_fval. For example, assume that the left most child node id is i (lmc_nid = i), 
+                                        and the feature value which leads to the lmc is j (lmc_fval = j). Given a feature value x, then it will
+                                        lead to the node whose id is i + x - j.
+ *  - <tt>is_feature_cont BOOLEAN</tt>- It specifies whether the selected feature is a continuous feature.
+ *  - <tt>split_value FLOAT</tt>      - For continuous feature, it specifies the split value. Otherwise, 
+ *                                      it is fixed to 0.
+ * @note Fixed parameter list: 
+ *      - <tt>validation_table_name</tt>    - NULL 
+ *      - <tt>continuous_feature_names</tt> - NULL
+ *      - <tt>id_col_name Name</tt>         - 'id'
+ *      - <tt>class_col_name Name</tt>      - 'class'
+ *      - <tt>confidence_level</tt>         - 25
+ *      - <tt>how2handle_missing_value</tt> - 'explicit'
+ *      - <tt>max_num_iter</tt>             - 2000
+ *      - <tt>max_tree_depth</tt>           - 10 
+ *      - <tt>min_percent_mode</tt>         - 0.001
+ *      - <tt>min_percent_split</tt>        - 0.01 
+ *      - <tt>verbosity</tt>                - 0
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     (
@@ -2638,18 +2666,56 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Another C45 train algorithm in short form
+ * @brief C45 train algorithm in short form.
  *
- * @param the same as the ones accepted by the long form 
+ * @param split_criterion_name      This parameter specifies which split criterion 
+ *                                  should be used for tree construction and pruning. 
+ *                                  The valid values are infogain, gainratio, or gini.
+ * @param training_table_name       Name of the table/view with the source data
+ * @param result_tree_table_name    The name of the table where the resulting DT will be stored.
+ * @param validation_table_name     The validation table used for pruning tree. 
+ * @param continuous_feature_names  A comma-separated list of the names of the features whose values are continuous. 
+ * @param feature_col_names         A comma-separated list of names of the table columns, each of which defines a feature.
+ * @param id_col_name               Name of the column containing id of each point.
+ * @param class_col_name            Name of the column containing correct class of each point.
+ * @param confidence_level          A statistical confidence interval of the resubstitution error.
+ * @param how2handle_missing_value  The way to handle missing value. The valid value is 'explicit' or 'ignore'. 
  *
- * @return the same as the one returned by the long form
+ * @return The columns of trained tree table:
+ *  - <tt>id SERIAL</tt>              - Tree node id
+ *  - <tt>tree_location INT[]</tt>    - Set of values that lead to this branch. 
+ *                                      0 is the initial point (no value). But this path does not specify which 
+ *                                      feature was used for the branching.
+ *  - <tt>feature INT</tt>            - Which element of the feature vector was used for 
+ *                                      branching at this node. Notice that this feature is not used in the current 
+ *     <tt>tree_location</tt>         - it will be added in the next step.
+ *  - <tt>probability FLOAT</tt>      - If forced to make a call for a dominant class 
+ *                                      at a given point this would be the confidence of the call  
+ *                                      (this is only an estimated value).
+ *  - <tt>maxclass INTEGER</tt>       - If forced to make a call for a dominant class 
+ *                                      at a given point this is the selected class.
+ *  - <tt>split_gain FLOAT</tt>       - Information gain computed using entropy (at this 
+ *                                      node), also used to determine termination of the branch.
+ *  - <tt>live INT</tt>               - Indication that the branch is still growing. 1 means "live". 
+ *                                      Exit value may be 1 if number of branches reached before termination condition is met.
+ *  - <tt>cat_size INT</tt>           - Number of data point at this node.
+ *  - <tt>parent_id INT</tt>          - Id of the parent branch.
+ *  - <tt>lmc_nid</tt>                - Leftmost child (lmc) node id of the node represented by the current row.
+ *  - <tt>lmc_fval</tt>               - The feature value which leads to the leftmost child (lmc) node.
+                                        Since the child nodes' ids are continuous integer values, they can be deduced 
+                                        by the lmc_nid and lmc_fval. For example, assume that the left most child node id is i (lmc_nid = i), 
+                                        and the feature value which leads to the lmc is j (lmc_fval = j). Given a feature value x, then it will
+                                        lead to the node whose id is i + x - j.
+ *  - <tt>is_feature_cont BOOLEAN</tt>- It specifies whether the selected feature is a continuous feature.
+ *  - <tt>split_value FLOAT</tt>      - For continuous feature, it specifies the split value. Otherwise, 
+ *                                      it is fixed to 0.
+ * @note Fixed parameter list: 
+ *      - <tt>max_num_iter</tt>             - 2000
+ *      - <tt>max_tree_depth</tt>           - 10 
+ *      - <tt>min_percent_mode</tt>         - 0.001
+ *      - <tt>min_percent_split</tt>        - 0.01 
+ *      - <tt>verbosity</tt>                - 0
  *
- * @note     
- *      max_num_iter:      			2000
- *      max_tree_depth:     		10 
- *      min_percent_mode:   		0.001
- *      min_percent_split:  		0.01 
- *      verbosity:          		0
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     (
@@ -2691,7 +2757,7 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief   Display the trained decision tree model with rules
+ * @brief   Display the trained decision tree model with rules.
  *
  * @param   tree_table_name     Name of the table containing the tree's information
  * @param   verbosity           If >= 1 will run in verbose mode
@@ -3471,7 +3537,7 @@ BEGIN
 END $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Display the trained decision tree model with human readable format
+ * @brief Display the trained decision tree model with human readable format.
  *
  * @param tree_table Name of the table containing the tree's information
  * @param max_depth  The max depth to be displayed. If null, this function will show all levels.
@@ -3519,7 +3585,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
 END $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Display the whole trained decision tree model with human readable format
+ * @brief Display the whole trained decision tree model with human readable format.
  *
  * @param tree_table Name of the table containing the tree's information
  *                    
@@ -3819,17 +3885,17 @@ $$ LANGUAGE PLPGSQL;
    
     
 /**
- * @brief Classify data points using trained decision tree model
+ * @brief Classify dataset using trained decision tree model.
  *
- * @param classification_table_name     Name of the table/view with the source data
  * @param tree_table_name               Name of trained tree
+ * @param classification_table_name     Name of the table/view with the source data
  * @param result_table_name             Name of result table
  * @param verbosity                     If set to 't' will use verbose mode
  *
- * @return Table columns:
- *  - <tt>id INT</tt>       Point id.
- *  - <tt>class INT</tt>    Class prediction. 
- *  - <tt>prob FLOAT</tt>   Probability of the predicted class.
+ * @return The columns of classified table:
+ *  - <tt>id INT</tt>     - Record id.
+ *  - <tt>class INT</tt>  - Predicted class. 
+ *  - <tt>prob FLOAT</tt> - Probability of the predicted class.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
@@ -3881,16 +3947,16 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief   Classify the data with no verbosity
+ * @brief Classify dataset using trained decision tree model.
  *  
  * @param classification_table_name     Name of the table/view with the source data
  * @param tree_table_name               Name of trained tree
  * @param result_table_name             Name of result table
  *
- * @return Table MADLIB_SCHEMA.classified_points:
- *  - <tt>id INT</tt>       Point id.
- *  - <tt>class INT</tt>    Class prediction. 
- *  - <tt>prob FLOAT</tt>   Probability of the predicted class.
+ * @return The columns of classified table:
+ *  - <tt>id INT</tt>     - Record id.
+ *  - <tt>class INT</tt>  - Predicted class. 
+ *  - <tt>prob FLOAT</tt> - Probability of the predicted class.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
@@ -3923,11 +3989,12 @@ BEGIN
 END $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief   Check the accuracy of the decision tree alogrithom 
+ * @brief Check the accuracy of the decision tree model. 
  * 
  * @param tree_table_name           Name of trained tree
  * @param scoring_table_name        Name of the table/view with the source data
  * @param verbosity                 If set to 't' will use verbose mode 
+ *
  * @return The estimated accuracy information.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_score
@@ -4040,11 +4107,11 @@ END;
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Cleanup the trained tree table and any relevant tables
+ * @brief Cleanup the trained tree table and any relevant tables.
  *
  * @param result_tree_table_name Name of the table containing the tree's information
  *
- * @return BOOLEAN value indicating the status of that cleanup operation.
+ * @return The status of that cleanup operation.
  *
  */
 DROP FUNCTION IF EXISTS  MADLIB_SCHEMA.c45_clean
