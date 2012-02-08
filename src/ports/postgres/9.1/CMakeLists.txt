@@ -1,0 +1,1 @@
+add_current_postgresql_version()

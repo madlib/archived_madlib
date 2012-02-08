@@ -2,29 +2,17 @@
  *
  * @file student.hpp
  *
- * @brief Evaluate the Student-T distribution function.
- *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_PROB_STUDENT_H
-#define MADLIB_PROB_STUDENT_H
+// Workaround for Doxygen: A header file that does not declare namespaces is to
+// be ignored if and only if it is processed stand-alone
+#if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
 
-#include <modules/common.hpp>
+/**
+ * @brief Student-t cumulative distribution function
+ */
+DECLARE_UDF(student_t_cdf)
 
-namespace madlib {
+double studentT_CDF(int64_t nu, double t);
 
-namespace modules {
-
-namespace prob {
-
-AnyType students_t_cdf(AbstractDBInterface &db, AnyType args);
-AnyType students_t_pdf(AbstractDBInterface &db, AnyType args);
-AnyType students_t_quantile(AbstractDBInterface &db, AnyType args);
-
-} // namespace prob
-
-} // namespace modules
-
-} // namespace regress
-
-#endif
+#endif // workaround for Doxygen

@@ -47,12 +47,13 @@ maddir_lib  = maddir + "/lib/libmadlib.so" # C/C++ libraries
 ports = configyml.get_ports(maddir_conf )  # object made of Ports.yml
 rev = configyml.get_version(maddir_conf )  # MADlib OS-level version
 portid_list = []
-for port in ports['ports']:
-    portid_list.append(port['id'])
+for port in ports:
+    portid_list.append(port)
 
 # Global variables
 portid = None       # Target port ID (eg: pg90, gp40)
 dbconn = None       # DB Connection object
+dbver = None        # DB version
 con_args = {}       # DB connection arguments
 verbose = None      # Verbose flag
 
@@ -152,22 +153,19 @@ def __run_sql_query(sql, show_error):
         except:
             pass
     
-    #print sql
-    #print runcmd
-    #print results    
     return results
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Run SQL file
 # @param schema name of the target schema  
-# @param maddir_mod name of the module dir with Python code
+# @param maddir_mod_py name of the module dir with Python code
 # @param module name of the module 
 # @param sqlfile name of the file to parse  
 # @param tmpfile name of the temp file to run
 # @param logfile name of the log file (stdout)    
 # @param pre_sql optional SQL to run before executing the file
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql):       
+def __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, pre_sql):       
 
     # Check if the SQL file exists     
     if not os.path.isfile(sqlfile):
@@ -184,15 +182,15 @@ def __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sq
             f.flush()
         
         # Find the madpack dir (platform specific or generic)
-        if os.path.isdir(maddir + "/ports/" + portid + "/madpack"):
-            maddir_madpack  = maddir + "/ports/" + portid + "/madpack"
+        if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/madpack"):
+            maddir_madpack  = maddir + "/ports/" + portid + "/" + dbver + "/madpack"
         else:        
             maddir_madpack  = maddir + "/madpack"
 
         m4args = [ 'm4', 
                     '-P', 
                     '-DMADLIB_SCHEMA=' + schema, 
-                    '-DPLPYTHON_LIBDIR=' + maddir_mod, 
+                    '-DPLPYTHON_LIBDIR=' + maddir_mod_py, 
                     '-DMODULE_PATHNAME=' + maddir_lib, 
                     '-DMODULE_NAME=' + module, 
                     '-I' + maddir_madpack,
@@ -266,6 +264,22 @@ def __get_madlib_dbver(schema):
         __error("Failed reading MADlib db version", True)
         
     return None
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Read version number from database (of form X.Y)
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __get_dbver():
+    try:
+        versionString = __run_sql_query("""SELECT version()""",
+            True)[0]['version']
+        if portid == 'postgres':
+            return re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)",
+                versionString).group(1)
+        elif portid == 'greenplum':
+            return re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)",
+                versionString).group(1)
+    except:
+        __error("Failed reading database version", True)
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Make sure we are connected to the expected DB platform
@@ -543,11 +557,17 @@ def __db_create_objects(schema, old_schema):
         module = moduleinfo['name']
         __info("> - %s" % module, True)        
         
-        # Find the module dir (platform specific or generic)
+        # Find the Python module dir (platform specific or generic)
+        if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/modules/" + module):
+            maddir_mod_py  = maddir + "/ports/" + portid + "/" + dbver + "/modules"
+        else:
+            maddir_mod_py  = maddir + "/modules"
+        
+        # Find the SQL module dir (platform specific or generic)
         if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
-            maddir_mod  = maddir + "/ports/" + portid + "/modules"
+            maddir_mod_sql  = maddir + "/ports/" + portid + "/modules"
         elif os.path.isdir(maddir + "/modules/" + module):
-            maddir_mod  = maddir + "/modules"
+            maddir_mod_sql  = maddir + "/modules"
         else:
             # This was a platform-specific module, for which no default exists.
             # We can just skip this module.
@@ -558,7 +578,7 @@ def __db_create_objects(schema, old_schema):
         __make_dir(cur_tmpdir)
 
         # Loop through all SQL files for this module
-        mask = maddir_mod + '/' + module + '/*.sql_in'
+        mask = maddir_mod_sql + '/' + module + '/*.sql_in'
         sql_files = glob.glob(mask)
 
         if not sql_files:
@@ -573,7 +593,7 @@ def __db_create_objects(schema, old_schema):
             
             # Run the SQL
             try:
-                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, None)
+                retval = __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, None)
             except:
                 raise Exception
                 
@@ -661,24 +681,28 @@ def main(argv):
   
 """)
             
-    parser.add_argument('command', metavar='COMMAND', nargs=1, 
-                         choices=['install','update','uninstall','version','install-check'], 
-                         help = "One of the following options:\n"
-                              + "  install/update : run sql scripts to load into DB\n"
-                              + "  uninstall      : run sql scripts to uninstall from DB\n"
-                              + "  version        : compare and print MADlib version (binaries vs database objects)\n"
-                              + "  install-check  : test all installed modules\n")
+    parser.add_argument(
+        'command', metavar='COMMAND', nargs=1, 
+        choices=['install','update','uninstall','reinstall','version','install-check'], 
+        help = "One of the following options:\n"
+            + "  install/update : run sql scripts to load into DB\n"
+            + "  uninstall      : run sql scripts to uninstall from DB\n"
+            + "  reinstall      : performs uninstall and install\n"
+            + "  version        : compare and print MADlib version (binaries vs database objects)\n"
+            + "  install-check  : test all installed modules\n"
+    )
   
-    parser.add_argument('-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
-                         help= "Connection string of the following syntax:\n"
-                             + "  [user[/password]@][host][:port][/database]\n" 
-                             + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
-                             + "- user: PGUSER or USER env variable or OS username\n"
-                             + "- pass: PGPASSWORD env variable or runtime prompt\n"
-                             + "- host: PGHOST env variable or 'localhost'\n"
-                             + "- port: PGPORT env variable or '5432'\n"
-                             + "- db: PGDATABASE env variable or OS username\n"
-                             )
+    parser.add_argument(
+        '-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
+        help= "Connection string of the following syntax:\n"
+            + "  [user[/password]@][host][:port][/database]\n" 
+            + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
+            + "- user: PGUSER or USER env variable or OS username\n"
+            + "- pass: PGPASSWORD env variable or runtime prompt\n"
+            + "- host: PGHOST env variable or 'localhost'\n"
+            + "- port: PGPORT env variable or '5432'\n"
+            + "- db: PGDATABASE env variable or OS username\n"
+            )
 
     parser.add_argument('-s', '--schema', nargs=1, dest='schema', 
                          metavar='SCHEMA', default='madlib',
@@ -694,7 +718,7 @@ def main(argv):
     parser.add_argument('-l', '--keeplogs', dest='keeplogs', default=False, 
                          action="store_true", help="Do not remove installation log files.")
 
-    parser.add_argument('-d', '--directory', dest='tmpdir', default = '/tmp/',
+    parser.add_argument('-d', '--tmpdir', dest='tmpdir', default = '/tmp/',
                          help="Temporary directory location for installation log files.")
 
     ##
@@ -726,27 +750,13 @@ def main(argv):
     ##
     # Parse DB Platform (== PortID) and compare with Ports.yml
     ##
-    global portid  
+    global portid
+    global dbver
     if args.platform:
         try:
             # Get the DB platform name == DB port id
             portid = args.platform[0].lower()
-            # Loop through available db ports 
-            for port in ports['ports']:                
-                if portid == port['id']:
-                    # Adjust MADlib directories for this port (if they exist)
-                    global maddir_conf 
-                    if os.path.isdir(maddir + "/ports/" + portid + "/config"):
-                        maddir_conf = maddir + "/ports/" + portid + "/config"
-                    global maddir_lib
-                    if os.path.isfile(maddir + "/ports/" + portid + \
-                            "/lib/libmadlib_" + portid + ".so"):
-                        maddir_lib  = maddir + "/ports/" + portid + \
-                            "/lib/libmadlib_" + portid + ".so"
-                    # Get the list of modules for this port
-                    global portspecs
-                    portspecs = configyml.get_modules(maddir_conf) 
-                    # print portspecs
+            ports[portid]
         except:
             portid = None
             __error("Can not find specs for port %s" % (args.platform[0]), True)
@@ -792,10 +802,35 @@ def main(argv):
         # Get MADlib version in DB
         dbrev = __get_madlib_dbver(schema)
         
+        # Get DB version
+        dbver = __get_dbver()
+        __info("Detected %s version %s." % (ports[portid]['name'], dbver), True)
+        portdir = os.path.join(maddir, "ports", portid)
+        if not os.path.isdir(os.path.join(portdir, dbver)):
+            __error("This version is not among the %s versions for which "
+                "MADlib support files have been installed (%s)." % 
+                (ports[portid]['name'],
+                ", ".join([name for name in os.listdir(portdir)
+                                if os.path.isdir(os.path.join(portdir, name))
+                                and re.match("^\d+\.\d+", name)])
+                ), True)
+        
         # Validate that db platform is correct 
         if __check_db_port(portid) == False:
             __error("Invalid database platform specified.", True)
-                   
+            
+        # Adjust MADlib directories for this port (if they exist)
+        global maddir_conf 
+        if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/config"):
+            maddir_conf = maddir + "/ports/" + portid + "/" + dbver + "/config"
+        global maddir_lib
+        if os.path.isfile(maddir + "/ports/" + portid + "/" + dbver + \
+                "/lib/libmadlib.so"):
+            maddir_lib  = maddir + "/ports/" + portid + "/" + dbver + \
+                "/lib/libmadlib.so"
+        # Get the list of modules for this port
+        global portspecs
+        portspecs = configyml.get_modules(maddir_conf)                   
     else:
         con_args = None
         dbrev = None
@@ -815,45 +850,55 @@ def main(argv):
         if not con_args:
             __error("Unknown problem with database connection string: %s" % con_args, True)
    
-
     ###
     # COMMAND: version
     ###
     if args.command[0] == 'version':
 
         __print_revs(rev, dbrev, con_args, schema)
-        
+                
     ###
-    # COMMAND: install/update
+    # COMMAND: uninstall/reinstall 
     ###
-    elif args.command[0] == 'install' or args.command[0] == 'update':
-        
-        # 1) Compare OS and DB versions. Continue if OS > DB.
-        __print_revs(rev, dbrev, con_args, schema)
-        if __get_rev_num(dbrev) >= __get_rev_num(rev):
-            __info("Current MADlib version already up to date.", True)
-            return
-
-        # 2) Run installation 
-        try:
-            __plpy_check(py_min_ver)
-            __db_install(schema, dbrev)
-        except:
-            __error("MADlib installation failed.", True)
-
-    ###
-    # COMMAND: uninstall (drops the schema)
-    ###
-    if args.command[0] == 'uninstall':
+    if args.command[0] == 'uninstall' or args.command[0] == 'reinstall':
 
         if __get_rev_num(dbrev) == ['0']:
             __info("Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
             return
 
-        __info("***************************************************************************", True)
+        # Find any potential data to lose
+        affected_objects = __run_sql_query("""
+            SELECT 
+                n1.nspname AS schema,
+                relname AS relation, 
+                attname AS column, 
+                typname AS type
+            FROM 
+                pg_attribute a, 
+                pg_class c, 
+                pg_type t, 
+                pg_namespace n, 
+                pg_namespace n1     
+            WHERE 
+                n.nspname = '%s'
+                AND t.typnamespace = n.oid 
+                AND a.atttypid = t.oid 
+                AND c.oid = a.attrelid 
+                AND c.relnamespace = n1.oid
+                AND c.relkind = 'r'
+            ORDER BY 
+                n1.nspname, relname, attname, typname""" % schema.lower()
+                , True
+        );
+                
+        __info("*** Uninstalling MADlib ***", True)        
+        __info("***********************************************************************************", True)
         __info("* Schema %s and all database objects depending on it will be dropped!" % schema.upper(), True)
-        __info("* This is potentially very dangerous operation!                      ", True)
-        __info("***************************************************************************", True)
+        if affected_objects:
+            __info("* If you continue the following data will be lost (schema : table.column : type):", True)
+            for ao in affected_objects:
+                __info ( '* - ' + ao['schema'] + ' : ' + ao['relation'] + '.' + ao['column'] + ' : ' + ao['type'], True);
+        __info("***********************************************************************************", True)
         __info("Would you like to continue? [Y/N]", True)
         go = raw_input('>>> ').upper()
         while go != 'Y' and go != 'N':
@@ -876,6 +921,33 @@ def main(argv):
             
         else:
             return
+
+    ###
+    # COMMAND: install/update/reinstall
+    ###
+    if ( args.command[0] == 'install' 
+         or args.command[0] == 'update'
+         or args.command[0] == 'reinstall'):
+        
+        # Refresh MADlib version in DB
+        if args.command[0] == 'reinstall': 
+            dbrev = __get_madlib_dbver(schema)
+            print ""
+
+        __info("*** Installing MADlib ***", True)
+        
+        # 1) Compare OS and DB versions. Continue if OS > DB.
+        __print_revs(rev, dbrev, con_args, schema)
+        if __get_rev_num(dbrev) >= __get_rev_num(rev):
+            __info("Current MADlib version already up to date.", True)
+            return
+
+        # 2) Run installation 
+        try:
+            __plpy_check(py_min_ver)
+            __db_install(schema, dbrev)
+        except:
+            __error("MADlib installation failed.", True)
            
     ###
     # COMMAND: install-check
@@ -906,7 +978,7 @@ def main(argv):
         __info("> Running test scripts for:", verbose)   
         
         # Loop through all modules 
-        for moduleinfo in portspecs['modules']:    
+        for moduleinfo in portspecs['modules']:
         
             # Get module name
             module = moduleinfo['name']
@@ -916,11 +988,17 @@ def main(argv):
             cur_tmpdir = tmpdir + '/' + module + '/test'
             __make_dir(cur_tmpdir)
             
-            # Find the module dir (platform specific or generic)
-            if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
-                maddir_mod  = maddir + "/ports/" + portid + "/modules"
+            # Find the Python module dir (platform specific or generic)
+            if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/modules/" + module):
+                maddir_mod_py  = maddir + "/ports/" + portid + "/" + dbver + "/modules"
             else:        
-                maddir_mod  = maddir + "/modules"      
+                maddir_mod_py  = maddir + "/modules"
+            
+            # Find the SQL module dir (platform specific or generic)
+            if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
+                maddir_mod_sql  = maddir + "/ports/" + portid + "/modules"
+            else:        
+                maddir_mod_sql  = maddir + "/modules"
 
             # Prepare test schema
             test_schema = "madlib_installcheck_%s" % (module)
@@ -937,7 +1015,7 @@ def main(argv):
                       % (test_user, test_schema, schema)
     
             # Loop through all test SQL files for this module
-            sql_files = maddir_mod + '/' + module + '/test/*.sql_in'
+            sql_files = maddir_mod_sql + '/' + module + '/test/*.sql_in'
             for sqlfile in sorted(glob.glob(sql_files)):
             
                 result = 'PASS'
@@ -951,7 +1029,7 @@ def main(argv):
 
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                retval = __run_sql_file(schema, maddir_mod, module, sqlfile, tmpfile, logfile, pre_sql)
+                retval = __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, pre_sql)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
@@ -994,3 +1072,6 @@ if __name__ == "__main__":
     # Optional log files cleanup    
     if keeplogs is False:
         shutil.rmtree(tmpdir)
+    else:
+        print "INFO: Log files saved in " + tmpdir
+

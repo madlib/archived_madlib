@@ -266,11 +266,19 @@ SvecType * svec_in_internal(char * str)
 	u_index = (int64 *)ARR_DATA_PTR(pgarray_ix);
 	vals = (double *)ARR_DATA_PTR(pgarray_vals);
 
-	/* Check for input errors */
+	/* The count and value arrays must be non-empty */
+	int size1 = ARR_NDIM(pgarray_ix);
+	int size2 = ARR_NDIM(pgarray_vals);
+	if (size1 == 0 || size2 == 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("The count and value arrays must be non-empty")));
+
+	/* The count and value arrays must have the same dimension */
 	if (num_values != *(ARR_DIMS(pgarray_vals)))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("Unique value count not equal to run length count")));
+			 errmsg("Unique value count not equal to run length count %d != %d", num_values, *(ARR_DIMS(pgarray_vals)))));
 
 	/* Count array cannot have NULLs */
 	if (ARR_HASNULL(pgarray_ix))

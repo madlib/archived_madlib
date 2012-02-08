@@ -1,148 +1,83 @@
 ---------------------------------------------------------------------------
 -- Rules: 
 -- ------
--- 1) Any DB objects should be created w/o schema prefix,
---    since this file is executed in a separate schema context.
--- 2) There should be no DROP statements in this script, since
---    all objects created in the default schema will be cleaned-up outside.
+-- Any DB objects should be created w/o schema prefix,
+-- since this file is executed in a separate schema context.
 ---------------------------------------------------------------------------
 
 ---------------------------------------------------------------------------
 -- Setup: 
 ---------------------------------------------------------------------------
-CREATE FUNCTION random_array ( 
-    size INTEGER, class INTEGER, total_classes INTEGER, sparsity FLOAT
-) RETURNS FLOAT[] AS $$
-declare
-	g FLOAT[];
-begin
-	FOR i IN 1..size LOOP
-		g[i] = 0;
-	END LOOP;
-	
-	FOR i IN (1+(size*class/total_classes))..((size*class/total_classes)+(size/total_classes)) LOOP
-		IF (sparsity > random()) THEN 
-			g[i] = random();
-		END IF;
-	END LOOP;
-	
-	RETURN g;
-end
-$$ language plpgsql;
+SELECT setseed( extract( epoch from current_timestamp)-floor( extract( epoch from current_timestamp)));
 
----------------------------------------------------------------------------
--- RNorm: Generates random number from normal distribution of (mean, sd)
----------------------------------------------------------------------------
-CREATE FUNCTION rnorm( mean FLOAT, sd FLOAT) RETURNS FLOAT AS $$
-declare
-begin
-	RETURN (|/abs(-log(random()*(|/ (2*pi()*sd*sd)))*2*sd*sd))*(sign(random()-.5)) + mean;
-end
-$$ language plpgsql;
-
----------------------------------------------------------------------------
--- Gaussian_Sparse_Array: Generates an SVEC of ...
----------------------------------------------------------------------------
-CREATE FUNCTION gaussian_sparse_array( center FLOAT[], sparsity FLOAT) RETURNS MADLIB_SCHEMA.svec AS $$
-declare
-	g FLOAT[];
-	sd FLOAT := 1;
-begin
-	FOR i IN 1..array_upper(center,1) LOOP
-		IF (center[i] > 0) THEN 
-			g[i] = RNorm(center[i], sd);
-		ELSE
-			g[i] = 0;
-		END IF;
-	END LOOP;
-	RETURN MADLIB_SCHEMA.svec_cast_float8arr(g);
-end
-$$ language plpgsql;
-
----------------------------------------------------------------------------
--- min: minimum of two FLOATs
----------------------------------------------------------------------------
-CREATE FUNCTION min( FLOAT, FLOAT) RETURNS FLOAT AS $$
-declare
-begin
-    IF ($1 > $2) THEN
-        RETURN $2;
-    ELSIF ($2 > $1) THEN
-        RETURN $1;
-    ELSIF ($1 = $2) THEN
-        RETURN $1;
-    ELSE
-        RETURN NULL;
-    END IF;
-end;
-$$ language plpgsql;
-
----------------------------------------------------------------------------
--- CreateTestTable: 
---   Creates a table and populates it with random points for k-means testing.
---   Table structure: (pid BIGINT, position SVEC)
----------------------------------------------------------------------------
-CREATE FUNCTION create_test_table( 
-    p_table TEXT, p_num int, p_dim int, p_nr_of_clusters int, p_sparsity float
-) RETURNS TEXT AS $$
-declare
-	vector FLOAT[];
-	sparsity FLOAT;
-	check BIGINT; 
-begin
-
-    RAISE INFO 'Creating a source table with % points.', p_num;
-    
-    -- Create the Target table
-    EXECUTE 'CREATE TABLE ' || p_table || '(
-    	pid BIGINT,
-    	position MADLIB_SCHEMA.SVEC
-    )';
-
-    -- Create Temp table
-    CREATE TEMP TABLE temp_kmeans_input(
-    	pid BIGINT,
-    	position MADLIB_SCHEMA.SVEC
-    );
-
-	sparsity = p_sparsity * p_nr_of_clusters;
-
-    -- Load some data
-	FOR i in 1..p_num LOOP
-		IF (i % 1000 = 1) THEN
-			RAISE INFO '[ % ]', i;
-		END IF; 
-		IF (i % (p_num/p_nr_of_clusters) < 2) THEN
-			vector = Random_Array( p_dim, CAST(floor((i-1)/(p_num/p_nr_of_clusters)) AS INTEGER), p_nr_of_clusters, sparsity);
-		END IF;
-		INSERT INTO temp_kmeans_input VALUES(i,  Gaussian_Sparse_Array(vector, sparsity));
-	END LOOP;
-	
-	-- Move data from Temp to Target table
-	EXECUTE 'INSERT INTO ' || p_table || ' SELECT * FROM temp_kmeans_input';
-	
-	RETURN 'Test table populated with ' || p_num || ' points (' || p_table || ').';
-	
-end
-$$ language plpgsql;
+SELECT * FROM MADLIB_SCHEMA.kmeans_sample_data( 
+    2,      -- # of dimensions
+    10,     -- # of clusters
+    1000,    -- # of points per cluster
+    1000,   -- max value of a cluster coordinate
+    10,     -- average width of a cluster in every dimension
+    'km_testdata'
+);
 
 ---------------------------------------------------------------
 -- Test
 ---------------------------------------------------------------
--- Create test table
-select create_test_table( 'madlib_installcheck_kmeans.table123', 1000, 10, 20, 0.1);
+-- Run k-means using kmeans++() seeding 
+DROP TABLE IF EXISTS km_points;
+DROP TABLE IF EXISTS km_cents;
+SELECT * FROM MADLIB_SCHEMA.kmeans_plusplus( 
+    'km_testdata'               -- relation 
+    , 'coords', null            -- data col, id col
+    , 'km_points', 'km_cents'   -- out points, out centroids
+    , 'l2norm'                  -- distance metric
+    , 5, 0.001                  -- max iter, convergence threshold
+    , True, True                -- evaluate, verbose
+    , 10, 0.01                  -- k, sample_fraq   			
+);
 
--- Run k-means clustering
-select MADLIB_SCHEMA.kmeans( 'madlib_installcheck_kmeans.table123', 20, 1, 'run1', 'madlib_installcheck_kmeans');
+-- Run k-means using random() seeding 
+DROP TABLE IF EXISTS km_points;
+DROP TABLE IF EXISTS km_cents;
+SELECT * FROM MADLIB_SCHEMA.kmeans_random( 
+    'km_testdata'               -- relation 
+    , 'coords', null            -- data col, id col
+    , 'km_points', 'km_cents'   -- out points, out centroids
+    , 'l1norm'                  -- distance metric
+    , 5, 0.001                  -- max iter, convergence threshold
+    , True, True                -- evaluate, verbose
+    , 10                        -- k  			
+);
 
--- Drop PID in the source table
--- alter table table123 drop column pid;
+-- Run k-means using canopy() seeding 
+DROP TABLE IF EXISTS km_points;
+DROP TABLE IF EXISTS km_cents;
+SELECT * FROM MADLIB_SCHEMA.kmeans_canopy( 
+    'km_testdata'               -- relation 
+    , 'coords', null            -- data col, id col
+    , 'km_points', 'km_cents'   -- out points, out centroids
+    , 'l1norm'                  -- distance metric
+    , 5, 0.001                  -- max iter, convergence threshold
+    , True, True                -- evaluate, verbose
+    , null, null                -- t1, t2			
+);
 
--- Rerun k-means clustering
-select MADLIB_SCHEMA.kmeans( 'madlib_installcheck_kmeans.table123', 20, 1, 'run1', 'madlib_installcheck_kmeans');
+-- Create a view with FLOAT[] data type
+CREATE VIEW km_testdata_float123 
+AS SELECT coords::float[] AS coords FROM km_testdata;
 
--- Change position data type to float
-create view madlib_installcheck_kmeans.tablefloat123 as select position::float[] from table123;
+-- Run k-means using prepared centroid set
+CREATE TABLE mycents AS SELECT * FROM km_cents;
+DROP TABLE IF EXISTS km_points;
+DROP TABLE IF EXISTS km_cents;
+SELECT * FROM MADLIB_SCHEMA.kmeans_cset( 
+    'km_testdata_float123'      -- relation 
+    , 'coords', null            -- data col, id col
+    , 'km_points', 'km_cents'   -- out points, out centroids
+    , 'tanimoto'                -- distance metric
+    , 5, 0.001                  -- max iter, convergence threshold
+    , True, True                -- evaluate, verbose
+    , 'mycents', 'coords'       -- init relation, init column
+);
 
--- Rerun k-means clustering
-select MADLIB_SCHEMA.kmeans( 'madlib_installcheck_kmeans.tablefloat123', 20, 1, 'run1', 'madlib_installcheck_kmeans');
+-- Show results
+SELECT cid, count(*) FROM km_points GROUP BY 1;

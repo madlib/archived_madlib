@@ -442,6 +442,7 @@ expr:
 	  INTEGER_LITERAL
     | FLOAT_LITERAL
 	| STRING_LITERAL
+    | IDENTIFIER
 	/* FIXME: Support more or ignore completely */
 ;
 

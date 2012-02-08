@@ -53,22 +53,11 @@ def get_ports(configdir):
         print "configyml : ERROR : missing or malformed Ports.yml"
         exit(2)
 
-    try:
-        conf['ports']
-    except:
-        print "configyml : ERROR : malformed Ports.yml"
-        exit(2)
-        
-    for port in conf['ports']:
+    for port in conf:
         try:
-            port['name']
+            conf[port]['name']
         except:
-            print "configyml : ERROR : malformed Ports.yml: missing name element"
-            exit(2)
-        try:
-            port['id']
-        except:
-            print "configyml : ERROR : malformed Ports.yml: no ID element for port " + port['name']
+            print "configyml : ERROR : malformed Ports.yml: no name element for port " + port
             exit(2)
         
     return conf

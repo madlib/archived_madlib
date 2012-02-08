@@ -10,6 +10,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+m4_include(`SQLCommon.m4')
+
 /**
 @addtogroup grp_svec
 
@@ -520,6 +522,16 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l2norm(MADLIB_SCHEMA.svec) RETURNS
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l2norm(float8[]) RETURNS float8 AS 'MODULE_PATHNAME', 'float8arr_l2norm' LANGUAGE C IMMUTABLE;
 
+--! Computes the l2norm distance between two SVECs.
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.l2norm(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_l2norm' LANGUAGE C STRICT IMMUTABLE;
+
+--! Computes the l1norm distance between two SVECs.
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.l1norm(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_l1norm' LANGUAGE C STRICT IMMUTABLE;
+
 --! Computes the l1norm of an SVEC.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l1norm(MADLIB_SCHEMA.svec) RETURNS float8 AS 'MODULE_PATHNAME', 'svec_l1norm' STRICT LANGUAGE C IMMUTABLE; 
@@ -527,6 +539,16 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l1norm(MADLIB_SCHEMA.svec) RETURNS
 --! Computes the l1norm of a float8 array.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l1norm(float8[]) RETURNS float8 AS 'MODULE_PATHNAME', 'float8arr_l1norm' STRICT LANGUAGE C IMMUTABLE; 
+
+--! Computes the angle between two SVECs in radians.
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.angle(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_angle' LANGUAGE C STRICT IMMUTABLE;
+
+--! Computes the Tanimoto distance between two SVECs.
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tanimoto_distance(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) 
+RETURNS float8 AS 'MODULE_PATHNAME', 'svec_svec_tanimoto_distance' LANGUAGE C STRICT IMMUTABLE;
 
 --! Unnests an SVEC into a table of uncompressed values  
 --!
@@ -887,6 +909,33 @@ CREATE OPERATOR MADLIB_SCHEMA.= (
 	restrict = eqsel, join = eqjoinsel
 );
 
+--! Transition function for mean(svec) aggregate
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_mean_transition( FLOAT[], MADLIB_SCHEMA.svec) 
+RETURNS FLOAT[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE; 
+
+--! Preliminary merge function for mean(svec) aggregate
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_mean_prefunc( FLOAT[], FLOAT[]) 
+RETURNS FLOAT[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE; 
+
+--! Final function for mean(svec) aggregate
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_mean_final( FLOAT[]) 
+RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE; 
+
+--! Aggregate that computes the element-wise mean of a list of vectors.
+--!
+CREATE AGGREGATE MADLIB_SCHEMA.mean( MADLIB_SCHEMA.svec) (
+	SFUNC = MADLIB_SCHEMA.svec_mean_transition,
+	m4_ifdef(`GREENPLUM',`prefunc = MADLIB_SCHEMA.svec_mean_prefunc,')
+	FINALFUNC = MADLIB_SCHEMA.svec_mean_final,
+	STYPE = FLOAT[]
+);
+
 --! Aggregate that provides the element-wise sum of a list of vectors.
 --!
 -- DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.svec_sum(MADLIB_SCHEMA.svec);
@@ -910,9 +959,11 @@ CREATE AGGREGATE MADLIB_SCHEMA.svec_count_nonzero (MADLIB_SCHEMA.svec) (
 --! Aggregate that turns a list of float8 values into an SVEC.
 --!
 -- DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.svec_agg(float8);
-CREATE AGGREGATE MADLIB_SCHEMA.svec_agg (float8) (
+CREATE
+m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `ORDERED'))
+AGGREGATE MADLIB_SCHEMA.svec_agg (float8) (
 	SFUNC = MADLIB_SCHEMA.svec_pivot,
-	m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.svec_concat,')
+    m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `', ``prefunc=MADLIB_SCHEMA.svec_concat,''))
 	STYPE = MADLIB_SCHEMA.svec
 );
 
@@ -954,6 +1005,11 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l2_ge(MADLIB_SCHEMA.svec,MADLIB_SC
 --! Returns a value indicating the relative values of the l2 norms of two SVECs.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_l2_cmp(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) RETURNS integer AS 'MODULE_PATHNAME', 'svec_l2_cmp' LANGUAGE C IMMUTABLE;
+
+--! Normalizes an SVEC that is divides all elements by its norm/magnitude.
+--!
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.normalize(MADLIB_SCHEMA.svec) 
+RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME', 'svec_normalize' LANGUAGE C IMMUTABLE STRICT;
 
 /*
 DROP OPERATOR IF EXISTS < (MADLIB_SCHEMA.svec, MADLIB_SCHEMA.svec) CASCADE ;

@@ -13,14 +13,11 @@ set(CMAKE_GENERATOR_CXX sunCC g++)
 
 project(MADlib)
 
-# We automatically download and build missing parts. For that we rely on
-# ExternalProject_Add, which requires CMake 2.8.
-# http://www.kitware.com/news/home/browse/252
-
-cmake_minimum_required(VERSION 2.8)
+# FindPostgreSQL.cmake needs at least 2.8.3. We are on the safe side and require
+# the minimum version tested, which is 2.8.4.
+cmake_minimum_required(VERSION 2.8.4 FATAL_ERROR)
 
 include(ExternalProject)
-
 
 # -- Local definitions (filenames, paths, etc.) --------------------------------
 
@@ -56,6 +53,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 if(CMAKE_COMPILER_IS_GNUCC)
+    # Let's store the gcc version in a variable
+    execute_process(COMMAND ${CMAKE_C_COMPILER} -dumpversion
+        OUTPUT_VARIABLE GNUCC_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+
     # A useful summary of warning options can be found here:
     # http://developer.apple.com/tools/xcode/compilercodewarnings.html
     # Note: gcc does not implicitly set _POSIX_C_SOURCE or _XOPEN_SOURCE when using -std=c99.
@@ -75,13 +77,19 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "SunPro")
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX)
+    # Let's store the gcc version in a variable
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -dumpversion
+        OUTPUT_VARIABLE GNUCXX_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+
     # We need the 1998 standard plus amendments (ISO/IEC 14882:2003) plus TR1
     # Unfortunately, we only get this with gnu++98
     # Special notes:
     # - long long is not part of the C++ 1998/2003 standard, but it is such a
     # common (and useful) extension that we do not want to hear warnings about
     # it.
-    set(CMAKE_CXX_FLAGS "-std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long" CACHE STRING
+    # FIXME: -msse2 should only be added on i386
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long -msse2" CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
     
     # We want to include some header files as system header files in order to
@@ -103,8 +111,37 @@ file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
 string(REGEX REPLACE "^.*version:[ \t]*([^\n]*)\n.*" "\\1" MADLIB_VERSION_STRING "${_MADLIB_VERSION_CONTENTS}")
 string(REGEX REPLACE "([0-9]+).*" "\\1" MADLIB_VERSION_MAJOR "${MADLIB_VERSION_STRING}")
 string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_MINOR "${MADLIB_VERSION_STRING}")
-string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "${MADLIB_VERSION_STRING}")
+if("${MADLIB_VERSION_STRING}" MATCHES "[0-9]+\\.[0-9]+\\.([0-9]+).*")
+    string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" MADLIB_VERSION_PATCH "${MADLIB_VERSION_STRING}")
+else()
+    set(MADLIB_VERSION_PATCH 0)
+endif()
 
+# Save build time
+execute_process(
+    COMMAND date -u
+    OUTPUT_VARIABLE MADLIB_BUILD_TIME
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+# Save git revision
+execute_process(
+    COMMAND git describe
+    OUTPUT_VARIABLE MADLIB_GIT_REVISION
+    ERROR_QUIET
+    RESULT_VARIABLE _RESULT
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _RESULT EQUAL 0)
+    set(MADLIB_GIT_REVISION "unknown")
+endif(NOT _RESULT EQUAL 0)
+if(CMAKE_COMPILER_IS_GNUCC)
+    set(MADLIB_C_COMPILER "gcc ${GNUCC_VERSION}")
+else(CMAKE_COMPILER_IS_GNUCC)
+    set(MADLIB_C_COMPILER "unknown")
+endif(CMAKE_COMPILER_IS_GNUCC)
+if(CMAKE_COMPILER_IS_GNUCXX)
+    set(MADLIB_CXX_COMPILER "gcc ${GNUCC_VERSION}")
+else(CMAKE_COMPILER_IS_GNUCXX)
+    set(MADLIB_CXX_COMPILER "unknown")
+endif(CMAKE_COMPILER_IS_GNUCXX)
 
 # -- Third-party dependencies: Find m4 -----------------------------------------
 

@@ -37,14 +37,13 @@ SparseData makeSparseData(void) {
 	/* Allocate the included elements */
 	sdata->vals  = makeStringInfo();
 	sdata->index = makeStringInfo();
-	sdata->vals->len = 0;
-	sdata->index->len = 0;
-	sdata->vals->cursor = 0;
-	sdata->index->cursor = 0;
+
 	sdata->unique_value_count=0;
 	sdata->total_value_count=0;
 	sdata->type_of_data = FLOAT8OID;
 	return sdata;
+
+	// makeStringInfo ensures vals and index each has a trailing '\0'
 }
 
 /** 
@@ -52,15 +51,27 @@ SparseData makeSparseData(void) {
  */
 SparseData makeEmptySparseData(void) {
 	/* Allocate the struct */
-	SparseData sdata = makeSparseData();
+	SparseData sdata = (SparseData)palloc(sizeof(SparseDataStruct)); 
 
-	/* Free the data area */
-	pfree(sdata->vals->data);
-	pfree(sdata->index->data);
-	sdata->vals->data  = palloc(1);
-	sdata->index->data = palloc(1);
-	sdata->vals->maxlen=0;
-	sdata->index->maxlen=0;
+	/* Set up the data area */
+	sdata->vals = (StringInfo)palloc(sizeof(StringInfoData));
+	sdata->vals->data = (char *)palloc(1);
+	sdata->vals->maxlen = 1;
+	sdata->vals->data[0] = '\0';
+	sdata->vals->len = 0;
+	sdata->vals->cursor = 0;
+
+	sdata->index = (StringInfo)palloc(sizeof(StringInfoData));
+	sdata->index->data = (char *)palloc(1);
+	sdata->index->maxlen = 1;
+	sdata->index->data[0] = '\0';
+	sdata->index->len = 0;
+	sdata->index->cursor = 0;
+
+	sdata->unique_value_count = 0;
+	sdata->total_value_count = 0;
+	sdata->type_of_data = FLOAT8OID;
+
 	return sdata;
 }
 
@@ -80,20 +91,36 @@ SparseData makeInplaceSparseData(char *vals, char *index,
 	SparseData sdata = makeEmptySparseData();
 	sdata->unique_value_count = unique_value_count;
 	sdata->total_value_count  = total_value_count;
-	
+
 	/*
-	 * Note: We are disobeying the constraints demanded in lib/stringinfo.h:
-	 * We do not use terminating NULL characters for the data field of
-	 * struct StringInfoData, i.e., sparse-vector code will not rely on
-	 * data[len] == '\0'
+	 * To be safe, we obey the constraint demanded in lib/stringinfo.h that
+	 * the data field of StringInfoData is always terminated with a null.
 	 */
+	if (vals != NULL && vals[datasize] != '\0') {
+		char * vals_temp = (char *)palloc(datasize+1);
+		memcpy(vals_temp, vals, datasize);
+		vals_temp[datasize] = '\0';
+		vals = vals_temp;
+	}
+
+	if (index != NULL && index[indexsize] != '\0') {
+		char * index_temp = (char *)palloc(indexsize+1);
+		memcpy(index_temp, index, indexsize);
+		index_temp[indexsize] = '\0';
+		index = index_temp;
+	}
+
 	sdata->vals->data = vals;
 	sdata->vals->len = datasize;
-	sdata->vals->maxlen = sdata->vals->len;
+	sdata->vals->maxlen = datasize+1;
 	sdata->index->data = index;
+
 	sdata->index->len = indexsize;
-	sdata->index->maxlen = sdata->index->len;
+	sdata->index->maxlen = index == NULL ? 0 : indexsize+1; 
+	   // here we are taking care of the special case of null index, which
+	   // represents uncompressed sparsedata; see SparseDataStruct defn
 	sdata->type_of_data = datatype;
+
 	return sdata;
 }
 
@@ -121,14 +148,13 @@ SparseData makeSparseDataFromDouble(double constant,int64 dimension) {
 	SparseData sdata = float8arr_to_sdata(&constant,1);
 	int8_to_compword(dimension,bytestore); /* create compressed version of
 					          int8 value */
-	pfree(sdata->index->data);
-	sdata->index->data = bytestore;
-	sdata->index->len = int8compstoragesize(bytestore);
-	sdata->total_value_count=dimension;
-	if (sdata->index->maxlen < int8compstoragesize(bytestore)) {
-		ereport(ERROR,(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			       errmsg("Internal error")));
-	}
+
+	int newlen = int8compstoragesize(bytestore);
+	sdata->index->len = 0; // write over existing value
+	appendBinaryStringInfo(sdata->index, bytestore, newlen);
+
+	sdata->total_value_count = dimension;
+
 	return sdata;
 }
 
@@ -176,9 +202,17 @@ StringInfo copyStringInfo(StringInfo sinfo) {
 StringInfo makeStringInfoFromData(char *data,int len) {
 	StringInfo sinfo;
 	sinfo = (StringInfo)palloc(sizeof(StringInfoData));
+
+	if (data != NULL && data[len] != '\0') {
+		char * data_temp = (char *)palloc(len+1);
+		memcpy(data_temp, data, len);
+		data_temp[len] = '\0';
+		data = data_temp;
+	}
+
 	sinfo->data   = data;
 	sinfo->len    = len;
-	sinfo->maxlen = len;
+	sinfo->maxlen = len+1;
 	sinfo->cursor = 0;
 	return sinfo;
 }
@@ -190,16 +224,6 @@ StringInfo makeStringInfoFromData(char *data,int len) {
  */
 SparseData float8arr_to_sdata(double *array, int count) {
 	return arr_to_sdata((char *)array, sizeof(float8), FLOAT8OID, count);
-}
-
-/**
- * @param array The array of values to be converted to values in SparseData
- * @param array_pos The array of positions to be converted to runs in SparseData
- * @param count The size of array
- * @return A SparseData representation of an input array of doubles
- */
-SparseData position_to_sdata(double *array,int64 *array_pos, int count, int64 end, double base_val) {
-	return posit_to_sdata((char *)array, array_pos, sizeof(float8), FLOAT8OID, count, end, (char *)&base_val);
 }
 
 /**
@@ -250,26 +274,31 @@ int compar(const void *i, const void *j){
 }
 
 /**
- * @param array The values of the positions	
- * @param array_pos The position for the values
- * @param width The size of the element in the array
- * @param type_of_data tyep of the value element
- * @param count Number of element in the array
- * @param end Target size of the element
- * @return A SparseData representation of an input array
+ * @param array_val The array of values to be converted to values in SparseData
+ * @param array_pos The array of positions to be converted to runs in SparseData
+ * @param type_of_data type of the value element
+ * @param count The (common) size of array and array_pos
+ * @param end The size of the desired SparseData
+ * @param default_val The default value for positions unspecified in array_pos
+ * @return A SparseData representation of an input array of doubles
  */
+SparseData position_to_sdata(double *array_val, int64 *array_pos, 
+			     Oid type_of_data, 
+			     int count, int64 end, double default_val) {
 
-SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_of_data, int count, int64 end, char *base_val){
+	char * array = (char *)array_val;
+	char * base_val = (char *)&default_val;
+	size_t width = size_of_type(type_of_data);
 	char *run_val=array;
 	int64 run_len;
 	SparseData sdata = makeSparseData();
 	
 	int *index = (int*)palloc(count*sizeof(int));
-	for(int i = 0; i < count; ++i){
+	for(int i = 0; i < count; ++i)
 		index[i] = i;
-	}
 	
-	/* this is a temp solutoin that will be in place only until qsort_r is a standard llibrary */
+	/* this is a temp solution that will be in place only until qsort_r 
+	 * is a standard library function */
 	array_pos_ref = array_pos;
 	qsort(index, count, sizeof(int), compar);
 	
@@ -286,14 +315,18 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 		 * like NaN are treated like any other value - if there are duplicates, the
 		 * value of the special number is preserved and they are counted.
 		 */
-		while((i < count-1)&&((array_pos[index[i+1]] - array_pos[index[i]])==1)&&(memcmp((array+index[i]*size_of_type(type_of_data)),(array+index[i+1]*size_of_type(type_of_data)),width)==0)){
+		while ((i < count-1) &&
+		       ((array_pos[index[i+1]] - array_pos[index[i]])==1) &&
+		       (memcmp((array+index[i]*size_of_type(type_of_data)),
+			       (array+index[i+1]*size_of_type(type_of_data)),width)==0)) {
 			run_len++;
 			i++;
 		}
-		while((i < count-1)&&((array_pos[index[i+1]] - array_pos[index[i]])==0)){
-			if((memcmp((array+index[i]*size_of_type(type_of_data)),(array+index[i+1]*size_of_type(type_of_data)),width)==0)){
+		while ((i < count-1)&&((array_pos[index[i+1]] - array_pos[index[i]])==0)) {
+			if ((memcmp((array+index[i]*size_of_type(type_of_data)),
+				    (array+index[i+1]*size_of_type(type_of_data)),width)==0)) {
 				i++;
-			}else{
+			} else {
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("posit_to_sdata conflicting values for the same position")));
@@ -304,12 +337,12 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 		
 		if(i < count-1){
 			run_len = array_pos[index[i+1]]-array_pos[index[i]]-1;
-			if(run_len > 0){
+			if (run_len > 0){
 				add_run_to_sdata(base_val,run_len,width,sdata);
 			}
 		}else if(array_pos[index[i]] < end){
 			run_len = end-array_pos[index[i]];
-			if(run_len > 0){
+			if (run_len > 0){
 				add_run_to_sdata(base_val,run_len,width,sdata);
 			}
 		}
@@ -317,7 +350,7 @@ SparseData posit_to_sdata(char *array, int64* array_pos, size_t width, Oid type_
 	
 	/* Add the final tallies */
 	sdata->unique_value_count = sdata->vals->len/width;
-	sdata->total_value_count = count;
+	sdata->total_value_count = end;
 	pfree(index);
 	return sdata;
 }
@@ -550,24 +583,62 @@ SparseData concat(SparseData left, SparseData right) {
 	int r_val_len = right->vals->len;
 	int l_ind_len = left->index->len;
 	int r_ind_len = right->index->len;
-	int val_len=l_val_len+r_val_len;
-	int ind_len=l_ind_len+r_ind_len;
+	int val_len = l_val_len + r_val_len;
+	int ind_len = l_ind_len + r_ind_len;
 	
-	vals = (char *)palloc(sizeof(char)*val_len);
-	index = (char *)palloc(sizeof(char)*ind_len);
+	vals = (char *)palloc(sizeof(char)*val_len + 1);
+	index = (char *)palloc(sizeof(char)*ind_len + 1);
 	
-	memcpy(vals          ,left->vals->data,l_val_len);
+	memcpy(vals, left->vals->data,l_val_len);
 	memcpy(vals+l_val_len,right->vals->data,r_val_len);
-	memcpy(index,          left->index->data,l_ind_len);
+	vals[val_len] = '\0';
+
+	memcpy(index, left->index->data,l_ind_len);
 	memcpy(index+l_ind_len,right->index->data,r_ind_len);
+	index[ind_len] = '\0';
 	
 	sdata->vals  = makeStringInfoFromData(vals,val_len);
 	sdata->index = makeStringInfoFromData(index,ind_len);
+
 	sdata->type_of_data = left->type_of_data;
-	sdata->unique_value_count = left->unique_value_count+
-		right->unique_value_count;
-	sdata->total_value_count  = left->total_value_count+
-		right->total_value_count;
+	sdata->unique_value_count = left->unique_value_count +
+		                    right->unique_value_count;
+	sdata->total_value_count  = left->total_value_count +
+		                    right->total_value_count;
+	return sdata;
+}
+
+/** 
+ * @param rep The SparseData to be replicated
+ * @param multiplier The number of times to replicate rep
+ * @return The input rep SparseData replicated multiplier times.
+ */
+SparseData concat_replicate(SparseData rep, int multiplier) {
+	if (rep == NULL) return NULL;
+
+	SparseData sdata = makeEmptySparseData();
+	char *vals,*index;
+	int l_val_len = rep->vals->len;
+	int l_ind_len = rep->index->len;
+	int val_len = l_val_len*multiplier;
+	int ind_len = l_ind_len*multiplier;
+
+	vals = (char *)palloc(sizeof(char)*val_len + 1);
+	index = (char *)palloc(sizeof(char)*ind_len + 1);
+
+	for (int i=0;i<multiplier;i++) {
+		memcpy(vals+i*l_val_len,rep->vals->data,l_val_len);
+		memcpy(index+i*l_ind_len,rep->index->data,l_ind_len);
+	}
+	vals[val_len] = '\0';
+	index[ind_len] = '\0';
+
+	sdata->vals  = makeStringInfoFromData(vals,val_len);
+	sdata->index = makeStringInfoFromData(index,ind_len);
+	sdata->type_of_data = rep->type_of_data;
+	sdata->unique_value_count = multiplier * rep->unique_value_count;
+	sdata->total_value_count  = multiplier * rep->total_value_count;	
+
 	return sdata;
 }
 

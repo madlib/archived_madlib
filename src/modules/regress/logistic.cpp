@@ -9,41 +9,42 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include <modules/regress/logistic.hpp>
-#include <utils/Reference.hpp>
-
-// Floating-point classification functions are in C99 and TR1, but not in the
-// official C++ Standard (before C++0x). We therefore use the Boost implementation
-#include <boost/math/special_functions/fpclassify.hpp>
-
-// z values are normally distributed
-#include <boost/math/distributions/normal.hpp>
-
-// The squared z values of regression coefficients are approximately chi-squared
-// distributed.
-#include <boost/math/distributions/chi_squared.hpp>
-
-
-// Import names from Armadillo
-using arma::mat;
-using arma::trans;
-using arma::colvec;
-using arma::as_scalar;
-
+#include <dbconnector/dbconnector.hpp>
+#include <modules/shared/HandleTraits.hpp>
+#include <modules/prob/prob.hpp>
 
 namespace madlib {
 
-using utils::Reference;
-
 namespace modules {
+
+// Import names from other MADlib modules
+using dbal::NoSolutionFoundException;
+using prob::normalCDF;
 
 namespace regress {
 
-// Local functions
-AnyType stateToResult(AbstractDBInterface &db,
-    const DoubleCol &inCoef,
-    const double &inLogLikelihood,
-    const mat &inInverse_of_X_transp_AX);
+// Workaround for Doxygen: A header file that does not declare namespaces is to
+// be ignored if and only if it is processed stand-alone
+#undef _DOXYGEN_IGNORE_HEADER_FILE
+#include "logistic.hpp"
+
+// Internal functions
+template <class LinAlgTypes>
+struct internal : public AbstractionLayer {
+    typedef typename HandleTraits<ArrayHandle<double>, LinAlgTypes>::
+        ColumnVectorTransparentHandleMap ColumnVectorTransparentHandleMap;
+    typedef typename LinAlgTypes::ColumnVector ColumnVector;
+    typedef typename LinAlgTypes::template HandleMap<ColumnVector>
+        ColumnVectorArrayHandleMap;
+    typedef typename LinAlgTypes::Index Index;
+
+    static AnyType stateToResult(
+        const Allocator &inAllocator,
+        const ColumnVectorTransparentHandleMap &coef,
+        const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+        double logLikelihood,
+        double conditionNo);
+};
 
 /**
  * @brief Inter- and intra-iteration state for conjugate-gradient method for
@@ -57,31 +58,22 @@ AnyType stateToResult(AbstractDBInterface &db,
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 5, and all elemenets are 0.
  *
- * @internal Array layout (iteration refers to one aggregate-function call):
- * Inter-iteration components (updated in final function):
- * - 0: iteration (current iteration)
- * - 1: widthOfX (number of coefficients)
- * - 2: coef (vector of coefficients)
- * - 2 + widthOfX: dir (direction)
- * - 2 + 2 * widthOfX: grad (gradient)
- * - 2 + 3 * widthOfX: beta (scale factor)
- *
- * Intra-iteration components (updated in transition step):
- * - 3 + 3 * widthOfX: numRows (number of rows already processed in this iteration)
- * - 4 + 3 * widthOfX: gradNew (intermediate value for gradient)
- * - 4 + 4 * widthOfX: X_transp_AX (X^T A X)
- * - 4 + widthOfX * widthOfX + 4 * widthOfX: logLikelihood ( ln(l(c)) )
-// * - 5 + widthOfX * widthOfX + 4 * widthOfX: dTHd (intermediate value for d^T * H * d)
  */
-class LogisticRegressionCG::State {
+template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
+class LogRegrCGTransitionState : public AbstractionLayer {
+    template <class OtherHandle, class OtherLinAlgTypes>
+    friend class LogRegrCGTransitionState;
+
 public:
-    State(AnyType inArg)
-        : mStorage(inArg.cloneIfImmutable()) {
+    LogRegrCGTransitionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
         
-        rebind();
+        rebind(static_cast<uint16_t>(mStorage[1]));
     }
     
     /**
+     * @brief Convert to backend representation
+     *
      * We define this function so that we can use State in the
      * argument list and as a return type.
      */
@@ -94,28 +86,37 @@ public:
      * 
      * This function is only called for the first iteration, for the first row.
      */
-    inline void initialize(AllocatorSPtr inAllocator,
-        const uint16_t inWidthOfX) {
-        
-        mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
+    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
+        widthOfX = inWidthOfX;
     }
     
     /**
      * @brief We need to support assigning the previous state
      */
-    State &operator=(const State &inOtherState) {
-        mStorage = inOtherState.mStorage;
+    template <class OtherHandle>
+    LogRegrCGTransitionState &operator=(
+        const LogRegrCGTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
         return *this;
     }
     
     /**
-     * @brief Merge with another State object by copying the intra-iteration fields
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
      */
-    State &operator+=(const State &inOtherState) {
+    template <class OtherHandle>
+    LogRegrCGTransitionState &operator+=(
+        const LogRegrCGTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
-            throw std::logic_error("Internal error: Incompatible transition states");
+            throw std::logic_error("Internal error: Incompatible transition "
+                "states");
         
         numRows += inOtherState.numRows;
         gradNew += inOtherState.gradNew;
@@ -129,8 +130,8 @@ public:
      */
     inline void reset() {
         numRows = 0;
-        X_transp_AX.zeros();
-        gradNew.zeros();
+        X_transp_AX.fill(0);
+        gradNew.fill(0);
         logLikelihood = 0;
     }
 
@@ -140,97 +141,78 @@ private:
     }
     
     /**
-     * @brief Who should own TransparentHandles pointing to slices of mStorage?
-     */
-    AbstractHandle::MemoryController memoryController() const {
-        AbstractHandle::MemoryController ctrl =
-            mStorage.memoryHandle()->memoryController();
-        
-        return (ctrl == AbstractHandle::kSelf ? AbstractHandle::kLocal : ctrl);
-    }
-
-    /**
-     * @brief Rebind vector to a particular position in storage array
-     */
-    void inline rebindToPos(DoubleCol &inVec, size_t inPos) {
-        inVec.rebind(
-            TransparentHandle::create(&mStorage[inPos],
-                widthOfX * sizeof(double),
-                memoryController()),
-            widthOfX);
-    }
-    
-    /**
      * @brief Rebind to a new storage array
      *
-     * @param inWidthOfX If this value is positive, use it as the number of
-     *     independent variables. This is needed during initialization, when
-     *     the storage array is still all zero, but we do already know the
-     *     with of the design matrix.
+     * @param inWidthOfX The number of independent variables.
+     *
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: iteration (current iteration)
+     * - 1: widthOfX (number of coefficients)
+     * - 2: coef (vector of coefficients)
+     * - 2 + widthOfX: dir (direction)
+     * - 2 + 2 * widthOfX: grad (gradient)
+     * - 2 + 3 * widthOfX: beta (scale factor)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 3 + 3 * widthOfX: numRows (number of rows already processed in this iteration)
+     * - 4 + 3 * widthOfX: gradNew (intermediate value for gradient)
+     * - 4 + 4 * widthOfX: X_transp_AX (X^T A X)
+     * - 4 + widthOfX * widthOfX + 4 * widthOfX: logLikelihood ( ln(l(c)) )
      */
-    void rebind(uint16_t inWidthOfX = 0) {
+    void rebind(uint16_t inWidthOfX) {
         iteration.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
-        
-        if (inWidthOfX != 0)
-            widthOfX = inWidthOfX;
-        
-        rebindToPos(coef, 2);
-        rebindToPos(dir, 2 + widthOfX);
-        rebindToPos(grad, 2 + 2 * widthOfX);
-        beta.rebind(&mStorage[2 + 3 * widthOfX]);
-        numRows.rebind(&mStorage[3 + 3 * widthOfX]);
-        rebindToPos(gradNew, 4 + 3 * widthOfX);
-        X_transp_AX.rebind(
-            TransparentHandle::create(&mStorage[4 + 4 * widthOfX],
-                widthOfX * widthOfX * sizeof(double),
-                memoryController()),
-            widthOfX, widthOfX);
-        logLikelihood.rebind(&mStorage[4 + widthOfX * widthOfX + 4 * widthOfX]);
+        coef.rebind(&mStorage[2], inWidthOfX);
+        dir.rebind(&mStorage[2 + inWidthOfX], inWidthOfX);
+        grad.rebind(&mStorage[2 + 2 * inWidthOfX], inWidthOfX);
+        beta.rebind(&mStorage[2 + 3 * inWidthOfX]);
+        numRows.rebind(&mStorage[3 + 3 * inWidthOfX]);
+        gradNew.rebind(&mStorage[4 + 3 * inWidthOfX], inWidthOfX);
+        X_transp_AX.rebind(&mStorage[4 + 4 * inWidthOfX], inWidthOfX, inWidthOfX);
+        logLikelihood.rebind(&mStorage[4 + inWidthOfX * inWidthOfX + 4 * inWidthOfX]);
     }
 
-    Array<double> mStorage;
+    Handle mStorage;
 
 public:
-    Reference<double, uint32_t> iteration;
-    Reference<double, uint16_t> widthOfX;
-    DoubleCol coef;
-    DoubleCol dir;
-    DoubleCol grad;
-    Reference<double> beta;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt32 iteration;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap dir;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap grad;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble beta;
     
-    Reference<double, uint64_t> numRows;
-    DoubleCol gradNew;
-    DoubleMat X_transp_AX;
-    Reference<double> logLikelihood;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap gradNew;
+    typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble logLikelihood;
 };
 
 /**
  * @brief Logistic function
  */
-static inline double sigma(double x) {
+inline double sigma(double x) {
 	return 1. / (1. + std::exp(-x));
 }
 
 /**
  * @brief Perform the logistic-regression transition step
  */
-AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) {
-    AnyType::iterator arg(args);
+AnyType
+logregr_cg_step_transition::run(AnyType &args) {
+    LogRegrCGTransitionState<MutableArrayHandle<double> > state = args[0];
+    double y = args[1].getAs<bool>() ? 1. : -1.;
+    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
     
-    // Initialize Arguments from SQL call
-    State state = *arg++;
-    double y = *arg++ ? 1. : -1.;
-    DoubleRow_const x = *arg++;
+    // The following check was added with MADLIB-138.
+    if (!isfinite(x))
+        throw std::domain_error("Design matrix is not finite.");
+    
     if (state.numRows == 0) {
-        state.initialize(
-            db.allocator(
-                AbstractAllocator::kAggregate,
-                AbstractAllocator::kZero
-            ),
-            x.n_elem);
-        if (!arg->isNull()) {
-            const State previousState = *arg;
+        state.initialize(*this, x.size());
+        if (!args[3].isNull()) {
+            LogRegrCGTransitionState<ArrayHandle<double> > previousState = args[3];
             
             state = previousState;
             state.reset();
@@ -239,15 +221,13 @@ AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) 
     
     // Now do the transition step
     state.numRows++;
-	
-    double xc = as_scalar( x * state.coef );
+    double xc = dot(x, state.coef);
+    state.gradNew.noalias() += sigma(-y * xc) * y * trans(x);
     
-    state.gradNew += sigma(-y * xc) * y * trans(x);
-
     // Note: sigma(-x) = 1 - sigma(x).
     // a_i = sigma(x_i c) sigma(-x_i c)
     double a = sigma(xc) * sigma(-xc);
-    state.X_transp_AX += trans(x) * a * x;
+    triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
 
     //          n
     //         --
@@ -255,15 +235,17 @@ AnyType LogisticRegressionCG::transition(AbstractDBInterface &db, AnyType args) 
     //         /_
     //         i=1
     state.logLikelihood -= std::log( 1. + std::exp(-y * xc) );
+    
     return state;
 }
 
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface & /* db */, AnyType args) {
-    State stateLeft = args[0].cloneIfImmutable();
-    const State stateRight = args[1];
+AnyType
+logregr_cg_step_merge_states::run(AnyType &args) {
+    LogRegrCGTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    LogRegrCGTransitionState<ArrayHandle<double> > stateRight = args[1];
 
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -280,10 +262,16 @@ AnyType LogisticRegressionCG::mergeStates(AbstractDBInterface & /* db */, AnyTyp
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyType LogisticRegressionCG::final(AbstractDBInterface & /* db */, AnyType args) {
-    // Argument from SQL call
-    State state = args[0].cloneIfImmutable();
+AnyType
+logregr_cg_step_final::run(AnyType &args) {
+    // We request a mutable object. Depending on the backend, this might perform
+    // a deep copy.
+    LogRegrCGTransitionState<MutableArrayHandle<double> > state = args[0];
     
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+
     // Note: k = state.iteration
     if (state.iteration == 0) {
 		// Iteration computes the gradient
@@ -296,7 +284,7 @@ AnyType LogisticRegressionCG::final(AbstractDBInterface & /* db */, AnyType args
 		//            g_k^T (g_k - g_{k-1})
 		// beta_k = -------------------------
 		//          d_{k-1}^T (g_k - g_{k-1})
-        colvec gradNewMinusGrad = state.gradNew - state.grad;
+        ColumnVector gradNewMinusGrad = state.gradNew - state.grad;
         state.beta
             = dot(state.gradNew, gradNewMinusGrad)
             / dot(state.dir, gradNewMinusGrad);
@@ -341,9 +329,10 @@ AnyType LogisticRegressionCG::final(AbstractDBInterface & /* db */, AnyType args
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyType LogisticRegressionCG::distance(AbstractDBInterface & /* db */, AnyType args) {
-    const State stateLeft = args[0];
-    const State stateRight = args[1];
+AnyType
+internal_logregr_cg_step_distance::run(AnyType &args) {
+    LogRegrCGTransitionState<ArrayHandle<double> > stateLeft = args[0];
+    LogRegrCGTransitionState<ArrayHandle<double> > stateRight = args[1];
 
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
@@ -351,14 +340,16 @@ AnyType LogisticRegressionCG::distance(AbstractDBInterface & /* db */, AnyType a
 /**
  * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyType LogisticRegressionCG::result(AbstractDBInterface &db, AnyType args) {
-    const State state = args[0];
-
-    // Compute (X^T * A * X)^+
-    mat inverse_of_X_transp_AX = pinv(state.X_transp_AX);
+AnyType
+internal_logregr_cg_result::run(AnyType &args) {
+    LogRegrCGTransitionState<ArrayHandle<double> > state = args[0];
     
-    return stateToResult(db, state.coef, state.logLikelihood,
-        inverse_of_X_transp_AX);
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
+        
+    return internal<LinAlgTypes>::stateToResult(*this, state.coef,
+        decomposition.pseudoInverse().diagonal(), state.logLikelihood,
+        decomposition.conditionNo());
 }
 
 /**
@@ -372,27 +363,22 @@ AnyType LogisticRegressionCG::result(AbstractDBInterface &db, AnyType args) {
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 4, and all elemenets are 0.
- *
- * @internal Array layout (iteration refers to one aggregate-function call):
- * Inter-iteration components (updated in final function):
- * - 0: widthOfX (number of coefficients)
- * - 1: coef (vector of coefficients)
- *
- * Intra-iteration components (updated in transition step):
- * - 1 + widthOfX: numRows (number of rows already processed in this iteration)
- * - 2 + widthOfX: X_transp_Az (X^T A z)
- * - 2 + 2 * widthOfX: X_transp_AX (X^T A X)
- * - 2 + widthOfX^2 + 2 * widthOfX: logLikelihood ( ln(l(c)) )
  */
-class LogisticRegressionIRLS::State {
+template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
+class LogRegrIRLSTransitionState : public AbstractionLayer {
+    template <class OtherHandle, class OtherLinAlgTypes>
+    friend class LogRegrIRLSTransitionState;
+
 public:
-    State(AnyType inArg)
-        : mStorage(inArg.cloneIfImmutable()) {
+    LogRegrIRLSTransitionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
         
-        rebind();
+        rebind(static_cast<uint16_t>(mStorage[0]));
     }
     
     /**
+     * @brief Convert to backend representation
+     *
      * We define this function so that we can use State in the
      * argument list and as a return type.
      */
@@ -405,18 +391,22 @@ public:
      * 
      * This function is only called for the first iteration, for the first row.
      */
-    inline void initialize(AllocatorSPtr inAllocator,
-        const uint16_t inWidthOfX) {
-        
-        mStorage.rebind(inAllocator, boost::extents[ arraySize(inWidthOfX) ]);
+    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
+        widthOfX = inWidthOfX;
     }
     
     /**
      * @brief We need to support assigning the previous state
      */
-    State &operator=(const State &inOtherState) {
-        mStorage = inOtherState.mStorage;
+    template <class OtherHandle>
+    LogRegrIRLSTransitionState &operator=(
+        const LogRegrIRLSTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
         return *this;
     }
     
@@ -424,7 +414,10 @@ public:
      * @brief Merge with another State object by copying the intra-iteration
      *     fields
      */
-    State &operator+=(const State &inOtherState) {
+    template <class OtherHandle>
+    LogRegrIRLSTransitionState &operator+=(
+        const LogRegrIRLSTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition "
@@ -436,60 +429,14 @@ public:
         logLikelihood += inOtherState.logLikelihood;
         return *this;
     }
-    
-    /**
-     * @brief Who should own TransparentHandles pointing to slices of mStorage?
-     */
-    AbstractHandle::MemoryController memoryController() const {
-        AbstractHandle::MemoryController ctrl =
-            mStorage.memoryHandle()->memoryController();
         
-        return (ctrl == AbstractHandle::kSelf ? AbstractHandle::kLocal : ctrl);
-    }
-
-    /**
-     * @brief Rebind vector to a particular position in storage array
-     */
-    void inline rebindToPos(DoubleCol &inVec, size_t inPos) {
-        inVec.rebind(
-            TransparentHandle::create(&mStorage[inPos],
-                widthOfX * sizeof(double),
-                memoryController()),
-            widthOfX);
-    }    
-    
-    /**
-     * @brief Rebind to a new storage array
-     *
-     * @param inWidthOfX If this value is positive, use it as the number of
-     *     independent variables. This is needed during initialization, when
-     *     the storage array is still all zero, but we do already know the
-     *     with of the design matrix.
-     */
-    void rebind(uint16_t inWidthOfX = 0) {
-        widthOfX.rebind(&mStorage[0]);
-        if (inWidthOfX != 0)
-            widthOfX = inWidthOfX;
-        
-        rebindToPos(coef, 1);
-        
-        numRows.rebind(&mStorage[1 + widthOfX]);
-        rebindToPos(X_transp_Az, 2 + widthOfX);
-        X_transp_AX.rebind(
-            TransparentHandle::create(&mStorage[2 + 2 * widthOfX],
-                widthOfX * widthOfX * sizeof(double),
-                memoryController()),
-            widthOfX, widthOfX);
-        logLikelihood.rebind(&mStorage[2 + widthOfX * widthOfX + 2 * widthOfX]);
-    }
-    
     /**
      * @brief Reset the inter-iteration fields.
      */
     inline void reset() {
         numRows = 0;
-        X_transp_Az.zeros();
-        X_transp_AX.zeros();
+        X_transp_Az.fill(0);
+        X_transp_AX.fill(0);
         logLikelihood = 0;
     }
     
@@ -497,44 +444,58 @@ private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
         return 3 + inWidthOfX * inWidthOfX + 2 * inWidthOfX;
     }
+    
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX The number of independent variables.
+     *
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: widthOfX (number of coefficients)
+     * - 1: coef (vector of coefficients)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 1 + widthOfX: numRows (number of rows already processed in this iteration)
+     * - 2 + widthOfX: X_transp_Az (X^T A z)
+     * - 2 + 2 * widthOfX: X_transp_AX (X^T A X)
+     * - 2 + widthOfX^2 + 2 * widthOfX: logLikelihood ( ln(l(c)) )
+     */
+    void rebind(uint16_t inWidthOfX = 0) {
+        widthOfX.rebind(&mStorage[0]);
+        coef.rebind(&mStorage[1], inWidthOfX);
+        numRows.rebind(&mStorage[1 + inWidthOfX]);
+        X_transp_Az.rebind(&mStorage[2 + inWidthOfX], inWidthOfX);
+        X_transp_AX.rebind(&mStorage[2 + 2 * inWidthOfX], inWidthOfX, inWidthOfX);
+        logLikelihood.rebind(&mStorage[2 + inWidthOfX * inWidthOfX + 2 * inWidthOfX]);
+    }
 
-    Array<double> mStorage;
+    Handle mStorage;
 
 public:
-    Reference<double, uint16_t> widthOfX;
-    DoubleCol coef;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap coef;
 
-    Reference<double, uint64_t> numRows;
-    DoubleCol X_transp_Az;
-    DoubleMat X_transp_AX;
-    Reference<double> logLikelihood;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap X_transp_Az;
+    typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble logLikelihood;
 };
 
-AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
-    AnyType args) {
-    AnyType::iterator arg(args);
-    
-    // Initialize Arguments from SQL call
-    State state = *arg++;
-    double y = *arg++ ? 1. : -1.;
-    DoubleRow_const x = *arg++;
+AnyType
+logregr_irls_step_transition::run(AnyType &args) {
+    LogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
+    double y = args[1].getAs<bool>() ? 1. : -1.;
+    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
 
-    // See MADLIB-138. At least on certain platforms and with certain versions,
-    // LAPACK will run into an infinite loop if pinv() is called for non-finite
-    // matrices. We extend the check also to the dependent variables.
-    if (!boost::math::isfinite(y))
-        throw std::invalid_argument("Dependent variables are not finite.");
-    else if (!x.is_finite())
-        throw std::invalid_argument("Design matrix is not finite.");
+    // The following check was added with MADLIB-138.
+    if (!x.is_finite())
+        throw std::domain_error("Design matrix is not finite.");
 
     if (state.numRows == 0) {
-        state.initialize(
-            db.allocator(
-                AbstractAllocator::kAggregate,
-                AbstractAllocator::kZero),
-            x.n_elem);
-        if (!arg->isNull()) {
-            const State previousState = *arg;
+        state.initialize(*this, x.size());
+        if (!args[3].isNull()) {
+            LogRegrIRLSTransitionState<ArrayHandle<double> > previousState = args[3];
             
             state = previousState;
             state.reset();
@@ -544,8 +505,8 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
     // Now do the transition step
     state.numRows++;
 
-    // xc = x_i c
-    double xc = as_scalar( x * state.coef );
+    // xc = x^T_i c
+    double xc = dot(x, state.coef);
         
     // a_i = sigma(x_i c) sigma(-x_i c)
     double a = sigma(xc) * sigma(-xc);
@@ -555,12 +516,14 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
     //             sigma(-y_i x_i c) y_i
     // z = x_i c + ---------------------
     //                     a_i
-    double z = xc + sigma(-y * xc) * y / a;
+    //
+    // To avoid overflows if a_i is close to 0, we do not compute z directly,
+    // but instead compute a * z.
+    double az = xc * a + sigma(-y * xc) * y;
 
-    state.X_transp_Az += trans(x) * a * z;
-    state.X_transp_AX += trans(x) * a * x;
+    state.X_transp_Az.noalias() += x * az;
+    triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
         
-    // We use state.sumy to store the log likelihood.
     //          n
     //         --
     // l(c) = -\  ln(1 + exp(-y_i * c^T x_i))
@@ -573,11 +536,10 @@ AnyType LogisticRegressionIRLS::transition(AbstractDBInterface &db,
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
-AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */,
-    AnyType args) {
-    
-    State stateLeft = args[0].cloneIfImmutable();
-    const State stateRight = args[1];
+AnyType
+logregr_irls_step_merge_states::run(AnyType &args) {
+    LogRegrIRLSTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    LogRegrIRLSTransitionState<ArrayHandle<double> > stateRight = args[1];
     
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -594,19 +556,41 @@ AnyType LogisticRegressionIRLS::mergeStates(AbstractDBInterface & /* db */,
 /**
  * @brief Perform the logistic-regression final step
  */
-AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */,
-    AnyType args) {
-    
-    // Argument from SQL call
-    State state = args[0].cloneIfImmutable();
+AnyType
+logregr_irls_step_final::run(AnyType &args) {
+    // We request a mutable object. Depending on the backend, this might perform
+    // a deep copy.
+    LogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
+
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
     // matrices. We extend the check also to the dependent variables.
     if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite())
-        throw std::invalid_argument("Design matrix is not finite.");
+        throw NoSolutionFoundException("Over- or underflow in intermediate "
+            "calulation. Input data is likely of poor numerical condition.");
     
-    state.coef = pinv(state.X_transp_AX) * state.X_transp_Az;
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
+    
+    // Precompute (X^T * A * X)^+
+    Matrix inverse_of_X_transp_AX = decomposition.pseudoInverse();
+    
+    state.coef.noalias() = inverse_of_X_transp_AX * state.X_transp_Az;
+    if(!state.coef.is_finite())
+        throw NoSolutionFoundException("Over- or underflow in Newton step, "
+            "while updating coefficients. Input data is likely of poor "
+            "numerical condition.");
+
+    // We use the intra-iteration field X_transp_Az for storing the diagonal
+    // of X^T A X, so that we don't have to recompute it in the result function.
+    // Likewise, we store the condition number.
+    // FIXME: This feels a bit like a hack.
+    state.X_transp_Az = inverse_of_X_transp_AX.diagonal();
+    state.X_transp_AX(0,0) = decomposition.conditionNo();
     
     return state;
 }
@@ -614,11 +598,10 @@ AnyType LogisticRegressionIRLS::final(AbstractDBInterface & /* db */,
 /**
  * @brief Return the difference in log-likelihood between two states
  */
-AnyType LogisticRegressionIRLS::distance(AbstractDBInterface & /* db */,
-    AnyType args) {
-    
-    const State stateLeft = args[0];
-    const State stateRight = args[1];
+AnyType
+internal_logregr_irls_step_distance::run(AnyType &args) {
+    LogRegrIRLSTransitionState<ArrayHandle<double> > stateLeft = args[0];
+    LogRegrIRLSTransitionState<ArrayHandle<double> > stateRight = args[1];
 
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
@@ -626,14 +609,263 @@ AnyType LogisticRegressionIRLS::distance(AbstractDBInterface & /* db */,
 /**
  * @brief Return the coefficients and diagnostic statistics of the state
  */
-AnyType LogisticRegressionIRLS::result(AbstractDBInterface &db, AnyType args) {
-    const State state = args[0];
+AnyType
+internal_logregr_irls_result::run(AnyType &args) {
+    LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
 
-    // Compute (X^T * A * X)^+
-    mat inverse_of_X_transp_AX = pinv(state.X_transp_AX);
+    return internal<LinAlgTypes>::stateToResult(*this, state.coef,
+        state.X_transp_Az, state.logLikelihood, state.X_transp_AX(0,0));
+}
+
+/**
+ * @brief Inter- and intra-iteration state for incremental gradient
+ *        method for logistic regression
+ *
+ * TransitionState encapsualtes the transition state during the
+ * logistic-regression aggregate function. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars, a vector, and a matrix.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 4, and all elemenets are 0.
+ */
+template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
+class LogRegrIGDTransitionState : public AbstractionLayer {
+    template <class OtherHandle, class OtherLinAlgTypes>
+    friend class LogRegrIGDTransitionState;
+
+public:
+    LogRegrIGDTransitionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
+        
+        rebind(static_cast<uint16_t>(mStorage[0]));
+    }
     
-    return stateToResult(db, state.coef, state.logLikelihood,
-        inverse_of_X_transp_AX);
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+    
+    /**
+     * @brief Initialize the conjugate-gradient state.
+     * 
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
+        rebind(inWidthOfX);
+        widthOfX = inWidthOfX;
+    }
+    
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    LogRegrIGDTransitionState &operator=(
+        const LogRegrIGDTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
+        return *this;
+    }
+    
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
+     */
+    template <class OtherHandle>
+    LogRegrIGDTransitionState &operator+=(
+        const LogRegrIGDTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX != inOtherState.widthOfX)
+            throw std::logic_error("Internal error: Incompatible transition "
+                "states");
+        
+		// Compute the average of the models. Note: The following remains an
+        // invariant, also after more than one merge:
+        // The model is a linear combination of the per-segment models
+        // where the coefficient (weight) for each per-segment model is the
+        // ratio "# rows in segment / total # rows of all segments merged so
+        // far".
+		double totalNumRows = numRows + inOtherState.numRows;
+		coef = double(numRows) / totalNumRows * coef
+			+ double(inOtherState.numRows) / totalNumRows * inOtherState.coef;
+
+        numRows += inOtherState.numRows;
+        X_transp_AX += inOtherState.X_transp_AX;
+        logLikelihood += inOtherState.logLikelihood;
+        return *this;
+    }
+            
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+		// FIXME: HAYING: stepsize if hard-coded here now
+        stepsize = .1;
+        numRows = 0;
+        X_transp_AX.fill(0);
+        logLikelihood = 0;
+    }
+    
+private:
+    static inline uint32_t arraySize(const uint16_t inWidthOfX) {
+        return 4 + inWidthOfX * inWidthOfX + inWidthOfX;
+    }
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX The number of independent variables.
+     *
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: widthOfX (number of coefficients)
+     * - 1: stepsize (step size of gradient steps)
+     * - 2: coef (vector of coefficients)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 2 + widthOfX: numRows (number of rows already processed in this iteration)
+     * - 3 + widthOfX: X_transp_AX (X^T A X)
+     * - 3 + widthOfX * widthOfX + widthOfX: logLikelihood ( ln(l(c)) )     
+     */
+    void rebind(uint16_t inWidthOfX) {
+        widthOfX.rebind(&mStorage[0]);
+        stepsize.rebind(&mStorage[1]);
+        coef.rebind(&mStorage[2], inWidthOfX);
+        numRows.rebind(&mStorage[2 + inWidthOfX]);
+        X_transp_AX.rebind(&mStorage[3 + inWidthOfX], inWidthOfX, inWidthOfX);
+        logLikelihood.rebind(&mStorage[3 + inWidthOfX * inWidthOfX + inWidthOfX]);
+    }
+
+    Handle mStorage;
+
+public:
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble stepsize;
+    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap coef;
+
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
+	typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble logLikelihood;
+};
+
+AnyType
+logregr_igd_step_transition::run(AnyType &args) {
+    LogRegrIGDTransitionState<MutableArrayHandle<double> > state = args[0];
+    double y = args[1].getAs<bool>() ? 1. : -1.;
+    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
+
+    // The following check was added with MADLIB-138.
+    if (!x.is_finite())
+        throw std::domain_error("Design matrix is not finite.");
+
+	// We only know the number of independent variables after seeing the first
+    // row.
+    if (state.numRows == 0) {
+        state.initialize(*this, x.size());
+
+		// For the first iteration, the previous state is NULL
+        if (!args[3].isNull()) {
+			LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
+            
+            state = previousState;
+            state.reset();
+        }
+    }
+    
+    // Now do the transition step
+    state.numRows++;
+
+    // xc = x^T_i c
+    double xc = dot(x, state.coef);
+    double scale = state.stepsize * sigma(-xc * y) * y;
+	state.coef += scale * x;
+
+    // Note: previous coefficients are used for Hessian and log likelihood
+	if (!args[3].isNull()) {
+		LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
+        
+		double previous_xc = dot(x, previousState.coef);
+		
+        // a_i = sigma(x_i c) sigma(-x_i c)
+		double a = sigma(previous_xc) * sigma(-previous_xc);
+		triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+        
+		// l_i(c) = - ln(1 + exp(-y_i * c^T x_i))
+		state.logLikelihood -= std::log( 1. + std::exp(-y * previous_xc) );
+	}
+
+    return state;
+}
+
+/**
+ * @brief Perform the perliminary aggregation function: Merge transition states
+ */
+AnyType
+logregr_igd_step_merge_states::run(AnyType &args) {    
+    LogRegrIGDTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    LogRegrIGDTransitionState<ArrayHandle<double> > stateRight = args[1];
+    
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
+    
+    // Merge states together and return
+    stateLeft += stateRight;
+    return stateLeft;
+}
+
+/**
+ * @brief Perform the logistic-regression final step
+ *
+ * All that we do here is to test whether we have seen any data. If not, we
+ * return NULL. Otherwise, we return the transition state unaltered.
+ */
+AnyType
+logregr_igd_step_final::run(AnyType &args) {
+    LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
+
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+    
+    return state;
+}
+
+/**
+ * @brief Return the difference in log-likelihood between two states
+ */
+AnyType
+internal_logregr_igd_step_distance::run(AnyType &args) {
+    LogRegrIGDTransitionState<ArrayHandle<double> > stateLeft = args[0];
+    LogRegrIGDTransitionState<ArrayHandle<double> > stateRight = args[1];
+
+    return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
+}
+
+/**
+ * @brief Return the coefficients and diagnostic statistics of the state
+ */
+AnyType
+internal_logregr_igd_result::run(AnyType &args) {
+    LogRegrIGDTransitionState<ArrayHandle<double> > state = args[0];
+    
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
+    
+    return internal<LinAlgTypes>::stateToResult(*this, state.coef,
+        decomposition.pseudoInverse().diagonal(), state.logLikelihood,
+        decomposition.conditionNo());
 }
 
 /**
@@ -642,34 +874,40 @@ AnyType LogisticRegressionIRLS::result(AbstractDBInterface &db, AnyType args) {
  * This function wraps the common parts of computing the results for both the
  * CG and the IRLS method.
  */
-AnyType stateToResult(AbstractDBInterface &db,
-    const DoubleCol &inCoef,
-    const double &inLogLikelihood,
-    const mat &inInverse_of_X_transp_AX) {
+template <class LinAlgTypes>
+AnyType internal<LinAlgTypes>::stateToResult(
+    const AbstractionLayer::Allocator &inAllocator,
+    const ColumnVectorTransparentHandleMap &inCoef,
+    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+    double logLikelihood,
+    double conditionNo) {
     
-    DoubleCol stdErr(db.allocator(), inCoef.n_elem);
-    DoubleCol waldZStats(db.allocator(), inCoef.n_elem);
-    DoubleCol waldPValues(db.allocator(), inCoef.n_elem);
-    DoubleCol oddsRatios(db.allocator(), inCoef.n_elem);
-    for (unsigned int i = 0; i < inCoef.n_elem; i++) {
-        stdErr(i) = std::sqrt(inInverse_of_X_transp_AX(i,i));
-        waldZStats(i) = inCoef(i) / stdErr(i);
-        waldPValues(i) = 2. *  ( boost::math::cdf(boost::math::normal(),
-            -std::abs( waldZStats(i) )) );
-        oddsRatios(i) = std::exp( inCoef(i) );
+    // FIXME: We currently need to copy the coefficient to a native array
+    // This should be transparent to user code
+    ColumnVectorArrayHandleMap coef(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    coef = inCoef;
+    
+    ColumnVectorArrayHandleMap stdErr(
+        inAllocator.allocateArray<double>(coef.size()));
+    ColumnVectorArrayHandleMap waldZStats(
+        inAllocator.allocateArray<double>(coef.size()));
+    ColumnVectorArrayHandleMap waldPValues(
+        inAllocator.allocateArray<double>(coef.size()));
+    ColumnVectorArrayHandleMap oddsRatios(
+        inAllocator.allocateArray<double>(coef.size()));
+    
+    for (Index i = 0; i < coef.size(); ++i) {
+        stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
+        waldZStats(i) = coef(i) / stdErr(i);
+        waldPValues(i) = 2. * normalCDF( -std::abs(waldZStats(i)) );
+        oddsRatios(i) = std::exp( coef(i) );
     }
-
+    
     // Return all coefficients, standard errors, etc. in a tuple
-    AnyTypeVector tuple;
-    ConcreteRecord::iterator tupleElement(tuple);
-    
-    *tupleElement++ = inCoef;
-    *tupleElement++ = inLogLikelihood;
-    *tupleElement++ = stdErr;
-    *tupleElement++ = waldZStats;
-    *tupleElement++ = waldPValues;
-    *tupleElement   = oddsRatios;
-    
+    AnyType tuple;
+    tuple << coef << logLikelihood << stdErr << waldZStats << waldPValues
+        << oddsRatios << conditionNo;
     return tuple;
 }
 
