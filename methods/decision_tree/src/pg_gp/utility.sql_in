@@ -1431,6 +1431,7 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief check if the input table has unsupported data type or not
+ *        check if the id column of input table has duplicated value or not
  * @param full_table_name <schema name>.<table name> 
  * @param feature_columns one array including all feature names
  * @param id_column the name of the id column        
@@ -1526,39 +1527,31 @@ BEGIN
                          DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ, and INTERVAL', 
                          rec.atttypid::regtype;
     END IF;
-        
-    RETURN;
-END
-$$ LANGUAGE PLPGSQL;    
 
-
-/*
- * @brief check if the input table has unsupported data type or not
- * @param full_table_name <schema name>.<table name> 
- *
- * @return if the table has unsupported data types, then raise exception
- *         otherwise return nothing
- *
- * NOTE: All the supported type are hardcoded in the function body     
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__validate_input_table
-    (
-    full_table_name     TEXT
-    );
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_input_table    
-    (
-    full_table_name     TEXT
-    )
-RETURNS void AS $$  
-BEGIN
-    PERFORM MADLIB_SCHEMA.__validate_input_table
-                        (
-                            full_table_name,
-                            NULL,
-                            NULL,
-                            NULL
-                        );     
+    SELECT MADLIB_SCHEMA.__format
+            ('SELECT % AS n
+              FROM % 
+              GROUP BY %
+              HAVING COUNT(%) > 1
+              LIMIT 1',
+              ARRAY[
+                id_column,
+                full_table_name,
+                id_column,
+                id_column
+                ]
+            )
+    INTO stmt;
+    
+    EXECUTE stmt INTO rec;
+    
+    -- check if the id column has duplicated value
+    PERFORM MADLIB_SCHEMA.__assert
+                (
+                    rec IS NULL,
+                    'The training table ' || full_table_name || ' must not have duplicated id'
+                );
+                        
     RETURN;
 END
 $$ LANGUAGE PLPGSQL;    
@@ -1822,13 +1815,6 @@ DECLARE
 BEGIN
     exec_begin = clock_timestamp();
 
-    PERFORM MADLIB_SCHEMA.__validate_input_table
-        (
-            MADLIB_SCHEMA.__get_schema_name(input_table_name)   ||
-            '.'                                                 ||
-            MADLIB_SCHEMA.__strip_schema_name(input_table_name)
-        );
-                
     SELECT MADLIB_SCHEMA.__format
         ('SELECT column_name FROM MADLIB_SCHEMA.% WHERE column_type=''i'';',
         metatable_name)
@@ -1836,6 +1822,16 @@ BEGIN
     
     EXECUTE curstmt INTO id_column_name;
     
+    PERFORM MADLIB_SCHEMA.__validate_input_table
+        (
+            MADLIB_SCHEMA.__get_schema_name(input_table_name)   ||
+            '.'                                                 ||
+            MADLIB_SCHEMA.__strip_schema_name(input_table_name),
+            NULL,
+            id_column_name,
+            NULL
+        );
+                
     SELECT MADLIB_SCHEMA.__format
         ('SELECT column_name, table_name FROM MADLIB_SCHEMA.% WHERE is_cont ORDER BY id;',
         metatable_name)
@@ -2336,14 +2332,14 @@ BEGIN
                     SELECT MADLIB_SCHEMA.__format(
                         'UPDATE MADLIB_SCHEMA.% SET key = % WHERE %=''%'';',
                         coltable_name,
-			             temp,
+                         temp,
                         column_name,
                         name)
                         INTO curstmt;
                 END IF;
-		
-		      EXECUTE curstmt;
-		      
+        
+              EXECUTE curstmt;
+              
             ELSE
                 -- we call "replace" function twice to escape the string "'" and "\" 
                 SELECT MADLIB_SCHEMA.__format
