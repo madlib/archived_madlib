@@ -321,7 +321,12 @@ logregr_cg_step_final::run(AnyType &args) {
     state.coef += dot(state.grad, state.dir) /
         as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
         * state.dir;
-
+    
+    if(!state.coef.is_finite())
+        throw NoSolutionFoundException("Over- or underflow in "
+            "conjugate-gradient step, while updating coefficients. Input data "
+            "is likely of poor numerical condition.");
+    
     state.iteration++;
     return state;
 }
@@ -834,6 +839,11 @@ logregr_igd_step_merge_states::run(AnyType &args) {
 AnyType
 logregr_igd_step_final::run(AnyType &args) {
     LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
+
+    if(!state.coef.is_finite())
+        throw NoSolutionFoundException("Over- or underflow in "
+            "incremental-gradient iteration. Input data is likely of poor "
+            "numerical condition.");
 
     // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
