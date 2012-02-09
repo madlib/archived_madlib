@@ -96,6 +96,11 @@ where \f$ Z \f$ is a standard normally distributed random variable.
 
 The odds ratio for coefficient \f$ i \f$ is estimated as \f$ \exp(c_i) \f$.
 
+The condition number is computed as \f$ \kappa(X^T A X) \f$ during the iteration
+immediately <em>preceding</em> convergence (i.e., \f$ A \f$ is computed using
+the coefficients of the previous iteration). A large condition number (say, more
+than 1000) indicates the presence of significant multicollinearity.
+
 
 @input
 
@@ -115,14 +120,15 @@ The training data is expected to be of the following form:\n
     [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
 );</pre>
   Output:
-  <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios
------+----------------+---------+---------+----------+------------
-                               ...
+  <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
+-----+----------------+---------+---------+----------+-------------+--------------+---------------
+                                               ...
 </pre>
 - Get vector of coefficients \f$ \boldsymbol c \f$:\n
   <pre>SELECT (\ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
-- Get array of coefficients \f$ \boldsymbol c \f$, log-likelihood of
-  determination \f$ l(\boldsymbol c) \f$, and array of p-values \f$ \boldsymbol p \f$:
+- Get a subset of the output columns, e.g., only the array of coefficients
+  \f$ \boldsymbol c \f$, the log-likelihood of determination
+  \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
   <pre>SELECT coef, log_likelihood, p_values
 FROM \ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
 
@@ -130,25 +136,32 @@ FROM \ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>inde
 
 -# Create the sample data set:
 @verbatim 
-# SELECT * FROM data;
-                     r1                      | val 
+sql> SELECT * FROM data;
+                  r1                      | val 
 ---------------------------------------------+-----
- {1,-0.537208849564195,0.0507612079381943}   | t
- {1,-1.83960389345884,0.0875045731663704}    | t
- {1,-4.28730633109808,0.839790890924633}     | t
- {1,2.4249863717705,0.499282206874341}       | t
- {1,-4.41880372352898,0.883616517763585}     | t
- {1,4.16272420901805,0.598018785007298}      | t
+ {1,3.01789340097457,0.454183579888195}   | t
+ {1,-2.59380532894284,0.602678326424211}  | f
+ {1,-1.30643094424158,0.151587064377964}  | t
+ {1,3.60722299199551,0.963550757616758}   | t
+ {1,-1.52197745628655,0.0782248834148049} | t
+ {1,-4.8746574902907,0.345104880165309}   | f
 ...
 @endverbatim
 -# Run the logistic regression function:
-@verbatim 
-# SELECT * FROM madlib.logregr('data', 'val', 'r1', 100, 'irls', 0.001); 
- 
-                          coef                          |  log_likelihood   |                         std_err                          |                        z_stats                        |                           p_values                            |                     odds_ratios                      
---------------------------------------------------------+-------------------+----------------------------------------------------------+-------------------------------------------------------+---------------------------------------------------------------+------------------------------------------------------
- {4.93532185789865,0.469393180445221,0.432089528467682} | -173.514819452336 | {0.407205759965291,0.0881607217787946,0.591853189786052} | {12.1199706465825,5.32428921830951,0.730062008492135} | {8.27887853333452e-34,1.01348545192981e-07,0.465352282469966} | {139.117911525733,1.59902357997671,1.54047302517705}
-(1 row) 
+@verbatim
+sql> \x on
+Expanded display is off.
+sql> SELECT * FROM logregr('data', 'val', 'r1', 100, 'irls', 0.001);
+-[ RECORD 1 ]--+--------------------------------------------------------------
+coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
+log_likelihood | -467.214718489873
+std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
+z_stats        | {17.5281667482197,20.7919819024719,-0.805666162169712}
+p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
+odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
+condition_no   | 179.186118573205
+num_iterations | 9
+
 @endverbatim
 
 @literature
@@ -397,7 +410,9 @@ LANGUAGE plpythonu VOLATILE;
  *  - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
  *    \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
  *  - <tt>condition_no FLOAT8</tt> - The condition number of matrix
- *    \f$ X^T A X \f$.
+ *    \f$ X^T A X \f$ during the iteration immediately <em>preceding</em>
+ *    convergence (i.e., \f$ A \f$ is computed using the coefficients of the
+ *    previous iteration)
  *  - <tt>num_iterations INTEGER</tt> - The number of iterations before the
  *    algorithm terminated
  *
@@ -407,8 +422,9 @@ LANGUAGE plpythonu VOLATILE;
  *    <pre>SELECT * FROM logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
  *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
  *    <pre>SELECT (logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
- *  - Get array of coefficients \f$ \boldsymbol c \f$, log-likelihood of
- *    determination \f$ l(\boldsymbol c) \f$, and array of p-values \f$ \boldsymbol p \f$:
+ *  - Get a subset of the output columns, e.g., only the array of coefficients
+ *    \f$ \boldsymbol c \f$, the log-likelihood of determination
+ *    \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
  *    <pre>SELECT coef, log_likelihood, p_values
  *FROM logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
  *

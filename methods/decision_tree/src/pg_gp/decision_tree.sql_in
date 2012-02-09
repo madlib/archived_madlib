@@ -33,11 +33,19 @@ m4_ifelse(
 
 @about
 
-This module provides an implementation of the C4.5 decision tree algorithm. 
-It assumes that:
-- The input table format is tabular.
-- Data features can be discrete or continuous. 
-- A feature can have missing value
+This module provides an implementation of the C4.5 implementation to grow decision trees.
+
+The implementation supports:
+- Tree Growth
+- Multiple split critera, including:
+  - Information Gain, also known as Kullback-Leibeler divergence:
+  - Gini Coefficient:
+  - Gain Ratio
+- Tree Pruning
+- Tree Scoring
+- Tree Display
+- Continuous and Discrete features
+- Null handling
 
 @input
 
@@ -88,11 +96,11 @@ of the following form:
     '<em>min_percent_split</em>'
     '<em>verbosity</em>');
   </pre>
-  This will create the MADLIB_SCHEMA.tree table storing an abstract object 
+  This will create the decision tree output table storing an abstract object
   (representing the model) used for further classification. Column names:
   <pre>    
  id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |    split_gain     | live | cat_size | parent_id |     jump      | is_feature_cont | split_value 
-----+---------------+---------+-------------------+------------------+----------+-------------------+------+----------+-----------+---------------+-----------------+-------------
+----+---------------+---------+-------------+-----------+----------+------------+------+----------+-----------+------+-----------------+-------------
                                                      ...</pre>    
     
 - Run the classification function using the learned model: 
@@ -103,6 +111,14 @@ of the following form:
   This will create the result_table with the 
   classification results. 
   <pre> </pre> 
+
+- Run the scorinf function to score the learned model against a validation data set:
+  <pre>SELECT * FROM \ref c45_score(
+    '<em>tree_table_name</em>',
+    '<em>validation_table_name</em>',
+	'<em>verbosity</em>');</pre>
+  This will give a ratio of correctly classified items in the validation set.
+  <pre> </pre>
 
 - Run the display tree function using the learned model: 
   <pre>SELECT * FROM \ref c45_display(
@@ -120,7 +136,7 @@ of the following form:
 
 -# Prepare an input table/view, e.g.:
 \verbatim
-testdb=# select * from golf_data order by id;
+sql> select * from golf_data order by id;
  id | outlook  | temperature | humidity | windy  |    class     
 ----+----------+-------------+----------+--------+--------------
   1 | sunny    |          85 |       85 |  false |  Do not Play
@@ -142,91 +158,113 @@ testdb=# select * from golf_data order by id;
 \endverbatim
 -# Train the decision tree model, e.g.:
 \verbatim
-sql> SELECT * FROM MADLIB.c45_train('infogain','golf_data','madlib.trained_tree_infogain',null,'f',
-    'temperature,humidity',null,'id','class', 100,3000,10,0.001,0.001,0);   
-CONTEXT:  PL/pgSQL function "c45_train" line 70 at assignment
+sql> SELECT * FROM madlib.c45_clean('trained_tree_infogain');
+sql> SELECT * FROM MADLIB.c45_train(
+	   'infogain',                       -- split criterion_name
+	   'golf_data',                      -- input table name
+	   'trained_tree_infogain',          -- result tree name
+	   null,                             -- validation table name
+	   'temperature,humidity',           -- continuous feature names
+	   'outlook,temperature,humidity,windy', -- feature column names
+	   'id',                             -- id column name
+	   'class',                          -- class column name
+	   100,                              -- confidence level
+	   'explicit',                       -- missing value preparation
+	   100,                              -- max iterations
+	   5,                                -- max tree depth
+	   0.001,                            -- min percent mode
+	   0.001,                            -- min percent split
+	   0);                               -- verbosity
  training_set_size | tree_nodes | tree_depth |    cost_time    | split_criterion 
 -------------------+------------+------------+-----------------+-----------------
-                14 |          8 |          3 | 00:00:00.889973 | infogain
-(1 row)
-
- 
+                14 |          8 |          3 | 00:00:00.871805 | infogain
 (1 row)
 \endverbatim
 -# Check few rows from the tree model table:
 \verbatim
-testdb=# select * from madlib.trained_tree_infogain order by id;
+sql> select * from trained_tree_infogain order by id;
  id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |    split_gain     | live | cat_size | parent_id |     jump      | is_feature_cont | split_value 
-----+---------------+---------+-------------------+------------------+----------+-------------------+------+----------+-----------+---------------+-----------------+-------------
-  1 | {0}           |       3 | 0.642857142857143 | 7.87584209442139 |        2 | 0.171033941880327 |    0 |       14 |         0 | [2:4]={2,3,4} | f               |            
-  2 | {0,1}         |       4 |                 1 | 1.75063467025757 |        2 |                 0 |    0 |        4 |         1 |               | f               |            
-  3 | {0,2}         |       4 |               0.6 | 3.74199032783508 |        2 | 0.673011667009257 |    0 |        5 |         1 | [2:3]={5,6}   | f               |            
-  4 | {0,3}         |       2 |               0.6 | 3.74199032783508 |        1 | 0.673011667009257 |    0 |        5 |         1 | [2:3]={7,8}   | t               |          70
-  5 | {0,2,1}       |       4 |                 1 | 1.60752332210541 |        2 |                 0 |    0 |        3 |         3 |               | f               |            
-  6 | {0,2,2}       |       4 |                 1 | 1.36754441261292 |        1 |                 0 |    0 |        2 |         3 |               | f               |            
-  7 | {0,3,1}       |       4 |                 1 | 1.36754441261292 |        2 |                 0 |    0 |        2 |         4 |               | f               |            
-  8 | {0,3,2}       |       4 |                 1 | 1.60752332210541 |        1 |                 0 |    0 |        3 |         4 |               | f               |            
+----+---------------+---------+-------------------+-----------+----------+-------------------+------+----------+-----------+---------------+-----------------+-------------
+  1 | {0}           |       3 | 0.642857142857143 |         1 |        2 | 0.171033941880327 |    0 |       14 |         0 | [2:4]={2,3,4} | f               |            
+  2 | {0,1}         |       4 |                 1 |         1 |        2 |                 0 |    0 |        4 |         1 |               | f               |            
+  3 | {0,2}         |       4 |               0.6 |         1 |        2 | 0.673011667009257 |    0 |        5 |         1 | [2:3]={5,6}   | f               |            
+  4 | {0,3}         |       2 |               0.6 |         1 |        1 | 0.673011667009257 |    0 |        5 |         1 | [2:3]={7,8}   | t               |          70
+  5 | {0,2,1}       |       4 |                 1 |         1 |        2 |                 0 |    0 |        3 |         3 |               | f               |            
+  6 | {0,2,2}       |       4 |                 1 |         1 |        1 |                 0 |    0 |        2 |         3 |               | f               |            
+  7 | {0,3,1}       |       4 |                 1 |         1 |        2 |                 0 |    0 |        2 |         4 |               | f               |            
+  8 | {0,3,2}       |       4 |                 1 |         1 |        1 |                 0 |    0 |        3 |         4 |               | f               |            
 (8 rows)
 
 \endverbatim
 -# To display the tree with human readable format:
 \verbatim
-testdb=# select madlib.c45_display('madlib.trained_tree_infogain');
+sql> select madlib.c45_display('trained_tree_infogain');
                                       c45_display                                      
 ---------------------------------------------------------------------------------------
+     Root Node  : class(  Play)   num_elements(14)  predict_prob(0.642857142857143)          
          outlook:  = overcast : class( Play)   num_elements(4)  predict_prob(1)        
          outlook:  = rain : class( Play)   num_elements(5)  predict_prob(0.6)          
              windy:  =  false : class( Play)   num_elements(3)  predict_prob(1)        
-             windy:  =  true : class(do not play)   num_elements(2)  predict_prob(1)   
-         outlook:  = sunny : class(do not play)   num_elements(5)  predict_prob(0.6)   
+             windy:  = true  : class(  Do not Play)   num_elements(2)  predict_prob(1)       
+         outlook:  =  sunny      : class(  Do not Play)   num_elements(5)  predict_prob(0.6) 
              humidity:  <= 70 : class( Play)   num_elements(2)  predict_prob(1)      
-             humidity:  > 70 : class(do not play)   num_elements(3)  predict_prob(1) 
- 
+             humidity:  > 70  : class(  Do not Play)   num_elements(3)  predict_prob(1)      
 (1 row)
 
 \endverbatim
 -# To classify data with the learned model:
 \verbatim
-testdb=# select * from  madlib.c45_classify
-testdb-#     (
-testdb(#     'madlib.trained_tree_infogain', 
-testdb(#     'golf_data', 
-testdb(#     'madlib.classification_result'); 
-PL/pgSQL function "c45_classify" line 2 at perform
- c45_classify 
---------------
- 
+sql> select * from madlib.c45_classify
+         'trained_tree_infogain',  -- name of the trained model
+         'golf_data',              -- name of the table containing data to classify
+         'classification_result'); -- name of the output table
+ input_set_size |    cost_time    
+----------------+-----------------
+             14 | 00:00:00.247713
 (1 row)
 \endverbatim
 -# Check classification results: 
 \verbatim
-testdb=# select t.id,t.outlook,t.temperature,t.humidity,t.windy,c.class from 
+sql> select t.id,t.outlook,t.temperature,t.humidity,t.windy,c.class from
     madlib.classification_result c,golf_data t where t.id=c.id order by id;
  id | outlook  | temperature | humidity | windy  | class 
-----+----------+-------------+----------+--------+-------
-  1 | sunny    |          85 |       85 |  false |     2
-  2 | sunny    |          80 |       90 |  true  |     2
-  3 | overcast |          83 |       78 |  false |     1
-  4 | rain     |          70 |       96 |  false |     1
-  5 | rain     |          68 |       80 |  false |     1
-  6 | rain     |          65 |       70 |  true  |     2
-  7 | overcast |          64 |       65 |  true  |     1
-  8 | sunny    |          72 |       95 |  false |     2
-  9 | sunny    |          69 |       70 |  false |     1
- 10 | rain     |          75 |       80 |  false |     1
- 11 | sunny    |          75 |       70 |  true  |     1
- 12 | overcast |          72 |       90 |  true  |     1
- 13 | overcast |          81 |       75 |  false |     1
- 14 | rain     |          71 |       80 |  true  |     2
+----+------------+-------------+----------+-------+-------
+  1 |  sunny     |          85 |       85 | f     |     1
+  2 |  sunny     |          80 |       90 | t     |     1
+  3 |  overcast  |          83 |       78 | f     |     2
+  4 |  rain      |          70 |       96 | f     |     2
+  5 |  rain      |          68 |       80 | f     |     2
+  6 |  rain      |          65 |       70 | t     |     1
+  7 |  overcast  |          64 |       65 | t     |     2
+  8 |  sunny     |          72 |       95 | f     |     1
+  9 |  sunny     |          69 |       70 | f     |     2
+ 10 |  rain      |          75 |       80 | f     |     2
+ 11 |  sunny     |          75 |       70 | t     |     2
+ 12 |  overcast  |          72 |       90 | t     |     2
+ 13 |  overcast  |          81 |       75 | f     |     2
+ 14 |  rain      |          71 |       80 | t     |     1
 (14 rows)
 (notes: The class value of 2 refers to 'do not play'. The class value of 1
 refers to 'Play'. We plan to add a view to translate the numeric value to original
 value soon.
 \endverbatim
 
+-# Score the data against a validation set:
+\verbatim
+sql> select * from madlib.c45_score(
+        'trained_tree_infogain',
+        'golf_data_validation',
+        false);
+ c45_score 
+-----------
+      0.98
+(1 row)
+\endverbatim
+
+
 -# clean up the tree and metadata: 
 \verbatim
-testdb=# select madlib.c45_clean('madlib.trained_tree_infogain');
+testdb=# select madlib.c45_clean('trained_tree_infogain');
  c45_clean 
 -----------
  
@@ -2318,8 +2356,7 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Train a decision tree model. User must specify all those data with that 
- *        long form function.
+ * @brief This is the long form API of training tree with all specified parameters.
  *
  * @param split_criterion_name      This parameter specifies which split criterion 
  *                                  should be used for tree construction and pruning. 
@@ -2332,6 +2369,7 @@ $$ LANGUAGE PLPGSQL;
  * @param id_col_name               Name of the column containing id of each point.
  * @param class_col_name            Name of the column containing correct class of each point.
  * @param confidence_level          A statistical confidence interval of the resubstitution error.
+ * @param how2handle_missing_value The way to handle missing value. The valid value is 'explicit' or 'ignore'.
  * @param max_num_iter              Max number of branches to follow (e.g. 2000)
  * @param max_tree_depth            Maximum decision tree depth 
  * @param min_percent_mode          Specifies the minimum number of cases required in a child node
@@ -2339,37 +2377,14 @@ $$ LANGUAGE PLPGSQL;
  *                                  a further split to be possible.
  * @param verbosity                 If True (or 1) will run in verbose mode
  *
- * @return Table MADLIB_SCHEMA.tree:
- *  - <tt>id SERIAL</tt> - Tree node id
- *  - <tt>tree_location INT[]</tt>      Set of values that lead to this branch. 
- *                                      0 is the initial point (no value). But this path does not specify which 
- *                                      feature was used for the branching.
- *  - <tt>feature INT</tt>              Which element of the feature vector was used for 
- *                                      branching at this node. Notice that this feature is not used in the current 
- *     <tt>tree_location</tt>           it will be added in the next step.
- *  - <tt>probability FLOAT</tt>        If forced to make a call for a dominant class 
- *                                      at a given point this would be the confidence of the call  
- *                                      (this is only an estimated value).
- *  - <tt>maxclass INTEGER</tt>         If forced to make a call for a dominant class 
- *                                      at a given point this is the selected class.
- *  - <tt>split_gain FLOAT</tt>         Information gain computed using entropy (at this 
- *                                      node), also used to determine termination of the branch.
- *  - <tt>live INT</tt>                 Indication that the branch is still growing. 1 means "live". 
- *                                      Exit value may be 1 if number of branches reached before termination condition is met.
- *  - <tt>cat_size INT</tt>             Number of data point at this node.
- *  - <tt>parent_id INT</tt>            Id of the parent branch.
- *  - <tt>jump INT[]</tt>               Location of children for each feature value. Notice 
- *                                      that assuming that the data is sparse we can have value 0 - representing 
- *                                      no value. Result such as [2:3]={2,3}, should be read: 
- *                                      jump['feature value'+1], so in this case there were no 0-value points for 
- *                                      this feature. For value 1 jump to 2; for value 2 jump to 3;
- *  - <tt>is_feature_cont BOOLEAN</tt>  It specifies whether the selected feature is a continuous feature.
- *  - <tt>split_value FLOAT</tt>        For continuous feature, it specifies the split value. Otherwise, 
- *     it is fixed to 0.
+ * @return
+ * - <tt>training_set_size</tt> - Number of items in the training set
+ * - <tt>tree_nodes</tt> - Number of nodes in the resulting tree
+ * - <tt>cost_time</tt> - Time spent training the tree
+ * - <tt>split_criterion</tt> - Split criterion used to build the tree.
  *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source and column names have to be passed as strings (due to
- *       limitations of the SQL syntax).
+ * This will also create the output table with name specified via 'result_tree_table_name'.
+ * The result table can be queried directly or displayed using c45_display.
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     (
@@ -2421,13 +2436,33 @@ BEGIN
             
     PERFORM MADLIB_SCHEMA.__assert
         (
+                id_col_name IS NOT NULL AND
+                class_col_name IS NOT NULL AND
+                length(btrim(id_col_name, ' ')) > 0 AND
+                length(btrim(class_col_name, ' ')) > 0,
+                'invalid id column name or class column name'
+            );
+                        
+    PERFORM MADLIB_SCHEMA.__assert
+        (
             training_table_name IS NOT NULL AND
             MADLIB_SCHEMA.__table_exists
                 (
                     MADLIB_SCHEMA.__get_schema_name(training_table_name),
                     MADLIB_SCHEMA.__strip_schema_name(training_table_name)
                 ),
-            'the specified training table doesn''t exist'
+            'the specified training table' || coalesce('<' || training_table_name || '> does not exist', ' is NULL')
+        );
+
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            MADLIB_SCHEMA.__column_exists
+                (
+                    MADLIB_SCHEMA.__get_schema_name(training_table_name),
+                    MADLIB_SCHEMA.__strip_schema_name(training_table_name),
+                    lower(btrim(id_col_name, ' '))
+                ),
+            'the specified training table<' || training_table_name || '> does not have column ''' || id_col_name || ''''
         );
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -2438,9 +2473,8 @@ BEGIN
                     MADLIB_SCHEMA.__strip_schema_name(training_table_name),
                     lower(btrim(class_col_name, ' '))
                 ),
-            'the specified training table must have class column'
+            'the specified training table<' || training_table_name || '> does not have column ''' || class_col_name || ''''
         );
-
 
     PERFORM MADLIB_SCHEMA.__assert
         (
@@ -2450,7 +2484,7 @@ BEGIN
                     MADLIB_SCHEMA.__get_schema_name(validation_table_name),
                     MADLIB_SCHEMA.__strip_schema_name(validation_table_name)
                 ),
-             'the specified validation table doesn''t exist'
+             'the specified validation table<' || validation_table_name || '> does not exist'
         );
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -2463,7 +2497,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name)
                     )
                 ),
-                'the specified result tree table exists'
+                'the specified result tree table' || coalesce('<' || result_tree_table_name || '> exists', ' is NULL')
             );   
 
     -- the maximum length of an identifier 63
@@ -2480,15 +2514,6 @@ BEGIN
             'the maximum length of ''<tree table schema name>_<tree table name>'' is 58'
         );
                     
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                id_col_name IS NOT NULL                 AND 
-                class_col_name IS NOT NULL              AND
-                length(btrim(id_col_name, ' ')) > 0     AND 
-                length(btrim(class_col_name, ' ')) > 0, 
-                'invalid id column name or class column name'
-            );
-                                                         
     PERFORM MADLIB_SCHEMA.__assert
             (
                 (confidence_level IS NOT NULL)      AND 
@@ -2623,23 +2648,36 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Another C45 train algorithm in short form
+ * @brief C45 train algorithm in short form.
  *
- * @param the same as the ones accepted by the long form 
+ * @param split_criterion_name This parameter specifies which split criterion
+ * should be used for tree construction and pruning.
+ * The valid values are infogain, gainratio, or gini.
+ * @param training_table_name Name of the table/view with the source data
+ * @param result_tree_table_name The name of the table where the resulting DT will be stored.
  *
- * @return the same as the one returned by the long form
+ * @return
+ * - <tt>training_set_size</tt> - Number of items in the training set
+ * - <tt>tree_nodes</tt> - Number of nodes in the resulting tree
+ * - <tt>cost_time</tt> - Time spent training the tree
+ * - <tt>split_criterion</tt> - Split criterion used to build the tree.
+ *
+ * This will also create the output table with name specified via 'result_tree_table_name'.
+ * The result table can be queried directly or displayed using c45_display.
  *
  * @note  
- *      validation_table_name:      NULL 
- *      continuous_feature_names:   NULL
- *      id_col_name Name:           'id'
- *      class_col_name Name:        'class'
- *      confidence_level:           25
- *      max_num_iter:               2000
- *      max_tree_depth:             10 
- *      min_percent_mode:           0.001
- *      min_percent_split:          0.01 
- *      verbosity:                  0
+ * This calls the long form of C45 with the following default parameters:
+ * - validation_table_name := NULL
+ * - continuous_feature_names := NULL
+ * - id_column_name := 'id'
+ * - class_column_name := 'class'
+ * - confidence_level = 25
+ * - how2handle_missing_value = 'explicit'
+ * - max_num_iter := 2000
+ * - max_tree_deapth := 10
+ * - min_percent_mode := 0.001
+ * - min_percent_split := 0.01
+ * - verbosity := false
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     (
@@ -2674,18 +2712,37 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief Another C45 train algorithm in short form
+ * @brief C45 train algorithm in short form.
  *
- * @param the same as the ones accepted by the long form 
+ * @param split_criterion_name This parameter specifies which split criterion
+ * should be used for tree construction and pruning.
+ * The valid values are infogain, gainratio, or gini.
+ * @param training_table_name Name of the table/view with the source data
+ * @param result_tree_table_name The name of the table where the resulting DT will be stored.
+ * @param validation_table_name The validation table used for pruning tree.
+ * @param continuous_feature_names A comma-separated list of the names of the features whose values are continuous.
+ * @param feature_col_names A comma-separated list of names of the table columns, each of which defines a feature.
+ * @param id_col_name Name of the column containing id of each point.
+ * @param class_col_name Name of the column containing correct class of each point.
+ * @param confidence_level A statistical confidence interval of the resubstitution error.
+ * @param how2handle_missing_value The way to handle missing value. The valid value is 'explicit' or 'ignore'.
  *
- * @return the same as the one returned by the long form
+ * @return
+ * - <tt>training_set_size</tt> - Number of items in the training set
+ * - <tt>tree_nodes</tt> - Number of nodes in the resulting tree
+ * - <tt>cost_time</tt> - Time spent training the tree
+ * - <tt>split_criterion</tt> - Split criterion used to build the tree.
+ *
+ * This will also create the output table with name specified via 'result_tree_table_name'.
+ * The result table can be queried directly or displayed using c45_display.
  *
  * @note     
- *      max_num_iter:      			2000
- *      max_tree_depth:     		10 
- *      min_percent_mode:   		0.001
- *      min_percent_split:  		0.01 
- *      verbosity:          		0
+ * This calls the long form of C45 with the following default parameters:
+ * - max_num_iter := 2000
+ * - max_tree_deapth := 10
+ * - min_percent_mode := 0.001
+ * - min_percent_split := 0.01
+ * - verbosity := false
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     (
@@ -2727,7 +2784,7 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /**
- * @brief   Display the trained decision tree model with rules
+ * @brief Display the trained decision tree model with rules.
  *
  * @param   tree_table_name     Name of the table containing the tree's information
  * @param   verbosity           If >= 1 will run in verbose mode
@@ -2776,7 +2833,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(tree_table_name)
                     )
                 ),
-                'the specified tree table doesn''t exists'
+                'the specified tree table' || coalesce('<' || tree_table_name || '> does not exists', ' is NULL')
             );   
             
     PERFORM MADLIB_SCHEMA.__assert
@@ -2997,9 +3054,11 @@ DECLARE
     str             TEXT;
 BEGIN
     -- run in non-verbose mode
-    FOR str IN EXECUTE 'SELECT * 
-                        FROM MADLIB_SCHEMA.c45_genrule(''' || 
-                        tree_table_name || ''', 0)' LOOP
+    FOR str IN EXECUTE
+                'SELECT *
+                 FROM MADLIB_SCHEMA.c45_genrule
+                 (' || coalesce('''' || tree_table_name || '''', 'NULL') || ', 0)'
+    LOOP
         RETURN NEXT str;
     END LOOP;
    
@@ -3467,8 +3526,8 @@ BEGIN
         0, metatable_name,max_depth);
 END $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief Display the trained decision tree model with human readable format
+/**
+ * @brief Display the trained decision tree model with human readable format.
  *
  * @param tree_table Name of the table containing the tree's information
  * @param max_depth  The max depth to be displayed. If null, this function will show all levels.
@@ -3502,7 +3561,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(tree_table)
                     )
                 ),
-                'the specified tree table doesn''t exists'
+                'the specified tree table' || coalesce('<' || tree_table || '> does not exists', ' is NULL')
             );   
 
 m4_changequote(`>>>', `<<<')
@@ -3514,8 +3573,8 @@ m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
 m4_changequote(>>>`<<<, >>>'<<<)
 END $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief Display the whole trained decision tree model with human readable format
+/**
+ * @brief Display the whole trained decision tree model with human readable format.
  *
  * @param tree_table Name of the table containing the tree's information
  *                    
@@ -3596,7 +3655,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(classification_table_name)
                     )
                 ),
-                'the specified classification table doesn''t exists'
+                'the specified classification table' || coalesce('<' || classification_table_name || '> does not exists', ' is NULL')
             );   
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -3609,7 +3668,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(tree_table_name)
                     )
                 ),
-                'the specified tree table doesn''t exists'
+                'the specified tree table' || coalesce('<' || tree_table_name || '> does not exists', ' is NULL')
             ); 
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -3622,7 +3681,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(result_table_name)
                     )
                 ),
-                'the specified result table exists'
+                'the specified result table' || coalesce('<' || result_table_name || '> exists', ' is NULL')
             ); 
                                     
     PERFORM MADLIB_SCHEMA.__assert
@@ -3781,18 +3840,18 @@ END
 $$ LANGUAGE PLPGSQL;
    
     
-/*
- * @brief Classify data points using trained decision tree model
+/**
+ * @brief Classify dataset using trained decision tree model.
  *
- * @param classification_table_name     Name of the table/view with the source data
  * @param tree_table_name               Name of trained tree
+ * @param classification_table_name Name of the table/view with the source data
  * @param result_table_name             Name of result table
  * @param verbosity                     If set to 't' will use verbose mode
  *
- * @return Table columns:
- *  - <tt>id INT</tt>       Point id.
- *  - <tt>class INT</tt>    Class prediction. 
- *  - <tt>prob FLOAT</tt>   Probability of the predicted class.
+ * @return The columns of classified table:
+ * - <tt>id INT</tt> - Record id.
+ * - <tt>class INT</tt> - Predicted class.
+ * - <tt>prob FLOAT</tt> - Probability of the predicted class.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
@@ -3843,17 +3902,17 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief   Classify the data with no verbosity
+/**
+ * @brief Classify dataset using trained decision tree model.
  *  
  * @param classification_table_name     Name of the table/view with the source data
  * @param tree_table_name               Name of trained tree
  * @param result_table_name             Name of result table
  *
- * @return Table MADLIB_SCHEMA.classified_points:
- *  - <tt>id INT</tt>       Point id.
- *  - <tt>class INT</tt>    Class prediction. 
- *  - <tt>prob FLOAT</tt>   Probability of the predicted class.
+ * @return The columns of classified table:
+ * - <tt>id INT</tt> - Record id.
+ * - <tt>class INT</tt> - Predicted class.
+ * - <tt>prob FLOAT</tt> - Probability of the predicted class.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_classify
     (
@@ -3885,12 +3944,13 @@ BEGIN
     RETURN ret;
 END $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief   Check the accuracy of the decision tree alogrithom 
+/**
+ * @brief Check the accuracy of the decision tree model.
  * 
  * @param tree_table_name           Name of trained tree
  * @param scoring_table_name        Name of the table/view with the source data
  * @param verbosity                 If set to 't' will use verbose mode 
+ *
  * @return The estimated accuracy information.
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_score
@@ -3932,7 +3992,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(tree_table_name)
                     )
                 ),
-                'relation '||quote_literal(tree_table_name)||' does not exist'
+                'the specified tree table' || coalesce('<' || tree_table_name || '> does not exist', ' is NULL')
             ); 
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -3945,7 +4005,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(scoring_table_name)
                     )
                 ),
-                'relation '||quote_literal(scoring_table_name)||' does not exist'
+                'the specified scoring table' || coalesce('<' || scoring_table_name || '> does not exist', ' is NULL')
             ); 
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -3956,7 +4016,7 @@ BEGIN
                     MADLIB_SCHEMA.__strip_schema_name(scoring_table_name),
                     MADLIB_SCHEMA.__get_class_column_name(MADLIB_SCHEMA.__get_metatable_name(tree_table_name))
                 ),
-            'relation '||quote_literal(scoring_table_name)||' does not have a column named ''class'''
+            'the specified scoring table<' || scoring_table_name || '> does not have class column'
         );
             
     result_table_name = MADLIB_SCHEMA.__get_schema_name(tree_table_name) || 
@@ -4002,12 +4062,12 @@ BEGIN
 END;
 $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief Cleanup the trained tree table and any relevant tables
+/**
+ * @brief Cleanup the trained tree table and any relevant tables.
  *
  * @param result_tree_table_name Name of the table containing the tree's information
  *
- * @return BOOLEAN value indicating the status of that cleanup operation.
+ * @return The status of that cleanup operation.
  *
  */
 DROP FUNCTION IF EXISTS  MADLIB_SCHEMA.c45_clean
@@ -4035,7 +4095,7 @@ BEGIN
                         MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name)
                     )
                 ),
-                'the specified tree table doesn''t exists'
+                'the specified tree table' || coalesce('<' || result_tree_table_name || '> does not exists', ' is NULL')
             ); 
                                     
                 
