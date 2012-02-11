@@ -22,15 +22,15 @@ DECLARE
         temp4 TEXT; 
 BEGIN
 	-- Documents table
-	CREATE TABLE textfex_documents (id integer,text text);
-        INSERT INTO  textfex_documents VALUES
+	CREATE TABLE textfex_document (id integer,text text);
+        INSERT INTO  textfex_document VALUES
         (1,E'Chancellor  of  the  Exchequer  Nigel  Lawson  ''s  restated  commitment  to  a  firm monetary  policy  has  helped  to  prevent  a  freefall  in  sterling  over  the  past  week  .'),
         (2,E'But  analysts  reckon  underlying  support  for  sterling  has  been  eroded  by  the  chancellor ''s  failure  to  announce  any  new  policy  measures  in  his  Mansion  House  speech  last  Thursday  .');
-	analyze textfex_documents;
+	analyze textfex_document;
 
 	-- Features table
-	CREATE TABLE textfex_features (id integer,name text,prev_label_id integer,label_id integer,weight float);
-        INSERT INTO textfex_features VALUES
+	CREATE TABLE textfex_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);
+        INSERT INTO textfex_feature VALUES
         (60,'E.0',0,12,2.607815743815415),           (96,'W_house',-1,13,3.6333342487137825),     (20,'E.29',29,11,1.5600124715129533),
 	(65,'U',-1,30,1.452559873574725),            (63,'R_endsWithS',-1,12,2.473913046238348),  (72,'W_support',-1,11,2.2895172323144894),
 	(59,'W_but',-1,0,2.725203469688223),         (17,'U',-1,29,1.693425697873463),            (23,'E.11',11,24,3.3606110066346395),
@@ -66,7 +66,7 @@ BEGIN
 	(19,'R_endsWithED',-1,29,3.7710064566513464),(69,'W_underlying',-1,28,2.1052292635097976),(47,'E.5',5,11,2.482005865540813),
 	(82,'W_failure',-1,11,1.6458016331559846),   (58,'U',-1,0,1.7115792838903565),            (57,'S.',-1,0,2.3460688502062736),
 	(15,'W_''s',-1,16,5.090147878397093);
-        analyze textfex_features;
+        analyze textfex_feature;
 
 	-- Dictionary table
 	CREATE TABLE textfex_dictionary (token text,token_id integer,label text,count integer, total integer);
@@ -97,18 +97,18 @@ BEGIN
 	analyze textfex_regex;
 
 	-- Lexicons table
-	CREATE TABLE textfex_lexicons (id integer,filename text,lexicon text);
-	analyze textfex_lexicons;
+	CREATE TABLE textfex_lexicon (id integer,filename text,lexicon text);
+	analyze textfex_lexicon;
 
 	-- Labels table
-	CREATE TABLE textfex_labels (id integer,label character varying);
-        INSERT INTO textfex_labels VALUES
+	CREATE TABLE textfex_label (id integer,label character varying);
+        INSERT INTO textfex_label VALUES
         (0,'CC'),   (1,'CD'),  (2,'DT'),  (3,'EX'),   (4,'FW'),  (5,'IN'),   (6,'JJ'),  (7,'JJR'), (8,'JJS'),
         (9,'LS'),   (10,'MD'), (11,'NN'), (12,'NNS'), (13,'NNP'),(14,'NNPS'),(15,'PDT'),(16,'POS'),(17,'PRP'),
         (18,'PRP$'),(19,'RB'), (20,'RBR'),(21,'RBS'), (22,'RP'), (23,'SYM'), (24,'TO'), (25,'UH'), (26,'VB'),
         (27,'VBD'), (28,'VBG'),(29,'VBN'),(30,'VBP'), (31,'VBZ'),(32,'WDT'), (33,'WP'), (34,'WP$'),(35,'WRB'),
         (36,'$'),   (37,'#'),  (38,''''''), (39,'``'),(40,'('),  (41,')'),   (42,','),  (43,'.'),  (44,':');
-	analyze textfex_labels;
+	analyze textfex_label;
 
 	-- Segment table
 	CREATE TABLE textfex_segmenttbl (start_pos integer,doc_id integer,seg_text text,max_pos integer);
@@ -126,9 +126,11 @@ BEGIN
 	(23,2,'mansion',28),  (24,2,'house',28),   (25,2,'speech',28),  (26,2,'last',28),     (27,2,'thursday',28),
 	(28,2,'.',28);
 	analyze textfex_segmenttbl;
+           
 
-        -- Factor table
-        CREATE TABLE viterbi_mrtbl (seg_text text, label int, prev_label int, score int);
+        -- m&r factor table
+        CREATE TABLE viterbi_mtbl (score real[][]);
+        CREATE TABLE viterbi_rtbl (seg_text text, label integer, score real);
 
 	-- Segment table
 	CREATE TABLE viterbi_segmenttbl(doc_id int, seg_id int, start_pos int, seg_text text);
@@ -137,14 +139,14 @@ BEGIN
 	CREATE TABLE viterbi_labels(id integer, label text);
         INSERT INTO viterbi_labels(id, label)
 	SELECT id,label
-	FROM textfex_labels;
+	FROM textfex_label;
         
         -- generate the factors in the training 
 	PERFORM MADLIB_SCHEMA.textfex_generatemrtbl(-1,false);
 
         -- testing a new sentence
         -- insert a new sentence to the textfex_document table
-        INSERT INTO textfex_documents VALUES
+        INSERT INTO textfex_document VALUES
         (3,E'His actions prevent disaster.');
         -- insert a new setence to the segment table
         INSERT INTO textfex_segmenttbl VALUES
@@ -170,7 +172,7 @@ BEGIN
 	(2,28,'.','.'),          (3,0,'his','NNP'),      (3,1,'actions','NNP'),   (3,2,'prevent','NNP'),    (3,3,'disaster','NNP'),
         (3,4,'.','.');   
  
-        PERFORM MADLIB_SCHEMA.vcrf_label('viterbi_segmenttbl', 'viterbi_mrtbl', 'viterbi_labels', 'extraction', 'madlib_installcheck_viterbi_textfex', 'mi');
+        PERFORM MADLIB_SCHEMA.vcrf_label('viterbi_segmenttbl', 'viterbi_mtbl', 'viterbi_rtbl', 'viterbi_labels', 'extraction', 'madlib_installcheck_viterbi_textfex', 'mi');
 
         -- do a comparaion between the expected result and the viterbi extraction result. It succeed only if the two tables are the same.
 	SELECT COUNT(*) INTO result_count FROM ((SELECT * FROM expected_extraction) EXCEPT (SELECT * FROM extraction)) AS U;
