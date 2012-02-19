@@ -11,15 +11,24 @@
 
 m4_include(`SQLCommon.m4')
 
+-- a human readable view of the segmentation output table
+create or replace function MADLIB_SCHEMA.__vcrf_top1_view (segtbl text, labeltbl text, result_tbl text, vw text) returns text AS
+$$
+rv = plpy.execute('SELECT COUNT(*) AS total FROM ' + labeltbl);
+nlabel = rv[0]['total']
+query = 'create view ' + vw + ' AS ' + \
+' select segs.doc_id, start_pos, seg_text, L.label, (exp((result.label[max_pos+2] - result.label[max_pos+3])::float/1000)) as prob ' + \
+' from ' + segtbl + ' segs, ' + labeltbl + ' L, ' + \
+' ' + result_tbl + ' result ' + \
+' where result.label[segs.start_pos+1]=L.id and segs.doc_id=result.doc_id' + \
+' order by doc_id, start_pos;'
+plpy.execute(query)
+return vw
+$$ language plpythonu strict;
+
 -- create C-UDF functions for array manipulations
 create or replace function MADLIB_SCHEMA.__vcrf_top1_label(anyarray, anyarray, anyarray, anyelement)
 returns anyarray as 'MODULE_PATHNAME' language c strict;
-
-create or replace function MADLIB_SCHEMA.__vcrf_sum_array(anyarray, anyarray, anyarray, anyelement, anyelement)
-returns anyarray as 'MODULE_PATHNAME' language c strict;
-
-create or replace function MADLIB_SCHEMA.__vcrf_sum(anyarray)
-returns integer as 'MODULE_PATHNAME' language c strict;
 
 --! \examp
 --! select normalization(doc_id) from doc_ids where doc_id=1;
@@ -35,15 +44,9 @@ $$
 rv = plpy.execute('SELECT COUNT(*) AS total FROM ' + labeltbl);
 nlabel = rv[0]['total']
 
-rv = plpy.execute('SELECT COUNT(*) AS total FROM '+docs); 
-ndocs =rv[0]['total']
-
-#for doc_id in range(1,ndocs+1):
-for doc_id in range(1,2):
-	rv = plpy.execute(' INSERT INTO ' + resulttbl + \
-                          ' SELECT MADLIB_SCHEMA.__vcrf_top1_label(segs.seglist, mfactors.score, rfactors.score, ' + str(nlabel) + ' ) '  + \
-			  ' FROM '  + segtbl + ' segs, ' + mfactortbl + ' mfactors, ' + rfactortbl + ' rfactors ' + \
-                          ' WHERE doc_id = ' + str(doc_id) + ' ;')
+plpy.execute(' INSERT INTO ' + resulttbl + \
+             ' SELECT segs.doc_id, MADLIB_SCHEMA.__vcrf_top1_label(segs.seglist, mfactors.score, rfactors.score, ' + str(nlabel) + ' ) '  + \
+	     ' FROM '  + segtbl + ' segs, ' + mfactortbl + ' mfactors, ' + rfactortbl + ' rfactors ' + ' ;') 
 return 0 
 $$ LANGUAGE plpythonu STRICT;
 
@@ -53,6 +56,7 @@ MADLIB_SCHEMA.vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labelt
   seq = prefix + "_seqno"
   seglook = schemaname + "." + prefix + "_segment_lookup"
   segs = schemaname + "." + prefix + "_segments"
+  segstbl = schemaname + "." + prefix + "_segmentbl"
   m_factors = schemaname + "." + prefix + "_m_factors"
   r_factors = schemaname + "." + prefix + "_r_factors"
   norm_factors = schemaname + "." + prefix + "_norm_factors"
@@ -69,6 +73,7 @@ MADLIB_SCHEMA.vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labelt
 
   retval = {}
   retval["segments"] = segs
+  retval["segmentstbl"] = segstbl
   retval["m_factors"] = m_factors
   retval["r_factors"] = r_factors
   retval["doc_ids"] = doc_ids
@@ -112,10 +117,20 @@ MADLIB_SCHEMA.vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labelt
      group by doc_id;"""
 
   plpy.execute(query)
-
   query = "analyze " + segs + ";"
 
+  query = """
+  -- tag ids onto input segments and store result in vcrf_segments
+  -- uses input: segtbl
+     select doc_id, start_pos, SH.seg_id::integer as seg_id, SH.seg_text, max_pos
+     into """ + segstbl + """
+     from """ + segtbl + """ S,
+          """ + seglook + """ SH
+     where S.seg_text=SH.seg_text
+     group by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos
+     order by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos;"""
   plpy.execute(query);
+  query = "analyze " + segstbl + ";"
 
   query = """
   -- for each seg_id, store array representation of max r_factor-score * 1000
@@ -153,7 +168,7 @@ MADLIB_SCHEMA.vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labelt
   plpy.execute(query);
 
   #query = "CREATE TABLE " + resulttbl_raw + " (doc_id integer, start_pos integer, seg_id integer, label integer, score integer);"
-  query = "CREATE TABLE " + resulttbl_raw + " (label integer[]);"
+  query = "CREATE TABLE " + resulttbl_raw + " (doc_id integer, label integer[]);"
   plpy.execute(query);
   query = """
   select madlib.__vcrf_top1(\'""" + segs + """\',
@@ -163,4 +178,9 @@ MADLIB_SCHEMA.vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labelt
                             \'""" + doc_ids + """\',
                             \'""" + resulttbl_raw + """\')"""
   plpy.execute(query);
+ 
+  query = "SELECT * FROM MADLIB_SCHEMA.__vcrf_top1_view(\'" + segstbl + "\', \'" + labeltbl + "\', \'" + resulttbl_raw + "\', \'" + resulttbl + "\');"
+
+  plpy.execute(query);
+   
 $$ LANGUAGE plpythonu STRICT;
