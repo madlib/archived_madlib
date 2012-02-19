@@ -100,8 +100,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                }
 
             } else{
-               //curr_norm_array=__vcrf_sum_array(prev_norm_array, mArray, rArray, segid, nlabel);             
-               //curr_norm_array = __vcrf_sum_array(prev_norm_array);             
+              // calculate the best label sequence
               for(currlabel=0; currlabel<nlabel; currlabel++){
                     for(prevlabel=0; prevlabel<nlabel; prevlabel++){
                         int top1_new_score = ((int*)ARR_DATA_PTR(prev_top1_array))[prevlabel] + 
@@ -114,6 +113,9 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                     } 
                  }
               }
+              // calculate the probability of the best label sequence
+              curr_norm_array=__vcrf_sum_array(prev_norm_array, mArray, rArray, segid, nlabel);             
+               //curr_norm_array = __vcrf_sum_array(prev_norm_array);             
               for(label=0; label<nlabel; label++){
                        ((int*)ARR_DATA_PTR(prev_top1_array))[label] = ((int*)ARR_DATA_PTR(curr_top1_array))[label];
                        ((int*)ARR_DATA_PTR(prev_norm_array))[label] = ((int*)ARR_DATA_PTR(curr_norm_array))[label];
