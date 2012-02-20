@@ -99,11 +99,34 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                                                                  ((int*)ARR_DATA_PTR(mArray))[label]; 
                }
 
-            } else{
+            } else if(start_pos == doclen-1){
                    for(currlabel=0; currlabel<nlabel; currlabel++){
                        for(prevlabel=0; prevlabel<nlabel; prevlabel++){
                           // calculate the best label sequence
                           int top1_new_score = ((int*)ARR_DATA_PTR(prev_top1_array))[prevlabel] + 
+                                               ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(mArray))[(nlabel+1)*nlabel+currlabel];
+                          if(top1_new_score > ((int*)ARR_DATA_PTR(curr_top1_array))[currlabel]){
+                             ((int*)ARR_DATA_PTR(curr_top1_array))[currlabel] = top1_new_score;
+                             ((int*)ARR_DATA_PTR(path))[start_pos*nlabel+currlabel] = prevlabel;
+                          }
+                          // calculate the probability of the best label sequence
+                          int norm_new_score = ((int*)ARR_DATA_PTR(prev_norm_array))[prevlabel] +
+                                               ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(mArray))[(nlabel+1)*nlabel+currlabel];
+		          // 0.5 is for rounding
+	                  ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = 
+                          (int)(log(exp(((int*)ARR_DATA_PTR(curr_norm_array))[currlabel]/1000.0) + 
+                          exp(norm_new_score/1000.0))*1000.0 + 0.5);
+                       } 
+                   }
+            } else {
+                   for(currlabel=0; currlabel<nlabel; currlabel++){
+                       for(prevlabel=0; prevlabel<nlabel; prevlabel++){
+                          // calculate the best label sequence
+                          int top1_new_score = ((int*)ARR_DATA_PTR(prev_top1_array))[prevlabel] +
                                                ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel];
                           if(top1_new_score > ((int*)ARR_DATA_PTR(curr_top1_array))[currlabel]){
@@ -114,13 +137,13 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                           int norm_new_score = ((int*)ARR_DATA_PTR(prev_norm_array))[prevlabel] +
                                                ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel];
-		          // 0.5 is for rounding
-	                  ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = 
-                          (int)(log(exp(((int*)ARR_DATA_PTR(curr_norm_array))[currlabel]/1000.0) + 
+                          // 0.5 is for rounding
+                          ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] =
+                          (int)(log(exp(((int*)ARR_DATA_PTR(curr_norm_array))[currlabel]/1000.0) +
                           exp(norm_new_score/1000.0))*1000.0 + 0.5);
                        } 
                    }
-                  }
+            }
             for(label=0; label<nlabel; label++){
                        ((int*)ARR_DATA_PTR(prev_top1_array))[label] = ((int*)ARR_DATA_PTR(curr_top1_array))[label];
                        ((int*)ARR_DATA_PTR(prev_norm_array))[label] = ((int*)ARR_DATA_PTR(curr_norm_array))[label];

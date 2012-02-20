@@ -80,17 +80,25 @@ BEGIN
         SELECT textfex_label.id
         FROM   textfex_label;
         INSERT INTO prev_textfex_label VALUES(-1);
+        INSERT INTO prev_textfex_label VALUES(nlabel);
 
         -- generate sparse M factor table
         INSERT INTO textfex_mtbl(prev_label, label, value)
         SELECT prev_label.id, label.id, 0 
         FROM   textfex_label as label,
                prev_textfex_label as prev_label;
-        
-        INSERT INTO textfex_mtbl
+
+        -- edgeFeature and startFeature, startFeature can be considered as a special edgeFeature  
+        INSERT INTO textfex_mtbl(prev_label, label, value)
         SELECT prev_label_id,label_id,weight
 	FROM   textfex_feature AS features
 	WHERE  features.prev_label_id<>-1 OR features.name = 'S.';
+
+        --endFeature, endFeature can be considered as a special edgeFeature
+        INSERT INTO textfex_mtbl(prev_label, label, value)
+        SELECT nlabel,label_id,weight
+	FROM   textfex_feature AS features
+	WHERE  features.name = 'End.';
 
         INSERT INTO viterbi_mtbl
         SELECT pg_catalog.array_agg(weight)
@@ -142,18 +150,18 @@ BEGIN
 		GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
         
         ELSE
-		-- create a temp partial dictionary table which stores the words whose occurance 
-                -- is below certain threshold.
+                -- create a temp partial dictionary table which stores the words whose occurance 
+                -- is above certain threshold.
 		-- refer to the CRF Package
-		DROP TABLE IF EXISTS textfex_unknown_token;
-		CREATE TEMP TABLE textfex_unknown_token (
+		DROP TABLE IF EXISTS textfex_known_token;
+		CREATE TEMP TABLE textfex_known_token (
 				token text NOT NULL
 				);
 
-		INSERT INTO textfex_unknown_token
+		INSERT INTO textfex_known_token
 		SELECT DISTINCT token
 		FROM   textfex_dictionary
-		WHERE  textfex_dictionary.total = 1;
+		WHERE  textfex_dictionary.total>1;
 
 		-- unknownFeature and word feature
 		INSERT INTO textfex_rtbl(seg_text, label, value)
@@ -161,7 +169,7 @@ BEGIN
 		FROM   textfex_segment_hashtbl AS segment_hashtbl,
 		       textfex_feature AS features
 		WHERE  (features.name = 'U'
-		        AND lower(segment_hashtbl.seg_text) in (select token from textfex_unknown_token)) OR
+		        AND lower(segment_hashtbl.seg_text) NOT IN (select token from textfex_known_token)) OR
 		       (features.name = 'W_' || segment_hashtbl.seg_text)
 		GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
 
