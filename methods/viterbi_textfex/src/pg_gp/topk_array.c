@@ -10,14 +10,16 @@ PG_MODULE_MAGIC;
 #endif
 
 Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
-Datum __vcrf_sum(PG_FUNCTION_ARGS);
 
-/*@param segments for a document
- *@param m table
- *@param r table
- *@param nlable 
- *calculate the top1 labeling of each sentence using viterbi algorithm
- *create function __vcrf_top1_label(anyarray, anyarray, anyarray, anyelement) returns anyarray
+/*calculate the top1 labeling of each sentence using viterbi algorithm
+ *create function __vcrf_top1_label(int[], int[], int[], int) returns int[]
+ *Parameters:
+ *	segtbl	The segments in a sentence/document
+ *	mArray  The m factors
+ *	rArray  The r factors
+ *	nlabel	Total number of labels in the label space
+ *Return:
+ *      the top1 labeling(best labeling) of the sentence and the probability of the top1 labeling
  **/
 
 PG_FUNCTION_INFO_V1(__vcrf_top1_label);
@@ -149,7 +151,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                        ((int*)ARR_DATA_PTR(prev_norm_array))[label] = ((int*)ARR_DATA_PTR(curr_norm_array))[label];
             }
         }
-        // find the maximum top1 label
+        // find the label of the last token in a sentence
         int top1label = 0;
         int maxscore =0;
         int pos =0;
@@ -159,6 +161,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                   top1label = label;
                }
         }
+        // trace back to get the labels for the rest tokens in a sentence
         ((int*)ARR_DATA_PTR(result))[doclen-1] = top1label;
         for (pos=doclen-1; pos>=1; pos--){
             top1label = ((int*)ARR_DATA_PTR(path))[pos*nlabel+top1label];  
