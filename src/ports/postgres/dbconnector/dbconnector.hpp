@@ -133,6 +133,18 @@ namespace madlib {
 
 // Unfortunately, we have to clean up some #defines in PostgreSQL headers
 // From c.h 
+#ifdef Abs
+#undef Abs
+#endif
+
+#ifdef Max
+#undef Max
+#endif
+
+#ifdef Min
+#undef Min
+#endif
+
 #ifdef gettext
 #undef gettext
 #endif

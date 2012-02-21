@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file student.hpp
+ * @file kolmogorov.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -9,13 +9,13 @@
 #if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
 
 /**
- * @brief Student-t cumulative distribution function
+ * @brief Kolmogorov cumulative distribution function
  */
-DECLARE_UDF(student_t_cdf)
+DECLARE_UDF(kolmogorov_cdf)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-double studentT_CDF(double t, double nu);
+double kolmogorovCDF(double t);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS)
 

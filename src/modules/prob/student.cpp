@@ -57,9 +57,8 @@
 
 #include <dbconnector/dbconnector.hpp>
 
-// The error function is in C99 and TR1, but not in the official C++ Standard
-// (before C++11). We therefore use the Boost implementation
-#include <boost/math/special_functions/erf.hpp>
+// Use boost implementation for non-natural nu
+#include <boost/math/distributions/students_t.hpp>
 
 
 namespace madlib {
@@ -72,12 +71,12 @@ namespace prob {
 // be ignored if and only if it is processed stand-alone
 #undef _DOXYGEN_IGNORE_HEADER_FILE
 #include "student.hpp"
+#include "boost.hpp"
 
 namespace {
     // Anonymous namespace for internal functions
     
-    inline double normal_cdf(double t);
-    double studentT_cdf_approx(int64_t nu, double t);
+    double studentT_cdf_approx(double t, double nu);
 }
 
 
@@ -89,6 +88,10 @@ namespace {
  *
  * For nu >= 1000000, we just use the normal distribution as an approximation.
  * For 1000000 >= nu >= 200, we use a simple approximation from [9].
+ * If nu is not within 0.01 of a natural number, we will call the student-t
+ * CDF from boost. Otherwise, our approach should be much more precise than
+ * using the incomplete beta function as boost does (see the references).
+ *
  * We are much more cautious than usual here (it is folklore that the normal
  * distribution is a "good" estimate for Student-T if nu >= 30), but we can
  * afford the extra work as this function is not designed to be called from
@@ -120,35 +123,41 @@ namespace {
  * where A(t|nu) = Pr[|T| <= t].
  * @endverbatim
  *
- * @param nu Degree of freedom (>= 1)
  * @param t Argument to cdf.
+ * @param nu Degree of freedom (>0)
  *
  * Note: The running time of calculating the series is proportional to nu.
  * We therefore use the normal distribution as an approximation for large nu.
  * Another idea for handling this case can be found in reference [8].
  */
 
-double studentT_CDF(int64_t nu, double t) {
-	double		z,
+double studentT_CDF(double inT, double inNu) {
+    double&     t = inT;
+    double		z,
 				t_by_sqrt_nu;
 	double		A, /* contains A(t|nu) */
 				prod = 1.,
 				sum = 1.;
 
 	/* Handle extreme cases. See above. */
-	 
-	if (nu <= 0)
+	if (inNu <= 0 || std::isnan(inT) || std::isnan(inNu))
 		return std::numeric_limits<double>::quiet_NaN();
     else if (t == std::numeric_limits<double>::infinity())
         return 1;
     else if (t == -std::numeric_limits<double>::infinity())
         return 0;
-	else if (nu >= 1000000)
-		return normal_cdf(t);
-	else if (nu >= 200)
-		return studentT_cdf_approx(nu, t);
+	else if (inNu >= 1000000)
+		return normalCDF(t);
+	else if (inNu >= 200)
+		return studentT_cdf_approx(t, inNu);
+    
+    /* inNu is non-negative here, so nu will be the closest integer */
+    int64_t    nu = std::floor(inNu + 0.5);
+	
+    if (std::fabs(inNu - nu)/inNu > 0.01)
+        return boost::math::cdf( boost::math::students_t(inNu), t );
 
-	/* Handle main case (nu < 200) in the rest of the function. */
+	/* Handle main case (nu \in {1, ..., 200}) in the rest of the function. */
 
 	z = 1. + t * t / nu;
 	t_by_sqrt_nu = std::fabs(t) / std::sqrt(static_cast<double>(nu));
@@ -193,20 +202,6 @@ double studentT_CDF(int64_t nu, double t) {
 namespace {
 
 /**
- * @brief Compute the normal distribution function using the library error function.
- *
- * This approximation satisfies
- * rel_error < 0.0001 || abs_error < 0.00000001
- * for all nu >= 1000000. (Tested on Mac OS X 10.6, gcc-4.2.)
- */
-
-inline double normal_cdf(double t)
-{
-	return .5 + .5 * boost::math::erf(t / std::sqrt(2.));
-}
-
-
-/**
  * @brief Approximate Student-T distribution using a formula suggested in
  *        [9], which goes back to an approximation suggested in [10].
  *
@@ -214,7 +209,7 @@ inline double normal_cdf(double t)
  * rel_error < 0.0001 || abs_error < 0.00000001
  * for all nu >= 200. (Tested on Mac OS X 10.6, gcc-4.2.)
  */
-double studentT_cdf_approx(int64_t nu, double t)
+double studentT_cdf_approx(double t, double nu)
 {
 	double	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
 			z = std::sqrt( std::log(1. + t * t / nu) / g );
@@ -222,7 +217,7 @@ double studentT_cdf_approx(int64_t nu, double t)
 	if (t < 0)
 		z *= -1.;
 	
-	return normal_cdf(z);
+	return normalCDF(z);
 }
 
 }
@@ -232,11 +227,11 @@ double studentT_cdf_approx(int64_t nu, double t)
  */
 AnyType
 student_t_cdf::run(AnyType &args) {
-    int64_t nu = args[0].getAs<int64_t>();
-    double t = args[1].getAs<double>();
-        
+    double t = args[0].getAs<double>();
+    double nu = args[1].getAs<double>();
+    
     /* We want to ensure nu > 0 */
-    if (nu <= 0)
+    if (nu <= 0.)
         throw std::domain_error("Student-t distribution undefined for "
             "degree of freedom <= 0");
 
