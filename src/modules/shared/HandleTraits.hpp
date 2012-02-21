@@ -36,9 +36,12 @@ struct HandleTraits<AbstractionLayer::ArrayHandle<double>, LinAlgTypes> {
     typedef typename LinAlgTypes::template HandleMap<const ColumnVector>
         ColumnVectorArrayHandleMap;
     typedef utils::Reference<double, uint64_t> ReferenceToUInt64;
+    typedef utils::Reference<double, int64_t> ReferenceToInt64;
     typedef utils::Reference<double, uint32_t> ReferenceToUInt32;
     typedef utils::Reference<double, uint16_t> ReferenceToUInt16;
+    typedef utils::Reference<double, bool> ReferenceToBool;
     typedef utils::Reference<double> ReferenceToDouble;
+    typedef const double* DoublePtr;
     typedef typename LinAlgTypes::template HandleMap<
         const ColumnVector, TransparentHandle> ColumnVectorTransparentHandleMap;
     typedef typename LinAlgTypes::template HandleMap<
@@ -55,9 +58,12 @@ struct HandleTraits<AbstractionLayer::MutableArrayHandle<double>, LinAlgTypes> {
     typedef typename LinAlgTypes::template HandleMap<ColumnVector>
         ColumnVectorArrayHandleMap;
     typedef utils::MutableReference<double, uint64_t> ReferenceToUInt64;
+    typedef utils::MutableReference<double, int64_t> ReferenceToInt64;
     typedef utils::MutableReference<double, uint32_t> ReferenceToUInt32;
     typedef utils::MutableReference<double, uint16_t> ReferenceToUInt16;
+    typedef utils::MutableReference<double, bool> ReferenceToBool;
     typedef utils::MutableReference<double> ReferenceToDouble;
+    typedef double* DoublePtr;
     typedef typename LinAlgTypes::template HandleMap<
         ColumnVector, TransparentHandle> ColumnVectorTransparentHandleMap;
     typedef typename LinAlgTypes::template HandleMap<

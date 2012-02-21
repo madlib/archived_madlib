@@ -32,6 +32,8 @@ public:
     class HandleMap;
 
     typedef Eigen::VectorXd ColumnVector;
+    typedef Eigen::Vector2d ColumnVector2;
+    typedef Eigen::Vector3d ColumnVector3;
     typedef Eigen::RowVectorXd RowVector;
     typedef Eigen::MatrixXd Matrix;
     typedef EIGEN_DEFAULT_DENSE_INDEX_TYPE Index;

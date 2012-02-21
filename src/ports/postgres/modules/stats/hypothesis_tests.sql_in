@@ -1,0 +1,786 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file hypothesis_tests.sql_in
+ *
+ * @brief SQL functions for statistical hypothesis tests
+ *
+ * @sa For an overview of hypthesis-test functions, see the module
+ *     description \ref grp_stats_tests.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_stats_tests
+
+@about
+
+@anchor sample_mean
+Let \f$ x_1, \dots, x_n \f$ be a sample. The <em>sample mean</em> is:
+\f[
+    \bar x := \frac 1n \sum_{i=1}^n x_i
+\f]
+@anchor sample_variance
+The <em>sample variance</em> is:
+\f[
+    s^2 = \frac{1}{n-1} \cdot \sum_{i=1}^n (x_i - \bar x)^2
+\f]
+
+@sa File hypothesis_tests.sql_in documenting the SQL functions.
+*/
+
+CREATE TYPE MADLIB_SCHEMA.t_test_result AS (
+    statistic DOUBLE PRECISION,
+    df DOUBLE PRECISION,
+    p_value_one_sided DOUBLE PRECISION,
+    p_value_two_sided DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.t_test_one_transition(
+    state DOUBLE PRECISION[],
+    value DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.t_test_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.t_test_one_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.t_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE MADLIB_SCHEMA.f_test_result AS (
+    statistic DOUBLE PRECISION,
+    df1 DOUBLE PRECISION,
+    df2 DOUBLE PRECISION,
+    p_value_one_sided DOUBLE PRECISION,
+    p_value_two_sided DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.f_test_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.f_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+/**
+ * @brief Perform one-sample or dependent paired Student t-test
+ *
+ * Given realizations \f$ x_1, \dots, x_n \f$ of i.i.d. random variables
+ * \f$ X_1, \dots, X_n \sim N(\mu, \sigma^2) \f$ with unknown parameters \f$ \mu \f$ and
+ * \f$ \sigma^2 \f$, test the null hypotheses \f$ H_0 : \mu \leq 0 \f$ and
+ * \f$ H_0 : \mu = 0 \f$.
+ *
+ * @param value Value of random variate \f$ x_i \f$
+ *
+ * @return A composite value as follows. We denote by \f$ \bar x \f$ the
+ *     \ref sample_mean "sample mean" and by \f$ s^2 \f$ the
+ *     \ref sample_variance "sample variance".
+ *  - <tt>statistic FLOAT8</tt> - Statistic
+ *    \f[
+ *        t = \frac{\sqrt n \cdot \bar x}{s}
+ *    \f]
+ *    The corresponding random
+ *    variable is Student-t distributed with
+ *    \f$ (n - 1) \f$ degrees of freedom.
+ *  - <tt>df BIGINT</tt> - Degrees of freedom \f$ (n - 1) \f$
+ *  - <tt>p_value_one_sided FLOAT8</tt> - Lower bound on one-sided p-value.
+ *    In detail, the result is \f$ \Pr[\bar X \geq \bar x \mid \mu = 0] \f$,
+ *    which is a lower bound on
+ *    \f$ \Pr[\bar X \geq \bar x \mid \mu \leq 0] \f$.
+ *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
+ *    \f$ \Pr[ |\bar X| \geq |\bar x| \mid \mu = 0] \f$
+ *
+ * @usage
+ *  - One-sample t-test: Test null hypothesis that the mean of a sample is at
+ *    most (or equal to, respectively) \f$ \mu_0 \f$:
+ *    <pre>SELECT (t_test_one(<em>value</em> - <em>mu_0</em>)).* FROM <em>sourceName</em></pre>
+ *  - Dependent paired t-test: Test null hypothesis that the mean difference
+ *    between the first and second value in a pair is at most (or equal to,
+ *    respectively) \f$ \mu_0 \f$:
+ *    <pre>SELECT (t_test_one(<em>first</em> - <em>second</em> - <em>mu_0</em>)).* FROM <em>sourceName</em></pre>
+ *
+ * @sa
+ *     student_t_cdf() for evaluating the CDF of the Student-t distribution
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.t_test_one(
+    /*+ value */ DOUBLE PRECISION) (
+    
+    SFUNC=MADLIB_SCHEMA.t_test_one_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.t_test_one_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.t_test_two_transition(
+    state DOUBLE PRECISION[],
+    "fromFirstSample" BOOLEAN,
+    "value" DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.t_test_two_pooled_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.t_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Perform two-sample pooled (i.e., equal variances) Student t-test
+ *
+ * Given realizations \f$ x_1, \dots, x_n \f$ and \f$ y_1, \dots, y_m \f$ of
+ * i.i.d. random variables \f$ X_1, \dots, X_n \sim N(\mu_X, \sigma^2) \f$ and
+ * \f$ Y_1, \dots, Y_m \sim N(\mu_Y, \sigma^2) \f$ with unknown parameters
+ * \f$ \mu_X, \mu_Y, \f$ and \f$ \sigma^2 \f$, test the null hypotheses
+ * \f$ H_0 : \mu_X \leq \mu_Y \f$ and \f$ H_0 : \mu_X = \mu_Y \f$.
+ *
+ * @param "fromFirstSample" Indicator whether \c value is from first sample
+ *     \f$ x_1, \dots, x_n \f$ (if \c TRUE) or from second sample
+ *     \f$ y_1, \dots, y_m \f$ (if \c FALSE)
+ * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$
+ *
+ * @return A composite value as follows. We denote by \f$ \bar x, \bar y \f$
+ *     the \ref sample_mean "sample means" and by \f$ s_X^2, s_Y^2 \f$ the
+ *     \ref sample_variance "sample variances".
+ *  - <tt>statistic FLOAT8</tt> - Statistic
+ *    \f[
+ *        t = \frac{\bar x - \bar y}{s_p \sqrt{1/n + 1/m}}
+ *    \f]
+ *    where
+ *    \f[
+ *        s_p^2 = \frac{\sum_{i=1}^n (x_i - \bar x)^2 
+ *                         + \sum_{i=1}^m (y_i - \bar y)^2}
+ *                     {n + m - 2}
+ *    \f]
+ *    is the <em>pooled variance</em>.
+ *    The corresponding random
+ *    variable is Student-t distributed with
+ *    \f$ (n + m - 2) \f$ degrees of freedom.
+ *  - <tt>df BIGINT</tt> - Degrees of freedom \f$ (n + m - 2) \f$
+ *  - <tt>p_value_one_sided FLOAT8</tt> - Lower bound on one-sided p-value.
+ *    In detail, the result is \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X = \mu_Y] \f$,
+ *    which is a lower bound on
+ *    \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X \leq \mu_Y] \f$.
+ *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
+ *    \f$ \Pr[ |\bar X - \bar Y| \geq |\bar x - \bar y| \mid \mu_X = \mu_Y] \f$
+ *
+ * @usage
+ *  - Two-sample pooled t-test: Test null hypothesis that the mean of the first
+ *    sample is at most (or equal to, respectively) the mean of the second
+ *    sample:
+ *    <pre>SELECT (t_test_pooled(<em>valueIsFromFirstSample</em>, <em>value</em>)).* FROM <em>sourceName</em></pre>
+ *
+ * @sa
+ *     student_t_cdf() for evaluating the CDF of the Student-t distribution
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.t_test_two_pooled(
+    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "value" */ DOUBLE PRECISION) (
+    
+    SFUNC=MADLIB_SCHEMA.t_test_two_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.t_test_two_pooled_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.t_test_two_unpooled_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.t_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Perform unpooled (i.e., unequal variances) t-test (also known as
+ *     Welch's t-test)
+ *
+ * Given realizations \f$ x_1, \dots, x_n \f$ and \f$ y_1, \dots, y_m \f$ of
+ * i.i.d. random variables \f$ X_1, \dots, X_n \sim N(\mu_X, \sigma_X^2) \f$ and
+ * \f$ Y_1, \dots, Y_m \sim N(\mu_Y, \sigma_Y^2) \f$ with unknown parameters
+ * \f$ \mu_X, \mu_Y, \sigma_X^2, \f$ and \f$ \sigma_Y^2 \f$, test the null
+ * hypotheses \f$ H_0 : \mu_X \leq \mu_Y \f$ and \f$ H_0 : \mu_X = \mu_Y \f$.
+ *
+ * @param "fromFirstSample" Indicator whether \c value is from first sample
+ *     \f$ x_1, \dots, x_n \f$ (if \c TRUE) or from second sample
+ *     \f$ y_1, \dots, y_m \f$ (if \c FALSE)
+ * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$
+ *
+ * @return A composite value as follows. We denote by \f$ \bar x, \bar y \f$
+ *     the \ref sample_mean "sample means" and by \f$ s_X^2, s_Y^2 \f$ the
+ *     \ref sample_variance "sample variances".
+ *  - <tt>statistic FLOAT8</tt> - Statistic
+ *    \f[
+ *        t = \frac{\bar x - \bar y}{\sqrt{s_X^2/n + s_Y^2/m}}
+ *    \f]
+ *    The corresponding random variable is approximately Student-t distributed
+ *    with
+ *    \f[
+ *        \frac{(s_X^2 / n + s_Y^2 / m)^2}{(s_X^2 / n)^2/(n-1) + (s_Y^2 / m)^2/(m-1)}
+ *    \f]
+ *    degrees of freedom (Welch–Satterthwaite formula).
+ *  - <tt>df BIGINT</tt> - Degrees of freedom (as above)
+ *  - <tt>p_value_one_sided FLOAT8</tt> - Lower bound on one-sided p-value.
+ *    In detail, the result is \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X = \mu_Y] \f$,
+ *    which is a lower bound on
+ *    \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X \leq \mu_Y] \f$.
+ *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
+ *    \f$ \Pr[ |\bar X - \bar Y| \geq |\bar x - \bar y| \mid \mu_X = \mu_Y] \f$
+ *
+ * @usage
+ *  - Two-sample unpooled t-test: Test null hypothesis that the mean of the
+ *    first sample is at most (or equal to, respectively) the mean of the second
+ *    sample:
+ *    <pre>SELECT (t_test_unpooled(<em>valueIsFromFirstSample</em>, <em>value</em>)).* FROM <em>sourceName</em></pre>
+ *
+ * @sa
+ *     student_t_cdf() for evaluating the CDF of the Student-t distribution
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.t_test_two_unpooled(
+    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "value" */ DOUBLE PRECISION) (
+    
+    SFUNC=MADLIB_SCHEMA.t_test_two_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.t_test_two_unpooled_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+/**
+ * @brief Perform Fisher F-test
+ *
+ * Given realizations \f$ x_1, \dots, x_m \f$ and \f$ y_1, \dots, y_n \f$ of
+ * i.i.d. random variables \f$ X_1, \dots, X_m \sim N(\mu_X, \sigma^2) \f$ and
+ * \f$ Y_1, \dots, Y_n \sim N(\mu_Y, \sigma^2) \f$ with unknown parameters
+ * \f$ \mu_X, \mu_Y, \f$ and \f$ \sigma^2 \f$, test the null hypotheses
+ * \f$ H_0 : \sigma_X < \sigma_Y \f$ and \f$ H_0 : \sigma_X = \sigma_Y \f$.
+ *
+ * @param "fromFirstSample" Indicator whether \c value is from first sample
+ *     \f$ x_1, \dots, x_m \f$ (if \c TRUE) or from second sample
+ *     \f$ y_1, \dots, y_n \f$ (if \c FALSE)
+ * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$
+ *
+ * @return A composite value as follows. We denote by \f$ \bar x, \bar y \f$
+ *     the \ref sample_mean "sample means" and by \f$ s_X^2, s_Y^2 \f$ the
+ *     \ref sample_variance "sample variances".
+ *  - <tt>statistic FLOAT8</tt> - Statistic
+ *    \f[
+ *        f = \frac{s_Y^2}{s_X^2}
+ *    \f]
+ *    The corresponding random
+ *    variable is Fisher-f distributed with
+ *    \f$ (n - 1) \f$ degrees of freedom in the numerator and
+ *    \f$ (m - 1) \f$ degrees of freedom in the denominator.
+ *  - <tt>df1 BIGINT</tt> - Degrees of freedom in the numerator \f$ (n - 1) \f$
+ *  - <tt>df2 BIGINT</tt> - Degrees of freedom in the denominator \f$ (m - 1) \f$
+ *  - <tt>p_value_one_sided FLOAT8</tt> - Lower bound on one-sided p-value.
+ *    In detail, the result is \f$ \Pr[F \geq f \mid \sigma_X = \sigma_Y] \f$,
+ *    which is a lower bound on
+ *    \f$ \Pr[F \geq f \mid \sigma_X \leq \sigma_Y] \f$.
+ *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
+ *    \f$ 2 \cdot \min \{ p, 1 - p \} \f$ where
+ *    \f$ p = \Pr[ F \geq f \mid \sigma_X = \sigma_Y] \f$.
+ *
+ * @usage
+ *  - Test null hypothesis that the variance of the first sample is at most (or
+ *    equal to, respectively) the variance of the second sample:
+ *    <pre>SELECT (f_test(<em>valueIsFromFirstSample</em>, <em>value</em>)).* FROM <em>sourceName</em></pre>
+ *
+ * @sa
+ *     fisher_f_cdf() for evaluating the CDF of the Fisher-f distribution
+ *
+ * @internal We reuse the two-sample t-test transition and merge functions.
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.f_test(
+    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "value" */ DOUBLE PRECISION) (
+    
+    SFUNC=MADLIB_SCHEMA.t_test_two_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.f_test_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
+    state DOUBLE PRECISION[],
+    observed BIGINT,
+    expected DOUBLE PRECISION,
+    df BIGINT
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE
+CALLED ON NULL INPUT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE TYPE MADLIB_SCHEMA.chi2_test_result AS (
+    statistic DOUBLE PRECISION,
+    p_value DOUBLE PRECISION,
+    df BIGINT,
+    phi DOUBLE PRECISION,
+    contingency_coef DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_final(
+    state DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.chi2_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Perform Pearson's chi-squared goodness-of-fit test
+ *
+ * Let \f$ n_1, \dots, n_k \f$ be a realization of a (vector) random variable
+ * \f$ N = (N_1, \dots, N_k) \f$ that follows the multinomial distribution with
+ * parameters \f$ k \f$ and \f$ p = (p_1, \dots, p_k) \f$. Test the null
+ * hypothesis \f$ H_0 : p = p^0 \f$.
+ *
+ * @param observed Number \f$ n_i \f$ of observations of the current event/row
+ * @param expected Expected number of observations of current event/row. This
+ *     number is not required to be normalized. That is, \f$ p^0_i \f$ will be
+ *     taken as \c expected divided by <tt>sum(expected)</tt>. If this parameter
+ *     is \c NULL, chi2_test() will use
+ *     \f$ p^0 = (\frac 1k, \dots, \frac 1k) \f$, i.e., test that \f$ p \f$ is a
+ *     discrete uniform distribution.
+ * @param df Degrees of freedom. This is the number of events reduced by the
+ *     degree of freedom lost by using the observed numbers for defining the
+ *     expected number of observations. If this parameter is \c NULL, the degree
+ *     of freedom is taken as \f$ (k - 1) \f$.
+ *
+ * @return A composite value as follows. Let \f$ n = \sum_{i=1}^n n_i \f$.
+ *  - <tt>statistic FLOAT8</tt> - Statistic
+ *    \f[
+ *        \chi^2 = \sum_{i=1}^k \frac{(n_i - np_i)^2}{np_i}
+ *    \f]
+ *    The corresponding random
+ *    variable is approximately chi-squared distributed with
+ *    \c df degrees of freedom.
+ *  - <tt>df BIGINT</tt> - Degrees of freedom
+ *  - <tt>p_value FLOAT8</tt> - Approximate p-value, i.e.,
+ *    \f$ \Pr[X^2 \geq \chi^2 \mid p = p^0] \f$
+ *  - <tt>phi FLOAT8</tt> - Phi coefficient, i.e., \f$ \phi^2 = \frac{\chi^2}{n} \f$
+ *  - <tt>contingency_coef FLOAT8</tt> - Contingency coefficient, i.e.,
+ *    \f$ \frac{\chi^2}{n + \chi^2} \f$
+ *
+ * @usage
+ *  - Test null hypothesis that all possible outcomes of a categorical variable
+ *    are equally likely:
+ *    <pre>SELECT (chi2_gof_test(<em>observed</em>, 1, NULL)).* FROM <em>sourceName</em></pre>
+ *
+ * @sa
+ *     chi_square_cdf() for evaluating the CDF of the chi-squared distribution
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
+    /*+ observed */ BIGINT,
+    /*+ expected */ DOUBLE PRECISION, -- /*+ DEFAULT NULL */,
+    /*+ df */ BIGINT -- /*+ DEFAULT NULL */
+) (    
+    SFUNC=MADLIB_SCHEMA.chi2_gof_test_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.chi2_gof_test_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.chi2_gof_test_merge_states,')
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ks_test_transition(
+    state DOUBLE PRECISION[],
+    "fromFirstSample" BOOLEAN,
+    "value" DOUBLE PRECISION,
+    "numFirst" BIGINT,
+    "numSecond" BIGINT
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+CREATE TYPE MADLIB_SCHEMA.ks_test_result AS (
+    statistic DOUBLE PRECISION,
+    k_statistic DOUBLE PRECISION,
+    p_value DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ks_test_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.ks_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Perform Kolmogorov-Smirnov test
+ *
+ * Given realizations \f$ x_1, \dots, x_m \f$ and \f$ y_1, \dots, y_m \f$ of
+ * i.i.d. random variables \f$ X_1, \dots, X_m \f$ and i.i.d.
+ * \f$ Y_1, \dots, Y_n \f$, respectively, test the null hypothesis that the
+ * underlying distributions function \f$ F_X, F_Y \f$ are identical, i.e.,
+ * \f$ H_0 : F_X = F_Y \f$.
+ *
+ * @param first Determines whether the value belongs to the first
+ *     (if \c TRUE) or the second sample (if \c FALSE)
+ * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$
+ * @param m Size \f$ m \f$ of the first sample. See usage instructions below.
+ * @param n Size of the second sample. See usage instructions below.
+ *
+ * @return A composite value.
+ *  - <tt>statistic FLOAT8</tt> - Kolmogorov–Smirnov statistic
+ *    \f[
+ *        d = \max_{t \in \mathbb R} |F_x(t) - F_y(t)|
+ *    \f]
+ *    where \f$ F_x(t) := \frac 1m |\{ i \mid x_i \leq t \}| \f$ and
+ *    \f$ F_y \f$ (defined likewise) are the empirical distribution functions.
+ *  - <tt>k_statistic FLOAT8</tt> - Kolmogorov statistic
+ *    \f$
+ *        k = r + 0.12 + \frac{0.11}{r}
+ *    \f$
+ *    where
+ *    \f$
+ *        r = \sqrt{\frac{m n}{m+n}}.
+ *    \f$
+ *    Then \f$ k \f$ is approximately Kolmogorov distributed.
+ *  - <tt>p_value FLOAT8</tt> - Approximate p-value, i.e., an approximate value
+ *    for \f$ \Pr[D \geq d \mid F_X = F_Y] \f$. Computed as
+ *    <tt>(1.0 - \ref kolmogorov_cdf "kolmogorov_cdf"(k_statistic))</tt>.
+ *
+ * @usage
+ *  - Test null hypothesis that two samples stem from the same distribution:
+ *    <pre>SELECT (ks_test(<em>first</em>, <em>value</em>,
+ *    (SELECT count(<em>value</em>) FROM <em>source</em> WHERE <em>first</em>),
+ *    (SELECT count(<em>value</em>) FROM <em>source</em> WHERE NOT <em>first</em>)
+ *    ORDER BY <em>value</em>
+ *)).* FROM <em>source</em></pre>
+ *
+ * @note
+ *     This aggregate must be used as an ordered aggregate
+ *     (<tt>ORDER BY \em value</tt>) and will raise an exception if values are
+ *     not ordered.
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__',`ORDERED')
+AGGREGATE MADLIB_SCHEMA.ks_test(
+    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "value" */ DOUBLE PRECISION,
+    /*+ "numFirst" */ BIGINT,
+    /*+ "numSecond" */ BIGINT
+) (
+    SFUNC=MADLIB_SCHEMA.ks_test_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.ks_test_final,
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mw_test_transition(
+    state DOUBLE PRECISION[],
+    "fromFirstSample" BOOLEAN,
+    "value" DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+CREATE TYPE MADLIB_SCHEMA.mw_test_result AS (
+    statistic DOUBLE PRECISION,
+    u_statistic DOUBLE PRECISION,
+    p_value_one_sided DOUBLE PRECISION,
+    p_value_two_sided DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mw_test_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.mw_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Perform Mann-Whitney test
+ *
+ * Given realizations \f$ x_1, \dots, x_m \f$ and \f$ y_1, \dots, y_m \f$ of
+ * i.i.d. random variables \f$ X_1, \dots, X_m \f$ and i.i.d.
+ * \f$ Y_1, \dots, Y_n \f$, respectively, test the null hypothesis that the
+ * underlying distributions are equal, i.e.,
+ * \f$ H_0 : \forall i,j: \Pr[X_i > Y_j] + \frac{\Pr[X_i = Y_j]}{2} = \frac 12 \f$.
+ *
+ * @param first Determines whether the value belongs to the first
+ *     (if \c TRUE) or the second sample (if \c FALSE)
+ * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$
+ *
+ * @return A composite value.
+ *  - <tt>statistic FLOAT8</tt> - Statistic
+ *    \f[
+ *        z = \frac{u - \bar x}{\sqrt{\frac{mn(m+n+1)}{12}}}
+ *    \f]
+ *    where \f$ u \f$ is the u-statistic computed as follows. The z-statistic
+ *    is approximately standard normally distributed.
+ *  - <tt>u_statistic FLOAT8</tt> - Statistic
+ *    \f$ u = \min \{ u_x, u_y \} \f$ where
+ *    \f[
+ *        u_x = mn + \binom{m+1}{2} - \sum_{i=1}^m r_{x,i}
+ *    \f]
+ *    where
+ *    \f[
+ *        r_{x,i}
+ *        =   \{ j \mid x_j < x_i \} + \{ j \mid y_j < x_i \} + 
+ *            \frac{\{ j \mid x_j = x_i \} + \{ j \mid y_j = x_i \} + 1}{2}
+ *    \f]
+ *    is defined as the rank of \f$ x_i \f$ in the combined list of all
+ *    \f$ m+n \f$ observations. For ties, the average rank of all equal values
+ *    is used.
+ *  - <tt>p_value_one_sided FLOAT8</tt> - Approximate one-sided p-value, i.e.,
+ *    an approximate value for \f$ \Pr[Z \geq z \mid H_0] \f$. Computed as
+ *    <tt>(1.0 - \ref normal_cdf "normal_cdf"(z_statistic))</tt>.
+ *  - <tt>p_value_two_sided FLOAT8</tt> - Approximate two-sided p-value, i.e.,
+ *    an approximate value for \f$ \Pr[|Z| \geq |z| \mid H_0] \f$. Computed as
+ *    <tt>(2 * \ref normal_cdf "normal_cdf"(-abs(z_statistic)))</tt>.
+ *
+ * @usage
+ *  - Test null hypothesis that two samples stem from the same distribution:
+ *    <pre>SELECT (mw_test(<em>first</em>, <em>value</em> ORDER BY <em>value</em>)).* FROM <em>source</em></pre>
+ *
+ * @note
+ *     This aggregate must be used as an ordered aggregate
+ *     (<tt>ORDER BY \em value</tt>) and will raise an exception if values are
+ *     not ordered.
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__',`ORDERED')
+AGGREGATE MADLIB_SCHEMA.mw_test(
+    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "value" */ DOUBLE PRECISION
+) (    
+    SFUNC=MADLIB_SCHEMA.mw_test_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.mw_test_final,
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.wsr_test_transition(
+    state DOUBLE PRECISION[],
+    "value" DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+CREATE TYPE MADLIB_SCHEMA.wsr_test_result AS (
+    statistic DOUBLE PRECISION,
+    rank_sum_pos FLOAT8,
+    rank_sum_neg FLOAT8,
+    num BIGINT,
+    z_statistic DOUBLE PRECISION,
+    p_value_one_sided DOUBLE PRECISION,
+    p_value_two_sided DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.wsr_test_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.wsr_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Perform Wilcoxon-Signed-Rank test
+ *
+ * Given realizations \f$ x_1, \dots, x_n \f$ of i.i.d. random variables
+ * \f$ X_1, \dots, X_n \f$ with unknown mean \f$ \mu \f$, test the null
+ * hypotheses \f$ H_0 : \mu \leq 0 \f$ and \f$ H_0 : \mu = 0 \f$.
+ *
+ * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$. Values of 0
+ *     are ignored (i.e., they do not count towards \f$ n \f$).
+ *
+ * @warning
+ *      There are conflicting sources for the variance reduction in case of ties:
+ *      - http://mlsc.lboro.ac.uk/resources/statistics/wsrt.pdf
+ *      - http://de.wikipedia.org/wiki/Wilcoxon-Vorzeichen-Rang-Test
+ *      .
+ *      We currently use the former. This needs to be verified with some
+ *      trusworthy sources.
+ *
+ * @return A composite value:
+ *  - <tt>statistic FLOAT8</tt> - statistic computed as follows. Let
+ *    \f$
+ *        w^+ = \sum_{i \mid x_i > 0} r_i
+ *    \f$
+ *    and 
+ *    \f$
+ *        w^- = \sum_{i \mid x_i < 0} r_i
+ *    \f$
+ *    be the <em>signed rank sums</em> where
+ *    \f[
+ *        r_i
+ *        =   \{ j \mid |x_j| < |x_i| \}
+ *        +   \frac{\{ j \mid |x_j| = |x_i| \} + 1}{2}.
+ *    \f]
+ *    The Wilcoxon signed-rank statistic is \f$ w = \min \{ w^+, w^- \} \f$.
+ *  - <tt>rank_sum_pos FLOAT8</tt> - rank sum of all positive values, i.e., \f$ w^+ \f$
+ *  - <tt>rank_sum_neg FLOAT8</tt> - rank sum of all negative values, i.e., \f$ w^- \f$
+ *  - <tt>num BIGINT</tt> - number \f$ n \f$ of non-zero values
+ *  - <tt>z_statistic FLOAT8</tt> - z-statistic
+ *    \f[
+ *       z = \frac{w^+ - \frac{n(n+1)}{4}}
+ *               {\sqrt{\frac{n(n+1)(2n+1)}{24}
+ *                - \sum_{i=1}^n \frac{t_i^2 - 1}{48}}}
+ *    \f]
+ *    where \f$ t_i \f$ is the number of
+ *    values with absolute value equal to \f$ |x_i| \f$. The corresponding
+ *    random variable is approximately standard normally distributed.
+ *  - <tt>p_value_one_sided FLOAT8</tt> - one-sided p-value i.e., 
+ *    \f$ \Pr[Z \geq z \mid \mu \leq 0] \f$
+ *  - <tt>p_value_two_sided FLOAT8</tt> - two-sided p-value, i.e.,
+ *    \f$ \Pr[ |Z| \geq |z| \mid \mu = 0] \f$
+ *
+ * @usage
+ *  - One-sample test: Test null hypothesis that the mean of a sample is at
+ *    most (or equal to, respectively) \f$ \mu_0 \f$:
+ *    <pre>SELECT (wsr_test(<em>value</em> - <em>mu_0</em> ORDER BY abs(<em>value</em>))).* FROM <em>sourceName</em></pre>
+ *  - Dependent paired test: Test null hypothesis that the mean difference
+ *    between the first and second value in a pair is at most (or equal to,
+ *    respectively) \f$ \mu_0 \f$:
+ *    <pre>SELECT (wsr_test(<em>first</em> - <em>second</em> - <em>mu_0</em> ORDER BY abs(<em>first</em> - <em>second</em>))).* FROM <em>sourceName</em></pre>
+ *
+ * @note
+ *     This aggregate must be used as an ordered aggregate
+ *     (<tt>ORDER BY abs(\em value</tt>)) and will raise an exception if values are
+ *     not ordered.
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__',`ORDERED')
+AGGREGATE MADLIB_SCHEMA.wsr_test(
+    /*+ "value" */ DOUBLE PRECISION
+) (    
+    SFUNC=MADLIB_SCHEMA.wsr_test_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.wsr_test_final,
+    INITCOND='{0,0,0,0,0,0,0,0}'
+);
+
+
+CREATE TYPE MADLIB_SCHEMA.one_way_anova_result AS (
+    sum_squares_between DOUBLE PRECISION,
+    sum_squares_within DOUBLE PRECISION,
+    df_between BIGINT,
+    df_within BIGINT,
+    mean_squares_between DOUBLE PRECISION,
+    mean_squares_within DOUBLE PRECISION,
+    statistic DOUBLE PRECISION,
+    p_value DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.one_way_anova_transition(
+    state DOUBLE PRECISION[],
+    "group" INTEGER,
+    value DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.one_way_anova_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.one_way_anova_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.one_way_anova_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Perform one-way analysis of variance
+ *
+ * Given realizations
+ * \f$ x_{1,1}, \dots, x_{1, n_1}, x_{2,1}, \dots, x_{2,n_2}, \dots, x_{k,n_k} \f$
+ * of i.i.d. random variables \f$ X_{i,j} \sim N(\mu_i, \sigma^2) \f$ with
+ * unknown parameters \f$ \mu_1, \dots, \mu_k \f$ and \f$ \sigma^2 \f$, test the
+ * null hypotheses \f$ H_0 : \mu_1 = \dots = \mu_k \f$.
+ *
+ * @param group Group which \c value is from. Note that \c group can assume
+ *     arbitary value not limited to a continguous range of integers.
+ * @param value Value of random variate \f$ x_{i,j} \f$
+ *
+ * @return A composite value as follows. We let \f$ n := \sum_{i=1}^k n_i \f$
+ *     and denote by \f$ \bar x \f$ the grand \ref sample_mean "mean",
+ *     by \f$ \overline{x_i} \f$ the group
+ *     \ref sample_mean "sample means" and by \f$ s_i^2 \f$ the group
+ *     \ref sample_variance "sample variances".
+ *  - <tt>sum_squares_between DOUBLE PRECISION</tt> - sum of squares between the
+ *    group means, i.e.,
+ *    \f$
+ *        \mathit{SS}_b = \sum_{i=1}^k n_i (\overline{x_i} - \bar x)^2.
+ *    \f$
+ *  - <tt>sum_squares_within DOUBLE PRECISION</tt> - sum of squares within the
+ *    groups, i.e.,
+ *    \f$
+ *        \mathit{SS}_w = \sum_{i=1}^k (n_i - 1) s_i^2.
+ *    \f$
+ *  - <tt>df_between BIGINT</tt> - degree of freedom for between-group variation \f$ (k-1) \f$
+ *  - <tt>df_within BIGINT</tt> - degree of freedom for within-group variation \f$ (n-k) \f$
+ *  - <tt>mean_squares_between DOUBLE PRECISION</tt> - mean square between
+ *    groups, i.e.,
+ *    \f$
+ *        s_b^2 := \frac{\mathit{SS}_b}{k-1}
+ *    \f$
+ *  - <tt>mean_squares_within DOUBLE PRECISION</tt> - mean square within
+ *    groups, i.e.,
+ *    \f$
+ *        s_w^2 := \frac{\mathit{SS}_w}{n-k}
+ *    \f$
+ *  - <tt>statistic DOUBLE PRECISION</tt> - Statistic computed as
+ *    \f[
+ *        f = \frac{s_b^2}{s_w^2}.
+ *    \f]
+ *    This statistic is Fisher F-distributed with \f$ (k-1) \f$ degrees of
+ *    freedom in the numerator and \f$ (n-k) \f$ degrees of freedom in the
+ *    denominator.
+ *  - <tt>p_value DOUBLE PRECISION</tt> - p-value, i.e.,
+ *    \f$ \Pr[ F \geq f \mid H_0] \f$.
+ *
+ * @usage
+ *  - Test null hypothesis that the mean of the all samples is equal:
+ *    <pre>SELECT (one_way_anova(<em>group</em>, <em>value</em>)).* FROM <em>sourceName</em></pre>
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.one_way_anova(
+    /*+ group */ INTEGER,
+    /*+ value */ DOUBLE PRECISION) (
+    
+    SFUNC=MADLIB_SCHEMA.one_way_anova_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.one_way_anova_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.one_way_anova_merge_states,')
+    INITCOND='{0}'
+);
