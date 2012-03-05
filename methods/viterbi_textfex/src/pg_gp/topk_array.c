@@ -95,9 +95,9 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
             int segid = ((int*)ARR_DATA_PTR(segtbl))[start_pos]; 
             if (start_pos == 0){
                for(int label=0; label<nlabel; label++){
-                  ((int*)ARR_DATA_PTR(prev_norm_array))[label] = ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+label] + 
+                  ((int*)ARR_DATA_PTR(curr_norm_array))[label] = ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+label] + 
                                                                  ((int*)ARR_DATA_PTR(mArray))[label]; 
-                  ((int*)ARR_DATA_PTR(prev_top1_array))[label] = ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+label] + 
+                  ((int*)ARR_DATA_PTR(curr_top1_array))[label] = ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+label] + 
                                                                  ((int*)ARR_DATA_PTR(mArray))[label]; 
                }
 
