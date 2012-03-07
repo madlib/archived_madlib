@@ -3871,6 +3871,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_classify
 RETURNS MADLIB_SCHEMA.c45_classify_result AS $$
 DECLARE
     encoded_table_name  TEXT := '';
+    temp_result_table   TEXT := '';
+    metatable_name      TEXT;
+    result_rec          RECORD;
     begin_time          TIMESTAMP;
     ret                 MADLIB_SCHEMA.c45_classify_result;
 BEGIN
@@ -3880,20 +3883,32 @@ BEGIN
     END IF;
     
     begin_time = clock_timestamp();
-    
+    temp_result_table = madlib.__strip_schema_name(result_table_name)||'_temp_result';
     SELECT MADLIB_SCHEMA.__c45_classify_internal
         (
         classification_table_name, 
         tree_table_name, 
-        result_table_name, 
-        'f',
+        temp_result_table, 
+        't',
         verbosity
         )  INTO encoded_table_name;
-    
-    EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN jump;';
-    EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN parent_id;';
-    EXECUTE 'ALTER TABLE '||result_table_name||' DROP COLUMN leaf_id;';
+
+    metatable_name = MADLIB_SCHEMA.__get_metatable_name( tree_table_name );
+    -- we do not store schema name to the table, add it here.
+    metatable_name = 'MADLIB_SCHEMA.'||metatable_name;
+    -- Get the metatable storing the encoding information of class.
+    EXECUTE 'SELECT column_name,table_name FROM '||metatable_name||
+            ' WHERE column_type=''c'' LIMIT 1;'
+            INTO result_rec;
+    result_rec.table_name = 'MADLIB_SCHEMA.'||result_rec.table_name;
+
+   -- translate the encoded class information back
+    EXECUTE 'CREATE TABLE '||result_table_name||' AS SELECT n.id, m.'||result_rec.column_name
+        ||' as class,n.prob from '||temp_result_table||' n,'||result_rec.table_name
+        ||' m where n.class=m.key m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');';
+        
     EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ';';
+    EXECUTE 'DROP TABLE IF EXISTS ' || temp_result_table || ';';
     EXECUTE 'SELECT COUNT(*) FROM ' ||classification_table_name||';' INTO ret.input_set_size;
     
     ret.cost_time = clock_timestamp() - begin_time;
