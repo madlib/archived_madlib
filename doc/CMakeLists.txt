@@ -153,3 +153,7 @@ else(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
         "bison, doxygen, or dot (part of graphviz, needed for doxygen). "
         "Documentation will not be built.")
 endif(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
+
+# -- Add subdirectories --------------------------------------------------------
+
+add_subdirectory(design)
