@@ -40,12 +40,17 @@ CREATE TABLE MADLIB_SCHEMA.viterbi_mtbl (
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.textfex_generatemrtbl(integer, boolean) RETURNS void AS $$
 DECLARE nlabel int;
 BEGIN
-        -- calcuate the number of labels in the label space
+        -- Calcuate the number of labels in the label space
         SELECT COUNT(*) INTO nlabel FROM textfex_label;
 
-        -- insert unique tokens into the segment_hashtbl
+        -- Insert unique tokens into the segment_hashtbl
         DROP TABLE IF EXISTS textfex_segment_hashtbl;
 	CREATE TEMP TABLE textfex_segment_hashtbl(seg_text text);
+        -- create a temp partial dictionary table which stores the words whose occurance 
+        -- is below certain threshold, refer to the CRF Package
+        DROP TABLE IF EXISTS textfex_unknown_segment_hashtbl;
+	CREATE TEMP TABLE textfex_unknown_segment_hashtbl(seg_text text);
+
         IF $2 = TRUE THEN 
 		INSERT INTO textfex_segment_hashtbl(seg_text)
 		((SELECT DISTINCT seg_text
@@ -56,13 +61,26 @@ BEGIN
 		  FROM   textfex_segmenttbl
 		  WHERE  doc_id <> $1)
 		);
+                
+                INSERT INTO textfex_unknown_segment_hashtbl(seg_text)
+                SELECT seg_text
+                FROM   textfex_segment_hashtbl;
         ELSE 
 		INSERT INTO textfex_segment_hashtbl(seg_text)
 		SELECT DISTINCT seg_text
 		FROM   textfex_segmenttbl;
+
+                INSERT INTO textfex_unknown_segment_hashtbl(seg_text)
+                ((SELECT DISTINCT seg_text
+                  FROM   textfex_segment_hashtbl)
+                 EXCEPT
+		 (SELECT DISTINCT token
+		  FROM   textfex_dictionary
+		  WHERE  textfex_dictionary.total>1)
+                );
         END IF; 
 
-	-- generate M factor table
+	-- Generate M factor table
 	DROP TABLE IF EXISTS textfex_mtbl;
 	CREATE TEMP TABLE textfex_mtbl (
                         prev_label integer,
@@ -70,30 +88,30 @@ BEGIN
 			value double precision
 			);
 
-	-- generate temp label table
+	-- Generate temp label table
 	DROP TABLE IF EXISTS prev_textfex_label;
 	CREATE TEMP TABLE prev_textfex_label (id integer);
 
-        -- add -1 to temp_textfex_label 
+        -- Add -1 to temp_textfex_label 
         INSERT INTO prev_textfex_label(id)
         SELECT textfex_label.id
         FROM   textfex_label;
         INSERT INTO prev_textfex_label VALUES(-1);
         INSERT INTO prev_textfex_label VALUES(nlabel);
 
-        -- generate sparse M factor table
+        -- Generate sparse M factor table
         INSERT INTO textfex_mtbl(prev_label, label, value)
         SELECT prev_label.id, label.id, 0 
         FROM   textfex_label as label,
                prev_textfex_label as prev_label;
 
-        -- edgeFeature and startFeature, startFeature can be considered as a special edgeFeature  
+        -- EdgeFeature and startFeature, startFeature can be considered as a special edgeFeature  
         INSERT INTO textfex_mtbl(prev_label, label, value)
         SELECT prev_label_id,label_id,weight
 	FROM   textfex_feature AS features
 	WHERE  features.prev_label_id<>-1 OR features.name = 'S.';
 
-        --endFeature, endFeature can be considered as a special edgeFeature
+        --EndFeature, endFeature can be considered as a special edgeFeature
         INSERT INTO textfex_mtbl(prev_label, label, value)
         SELECT nlabel,label_id,weight
 	FROM   textfex_feature AS features
@@ -107,7 +125,7 @@ BEGIN
                 ORDER BY prev_label,label) as TEMP_MTBL;
         --GROUP BY prev_label, label;
 
-        -- generate a sparse matrix to store the r factors
+        -- Generate a sparse matrix to store the r factors
 	DROP TABLE IF EXISTS textfex_rtbl;
 	CREATE TEMP TABLE textfex_rtbl (
 			seg_text text NOT NULL,
@@ -131,47 +149,31 @@ BEGIN
 	GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
 
         -- LexiconFeature
-       INSERT INTO textfex_rtbl(seg_text, label, value)
-       SELECT segment_hashtbl.seg_text, features.label_id, features.weight
-       FROM   textfex_segment_hashtbl AS segment_hashtbl, 
-              textfex_feature AS features
-       WHERE  features.name = 'L_' || 
-              (SELECT filename FROM textfex_lexicon WHERE lexicon = upper(segment_hashtbl.seg_text) LIMIT 1)
-       GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
+        INSERT INTO textfex_rtbl(seg_text, label, value)
+        SELECT segment_hashtbl.seg_text, features.label_id, features.weight
+        FROM   textfex_segment_hashtbl AS segment_hashtbl, 
+               textfex_feature AS features,
+               textfex_lexicon
+        WHERE  features.name = 'L_' || filename
+               AND lexicon = upper(segment_hashtbl.seg_text)
+        GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
        
-        IF $2 = TRUE THEN
-		-- unknownFeature
+	-- UnknownFeature
+	INSERT INTO textfex_rtbl(seg_text, label, value)
+	SELECT segment_hashtbl.seg_text, features.label_id, features.weight
+	FROM   textfex_unknown_segment_hashtbl AS segment_hashtbl,
+	       textfex_feature AS features
+	WHERE  features.name = 'U'
+	GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
+
+	-- Wordfeature
+        IF $2 = FALSE THEN
 		INSERT INTO textfex_rtbl(seg_text, label, value)
 		SELECT segment_hashtbl.seg_text, features.label_id, features.weight
 		FROM   textfex_segment_hashtbl AS segment_hashtbl,
 		       textfex_feature AS features
-		WHERE  features.name = 'U'
+		WHERE  features.name = 'W_' || segment_hashtbl.seg_text
 		GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
-        
-        ELSE
-                -- create a temp partial dictionary table which stores the words whose occurance 
-                -- is above certain threshold.
-		-- refer to the CRF Package
-		DROP TABLE IF EXISTS textfex_known_token;
-		CREATE TEMP TABLE textfex_known_token (
-				token text NOT NULL
-				);
-
-		INSERT INTO textfex_known_token
-		SELECT DISTINCT token
-		FROM   textfex_dictionary
-		WHERE  textfex_dictionary.total>1;
-
-		-- unknownFeature and word feature
-		INSERT INTO textfex_rtbl(seg_text, label, value)
-		SELECT segment_hashtbl.seg_text, features.label_id, features.weight
-		FROM   textfex_segment_hashtbl AS segment_hashtbl,
-		       textfex_feature AS features
-		WHERE  (features.name = 'U'
-		        AND lower(segment_hashtbl.seg_text) NOT IN (select token from textfex_known_token)) OR
-		       (features.name = 'W_' || segment_hashtbl.seg_text)
-		GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
-
         END IF;
 
 	-- Factor table
