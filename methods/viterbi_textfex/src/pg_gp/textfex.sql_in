@@ -1,56 +1,12 @@
--- Create the necessary tables for storing training data
-
--- document representations
-DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_document CASCADE;
-CREATE TABLE MADLIB_SCHEMA.textfex_document (id integer,text text);
-
--- tokenized document
-DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segmenttbl CASCADE;
-CREATE TABLE MADLIB_SCHEMA.textfex_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer);
-
--- CRF features
-DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_dictionary CASCADE;
-CREATE TABLE MADLIB_SCHEMA.textfex_dictionary (token text,token_id integer,label text,count integer,total integer);
- 
-DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_feature CASCADE;
-CREATE TABLE MADLIB_SCHEMA.textfex_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);
-
--- label space
-DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_label CASCADE;
-CREATE TABLE MADLIB_SCHEMA.textfex_label (id integer,label character varying);
-
--- lexicon table
-DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_lexicon CASCADE;
-CREATE TABLE MADLIB_SCHEMA.textfex_lexicon (id integer,filename text,lexicon text);
-
--- regex table
-DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_regex CASCADE;
-CREATE TABLE MADLIB_SCHEMA.textfex_regex (pattern text,name text);
-
--- R factor table
-DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_rtbl CASCADE;
-CREATE TABLE MADLIB_SCHEMA.viterbi_rtbl (seg_text text, label integer, score real);
-
--- M factor table
-DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_mtbl CASCADE;
-CREATE TABLE MADLIB_SCHEMA.viterbi_mtbl (
-        score integer[]
-);
-   
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.textfex_generatemrtbl(integer, boolean) RETURNS void AS $$
 DECLARE nlabel int;
-BEGIN
-        -- Calcuate the number of labels in the label space
-        SELECT COUNT(*) INTO nlabel FROM textfex_label;
+BEGIN       
+         PERFORM MADLIB_SCHEMA.__load_crf_model(); 
+         EXECUTE 'TRUNCATE textfex_segment_hashtbl, textfex_unknown_segment_hashtbl, prev_textfex_label, textfex_mtbl, textfex_rtbl';
 
-        -- Insert unique tokens into the segment_hashtbl
-        DROP TABLE IF EXISTS textfex_segment_hashtbl;
-	CREATE TEMP TABLE textfex_segment_hashtbl(seg_text text);
-        -- create a temp partial dictionary table which stores the words whose occurance 
-        -- is below certain threshold, refer to the CRF Package
-        DROP TABLE IF EXISTS textfex_unknown_segment_hashtbl;
-	CREATE TEMP TABLE textfex_unknown_segment_hashtbl(seg_text text);
-
+        --Calcuate the number of labels in the label space
+        -- EXECUTE 'SELECT COUNT(*) INTO nlabel FROM textfex_label';
+        
         IF $2 = TRUE THEN 
 		INSERT INTO textfex_segment_hashtbl(seg_text)
 		((SELECT DISTINCT seg_text
@@ -66,9 +22,9 @@ BEGIN
                 SELECT seg_text
                 FROM   textfex_segment_hashtbl;
         ELSE 
-		INSERT INTO textfex_segment_hashtbl(seg_text)
+		EXECUTE 'INSERT INTO textfex_segment_hashtbl(seg_text)
 		SELECT DISTINCT seg_text
-		FROM   textfex_segmenttbl;
+		FROM   textfex_segmenttbl';
 
                 INSERT INTO textfex_unknown_segment_hashtbl(seg_text)
                 ((SELECT DISTINCT seg_text
@@ -80,20 +36,7 @@ BEGIN
                 );
         END IF; 
 
-	-- Generate M factor table
-	DROP TABLE IF EXISTS textfex_mtbl;
-	CREATE TEMP TABLE textfex_mtbl (
-                        prev_label integer,
-                        label integer,
-			value double precision
-			);
-
-	-- Generate temp label table
-	DROP TABLE IF EXISTS prev_textfex_label;
-	CREATE TEMP TABLE prev_textfex_label (id integer);
-
-        -- Add -1 to temp_textfex_label 
-        INSERT INTO prev_textfex_label(id)
+        INSERT INTO prev_textfex_label
         SELECT textfex_label.id
         FROM   textfex_label;
         INSERT INTO prev_textfex_label VALUES(-1);
@@ -123,20 +66,11 @@ BEGIN
 	        FROM   textfex_mtbl
                 GROUP BY prev_label,label
                 ORDER BY prev_label,label) as TEMP_MTBL;
-        --GROUP BY prev_label, label;
 
-        -- Generate a sparse matrix to store the r factors
-	DROP TABLE IF EXISTS textfex_rtbl;
-	CREATE TEMP TABLE textfex_rtbl (
-			seg_text text NOT NULL,
-			label integer,
-			value double precision
-			);
 	INSERT INTO textfex_rtbl(seg_text, label, value)
 	SELECT segment_hashtbl.seg_text, labels.id, 0
 	FROM   textfex_segment_hashtbl segment_hashtbl, 
-	       textfex_label as labels
-	GROUP BY segment_hashtbl.seg_text,labels.id;
+	       textfex_label as labels;
 
 	-- RegExFeature
 	INSERT INTO textfex_rtbl(seg_text, label, value)
@@ -145,8 +79,7 @@ BEGIN
 	       textfex_feature AS features, 
 	       textfex_regex AS regex
 	WHERE  segment_hashtbl.seg_text ~ regex.pattern
-	       AND features.name||'%' ='R_' || regex.name
-	GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
+	       AND features.name||'%' ='R_' || regex.name;
 
         -- LexiconFeature
         INSERT INTO textfex_rtbl(seg_text, label, value)
@@ -155,16 +88,14 @@ BEGIN
                textfex_feature AS features,
                textfex_lexicon
         WHERE  features.name = 'L_' || filename
-               AND lexicon = upper(segment_hashtbl.seg_text)
-        GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
+               AND lexicon = upper(segment_hashtbl.seg_text);
        
 	-- UnknownFeature
 	INSERT INTO textfex_rtbl(seg_text, label, value)
 	SELECT segment_hashtbl.seg_text, features.label_id, features.weight
 	FROM   textfex_unknown_segment_hashtbl AS segment_hashtbl,
 	       textfex_feature AS features
-	WHERE  features.name = 'U'
-	GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
+	WHERE  features.name = 'U';
 
 	-- Wordfeature
         IF $2 = FALSE THEN
@@ -172,8 +103,7 @@ BEGIN
 		SELECT segment_hashtbl.seg_text, features.label_id, features.weight
 		FROM   textfex_segment_hashtbl AS segment_hashtbl,
 		       textfex_feature AS features
-		WHERE  features.name = 'W_' || segment_hashtbl.seg_text
-		GROUP BY segment_hashtbl.seg_text, features.label_id, features.weight;
+		WHERE  features.name = 'W_' || segment_hashtbl.seg_text;
         END IF;
 
 	-- Factor table
@@ -196,8 +126,5 @@ BEGIN
 		FROM   textfex_segmenttbl;
 		analyze viterbi_segmenttbl;
         END IF;
-	DROP TABLE IF EXISTS textfex_rtbl;
-	DROP TABLE IF EXISTS textfex_segment_hashtbl; 
-
 END
 $$ LANGUAGE plpgsql;
