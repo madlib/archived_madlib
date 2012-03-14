@@ -1,0 +1,89 @@
+-- Create the necessary tables for storing training data
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__load_crf_model() RETURNS void AS $$
+BEGIN
+	-- document representations
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_document CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_document (id integer,text text)';
+	
+        -- tokenized document
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segmenttbl CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)';
+
+	-- CRF features
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_dictionary CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_dictionary (token text,token_id integer,label text,count integer,total integer)';
+	 
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_feature CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_feature (id integer,name text,prev_label_id integer,label_id integer,weight float)';
+
+	-- label space
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_label CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_label (id integer,label character varying)';
+
+	-- lexicon table
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_lexicon CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_lexicon (id integer,filename text,lexicon text)';
+
+	-- regex table
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_regex CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_regex (pattern text,name text)';
+
+	-- R factor table
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_rtbl CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.viterbi_rtbl (seg_text text, label integer, score real)';
+
+	-- M factor table
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_mtbl CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.viterbi_mtbl (score integer[])';
+
+	-- Segment table
+	EXECUTE 'DROP TABLE if EXISTS MADLIB_SCHEMA.viterbi_segmenttbl CASCADE';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.viterbi_segmenttbl(doc_id int, seg_id int, start_pos int, seg_text text, max_pos integer)';
+
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.prev_textfex_label';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.prev_textfex_label(id int)';
+
+	-- Insert unique tokens into the segment_hashtbl
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segment_hashtbl';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_segment_hashtbl(seg_text text)';
+
+	-- create a temp partial dictionary table which stores the words whose occurance
+	-- is below certain threshold, refer to the CRF Package
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_unknown_segment_hashtbl';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_unknown_segment_hashtbl(seg_text text)';
+
+	-- Generate a sparse matrix to store the r factors
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_rtbl';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_rtbl (seg_text text NOT NULL, label integer, value double precision)';
+
+	-- Generate M factor table
+	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_mtbl';
+	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_mtbl(prev_label integer, label integer, value double precision)';
+
+	--Documents table
+	COPY MADLIB_SCHEMA.textfex_document (id ,text) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-documents.tab';
+	analyze MADLIB_SCHEMA.textfex_document;
+
+	--Features table
+	COPY MADLIB_SCHEMA.textfex_feature (id,name,prev_label_id,label_id,weight) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-features.tab';
+	analyze MADLIB_SCHEMA.textfex_feature;
+
+
+	--Dictionary table
+	COPY MADLIB_SCHEMA.textfex_dictionary (token,token_id,label,count,total) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-dictionary.tab';
+	analyze MADLIB_SCHEMA.textfex_dictionary;
+
+	--Regex table
+	COPY MADLIB_SCHEMA.textfex_regex (pattern,name) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-regex.tab';
+	analyze MADLIB_SCHEMA.textfex_regex;
+
+	--Labels table
+	COPY MADLIB_SCHEMA.textfex_label (id,label) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-labels.tab';
+	analyze MADLIB_SCHEMA.textfex_label;
+
+	--Segment table
+	COPY MADLIB_SCHEMA.textfex_segmenttbl (start_pos,doc_id,seg_text,max_pos) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-segmenttbl.tab';
+	analyze MADLIB_SCHEMA.textfex_segmenttbl;
+
+END
+$$ language plpgsql;
