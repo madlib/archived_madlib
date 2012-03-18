@@ -1,130 +1,232 @@
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.textfex_generatemrtbl(integer, boolean) RETURNS void AS $$
-DECLARE nlabel int;
-BEGIN       
-         PERFORM MADLIB_SCHEMA.__load_crf_model(); 
-         EXECUTE 'TRUNCATE textfex_segment_hashtbl, textfex_unknown_segment_hashtbl, prev_textfex_label, textfex_mtbl, textfex_rtbl';
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file textfex.sql_in
+ *
+ * @brief this function is for text feature extraction. It supports two modes: batch mode and interactive mode.
+ *     In batch mode, it extracts features for more than one sentences which stores in the segmentbl.
+ *     In interactive mode, it extracts features for one sentence specified by the docId
+ *
+ * @param segmenttbl table representation of sentences
+ * @param dictionary all the tokens which appear in the training data set
+ * @param labeltbl the label space used in POS or other NLP tasks
+ * @param regextbl all the regular expressions to capture regex features
+ * @param viterbi_mtbl 
+ * @param viterbi_rtbl
+ * @param docId  if docId =-1 then it is in batch mode else it is in interactive mode, docId is the id of the sentence to be extracted features
+ *
+ *//* ----------------------------------------------------------------------- */
 
-        --Calcuate the number of labels in the label space
-        -- EXECUTE 'SELECT COUNT(*) INTO nlabel FROM textfex_label';
-        
-        IF $2 = TRUE THEN 
-		INSERT INTO textfex_segment_hashtbl(seg_text)
-		((SELECT DISTINCT seg_text
-		  FROM   textfex_segmenttbl
-		  WHERE  doc_id = $1)
-		 EXCEPT
-		 (SELECT DISTINCT seg_text
-		  FROM   textfex_segmenttbl
-		  WHERE  doc_id <> $1)
-		);
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_texfex
+
+@examp
+
+-# Prepare an input segmenttbl, e.g.:
+sql> select * from segmenttbl order by doc_id, start_pos;
+start_pos | doc_id | seg_text      | max_pos
+----------+---------+--------------+-------------
+     0    |    1   |       madlib  |    9  
+     1    |    1   |           is  |    9
+     2    |    1   |           an  |    9
+     3    |    1   |  open-source  |    9
+     4    |    1   |      library  |    9
+     5    |    1   |          for  |    9
+     6    |    1   |     scalable  |    9
+     7    |    1   |  in-database  |    9
+     8    |    1   |    analytics  |    9
+     9    |    1   |            .  |    9
+     0    |    2   |           it  |   16    
+     1    |    2   |     provides  |   16
+     2    |    2   |data-parallel  |   16
+     3    |    2   |implementations|   16
+     ... 
+     14   |    2   |  unstructured |   16
+     15   |    2   |          data |   16
+     16   |    2   |             . |   16
+
+-# Prepare an input """ + dictionary + """ table, e.g.:
+\verbatim
+sql> select * from """ + dictionary + """;
+token       | label  | count | total
+------------+--------+--------------
+   freefall |   11   |   1   |  1
+     policy |   11   |   2   |  2
+   measures |   12   |   1   |  1
+ commitment |   11   |   1   |  1
+        new |    6   |   1   |  1
+     speech |   11   |   1   |  1
+         's |   16   |   2   |  2
+     reckon |   30   |   1   |  1
+ underlying |   28   |   1   |  1
+ ...
+\endverbatim
+
+-# Prepare an input label table, e.g.:
+\verbatim
+sql> select * from """ + labeltbl + """ order by id;
+id          | label
+------------+--------
+      0     |   CC   
+      1     |   CD   
+      2     |   DT
+      3     |   EX
+      4     |   FW
+      5     |   IN
+      6     |   JJ
+...
+     42     |    ,
+     43     |    .
+     44     |    :
+\endverbatim
+
+-# Prepare an input regex table, e.g.:
+\verbatim
+sql> select * from regex;
+pattern       |   name
+------------- +---------------
+^[A-Z][a-z]+$ |  InitCapital%   
+     ^[A-Z]+$ |  isAllCapital%
+ ^.*[0-9]+.*$ |  containsDigit%
+      ^.+[.]$ |  endsWithDot%
+      ^.+[,]$ |  endsWithComma%
+       ^.+er$ |  endsWithER%
+      ^.+est$ |  endsWithEst%
+       ^.+ed$ |  endsWithED%
+...
+\endverbatim
+
+-# Prepare an input feature table, e.g.:
+\verbatim
+sql> select * from feature order by id;
+id   |     name     | prev_label_id | label_id | weight
+-------------------------------------------------------
+1    | W_chancellor |       -1      |    13     | 2.2322
+2    |         E.13 |       13      |     5     | 2.3995
+3    |            U |       -1      |     5     | 1.2164
+4    |         W_of |       -1      |     5     | 2.8744
+5    |          E.5 |        5      |     2     | 3.7716
+6    |        W_the |       -1      |     2     | 4.1790
+7    |          E.2 |        2      |    13     | 0.8957
+...
+\endverbatim
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__text_feature_extraction(segmenttbl text, dictionary  text, labeltbl text, regextbl text, viterbi_mtbl text, 
+                                                                   viterbi_rtbl text, featuretbl text, document_id integer) RETURNS void AS 
+$$
+        plpy.execute("DROP TABLE IF EXISTS prev_labeltbl, segment_hashtbl, unknown_segment_hashtbl, rtbl, mtbl;")
+
+        plpy.execute("CREATE TEMP TABLE prev_labeltbl(id int);")
+
+        # Insert unique tokens into the segment_hashtbl
+        plpy.execute("CREATE TEMP TABLE segment_hashtbl(seg_text text);")
+
+        # create a temp partial dictionary table which stores the words whose occurance
+        # is below certain threshold, refer to the CRF Package
+        plpy.execute("CREATE TEMP TABLE unknown_segment_hashtbl(seg_text text);")
+
+        # Generate a sparse matrix to store the r factors
+        plpy.execute("CREATE TEMP TABLE rtbl (seg_text text NOT NULL, label integer, value double precision);")
+
+        # Generate M factor table
+        plpy.execute("CREATE TEMP TABLE mtbl(prev_label integer, label integer, value double precision);")
+
+        # Calcuate the number of labels in the label space
+        rv = plpy.execute("SELECT COUNT(*) AS total_label FROM " + labeltbl + ";")
+        nlabel = rv[0]['total_label']
+
+        if document_id != -1: 
+        	plpy.execute("""INSERT INTO segment_hashtbl(seg_text)
+		                ((SELECT DISTINCT seg_text
+		                  FROM   """ + segmenttbl + """ 
+		                  WHERE  doc_id = """ + str(document_id) + """) 
+		                 EXCEPT 
+		                 (SELECT DISTINCT seg_text 
+		                  FROM   """ + segmenttbl + """ 
+		                  WHERE  doc_id <> """ + str(document_id) + """));""")
                 
-                INSERT INTO textfex_unknown_segment_hashtbl(seg_text)
-                SELECT seg_text
-                FROM   textfex_segment_hashtbl;
-        ELSE 
-		EXECUTE 'INSERT INTO textfex_segment_hashtbl(seg_text)
-		SELECT DISTINCT seg_text
-		FROM   textfex_segmenttbl';
+                plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
+                                SELECT seg_text 
+                                FROM   segment_hashtbl;""")
+        else: 
+                plpy.execute("""INSERT INTO segment_hashtbl(seg_text) 
+	             	        SELECT DISTINCT seg_text
+		                FROM   """ + segmenttbl + """;""")
 
-                INSERT INTO textfex_unknown_segment_hashtbl(seg_text)
-                ((SELECT DISTINCT seg_text
-                  FROM   textfex_segment_hashtbl)
-                 EXCEPT
-		 (SELECT DISTINCT token
-		  FROM   textfex_dictionary
-		  WHERE  textfex_dictionary.total>1)
-                );
-        END IF; 
+                plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
+                                ((SELECT DISTINCT seg_text 
+                                  FROM   segment_hashtbl) 
+                                 EXCEPT
+		                 (SELECT DISTINCT token 
+		                  FROM   """ + dictionary + """ 
+		                  WHERE  total>1));""")
 
-        INSERT INTO prev_textfex_label
-        SELECT textfex_label.id
-        FROM   textfex_label;
-        INSERT INTO prev_textfex_label VALUES(-1);
-        INSERT INTO prev_textfex_label VALUES(nlabel);
+        plpy.execute("""INSERT INTO prev_labeltbl
+                        SELECT id
+                        FROM   """ + labeltbl + """;
+                        INSERT INTO prev_labeltbl VALUES(-1); 
+                        INSERT INTO prev_labeltbl VALUES( """ + str(nlabel) + """);""")
 
-        -- Generate sparse M factor table
-        INSERT INTO textfex_mtbl(prev_label, label, value)
-        SELECT prev_label.id, label.id, 0 
-        FROM   textfex_label as label,
-               prev_textfex_label as prev_label;
+        # Generate sparse M factor table
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+                        SELECT prev_label.id, label.id, 0 
+                        FROM   """ + labeltbl + """ AS label, 
+                               prev_labeltbl as prev_label;""")
 
-        -- EdgeFeature and startFeature, startFeature can be considered as a special edgeFeature  
-        INSERT INTO textfex_mtbl(prev_label, label, value)
-        SELECT prev_label_id,label_id,weight
-	FROM   textfex_feature AS features
-	WHERE  features.prev_label_id<>-1 OR features.name = 'S.';
+        # EdgeFeature and startFeature, startFeature can be considered as a special edgeFeature  
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+                        SELECT prev_label_id,label_id,weight
+	                FROM   """ + featuretbl + """ AS features 
+	                WHERE  features.prev_label_id<>-1 OR features.name = 'S.';""")
 
-        --EndFeature, endFeature can be considered as a special edgeFeature
-        INSERT INTO textfex_mtbl(prev_label, label, value)
-        SELECT nlabel,label_id,weight
-	FROM   textfex_feature AS features
-	WHERE  features.name = 'End.';
+        # EndFeature, endFeature can be considered as a special edgeFeature
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+                        SELECT """ + str(nlabel) + """, label_id, weight
+	                FROM   """ + featuretbl + """ AS features 
+	                WHERE  features.name = 'End.';""")
 
-        INSERT INTO viterbi_mtbl
-        SELECT pg_catalog.array_agg(weight)
-        FROM   (SELECT prev_label, label, (SUM(value)*1000)::integer AS weight
-	        FROM   textfex_mtbl
-                GROUP BY prev_label,label
-                ORDER BY prev_label,label) as TEMP_MTBL;
+        plpy.execute("""INSERT INTO viterbi_mtbl
+                        SELECT pg_catalog.array_agg(weight) 
+                        FROM   (SELECT prev_label, label, (SUM(value)*1000)::integer AS weight 
+	                        FROM   mtbl
+                                GROUP BY prev_label,label
+                                ORDER BY prev_label,label) as TEMP_MTBL;""")
 
-	INSERT INTO textfex_rtbl(seg_text, label, value)
-	SELECT segment_hashtbl.seg_text, labels.id, 0
-	FROM   textfex_segment_hashtbl segment_hashtbl, 
-	       textfex_label as labels;
+	plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                SELECT segment_hashtbl.seg_text, labels.id, 0 
+	                FROM   segment_hashtbl segment_hashtbl, 
+	                 """ + labeltbl + """ AS labels;""")
 
-	-- RegExFeature
-	INSERT INTO textfex_rtbl(seg_text, label, value)
-	SELECT segment_hashtbl.seg_text, features.label_id, features.weight
-	FROM   textfex_segment_hashtbl AS segment_hashtbl, 
-	       textfex_feature AS features, 
-	       textfex_regex AS regex
-	WHERE  segment_hashtbl.seg_text ~ regex.pattern
-	       AND features.name||'%' ='R_' || regex.name;
+	# RegExFeature
+	plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                SELECT segment_hashtbl.seg_text, features.label_id, features.weight 
+	                FROM   segment_hashtbl AS segment_hashtbl, 
+	                 """ + featuretbl + """ AS features,
+	                 """ + regextbl + """ AS regex
+	                WHERE  segment_hashtbl.seg_text ~ regex.pattern 
+	                       AND features.name||'%' ='R_' || regex.name;""")
 
-        -- LexiconFeature
-        INSERT INTO textfex_rtbl(seg_text, label, value)
-        SELECT segment_hashtbl.seg_text, features.label_id, features.weight
-        FROM   textfex_segment_hashtbl AS segment_hashtbl, 
-               textfex_feature AS features,
-               textfex_lexicon
-        WHERE  features.name = 'L_' || filename
-               AND lexicon = upper(segment_hashtbl.seg_text);
-       
-	-- UnknownFeature
-	INSERT INTO textfex_rtbl(seg_text, label, value)
-	SELECT segment_hashtbl.seg_text, features.label_id, features.weight
-	FROM   textfex_unknown_segment_hashtbl AS segment_hashtbl,
-	       textfex_feature AS features
-	WHERE  features.name = 'U';
+	# UnknownFeature
+	plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                SELECT segment_hashtbl.seg_text, features.label_id, features.weight 
+	                FROM   unknown_segment_hashtbl AS segment_hashtbl, 
+	                 """ + featuretbl + """ AS features 
+	                WHERE  features.name = 'U';""")
 
-	-- Wordfeature
-        IF $2 = FALSE THEN
-		INSERT INTO textfex_rtbl(seg_text, label, value)
-		SELECT segment_hashtbl.seg_text, features.label_id, features.weight
-		FROM   textfex_segment_hashtbl AS segment_hashtbl,
-		       textfex_feature AS features
-		WHERE  features.name = 'W_' || segment_hashtbl.seg_text;
-        END IF;
+	# Wordfeature
+        if document_id == -1:
+		plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                        SELECT seg_text, label_id, weight 
+	                        FROM   segment_hashtbl, 
+		                """  + featuretbl + """ 
+                                WHERE  name = 'W_' || seg_text;""")
 
-	-- Factor table
-	INSERT INTO viterbi_rtbl(seg_text, label, score)
-	SELECT seg_text,label,SUM(value) AS score
-	FROM   textfex_rtbl
-	GROUP BY seg_text,label;
+	# Factor table
+	plpy.execute("""INSERT INTO """ + viterbi_rtbl + """(seg_text, label, score) 
+	                SELECT seg_text,label,SUM(value) AS score 
+	                FROM   rtbl
+	                GROUP BY seg_text,label;""")
 
-        IF $2 = TRUE THEN
-		-- insert the new sentence to the viterbi_segmenttbl
-		INSERT INTO viterbi_segmenttbl(doc_id, seg_id, start_pos, seg_text,max_pos)
-		SELECT doc_id,-1,start_pos,seg_text,max_pos
-		FROM   textfex_segmenttbl
-		WHERE  doc_id = $1;
-		analyze viterbi_segmenttbl;
-        ELSE
-		-- insert the all sentences in the training dataset to the viterbi_segmenttbl
-		INSERT INTO viterbi_segmenttbl(doc_id, seg_id, start_pos, seg_text, max_pos)
-		SELECT doc_id,-1,start_pos,seg_text,max_pos
-		FROM   textfex_segmenttbl;
-		analyze viterbi_segmenttbl;
-        END IF;
-END
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpythonu STRICT;

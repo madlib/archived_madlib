@@ -11,15 +11,13 @@ PG_MODULE_MAGIC;
 
 Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
 
-/*calculate the top1 labeling of each sentence using viterbi algorithm
- *create function __vcrf_top1_label(int[], int[], int[], int) returns int[]
- *Parameters:
- *	segtbl	The segments in a sentence/document
- *	mArray  The m factors
- *	rArray  The r factors
- *	nlabel	Total number of labels in the label space
- *Return:
- *      the top1 labeling(best labeling) of the sentence and the probability of the top1 labeling
+/**
+ * calculate the top1 labeling of each sentence and the probablity of that top1 labeling using viterbi algorithm
+ * @param segtbl the segments in a sentence/document
+ * @param mArray  m factors
+ * @param rArray  r factors
+ * @param nlabel total number of labels in the label space
+ * @return the top1 labeling(best labeling) of the sentence and the probability of the top1 labeling
  **/
 
 PG_FUNCTION_INFO_V1(__vcrf_top1_label);

@@ -1,89 +1,101 @@
--- Create the necessary tables for storing training data
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__load_crf_model() RETURNS void AS $$
-BEGIN
-	-- document representations
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_document CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_document (id integer,text text)';
-	
-        -- tokenized document
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segmenttbl CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)';
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file model_loader.sql_in
+ *
+ * @brief create all the necessary tables to store the trained model, then import the trained models to the tables
+ * @date Feb. 2012
+ * @sa For an introduction to the text feature extraction, see the module
+ *     description \ref grp_textfex.
+ *
+ *//* ----------------------------------------------------------------------- */
 
-	-- CRF features
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_dictionary CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_dictionary (token text,token_id integer,label text,count integer,total integer)';
-	 
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_feature CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_feature (id integer,name text,prev_label_id integer,label_id integer,weight float)';
+m4_include(`SQLCommon.m4')
 
-	-- label space
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_label CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_label (id integer,label character varying)';
+/**
+@addtogroup grp_textfex
 
-	-- lexicon table
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_lexicon CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_lexicon (id integer,filename text,lexicon text)';
+@input
+The <b>textfex_document</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>textfex_documents</em> (
+*/
 
-	-- regex table
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_regex CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_regex (pattern text,name text)';
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__load_crf_model() RETURNS void AS 
+$$
+        # document table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_document;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_document (id integer,text text);"
+	plpy.execute(query);
 
-	-- R factor table
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_rtbl CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.viterbi_rtbl (seg_text text, label integer, score real)';
+        # tokenized document
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segmenttbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)";
+	plpy.execute(query);
 
-	-- M factor table
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_mtbl CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.viterbi_mtbl (score integer[])';
+	# CRF features
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_dictionary;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_dictionary (token text,token_id integer,label text,count integer,total integer)";
+	plpy.execute(query);
 
-	-- Segment table
-	EXECUTE 'DROP TABLE if EXISTS MADLIB_SCHEMA.viterbi_segmenttbl CASCADE';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.viterbi_segmenttbl(doc_id int, seg_id int, start_pos int, seg_text text, max_pos integer)';
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_feature;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_feature (id integer,name text,prev_label_id integer,label_id integer,weight float)";
+	plpy.execute(query);
 
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.prev_textfex_label';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.prev_textfex_label(id int)';
+	# label space
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_label CASCADE;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_label (id integer,label character varying)";
+	plpy.execute(query);
 
-	-- Insert unique tokens into the segment_hashtbl
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segment_hashtbl';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_segment_hashtbl(seg_text text)';
+	# lexicon table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_lexicon;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_lexicon (id integer,filename text,lexicon text)";
+	plpy.execute(query);
 
-	-- create a temp partial dictionary table which stores the words whose occurance
-	-- is below certain threshold, refer to the CRF Package
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_unknown_segment_hashtbl';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_unknown_segment_hashtbl(seg_text text)';
+	# regex table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_regex;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_regex (pattern text,name text)";
+	plpy.execute(query);
 
-	-- Generate a sparse matrix to store the r factors
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_rtbl';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_rtbl (seg_text text NOT NULL, label integer, value double precision)';
+	# R factor table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_rtbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.viterbi_rtbl (seg_text text, label integer, score real)";
+	plpy.execute(query);
 
-	-- Generate M factor table
-	EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_mtbl';
-	EXECUTE 'CREATE TABLE MADLIB_SCHEMA.textfex_mtbl(prev_label integer, label integer, value double precision)';
+	# M factor table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_mtbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.viterbi_mtbl (score integer[])";
+	plpy.execute(query);
 
-	--Documents table
-	COPY MADLIB_SCHEMA.textfex_document (id ,text) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-documents.tab';
-	analyze MADLIB_SCHEMA.textfex_document;
+	# Segment table
+	query = "DROP TABLE if EXISTS MADLIB_SCHEMA.viterbi_segmenttbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.viterbi_segmenttbl(doc_id int, seg_id int, start_pos int, seg_text text, max_pos integer)";
+	plpy.execute(query);
 
-	--Features table
-	COPY MADLIB_SCHEMA.textfex_feature (id,name,prev_label_id,label_id,weight) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-features.tab';
-	analyze MADLIB_SCHEMA.textfex_feature;
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.prev_textfex_label;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.prev_textfex_label(id int)";
+	plpy.execute(query);
 
+	# Documents table
+	query = "COPY MADLIB_SCHEMA.textfex_document (id ,text) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-documents.tab'";
+	plpy.execute(query);
 
-	--Dictionary table
-	COPY MADLIB_SCHEMA.textfex_dictionary (token,token_id,label,count,total) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-dictionary.tab';
-	analyze MADLIB_SCHEMA.textfex_dictionary;
+	# Features table
+	query = "COPY MADLIB_SCHEMA.textfex_feature (id,name,prev_label_id,label_id,weight) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-features.tab'";
+	plpy.execute(query);
 
-	--Regex table
-	COPY MADLIB_SCHEMA.textfex_regex (pattern,name) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-regex.tab';
-	analyze MADLIB_SCHEMA.textfex_regex;
+	# Dictionary table
+	query = "COPY MADLIB_SCHEMA.textfex_dictionary (token,token_id,label,count,total) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-dictionary.tab'";
+	plpy.execute(query);
 
-	--Labels table
-	COPY MADLIB_SCHEMA.textfex_label (id,label) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-labels.tab';
-	analyze MADLIB_SCHEMA.textfex_label;
+	# Regex table
+	query = "COPY MADLIB_SCHEMA.textfex_regex (pattern,name) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-regex.tab'";
+	plpy.execute(query);
 
-	--Segment table
-	COPY MADLIB_SCHEMA.textfex_segmenttbl (start_pos,doc_id,seg_text,max_pos) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-segmenttbl.tab';
-	analyze MADLIB_SCHEMA.textfex_segmenttbl;
+	# Labels table
+	query = "COPY MADLIB_SCHEMA.textfex_label (id,label) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-labels.tab'";
+	plpy.execute(query);
 
-END
-$$ language plpgsql;
+	# Segment table
+	query = "COPY MADLIB_SCHEMA.textfex_segmenttbl (start_pos,doc_id,seg_text,max_pos) FROM '/home/livingstream/Desktop/Dropbox/posinputMadlib/output/enron-segmenttbl.tab'";
+	plpy.execute(query);
+
+$$ language plpythonu STRICT;

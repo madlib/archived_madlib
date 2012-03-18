@@ -1,56 +1,67 @@
---! \file viterbi.sql_in
---!
---! * Basic usage
---! \code
---!   -- Compute the Max-Likelihood segmentation for each document.
---!   select MADLIB_SCHEMA.vcrf_label('enron.segments', 'enron.m_factors', 'enron.r_factors', 'enron.labels', 'enron.extraction', 'enron', 'e');
---!
---!   -- Examine the view
---!   select * from enron.extraction;
---! \endcode
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file viterbi.sql_in
+ * @brief implementation of vi
+ * @date   February 2012
+ *
+ *
+ *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
 
--- a human readable view of the segmentation output table
-create or replace function MADLIB_SCHEMA.__vcrf_top1_view (segtbl text, labeltbl text, result_tbl text, vw text) returns text AS
+/**
+@addtogroup grp_textfex
+@about create a human readable view of the segmentation output table
+ \code select * from enron.extraction;
+ \endcode
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__vcrf_top1_view (segtbl text, labeltbl text, result_tbl text, vw text) returns text AS
 $$
 rv = plpy.execute('SELECT COUNT(*) AS total FROM ' + labeltbl);
 nlabel = rv[0]['total']
-query = 'create view ' + vw + ' AS ' + \
-' select segs.doc_id, start_pos, seg_text, L.label, (L.id+1) as id, (exp((result.label[max_pos+2] - result.label[max_pos+3])::float/1000)) as prob ' + \
-' from ' + segtbl + ' segs, ' + labeltbl + ' L, ' + \
-' ' + result_tbl + ' result ' + \
-' where result.label[segs.start_pos+1]=L.id and segs.doc_id=result.doc_id' + \
-' order by doc_id, start_pos;'
+query = """create view """ + vw + """ AS
+           select segs.doc_id, start_pos, seg_text, L.label, (L.id+1) as id, (exp((result.label[max_pos+2] - result.label[max_pos+3])::float/1000)) as prob
+           from """ + segtbl + """ segs, """ + labeltbl + """ L, """ + result_tbl + """ result
+           where result.label[segs.start_pos+1]=L.id and segs.doc_id=result.doc_id
+           order by doc_id, start_pos;"""
 plpy.execute(query)
 return vw
 $$ language plpythonu strict;
 
--- create C-UDF functions for finding optimal sequence label using viterbi algorithm
-create or replace function MADLIB_SCHEMA.__vcrf_top1_label(int[], int[], int[], int)
+/**
+ * @brief This function implements the viterbi algorithm which takes the sentence to be label as input and return the top1 labeling for that sentence 
+ * @param segtbl array representation of tokens in a sentence.
+ * @param mArray m factors
+ * @param rArray r factors
+ * @param nlabel total number of labels in the label space
+ * @returns the top1 label sequence, the last two elements in the array is used to calculate the top1 probablity 
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__vcrf_top1_label(segtbl int[], mArray int[], rArray int[], nlabel int)
 returns int[] as 'MODULE_PATHNAME' language c strict;
 
---! \examp
---! select __vcrf_top1(doc_id) from doc_ids where doc_id=1;
----------------------------------------------------------------
--- UDF: __vcrf_top1(segtbl, docid int)
--- usage: compute top1 labelings for a document
--- input: doc_id
--- output: output file name
-----------------------------------------------------------------
+
+/** examp
+  * select __vcrf_top1(doc_id) from doc_ids where doc_id=1;
+  *-------------------------------------------------------------
+  * UDF: __vcrf_top1(segtbl, docid int)
+  *usage: compute top1 labelings for a document
+  *input: doc_id
+  *output: output file name
+  */
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__vcrf_top1(segtbl text, mfactortbl text, rfactortbl text, labeltbl text, docs text, resulttbl text) RETURNS int AS
 $$
 rv = plpy.execute('SELECT COUNT(*) AS total FROM ' + labeltbl);
 nlabel = rv[0]['total']
 
-plpy.execute(' INSERT INTO ' + resulttbl + \
-             ' SELECT segs.doc_id, MADLIB_SCHEMA.__vcrf_top1_label(segs.seglist, mfactors.score, rfactors.score, ' + str(nlabel) + ' ) '  + \
-             ' FROM '  + segtbl + ' segs, ' + mfactortbl + ' mfactors, ' + rfactortbl + ' rfactors ' + ' ;') 
+plpy.execute(""" INSERT INTO """ + resulttbl + """
+                 SELECT segs.doc_id, MADLIB_SCHEMA.__vcrf_top1_label(segs.seglist, mfactors.score, rfactors.score, """ + str(nlabel) + """ )
+                 FROM """ + segtbl + """ segs, """ + mfactortbl + """ mfactors, """ + rfactortbl + """ rfactors;""") 
 return 0 
 $$ LANGUAGE plpythonu STRICT;
 
-create or replace function
+CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labeltbl text, resulttbl text, schemaname text, prefix text)   RETURNS text AS
   $$
   seq = prefix + "_seqno"
@@ -63,10 +74,8 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
   doc_ids = schemaname + "." + prefix + "_doc_ids"
   resulttbl_raw = resulttbl + "_raw"
 
-  query = "DROP SEQUENCE IF EXISTS " + seq + " cascade;"
-  plpy.execute(query);
-  query = "DROP TABLE IF EXISTS " +seglook+","+segs+","+segstbl+","+m_factors+","+r_factors+","+norm_factors+","+doc_ids+","+resulttbl_raw +";"
-  plpy.execute(query);
+  plpy.execute("DROP SEQUENCE IF EXISTS " + seq + " cascade;")
+  plpy.execute("DROP TABLE IF EXISTS " +seglook+","+segs+","+segstbl+","+m_factors+","+r_factors+","+norm_factors+","+doc_ids+","+resulttbl_raw +";")
 
   retval = {}
   retval["segments"] = segs
@@ -79,24 +88,18 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
   retval["norm_factors"] = norm_factors
   retval["result_table"] = resulttbl
 
-  query = """
+  plpy.execute("""
   -- assign IDs to distinct segments.
   -- uses input: segtbl
-  create temp sequence """ + seq + ";"
-
-  plpy.execute(query)
+  create temp sequence """ + seq + ";")
 
   query = """
     select seg_text, nextval(\'""" + seq + """\') as seg_id
       into """ + seglook + """
       from (select distinct(seg_text)
               from """ + segtbl + ") as A;"
-
   plpy.execute(query)
-
-  query = "analyze " + seglook + ";"
-
-  plpy.execute(query);
+  plpy.execute("analyze " + seglook + ";")
 
   query = """
   -- tag ids onto input segments and store result in vcrf_segments
@@ -111,9 +114,8 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
           group by doc_id, start_pos, SH.seg_id
           order by doc_id, start_pos, SH.seg_id) as ss
      group by doc_id;"""
-
   plpy.execute(query)
-  query = "analyze " + segs + ";"
+  plpy.execute("analyze " + segs + ";")
 
   query = """
   -- tag ids onto input segments and store result in vcrf_segments
@@ -125,8 +127,8 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
      where S.seg_text=SH.seg_text
      group by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos
      order by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos;"""
-  plpy.execute(query);
-  query = "analyze " + segstbl + ";"
+  plpy.execute(query)
+  plpy.execute("analyze " + segstbl + ";")
 
   query = """
   -- for each seg_id, store array representation of max r_factor-score * 1000
@@ -146,7 +148,6 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
     into """ + m_factors + """
     from (select score
           from """ + factor_mtbl + """ factors) as ss; """
-
   plpy.execute(query)
 
   query = """
