@@ -25,19 +25,18 @@ PG_FUNCTION_INFO_V1(__vcrf_top1_label);
 Datum
 __vcrf_top1_label(PG_FUNCTION_ARGS)
 {
-	ArrayType *segtbl, *mArray,*rArray, *result, *path;
+	ArrayType *mArray,*rArray, *result, *path;
         ArrayType *prev_top1_array, *curr_top1_array, *prev_norm_array, *curr_norm_array;
         int ndims, ndatabytes, nbytes, norm_factor, i;
         int start_pos, label, currlabel, prevlabel, doclen, nlabel;
         Oid     element_type;
-        if(PG_ARGISNULL(0)||PG_ARGISNULL(1)||PG_ARGISNULL(2)||PG_ARGISNULL(3))
+        if(PG_ARGISNULL(0)||PG_ARGISNULL(1)||PG_ARGISNULL(2))
         	PG_RETURN_NULL();	     
-        segtbl = PG_GETARG_ARRAYTYPE_P(0);
-        mArray = PG_GETARG_ARRAYTYPE_P(1);
+        mArray = PG_GETARG_ARRAYTYPE_P(0);
         element_type = ARR_ELEMTYPE(mArray);        
-        rArray = PG_GETARG_ARRAYTYPE_P(2);
-        nlabel = PG_GETARG_INT32(3);
-        doclen = ARR_DIMS(segtbl)[0];
+        rArray = PG_GETARG_ARRAYTYPE_P(1);
+        nlabel = PG_GETARG_INT32(2);
+        doclen = ARR_DIMS(rArray)[0]/nlabel;
         // initialize the four arrays
         ndatabytes = sizeof(int) * nlabel;
         ndims =1;
@@ -90,12 +89,11 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
 	       ((int*)ARR_DATA_PTR(curr_top1_array))[label] = 0;
 	       ((int*)ARR_DATA_PTR(curr_norm_array))[label] = 0;
             }
-            int segid = ((int*)ARR_DATA_PTR(segtbl))[start_pos]; 
             if (start_pos == 0){
                for(int label=0; label<nlabel; label++){
-                  ((int*)ARR_DATA_PTR(curr_norm_array))[label] = ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+label] + 
+                  ((int*)ARR_DATA_PTR(curr_norm_array))[label] = ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+label] + 
                                                                  ((int*)ARR_DATA_PTR(mArray))[label]; 
-                  ((int*)ARR_DATA_PTR(curr_top1_array))[label] = ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+label] + 
+                  ((int*)ARR_DATA_PTR(curr_top1_array))[label] = ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+label] + 
                                                                  ((int*)ARR_DATA_PTR(mArray))[label]; 
                }
 
@@ -104,7 +102,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                        for(prevlabel=0; prevlabel<nlabel; prevlabel++){
                           // calculate the best label sequence
                           int top1_new_score = ((int*)ARR_DATA_PTR(prev_top1_array))[prevlabel] + 
-                                               ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(nlabel+1)*nlabel+currlabel];
                           if(top1_new_score > ((int*)ARR_DATA_PTR(curr_top1_array))[currlabel]){
@@ -113,7 +111,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                           }
                           // calculate the probability of the best label sequence
                           int norm_new_score = ((int*)ARR_DATA_PTR(prev_norm_array))[prevlabel] +
-                                               ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(nlabel+1)*nlabel+currlabel];
 		          // 0.5 is for rounding
@@ -127,7 +125,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                        for(prevlabel=0; prevlabel<nlabel; prevlabel++){
                           // calculate the best label sequence
                           int top1_new_score = ((int*)ARR_DATA_PTR(prev_top1_array))[prevlabel] +
-                                               ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel];
                           if(top1_new_score > ((int*)ARR_DATA_PTR(curr_top1_array))[currlabel]){
                              ((int*)ARR_DATA_PTR(curr_top1_array))[currlabel] = top1_new_score;
@@ -135,7 +133,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                           }
                           // calculate the probability of the best label sequence
                           int norm_new_score = ((int*)ARR_DATA_PTR(prev_norm_array))[prevlabel] +
-                                               ((int*)ARR_DATA_PTR(rArray))[(segid-1)*nlabel+currlabel] +
+                                               ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel];
                           // 0.5 is for rounding
                           ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] =
