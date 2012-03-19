@@ -94,60 +94,60 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
   create temp sequence """ + seq + ";")
 
   query = """
-    select seg_text, nextval(\'""" + seq + """\') as seg_id
-      into """ + seglook + """
-      from (select distinct(seg_text)
-              from """ + segtbl + ") as A;"
+  select seg_text, nextval(\'""" + seq + """\') as seg_id
+  into """ + seglook + """
+  from (select distinct(seg_text)
+        from """ + segtbl + ") as A;"
   plpy.execute(query)
   plpy.execute("analyze " + seglook + ";")
 
   query = """
   -- tag ids onto input segments and store result in vcrf_segments
   -- uses input: segtbl
-  select doc_id, pg_catalog.array_agg(seg_id) as seglist
+  select doc_id, array_agg(seg_id order by start_pos) as seglist
   -- select doc_id, start_pos, SH.seg_id
-    into """ + segs + """
-    from (select doc_id, SH.seg_id::integer as seg_id
-          from """ + segtbl + """ S,
-               """ + seglook + """ SH
-          where S.seg_text=SH.seg_text
-          group by doc_id, start_pos, SH.seg_id
-          order by doc_id, start_pos, SH.seg_id) as ss
-     group by doc_id;"""
+  into """ + segs + """
+  from (select doc_id, start_pos, SH.seg_id::integer as seg_id
+        from """ + segtbl + """ S,
+             """ + seglook + """ SH
+        where S.seg_text=SH.seg_text
+        group by doc_id, start_pos, SH.seg_id
+        order by doc_id, start_pos, SH.seg_id) as ss
+  group by doc_id;"""
   plpy.execute(query)
   plpy.execute("analyze " + segs + ";")
 
   query = """
   -- tag ids onto input segments and store result in vcrf_segments
   -- uses input: segtbl
-     select doc_id, start_pos, SH.seg_id::integer as seg_id, SH.seg_text, max_pos
-     into """ + segstbl + """
-     from """ + segtbl + """ S,
-          """ + seglook + """ SH
-     where S.seg_text=SH.seg_text
-     group by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos
-     order by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos;"""
+  select doc_id, start_pos, SH.seg_id::integer as seg_id, SH.seg_text, max_pos
+  into """ + segstbl + """
+  from """ + segtbl + """ S,
+       """ + seglook + """ SH
+  where S.seg_text=SH.seg_text
+  group by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos
+  order by doc_id, start_pos, SH.seg_id, SH.seg_text, max_pos;"""
   plpy.execute(query)
   plpy.execute("analyze " + segstbl + ";")
 
   query = """
-  -- for each seg_id, store array representation of max r_factor-score * 1000
-  select pg_catalog.array_agg(score) as score
-    into """ + r_factors + """
-    from (select seg_id, (score*1000)::integer as score
-          from """ + factor_rtbl + """ factors,
-                 """ + seglook + """ SH
-          where factors.seg_text=SH.seg_text
-          order by seg_id, label) as ss;"""
+  -- for each seg_id, store array representation of r_factor-score * 1000
+  select array_agg(score order by seg_id, label) as score
+  into """ + r_factors + """
+  from (select seg_id, label, (score*1000)::integer as score
+        from """ + factor_rtbl + """ factors,
+             """ + seglook + """ SH
+        where factors.seg_text=SH.seg_text
+        order by seg_id, label) as ss;"""
   
   plpy.execute(query)
 
   query = """
-  -- for each seg_id, store array representation of max r_factor-score * 1000
+  -- for each seg_id, store array representation of m_factor
   select score
-    into """ + m_factors + """
-    from (select score
-          from """ + factor_mtbl + """ factors) as ss; """
+  into """ + m_factors + """
+  from (select score
+        from """ + factor_mtbl + """ factors) as ss; """
   plpy.execute(query)
 
   query = """
