@@ -31,7 +31,6 @@ $$ language plpythonu strict;
 
 /**
  * @brief This function implements the viterbi algorithm which takes the sentence to be label as input and return the top1 labeling for that sentence 
- * @param segtbl array representation of tokens in a sentence.
  * @param mArray m factors
  * @param rArray r factors
  * @param nlabel total number of labels in the label space
@@ -41,6 +40,15 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__vcrf_top1_label(mArray int[], rArray 
 returns int[] as 'MODULE_PATHNAME' language c strict;
 
 
+/**
+ * @brief This function prepares the inputs for the c function '__vcrf_top1_label' and invoke the c function. 
+ * @param factor_mtbl m factors
+ * @param factor_rtbl r factors
+ * @param labeltbl total number of labels in the label space
+ * @param resulttbl table to store the output
+ * @param schemaname the schema name of the output tables
+ * @returns the top1 label sequence, the last two elements in the array is used to calculate the top1 probablity 
+ */
 /** examp
   * select __vcrf_label(doc_id) from doc_ids where doc_id=1;
   *-------------------------------------------------------------
@@ -51,10 +59,10 @@ returns int[] as 'MODULE_PATHNAME' language c strict;
   */
 
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labeltbl text, resulttbl text, schemaname text, prefix text)   RETURNS text AS
+MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labeltbl text, resulttbl text, schemaname text)   RETURNS text AS
   $$
-  m_factors = schemaname + "." + prefix + "_m_factors"
-  r_factors = schemaname + "." + prefix + "_r_factors"
+  m_factors = schemaname + "._m_factors"
+  r_factors = schemaname + "._r_factors"
   resulttbl_raw = resulttbl + "_raw"
 
   plpy.execute("DROP TABLE IF EXISTS " + m_factors +","+ r_factors + "," + resulttbl_raw +";")
@@ -65,7 +73,7 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
   retval["result_table"] = resulttbl
 
   query = """
-  -- for each seg_id, store array representation of r_factor-score
+  -- for each sentence, store array representation of r_factors
   select doc_id, array_agg(score order by start_pos, label) as score
   into """ + r_factors + """
   from (select doc_id, start_pos, label, score
@@ -78,7 +86,7 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
   plpy.execute("analyze " + r_factors + ";")
 
   query = """
-  -- for each seg_id, store array representation of m_factor
+  -- array representation of m_factor
   select score
   into """ + m_factors + """
   from (select score
@@ -87,7 +95,6 @@ MADLIB_SCHEMA.__vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labe
 
   query = "CREATE TABLE " + resulttbl_raw + " (doc_id integer, label integer[]);"
   plpy.execute(query);
-
 
   rv = plpy.execute('SELECT COUNT(*) AS total FROM ' + labeltbl);
   nlabel = rv[0]['total']
