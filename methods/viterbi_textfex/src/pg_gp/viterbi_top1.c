@@ -13,7 +13,6 @@ Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
 
 /**
  * calculate the top1 labeling of each sentence and the probablity of that top1 labeling using viterbi algorithm
- * @param segtbl the segments in a sentence/document
  * @param mArray  m factors
  * @param rArray  r factors
  * @param nlabel total number of labels in the label space
@@ -115,9 +114,15 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(nlabel+1)*nlabel+currlabel];
 		          // 0.5 is for rounding
-	                  ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = 
-                          (int)(log(exp(((int*)ARR_DATA_PTR(curr_norm_array))[currlabel]/1000.0) + 
-                          exp(norm_new_score/1000.0))*1000.0 + 0.5);
+		          if (((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] == 0){
+                             ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = norm_new_score;
+                          } else if (((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] < norm_new_score ){
+                             ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] +
+                             (int)(log(exp((norm_new_score - ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel])/1000.0) + 1)*1000.0 + 0.5);
+                          } else {
+                             ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = norm_new_score +
+                             (int)(log(exp((((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] - norm_new_score)/1000.0) + 1)*1000.0 + 0.5);
+                          }
                        } 
                    }
             } else {
@@ -136,9 +141,15 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                                                ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel];
                           // 0.5 is for rounding
-                          ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] =
-                          (int)(log(exp(((int*)ARR_DATA_PTR(curr_norm_array))[currlabel]/1000.0) +
-                          exp(norm_new_score/1000.0))*1000.0 + 0.5);
+                           if (((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] == 0){
+                             ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = norm_new_score;
+                           } else if (((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] < norm_new_score ){
+                             ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] +
+                             (int)(log(exp((norm_new_score - ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel])/1000.0) + 1)*1000.0 + 0.5);
+                          } else {
+                             ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = norm_new_score +
+                             (int)(log(exp((((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] - norm_new_score)/1000.0) + 1)*1000.0 + 0.5);
+                          }
                        } 
                    }
             }
@@ -167,7 +178,16 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
         // used in the UDFs which needs marginalization e.g. normalization 
         norm_factor = 0;
         for(i = 0; i < nlabel; i++) {
-                norm_factor = (int)(log(exp(norm_factor/1000.0) + exp(((int*)ARR_DATA_PTR(curr_norm_array))[i]/1000.0))*1000.0 + 0.5);
+            if(i == 0) {
+               norm_factor = ((int*)ARR_DATA_PTR(curr_norm_array))[0];
+            } 
+            else if (((int*)ARR_DATA_PTR(curr_norm_array))[i] < norm_factor ){
+                norm_factor = ((int*)ARR_DATA_PTR(curr_norm_array))[i] +
+                (int)(log(exp((norm_factor - ((int*)ARR_DATA_PTR(curr_norm_array))[i])/1000.0) + 1)*1000.0 + 0.5);
+            } else {
+                 norm_factor = norm_factor +
+                 (int)(log(exp((((int*)ARR_DATA_PTR(curr_norm_array))[i] - norm_factor)/1000.0) + 1)*1000.0 + 0.5);
+            }
         }
         ((int*)ARR_DATA_PTR(result))[doclen] = maxscore;           
         ((int*)ARR_DATA_PTR(result))[doclen+1] = norm_factor;           
