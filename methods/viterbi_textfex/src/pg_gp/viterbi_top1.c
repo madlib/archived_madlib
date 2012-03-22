@@ -12,10 +12,12 @@ PG_MODULE_MAGIC;
 Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
 
 /**
- * calculate the top1 labeling of each sentence and the probablity of that top1 labeling using viterbi algorithm
+ * @brief calculate the top1 labeling of each sentence and the probablity of that top1 labeling using viterbi algorithm
  * @param mArray  m factors
  * @param rArray  r factors
  * @param nlabel total number of labels in the label space
+ * @literature
+ *  [1] en.wikipedia.org/wiki/Viterbi_algorithm
  * @return the top1 labeling(best labeling) of the sentence and the probability of the top1 labeling
  **/
 
@@ -36,7 +38,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
         rArray = PG_GETARG_ARRAYTYPE_P(1);
         nlabel = PG_GETARG_INT32(2);
         doclen = ARR_DIMS(rArray)[0]/nlabel;
-        // initialize the four arrays
+        // initialize the four temporay arrays
         ndatabytes = sizeof(int) * nlabel;
         ndims =1;
         nbytes = ndatabytes +  ARR_OVERHEAD_NONULLS(ndims);
@@ -75,7 +77,8 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
         ARR_DIMS(path)[0] = nlabel;
         ARR_DIMS(path)[1] = doclen;
         
-        // define the output
+        // define the output, the first doclen elements are to store the best label sequence
+        // the last two elements are used to calucate the probability.
         result = (ArrayType *) palloc(sizeof(int)*(doclen+2) + ARR_OVERHEAD_NONULLS(1));
         SET_VARSIZE(result, sizeof(int)*(doclen+2) + ARR_OVERHEAD_NONULLS(1));
         result->ndim = 1;
@@ -88,7 +91,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
 	       ((int*)ARR_DATA_PTR(curr_top1_array))[label] = 0;
 	       ((int*)ARR_DATA_PTR(curr_norm_array))[label] = 0;
             }
-            if (start_pos == 0){
+            if (start_pos == 0){// the first token in a sentence, the start feature to be fired.
                for(int label=0; label<nlabel; label++){
                   ((int*)ARR_DATA_PTR(curr_norm_array))[label] = ((int*)ARR_DATA_PTR(rArray))[start_pos*nlabel+label] + 
                                                                  ((int*)ARR_DATA_PTR(mArray))[label]; 
@@ -96,7 +99,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                                                                  ((int*)ARR_DATA_PTR(mArray))[label]; 
                }
 
-            } else if(start_pos == doclen-1){
+            } else if(start_pos == doclen-1){// the last token in a sentence, the end feature should be fired.
                    for(currlabel=0; currlabel<nlabel; currlabel++){
                        for(prevlabel=0; prevlabel<nlabel; prevlabel++){
                           // calculate the best label sequence
