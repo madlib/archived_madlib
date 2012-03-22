@@ -117,6 +117,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                                                ((int*)ARR_DATA_PTR(mArray))[(prevlabel+1)*nlabel+currlabel] +
                                                ((int*)ARR_DATA_PTR(mArray))[(nlabel+1)*nlabel+currlabel];
 		          // 0.5 is for rounding
+                          // the following wants to do z=log(exp(x)+exp(y)), the faster implemenation is z=min(x,y) + log(exp(abs(x-y))+1)
 		          if (((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] == 0){
                              ((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] = norm_new_score;
                           } else if (((int*)ARR_DATA_PTR(curr_norm_array))[currlabel] < norm_new_score ){
