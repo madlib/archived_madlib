@@ -59,6 +59,39 @@ normalCDF(double t) {
         : boost::math::cdf( boost::math::normal(), t );
 }
 
+
+/**
+ * @brief Normal probability density function: In-database interface
+ */
+AnyType
+normal_pdf::run(AnyType &args) {
+    double t = args[0].getAs<double>();
+    double mu = args[1].getAs<double>();
+    double sigma = args[2].getAs<double>();
+
+    if (sigma < 0) {
+        throw std::domain_error("Normal distribtion distribution undefined for "
+            "standard deviation < 0");
+    }
+    
+    return normalPDF(t, mu, sigma);
+}
+
+double
+normalPDF(double t, double mu, double sigma) {
+    if (sigma < 0 || std::isnan(t) || std::isnan(mu) || std::isnan(sigma)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    else if (t == std::numeric_limits<double>::infinity()) {
+        return 1;
+    }
+    else if (t == -std::numeric_limits<double>::infinity()) {
+        return 0;
+    }
+    
+    return boost::math::pdf( boost::math::normal(mu, sigma), t );
+}
+
 } // namespace prob
 
 } // namespace modules
