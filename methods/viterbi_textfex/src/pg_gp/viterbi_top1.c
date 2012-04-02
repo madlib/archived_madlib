@@ -57,10 +57,8 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
         ARR_DIMS(result)[0] = doclen+2; 
         ARR_LBOUND(result)[0] = 1;
         for(start_pos=0;start_pos<doclen;start_pos++){
-            for(label=0; label<nlabel; label++){
-	       curr_top1_array[label] = 0;
-	       curr_norm_array[label] = 0;
-            }
+            memset(curr_top1_array, 0, nlabel*sizeof(int));
+            memset(curr_norm_array, 0, nlabel*sizeof(int));
             if (start_pos == 0){// the first token in a sentence, the start feature to be fired.
                for(int label=0; label<nlabel; label++){
                   curr_norm_array[label] = rArray[start_pos*nlabel+label] + mArray[label]; 
@@ -82,14 +80,15 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                                                mArray[(prevlabel+1)*nlabel+currlabel] + mArray[(nlabel+1)*nlabel+currlabel];
                           // the following wants to do z=log(exp(x)+exp(y)), the faster implemenation is 
                           // z=min(x,y) + log(exp(abs(x-y))+1)
+                          // 0.5 is for rounding
 		          if (curr_norm_array[currlabel] == 0){
                              curr_norm_array[currlabel] = norm_new_score;
                           } else if (curr_norm_array[currlabel] < norm_new_score ){
                              curr_norm_array[currlabel] = curr_norm_array[currlabel] +
-                             (int)(log(exp((norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0);
+                             (int)(log(exp((norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0 + 0.5);
                           } else {
                              curr_norm_array[currlabel] = norm_new_score +
-                             (int)(log(exp((curr_norm_array[currlabel] - norm_new_score)/1000.0) + 1)*1000.0);
+                             (int)(log(exp((curr_norm_array[currlabel] - norm_new_score)/1000.0) + 1)*1000.0 + 0.5);
                           }
                        } 
                    }
@@ -110,10 +109,10 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                              curr_norm_array[currlabel] = norm_new_score;
                            } else if (curr_norm_array[currlabel] < norm_new_score ){
                              curr_norm_array[currlabel] = curr_norm_array[currlabel] +
-                             (int)(log(exp((norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0);
+                             (int)(log(exp((norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0 + 0.5);
                           } else {
                              curr_norm_array[currlabel] = norm_new_score +
-                             (int)(log(exp((curr_norm_array[currlabel] - norm_new_score)/1000.0) + 1)*1000.0);
+                             (int)(log(exp((curr_norm_array[currlabel] - norm_new_score)/1000.0) + 1)*1000.0 + 0.5);
                           }
                        } 
                    }
@@ -147,9 +146,9 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                norm_factor = curr_norm_array[0];
             } 
             else if (curr_norm_array[i] < norm_factor ){
-                norm_factor = curr_norm_array[i] + (int)(log(exp((norm_factor - curr_norm_array[i])/1000.0) + 1)*1000.0);
+                norm_factor = curr_norm_array[i] + (int)(log(exp((norm_factor - curr_norm_array[i])/1000.0) + 1)*1000.0 + 0.5);
             } else {
-                 norm_factor = norm_factor + (int)(log(exp((curr_norm_array[i] - norm_factor)/1000.0) + 1)*1000.0);
+                 norm_factor = norm_factor + (int)(log(exp((curr_norm_array[i] - norm_factor)/1000.0) + 1)*1000.0 + 0.5);
             }
         }
         ((int*)ARR_DATA_PTR(result))[doclen] = maxscore;           
