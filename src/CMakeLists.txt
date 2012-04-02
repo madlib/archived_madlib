@@ -326,12 +326,6 @@ add_sql_files(
 )
 add_custom_target(sqlFiles ALL DEPENDS ${SQL_TARGET_FILES})
 
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
-    DESTINATION .
-    COMPONENT core
-    REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
-)
-
 # -- Use all necessary patches directory ---------------------------------------
 
 include_directories(BEFORE "${MAD_PATCH_DIR}")
