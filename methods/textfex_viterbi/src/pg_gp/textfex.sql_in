@@ -1,0 +1,235 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file textfex.sql_in
+ *
+ * @brief SQL function for text feature extraction
+ * @date February 2012
+ *  
+ * @sa For an introduction to text feature extraction, see the module
+ *     description \ref grp_textfex_viterbi
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_textfex_viterbi
+
+@about 
+This module provides the functionality of feature extraction for basic text analysis tasks such as
+part-of-speech(POS) tagging, named entity resolution, and entity resolution. In addition to feature 
+extraction, it also have a viterbi implemenation to get the best label sequence and the conditional
+probability \f$ p(top1_label_sequence|sentence).
+-# At present, we implement six feature types
+    - Edge Feature: transition feature that encodes the transition feature weight from current label to next label.
+    - Start Feature: fired when the current token is the first token in a sentence.
+    - End Feature: fired when the current token is the last token in a sentence.
+    - Word Feature: fired when the current token is observed in the trained dictionary. 
+    - Unknown Feature: fired when the current token is not observed in the trained dictionary for at least certain times.
+    - Regex Feature: fired when the current token can be matched by the regular expression.
+you can add your own feature type according to the training model
+
+-# advantage
+ Instead of scanning every tokens in a sentence and extract features for each token on fly, 
+ we extract features for each distinct token and prematerlized it in the table.
+ When we call viterbi function to get the best label sequence, we only need to a single lookup to get the feature weight.
+
+@usage 
+  - Use CRF PACKAGE to generate the trained models. Basically CRF PACKAGE generates two model files 'feature' and 'crf'.
+    Wrte some simple scripts to convert the data in the model files to the data format required by our package.
+  - invoke function madlib.__load_crf_model('/path/to/data') to create tables and import the data into tables.
+  - Run feature extraction in batch mode or interactive mode
+    <pre>SELECT madlib.__text_feature_extraction(
+         '<em>segmenttbl</em>',
+         '<em>dictionary</em>',
+         '<em>labeltbl</em>',
+         '<em>regextbl</em>',
+         '<em>featuretbl</em>',
+         '<em>viterbi_mtbl</em>',
+         '<em>viterbi_rtbl</em>'
+         '<em>mode</em>');</pre>
+    if mode equals -1, then the function will do feature extraction for all the sentences in the segmenttbl,
+    else it will do feature extraction for the sentence specified by sentence id mode.
+ 
+  - Run viterbi function to get the best label sequence and the conditional probability \f$ p(top1_label_sequence|sentence)
+    <pre>SELECT madlib.__vcrf_label(
+         '<em>segmenttbl</em>',
+         '<em>viterbi_mtbl</em>',
+         '<em>viterbi_rtbl</em>',
+         '<em>labeltbl</em>',
+         '<em>resulttbl</em>',
+         '<em>schemaname</em>');</pre>
+
+@literature
+[1] http://crf.sourceforge.net/ 
+[2] www.cs.berkeley.edu/~daisyw/ViterbiCRF.html
+[3] en.wikipedia.org/wiki/Viterbi_algorithm
+*/
+
+/*
+ * @brief this function is for text feature extraction. It supports two modes: batch mode and interactive mode.
+ * In batch mode, it extracts features for all sentences, which stores in the segmentbl.
+ * In interactive mode, it extracts features for one sentence specified by the docId
+ * This feature extraction function will produce two factor tables, m table and r table. The m table and r table are used to calucate
+ * the best label sequence for each sentence.
+ * - m table
+ * basically m table contains the edge features which are solely dependent on upon current label and previous 'y' value.
+ * m table has three colomuns which are prev_label, label, value respectively.
+ * if the number of labels in n, then the m factors table will n*n rows. Each row encodes the transition feature weight 
+ * value from previous label to current label.
+ * startFeature is can be considered as a special edge feature which is from the very first to the first token
+ * endFeature can be considered as a special edege feature which is from the last token to the vey end.
+ * so m table encodes the edgeFeature, startFeature, endFeature.
+ * if the total number of labels in the label space are 45 from 0 to 44. then the m factors array is as follows:
+ * <pre>
+ *               0  1  2  3  4  5  6...44
+ * startFeature -1  a  a  a  a  a  a...a
+ * edgeFeature   0  a  a  a  a  a  a...a
+ * edgeFeature   1  a  a  a  a  a  a...a
+ * ...
+ * edgeFeature   44 a  a  a  a  a  a...a
+ * endFeature    45 a  a  a  a  a  a...a</pre>
+ * 
+ * -r table
+ * r table is related to specific tokens. It encodes the single state features,eg., worldFeature, RegexFeature
+ * for all tokens. The r table is represented in the following way.
+ * <pre>
+ *        0  1  2  3  4...44
+ * token1 a  a  a  a  a...a
+ * token2 a  a  a  a  a...a<\pre>
+ *
+ * @param segmenttbl table representation of sentences
+ * @param dictionary all the tokens which appear in the training data set
+ * @param labeltbl the label space used in POS or other NLP tasks
+ * @param regextbl all the regular expressions to capture regex features
+ * @param viterbi_mtbl 
+ * @param viterbi_rtbl
+ * @param docId  if docId =-1 then it is in batch mode else it is in interactive mode, docId is the id of the sentence to be extracted features
+ * @usage
+ *  <pre>SELECT madlib.__text_feature_extraction(
+ *       '<em>segmenttbl</em>',
+ *       '<em>dictionary</em>',
+ *       '<em>labeltbl</em>',
+ *       '<em>regextbl</em>',
+ *       '<em>featuretbl</em>',
+ *       '<em>viterbi_mtbl</em>',
+ *       '<em>viterbi_rtbl</em>'
+ *       '<em>mode</em>');</pre>
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__text_feature_extraction(segmenttbl text, dictionary  text, labeltbl text, regextbl text, featuretbl text,
+                                                                   viterbi_mtbl text, viterbi_rtbl text, document_id integer) RETURNS void AS 
+$$
+        plpy.execute("DROP TABLE IF EXISTS prev_labeltbl, segment_hashtbl, unknown_segment_hashtbl, rtbl, mtbl;")
+
+        plpy.execute("CREATE TEMP TABLE prev_labeltbl(id int);")
+
+        # Insert unique tokens into the segment_hashtbl
+        plpy.execute("CREATE TEMP TABLE segment_hashtbl(seg_text text);")
+
+        # create a temp partial dictionary table which stores the words whose occurance
+        # is below certain threshold, refer to the CRF Package
+        plpy.execute("CREATE TEMP TABLE unknown_segment_hashtbl(seg_text text);")
+
+        # Generate a sparse matrix to store the r factors
+        plpy.execute("CREATE TEMP TABLE rtbl (seg_text text NOT NULL, label integer, value double precision);")
+
+        # Generate M factor table
+        plpy.execute("CREATE TEMP TABLE mtbl(prev_label integer, label integer, value double precision);")
+
+        # Calcuate the number of labels in the label space
+        rv = plpy.execute("SELECT COUNT(*) AS total_label FROM " + labeltbl + ";")
+        nlabel = rv[0]['total_label']
+
+        if document_id != -1: 
+        	plpy.execute("""INSERT INTO segment_hashtbl(seg_text)
+		                ((SELECT DISTINCT seg_text
+		                  FROM   """ + segmenttbl + """ 
+		                  WHERE  doc_id = """ + str(document_id) + """) 
+		                 EXCEPT 
+		                 (SELECT DISTINCT seg_text 
+		                  FROM   """ + segmenttbl + """ 
+		                  WHERE  doc_id <> """ + str(document_id) + """));""")
+                
+                plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
+                                SELECT seg_text 
+                                FROM   segment_hashtbl;""")
+        else: 
+                plpy.execute("""INSERT INTO segment_hashtbl(seg_text) 
+	             	        SELECT DISTINCT seg_text
+		                FROM   """ + segmenttbl + """;""")
+
+                plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
+                                ((SELECT DISTINCT seg_text 
+                                  FROM   segment_hashtbl) 
+                                 EXCEPT
+		                 (SELECT DISTINCT token 
+		                  FROM   """ + dictionary + """ 
+		                  WHERE  total>1));""")
+
+        plpy.execute("""INSERT INTO prev_labeltbl
+                        SELECT id
+                        FROM   """ + labeltbl + """;
+                        INSERT INTO prev_labeltbl VALUES(-1); 
+                        INSERT INTO prev_labeltbl VALUES( """ + str(nlabel) + """);""")
+
+        # Generate sparse M factor table
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+                        SELECT prev_label.id, label.id, 0 
+                        FROM   """ + labeltbl + """ AS label, 
+                               prev_labeltbl as prev_label;""")
+
+        # EdgeFeature and startFeature, startFeature can be considered as a special edgeFeature  
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+                        SELECT prev_label_id,label_id,weight
+	                FROM   """ + featuretbl + """ AS features 
+	                WHERE  features.prev_label_id<>-1 OR features.name = 'S.';""")
+
+        # EndFeature, endFeature can be considered as a special edgeFeature
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+                        SELECT """ + str(nlabel) + """, label_id, weight
+	                FROM   """ + featuretbl + """ AS features 
+	                WHERE  features.name = 'End.';""")
+
+        plpy.execute("""INSERT INTO viterbi_mtbl
+                        SELECT array_agg(weight ORDER BY prev_label,label) 
+                        FROM   (SELECT prev_label, label, (SUM(value)*1000)::integer AS weight 
+	                        FROM   mtbl
+                                GROUP BY prev_label,label
+                                ORDER BY prev_label,label) as TEMP_MTBL;""")
+
+	plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                SELECT segment_hashtbl.seg_text, labels.id, 0 
+	                FROM   segment_hashtbl segment_hashtbl, 
+	                 """ + labeltbl + """ AS labels;""")
+
+	# RegExFeature
+	plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                SELECT segment_hashtbl.seg_text, features.label_id, features.weight 
+	                FROM   segment_hashtbl AS segment_hashtbl, 
+	                 """ + featuretbl + """ AS features,
+	                 """ + regextbl + """ AS regex
+	                WHERE  segment_hashtbl.seg_text ~ regex.pattern 
+	                       AND features.name||'%' ='R_' || regex.name;""")
+
+	# UnknownFeature
+	plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                SELECT segment_hashtbl.seg_text, features.label_id, features.weight 
+	                FROM   unknown_segment_hashtbl AS segment_hashtbl, 
+	                 """ + featuretbl + """ AS features 
+	                WHERE  features.name = 'U';""")
+
+	# Wordfeature
+        if document_id == -1:
+		plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
+	                        SELECT seg_text, label_id, weight 
+	                        FROM   segment_hashtbl, 
+		                """  + featuretbl + """ 
+                                WHERE  name = 'W_' || seg_text;""")
+
+	# Factor table
+	plpy.execute("""INSERT INTO """ + viterbi_rtbl + """(seg_text, label, score) 
+	                SELECT seg_text,label,(SUM(value)*1000)::integer AS score 
+	                FROM   rtbl
+	                GROUP BY seg_text,label;""")
+
+$$ LANGUAGE plpythonu STRICT;
