@@ -12,13 +12,14 @@ PG_MODULE_MAGIC;
 Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
 
 /**
- * @brief calculate the top1 labeling of each sentence and the probability of that top1 labeling using viterbi algorithm
- * @param mArray  m factors
- * @param rArray  r factors
+ * @brief calculate the top1 labeling of the given sentence and the conditional probability using viterbi algorithm
+ * @param mArray  encode the edge feature, start feature and end feature
+ * @param rArray  encode the single state feature, e.g, word feature, regex feature.
  * @param nlabel total number of labels in the label space
  * @literature
  *  [1] en.wikipedia.org/wiki/Viterbi_algorithm
- * @return the top1 labeling(best labeling) of the sentence and the probability of the top1 labeling
+ * @return the top1 labeling(best labeling) of the sentence and two numbers to calculate the probability of the top1 labeling.
+ *  the fist number is the numerator, the second number is the normalization factor.
  **/
 
 PG_FUNCTION_INFO_V1(__vcrf_top1_label);

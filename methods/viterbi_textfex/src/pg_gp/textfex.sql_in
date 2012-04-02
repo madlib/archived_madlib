@@ -2,29 +2,23 @@
  *
  * @file textfex.sql_in
  *
- * @brief this function is for text feature extraction. It supports two modes: batch mode and interactive mode.
- *     In batch mode, it extracts features for more than one sentences which stores in the segmentbl.
- *     In interactive mode, it extracts features for one sentence specified by the docId
- *
- * @param segmenttbl table representation of sentences
- * @param dictionary all the tokens which appear in the training data set
- * @param labeltbl the label space used in POS or other NLP tasks
- * @param regextbl all the regular expressions to capture regex features
- * @param viterbi_mtbl 
- * @param viterbi_rtbl
- * @param docId  if docId =-1 then it is in batch mode else it is in interactive mode, docId is the id of the sentence to be extracted features
- *
+ * @brief SQL function for text feature extraction
+ * @date February 2012
+ *  
+ * @sa For an introduction to text feature extraction, see the module
+ *     description \ref grp_textfex_viterbi
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
 
 /**
-@addtogroup grp_textfex
+@addtogroup grp_textfex_viterbi
 
-@about this module does feature extraction implemented in plpython.
-
-@implementation
-
+@about 
+This module provides the functionality of feature extraction for basic text analysis tasks such as
+part-of-speech(POS) tagging, named entity resolution, and entity resolution. In addition to feature 
+extraction, it also have a viterbi implemenation to get the best label sequence and the conditional
+probability \f$ p(top1_label_sequence|sentence).
 -# At present, we implement six feature types
     - Edge Feature: transition feature that encodes the transition feature weight from current label to next label.
     - Start Feature: fired when the current token is the first token in a sentence.
@@ -34,72 +28,92 @@ m4_include(`SQLCommon.m4')
     - Regex Feature: fired when the current token can be matched by the regular expression.
 you can add your own feature type according to the training model
 
-@implemenation
- this feature extraction function will produce two tables, m table and r table. The m table and r table are used to calucate
- the best label sequence for each sentence.
- - m table
- basically m table contains the edge features which are solely dependent on upon current label and previous 'y' value.
- m table has three colomuns which are prev_label, label, value respectively.
- if the number of labels in n, then the m factors table will n*n rows. Each row encodes the transition feature weight 
-'value' from previous label to current label.
- startFeature is can be considered as a special edge feature which is from the very first to the first token
- endFeature can be considered as a special edege feature which is from the last token to the vey end.
- so m table encodes the edgeFeature, startFeature, endFeature.
- if the total number of labels in the label space are 45 from 0 to 44. then the m factors array is as follows:
-                  0  1  2  3  4  5...44
- startFeature -1  a  a  a  a  a  a...a
- edgeFeature   0  a  a  a  a  a  a...a
- edgeFeature   1  a  a  a  a  a  a...a
- ...
- edgeFeature   44 a  a  a  a  a  a...a
- endFeature    45 a  a  a  a  a  a...a
-
- -r table
- r table is related to specific tokens. It encodes the single state features,eg., worldFeature, RegexFeature
- for all tokens. The r table is represented in the following way.
-        0  1  2  3  4...44
- token1 a  a  a  a  a...a
- token2 a  a  a  a  a...a
-
- -advantage
+-# advantage
  Instead of scanning every tokens in a sentence and extract features for each token on fly, 
  we extract features for each distinct token and prematerlized it in the table.
  When we call viterbi function to get the best label sequence, we only need to a single lookup to get the feature weight.
 
 @usage 
-  - Use CRF PACKAGE to generate the trained models. Basically CRF PACKAGE generates two model files feature and crf.
+  - Use CRF PACKAGE to generate the trained models. Basically CRF PACKAGE generates two model files 'feature' and 'crf'.
     Wrte some simple scripts to convert the data in the model files to the data format required by our package.
   - invoke function madlib.__load_crf_model('/path/to/data') to create tables and import the data into tables.
-  - Run feature extraction in batch mode
-  <pre>SELECT __text_feature_extraction(
-       '<em>segmenttbl<\em>',
-       '<em>dictionary<\em>',
-       '<em>labeltbl<\em>',
-       '<em>regextbl<\em>',
-       '<em>featuretbl<\em>',
-       '<em>viterbi_mtbl<\em>',
-       '<em>viterbi_rtbl<\em>'
-       '<em>-1<\em>');</pre>
-  This will do feature extraction for all the sentences in the segmenttbl
-  <pre></pre>
-
-  - Run feature extraction in interactive mode
-  <pre>SELECT __text_feature_extraction(
-       '<em>segmenttbl<\em>',
-       '<em>dictionary<\em>',
-       '<em>labeltbl<\em>',
-       '<em>regextbl<\em>',
-       '<em>featuretbl<\em>',
-       '<em>viterbi_mtbl<\em>',
-       '<em>viterbi_rtbl<\em>'
-       '<em>sentence_id<\em>');</pre>
-  This will do feature extraction for the sentence specified by the sentence_id in the segmenttbl
-  <pre></pre>
-  
-  - invoke function madlib.__vcrf_label(args) to get the best label sequence and the probability of that best sequence.
+  - Run feature extraction in batch mode or interactive mode
+    <pre>SELECT madlib.__text_feature_extraction(
+         '<em>segmenttbl</em>',
+         '<em>dictionary</em>',
+         '<em>labeltbl</em>',
+         '<em>regextbl</em>',
+         '<em>featuretbl</em>',
+         '<em>viterbi_mtbl</em>',
+         '<em>viterbi_rtbl</em>'
+         '<em>mode</em>');</pre>
+    if mode equals -1, then the function will do feature extraction for all the sentences in the segmenttbl,
+    else it will do feature extraction for the sentence specified by sentence id mode.
+ 
+  - Run viterbi function to get the best label sequence and the conditional probability \f$ p(top1_label_sequence|sentence)
+    <pre>SELECT madlib.__vcrf_label(
+         '<em>segmenttbl</em>',
+         '<em>viterbi_mtbl</em>',
+         '<em>viterbi_rtbl</em>',
+         '<em>labeltbl</em>',
+         '<em>resulttbl</em>',
+         '<em>schemaname</em>');</pre>
 
 @literature
 [1] http://crf.sourceforge.net/ 
+[2] www.cs.berkeley.edu/~daisyw/ViterbiCRF.html
+[3] en.wikipedia.org/wiki/Viterbi_algorithm
+*/
+
+/*
+ * @brief this function is for text feature extraction. It supports two modes: batch mode and interactive mode.
+ * In batch mode, it extracts features for all sentences, which stores in the segmentbl.
+ * In interactive mode, it extracts features for one sentence specified by the docId
+ * This feature extraction function will produce two factor tables, m table and r table. The m table and r table are used to calucate
+ * the best label sequence for each sentence.
+ * - m table
+ * basically m table contains the edge features which are solely dependent on upon current label and previous 'y' value.
+ * m table has three colomuns which are prev_label, label, value respectively.
+ * if the number of labels in n, then the m factors table will n*n rows. Each row encodes the transition feature weight 
+ * value from previous label to current label.
+ * startFeature is can be considered as a special edge feature which is from the very first to the first token
+ * endFeature can be considered as a special edege feature which is from the last token to the vey end.
+ * so m table encodes the edgeFeature, startFeature, endFeature.
+ * if the total number of labels in the label space are 45 from 0 to 44. then the m factors array is as follows:
+ * <pre>
+ *               0  1  2  3  4  5  6...44
+ * startFeature -1  a  a  a  a  a  a...a
+ * edgeFeature   0  a  a  a  a  a  a...a
+ * edgeFeature   1  a  a  a  a  a  a...a
+ * ...
+ * edgeFeature   44 a  a  a  a  a  a...a
+ * endFeature    45 a  a  a  a  a  a...a</pre>
+ * 
+ * -r table
+ * r table is related to specific tokens. It encodes the single state features,eg., worldFeature, RegexFeature
+ * for all tokens. The r table is represented in the following way.
+ * <pre>
+ *        0  1  2  3  4...44
+ * token1 a  a  a  a  a...a
+ * token2 a  a  a  a  a...a<\pre>
+ *
+ * @param segmenttbl table representation of sentences
+ * @param dictionary all the tokens which appear in the training data set
+ * @param labeltbl the label space used in POS or other NLP tasks
+ * @param regextbl all the regular expressions to capture regex features
+ * @param viterbi_mtbl 
+ * @param viterbi_rtbl
+ * @param docId  if docId =-1 then it is in batch mode else it is in interactive mode, docId is the id of the sentence to be extracted features
+ * @usage
+ *  <pre>SELECT madlib.__text_feature_extraction(
+ *       '<em>segmenttbl</em>',
+ *       '<em>dictionary</em>',
+ *       '<em>labeltbl</em>',
+ *       '<em>regextbl</em>',
+ *       '<em>featuretbl</em>',
+ *       '<em>viterbi_mtbl</em>',
+ *       '<em>viterbi_rtbl</em>'
+ *       '<em>mode</em>');</pre>
 */
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__text_feature_extraction(segmenttbl text, dictionary  text, labeltbl text, regextbl text, featuretbl text,
