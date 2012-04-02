@@ -123,8 +123,8 @@ namespace {
  * where A(t|nu) = Pr[|T| <= t].
  * @endverbatim
  *
- * @param t Argument to cdf.
- * @param nu Degree of freedom (>0)
+ * @param inT Argument to cdf.
+ * @param inNu Degree of freedom (>0)
  *
  * Note: The running time of calculating the series is proportional to nu.
  * We therefore use the normal distribution as an approximation for large nu.
@@ -133,70 +133,71 @@ namespace {
 
 double studentT_CDF(double inT, double inNu) {
     double&     t = inT;
-    double		z,
-				t_by_sqrt_nu;
-	double		A, /* contains A(t|nu) */
-				prod = 1.,
-				sum = 1.;
+    double      z,
+                t_by_sqrt_nu;
+    double      A, /* contains A(t|nu) */
+                prod = 1.,
+                sum = 1.;
 
-	/* Handle extreme cases. See above. */
-	if (inNu <= 0 || std::isnan(inT) || std::isnan(inNu))
-		return std::numeric_limits<double>::quiet_NaN();
+    /* Handle extreme cases. See above. */
+    if (inNu <= 0 || std::isnan(t) || std::isnan(inNu))
+        return std::numeric_limits<double>::quiet_NaN();
     else if (t == std::numeric_limits<double>::infinity())
         return 1;
     else if (t == -std::numeric_limits<double>::infinity())
         return 0;
-	else if (inNu >= 1000000)
-		return normalCDF(t);
-	else if (inNu >= 200)
-		return studentT_cdf_approx(t, inNu);
+    else if (inNu >= 1000000)
+        return normalCDF(t);
+    else if (inNu >= 200)
+        return studentT_cdf_approx(t, inNu);
     
     /* inNu is non-negative here, so nu will be the closest integer */
     int64_t    nu = std::floor(inNu + 0.5);
-	
+    
+    // FIXME: Add some justification/do some tests.
     if (std::fabs(inNu - nu)/inNu > 0.01)
         return boost::math::cdf( boost::math::students_t(inNu), t );
 
-	/* Handle main case (nu \in {1, ..., 200}) in the rest of the function. */
+    /* Handle main case (nu \in {1, ..., 200}) in the rest of the function. */
 
-	z = 1. + t * t / nu;
-	t_by_sqrt_nu = std::fabs(t) / std::sqrt(static_cast<double>(nu));
-	
-	if (nu == 1)
-	{
-		A = 2. / M_PI * std::atan(t_by_sqrt_nu);
-	}
-	else if (nu & 1) /* odd nu > 1 */
-	{
-		for (int j = 2; j <= nu - 3; j += 2)
-		{
-			prod = prod * j / ((j + 1) * z);
-			sum = sum + prod;
-		}
-		A = 2 / M_PI * ( std::atan(t_by_sqrt_nu) + t_by_sqrt_nu / z * sum );
-	}
-	else /* even nu */
-	{
-		for (int j = 2; j <= nu - 2; j += 2)
-		{
-			prod = prod * (j - 1) / (j * z);
-			sum = sum + prod;
-		}
-		A = t_by_sqrt_nu / std::sqrt(z) * sum;
-	}
-	
-	/* A should obviously be within the interval [0,1] plus minus (hopefully
-	 * small) rounding errors. */
-	if (A > 1.)
-		A = 1.;
-	else if (A < 0.)
-		A = 0.;
-	
-	/* The Student-T distribution is obviously symmetric around t=0... */
-	if (t < 0)
-		return .5 * (1. - A);
-	else
-		return 1. - .5 * (1. - A);
+    z = 1. + t * t / nu;
+    t_by_sqrt_nu = std::fabs(t) / std::sqrt(static_cast<double>(nu));
+    
+    if (nu == 1)
+    {
+        A = 2. / M_PI * std::atan(t_by_sqrt_nu);
+    }
+    else if (nu & 1) /* odd nu > 1 */
+    {
+        for (int j = 2; j <= nu - 3; j += 2)
+        {
+            prod = prod * j / ((j + 1) * z);
+            sum = sum + prod;
+        }
+        A = 2 / M_PI * ( std::atan(t_by_sqrt_nu) + t_by_sqrt_nu / z * sum );
+    }
+    else /* even nu */
+    {
+        for (int j = 2; j <= nu - 2; j += 2)
+        {
+            prod = prod * (j - 1) / (j * z);
+            sum = sum + prod;
+        }
+        A = t_by_sqrt_nu / std::sqrt(z) * sum;
+    }
+    
+    /* A should obviously be within the interval [0,1] plus minus (hopefully
+     * small) rounding errors. */
+    if (A > 1.)
+        A = 1.;
+    else if (A < 0.)
+        A = 0.;
+    
+    /* The Student-T distribution is obviously symmetric around t=0... */
+    if (t < 0)
+        return .5 * (1. - A);
+    else
+        return 1. - .5 * (1. - A);
 }
 
 namespace {
@@ -211,13 +212,13 @@ namespace {
  */
 double studentT_cdf_approx(double t, double nu)
 {
-	double	g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
-			z = std::sqrt( std::log(1. + t * t / nu) / g );
+    double  g = (nu - 1.5) / ((nu - 1) * (nu - 1)),
+            z = std::sqrt( std::log(1. + t * t / nu) / g );
 
-	if (t < 0)
-		z *= -1.;
-	
-	return normalCDF(z);
+    if (t < 0)
+        z *= -1.;
+    
+    return normalCDF(z);
 }
 
 }
@@ -235,7 +236,7 @@ student_t_cdf::run(AnyType &args) {
         throw std::domain_error("Student-t distribution undefined for "
             "degree of freedom <= 0");
 
-    return studentT_CDF(nu, t);
+    return studentT_CDF(t, nu);
 }
 
 } // namespace prob
