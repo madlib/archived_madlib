@@ -302,8 +302,8 @@ linregr_final::run(AnyType &args) {
     HandleMap<ColumnVector> pValues(allocateArray<double>(state.widthOfX));
     for (int i = 0; i < state.widthOfX; i++)
         pValues(i) = 2. * (1. - studentT_CDF(
-                                    state.numRows - state.widthOfX,
-                                    std::fabs( tStats(i) )));
+                                    std::fabs( tStats(i) ),
+                                    state.numRows - state.widthOfX));
     
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
