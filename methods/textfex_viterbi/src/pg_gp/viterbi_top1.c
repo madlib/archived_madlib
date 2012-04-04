@@ -12,7 +12,9 @@ PG_MODULE_MAGIC;
 Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
 
 /**
+ * @file viterbi_top1.c
  * @brief calculate the top1 labeling of the given sentence and the conditional probability using viterbi algorithm
+ * @date February 2012
  * @param mArray  encode the edge feature, start feature and end feature
  * @param rArray  encode the single state feature, e.g, word feature, regex feature.
  * @param nlabel total number of labels in the label space
