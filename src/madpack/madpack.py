@@ -268,14 +268,15 @@ def __get_madlib_dbver(schema):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __get_dbver():
     try:
-        versionString = __run_sql_query("""SELECT version()""",
+        versionStr = __run_sql_query("""SELECT version()""",
             True)[0]['version']
         if portid == 'postgres':
-            return re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)",
-                versionString).group(1)
+            match = re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)",
+                versionStr)
         elif portid == 'greenplum':
-            return re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)",
-                versionString).group(1)
+            match = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)",
+                versionStr)
+        return None if match is None else match.group(1)
     except:
         __error("Failed reading database version", True)
 
@@ -802,16 +803,26 @@ def main(argv):
         
         # Get DB version
         dbver = __get_dbver()
-        __info("Detected %s version %s." % (ports[portid]['name'], dbver), True)
         portdir = os.path.join(maddir, "ports", portid)
-        if not os.path.isdir(os.path.join(portdir, dbver)):
-            __error("This version is not among the %s versions for which "
-                "MADlib support files have been installed (%s)." % 
-                (ports[portid]['name'],
-                ", ".join([name for name in os.listdir(portdir)
-                                if os.path.isdir(os.path.join(portdir, name))
-                                and re.match("^\d+\.\d+", name)])
+        supportedVersions = [dirItem for dirItem in os.listdir(portdir)
+                                if os.path.isdir(os.path.join(portdir, dirItem))
+                                and re.match("^\d+\.\d+", dirItem)]
+        if dbver is None:
+            dbver = ".".join(map(str, max([map(int, versionStr.split('.'))
+                    for versionStr in supportedVersions])))
+            __info("Could not parse version string reported by {DBMS}. Will "
+                "default to newest supported version of {DBMS} "
+                "({version}).".format(
+                    DBMS = ports[portid]['name'],
+                    version = dbver
                 ), True)
+        else:
+            __info("Detected %s version %s." % (ports[portid]['name'], dbver),
+                True)
+            if not os.path.isdir(os.path.join(portdir, dbver)):
+                __error("This version is not among the %s versions for which "
+                    "MADlib support files have been installed (%s)." % 
+                    (ports[portid]['name'], ", ".join(supportedVersions)), True)
         
         # Validate that db platform is correct 
         if __check_db_port(portid) == False:

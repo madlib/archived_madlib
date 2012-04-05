@@ -50,6 +50,9 @@ endif(NOT DEFINED _FIND_PACKAGE_FILE)
 if(NOT DEFINED _NEEDED_PG_CONFIG_PACKAGE_NAME)
     set(_NEEDED_PG_CONFIG_PACKAGE_NAME "PostgreSQL")
 endif(NOT DEFINED _NEEDED_PG_CONFIG_PACKAGE_NAME)
+if(NOT DEFINED _PG_CONFIG_VERSION_NUM_MACRO)
+    set(_PG_CONFIG_VERSION_NUM_MACRO "PG_VERSION_NUM")
+endif(NOT DEFINED _PG_CONFIG_VERSION_NUM_MACRO)
 if(NOT DEFINED _PG_CONFIG_VERSION_MACRO)
     set(_PG_CONFIG_VERSION_MACRO "PG_VERSION")
 endif(NOT DEFINED _PG_CONFIG_VERSION_MACRO)
@@ -85,12 +88,12 @@ if(${PKG_NAME}_PG_CONFIG)
 endif(${PKG_NAME}_PG_CONFIG)
 
 if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
-	set(${PKG_NAME}_VERSION_MAJOR 0)
-	set(${PKG_NAME}_VERSION_MINOR 0)
-	set(${PKG_NAME}_VERSION_PATCH 0)
-	
-	if(EXISTS "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h")
-		# Read and parse postgres version header file for version number
+    set(${PKG_NAME}_VERSION_MAJOR 0)
+    set(${PKG_NAME}_VERSION_MINOR 0)
+    set(${PKG_NAME}_VERSION_PATCH 0)
+    
+    if(EXISTS "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h")
+        # Read and parse postgres version header file for version number
         if(${CMAKE_COMPILER_IS_GNUCC})
             # If we know the compiler, we can do something that is a little
             # smarter: Dump the definitions only.
@@ -106,16 +109,31 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
         
         string(REGEX REPLACE ".*#define PACKAGE_NAME \"([^\"]+)\".*" "\\1"
             _PACKAGE_NAME "${_PG_CONFIG_HEADER_CONTENTS}")
-		string(REGEX REPLACE
-            ".*#define ${_PG_CONFIG_VERSION_MACRO} \"([^\"]+)\".*" "\\1"   
-            ${PKG_NAME}_VERSION_STRING "${_PG_CONFIG_HEADER_CONTENTS}")
-		string(REGEX REPLACE "([0-9]+).*" "\\1"
-            ${PKG_NAME}_VERSION_MAJOR "${${PKG_NAME}_VERSION_STRING}")
-		string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1"
-            ${PKG_NAME}_VERSION_MINOR "${${PKG_NAME}_VERSION_STRING}")
-		string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1"
-            ${PKG_NAME}_VERSION_PATCH "${${PKG_NAME}_VERSION_STRING}")
-	endif(EXISTS "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h")
+            
+        string(REGEX REPLACE
+            ".*#define ${_PG_CONFIG_VERSION_NUM_MACRO} ([0-9]+).*" "\\1"
+            ${PKG_NAME}_VERSION_NUM "${_PG_CONFIG_HEADER_CONTENTS}")
+        
+        if(${PKG_NAME}_VERSION_NUM MATCHES "^[0-9]+$")
+            math(EXPR ${PKG_NAME}_VERSION_MAJOR "${${PKG_NAME}_VERSION_NUM} / 10000")
+            math(EXPR ${PKG_NAME}_VERSION_MINOR "(${${PKG_NAME}_VERSION_NUM} % 10000) / 100")
+            math(EXPR ${PKG_NAME}_VERSION_PATCH "${${PKG_NAME}_VERSION_NUM} % 100")
+            set(${PKG_NAME}_VERSION_STRING "${${PKG_NAME}_VERSION_MAJOR}.${${PKG_NAME}_VERSION_MINOR}.${${PKG_NAME}_VERSION_PATCH}")
+        else(${PKG_NAME}_VERSION_NUM MATCHES "^[0-9]+$")
+            # Macro with version number was not found. We use the version string
+            # macro as a fallback. Example when this is used: Greenplum < 4.1
+            # does not have a GP_VERSION_NUM macro, but only GP_VERSION.
+            string(REGEX REPLACE
+                ".*#define ${_PG_CONFIG_VERSION_MACRO} \"([^\"]+)\".*" "\\1"   
+                ${PKG_NAME}_VERSION_STRING "${_PG_CONFIG_HEADER_CONTENTS}")
+            string(REGEX REPLACE "([0-9]+).*" "\\1"
+                ${PKG_NAME}_VERSION_MAJOR "${${PKG_NAME}_VERSION_STRING}")
+            string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1"
+                ${PKG_NAME}_VERSION_MINOR "${${PKG_NAME}_VERSION_STRING}")
+            string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1"
+                ${PKG_NAME}_VERSION_PATCH "${${PKG_NAME}_VERSION_STRING}")
+        endif(${PKG_NAME}_VERSION_NUM MATCHES "^[0-9]+$")
+    endif(EXISTS "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h")
 
     if(_PACKAGE_NAME STREQUAL "${_NEEDED_PG_CONFIG_PACKAGE_NAME}")
         if((NOT DEFINED PACKAGE_FIND_VERSION) OR
@@ -159,10 +177,10 @@ endif(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
 # passed in original casing.
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(${PACKAGE_FIND_NAME}
-	REQUIRED_VARS
+    REQUIRED_VARS
         ${PKG_NAME}_EXECUTABLE
         ${PKG_NAME}_CLIENT_INCLUDE_DIR
         ${PKG_NAME}_SERVER_INCLUDE_DIR
-	VERSION_VAR
+    VERSION_VAR
         ${PKG_NAME}_VERSION_STRING
 )
