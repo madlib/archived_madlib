@@ -67,56 +67,39 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                   curr_norm_array[label] = rArray[start_pos*nlabel+label] + mArray[label]; 
                   curr_top1_array[label] = rArray[start_pos*nlabel+label] + mArray[label]; 
                }
-
-            } else if(start_pos == doclen-1){// the last token in a sentence, the end feature should be fired.
-                   for(currlabel=0; currlabel<nlabel; currlabel++){
+            } else {
+                    for(currlabel=0; currlabel<nlabel; currlabel++){
                        for(prevlabel=0; prevlabel<nlabel; prevlabel++){
                           // calculate the best label sequence
                           int top1_new_score = prev_top1_array[prevlabel] + rArray[start_pos*nlabel+currlabel] +
-                                               mArray[(prevlabel+1)*nlabel+currlabel] + mArray[(nlabel+1)*nlabel+currlabel];
+                                               mArray[(prevlabel+1)*nlabel+currlabel];
+                          // the last token in a sentece, the end feature should be fired 
+                          if (start_pos == doclen-1){
+                             top1_new_score += mArray[(nlabel+1)*nlabel+currlabel];
+                          }
                           if(top1_new_score > curr_top1_array[currlabel]){
                              curr_top1_array[currlabel] = top1_new_score;
                              path[start_pos*nlabel+currlabel] = prevlabel;
                           }
                           // calculate the probability of the best label sequence
                           int norm_new_score = prev_norm_array[prevlabel] + rArray[start_pos*nlabel+currlabel] +
-                                               mArray[(prevlabel+1)*nlabel+currlabel] + mArray[(nlabel+1)*nlabel+currlabel];
+                                               mArray[(prevlabel+1)*nlabel+currlabel];
+                          // the last token in a sentece, the end feature should be fired 
+                          if(start_pos == doclen-1){
+                              norm_new_score += mArray[(nlabel+1)*nlabel+currlabel];
+                          }  
                           // the following wants to do z=log(exp(x)+exp(y)), the faster implemenation is 
                           // z=min(x,y) + log(exp(abs(x-y))+1)
                           // 0.5 is for rounding
-		          if (curr_norm_array[currlabel] == 0){
+                          if (curr_norm_array[currlabel] == 0){
                              curr_norm_array[currlabel] = norm_new_score;
                           } else if (curr_norm_array[currlabel] < norm_new_score ){
                              curr_norm_array[currlabel] = curr_norm_array[currlabel] +
                              (int)(log(exp((norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0 + 0.5);
-                          } else {
+                         } else {
                              curr_norm_array[currlabel] = norm_new_score +
                              (int)(log(exp((curr_norm_array[currlabel] - norm_new_score)/1000.0) + 1)*1000.0 + 0.5);
-                          }
-                       } 
-                   }
-            } else {
-                   for(currlabel=0; currlabel<nlabel; currlabel++){
-                       for(prevlabel=0; prevlabel<nlabel; prevlabel++){
-                          // calculate the best label sequence
-                          int top1_new_score = prev_top1_array[prevlabel] + rArray[start_pos*nlabel+currlabel] +
-                                               mArray[(prevlabel+1)*nlabel+currlabel];
-                          if(top1_new_score > curr_top1_array[currlabel]){
-                             curr_top1_array[currlabel] = top1_new_score;
-                             path[start_pos*nlabel+currlabel] = prevlabel;
-                          }
-                          // calculate the probability of the best label sequence
-                          int norm_new_score = prev_norm_array[prevlabel] + rArray[start_pos*nlabel+currlabel] +
-                                               mArray[(prevlabel+1)*nlabel+currlabel];
-                           if (curr_norm_array[currlabel] == 0){
-                             curr_norm_array[currlabel] = norm_new_score;
-                           } else if (curr_norm_array[currlabel] < norm_new_score ){
-                             curr_norm_array[currlabel] = curr_norm_array[currlabel] +
-                             (int)(log(exp((norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0 + 0.5);
-                          } else {
-                             curr_norm_array[currlabel] = norm_new_score +
-                             (int)(log(exp((curr_norm_array[currlabel] - norm_new_score)/1000.0) + 1)*1000.0 + 0.5);
-                          }
+                         }
                        } 
                    }
             }
