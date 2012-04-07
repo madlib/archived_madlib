@@ -9,6 +9,10 @@
 PG_MODULE_MAGIC;
 #endif
 
+#ifndef min
+#define min(a,b)((a) < (b) ? (a):(b))
+#endif
+
 Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
 
 /**
@@ -92,14 +96,11 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                           // z=min(x,y) + log(exp(abs(x-y))+1)
                           // 0.5 is for rounding
                           if (curr_norm_array[currlabel] == 0){
-                             curr_norm_array[currlabel] = norm_new_score;
-                          } else if (curr_norm_array[currlabel] < norm_new_score ){
-                             curr_norm_array[currlabel] = curr_norm_array[currlabel] +
-                             (int)(log(exp((norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0 + 0.5);
-                         } else {
-                             curr_norm_array[currlabel] = norm_new_score +
-                             (int)(log(exp((curr_norm_array[currlabel] - norm_new_score)/1000.0) + 1)*1000.0 + 0.5);
-                         }
+                              curr_norm_array[currlabel] = norm_new_score;
+                          } else {
+                              curr_norm_array[currlabel] = min(curr_norm_array[currlabel], norm_new_score) + 
+                              (int)(log(exp(abs(norm_new_score - curr_norm_array[currlabel])/1000.0) + 1)*1000.0 + 0.5);
+                          }
                        } 
                    }
             }
@@ -126,16 +127,16 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
         }
         // compute the sum_i of log(v1[i]/1000), return (e^sum)*1000
         // used in the UDFs which needs marginalization e.g. normalization
+        // the following wants to do z=log(exp(x)+exp(y)), the faster implemenation is 
+        // z=min(x,y) + log(exp(abs(x-y))+1)
         norm_factor = 0;
         for(i = 0; i < nlabel; i++) {
             if(i == 0) {
                norm_factor = curr_norm_array[0];
-            } 
-            else if (curr_norm_array[i] < norm_factor ){
-                norm_factor = curr_norm_array[i] + (int)(log(exp((norm_factor - curr_norm_array[i])/1000.0) + 1)*1000.0 + 0.5);
             } else {
-                 norm_factor = norm_factor + (int)(log(exp((curr_norm_array[i] - norm_factor)/1000.0) + 1)*1000.0 + 0.5);
-            }
+               norm_factor = min(curr_norm_array[i], norm_factor) +
+                             (int)(log(exp(abs(norm_factor - curr_norm_array[i])/1000.0) + 1)*1000.0 + 0.5);
+            } 
         }
         ((int*)ARR_DATA_PTR(result))[doclen] = maxscore;           
         ((int*)ARR_DATA_PTR(result))[doclen+1] = norm_factor;           
