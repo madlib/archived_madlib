@@ -56,12 +56,12 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
         
         // define the output, the first doclen elements are to store the best label sequence
         // the last two elements are used to calucate the probability.
-        result = (ArrayType *) palloc(sizeof(int)*(doclen+2) + ARR_OVERHEAD_NONULLS(1));
-        SET_VARSIZE(result, sizeof(int)*(doclen+2) + ARR_OVERHEAD_NONULLS(1));
+        result = (ArrayType *) palloc(sizeof(int)*(doclen+1) + ARR_OVERHEAD_NONULLS(1));
+        SET_VARSIZE(result, sizeof(int)*(doclen+1) + ARR_OVERHEAD_NONULLS(1));
         result->ndim = 1;
         result->dataoffset = 0;
         result->elemtype = element_type;
-        ARR_DIMS(result)[0] = doclen+2; 
+        ARR_DIMS(result)[0] = doclen+1; 
         ARR_LBOUND(result)[0] = 1;
         for(start_pos=0;start_pos<doclen;start_pos++){
             memset(curr_top1_array, 0, nlabel*sizeof(int));
@@ -138,7 +138,10 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
                              (int)(log(exp(abs(norm_factor - curr_norm_array[i])/1000.0) + 1)*1000.0 + 0.5);
             } 
         }
-        ((int*)ARR_DATA_PTR(result))[doclen] = maxscore;           
-        ((int*)ARR_DATA_PTR(result))[doclen+1] = norm_factor;           
+        // calculate the conditional probability.
+        // to convert the probability into integer, firstly,let it multipy 1000000, then later make the product divided by 1000000
+        // to get the real conditional probability
+        ((int*)ARR_DATA_PTR(result))[doclen] = (int)(exp((maxscore - norm_factor)/1000.0)*1000000);
+
         PG_RETURN_ARRAYTYPE_P(result);
 }
