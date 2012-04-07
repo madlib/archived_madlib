@@ -19,9 +19,9 @@ Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
  * @file viterbi_top1.c
  * @brief find the most probable sequence assignment and the conditional probability using Viterbi algorithm [1]
  * @date February 2012
- * @param marray  encode the edge feature, start feature and end feature
- * @param rarray  encode the single state feature, e.g, word feature, regex feature.
- * @param nlabel total number of labels in the label space
+ * @param marray  Encode the edge feature, start feature and end feature
+ * @param rarray  Encode the single state feature, e.g, word feature, regex feature.
+ * @param nlabel Total number of labels in the label space
  * @literature
  *  [1] http://en.wikipedia.org/wiki/Viterbi_algorithm
  * @return the most probable sequence assignment and two integer numbers used to calculate the conditional probability.
