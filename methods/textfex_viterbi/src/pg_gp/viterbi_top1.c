@@ -13,15 +13,15 @@ Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
 
 /**
  * @file viterbi_top1.c
- * @brief calculate the top1 labeling of the given sentence and the conditional probability using viterbi algorithm
+ * @brief find the most probable sequence assignment and the conditional probability using Viterbi algorithm [1]
  * @date February 2012
- * @param mArray  encode the edge feature, start feature and end feature
- * @param rArray  encode the single state feature, e.g, word feature, regex feature.
+ * @param marray  encode the edge feature, start feature and end feature
+ * @param rarray  encode the single state feature, e.g, word feature, regex feature.
  * @param nlabel total number of labels in the label space
  * @literature
- *  [1] en.wikipedia.org/wiki/Viterbi_algorithm
- * @return the top1 labeling(best labeling) of the sentence and two numbers to calculate the probability of the top1 labeling.
- *  the fist number is the numerator, the second number is the normalization factor.
+ *  [1] http://en.wikipedia.org/wiki/Viterbi_algorithm
+ * @return the most probable sequence assignment and two integer numbers used to calculate the conditional probability.
+ *         the fist number is the numerator, the second number is the normalization factor.
  **/
 
 PG_FUNCTION_INFO_V1(__vcrf_top1_label);
@@ -125,7 +125,7 @@ __vcrf_top1_label(PG_FUNCTION_ARGS)
             ((int*)ARR_DATA_PTR(result))[pos-1] = top1label;           
         }
         // compute the sum_i of log(v1[i]/1000), return (e^sum)*1000
-        // used in the UDFs which needs marginalization e.g. normalization 
+        // used in the UDFs which needs marginalization e.g. normalization
         norm_factor = 0;
         for(i = 0; i < nlabel; i++) {
             if(i == 0) {
