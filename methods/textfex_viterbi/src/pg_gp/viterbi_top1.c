@@ -13,7 +13,7 @@ PG_MODULE_MAGIC;
 #define min(a,b)((a) < (b) ? (a):(b))
 #endif
 
-Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
+Datum vcrf_top1_label(PG_FUNCTION_ARGS);
 
 /**
  * @file viterbi_top1.c
@@ -28,10 +28,10 @@ Datum __vcrf_top1_label(PG_FUNCTION_ARGS);
  *         the fist number is the numerator, the second number is the normalization factor.
  **/
 
-PG_FUNCTION_INFO_V1(__vcrf_top1_label);
+PG_FUNCTION_INFO_V1(vcrf_top1_label);
 
 Datum
-__vcrf_top1_label(PG_FUNCTION_ARGS)
+vcrf_top1_label(PG_FUNCTION_ARGS)
 {
 	ArrayType *result;
         int *prev_top1_array, *curr_top1_array, *prev_norm_array, *curr_norm_array, *path, *mArray, *rArray;
