@@ -43,7 +43,7 @@ vcrf_top1_label(PG_FUNCTION_ARGS)
         rArray = (int*)ARR_DATA_PTR(PG_GETARG_ARRAYTYPE_P(1));
         nlabel = PG_GETARG_INT32(2);
         doclen = ARR_DIMS(PG_GETARG_ARRAYTYPE_P(1))[0]/nlabel;
-        // initialize the four temporay arrays
+        // initialize the four temporary arrays
         ndatabytes = sizeof(int) * nlabel;
         prev_top1_array = (int*) palloc0(ndatabytes);
         curr_top1_array = (int*) palloc0(ndatabytes);
@@ -55,7 +55,7 @@ vcrf_top1_label(PG_FUNCTION_ARGS)
         path = (int*)palloc0(nbytes);
         
         // define the output, the first doclen elements are to store the best label sequence
-        // the last two elements are used to calucate the probability.
+        // the last two elements are used to calculate the probability.
         result = (ArrayType *) palloc(sizeof(int)*(doclen+1) + ARR_OVERHEAD_NONULLS(1));
         SET_VARSIZE(result, sizeof(int)*(doclen+1) + ARR_OVERHEAD_NONULLS(1));
         result->ndim = 1;
@@ -77,7 +77,7 @@ vcrf_top1_label(PG_FUNCTION_ARGS)
                           // calculate the best label sequence
                           int top1_new_score = prev_top1_array[prevlabel] + rArray[start_pos*nlabel+currlabel] +
                                                mArray[(prevlabel+1)*nlabel+currlabel];
-                          // the last token in a sentece, the end feature should be fired 
+                          // the last token in a sentence, the end feature should be fired 
                           if (start_pos == doclen-1){
                              top1_new_score += mArray[(nlabel+1)*nlabel+currlabel];
                           }
@@ -88,11 +88,11 @@ vcrf_top1_label(PG_FUNCTION_ARGS)
                           // calculate the probability of the best label sequence
                           int norm_new_score = prev_norm_array[prevlabel] + rArray[start_pos*nlabel+currlabel] +
                                                mArray[(prevlabel+1)*nlabel+currlabel];
-                          // the last token in a sentece, the end feature should be fired 
+                          // the last token in a sentence, the end feature should be fired 
                           if(start_pos == doclen-1){
                               norm_new_score += mArray[(nlabel+1)*nlabel+currlabel];
                           }  
-                          // the following wants to do z=log(exp(x)+exp(y)), the faster implemenation is 
+                          // the following wants to do z=log(exp(x)+exp(y)), the faster implementation is 
                           // z=min(x,y) + log(exp(abs(x-y))+1)
                           // 0.5 is for rounding
                           if (curr_norm_array[currlabel] == 0){
@@ -126,8 +126,8 @@ vcrf_top1_label(PG_FUNCTION_ARGS)
             ((int*)ARR_DATA_PTR(result))[pos-1] = top1label;           
         }
         // compute the sum_i of log(v1[i]/1000), return (e^sum)*1000
-        // used in the UDFs which needs marginalization e.g. normalization
-        // the following wants to do z=log(exp(x)+exp(y)), the faster implemenation is 
+        // used in the UDFs which needs marginalization e.g., normalization
+        // the following wants to do z=log(exp(x)+exp(y)), the faster implementation is 
         // z=min(x,y) + log(exp(abs(x-y))+1)
         norm_factor = 0;
         for(i = 0; i < nlabel; i++) {
@@ -139,7 +139,7 @@ vcrf_top1_label(PG_FUNCTION_ARGS)
             } 
         }
         // calculate the conditional probability.
-        // to convert the probability into integer, firstly,let it multipy 1000000, then later make the product divided by 1000000
+        // to convert the probability into integer, firstly,let it multiply 1000000, then later make the product divided by 1000000
         // to get the real conditional probability
         ((int*)ARR_DATA_PTR(result))[doclen] = (int)(exp((maxscore - norm_factor)/1000.0)*1000000);
 
