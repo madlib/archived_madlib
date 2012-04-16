@@ -12,6 +12,7 @@
 #include <boost/math/distributions/chi_squared.hpp>
 #include <boost/math/distributions/fisher_f.hpp>
 #include <boost/math/distributions/normal.hpp>
+#include <cmath>
 
 namespace madlib {
 
@@ -111,6 +112,34 @@ normalCDF(double t, double mu, double sigma) {
     return boost::math::cdf( boost::math::normal(mu, sigma), t );
 }
 
+/**
+ * @brief Normal probability density function: In-database interface
+ */
+AnyType
+normal_pdf::run(AnyType &args) {
+    double t = args[0].getAs<double>();
+    double mu = args[1].getAs<double>();
+    double sigma = args[2].getAs<double>();
+
+    if (sigma < 0) {
+        throw std::domain_error("Normal distribtion distribution undefined for "
+            "standard deviation < 0");
+    }
+    
+    return normalPDF(t, mu, sigma);
+}
+
+double
+normalPDF(double t, double mu, double sigma) {
+    if (sigma < 0 || std::isnan(t) || std::isnan(mu) || std::isnan(sigma)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    else if (std::isinf(t)) {
+        return 0;
+    }
+    
+    return boost::math::pdf( boost::math::normal(mu, sigma), t );
+}
 } // namespace prob
 
 } // namespace modules
