@@ -1,0 +1,1177 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file rf.sql_in
+ *
+ * @brief random forest APIs and main control logic written in PL/PGSQL
+ * @date April 5, 2012
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/* Own macro definitions */
+m4_ifelse(
+    m4_eval(
+        m4_ifdef(`__GREENPLUM__', 1, 0) &&
+        __DBMS_VERSION_MAJOR__ * 100 + __DBMS_VERSION_MINOR__ < 401
+    ), 1,
+    `m4_define(`__GREENPLUM_PRE_4_1__')'
+)
+m4_ifelse(
+    m4_eval(
+        m4_ifdef(`__POSTGRESQL__', 1, 0) &&
+        __DBMS_VERSION_MAJOR__ < 9
+    ), 1,
+    `m4_define(`__POSTGRESQL_PRE_9_0__')'
+)
+
+/**
+@addtogroup grp_rf
+
+@about
+A random forest (RF) is an ensemble classifier that consists of many decision 
+trees and outputs the class that is voted by the majority of the individual 
+trees.
+
+It has the following well-known advantages:
+- Overall, RF produces better accuracy. 
+- It can be very efficient for large data sets. Trees of an RF can be 
+  trained in parallel.
+- It can handle thousands of input attributes without attribute deletion.
+
+This module provides an implementation of the random forest algorithm 
+described in [1].
+
+The implementation supports:
+- Building random forests
+- Multiple split critera, including:
+  . Information Gain
+  . Gini Coefficient
+  . Gain Ratio
+- Random forest Classification/Scoring
+- Random forest Display
+- Continuous and Discrete features
+- Equal frequency discretization for continuous features
+- Missing value handling
+- Sampling with replacement
+
+@input
+
+The <b>training data</b> is expected to be of 
+the following form:
+<pre>{TABLE|VIEW} <em>trainingSource</em> (
+    ...
+    <em>id</em> INT|BIGINT,
+    <em>feature1</em> SUPPORTED_DATA_TYPE,
+    <em>feature2</em> SUPPORTED_DATA_TYPE,
+    <em>feature3</em> SUPPORTED_DATA_TYPE,
+    ....................
+    <em>featureN</em> SUPPORTED_DATA_TYPE,
+    <em>class</em>    SUPPORTED_DATA_TYPE,
+    ...
+)</pre>
+
+The detailed list of SUPPORTED_DATA_TYPE is: 
+SMALLINT, INT, BIGINT, FLOAT8, REAL, NUMERIC,
+DECIMAL, INET, CIDR, MACADDR, BOOLEAN,
+CHAR, VARCHAR, TEXT, "char", 
+DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ, and INTERVAL.
+
+The <b>data to classify</b> is expected to be 
+of the same form as <b>training data</b>, except
+that it does not need a class column.
+
+@usage
+
+- Run the training algorithm on the source data:
+  <pre>SELECT * FROM \ref rf_train(
+    '<em>split_criterion_name</em>',
+    '<em>training_table_name</em>', 
+    '<em>result_rf_table_name</em>', 
+    '<em>num_trees</em>',
+    '<em>features_per_node</em>',
+    '<em>sampling_percentage</em>',
+    '<em>continuous_feature_names</em>', 
+    '<em>feature_col_names</em>',
+    '<em>id_col_name</em>',
+    '<em>class_col_name</em>'
+    '<em>how2handle_missing_value</em>',
+    '<em>max_tree_depth</em>',
+    '<em>node_prune_threshold</em>',
+    '<em>node_split_threshold</em>',
+    '<em>max_split_point</em>',    
+    '<em>verbosity</em>');
+  </pre>
+  This will create the decision tree output table storing an abstract object
+  (representing the model) used for further classification. Column names:
+  <pre>    
+ id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |    split_gain     | live | cat_size | parent_id | lmc_nid | lmc_fval | is_feature_cont | split_value | tid | dp_ids 
+----+---------------+---------+-------------------+------------------+----------+-------------------+------+----------+-----------+---------+----------+-----------------+-------------+-----+--------
+                                                     ...</pre>    
+    
+- Run the classification function using the learned model: 
+  <pre>SELECT * FROM \ref rf_classify(
+    '<em>rf_table_name</em>', 
+    '<em>classification_table_name</em>', 
+    '<em>result_table_name</em>');</pre>
+  This will create the result_table with the 
+  classification results. 
+  <pre> </pre> 
+
+- Run the scoring function to score the learned model against a validation data set:
+  <pre>SELECT * FROM \ref rf_score(
+    '<em>rf_table_name</em>',
+    '<em>validation_table_name</em>',
+	'<em>verbosity</em>');</pre>
+  This will give a ratio of correctly classified items in the validation set.
+  <pre> </pre>
+
+- Run the display tree function using the learned model: 
+  <pre>SELECT * FROM \ref rf_display(
+    '<em>rf_table_name</em>');</pre>
+  This will display the trained trees in human readable format. 
+  <pre> </pre> 
+
+- Run the clean tree function as below: 
+  <pre>SELECT * FROM \ref rf_clean(
+    '<em>rf_table_name</em>');</pre>
+  This will clean up the learned model and all metadata.
+  <pre> </pre> 
+
+@examp
+
+-# Prepare an input table/view, e.g.:
+\verbatim
+sql> select * from golf_data order by id;
+ id | outlook  | temperature | humidity | windy  |    class     
+----+----------+-------------+----------+--------+--------------
+  1 | sunny    |          85 |       85 |  false |  Do not Play
+  2 | sunny    |          80 |       90 |  true  |  Do not Play
+  3 | overcast |          83 |       78 |  false |  Play
+  4 | rain     |          70 |       96 |  false |  Play
+  5 | rain     |          68 |       80 |  false |  Play
+  6 | rain     |          65 |       70 |  true  |  Do not Play
+  7 | overcast |          64 |       65 |  true  |  Play
+  8 | sunny    |          72 |       95 |  false |  Do not Play
+  9 | sunny    |          69 |       70 |  false |  Play
+ 10 | rain     |          75 |       80 |  false |  Play
+ 11 | sunny    |          75 |       70 |  true  |  Play
+ 12 | overcast |          72 |       90 |  true  |  Play
+ 13 | overcast |          81 |       75 |  false |  Play
+ 14 | rain     |          71 |       80 |  true  |  Do not Play
+(14 rows)
+
+\endverbatim
+-# Train the random forest, e.g.:
+\verbatim
+sql> SELECT * FROM madlib.rf_clean('trained_tree_infogain');
+sql> SELECT * FROM MADLIB.rf_train(
+	   'infogain',                      	 -- split criterion_name
+	   'golf_data',                      	 -- input table name
+	   'trained_tree_infogain',         	 -- result tree name
+	   10,                                   -- number of trees
+       2,                                    -- features_per_node
+       0.7,                                  -- sampling_percentage
+	   'temperature,humidity',               -- continuous feature names
+	   'outlook,temperature,humidity,windy', -- feature column names
+	   'id',                                 -- id column name
+	   'class',                              -- class column name
+	   'explicit',                           -- how to handle missing value
+	   10,                                   -- max tree depth
+	   0.001,                                -- min percent mode
+	   0.001,                                -- min percent split
+       'f'                                   -- optimize continuous feature
+	   0);                                   -- verbosity
+ training_time  | num_of_cases | num_trees | features_per_node | num_tree_nodes | max_tree_depth | split_criterion |    acs_time     |    acc_time     |    olap_time    |   update_time   |    best_time    
+----------------+--------------+-----------+-------------------+----------------+----------------+-----------------+-----------------+-----------------+-----------------+-----------------+-----------------
+ 00:00:03.60498 |           14 |        10 |                 3 |             71 |              6 | infogain        | 00:00:00.154991 | 00:00:00.404411 | 00:00:00.736876 | 00:00:00.374084 | 00:00:01.722658
+(1 row)
+\endverbatim
+-# Check the table records that keep the random forest:
+\verbatim
+sql> select * from golf_tree order by tid,id;
+ id | tree_location | feature |    probability    | ebp_coeff | maxclass |     split_gain     | live | cat_size | parent_id | lmc_nid | lmc_fval | is_feature_cont | split_value | tid | dp_ids 
+----+---------------+---------+-------------------+-----------+----------+--------------------+------+----------+-----------+---------+----------+-----------------+-------------+-----+--------
+  1 | {0}           |       3 | 0.777777777777778 |         1 |        2 |  0.197530864197531 |    0 |        9 |         0 |      24 |        1 | f               |             |   1 | 
+ 24 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        4 |         1 |         |          | f               |             |   1 | {3}
+ 25 | {0,2}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        2 |         1 |         |          | f               |             |   1 | {3}
+ 26 | {0,3}         |       2 | 0.666666666666667 |         1 |        1 |  0.444444444444444 |    0 |        3 |         1 |      42 |        1 | t               |          70 |   1 | {3}
+ 42 | {0,3,1}       |       4 |                 1 |         1 |        2 |                  0 |    0 |        1 |        26 |         |          | f               |             |   1 | 
+ 43 | {0,3,2}       |       4 |                 1 |         1 |        1 |                  0 |    0 |        2 |        26 |         |          | f               |             |   1 | 
+  2 | {0}           |       2 | 0.555555555555556 |         1 |        1 |   0.17636684303351 |    0 |        9 |         0 |      11 |        1 | t               |          65 |   2 | 
+ 11 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        2 |         2 |         |          | f               |             |   2 | 
+ 12 | {0,2}         |       4 | 0.714285714285714 |         1 |        1 |  0.217687074829932 |    0 |        7 |         2 |      44 |        1 | f               |             |   2 | 
+ 44 | {0,2,1}       |       3 | 0.666666666666667 |         1 |        2 |  0.444444444444444 |    0 |        3 |        12 |      57 |        1 | f               |             |   2 | {4}
+ 45 | {0,2,2}       |       3 |                 1 |         1 |        1 |                  0 |    0 |        4 |        12 |         |          | f               |             |   2 | {4}
+ 57 | {0,2,1,1}     |       2 |                 1 |         1 |        2 |                  0 |    0 |        1 |        44 |         |          | t               |          78 |   2 | {4,3}
+ 58 | {0,2,1,2}     |       2 |                 1 |         1 |        2 |                  0 |    0 |        1 |        44 |         |          | t               |          96 |   2 | {4,3}
+ 59 | {0,2,1,3}     |       2 |                 1 |         1 |        1 |                  0 |    0 |        1 |        44 |         |          | t               |          85 |   2 | {4,3}
+  3 | {0}           |       2 | 0.777777777777778 |         1 |        2 |  0.197530864197531 |    0 |        9 |         0 |      27 |        1 | t               |          80 |   3 | 
+ 27 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        6 |         3 |         |          | f               |             |   3 | 
+ 28 | {0,2}         |       2 | 0.666666666666667 |         1 |        1 |  0.444444444444444 |    0 |        3 |         3 |      46 |        1 | t               |          90 |   3 | 
+ 46 | {0,2,1}       |       4 |                 1 |         1 |        1 |                  0 |    0 |        2 |        28 |         |          | f               |             |   3 | 
+ 47 | {0,2,2}       |       4 |                 1 |         1 |        2 |                  0 |    0 |        1 |        28 |         |          | f               |             |   3 | 
+  4 | {0}           |       4 | 0.888888888888889 |         1 |        2 | 0.0493827160493827 |    0 |        9 |         0 |      13 |        1 | f               |             |   4 | 
+ 13 | {0,1}         |       3 |                 1 |         1 |        2 |                  0 |    0 |        6 |         4 |         |          | f               |             |   4 | {4}
+ 14 | {0,2}         |       3 | 0.666666666666667 |         1 |        2 |  0.444444444444444 |    0 |        3 |         4 |      48 |        1 | f               |             |   4 | {4}
+ 48 | {0,2,1}       |       2 |                 1 |         1 |        2 |                  0 |    0 |        2 |        14 |         |          | t               |          90 |   4 | {4,3}
+ 49 | {0,2,2}       |       2 |                 1 |         1 |        1 |                  0 |    0 |        1 |        14 |         |          | t               |          80 |   4 | {4,3}
+  5 | {0}           |       2 | 0.888888888888889 |         1 |        2 |  0.197530864197531 |    0 |        9 |         0 |      29 |        1 | t               |          90 |   5 | 
+ 29 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        8 |         5 |         |          | f               |             |   5 | 
+ 30 | {0,2}         |       3 |                 1 |         1 |        1 |                  0 |    0 |        1 |         5 |         |          | f               |             |   5 | 
+  6 | {0}           |       3 | 0.555555555555556 |         1 |        2 |  0.345679012345679 |    0 |        9 |         0 |      15 |        1 | f               |             |   6 | 
+ 15 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        3 |         6 |         |          | f               |             |   6 | {3}
+ 16 | {0,2}         |       4 | 0.666666666666667 |         1 |        2 |  0.444444444444444 |    0 |        3 |         6 |      51 |        1 | f               |             |   6 | {3}
+ 17 | {0,3}         |       4 |                 1 |         1 |        1 |                  0 |    0 |        3 |         6 |         |          | f               |             |   6 | {3}
+ 51 | {0,2,1}       |       2 |                 1 |         1 |        2 |                  0 |    0 |        2 |        16 |         |          | t               |          96 |   6 | {3,4}
+ 52 | {0,2,2}       |       2 |                 1 |         1 |        1 |                  0 |    0 |        1 |        16 |         |          | t               |          70 |   6 | {3,4}
+  7 | {0}           |       4 | 0.666666666666667 |         1 |        2 |  0.253968253968254 |    0 |        9 |         0 |      31 |        1 | f               |             |   7 | 
+ 31 | {0,1}         |       2 | 0.857142857142857 |         1 |        2 |  0.102040816326531 |    0 |        7 |         7 |      36 |        1 | t               |          80 |   7 | {4}
+ 32 | {0,2}         |       3 |                 1 |         1 |        1 |                  0 |    0 |        2 |         7 |         |          | f               |             |   7 | {4}
+ 36 | {0,1,1}       |       4 |                 1 |         1 |        2 |                  0 |    0 |        5 |        31 |         |          | f               |             |   7 | 
+ 37 | {0,1,2}       |       2 |               0.5 |         1 |        2 |                0.5 |    0 |        2 |        31 |      60 |        1 | t               |          95 |   7 | 
+ 60 | {0,1,2,1}     |       4 |                 1 |         1 |        1 |                  0 |    0 |        1 |        37 |         |          | f               |             |   7 | 
+ 61 | {0,1,2,2}     |       4 |                 1 |         1 |        2 |                  0 |    0 |        1 |        37 |         |          | f               |             |   7 | 
+  8 | {0}           |       3 | 0.777777777777778 |         1 |        2 | 0.0864197530864197 |    0 |        9 |         0 |      18 |        1 | f               |             |   8 | 
+ 18 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        4 |         8 |         |          | f               |             |   8 | {3}
+ 19 | {0,2}         |       4 | 0.666666666666667 |         1 |        2 |  0.444444444444444 |    0 |        3 |         8 |      38 |        1 | f               |             |   8 | {3}
+ 20 | {0,3}         |       2 |               0.5 |         1 |        2 |                0.5 |    0 |        2 |         8 |      53 |        1 | t               |          70 |   8 | {3}
+ 38 | {0,2,1}       |       2 |                 1 |         1 |        2 |                  0 |    0 |        2 |        19 |         |          | t               |          80 |   8 | {3,4}
+ 39 | {0,2,2}       |       2 |                 1 |         1 |        1 |                  0 |    0 |        1 |        19 |         |          | t               |          80 |   8 | {3,4}
+ 53 | {0,3,1}       |       4 |                 1 |         1 |        2 |                  0 |    0 |        1 |        20 |         |          | f               |             |   8 | 
+ 54 | {0,3,2}       |       4 |                 1 |         1 |        1 |                  0 |    0 |        1 |        20 |         |          | f               |             |   8 | 
+  9 | {0}           |       3 | 0.555555555555556 |         1 |        2 |  0.327160493827161 |    0 |        9 |         0 |      33 |        1 | f               |             |   9 | 
+ 33 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        2 |         9 |         |          | f               |             |   9 | {3}
+ 34 | {0,2}         |       4 |              0.75 |         1 |        2 |              0.375 |    0 |        4 |         9 |      55 |        1 | f               |             |   9 | {3}
+ 35 | {0,3}         |       4 |                 1 |         1 |        1 |                  0 |    0 |        3 |         9 |         |          | f               |             |   9 | {3}
+ 55 | {0,2,1}       |       2 |                 1 |         1 |        2 |                  0 |    0 |        3 |        34 |         |          | t               |          96 |   9 | {3,4}
+ 56 | {0,2,2}       |       2 |                 1 |         1 |        1 |                  0 |    0 |        1 |        34 |         |          | t               |          70 |   9 | {3,4}
+ 10 | {0}           |       3 | 0.666666666666667 |         1 |        2 |  0.277777777777778 |    0 |        9 |         0 |      21 |        1 | f               |             |  10 | 
+ 21 | {0,1}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        1 |        10 |         |          | f               |             |  10 | {3}
+ 22 | {0,2}         |       4 |                 1 |         1 |        2 |                  0 |    0 |        4 |        10 |         |          | f               |             |  10 | {3}
+ 23 | {0,3}         |       2 |              0.75 |         1 |        1 |              0.375 |    0 |        4 |        10 |      40 |        1 | t               |          70 |  10 | {3}
+ 40 | {0,3,1}       |       4 |                 1 |         1 |        2 |                  0 |    0 |        1 |        23 |         |          | f               |             |  10 | 
+ 41 | {0,3,2}       |       4 |                 1 |         1 |        1 |                  0 |    0 |        3 |        23 |         |          | f               |             |  10 | 
+(60 rows)
+
+\endverbatim
+-# To display the random forest with human readable format:
+\verbatim
+sql> select * from madlib.rf_display('trained_tree_infogain');
+                                             rf_display                                              
+-----------------------------------------------------------------------------------------------------
+                                                                                                     
+ Tree 1                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.777777777777778)                    
+         outlook:  = overcast  : class( Play)   num_elements(4)  predict_prob(1)                     
+         outlook:  = rain  : class( Play)   num_elements(2)  predict_prob(1)                         
+         outlook:  = sunny  : class( Do not Play)   num_elements(3)  predict_prob(0.666666666666667) 
+             humidity:  <= 70  : class( Play)   num_elements(1)  predict_prob(1)                     
+             humidity:  > 70  : class( Do not Play)   num_elements(2)  predict_prob(1)               
+ 
+                                                                                                     
+ Tree 2                                                                                              
+     Root Node  : class( Do not Play)   num_elements(9)  predict_prob(0.555555555555556)             
+         humidity:  <= 65  : class( Play)   num_elements(2)  predict_prob(1)                         
+         humidity:  > 65  : class( Do not Play)   num_elements(7)  predict_prob(0.714285714285714)   
+             windy:  =  false  : class( Play)   num_elements(3)  predict_prob(0.666666666666667)     
+                 outlook:  = overcast  : class( Play)   num_elements(1)  predict_prob(1)             
+                 outlook:  = rain  : class( Play)   num_elements(1)  predict_prob(1)                 
+                 outlook:  = sunny  : class( Do not Play)   num_elements(1)  predict_prob(1)         
+             windy:  =  true  : class( Do not Play)   num_elements(4)  predict_prob(1)               
+ 
+                                                                                                     
+ Tree 3                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.777777777777778)                    
+         humidity:  <= 80  : class( Play)   num_elements(6)  predict_prob(1)                         
+         humidity:  > 80  : class( Do not Play)   num_elements(3)  predict_prob(0.666666666666667)   
+             humidity:  <= 90  : class( Do not Play)   num_elements(2)  predict_prob(1)              
+             humidity:  > 90  : class( Play)   num_elements(1)  predict_prob(1)                      
+ 
+                                                                                                     
+ Tree 4                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.888888888888889)                    
+         windy:  =  false  : class( Play)   num_elements(6)  predict_prob(1)                         
+         windy:  =  true  : class( Play)   num_elements(3)  predict_prob(0.666666666666667)          
+             outlook:  = overcast  : class( Play)   num_elements(2)  predict_prob(1)                 
+             outlook:  = rain  : class( Do not Play)   num_elements(1)  predict_prob(1)              
+ 
+                                                                                                     
+ Tree 5                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.888888888888889)                    
+         humidity:  <= 90  : class( Play)   num_elements(8)  predict_prob(1)                         
+         humidity:  > 90  : class( Do not Play)   num_elements(1)  predict_prob(1)                   
+ 
+                                                                                                     
+ Tree 6                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.555555555555556)                    
+         outlook:  = overcast  : class( Play)   num_elements(3)  predict_prob(1)                     
+         outlook:  = rain  : class( Play)   num_elements(3)  predict_prob(0.666666666666667)         
+             windy:  =  false  : class( Play)   num_elements(2)  predict_prob(1)                     
+             windy:  =  true  : class( Do not Play)   num_elements(1)  predict_prob(1)               
+         outlook:  = sunny  : class( Do not Play)   num_elements(3)  predict_prob(1)                 
+ 
+                                                                                                     
+ Tree 7                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.666666666666667)                    
+         windy:  =  false  : class( Play)   num_elements(7)  predict_prob(0.857142857142857)         
+             humidity:  <= 80  : class( Play)   num_elements(5)  predict_prob(1)                     
+             humidity:  > 80  : class( Play)   num_elements(2)  predict_prob(0.5)                    
+                 humidity:  <= 95  : class( Do not Play)   num_elements(1)  predict_prob(1)          
+                 humidity:  > 95  : class( Play)   num_elements(1)  predict_prob(1)                  
+         windy:  =  true  : class( Do not Play)   num_elements(2)  predict_prob(1)                   
+ 
+                                                                                                     
+ Tree 8                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.777777777777778)                    
+         outlook:  = overcast  : class( Play)   num_elements(4)  predict_prob(1)                     
+         outlook:  = rain  : class( Play)   num_elements(3)  predict_prob(0.666666666666667)         
+             windy:  =  false  : class( Play)   num_elements(2)  predict_prob(1)                     
+             windy:  =  true  : class( Do not Play)   num_elements(1)  predict_prob(1)               
+         outlook:  = sunny  : class( Play)   num_elements(2)  predict_prob(0.5)                      
+             humidity:  <= 70  : class( Play)   num_elements(1)  predict_prob(1)                     
+             humidity:  > 70  : class( Do not Play)   num_elements(1)  predict_prob(1)               
+ 
+                                                                                                     
+ Tree 9                                                                                              
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.555555555555556)                    
+         outlook:  = overcast  : class( Play)   num_elements(2)  predict_prob(1)                     
+         outlook:  = rain  : class( Play)   num_elements(4)  predict_prob(0.75)                      
+             windy:  =  false  : class( Play)   num_elements(3)  predict_prob(1)                     
+             windy:  =  true  : class( Do not Play)   num_elements(1)  predict_prob(1)               
+         outlook:  = sunny  : class( Do not Play)   num_elements(3)  predict_prob(1)                 
+ 
+                                                                                                     
+ Tree 10                                                                                             
+     Root Node  : class( Play)   num_elements(9)  predict_prob(0.666666666666667)                    
+         outlook:  = overcast  : class( Play)   num_elements(1)  predict_prob(1)                     
+         outlook:  = rain  : class( Play)   num_elements(4)  predict_prob(1)                         
+         outlook:  = sunny  : class( Do not Play)   num_elements(4)  predict_prob(0.75)              
+             humidity:  <= 70  : class( Play)   num_elements(1)  predict_prob(1)                     
+             humidity:  > 70  : class( Do not Play)   num_elements(3)  predict_prob(1)               
+ 
+(10 rows)
+
+\endverbatim
+-# To classify data with the learned model:
+\verbatim
+sql> select * from madlib.rf_classify(
+         'trained_tree_infogain',  -- name of the trained model
+         'golf_data',              -- name of the table containing data to classify
+         'classification_result'); -- name of the output table
+ input_set_size | classification_time 
+----------------+---------------------
+             14 | 00:00:02.215017
+(1 row)
+\endverbatim
+-# Check classification results: 
+\verbatim
+sql> select t.id,t.outlook,t.temperature,t.humidity,t.windy,c.class from
+    classification_result c,golf_data t where t.id=c.id order by id;
+ id | outlook  | temperature | humidity | windy  |    class     
+----+----------+-------------+----------+--------+--------------
+  1 | sunny    |          85 |       85 |  false |  Do not Play
+  2 | sunny    |          80 |       90 |  true  |  Do not Play
+  3 | overcast |          83 |       78 |  false |  Play
+  4 | rain     |          70 |       96 |  false |  Play
+  5 | rain     |          68 |       80 |  false |  Play
+  6 | rain     |          65 |       70 |  true  |  Do not Play
+  7 | overcast |          64 |       65 |  true  |  Play
+  8 | sunny    |          72 |       95 |  false |  Do not Play
+  9 | sunny    |          69 |       70 |  false |  Play
+ 10 | rain     |          75 |       80 |  false |  Play
+ 11 | sunny    |          75 |       70 |  true  |  Do not Play
+ 12 | overcast |          72 |       90 |  true  |  Play
+ 13 | overcast |          81 |       75 |  false |  Play
+ 14 | rain     |          71 |       80 |  true  |  Do not Play
+(14 rows)
+
+\endverbatim
+
+-# Score the data against a validation set:
+\verbatim
+sql> select * from madlib.rf_score(
+        'trained_tree_infogain',
+        'golf_data_validation',
+        0);
+     rf_score      
+-------------------
+ 0.928571428571429
+(1 row)
+\endverbatim
+
+
+-# clean up the random forest and other auxiliary information: 
+\verbatim
+testdb=# select madlib.rf_clean('trained_tree_infogain');
+ rf_clean 
+----------
+ t
+(1 row)
+\endverbatim
+
+@literature
+
+[1] http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm
+[2] http://en.wikipedia.org/wiki/Discretization_of_continuous_features
+
+@sa File rf.sql_in documenting the SQL functions.
+*/
+
+/*
+ * This structure is used to store the results for the function of rf_train.
+ *   training_time      The total training time
+ *   num_of_cases       How many records there exist in the training set   
+ *   num_trees          The number of trees grown
+ *   features_per_node  The number of features chosen for each node
+ *   num_tree_nodes     The number of nodes in the resulting RF
+ *   max_tree_depth     The depth of the deepest trained tree
+ *   split_criterion    The split criterion used to train the RF 
+ */
+DROP TYPE IF EXISTS MADLIB_SCHEMA.rf_train_result;
+CREATE TYPE MADLIB_SCHEMA.rf_train_result AS 
+(   
+    training_time            INTERVAL,
+    num_of_cases             BIGINT,   
+    num_trees                INT,
+    features_per_node        INT,
+    num_tree_nodes           INT,
+    max_tree_depth           INT,
+    split_criterion          TEXT
+);
+
+/*
+ * This structure is used to store the results for the function of rf_classify.
+ *  input_set_size         How many records there exist in 
+ *                         the classification set
+ *  classification_time    The time consumed during classification
+ */
+DROP TYPE IF EXISTS MADLIB_SCHEMA.rf_classify_result;
+CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS 
+    (   
+    input_set_size        BIGINT,   
+    classification_time   INTERVAL
+    );
+
+
+/**
+ * @brief This API is defined for training a random forest.  
+
+ * For continuous features, each possible value could be used as a potential 
+ * split point for entropy/gini computation. If the number of distinct values 
+ * is large, the computation could be very costly. Users can specify the maximum
+ * split points with the parameter of 'max_split_point'. If the specified value
+ * is a positive number, we use equal-freqency algorithm [2] to discretize the  
+ * continuous features. The discretization process is as follows:
+ * 1) We determine the minimum and maximum values of a continuous feature. 
+ * 2) We sort all values in ascending order and divides the range into K  
+ *    intervals so that each interval contains the same number of sorted values.
+ * 3) We only consider the values in the intervals' boundaries as potential
+ *    split points.
+
+ * We discretize continuous features on local regions during training rather 
+ * than discretizing on the whole dataset prior to training because local 
+ * discretization takes into account the context sensitivity.
+ *
+ * @param split_criterion_name      The split criterion used for tree construction. 
+ *                                  The valid values are infogain, gainratio, or
+ *                                  gini.
+ * @param training_table_name       The name of the table/view with the training data.
+ * @param result_rf_table_name      The name of the table where the resulting 
+ *                                  trees will be stored.
+ * @param num_trees                 The number of trees to be trained. 
+ * @param features_per_node         The number of features to be considered 
+ *                                  when finding a best split. 
+ * @param sampling_percentage       The percentage of records sampled to 
+ *                                  train a tree.
+ * @param continuous_feature_names  A comma-separated list of the names of the 
+ *                                  features whose values are continuous. 
+ * @param feature_col_names         A comma-separated list of names of the 
+ *                                  table columns, each of which defines a feature.
+ * @param id_col_name               The name of the column containing id of each record.
+ * @param class_col_name            The name of the column containing correct class of 
+ *                                  each record.
+ * @param how2handle_missing_value  The way to handle missing value. The valid 
+ *                                  values are 'explicit' and 'ignore'.
+ * @param max_tree_depth            The maximum tree depth 
+ * @param node_prune_threshold      The minimum number of records required in a 
+ *                                  child node
+ * @param node_split_threshold      The minimum number of records required in a 
+ *                                  node in order for a further split to be possible.
+ * @param max_split_point:          The upper limit of sampled split points for 
+ *                                  continuous features
+ * @param verbosity                 A flag indicating whether we should run in 
+ *                                  verbose mode
+ *
+ * @return
+ *   An rf_train_result object.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_train
+    (
+    split_criterion             TEXT,
+    training_table_name         TEXT, 
+    result_rf_table_name        TEXT,
+    num_trees                   INT, 
+    features_per_node           INT,
+    sampling_percentage         FLOAT,
+    continuous_feature_names    TEXT, 
+    feature_col_names           TEXT, 
+    id_col_name                 TEXT, 
+    class_col_name              TEXT, 
+    how2handle_missing_value    TEXT,
+    max_tree_depth              INT,
+    node_prune_threshold        FLOAT,
+    node_split_threshold        FLOAT, 
+    max_split_point             INT,
+    verbosity                   INT
+    ) 
+RETURNS MADLIB_SCHEMA.rf_train_result AS $$
+DECLARE
+    cont_feature_col_names          TEXT[];
+    feature_name_array              TEXT[];
+    begin_func_exec                 TIMESTAMP;
+    rf_schema_name                  TEXT;
+    rf_table_name                   TEXT;
+    training_encoded_table_name     TEXT;
+    training_metatable_name         TEXT;
+    h2hmv_routine_id                INT := 1;  
+    ret                             MADLIB_SCHEMA.rf_train_result;
+    train_rs                        RECORD;
+    n_fids                          INT;
+    features_per_node_tmp           INT;
+    curstmt                         TEXT;
+BEGIN   
+    begin_func_exec = clock_timestamp();
+    
+    IF (verbosity < 1) THEN
+        -- get rid of the messages whose severity level is lower than 'WARNING'
+        SET client_min_messages = WARNING;
+    END IF;
+
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            (split_criterion IS NOT NULL)   AND
+            (
+             split_criterion = 'infogain'   OR 
+             split_criterion = 'gainratio'  OR 
+             split_criterion = 'gini'
+            ),
+            'split_criterion must be infogain, gainratio or gini'
+        );
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                how2handle_missing_value = 'ignore' OR 
+                how2handle_missing_value = 'explicit',
+                'how2handle_missing_value must be ignore or explicit!'
+            );    
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                num_trees IS NOT NULL                   AND
+                sampling_percentage IS NOT NULL         AND
+                num_trees  > 0                          AND
+                sampling_percentage > 0,
+                'invalid parameters value for num_trees, features_per_node  or sampling_percentage'
+            );
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                node_prune_threshold IS NOT NULL    AND
+                float8ge(node_prune_threshold, 0)   AND
+                float8le(node_prune_threshold, 1),
+                'node_prune_threshold value must be in range from 0 to 1'
+            );
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                node_split_threshold IS NOT NULL   AND                
+                float8ge(node_split_threshold, 0)  AND
+                float8le(node_split_threshold, 1),                
+                'node_split_threshold value must be in range from 0 to 1'
+            );
+            
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                verbosity IS NOT NULL,                
+                'verbosity must be non-null'
+            );
+                        
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+                id_col_name IS NOT NULL AND
+                class_col_name IS NOT NULL AND
+                length(btrim(id_col_name, ' ')) > 0 AND
+                length(btrim(class_col_name, ' ')) > 0,
+                'invalid id column name or class column name'
+            );
+                        
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            training_table_name IS NOT NULL AND
+            MADLIB_SCHEMA.__table_exists
+                (
+                    training_table_name
+                ),
+            'the specified training table' || 
+            coalesce('<' || training_table_name || 
+            '> does not exist', ' is NULL')
+        );
+
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            MADLIB_SCHEMA.__column_exists
+                (
+                    training_table_name,
+                    lower(btrim(id_col_name, ' '))
+                ),
+            'the specified training table<' || training_table_name 
+            || '> does not have column ''' || id_col_name || ''''
+        );
+
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            MADLIB_SCHEMA.__column_exists
+                (
+                    training_table_name,
+                    lower(btrim(class_col_name, ' '))
+                ),
+            'the specified training table<' || training_table_name || 
+            '> does not have column ''' || class_col_name || ''''
+        );
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                result_rf_table_name IS NOT NULL,
+                'the specified result random forest table name is NULL'
+            );
+                    
+    rf_table_name = btrim(lower(result_rf_table_name), ' ');
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                NOT MADLIB_SCHEMA.__table_exists
+                    (
+                        rf_table_name
+                    )
+                ,
+                'the specified result random forest table<'  || 
+                rf_table_name                     || 
+                '> exists' 
+            );
+            
+    -- create tree table and auxiliary tables, so that we can get the schema 
+    -- name of the table  
+    PERFORM MADLIB_SCHEMA.__create_tree_tables(rf_table_name);
+        
+    rf_schema_name = MADLIB_SCHEMA.__get_schema_name(rf_table_name);
+            
+    -- the maximum length of an identifier 63
+    -- encoding table name convension:  <rf table schema name>_<rf table name>_ed
+    -- data info table name convension: <rf table schema name>_<rf table name>_di
+    -- the KV table name convension:    <rf table schema name>_<rf table name>_<####>
+    -- therefore, the maximum length of '<rf table schema name>_<rf table name>' 
+    -- is 58
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            length(
+                rf_schema_name      || 
+                '_'                   || 
+                rf_table_name) <= 58,
+            'the maximum length of ''<RF table schema name>_<RF table name>'' is 58'
+        );
+            
+    IF (how2handle_missing_value = 'ignore') THEN
+        h2hmv_routine_id = 1;
+    ELSE
+        h2hmv_routine_id = 2;
+    END IF;
+
+    cont_feature_col_names = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
+    
+    IF ( verbosity > 0 ) THEN
+        RAISE INFO 'continuous features:%', cont_feature_col_names;
+    END IF;
+ 
+    -- the encoded table and meta table will be under the specified schema
+    training_encoded_table_name = rf_schema_name || '.' || 
+        replace(rf_table_name, '.', '_') || '_ed';
+    training_metatable_name     = rf_schema_name || '.' || 
+        replace(rf_table_name, '.', '_') || '_di';        
+    
+    IF(verbosity > 0) THEN
+        RAISE INFO 'Before encoding: %', clock_timestamp() - begin_func_exec;
+    END IF; 
+
+        
+    PERFORM MADLIB_SCHEMA.__encode_tabular_table
+        (
+        training_table_name,
+        lower(id_col_name),
+        MADLIB_SCHEMA.__csvstr_to_array(feature_col_names),
+        lower(class_col_name),
+        cont_feature_col_names,
+        training_encoded_table_name,
+        training_metatable_name,
+        h2hmv_routine_id,
+        verbosity > 0
+        );
+
+    IF(verbosity > 0) THEN
+            RAISE INFO 'After encoding: %', clock_timestamp() - begin_func_exec;
+            RAISE INFO 'successfully encode the input table :%',
+                training_encoded_table_name;
+    END IF;    
+
+    SELECT MADLIB_SCHEMA.__format
+        (
+        'SELECT COUNT(id)
+         FROM % 
+         WHERE column_type = ''f''',
+        ARRAY[
+            training_metatable_name
+            ]
+        ) INTO curstmt;
+    
+    EXECUTE curstmt INTO n_fids;
+    
+    if (features_per_node IS NULL) THEN
+        features_per_node_tmp = round(sqrt(n_fids) - 0.5)::INT + 1;
+    ELSE
+        features_per_node_tmp = features_per_node;
+    END IF;
+    
+    IF (verbosity > 0) THEN
+        RAISE INFO 'features_per_node: %', features_per_node_tmp;
+    END IF;
+
+    PERFORM MADLIB_SCHEMA.__insert_into_traininginfo
+        (
+            'RF',
+            rf_table_name,
+            training_table_name,
+            training_metatable_name,
+            training_encoded_table_name,
+            null,
+            how2handle_missing_value,
+            split_criterion,
+            sampling_percentage,
+            features_per_node_tmp,
+            num_trees
+        );
+            
+    train_rs = MADLIB_SCHEMA.__train_tree
+                (
+                    split_criterion,
+                    num_trees,
+                    features_per_node_tmp ,
+                    training_encoded_table_name,
+                    training_metatable_name,
+                    rf_table_name,
+                    null, 
+                    'id', 
+                    'class', 
+                    100.0,              
+                    max_tree_depth, 
+                    sampling_percentage,
+                    node_prune_threshold,
+                    node_split_threshold,
+                    't',
+                    max_split_point,
+                    verbosity
+                );
+
+    IF ( verbosity > 0 ) THEN
+            RAISE INFO 'Training Total Time: %', clock_timestamp() - begin_func_exec;
+            RAISE INFO 'training result:%', train_rs;
+    END IF;
+
+    ret.training_time           = clock_timestamp() - begin_func_exec;
+    ret.num_of_cases            = train_rs.num_of_cases;      
+    ret.num_trees               = num_trees; 
+    ret.features_per_node       = train_rs.features_per_node; 
+    ret.num_tree_nodes          = train_rs.num_tree_nodes; 
+    ret.max_tree_depth          = train_rs.max_tree_depth;
+    ret.split_criterion         = split_criterion;
+    RETURN ret;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief Display the trees in the random forest with human readable format.
+ *
+ * @param rf_table_name The name of the table containing the trees' information 
+ *                      in the random forest
+ * @param tree_id       The trees to be displayed. If users set it to null, we 
+ *                      display all the trees
+ * @param max_depth     The max depth to be displayed. If null, this 
+ *                      function will show all levels
+ *                    
+ * @return The text representing the trees in random forest with human 
+ *         readable format.
+ *
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.rf_display
+    (
+    rf_table_name   TEXT,
+    tree_id         INT[],
+    max_depth       INT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_display
+    (
+    rf_table_name   TEXT,
+    tree_id         INT[],
+    max_depth       INT
+    ) 
+RETURNS SETOF TEXT AS $$
+DECLARE
+    tid     INT;
+    tids    INT[];
+    str     TEXT;
+BEGIN
+    -- get rid of the messages whose severity level is lower than 'WARNING'
+    SET client_min_messages = WARNING;
+    
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                (rf_table_name IS NOT NULL) AND
+                (
+                 MADLIB_SCHEMA.__table_exists
+                    (
+                        rf_table_name
+                    )
+                ),
+                'the specified tree table' || 
+                coalesce
+                (
+                    '<' || rf_table_name || '> does not exists', 
+                    ' is NULL'
+                )
+            );   
+    tids = tree_id;
+    -- IF tree_id is null, display all these trees
+    IF (tids IS NULL) THEN
+        FOR tid IN EXECUTE 'SELECT distinct tid FROM '||rf_table_name LOOP
+            tids = array_append(tids, tid);
+        END LOOP;
+    END IF;
+    
+    FOR str IN SELECT * FROM 
+m4_changequote(`>>>', `<<<')
+m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
+         MADLIB_SCHEMA.__treemodel_display_with_ordered_aggr
+         (
+            rf_table_name,
+            tids,
+            max_depth
+         ) LOOP
+<<<, >>>
+         MADLIB_SCHEMA.__treemodel_display_no_ordered_aggr
+         (
+            rf_table_name,
+            tids,
+            max_depth
+         ) LOOP
+<<<)
+m4_changequote(>>>`<<<, >>>'<<<)
+        RETURN NEXT str;
+    END LOOP;
+    RETURN;
+END $$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief Display the trees in the random forest with human readable format.
+ *        This function displays all the levels of these specified trees.
+ *
+ * @param rf_table_name The name of the table containing the trees' information 
+ *                      in the random forest
+ * @param tree_id       The trees to be displayed. If users set it to null, we 
+ *                      display all the trees
+ *                    
+ * @return The text representing the trees in random forest with human 
+ *         readable format.
+ *
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.rf_display
+    (
+    rf_table_name   TEXT,
+    tree_id         INT[]
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_display
+    (
+    rf_table_name   TEXT,
+    tree_id         INT[]    
+    ) 
+RETURNS SETOF TEXT AS $$
+DECLARE
+    str     TEXT;
+BEGIN
+    FOR str IN SELECT * FROM 
+               MADLIB_SCHEMA.rf_display(rf_table_name,tree_id,NULL) LOOP
+        RETURN NEXT str;
+    END LOOP;
+    RETURN;
+END $$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief Display the trees in the random forest with human readable format.
+ *        This function displays all the levels of all trees in RF.
+ *
+ * @param rf_table_name The name of the table containing the trees' information 
+ *                      in the random forest
+ *                    
+ * @return The text representing the trees in random forest with human 
+ *         readable format.
+ *
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.rf_display
+    (
+    rf_table_name  TEXT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_display
+    (
+    rf_table_name  TEXT
+    ) 
+RETURNS SETOF TEXT AS $$
+DECLARE
+    str     TEXT;
+BEGIN
+    FOR str IN SELECT * FROM 
+               MADLIB_SCHEMA.rf_display(rf_table_name,NULL) LOOP
+        RETURN NEXT str;
+    END LOOP;
+    RETURN;
+END $$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief Classify dataset using a trained RF.
+ *
+ * The classification result will be stored in the table which is defined 
+ * as: 
+ .
+ *  CREATE TABLE classification_result
+ *  (
+ *     id        INT|BIGINT,
+ *     class     SUPPORTED_DATA_TYPE,
+ *     prob      FLOAT
+ *  );
+ * 
+ * @param rf_table_name             The name of RF table 
+ * @param classification_table_name The name of the table/view that keeps the data 
+ *                                  to be classified. 
+ * @param result_table_name         The name of result table 
+ * @param is_serial_classification  Whether classify with all trees at a 
+ *                                  time or one by one
+ * @param verbosity                 If set to 1 will use verbose mode
+ *
+ * @return 
+ *   A rf_classify_result object.
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.rf_classify
+    (
+    rf_table_name               TEXT, 
+    classification_table_name   TEXT, 
+    result_table_name           TEXT, 
+    is_serial_classification    BOOLEAN,
+    verbosity                   INT
+    );
+    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_classify
+    (
+    rf_table_name               TEXT, 
+    classification_table_name   TEXT, 
+    result_table_name           TEXT, 
+    is_serial_classification    BOOLEAN,
+    verbosity                   INT
+    ) 
+RETURNS MADLIB_SCHEMA.rf_classify_result AS $$
+DECLARE
+    encoded_table_name  TEXT := '';
+    temp_result_table   TEXT := '';
+    vote_result_table   TEXT;
+    metatable_name      TEXT;
+    result_rec          RECORD;
+    begin_time          TIMESTAMP;
+    curstmt             TEXT;
+    ret                 MADLIB_SCHEMA.rf_classify_result;
+BEGIN
+    IF (NOT verbosity>0) THEN
+        -- get rid of the messages whose severity level is lower than 'WARNING'
+        SET client_min_messages = WARNING;
+    END IF;
+    
+    begin_time = clock_timestamp();
+    temp_result_table = madlib.__strip_schema_name(result_table_name)||'_temp_result';
+    vote_result_table = temp_result_table||'_vote';
+
+    IF (is_serial_classification) THEN
+        SELECT MADLIB_SCHEMA.__treemodel_classify_internal_serial
+            (
+            classification_table_name, 
+            rf_table_name, 
+            temp_result_table, 
+            't',
+            verbosity>0
+            )  INTO encoded_table_name;
+    ELSE
+        SELECT MADLIB_SCHEMA.__treemodel_classify_internal
+            (
+            classification_table_name, 
+            rf_table_name, 
+            temp_result_table, 
+            't',
+            verbosity>0
+            )  INTO encoded_table_name;
+    END IF;
+
+    PERFORM MADLIB_SCHEMA.__treemodel_get_vote_result
+        (
+        temp_result_table, 
+        vote_result_table
+        );
+
+    metatable_name = MADLIB_SCHEMA.__get_metatable_name( rf_table_name );
+
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'SELECT 
+                column_name,
+                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name 
+             FROM %
+             WHERE column_type=''c'' LIMIT 1',
+            ARRAY[
+                metatable_name
+            ]
+        ) INTO curstmt;
+    
+    EXECUTE curstmt INTO result_rec;
+            
+   -- translate the encoded class information back
+    EXECUTE 'CREATE TABLE '||result_table_name||' AS SELECT n.id, m.'||
+        result_rec.column_name||' as class,n.prob from '||vote_result_table||
+        ' n,'||result_rec.table_name||' m where n.class=m.key 
+        m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');';
+        
+    EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ';';
+    EXECUTE 'DROP TABLE IF EXISTS ' || temp_result_table || ';';
+    EXECUTE 'DROP TABLE IF EXISTS ' || vote_result_table || ';';
+    EXECUTE 'SELECT COUNT(*) FROM ' ||classification_table_name||';' 
+             INTO ret.input_set_size;
+    
+    ret.classification_time = clock_timestamp() - begin_time;
+    RETURN ret;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief Classify dataset using a trained RF. This function does 
+ *        the same thing as the full version defined as above except 
+ *        that it will only use parallel classification and run in 
+ *        quiet mode. 
+ *  
+ * @param rf_table_name             The name of RF table
+ * @param classification_table_name The name of the table/view that keeps the data 
+ *                                  to be classified. 
+ * @param result_table_name         The name of result table  
+ *
+ * @return 
+ *   A rf_classify_result object.
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.rf_classify
+    (
+    rf_table_name               TEXT, 
+    classification_table_name   TEXT, 
+    result_table_name           TEXT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_classify
+    (
+    rf_table_name               TEXT, 
+    classification_table_name   TEXT, 
+    result_table_name           TEXT
+    ) 
+RETURNS MADLIB_SCHEMA.rf_classify_result AS $$
+DECLARE
+    ret MADLIB_SCHEMA.rf_classify_result;
+BEGIN
+    -- get rid of the messages whose severity level is lower than 'WARNING'
+    SET client_min_messages = WARNING;
+    
+	ret = MADLIB_SCHEMA.rf_classify
+	          (
+	          rf_table_name,
+	          classification_table_name, 
+	          result_table_name,
+              'f',
+	          0
+	          );
+	       
+    RETURN ret;
+END $$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief Check the accuracy of a trained RF with a scoring set.
+ * 
+ * @param rf_table_name       The name of RF table
+ * @param scoring_table_name  The name of the table/view with the source data
+ * @param verbosity           A flag indicating whether to run in verbose mode
+ *
+ * @return The estimated accuracy information.
+ */
+DROP FUNCTION IF EXISTS MADLIB_SCHEMA.rf_score
+    (
+    rf_table_name               TEXT, 
+    scoring_table_name          TEXT, 
+    verbosity                   INT
+    );
+    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_score
+    (
+    rf_table_name               TEXT, 
+    scoring_table_name          TEXT, 
+    verbosity                   INT
+    ) 
+RETURNS FLOAT8 AS $$
+DECLARE
+    accuracy        FLOAT8;
+BEGIN
+    accuracy = MADLIB_SCHEMA.__treemodel_score
+                   (
+                   rf_table_name,
+                   scoring_table_name,
+                   verbosity>0
+                   );
+    RETURN accuracy;
+END;
+$$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief Cleanup the trained random forest table and any relevant tables.
+ * 
+ * @param rf_table_name             The name of RF table  
+ * 
+ * @return The status of that cleanup operation.
+ *
+ */
+DROP FUNCTION IF EXISTS  MADLIB_SCHEMA.rf_clean
+    (
+    TEXT
+    );
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_clean
+    ( 
+    rf_table_name TEXT
+    ) 
+RETURNS BOOLEAN AS $$
+DECLARE
+    result BOOLEAN;
+BEGIN
+    result = MADLIB_SCHEMA.__treemodel_clean(rf_table_name);
+    RETURN result;
+END
+$$ LANGUAGE PLPGSQL;

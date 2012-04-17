@@ -1,0 +1,505 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file dt_utility.sql_in
+ *
+ * @brief the utility functions written in PL/PGSQL for C4.5 and RF
+ * @date April 5, 2012
+ *
+ *
+ *//* ----------------------------------------------------------------------- */
+ 
+m4_include(`SQLCommon.m4')
+
+/* Own macro definitions */
+m4_ifelse(
+    m4_eval(
+        m4_ifdef(`__GREENPLUM__', 1, 0) &&
+        __DBMS_VERSION_MAJOR__ * 100 + __DBMS_VERSION_MINOR__ < 401
+    ), 1,
+    `m4_define(`__GREENPLUM_PRE_4_1__')'
+)
+
+
+/*
+ * @brief Cast regclass to text. we will not create a cast, 
+ *        since it may override the existing cast. 
+ *        
+ * @param rc	The regclass of the table
+ *
+ * @return The text representation for the regclass
+ */
+CREATE or replace FUNCTION MADLIB_SCHEMA.__regclass_to_text
+    (
+    rc regclass
+    ) 
+RETURNS TEXT                          
+AS $$  
+BEGIN                
+   RETURN rc;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief cast any value to text
+ *
+ * @param val   The value with any specific type
+ *
+ * @note Greenplum doesn't support boolean to text casting
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
+    (
+    val anyelement
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+    is_bool    BOOLEAN;
+BEGIN
+    IF (val IS NULL) THEN
+        RETURN 'null';
+    END IF;
+    SELECT pg_typeof(val) = 'boolean'::regtype INTO is_bool;
+    IF (is_bool) THEN
+         IF (val::boolean) THEN
+            RETURN 'true';
+         ELSE
+            RETURN 'false';
+         END IF;
+    END IF;
+    
+    RETURN val::TEXT;
+
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Format a string with the value in args array.
+ *
+ * @param fmt   The format string
+ * @param args  The specified elements in format string
+ *
+ * @note Each '%' in fmt will be replaced with the corresponding value of args.
+ *       The number of '%'s should equal to the length of array args.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
+    (
+    fmt     TEXT, 
+    args    TEXT[]
+    ) 
+RETURNS TEXT
+AS 'MODULE_PATHNAME', 'dt_text_format'
+LANGUAGE C IMMUTABLE;
+
+
+/*
+ * @brief Short form to format a string with four parameters
+ *
+ * @param arg1  The first argument
+ * @param arg2  The second argument
+ * @param arg3  The third argument
+ * @param arg4  The fouth argument
+ *   
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
+    (
+    fmt       TEXT, 
+    arg1      TEXT, 
+    arg2      TEXT, 
+    arg3      TEXT,
+    arg4      TEXT
+    )
+RETURNS TEXT AS $$
+DECLARE
+    stmt TEXT := '';
+BEGIN
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2, arg3, arg4]) INTO stmt;
+    RETURN stmt;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Short form to format a string with three parameters
+ *
+ * @param arg1  The first argument
+ * @param arg2  The second argument
+ * @param arg3  The third argument
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
+    (
+    fmt         TEXT, 
+    arg1        TEXT, 
+    arg2        TEXT, 
+    arg3        TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+    stmt TEXT := '';
+BEGIN
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2, arg3]) INTO stmt;
+    RETURN stmt;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Short form to format a string with two parameters
+ *
+ * @param arg1  The first argument
+ * @param arg2  The second argument
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
+    (
+    fmt         TEXT, 
+    arg1        TEXT, 
+    arg2        TEXT
+    )
+RETURNS TEXT AS $$
+DECLARE
+    stmt TEXT := '';
+BEGIN
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2]) INTO stmt;
+    RETURN stmt;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Short form to format a string with a parameter
+ *
+ * @param arg1  The first argument
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
+    (
+    fmt         TEXT, 
+    arg1        TEXT
+    )
+RETURNS TEXT AS $$
+DECLARE
+    stmt TEXT := '';
+BEGIN
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1]) INTO stmt;
+    RETURN stmt;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Raise exception if the condition is false
+ *
+ * @param condition     The assert condition
+ * @param reason        The reason string displayed when assert failure
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__assert
+    (
+    condition   BOOLEAN,
+    reason      TEXT
+    ) 
+RETURNS void AS $$
+BEGIN
+    IF (NOT condition) THEN
+        RAISE EXCEPTION 'ERROR: %', reason;
+    END IF;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Test if the specified schema exists or not
+ *
+ * @param schema_name   The name of the schema
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__schema_exists
+    (
+    schema_name  TEXT
+    ) 
+RETURNS BOOLEAN AS $$
+DECLARE
+    curstmt         TEXT := '';
+    result          INT  := 0;
+    schema_name_c   TEXT := '';
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            schema_name IS NOT NULL, 
+            'Schema name must not be null!'
+        );
+    
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'SELECT COUNT(c.oid)
+             FROM pg_catalog.pg_namespace c
+             WHERE c.nspname = btrim(lower(''%''), '' '')',
+             schema_name
+        )
+        INTO curstmt;
+    
+    EXECUTE curstmt INTO result;
+    
+    RETURN result >= 1;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Test if the specified table exists or not
+ *
+ * @param full_table_name    The full table name
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__table_exists
+    (
+    full_table_name    TEXT
+    ) 
+RETURNS BOOLEAN AS $$
+DECLARE
+    --toid              OID;
+    table_name          TEXT;
+    temp                TEXT[];
+    len                 INT;
+    schema_names        TEXT[];
+BEGIN
+    IF (full_table_name IS NULL) THEN
+        RETURN 'f';
+    END IF;
+
+    -- Currently, we only allow 100 subtransactions within a transaction.
+    -- we will not use this way
+    --BEGIN
+    --    SELECT full_table_name::regclass::oid INTO toid;
+    --EXCEPTION
+    --    WHEN undefined_table THEN
+    --    RETURN 'f';
+    --END;
+    
+    temp = string_to_array(full_table_name, '.');
+    len = array_upper(temp, 1);
+    
+    IF (1 = len) THEN
+        -- get all schema names from search_path except the implicit schema 
+        schema_names = current_schemas('f');
+        table_name = temp[1];
+    ELSE
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                len = 2, 
+                'wrong full table name<' || full_table_name || '>'
+            );
+        schema_names[1] = lower(btrim(temp[1]));
+        table_name = lower(btrim(temp[2], ' '));
+    END IF; 
+        
+    SELECT count(c.oid)
+    FROM   pg_catalog.pg_class c
+           LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE  c.relname = table_name
+      AND  n.nspname = any(schema_names)
+    INTO   len;
+    
+    RETURN len >= 1;
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Test if the specified column exists or not
+ *
+ * @param full_table_name    The full table name
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__column_exists
+    (
+    full_table_name   TEXT,
+    column_name       TEXT
+    ) 
+RETURNS BOOLEAN AS $$
+DECLARE
+    curstmt         TEXT := '';
+    result          INT  := 0;
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            (full_table_name IS NOT NULL) AND (column_name IS NOT NULL), 
+            'the table name and column name must not be null'
+        );
+                
+    IF (MADLIB_SCHEMA.__table_exists(full_table_name)) THEN
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT COUNT(*) 
+                 FROM pg_catalog.pg_attribute 
+                 WHERE attnum > 0 AND 
+                       (NOT attisdropped) AND
+                       attname = ''%'' AND
+                       attrelid = ''%''::regclass',
+                ARRAY[
+                    column_name,
+                    full_table_name
+                ]
+            ) INTO curstmt;
+            
+        EXECUTE curstmt INTO result;
+        
+        RETURN result >= 1;         
+    END IF;
+    
+    RETURN 'f';
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief assert if the specified table exists or not
+ *
+ * @param full_table_name   The full table name
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__assert_table
+    (
+    full_table_name      TEXT,
+    existence            BOOLEAN
+    ) 
+RETURNS void AS $$
+DECLARE
+    err_msg     TEXT;
+BEGIN
+    IF (existence) THEN
+        err_msg = 'assertion failure. Table: ''' || full_table_name || 
+                  ''' does not exist';
+    ELSE
+        err_msg = 'assertion failure. Table: ''' || full_table_name || 
+                  ''' already exists';
+    END IF;
+    
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            MADLIB_SCHEMA.__table_exists(full_table_name) = existence, 
+            err_msg
+        );
+END
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief  Strip the schema name from the full table name 
+ *
+ * @param full_table_name     The full table name 
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__strip_schema_name
+    (
+    full_table_name TEXT
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+    str_val TEXT;
+BEGIN
+    str_val = trim(both ' ' FROM split_part(full_table_name, '.', 2));
+
+    IF( str_val is null or str_val = '' ) THEN
+        str_val = trim(both ' ' FROM full_table_name);
+    END IF;
+    RETURN lower(str_val);
+end
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Get the schema name from a full table name
+ *        if there is no schema name in the full table name, then
+ *        if the table exists, we return the schema name from catalog
+ *        else the current schema name,
+ *        else return the schema name from the full table name directly
+ *
+ * @param full_table_name   The full table name
+ *
+ */       
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_schema_name
+    (
+    full_table_name TEXT
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+    table_name          TEXT;
+    temp                TEXT[];
+    len                 INT;
+    curstmt             TEXT;
+    schema_name         TEXT;
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            full_table_name IS NOT NULL, 
+            'table name should not be null'
+        );
+
+    temp = string_to_array(full_table_name, '.');
+    len = array_upper(temp, 1);
+
+    IF (1 = len) THEN
+        -- if table exists, return the schema name from catalog
+        IF (MADLIB_SCHEMA.__table_exists(full_table_name)) THEN
+            SELECT nspname 
+            FROM pg_catalog.pg_namespace n
+            WHERE n.oid = 
+             (
+                 SELECT relnamespace FROM pg_catalog.pg_class
+                 WHERE oid= full_table_name::regclass
+             )
+                         
+            INTO schema_name; 
+        ELSE
+            -- get the current schema name
+            schema_name = current_schema();
+        END IF;
+    ELSE
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                len = 2, 
+                'wrong full table name<' || full_table_name || '>'
+            );
+        -- get the shema name directly 
+        schema_name = lower(btrim(temp[1], ' '));    
+    END IF;
+    
+    RETURN schema_name;
+end
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Convert a string with delimiter ',' to an array  
+ *
+ * @param csv_str The string with elements delimited by ','
+ *
+ * @return The splitting string array     
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__csvstr_to_array 
+    (
+    csv_str TEXT
+    )
+RETURNS TEXT[] AS $$
+DECLARE
+    ret     TEXT[];
+    str_val TEXT;
+    index   INTEGER;
+BEGIN
+    ret = string_to_array(lower(csv_str), ',');
+    
+    IF (ret IS NOT NULL) THEN
+        FOR index IN 1..array_upper(ret, 1) LOOP
+            ret[index] = btrim(ret[index], ' ');
+        END LOOP;
+    END IF;
+
+    RETURN ret;
+END
+$$ LANGUAGE PLPGSQL;
