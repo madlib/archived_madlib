@@ -1483,7 +1483,7 @@ BEGIN
 	DROP TABLE IF EXISTS tree_internal CASCADE;
 	CREATE TEMP TABLE tree_internal
 	(
-    	id              SERIAL,
+    	id              INT,
     	tree_location   INT[],
     	feature         INT,
     	probability     FLOAT,
@@ -1943,7 +1943,6 @@ DECLARE
     max_depth                   INT := max_tree_depth;
     answer                      MADLIB_SCHEMA.__best_split_result;
     location_size               INT;
-    max_id                      INT;
     exec_begin                  TIMESTAMP;
     find_best_time              INTERVAL;
     begin_find_best_time        TIMESTAMP;
@@ -1956,7 +1955,7 @@ DECLARE
     ret                         MADLIB_SCHEMA.c45_train_result;
     selection_visit             BOOLEAN[];
     selection_index             INT := 1;
-    select_max_id               INT := 0;
+    nid                   		INT := 1;
     best_time_cmp               BOOLEAN := 'f';
 BEGIN   
     exec_begin = clock_timestamp();
@@ -2004,10 +2003,11 @@ BEGIN
         RAISE EXCEPTION 'The number of classes must be in range 2 to 8,000,000!';
     END IF;
     
-    EXECUTE 'INSERT INTO tree_internal (tree_location, feature, probability, maxclass, 
+    EXECUTE 'INSERT INTO tree_internal (id, tree_location, feature, probability, maxclass, 
         split_gain, live, cat_size, parent_id) 
-        VALUES(ARRAY[0], 0, 1, 1, 1, 1, 0, 0);';
-               
+        VALUES(1, ARRAY[0], 0, 1, 1, 1, 1, 0, 0);';
+    nid = nid + 1; -- next started ID for the tree node
+
     location_size = 0;
     
     begin_data_transfer = clock_timestamp();
@@ -2029,13 +2029,11 @@ BEGIN
         END IF;
 
         EXECUTE 'SELECT id FROM tree_internal WHERE live = 1 ORDER BY id LIMIT 1;' INTO assigned_nid;
-        EXECUTE 'SELECT id FROM tree_internal WHERE live = 1 ORDER BY id DESC LIMIT 1;' INTO max_id;
         
-        FOR selection_index IN 1..(max_id - assigned_nid + 1) LOOP
+        FOR selection_index IN 1..(nid - assigned_nid) LOOP
             selection_visit[selection_index] = 'f';
         END LOOP;
         
-        select_max_id = max_id;
         
 m4_changequote(`>>>', `<<<')
 m4_ifdef(>>>__GREENPLUM__<<<, >>>
@@ -2070,7 +2068,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                         feature_dimension, 
                         num_classes, 
                         assigned_nid, 
-                        max_id - assigned_nid + 1, 
+                        nid - assigned_nid, 
                         'training_instance',
                         confidence_level,
                         training_table_meta,
@@ -2148,13 +2146,16 @@ m4_changequote(>>>`<<<, >>>'<<<)
                 FOR i IN 1..answer.distinct_features LOOP
                     temp_location = location;
                     temp_location[array_upper(temp_location,1)+1] = i;
-                    EXECUTE 'INSERT INTO tree_internal (tree_location, feature, probability, 
+                    EXECUTE 'INSERT INTO tree_internal (id, tree_location, feature, probability, 
                         maxclass, split_gain, live, parent_id) 
-                        VALUES(ARRAY['                          || 
+                        VALUES('				||
+			    nid					||
+			    ', ARRAY['                          || 
                             array_to_string(temp_location, ',') ||
                             '], 0, 1, 1, 1, 1, '                || 
                             answer.node_id                      ||
                           ');';
+		        nid = nid + 1;
                 END LOOP;
                 
                 SELECT MADLIB_SCHEMA.__format
@@ -2165,7 +2166,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                     WHERE assigned_nid = % and t.id = s.id;',
                     ARRAY[
                         MADLIB_SCHEMA.__get_feature_name(answer.feature,training_table_meta),
-                        MADLIB_SCHEMA.__to_char(select_max_id),
+                        MADLIB_SCHEMA.__to_char(nid - answer.distinct_features - 1),
                         training_table_name,
                         MADLIB_SCHEMA.__to_char(answer.node_id)
                     ]
@@ -2174,8 +2175,6 @@ m4_changequote(>>>`<<<, >>>'<<<)
                     
                 EXECUTE curstmt;
                 
-                select_max_id = select_max_id + answer.distinct_features;
-                
             ELSIF (answer.live > 0 and answer.is_cont_feature = 't') THEN
                 IF(verbosity > 0) THEN
                     RAISE INFO 'determine live for continuous';
@@ -2183,14 +2182,16 @@ m4_changequote(>>>`<<<, >>>'<<<)
                 FOR i IN 1..2 LOOP
                     temp_location = location;
                     temp_location[array_upper(temp_location,1)+1] = i;
-                    EXECUTE 'INSERT INTO tree_internal (tree_location, feature, probability, 
+                    EXECUTE 'INSERT INTO tree_internal (id, tree_location, feature, probability, 
                         maxclass, split_gain, live, parent_id) 
-                        VALUES(ARRAY['                          ||
+                        VALUES('				||
+			    nid					||
+			    ', ARRAY['                          ||
                             array_to_string(temp_location, ',') ||
                             '], 0, 1, 1, 1, 1, '                || 
                             answer.node_id                      ||
-                         ');';
-                    
+                      ');';
+                nid = nid + 1;
                 END LOOP;
 
                 SELECT MADLIB_SCHEMA.__format
@@ -2209,7 +2210,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                     ARRAY[
                         MADLIB_SCHEMA.__to_char(answer.split_value),
                         MADLIB_SCHEMA.__get_feature_name(answer.feature, training_table_meta),
-                        MADLIB_SCHEMA.__to_char(select_max_id),
+                        MADLIB_SCHEMA.__to_char(nid - 3),
                         training_table_name,
                         MADLIB_SCHEMA.__to_char(answer.node_id)
                     ]
@@ -2217,8 +2218,6 @@ m4_changequote(>>>`<<<, >>>'<<<)
                     INTO curstmt;
                     
                 EXECUTE curstmt;
-                               
-                select_max_id = select_max_id + 2;
             ELSE
                 -- answer.live = 0
                 -- process the min_percent_mode
@@ -2230,7 +2229,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
         END LOOP;
         
         -- Remove the nodes which contains no data
-        FOR selection_index IN assigned_nid..max_id  LOOP
+        FOR selection_index IN assigned_nid..(nid - 1)  LOOP
             IF (NOT selection_visit[selection_index - assigned_nid + 1]) THEN
                 IF (verbosity > 0) THEN
                     RAISE NOTICE '%, %', 'unneccesary node!', selection_index;
