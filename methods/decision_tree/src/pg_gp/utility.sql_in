@@ -297,111 +297,101 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Test if the specified table exists or not
- * @param schema_name   schema name of the table
- * @param table_name    the short table name without schema name
+ *
+ * @param full_table_name    The full table name
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__table_exists
-    (
-    schema_name  TEXT,
-    table_name   TEXT
-    );
-    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__table_exists
     (
-    schema_name  TEXT,
-    table_name   TEXT
+    full_table_name    TEXT
     ) 
 RETURNS BOOLEAN AS $$
 DECLARE
-    curstmt         TEXT := '';
-    result          INT := 0;
-    schema_name_c   TEXT := '';
-    table_name_c    TEXT := '';
+    --toid              OID;
+    table_name          TEXT;
+    temp                TEXT[];
+    len                 INT;
+    schema_names        TEXT[];
+    temp_schema         TEXT;
 BEGIN
-    PERFORM MADLIB_SCHEMA.__assert
-        (schema_name IS NOT NULL, 'Schema name must not be null!');
-        
-    PERFORM MADLIB_SCHEMA.__assert
-        (table_name IS NOT NULL, 'Table name must not be null!');
-    
-    IF (length(btrim(lower(schema_name), ' ')) = 0) THEN
-        schema_name_c = 'public';
-    ELSE
-        schema_name_c = schema_name;
+    IF (full_table_name IS NULL) THEN
+        RETURN 'f';
     END IF;
+
+    temp = string_to_array(full_table_name, '.');
+    len = array_upper(temp, 1);
     
-    table_name_c = btrim(lower(table_name), ' ');
+    IF (1 = len) THEN
+        -- get all schema names from search_path except the implicit schema 
+        schema_names = current_schemas('f');
+
+        -- add this session's temp schema to search path too
+        EXECUTE 'SELECT nspname FROM pg_catalog.pg_namespace 
+                 WHERE oid = pg_my_temp_schema() LIMIT 1'
+            INTO temp_schema;
+        schema_names[array_upper(schema_names, 1) + 1] = temp_schema;
+        
+        table_name = temp[1];
+    ELSE
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                len = 2, 
+                'wrong full table name<' || full_table_name || '>'
+            );
+        schema_names[1] = lower(btrim(temp[1]));
+        table_name = lower(btrim(temp[2], ' '));
+    END IF; 
+        
+    SELECT count(c.oid)
+    FROM   pg_catalog.pg_class c
+           LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE  c.relname = table_name
+      AND  n.nspname = any(schema_names)
+    INTO   len;
     
-    SELECT MADLIB_SCHEMA.__format('SELECT count(c.oid)
-        FROM pg_catalog.pg_class c
-        LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE btrim(c.relname, '' '') = ''%''
-        AND btrim(n.nspname, '' '') = ''%'';',
-        table_name_c,
-        schema_name_c
-        )
-        INTO curstmt;
-    
-    EXECUTE curstmt INTO result;
-    
-    RETURN result >= 1;
+    RETURN len >= 1;
 END
 $$ LANGUAGE PLPGSQL;
 
 
 /*
  * @brief Test if the specified column exists or not
- * @param schema_name   schema name of the table
- * @param table_name    the short table name without schema name
- * @param column_name   name of the column
+ *
+ * @param full_table_name    The full table name
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__column_exists
-    (
-    schema_name  TEXT,
-    table_name   TEXT,
-    column_name  TEXT
-    );
-    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__column_exists
     (
-    schema_name  TEXT,
-    table_name   TEXT,
-    column_name  TEXT
+    full_table_name   TEXT,
+    column_name       TEXT
     ) 
 RETURNS BOOLEAN AS $$
 DECLARE
     curstmt         TEXT := '';
-    result          INT := 0;
-    schema_name_c   TEXT := '';
-    table_name_c    TEXT := '';
+    result          INT  := 0;
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert
-        (schema_name IS NOT NULL, 'schema name must not be null!');
-
-    PERFORM MADLIB_SCHEMA.__assert
-        (table_name IS NOT NULL, 'table name must not be null!');
+        (
+            (full_table_name IS NOT NULL) AND (column_name IS NOT NULL), 
+            'the table name and column name must not be null'
+        );
                 
-    PERFORM MADLIB_SCHEMA.__assert
-        (column_name IS NOT NULL, 'column name must not be null!');
-        
-    IF (length(btrim(lower(schema_name), ' ')) = 0) THEN
-        schema_name_c = 'public';
-    ELSE
-        schema_name_c = schema_name;
-    END IF;
-    
-    table_name_c = btrim(lower(table_name), ' ');
-    
-    IF (MADLIB_SCHEMA.__table_exists(schema_name_c, table_name_c)) THEN
-        EXECUTE 'SELECT COUNT(*) 
+    IF (MADLIB_SCHEMA.__table_exists(full_table_name)) THEN
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT COUNT(*) 
                  FROM pg_catalog.pg_attribute 
                  WHERE attnum > 0 AND 
                        (NOT attisdropped) AND
-                       attname = ''' || column_name || ''' AND
-                       attrelid = ''' ||  schema_name_c || '.' || table_name_c || '''::regclass'
-        INTO result;
+                       attname = ''%'' AND
+                       attrelid = ''%''::regclass',
+                ARRAY[
+                    column_name,
+                    full_table_name
+                ]
+            ) INTO curstmt;
+            
+        EXECUTE curstmt INTO result;
         
         RETURN result >= 1;         
     END IF;
@@ -442,7 +432,7 @@ BEGIN
     
     PERFORM MADLIB_SCHEMA.__assert
         (
-        MADLIB_SCHEMA.__table_exists(schema_name, table_name) = existence, 
+        MADLIB_SCHEMA.__table_exists(schema_name||'.'||table_name) = existence, 
         err_msg
         );
 END
@@ -1656,9 +1646,7 @@ BEGIN
     
     PERFORM MADLIB_SCHEMA.__validate_input_table
         (
-            MADLIB_SCHEMA.__get_schema_name(input_table_name)   ||
-            '.'                                                 ||
-            MADLIB_SCHEMA.__strip_schema_name(input_table_name),
+            input_table_name,
             feature_names,
             id_column_name,
             class_column_name
@@ -1824,9 +1812,7 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__validate_input_table
         (
-            MADLIB_SCHEMA.__get_schema_name(input_table_name)   ||
-            '.'                                                 ||
-            MADLIB_SCHEMA.__strip_schema_name(input_table_name)
+            input_table_name
         );
                 
     SELECT MADLIB_SCHEMA.__format
@@ -2176,8 +2162,7 @@ BEGIN
     IF (
         NOT MADLIB_SCHEMA.__column_exists
                     (
-                    MADLIB_SCHEMA.__get_schema_name(input_table_name),
-                    MADLIB_SCHEMA.__strip_schema_name(input_table_name),
+                    input_table_name,
                     column_name
                     ) 
        ) THEN
