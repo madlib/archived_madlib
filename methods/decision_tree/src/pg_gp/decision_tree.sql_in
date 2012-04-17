@@ -695,7 +695,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                         ) AS t1
                     CROSS JOIN
                     (
-                        SELECT key FROM MADLIB_SCHEMA.%
+                        SELECT key FROM %
                     ) as t2
                 ) AS n1 
                 LEFT JOIN % n2   
@@ -779,7 +779,7 @@ BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
         'SELECT table_name 
-        FROM MADLIB_SCHEMA.% 
+        FROM % 
         WHERE column_type = ''c''',
         metatable_name
         )
@@ -790,7 +790,7 @@ BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
             'SELECT id, column_name, is_cont 
-            FROM MADLIB_SCHEMA.% 
+            FROM % 
             WHERE column_type = ''f'' ORDER BY id',
             metatable_name
         )
@@ -913,7 +913,7 @@ BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
         'SELECT table_name 
-        FROM MADLIB_SCHEMA.% 
+        FROM % 
         WHERE column_type = ''c''',
         metatable_name
         )
@@ -987,7 +987,7 @@ BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
             'SELECT id, column_name, is_cont 
-            FROM MADLIB_SCHEMA.% 
+            FROM % 
             WHERE column_type = ''f'' ORDER BY id',
             metatable_name
         )
@@ -1612,7 +1612,7 @@ BEGIN
         'SELECT COUNT(*) 
          FROM %
          WHERE % NOT IN
-            (SELECT % FROM MADLIB_SCHEMA.% WHERE % IS NOT NULL)',
+            (SELECT % FROM % WHERE % IS NOT NULL)',
         ARRAY[
             validation_table,
             class_col_name,
@@ -2369,7 +2369,11 @@ $$ LANGUAGE PLPGSQL;
  * @param id_col_name               Name of the column containing id of each point.
  * @param class_col_name            Name of the column containing correct class of each point.
  * @param confidence_level          A statistical confidence interval of the resubstitution error.
- * @param how2handle_missing_value The way to handle missing value. The valid value is 'explicit' or 'ignore'.
+ * @param how2handle_missing_value  The way to handle missing value. The valid value is 'explicit' or 'ignore'.
+ * @param target_schema_name        Name of the schema in which result tree table, encoded table, and other auxiliary tables (such as data info table,
+ *                                  key-value table, etc.) will be put. 
+ *                                  If the result tree table name contains schema name, then it must be the same with the target schema name.
+ *                                  Otherwise, the result tree table will be under the target schema.
  * @param max_num_iter              Max number of branches to follow (e.g. 2000)
  * @param max_tree_depth            Maximum decision tree depth 
  * @param min_percent_mode          Specifies the minimum number of cases required in a child node
@@ -2397,7 +2401,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     id_col_name                 TEXT, 
     class_col_name              TEXT, 
     confidence_level            FLOAT,
-    how2handle_missing_value    TEXT, 
+    how2handle_missing_value    TEXT,
+    target_schema_name          TEXT, 
     max_num_iter                INT, 
     max_tree_depth              INT, 
     min_percent_mode            FLOAT,
@@ -2414,6 +2419,7 @@ DECLARE
     training_encoded_table_name     TEXT;
     training_metatable_name         TEXT;
     h2hmv_routine_id                INT := 1;  
+    ts_name                         TEXT;
     ret                             MADLIB_SCHEMA.c45_train_result;
 BEGIN   
     exec_begin = clock_timestamp();
@@ -2422,7 +2428,7 @@ BEGIN
         -- get rid of the messages whose severity level is lower than 'WARNING'
         SET client_min_messages = WARNING;
     END IF;
-    
+
     PERFORM MADLIB_SCHEMA.__assert
         (
             (split_criterion IS NOT NULL)   AND
@@ -2488,16 +2494,51 @@ BEGIN
         );
 
     PERFORM MADLIB_SCHEMA.__assert
+        (
+            (target_schema_name IS NOT NULL) AND
+            (MADLIB_SCHEMA.__schema_exists(target_schema_name)),
+            'the specified target schema' || coalesce('<' || target_schema_name || '> does not exist', ' is NULL')
+        );
+    
+    ts_name = lower(btrim(target_schema_name, ' '));
+
+    PERFORM MADLIB_SCHEMA.__assert
             (
-                (result_tree_table_name IS NOT NULL) AND
-                (
-                 NOT MADLIB_SCHEMA.__table_exists
+                result_tree_table_name IS NOT NULL,
+                'the specified result tree table name is NULL'
+            );
+                    
+    -- extract the schema name from result tree table name
+    -- if there is no schema name in the tree table, then we will use the target schema name as
+    -- its schema. Otherwise, the schema name of tree table must be the same with target schema name
+    tree_table_name = btrim(split_part(result_tree_table_name, '.', 2), ' ');
+    IF (tree_table_name = '' OR tree_table_name IS NULL) THEN
+        tree_table_name     = btrim(result_tree_table_name, ' ');
+        tree_schema_name    = ts_name;
+    ELSE
+        tree_table_name     = MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name);
+        tree_schema_name    = MADLIB_SCHEMA.__get_schema_name(result_tree_table_name);
+    END IF;
+
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            tree_schema_name = ts_name,
+            'the schema name of result tree table must be the same with target schema name'
+        );
+            
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                NOT MADLIB_SCHEMA.__table_exists
                     (
-                        MADLIB_SCHEMA.__get_schema_name(result_tree_table_name),
-                        MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name)
+                        tree_schema_name,
+                        tree_table_name
                     )
-                ),
-                'the specified result tree table' || coalesce('<' || result_tree_table_name || '> exists', ' is NULL')
+                ,
+                'the specified result tree table<'  || 
+                tree_schema_name                    ||
+                '.'                                 ||
+                tree_table_name                     || 
+                '> exists' 
             );   
 
     -- the maximum length of an identifier 63
@@ -2508,12 +2549,12 @@ BEGIN
     PERFORM MADLIB_SCHEMA.__assert
         (
             length(
-                MADLIB_SCHEMA.__get_schema_name(result_tree_table_name) || 
-                '_'                                                     || 
-                MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name)) <= 58,
+                tree_schema_name      || 
+                '_'                   || 
+                tree_table_name) <= 58,
             'the maximum length of ''<tree table schema name>_<tree table name>'' is 58'
         );
-                    
+
     PERFORM MADLIB_SCHEMA.__assert
             (
                 (confidence_level IS NOT NULL)      AND 
@@ -2564,17 +2605,6 @@ BEGIN
     ELSE
         h2hmv_routine_id = 2;
     END IF;
-    
-    PERFORM MADLIB_SCHEMA.__insert_into_traininginfo
-                (
-                result_tree_table_name,
-                training_table_name,
-                null,
-                null,
-                validation_table_name,
-                how2handle_missing_value,
-                split_criterion
-                );
 
     cont_feature_col_names = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
     
@@ -2582,16 +2612,25 @@ BEGIN
         RAISE INFO 'continuous features:%', cont_feature_col_names;
     END IF;
     
-    tree_table_name = MADLIB_SCHEMA.__strip_schema_name(result_tree_table_name);
-    tree_schema_name = MADLIB_SCHEMA.__get_schema_name(result_tree_table_name);
-    
-    IF(verbosity > 0) THEN
-        RAISE INFO 'table name after strip schema:%',tree_table_name;
-    END IF;
-    
-    training_encoded_table_name = 'MADLIB_SCHEMA.' || tree_schema_name || '_' ||tree_table_name || '_ed';
-    training_metatable_name =  tree_schema_name || '_' || tree_table_name || '_di';
- 
+    -- the encoded table and meta table will be under the specified schema (target_schema_name) 
+    training_encoded_table_name = ts_name || '.' || tree_schema_name || '_' ||tree_table_name || '_ed';
+    training_metatable_name =  ts_name || '.' || tree_schema_name || '_' || tree_table_name || '_di';
+
+    -- add the schema name to the tree table name
+    tree_table_name = tree_schema_name || '.' || tree_table_name;
+            
+    PERFORM MADLIB_SCHEMA.__insert_into_traininginfo
+                (
+                tree_table_name,
+                training_table_name,
+                training_metatable_name,
+                training_encoded_table_name,
+                validation_table_name,
+                how2handle_missing_value,
+                split_criterion,
+                ts_name
+                );
+                 
     IF(verbosity > 0) THEN
         RAISE INFO 'Before encoding: %', clock_timestamp() - exec_begin;
     END IF; 
@@ -2608,13 +2647,6 @@ BEGIN
         h2hmv_routine_id,
         verbosity > 0
         );
-    
-    PERFORM  MADLIB_SCHEMA.__set_encode_and_metatable_name
-                ( 
-                result_tree_table_name, 
-                training_metatable_name,
-                training_encoded_table_name
-                );
                 
     IF(verbosity > 0) THEN
             RAISE INFO 'After encoding: %', clock_timestamp() - exec_begin;
@@ -2623,11 +2655,11 @@ BEGIN
 
     ret = MADLIB_SCHEMA.__train_tree
             (
-            split_criterion ,
-            training_encoded_table_name ,
+            split_criterion,
+            training_encoded_table_name,
             training_metatable_name,
-            result_tree_table_name ,
-            validation_table_name , 
+            tree_table_name,
+            validation_table_name, 
             'id', 
             'class', 
             confidence_level,
@@ -2647,69 +2679,6 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/**
- * @brief C45 train algorithm in short form.
- *
- * @param split_criterion_name This parameter specifies which split criterion
- * should be used for tree construction and pruning.
- * The valid values are infogain, gainratio, or gini.
- * @param training_table_name Name of the table/view with the source data
- * @param result_tree_table_name The name of the table where the resulting DT will be stored.
- *
- * @return
- * - <tt>training_set_size</tt> - Number of items in the training set
- * - <tt>tree_nodes</tt> - Number of nodes in the resulting tree
- * - <tt>cost_time</tt> - Time spent training the tree
- * - <tt>split_criterion</tt> - Split criterion used to build the tree.
- *
- * This will also create the output table with name specified via 'result_tree_table_name'.
- * The result table can be queried directly or displayed using c45_display.
- *
- * @note  
- * This calls the long form of C45 with the following default parameters:
- * - validation_table_name := NULL
- * - continuous_feature_names := NULL
- * - id_column_name := 'id'
- * - class_column_name := 'class'
- * - confidence_level = 25
- * - how2handle_missing_value = 'explicit'
- * - max_num_iter := 2000
- * - max_tree_deapth := 10
- * - min_percent_mode := 0.001
- * - min_percent_split := 0.01
- * - verbosity := false
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
-    (
-    split_criterion         TEXT,
-    training_table_name     TEXT, 
-    result_tree_table_name  TEXT
-    ) 
-RETURNS MADLIB_SCHEMA.c45_train_result AS $$
-DECLARE
-    ret MADLIB_SCHEMA.c45_train_result;
-BEGIN   
-    ret = MADLIB_SCHEMA.c45_train(
-        split_criterion,
-        training_table_name, 
-        result_tree_table_name,
-        null,
-        null,       
-        null,
-        'id',
-        'class',
-        25,
-        'explicit',
-        2000,
-        10,
-        0.001,
-        0.01,
-        0           
-    );
-    
-    RETURN ret;
-END
-$$ LANGUAGE PLPGSQL;
 
 /**
  * @brief C45 train algorithm in short form.
@@ -2738,6 +2707,7 @@ $$ LANGUAGE PLPGSQL;
  *
  * @note     
  * This calls the long form of C45 with the following default parameters:
+ * - target_schema_name := <schema name of result tree table> 
  * - max_num_iter := 2000
  * - max_tree_deapth := 10
  * - min_percent_mode := 0.001
@@ -2759,8 +2729,19 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     ) 
 RETURNS MADLIB_SCHEMA.c45_train_result AS $$
 DECLARE
-    ret MADLIB_SCHEMA.c45_train_result;
-BEGIN   
+    ret                 MADLIB_SCHEMA.c45_train_result;
+    tree_schema_name    TEXT;
+BEGIN
+    -- extract the schema name of result tree table
+    -- use it as the target schema name
+    tree_schema_name = MADLIB_SCHEMA.__get_schema_name(result_tree_table_name);
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            (tree_schema_name IS NOT NULL) AND
+            (MADLIB_SCHEMA.__schema_exists(tree_schema_name)),
+            'the schema name' || coalesce('<' || tree_schema_name || '> does not exist', ' is NULL')
+        );
+           
     ret = MADLIB_SCHEMA.c45_train
             (
             split_criterion,
@@ -2773,6 +2754,7 @@ BEGIN
             class_col_name , 
             confidence_level,
             how2handle_missing_value,
+            tree_schema_name,
             2000,
             10,
             0.001,
@@ -2782,6 +2764,68 @@ BEGIN
     RETURN ret;
 END
 $$ LANGUAGE PLPGSQL;
+
+
+/**
+ * @brief C45 train algorithm in short form.
+ *
+ * @param split_criterion_name This parameter specifies which split criterion
+ * should be used for tree construction and pruning.
+ * The valid values are infogain, gainratio, or gini.
+ * @param training_table_name Name of the table/view with the source data
+ * @param result_tree_table_name The name of the table where the resulting DT will be stored.
+ *
+ * @return
+ * - <tt>training_set_size</tt> - Number of items in the training set
+ * - <tt>tree_nodes</tt> - Number of nodes in the resulting tree
+ * - <tt>cost_time</tt> - Time spent training the tree
+ * - <tt>split_criterion</tt> - Split criterion used to build the tree.
+ *
+ * This will also create the output table with name specified via 'result_tree_table_name'.
+ * The result table can be queried directly or displayed using c45_display.
+ *
+ * @note  
+ * This calls the above short form of C45 with the following default parameters:
+ * - validation_table_name := NULL
+ * - continuous_feature_names := NULL
+ * - id_column_name := 'id'
+ * - class_column_name := 'class'
+ * - confidence_level := 25
+ * - how2handle_missing_value := 'explicit'
+ * - target_schema_name := <schema name of result tree table> 
+ * - max_num_iter := 2000
+ * - max_tree_deapth := 10
+ * - min_percent_mode := 0.001
+ * - min_percent_split := 0.01
+ * - verbosity := false
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
+    (
+    split_criterion         TEXT,
+    training_table_name     TEXT, 
+    result_tree_table_name  TEXT
+    ) 
+RETURNS MADLIB_SCHEMA.c45_train_result AS $$
+DECLARE
+    ret MADLIB_SCHEMA.c45_train_result;
+BEGIN   
+    ret = MADLIB_SCHEMA.c45_train(
+        split_criterion,
+        training_table_name, 
+        result_tree_table_name,
+        null,
+        null,       
+        null,
+        'id',
+        'class',
+        25,
+        'explicit'
+    );
+    
+    RETURN ret;
+END
+$$ LANGUAGE PLPGSQL;
+
 
 /**
  * @brief Display the trained decision tree model with rules.
@@ -2870,7 +2914,7 @@ BEGIN
         (
         'SELECT id, column_name, table_name, is_cont
          FROM 
-            MADLIB_SCHEMA.% n1
+            % n1
          WHERE id IN
             (SELECT DISTINCT feature
              FROM %
@@ -2904,7 +2948,7 @@ BEGIN
             SELECT MADLIB_SCHEMA.__format
                 (
                 'SELECT % as fid, key, ''% = ''::TEXT as fname, MADLIB_SCHEMA.__to_char(%) as fval
-                 FROM MADLIB_SCHEMA.%
+                 FROM %
                  WHERE key IS NOT NULL',
                 ARRAY[
                     MADLIB_SCHEMA.__to_char(rec.id),
@@ -2954,7 +2998,7 @@ BEGIN
             ) n1
             LEFT JOIN
             (SELECT % as class, key
-             FROM MADLIB_SCHEMA.% 
+             FROM % 
              WHERE key IS NOT NULL
             ) n2
             ON n1.maxclass = n2.key 
@@ -3229,8 +3273,6 @@ BEGIN
             );   
             
     metatable_name = MADLIB_SCHEMA.__get_metatable_name( tree_table );
-    -- We removed the schema when storing the metatable's name. 
-    metatable_name = 'MADLIB_SCHEMA.'||metatable_name;
  
     -- This table is used for tree display.
     -- It is filled with the original information before
@@ -3278,7 +3320,7 @@ BEGIN
     EXECUTE 'SELECT column_name,table_name FROM '||metatable_name||
             ' WHERE column_type=''c'' LIMIT 1;'
             INTO result_rec;
-    table_name = 'MADLIB_SCHEMA.'||result_rec.table_name;
+    table_name = result_rec.table_name;
     
     IF (table_name IS NOT NULL) THEN
         -- Convert back for the class column.
@@ -3311,7 +3353,6 @@ BEGIN
     FOR result_rec IN EXECUTE (curr_stmt) LOOP
         feature_name = result_rec.column_name;
         table_name = result_rec.table_name;
-        table_name = 'MADLIB_SCHEMA.'||table_name;
         SELECT MADLIB_SCHEMA.__format(
             'UPDATE auxiliary_tree_display n 
              SET curr_value = MADLIB_SCHEMA.__to_char(m.%) 
@@ -4098,7 +4139,6 @@ BEGIN
                 'the specified tree table' || coalesce('<' || result_tree_table_name || '> does not exists', ' is NULL')
             ); 
                                     
-                
     IF (MADLIB_SCHEMA.__table_exists('MADLIB_SCHEMA', 'training_info')) THEN
         metatable_name = MADLIB_SCHEMA.__get_metatable_name(result_tree_table_name);
         
