@@ -95,7 +95,7 @@ uint32_t
 OWATransitionState<AbstractionLayer::ArrayHandle<double> >::idxOfGroup(
     const Allocator&, uint16_t inValue) {
     
-    uint16_t pos = std::upper_bound(
+    uint16_t pos = std::lower_bound(
         groupValues, groupValues + numGroups, inValue) - groupValues;
 
     if (pos >= numGroups || groupValues[pos] != inValue) {
