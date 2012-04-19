@@ -1874,11 +1874,11 @@ BEGIN
                  SET lmc_nid = g.lmc_nid, lmc_fval = g.lmc_fval
                  FROM  
                     (
-                    SELECT DISTINCT ON(parent_id) parent_id,
-                           id as lmc_nid, 
-                           tree_location[array_upper(tree_location,1)] as lmc_fval
+                    SELECT parent_id,
+                           min(id) as lmc_nid, 
+                           min(tree_location[array_upper(tree_location,1)]) as lmc_fval
                     FROM %
-                    ORDER BY parent_id, id
+                    GROUP BY parent_id
                     ) g
                 WHERE k.id = g.parent_id',
                 ARRAY[
@@ -1955,7 +1955,7 @@ DECLARE
     ret                         MADLIB_SCHEMA.c45_train_result;
     selection_visit             BOOLEAN[];
     selection_index             INT := 1;
-    nid                   		INT := 1;
+    nid               		INT := 1;
     best_time_cmp               BOOLEAN := 'f';
 BEGIN   
     exec_begin = clock_timestamp();
@@ -2155,7 +2155,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                             '], 0, 1, 1, 1, 1, '                || 
                             answer.node_id                      ||
                           ');';
-		        nid = nid + 1;
+		    nid = nid + 1;
                 END LOOP;
                 
                 SELECT MADLIB_SCHEMA.__format
@@ -2190,8 +2190,8 @@ m4_changequote(>>>`<<<, >>>'<<<)
                             array_to_string(temp_location, ',') ||
                             '], 0, 1, 1, 1, 1, '                || 
                             answer.node_id                      ||
-                      ');';
-                nid = nid + 1;
+                         ');';
+                    nid = nid + 1;
                 END LOOP;
 
                 SELECT MADLIB_SCHEMA.__format
@@ -3358,8 +3358,6 @@ DECLARE
     ret                     TEXT := '';
     tree_location           INT[];
     feature                 INT;
-    lmc_nid                 INT;
-    lmc_fval                INT;
     maxclass                INT;
     cat_size                INT;
     is_feature_cont         BOOLEAN;
@@ -3370,6 +3368,7 @@ DECLARE
     max_child_nid           INT;
     probability             FLOAT;
     curstmt                 TEXT;
+    child_nid               INT;
 BEGIN
     IF (id IS NULL OR id <= 0) THEN
         RETURN ret;
@@ -3377,7 +3376,7 @@ BEGIN
 
     SELECT MADLIB_SCHEMA.__format
             (
-                'SELECT tree_location, feature, lmc_nid, lmc_fval,is_feature_cont, 
+                'SELECT tree_location, feature, is_feature_cont, 
                         split_value, maxclass,cat_size,probability
                  FROM %
                  WHERE id = %',
@@ -3388,7 +3387,7 @@ BEGIN
              )
     INTO curstmt;
     
-    EXECUTE curstmt INTO tree_location, feature, lmc_nid, lmc_fval, is_feature_cont, 
+    EXECUTE curstmt INTO tree_location, feature, is_feature_cont, 
                          temp_split_value, maxclass, cat_size, probability;  
 
     curr_value = tree_location[array_upper(tree_location,1)];
@@ -3437,38 +3436,30 @@ BEGIN
         RETURN ret;
     END IF;
     
-    SELECT MADLIB_SCHEMA.__format
-            (
-                'SELECT DISTINCT ON(parent_id) id
-                 FROM %
-                 WHERE parent_id = %
-                 ORDER BY parent_id, id desc',
-                ARRAY[
-                    tree_table,
-                    MADLIB_SCHEMA.__to_char(id)
-                    ]
-            )
-    INTO curstmt;   
-    EXECUTE curstmt INTO max_child_nid;
+    curstmt = MADLIB_SCHEMA.__format
+                (
+                    'SELECT id
+                     FROM %
+                     WHERE parent_id = % AND tid=%
+                     ORDER BY id',
+                    ARRAY[
+                        tree_table,
+                        MADLIB_SCHEMA.__to_char(id),
+                        MADLIB_SCHEMA.__to_char(tree_id)
+                        ]
+                );
     
-    -- if current node has children, then recursively display
-    node_count = 1;
-    WHILE (lmc_nid IS NOT NULL) AND (0 < node_count AND lmc_nid <= max_child_nid) LOOP
+    FOR child_nid IN EXECUTE curstmt LOOP
         ret = ret || MADLIB_SCHEMA.__display_tree_no_ordered_aggr(
-                            tree_table, 
-                            lmc_nid, 
-                            feature, 
-                            depth + 1, 
-                            is_feature_cont, 
-                            temp_split_value, 
-                            metatable_name,
-                            max_depth);
-                                    
-        lmc_nid = lmc_nid + 1;
-        
-        EXECUTE ' SELECT COUNT(id) FROM ' || tree_table ||
-                ' WHERE id = ' || lmc_nid || ' AND parent_id = ' || id
-                INTO node_count;        
+                        tree_table, 
+                        child_nid, 
+                        feature, 
+                        depth + 1, 
+                        is_feature_cont, 
+                        temp_split_value, 
+                        metatable_name,
+                        max_depth,
+                        tree_id);    
     END LOOP;
 
     RETURN ret;
