@@ -11,7 +11,7 @@ m4_ifelse(
 
 /*
  * @brief cast any value to text
- * @param val   a value with any specific type
+ * @param val a value with any specific type
  *
  * @note Greenplum doesn't support boolean to text casting
  */
@@ -22,13 +22,13 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__to_char
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
     (
     val anyelement
-    ) 
+    )
 RETURNS TEXT AS $$
 DECLARE
-    is_bool    BOOLEAN;
+    is_bool BOOLEAN;
 BEGIN
     IF (val is NULL) THEN
-        return null::text;
+        return 'null'::text;
     END IF;
     SELECT pg_typeof(val) = 'boolean'::regtype INTO is_bool;
     IF (is_bool) THEN
@@ -46,83 +46,66 @@ $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief Format a string with the value in allvalues array
- * @param format_str the format string
- * @param allvalues the specified elements in format_str
+ * @brief Cast regclass to text. we will not create a cast, 
+ *        since it may override the existing cast. 
+ *        
+ * @param rc	The regclass of the table
  *
- * @note All the char ('%') in format_str will be replaced with allvalues
- *       The number of '%' should be equal with the length of array allvalues
+ * @return The text representation for the regclass
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__format
+CREATE or replace FUNCTION MADLIB_SCHEMA.__regclass_to_text
     (
-    format_str  TEXT, 
-    allvalues   TEXT[]
-    );
-    
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
-    (
-    format_str  TEXT, 
-    allvalues   TEXT[]
+    rc regclass
     ) 
-RETURNS TEXT AS $$
-DECLARE
-    stmt        TEXT := '';
-    parts       TEXT[];
-    idx         INT := 1;
-    curpart     TEXT;
-    curvalue    TEXT;
-BEGIN
-    SELECT regexp_split_to_array(format_str, '%') INTO parts;
-    
-    LOOP
-        curpart = parts[idx];
-        curValue = allvalues[idx];
-        IF (curpart IS NULL OR curValue IS NULL ) THEN
-            EXIT;
-        END IF;
-        
-        stmt = stmt || curpart || curValue;
-        idx = idx + 1;
-    END LOOP;
-    
-    IF (curpart IS NOT NULL) THEN
-        stmt = stmt || curpart;
-    END IF;
-    RETURN stmt;
+RETURNS TEXT                          
+AS $$  
+BEGIN                
+   RETURN rc;
 END
 $$ LANGUAGE PLPGSQL;
 
 /*
- * @brief Short form to format a string with four parameters
- * @param value1 The first value
- * @param value2 The second value
- * @param value3 The third value
- * @param value4 The fouth value
-    
- * @note All the char ('%') in format_str will be replaced with allvalues
+ * @brief Format a string with the value in args array.
+ *
+ * @param fmt   The format string
+ * @param args  The specified elements in format string
+ *
+ * @note Each '%' in fmt will be replaced with the corresponding value of args.
+ *       The number of '%'s should equal to the length of array args.
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__format
-    (
-    format_str  TEXT, 
-    value1      TEXT, 
-    value2      TEXT, 
-    value3      TEXT,
-    value4      TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     (
-    format_str  TEXT, 
-    value1      TEXT, 
-    value2      TEXT, 
-    value3      TEXT,
-    value4      TEXT
+    fmt     TEXT, 
+    args    TEXT[]
+    ) 
+RETURNS TEXT
+AS 'MODULE_PATHNAME', 'dt_text_format'
+LANGUAGE C IMMUTABLE;
+
+
+/*
+ * @brief Short form to format a string with four parameters
+ *
+ * @param arg1  The first argument
+ * @param arg2  The second argument
+ * @param arg3  The third argument
+ * @param arg4  The fouth argument
+ *   
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
+    (
+    fmt       TEXT, 
+    arg1      TEXT, 
+    arg2      TEXT, 
+    arg3      TEXT,
+    arg4      TEXT
     )
 RETURNS TEXT AS $$
 DECLARE
     stmt TEXT := '';
 BEGIN
-    SELECT MADLIB_SCHEMA.__format(format_str, ARRAY[value1, value2, value3, value4]) INTO stmt;
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2, arg3, arg4]) INTO stmt;
     RETURN stmt;
 END
 $$ LANGUAGE PLPGSQL;
@@ -130,32 +113,24 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Short form to format a string with three parameters
- * @param value1 The first value
- * @param value2 The second value
- * @param value3 The third value
  *
- * @note All the char ('%') in format_str will be replaced with allvalues
+ * @param arg1  The first argument
+ * @param arg2  The second argument
+ * @param arg3  The third argument
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__format
-    (
-    format_str  TEXT, 
-    value1      TEXT, 
-    value2      TEXT, 
-    value3      TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     (
-    format_str  TEXT, 
-    value1      TEXT, 
-    value2      TEXT, 
-    value3      TEXT
+    fmt         TEXT, 
+    arg1        TEXT, 
+    arg2        TEXT, 
+    arg3        TEXT
 )
 RETURNS TEXT AS $$
 DECLARE
     stmt TEXT := '';
 BEGIN
-    SELECT MADLIB_SCHEMA.__format(format_str, ARRAY[value1, value2, value3]) INTO stmt;
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2, arg3]) INTO stmt;
     RETURN stmt;
 END
 $$ LANGUAGE PLPGSQL;
@@ -163,29 +138,22 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Short form to format a string with two parameters
- * @param value1 The first value
- * @param value2 The second value
  *
- * @note All the char ('%') in format_str will be replaced with allvalues
+ * @param arg1  The first argument
+ * @param arg2  The second argument
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__format
-    (
-    format_str  TEXT, 
-    value1      TEXT, 
-    value2      TEXT
-    );
-    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     (
-    format_str  TEXT, 
-    value1      TEXT, 
-    value2      TEXT
+    fmt         TEXT, 
+    arg1        TEXT, 
+    arg2        TEXT
     )
 RETURNS TEXT AS $$
 DECLARE
     stmt TEXT := '';
 BEGIN
-    SELECT MADLIB_SCHEMA.__format(format_str, ARRAY[value1, value2]) INTO stmt;
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2]) INTO stmt;
     RETURN stmt;
 END
 $$ LANGUAGE PLPGSQL;
@@ -193,95 +161,32 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Short form to format a string with a parameter
- * @param value1 The first value
  *
- * @note All the char ('%') in format_str will be replaced with allvalues
+ * @param arg1  The first argument
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__format
-    (
-    format_str  TEXT, 
-    value1      TEXT
-    );
-    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     (
-    format_str  TEXT, 
-    value1      TEXT
+    fmt         TEXT, 
+    arg1        TEXT
     )
 RETURNS TEXT AS $$
 DECLARE
     stmt TEXT := '';
 BEGIN
-    SELECT MADLIB_SCHEMA.__format(format_str, ARRAY[value1]) INTO stmt;
+    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1]) INTO stmt;
     RETURN stmt;
 END
 $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief   Format a string with the value in allvalues array
- *          All the char ('%') in format_str will be replaced with allvalues
- *          If a element in quotes is t, then the value in allvalues will be quoted.
- *          Such as, allvalues: ['1', '2'], and quotes: ['f', 't']
- *          then allvalues will be change to [''1'', ''2''] 
+ * @brief Raise exception if the condition is false
  *
- * @param format_str the format string
- * @param allvalues the specified elements in format_str
- * @param quotes specify which string in the array should add quote
+ * @param condition     The assert condition
+ * @param reason        The reason string displayed when assert failure
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__format
-    (
-    format_str      TEXT, 
-    allvalues       TEXT[], 
-    quotes          BOOLEAN[]
-    );
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
-    (
-    format_str      TEXT, 
-    allvalues       TEXT[], 
-    quotes          BOOLEAN[]
-    ) 
-RETURNS TEXT AS $$
-DECLARE
-    stmt            TEXT := '';
-    temp_allvalues  TEXT[];
-    idx             INT := 1;
-    quote           TEXT;
-BEGIN
-    LOOP
-        quote = quotes[idx];
-        IF (quote IS NULL) THEN
-            EXIT;
-        END IF;
-        stmt = allvalues[idx];
-        IF (quote) THEN
-            SELECT quote_literal( allvalues[idx] ) INTO stmt;
-        END IF;
-        
-        temp_allvalues[idx] = stmt;
-        idx = idx + 1;
-    END LOOP;
-    
-    SELECT MADLIB_SCHEMA.__format(format_str, temp_allvalues) INTO stmt;
-    
-    RETURN stmt;
-END
-$$ LANGUAGE PLPGSQL;
-
-
-/*
- * @brief assert function
- * @param condition the assert condition
- * @param reason the reason string, which will be display when assert failure
- *
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__assert
-    (
-    condition   BOOLEAN,
-    reason      TEXT
-    );
-    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__assert
     (
     condition   BOOLEAN,
@@ -295,6 +200,7 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Test if the specified table exists or not
  *
@@ -305,9 +211,10 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__table_exists
     (
     full_table_name    TEXT
     ) 
-RETURNS BOOLEAN AS
-'MODULE_PATHNAME', 'table_exists'
+RETURNS BOOLEAN AS 
+'MODULE_PATHNAME', 'table_exists' 
 LANGUAGE C IMMUTABLE;
+
 
 /*
  * @brief Test if the specified column exists or not
@@ -327,14 +234,14 @@ DECLARE
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert
         (
-            (full_table_name IS NOT NULL) AND (column_name IS NOT NULL),
+            (full_table_name IS NOT NULL) AND (column_name IS NOT NULL), 
             'the table name and column name must not be null'
         );
                 
     IF (MADLIB_SCHEMA.__table_exists(full_table_name)) THEN
         SELECT MADLIB_SCHEMA.__format
             (
-                'SELECT COUNT(*)
+                'SELECT COUNT(*) 
                  FROM pg_catalog.pg_attribute 
                  WHERE attnum > 0 AND 
                        (NOT attisdropped) AND
@@ -345,7 +252,7 @@ BEGIN
                     full_table_name
                 ]
             ) INTO curstmt;
-
+            
         EXECUTE curstmt INTO result;
         
         RETURN result >= 1;         
@@ -356,39 +263,32 @@ END
 $$ LANGUAGE PLPGSQL;
 
 /*
- * @brief assert if the specified table under the specified schema exists or not
- * @param schema_name schema name of the table
- * @param table_name the short table name without schema name
- * @param existence ture if assert table exists, otherwise false
+ * @brief assert if the specified table exists or not
+ *
+ * @param full_table_name   The full table name
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__assert
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__assert_table
     (
-    schema_name     TEXT,
-    table_name      TEXT,
-    existence       BOOLEAN
-    );
-    
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__assert
-    (
-    schema_name     TEXT,
-    table_name      TEXT,
-    existence       BOOLEAN
+    full_table_name      TEXT,
+    existence            BOOLEAN
     ) 
 RETURNS void AS $$
 DECLARE
     err_msg     TEXT;
 BEGIN
     IF (existence) THEN
-        err_msg = 'assertion failure. Table: ''' || table_name || ''' does not exist';
+        err_msg = 'assertion failure. Table: ''' || full_table_name || 
+                  ''' does not exist';
     ELSE
-        err_msg = 'assertion failure. Table: ''' || table_name || ''' already exists';
+        err_msg = 'assertion failure. Table: ''' || full_table_name || 
+                  ''' already exists';
     END IF;
     
     PERFORM MADLIB_SCHEMA.__assert
         (
-        MADLIB_SCHEMA.__table_exists(schema_name||'.'||table_name) = existence,
-        err_msg
+            MADLIB_SCHEMA.__table_exists(full_table_name) = existence, 
+            err_msg
         );
 END
 $$ LANGUAGE PLPGSQL;
@@ -399,26 +299,29 @@ $$ LANGUAGE PLPGSQL;
 DROP TABLE IF EXISTS MADLIB_SCHEMA.training_info;
 CREATE TABLE MADLIB_SCHEMA.training_info
     (
-    tree_table_name TEXT        NOT NULL,
-    training_table_name         TEXT,
-    training_metatable_name     TEXT,
-    training_encoded_table_name TEXT,
-    validation_table_name       TEXT,
+    classifier_name             TEXT NOT NULL,
+    result_table_oid            OID NOT NULL,
+    training_table_oid          OID,
+    training_metatable_oid      OID,
+    training_encoded_table_oid  OID,
+    validation_table_oid        OID,
     how2handle_missing_value    TEXT,
     split_criterion             TEXT,
-    PRIMARY KEY (tree_table_name)
-    ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (tree_table_name)');
-GRANT ALL PRIVILEGES ON MADLIB_SCHEMA.training_info TO PUBLIC;
+    sampling_percentage         FLOAT,
+    num_feature_chosen          INT,
+    num_trees                   INT,
+    PRIMARY KEY (result_table_oid)
+    ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (result_table_oid)');
+GRANT SELECT, INSERT, UPDATE, DELETE ON MADLIB_SCHEMA.training_info TO PUBLIC;
 
 /*
- * @brief get the meta table name by the tree table name
- * @param tree_table tree table name
+ * Get the meta table name by the tree table name 
  *
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_metatable_name
-    (
-    tree_table TEXT 
-    );            
+ * Parameters:
+ *      tree_table:         The full name of the tree table
+ * Returns:
+ *      The full name of the metatable
+ */      
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_metatable_name
     (
     tree_table TEXT 
@@ -428,38 +331,34 @@ DECLARE
     metatable_name TEXT := '';
 BEGIN
 
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__assert_table
             (
-                MADLIB_SCHEMA.__get_schema_name(tree_table),
-                MADLIB_SCHEMA.__strip_schema_name(tree_table),
-                't'
+                tree_table::TEXT,
+                't'::BOOL
             );     
     
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__assert_table
             (
-                'MADLIB_SCHEMA',
-                'training_info',
-                't'
+                'MADLIB_SCHEMA.training_info'::TEXT,
+                't'::BOOL
             ); 
             
-    SELECT training_metatable_name 
+    SELECT MADLIB_SCHEMA.__regclass_to_text(training_metatable_oid) 
     FROM MADLIB_SCHEMA.training_info 
-    WHERE tree_table_name = tree_table 
+    WHERE result_table_oid = tree_table::regclass 
     INTO metatable_name;
     
     RETURN metatable_name;
-end
+END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
- * @brief get the class table name by the metatable name
- * @param metatable_name name of metatable
+ * @brief Get the class table name by the metatable name
  *
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_classtable_name
-    (
-    metatable_name TEXT 
-    );            
+ * @param metatable_name The full name of the metatable
+ *
+ */  
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_classtable_name
     (
     metatable_name TEXT 
@@ -469,15 +368,15 @@ DECLARE
     classtable_name TEXT;
 BEGIN
 
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__assert_table
             (
-                'MADLIB_SCHEMA',
                 metatable_name,
                 't'
             ); 
             
-    EXECUTE ' SELECT table_name 
-              FROM MADLIB_SCHEMA.' || metatable_name ||
+    EXECUTE ' SELECT MADLIB_SCHEMA.__regclass_to_text
+                (table_oid) as table_name 
+              FROM ' || metatable_name ||
             ' WHERE column_type = ''c'';'  
     INTO classtable_name;
     
@@ -486,16 +385,14 @@ end
 $$ LANGUAGE PLPGSQL;
 
 /*
- * @brief get the encoding table name by tree table name
- * @param tree_table tree table name
- * 
- * @return the encoding table name
- *  
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_encode_table_name
-    (
-    tree_table TEXT 
-    );            
+ * Get the encoding table name by tree table name 
+ *
+ * Parameters:
+ *      tree_table:         The full name of the tree table
+ *
+ * Returns:
+ *      The full name of the encoded table
+ */  
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_encode_table_name
     (
     tree_table TEXT 
@@ -504,26 +401,25 @@ RETURNS TEXT AS $$
 DECLARE
     encoded_table_name TEXT := '';
 BEGIN
-    SELECT training_encoded_table_name 
+    SELECT MADLIB_SCHEMA.__regclass_to_text(training_encoded_table_oid) 
     FROM MADLIB_SCHEMA.training_info
-    WHERE tree_table_name = tree_table 
+    WHERE result_table_oid = tree_table::regclass 
     INTO encoded_table_name;
     
     RETURN encoded_table_name;
-end
+END
 $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief get the unknown values processing routine id 
- * @param tree_table tree table name         
- *  
- * @note currently, we support 'explicit' and 'ignore'
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_routine_id
-    (
-    tree_table TEXT 
-    );            
+ * Get the unknown values processing routine id 
+ *
+ * Parameters:
+ *      tree_table:         The full name of the tree table
+ *
+ * Returns:
+ *      The encoded missing value processing routine id
+ */     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_routine_id
     (
     tree_table TEXT 
@@ -532,17 +428,15 @@ RETURNS INT AS $$
 DECLARE
     name TEXT;
 BEGIN
-    
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__assert_table
     (
-        'MADLIB_SCHEMA',
-        'training_info',
+        'MADLIB_SCHEMA.training_info',
         't'
     );
         
     SELECT how2handle_missing_value 
     FROM   MADLIB_SCHEMA.training_info 
-    WHERE  tree_table_name = tree_table 
+    WHERE  result_table_oid = tree_table::regclass 
     INTO   name;
         
     IF (name = 'ignore') THEN
@@ -553,249 +447,214 @@ BEGIN
         RAISE EXCEPTION '__get_routine_id: %', name; 
     END IF;
     
-end
-$$ LANGUAGE PLPGSQL;
-
-
-/*
- * @brief get the feature column's name
- * @param tree_table tree table name         
- *  
- * @return the name of feature column
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_feature_column_name
-    (
-    tree_table TEXT
-    );            
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_column_name
-    (
-    tree_table TEXT
-    ) 
-RETURNS TEXT AS $$
-DECLARE
-    feature_name TEXT;
-BEGIN
-    SELECT feature_col_names 
-    FROM   MADLIB_SCHEMA.training_info 
-    WHERE  tree_table_name = tree_table 
-    INTO   feature_name;
-        
-    RETURN feature_name;
-end
+END
 $$ LANGUAGE PLPGSQL;
 
 /*
- * @brief Remove the trained tree from training info table 
- * @param tree_table tree table name 
- *  
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__delete_traininginfo
-    (
-    tree_table TEXT 
-    );            
+ * Remove the trained tree from training info table 
+ *
+ * Parameters:
+ *      tree_table:  The name of the tree table
+ */      
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__delete_traininginfo
     (
     tree_table TEXT 
     ) 
 RETURNS void AS $$
 BEGIN
-    DELETE FROM MADLIB_SCHEMA.training_info WHERE tree_table_name = tree_table;
+    DELETE FROM MADLIB_SCHEMA.training_info 
+    WHERE result_table_oid = tree_table::regclass;
 end
 $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief insert the trained tree into training info table 
- * @param result_tree_table_name        tree table name
- * @param training_table_name           training table name
- * @param training_metatable_name       name of training data table
- * @param training_encoded_table_name   name of encoding table 
- * @param validation_table_name         validation table name
- * @param how2handle_missing_value      the routine to process unknown values
- * @param split_criterion               the name of split criterion
+ * Insert the trained tree into training info table 
  *
- * @note 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__insert_into_traininginfo
-    (
-    result_tree_table_name      TEXT,
-    training_table_name         TEXT,
-    training_metatable_name     TEXT,
-    training_encoded_table_name TEXT,
-    validation_table_name       TEXT,
-    how2handle_missing_value    TEXT,
-    split_criterion             TEXT  
-    );
-               
+ * Parameters:
+ *      classifier_table_name:         The name of the classifier
+ *      result_table_name:             The full name of the training result table
+ *      training_table_name:           The full name of the training table
+ *      training_metatable_name:       The full name of metatable
+ *      training_encoded_table_name:   The full name of the encoded table 
+ *      validation_table_name:         The full name of the validation table
+ *      how2handle_missing_value:      The name of the routine to process unknown values
+ *      split_criterion:               The name of split criterion
+ *      sampling_percentage:           The percentage of bootstrap samples size in 
+ *                                     training dataset
+ *      num_features_chosen:           The number of features to split on each tree
+ *                                     node 
+ *      num_trees:                     The number of trees after completed the 
+ *                                     training process 
+ */ 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__insert_into_traininginfo
     (
-    result_tree_table_name      TEXT,
+    classifier_table_name       TEXT,
+    result_table_name           TEXT,
     training_table_name         TEXT,
     training_metatable_name     TEXT,
     training_encoded_table_name TEXT,
     validation_table_name       TEXT,
     how2handle_missing_value    TEXT,
-    split_criterion             TEXT  
+    split_criterion             TEXT,
+    sampling_percentage         FLOAT,
+    num_features_chosen         INT,
+    num_trees                   INT
     )
 RETURNS void AS $$
 BEGIN
     INSERT INTO MADLIB_SCHEMA.training_info VALUES
-                        (
-                        result_tree_table_name,
-                        training_table_name,
-                        training_metatable_name,
-                        training_encoded_table_name,
-                        validation_table_name,
-                        how2handle_missing_value,
-                        split_criterion
-                        );
-end
-$$ LANGUAGE PLPGSQL;
-
-
-/*
- * @brief  set the encoding table name and training data table name 
- *         in the training info table
- * @param result_tree_table_name tree table name
- * @param metatable_name name of training data table
- * @param encoded_table_name name of encoded table 
- *  
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__set_encode_and_metatable_name
-    (
-    result_tree_table_name  TEXT,
-    metatable_name          TEXT,
-    encoded_table_name      TEXT
-    );        
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__set_encode_and_metatable_name
-    (
-    result_tree_table_name  TEXT,
-    metatable_name          TEXT,
-    encoded_table_name      TEXT
-    ) 
-RETURNS void AS $$
-BEGIN
-    UPDATE MADLIB_SCHEMA.training_info 
-    SET training_metatable_name = metatable_name,
-        training_encoded_table_name = encoded_table_name 
-    WHERE tree_table_name = result_tree_table_name;
-end
-$$ LANGUAGE PLPGSQL;
-
-
-/*
- * @brief  Strip the schema name from the full name 
- * @param full_name the full name of table (with schema name)
- * @note 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__strip_schema_name
-    (
-    full_name TEXT
-    ) ;          
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__strip_schema_name
-    (
-    full_name TEXT
-    ) 
-RETURNS TEXT AS $$
-DECLARE
-    str_val TEXT;
-BEGIN
-    str_val = trim(both ' ' FROM split_part(full_name, '.', 2));
-
-    IF( str_val is null or str_val = '' ) THEN
-        str_val = trim(both ' ' FROM full_name);
-    END IF;
-    RETURN str_val;
-end
+        (
+            classifier_table_name,
+            result_table_name::regclass,
+            training_table_name::regclass,
+            training_metatable_name::regclass,
+            training_encoded_table_name::regclass,
+            validation_table_name::regclass,
+            how2handle_missing_value,
+            split_criterion,
+            sampling_percentage,
+            num_features_chosen,
+            num_trees
+        );
+END
 $$ LANGUAGE PLPGSQL;
 
 /*
- * @brief get the schema name from a full database object name
- * @param full_name the fullname of a database object
+ * @brief  Strip the schema name from the full table name 
+ *
+ * @param full_table_name     The full table name 
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_schema_name
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__strip_schema_name
     (
-    full_name TEXT
-    ) ;          
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_schema_name
-    (
-    full_name TEXT
+    full_table_name TEXT
     ) 
 RETURNS TEXT AS $$
 DECLARE
     str_val TEXT;
-    ret_val TEXT;
 BEGIN
-    str_val = btrim(split_part(full_name, '.', 2), ' ');
+    str_val = trim(both ' ' FROM split_part(full_table_name, '.', 2));
 
     IF( str_val is null or str_val = '' ) THEN
-        ret_val = 'public';
-    ELSE
-        ret_val = btrim(split_part(full_name, '.', 1), ' ');
+        str_val = trim(both ' ' FROM full_table_name);
     END IF;
-    RETURN ret_val;
+    RETURN lower(str_val);
+end
+$$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Get the schema name from a full table name
+ *        if there is no schema name in the full table name, then
+ *        if the table exists, we return the schema name from catalog
+ *        else the current schema name,
+ *        else return the schema name from the full table name directly
+ *
+ * @param full_table_name   The full table name
+ *
+ */       
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_schema_name
+    (
+    full_table_name TEXT
+    ) 
+RETURNS TEXT AS $$
+DECLARE
+    table_name          TEXT;
+    temp                TEXT[];
+    len                 INT;
+    curstmt             TEXT;
+    schema_name         TEXT;
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert
+        (
+            full_table_name IS NOT NULL, 
+            'table name should not be null'
+        );
+
+    temp = string_to_array(full_table_name, '.');
+    len = array_upper(temp, 1);
+
+    IF (1 = len) THEN
+        -- if table exists, return the schema name from catalog
+        IF (MADLIB_SCHEMA.__table_exists(full_table_name)) THEN
+            SELECT nspname 
+            FROM pg_catalog.pg_namespace n
+            WHERE n.oid = 
+             (
+                 SELECT relnamespace FROM pg_catalog.pg_class
+                 WHERE oid= full_table_name::regclass
+             )
+                         
+            INTO schema_name; 
+        ELSE
+            -- get the current schema name
+            schema_name = current_schema();
+        END IF;
+    ELSE
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                len = 2, 
+                'wrong full table name<' || full_table_name || '>'
+            );
+        -- get the shema name directly 
+        schema_name = lower(btrim(temp[1], ' '));    
+    END IF;
+    
+    RETURN schema_name;
 end
 $$ LANGUAGE PLPGSQL;
 
 
 /*
  * @brief Drop the metatable and all the KV tables
- * @param table_name the metatable name
  *
- * @note MADLIB_SCHEMA will be added to the table_name automatically
+ * @param metatable_name    The full name of the metatable
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__drop_metatable
-    (
-    table_name TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__drop_metatable 
     (
-    table_name TEXT
+    metatable_name TEXT
     )
 RETURNS void AS $$
 DECLARE
     curstmt TEXT;
     name    TEXT;
 BEGIN
-    IF ( table_name is NULL ) THEN
+    IF (metatable_name is NULL ) THEN
         RETURN;
     END IF;
     
-    PERFORM MADLIB_SCHEMA.__assert('MADLIB_SCHEMA', table_name, 't');
+    PERFORM MADLIB_SCHEMA.__assert_table(metatable_name, 't');
     
     SELECT MADLIB_SCHEMA.__format
             (
-            'SELECT table_name FROM MADLIB_SCHEMA.% 
-            WHERE table_name IS NOT NULL AND length(trim(table_name, '' '')) > 1',
-            table_name
-            ) 
-    INTO curstmt;
+            'SELECT MADLIB_SCHEMA.__regclass_to_text
+                (table_oid) as table_name 
+             FROM % 
+             WHERE table_oid IS NOT NULL',
+             metatable_name
+            ) INTO curstmt;
         
     FOR name IN EXECUTE curstmt LOOP
-        PERFORM MADLIB_SCHEMA.__assert('MADLIB_SCHEMA', name, 't');
-        EXECUTE 'DROP TABLE MADLIB_SCHEMA.' || name || ' CASCADE;';
+        PERFORM MADLIB_SCHEMA.__assert_table(name, 't');
+        EXECUTE 'DROP TABLE ' || name || ' CASCADE;';
     END LOOP;
     
-    EXECUTE 'DROP TABLE MADLIB_SCHEMA.' || table_name || ' CASCADE;';
+    EXECUTE 'DROP TABLE ' || metatable_name || ' CASCADE;';
 end
 $$ LANGUAGE PLPGSQL;
 
 
 /*
  * @brief Create the metatable 
- * @param table_name the metatable name  
+ *
+ * @param metatable_name    The full name of the metatable
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__create_metatable
-    (
-    table_name TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_metatable 
     (
-    table_name TEXT
+    metatable_name TEXT
     )
 RETURNS void AS $$
 DECLARE
@@ -805,20 +664,23 @@ BEGIN
     -- the maximum length of an identifier is 63
     PERFORM MADLIB_SCHEMA.__assert
         (
-            length(MADLIB_SCHEMA.__strip_schema_name(table_name)) <= 63, 
-            'The maximum length of ' || table_name || ' is 63'
+            length(MADLIB_SCHEMA.__strip_schema_name(metatable_name)) <= 63, 
+            'The maximum length of '                            ||
+             MADLIB_SCHEMA.__strip_schema_name(metatable_name)  || 
+             ' is 63'
         );
         
     -- must not be existence
-    PERFORM MADLIB_SCHEMA.__assert('MADLIB_SCHEMA', table_name, 'f');
+    PERFORM MADLIB_SCHEMA.__assert_table(metatable_name, 'f');
+    
     -- 'f' for feature, 'c' for class, 'i' for id
     -- 't' for continuous value, 'f' for discrete value
-    EXECUTE 'CREATE TABLE MADLIB_SCHEMA.'|| table_name || E'(
+    EXECUTE 'CREATE TABLE '|| metatable_name || E'(
         id SERIAL,
         column_name TEXT,
         column_type CHAR,    
         is_cont BOOLEAN,     
-        table_name TEXT,
+        table_oid OID,
         num_dist_value INT
     ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');';
     
@@ -827,27 +689,21 @@ $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief Insert a record to the meta data table
- * @param metatable_name name of meta table
- * @param column_name name of the column
- * @param column_type the type of column
- *        'i' means id, 'c' means class, 'f' means feature
- * @param is_cont ture if the column is continuous 
- * @param table_name the key-value table name for the specified column
- * @param num_dist_value the number of distinct values for the specified column
+ * @brief Insert a record to the metatable
+ *        A row in the metatable represents a column's information
+ *
+ * @param metatable_name 	The full name of the metatable
+ * @param column_name 		The name of the column
+ * @param column_type 		The type of the column
+ *        			        'i' means id, 'c' means class, 'f' means feature
+ * @param is_cont 		    True if the column is continuous 
+ * @param table_name 		The full name of key-value table for the column
+ *                   		The OID of this table will be stored
+ * @param num_dist_value 	The number of distinct values for the column
  *
  * @note  num_dist_value includes the null value
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__insert_into_metatable
-    (
-    metatable_name      TEXT,
-    column_name         TEXT,
-    column_type         CHAR,   
-    is_cont             BOOLEAN,     
-    table_name          TEXT,
-    num_dist_value      INT    
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__insert_into_metatable 
     (
     metatable_name      TEXT,
@@ -865,36 +721,48 @@ BEGIN
         column_type = 'f' OR column_type = 'i' OR column_type = 'c',
         'column type must be ''f'', ''i'' or ''c''');
     
-    SELECT MADLIB_SCHEMA.__format(
-        'INSERT INTO MADLIB_SCHEMA.% VALUES(default, ''%'', ''%'', ''%'', ''%'', %);',
-        ARRAY[
-        metatable_name, 
-        column_name, 
-        column_type, 
-        MADLIB_SCHEMA.__to_char(is_cont), 
-        table_name, 
-        MADLIB_SCHEMA.__to_char(num_dist_value)
-        ]) 
-        INTO curstmt; 
-                
+    IF (table_name IS NULL) THEN
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'INSERT INTO % VALUES
+                    (default, ''%'', ''%'', ''%'', null::regclass, %);',
+                ARRAY[
+                    metatable_name, 
+                    column_name, 
+                    column_type, 
+                    MADLIB_SCHEMA.__to_char(is_cont), 
+                    MADLIB_SCHEMA.__to_char(num_dist_value)
+            ]) INTO curstmt;    
+    ELSE
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'INSERT INTO % VALUES
+                    (default, ''%'', ''%'', ''%'', ''%''::regclass, %);',
+                ARRAY[
+                metatable_name, 
+                column_name, 
+                column_type, 
+                MADLIB_SCHEMA.__to_char(is_cont), 
+                table_name, 
+                MADLIB_SCHEMA.__to_char(num_dist_value)
+                ]
+            ) INTO curstmt;    
+    END IF;
+ 
     EXECUTE curstmt;
-    
 END
 $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief Get the number of distinct vlaues for the given feature
- * @param metatable_name    name of meta table
- * @param feature_id        the index of feature in the metatable
+ * @brief Get the number of distinct values for the feature with given ID
+ *
+ * @param metatable_name  The full name of the metatable
+ * @param feature_id      The ID of the feature in the metatable
+ *
+ * @return The number of distinct values
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__distinct_feature_value
-    (
-    metatable_name  TEXT,
-    feature_id      INT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__distinct_feature_value 
     (
     metatable_name  TEXT,
@@ -907,12 +775,11 @@ DECLARE
 BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
-        'SELECT num_dist_value 
-        FROM MADLIB_SCHEMA.% WHERE column_type=''f'' AND id = %;',
-        metatable_name,
-        MADLIB_SCHEMA.__to_char(feature_id)
-        )
-    INTO curstmt; 
+            'SELECT num_dist_value 
+            FROM % WHERE column_type=''f'' AND id = %;',
+            metatable_name,
+            MADLIB_SCHEMA.__to_char(feature_id)
+        ) INTO curstmt; 
                 
     EXECUTE curstmt INTO result;
     
@@ -920,16 +787,15 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Get the number of features
- * @param metatable_name    name of metatable
+ *
+ * @param metatable_name    The full name of the metatable
+ *
+ * @return The number of features
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__num_of_feature
-    (
-    metatable_name TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__num_of_feature 
     (
     metatable_name TEXT
@@ -942,10 +808,9 @@ BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
         'SELECT COUNT(*) 
-        FROM MADLIB_SCHEMA.% WHERE column_type=''f'';',
+        FROM % WHERE column_type=''f'';',
         metatable_name
-        )
-        INTO curstmt; 
+        ) INTO curstmt; 
                 
     EXECUTE curstmt INTO result;
     
@@ -956,14 +821,10 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Get the number of distinct class values
- * @param metatable_name    name of metatable
+ *
+ * @param metatable_name    The full name of the metatable
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__num_of_class
-    (
-    metatable_name TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__num_of_class
     (
     metatable_name TEXT
@@ -976,9 +837,9 @@ DECLARE
 BEGIN
     SELECT MADLIB_SCHEMA.__format
         (
-        'SELECT table_name 
-        FROM MADLIB_SCHEMA.% WHERE column_type=''c'';',
-        metatable_name
+            'SELECT MADLIB_SCHEMA.__regclass_to_text(table_oid) 
+             FROM % WHERE column_type=''c'';',
+            metatable_name
         )
         INTO curstmt; 
                 
@@ -986,9 +847,9 @@ BEGIN
     
     SELECT MADLIB_SCHEMA.__format
         (
-        'SELECT COUNT(key)
-        FROM MADLIB_SCHEMA.%',
-        class_table_name
+            'SELECT COUNT(key)
+             FROM %',
+            class_table_name
         ) INTO curstmt;
     
     EXECUTE curstmt INTO result;
@@ -997,19 +858,16 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief Get the feature index by the specified feature name
- * @param feature_name the feature name
- * @param metatable_name the meta table name
- *
- * @return the feature id 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_feature_index
-    (
-    feature_name    TEXT,
-    metatable_name  TEXT
-    );
 
+/*
+ * @brief Get the feature ID by the specified feature name
+ *
+ * @param feature_name      The name of the feature
+ * @param metatable_name    The full name of the metatable
+ *
+ * @return The feature id 
+ *
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_index    
     (
     feature_name    TEXT,
@@ -1020,15 +878,18 @@ DECLARE
     curstmt TEXT;
     result  INT := 0;
 BEGIN
-    SELECT MADLIB_SCHEMA.__format(
-            'SELECT  id 
-             FROM    MADLIB_SCHEMA.% 
-             WHERE   column_name=''%'' AND column_type = ''f'' 
-             LIMIT   1;',
-            metatable_name,
-            feature_name
-        )
-        INTO curstmt;
+    curstmt = MADLIB_SCHEMA.__format
+                (
+                    'SELECT id 
+                     FROM  % 
+                     WHERE column_name=''%'' AND 
+                           column_type = ''f'' 
+                     LIMIT 1;',
+                    ARRAY[
+                        metatable_name,
+                        feature_name
+                    ]
+                );
         
     EXECUTE curstmt INTO result;
     
@@ -1038,18 +899,14 @@ $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief Get the feature name by the specified feature index
- * @param feature_index the id of a feature
- * @param metatable_name the meta table name
+ * @brief Get the feature name by the specified feature ID
  *
- * @return the feature name 
+ * @param feature_index     The ID of the feature
+ * @param metatable_name    The full name of the metatable
+ *
+ * @return The feature name 
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_feature_name
-    (
-    feature_index   INT,
-    metatable_name  TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_name    
     (
     feature_index   INT,
@@ -1060,9 +917,10 @@ DECLARE
     curstmt TEXT;
     result  TEXT := '';
 BEGIN
-    SELECT MADLIB_SCHEMA.__format(
+    SELECT MADLIB_SCHEMA.__format
+        (
             'SELECT column_name 
-             FROM   MADLIB_SCHEMA.% 
+             FROM   % 
              WHERE  id = % AND column_type = ''f'';',
             metatable_name,
             MADLIB_SCHEMA.__to_char(feature_index)
@@ -1076,18 +934,14 @@ END
 $$ LANGUAGE PLPGSQL;
 
 
-
 /*
  * @brief Get the feature name list
- * @param metatable_name the meta table name
  *
- * @return the feature name list 
+ * @param metatable_name    The full name of the metatable
+ *
+ * @return The feature name list 'ARRAY[c1, c2, ..., cn]'
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_feature_name_list
-    (
-    metatable_name TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_name_list    
     (
     metatable_name TEXT
@@ -1099,7 +953,7 @@ DECLARE
 BEGIN
     FOR name IN EXECUTE 
         ('SELECT column_name 
-          FROM   MADLIB_SCHEMA.' || metatable_name || ' ' ||
+          FROM   ' || metatable_name || ' ' ||
          'WHERE  column_type = ''f'' ORDER BY id;'
         )
         LOOP
@@ -1112,17 +966,15 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Concat all the feature names with delimeter ','
- * @param metatable_name the meta table name
  *
- * @return the text representing feature names with delimeter ','
+ * @param metatable_name    The full name of the metatable
+ *
+ * @return The text representing feature names with delimeter ','
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_feature_name_in_selectstmt
-    (
-    metatable_name TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_name_in_selectstmt    
     (
     metatable_name TEXT
@@ -1134,7 +986,7 @@ DECLARE
 BEGIN
     FOR name IN EXECUTE 
         ('SELECT column_name 
-          FROM   MADLIB_SCHEMA.' || metatable_name || ' ' ||
+          FROM   ' || metatable_name || ' ' ||
          'WHERE  column_type = ''f'' ORDER BY id;'
         )
         LOOP
@@ -1147,24 +999,19 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief Get the column value by the specified column index and key
- * @param column_index the column id
- * @param key the key of returned value
- * @param column_type the type of column
- *        'i' means id, 'c' means class, 'f' means feature
- * @param metatable_name the meta table name
- * 
- * @return the actual value for the specified key 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_column_value
-    (
-    column_index    INT,
-    key             INT,
-    column_type     CHAR,
-    metatable_name  TEXT
-    );
 
+/*
+ * @brief Get the column value by the specified column ID and key
+ *
+ * @param column_index      The ID of the column
+ * @param key               The key of the column value
+ * @param column_type       The type of the column
+ *                          'i' means id, 'c' means class, 'f' means feature
+ * @param metatable_name    The full name of the metatable
+ * 
+ * @return The column's value corresponding to the give key 
+ *
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_column_value    
     (
     column_index    INT,
@@ -1179,23 +1026,28 @@ DECLARE
     result      TEXT := '';
 BEGIN
     IF (column_type = 'c') THEN
-        SELECT MADLIB_SCHEMA.__format(
-            'SELECT ARRAY[column_name, table_name] 
-             FROM   MADLIB_SCHEMA.% 
-             WHERE  column_type = ''c'';',
-            metatable_name
-            )
-       INTO curstmt; 
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT ARRAY[
+                            column_name, 
+                            MADLIB_SCHEMA.__regclass_to_text(table_oid)
+                        ] 
+                 FROM % 
+                 WHERE  column_type = ''c'';',
+                metatable_name
+            ) INTO curstmt; 
     ELSE
         SELECT MADLIB_SCHEMA.__format(
-            'SELECT ARRAY[column_name, table_name] 
-             FROM   MADLIB_SCHEMA.% 
-             WHERE  id = % AND column_type = ''%'';',
+            'SELECT ARRAY[
+                        column_name, 
+                        MADLIB_SCHEMA.__regclass_to_text(table_oid)
+                    ] 
+             FROM % 
+             WHERE id = % AND column_type = ''%'';',
             metatable_name,
             MADLIB_SCHEMA.__to_char(column_index),
             column_type
-            )
-           INTO curstmt;    
+            ) INTO curstmt;    
     END IF;
                    
     EXECUTE curstmt INTO names;
@@ -1204,20 +1056,22 @@ BEGIN
     PERFORM MADLIB_SCHEMA.__assert(names[2] IS NOT NULL, 'No such table name');
     
     IF (key IS NULL ) THEN
-        SELECT MADLIB_SCHEMA.__format(
-            'SELECT % FROM MADLIB_SCHEMA.% WHERE key IS NULL;',
-            names[1],
-            names[2]
-        )
-        INTO curstmt;        
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT % FROM % WHERE key IS NULL;',
+                names[1],
+                names[2]
+            ) INTO curstmt;        
     ELSE
-        SELECT MADLIB_SCHEMA.__format(
-            'SELECT MADLIB_SCHEMA.__to_char(%) FROM MADLIB_SCHEMA.% WHERE key = %;',
-            names[1],
-            names[2],
-            MADLIB_SCHEMA.__to_char(key)
-        )
-        INTO curstmt;
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT MADLIB_SCHEMA.__to_char(%) 
+                FROM % 
+                WHERE key = %;',
+                names[1],
+                names[2],
+                MADLIB_SCHEMA.__to_char(key)
+            ) INTO curstmt;
     END IF;
 
     EXECUTE curstmt INTO result;
@@ -1232,20 +1086,16 @@ $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief Get the feature value by the specified feature index and key
- * @param feature_index the feature id
- * @param key the key of returned value
- * @param metatable_name the meta table name  
+ * @brief Get the feature value by the specified feature ID and key
  *
- * @return the value of specified key of the feature whose id specified in feature_index
+ * @param feature_index     The ID of the feature
+ * @param key               The key of the feature value
+ * @param metatable_name    The full name of the metatable  
+ *
+ * @return The value of specified key of the feature 
+ *         whose id specified in feature_index
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_feature_value
-    (
-    feature_index   INT,
-    key             INT,
-    metatable_name  TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_value    
     (
     feature_index   INT,
@@ -1256,24 +1106,23 @@ RETURNS TEXT AS $$
 DECLARE
     result TEXT := '';
 BEGIN
-    SELECT MADLIB_SCHEMA.__get_column_value(feature_index, key, 'f', metatable_name)
+    SELECT MADLIB_SCHEMA.__get_column_value
+            (feature_index, key, 'f', metatable_name)
         INTO result;
             
     RETURN result;
 END
 $$ LANGUAGE PLPGSQL;
 
-/*
- * @brief Get the id column name
- * @param metatable_name the meta table name
- *
- * @return the id column name 
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_id_column_name
-    (
-    metatable_name  TEXT
-    );
 
+/*
+ * @brief Get the ID column name
+ *
+ * @param metatable_name The full name of the metatable
+ *
+ * @return the ID column name 
+ *
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_id_column_name    
     (
     metatable_name  TEXT
@@ -1283,20 +1132,20 @@ DECLARE
     curstmt TEXT;
     result  TEXT := '';
 BEGIN
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__assert_table
         (
-            'MADLIB_SCHEMA',
             metatable_name,
             't'
         );
         
-    SELECT MADLIB_SCHEMA.__format(
+    SELECT MADLIB_SCHEMA.__format
+        (
             'SELECT column_name 
-             FROM   MADLIB_SCHEMA.% 
-             WHERE  column_type = ''i'' LIMIT 1',
+             FROM   % 
+             WHERE  column_type = ''i'' 
+             LIMIT 1',
             metatable_name
-        )
-        INTO curstmt;
+        ) INTO curstmt;
         
     EXECUTE curstmt INTO result;
     
@@ -1304,17 +1153,15 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Get the class column name
- * @param metatable_name the meta table name
  *
- * @return the class column name 
+ * @param metatable_name   The full name of the metatable
+ *
+ * @return The class column name 
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_class_column_name
-    (
-    metatable_name  TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_column_name    
     (
     metatable_name  TEXT
@@ -1324,20 +1171,19 @@ DECLARE
     curstmt TEXT;
     result  TEXT := '';
 BEGIN
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__assert_table
         (
-            'MADLIB_SCHEMA',
             metatable_name,
             't'
         );
         
-    SELECT MADLIB_SCHEMA.__format(
+    SELECT MADLIB_SCHEMA.__format
+        (
             'SELECT column_name 
-             FROM   MADLIB_SCHEMA.% 
+             FROM   % 
              WHERE  column_type = ''c'' LIMIT 1',
             metatable_name
-        )
-        INTO curstmt;
+        ) INTO curstmt;
         
     EXECUTE curstmt INTO result;
     
@@ -1345,19 +1191,16 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Get the class value by the specified key
- * @param key key the key of returned value
- * @param metatable_name the meta table name 
  *
- * @return the class value of the key 
+ * @param key               The key of the class value
+ * @param metatable_name    The full name of the metatable
+ *
+ * @return The class value corresponding to the key 
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__get_class_value
-    (
-    key             INT,
-    metatable_name  TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_value    
     (
     key             INT,
@@ -1372,28 +1215,23 @@ BEGIN
             
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;    
+$$ LANGUAGE PLPGSQL;  
+
 
 /*
- * @brief check if the input table has unsupported data type or not
- * @param full_table_name <schema name>.<table name> 
- * @param feature_columns one array including all feature names
- * @param id_column the name of the id column        
- * @param class_column the name of the class column        
+ * Check if the input table has unsupported data type or not
+ * Check if the id column of input table has duplicated value or not
  *
- * @return if the table has unsupported data types, then raise exception
- *         otherwise return nothing
+ * Parameters:
+ *      full_table_name:     The full table name
+ *      feature_columns:     The array including all feature names
+ *      id_column:           The name of the ID column        
+ *      class_column:        The name of the class column 
  *
- * NOTE: All the supported type are hardcoded in the function body     
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__validate_input_table
-    (
-    full_table_name     TEXT,
-    feature_columns     TEXT[],
-    id_column           TEXT,
-    class_column        TEXT
-    );
-
+ * Returns:
+ *      If the table has unsupported data types, then raise exception
+ *      otherwise return nothing
+ */    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_input_table    
     (
     full_table_name     TEXT,
@@ -1405,7 +1243,7 @@ RETURNS void AS $$
 DECLARE
     rec             RECORD;
     stmt            TEXT;
-    all_columns     TEXT='';
+    all_columns     TEXT := '';
     index           INT;
 BEGIN
     -- find the first (LIMIT 1) unsupported data type if the input table has.
@@ -1449,7 +1287,9 @@ BEGIN
         -- Otherwise, we just need to check those specified columns.
         index = array_lower(feature_columns, 1);
         WHILE (index <= array_upper(feature_columns, 1)) LOOP
-            all_columns = all_columns || quote_literal(feature_columns[index]) || ',';
+            all_columns = all_columns                           || 
+                          quote_literal(feature_columns[index]) || 
+                          ',';
             index = index+1;
         END LOOP; 
         
@@ -1471,57 +1311,46 @@ BEGIN
                          DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ, and INTERVAL', 
                          rec.atttypid::regtype;
     END IF;
-        
+
+    SELECT MADLIB_SCHEMA.__format
+            ('SELECT % AS n
+              FROM % 
+              GROUP BY %
+              HAVING COUNT(%) > 1
+              LIMIT 1',
+              ARRAY[
+                id_column,
+                full_table_name,
+                id_column,
+                id_column
+                ]
+            )
+    INTO stmt;
+    
+    EXECUTE stmt INTO rec;
+    
+    -- check if the id column has duplicated value
+    PERFORM MADLIB_SCHEMA.__assert
+                (
+                    rec IS NULL,
+                    'The training table ' || full_table_name || ' must not have duplicated id'
+                );
+                        
     RETURN;
 END
 $$ LANGUAGE PLPGSQL;    
 
 
 /*
- * @brief check if the input table has unsupported data type or not
- * @param full_table_name <schema name>.<table name> 
+ * @brief Test if the given column is a continuous one or not
  *
- * @return if the table has unsupported data types, then raise exception
- *         otherwise return nothing
- *
- * NOTE: All the supported type are hardcoded in the function body     
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__validate_input_table
-    (
-    full_table_name     TEXT
-    );
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_input_table    
-    (
-    full_table_name     TEXT
-    )
-RETURNS void AS $$  
-BEGIN
-    PERFORM MADLIB_SCHEMA.__validate_input_table
-                        (
-                            full_table_name,
-                            NULL,
-                            NULL,
-                            NULL
-                        );     
-    RETURN;
-END
-$$ LANGUAGE PLPGSQL;    
-
-
-/*
- * @brief Test if the given column_name is a continuous column or not
- * @param column_name name of column
- * @cont_column_names an array contains all the continuous column names
+ * @param column_name           The name of the column
+ * @param cont_column_names     The array contains all the 
+ *                              continuous column names
  * 
- * @return true if the specified column is continuous, otherwise return false 
+ * @return True if the specified column is continuous, otherwise return false 
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__is_continuous
-    (
-    column_name         TEXT,
-    cont_column_names   TEXT[]
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__is_continuous 
     (
     column_name         TEXT,
@@ -1546,34 +1375,27 @@ $$ LANGUAGE PLPGSQL;
 
 /*
  * @brief encode a tabular table
- * @param input_table_name      the input table name
- * @param id_column_name        the name of id column 
- * @param feature_names         an array contains all the feature. If it's null, 
-                                we will get all the columns of the input table
- * @param class_column_name     class column's name
- * @param cont_column_names     an array contains all the continuous feature
- *                              null means no continuous feature
- * @param encoded_table_name    the encoding table name
- * @param metatable_name        the meta table name
- * @param h2hmv_routine_id      the id of the routine which specifies 
-                                how to handle missing value(h2hmv)
- * @param verbosity             ture if print the debug info 
  *
- * @note The name convension of the table for a column is: metatable_name || '_' || col_index 
+ * @param input_table_name      The full name of the input table
+ * @param id_column_name        The name of id column 
+ * @param feature_names         An array contains all the feature. If it's null, 
+ *                              we will get all the columns of the input table
+ * @param class_column_name     The name of class column
+ * @param cont_column_names     An array contains all the continuous feature
+ *                              Null means no continuous feature
+ * @param encoded_table_name    The full name of the encoded table
+ * @param metatable_name        The full name of the metatable
+ * @param h2hmv_routine_id      The ID of the routine which specifies 
+ *                              How to handle missing value(h2hmv)
+ * @param verbosity             True if print the debug info 
+ *
+ * @return The full name of the encoded table
+ *
+ * @note The name convension of the table for a column is:
+ *       metatable_name || '_' || col_index 
  *       col_index is start from 1, and end at 9999 
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__encode_tabular_table
-    (
-    input_table_name    TEXT, 
-    id_column_name      TEXT, 
-    feature_names       TEXT[],
-    class_column_name   TEXT, 
-    cont_column_names   TEXT[], 
-    encoded_table_name  TEXT,
-    metatable_name      TEXT,
-    h2hmv_routine_id    INT,
-    verbosity           BOOLEAN
-    );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_tabular_table
     (
     input_table_name    TEXT, 
@@ -1594,6 +1416,8 @@ DECLARE
     col_index           INT := 1;
     contcol_stmt        TEXT := '';
     contcol_stmt_quote  TEXT := '';
+    
+    -- the key-value tables will have the same schema with meta table
     coltable_name       TEXT := rtrim(metatable_name, 'di');
     exec_begin          TIMESTAMP;
 BEGIN
@@ -1606,12 +1430,14 @@ BEGIN
             id_column_name,
             class_column_name
         );
-        
+    
     PERFORM MADLIB_SCHEMA.__create_metatable(metatable_name);
     
     IF (cont_column_names IS NOT NULL) THEN  
         FOR i IN 1..array_upper(cont_column_names, 1) LOOP
-            contcol_stmt_quote = contcol_stmt_quote || quote_literal(cont_column_names[i]) || ',';
+            contcol_stmt_quote = contcol_stmt_quote                  || 
+                                 quote_literal(cont_column_names[i]) || 
+                                 ',';
             contcol_stmt = contcol_stmt || ',' || cont_column_names[i];
         END LOOP; 
     END IF;
@@ -1647,17 +1473,18 @@ BEGIN
     END IF;
          
     IF (feature_names IS NULL) THEN
-        SELECT MADLIB_SCHEMA.__format(
-            'SELECT btrim(attname, '' '') as attname 
-             FROM   pg_attribute 
-             WHERE  attrelid = ''%''::regclass and attnum > 0 AND 
-                    (attname NOT IN (%)) AND 
-                    NOT attisdropped;', 
-            input_table_name, contcol_stmt_quote)
-            INTO curstmt;   
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT btrim(attname, '' '') as attname 
+                 FROM   pg_attribute 
+                 WHERE  attrelid = ''%''::regclass and attnum > 0 AND 
+                        (attname NOT IN (%)) AND 
+                        NOT attisdropped;', 
+                input_table_name, 
+                contcol_stmt_quote
+            ) INTO curstmt;   
         
         FOR column_name IN EXECUTE curstmt LOOP
-            
             IF (column_name <> class_column_name) THEN
                 PERFORM MADLIB_SCHEMA.__encode_discrete_column
                     (
@@ -1679,7 +1506,9 @@ BEGIN
     ELSE
         FOR i IN 1..array_upper(feature_names, 1) LOOP
             column_name = feature_names[i];
-            IF (NOT MADLIB_SCHEMA.__is_continuous(column_name, cont_column_names)) THEN
+            IF (NOT MADLIB_SCHEMA.__is_continuous
+                (column_name, cont_column_names)
+               ) THEN
                 PERFORM MADLIB_SCHEMA.__encode_discrete_column
                     (
                         input_table_name, 
@@ -1727,25 +1556,18 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;    
 
+
 /*
  * @brief Encode a tabular table for classification/scoring
- * @param input_table_name the input table name
- * @param encoded_table_name the encoding table name
- * @param metatable_name the meta table name
- * @param h2hmv_routine_id the id of the routine which specifies 
-                            how to handle missing value(h2hmv) 
- * @param verbosity ture if print the debug info 
  *
- * @note  feature (discrete or continuous) names and keys were retrieved from meta table
+ * @param input_table_name 	    The full name of the input table
+ * @param encoded_table_name 	The full name of the encoded table
+ * @param metatable_name 	    The full name of the metatable
+ * @param h2hmv_routine_id 	    The ID of the routine which specifies 
+ *                          	how to handle missing value(h2hmv) 
+ * @param verbosity 		    True if print the debug info 
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__encode_tabular_table
-    (
-    input_table_name    TEXT, 
-    encoded_table_name  TEXT,
-    metatable_name      TEXT,
-    h2hmv_routine_id    INT,
-    verbosity           BOOLEAN
-    ) CASCADE;
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_tabular_table
     (
     input_table_name    TEXT, 
@@ -1765,22 +1587,29 @@ DECLARE
 BEGIN
     exec_begin = clock_timestamp();
 
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'SELECT column_name FROM % WHERE column_type=''i'';',
+            metatable_name
+        ) INTO curstmt; 
+    EXECUTE curstmt INTO id_column_name;
+    
     PERFORM MADLIB_SCHEMA.__validate_input_table
         (
-            input_table_name
+            input_table_name,
+            NULL,
+            id_column_name,
+            NULL
         );
                 
     SELECT MADLIB_SCHEMA.__format
-        ('SELECT column_name FROM MADLIB_SCHEMA.% WHERE column_type=''i'';',
-        metatable_name)
-        INTO curstmt; 
-    
-    EXECUTE curstmt INTO id_column_name;
-    
-    SELECT MADLIB_SCHEMA.__format
-        ('SELECT column_name, table_name FROM MADLIB_SCHEMA.% WHERE is_cont ORDER BY id;',
-        metatable_name)
-        INTO curstmt; 
+        (
+            'SELECT 
+             column_name, 
+             MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name
+             FROM % WHERE is_cont ORDER BY id;',
+            metatable_name
+        ) INTO curstmt; 
         
     FOR result_rec IN EXECUTE curstmt LOOP
         contcol_stmt = contcol_stmt || ',' || result_rec.column_name;
@@ -1811,8 +1640,11 @@ BEGIN
     END LOOP;
         
     SELECT MADLIB_SCHEMA.__format
-        ('SELECT column_name, column_type, table_name 
-          FROM   MADLIB_SCHEMA.% 
+        ('SELECT 
+            column_name, 
+            column_type, 
+            MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name
+          FROM   % 
           WHERE  (column_type <> ''i'') AND (NOT is_cont) ORDER BY id',
         metatable_name)
         INTO curstmt; 
@@ -1866,22 +1698,13 @@ $$ LANGUAGE PLPGSQL;
    
    
 /*
- * @brief The post process for encoding
+ * @brief The post processing for encoding table
  *
- * @param id_column_name the name of id column 
- * @param metatable_name the meta table name
- * @param is_persistent ture if write the column info into meta table
- *
- * @return the string contains the drop column statement   
+ * @param id_column_name 	The name of the ID column 
+ * @param metatable_name 	The full name of the metatable
+ * @param is_persistent 	True if write the column info into the metatable
  *
  */   
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__post_encode_tabular_table
-    (
-    id_column_name      TEXT,
-    metatable_name      TEXT,
-    is_persistent       BOOLEAN
-    ) CASCADE;
-    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__post_encode_tabular_table
     (
     id_column_name      TEXT,
@@ -1893,30 +1716,25 @@ DECLARE
 BEGIN
     IF (is_persistent) THEN
         PERFORM MADLIB_SCHEMA.__insert_into_metatable
-            (metatable_name, id_column_name, 'i', 'f', '', 0);
+            (metatable_name, id_column_name, 'i', 'f', NULL, 0);
     END IF;
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
- * @brief Create the encoding table
- * @param input_table_name the input table name
- * @param id_column_name the name of id column 
- * @param contcol_stmt a string contains all the continuous feature names 
- *                    with delimiter ','
- * @param encoded_table_name the encoding table name
- * @param verbosity ture if print the debug info 
+ * @brief Create the encoded table
  *
- * @return the encoding table name  
+ * @param input_table_name      The full name of the input table
+ * @param id_column_name        The name of the ID column 
+ * @param contcol_stmt          A string contains all the continuous 
+ *                              feature names with delimiter ','
+ * @param encoded_table_name    The full name of encoded table
+ * @param verbosity             True if print the debug info 
+ *
+ * @return The encoding table name  
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__create_encoded_table
-    (
-    input_table_name    TEXT, 
-    id_column_name      TEXT, 
-    contcol_stmt        TEXT,
-    encoded_table_name  TEXT,
-    verbosity           BOOLEAN
-    ) CASCADE;
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_encoded_table
     (
     input_table_name    TEXT, 
@@ -1946,50 +1764,43 @@ BEGIN
     -- create result table, and get all the id and continuous columns' value
     EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ' CASCADE;';
     
-    SELECT MADLIB_SCHEMA.__format(
-        'CREATE TABLE %(id %) AS SELECT % % FROM % m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(id)');', 
-        ARRAY[
-            encoded_table_name, 
-            contcol_stmt, 
-            id_column_name, 
-            contcol_stmt, 
-            input_table_name
-            ])
-        INTO curstmt;
+    curstmt = MADLIB_SCHEMA.__format
+                (
+                    'CREATE TABLE %(id %) AS SELECT % % FROM % 
+                    m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(id)');', 
+                    ARRAY[
+                        encoded_table_name, 
+                        contcol_stmt, 
+                        id_column_name, 
+                        contcol_stmt, 
+                        input_table_name
+                    ]
+                );
             
     EXECUTE curstmt;
      
-    RETURN  encoded_table_name ;
+    RETURN  encoded_table_name;
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Encode the continuous feature
- * @param input_table_name      the input table name
- * @param id_column_name        the name of id column 
- * @param column_name           name of the column
- * @param coltable_name         the table name for the specified column
- *                              this table is used to store the minimal value of this column
- * @param encoded_table_name    the encoding table name
- * @param metatable_name        the meta table name
- * @param h2hmv_routine_id      the id of the routine which specifies 
-                                how to handle missing value(h2hmv)
- * @param is_persistent         ture if write the column info into meta table
- * @param verbosity             ture if print the debug info 
+ *
+ * @param input_table_name      The full name of the input table
+ * @param id_column_name        The name of the ID column 
+ * @param column_name           The name of the column
+ * @param coltable_name         The full table name for the specified column
+ *                              This table is used to store the minimal 
+ *                              value of this column
+ * @param encoded_table_name    The full name of the encoded table
+ * @param metatable_name        The full name of the metatable
+ * @param h2hmv_routine_id      The ID of the routine which specifies 
+                                How to handle missing value(h2hmv)
+ * @param is_persistent         True if write the column info into meta table
+ * @param verbosity             True if print the debug info 
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__encode_cont_column
-    (
-    input_table_name        TEXT, 
-    id_column_name          TEXT, 
-    column_name             TEXT,
-    coltable_name           TEXT,
-    encoded_table_name      TEXT,
-    metatable_name          TEXT,
-    h2hmv_routine_id        INT,
-    is_persistent           BOOLEAN,
-    verbosity               BOOLEAN
-    ) CASCADE;
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_cont_column
     (
     input_table_name        TEXT, 
@@ -2011,91 +1822,85 @@ DECLARE
 BEGIN
     -- insert the continuous features
     IF (is_persistent) THEN
-        IF (h2hmv_routine_id = 2) THEN
-            SELECT MADLIB_SCHEMA.__format(
+        SELECT MADLIB_SCHEMA.__format
+            (
                 'SELECT coalesce(min(%), 1) - 1 FROM %', 
                 column_name,
-                input_table_name) 
-                INTO curstmt;
-                
-            EXECUTE curstmt INTO min_val;
-    
-            SELECT MADLIB_SCHEMA.__format(
-                'CREATE TABLE MADLIB_SCHEMA.%(key) AS SELECT % m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (key)')', 
+                input_table_name
+            ) INTO curstmt;
+            
+        EXECUTE curstmt INTO min_val;
+
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'CREATE TABLE %(key) AS SELECT % 
+                 m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (key)')', 
                 coltable_name2,
-                MADLIB_SCHEMA.__to_char(min_val)) 
-                INTO curstmt;
+                MADLIB_SCHEMA.__to_char(min_val)
+            ) INTO curstmt;
+            
+        EXECUTE curstmt;
                 
-            EXECUTE curstmt;
-                    
-            SELECT MADLIB_SCHEMA.__format('UPDATE % SET %=% WHERE % is null;',
-                          encoded_table_name,
-                          column_name,
-                          MADLIB_SCHEMA.__to_char(min_val),
-                          column_name)
-                 INTO curstmt;
-                 
-            EXECUTE curstmt;
-        ELSE
-            coltable_name2 = '';
-        END IF;
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'UPDATE % SET %=% WHERE % is null;',
+                      encoded_table_name,
+                      column_name,
+                      MADLIB_SCHEMA.__to_char(min_val),
+                      column_name
+            ) INTO curstmt;
+             
+        EXECUTE curstmt;
         
-        SELECT MADLIB_SCHEMA.__format(
-            'SELECT COUNT(DISTINCT %) FROM %',
-            column_name, input_table_name)
-            INTO curstmt;
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT COUNT(DISTINCT %) FROM %',
+                column_name, 
+                input_table_name
+            ) INTO curstmt;
         
         EXECUTE curstmt INTO num;
         
         PERFORM MADLIB_SCHEMA.__insert_into_metatable
             (metatable_name, column_name, 'f', 't', coltable_name2, num);
     ELSE
-         IF (h2hmv_routine_id = 2) THEN
-             SELECT MADLIB_SCHEMA.__format(
-                'SELECT key FROM MADLIB_SCHEMA.% LIMIT 1', 
-                coltable_name2) 
-                INTO curstmt;
-                
-            EXECUTE curstmt INTO min_val;
+         SELECT MADLIB_SCHEMA.__format
+            (
+                'SELECT key FROM % LIMIT 1', 
+                coltable_name2
+            ) INTO curstmt;
             
-            SELECT MADLIB_SCHEMA.__format('UPDATE % SET %=% WHERE % is null',
-                          encoded_table_name,
-                          column_name,
-                          MADLIB_SCHEMA.__to_char(min_val),
-                          column_name)
-                 INTO curstmt;
-                 
-            EXECUTE curstmt;
-        END IF;
+        EXECUTE curstmt INTO min_val;
         
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'UPDATE % SET %=% WHERE % is null',
+                 encoded_table_name,
+                 column_name,
+                 MADLIB_SCHEMA.__to_char(min_val),
+                 column_name
+            ) INTO curstmt;
+             
+        EXECUTE curstmt;
     END IF;
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Encode the class column
- * @param input_table_name      the input table name
- * @param id_column_name        the name of id column 
- * @param column_name           name of the column
- * @param coltable_name         the table name for the specified column
- *                              this table is the key-value table for this column
- * @param encoded_table_name    the encoding table name
- * @param metatable_name        the meta table name
- * @param is_persistent         ture if write the column info into meta table
- * @param verbosity             ture if print the debug info 
+ *
+ * @param input_table_name      The full name of the input table
+ * @param id_column_name        The name of the ID column 
+ * @param column_name           The name of the column
+ * @param coltable_name         The full table name for the specified column
+ *                              This table is the key-value table for this column
+ * @param encoded_table_name    The name of the encoded table
+ * @param metatable_name        The full name of the metatable
+ * @param is_persistent         True if write the column info into meta table
+ * @param verbosity             True if print the debug info 
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__encode_class_column
-    (
-    input_table_name        TEXT, 
-    id_column_name          TEXT, 
-    column_name             TEXT,
-    coltable_name           TEXT,
-    encoded_table_name      TEXT,
-    metatable_name          TEXT,
-    is_persistent           BOOLEAN,
-    verbosity               BOOLEAN
-    );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_class_column
     (
     input_table_name        TEXT, 
@@ -2116,10 +1921,10 @@ BEGIN
     
     IF (
         NOT MADLIB_SCHEMA.__column_exists
-                    (
-                    input_table_name,
-                    column_name
-                    ) 
+            (
+                input_table_name,
+                column_name
+            ) 
        ) THEN
         
         RETURN;
@@ -2160,7 +1965,7 @@ BEGIN
     
     IF (is_persistent) THEN
         SELECT MADLIB_SCHEMA.__format
-            ('INSERT INTO MADLIB_SCHEMA.% VALUES(null, null)',
+            ('INSERT INTO % VALUES(null, null)',
             coltable_name)
         INTO curstmt;
        
@@ -2168,9 +1973,15 @@ BEGIN
     END IF;
     
     -- rename the class column with "class"
-    IF ((column_name IS NOT NULL) AND (column_name <> '') AND (column_name <> 'class')) THEN
+    IF ((column_name IS NOT NULL) AND (column_name <> '') AND 
+        (column_name <> 'class')
+       ) THEN
         SELECT MADLIB_SCHEMA.__format
-            ('ALTER TABLE % RENAME % to class', encoded_table_name, column_name) 
+            (
+                'ALTER TABLE % RENAME % to class', 
+                encoded_table_name, 
+                column_name
+            ) 
             INTO curstmt;
         
         EXECUTE curstmt;
@@ -2178,35 +1989,25 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
 /*
  * @brief Encode the discrete column
- * @param input_table_name      the input table name
- * @param id_column_name        the name of id column 
- * @param column_name           name of the column
- * @param column_type           the type of column
+ *
+ * @param input_table_name      The full name of the input table
+ * @param id_column_name        The name of the ID column 
+ * @param column_name           The name of the column
+ * @param column_type           The type of column
  *                              'i' means id, 'c' means class, 'f' means feature
- * @param coltable_name         the table name for the specified column
- *                              this table is the key-value table for this column
- * @param encoded_table_name    the encoding table name
- * @param metatable_name        the meta table name
- * @param h2hmv_routine_id      the id of the routine which specifies how to handle missing value(h2hmv) 
- * @param is_persistent         ture if write the column info into meta table
- * @param verbosity             ture if print the debug info 
+ * @param coltable_name         The full table name for the specified column
+ *                              This table is the key-value table for this column
+ * @param encoded_table_name    The full name of the encoded table 
+ * @param metatable_name        The full name of the metatable
+ * @param h2hmv_routine_id      The ID of the routine which specifies how to 
+ *                              handle missing value(h2hmv) 
+ * @param is_persistent         True if write the column info into meta table
+ * @param verbosity             True if print the debug info 
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__encode_discrete_column
-    (
-    input_table_name    TEXT, 
-    id_column_name      TEXT, 
-    column_name         TEXT,
-    column_type         CHAR,
-    coltable_name       TEXT,
-    encoded_table_name  TEXT,
-    metatable_name      TEXT,
-    h2hmv_routine_id    INT,
-    is_persistent       BOOLEAN,
-    verbosity           BOOLEAN
-    ) CASCADE;
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_discrete_column
     (
     input_table_name    TEXT, 
@@ -2223,28 +2024,29 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_discrete_column
 RETURNS void AS $$
 DECLARE
     curstmt TEXT := '';
-    index   INT := 1;
+    index   INT  := 1;
     name    TEXT := '';
     temp    TEXT;
 BEGIN
     -- For each column, we will create a table for it. 
     -- The table stores the key->value, and distributed by value for parallelism                            
     IF (is_persistent) THEN
-        EXECUTE 'DROP TABLE IF EXISTS MADLIB_SCHEMA.' || coltable_name || ';';
+        EXECUTE 'DROP TABLE IF EXISTS ' || coltable_name || ';';
                 
         -- create table with columns: key, value
-        SELECT MADLIB_SCHEMA.__format(
-            'CREATE TABLE MADLIB_SCHEMA.% (%, key)  
-            AS SELECT DISTINCT %, 1 FROM %   
-            m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(%)');', 
-            ARRAY[
-            coltable_name, 
-            column_name,
-            column_name, 
-            input_table_name
-            m4_ifdef(`__GREENPLUM__', `, column_name')
-            ]) 
-            INTO curstmt;
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'CREATE TABLE % (%, key)  
+                 AS SELECT DISTINCT %, 1 FROM %   
+                 m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(%)');', 
+                ARRAY[
+                    coltable_name, 
+                    column_name,
+                    column_name, 
+                    input_table_name
+                    m4_ifdef(`__GREENPLUM__', `, column_name')
+                ]
+            ) INTO curstmt;
         
         IF (verbosity) THEN    
             RAISE INFO 'Create table: %', curstmt;
@@ -2252,7 +2054,7 @@ BEGIN
         EXECUTE curstmt;
         
         SELECT MADLIB_SCHEMA.__format(
-            'SELECT % FROM MADLIB_SCHEMA.% ORDER BY %',
+            'SELECT % FROM % ORDER BY %',
             column_name,
             coltable_name,
             column_name)
@@ -2260,7 +2062,9 @@ BEGIN
             
        index = 1;
        FOR name IN EXECUTE (curstmt) LOOP
-            IF ((name IS null) OR (name = '?') OR (length(btrim(name, ' ')) = 0)) THEN
+            IF ((name IS null) OR (name = '?') OR 
+                (length(btrim(name, ' ')) = 0)
+               ) THEN
                 temp = 'null';
                 IF (h2hmv_routine_id = 2) THEN
                     temp = MADLIB_SCHEMA.__to_char(index);
@@ -2269,26 +2073,25 @@ BEGIN
                 
                 IF (name IS NULL) THEN
                     SELECT MADLIB_SCHEMA.__format(
-                    'UPDATE MADLIB_SCHEMA.%  SET key=% WHERE % IS NULL',
+                    'UPDATE %  SET key=% WHERE % IS NULL',
                     coltable_name, temp, column_name)
                     INTO curstmt;
                 ELSE
                     SELECT MADLIB_SCHEMA.__format(
-                        'UPDATE MADLIB_SCHEMA.% SET key = % WHERE %=''%'';',
+                        'UPDATE % SET key = % WHERE %=''%'';',
                         coltable_name,
-			             temp,
+                         temp,
                         column_name,
                         name)
                         INTO curstmt;
                 END IF;
-		
-		      EXECUTE curstmt;
-		      
+        
+              EXECUTE curstmt;
             ELSE
                 -- we call "replace" function twice to escape the string "'" and "\" 
                 SELECT MADLIB_SCHEMA.__format
                     (
-                    'UPDATE MADLIB_SCHEMA.% SET key=% WHERE %=E''%'';',
+                    'UPDATE % SET key=% WHERE %=E''%'';',
                     coltable_name,
                     MADLIB_SCHEMA.__to_char(index),
                     column_name,
@@ -2298,21 +2101,24 @@ BEGIN
                 index = index + 1;
                 
             END IF;
-            
             EXECUTE curstmt;
         END LOOP;
     END IF;
-    
 
     -- We impose a hard limit, which is 8 million, on the number of distinct classes.
     -- This should be a large enough number for real world applications.
     IF ((column_type = 'c') AND (index > 8000000)) THEN
-        RAISE EXCEPTION '%', 'The number of distinct class values can''t exceed 8,000,000!';
+        RAISE EXCEPTION '%', 
+            'The number of distinct class values can''t exceed 8,000,000!';
     END IF;
     
     -- Add the column to the result table
-    SELECT MADLIB_SCHEMA.__format('ALTER TABLE % ADD COLUMN % INT', encoded_table_name, column_name)
-            INTO curstmt;
+    SELECT MADLIB_SCHEMA.__format
+        (
+            'ALTER TABLE % ADD COLUMN % INT', 
+            encoded_table_name, 
+            column_name
+        ) INTO curstmt;
     EXECUTE curstmt;
     
     SELECT MADLIB_SCHEMA.__update_discrete_column_table_stmt
@@ -2333,34 +2139,29 @@ BEGIN
     
     IF (is_persistent) THEN
         PERFORM MADLIB_SCHEMA.__insert_into_metatable
-            (metatable_name, column_name, column_type, 'f', coltable_name, index - 1);
+            (metatable_name, column_name, column_type, 
+             'f', coltable_name, index - 1);
     END IF;
 END
 $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief Retrieve the update encoding statement for discrete column
- * @param input_table_name      the input table name
- * @param id_column_name        the name of id column 
- * @param column_name           name of the discrete column
- * @param coltable_name         the table name for the specified column
- *                              this table is the key-value table for this column
- * @param encoded_table_name    the encoding table name
+ * @brief Retrieve the update statement for discrete column
  *
- * @return the update statement
+ * @param input_table_name      The full name of the input table
+ * @param column_name           The name of the discrete column
+ * @param coltable_name         The full table name for the specified column
+ *                              This table is the key-value table for this column
+ * @param encoded_table_name    The full name of the encoded table 
  *
- * @note Since Greenplum4.0 doesn't support to distribute data between segments when updating,
- *       we will use a temp table to store the result of joining (join column is not the distribute column)
+ * @return The update SQL statement
+ *
+ * @note Since Greenplum4.0 doesn't support to distribute data between 
+ *       segments when updating, we will use a temp table to store the 
+ *       result of joining (join column is not the distribute column)
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__update_discrete_column_table_stmt
-    (
-    input_table_name    TEXT, 
-    id_column_name      TEXT, 
-    column_name         TEXT,
-    coltable_name       TEXT,
-    encoded_table_name  TEXT
-    ) CASCADE;
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__update_discrete_column_table_stmt
     (
     input_table_name    TEXT, 
@@ -2378,80 +2179,78 @@ m4_changequote(`>>>', `<<<')
 m4_ifdef(>>>__GREENPLUM_PRE_4_1__<<<, >>>
     EXECUTE 'DROP TABLE IF EXISTS c45_update_discrete_col_table';
     -- use a temp table to store the result of joining
-    SELECT MADLIB_SCHEMA.__format
-        ('CREATE TEMP TABLE c45_update_discrete_col_table(id, key) AS
-          SELECT % as id, key
-          FROM % t LEFT JOIN MADLIB_SCHEMA.% k ON (t.% = k.% OR (t.% IS NULL AND k.% IS NULL))
-          DISTRIBUTED BY (id)',
-          ARRAY[
-           id_column_name,
-           input_table_name,
-           coltable_name,
-           column_name,
-           column_name,
-           column_name,
-           column_name
-          ]
-         )
-     INTO curstmt;
-     
+    curstmt = MADLIB_SCHEMA.__format
+                (
+                    'CREATE TEMP TABLE 
+                     c45_update_discrete_col_table(id, key) AS
+                     SELECT % as id, key
+                     FROM % t LEFT JOIN % k 
+                        ON (t.% = k.% OR (t.% IS NULL AND k.% IS NULL))
+                     m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)')',
+                     ARRAY[
+                       id_column_name,
+                       input_table_name,
+                       coltable_name,
+                       column_name,
+                       column_name,
+                       column_name,
+                       column_name
+                     ]
+                 );
      EXECUTE curstmt;       
      
-    SELECT MADLIB_SCHEMA.__format
-            (
-                'FROM c45_update_discrete_col_table s
-                 WHERE %.id = s.id',
-                 ARRAY[
-                 encoded_table_name
-                 ]
-            )
-    INTO from_stmt;          
+    from_stmt = MADLIB_SCHEMA.__format
+                (
+                    'FROM c45_update_discrete_col_table s
+                     WHERE %.id = s.id',
+                     ARRAY[
+                     encoded_table_name
+                     ]
+                );
 <<<, >>>
-    SELECT MADLIB_SCHEMA.__format
-                ('FROM MADLIB_SCHEMA.% s, % p 
-                  WHERE (s.% = p.% OR (s.% is NULL AND p.% is NULL)) AND %.id=p.%',
-                  ARRAY[
-                  coltable_name,
-                  input_table_name,
-                  column_name,
-                  column_name,
-                  column_name,
-                  column_name,
-                  encoded_table_name,
-                  id_column_name]
-                 )
-    INTO from_stmt;    
+    from_stmt = MADLIB_SCHEMA.__format
+                (
+                     'FROM % s, % p 
+                      WHERE (s.% = p.% OR (s.% is NULL AND p.% is NULL)) AND 
+                            %.id=p.%',
+                      ARRAY[
+                          coltable_name,
+                          input_table_name,
+                          column_name,
+                          column_name,
+                          column_name,
+                          column_name,
+                          encoded_table_name,
+                          id_column_name
+                      ]
+                 );
 <<<)
 m4_changequote(>>>`<<<, >>>'<<<)
     
     -- the update result table statement
-    SELECT MADLIB_SCHEMA.__format
-                    ('UPDATE % SET %=s.key 
+    curstmt = MADLIB_SCHEMA.__format
+                (
+                     'UPDATE % SET %=s.key 
                       %',
                       ARRAY[
-                      encoded_table_name,
-                      column_name,
-                      from_stmt
+                        encoded_table_name,
+                        column_name,
+                        from_stmt
                       ]
-                     )
-    INTO curstmt;
+                );
              
     RETURN curstmt;
 END
 $$ LANGUAGE PLPGSQL;
 
-
 /*
- * @brief Convert a string with delimiter ',' to an array 
- * @param csv_str a string with delimiter ','
+ * @brief Convert a string with delimiter ',' to an array  
  *
- * @return the splitting string array    
+ * @param csv_str The string with elements delimited by ','
+ *
+ * @return The splitting string array     
+ *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__csvstr_to_array
-    (
-    csv_str TEXT
-    );
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__csvstr_to_array 
     (
     csv_str TEXT
@@ -2466,10 +2265,11 @@ BEGIN
     
     IF (ret IS NOT NULL) THEN
         FOR index IN 1..array_upper(ret, 1) LOOP
-            ret[index] = lower(btrim(ret[index], ' '));
+            ret[index] = btrim(ret[index], ' ');
         END LOOP;
     END IF;
 
     RETURN ret;
 END
 $$ LANGUAGE PLPGSQL;
+
