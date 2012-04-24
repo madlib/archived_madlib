@@ -36,6 +36,7 @@ PG_MODULE_MAGIC;
 #define dtelog(...)
 #endif
 
+
 /*
  * Postgres8.4 doesn't have such macro, so we add here
  */
@@ -62,12 +63,12 @@ PG_MODULE_MAGIC;
 
 
 /*
- *  For Error Based Pruning (EBP), we need to compute the additional errors
- *  if the error rate increases to the upper limit of the confidence level.
- *  The coefficient is the square of the number of standard deviations
- *  corresponding to the selected confidence level.
- *  (Taken from Documenta Geigy Scientific Tables (Sixth Edition),
- *  p185 (with modifications).)
+ * For Error Based Pruning (EBP), we need to compute the additional errors
+ * if the error rate increases to the upper limit of the confidence level.
+ * The coefficient is the square of the number of standard deviations
+ * corresponding to the selected confidence level.
+ * (Taken from Documenta Geigy Scientific Tables (Sixth Edition),
+ * p185 (with modifications).)
  */
 static float8 DT_CONFIDENCE_LEVEL[] =
 				{0, 0.001, 0.005, 0.01, 0.05, 0.10, 0.20, 0.40, 1.00};
@@ -113,18 +114,18 @@ dt_ebp_calc_errors_internal
 
 
 /*
- * Calculates the total errors used by Error Based Pruning (EBP).
- * This will be wrapped as a plc function.
+ * @brief Calculates the total errors used by Error Based Pruning (EBP).
+ *        This will be wrapped as a plc function.
  *
- * Parameters:
- *      total 			The number of total cases represented by the node
- *      				being processed.
- *      probability   	The probability to mis-classify cases represented
- *      				by the child nodes if they are pruned with EBP.
- *      conf_level  	A certainty factor to calculate the confidence limits
- *      				for the probability of error using the binomial theorem.
- * Return:
- *      The computed total error
+ * @param total         The number of total cases represented by the node
+ *                      being processed.
+ * @param probability   The probability to mis-classify cases represented
+ *                      by the child nodes if they are pruned with EBP.
+ * @param conf_level    A certainty factor to calculate the confidence limits
+ *                      for the probability of error using the binomial theorem.
+ * 
+ * @return The computed total error.
+ *
  */
 Datum
 dt_ebp_calc_errors
@@ -219,19 +220,18 @@ PG_FUNCTION_INFO_V1(dt_ebp_calc_errors);
 
 
 /*
- * This function calculates the additional errors for EBP.
- * Detailed description of that pruning strategy can be found in the paper
- * 'Error-Based Pruning of Decision Trees Grown on Very Large Data Sets Can Work!'.
+ * @brief This function calculates the additional errors for EBP.
+ *        Detailed description of that pruning strategy can be found in the paper
+ *        'Error-Based Pruning of Decision Trees Grown on Very Large Data Sets Can Work!'.
  *
- * Parameters:
- *      total_cases  The number of total cases represented by the node
- *      			 being processed.
- *      num_errors   The number of mis-classified cases represented
- *      			 by the child nodes if they are pruned with EBP.
- *      conf_level   A certainty factor to calculate the confidence limits
- *      			 for the probability of error using the binomial theorem.
- * Return:
- *      The additional errors if we prune the node being processed.
+ * @param total_cases   The number of total cases represented by the node
+ *                      being processed.
+ * @param num_errors    The number of mis-classified cases represented
+ *                      by the child nodes if they are pruned with EBP.
+ * @param conf_level    A certainty factor to calculate the confidence limits
+ *                      for the probability of error using the binomial theorem.
+ *
+ * @return The additional errors if we prune the node being processed.
  *
  */
 static
@@ -281,18 +281,18 @@ dt_ebp_calc_errors_internal
 
 
 /*
- * The step function for aggregating the class counts while
- * doing Reduce Error Pruning (REP).
+ * @brief The step function for aggregating the class counts while
+ *        doing Reduce Error Pruning (REP).
  *
- * Parameters:
- *      class_count_array   The array used to store the accumulated information.
- *                          [0]: the total number of mis-classified cases
- *                          [i]: the number of cases belonging to the ith class
- *      classified_class    The predicted class based on our trained DT model.
- *      original_class      The real class value provided in the validation set.
- *      max_num_of_classes  The total number of distinct class values.
- * Return:
- *      An updated state array.
+ * @param class_count_array     The array used to store the accumulated information.
+ *                              [0]: the total number of mis-classified cases
+ *                              [i]: the number of cases belonging to the ith class
+ * @param classified_class      The predicted class based on our trained DT model.
+ * @param original_class        The real class value provided in the validation set.
+ * @param max_num_of_classes    The total number of distinct class values.
+ *
+ * @return An updated state array.
+ *
  */
 Datum
 dt_rep_aggr_class_count_sfunc
@@ -414,14 +414,14 @@ PG_FUNCTION_INFO_V1(dt_rep_aggr_class_count_sfunc);
 
 
 /*
- * The pre-function for REP. It takes two class count arrays
- * produced by the sfunc and combine them together.
+ * @brief The pre-function for REP. It takes two class count arrays
+ *        produced by the sfunc and combine them together.
  *
- * Parameters:
- *      1 arg         The array returned by sfun1
- *      2 arg         The array returned by sfun2
- * Return:
- *      The array with the combined information
+ * @param 1 arg         The array returned by sfun1.
+ * @param 2 arg         The array returned by sfun2.
+ *
+ * @return The array with the combined information.
+ *
  */
 Datum
 dt_rep_aggr_class_count_prefunc
@@ -511,19 +511,19 @@ PG_FUNCTION_INFO_V1(dt_rep_aggr_class_count_prefunc);
 
 
 /*
- * The final function for aggregating the class counts for REP.
- * It takes the class count array produced by the sfunc and produces
- * a two-element array. The first element is the ID of the class that
- * has the maximum number of cases represented by the root node of
- * the subtree being processed. The second element is the number of
- * reduced misclassified cases if the leave nodes of the subtree are pruned.
+ * @brief The final function for aggregating the class counts for REP.
+ *        It takes the class count array produced by the sfunc and produces
+ *        a two-element array. The first element is the ID of the class that
+ *        has the maximum number of cases represented by the root node of
+ *        the subtree being processed. The second element is the number of
+ *        reduced misclassified cases if the leave nodes of the subtree are pruned.
  *
- * Parameters:
- *      class_count_data    The array containing all the information for the
+ * @param class_count_data  The array containing all the information for the
  *                          calculation of Reduced-Error pruning. 
- * Return:
- *      A two-element array that contains the most frequent class ID and
- *      the prune flag.
+ *
+ * @return A two-element array that contains the most frequent class ID and
+ *         the prune flag.
+ *
  */
 Datum
 dt_rep_aggr_class_count_ffunc
@@ -765,6 +765,7 @@ PG_FUNCTION_INFO_V1(dt_rep_aggr_class_count_ffunc);
  * aggregate for calculating splitting criteria values (SCVs).
  * The enum types defines which element of that array is used
  * for which purpose.
+ *
  */
 enum DT_SCV_STATE_ARRAY_INDEX
 {
@@ -820,6 +821,7 @@ enum DT_SCV_STATE_ARRAY_INDEX
  * aggregate for calculating splitting criteria values (SCVs).
  * The enum types defines which element of that array is used
  * for which purpose.
+ *
  */
 enum DT_SCV_FINAL_ARRAY_INDEX
 {
@@ -855,14 +857,14 @@ enum DT_SCV_FINAL_ARRAY_INDEX
 
 
 /*
- * The function is used to calculate pre-split splitting criteria value. 
+ * @brief The function is used to calculate pre-split splitting criteria value. 
  *
- * Parameters:
- *      scv_state_array     The array containing all the information for the 
- *                          calculation of splitting criteria values. 
- *      curr_class_count    Total count of elements belonging to current class.
- *      total_elem_count    Total count of elements.
- *      split_criterion     1- infogain; 2- gainratio; 3- gini.
+ * @param scv_state_array     The array containing all the information for the 
+ *                            calculation of splitting criteria values. 
+ * @param curr_class_count    Total count of elements belonging to current class.
+ * @param total_elem_count    Total count of elements.
+ * @param split_criterion     1 - infogain; 2 - gainratio; 3 - gini.
+ *
  */
 static
 void
@@ -927,27 +929,26 @@ dt_accumulate_pre_split_scv
 
 
 /*
- * The step function for the aggregation of splitting criteria values.
- * It accumulates all the information for scv calculation
- * and stores to a fourteen element array.
+ * @brief The step function for the aggregation of splitting criteria values.
+ *        It accumulates all the information for scv calculation
+ *        and stores to a fourteen element array.
  *
- * Parameters:
- *      scv_state_array    The array used to accumulate all the information
- *      				   for the calculation of splitting criteria values.
- *      				   Please refer to the definition of DT_SCV_STATE_ARRAY_INDEX.
- *      split_criterion    1- infogain; 2- gainratio; 3- gini.
- *      feature_val        The feature value of current record under processing.
- *      class              The class of current record under processing.
- *      is_cont_feature    True- The feature is continuous. False- The feature is
- *                         discrete.
- *      less               Count of elements less than or equal to feature_val.
- *      great              Count of elements greater than feature_val.
- *      true_total_count   If there is any missing value, true_total_count is larger
- *      				   than the total count computed in the aggregation. Thus,
- *      				   we should multiply a ratio for the computed gain.
- * Return:
- *      A fourteen element array. Please refer to the definition of 
- *      DT_SCV_STATE_ARRAY_INDEX for the detailed information of this array.
+ * @param scv_state_array   The array used to accumulate all the information
+ *                          for the calculation of splitting criteria values.
+ *                          Please refer to the definition of DT_SCV_STATE_ARRAY_INDEX.
+ * @param split_criterion   1- infogain; 2- gainratio; 3- gini.
+ * @param feature_val       The feature value of current record under processing.
+ * @param class             The class of current record under processing.
+ * @param is_cont_feature   True- The feature is continuous. False- The feature is
+ *                          discrete.
+ * @param less              Count of elements less than or equal to feature_val.
+ * @param great             Count of elements greater than feature_val.
+ * @param true_total_count  If there is any missing value, true_total_count is larger
+ *      				    than the total count computed in the aggregation. Thus,
+ *                          we should multiply a ratio for the computed gain.
+ *
+ * @return A fourteen element array. Please refer to the definition of 
+ *         DT_SCV_STATE_ARRAY_INDEX for the detailed information of this array.
  */
 Datum
 dt_scv_aggr_sfunc
@@ -1215,16 +1216,15 @@ PG_FUNCTION_INFO_V1(dt_scv_aggr_sfunc);
 
 
 /*
- * The pre-function for the aggregation of splitting criteria values.
- * It takes the state array produced by two sfunc and combine them together.
+ * @brief The pre-function for the aggregation of splitting criteria values.
+ *        It takes the state array produced by two sfunc and combine them together.
  *
- * Parameters:
- *      scv_state_array    The array from sfunc1
- *      scv_state_array    The array from sfunc2
- * Return:
- *      A fourteen element array. Please refer to the definition of 
- *      DT_SCV_STATE_ARRAY_INDEX for the detailed information of this
- *      array.
+ * @param scv_state_array    The array from sfunc1.
+ * @param scv_state_array    The array from sfunc2.
+ *
+ * @return A fourteen element array. Please refer to the definition of 
+ *         DT_SCV_STATE_ARRAY_INDEX for the detailed information of this array.
+ *
  */
 Datum
 dt_scv_aggr_prefunc
@@ -1348,17 +1348,16 @@ PG_FUNCTION_INFO_V1(dt_scv_aggr_prefunc);
 
 
 /*
- * The final function for the aggregation of splitting criteria values.
- * It takes the state array produced by the sfunc and produces
- * an eleven-element array.
+ * @brief The final function for the aggregation of splitting criteria values.
+ *        It takes the state array produced by the sfunc and produces
+ *        an eleven-element array.
  *
- * Parameters:
- *      scv_state_array    The array containing all the information for the 
+ * @param scv_state_array  The array containing all the information for the 
  *                         calculation of splitting criteria values. 
- * Return:
- *      An eleven element array. Please refer to the definition of 
- *      DT_SCV_FINAL_ARRAY_INDEX for the detailed information of this
- *      array.
+ *
+ * @return An eleven element array. Please refer to the definition of 
+ *         DT_SCV_FINAL_ARRAY_INDEX for the detailed information of this array.
+ *
  */
 Datum
 dt_scv_aggr_ffunc
@@ -1547,17 +1546,17 @@ PG_FUNCTION_INFO_V1(dt_scv_aggr_ffunc);
 
 
 /*
- * The function samples a set of integer values between low and high.
- * The sample method is 'sample with replacement', which means a case
- * could be chosen multiple times.
+ * @brief The function samples a set of integer values between low and high.
+ *        The sample method is 'sample with replacement', which means a case
+ *        could be chosen multiple times.
  *
- * Parameters:
- *      sample_size     Number of records to be sampled
- *      low             Low limit of sampled values
- *      high            High limit of sampled values
- *      seed            Seed for random number
- * Return:
- *      A set of integer values sampled randomly between [low, high].
+ * @param sample_size     Number of records to be sampled.
+ * @param low             Low limit of sampled values.
+ * @param high            High limit of sampled values.
+ * @param seed            Seed for random number.
+ *
+ * @return A set of integer values sampled randomly between [low, high].
+ *
  */
 Datum
 dt_sample_within_range
@@ -1618,21 +1617,21 @@ PG_FUNCTION_INFO_V1(dt_sample_within_range);
 
 
 /*
- * Sample the specified number of unique features for a node.
- * Features used by ancestor nodes will be excluded.
- * If the number of remaining features is less or equal than the
- * requested number of features, then all the remaining features
- * will be returned.
+ * @brief Sample the specified number of unique features for a node.
+ *        Features used by ancestor nodes will be excluded.
+ *        If the number of remaining features is less or equal than the
+ *        requested number of features, then all the remaining features
+ *        will be returned.
  *
- * Parameters:
- *      num_req_features	The number of requested features
- *      num_features		The total number of features
- *      nid					The ID of the node for which the
- *      					features are sampled
- *      dp_fids				The IDs of the discrete features
- *      					used by the ancestors
- * Return:
- *      An array containing all the IDs of sampled features.
+ * @param num_req_features  The number of requested features.
+ * @param num_features      The total number of features.
+ * @param nid               The ID of the node for which the
+ *                          features are sampled.
+ * @param dp_fids           The IDs of the discrete features
+ *                          used by the ancestors.
+ *
+ * @return An array containing all the IDs of sampled features.
+ *
  */
 Datum
 dt_sample_unique_features
@@ -1792,21 +1791,21 @@ PG_FUNCTION_INFO_V1(dt_sample_unique_features);
 
 
 /*
- * Use % as the delimiter to split the given string. The char '\' is used
- * to escape %. We will not change the default behavior of '\' in PG/GP.
- * For example, assume the given string is E"\\\\\\\\\\%123%123". Then it only
- * has one delimiter; the string will be split to two substrings:
- * E'\\\\\\\\\\%123' and '123'; the position array size is 1, where position[0] = 9;
- * (*num_deli) = 1; (*len) = 13.
+ * @brief Use % as the delimiter to split the given string. The char '\' is used
+ *        to escape %. We will not change the default behavior of '\' in PG/GP.
+ *        For example, assume the given string is E"\\\\\\\\\\%123%123". Then it only
+ *        has one delimiter; the string will be split to two substrings:
+ *        E'\\\\\\\\\\%123' and '123'; the position array size is 1, where position[0] = 9;
+ *        (*num_deli) = 1; (*len) = 13.
  *
- * Parameters:
- *      str		    The string to be split
- *      position	An array to store the position of each un-escaped % in the string
- *   	num_deli	The number of un-escaped %s in the string
- *      len		    The length of the string. It doesn't include the terminal.
- * Return:
- *      The position array which records the positions of all un-escaped %s
- *      in the give string
+ * @param str       The string to be split.
+ * @param position  An array to store the position of each un-escaped % in the string.
+ * @param num_deli  The number of un-escaped %s in the string.
+ * @param len       The length of the string. It doesn't include the terminal.
+ *
+ * @return The position array which records the positions of all un-escaped %s
+ *         in the give string.
+ *
  */
 static
 int*
@@ -1862,18 +1861,18 @@ dt_split_string
 
 
 /*
- * Change all occurrences of '\%' in the give string to '%'. Our split
- * method will ensure that the char immediately before a '%' must be a '\'.
- * We traverse the string from left to right, if we meet a '%', then
- * move the substring after the current '\%' to the right place until
- * we meet next '\%' or the '\0'. Finally, set the terminal symbol for
- * the replaced string.
+ * @brief Change all occurrences of '\%' in the give string to '%'. Our split
+ *        method will ensure that the char immediately before a '%' must be a '\'.
+ *        We traverse the string from left to right, if we meet a '%', then
+ *        move the substring after the current '\%' to the right place until
+ *        we meet next '\%' or the '\0'. Finally, set the terminal symbol for
+ *        the replaced string.
  *
- * Parameters:
- *      str		    The null terminated string to be escaped.
- *					The char immediately before a '%' must be a '\'
- * Return:
- *      The new string with \% changed to %
+ * @param str   The null terminated string to be escaped.
+ *              The char immediately before a '%' must be a '\'.
+ *
+ * @return The new string with \% changed to %.
+ *
  */
 static
 char*
@@ -1928,24 +1927,24 @@ dt_escape_pct_sym
 
 
 /*
- * We need to build a lot of query strings based on a set of arguments. For that
- * purpose, this function will take a format string (the template) and an array
- * of values, scan through the format string, and replace the %s in the format
- * string with the corresponding values in the array. The result string is
- * returned as a PG/GP text Datum. The escape char for '%' is '\'. And we will
- * not change it's default behavior in PG/GP. For example, assume that
- * fmt = E'\\\\\\\\ % \\% %', args[] = {"100", "20"}, then the returned text
- * of this function is E'\\\\\\\\ 100 % 20'
+ * @brief We need to build a lot of query strings based on a set of arguments. For that
+ *        purpose, this function will take a format string (the template) and an array
+ *        of values, scan through the format string, and replace the %s in the format
+ *        string with the corresponding values in the array. The result string is
+ *        returned as a PG/GP text Datum. The escape char for '%' is '\'. And we will
+ *        not change it's default behavior in PG/GP. For example, assume that
+ *        fmt = E'\\\\\\\\ % \\% %', args[] = {"100", "20"}, then the returned text
+ *        of this function is E'\\\\\\\\ 100 % 20'
  *
- * Parameters:
- *      fmt		    The format string. %s are used to indicate a position
- *      			where a value should be filled in.
- *      args		An array of values that should be used for replacements.
- *      			args[i] replaces the i-th % in fmt. The array length should
- *      			equal to the number of %s in fmt.
- * Return:
- *      A string with all %s which were not escaped in first argument replaced
- *      with the corresponding values in the second argument.
+ * @param fmt       The format string. %s are used to indicate a position
+ *                  where a value should be filled in.
+ * @param args      An array of values that should be used for replacements.
+ *                  args[i] replaces the i-th % in fmt. The array length should
+ *                  equal to the number of %s in fmt.
+ *
+ * @return A string with all %s which were not escaped in first argument replaced
+ *         with the corresponding values in the second argument.
+ *
  */
 Datum
 dt_text_format
@@ -2103,12 +2102,11 @@ PG_FUNCTION_INFO_V1(dt_text_format);
 
 
 /*
- * This function checks whether the specified table exists or not.
+ * @brief This function checks whether the specified table exists or not.
  *
- * Parameters:
- *      input	The table name to be tested.	    
- * Return:
- *      A boolean value indicating whether the table exists or not.
+ * @param input     The table name to be tested.	    
+ *
+ * @return A boolean value indicating whether the table exists or not.
  */
 Datum table_exists(PG_FUNCTION_ARGS)
 {
