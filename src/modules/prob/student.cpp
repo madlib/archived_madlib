@@ -239,6 +239,77 @@ student_t_cdf::run(AnyType &args) {
     return studentT_CDF(t, nu);
 }
 
+/**
+ * @brief Student-t density function: In-database interface
+ */
+AnyType
+student_t_pdf::run(AnyType &args)
+{
+    double t = args[0].getAs<double>();
+    double nu = args[1].getAs<double>();
+    
+    /* We want to ensure nu > 0 */
+    if (nu <= 0.) {
+        throw std::domain_error("Student-t distribution undefined for "
+            "degree of freedom <= 0");
+    }
+    
+    return studentT_PDF(t,nu);
+}
+
+double studentT_PDF(double t, double nu)
+{
+    if (0 >= nu || std::isnan(t) || std::isnan(nu)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    else if (std::isinf(t)) {
+        return 0;
+    }
+    
+    return boost::math::pdf(boost::math::students_t(nu), t);
+}
+
+/**
+ * @brief Student-t quantile functin: In-database interface
+ */
+AnyType 
+student_t_quantile::run(AnyType &args)
+{
+    double t = args[0].getAs<double>();
+    double nu = args[1].getAs<double>();
+    
+    /* We want to ensure nu > 0 */
+    if (nu <= 0.) {
+        throw std::domain_error("Student-t distribution undefined for "
+            "degree of freedom <= 0");
+    }
+    else if (t < 0) {
+        throw std::domain_error("Student-t distribution undefined for "
+            "cumulative < 0");
+    }
+    else if (t > 1) {
+        throw std::domain_error("Student-t distribution undefined for "
+            "cumulative > 1");
+    }
+    
+    return studentT_Quantile(t,nu);
+}
+
+double studentT_Quantile(double t, double nu)
+{
+    if (0 >= nu || std::isnan(t) || std::isnan(nu)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    else if (0 == t) {
+        return -INFINITY;
+    }
+    else if (1 == t) {
+        return INFINITY;
+    }
+    
+    return boost::math::quantile(boost::math::students_t(nu), t);
+}
+
 } // namespace prob
 
 } // namespace modules
