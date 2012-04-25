@@ -1719,7 +1719,7 @@ dt_sample_unique_features
 			 */
 			do
 			{
-				fid = abs(rand()) % num_features;
+				fid = rand() % num_features;
 			}while (0 < (bitmap[fid >> power_uint32] & dt_fid_mask(fid, power_uint32)));
 
 			result[i] = Int32GetDatum(fid + 1);
