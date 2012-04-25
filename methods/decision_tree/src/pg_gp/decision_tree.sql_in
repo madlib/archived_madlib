@@ -1802,6 +1802,7 @@ DECLARE
     classify_result         TEXT;
     temp_text               TEXT;
     n                       INT;
+    table_names             TEXT[];
 BEGIN
     metatable_name  = MADLIB_SCHEMA.__get_metatable_name(tree_table_name);
     id_col_name     = MADLIB_SCHEMA.__get_id_column_name(metatable_name);
@@ -1832,23 +1833,17 @@ BEGIN
                 'the value of class column in validation table must in 
                  training table'
             ); 
-
-    cf_table_name   = MADLIB_SCHEMA.__format
-                          (
-                          '%_ct', 
-                          ARRAY[MADLIB_SCHEMA.__strip_schema_name(tree_table_name)]
-                          );
-    classify_result = cf_table_name;   
-
                                 
-    SELECT MADLIB_SCHEMA.__treemodel_classify_internal
-    (
-        validation_table, 
-        tree_table_name, 
-        classify_result, 
-        't',
-        'f'
-    ) INTO encoded_table_name;
+    table_names = MADLIB_SCHEMA.__treemodel_classify_internal
+                  (
+                    validation_table, 
+                    tree_table_name, 
+                    0
+                  );
+   
+    encoded_table_name = table_names[1];
+    classify_result    = table_names[2];
+    cf_table_name      = classify_result;
 
     -- after encoding in classification, class_col_name is fixed to class
     class_col_name  = 'class';
@@ -4199,32 +4194,26 @@ $$ LANGUAGE PLPGSQL;
  * @param tree_table_name            The full name of the tree table
  * @param result_table_name          The full name of the table containing the 
  *                                   classification result
- * @param is_result_temp             It specifies whether the result_table should
- *                                   be temporary
  * @param verbosity                  Whether printing those debug information. 
  *
- * @return The encoded table name. (We encode the source table during
- *         the classification process.)
+ * @return An array containing the encoded table name and classification result 
+ *         table name (We encode the source table during the classification).
  *
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__treemodel_classify_internal
     (
     classification_table_name   TEXT, 
     tree_table_name             TEXT, 
-    result_table_name           TEXT, 
-    is_result_temp              BOOLEAN,
-    verbosity                   BOOLEAN
+    verbosity                   INT 
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__treemodel_classify_internal
     (
     classification_table_name   TEXT, 
     tree_table_name             TEXT, 
-    result_table_name           TEXT, 
-    is_result_temp              BOOLEAN,
-    verbosity                   BOOLEAN
+    verbosity                   INT
     ) 
-RETURNS TEXT AS $$
+RETURNS TEXT[] AS $$
 DECLARE
     table_pick              INT    := 1;
     remains_to_classify     INT;
@@ -4234,21 +4223,14 @@ DECLARE
     id_col_name             TEXT   := 'id';
     curr_level              INT    := 1;
     max_level               INT    := 0;
-    create_text             TEXT   := '';
     h2hmv_routine_id        INT    := 0;
     curstmt                 TEXT   := '';
-    encoded_table_name      TEXT   := 'rf_classify_internal_edt';
+    result_table_name       TEXT   := 'dt_classify_internal_rt';
+    encoded_table_name      TEXT   := 'dt_classify_internal_edt';
     table_names             TEXT[] := '{classified_instance_ping,classified_instance_pong}';
     tree_id                 INT;
 BEGIN
     time_stamp = clock_timestamp();
-
-    IF (is_result_temp) THEN
-        create_text = 'CREATE TEMP TABLE ';
-        EXECUTE 'DROP TABLE IF EXISTS '||result_table_name;
-    ELSE
-        create_text = 'CREATE TABLE ';
-    END IF;
 
     PERFORM MADLIB_SCHEMA.__assert
             (
@@ -4276,25 +4258,13 @@ BEGIN
                 'the specified tree table' || 
                 coalesce('<' || tree_table_name || '> does not exists', ' is NULL')
             ); 
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                (result_table_name IS NOT NULL) AND
-                (
-                 NOT MADLIB_SCHEMA.__table_exists
-                    (
-                        result_table_name
-                    )
-                ),
-                'the specified result table' || coalesce('<' || result_table_name || '> exists', ' is NULL')
-            ); 
-                                    
+                  
     PERFORM MADLIB_SCHEMA.__assert
             (
                 verbosity IS NOT NULL,                
                 'verbosity must be non-null'
             );    
-            
+
     EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ' CASCADE';
                                  
     SELECT MADLIB_SCHEMA.__get_metatable_name(tree_table_name) INTO metatable_name;
@@ -4307,7 +4277,7 @@ BEGIN
             encoded_table_name, 
             metatable_name, 
             h2hmv_routine_id,
-            verbosity
+            verbosity > 0
         );
         
     IF ( verbosity ) THEN
@@ -4339,7 +4309,8 @@ BEGIN
     ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');
 
 
-    EXECUTE create_text || result_table_name || E'
+    EXECUTE 'DROP TABLE IF EXISTS ' || result_table_name || ' CASCADE';
+    EXECUTE 'CREATE TEMP TABLE ' || result_table_name || E'
     (
         tid         INT,
         id          INT,
@@ -4478,7 +4449,7 @@ BEGIN
         RAISE INFO 'final classification time:%', clock_timestamp() - time_stamp;
     END IF;
     
-    RETURN encoded_table_name;
+    RETURN ARRAY[encoded_table_name, result_table_name];
 END
 $$ LANGUAGE PLPGSQL;
 
@@ -4497,28 +4468,24 @@ $$ LANGUAGE PLPGSQL;
  *                                   be temporary
  * @param verbosity                  Whether printing those debug information. 
  *
- * @return The encoded table name. (We encode the source table during
- *         the classification process.)
+ * @return An array containing the encoded table name and classification result 
+ *         table name (We encode the source table during the classification).
  *
  */
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__treemodel_classify_internal_serial
     (
     classification_table_name   TEXT, 
     tree_table_name             TEXT, 
-    result_table_name           TEXT, 
-    is_result_temp              BOOLEAN,
-    verbosity                   BOOLEAN
+    verbosity                   INT
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__treemodel_classify_internal_serial
     (
     classification_table_name   TEXT, 
     tree_table_name             TEXT, 
-    result_table_name           TEXT, 
-    is_result_temp              BOOLEAN,
-    verbosity                   BOOLEAN
+    verbosity                   INT
     ) 
-RETURNS TEXT AS $$
+RETURNS TEXT[] AS $$
 DECLARE
     table_pick              INT    := 1;
     remains_to_classify     INT;
@@ -4528,10 +4495,10 @@ DECLARE
     id_col_name             TEXT   := 'id';
     curr_level              INT    := 1;
     max_level               INT    := 0;
-    create_text             TEXT   := '';
     h2hmv_routine_id        INT    := 0;
     curstmt                 TEXT   := '';
-    encoded_table_name      TEXT   := 'rf_classify_internal_edt';
+    result_table_name       TEXT   := 'dt_classify_internal_rt';
+    encoded_table_name      TEXT   := 'dt_classify_internal_edt';
     table_names             TEXT[] := ARRAY[ 
                                         'classified_instance_ping',
                                         'classified_instance_pong'
@@ -4540,13 +4507,6 @@ DECLARE
     root_id                 INT;
 BEGIN
     time_stamp = clock_timestamp();
-
-    IF (is_result_temp) THEN
-        create_text = 'CREATE TEMP TABLE ';
-        EXECUTE 'DROP TABLE IF EXISTS '||result_table_name;
-    ELSE
-        create_text = 'CREATE TABLE ';
-    END IF;
 
     PERFORM MADLIB_SCHEMA.__assert
             (
@@ -4578,20 +4538,6 @@ BEGIN
                 '> does not exists', ' is NULL')
             ); 
 
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                (result_table_name IS NOT NULL) AND
-                (
-                 NOT MADLIB_SCHEMA.__table_exists
-                    (
-                        result_table_name
-                    )
-                ),
-                'the specified result table' || 
-                coalesce('<'                 || 
-                result_table_name            || 
-                '> exists', ' is NULL')
-            ); 
                                     
     PERFORM MADLIB_SCHEMA.__assert
             (
@@ -4611,7 +4557,7 @@ BEGIN
             encoded_table_name, 
             metatable_name, 
             h2hmv_routine_id,
-            verbosity
+            verbosity > 0
         );
         
     IF ( verbosity ) THEN
@@ -4639,8 +4585,10 @@ BEGIN
         parent_id   INT,
         leaf_id     INT
     ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');
- 
-    EXECUTE create_text || result_table_name || E'
+
+    
+    EXECUTE 'DROP TABLE IF EXISTS '||result_table_name || ' CASCADE'; 
+    EXECUTE 'CREATE TEMP TABLE ' || result_table_name || E'
     (
         tid         INT,
         id          INT,
@@ -4788,7 +4736,7 @@ BEGIN
         RAISE INFO 'final classification time:%', clock_timestamp() - time_stamp;
     END IF;
     
-    RETURN encoded_table_name;
+    RETURN ARRAY[encoded_table_name, result_table_name];
 END
 $$ LANGUAGE PLPGSQL;
 
@@ -4835,7 +4783,8 @@ DECLARE
     temp_result_table   TEXT := '';
     metatable_name      TEXT;
     result_rec          RECORD;
-    curstmt             TEXT;    
+    curstmt             TEXT;   
+    table_names         TEXT[]; 
 BEGIN
     IF (NOT verbosity>0) THEN
         -- get rid of the messages whose severity level is lower than 'WARNING'
@@ -4843,17 +4792,28 @@ BEGIN
     END IF;
     
     begin_time = clock_timestamp();
-    temp_result_table = madlib.__strip_schema_name(result_table_name)   ||
-                        '_temp_result';
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                (result_table_name IS NOT NULL) AND
+                (
+                 NOT MADLIB_SCHEMA.__table_exists
+                    (
+                        result_table_name
+                    )
+                ),
+                'the specified result table' || coalesce('<' || result_table_name || '> exists', ' is NULL')
+            ); 
     
-    SELECT MADLIB_SCHEMA.__treemodel_classify_internal
-        (
-            classification_table_name, 
-            tree_table_name, 
-            temp_result_table, 
-            't',
-            verbosity > 0
-        )  INTO encoded_table_name;
+    table_names = MADLIB_SCHEMA.__treemodel_classify_internal
+                  (
+                    classification_table_name, 
+                    tree_table_name, 
+                    verbosity 
+                  );
+    
+    encoded_table_name = table_names[1]; 
+    temp_result_table  = table_names[2];
     
     EXECUTE 'DELETE FROM '||temp_result_table||' WHERE tid <> 1;';
     metatable_name = MADLIB_SCHEMA.__get_metatable_name( tree_table_name );
@@ -4966,18 +4926,18 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__treemodel_score
     (
     tree_table_name             TEXT, 
     scoring_table_name          TEXT, 
-    verbosity                   BOOLEAN
+    verbosity                   INT
     );
     
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__treemodel_score
     (
     tree_table_name             TEXT, 
     scoring_table_name          TEXT, 
-    verbosity                   BOOLEAN
+    verbosity                   INT
     ) 
 RETURNS FLOAT AS $$
 DECLARE
-    result_table_name       TEXT  := 'treemodel_score_table_temp';
+    result_table_name       TEXT;
     result_table_name_final	TEXT;
     id_col_name   	      	TEXT  := 'id';
     class_col_name      	TEXT  := 'class';
@@ -4985,9 +4945,10 @@ DECLARE
     num_of_row          	FLOAT := 0.0;
     mis_of_row          	FLOAT := 0.0;
     encoded_table_name  	TEXT  := '';
+    table_names             TEXT[];
 BEGIN
 
-    IF (NOT verbosity) THEN
+    IF (verbosity > 0) THEN
         -- get rid of the messages whose severity level is lower than 'WARNING'
         SET client_min_messages = WARNING;
     END IF;
@@ -5033,20 +4994,15 @@ BEGIN
             '> does not have class column'
         );
             
-    result_table_name       = MADLIB_SCHEMA.__get_schema_name(tree_table_name)  || 
-                              MADLIB_SCHEMA.__strip_schema_name(tree_table_name)|| 
-                              result_table_name;
+    table_names = MADLIB_SCHEMA.__treemodel_classify_internal
+                    (
+                        scoring_table_name, 
+                        tree_table_name, 
+                        verbosity
+                    ); 
+    encoded_table_name      = table_names[1];
+    result_table_name       = table_names[2];
     result_table_name_final = result_table_name||'_final';
-    
-    SELECT MADLIB_SCHEMA.__treemodel_classify_internal
-        (
-        scoring_table_name, 
-        tree_table_name, 
-        result_table_name, 
-        't',
-        verbosity
-        ) 
-    INTO encoded_table_name;
     
     PERFORM MADLIB_SCHEMA.__treemodel_get_vote_result
         (
@@ -5114,7 +5070,7 @@ BEGIN
                 (
                     tree_table_name,
                     scoring_table_name,
-                    verbosity > 0
+                    verbosity 
                 );
     RETURN accuracy;
 END;
