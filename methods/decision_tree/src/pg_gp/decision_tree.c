@@ -22,9 +22,6 @@
 #include "nodes/execnodes.h"
 #include "nodes/nodes.h"
 #include "funcapi.h"
-#include <stdlib.h>
-#include <time.h>
-
 
 #ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -1618,7 +1615,7 @@ PG_FUNCTION_INFO_V1(dt_sample_within_range);
 
 /*
  * @brief Sample the specified number of unique features for a node.
- *        Features used by ancestor nodes will be excluded.
+ *        Discrete features used by ancestor nodes will be excluded.
  *        If the number of remaining features is less or equal than the
  *        requested number of features, then all the remaining features
  *        will be returned.
