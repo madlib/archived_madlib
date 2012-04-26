@@ -194,13 +194,6 @@ dt_ebp_calc_errors
 
 		coeff *= coeff;
 
-		dt_check_error_value
-    		(
-    			coeff > 0,
-    			"invalid coefficiency: %lf. It must be greater than 0",
-    			coeff
-    		);
-
 		float8 num_errors = total_cases * (1 - probability);
     	result 			  = dt_ebp_calc_errors_internal
 								(
@@ -1540,77 +1533,6 @@ dt_scv_aggr_ffunc
     PG_RETURN_ARRAYTYPE_P(result_array);
 }
 PG_FUNCTION_INFO_V1(dt_scv_aggr_ffunc);
-
-
-/*
- * @brief The function samples a set of integer values between low and high.
- *        The sample method is 'sample with replacement', which means a case
- *        could be chosen multiple times.
- *
- * @param sample_size     Number of records to be sampled.
- * @param low             Low limit of sampled values.
- * @param high            High limit of sampled values.
- * @param seed            Seed for random number.
- *
- * @return A set of integer values sampled randomly between [low, high].
- *
- */
-Datum
-dt_sample_within_range
-	(
-	PG_FUNCTION_ARGS
-	)
-{
-    FuncCallContext     *funcctx 	= NULL;
-    int64               call_cntr	= 0;
-    int64               max_calls	= 0;
-
-    /* stuff done only on the first call of the function */
-    if (SRF_IS_FIRSTCALL())
-    {
-        MemoryContext   oldcontext;
-
-        /* create a function context for cross-call persistence */
-        funcctx = SRF_FIRSTCALL_INIT();
-
-        /* switch to memory context appropriate for multiple function calls */
-        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-        int64  low = PG_GETARG_INT64(1);
-        int64 high = PG_GETARG_INT64(2);
-        int32 seed = PG_GETARG_INT64(3);
-
-		dt_check_error
-			(
-				low<=high && low>=0,
-				"The low margin must not be greater than the high margin. "
-           		"And negative numbers are not accepted"
-			);
-
-        /* total number of samples to be returned */
-        funcctx->max_calls = PG_GETARG_INT64(0);
-        srand(time(NULL)+seed);
-        MemoryContextSwitchTo(oldcontext);
-    }
-
-    /* stuff done on every call of the function */
-    funcctx   = SRF_PERCALL_SETUP();
-    call_cntr = funcctx->call_cntr;
-    max_calls = funcctx->max_calls;
- 
-    /* when there is more records to return */
-    if (call_cntr < max_calls)
-    {
-        int64       low			= PG_GETARG_INT64(1);
-        int64       high		= PG_GETARG_INT64(2);
-        float8      rand_num	= (rand()/(float8)(RAND_MAX+1.0));
-        int64       selection	= (int64)(rand_num*(high-low+1)+low);
-        SRF_RETURN_NEXT(funcctx, Int64GetDatum(selection));
-    }
-
-    /* when there is no more records left */
-    SRF_RETURN_DONE(funcctx);
-}
-PG_FUNCTION_INFO_V1(dt_sample_within_range);
 
 
 /*

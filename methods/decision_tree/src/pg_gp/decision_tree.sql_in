@@ -559,13 +559,13 @@ $$ LANGUAGE PLPGSQL;
 
 
 /*
- * @brief Generate the training instances for current leaf nodes by grouping
- *        sets for greenplumn.
+ * @brief Generate the training instances (ACS set) for current leaf nodes based
+ *        on the ACC table specified in parameter acc_table_name. 
  *
  * @param instance_table_name   The output table name, which contains all the
  *                              training set for current leaf nodes.
  * @param class_table_name      The name of the class table.
- * @param group_table_name      The name of the table containing grouping data 
+ * @param acc_table_name        The name of the table containing grouping data 
  *                              info.
  * @param max_split_point       The upper limit of sampled split points for 
  *                              continuous features. 
@@ -576,7 +576,7 @@ DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__create_training_instance
     (
     instance_table_name         TEXT,
     class_table_name            TEXT,
-    group_table_name            TEXT,
+    acc_table_name              TEXT,
     max_split_point             INT,
     verbosity                   INT
     );
@@ -584,7 +584,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_training_instance
     (
     instance_table_name         TEXT,
     class_table_name            TEXT,
-    group_table_name            TEXT,
+    acc_table_name              TEXT,
     max_split_point             INT,
     verbosity                   INT
     )
@@ -691,9 +691,9 @@ m4_changequote(>>>`<<<, >>>'<<<)
             ARRAY[
                 temp_table_name,
                 window_func_stmt,
-                group_table_name,
+                acc_table_name,
                 class_table_name,
-                group_table_name
+                acc_table_name 
             ]
         ) INTO curstmt;
 
@@ -815,10 +815,12 @@ BEGIN
                     'CREATE TEMP TABLE sf_association(nid, fid) 
                      AS SELECT 
                      nid, 
-                     unnest(MADLIB_SCHEMA.__sample_unique_features(%, %,
+                     unnest(MADLIB_SCHEMA.__dt_sample_unique_features(%, %,
                                 nid,dp_ids)) as fid
-                     FROM (SELECT DISTINCT ON(nid) nid, dp_ids 
-                           FROM % s1, % s2 WHERE s1.nid = s2.id) t
+                     FROM (SELECT nid, dp_ids 
+                           FROM % s1, % s2 
+                           WHERE s1.nid = s2.id
+                           GROUP BY nid, dp_ids) t
                      m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (fid)')',
                     ARRAY[
                         num_chosen_fids::TEXT,
@@ -2241,7 +2243,6 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__train_tree
     sampling_percentage     FLOAT,
     node_prune_threshold    FLOAT,
     node_split_threshold    FLOAT,
-    sampling_needed         BOOLEAN,
     max_split_point         INT,
     verbosity               INT
     ) 
@@ -2313,27 +2314,16 @@ BEGIN
         RAISE INFO 'INPUT TABLE SIZE: %', total_size;
     END IF;
 
-    begin_bld_asso = clock_timestamp();
-    IF (sampling_needed) THEN
-        PERFORM MADLIB_SCHEMA.__sample_with_replacement
-            (
-            num_trees,
-            round(sampling_percentage * total_size)::INT,
-            training_table_name,
-            'tr_association'
-            );
-    ELSE
-        EXECUTE 'DROP TABLE IF EXISTS tr_association CASCADE';
-        curstmt = MADLIB_SCHEMA.__format
-                    (
-                        'CREATE TEMP TABLE tr_association AS 
-                         SELECT id, 1 as tid, 1 as nid, 1 as weight 
-                         FROM %
-                         m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)')',
-                         training_table_name
-                     );
-        EXECUTE curstmt;    
-    END IF;
+    EXECUTE 'DROP TABLE IF EXISTS tr_association CASCADE';
+    curstmt = MADLIB_SCHEMA.__format
+                (
+                    'CREATE TEMP TABLE tr_association AS 
+                     SELECT id, 1 as tid, 1 as nid, 1 as weight 
+                     FROM %
+                     m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)')',
+                     training_table_name
+                 );
+    EXECUTE curstmt;    
     
     bld_asso_time = clock_timestamp() - begin_bld_asso;
 
@@ -2422,7 +2412,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
         calc_acc_time  = calc_acc_time + instance_time.calc_acc_time;
         calc_olap_time = calc_olap_time + (clock_timestamp() - begin_olap_acs);
 
-        -- If you want to keep the ACS set, please comment the following code out.
+        -- If you want to keep the ACS set, please uncomment the following code.
         -- IF (verbosity > 0) THEN
         --     IF (NOT MADLIB_SCHEMA.__table_exists('training_instance_copy')) THEN
         --         CREATE TABLE training_instance_copy AS 
@@ -3026,7 +3016,6 @@ BEGIN
                     1.0,
                     node_prune_threshold,
                     node_split_threshold,
-                    'f',
                     0,
                     verbosity
                 );
@@ -4280,7 +4269,7 @@ BEGIN
             verbosity
         );
         
-    IF ( verbosity ) THEN
+    IF (verbosity > 0) THEN
         RAISE INFO 'tabular format. id_col_name: %', id_col_name;
     END IF;        
     
@@ -4336,7 +4325,7 @@ BEGIN
     END IF;
 
     FOR curr_level IN 1..max_level LOOP
-        IF(verbosity) THEN  
+        IF (verbosity > 0) THEN  
             RAISE INFO 'new_depth: %', curr_level;
         END IF;
         
@@ -4345,7 +4334,7 @@ BEGIN
         EXECUTE 'TRUNCATE '|| table_names[table_pick] ||';';
         EXECUTE 'SELECT count(id) FROM '||result_table_name||';' INTO size_finished;
         
-        IF(verbosity) THEN  
+        IF (verbosity > 0) THEN  
             RAISE INFO 'size_finished %', size_finished;
         END IF;       
         
@@ -4353,7 +4342,7 @@ BEGIN
             INTO remains_to_classify;
             
         IF (remains_to_classify = 0) THEN
-            IF(verbosity) THEN  
+            IF (verbosity > 0) THEN  
                 RAISE INFO 'size_finished: % remains_to_classify: %', 
                     size_finished, remains_to_classify;
             END IF;  
@@ -4445,7 +4434,7 @@ BEGIN
     EXECUTE 'INSERT INTO '||result_table_name||' SELECT * FROM '|| 
         table_names[table_pick % 2 + 1] ||' WHERE jump = 0;';
     
-    IF(verbosity) THEN  
+    IF (verbosity > 0) THEN  
         RAISE INFO 'final classification time:%', clock_timestamp() - time_stamp;
     END IF;
     
@@ -4560,7 +4549,7 @@ BEGIN
             verbosity
         );
         
-    IF ( verbosity ) THEN
+    IF (verbosity > 0) THEN
         RAISE INFO 'tabular format. id_col_name: %', id_col_name;
     END IF;        
     
@@ -4602,7 +4591,7 @@ BEGIN
     FOR tree_id IN EXECUTE 'SELECT DISTINCT tid FROM '||tree_table_name LOOP
         EXECUTE 'SELECT max(array_upper(tree_location,1)) FROM '||
             tree_table_name||' WHERE tid='||tree_id||';'  INTO max_level;
-        IF(verbosity) THEN   
+        IF (verbosity > 0) THEN   
             RAISE INFO 'tree_id: %, max_level: %', tree_id,max_level;
         END IF;
 
@@ -4621,7 +4610,7 @@ BEGIN
                  encoded_table_name || ';';  
         table_pick= 1;
         FOR curr_level IN 1..max_level LOOP
-            IF(verbosity) THEN  
+            IF (verbosity > 0) THEN  
                 RAISE INFO 'new_depth: %', curr_level;
             END IF;
             
@@ -4631,7 +4620,7 @@ BEGIN
             EXECUTE 'SELECT count(id) FROM '||result_table_name||';' 
                      INTO size_finished;
             
-            IF(verbosity) THEN  
+            IF (verbosity > 0) THEN  
                 RAISE INFO 'size_finished %', size_finished;
             END IF;       
             
@@ -4640,7 +4629,7 @@ BEGIN
                      INTO remains_to_classify;
                 
             IF (remains_to_classify = 0) THEN
-                IF(verbosity) THEN  
+                IF (verbosity > 0) THEN  
                     RAISE INFO 'size_finished: % remains_to_classify: %', 
                         size_finished, remains_to_classify;
                 END IF;  
@@ -4732,7 +4721,7 @@ BEGIN
             table_names[table_pick % 2 + 1] ||' WHERE jump = 0;';
     END LOOP;
 
-    IF(verbosity) THEN  
+    IF (verbosity > 0) THEN  
         RAISE INFO 'final classification time:%', clock_timestamp() - time_stamp;
     END IF;
     
@@ -4786,7 +4775,7 @@ DECLARE
     curstmt             TEXT;   
     table_names         TEXT[]; 
 BEGIN
-    IF (NOT verbosity>0) THEN
+    IF (verbosity < 1) THEN
         -- get rid of the messages whose severity level is lower than 'WARNING'
         SET client_min_messages = WARNING;
     END IF;
@@ -5211,140 +5200,7 @@ $$ LANGUAGE PLPGSQL;
  *
  */
 CREATE OR REPLACE FUNCTION 
-MADLIB_SCHEMA.__sample_unique_features(INT4, INT4, INT4, INT4[])
+MADLIB_SCHEMA.__dt_sample_unique_features(INT4, INT4, INT4, INT4[])
 RETURNS INT[]
 AS 'MODULE_PATHNAME', 'dt_sample_unique_features'
 LANGUAGE C VOLATILE;
-
-
-/*
- * @brief The function samples a set of integer values between low and high.
- *
- * @param sample_size     The number of records to be sampled_rd.
- * @param low             The low limit of sampled valuesn_fid.
- * @param high            The high limit of sampled valuesnid.
- * @param seed            The seed for random number generator.
- *
- * @return A set of integer values sampled randomly between [low, high].
- *
- */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__sample_within_range
-    (
-    BIGINT,
-    BIGINT,
-    BIGINT,
-    INT
-    )CASCADE;
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__sample_within_range
-    (
-    sample_size     BIGINT,
-    low             BIGINT,
-    high            BIGINT,
-    seed            INT
-    ) 
-RETURNS SETOF BIGINT  
-AS 'MODULE_PATHNAME', 'dt_sample_within_range'
-LANGUAGE C STRICT VOLATILE;
-
-
-/*
- * @brief The function samples with replacement from source table and store
- *        the results to destination table.
- * 
- *        In this function, we firstly calculate how many samples should be
- *        generated in each segment. Then, we let those segments sample with
- *        replacement between the maximum ID and minimum ID of the source table 
- *        in parallel and assign samples to different trees. 
- *
- *        If there are gaps in the ID column of the source table, we sample
- *        extra records in proportion to the number of gaps. At last, we remove
- *        these invalid samples with an inner join operation with the source
- *        table. Since we target big data, this strategy works quite well.
- *
- * @param num_of_tree     The number of trees to be trained.
- * @param size_per_tree   The number of records to be sampled for each tree.
- * @param src_table       The name of the table to be sampled from.
- * @param target_table    The name of the table used to store the results.
- *
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__sample_with_replacement
-    ( 
-    num_of_tree     INT,
-    size_per_tree   INT, 
-    src_table       TEXT,
-    target_table    TEXT
-    ) 
-RETURNS VOID AS $$
-DECLARE
-    segment_num     INT;
-    sample_per_seg  INT;
-    sample_ratio    FLOAT8;
-    record_num      FLOAT8;
-    min_id          INT;
-    max_id          INT;
-    range           FLOAT8;
-    stmt            TEXT;
-BEGIN
-
-m4_changequote(`>>>', `<<<')
-m4_ifdef(>>>__GREENPLUM__<<<, >>>
-    -- get the segment number
-    SELECT COUNT(distinct content) FROM gp_segment_configuration 
-        WHERE content<>-1 INTO segment_num;
-<<<, >>>
-    -- fix the segment number to 1 for PG
-    segment_num = 1;
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
-
-
-    DROP TABLE IF EXISTS auxiliary_segment_table;
-    CREATE TEMP TABLE auxiliary_segment_table
-    (
-        segment_id  INT   
-    ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(segment_id)');
-
-    -- Insert segment_num of records distributed by segment id
-    EXECUTE 'INSERT INTO auxiliary_segment_table 
-        SELECT generate_series(1,'||segment_num||');';
-
-    EXECUTE 'SELECT max(id),min(id), count(DISTINCT id) as record_num 
-        FROM '||src_table||';' INTO max_id,min_id,record_num;
-    range=max_id-min_id+1;
-
-    -- compute the sample ratio
-    sample_ratio= range/record_num;
-
-    -- compute how many records should be sampled by each segment
-    sample_per_seg=((sample_ratio*num_of_tree*size_per_tree)/segment_num)::INT;
-    
-    DROP TABLE IF EXISTS sample_result_temp;
-    CREATE TEMP TABLE sample_result_temp
-    (
-        sample_id   SERIAL,
-        record_id   INT,
-        tree_id     INT
-    ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(record_id)');
-
-    RAISE INFO 'sample_per_seg:%, sample_ratio:%', sample_per_seg, sample_ratio;
-    -- sample in parallel by all segments
-    stmt= 'INSERT INTO sample_result_temp(record_id) 
-        SELECT MADLIB_SCHEMA.__sample_within_range('||sample_per_seg||','||min_id
-        ||','||max_id||',segment_id) FROM auxiliary_segment_table;';
-
-    RAISE INFO 'stmt:%', stmt;
-    EXECUTE stmt;
-
-    EXECUTE 'UPDATE sample_result_temp 
-        SET tree_id=((sample_id-1)%('||num_of_tree||')+1)::INT;';
-
-    -- remove those invalid samples with join operation
-    -- add the weight field
-    EXECUTE 'DROP TABLE IF EXISTS '||target_table;
-    EXECUTE 'CREATE TEMP TABLE '||target_table||'(id, tid, nid, weight) AS
-        SELECT record_id, tree_id, tree_id, count(*) as weight  
-        FROM (sample_result_temp t join '||src_table||' k on t.record_id=k.id) l
-        GROUP BY record_id, tree_id
-    m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(id)');';
-END
-$$ LANGUAGE PLPGSQL VOLATILE;
