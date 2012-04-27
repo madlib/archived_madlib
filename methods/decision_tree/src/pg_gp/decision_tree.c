@@ -506,7 +506,7 @@ PG_FUNCTION_INFO_V1(dt_rep_aggr_class_count_prefunc);
  *        a two-element array. The first element is the ID of the class that
  *        has the maximum number of cases represented by the root node of
  *        the subtree being processed. The second element is the number of
- *        reduced misclassified cases if the leave nodes of the subtree are pruned.
+ *        reduced misclassified cases if the leaf nodes of the subtree are pruned.
  *
  * @param class_count_data  The array containing all the information for the
  *                          calculation of Reduced-Error pruning. 
@@ -1536,11 +1536,12 @@ PG_FUNCTION_INFO_V1(dt_scv_aggr_ffunc);
 
 
 /*
- * @brief Sample the specified number of unique features for a node.
+ * @brief Retrieve the specified number of unique features for a node.
  *        Discrete features used by ancestor nodes will be excluded.
  *        If the number of remaining features is less or equal than the
  *        requested number of features, then all the remaining features
- *        will be returned.
+ *        will be returned. Otherwise, we will sample the requested 
+ *        number of features from the remaining features.
  *
  * @param num_req_features  The number of requested features.
  * @param num_features      The total number of features.
@@ -1553,7 +1554,7 @@ PG_FUNCTION_INFO_V1(dt_scv_aggr_ffunc);
  *
  */
 Datum
-dt_sample_unique_features
+dt_get_node_split_fids
 	(
 	PG_FUNCTION_ARGS
 	)
@@ -1706,7 +1707,7 @@ dt_sample_unique_features
 
     PG_RETURN_ARRAYTYPE_P(result_array);
 }
-PG_FUNCTION_INFO_V1(dt_sample_unique_features);
+PG_FUNCTION_INFO_V1(dt_get_node_split_fids);
 
 
 /*
@@ -1715,16 +1716,18 @@ PG_FUNCTION_INFO_V1(dt_sample_unique_features);
  *        For example, assume the given string is E"\\\\\\\\\\%123%123". Then it only
  *        has one delimiter; the string will be split to two substrings:
  *        E'\\\\\\\\\\%123' and '123'; the position array size is 1, where position[0] = 9;
- *        (*num_deli) = 1; (*len) = 13.
+ *        ; (*len) = 13.
  *
  * @param str       The string to be split.
  * @param position  An array to store the position of each un-escaped % in the string.
- * @param num_deli  The number of un-escaped %s in the string.
+ * @param num_pos   The expected number of un-escaped %s in the string.
  * @param len       The length of the string. It doesn't include the terminal.
  *
  * @return The position array which records the positions of all un-escaped %s
  *         in the give string.
  *
+ * @note If the number of %s in the string is not equal to the expected number,
+ *       we will report error via elog.
  */
 static
 int*
@@ -1732,13 +1735,13 @@ dt_split_string
 	(
 	char *str,
 	int  *position,
-	int  *num_deli,
+    int  num_pos,
 	int  *len
 	)
 {
 	int i 				  = 0;
 	int j 				  = 0;
-
+	
 	/* the number of the escape chars which occur continuously */
 	int num_cont_escapes  = 0;
 
@@ -1752,6 +1755,13 @@ dt_split_string
 			 */
 			if (!(num_cont_escapes & 0x01))
 			{
+            	dt_check_error
+	            	(
+                        i < num_pos,
+                        "the number of the elements in the array is less than "
+                        "the format string expects."
+                    );
+
 				/*  convert the char '%' to '\0' */
 				position[i++] 	= j;
 				*str 			= '\0';
@@ -1772,8 +1782,14 @@ dt_split_string
 		}
 	}
 
-	*num_deli = i;
 	*len      = j;
+	
+    dt_check_error
+        (
+            i == num_pos,
+            "the number of the elements in the array is greater than "
+            "the format string expects. "
+        );
 
 	return position;
 }
@@ -1909,7 +1925,6 @@ dt_text_format
 
 	int *position 	= (int*)palloc0(nitems * sizeof(int));
 
-	int	num_deli    = 0;
 	int last_pos    = 0;
 	int len_fmt     = 0;
 
@@ -1917,14 +1932,7 @@ dt_text_format
 	 * split the format string, so that later we can replace the delimiters
 	 * with the given arguments
 	 */
-	dt_split_string(fmt, position, &num_deli, &len_fmt);
-
-	dt_check_error_value
-		(
-			nitems == num_deli,
-			"the number of parameters does not match the template string: %d",
-			num_deli
-		);
+	dt_split_string(fmt, position, nitems, &len_fmt);
 
 	element_type = ARR_ELEMTYPE(args_array);
 	initStringInfo(&buf);
