@@ -22,6 +22,7 @@ namespace prob {
 #define MADLIB_CURRENT_NAMESPACE madlib::modules::prob
 
 #include "boost.hpp"
+#include "kolmogorov.hpp"
 #include "student.hpp"
 
 } // namespace prob

@@ -64,6 +64,7 @@ def __run_quietly(sql):
     except:
         # If there was a problem do this anyway
         plpy.execute("SET client_min_messages = %s;" % prev_msg_level)
+        raise
 
     return rv
     
@@ -787,14 +788,16 @@ def kmeans( madlib_schema
     ''';
     __run_quietly( sql);
     # Create the Temporary Point table
-    # Remove any NULL values
+    # Remove any NULL, NaN, and any non-finite values
     sql = '''
         INSERT INTO TempPoints0 
         SELECT pid, coords, 0, null
         FROM ''' + src_view + '''
-        WHERE ''' + madlib_schema + '.svec_dot(coords,coords) IS NOT NULL';
+        WHERE abs( 
+                  coalesce(''' + madlib_schema + '''.svec_elsum(coords), 'Infinity'::FLOAT8)
+                 ) < 'Infinity'::FLOAT8''';
     plpy.execute( sql);        
-    # Find the number of points after skipping NULL values
+    # Find the number of points after cleanup
     sql = 'SELECT count(*) as cnt FROM TempPoints0';
     rv = plpy.execute( sql);    
     orig_point_count = point_count;      
@@ -810,7 +813,7 @@ def kmeans( madlib_schema
         plpy.error( "input points must have the same dimensions\n")            
     info( ' * points: ' + str(orig_point_count) + ' (' \
             + str(rv[0]['min_dim']) + ' dimensions), kept ' + str(point_count) + \
-            ' after removing NULLs');     
+            ' after removing non-finite values');     
 
     # Initialize centroids
     info( '... generating initial centroids')

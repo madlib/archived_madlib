@@ -9,19 +9,17 @@
 
 #include <float.h>
 #include <math.h>
-#include <stdlib.h>
-#include <time.h>
 
 #include "postgres.h"
 #include "fmgr.h"
-#include "utils/array.h"
-#include "utils/lsyscache.h"
-#include "utils/builtins.h"
+#include "funcapi.h"
 #include "catalog/pg_type.h"
 #include "catalog/namespace.h"
 #include "nodes/execnodes.h"
 #include "nodes/nodes.h"
-#include "funcapi.h"
+#include "utils/array.h"
+#include "utils/lsyscache.h"
+#include "utils/builtins.h"
 
 #ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -1333,18 +1331,22 @@ PG_FUNCTION_INFO_V1(scv_aggr_ffunc);
 
 Datum table_exists(PG_FUNCTION_ARGS)
 {
-    text*           input;
-    List*           names;
-    char*           relname;
-    Oid             relid;
+	text		   *input;
+	List		   *names;
+	char		   *relname;
+	Oid				relid;
 
-    if (PG_ARGISNULL(0))
-        PG_RETURN_BOOL(false);
-    
-    input   =  PG_GETARG_TEXT_PP(0);
-    relname =  text_to_cstring(input); 
-    names = stringToQualifiedNameList(relname, "table_exists");
-    relid = RangeVarGetRelid(makeRangeVarFromNameList(names), true);
-    PG_RETURN_BOOL(OidIsValid(relid));
+	if (PG_ARGISNULL(0))
+		PG_RETURN_BOOL(false);
+
+	input   =  PG_GETARG_TEXT_PP(0);
+	relname =  text_to_cstring(input);
+#if PG_VERSION_NUM >= 80300
+	names = stringToQualifiedNameList(relname);
+#else
+	names = stringToQualifiedNameList(relname, "table_exists");
+#endif
+	relid = RangeVarGetRelid(makeRangeVarFromNameList(names), true);
+	PG_RETURN_BOOL(OidIsValid(relid));
 }
 PG_FUNCTION_INFO_V1(table_exists);
