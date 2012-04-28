@@ -535,6 +535,41 @@ INSERT INTO MADLIB_SCHEMA.crx_dt_test VALUES (486, 'b', 74.829999999999998, 19, 
 INSERT INTO MADLIB_SCHEMA.crx_dt_test VALUES (488, 'b', 24.5, 13.335000000000001, 'y', 'p', 'aa', 'v', 0.040000000000000001, 'f', 'f', 0, 't', 'g', 120, 475, '-');
 INSERT INTO MADLIB_SCHEMA.crx_dt_test VALUES (490, NULL, 45.329999999999998, 1, 'u', 'g', 'q', 'v', 0.125, 'f', 'f', 0, 't', 'g', 263, 0, '-');
 
+drop function if exists MADLIB_SCHEMA.rf_test( TEXT, TEXT, TEXT, TEXT,TEXT, INT,TEXT,INT);
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_test
+    (
+    training_set        TEXT,
+    method              TEXT,
+    cont_features       TEXT,
+    class_column        TEXT,
+    score_set           TEXT,
+    tree_dep            INT,
+    missing_operation   TEXT,
+    num_of_tree         INT
+    )
+RETURNS TEXT AS $$
+DECLARE
+    result          TEXT;
+    score_accuracy  float8;
+    train_result    MADLIB_SCHEMA.rf_train_result;
+    tree_name       TEXT:='MADLIB_SCHEMA.trained_rf';
+BEGIN 
+    result='PASS';
+    train_result = MADLIB_SCHEMA.rf_train(method,training_set,tree_name,
+        num_of_tree,null,0.677,cont_features,null,'id',class_column, 
+        missing_operation,tree_dep,0,0,0,0);
+   
+    score_accuracy = MADLIB_SCHEMA.rf_score(tree_name,score_set,0);
+
+    PERFORM MADLIB_SCHEMA.rf_clean(tree_name);    
+    -- For those two datasets, we should not get an accuracy lower than 0.7
+    IF (score_accuracy<0.7) THEN 
+        result = 'FAIL';
+        RAISE EXCEPTION 'Install check failed.';
+    END IF;
+    RETURN result;
+END
+$$ language plpgsql;  
 
 DROP FUNCTION IF EXISTS MADLIB_SCHEMA.c45_test(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,INT,TEXT,TEXT);
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_test
@@ -602,6 +637,8 @@ SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','infogain','temperatu
              humidity:  <= 70  : class( Play)   num_elements(2)  predict_prob(1)
              humidity:  > 70  : class( Do not Play)   num_elements(3)  predict_prob(1)');
 
+SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.golf_dt_test','infogain','temperature,humidity',
+    'class','MADLIB_SCHEMA.golf_dt_test',10,'explicit',5);
 
 SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','gini','temperature,humidity',
     'class','MADLIB_SCHEMA.golf_dt_test','MADLIB_SCHEMA.golf_dt_test',10,'explicit',
@@ -615,10 +652,10 @@ SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','gini','temperature,h
              humidity:  <= 70  : class( Play)   num_elements(2)  predict_prob(1)
              humidity:  > 70  : class( Do not Play)   num_elements(3)  predict_prob(1)');
 
+SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.golf_dt_test','gini','temperature,humidity',
+    'class','MADLIB_SCHEMA.golf_dt_test',10,'explicit',5);
 
-DROP TABLE IF EXISTS golf_tmp;
-CREATE TEMP TABLE golf_tmp AS SELECT * from MADLIB_SCHEMA.golf_dt_test;
-SELECT MADLIB_SCHEMA.c45_test('golf_tmp','gainratio','temperature,humidity',
+SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','gainratio','temperature,humidity',
     'class','MADLIB_SCHEMA.golf_dt_test','MADLIB_SCHEMA.golf_dt_test',10,'explicit',
     'Tree 1
     Root Node  : class( Play)   num_elements(14)  predict_prob(0.642857142857143)                                          
@@ -640,10 +677,13 @@ SELECT MADLIB_SCHEMA.c45_test('golf_tmp','gainratio','temperature,humidity',
              temperature:  > 80  : class( Play)   num_elements(2)  predict_prob(1)                                          
          temperature:  > 83  : class( Do not Play)   num_elements(1)  predict_prob(1)');
 
+SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.golf_dt_test','gainratio','temperature,humidity',
+    'class','MADLIB_SCHEMA.golf_dt_test',10,'explicit',5);
 
-DROP TABLE IF EXISTS golf_tmp;
 DROP TABLE IF EXISTS MADLIB_SCHEMA.golf_dt_test;
 
+SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.crx_dt_test','gini','A2,A3,A8,A11,A14,A15',
+    'a16','MADLIB_SCHEMA.crx_dt_test',10,'ignore',5);
 
 SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.crx_dt_test','gini','A2,A3,A8,A11,A14,A15',
     'a16','MADLIB_SCHEMA.crx_dt_test','MADLIB_SCHEMA.crx_dt_test',10,'ignore',
@@ -811,6 +851,8 @@ SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.crx_dt_test','gini','A2,A3,A8,A11,A
                      a6:  = x  : class(+)   num_elements(4)  predict_prob(1)                              
                  a8:  > 1  : class(+)   num_elements(81)  predict_prob(1)');
 
+SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.crx_dt_test','gainratio','A2,A3,A8,A11,A14,A15',
+    'a16','MADLIB_SCHEMA.crx_dt_test',10,'explicit',5);
 SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.crx_dt_test','gainratio','A2,A3,A8,A11,A14,A15',
     'a16','MADLIB_SCHEMA.crx_dt_test','MADLIB_SCHEMA.crx_dt_test',10,'explicit',
     'Tree 1
@@ -885,6 +927,8 @@ SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.crx_dt_test','gainratio','A2,A3,A8,
                      a15:  > 500  : class(+)   num_elements(80)  predict_prob(1)                                           
                  a14:  > 583  : class(-)   num_elements(1)  predict_prob(1)');  
 
+SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.crx_dt_test','infogain','A2,A3,A8,A11,A14,A15',
+    'a16','MADLIB_SCHEMA.crx_dt_test',10,'explicit',5);
 SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.crx_dt_test','infogain','A2,A3,A8,A11,A14,A15',
     'a16','MADLIB_SCHEMA.crx_dt_test','MADLIB_SCHEMA.crx_dt_test',10,'explicit',
     'Tree 1
