@@ -549,21 +549,55 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_test
     )
 RETURNS TEXT AS $$
 DECLARE
-    result          TEXT;
-    score_accuracy  float8;
-    train_result    MADLIB_SCHEMA.rf_train_result;
-    tree_name       TEXT:='MADLIB_SCHEMA.trained_rf';
+    result              TEXT;
+    score_accuracy      FLOAT8;
+    train_result        MADLIB_SCHEMA.rf_train_result;
+    tree_name           TEXT := 'MADLIB_SCHEMA.trained_rf';
+    classify_result     TEXT := 'MADLIB_SCHEMA.classify_result';
+    classify_result2    TEXT := 'MADLIB_SCHEMA.classify_result2';
+    size                INT;
+    size_consistent     INT;
 BEGIN 
     result='PASS';
     train_result = MADLIB_SCHEMA.rf_train(method,training_set,tree_name,
-        num_of_tree,null,0.677,cont_features,null,'id',class_column, 
+        num_of_tree,null,1,cont_features,null,'id',class_column, 
         missing_operation,tree_dep,0,0,0,0);
    
     score_accuracy = MADLIB_SCHEMA.rf_score(tree_name,score_set,0);
 
-    PERFORM MADLIB_SCHEMA.rf_clean(tree_name);    
-    -- For those two datasets, we should not get an accuracy lower than 0.7
-    IF (score_accuracy<0.7) THEN 
+    -- parallel classify should work.
+    PERFORM MADLIB_SCHEMA.rf_classify(tree_name,score_set,classify_result,'f',0);
+    
+    -- serial classify should work.
+    PERFORM MADLIB_SCHEMA.rf_classify(tree_name,score_set,classify_result2,'t',0);
+    
+    -- Check the classification result is OK
+    IF ( MADLIB_SCHEMA.__table_exists(classify_result)
+            AND MADLIB_SCHEMA.__table_exists(classify_result2) ) THEN
+        EXECUTE 'SELECT COUNT(*) FROM '||classify_result||';' INTO size;
+        
+        EXECUTE 'SELECT COUNT(*) FROM '||classify_result||' t1,'||classify_result2||
+            ' t2 WHERE t1.id=t2.id AND t1.class=t2.class;' INTO size_consistent;
+
+        EXECUTE 'DROP TABLE '||classify_result;
+        EXECUTE 'DROP TABLE '||classify_result2;
+        
+        -- The results from the two classification method should be consistent.
+        IF (size <> size_consistent) THEN
+            result = 'FAIL';
+            RAISE EXCEPTION 'Install check failed.';
+        END IF;
+    ELSE
+        result = 'FAIL';
+        RAISE EXCEPTION 'Install check failed.';
+    END IF;
+    
+    PERFORM MADLIB_SCHEMA.rf_clean(tree_name);  
+
+    -- Since random forest use sampling, the trained model varies each time.
+    -- As a result, we cannot check the display result as the test for c4.5.
+    -- But for the chosen data set, we should not get an accuracy lower than 0.8.
+    IF (score_accuracy<0.8) THEN 
         result = 'FAIL';
         RAISE EXCEPTION 'Install check failed.';
     END IF;
@@ -589,15 +623,28 @@ declare
 	result              TEXT := 'PASS';
 	display_result      TEXT;
 	exp_display_result  TEXT;
-    score_accuracy      float8;
+    score_accuracy      FLOAT8;
     train_result        MADLIB_SCHEMA.c45_train_result;
     tree_name           TEXT := 'MADLIB_SCHEMA.trained_tree';
+    classify_result     TEXT := 'MADLIB_SCHEMA.classify_result';
 begin 
 
 	train_result = MADLIB_SCHEMA.c45_train(method,training_set,tree_name,
-        validation_set,cont_features,null,'id',class_column, 100,missing_operation, tree_dep,0,0,0);
+        validation_set,cont_features,null,'id',class_column, 100,
+        missing_operation,tree_dep,0,0,0);
    
-	score_accuracy = MADLIB_SCHEMA.c45_score(tree_name,score_set,0);
+	score_accuracy =  MADLIB_SCHEMA.c45_score(tree_name,score_set,0);
+	
+    -- classify should work.
+    PERFORM MADLIB_SCHEMA.c45_classify(tree_name,score_set,classify_result,0);
+    -- Check the classification result is OK
+    IF ( MADLIB_SCHEMA.__table_exists(classify_result) ) THEN
+        EXECUTE 'DROP TABLE '||classify_result;
+    ELSE
+        result = 'FAIL';
+        RAISE EXCEPTION 'Install check failed.';
+    END IF;
+
     -- For those two datasets, we should not get an accuracy lower than 0.9
     IF (score_accuracy<0.9) THEN 
         result = 'FAIL';
@@ -608,7 +655,8 @@ begin
     exp_display_result = replace(exp_display_result,' ','');
     exp_display_result = replace(exp_display_result,E'\n','');
 
-    SELECT * FROM MADLIB_SCHEMA.c45_display(tree_name) LIMIT 1 INTO display_result;
+    SELECT * FROM MADLIB_SCHEMA.c45_display(tree_name) LIMIT 1 
+        INTO display_result;
     -- remove space and some control character
     display_result = replace(display_result,' ','');
     display_result = replace(display_result,E'\n','');
@@ -625,6 +673,8 @@ begin
 end
 $$ language plpgsql;	
 
+-- Golf dataset is very small. Since random forest uses sampling, we think this dataset
+-- is not appropriate for random forest test. We only test c4.5 based on golf.
 SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','infogain','temperature,humidity',
     'class','MADLIB_SCHEMA.golf_dt_test','MADLIB_SCHEMA.golf_dt_test',10,'explicit',
     'Tree 1
@@ -637,8 +687,6 @@ SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','infogain','temperatu
              humidity:  <= 70  : class( Play)   num_elements(2)  predict_prob(1)
              humidity:  > 70  : class( Do not Play)   num_elements(3)  predict_prob(1)');
 
-SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.golf_dt_test','infogain','temperature,humidity',
-    'class','MADLIB_SCHEMA.golf_dt_test',10,'explicit',5);
 
 SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','gini','temperature,humidity',
     'class','MADLIB_SCHEMA.golf_dt_test','MADLIB_SCHEMA.golf_dt_test',10,'explicit',
@@ -652,10 +700,10 @@ SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','gini','temperature,h
              humidity:  <= 70  : class( Play)   num_elements(2)  predict_prob(1)
              humidity:  > 70  : class( Do not Play)   num_elements(3)  predict_prob(1)');
 
-SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.golf_dt_test','gini','temperature,humidity',
-    'class','MADLIB_SCHEMA.golf_dt_test',10,'explicit',5);
-
-SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','gainratio','temperature,humidity',
+-- Verify temporary table can be used as training table.
+DROP TABLE IF EXISTS golf_tmp;
+CREATE TEMP TABLE golf_tmp AS SELECT * from MADLIB_SCHEMA.golf_dt_test;
+SELECT MADLIB_SCHEMA.c45_test('golf_tmp','gainratio','temperature,humidity',
     'class','MADLIB_SCHEMA.golf_dt_test','MADLIB_SCHEMA.golf_dt_test',10,'explicit',
     'Tree 1
     Root Node  : class( Play)   num_elements(14)  predict_prob(0.642857142857143)                                          
@@ -677,9 +725,7 @@ SELECT MADLIB_SCHEMA.c45_test('MADLIB_SCHEMA.golf_dt_test','gainratio','temperat
              temperature:  > 80  : class( Play)   num_elements(2)  predict_prob(1)                                          
          temperature:  > 83  : class( Do not Play)   num_elements(1)  predict_prob(1)');
 
-SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.golf_dt_test','gainratio','temperature,humidity',
-    'class','MADLIB_SCHEMA.golf_dt_test',10,'explicit',5);
-
+DROP TABLE IF EXISTS golf_tmp;
 DROP TABLE IF EXISTS MADLIB_SCHEMA.golf_dt_test;
 
 SELECT MADLIB_SCHEMA.rf_test('MADLIB_SCHEMA.crx_dt_test','gini','A2,A3,A8,A11,A14,A15',
