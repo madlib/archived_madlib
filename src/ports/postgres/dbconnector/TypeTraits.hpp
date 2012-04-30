@@ -114,6 +114,16 @@ DECLARE_CXX_TYPE(
     BoolGetDatum(value),
     DatumGetBool(value)
 );
+DECLARE_CXX_TYPE_EXT(
+    REGPROCOID,
+    NULL,
+    FunctionHandle,
+    dbal::SimpleType,
+    dbal::Immutable,
+    ObjectIdGetDatum(value.funcID()),
+    FunctionHandle(sysInfo, DatumGetObjectId(value)),
+    value.getSysInfo()
+);
 DECLARE_CXX_TYPE(
     FLOAT8ARRAYOID,
     ArrayHandle<double>,

@@ -31,6 +31,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/dbconnector.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/FunctionHandle_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/FunctionHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NewDelete.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_impl.hpp"

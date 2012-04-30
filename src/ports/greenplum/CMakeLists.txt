@@ -41,6 +41,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/dbconnector.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/FunctionHandle_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/FunctionHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NewDelete.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/OutputStreamBuffer_impl.hpp"
