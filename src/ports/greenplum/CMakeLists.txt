@@ -48,6 +48,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/OutputStreamBuffer_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/OutputStreamBuffer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/PGException_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SparseVector_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SparseVector_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TransparentHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TransparentHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TypeTraits.hpp"

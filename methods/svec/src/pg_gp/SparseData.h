@@ -242,15 +242,15 @@ static inline void int8_to_compword(int64 num, char entry[9])
 
 	if (num < 32768) { entry[0] = 2; return; }
 
-	entry[3] = (char)((num & 0xFF0000) >> 16);
-	entry[4] = (char)((num & 0xFF000000) >> 24);
+	entry[3] = (char)((num & 0xFF0000L) >> 16);
+	entry[4] = (char)((num & 0xFF000000L) >> 24);
 
-	if (num < 2147483648) { entry[0] = 4; return; }
+	if (num < 2147483648LL) { entry[0] = 4; return; }
 
-	entry[5] = (char)((num & 0xFF00000000) >> 32);
-	entry[6] = (char)((num & 0xFF0000000000) >> 40);
-	entry[7] = (char)((num & 0xFF000000000000) >> 48);
-	entry[8] = (char)((num & 0xFF00000000000000) >> 56);
+	entry[5] = (char)((num & 0xFF00000000LL) >> 32);
+	entry[6] = (char)((num & 0xFF0000000000LL) >> 40);
+	entry[7] = (char)((num & 0xFF000000000000LL) >> 48);
+	entry[8] = (char)((num & 0xFF00000000000000LL) >> 56);
 
 	entry[0] = 8;
 }

@@ -38,6 +38,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/PGException_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SparseVector_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SparseVector_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TypeTraits.hpp"
