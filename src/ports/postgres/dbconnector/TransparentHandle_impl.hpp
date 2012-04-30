@@ -19,7 +19,7 @@ namespace postgres {
 template <typename T>
 inline
 const T*
-AbstractionLayer::TransparentHandle<T>::ptr() const {
+TransparentHandle<T>::ptr() const {
     return mPtr;
 }
 
@@ -29,7 +29,7 @@ AbstractionLayer::TransparentHandle<T>::ptr() const {
 template <typename T>
 inline
 T*
-AbstractionLayer::MutableTransparentHandle<T>::ptr() {
+MutableTransparentHandle<T>::ptr() {
     return mPtr;
 }
 

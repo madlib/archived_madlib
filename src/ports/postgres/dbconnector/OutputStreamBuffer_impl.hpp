@@ -22,11 +22,10 @@ namespace postgres {
 template <int ErrorLevel>
 inline
 void
-AbstractionLayer::OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
+OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
     uint32_t /* inLength */) const {
     
-    bool errorOccurred = false;
-    
+    volatile bool errorOccurred = false;
     PG_TRY(); {
         ereport(ErrorLevel,
             (errmsg("%s", inMsg))); // Don't supply strings as format strings!

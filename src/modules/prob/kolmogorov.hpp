@@ -7,7 +7,8 @@
 /**
  * @brief Kolmogorov cumulative distribution function
  */
-DECLARE_UDF(kolmogorov_cdf)
+DECLARE_UDF(prob, kolmogorov_cdf)
+
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 

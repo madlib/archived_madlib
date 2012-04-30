@@ -16,12 +16,14 @@ namespace postgres {
 /**
  * @brief Unspecified PostgreSQL backend expcetion
  */
-class AbstractionLayer::PGException
-  : public std::runtime_error {
-
+class PGException : public std::runtime_error {
 public:
     explicit 
     PGException()
+      : std::runtime_error("The backend raised an exception.") { }
+    
+    // FIXME: Do something useful with inErrorData
+    PGException(ErrorData* /* inErrorData */)
       : std::runtime_error("The backend raised an exception.") { }
 };
 

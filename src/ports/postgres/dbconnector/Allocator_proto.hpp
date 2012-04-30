@@ -13,6 +13,9 @@ namespace dbconnector {
 
 namespace postgres {
 
+template <typename T>
+class MutableArrayHandle;
+
 /**
  * @brief PostgreSQL memory allocator
  *
@@ -30,12 +33,12 @@ namespace postgres {
  * In NewDelete.cpp, we therefore redefine <tt>operator new()</tt> and
  * <tt>operator delete()</tt> to call \c palloc() and \c pfree().
  *
- * @see AbstractionLayer::Allocator::internalAllocate, NewDelete.cpp
+ * @see Allocator::internalAllocate, NewDelete.cpp
  *
  * @internal
  *     To avoid name conflicts, we do not import namespace dbal
  */
-class AbstractionLayer::Allocator {
+class Allocator {
 public:
     Allocator(FunctionCallInfo inFCInfo) : fcinfo(inFCInfo) { }
 
@@ -56,7 +59,7 @@ public:
         
     template <dbal::MemoryContext MC>
     void free(void *inPtr) const;
-
+    
 protected:
     /**
      * @brief Template argument type for internalAllocate()

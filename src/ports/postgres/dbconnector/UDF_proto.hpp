@@ -16,16 +16,18 @@ namespace postgres {
 /**
  * @brief User-defined function
  */
-class UDF
-  : public AbstractionLayer,
-    public AbstractionLayer::Allocator {
-
+class UDF : public Allocator {
 public:
-    UDF(FunctionCallInfo inFCInfo) : AbstractionLayer::Allocator(inFCInfo),
+    typedef AnyType (*Pointer)(FunctionCallInfo, AnyType&);
+
+    UDF(FunctionCallInfo inFCInfo) : Allocator(inFCInfo),
         dbout(&mOutStreamBuffer), dberr(&mErrStreamBuffer) { }
 
     template <class Function>
-    static inline Datum call(FunctionCallInfo fcinfo);
+    static Datum call(FunctionCallInfo fcinfo);
+
+    template <class Function>
+    static AnyType invoke(FunctionCallInfo fcinfo, AnyType& args);
 
 private:
     OutputStreamBuffer<INFO> mOutStreamBuffer;

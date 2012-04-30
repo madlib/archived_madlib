@@ -32,14 +32,13 @@ include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 set(MAD_DBAL_SOURCES
     ${MAD_SOURCES})
 list(APPEND MAD_DBAL_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/AbstractionLayer_impl.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/AbstractionLayer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Allocator_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Allocator_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/AnyType_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/AnyType_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/dbconnector.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/main.cpp"
@@ -49,6 +48,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/PGException_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SparseVector_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SparseVector_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SystemInformation_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SystemInformation_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TransparentHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TransparentHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TypeTraits.hpp"

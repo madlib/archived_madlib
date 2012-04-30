@@ -7,17 +7,18 @@
 /**
  * @brief Chi-squared cumulative distribution function
  */
-DECLARE_UDF(chi_squared_cdf)
+DECLARE_UDF(prob, chi_squared_cdf)
 
 /**
  * @brief Fisher F cumulative distribution function
  */
-DECLARE_UDF(fisher_f_cdf)
+DECLARE_UDF(prob, fisher_f_cdf)
 
 /**
  * @brief Normal cumulative distribution function
  */
-DECLARE_UDF(normal_cdf)
+DECLARE_UDF(prob, normal_cdf)
+
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 

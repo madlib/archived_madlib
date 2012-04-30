@@ -22,14 +22,13 @@ include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 set(MAD_DBAL_SOURCES
     ${MAD_SOURCES})
 list(APPEND MAD_DBAL_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AbstractionLayer_impl.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AbstractionLayer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Allocator_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Allocator_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AnyType_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AnyType_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/dbconnector.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/main.cpp"
@@ -39,6 +38,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/PGException_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SparseVector_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SparseVector_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SystemInformation_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SystemInformation_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TypeTraits.hpp"

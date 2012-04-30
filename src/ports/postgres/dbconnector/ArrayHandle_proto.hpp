@@ -14,7 +14,7 @@ namespace dbconnector {
 namespace postgres {
 
 template <typename T>
-class AbstractionLayer::ArrayHandle {
+class ArrayHandle {
 public:
     enum { isMutable = false };
 
@@ -32,9 +32,7 @@ protected:
 
 
 template <typename T>
-class AbstractionLayer::MutableArrayHandle
-  : public AbstractionLayer::ArrayHandle<T> {
-
+class MutableArrayHandle : public ArrayHandle<T> {
     typedef ArrayHandle<T> Base;
     
 public:

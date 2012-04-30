@@ -20,7 +20,7 @@ namespace postgres {
  * need a type that conforms to the handle policy, but no meta data is required.
  */
 template <typename T>
-class AbstractionLayer::TransparentHandle {
+class TransparentHandle {
 public:
     enum { isMutable = false };
 
@@ -37,8 +37,8 @@ protected:
  * @brief Mutable handle without any meta data (essentially, a pointer)
  */
 template <typename T>
-class AbstractionLayer::MutableTransparentHandle
-  : public AbstractionLayer::TransparentHandle<T> {
+class MutableTransparentHandle
+  : public TransparentHandle<T> {
 
     typedef TransparentHandle<T> Base;
     

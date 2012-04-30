@@ -18,7 +18,7 @@ namespace postgres {
  *        function
  */
 template <int ErrorLevel>
-class AbstractionLayer::OutputStreamBuffer
+class OutputStreamBuffer
   : public dbal::OutputStreamBufferBase<OutputStreamBuffer<ErrorLevel>, char> {
 
 public:

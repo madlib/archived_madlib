@@ -18,6 +18,25 @@ namespace postgres {
     strncpy(msg, exc.what(), sizeof(msg));
 
 /**
+ * @brief Internal interface for calling a UDF
+ *
+ * We need the FunctionCallInfo in case some arguments or return values are
+ * of polymorphic types.
+ *
+ * @param fcinfo The PostgreSQL FunctionCallInfoData structure
+ * @param args Arguments to the function. While for calls from the backend
+ *     all arguments are specified by \c fcinfo, for calls "within" the C++ AL
+ *     it is more efficient to pass arguments as "native" C++ object references.
+ *     This is 
+ */
+template <class Function>
+inline
+AnyType
+UDF::invoke(FunctionCallInfo fcinfo, AnyType& args) {
+    return Function(fcinfo).run(args);
+}
+
+/**
  * @brief Each exported C function calls this method (and nothing else)
  */
 template <class Function>
@@ -28,8 +47,15 @@ UDF::call(FunctionCallInfo fcinfo) {
     char msg[2048];
 
     try {
-        AnyType args = fcinfo;
-        AnyType result = Function(fcinfo).run(args);
+        // We want to store in the cache that this function is implemented on
+        // top of the C++ AL. Should the same function be invoked again via a
+        // FunctionHandle, it can be invoked directly.
+        SystemInformation::get(fcinfo)
+            ->functionInformation(fcinfo->flinfo->fn_oid)->cxx_func
+            = invoke<Function>;
+
+        AnyType args(fcinfo);
+        AnyType result = invoke<Function>(fcinfo, args);
 
         if (result.isNull())
             PG_RETURN_NULL();

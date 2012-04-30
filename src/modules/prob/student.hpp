@@ -7,7 +7,8 @@
 /**
  * @brief Student-t cumulative distribution function
  */
-DECLARE_UDF(student_t_cdf)
+DECLARE_UDF(prob, student_t_cdf)
+
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
