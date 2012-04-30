@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_OUTPUTSTREAMBUFFER_IMPL_HPP
+#define MADLIB_POSTGRES_OUTPUTSTREAMBUFFER_IMPL_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Output a null-terminated C string.
@@ -32,4 +38,10 @@ AbstractionLayer::OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
         throw std::runtime_error("An exception occured during message output.");
 }
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_OUTPUTSTREAMBUFFER_IMPL_HPP)

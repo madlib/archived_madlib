@@ -10,6 +10,8 @@
 #include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/prob.hpp>
 
+#include "linear.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -18,11 +20,6 @@ namespace modules {
 using prob::studentT_CDF;
 
 namespace regress {
-
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "linear.hpp"
 
 /**
  * @brief Transition state for linear-regression functions

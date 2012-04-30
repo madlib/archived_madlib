@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_ALLOCATOR_IMPL_HPP
+#define MADLIB_POSTGRES_ALLOCATOR_IMPL_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Construct an empty postgres array of the given size.
@@ -382,4 +388,10 @@ AbstractionLayer::Allocator::internalAllocate(void *inPtr, const size_t inSize) 
     return ptr;
 }
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_ALLOCATOR_IMPL_HPP)

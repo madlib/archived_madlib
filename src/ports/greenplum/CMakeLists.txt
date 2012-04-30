@@ -27,7 +27,7 @@ include(GreenplumUtils)
 # -- 1. Specify files that will be compiled into the shared library, for *all*
 #       versions of this port --------------------------------------------------
 
-include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../postgres")
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 
 set(MAD_DBAL_SOURCES
     ${MAD_SOURCES})
@@ -40,8 +40,7 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/AnyType_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_proto.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Compatibility.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/dbconnector.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NewDelete.cpp"

@@ -4,10 +4,6 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
-
 /**
  * @brief Logistic regression (conjugate-gradient step): Transition function
  */
@@ -93,5 +89,3 @@ DECLARE_UDF(internal_logregr_igd_step_distance)
  *     Convert transition state to result tuple
  */
 DECLARE_UDF(internal_logregr_igd_result)
-
-#endif // workaround for Doxygen

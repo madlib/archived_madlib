@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_OUTPUTSTREAMBUFFER_PROTO_HPP
+#define MADLIB_POSTGRES_OUTPUTSTREAMBUFFER_PROTO_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Stream buffer that dispatches all output to PostgreSQL's ereport
@@ -19,4 +25,10 @@ public:
     void output(char *inMsg, uint32_t inLength) const;
 };
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_OUTPUTSTREAMBUFFER_PROTO_HPP)

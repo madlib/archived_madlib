@@ -13,6 +13,8 @@
 #include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/prob.hpp>
 
+#include "logistic.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -22,11 +24,6 @@ using dbal::NoSolutionFoundException;
 using prob::normalCDF;
 
 namespace regress {
-
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "logistic.hpp"
 
 // Internal functions
 template <class LinAlgTypes>

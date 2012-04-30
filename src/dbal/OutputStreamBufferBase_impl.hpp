@@ -4,8 +4,12 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by EigenLinAlgTypes.hpp
-#ifdef MADLIB_DBAL_HPP
+#ifndef MADLIB_DBAL_OUTPUTSTREAMBUFFERBASE_IMPL_HPP
+#define MADLIB_DBAL_OUTPUTSTREAMBUFFERBASE_IMPL_HPP
+
+namespace madlib {
+
+namespace dbal {
 
 /**
  * @internal One extra byte is allocated for the terminating null character.
@@ -90,4 +94,8 @@ OutputStreamBufferBase<Derived, C>::sync() {
     return 0;
 }
 
-#endif // MADLIB_DBAL_HPP (workaround for Doxygen)
+} // namespace dbal
+
+} // namespace madlib
+
+#endif // defined(MADLIB_OUTPUTSTREAMBUFFERBASE_IMPL_HPP)

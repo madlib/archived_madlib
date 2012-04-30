@@ -4,9 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_TYPETRAITS_HPP
+#define MADLIB_POSTGRES_TYPETRAITS_HPP
 
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 /*
  * Mutable means in this context that the value of a variable can be changed and
  * that it would change the value for the backend
@@ -103,4 +108,10 @@ DECLARE_CXX_TYPE(
 #undef DECLARE_CXX_TYPE
 #undef DECLARE_OID
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_TYPETRAITS_HPP)

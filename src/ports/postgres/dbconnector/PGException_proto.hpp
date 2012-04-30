@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_PGEXCEPTION_PROTO_HPP
+#define MADLIB_POSTGRES_PGEXCEPTION_PROTO_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Unspecified PostgreSQL backend expcetion
@@ -19,4 +25,10 @@ public:
       : std::runtime_error("The backend raised an exception.") { }
 };
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_FUNCTIONHANDLE_PROTO_HPP)

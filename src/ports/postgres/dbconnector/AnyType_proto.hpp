@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_ANYTYPE_PROTO_HPP
+#define MADLIB_POSTGRES_ANYTYPE_PROTO_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Proxy for PostgreSQL objects
@@ -95,4 +101,10 @@ protected:
     bool mIsMutable;
 };
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_ANYTYPE_PROTO_HPP)

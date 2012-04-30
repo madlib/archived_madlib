@@ -4,10 +4,6 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
-
 /**
  * @brief Chi-squared cumulative distribution function
  */
@@ -25,10 +21,20 @@ DECLARE_UDF(normal_cdf)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
+namespace madlib {
+
+namespace modules {
+
+namespace prob {
+
 double chiSquaredCDF(double t, double nu);
 double fisherF_CDF(double t, double df1, double df2);
 double normalCDF(double t, double mu = 0, double sigma = 1);
 
-#endif // !defined(DECLARE_LIBRARY_EXPORTS)
+} // namespace prob
 
-#endif // workaround for Doxygen
+} // namespace modules
+
+} // namespace madlib
+
+#endif // !defined(DECLARE_LIBRARY_EXPORTS)

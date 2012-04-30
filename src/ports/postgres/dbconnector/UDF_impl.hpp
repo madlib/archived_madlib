@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_UDF_IMPL_HPP
+#define MADLIB_POSTGRES_UDF_IMPL_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 #define MADLIB_HANDLE_STANDARD_EXCEPTION(err) \
     sqlerrcode = err; \
@@ -79,4 +85,10 @@ UDF::call(FunctionCallInfo fcinfo) {
 
 #undef MADLIB_HANDLE_STANDARD_EXCEPTION
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_UDF_IMPL_HPP)

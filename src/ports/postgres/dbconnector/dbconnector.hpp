@@ -6,33 +6,30 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_DBCONNECTOR_HPP
-// Note: We also use MADLIB_DBCONNECTOR_HPP for a workaround for Doxygen:
-// *_{impl|proto}.hpp files should be ingored if not included by dbconnector.hpp
-#define MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_DBCONNECTOR_HPP
+#define MADLIB_POSTGRES_DBCONNECTOR_HPP
 
-// Include C++ headers first because PostgreSQL headers might define some
-// conflicting macros (see also end of file)
-#include <boost/unordered_map.hpp> // For Oid to bool map (if types are tuples)
-#include <boost/type_traits/is_const.hpp>
-#include <boost/math/special_functions/fpclassify.hpp>
-#include <boost/logic/tribool.hpp>
-#include <boost/utility/enable_if.hpp>
-#include <limits>
-#include <stdexcept>
-#include <vector>
-#include <fstream>
+// On platforms based on PostgreSQL we can include a different set of headers.
+// Also, there may be different compatibility headers for other platforms.
+#ifndef MADLIB_POSTGRES_HEADERS
+#define MADLIB_POSTGRES_HEADERS
 
 extern "C" {
     #include <postgres.h>
     #include <funcapi.h>
+    #include <catalog/pg_proc.h>
     #include <catalog/pg_type.h>
+    #include <executor/executor.h> // For GetAttributeByNum()
     #include <miscadmin.h>         // Memory allocation, e.g., HOLD_INTERRUPTS
+    #include <utils/acl.h>
     #include <utils/array.h>
     #include <utils/builtins.h>    // needed for format_procedure()
-    #include <executor/executor.h> // Greenplum requires this for GetAttributeByNum()
-    #include <utils/typcache.h>    // type conversion, e.g., lookup_rowtype_tupdesc
+    #include <utils/datum.h>
     #include <utils/lsyscache.h>   // for type lookup, e.g., type_is_rowtype
+    #include <utils/memutils.h>
+    #include <utils/syscache.h>    // for direct access to catalog, e.g., SearchSysCache()
+    #include <utils/typcache.h>    // type conversion, e.g., lookup_rowtype_tupdesc
+    #include "../../../../methods/svec/src/pg_gp/sparse_vector.h" // Legacy sparse vectors
 } // extern "C"
 
 #include "Compatibility.hpp"
@@ -42,6 +39,49 @@ namespace std {
     using boost::unordered_map;
     using boost::hash;
 }
+#endif MADLIB_POSTGRES_HEADERS
+
+// Unfortunately, we have to clean up some #defines in PostgreSQL headers. They
+// interfere with C++ code.
+// From c.h:
+#ifdef Abs
+#undef Abs
+#endif
+
+#ifdef Max
+#undef Max
+#endif
+
+#ifdef Min
+#undef Min
+#endif
+
+#ifdef gettext
+#undef gettext
+#endif
+
+#ifdef dgettext
+#undef dgettext
+#endif
+
+#ifdef ngettext
+#undef ngettext
+#endif
+
+#ifdef dngettext
+#undef dngettext
+#endif
+
+
+// Note: If errors occur in the following include files, it could indicate that
+// new macros have been added to PostgreSQL header files.
+#include <boost/type_traits/is_const.hpp>
+#include <boost/math/special_functions/fpclassify.hpp>
+#include <boost/utility/enable_if.hpp>
+#include <limits>
+#include <stdexcept>
+#include <vector>
+#include <fstream>
 
 #define MADLIB_DEFAULT_EXCEPTION std::runtime_error("Internal error")
 #define madlib_assert(_cond, _exception) \
@@ -132,34 +172,11 @@ namespace madlib {
         } \
     }
 
-// Unfortunately, we have to clean up some #defines in PostgreSQL headers
-// From c.h 
-#ifdef Abs
-#undef Abs
-#endif
 
-#ifdef Max
-#undef Max
-#endif
 
-#ifdef Min
-#undef Min
-#endif
 
-#ifdef gettext
-#undef gettext
-#endif
 
-#ifdef dgettext
-#undef dgettext
-#endif
 
-#ifdef ngettext
-#undef ngettext
-#endif
 
-#ifdef dngettext
-#undef dngettext
-#endif
 
-#endif // defined(MADLIB_DBCONNECTOR_HPP)
+#endif // defined(MADLIB_POSTGRES_DBCONNECTOR_HPP)
