@@ -72,7 +72,7 @@ the following form:
 )</pre>
 
 The detailed list of SUPPORTED_DATA_TYPE is: 
-SMALLINT, INT, BIGINT, FLOAT8, REAL, NUMERIC,
+SMALLINT, INT, BIGINT, FLOAT8, REAL, 
 DECIMAL, INET, CIDR, MACADDR, BOOLEAN,
 CHAR, VARCHAR, TEXT, "char", 
 DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ, and INTERVAL.
@@ -460,18 +460,23 @@ CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
 
 /**
  * @brief This API is defined for training a random forest.  
- *
- * For continuous features, each possible value could be used as a potential 
- * split point for entropy/gini computation. If the number of distinct values 
- * is large, the computation could be very costly. Users can specify the maximum
- * split points with the parameter of 'max_split_point'. If the specified value
- * is a positive number, we use equal-freqency algorithm to discretize the  
- * continuous features. The discretization process is as follows:
- * 1) We determine the minimum and maximum values of a continuous feature. 
- * 2) We sort all values in ascending order and divides the range into K  
- *    intervals so that each interval contains the same number of sorted values.
- * 3) We only consider the values in the intervals' boundaries as potential
- *    split points.
+ *        The training function provides a number of parameters that enables
+ *        more flexible controls on how an RF is generated. It constructs the 
+ *        RF based on a training set stored in a database table, each row of 
+ *        which defines a set of features, an ID, and a labeled class. Features 
+ *        could be either discrete or continuous. All the DTs of the result RF 
+ *        will be kept in a single table. 
+ *        For continuous features, each possible value could be used as a potential 
+ *        split point for entropy/gini computation. If the number of distinct values 
+ *        is large, the computation could be very costly. Users can specify the maximum
+ *        split points with the parameter of 'max_split_point'. If the specified value
+ *        is a positive number, we use equal-freqency algorithm to discretize the  
+ *        continuous features. The discretization process is as follows:
+ *        1) We determine the minimum and maximum values of a continuous feature. 
+ *        2) We sort all values in ascending order and divides the range into K  
+ *        intervals so that each interval contains the same number of sorted values.
+ *        3) We only consider the values in the intervals' boundaries as potential
+ *        split points.
  *
  * We discretize continuous features on local regions during training rather 
  * than discretizing on the whole dataset prior to training because local 
@@ -479,33 +484,42 @@ CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
  *
  * @param split_criterion           The split criterion used for tree construction. 
  *                                  The valid values are infogain, gainratio, or
- *                                  gini.
+ *                                  gini. It can't be NULL.
  * @param training_table_name       The name of the table/view with the training data.
- * @param result_rf_table_name      The name of the table where the resulting. 
- *                                  trees will be stored.
+ *									It can't be NULL and must exist.
+ * @param result_rf_table_name      The name of the table where the resulting trees will  
+ *                                  be stored. It can't be NULL and must not exist.
  * @param num_trees                 The number of trees to be trained. 
- * @param features_per_node         The number of features to be considered 
- *                                  when finding a best split. 
- * @param sampling_percentage       The percentage of records sampled to 
- *                                  train a tree.
+ *									If it's NULL, 10 will be used. 
+ * @param features_per_node         The number of features to be considered when finding 
+ *									a best split. If it's NULL, sqrt(p), where p is the  
+ *									number of features, will be used. 
+ * @param sampling_percentage       The percentage of records sampled to train a tree.
+ *									If it's NULL, 0.632 bootstrap will be used
  * @param continuous_feature_names  A comma-separated list of the names of the 
- *                                  features whose values are continuous. 
- * @param feature_col_names         A comma-separated list of names of the 
- *                                  table columns, each of which defines a feature.
+ *                                  features whose values are continuous.
+ *									NULL means there are no continuous features.  
+ * @param feature_col_names         A comma-separated list of names of the table columns, 
+ *                                  each of which defines a feature. NULL means all the 
+ *									columns except the ID and Class columns will be treated as
+ *									features.
  * @param id_col_name               The name of the column containing id of each record.
+ *									It can't be NULL.
  * @param class_col_name            The name of the column containing correct class of 
- *                                  each record.
- * @param how2handle_missing_value  The way to handle missing value. The valid 
- *                                  values are 'explicit' and 'ignore'.
- * @param max_tree_depth            The maximum tree depth. 
+ *                                  each record. It can't be NULL.
+ * @param how2handle_missing_value  The way to handle missing value. The valid values are 
+ *                                  'explicit' and 'ignore'. It can't be NULL.
+ * @param max_tree_depth            The maximum tree depth. It can't be NULL.
  * @param node_prune_threshold      The minimum number of records required in a 
- *                                  child node.
+ *                                  child node. It can't be NULL.
  * @param node_split_threshold      The minimum number of records required in a 
  *                                  node in order for a further split to be possible.
- * @param max_split_point           The upper limit of sampled split points for 
- *                                  continuous features.
- * @param verbosity                 A flag indicating whether we should run in 
- *                                  verbose mode.
+ *									It can't be NULL.
+ * @param max_split_point           The upper limit of sampled split points for continuous 
+ *                                  features. If it's NULL, all the distinct values of the
+ *									features will be used as split values.
+ * @param verbosity                 > 0 means this function runs in verbose mode. 
+ *                                  It can't be NULL.
  *
  * @return An rf_train_result object.
  *
@@ -818,29 +832,19 @@ $$ LANGUAGE PLPGSQL;
 
 /**
  * @brief This API (short form) is defined for training a random forest.  
- *
- * For continuous features, each possible value could be used as a potential 
- * split point for entropy/gini computation. If the number of distinct values 
- * is large, the computation could be very costly. Users can specify the maximum
- * split points with the parameter of 'max_split_point'. If the specified value
- * is a positive number, we use equal-freqency algorithm to discretize the  
- * continuous features. The discretization process is as follows:
- * 1) We determine the minimum and maximum values of a continuous feature. 
- * 2) We sort all values in ascending order and divides the range into K  
- *    intervals so that each interval contains the same number of sorted values.
- * 3) We only consider the values in the intervals' boundaries as potential
- *    split points.
-
- * We discretize continuous features on local regions during training rather 
- * than discretizing on the whole dataset prior to training because local 
- * discretization takes into account the context sensitivity.
+ *        For convenience, a short form of the training API with three parameters is 
+ *		  also defined. This one needs only the split criterion name, the name of the 
+ *        table where training data is kept, and the name of the table where the 
+ *        trained RF should be kept. All other parameters in the full form will take 
+ *        their default values.
  *
  * @param split_criterion           The split criterion used for tree construction. 
  *                                  The valid values are infogain, gainratio, or
- *                                  gini.
+ *                                  gini. It can't be NULL.
  * @param training_table_name       The name of the table/view with the training data.
- * @param result_rf_table_name      The name of the table where the resulting 
- *                                  trees will be stored.
+ *									It can't be NULL and must exist.
+ * @param result_rf_table_name      The name of the table where the resulting trees will  
+ *                                  be stored. It can't be NULL and must not exist.
  *
  * @return An rf_train_result object.
  *
@@ -883,11 +887,10 @@ $$ LANGUAGE PLPGSQL;
 /**
  * @brief Display the trees in the random forest with human readable format.
  *
- * @param rf_table_name The name of the table containing the trees' information 
- *                      in the random forest.
- * @param tree_id       The trees to be displayed. If users set it to null, we 
+ * @param rf_table_name The name of RF table. It can't be NULL and must exist.
+ * @param tree_id       The trees to be displayed. If it's NULL, we 
  *                      display all the trees.
- * @param max_depth     The max depth to be displayed. If null, this 
+ * @param max_depth     The max depth to be displayed. If It's NULL, this 
  *                      function will show all levels.
  *                    
  * @return The text representing the trees in random forest with human 
@@ -986,9 +989,8 @@ END $$ LANGUAGE PLPGSQL;
  * @brief Display the trees in the random forest with human readable format.
  *        This function displays all the levels of these specified trees.
  *
- * @param rf_table_name The name of the table containing the trees' information 
- *                      in the random forest.
- * @param tree_id       The trees to be displayed. If users set it to null, we 
+ * @param rf_table_name The name of RF table. It can't be NULL and must exist.
+ * @param tree_id       The trees to be displayed. If it's NULL, we 
  *                      display all the trees.
  *                    
  * @return The text representing the trees in random forest with human 
@@ -1016,8 +1018,8 @@ END $$ LANGUAGE PLPGSQL;
  * @brief Display the trees in the random forest with human readable format.
  *        This function displays all the levels of all trees in RF.
  *
- * @param rf_table_name The name of the table containing the trees' information 
- *                      in the random forest.
+ * @param rf_table_name The name of RF table. It can't be NULL and must exist.
+
  *                    
  * @return The text representing the trees in random forest with human 
  *         readable format.
@@ -1052,13 +1054,14 @@ END $$ LANGUAGE PLPGSQL;
  *     prob      FLOAT
  *  );
  * 
- * @param rf_table_name             The name of RF table. 
+ * @param rf_table_name             The name of RF table. It can't be NULL.
  * @param classification_table_name The name of the table/view that keeps the data 
- *                                  to be classified. 
- * @param result_table_name         The name of result table. 
+ *                                  to be classified. It can't be NULL and must exist.
+ * @param result_table_name         The name of result table. It can't be NULL and must exist. 
  * @param is_serial_classification  Whether classify with all trees at a 
- *                                  time or one by one.
- * @param verbosity                 If set to 1 will use verbose mode.
+ *                                  time or one by one. It can't be NULL.
+ * @param verbosity                 > 0 means this function runs in verbose mode. 
+ *									It can't be NULL. 
  *
  * @return A rf_classify_result object.
  *
@@ -1173,11 +1176,12 @@ $$ LANGUAGE PLPGSQL;
  *        the same thing as the full version defined as above except 
  *        that it will only use parallel classification. 
  *  
- * @param rf_table_name             The name of RF table.
+ * @param rf_table_name             The name of RF table. It can't be NULL.
  * @param classification_table_name The name of the table/view that keeps the data 
- *                                  to be classified. 
- * @param result_table_name         The name of result table.
- * @param verbosity                 If set to 1 will use verbose mode.
+ *                                  to be classified. It can't be NULL and must exist.
+ * @param result_table_name         The name of result table. It can't be NULL and must exist. 
+ * @param verbosity                 > 0 means this function runs in verbose mode. 
+ *									It can't be NULL. 
  *
  * @return A rf_classify_result object.
  *
@@ -1212,10 +1216,10 @@ END $$ LANGUAGE PLPGSQL;
  *        that it will only use parallel classification and run in 
  *        quiet mode. 
  *  
- * @param rf_table_name             The name of RF table.
+ * @param rf_table_name             The name of RF table. It can't be NULL.
  * @param classification_table_name The name of the table/view that keeps the data 
- *                                  to be classified. 
- * @param result_table_name         The name of result table.  
+ *                                  to be classified. It can't be NULL and must exist.
+ * @param result_table_name         The name of result table. It can't be NULL and must exist. 
  *
  * @return A rf_classify_result object.
  *
@@ -1246,9 +1250,11 @@ END $$ LANGUAGE PLPGSQL;
 /**
  * @brief Check the accuracy of a trained RF with a scoring set.
  * 
- * @param rf_table_name       The name of RF table.
- * @param scoring_table_name  The name of the table/view with the source data.
- * @param verbosity           A flag indicating whether to run in verbose mode.
+ * @param rf_table_name             The name of RF table. It can't be NULL.
+ * @param scoring_table_name        The name of the table/view that keeps the data 
+ *                                  to be scored. It can't be NULL and must exist.
+ * @param verbosity                 > 0 means this function runs in verbose mode. 
+ *									It can't be NULL. 
  *
  * @return The estimated accuracy information.
  *
@@ -1274,8 +1280,9 @@ $$ LANGUAGE PLPGSQL;
 /**
  * @brief Check the accuracy of a trained RF with a scoring set in quiet mode.
  * 
- * @param rf_table_name       The name of RF table.
- * @param scoring_table_name  The name of the table/view with the source data.
+ * @param rf_table_name             The name of RF table. It can't be NULL.
+ * @param scoring_table_name        The name of the table/view that keeps the data 
+ *                                  to be scored. It can't be NULL and must exist.
  *
  * @return The estimated accuracy information.
  *
@@ -1295,7 +1302,7 @@ $$ LANGUAGE PLPGSQL;
 /**
  * @brief Cleanup the trained random forest table and any relevant tables.
  * 
- * @param rf_table_name             The name of RF table.  
+ * @param rf_table_name             The name of RF table. It can't be NULL.
  * 
  * @return The status of that cleanup operation.
  *
