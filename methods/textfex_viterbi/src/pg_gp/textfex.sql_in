@@ -40,7 +40,7 @@ Instead of scanning every tokens in a sentence and extract features for each tok
     <pre>SELECT madlib.load_crf_model(
          '<em>/path/to/data</em>');</pre>
 
-  - Run feature extraction in batch mode or interactive mode
+  - Run feature extraction
     <pre>SELECT madlib.text_feature_extraction(
          '<em>segmenttbl</em>',
          '<em>dictionary</em>',
@@ -48,10 +48,7 @@ Instead of scanning every tokens in a sentence and extract features for each tok
          '<em>regextbl</em>',
          '<em>featuretbl</em>',
          '<em>viterbi_mtbl</em>',
-         '<em>viterbi_rtbl</em>',
-         '<em>mode</em>');</pre>
-    if mode equals -1, then the function will do feature extraction for all the sentences in the segmenttbl,
-    else it will do feature extraction for the sentence specified by mode.
+         '<em>viterbi_rtbl</em>');</pre>
 
   - Run Viterbi function to get the best label sequence and the conditional probability \f$ p(top1_label_sequence|sentence) \f$.
     <pre>SELECT madlib.vcrf_label(
@@ -74,9 +71,7 @@ Instead of scanning every tokens in a sentence and extract features for each tok
 */
 
 /**
- * @brief This function extracts text feature. It supports two modes: batch mode and interactive mode.
- * In batch mode, it extracts features for all sentences.
- * In interactive mode, it extracts features for one sentence specified by the docId
+ * @brief This function extracts text feature.
  * This feature extraction function will produce two factor tables, m table and r table. 
  * The viterbi_m table and viterbi_r table are used to calculate the best label sequence for each sentence.
  * - viterbi_mtbl table
@@ -111,13 +106,14 @@ Instead of scanning every tokens in a sentence and extract features for each tok
  * @param regextbl Name of table containing all the regular expressions to capture regex features.
  * @param viterbi_mtbl Name of table to store the m factors.
  * @param viterbi_rtbl Name of table to store the r factors.
- * @param document_id The id of the sentence to be extracted features, -1 means extracting features for all testing sentences.
  *
  */
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.text_feature_extraction(segmenttbl text, dictionary  text, labeltbl text, regextbl text, featuretbl text,
-                                                                   viterbi_mtbl text, viterbi_rtbl text, document_id integer) RETURNS void AS 
+                                                                   viterbi_mtbl text, viterbi_rtbl text) RETURNS void AS 
 $$
+        plpy.execute("TRUNCATE TABLE " + viterbi_mtbl + ", " + viterbi_rtbl + ";")
+
         plpy.execute("DROP TABLE IF EXISTS prev_labeltbl, segment_hashtbl, unknown_segment_hashtbl, rtbl, mtbl;")
 
         plpy.execute("CREATE TEMP TABLE prev_labeltbl(id int);")
@@ -139,31 +135,17 @@ $$
         rv = plpy.execute("SELECT COUNT(*) AS total_label FROM " + labeltbl + ";")
         nlabel = rv[0]['total_label']
 
-        if document_id != -1: 
-        	plpy.execute("""INSERT INTO segment_hashtbl(seg_text)
-		                ((SELECT DISTINCT seg_text
-		                  FROM   """ + segmenttbl + """ 
-		                  WHERE  doc_id = """ + str(document_id) + """) 
-		                 EXCEPT 
-		                 (SELECT DISTINCT seg_text 
-		                  FROM   """ + segmenttbl + """ 
-		                  WHERE  doc_id <> """ + str(document_id) + """));""")
-                
-                plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
-                                SELECT seg_text 
-                                FROM   segment_hashtbl;""")
-        else: 
-                plpy.execute("""INSERT INTO segment_hashtbl(seg_text) 
-	             	        SELECT DISTINCT seg_text
-		                FROM   """ + segmenttbl + """;""")
+        plpy.execute("""INSERT INTO segment_hashtbl(seg_text) 
+	             	SELECT DISTINCT seg_text
+		        FROM   """ + segmenttbl + """;""")
 
-                plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
-                                ((SELECT DISTINCT seg_text 
-                                  FROM   segment_hashtbl) 
-                                 EXCEPT
-		                 (SELECT DISTINCT token 
-		                  FROM   """ + dictionary + """ 
-		                  WHERE  total>1));""")
+	plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
+	                ((SELECT DISTINCT seg_text 
+                          FROM   segment_hashtbl) 
+                         EXCEPT
+		         (SELECT DISTINCT token 
+		          FROM   """ + dictionary + """ 
+		          WHERE  total>1));""")
 
         plpy.execute("""INSERT INTO prev_labeltbl
                         SELECT id
