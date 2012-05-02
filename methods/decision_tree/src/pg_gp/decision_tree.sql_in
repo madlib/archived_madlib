@@ -5119,8 +5119,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
     CREATE TEMP TABLE sample_result_temp
     (
         sample_id   SERIAL,
-        record_id   INT,
-        tree_id     INT
+        record_id   INT
     ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(record_id)');
 
     RAISE INFO 'sample_per_seg:%, sample_ratio:%', sample_per_seg, sample_ratio;
@@ -5131,16 +5130,27 @@ m4_changequote(>>>`<<<, >>>'<<<)
 
     EXECUTE stmt;
 
-    EXECUTE 'UPDATE sample_result_temp 
-        SET tree_id=((sample_id-1)%('||num_of_tree||')+1)::INT;';
-
     -- remove those invalid samples with join operation
     -- add the weight field
     EXECUTE 'DROP TABLE IF EXISTS '||target_table;
-    EXECUTE 'CREATE TEMP TABLE '||target_table||'(id, tid, nid, weight) AS
-        SELECT record_id, tree_id, tree_id, count(*) as weight  
-        FROM (sample_result_temp t join '||src_table||' k on t.record_id=k.id) l
-        GROUP BY record_id, tree_id
-    m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(id)');';
+	stmt = MADLIB_SCHEMA.__format
+			(
+				E'CREATE TEMP TABLE %(id, tid, nid, weight) AS
+				  SELECT record_id, 
+				        ((sample_id - 1)\\% % + 1)::INT AS tid, 
+				        ((sample_id - 1)\\% % + 1)::INT AS nid, 
+				        count(*) AS weight
+				  FROM sample_result_temp t, % k
+				  WHERE t.record_id=k.id
+				  GROUP BY record_id, tid, nid
+				  m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY(id)');',
+				ARRAY[
+					target_table,
+					num_of_tree::TEXT,
+					num_of_tree::TEXT,
+					src_table
+				]
+			);
+	EXECUTE stmt;
 END
 $$ LANGUAGE PLPGSQL VOLATILE;
