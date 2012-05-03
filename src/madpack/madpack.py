@@ -989,7 +989,8 @@ def main(argv):
         # 2) Run test SQLs 
         __info("> Running test scripts for:", verbose)   
         
-        caseset = set(args.testcase.split(',')) if args.testcase != "" else set()
+        caseset = set([test.strip()
+            for test in args.testcase.split(',')]) if args.testcase != "" else set()
 
         # Loop through all modules 
         for moduleinfo in portspecs['modules']:
