@@ -57,17 +57,65 @@ dbver = None        # DB version
 con_args = {}       # DB connection arguments
 verbose = None      # Verbose flag
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Create a temp dir 
-# @param dir temp directory path
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __make_dir(dir):
-    if not os.path.isdir(dir):
-        try:
-            os.makedirs(dir)
-        except:
-            print "ERROR: can not create directory: %s. Check permissions." % dir
-            exit(1)    
+class ModuleItem:
+    def __init__(self, name):
+        self.name = name
+
+    # Find the Python module dir (platform specific or generic)
+    def pydir(self):
+        pathname = os.path.join(maddir, "ports", portid, dbver, "modules", self.name)
+        if os.path.isdir(pathname):
+            return os.path.dirname(pathname)
+        else:
+            return os.path.join(maddir, "modules")
+
+    # Find the SQL module dir (platform specific or generic)
+    # Return None if this platform is not supported.
+    def sqldir(self):
+        specific_path = os.path.join(maddir, "ports", portid, "modules", self.name)
+        generic_path = os.path.join(maddir, "modules", self.name)
+        if os.path.isdir(specific_path):
+            return os.path.dirname(specific_path)
+        elif os.path.isdir(generic_path):
+            return os.path.dirname(generic_path)
+
+    # Generator for each masked file under its sql directory
+    def sqldir_files(self, mask):
+        full_mask = os.path.join(self.sqldir(), self.name, mask)
+        files = glob.glob(full_mask)
+
+        for fn in files:
+            yield fn
+
+    # Generator for each masked file under its sql/test directory
+    def testdir_files(self, mask):
+        full_mask = os.path.join(self.sqldir(), self.name, "test", mask)
+        files = glob.glob(full_mask)
+
+        # Test scripts need to be sorted
+        for fn in sorted(files):
+            yield fn
+
+    # True if this module supports the db/version
+    def support_platform(self):
+        return self.sqldir() is not None
+
+    def tmpdir_name(self, child_path=None):
+        dirname = os.path.join(tmpdir, self.name)
+        if child_path is not None:
+           dirname = os.path.join(dirname, child_path)
+        return dirname
+
+    # Returns (tmpfile, logfile) names using basename of input file name
+    def tmp_log_files(self, afile, child_path=None):
+        dirname = self.tmpdir_name(child_path)
+        if not os.path.isdir(dirname):
+            os.makedirs(dirname)
+        basename = os.path.basename(afile)
+        tmpfile = os.path.join(dirname, basename + ".tmp")
+        logfile = os.path.join(dirname, basename + ".log")
+        return (tmpfile, logfile)
+
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Error message wrapper 
@@ -93,6 +141,24 @@ def __info(msg, verbose):
     # Print to stdout
     if verbose:
         print this + ' : INFO : ' + msg
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Find EXTENSION directory in the PG installation
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __get_extension_dir():
+    out, err = subprocess.Popen(['pg_config', '--sharedir'],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE).communicate()
+    if out == '':
+        __error("extension directory not found", False)
+        raise Exception
+    return out.rstrip() + "/extension"
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Determine if EXTENSION is supported
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __can_create_extension():
+    return portid == 'postgres' and dbver >= '9.1'
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Runs a SQL query on the target platform DB
@@ -155,17 +221,15 @@ def __run_sql_query(sql, show_error):
     return results
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Run SQL file
-# @param schema name of the target schema  
+# Substitute variables in the file and create a new file
+# @param schema name of the target schema
 # @param maddir_mod_py name of the module dir with Python code
-# @param module name of the module 
-# @param sqlfile name of the file to parse  
+# @param module name of the module
+# @param sqlfile name of the file to parse
 # @param tmpfile name of the temp file to run
-# @param logfile name of the log file (stdout)    
 # @param pre_sql optional SQL to run before executing the file
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, pre_sql):       
-
+def __preprocess_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, pre_sql):
     # Check if the SQL file exists     
     if not os.path.isfile(sqlfile):
         __error("Missing module SQL file (%s)" % sqlfile, False)
@@ -204,6 +268,12 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, pre
         __error("Failed executing m4 on %s" % sqlfile, False)
         raise Exception
 
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Run SQL file
+# @param sqlfile name of the file to parse  
+# @param logfile name of the log file (stdout)    
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __run_sql_file(sqlfile, logfile):
     # Run the SQL using DB command-line utility
     if portid == 'greenplum' or portid == 'postgres':
 
@@ -221,7 +291,7 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, pre
                     '-p', con_args['host'].split(':')[1],
                     '-d', con_args['database'],
                     '-U', con_args['user'],
-                    '-f', tmpfile]
+                    '-f', sqlfile]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
         
@@ -234,10 +304,10 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, pre
         
     # Run the SQL
     try:
-        __info("> ... executing " + tmpfile, verbose ) 
+        __info("> ... executing " + sqlfile, verbose )
         retval = subprocess.call(runcmd , env=runenv, stdout=log, stderr=log) 
     except:            
-        __error("Failed executing %s" % tmpfile, False)  
+        __error("Failed executing %s" % sqlfile, False)
         raise Exception    
     finally:
         log.close()
@@ -472,12 +542,14 @@ def __db_install(schema, dbrev):
             __db_create_schema(schema)
         except:
             __db_rollback(schema, None)
+            raise
 
         # Create MADlib objects
         try:
             __db_create_objects(schema, None)
         except:
             __db_rollback(schema, None)
+            raise
 
     __info("MADlib %s installed successfully in %s schema." % (rev, schema.upper()), True)
         
@@ -511,7 +583,8 @@ def __db_create_schema(schema):
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Create MADlib DB objects in the schema
-# @param schema name of the target schema 
+# @param schema name of the target schema
+# @param old_schema name of the existing schema
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __db_create_objects(schema, old_schema):
 
@@ -548,60 +621,81 @@ def __db_create_objects(schema, old_schema):
     
     # Run migration SQLs    
     __info("> Creating objects for modules:", True)  
-    
+
+    # If EXTENSION is available, use it
+    if __can_create_extension():
+        __db_create_extension_files(schema)
+        __run_sql_query("""CREATE EXTENSION madlib""", True)
+        return
     # Loop through all modules/modules  
-    for moduleinfo in portspecs['modules']:   
-     
+    for moduleinfo in portspecs['modules']:
+
         # Get the module name
-        module = moduleinfo['name']
-        __info("> - %s" % module, True)        
-        
-        # Find the Python module dir (platform specific or generic)
-        if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/modules/" + module):
-            maddir_mod_py  = maddir + "/ports/" + portid + "/" + dbver + "/modules"
-        else:
-            maddir_mod_py  = maddir + "/modules"
-        
-        # Find the SQL module dir (platform specific or generic)
-        if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
-            maddir_mod_sql  = maddir + "/ports/" + portid + "/modules"
-        elif os.path.isdir(maddir + "/modules/" + module):
-            maddir_mod_sql  = maddir + "/modules"
-        else:
+        module = ModuleItem(moduleinfo['name'])
+        __info("> - %s" % module.name, True)
+
+        if not module.support_platform():
             # This was a platform-specific module, for which no default exists.
             # We can just skip this module.
             continue
 
-        # Make a temp dir for log files 
-        cur_tmpdir = tmpdir + "/" + module
-        __make_dir(cur_tmpdir)
-
-        # Loop through all SQL files for this module
-        mask = maddir_mod_sql + '/' + module + '/*.sql_in'
-        sql_files = glob.glob(mask)
-
-        if not sql_files:
-            __error("No files found in: %s" % mask, True)
-
-        # Execute all SQL files for the module
-        for sqlfile in sql_files:
-
-            # Set file names
-            tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
-            logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
-            
-            # Run the SQL
-            try:
-                retval = __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, None)
-            except:
-                raise Exception
+        for sqlfile in module.sqldir_files("*.sql_in"):
+            (tmpfile, logfile) = module.tmp_log_files(sqlfile)
+            __preprocess_sql_file(schema, module.pydir(), module.name,
+                                  sqlfile, tmpfile, None)
+            retval = __run_sql_file(tmpfile, logfile)
                 
             # Check the exit status
             if retval != 0:
                 __error("Failed executing %s" % tmpfile, False)  
                 __error("Check the log at %s" % logfile, False) 
                 raise Exception    
-                       
+
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Generate EXTENSION files
+# @param schema schema to be installed in
+## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+def __db_create_extension_files(schema):
+    files = []
+    # Create sql file
+    # Loop through all modules/methods
+    for moduleinfo in portspecs['modules']:
+        # Get the module name
+        module = ModuleItem(moduleinfo['name'])
+        __info("> - %s" % module.name, True)
+
+        if not module.support_platform():
+            # This was a platform-specific module, for which no default exists.
+            # We can just skip this module.
+            continue
+
+        # Loop through all SQL files for this module
+        for sqlfile in module.sqldir_files("*.sql_in"):
+            (tmpfile, logfile) = module.tmp_log_files(sqlfile)
+            # Substitute variables in the file
+            __preprocess_sql_file(schema, module.pydir(), module.name,
+                                  sqlfile, tmpfile, None)
+            files.append(tmpfile)
+
+
+    extdir = __get_extension_dir()
+    dstfile = os.path.join(extdir, "madlib--" + rev + ".sql")
+
+    # Write everything into the single file
+    __info("Create %s" % dstfile, True)
+    outfile = open(dstfile, "w")
+    for tmpfile in files:
+        infile = open(tmpfile)
+        outfile.write(infile.read())
+        infile.close()
+    outfile.close
+
+    # Copy the control file
+    __info("Copy the control file", True)
+    src = os.path.join(maddir, "ports", portid, dbver, "madpack", "madlib.control")
+    dst = os.path.join(extdir, "madlib.control")
+    shutil.copy(src, dst)
+
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Rollback installation
 # @param drop_schema name of the schema to drop
@@ -626,8 +720,6 @@ def __db_rollback(drop_schema, keep_schema):
         __db_rename_schema(keep_schema, drop_schema)   
 
     __info("Rollback finished successfully.", True)
-    raise Exception
-            
 
 def unescape(string):
     """
@@ -956,7 +1048,9 @@ def main(argv):
             __plpy_check(py_min_ver)
             __db_install(schema, dbrev)
         except:
-            __error("MADlib installation failed.", True)
+            # exit silently if not verbose
+            __error("MADlib installation failed.", not verbose)
+            raise
            
     ###
     # COMMAND: install-check
@@ -988,29 +1082,18 @@ def main(argv):
         
         # Loop through all modules 
         for moduleinfo in portspecs['modules']:
-        
-            # Get module name
-            module = moduleinfo['name']
-            __info("> - %s" % module, verbose)        
 
-            # Make a temp dir for this module (if doesn't exist)
-            cur_tmpdir = tmpdir + '/' + module + '/test'
-            __make_dir(cur_tmpdir)
-            
-            # Find the Python module dir (platform specific or generic)
-            if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/modules/" + module):
-                maddir_mod_py  = maddir + "/ports/" + portid + "/" + dbver + "/modules"
-            else:        
-                maddir_mod_py  = maddir + "/modules"
-            
-            # Find the SQL module dir (platform specific or generic)
-            if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
-                maddir_mod_sql  = maddir + "/ports/" + portid + "/modules"
-            else:        
-                maddir_mod_sql  = maddir + "/modules"
+            # Get module name
+            module = ModuleItem(moduleinfo['name'])
+            __info("> - %s" % module.name, verbose)
+
+            if not module.support_platform():
+                # This was a platform-specific module, for which no default exists.
+                # We can just skip this module.
+                continue
 
             # Prepare test schema
-            test_schema = "madlib_installcheck_%s" % (module)
+            test_schema = "madlib_installcheck_%s" % (module.name)
             __run_sql_query("DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s;" 
                             % (test_schema, test_schema), True)
             __run_sql_query("GRANT ALL ON SCHEMA %s TO %s;" 
@@ -1022,23 +1105,20 @@ def main(argv):
                       '-- Set SEARCH_PATH for install-check:\n' \
                       'SET search_path=%s,%s;\n' \
                       % (test_user, test_schema, schema)
-    
-            # Loop through all test SQL files for this module
-            sql_files = maddir_mod_sql + '/' + module + '/test/*.sql_in'
-            for sqlfile in sorted(glob.glob(sql_files)):
-            
-                result = 'PASS'
 
-                # Set file names
-                tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
-                logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
-                
+            # Loop through all test SQL files for this module
+            for sqlfile in module.testdir_files("*.sql_in"):
+                result = 'PASS'
+                (tmpfile, logfile) = module.tmp_log_files(sqlfile, "test")
+
                 # If there is no problem with the SQL file
                 milliseconds = 0
 
                 # Run the SQL
                 run_start = datetime.datetime.now()
-                retval = __run_sql_file(schema, maddir_mod_py, module, sqlfile, tmpfile, logfile, pre_sql)
+                __preprocess_sql_file(schema, module.pydir(), module.name,
+                                      sqlfile, tmpfile, pre_sql)
+                retval = __run_sql_file(tmpfile, logfile)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
                 milliseconds = round((run_end - run_start).seconds * 1000 + (run_end - run_start).microseconds / 1000)
@@ -1058,7 +1138,7 @@ def main(argv):
                     result = 'ERROR'
                 
                 # Spit the line
-                print "TEST CASE RESULT|Module: " + module + \
+                print "TEST CASE RESULT|Module: " + module.name + \
                     "|" + os.path.basename(sqlfile) + "|" + result + \
                     "|Time: %d milliseconds" % (milliseconds)           
 

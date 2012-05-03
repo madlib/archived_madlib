@@ -195,6 +195,10 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         "${CMAKE_CURRENT_BINARY_DIR}/madpack/SQLCommon.m4"
         @ONLY
     )
+    configure_file("${PORT_SOURCE_DIR}/madpack/madlib.control_in"
+        "${CMAKE_CURRENT_BINARY_DIR}/madpack/madlib.control"
+        @ONLY
+    )
     
     add_custom_target(pythonFiles_${DBMS} ALL
         DEPENDS ${PYTHON_TARGET_FILES})
@@ -213,6 +217,10 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         REGEX "^(.*/)?\\.DS_Store\$" EXCLUDE
     )
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/madpack/SQLCommon.m4"
+        DESTINATION ports/${PORT_DIR_NAME}/${IN_PORT_VERSION}/madpack
+        COMPONENT ${DBMS}
+    )
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/madpack/madlib.control"
         DESTINATION ports/${PORT_DIR_NAME}/${IN_PORT_VERSION}/madpack
         COMPONENT ${DBMS}
     )
