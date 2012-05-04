@@ -1536,6 +1536,75 @@ PG_FUNCTION_INFO_V1(dt_scv_aggr_ffunc);
 
 
 /*
+ * @brief The function samples a set of integer values between low and high.
+ *        The sample method is 'sample with replacement', which means a case
+ *        could be chosen multiple times.
+ *
+ * @param sample_size     Number of records to be sampled.
+ * @param low             Low limit of sampled values.
+ * @param high            High limit of sampled values.
+ * @param seed            Seed for random number.
+ *
+ * @return A set of integer values sampled randomly between [low, high].
+ *
+ */
+Datum
+dt_sample_within_range
+	(
+	PG_FUNCTION_ARGS
+	)
+{
+    FuncCallContext     *funcctx 	= NULL;
+    int64               call_cntr	= 0;
+    int64               max_calls	= 0;
+
+    /* stuff done only on the first call of the function */
+    if (SRF_IS_FIRSTCALL())
+    {
+        MemoryContext   oldcontext;
+
+        /* create a function context for cross-call persistence */
+        funcctx = SRF_FIRSTCALL_INIT();
+
+        /* switch to memory context appropriate for multiple function calls */
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+        int64  low = PG_GETARG_INT64(1);
+        int64 high = PG_GETARG_INT64(2);
+
+		dt_check_error
+			(
+				low<=high && low>=0,
+				"The low margin must not be greater than the high margin. "
+           		"And negative numbers are not accepted"
+			);
+
+        /* total number of samples to be returned */
+        funcctx->max_calls = PG_GETARG_INT64(0);
+        MemoryContextSwitchTo(oldcontext);
+    }
+
+    /* stuff done on every call of the function */
+    funcctx   = SRF_PERCALL_SETUP();
+    call_cntr = funcctx->call_cntr;
+    max_calls = funcctx->max_calls;
+ 
+    /* when there is more records to return */
+    if (call_cntr < max_calls)
+    {
+        int64       low			= PG_GETARG_INT64(1);
+        int64       high		= PG_GETARG_INT64(2);
+        float8      rand_num	= (random()/(float8)(RAND_MAX+1.0));
+        int64       selection	= (int64)(rand_num*(high-low+1)+low);
+        SRF_RETURN_NEXT(funcctx, Int64GetDatum(selection));
+    }
+
+    /* when there is no more records left */
+    SRF_RETURN_DONE(funcctx);
+}
+PG_FUNCTION_INFO_V1(dt_sample_within_range);
+
+
+/*
  * @brief Retrieve the specified number of unique features for a node.
  *        Discrete features used by ancestor nodes will be excluded.
  *        If the number of remaining features is less or equal than the
@@ -1626,9 +1695,6 @@ dt_get_node_split_fids
      */
     if (n_remain_fids > num_req_features)
     {
-		/* set the seed, nid is different for each segment */
-		srand(time(NULL) + nid);
-
 		for (int i = 0; i < num_req_features; ++i)
 		{
 			int32 fid = 0;
@@ -1639,7 +1705,7 @@ dt_get_node_split_fids
 			 */
 			do
 			{
-				fid = rand() % num_features;
+				fid = random() % num_features;
 			}while (0 < (bitmap[fid >> power_uint32] & dt_fid_mask(fid, power_uint32)));
 
 			result[i] = Int32GetDatum(fid + 1);
