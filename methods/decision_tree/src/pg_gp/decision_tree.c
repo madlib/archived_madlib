@@ -1570,7 +1570,6 @@ dt_sample_within_range
         oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
         int64  low = PG_GETARG_INT64(1);
         int64 high = PG_GETARG_INT64(2);
-        int32 seed = PG_GETARG_INT64(3);
 
 		dt_check_error
 			(
@@ -1581,7 +1580,6 @@ dt_sample_within_range
 
         /* total number of samples to be returned */
         funcctx->max_calls = PG_GETARG_INT64(0);
-        srand(time(NULL)+seed);
         MemoryContextSwitchTo(oldcontext);
     }
 
@@ -1595,7 +1593,7 @@ dt_sample_within_range
     {
         int64       low			= PG_GETARG_INT64(1);
         int64       high		= PG_GETARG_INT64(2);
-        float8      rand_num	= (rand()/(float8)(RAND_MAX+1.0));
+        float8      rand_num	= (random()/(float8)(RAND_MAX+1.0));
         int64       selection	= (int64)(rand_num*(high-low+1)+low);
         SRF_RETURN_NEXT(funcctx, Int64GetDatum(selection));
     }
@@ -1697,9 +1695,6 @@ dt_get_node_split_fids
      */
     if (n_remain_fids > num_req_features)
     {
-		/* set the seed, nid is different for each segment */
-		srand(time(NULL) + nid);
-
 		for (int i = 0; i < num_req_features; ++i)
 		{
 			int32 fid = 0;
@@ -1710,7 +1705,7 @@ dt_get_node_split_fids
 			 */
 			do
 			{
-				fid = rand() % num_features;
+				fid = random() % num_features;
 			}while (0 < (bitmap[fid >> power_uint32] & dt_fid_mask(fid, power_uint32)));
 
 			result[i] = Int32GetDatum(fid + 1);
