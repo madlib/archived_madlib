@@ -19,7 +19,7 @@ namespace modules {
 
 // Import names from other MADlib modules
 using dbal::NoSolutionFoundException;
-using prob::normalCDF;
+using prob::normal_CDF;
 
 namespace regress {
 
@@ -910,7 +910,7 @@ AnyType internal<LinAlgTypes>::stateToResult(
     for (Index i = 0; i < coef.size(); ++i) {
         stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
         waldZStats(i) = coef(i) / stdErr(i);
-        waldPValues(i) = 2. * normalCDF( -std::abs(waldZStats(i)) );
+        waldPValues(i) = 2. * normal_CDF( -std::abs(waldZStats(i)) , 0, 1);
         oddsRatios(i) = std::exp( coef(i) );
     }
     

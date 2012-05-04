@@ -15,7 +15,7 @@ namespace madlib {
 namespace modules {
 
 // Import names from other MADlib modules
-using prob::studentT_CDF;
+using prob::students_t_CDF;
 
 namespace regress {
 
@@ -301,7 +301,7 @@ linregr_final::run(AnyType &args) {
     // by reference, so we need to bind to db memory
     HandleMap<ColumnVector> pValues(allocateArray<double>(state.widthOfX));
     for (int i = 0; i < state.widthOfX; i++)
-        pValues(i) = 2. * (1. - studentT_CDF(
+        pValues(i) = 2. * (1. - students_t_CDF(
                                     std::fabs( tStats(i) ),
                                     state.numRows - state.widthOfX));
     
