@@ -1,6 +1,6 @@
 /*
  *
- * @file decision_tree.c
+ * @file dt.c
  *
  * @brief Aggregate and utility functions written in C for C45 and RF in MADlib
  *
