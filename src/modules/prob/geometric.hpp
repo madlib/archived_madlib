@@ -23,9 +23,9 @@ DECLARE_UDF(geometric_quantile)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-double geometric_CDF(double x, double suc_frac);
-double geometric_PDF(double x, double suc_frac);
-double geometric_QUANTILE(double p, double suc_frac);
+double geometric_CDF(double x, double suc_prob);
+double geometric_PDF(double x, double suc_prob);
+double geometric_QUANTILE(double p, double suc_prob);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 
 #endif // workaround for Doxygen

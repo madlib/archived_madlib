@@ -23,9 +23,9 @@ DECLARE_UDF(hypergeometric_quantile)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-double hypergeometric_CDF(double x, double total, double defective, double sample_count);
-double hypergeometric_PDF(double x, double total, double defective, double sample_count);
-double hypergeometric_QUANTILE(double p, double total, double defective, double sample_count);
+double hypergeometric_CDF(double x, double defective, double sample_count, double total);
+double hypergeometric_PDF(double x, double defective, double sample_count, double total);
+double hypergeometric_QUANTILE(double p, double defective, double sample_count, double total);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 
 #endif // workaround for Doxygen

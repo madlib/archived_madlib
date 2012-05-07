@@ -23,9 +23,9 @@ DECLARE_UDF(negative_binomial_quantile)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-double negative_binomial_CDF(double x, double suc_frac, double successes);
-double negative_binomial_PDF(double x, double suc_frac, double successes);
-double negative_binomial_QUANTILE(double p, double suc_frac, double successes);
+double negative_binomial_CDF(double x, double successes, double succ_prob);
+double negative_binomial_PDF(double x, double successes, double succ_prob);
+double negative_binomial_QUANTILE(double p, double successes, double succ_prob);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 
 #endif // workaround for Doxygen
