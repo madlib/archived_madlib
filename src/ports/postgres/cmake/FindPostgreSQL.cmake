@@ -21,6 +21,7 @@
 #      (see below)
 #  ${PKG_NAME}_FOUND - set to true if headers and binary were found
 #  ${PKG_NAME}_LIB_DIR - PostgreSQL library directory
+#  ${PKG_NAME}_SHARE_DIR - PostgreSQL share directory
 #  ${PKG_NAME}_CLIENT_INCLUDE_DIR - client include directory
 #  ${PKG_NAME}_SERVER_INCLUDE_DIR - server include directory
 #  ${PKG_NAME}_EXECUTABLE - path to postgres binary
@@ -155,7 +156,12 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
                 OUTPUT_VARIABLE ${PKG_NAME}_LIB_DIR
                 OUTPUT_STRIP_TRAILING_WHITESPACE
             )
-            
+
+            execute_process(COMMAND ${${PKG_NAME}_PG_CONFIG} --sharedir
+                OUTPUT_VARIABLE ${PKG_NAME}_SHARE_DIR
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+            )
+
             architecture("${${PKG_NAME}_EXECUTABLE}" ${PKG_NAME}_ARCHITECTURE)
         else()
             message(STATUS "Found pg_config at \"${${PKG_NAME}_PG_CONFIG}\", "
