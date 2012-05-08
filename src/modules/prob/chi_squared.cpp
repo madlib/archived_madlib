@@ -91,6 +91,7 @@ CHI_SQUARED_PDF(double x, double df)
 		return std::numeric_limits<double>::infinity();
 	}
 	if ( 2 == df && 0 == x ) {
+		/// FIXME
 		return 0.5;
 	}
 

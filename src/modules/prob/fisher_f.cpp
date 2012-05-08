@@ -92,6 +92,7 @@ FISHER_F_PDF(double x, double df1, double df2)
 		return 0.0;
 	}
 	if ( 0 == x ) {
+		/// FIXME
 		return df1 > 2 ? 0 : (df1 == 2 ? 1 : std::numeric_limits<double>::infinity());
 	}
 
