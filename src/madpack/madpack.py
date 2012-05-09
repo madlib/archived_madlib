@@ -720,6 +720,9 @@ def main(argv):
     parser.add_argument('-d', '--tmpdir', dest='tmpdir', default = '/tmp/',
                          help="Temporary directory location for installation log files.")
 
+    parser.add_argument('-t', '--testcase', dest='testcase', default="",
+                         help="Module names to test, comma separated. Effective only for install-check.")
+
     ##
     # Get the arguments
     ##
@@ -986,11 +989,19 @@ def main(argv):
         # 2) Run test SQLs 
         __info("> Running test scripts for:", verbose)   
         
+        caseset = set([test.strip()
+            for test in args.testcase.split(',')]) if args.testcase != "" else set()
+
         # Loop through all modules 
         for moduleinfo in portspecs['modules']:
         
             # Get module name
             module = moduleinfo['name']
+
+            # Skip if doesn't meet specified modules
+            if len(caseset) > 0 and module not in caseset:
+                continue
+
             __info("> - %s" % module, verbose)        
 
             # Make a temp dir for this module (if doesn't exist)

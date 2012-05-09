@@ -1,0 +1,177 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file model_loader.sql_in
+ *
+ * @brief create all the necessary tables to store the trained model, then import the trained models to the tables
+ * @param datapath the path to the crf model data
+ * @date Feb. 2012
+ * @sa For an introduction to the text feature extraction, see the module
+ *     description \ref grp_textfex_viterbi
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+
+@input
+
+-# Prepare an input segmenttbl, e.g.:
+- CREATE TABLE segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)
+\verbatim
+sql> select * from segmenttbl order by doc_id, start_pos;
+start_pos | doc_id | seg_text      | max_pos
+----------+---------+--------------+-------------
+     0    |    1   |       madlib  |    9  
+     1    |    1   |           is  |    9
+     2    |    1   |           an  |    9
+     3    |    1   |  open-source  |    9
+     4    |    1   |      library  |    9
+     5    |    1   |          for  |    9
+     6    |    1   |     scalable  |    9
+     7    |    1   |  in-database  |    9
+     8    |    1   |    analytics  |    9
+     9    |    1   |            .  |    9
+     0    |    2   |           it  |   16    
+     1    |    2   |     provides  |   16
+     2    |    2   |data-parallel  |   16
+     3    |    2   |implementations|   16
+     ... 
+     14   |    2   |  unstructured |   16
+     15   |    2   |          data |   16
+     16   |    2   |             . |   16
+\endverbatim
+
+-# Prepare an input dictionary table, e.g.,:
+- CREATE TABLE dictionary (token text,token_id integer,label text,count integer,total integer)
+\verbatim
+sql> select * from dictionary;
+token       | label  | count | total
+------------+--------+--------------
+   freefall |   11   |   1   |  1
+     policy |   11   |   2   |  2
+   measures |   12   |   1   |  1
+ commitment |   11   |   1   |  1
+        new |    6   |   1   |  1
+     speech |   11   |   1   |  1
+         's |   16   |   2   |  2
+     reckon |   30   |   1   |  1
+ underlying |   28   |   1   |  1
+ ...
+\endverbatim
+
+-# Prepare an input label table, e.g.,:
+- CREATE TABLE labeltbl (id integer,label character varying)
+\verbatim
+sql> select * from labeltbl order by id;
+id          | label
+------------+--------
+      0     |   CC   
+      1     |   CD   
+      2     |   DT
+      3     |   EX
+      4     |   FW
+      5     |   IN
+      6     |   JJ
+...
+     42     |    ,
+     43     |    .
+     44     |    :
+\endverbatim
+
+-# Prepare an input regex table, e.g.,:
+- CREATE TABLE regextbl (pattern text,name text)
+\verbatim
+sql> select * from regex;
+pattern       |   name
+------------- +---------------
+^[A-Z][a-z]+$ |  InitCapital%   
+     ^[A-Z]+$ |  isAllCapital%
+ ^.*[0-9]+.*$ |  containsDigit%
+      ^.+[.]$ |  endsWithDot%
+      ^.+[,]$ |  endsWithComma%
+       ^.+er$ |  endsWithER%
+      ^.+est$ |  endsWithEst%
+       ^.+ed$ |  endsWithED%
+...
+\endverbatim
+
+-# Prepare an input feature table, e.g.,:
+- CREATE TABLE featuretbl (id integer,name text,prev_label_id integer,label_id integer,weight float)
+\verbatim
+sql> select * from feature order by id;
+id   |     name     | prev_label_id | label_id | weight
+-------------------------------------------------------
+1    | W_chancellor |       -1      |    13     | 2.2322
+2    |         E.13 |       13      |     5     | 2.3995
+3    |            U |       -1      |     5     | 1.2164
+4    |         W_of |       -1      |     5     | 2.8744
+5    |          E.5 |        5      |     2     | 3.7716
+6    |        W_the |       -1      |     2     | 4.1790
+7    |          E.2 |        2      |    13     | 0.8957
+...
+\endverbatim
+
+@usage
+- create tables and import data to the database
+  SELECT madlib.load_crf_model('/path/to/modeldata')
+
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.load_crf_model(datapath text) RETURNS void AS 
+$$
+        # tokenized document
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_segmenttbl CASCADE;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)";
+	plpy.execute(query);
+
+	# CRF features
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_dictionary;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_dictionary (token text,token_id integer,label text,count integer,total integer)";
+	plpy.execute(query);
+
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_feature;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_feature (id integer,name text,prev_label_id integer,label_id integer,weight float)";
+	plpy.execute(query);
+
+	# label space
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_label CASCADE;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_label (id integer,label character varying)";
+	plpy.execute(query);
+
+	# regex table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.textfex_regex;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.textfex_regex (pattern text,name text)";
+	plpy.execute(query);
+
+	# R factor table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_rtbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.viterbi_rtbl (seg_text text, label integer, score integer)";
+	plpy.execute(query);
+
+	# M factor table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_mtbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.viterbi_mtbl (score integer[])";
+	plpy.execute(query);
+
+        # import feature data to features table
+        query = "COPY MADLIB_SCHEMA.textfex_feature (id,name,prev_label_id,label_id,weight) FROM '" + datapath + "/enron-features.tab'";
+        plpy.execute(query);
+
+        # import dictionary to dictionary table
+        query = "COPY MADLIB_SCHEMA.textfex_dictionary (token,token_id,label,count,total) FROM '" + datapath + "/enron-dictionary.tab'";
+        plpy.execute(query);
+
+        # import regex to regex table
+        query = "COPY MADLIB_SCHEMA.textfex_regex (pattern,name) FROM '" + datapath + "/enron-regex.tab'";
+        plpy.execute(query);
+
+        # import all the labels to the label table
+        query = "COPY MADLIB_SCHEMA.textfex_label (id,label) FROM '" + datapath + "/enron-labels.tab'";
+        plpy.execute(query);
+
+        # import tokenized document to the segment table
+        query = "COPY MADLIB_SCHEMA.textfex_segmenttbl (start_pos,doc_id,seg_text,max_pos) FROM '" + datapath + "/enron-segmenttbl.tab'";
+        plpy.execute(query);
+
+$$ language plpythonu STRICT;
