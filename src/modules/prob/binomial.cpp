@@ -2,7 +2,7 @@
  *
  * @file binomial.cpp 
  *
- * @brief Probability density and distribution functions of binomial distruction imported from Boost.
+ * @brief Probability mass and distribution functions of binomial distruction imported from Boost.
  *
  *//* ----------------------------------------------------------------------- */
 #include <dbconnector/dbconnector.hpp>
@@ -27,25 +27,24 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(trials) || std::isnan(succ_prob) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(trials >= 0 && (int)trials == trials) ) {\
-			throw std::domain_error("Binomial distribution is undefined when trials doesn't conform to (trials >= 0 && (int)trials == trials).");\
+		if ( !(trials >= 0 ) ) {\
+			throw std::domain_error("Binomial distribution is undefined when trials doesn't conform to (trials >= 0 ).");\
 		}\
-		if ( !(succ_prob >= 0 && succ_prob <= 1) ) {\
+		else if ( !(succ_prob >= 0 && succ_prob <= 1) ) {\
 			throw std::domain_error("Binomial distribution is undefined when succ_prob doesn't conform to (succ_prob >= 0 && succ_prob <= 1).");\
 		}\
 	} while(0)
 
 
 inline double 
-BINOMIAL_CDF(double x, double trials, double succ_prob)
-{
+_binomial_cdf(double x, int trials, double succ_prob) {
 	BINOMIAL_DOMAIN_CHECK(trials, succ_prob);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x > trials ) {
+	else if ( x > trials ) {
 		return 1.0;
 	}
 	x = floor(x);
@@ -58,18 +57,18 @@ BINOMIAL_CDF(double x, double trials, double succ_prob)
 AnyType
 binomial_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
-	double trials = args[1].getAs<double>();
+	int trials = args[1].getAs<int>();
 	double succ_prob = args[2].getAs<double>();
 
-	return BINOMIAL_CDF(x, trials, succ_prob);
+	return _binomial_cdf(x, trials, succ_prob);
 }
 
 double
-binomial_CDF(double x, double trials, double succ_prob) {
+binomial_CDF(double x, int trials, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = BINOMIAL_CDF(x, trials, succ_prob);
+		res = _binomial_cdf(x, trials, succ_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -81,40 +80,37 @@ binomial_CDF(double x, double trials, double succ_prob) {
 
 
 inline double 
-BINOMIAL_PDF(double x, double trials, double succ_prob)
-{
+_binomial_pdf(int x, int trials, double succ_prob) {
 	BINOMIAL_DOMAIN_CHECK(trials, succ_prob);
-	if ( (int)x != x && !std::isinf(x) ) {
-		throw std::domain_error("Binomial distribution is a discrete distribution, random variable can only be interger.");
-	}
+	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x > trials ) {
+	else if ( x > trials ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::binomial_distribution<>(trials, succ_prob), x); 
 }
 
 /**
- * @brief binomial distribution probability density function: In-database interface
+ * @brief binomial distribution probability mass function: In-database interface
  */
 AnyType
 binomial_pdf::run(AnyType &args) {
-	double x = args[0].getAs<double>();
-	double trials = args[1].getAs<double>();
+	int x = args[0].getAs<int>();
+	int trials = args[1].getAs<int>();
 	double succ_prob = args[2].getAs<double>();
 
-	return BINOMIAL_PDF(x, trials, succ_prob);
+	return _binomial_pdf(x, trials, succ_prob);
 }
 
 double
-binomial_PDF(double x, double trials, double succ_prob) {
+binomial_PDF(int x, int trials, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = BINOMIAL_PDF(x, trials, succ_prob);
+		res = _binomial_pdf(x, trials, succ_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -126,17 +122,16 @@ binomial_PDF(double x, double trials, double succ_prob) {
 
 
 inline double 
-BINOMIAL_QUANTILE(double x, double trials, double succ_prob)
-{
+_binomial_quantile(double x, int trials, double succ_prob) {
 	BINOMIAL_DOMAIN_CHECK(trials, succ_prob);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Binomial distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of binomial distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return trials;
 	}
 	return boost::math::quantile(boost::math::binomial_distribution<>(trials, succ_prob), x); 
@@ -148,18 +143,18 @@ BINOMIAL_QUANTILE(double x, double trials, double succ_prob)
 AnyType
 binomial_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
-	double trials = args[1].getAs<double>();
+	int trials = args[1].getAs<int>();
 	double succ_prob = args[2].getAs<double>();
 
-	return BINOMIAL_QUANTILE(x, trials, succ_prob);
+	return _binomial_quantile(x, trials, succ_prob);
 }
 
 double
-binomial_QUANTILE(double x, double trials, double succ_prob) {
+binomial_QUANTILE(double x, int trials, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = BINOMIAL_QUANTILE(x, trials, succ_prob);
+		res = _binomial_quantile(x, trials, succ_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

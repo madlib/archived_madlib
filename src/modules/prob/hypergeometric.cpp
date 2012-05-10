@@ -2,7 +2,7 @@
  *
  * @file hypergeometric.cpp 
  *
- * @brief Probability density and distribution functions of hypergeometric distruction imported from Boost.
+ * @brief Probability mass and distribution functions of hypergeometric distruction imported from Boost.
  *
  *//* ----------------------------------------------------------------------- */
 #include <dbconnector/dbconnector.hpp>
@@ -27,28 +27,27 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(defective) || std::isnan(sample_count) || std::isnan(total) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !((int)defective == defective && defective >= 0 && defective <= total) ) {\
-			throw std::domain_error("Hypergeometric distribution is undefined when defective doesn't conform to ((int)defective == defective && defective >= 0 && defective <= total).");\
+		else if ( !( defective >= 0 && defective <= total) ) {\
+			throw std::domain_error("Hypergeometric distribution is undefined when defective doesn't conform to (defective >= 0 && defective <= total).");\
 		}\
-		if ( !((int)sample_count == sample_count && sample_count >= 1 && sample_count <= total) ) {\
-			throw std::domain_error("Hypergeometric distribution is undefined when sample_count doesn't conform to ((int)sample_count == sample_count && sample_count >= 1 && sample_count <= total).");\
+		else if ( !( sample_count >= 1 && sample_count <= total) ) {\
+			throw std::domain_error("Hypergeometric distribution is undefined when sample_count doesn't conform to (sample_count >= 1 && sample_count <= total).");\
 		}\
-		if ( !( total >=1 && (int)total == total) ) {\
-			throw std::domain_error("Hypergeometric distribution is undefined when total doesn't conform to ( total >=1 && (int)total == total).");\
+		else if ( !( total >=1 ) ) {\
+			throw std::domain_error("Hypergeometric distribution is undefined when total doesn't conform to ( total >=1 ).");\
 		}\
 	} while(0)
 
 
 inline double 
-HYPERGEOMETRIC_CDF(double x, double defective, double sample_count, double total)
-{
+_hypergeometric_cdf(double x, int defective, int sample_count, int total) {
 	HYPERGEOMETRIC_DOMAIN_CHECK(defective, sample_count, total);
 	
 	
 	if ( x < std::max<int>(0, sample_count + defective - total) ) {
 		return 0.0;
 	}
-	if ( x > std::min<int>(defective, sample_count) ) {
+	else if ( x > std::min<int>(defective, sample_count) ) {
 		return 1.0;
 	}
 	x = floor(x);
@@ -61,19 +60,19 @@ HYPERGEOMETRIC_CDF(double x, double defective, double sample_count, double total
 AnyType
 hypergeometric_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
-	double defective = args[1].getAs<double>();
-	double sample_count = args[2].getAs<double>();
-	double total = args[3].getAs<double>();
+	int defective = args[1].getAs<int>();
+	int sample_count = args[2].getAs<int>();
+	int total = args[3].getAs<int>();
 
-	return HYPERGEOMETRIC_CDF(x, defective, sample_count, total);
+	return _hypergeometric_cdf(x, defective, sample_count, total);
 }
 
 double
-hypergeometric_CDF(double x, double defective, double sample_count, double total) {
+hypergeometric_CDF(double x, int defective, int sample_count, int total) {
 	double res = 0;
 
 	try {
-		res = HYPERGEOMETRIC_CDF(x, defective, sample_count, total);
+		res = _hypergeometric_cdf(x, defective, sample_count, total);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -85,41 +84,38 @@ hypergeometric_CDF(double x, double defective, double sample_count, double total
 
 
 inline double 
-HYPERGEOMETRIC_PDF(double x, double defective, double sample_count, double total)
-{
+_hypergeometric_pdf(int x, int defective, int sample_count, int total) {
 	HYPERGEOMETRIC_DOMAIN_CHECK(defective, sample_count, total);
-	if ( (int)x != x && !std::isinf(x) ) {
-		throw std::domain_error("Hypergeometric distribution is a discrete distribution, random variable can only be interger.");
-	}
+	
 	
 	if ( x < std::max<int>(0, sample_count + defective - total) ) {
 		return 0.0;
 	}
-	if ( x > std::min<int>(defective, sample_count) ) {
+	else if ( x > std::min<int>(defective, sample_count) ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::hypergeometric_distribution<>(defective, sample_count, total), x); 
 }
 
 /**
- * @brief hypergeometric distribution probability density function: In-database interface
+ * @brief hypergeometric distribution probability mass function: In-database interface
  */
 AnyType
 hypergeometric_pdf::run(AnyType &args) {
-	double x = args[0].getAs<double>();
-	double defective = args[1].getAs<double>();
-	double sample_count = args[2].getAs<double>();
-	double total = args[3].getAs<double>();
+	int x = args[0].getAs<int>();
+	int defective = args[1].getAs<int>();
+	int sample_count = args[2].getAs<int>();
+	int total = args[3].getAs<int>();
 
-	return HYPERGEOMETRIC_PDF(x, defective, sample_count, total);
+	return _hypergeometric_pdf(x, defective, sample_count, total);
 }
 
 double
-hypergeometric_PDF(double x, double defective, double sample_count, double total) {
+hypergeometric_PDF(int x, int defective, int sample_count, int total) {
 	double res = 0;
 
 	try {
-		res = HYPERGEOMETRIC_PDF(x, defective, sample_count, total);
+		res = _hypergeometric_pdf(x, defective, sample_count, total);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -131,17 +127,16 @@ hypergeometric_PDF(double x, double defective, double sample_count, double total
 
 
 inline double 
-HYPERGEOMETRIC_QUANTILE(double x, double defective, double sample_count, double total)
-{
+_hypergeometric_quantile(double x, int defective, int sample_count, int total) {
 	HYPERGEOMETRIC_DOMAIN_CHECK(defective, sample_count, total);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Hypergeometric distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of hypergeometric distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return std::max<int>(0, sample_count + defective - total);
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::min<int>(defective, sample_count);
 	}
 	return boost::math::quantile(boost::math::hypergeometric_distribution<>(defective, sample_count, total), x); 
@@ -153,19 +148,19 @@ HYPERGEOMETRIC_QUANTILE(double x, double defective, double sample_count, double 
 AnyType
 hypergeometric_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
-	double defective = args[1].getAs<double>();
-	double sample_count = args[2].getAs<double>();
-	double total = args[3].getAs<double>();
+	int defective = args[1].getAs<int>();
+	int sample_count = args[2].getAs<int>();
+	int total = args[3].getAs<int>();
 
-	return HYPERGEOMETRIC_QUANTILE(x, defective, sample_count, total);
+	return _hypergeometric_quantile(x, defective, sample_count, total);
 }
 
 double
-hypergeometric_QUANTILE(double x, double defective, double sample_count, double total) {
+hypergeometric_QUANTILE(double x, int defective, int sample_count, int total) {
 	double res = 0;
 
 	try {
-		res = HYPERGEOMETRIC_QUANTILE(x, defective, sample_count, total);
+		res = _hypergeometric_quantile(x, defective, sample_count, total);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

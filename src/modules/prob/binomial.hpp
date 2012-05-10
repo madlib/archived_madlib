@@ -12,7 +12,7 @@
  */
 DECLARE_UDF(binomial_cdf)
 /**
- * @brief binomial probability density function
+ * @brief binomial probability mass function
  */
 DECLARE_UDF(binomial_pdf)
 
@@ -23,9 +23,9 @@ DECLARE_UDF(binomial_quantile)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-double binomial_CDF(double x, double trials, double succ_prob);
-double binomial_PDF(double x, double trials, double succ_prob);
-double binomial_QUANTILE(double p, double trials, double succ_prob);
+double binomial_CDF(double x, int trials, double succ_prob);
+double binomial_PDF(int x, int trials, double succ_prob);
+double binomial_QUANTILE(double p, int trials, double succ_prob);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 
 #endif // workaround for Doxygen

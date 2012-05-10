@@ -31,22 +31,21 @@ namespace prob {
 		if ( !(lower < upper) ) {\
 			throw std::domain_error("Uniform distribution is undefined when upper doesn't conform to (lower < upper).");\
 		}\
-		if ( std::isinf(lower) || std::isinf(upper) ) {\
+		else if ( std::isinf(lower) || std::isinf(upper) ) {\
 			throw std::domain_error("Uniform distribution is undefined when upper or lower is infinity.");\
 		}\
 	} while(0)
 
 
 inline double 
-UNIFORM_CDF(double x, double lower, double upper)
-{
+_uniform_cdf(double x, double lower, double upper) {
 	UNIFORM_DOMAIN_CHECK(lower, upper);
 	
 	
 	if ( x < lower ) {
 		return 0.0;
 	}
-	if ( x > upper ) {
+	else if ( x > upper ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::uniform_distribution<>(lower, upper), x); 
@@ -61,7 +60,7 @@ uniform_cdf::run(AnyType &args) {
 	double lower = args[1].getAs<double>();
 	double upper = args[2].getAs<double>();
 
-	return UNIFORM_CDF(x, lower, upper);
+	return _uniform_cdf(x, lower, upper);
 }
 
 double
@@ -69,7 +68,7 @@ uniform_CDF(double x, double lower, double upper) {
 	double res = 0;
 
 	try {
-		res = UNIFORM_CDF(x, lower, upper);
+		res = _uniform_cdf(x, lower, upper);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -81,15 +80,14 @@ uniform_CDF(double x, double lower, double upper) {
 
 
 inline double 
-UNIFORM_PDF(double x, double lower, double upper)
-{
+_uniform_pdf(double x, double lower, double upper) {
 	UNIFORM_DOMAIN_CHECK(lower, upper);
 	
 	
 	if ( x < lower ) {
 		return 0.0;
 	}
-	if ( x > upper ) {
+	else if ( x > upper ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::uniform_distribution<>(lower, upper), x); 
@@ -104,7 +102,7 @@ uniform_pdf::run(AnyType &args) {
 	double lower = args[1].getAs<double>();
 	double upper = args[2].getAs<double>();
 
-	return UNIFORM_PDF(x, lower, upper);
+	return _uniform_pdf(x, lower, upper);
 }
 
 double
@@ -112,7 +110,7 @@ uniform_PDF(double x, double lower, double upper) {
 	double res = 0;
 
 	try {
-		res = UNIFORM_PDF(x, lower, upper);
+		res = _uniform_pdf(x, lower, upper);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -124,17 +122,16 @@ uniform_PDF(double x, double lower, double upper) {
 
 
 inline double 
-UNIFORM_QUANTILE(double x, double lower, double upper)
-{
+_uniform_quantile(double x, double lower, double upper) {
 	UNIFORM_DOMAIN_CHECK(lower, upper);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Uniform distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of uniform distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return lower;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return upper;
 	}
 	return boost::math::quantile(boost::math::uniform_distribution<>(lower, upper), x); 
@@ -149,7 +146,7 @@ uniform_quantile::run(AnyType &args) {
 	double lower = args[1].getAs<double>();
 	double upper = args[2].getAs<double>();
 
-	return UNIFORM_QUANTILE(x, lower, upper);
+	return _uniform_quantile(x, lower, upper);
 }
 
 double
@@ -157,7 +154,7 @@ uniform_QUANTILE(double x, double lower, double upper) {
 	double res = 0;
 
 	try {
-		res = UNIFORM_QUANTILE(x, lower, upper);
+		res = _uniform_quantile(x, lower, upper);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

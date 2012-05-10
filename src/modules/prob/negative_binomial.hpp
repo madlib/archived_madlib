@@ -12,7 +12,7 @@
  */
 DECLARE_UDF(negative_binomial_cdf)
 /**
- * @brief negative_binomial probability density function
+ * @brief negative_binomial probability mass function
  */
 DECLARE_UDF(negative_binomial_pdf)
 
@@ -24,7 +24,7 @@ DECLARE_UDF(negative_binomial_quantile)
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
 double negative_binomial_CDF(double x, double successes, double succ_prob);
-double negative_binomial_PDF(double x, double successes, double succ_prob);
+double negative_binomial_PDF(int x, double successes, double succ_prob);
 double negative_binomial_QUANTILE(double p, double successes, double succ_prob);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 

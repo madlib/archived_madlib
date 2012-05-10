@@ -27,36 +27,35 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(df) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(df > 0) ) {\
-			throw std::domain_error("Chi_squared distribution is undefined when df doesn't conform to (df > 0).");\
+		else if ( !(df > 0) ) {\
+			throw std::domain_error("Chi-squared distribution is undefined when df doesn't conform to (df > 0).");\
 		}\
 	} while(0)
 
 
 inline double 
-CHI_SQUARED_CDF(double x, double df)
-{
+_chi_squared_cdf(double x, double df) {
 	CHI_SQUARED_DOMAIN_CHECK(df);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::chi_squared_distribution<>(df), x); 
 }
 
 /**
- * @brief chi_squared distribution cumulative function: In-database interface
+ * @brief Chi-squared distribution cumulative function: In-database interface
  */
 AnyType
 chi_squared_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return CHI_SQUARED_CDF(x, df);
+	return _chi_squared_cdf(x, df);
 }
 
 double
@@ -64,7 +63,7 @@ chi_squared_CDF(double x, double df) {
 	double res = 0;
 
 	try {
-		res = CHI_SQUARED_CDF(x, df);
+		res = _chi_squared_cdf(x, df);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -76,21 +75,20 @@ chi_squared_CDF(double x, double df) {
 
 
 inline double 
-CHI_SQUARED_PDF(double x, double df)
-{
+_chi_squared_pdf(double x, double df) {
 	CHI_SQUARED_DOMAIN_CHECK(df);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
-	if ( df < 2 && 0 == x ) {
+	else if ( df < 2 && 0 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
-	if ( 2 == df && 0 == x ) {
+	else if ( 2 == df && 0 == x ) {
 		/// FIXME
 		return 0.5;
 	}
@@ -99,14 +97,14 @@ CHI_SQUARED_PDF(double x, double df)
 }
 
 /**
- * @brief chi_squared distribution probability density function: In-database interface
+ * @brief Chi-squared distribution probability density function: In-database interface
  */
 AnyType
 chi_squared_pdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return CHI_SQUARED_PDF(x, df);
+	return _chi_squared_pdf(x, df);
 }
 
 double
@@ -114,7 +112,7 @@ chi_squared_PDF(double x, double df) {
 	double res = 0;
 
 	try {
-		res = CHI_SQUARED_PDF(x, df);
+		res = _chi_squared_pdf(x, df);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -126,31 +124,30 @@ chi_squared_PDF(double x, double df) {
 
 
 inline double 
-CHI_SQUARED_QUANTILE(double x, double df)
-{
+_chi_squared_quantile(double x, double df) {
 	CHI_SQUARED_DOMAIN_CHECK(df);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Chi_squared distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of Chi-squared distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::chi_squared_distribution<>(df), x); 
 }
 
 /**
- * @brief chi_squared distribution quantile function: In-database interface
+ * @brief Chi-squared distribution quantile function: In-database interface
  */
 AnyType
 chi_squared_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return CHI_SQUARED_QUANTILE(x, df);
+	return _chi_squared_quantile(x, df);
 }
 
 double
@@ -158,7 +155,7 @@ chi_squared_QUANTILE(double x, double df) {
 	double res = 0;
 
 	try {
-		res = CHI_SQUARED_QUANTILE(x, df);
+		res = _chi_squared_quantile(x, df);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

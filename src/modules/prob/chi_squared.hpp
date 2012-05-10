@@ -8,16 +8,16 @@
 // be ignored if and only if it is processed stand-alone
 #if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
 /**
- * @brief chi_squared cumulative distribution function
+ * @brief Chi-squared cumulative distribution function
  */
 DECLARE_UDF(chi_squared_cdf)
 /**
- * @brief chi_squared probability density function
+ * @brief Chi-squared probability density function
  */
 DECLARE_UDF(chi_squared_pdf)
 
 /**
- * @brief chi_squared quantile function
+ * @brief Chi-squared quantile function
  */
 DECLARE_UDF(chi_squared_quantile)
 

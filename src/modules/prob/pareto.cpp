@@ -27,25 +27,24 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(location) || std::isnan(shape) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(location > 0) ) {\
+		else if ( !(location > 0) ) {\
 			throw std::domain_error("Pareto distribution is undefined when location doesn't conform to (location > 0).");\
 		}\
-		if ( !(shape > 0) ) {\
+		else if ( !(shape > 0) ) {\
 			throw std::domain_error("Pareto distribution is undefined when shape doesn't conform to (shape > 0).");\
 		}\
 	} while(0)
 
 
 inline double 
-PARETO_CDF(double x, double location, double shape)
-{
+_pareto_cdf(double x, double location, double shape) {
 	PARETO_DOMAIN_CHECK(location, shape);
 	
 	
 	if ( x < location ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::pareto_distribution<>(location, shape), x); 
@@ -60,7 +59,7 @@ pareto_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double shape = args[2].getAs<double>();
 
-	return PARETO_CDF(x, location, shape);
+	return _pareto_cdf(x, location, shape);
 }
 
 double
@@ -68,7 +67,7 @@ pareto_CDF(double x, double location, double shape) {
 	double res = 0;
 
 	try {
-		res = PARETO_CDF(x, location, shape);
+		res = _pareto_cdf(x, location, shape);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -80,15 +79,14 @@ pareto_CDF(double x, double location, double shape) {
 
 
 inline double 
-PARETO_PDF(double x, double location, double shape)
-{
+_pareto_pdf(double x, double location, double shape) {
 	PARETO_DOMAIN_CHECK(location, shape);
 	
 	
 	if ( x < location ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::pareto_distribution<>(location, shape), x); 
@@ -103,7 +101,7 @@ pareto_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double shape = args[2].getAs<double>();
 
-	return PARETO_PDF(x, location, shape);
+	return _pareto_pdf(x, location, shape);
 }
 
 double
@@ -111,7 +109,7 @@ pareto_PDF(double x, double location, double shape) {
 	double res = 0;
 
 	try {
-		res = PARETO_PDF(x, location, shape);
+		res = _pareto_pdf(x, location, shape);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -123,17 +121,16 @@ pareto_PDF(double x, double location, double shape) {
 
 
 inline double 
-PARETO_QUANTILE(double x, double location, double shape)
-{
+_pareto_quantile(double x, double location, double shape) {
 	PARETO_DOMAIN_CHECK(location, shape);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Pareto distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of pareto distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return location;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::pareto_distribution<>(location, shape), x); 
@@ -148,7 +145,7 @@ pareto_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double shape = args[2].getAs<double>();
 
-	return PARETO_QUANTILE(x, location, shape);
+	return _pareto_quantile(x, location, shape);
 }
 
 double
@@ -156,7 +153,7 @@ pareto_QUANTILE(double x, double location, double shape) {
 	double res = 0;
 
 	try {
-		res = PARETO_QUANTILE(x, location, shape);
+		res = _pareto_quantile(x, location, shape);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

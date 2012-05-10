@@ -23,9 +23,9 @@ DECLARE_UDF(normal_quantile)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-double normal_CDF(double x, double mean, double sd);
-double normal_PDF(double x, double mean, double sd);
-double normal_QUANTILE(double p, double mean, double sd);
+double normal_CDF(double x, double mean = 0, double sd = 1);
+double normal_PDF(double x, double mean = 0, double sd = 1);
+double normal_QUANTILE(double p, double mean = 0, double sd = 1);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 
 #endif // workaround for Doxygen

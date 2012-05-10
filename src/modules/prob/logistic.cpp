@@ -35,15 +35,14 @@ namespace prob {
 
 
 inline double 
-LOGISTIC_CDF(double x, double location, double scale)
-{
+_logistic_cdf(double x, double location, double scale) {
 	LOGISTIC_DOMAIN_CHECK(location, scale);
 	
 	
 	if ( x == -std::numeric_limits<double>::infinity() ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::logistic_distribution<>(location, scale), x); 
@@ -58,7 +57,7 @@ logistic_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LOGISTIC_CDF(x, location, scale);
+	return _logistic_cdf(x, location, scale);
 }
 
 double
@@ -66,7 +65,7 @@ logistic_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LOGISTIC_CDF(x, location, scale);
+		res = _logistic_cdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -78,8 +77,7 @@ logistic_CDF(double x, double location, double scale) {
 
 
 inline double 
-LOGISTIC_PDF(double x, double location, double scale)
-{
+_logistic_pdf(double x, double location, double scale) {
 	LOGISTIC_DOMAIN_CHECK(location, scale);
 	
 	
@@ -98,7 +96,7 @@ logistic_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LOGISTIC_PDF(x, location, scale);
+	return _logistic_pdf(x, location, scale);
 }
 
 double
@@ -106,7 +104,7 @@ logistic_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LOGISTIC_PDF(x, location, scale);
+		res = _logistic_pdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -118,17 +116,16 @@ logistic_PDF(double x, double location, double scale) {
 
 
 inline double 
-LOGISTIC_QUANTILE(double x, double location, double scale)
-{
+_logistic_quantile(double x, double location, double scale) {
 	LOGISTIC_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Logistic distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of logistic distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return -std::numeric_limits<double>::infinity();
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::logistic_distribution<>(location, scale), x); 
@@ -143,7 +140,7 @@ logistic_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LOGISTIC_QUANTILE(x, location, scale);
+	return _logistic_quantile(x, location, scale);
 }
 
 double
@@ -151,7 +148,7 @@ logistic_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LOGISTIC_QUANTILE(x, location, scale);
+		res = _logistic_quantile(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

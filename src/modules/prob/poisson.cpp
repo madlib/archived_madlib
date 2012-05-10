@@ -2,7 +2,7 @@
  *
  * @file poisson.cpp 
  *
- * @brief Probability density and distribution functions of poisson distruction imported from Boost.
+ * @brief Probability mass and distribution functions of poisson distruction imported from Boost.
  *
  *//* ----------------------------------------------------------------------- */
 #include <dbconnector/dbconnector.hpp>
@@ -27,22 +27,21 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(mean) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(mean > 0) ) {\
+		else if ( !(mean > 0) ) {\
 			throw std::domain_error("Poisson distribution is undefined when mean doesn't conform to (mean > 0).");\
 		}\
 	} while(0)
 
 
 inline double 
-POISSON_CDF(double x, double mean)
-{
+_poisson_cdf(double x, double mean) {
 	POISSON_DOMAIN_CHECK(mean);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	x = floor(x);
@@ -57,7 +56,7 @@ poisson_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double mean = args[1].getAs<double>();
 
-	return POISSON_CDF(x, mean);
+	return _poisson_cdf(x, mean);
 }
 
 double
@@ -65,7 +64,7 @@ poisson_CDF(double x, double mean) {
 	double res = 0;
 
 	try {
-		res = POISSON_CDF(x, mean);
+		res = _poisson_cdf(x, mean);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -77,39 +76,36 @@ poisson_CDF(double x, double mean) {
 
 
 inline double 
-POISSON_PDF(double x, double mean)
-{
+_poisson_pdf(int x, double mean) {
 	POISSON_DOMAIN_CHECK(mean);
-	if ( (int)x != x && !std::isinf(x) ) {
-		throw std::domain_error("Poisson distribution is a discrete distribution, random variable can only be interger.");
-	}
+	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::poisson_distribution<>(mean), x); 
 }
 
 /**
- * @brief poisson distribution probability density function: In-database interface
+ * @brief poisson distribution probability mass function: In-database interface
  */
 AnyType
 poisson_pdf::run(AnyType &args) {
-	double x = args[0].getAs<double>();
+	int x = args[0].getAs<int>();
 	double mean = args[1].getAs<double>();
 
-	return POISSON_PDF(x, mean);
+	return _poisson_pdf(x, mean);
 }
 
 double
-poisson_PDF(double x, double mean) {
+poisson_PDF(int x, double mean) {
 	double res = 0;
 
 	try {
-		res = POISSON_PDF(x, mean);
+		res = _poisson_pdf(x, mean);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -121,17 +117,16 @@ poisson_PDF(double x, double mean) {
 
 
 inline double 
-POISSON_QUANTILE(double x, double mean)
-{
+_poisson_quantile(double x, double mean) {
 	POISSON_DOMAIN_CHECK(mean);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Poisson distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of poisson distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::poisson_distribution<>(mean), x); 
@@ -145,7 +140,7 @@ poisson_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double mean = args[1].getAs<double>();
 
-	return POISSON_QUANTILE(x, mean);
+	return _poisson_quantile(x, mean);
 }
 
 double
@@ -153,7 +148,7 @@ poisson_QUANTILE(double x, double mean) {
 	double res = 0;
 
 	try {
-		res = POISSON_QUANTILE(x, mean);
+		res = _poisson_quantile(x, mean);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

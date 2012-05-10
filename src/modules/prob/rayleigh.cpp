@@ -27,22 +27,21 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(sigma) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(sigma > 0) ) {\
+		else if ( !(sigma > 0) ) {\
 			throw std::domain_error("Rayleigh distribution is undefined when sigma doesn't conform to (sigma > 0).");\
 		}\
 	} while(0)
 
 
 inline double 
-RAYLEIGH_CDF(double x, double sigma)
-{
+_rayleigh_cdf(double x, double sigma) {
 	RAYLEIGH_DOMAIN_CHECK(sigma);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::rayleigh_distribution<>(sigma), x); 
@@ -56,7 +55,7 @@ rayleigh_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double sigma = args[1].getAs<double>();
 
-	return RAYLEIGH_CDF(x, sigma);
+	return _rayleigh_cdf(x, sigma);
 }
 
 double
@@ -64,7 +63,7 @@ rayleigh_CDF(double x, double sigma) {
 	double res = 0;
 
 	try {
-		res = RAYLEIGH_CDF(x, sigma);
+		res = _rayleigh_cdf(x, sigma);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -76,15 +75,14 @@ rayleigh_CDF(double x, double sigma) {
 
 
 inline double 
-RAYLEIGH_PDF(double x, double sigma)
-{
+_rayleigh_pdf(double x, double sigma) {
 	RAYLEIGH_DOMAIN_CHECK(sigma);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::rayleigh_distribution<>(sigma), x); 
@@ -98,7 +96,7 @@ rayleigh_pdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double sigma = args[1].getAs<double>();
 
-	return RAYLEIGH_PDF(x, sigma);
+	return _rayleigh_pdf(x, sigma);
 }
 
 double
@@ -106,7 +104,7 @@ rayleigh_PDF(double x, double sigma) {
 	double res = 0;
 
 	try {
-		res = RAYLEIGH_PDF(x, sigma);
+		res = _rayleigh_pdf(x, sigma);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -118,17 +116,16 @@ rayleigh_PDF(double x, double sigma) {
 
 
 inline double 
-RAYLEIGH_QUANTILE(double x, double sigma)
-{
+_rayleigh_quantile(double x, double sigma) {
 	RAYLEIGH_DOMAIN_CHECK(sigma);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Rayleigh distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of rayleigh distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::rayleigh_distribution<>(sigma), x); 
@@ -142,7 +139,7 @@ rayleigh_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double sigma = args[1].getAs<double>();
 
-	return RAYLEIGH_QUANTILE(x, sigma);
+	return _rayleigh_quantile(x, sigma);
 }
 
 double
@@ -150,7 +147,7 @@ rayleigh_QUANTILE(double x, double sigma) {
 	double res = 0;
 
 	try {
-		res = RAYLEIGH_QUANTILE(x, sigma);
+		res = _rayleigh_quantile(x, sigma);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

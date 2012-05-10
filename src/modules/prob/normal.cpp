@@ -35,15 +35,14 @@ namespace prob {
 
 
 inline double 
-NORMAL_CDF(double x, double mean, double sd)
-{
+_normal_cdf(double x, double mean, double sd) {
 	NORMAL_DOMAIN_CHECK(mean, sd);
 	
 	
 	if ( x == -std::numeric_limits<double>::infinity() ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::normal_distribution<>(mean, sd), x); 
@@ -58,7 +57,7 @@ normal_cdf::run(AnyType &args) {
 	double mean = args[1].getAs<double>();
 	double sd = args[2].getAs<double>();
 
-	return NORMAL_CDF(x, mean, sd);
+	return _normal_cdf(x, mean, sd);
 }
 
 double
@@ -66,7 +65,7 @@ normal_CDF(double x, double mean, double sd) {
 	double res = 0;
 
 	try {
-		res = NORMAL_CDF(x, mean, sd);
+		res = _normal_cdf(x, mean, sd);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -78,8 +77,7 @@ normal_CDF(double x, double mean, double sd) {
 
 
 inline double 
-NORMAL_PDF(double x, double mean, double sd)
-{
+_normal_pdf(double x, double mean, double sd) {
 	NORMAL_DOMAIN_CHECK(mean, sd);
 	
 	
@@ -98,7 +96,7 @@ normal_pdf::run(AnyType &args) {
 	double mean = args[1].getAs<double>();
 	double sd = args[2].getAs<double>();
 
-	return NORMAL_PDF(x, mean, sd);
+	return _normal_pdf(x, mean, sd);
 }
 
 double
@@ -106,7 +104,7 @@ normal_PDF(double x, double mean, double sd) {
 	double res = 0;
 
 	try {
-		res = NORMAL_PDF(x, mean, sd);
+		res = _normal_pdf(x, mean, sd);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -118,17 +116,16 @@ normal_PDF(double x, double mean, double sd) {
 
 
 inline double 
-NORMAL_QUANTILE(double x, double mean, double sd)
-{
+_normal_quantile(double x, double mean, double sd) {
 	NORMAL_DOMAIN_CHECK(mean, sd);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Normal distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of normal distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return -std::numeric_limits<double>::infinity();
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::normal_distribution<>(mean, sd), x); 
@@ -143,7 +140,7 @@ normal_quantile::run(AnyType &args) {
 	double mean = args[1].getAs<double>();
 	double sd = args[2].getAs<double>();
 
-	return NORMAL_QUANTILE(x, mean, sd);
+	return _normal_quantile(x, mean, sd);
 }
 
 double
@@ -151,7 +148,7 @@ normal_QUANTILE(double x, double mean, double sd) {
 	double res = 0;
 
 	try {
-		res = NORMAL_QUANTILE(x, mean, sd);
+		res = _normal_quantile(x, mean, sd);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

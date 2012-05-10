@@ -35,15 +35,14 @@ namespace prob {
 
 
 inline double 
-LAPLACE_CDF(double x, double location, double scale)
-{
+_laplace_cdf(double x, double location, double scale) {
 	LAPLACE_DOMAIN_CHECK(location, scale);
 	
 	
 	if ( x == -std::numeric_limits<double>::infinity() ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::laplace_distribution<>(location, scale), x); 
@@ -58,7 +57,7 @@ laplace_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LAPLACE_CDF(x, location, scale);
+	return _laplace_cdf(x, location, scale);
 }
 
 double
@@ -66,7 +65,7 @@ laplace_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LAPLACE_CDF(x, location, scale);
+		res = _laplace_cdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -78,8 +77,7 @@ laplace_CDF(double x, double location, double scale) {
 
 
 inline double 
-LAPLACE_PDF(double x, double location, double scale)
-{
+_laplace_pdf(double x, double location, double scale) {
 	LAPLACE_DOMAIN_CHECK(location, scale);
 	
 	
@@ -98,7 +96,7 @@ laplace_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LAPLACE_PDF(x, location, scale);
+	return _laplace_pdf(x, location, scale);
 }
 
 double
@@ -106,7 +104,7 @@ laplace_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LAPLACE_PDF(x, location, scale);
+		res = _laplace_pdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -118,17 +116,16 @@ laplace_PDF(double x, double location, double scale) {
 
 
 inline double 
-LAPLACE_QUANTILE(double x, double location, double scale)
-{
+_laplace_quantile(double x, double location, double scale) {
 	LAPLACE_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Laplace distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of laplace distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return -std::numeric_limits<double>::infinity();
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::laplace_distribution<>(location, scale), x); 
@@ -143,7 +140,7 @@ laplace_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LAPLACE_QUANTILE(x, location, scale);
+	return _laplace_quantile(x, location, scale);
 }
 
 double
@@ -151,7 +148,7 @@ laplace_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LAPLACE_QUANTILE(x, location, scale);
+		res = _laplace_quantile(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

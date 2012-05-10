@@ -12,7 +12,7 @@
  */
 DECLARE_UDF(poisson_cdf)
 /**
- * @brief poisson probability density function
+ * @brief poisson probability mass function
  */
 DECLARE_UDF(poisson_pdf)
 
@@ -24,7 +24,7 @@ DECLARE_UDF(poisson_quantile)
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
 double poisson_CDF(double x, double mean);
-double poisson_PDF(double x, double mean);
+double poisson_PDF(int x, double mean);
 double poisson_QUANTILE(double p, double mean);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 

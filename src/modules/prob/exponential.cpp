@@ -27,22 +27,21 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(rate) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(rate > 0) ) {\
+		else if ( !(rate > 0) ) {\
 			throw std::domain_error("Exponential distribution is undefined when rate doesn't conform to (rate > 0).");\
 		}\
 	} while(0)
 
 
 inline double 
-EXPONENTIAL_CDF(double x, double rate)
-{
+_exponential_cdf(double x, double rate) {
 	EXPONENTIAL_DOMAIN_CHECK(rate);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::exponential_distribution<>(rate), x); 
@@ -56,7 +55,7 @@ exponential_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double rate = args[1].getAs<double>();
 
-	return EXPONENTIAL_CDF(x, rate);
+	return _exponential_cdf(x, rate);
 }
 
 double
@@ -64,7 +63,7 @@ exponential_CDF(double x, double rate) {
 	double res = 0;
 
 	try {
-		res = EXPONENTIAL_CDF(x, rate);
+		res = _exponential_cdf(x, rate);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -76,15 +75,14 @@ exponential_CDF(double x, double rate) {
 
 
 inline double 
-EXPONENTIAL_PDF(double x, double rate)
-{
+_exponential_pdf(double x, double rate) {
 	EXPONENTIAL_DOMAIN_CHECK(rate);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::exponential_distribution<>(rate), x); 
@@ -98,7 +96,7 @@ exponential_pdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double rate = args[1].getAs<double>();
 
-	return EXPONENTIAL_PDF(x, rate);
+	return _exponential_pdf(x, rate);
 }
 
 double
@@ -106,7 +104,7 @@ exponential_PDF(double x, double rate) {
 	double res = 0;
 
 	try {
-		res = EXPONENTIAL_PDF(x, rate);
+		res = _exponential_pdf(x, rate);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -118,17 +116,16 @@ exponential_PDF(double x, double rate) {
 
 
 inline double 
-EXPONENTIAL_QUANTILE(double x, double rate)
-{
+_exponential_quantile(double x, double rate) {
 	EXPONENTIAL_DOMAIN_CHECK(rate);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Exponential distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of exponential distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::exponential_distribution<>(rate), x); 
@@ -142,7 +139,7 @@ exponential_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double rate = args[1].getAs<double>();
 
-	return EXPONENTIAL_QUANTILE(x, rate);
+	return _exponential_quantile(x, rate);
 }
 
 double
@@ -150,7 +147,7 @@ exponential_QUANTILE(double x, double rate) {
 	double res = 0;
 
 	try {
-		res = EXPONENTIAL_QUANTILE(x, rate);
+		res = _exponential_quantile(x, rate);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

@@ -2,7 +2,7 @@
  *
  * @file geometric.cpp 
  *
- * @brief Probability density and distribution functions of geometric distruction imported from Boost.
+ * @brief Probability mass and distribution functions of geometric distruction imported from Boost.
  *
  *//* ----------------------------------------------------------------------- */
 #include <dbconnector/dbconnector.hpp>
@@ -27,22 +27,21 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(suc_prob) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(0 < suc_prob <= 1) ) {\
+		else if ( !(0 < suc_prob <= 1) ) {\
 			throw std::domain_error("Geometric distribution is undefined when suc_prob doesn't conform to (0 < suc_prob <= 1).");\
 		}\
 	} while(0)
 
 
 inline double 
-GEOMETRIC_CDF(double x, double suc_prob)
-{
+_geometric_cdf(double x, double suc_prob) {
 	GEOMETRIC_DOMAIN_CHECK(suc_prob);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	x = floor(x);
@@ -57,7 +56,7 @@ geometric_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double suc_prob = args[1].getAs<double>();
 
-	return GEOMETRIC_CDF(x, suc_prob);
+	return _geometric_cdf(x, suc_prob);
 }
 
 double
@@ -65,7 +64,7 @@ geometric_CDF(double x, double suc_prob) {
 	double res = 0;
 
 	try {
-		res = GEOMETRIC_CDF(x, suc_prob);
+		res = _geometric_cdf(x, suc_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -77,39 +76,36 @@ geometric_CDF(double x, double suc_prob) {
 
 
 inline double 
-GEOMETRIC_PDF(double x, double suc_prob)
-{
+_geometric_pdf(int x, double suc_prob) {
 	GEOMETRIC_DOMAIN_CHECK(suc_prob);
-	if ( (int)x != x && !std::isinf(x) ) {
-		throw std::domain_error("Geometric distribution is a discrete distribution, random variable can only be interger.");
-	}
+	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::geometric_distribution<>(suc_prob), x); 
 }
 
 /**
- * @brief geometric distribution probability density function: In-database interface
+ * @brief geometric distribution probability mass function: In-database interface
  */
 AnyType
 geometric_pdf::run(AnyType &args) {
-	double x = args[0].getAs<double>();
+	int x = args[0].getAs<int>();
 	double suc_prob = args[1].getAs<double>();
 
-	return GEOMETRIC_PDF(x, suc_prob);
+	return _geometric_pdf(x, suc_prob);
 }
 
 double
-geometric_PDF(double x, double suc_prob) {
+geometric_PDF(int x, double suc_prob) {
 	double res = 0;
 
 	try {
-		res = GEOMETRIC_PDF(x, suc_prob);
+		res = _geometric_pdf(x, suc_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -121,17 +117,16 @@ geometric_PDF(double x, double suc_prob) {
 
 
 inline double 
-GEOMETRIC_QUANTILE(double x, double suc_prob)
-{
+_geometric_quantile(double x, double suc_prob) {
 	GEOMETRIC_DOMAIN_CHECK(suc_prob);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Geometric distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of geometric distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::geometric_distribution<>(suc_prob), x); 
@@ -145,7 +140,7 @@ geometric_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double suc_prob = args[1].getAs<double>();
 
-	return GEOMETRIC_QUANTILE(x, suc_prob);
+	return _geometric_quantile(x, suc_prob);
 }
 
 double
@@ -153,7 +148,7 @@ geometric_QUANTILE(double x, double suc_prob) {
 	double res = 0;
 
 	try {
-		res = GEOMETRIC_QUANTILE(x, suc_prob);
+		res = _geometric_quantile(x, suc_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

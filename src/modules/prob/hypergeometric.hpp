@@ -12,7 +12,7 @@
  */
 DECLARE_UDF(hypergeometric_cdf)
 /**
- * @brief hypergeometric probability density function
+ * @brief hypergeometric probability mass function
  */
 DECLARE_UDF(hypergeometric_pdf)
 
@@ -23,9 +23,9 @@ DECLARE_UDF(hypergeometric_quantile)
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-double hypergeometric_CDF(double x, double defective, double sample_count, double total);
-double hypergeometric_PDF(double x, double defective, double sample_count, double total);
-double hypergeometric_QUANTILE(double p, double defective, double sample_count, double total);
+double hypergeometric_CDF(double x, int defective, int sample_count, int total);
+double hypergeometric_PDF(int x, int defective, int sample_count, int total);
+double hypergeometric_QUANTILE(double p, int defective, int sample_count, int total);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 
 #endif // workaround for Doxygen

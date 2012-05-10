@@ -35,15 +35,14 @@ namespace prob {
 
 
 inline double 
-LOGNORMAL_CDF(double x, double location, double scale)
-{
+_lognormal_cdf(double x, double location, double scale) {
 	LOGNORMAL_DOMAIN_CHECK(location, scale);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::lognormal_distribution<>(location, scale), x); 
@@ -58,7 +57,7 @@ lognormal_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LOGNORMAL_CDF(x, location, scale);
+	return _lognormal_cdf(x, location, scale);
 }
 
 double
@@ -66,7 +65,7 @@ lognormal_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LOGNORMAL_CDF(x, location, scale);
+		res = _lognormal_cdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -78,15 +77,14 @@ lognormal_CDF(double x, double location, double scale) {
 
 
 inline double 
-LOGNORMAL_PDF(double x, double location, double scale)
-{
+_lognormal_pdf(double x, double location, double scale) {
 	LOGNORMAL_DOMAIN_CHECK(location, scale);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::lognormal_distribution<>(location, scale), x); 
@@ -101,7 +99,7 @@ lognormal_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LOGNORMAL_PDF(x, location, scale);
+	return _lognormal_pdf(x, location, scale);
 }
 
 double
@@ -109,7 +107,7 @@ lognormal_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LOGNORMAL_PDF(x, location, scale);
+		res = _lognormal_pdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -121,17 +119,16 @@ lognormal_PDF(double x, double location, double scale) {
 
 
 inline double 
-LOGNORMAL_QUANTILE(double x, double location, double scale)
-{
+_lognormal_quantile(double x, double location, double scale) {
 	LOGNORMAL_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Lognormal distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of lognormal distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::lognormal_distribution<>(location, scale), x); 
@@ -146,7 +143,7 @@ lognormal_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return LOGNORMAL_QUANTILE(x, location, scale);
+	return _lognormal_quantile(x, location, scale);
 }
 
 double
@@ -154,7 +151,7 @@ lognormal_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = LOGNORMAL_QUANTILE(x, location, scale);
+		res = _lognormal_quantile(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

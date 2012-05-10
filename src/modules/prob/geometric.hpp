@@ -12,7 +12,7 @@
  */
 DECLARE_UDF(geometric_cdf)
 /**
- * @brief geometric probability density function
+ * @brief geometric probability mass function
  */
 DECLARE_UDF(geometric_pdf)
 
@@ -24,7 +24,7 @@ DECLARE_UDF(geometric_quantile)
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
 double geometric_CDF(double x, double suc_prob);
-double geometric_PDF(double x, double suc_prob);
+double geometric_PDF(int x, double suc_prob);
 double geometric_QUANTILE(double p, double suc_prob);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 

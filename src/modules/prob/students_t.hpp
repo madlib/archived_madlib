@@ -8,16 +8,16 @@
 // be ignored if and only if it is processed stand-alone
 #if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
 /**
- * @brief students_t cumulative distribution function
+ * @brief Student's t cumulative distribution function
  */
 DECLARE_UDF(students_t_cdf)
 /**
- * @brief students_t probability density function
+ * @brief Student's t probability density function
  */
 DECLARE_UDF(students_t_pdf)
 
 /**
- * @brief students_t quantile function
+ * @brief Student's t quantile function
  */
 DECLARE_UDF(students_t_quantile)
 

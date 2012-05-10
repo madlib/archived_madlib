@@ -12,7 +12,7 @@
  */
 DECLARE_UDF(bernoulli_cdf)
 /**
- * @brief bernoulli probability density function
+ * @brief bernoulli probability mass function
  */
 DECLARE_UDF(bernoulli_pdf)
 
@@ -24,7 +24,7 @@ DECLARE_UDF(bernoulli_quantile)
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
 double bernoulli_CDF(double x, double succ_prob);
-double bernoulli_PDF(double x, double succ_prob);
+double bernoulli_PDF(int x, double succ_prob);
 double bernoulli_QUANTILE(double p, double succ_prob);
 
 #endif // !defined(DECLARE_LIBRARY_EXPORTS) 

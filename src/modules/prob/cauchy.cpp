@@ -35,15 +35,14 @@ namespace prob {
 
 
 inline double 
-CAUCHY_CDF(double x, double location, double scale)
-{
+_cauchy_cdf(double x, double location, double scale) {
 	CAUCHY_DOMAIN_CHECK(location, scale);
 	
 	
 	if ( x == -std::numeric_limits<double>::infinity() ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::cauchy_distribution<>(location, scale), x); 
@@ -58,7 +57,7 @@ cauchy_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return CAUCHY_CDF(x, location, scale);
+	return _cauchy_cdf(x, location, scale);
 }
 
 double
@@ -66,7 +65,7 @@ cauchy_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = CAUCHY_CDF(x, location, scale);
+		res = _cauchy_cdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -78,8 +77,7 @@ cauchy_CDF(double x, double location, double scale) {
 
 
 inline double 
-CAUCHY_PDF(double x, double location, double scale)
-{
+_cauchy_pdf(double x, double location, double scale) {
 	CAUCHY_DOMAIN_CHECK(location, scale);
 	
 	
@@ -98,7 +96,7 @@ cauchy_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return CAUCHY_PDF(x, location, scale);
+	return _cauchy_pdf(x, location, scale);
 }
 
 double
@@ -106,7 +104,7 @@ cauchy_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = CAUCHY_PDF(x, location, scale);
+		res = _cauchy_pdf(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -118,17 +116,16 @@ cauchy_PDF(double x, double location, double scale) {
 
 
 inline double 
-CAUCHY_QUANTILE(double x, double location, double scale)
-{
+_cauchy_quantile(double x, double location, double scale) {
 	CAUCHY_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Cauchy distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of cauchy distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return -std::numeric_limits<double>::infinity();
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::cauchy_distribution<>(location, scale), x); 
@@ -143,7 +140,7 @@ cauchy_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return CAUCHY_QUANTILE(x, location, scale);
+	return _cauchy_quantile(x, location, scale);
 }
 
 double
@@ -151,7 +148,7 @@ cauchy_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = CAUCHY_QUANTILE(x, location, scale);
+		res = _cauchy_quantile(x, location, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

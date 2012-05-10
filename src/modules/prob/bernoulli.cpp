@@ -2,7 +2,7 @@
  *
  * @file bernoulli.cpp 
  *
- * @brief Probability density and distribution functions of bernoulli distruction imported from Boost.
+ * @brief Probability mass and distribution functions of bernoulli distruction imported from Boost.
  *
  *//* ----------------------------------------------------------------------- */
 #include <dbconnector/dbconnector.hpp>
@@ -27,22 +27,21 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(succ_prob) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(succ_prob >= 0 && succ_prob <= 1) ) {\
+		else if ( !(succ_prob >= 0 && succ_prob <= 1) ) {\
 			throw std::domain_error("Bernoulli distribution is undefined when succ_prob doesn't conform to (succ_prob >= 0 && succ_prob <= 1).");\
 		}\
 	} while(0)
 
 
 inline double 
-BERNOULLI_CDF(double x, double succ_prob)
-{
+_bernoulli_cdf(double x, double succ_prob) {
 	BERNOULLI_DOMAIN_CHECK(succ_prob);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x > 1 ) {
+	else if ( x > 1 ) {
 		return 1.0;
 	}
 	x = floor(x);
@@ -57,7 +56,7 @@ bernoulli_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double succ_prob = args[1].getAs<double>();
 
-	return BERNOULLI_CDF(x, succ_prob);
+	return _bernoulli_cdf(x, succ_prob);
 }
 
 double
@@ -65,7 +64,7 @@ bernoulli_CDF(double x, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = BERNOULLI_CDF(x, succ_prob);
+		res = _bernoulli_cdf(x, succ_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -77,39 +76,36 @@ bernoulli_CDF(double x, double succ_prob) {
 
 
 inline double 
-BERNOULLI_PDF(double x, double succ_prob)
-{
+_bernoulli_pdf(int x, double succ_prob) {
 	BERNOULLI_DOMAIN_CHECK(succ_prob);
-	if ( (int)x != x && !std::isinf(x) ) {
-		throw std::domain_error("Bernoulli distribution is a discrete distribution, random variable can only be interger.");
-	}
+	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x > 1 ) {
+	else if ( x > 1 ) {
 		return 0.0;
 	}
 	return boost::math::pdf(boost::math::bernoulli_distribution<>(succ_prob), x); 
 }
 
 /**
- * @brief bernoulli distribution probability density function: In-database interface
+ * @brief bernoulli distribution probability mass function: In-database interface
  */
 AnyType
 bernoulli_pdf::run(AnyType &args) {
-	double x = args[0].getAs<double>();
+	int x = args[0].getAs<int>();
 	double succ_prob = args[1].getAs<double>();
 
-	return BERNOULLI_PDF(x, succ_prob);
+	return _bernoulli_pdf(x, succ_prob);
 }
 
 double
-bernoulli_PDF(double x, double succ_prob) {
+bernoulli_PDF(int x, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = BERNOULLI_PDF(x, succ_prob);
+		res = _bernoulli_pdf(x, succ_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -121,17 +117,16 @@ bernoulli_PDF(double x, double succ_prob) {
 
 
 inline double 
-BERNOULLI_QUANTILE(double x, double succ_prob)
-{
+_bernoulli_quantile(double x, double succ_prob) {
 	BERNOULLI_DOMAIN_CHECK(succ_prob);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Bernoulli distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of bernoulli distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return 1;
 	}
 	return boost::math::quantile(boost::math::bernoulli_distribution<>(succ_prob), x); 
@@ -145,7 +140,7 @@ bernoulli_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double succ_prob = args[1].getAs<double>();
 
-	return BERNOULLI_QUANTILE(x, succ_prob);
+	return _bernoulli_quantile(x, succ_prob);
 }
 
 double
@@ -153,7 +148,7 @@ bernoulli_QUANTILE(double x, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = BERNOULLI_QUANTILE(x, succ_prob);
+		res = _bernoulli_quantile(x, succ_prob);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();

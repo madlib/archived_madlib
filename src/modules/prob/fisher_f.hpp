@@ -8,16 +8,16 @@
 // be ignored if and only if it is processed stand-alone
 #if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
 /**
- * @brief fisher_f cumulative distribution function
+ * @brief Fisher-f cumulative distribution function
  */
 DECLARE_UDF(fisher_f_cdf)
 /**
- * @brief fisher_f probability density function
+ * @brief Fisher-f probability density function
  */
 DECLARE_UDF(fisher_f_pdf)
 
 /**
- * @brief fisher_f quantile function
+ * @brief Fisher-f quantile function
  */
 DECLARE_UDF(fisher_f_quantile)
 

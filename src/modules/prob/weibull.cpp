@@ -27,25 +27,24 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(shape) || std::isnan(scale) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		if ( !(shape > 0) ) {\
+		else if ( !(shape > 0) ) {\
 			throw std::domain_error("Weibull distribution is undefined when shape doesn't conform to (shape > 0).");\
 		}\
-		if ( !(scale > 0) ) {\
+		else if ( !(scale > 0) ) {\
 			throw std::domain_error("Weibull distribution is undefined when scale doesn't conform to (scale > 0).");\
 		}\
 	} while(0)
 
 
 inline double 
-WEIBULL_CDF(double x, double shape, double scale)
-{
+_weibull_cdf(double x, double shape, double scale) {
 	WEIBULL_DOMAIN_CHECK(shape, scale);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( x == std::numeric_limits<double>::infinity() ) {
+	else if ( x == std::numeric_limits<double>::infinity() ) {
 		return 1.0;
 	}
 	return boost::math::cdf(boost::math::weibull_distribution<>(shape, scale), x); 
@@ -60,7 +59,7 @@ weibull_cdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return WEIBULL_CDF(x, shape, scale);
+	return _weibull_cdf(x, shape, scale);
 }
 
 double
@@ -68,7 +67,7 @@ weibull_CDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = WEIBULL_CDF(x, shape, scale);
+		res = _weibull_cdf(x, shape, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -80,15 +79,14 @@ weibull_CDF(double x, double shape, double scale) {
 
 
 inline double 
-WEIBULL_PDF(double x, double shape, double scale)
-{
+_weibull_pdf(double x, double shape, double scale) {
 	WEIBULL_DOMAIN_CHECK(shape, scale);
 	
 	
 	if ( x < 0 ) {
 		return 0.0;
 	}
-	if ( std::isinf(x) ) {
+	else if ( std::isinf(x) ) {
 		return 0.0;
 	}
 	else if ( 0 == x && shape < 1 ) {
@@ -106,7 +104,7 @@ weibull_pdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return WEIBULL_PDF(x, shape, scale);
+	return _weibull_pdf(x, shape, scale);
 }
 
 double
@@ -114,7 +112,7 @@ weibull_PDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = WEIBULL_PDF(x, shape, scale);
+		res = _weibull_pdf(x, shape, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
@@ -126,17 +124,16 @@ weibull_PDF(double x, double shape, double scale) {
 
 
 inline double 
-WEIBULL_QUANTILE(double x, double shape, double scale)
-{
+_weibull_quantile(double x, double shape, double scale) {
 	WEIBULL_DOMAIN_CHECK(shape, scale);
 	
 	if ( x < 0 || x > 1 ) {
-		throw std::domain_error("Weibull distribution is undefined for CDF out of range [0, 1].");
+		throw std::domain_error("CDF of weibull distribution must be in range [0, 1].");
 	}
-	if ( 0 == x ) {
+	else if ( 0 == x ) {
 		return 0;
 	}
-	if ( 1 == x ) {
+	else if ( 1 == x ) {
 		return std::numeric_limits<double>::infinity();
 	}
 	return boost::math::quantile(boost::math::weibull_distribution<>(shape, scale), x); 
@@ -151,7 +148,7 @@ weibull_quantile::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return WEIBULL_QUANTILE(x, shape, scale);
+	return _weibull_quantile(x, shape, scale);
 }
 
 double
@@ -159,7 +156,7 @@ weibull_QUANTILE(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = WEIBULL_QUANTILE(x, shape, scale);
+		res = _weibull_quantile(x, shape, scale);
 	}
 	catch (...) {
 		res = std::numeric_limits<double>::quiet_NaN();
