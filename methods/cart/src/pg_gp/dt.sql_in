@@ -2137,7 +2137,7 @@ DECLARE
     grow_tree                   INT := max_tree_depth;
     ret                         MADLIB_SCHEMA.__train_result;
     curr_level                  INT := 1;
-    dp_ids                      TEXT;
+    dp_ids                      INT[];
     instance_time               MADLIB_SCHEMA.__gen_acs_time;
 BEGIN  
 	-- record the time costed in different steps when training
@@ -2359,29 +2359,52 @@ m4_changequote(>>>`<<<, >>>'<<<)
             --here insert live determination function 
             SELECT MADLIB_SCHEMA.__format
                 (
-                    'SELECT array_to_string(array_append(dp_ids,%), '',''),
-                     tree_location
+                    'SELECT tree_location, dp_ids
                      FROM %
                      WHERE id = % AND tid = %;',
                     ARRAY[
-                        answer.feature::TEXT,
                         result_tree_table_name,
                         answer.node_id::TEXT,
                         answer.tid::TEXT
                     ]
                 ) INTO curstmt;
             
-            EXECUTE curstmt INTO dp_ids,location;    
+            EXECUTE curstmt INTO location, dp_ids;    
 
             IF (location IS NULL) THEN
                 RAISE EXCEPTION 'tid:%,node_id:%,dpids:%,tree_location should 
-                    not be NULL',answer.tid,answer.node_id,dp_ids;
+                    not be NULL',answer.tid,answer.node_id, dp_ids;
             END IF;
 
             IF (answer.live > 0 and answer.is_cont_feature = 'f') THEN 
                 IF(verbosity > 0) THEN
                     RAISE INFO 'determine live for discrete';
                 END IF;  
+                
+                -- the length of the array(dp_ids) should be less than the number 
+                -- of discrete features. Otherwise, raise exception, which 
+                -- means there maybe somewrong in the code(such as, the DT_EPSILON in
+                -- the dt.c file is too precise so that we split a node with a zero 
+                -- split criterion value. If it's this case, we need to reduce the precision).
+                PERFORM MADLIB_SCHEMA.__assert
+                    (
+                        coalesce(array_upper(dp_ids, 1), 0) < 
+                        MADLIB_SCHEMA.__get_num_discete_features(training_table_meta),
+                        'the number of parent discrete features('   || 
+                        array_upper(dp_ids, 1)                      ||  
+                        ') is greater than or equal to '            ||
+                        'the number of discrete features('          ||
+                         MADLIB_SCHEMA.__get_num_discete_features
+                            (training_table_meta)                   ||
+                        ')'
+                    );
+                
+                -- add the current feature ID to the array(dp_ids)
+                IF (dp_ids IS NULL) THEN
+                    dp_ids = array[answer.feature];
+                ELSE
+                    dp_ids = dp_ids || answer.feature;
+                END IF;
 
                 -- insert the leftmost child node id and relevant info
                 -- to the asso_aux table, so that we will make use of this 
@@ -2417,7 +2440,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                             curr_level::TEXT,
                             answer.node_id::TEXT,
                             answer.tid::TEXT,
-                            dp_ids
+                            array_to_string(dp_ids, ',')
                          ]
                     ) INTO curstmt;
                     EXECUTE curstmt;        
