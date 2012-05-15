@@ -47,6 +47,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/FunctionHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NewDelete.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NativeRandomNumberGenerator_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NativeRandomNumberGenerator_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/OutputStreamBuffer_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/OutputStreamBuffer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/PGException_proto.hpp"

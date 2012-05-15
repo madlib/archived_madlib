@@ -37,6 +37,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/FunctionHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NewDelete.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NativeRandomNumberGenerator_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NativeRandomNumberGenerator_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/PGException_proto.hpp"
