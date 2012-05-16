@@ -32,7 +32,8 @@ namespace stats {
  * @brief Transition state for one-way ANOVA functions
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length 1, and all elemenets are 0.
+ * database with length 2, and all elemenets are 0. Handle::operator[] will
+ * perform bounds checking.
  */
 template <class Handle>
 class OWATransitionState : public AbstractionLayer {
@@ -54,7 +55,7 @@ public:
     }
     
     /**
-     * @brief Return the index (in the num, sum, and coorected_square_sum
+     * @brief Return the index (in the num, sum, and corrected_square_sum
      *     fields) of a group value
      *
      * If a value is not found, we add a new group to the transition state.
@@ -70,6 +71,9 @@ private:
     }
 
     void rebind(uint16_t inNumGroupsReserved) {
+        madlib_assert(mStorage.size() >= arraySize(inNumGroupsReserved),
+            std::runtime_error("Out-of-bounds array access detected."));
+        
         numGroups.rebind(&mStorage[0]);
         groupValues = &mStorage[1];
         posToIndices = &mStorage[1 + inNumGroupsReserved];
@@ -112,6 +116,7 @@ OWATransitionState<AbstractionLayer::MutableArrayHandle<double> >::idxOfGroup(
     const Allocator& inAllocator, uint16_t inValue) {
     
     // FIXME: Think of using proper iterators. Add some safety. Overflow checks.
+    // http://jira.madlib.net/browse/MADLIB-499
     uint16_t pos = std::lower_bound(
         groupValues, groupValues + numGroups, inValue) - groupValues;
     
@@ -162,6 +167,7 @@ OWATransitionState<AbstractionLayer::MutableArrayHandle<double> >::idxOfGroup(
 }
 
 // FIXME: Same function used for t_test. Factor out.
+// http://jira.madlib.net/browse/MADLIB-500
 /**
  * @brief Update the corrected sum of squares
  *
@@ -189,6 +195,7 @@ updateCorrectedSumOfSquares(double &ioLeftWeight, double &ioLeftSum,
         return;
     
     // FIXME: Use compensated sums for numerical stability
+    // http://jira.madlib.net/browse/MADLIB-500
     // See Ogita et al., "Accurate Sum and Dot Product", SIAM Journal on
     // Scientific Computing (SISC), 26(6):1955-1988, 2005.
     if (ioLeftWeight <= 0)

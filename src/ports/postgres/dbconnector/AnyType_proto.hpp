@@ -27,6 +27,7 @@ public:
     template <typename T> AnyType(const T &inValue);
     template <typename T> T getAs() const;
     AbstractionLayer::AnyType operator[](uint16_t inID) const;
+    uint16_t numFields() const;
     bool isNull() const;
     bool isComposite() const;
     bool isArray() const;

@@ -31,7 +31,8 @@ namespace stats {
  * @brief Transition state for chi-squared functions
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length 8, and all elemenets are 0.
+ * database with length 7, and all elements are 0. Handle::operator[] will
+ * perform bounds checking.
  */
 template <class Handle>
 class Chi2TestTransitionState : public AbstractionLayer {
@@ -77,6 +78,7 @@ updateSumSquaredDeviations(double &ioLeftNumRows, double &ioLeftSumExp,
         return;
     
     // FIXME: Use compensated sums for numerical stability
+    // http://jira.madlib.net/browse/MADLIB-501
     ioLeftSumSquaredDeviations
            += inRightSumSquaredDeviations
             + ioLeftSumExp * inRightSumObsSquareOverExp
@@ -93,18 +95,22 @@ AnyType
 chi2_gof_test_transition::run(AnyType &args) {
     Chi2TestTransitionState<MutableArrayHandle<double> > state = args[0];
     int64_t observed = args[1].getAs<int64_t>();
-    double expected = args[2].isNull() ? 1 : args[2].getAs<double>();
-    int64_t df = args[3].isNull() ? -1 : args[3].getAs<int64_t>();
+    AnyType expectedArg = args.numFields() >= 3 ? args[2] : Null();
+    double expected = expectedArg.isNull() ? 1 : expectedArg.getAs<double>();
+    AnyType dfArg = args.numFields() >= 4 ? args[3] : Null();
+    int64_t df = dfArg.isNull() ? -1 : dfArg.getAs<int64_t>();
     
-    if (state.uniformDist != args[2].isNull()) {
+    if (state.uniformDist != expectedArg.isNull()) {
         if (state.numRows > 0)
             throw std::invalid_argument("Expected number of observations must "
                 "be given for all events or must be NULL for all events, in "
                 "which case a discrete uniform distribution is assumed.");
-        state.uniformDist = args[2].isNull();
+        state.uniformDist = expectedArg.isNull();
     }
     
-    if (state.df != df) {
+    if (!dfArg.isNull() && df <= 0)
+        throw std::invalid_argument("Degree of freedom must be positive.");
+    else if (state.df != df) {
         if (state.numRows > 0)
             throw std::invalid_argument("Degree of freedom must be constant.");
         state.df = df;

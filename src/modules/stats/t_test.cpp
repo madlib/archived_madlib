@@ -179,10 +179,10 @@ AnyType
 t_test_one_final::run(AnyType &args) {
     TTestTransitionState<ArrayHandle<double> > state = args[0];
 
-    // If we haven't seen any data, just return Null. This is the standard
+    // If we haven't seen enough data, just return Null. This is the standard
     // behavior of aggregate function on empty data sets (compare, e.g.,
-    // how PostgreSQL handles sum or avg on empty inputs)
-    if (state.numX == 0)
+    // how PostgreSQL handles stddev_samp on quasi-empty inputs)
+    if (state.numX <= 1)
         return Null();
     
     double degreeOfFreedom = state.numX - 1;
@@ -201,6 +201,12 @@ t_test_one_final::run(AnyType &args) {
 AnyType
 t_test_two_pooled_final::run(AnyType &args) {
     TTestTransitionState<ArrayHandle<double> > state = args[0];
+
+    // If we haven't seen enough data, just return Null. This is the standard
+    // behavior of aggregate function on empty data sets (compare, e.g.,
+    // how PostgreSQL handles stddev_samp on quasi-empty inputs)
+    if (state.numX == 0 || state.numY == 0 || state.numX + state.numY <= 2)
+        return Null();
 
     // Formulas taken from:
     // http://www.itl.nist.gov/div898/handbook/eda/section3/eda353.htm
@@ -223,6 +229,12 @@ t_test_two_pooled_final::run(AnyType &args) {
 AnyType
 t_test_two_unpooled_final::run(AnyType &args) {
     TTestTransitionState<ArrayHandle<double> > state = args[0];
+
+    // If we haven't seen enough data, just return Null. This is the standard
+    // behavior of aggregate function on empty data sets (compare, e.g.,
+    // how PostgreSQL handles stddev_samp on quasi-empty inputs)
+    if (state.numX <= 1 || state.numY <= 1)
+        return Null();
 
     // Formulas taken from:
     // http://www.itl.nist.gov/div898/handbook/eda/section3/eda353.htm
@@ -252,6 +264,12 @@ t_test_two_unpooled_final::run(AnyType &args) {
 AnyType
 f_test_final::run(AnyType &args) {
     TTestTransitionState<ArrayHandle<double> > state = args[0];
+
+    // If we haven't seen enough data, just return Null. This is the standard
+    // behavior of aggregate function on empty data sets (compare, e.g.,
+    // how PostgreSQL handles stddev_samp on quasi-empty inputs)
+    if (state.numX <= 1 || state.numY <= 1)
+        return Null();
 
     // Formulas taken from:
     // http://www.itl.nist.gov/div898/handbook/eda/section3/eda359.htm

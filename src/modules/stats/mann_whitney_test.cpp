@@ -9,6 +9,7 @@
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/prob.hpp>
+#include <utils/Math.hpp>
 
 // We use string concatenation with the + operator
 #include <string>
@@ -31,7 +32,8 @@ namespace stats {
  * @brief Transition state for Mann-Whitney-Test functions
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length 7, and all elemenets are 0.
+ * database with length 7, and all elemenets are 0. Handle::operator[] will
+ * perform bounds checking.
  */
 template <class Handle>
 class MWTestTransitionState : public AbstractionLayer {
@@ -66,13 +68,18 @@ mw_test_transition::run(AnyType &args) {
     int sample = args[1].getAs<bool>() ? 0 : 1;
     double value = args[2].getAs<double>();
     
-    if (state.last < value) {
-        state.numTies.setZero();
-    } else if (state.last == value) {
+    // For almostEqual, we choose a precision of 2 * 1 units in the last place.
+    // This is because we assume that value is original data, so the only
+    // precision loss is due to representation as floating-point number.
+    if (utils::almostEqual(static_cast<double>(state.last), value, 2)) {
         for (int i = 0; i <= 1; i++)
             state.rankSum(i) += state.numTies(i) * 0.5;
-    } else if (state.num.sum() > 0) { // also satisfied here: state.last > value
-        throw std::invalid_argument("Must be used as an ordered aggregate.");
+    } else if (state.last < value) {
+        state.numTies.setZero();
+    } else if (state.num.sum() > 0) {
+        // also satisfied here: state.last > value
+        throw std::invalid_argument("Must be used as an ordered aggregate, "
+            "in ascending order of the second argument.");
     }
     
     state.num(sample)++;

@@ -31,7 +31,8 @@ namespace stats {
  * @brief Transition state for Kolmogorov-Smirnov-Test functions
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length 7, and all elemenets are 0.
+ * database with length 7, and all elemenets are 0. Handle::operator[] will
+ * perform bounds checking.
  */
 template <class Handle>
 class KSTestTransitionState : public AbstractionLayer {
@@ -41,7 +42,10 @@ public:
         num(&mStorage[0], 2),
         last(&mStorage[2]),
         maxDiff(&mStorage[3]),
-        expectedNum(&mStorage[4], 2) { }
+        expectedNum(&mStorage[4], 2) {
+        madlib_assert(mStorage.size() >= 6, std::runtime_error(
+            "Out-of-bounds array access detected."));
+    }
     
     inline operator AnyType() const {
         return mStorage;
@@ -77,7 +81,8 @@ ks_test_transition::run(AnyType &args) {
     }
     
     if (state.last > value && state.num.sum() > 0)
-        throw std::invalid_argument("Must be used as an ordered aggregate.");
+        throw std::invalid_argument("Must be used as an ordered "
+            "aggregate, in ascending order of the second argument.");
     state.num(sample)++;
     state.last = value;
     

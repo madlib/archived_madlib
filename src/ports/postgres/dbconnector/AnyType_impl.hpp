@@ -148,6 +148,27 @@ AbstractionLayer::AnyType::isComposite() const {
 }
 
 /**
+ * @brief Return the number of fields in a composite value.
+ *
+ * @returns The number of fields in a composite value. In the case of a scalar
+ *     value, return 1. If the content is NULL, return 0.
+ */
+inline
+uint16_t
+AnyType::numFields() const {
+    switch (mContent) {
+        case Null: return 0;
+        case Scalar: return 1;
+        case ReturnComposite: return mChildren.size();
+        case FunctionComposite: return PG_NARGS();
+        case NativeComposite: return HeapTupleHeaderGetNatts(mTupleHeader);
+        default:
+            // This should never happen
+            throw std::logic_error("Unhandled case in AnyType::numFields().");
+    }
+}
+
+/**
  * @brief Internal function for determining the type of a function argument
  *
  * @param inID Number of function argument

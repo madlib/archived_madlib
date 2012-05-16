@@ -332,6 +332,24 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE
 CALLED ON NULL INPUT;
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
+    state DOUBLE PRECISION[],
+    observed BIGINT,
+    expected DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE
+CALLED ON NULL INPUT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
+    state DOUBLE PRECISION[],
+    observed BIGINT
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE
+CALLED ON NULL INPUT;
+
+
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_merge_states(
     state1 DOUBLE PRECISION[],
     state2 DOUBLE PRECISION[])
@@ -419,8 +437,8 @@ LANGUAGE C IMMUTABLE STRICT;
  */
 CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
     /*+ observed */ BIGINT,
-    /*+ expected */ DOUBLE PRECISION, -- /*+ DEFAULT NULL */,
-    /*+ df */ BIGINT -- /*+ DEFAULT NULL */
+    /*+ expected */ DOUBLE PRECISION /*+ DEFAULT NULL */,
+    /*+ df */ BIGINT /*+ DEFAULT NULL */
 ) (    
     SFUNC=MADLIB_SCHEMA.chi2_gof_test_transition,
     STYPE=DOUBLE PRECISION[],
@@ -429,6 +447,26 @@ CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
     INITCOND='{0,0,0,0,0,0,0}'
 );
 
+CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
+    /*+ observed */ BIGINT,
+    /*+ expected */ DOUBLE PRECISION
+) (    
+    SFUNC=MADLIB_SCHEMA.chi2_gof_test_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.chi2_gof_test_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.chi2_gof_test_merge_states,')
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
+    /*+ observed */ BIGINT
+) (    
+    SFUNC=MADLIB_SCHEMA.chi2_gof_test_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.chi2_gof_test_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.chi2_gof_test_merge_states,')
+    INITCOND='{0,0,0,0,0,0,0}'
+);
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ks_test_transition(
     state DOUBLE PRECISION[],
@@ -605,12 +643,23 @@ AGGREGATE MADLIB_SCHEMA.mw_test(
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.wsr_test_transition(
     state DOUBLE PRECISION[],
-    "value" DOUBLE PRECISION
+    value DOUBLE PRECISION,
+    "precision" DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE
 STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.wsr_test_transition(
+    state DOUBLE PRECISION[],
+    value DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
 
 CREATE TYPE MADLIB_SCHEMA.wsr_test_result AS (
     statistic DOUBLE PRECISION,
@@ -637,6 +686,11 @@ LANGUAGE C IMMUTABLE STRICT;
  *
  * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$. Values of 0
  *     are ignored (i.e., they do not count towards \f$ n \f$).
+ * @param precision The precision with which value is known. The precision
+ *     determines the handling of ties. The current value is regarded a tie
+ *     with the previous value if <tt>value - precision</tt> is at most
+ *     <tt>value + precision</tt>, for any of the immediately preceeding rows
+ *     that form a tie.
  *
  * @warning
  *      There are conflicting sources for the variance reduction in case of ties:
@@ -689,6 +743,18 @@ LANGUAGE C IMMUTABLE STRICT;
  *    between the first and second value in a pair is at most (or equal to,
  *    respectively) \f$ \mu_0 \f$:
  *    <pre>SELECT (wsr_test(<em>first</em> - <em>second</em> - <em>mu_0</em> ORDER BY abs(<em>first</em> - <em>second</em>))).* FROM <em>source</em></pre>
+ *    If correctly determining ties is important (e.g., you may want to do so 
+ *    when comparing to software products that take \c first, \c second,
+ *    and \c mu_0 as individual parameters), supply the precision parameter.
+ *    This can be done as follows:
+ *    <pre>SELECT (wsr_test(
+    <em>first</em> - <em>second</em> - <em>mu_0</em>,
+    3 * 2^(-52) * greatest(first, second, mu_0)
+    ORDER BY abs(<em>first</em> - <em>second</em>)
+)).* FROM <em>source</em></pre>
+ *    Here \f$ 2^{-52} \f$ is the machine epsilon, which we scale to the
+ *    magnitude of the input data and multiply with 3 because we have a sum with
+ *    three terms.
  *
  * @note
  *     This aggregate must be used as an ordered aggregate
@@ -698,12 +764,24 @@ LANGUAGE C IMMUTABLE STRICT;
 CREATE
 m4_ifdef(`__GREENPLUM__',`ORDERED')
 AGGREGATE MADLIB_SCHEMA.wsr_test(
-    /*+ "value" */ DOUBLE PRECISION
+    /*+ value */ DOUBLE PRECISION,
+    /*+ "precision" */ DOUBLE PRECISION /*+ DEFAULT NULL */
 ) (    
     SFUNC=MADLIB_SCHEMA.wsr_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.wsr_test_final,
-    INITCOND='{0,0,0,0,0,0,0,0}'
+    INITCOND='{0,0,0,0,0,0,0,0,0}'
+);
+
+CREATE
+m4_ifdef(`__GREENPLUM__',`ORDERED')
+AGGREGATE MADLIB_SCHEMA.wsr_test(
+    /*+ value */ DOUBLE PRECISION
+) (    
+    SFUNC=MADLIB_SCHEMA.wsr_test_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.wsr_test_final,
+    INITCOND='{0,0,0,0,0,0,0,0,0}'
 );
 
 
@@ -804,5 +882,5 @@ CREATE AGGREGATE MADLIB_SCHEMA.one_way_anova(
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.one_way_anova_final,
     m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.one_way_anova_merge_states,')
-    INITCOND='{0}'
+    INITCOND='{0,0}'
 );
