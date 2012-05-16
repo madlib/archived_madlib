@@ -51,12 +51,20 @@ PG_MODULE_MAGIC;
 
 
 /*
+ * We will do a lot of float number calculations on log, square, 
+ * division, and multiplication, etc. Our tests show that the 
+ * DBL_EPSILON is too precise for us. Therefore we define our 
+ * own precision here.
+ */
+#define DT_EPSILON 0.000000001
+
+/*
  * This function is used to test if a float value is 0.
  * Due to the precision of floating numbers, we can not
  * compare them directly with 0.
  */
 #define dt_is_float_zero(value)  \
-			((value) < DBL_EPSILON && (value) > -DBL_EPSILON)
+			((value) < DT_EPSILON && (value) > -DT_EPSILON)
 
 
 /*

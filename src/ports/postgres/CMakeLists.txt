@@ -236,6 +236,99 @@ macro(add_current_${PORT_LC}_version)
     endif(${PORT_UC}_${_VERSION_UNDERSCORES}_FOUND)
 endmacro(add_current_${PORT_LC}_version)
 
+# -- Extension support
+# If the DBMS can support CREATE EXTENSION, call this function
+# after add_current_PORT_version()
+function(add_extension_support)
+    get_filename_component(_VERSION "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
+    string(REPLACE "." "_" PORT_VERSION_UNDERSCORE "${_VERSION}")
+    set(DBMS "${PORT_LC}_${PORT_VERSION_UNDERSCORE}")
+    set(DBMS_UC "${PORT_UC}_${PORT_VERSION_UNDERSCORE}")
+
+    foreach(CURRENT_FILE ${SQL_TARGET_FILES})
+        if(NOT ${CURRENT_FILE} MATCHES "/test/")
+            set(OUTFILE ${CURRENT_FILE})
+            string(REGEX REPLACE ".sql_in\$" ".sql" OUTFILE ${OUTFILE})
+            get_dir_name(OUTDIR ${OUTFILE})
+            get_filename_component(MODULE_NAME ${OUTDIR} NAME)
+
+            # This should match with madpack
+            # We use @extschema@ for its schema and let users
+            # decide the schema name when CREATE EXTENSION.
+            # Also, we install libmadlib.so into $libdir
+            # so madlib.control specifies MODULE_PATHNAME and we don't
+            # do it here.
+            set(M4_ARGS
+                "-P"
+                "-DMADLIB_SCHEMA=@extschema@"
+                "-DPLPYTHON_LIBDIR=${${DBMS_UC}_SHARE_DIR}/madlib/modules"
+                "-DMODULE_NAME=${MODULE_NAME}"
+                "-D${PORT_UC}"
+                "-I${CMAKE_CURRENT_BINARY_DIR}/madpack"
+            )
+            add_custom_command(OUTPUT "${OUTFILE}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTDIR}"
+                COMMAND ${M4_BINARY} ${M4_ARGS} "${CURRENT_FILE}" > "${OUTFILE}"
+                DEPENDS sqlFiles_${PORT_LC}
+                COMMENT "Preprocessing ${CURRENT_FILE} with m4."
+            )
+            list(APPEND MODULE_SQL_POST_FILES ${OUTFILE})
+        endif(NOT ${CURRENT_FILE} MATCHES "/test/")
+    endforeach(CURRENT_FILE)
+
+    configure_file("${PORT_SOURCE_DIR}/extension/madlib.control_in"
+        "${CMAKE_CURRENT_BINARY_DIR}/extension/madlib.control"
+        @ONLY
+    )
+    # base file contains miscellaneous operations such like creating history table
+    set(EXTENSION_SQL_BASE "${CMAKE_CURRENT_BINARY_DIR}/extension/madlib.sql.base")
+    set(extschema "@extschema@")
+    configure_file("${PORT_SOURCE_DIR}/extension/madlib.sql.base_in"
+        "${EXTENSION_SQL_BASE}"
+        @ONLY
+    )
+    unset(extschema)
+
+    # We use X.Y.Z style for version string for it is recommended in PGXN.
+    set(EXTENSION_SQL "${CMAKE_CURRENT_BINARY_DIR}/extension/madlib--${MADLIB_VERSION_MAJOR}.${MADLIB_VERSION_MINOR}.${MADLIB_VERSION_PATCH}.sql")
+
+    # The workhorse for extension target
+    # It is hard to interpret Modules.yml in this cmake file, thus we use
+    # sort-module.py to sort modules based on the dependencies.
+    add_custom_command(OUTPUT ${EXTENSION_SQL}
+        COMMAND cat ${EXTENSION_SQL_BASE}
+            `cd ${CMAKE_BINARY_DIR}/src/madpack &&
+            python sort-module.py ${MODULE_SQL_POST_FILES}` >${EXTENSION_SQL}
+        DEPENDS ${MODULE_SQL_POST_FILES} madpackFiles configFiles pythonFiles_${DBMS} madlib_${DBMS}
+        COMMENT "Concatenating into ${EXTENSION_SQL}"
+    )
+    # default target for extension
+    add_custom_target(extension
+        DEPENDS ${EXTENSION_SQL}
+    )
+
+    # clean target for extension
+    add_custom_target(extension-clean
+        COMMAND ${CMAKE_COMMAND} -E remove ${EXTENSION_SQL}
+    )
+
+    # install target for extension
+    # Unfortunately, cmake install command cannot be used here, as
+    # DIRECTORY install doesn't have custom target option.
+    add_custom_target(extension-install
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${${DBMS_UC}_SHARE_DIR}/madlib
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_BINARY_DIR}/modules ${${DBMS_UC}_SHARE_DIR}/madlib/modules
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_CURRENT_BINARY_DIR}/lib/libmadlib.so ${${DBMS_UC}_LIB_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${EXTENSION_SQL} ${${DBMS_UC}_SHARE_DIR}/extension/
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_CURRENT_BINARY_DIR}/extension/madlib.control
+            ${${DBMS_UC}_SHARE_DIR}/extension/
+        DEPENDS ${EXTENSION_SQL}
+    )
+endfunction(add_extension_support)
 
 # -- 6. Build shared library and copy version-specific file for all
 #       ${PORT_UC}_X_Y_PG_CONFIG macros defined by the user. If none has been
@@ -245,3 +338,4 @@ determine_target_versions(VERSIONS)
 foreach(VERSION ${VERSIONS})
 	add_subdirectory(${VERSION})
 endforeach(VERSION)
+
