@@ -1,10 +1,10 @@
 add_current_greenplum_version()
 
 if(GREENPLUM_4_0_FOUND)
+    add_subdirectory(config)
+
     # Old versions of Greenplum ship with header files that need a patch to be
     # compatible with C++
-    
-    add_subdirectory(config)
     add_subdirectory(patch)
 
     # Append directory with patched header file at beginning
