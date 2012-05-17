@@ -40,7 +40,7 @@ namespace prob {
 
 
 inline double 
-_hypergeometric_cdf(double x, int defective, int sample_count, int total) {
+hypergeometric_cdf_imp(double x, int defective, int sample_count, int total) {
 	HYPERGEOMETRIC_DOMAIN_CHECK(defective, sample_count, total);
 	
 	
@@ -64,7 +64,7 @@ hypergeometric_cdf::run(AnyType &args) {
 	int sample_count = args[2].getAs<int>();
 	int total = args[3].getAs<int>();
 
-	return _hypergeometric_cdf(x, defective, sample_count, total);
+	return hypergeometric_cdf_imp(x, defective, sample_count, total);
 }
 
 double
@@ -72,9 +72,9 @@ hypergeometric_CDF(double x, int defective, int sample_count, int total) {
 	double res = 0;
 
 	try {
-		res = _hypergeometric_cdf(x, defective, sample_count, total);
+		res = hypergeometric_cdf_imp(x, defective, sample_count, total);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -84,7 +84,7 @@ hypergeometric_CDF(double x, int defective, int sample_count, int total) {
 
 
 inline double 
-_hypergeometric_pdf(int x, int defective, int sample_count, int total) {
+hypergeometric_pdf_imp(int x, int defective, int sample_count, int total) {
 	HYPERGEOMETRIC_DOMAIN_CHECK(defective, sample_count, total);
 	
 	
@@ -107,7 +107,7 @@ hypergeometric_pdf::run(AnyType &args) {
 	int sample_count = args[2].getAs<int>();
 	int total = args[3].getAs<int>();
 
-	return _hypergeometric_pdf(x, defective, sample_count, total);
+	return hypergeometric_pdf_imp(x, defective, sample_count, total);
 }
 
 double
@@ -115,9 +115,9 @@ hypergeometric_PDF(int x, int defective, int sample_count, int total) {
 	double res = 0;
 
 	try {
-		res = _hypergeometric_pdf(x, defective, sample_count, total);
+		res = hypergeometric_pdf_imp(x, defective, sample_count, total);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -127,7 +127,7 @@ hypergeometric_PDF(int x, int defective, int sample_count, int total) {
 
 
 inline double 
-_hypergeometric_quantile(double x, int defective, int sample_count, int total) {
+hypergeometric_quantile_imp(double x, int defective, int sample_count, int total) {
 	HYPERGEOMETRIC_DOMAIN_CHECK(defective, sample_count, total);
 	
 	if ( x < 0 || x > 1 ) {
@@ -152,7 +152,7 @@ hypergeometric_quantile::run(AnyType &args) {
 	int sample_count = args[2].getAs<int>();
 	int total = args[3].getAs<int>();
 
-	return _hypergeometric_quantile(x, defective, sample_count, total);
+	return hypergeometric_quantile_imp(x, defective, sample_count, total);
 }
 
 double
@@ -160,9 +160,9 @@ hypergeometric_QUANTILE(double x, int defective, int sample_count, int total) {
 	double res = 0;
 
 	try {
-		res = _hypergeometric_quantile(x, defective, sample_count, total);
+		res = hypergeometric_quantile_imp(x, defective, sample_count, total);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

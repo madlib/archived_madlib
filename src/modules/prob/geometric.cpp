@@ -27,14 +27,14 @@ namespace prob {
 		if ( std::isnan(x) || std::isnan(suc_prob) ) {\
 			return std::numeric_limits<double>::quiet_NaN();\
 		}\
-		else if ( !(0 < suc_prob <= 1) ) {\
+		else if ( !(0 < suc_prob && suc_prob <= 1) ) {\
 			throw std::domain_error("Geometric distribution is undefined when suc_prob doesn't conform to (0 < suc_prob <= 1).");\
 		}\
 	} while(0)
 
 
 inline double 
-_geometric_cdf(double x, double suc_prob) {
+geometric_cdf_imp(double x, double suc_prob) {
 	GEOMETRIC_DOMAIN_CHECK(suc_prob);
 	
 	
@@ -56,7 +56,7 @@ geometric_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double suc_prob = args[1].getAs<double>();
 
-	return _geometric_cdf(x, suc_prob);
+	return geometric_cdf_imp(x, suc_prob);
 }
 
 double
@@ -64,9 +64,9 @@ geometric_CDF(double x, double suc_prob) {
 	double res = 0;
 
 	try {
-		res = _geometric_cdf(x, suc_prob);
+		res = geometric_cdf_imp(x, suc_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -76,7 +76,7 @@ geometric_CDF(double x, double suc_prob) {
 
 
 inline double 
-_geometric_pdf(int x, double suc_prob) {
+geometric_pdf_imp(int x, double suc_prob) {
 	GEOMETRIC_DOMAIN_CHECK(suc_prob);
 	
 	
@@ -97,7 +97,7 @@ geometric_pdf::run(AnyType &args) {
 	int x = args[0].getAs<int>();
 	double suc_prob = args[1].getAs<double>();
 
-	return _geometric_pdf(x, suc_prob);
+	return geometric_pdf_imp(x, suc_prob);
 }
 
 double
@@ -105,9 +105,9 @@ geometric_PDF(int x, double suc_prob) {
 	double res = 0;
 
 	try {
-		res = _geometric_pdf(x, suc_prob);
+		res = geometric_pdf_imp(x, suc_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -117,7 +117,7 @@ geometric_PDF(int x, double suc_prob) {
 
 
 inline double 
-_geometric_quantile(double x, double suc_prob) {
+geometric_quantile_imp(double x, double suc_prob) {
 	GEOMETRIC_DOMAIN_CHECK(suc_prob);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ geometric_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double suc_prob = args[1].getAs<double>();
 
-	return _geometric_quantile(x, suc_prob);
+	return geometric_quantile_imp(x, suc_prob);
 }
 
 double
@@ -148,9 +148,9 @@ geometric_QUANTILE(double x, double suc_prob) {
 	double res = 0;
 
 	try {
-		res = _geometric_quantile(x, suc_prob);
+		res = geometric_quantile_imp(x, suc_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

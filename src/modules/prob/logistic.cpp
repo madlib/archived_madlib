@@ -35,7 +35,7 @@ namespace prob {
 
 
 inline double 
-_logistic_cdf(double x, double location, double scale) {
+logistic_cdf_imp(double x, double location, double scale) {
 	LOGISTIC_DOMAIN_CHECK(location, scale);
 	
 	
@@ -57,7 +57,7 @@ logistic_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _logistic_cdf(x, location, scale);
+	return logistic_cdf_imp(x, location, scale);
 }
 
 double
@@ -65,9 +65,9 @@ logistic_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _logistic_cdf(x, location, scale);
+		res = logistic_cdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -77,7 +77,7 @@ logistic_CDF(double x, double location, double scale) {
 
 
 inline double 
-_logistic_pdf(double x, double location, double scale) {
+logistic_pdf_imp(double x, double location, double scale) {
 	LOGISTIC_DOMAIN_CHECK(location, scale);
 	
 	
@@ -96,7 +96,7 @@ logistic_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _logistic_pdf(x, location, scale);
+	return logistic_pdf_imp(x, location, scale);
 }
 
 double
@@ -104,9 +104,9 @@ logistic_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _logistic_pdf(x, location, scale);
+		res = logistic_pdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -116,7 +116,7 @@ logistic_PDF(double x, double location, double scale) {
 
 
 inline double 
-_logistic_quantile(double x, double location, double scale) {
+logistic_quantile_imp(double x, double location, double scale) {
 	LOGISTIC_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ logistic_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _logistic_quantile(x, location, scale);
+	return logistic_quantile_imp(x, location, scale);
 }
 
 double
@@ -148,9 +148,9 @@ logistic_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _logistic_quantile(x, location, scale);
+		res = logistic_quantile_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

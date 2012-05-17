@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_binomial_cdf(double x, int trials, double succ_prob) {
+binomial_cdf_imp(double x, int trials, double succ_prob) {
 	BINOMIAL_DOMAIN_CHECK(trials, succ_prob);
 	
 	
@@ -60,7 +60,7 @@ binomial_cdf::run(AnyType &args) {
 	int trials = args[1].getAs<int>();
 	double succ_prob = args[2].getAs<double>();
 
-	return _binomial_cdf(x, trials, succ_prob);
+	return binomial_cdf_imp(x, trials, succ_prob);
 }
 
 double
@@ -68,9 +68,9 @@ binomial_CDF(double x, int trials, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _binomial_cdf(x, trials, succ_prob);
+		res = binomial_cdf_imp(x, trials, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -80,7 +80,7 @@ binomial_CDF(double x, int trials, double succ_prob) {
 
 
 inline double 
-_binomial_pdf(int x, int trials, double succ_prob) {
+binomial_pdf_imp(int x, int trials, double succ_prob) {
 	BINOMIAL_DOMAIN_CHECK(trials, succ_prob);
 	
 	
@@ -102,7 +102,7 @@ binomial_pdf::run(AnyType &args) {
 	int trials = args[1].getAs<int>();
 	double succ_prob = args[2].getAs<double>();
 
-	return _binomial_pdf(x, trials, succ_prob);
+	return binomial_pdf_imp(x, trials, succ_prob);
 }
 
 double
@@ -110,9 +110,9 @@ binomial_PDF(int x, int trials, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _binomial_pdf(x, trials, succ_prob);
+		res = binomial_pdf_imp(x, trials, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -122,7 +122,7 @@ binomial_PDF(int x, int trials, double succ_prob) {
 
 
 inline double 
-_binomial_quantile(double x, int trials, double succ_prob) {
+binomial_quantile_imp(double x, int trials, double succ_prob) {
 	BINOMIAL_DOMAIN_CHECK(trials, succ_prob);
 	
 	if ( x < 0 || x > 1 ) {
@@ -146,7 +146,7 @@ binomial_quantile::run(AnyType &args) {
 	int trials = args[1].getAs<int>();
 	double succ_prob = args[2].getAs<double>();
 
-	return _binomial_quantile(x, trials, succ_prob);
+	return binomial_quantile_imp(x, trials, succ_prob);
 }
 
 double
@@ -154,9 +154,9 @@ binomial_QUANTILE(double x, int trials, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _binomial_quantile(x, trials, succ_prob);
+		res = binomial_quantile_imp(x, trials, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

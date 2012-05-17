@@ -34,7 +34,7 @@ namespace prob {
 
 
 inline double 
-_bernoulli_cdf(double x, double succ_prob) {
+bernoulli_cdf_imp(double x, double succ_prob) {
 	BERNOULLI_DOMAIN_CHECK(succ_prob);
 	
 	
@@ -56,7 +56,7 @@ bernoulli_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double succ_prob = args[1].getAs<double>();
 
-	return _bernoulli_cdf(x, succ_prob);
+	return bernoulli_cdf_imp(x, succ_prob);
 }
 
 double
@@ -64,9 +64,9 @@ bernoulli_CDF(double x, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _bernoulli_cdf(x, succ_prob);
+		res = bernoulli_cdf_imp(x, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -76,7 +76,7 @@ bernoulli_CDF(double x, double succ_prob) {
 
 
 inline double 
-_bernoulli_pdf(int x, double succ_prob) {
+bernoulli_pdf_imp(int x, double succ_prob) {
 	BERNOULLI_DOMAIN_CHECK(succ_prob);
 	
 	
@@ -97,7 +97,7 @@ bernoulli_pdf::run(AnyType &args) {
 	int x = args[0].getAs<int>();
 	double succ_prob = args[1].getAs<double>();
 
-	return _bernoulli_pdf(x, succ_prob);
+	return bernoulli_pdf_imp(x, succ_prob);
 }
 
 double
@@ -105,9 +105,9 @@ bernoulli_PDF(int x, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _bernoulli_pdf(x, succ_prob);
+		res = bernoulli_pdf_imp(x, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -117,7 +117,7 @@ bernoulli_PDF(int x, double succ_prob) {
 
 
 inline double 
-_bernoulli_quantile(double x, double succ_prob) {
+bernoulli_quantile_imp(double x, double succ_prob) {
 	BERNOULLI_DOMAIN_CHECK(succ_prob);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ bernoulli_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double succ_prob = args[1].getAs<double>();
 
-	return _bernoulli_quantile(x, succ_prob);
+	return bernoulli_quantile_imp(x, succ_prob);
 }
 
 double
@@ -148,9 +148,9 @@ bernoulli_QUANTILE(double x, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _bernoulli_quantile(x, succ_prob);
+		res = bernoulli_quantile_imp(x, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

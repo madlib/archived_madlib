@@ -38,7 +38,7 @@ namespace prob {
 
 
 inline double 
-_uniform_cdf(double x, double lower, double upper) {
+uniform_cdf_imp(double x, double lower, double upper) {
 	UNIFORM_DOMAIN_CHECK(lower, upper);
 	
 	
@@ -60,7 +60,7 @@ uniform_cdf::run(AnyType &args) {
 	double lower = args[1].getAs<double>();
 	double upper = args[2].getAs<double>();
 
-	return _uniform_cdf(x, lower, upper);
+	return uniform_cdf_imp(x, lower, upper);
 }
 
 double
@@ -68,9 +68,9 @@ uniform_CDF(double x, double lower, double upper) {
 	double res = 0;
 
 	try {
-		res = _uniform_cdf(x, lower, upper);
+		res = uniform_cdf_imp(x, lower, upper);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -80,7 +80,7 @@ uniform_CDF(double x, double lower, double upper) {
 
 
 inline double 
-_uniform_pdf(double x, double lower, double upper) {
+uniform_pdf_imp(double x, double lower, double upper) {
 	UNIFORM_DOMAIN_CHECK(lower, upper);
 	
 	
@@ -102,7 +102,7 @@ uniform_pdf::run(AnyType &args) {
 	double lower = args[1].getAs<double>();
 	double upper = args[2].getAs<double>();
 
-	return _uniform_pdf(x, lower, upper);
+	return uniform_pdf_imp(x, lower, upper);
 }
 
 double
@@ -110,9 +110,9 @@ uniform_PDF(double x, double lower, double upper) {
 	double res = 0;
 
 	try {
-		res = _uniform_pdf(x, lower, upper);
+		res = uniform_pdf_imp(x, lower, upper);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -122,7 +122,7 @@ uniform_PDF(double x, double lower, double upper) {
 
 
 inline double 
-_uniform_quantile(double x, double lower, double upper) {
+uniform_quantile_imp(double x, double lower, double upper) {
 	UNIFORM_DOMAIN_CHECK(lower, upper);
 	
 	if ( x < 0 || x > 1 ) {
@@ -146,7 +146,7 @@ uniform_quantile::run(AnyType &args) {
 	double lower = args[1].getAs<double>();
 	double upper = args[2].getAs<double>();
 
-	return _uniform_quantile(x, lower, upper);
+	return uniform_quantile_imp(x, lower, upper);
 }
 
 double
@@ -154,9 +154,9 @@ uniform_QUANTILE(double x, double lower, double upper) {
 	double res = 0;
 
 	try {
-		res = _uniform_quantile(x, lower, upper);
+		res = uniform_quantile_imp(x, lower, upper);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

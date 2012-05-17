@@ -35,7 +35,7 @@ namespace prob {
 
 
 inline double 
-_extreme_value_cdf(double x, double location, double scale) {
+extreme_value_cdf_imp(double x, double location, double scale) {
 	EXTREME_VALUE_DOMAIN_CHECK(location, scale);
 	
 	
@@ -57,7 +57,7 @@ extreme_value_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _extreme_value_cdf(x, location, scale);
+	return extreme_value_cdf_imp(x, location, scale);
 }
 
 double
@@ -65,9 +65,9 @@ extreme_value_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _extreme_value_cdf(x, location, scale);
+		res = extreme_value_cdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -77,7 +77,7 @@ extreme_value_CDF(double x, double location, double scale) {
 
 
 inline double 
-_extreme_value_pdf(double x, double location, double scale) {
+extreme_value_pdf_imp(double x, double location, double scale) {
 	EXTREME_VALUE_DOMAIN_CHECK(location, scale);
 	
 	
@@ -96,7 +96,7 @@ extreme_value_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _extreme_value_pdf(x, location, scale);
+	return extreme_value_pdf_imp(x, location, scale);
 }
 
 double
@@ -104,9 +104,9 @@ extreme_value_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _extreme_value_pdf(x, location, scale);
+		res = extreme_value_pdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -116,7 +116,7 @@ extreme_value_PDF(double x, double location, double scale) {
 
 
 inline double 
-_extreme_value_quantile(double x, double location, double scale) {
+extreme_value_quantile_imp(double x, double location, double scale) {
 	EXTREME_VALUE_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ extreme_value_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _extreme_value_quantile(x, location, scale);
+	return extreme_value_quantile_imp(x, location, scale);
 }
 
 double
@@ -148,9 +148,9 @@ extreme_value_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _extreme_value_quantile(x, location, scale);
+		res = extreme_value_quantile_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

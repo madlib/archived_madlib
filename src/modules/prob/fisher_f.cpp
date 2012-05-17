@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_fisher_f_cdf(double x, double df1, double df2) {
+fisher_f_cdf_imp(double x, double df1, double df2) {
 	FISHER_F_DOMAIN_CHECK(df1, df2);
 	
 	
@@ -59,7 +59,7 @@ fisher_f_cdf::run(AnyType &args) {
 	double df1 = args[1].getAs<double>();
 	double df2 = args[2].getAs<double>();
 
-	return _fisher_f_cdf(x, df1, df2);
+	return fisher_f_cdf_imp(x, df1, df2);
 }
 
 double
@@ -67,9 +67,9 @@ fisher_f_CDF(double x, double df1, double df2) {
 	double res = 0;
 
 	try {
-		res = _fisher_f_cdf(x, df1, df2);
+		res = fisher_f_cdf_imp(x, df1, df2);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -79,7 +79,7 @@ fisher_f_CDF(double x, double df1, double df2) {
 
 
 inline double 
-_fisher_f_pdf(double x, double df1, double df2) {
+fisher_f_pdf_imp(double x, double df1, double df2) {
 	FISHER_F_DOMAIN_CHECK(df1, df2);
 	
 	
@@ -106,7 +106,7 @@ fisher_f_pdf::run(AnyType &args) {
 	double df1 = args[1].getAs<double>();
 	double df2 = args[2].getAs<double>();
 
-	return _fisher_f_pdf(x, df1, df2);
+	return fisher_f_pdf_imp(x, df1, df2);
 }
 
 double
@@ -114,9 +114,9 @@ fisher_f_PDF(double x, double df1, double df2) {
 	double res = 0;
 
 	try {
-		res = _fisher_f_pdf(x, df1, df2);
+		res = fisher_f_pdf_imp(x, df1, df2);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -126,7 +126,7 @@ fisher_f_PDF(double x, double df1, double df2) {
 
 
 inline double 
-_fisher_f_quantile(double x, double df1, double df2) {
+fisher_f_quantile_imp(double x, double df1, double df2) {
 	FISHER_F_DOMAIN_CHECK(df1, df2);
 	
 	if ( x < 0 || x > 1 ) {
@@ -150,7 +150,7 @@ fisher_f_quantile::run(AnyType &args) {
 	double df1 = args[1].getAs<double>();
 	double df2 = args[2].getAs<double>();
 
-	return _fisher_f_quantile(x, df1, df2);
+	return fisher_f_quantile_imp(x, df1, df2);
 }
 
 double
@@ -158,9 +158,9 @@ fisher_f_QUANTILE(double x, double df1, double df2) {
 	double res = 0;
 
 	try {
-		res = _fisher_f_quantile(x, df1, df2);
+		res = fisher_f_quantile_imp(x, df1, df2);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

@@ -38,7 +38,7 @@ namespace prob {
 
 
 inline double 
-_triangular_cdf(double x, double lower, double mode, double upper) {
+triangular_cdf_imp(double x, double lower, double mode, double upper) {
 	TRIANGULAR_DOMAIN_CHECK(lower, mode, upper);
 	
 	
@@ -61,7 +61,7 @@ triangular_cdf::run(AnyType &args) {
 	double mode = args[2].getAs<double>();
 	double upper = args[3].getAs<double>();
 
-	return _triangular_cdf(x, lower, mode, upper);
+	return triangular_cdf_imp(x, lower, mode, upper);
 }
 
 double
@@ -69,9 +69,9 @@ triangular_CDF(double x, double lower, double mode, double upper) {
 	double res = 0;
 
 	try {
-		res = _triangular_cdf(x, lower, mode, upper);
+		res = triangular_cdf_imp(x, lower, mode, upper);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -81,7 +81,7 @@ triangular_CDF(double x, double lower, double mode, double upper) {
 
 
 inline double 
-_triangular_pdf(double x, double lower, double mode, double upper) {
+triangular_pdf_imp(double x, double lower, double mode, double upper) {
 	TRIANGULAR_DOMAIN_CHECK(lower, mode, upper);
 	
 	
@@ -104,7 +104,7 @@ triangular_pdf::run(AnyType &args) {
 	double mode = args[2].getAs<double>();
 	double upper = args[3].getAs<double>();
 
-	return _triangular_pdf(x, lower, mode, upper);
+	return triangular_pdf_imp(x, lower, mode, upper);
 }
 
 double
@@ -112,9 +112,9 @@ triangular_PDF(double x, double lower, double mode, double upper) {
 	double res = 0;
 
 	try {
-		res = _triangular_pdf(x, lower, mode, upper);
+		res = triangular_pdf_imp(x, lower, mode, upper);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -124,7 +124,7 @@ triangular_PDF(double x, double lower, double mode, double upper) {
 
 
 inline double 
-_triangular_quantile(double x, double lower, double mode, double upper) {
+triangular_quantile_imp(double x, double lower, double mode, double upper) {
 	TRIANGULAR_DOMAIN_CHECK(lower, mode, upper);
 	
 	if ( x < 0 || x > 1 ) {
@@ -149,7 +149,7 @@ triangular_quantile::run(AnyType &args) {
 	double mode = args[2].getAs<double>();
 	double upper = args[3].getAs<double>();
 
-	return _triangular_quantile(x, lower, mode, upper);
+	return triangular_quantile_imp(x, lower, mode, upper);
 }
 
 double
@@ -157,9 +157,9 @@ triangular_QUANTILE(double x, double lower, double mode, double upper) {
 	double res = 0;
 
 	try {
-		res = _triangular_quantile(x, lower, mode, upper);
+		res = triangular_quantile_imp(x, lower, mode, upper);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

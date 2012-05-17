@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_weibull_cdf(double x, double shape, double scale) {
+weibull_cdf_imp(double x, double shape, double scale) {
 	WEIBULL_DOMAIN_CHECK(shape, scale);
 	
 	
@@ -59,7 +59,7 @@ weibull_cdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _weibull_cdf(x, shape, scale);
+	return weibull_cdf_imp(x, shape, scale);
 }
 
 double
@@ -67,9 +67,9 @@ weibull_CDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _weibull_cdf(x, shape, scale);
+		res = weibull_cdf_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -79,7 +79,7 @@ weibull_CDF(double x, double shape, double scale) {
 
 
 inline double 
-_weibull_pdf(double x, double shape, double scale) {
+weibull_pdf_imp(double x, double shape, double scale) {
 	WEIBULL_DOMAIN_CHECK(shape, scale);
 	
 	
@@ -104,7 +104,7 @@ weibull_pdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _weibull_pdf(x, shape, scale);
+	return weibull_pdf_imp(x, shape, scale);
 }
 
 double
@@ -112,9 +112,9 @@ weibull_PDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _weibull_pdf(x, shape, scale);
+		res = weibull_pdf_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -124,7 +124,7 @@ weibull_PDF(double x, double shape, double scale) {
 
 
 inline double 
-_weibull_quantile(double x, double shape, double scale) {
+weibull_quantile_imp(double x, double shape, double scale) {
 	WEIBULL_DOMAIN_CHECK(shape, scale);
 	
 	if ( x < 0 || x > 1 ) {
@@ -148,7 +148,7 @@ weibull_quantile::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _weibull_quantile(x, shape, scale);
+	return weibull_quantile_imp(x, shape, scale);
 }
 
 double
@@ -156,9 +156,9 @@ weibull_QUANTILE(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _weibull_quantile(x, shape, scale);
+		res = weibull_quantile_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

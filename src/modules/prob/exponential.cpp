@@ -34,7 +34,7 @@ namespace prob {
 
 
 inline double 
-_exponential_cdf(double x, double rate) {
+exponential_cdf_imp(double x, double rate) {
 	EXPONENTIAL_DOMAIN_CHECK(rate);
 	
 	
@@ -55,7 +55,7 @@ exponential_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double rate = args[1].getAs<double>();
 
-	return _exponential_cdf(x, rate);
+	return exponential_cdf_imp(x, rate);
 }
 
 double
@@ -63,9 +63,9 @@ exponential_CDF(double x, double rate) {
 	double res = 0;
 
 	try {
-		res = _exponential_cdf(x, rate);
+		res = exponential_cdf_imp(x, rate);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -75,7 +75,7 @@ exponential_CDF(double x, double rate) {
 
 
 inline double 
-_exponential_pdf(double x, double rate) {
+exponential_pdf_imp(double x, double rate) {
 	EXPONENTIAL_DOMAIN_CHECK(rate);
 	
 	
@@ -96,7 +96,7 @@ exponential_pdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double rate = args[1].getAs<double>();
 
-	return _exponential_pdf(x, rate);
+	return exponential_pdf_imp(x, rate);
 }
 
 double
@@ -104,9 +104,9 @@ exponential_PDF(double x, double rate) {
 	double res = 0;
 
 	try {
-		res = _exponential_pdf(x, rate);
+		res = exponential_pdf_imp(x, rate);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -116,7 +116,7 @@ exponential_PDF(double x, double rate) {
 
 
 inline double 
-_exponential_quantile(double x, double rate) {
+exponential_quantile_imp(double x, double rate) {
 	EXPONENTIAL_DOMAIN_CHECK(rate);
 	
 	if ( x < 0 || x > 1 ) {
@@ -139,7 +139,7 @@ exponential_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double rate = args[1].getAs<double>();
 
-	return _exponential_quantile(x, rate);
+	return exponential_quantile_imp(x, rate);
 }
 
 double
@@ -147,9 +147,9 @@ exponential_QUANTILE(double x, double rate) {
 	double res = 0;
 
 	try {
-		res = _exponential_quantile(x, rate);
+		res = exponential_quantile_imp(x, rate);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

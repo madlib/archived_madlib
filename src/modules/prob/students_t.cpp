@@ -254,7 +254,7 @@ students_t_cdf::run(AnyType &args) {
 
 
 inline double 
-_students_t_pdf(double x, double df) {
+students_t_pdf_imp(double x, double df) {
 	STUDENTS_T_DOMAIN_CHECK(df);
 	
 	
@@ -272,7 +272,7 @@ students_t_pdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return _students_t_pdf(x, df);
+	return students_t_pdf_imp(x, df);
 }
 
 double
@@ -280,9 +280,9 @@ students_t_PDF(double x, double df) {
 	double res = 0;
 
 	try {
-		res = _students_t_pdf(x, df);
+		res = students_t_pdf_imp(x, df);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -292,7 +292,7 @@ students_t_PDF(double x, double df) {
 
 
 inline double 
-_students_t_quantile(double x, double df) {
+students_t_quantile_imp(double x, double df) {
 	STUDENTS_T_DOMAIN_CHECK(df);
 	
 	if ( x < 0 || x > 1 ) {
@@ -315,7 +315,7 @@ students_t_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return _students_t_quantile(x, df);
+	return students_t_quantile_imp(x, df);
 }
 
 double
@@ -323,9 +323,9 @@ students_t_QUANTILE(double x, double df) {
 	double res = 0;
 
 	try {
-		res = _students_t_quantile(x, df);
+		res = students_t_quantile_imp(x, df);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

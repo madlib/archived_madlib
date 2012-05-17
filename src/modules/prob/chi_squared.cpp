@@ -34,7 +34,7 @@ namespace prob {
 
 
 inline double 
-_chi_squared_cdf(double x, double df) {
+chi_squared_cdf_imp(double x, double df) {
 	CHI_SQUARED_DOMAIN_CHECK(df);
 	
 	
@@ -55,7 +55,7 @@ chi_squared_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return _chi_squared_cdf(x, df);
+	return chi_squared_cdf_imp(x, df);
 }
 
 double
@@ -63,9 +63,9 @@ chi_squared_CDF(double x, double df) {
 	double res = 0;
 
 	try {
-		res = _chi_squared_cdf(x, df);
+		res = chi_squared_cdf_imp(x, df);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -75,7 +75,7 @@ chi_squared_CDF(double x, double df) {
 
 
 inline double 
-_chi_squared_pdf(double x, double df) {
+chi_squared_pdf_imp(double x, double df) {
 	CHI_SQUARED_DOMAIN_CHECK(df);
 	
 	
@@ -104,7 +104,7 @@ chi_squared_pdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return _chi_squared_pdf(x, df);
+	return chi_squared_pdf_imp(x, df);
 }
 
 double
@@ -112,9 +112,9 @@ chi_squared_PDF(double x, double df) {
 	double res = 0;
 
 	try {
-		res = _chi_squared_pdf(x, df);
+		res = chi_squared_pdf_imp(x, df);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -124,7 +124,7 @@ chi_squared_PDF(double x, double df) {
 
 
 inline double 
-_chi_squared_quantile(double x, double df) {
+chi_squared_quantile_imp(double x, double df) {
 	CHI_SQUARED_DOMAIN_CHECK(df);
 	
 	if ( x < 0 || x > 1 ) {
@@ -147,7 +147,7 @@ chi_squared_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double df = args[1].getAs<double>();
 
-	return _chi_squared_quantile(x, df);
+	return chi_squared_quantile_imp(x, df);
 }
 
 double
@@ -155,9 +155,9 @@ chi_squared_QUANTILE(double x, double df) {
 	double res = 0;
 
 	try {
-		res = _chi_squared_quantile(x, df);
+		res = chi_squared_quantile_imp(x, df);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

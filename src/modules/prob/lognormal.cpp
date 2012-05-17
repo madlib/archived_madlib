@@ -35,7 +35,7 @@ namespace prob {
 
 
 inline double 
-_lognormal_cdf(double x, double location, double scale) {
+lognormal_cdf_imp(double x, double location, double scale) {
 	LOGNORMAL_DOMAIN_CHECK(location, scale);
 	
 	
@@ -57,7 +57,7 @@ lognormal_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _lognormal_cdf(x, location, scale);
+	return lognormal_cdf_imp(x, location, scale);
 }
 
 double
@@ -65,9 +65,9 @@ lognormal_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _lognormal_cdf(x, location, scale);
+		res = lognormal_cdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -77,7 +77,7 @@ lognormal_CDF(double x, double location, double scale) {
 
 
 inline double 
-_lognormal_pdf(double x, double location, double scale) {
+lognormal_pdf_imp(double x, double location, double scale) {
 	LOGNORMAL_DOMAIN_CHECK(location, scale);
 	
 	
@@ -99,7 +99,7 @@ lognormal_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _lognormal_pdf(x, location, scale);
+	return lognormal_pdf_imp(x, location, scale);
 }
 
 double
@@ -107,9 +107,9 @@ lognormal_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _lognormal_pdf(x, location, scale);
+		res = lognormal_pdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -119,7 +119,7 @@ lognormal_PDF(double x, double location, double scale) {
 
 
 inline double 
-_lognormal_quantile(double x, double location, double scale) {
+lognormal_quantile_imp(double x, double location, double scale) {
 	LOGNORMAL_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
@@ -143,7 +143,7 @@ lognormal_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _lognormal_quantile(x, location, scale);
+	return lognormal_quantile_imp(x, location, scale);
 }
 
 double
@@ -151,9 +151,9 @@ lognormal_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _lognormal_quantile(x, location, scale);
+		res = lognormal_quantile_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

@@ -34,7 +34,7 @@ namespace prob {
 
 
 inline double 
-_poisson_cdf(double x, double mean) {
+poisson_cdf_imp(double x, double mean) {
 	POISSON_DOMAIN_CHECK(mean);
 	
 	
@@ -56,7 +56,7 @@ poisson_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double mean = args[1].getAs<double>();
 
-	return _poisson_cdf(x, mean);
+	return poisson_cdf_imp(x, mean);
 }
 
 double
@@ -64,9 +64,9 @@ poisson_CDF(double x, double mean) {
 	double res = 0;
 
 	try {
-		res = _poisson_cdf(x, mean);
+		res = poisson_cdf_imp(x, mean);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -76,7 +76,7 @@ poisson_CDF(double x, double mean) {
 
 
 inline double 
-_poisson_pdf(int x, double mean) {
+poisson_pdf_imp(int x, double mean) {
 	POISSON_DOMAIN_CHECK(mean);
 	
 	
@@ -97,7 +97,7 @@ poisson_pdf::run(AnyType &args) {
 	int x = args[0].getAs<int>();
 	double mean = args[1].getAs<double>();
 
-	return _poisson_pdf(x, mean);
+	return poisson_pdf_imp(x, mean);
 }
 
 double
@@ -105,9 +105,9 @@ poisson_PDF(int x, double mean) {
 	double res = 0;
 
 	try {
-		res = _poisson_pdf(x, mean);
+		res = poisson_pdf_imp(x, mean);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -117,7 +117,7 @@ poisson_PDF(int x, double mean) {
 
 
 inline double 
-_poisson_quantile(double x, double mean) {
+poisson_quantile_imp(double x, double mean) {
 	POISSON_DOMAIN_CHECK(mean);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ poisson_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double mean = args[1].getAs<double>();
 
-	return _poisson_quantile(x, mean);
+	return poisson_quantile_imp(x, mean);
 }
 
 double
@@ -148,9 +148,9 @@ poisson_QUANTILE(double x, double mean) {
 	double res = 0;
 
 	try {
-		res = _poisson_quantile(x, mean);
+		res = poisson_quantile_imp(x, mean);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

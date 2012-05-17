@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_inverse_gamma_cdf(double x, double shape, double scale) {
+inverse_gamma_cdf_imp(double x, double shape, double scale) {
 	INVERSE_GAMMA_DOMAIN_CHECK(shape, scale);
 	if ( !(x > 0) ) {
 		throw std::domain_error("Inverse_gamma distribution is undefined when random variable doesn't conform to (x > 0).");
@@ -57,7 +57,7 @@ inverse_gamma_cdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _inverse_gamma_cdf(x, shape, scale);
+	return inverse_gamma_cdf_imp(x, shape, scale);
 }
 
 double
@@ -65,9 +65,9 @@ inverse_gamma_CDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _inverse_gamma_cdf(x, shape, scale);
+		res = inverse_gamma_cdf_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -77,7 +77,7 @@ inverse_gamma_CDF(double x, double shape, double scale) {
 
 
 inline double 
-_inverse_gamma_pdf(double x, double shape, double scale) {
+inverse_gamma_pdf_imp(double x, double shape, double scale) {
 	INVERSE_GAMMA_DOMAIN_CHECK(shape, scale);
 	if ( !(x > 0) ) {
 		throw std::domain_error("Inverse_gamma distribution is undefined when random variable doesn't conform to (x > 0).");
@@ -97,7 +97,7 @@ inverse_gamma_pdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _inverse_gamma_pdf(x, shape, scale);
+	return inverse_gamma_pdf_imp(x, shape, scale);
 }
 
 double
@@ -105,9 +105,9 @@ inverse_gamma_PDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _inverse_gamma_pdf(x, shape, scale);
+		res = inverse_gamma_pdf_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -117,7 +117,7 @@ inverse_gamma_PDF(double x, double shape, double scale) {
 
 
 inline double 
-_inverse_gamma_quantile(double x, double shape, double scale) {
+inverse_gamma_quantile_imp(double x, double shape, double scale) {
 	INVERSE_GAMMA_DOMAIN_CHECK(shape, scale);
 	
 	if ( x <= 0 || x > 1 ) {
@@ -138,7 +138,7 @@ inverse_gamma_quantile::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _inverse_gamma_quantile(x, shape, scale);
+	return inverse_gamma_quantile_imp(x, shape, scale);
 }
 
 double
@@ -146,9 +146,9 @@ inverse_gamma_QUANTILE(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _inverse_gamma_quantile(x, shape, scale);
+		res = inverse_gamma_quantile_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

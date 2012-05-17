@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_gamma_cdf(double x, double shape, double scale) {
+gamma_cdf_imp(double x, double shape, double scale) {
 	GAMMA_DOMAIN_CHECK(shape, scale);
 	
 	
@@ -59,7 +59,7 @@ gamma_cdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _gamma_cdf(x, shape, scale);
+	return gamma_cdf_imp(x, shape, scale);
 }
 
 double
@@ -67,9 +67,9 @@ gamma_CDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _gamma_cdf(x, shape, scale);
+		res = gamma_cdf_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -79,7 +79,7 @@ gamma_CDF(double x, double shape, double scale) {
 
 
 inline double 
-_gamma_pdf(double x, double shape, double scale) {
+gamma_pdf_imp(double x, double shape, double scale) {
 	GAMMA_DOMAIN_CHECK(shape, scale);
 	
 	
@@ -104,7 +104,7 @@ gamma_pdf::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _gamma_pdf(x, shape, scale);
+	return gamma_pdf_imp(x, shape, scale);
 }
 
 double
@@ -112,9 +112,9 @@ gamma_PDF(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _gamma_pdf(x, shape, scale);
+		res = gamma_pdf_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -124,7 +124,7 @@ gamma_PDF(double x, double shape, double scale) {
 
 
 inline double 
-_gamma_quantile(double x, double shape, double scale) {
+gamma_quantile_imp(double x, double shape, double scale) {
 	GAMMA_DOMAIN_CHECK(shape, scale);
 	
 	if ( x < 0 || x > 1 ) {
@@ -148,7 +148,7 @@ gamma_quantile::run(AnyType &args) {
 	double shape = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _gamma_quantile(x, shape, scale);
+	return gamma_quantile_imp(x, shape, scale);
 }
 
 double
@@ -156,9 +156,9 @@ gamma_QUANTILE(double x, double shape, double scale) {
 	double res = 0;
 
 	try {
-		res = _gamma_quantile(x, shape, scale);
+		res = gamma_quantile_imp(x, shape, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

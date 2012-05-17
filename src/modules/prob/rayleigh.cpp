@@ -34,7 +34,7 @@ namespace prob {
 
 
 inline double 
-_rayleigh_cdf(double x, double sigma) {
+rayleigh_cdf_imp(double x, double sigma) {
 	RAYLEIGH_DOMAIN_CHECK(sigma);
 	
 	
@@ -55,7 +55,7 @@ rayleigh_cdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double sigma = args[1].getAs<double>();
 
-	return _rayleigh_cdf(x, sigma);
+	return rayleigh_cdf_imp(x, sigma);
 }
 
 double
@@ -63,9 +63,9 @@ rayleigh_CDF(double x, double sigma) {
 	double res = 0;
 
 	try {
-		res = _rayleigh_cdf(x, sigma);
+		res = rayleigh_cdf_imp(x, sigma);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -75,7 +75,7 @@ rayleigh_CDF(double x, double sigma) {
 
 
 inline double 
-_rayleigh_pdf(double x, double sigma) {
+rayleigh_pdf_imp(double x, double sigma) {
 	RAYLEIGH_DOMAIN_CHECK(sigma);
 	
 	
@@ -96,7 +96,7 @@ rayleigh_pdf::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double sigma = args[1].getAs<double>();
 
-	return _rayleigh_pdf(x, sigma);
+	return rayleigh_pdf_imp(x, sigma);
 }
 
 double
@@ -104,9 +104,9 @@ rayleigh_PDF(double x, double sigma) {
 	double res = 0;
 
 	try {
-		res = _rayleigh_pdf(x, sigma);
+		res = rayleigh_pdf_imp(x, sigma);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -116,7 +116,7 @@ rayleigh_PDF(double x, double sigma) {
 
 
 inline double 
-_rayleigh_quantile(double x, double sigma) {
+rayleigh_quantile_imp(double x, double sigma) {
 	RAYLEIGH_DOMAIN_CHECK(sigma);
 	
 	if ( x < 0 || x > 1 ) {
@@ -139,7 +139,7 @@ rayleigh_quantile::run(AnyType &args) {
 	double x = args[0].getAs<double>();
 	double sigma = args[1].getAs<double>();
 
-	return _rayleigh_quantile(x, sigma);
+	return rayleigh_quantile_imp(x, sigma);
 }
 
 double
@@ -147,9 +147,9 @@ rayleigh_QUANTILE(double x, double sigma) {
 	double res = 0;
 
 	try {
-		res = _rayleigh_quantile(x, sigma);
+		res = rayleigh_quantile_imp(x, sigma);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

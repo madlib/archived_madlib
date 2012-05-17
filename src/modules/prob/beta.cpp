@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_beta_cdf(double x, double alpha, double beta) {
+beta_cdf_imp(double x, double alpha, double beta) {
 	BETA_DOMAIN_CHECK(alpha, beta);
 	
 	
@@ -59,7 +59,7 @@ beta_cdf::run(AnyType &args) {
 	double alpha = args[1].getAs<double>();
 	double beta = args[2].getAs<double>();
 
-	return _beta_cdf(x, alpha, beta);
+	return beta_cdf_imp(x, alpha, beta);
 }
 
 double
@@ -67,9 +67,9 @@ beta_CDF(double x, double alpha, double beta) {
 	double res = 0;
 
 	try {
-		res = _beta_cdf(x, alpha, beta);
+		res = beta_cdf_imp(x, alpha, beta);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -79,7 +79,7 @@ beta_CDF(double x, double alpha, double beta) {
 
 
 inline double 
-_beta_pdf(double x, double alpha, double beta) {
+beta_pdf_imp(double x, double alpha, double beta) {
 	BETA_DOMAIN_CHECK(alpha, beta);
 	
 	
@@ -107,7 +107,7 @@ beta_pdf::run(AnyType &args) {
 	double alpha = args[1].getAs<double>();
 	double beta = args[2].getAs<double>();
 
-	return _beta_pdf(x, alpha, beta);
+	return beta_pdf_imp(x, alpha, beta);
 }
 
 double
@@ -115,9 +115,9 @@ beta_PDF(double x, double alpha, double beta) {
 	double res = 0;
 
 	try {
-		res = _beta_pdf(x, alpha, beta);
+		res = beta_pdf_imp(x, alpha, beta);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -127,7 +127,7 @@ beta_PDF(double x, double alpha, double beta) {
 
 
 inline double 
-_beta_quantile(double x, double alpha, double beta) {
+beta_quantile_imp(double x, double alpha, double beta) {
 	BETA_DOMAIN_CHECK(alpha, beta);
 	
 	if ( x < 0 || x > 1 ) {
@@ -151,7 +151,7 @@ beta_quantile::run(AnyType &args) {
 	double alpha = args[1].getAs<double>();
 	double beta = args[2].getAs<double>();
 
-	return _beta_quantile(x, alpha, beta);
+	return beta_quantile_imp(x, alpha, beta);
 }
 
 double
@@ -159,9 +159,9 @@ beta_QUANTILE(double x, double alpha, double beta) {
 	double res = 0;
 
 	try {
-		res = _beta_quantile(x, alpha, beta);
+		res = beta_quantile_imp(x, alpha, beta);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

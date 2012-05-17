@@ -35,7 +35,7 @@ namespace prob {
 
 
 inline double 
-_laplace_cdf(double x, double location, double scale) {
+laplace_cdf_imp(double x, double location, double scale) {
 	LAPLACE_DOMAIN_CHECK(location, scale);
 	
 	
@@ -57,7 +57,7 @@ laplace_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _laplace_cdf(x, location, scale);
+	return laplace_cdf_imp(x, location, scale);
 }
 
 double
@@ -65,9 +65,9 @@ laplace_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _laplace_cdf(x, location, scale);
+		res = laplace_cdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -77,7 +77,7 @@ laplace_CDF(double x, double location, double scale) {
 
 
 inline double 
-_laplace_pdf(double x, double location, double scale) {
+laplace_pdf_imp(double x, double location, double scale) {
 	LAPLACE_DOMAIN_CHECK(location, scale);
 	
 	
@@ -96,7 +96,7 @@ laplace_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _laplace_pdf(x, location, scale);
+	return laplace_pdf_imp(x, location, scale);
 }
 
 double
@@ -104,9 +104,9 @@ laplace_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _laplace_pdf(x, location, scale);
+		res = laplace_pdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -116,7 +116,7 @@ laplace_PDF(double x, double location, double scale) {
 
 
 inline double 
-_laplace_quantile(double x, double location, double scale) {
+laplace_quantile_imp(double x, double location, double scale) {
 	LAPLACE_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ laplace_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _laplace_quantile(x, location, scale);
+	return laplace_quantile_imp(x, location, scale);
 }
 
 double
@@ -148,9 +148,9 @@ laplace_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _laplace_quantile(x, location, scale);
+		res = laplace_quantile_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

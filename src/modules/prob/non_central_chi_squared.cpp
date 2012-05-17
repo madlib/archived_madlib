@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_non_central_chi_squared_cdf(double x, double df, double non_centrality) {
+non_central_chi_squared_cdf_imp(double x, double df, double non_centrality) {
 	NON_CENTRAL_CHI_SQUARED_DOMAIN_CHECK(df, non_centrality);
 	
 	
@@ -59,7 +59,7 @@ non_central_chi_squared_cdf::run(AnyType &args) {
 	double df = args[1].getAs<double>();
 	double non_centrality = args[2].getAs<double>();
 
-	return _non_central_chi_squared_cdf(x, df, non_centrality);
+	return non_central_chi_squared_cdf_imp(x, df, non_centrality);
 }
 
 double
@@ -67,9 +67,9 @@ non_central_chi_squared_CDF(double x, double df, double non_centrality) {
 	double res = 0;
 
 	try {
-		res = _non_central_chi_squared_cdf(x, df, non_centrality);
+		res = non_central_chi_squared_cdf_imp(x, df, non_centrality);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -79,7 +79,7 @@ non_central_chi_squared_CDF(double x, double df, double non_centrality) {
 
 
 inline double 
-_non_central_chi_squared_pdf(double x, double df, double non_centrality) {
+non_central_chi_squared_pdf_imp(double x, double df, double non_centrality) {
 	NON_CENTRAL_CHI_SQUARED_DOMAIN_CHECK(df, non_centrality);
 	
 	
@@ -108,7 +108,7 @@ non_central_chi_squared_pdf::run(AnyType &args) {
 	double df = args[1].getAs<double>();
 	double non_centrality = args[2].getAs<double>();
 
-	return _non_central_chi_squared_pdf(x, df, non_centrality);
+	return non_central_chi_squared_pdf_imp(x, df, non_centrality);
 }
 
 double
@@ -116,9 +116,9 @@ non_central_chi_squared_PDF(double x, double df, double non_centrality) {
 	double res = 0;
 
 	try {
-		res = _non_central_chi_squared_pdf(x, df, non_centrality);
+		res = non_central_chi_squared_pdf_imp(x, df, non_centrality);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -128,7 +128,7 @@ non_central_chi_squared_PDF(double x, double df, double non_centrality) {
 
 
 inline double 
-_non_central_chi_squared_quantile(double x, double df, double non_centrality) {
+non_central_chi_squared_quantile_imp(double x, double df, double non_centrality) {
 	NON_CENTRAL_CHI_SQUARED_DOMAIN_CHECK(df, non_centrality);
 	
 	if ( x < 0 || x > 1 ) {
@@ -152,7 +152,7 @@ non_central_chi_squared_quantile::run(AnyType &args) {
 	double df = args[1].getAs<double>();
 	double non_centrality = args[2].getAs<double>();
 
-	return _non_central_chi_squared_quantile(x, df, non_centrality);
+	return non_central_chi_squared_quantile_imp(x, df, non_centrality);
 }
 
 double
@@ -160,9 +160,9 @@ non_central_chi_squared_QUANTILE(double x, double df, double non_centrality) {
 	double res = 0;
 
 	try {
-		res = _non_central_chi_squared_quantile(x, df, non_centrality);
+		res = non_central_chi_squared_quantile_imp(x, df, non_centrality);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

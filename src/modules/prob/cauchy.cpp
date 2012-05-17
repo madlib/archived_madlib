@@ -35,7 +35,7 @@ namespace prob {
 
 
 inline double 
-_cauchy_cdf(double x, double location, double scale) {
+cauchy_cdf_imp(double x, double location, double scale) {
 	CAUCHY_DOMAIN_CHECK(location, scale);
 	
 	
@@ -57,7 +57,7 @@ cauchy_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _cauchy_cdf(x, location, scale);
+	return cauchy_cdf_imp(x, location, scale);
 }
 
 double
@@ -65,9 +65,9 @@ cauchy_CDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _cauchy_cdf(x, location, scale);
+		res = cauchy_cdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -77,7 +77,7 @@ cauchy_CDF(double x, double location, double scale) {
 
 
 inline double 
-_cauchy_pdf(double x, double location, double scale) {
+cauchy_pdf_imp(double x, double location, double scale) {
 	CAUCHY_DOMAIN_CHECK(location, scale);
 	
 	
@@ -96,7 +96,7 @@ cauchy_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _cauchy_pdf(x, location, scale);
+	return cauchy_pdf_imp(x, location, scale);
 }
 
 double
@@ -104,9 +104,9 @@ cauchy_PDF(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _cauchy_pdf(x, location, scale);
+		res = cauchy_pdf_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -116,7 +116,7 @@ cauchy_PDF(double x, double location, double scale) {
 
 
 inline double 
-_cauchy_quantile(double x, double location, double scale) {
+cauchy_quantile_imp(double x, double location, double scale) {
 	CAUCHY_DOMAIN_CHECK(location, scale);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ cauchy_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double scale = args[2].getAs<double>();
 
-	return _cauchy_quantile(x, location, scale);
+	return cauchy_quantile_imp(x, location, scale);
 }
 
 double
@@ -148,9 +148,9 @@ cauchy_QUANTILE(double x, double location, double scale) {
 	double res = 0;
 
 	try {
-		res = _cauchy_quantile(x, location, scale);
+		res = cauchy_quantile_imp(x, location, scale);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

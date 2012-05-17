@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_pareto_cdf(double x, double location, double shape) {
+pareto_cdf_imp(double x, double location, double shape) {
 	PARETO_DOMAIN_CHECK(location, shape);
 	
 	
@@ -59,7 +59,7 @@ pareto_cdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double shape = args[2].getAs<double>();
 
-	return _pareto_cdf(x, location, shape);
+	return pareto_cdf_imp(x, location, shape);
 }
 
 double
@@ -67,9 +67,9 @@ pareto_CDF(double x, double location, double shape) {
 	double res = 0;
 
 	try {
-		res = _pareto_cdf(x, location, shape);
+		res = pareto_cdf_imp(x, location, shape);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -79,7 +79,7 @@ pareto_CDF(double x, double location, double shape) {
 
 
 inline double 
-_pareto_pdf(double x, double location, double shape) {
+pareto_pdf_imp(double x, double location, double shape) {
 	PARETO_DOMAIN_CHECK(location, shape);
 	
 	
@@ -101,7 +101,7 @@ pareto_pdf::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double shape = args[2].getAs<double>();
 
-	return _pareto_pdf(x, location, shape);
+	return pareto_pdf_imp(x, location, shape);
 }
 
 double
@@ -109,9 +109,9 @@ pareto_PDF(double x, double location, double shape) {
 	double res = 0;
 
 	try {
-		res = _pareto_pdf(x, location, shape);
+		res = pareto_pdf_imp(x, location, shape);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -121,7 +121,7 @@ pareto_PDF(double x, double location, double shape) {
 
 
 inline double 
-_pareto_quantile(double x, double location, double shape) {
+pareto_quantile_imp(double x, double location, double shape) {
 	PARETO_DOMAIN_CHECK(location, shape);
 	
 	if ( x < 0 || x > 1 ) {
@@ -145,7 +145,7 @@ pareto_quantile::run(AnyType &args) {
 	double location = args[1].getAs<double>();
 	double shape = args[2].getAs<double>();
 
-	return _pareto_quantile(x, location, shape);
+	return pareto_quantile_imp(x, location, shape);
 }
 
 double
@@ -153,9 +153,9 @@ pareto_QUANTILE(double x, double location, double shape) {
 	double res = 0;
 
 	try {
-		res = _pareto_quantile(x, location, shape);
+		res = pareto_quantile_imp(x, location, shape);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

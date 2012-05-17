@@ -35,7 +35,7 @@ namespace prob {
 
 
 inline double 
-_normal_cdf(double x, double mean, double sd) {
+normal_cdf_imp(double x, double mean, double sd) {
 	NORMAL_DOMAIN_CHECK(mean, sd);
 	
 	
@@ -57,7 +57,7 @@ normal_cdf::run(AnyType &args) {
 	double mean = args[1].getAs<double>();
 	double sd = args[2].getAs<double>();
 
-	return _normal_cdf(x, mean, sd);
+	return normal_cdf_imp(x, mean, sd);
 }
 
 double
@@ -65,9 +65,9 @@ normal_CDF(double x, double mean, double sd) {
 	double res = 0;
 
 	try {
-		res = _normal_cdf(x, mean, sd);
+		res = normal_cdf_imp(x, mean, sd);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -77,7 +77,7 @@ normal_CDF(double x, double mean, double sd) {
 
 
 inline double 
-_normal_pdf(double x, double mean, double sd) {
+normal_pdf_imp(double x, double mean, double sd) {
 	NORMAL_DOMAIN_CHECK(mean, sd);
 	
 	
@@ -96,7 +96,7 @@ normal_pdf::run(AnyType &args) {
 	double mean = args[1].getAs<double>();
 	double sd = args[2].getAs<double>();
 
-	return _normal_pdf(x, mean, sd);
+	return normal_pdf_imp(x, mean, sd);
 }
 
 double
@@ -104,9 +104,9 @@ normal_PDF(double x, double mean, double sd) {
 	double res = 0;
 
 	try {
-		res = _normal_pdf(x, mean, sd);
+		res = normal_pdf_imp(x, mean, sd);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -116,7 +116,7 @@ normal_PDF(double x, double mean, double sd) {
 
 
 inline double 
-_normal_quantile(double x, double mean, double sd) {
+normal_quantile_imp(double x, double mean, double sd) {
 	NORMAL_DOMAIN_CHECK(mean, sd);
 	
 	if ( x < 0 || x > 1 ) {
@@ -140,7 +140,7 @@ normal_quantile::run(AnyType &args) {
 	double mean = args[1].getAs<double>();
 	double sd = args[2].getAs<double>();
 
-	return _normal_quantile(x, mean, sd);
+	return normal_quantile_imp(x, mean, sd);
 }
 
 double
@@ -148,9 +148,9 @@ normal_QUANTILE(double x, double mean, double sd) {
 	double res = 0;
 
 	try {
-		res = _normal_quantile(x, mean, sd);
+		res = normal_quantile_imp(x, mean, sd);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 

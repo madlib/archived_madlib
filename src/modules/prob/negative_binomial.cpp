@@ -37,7 +37,7 @@ namespace prob {
 
 
 inline double 
-_negative_binomial_cdf(double x, double successes, double succ_prob) {
+negative_binomial_cdf_imp(double x, double successes, double succ_prob) {
 	NEGATIVE_BINOMIAL_DOMAIN_CHECK(successes, succ_prob);
 	
 	
@@ -60,7 +60,7 @@ negative_binomial_cdf::run(AnyType &args) {
 	double successes = args[1].getAs<double>();
 	double succ_prob = args[2].getAs<double>();
 
-	return _negative_binomial_cdf(x, successes, succ_prob);
+	return negative_binomial_cdf_imp(x, successes, succ_prob);
 }
 
 double
@@ -68,9 +68,9 @@ negative_binomial_CDF(double x, double successes, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _negative_binomial_cdf(x, successes, succ_prob);
+		res = negative_binomial_cdf_imp(x, successes, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -80,7 +80,7 @@ negative_binomial_CDF(double x, double successes, double succ_prob) {
 
 
 inline double 
-_negative_binomial_pdf(int x, double successes, double succ_prob) {
+negative_binomial_pdf_imp(int x, double successes, double succ_prob) {
 	NEGATIVE_BINOMIAL_DOMAIN_CHECK(successes, succ_prob);
 	
 	
@@ -102,7 +102,7 @@ negative_binomial_pdf::run(AnyType &args) {
 	double successes = args[1].getAs<double>();
 	double succ_prob = args[2].getAs<double>();
 
-	return _negative_binomial_pdf(x, successes, succ_prob);
+	return negative_binomial_pdf_imp(x, successes, succ_prob);
 }
 
 double
@@ -110,9 +110,9 @@ negative_binomial_PDF(int x, double successes, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _negative_binomial_pdf(x, successes, succ_prob);
+		res = negative_binomial_pdf_imp(x, successes, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
@@ -122,7 +122,7 @@ negative_binomial_PDF(int x, double successes, double succ_prob) {
 
 
 inline double 
-_negative_binomial_quantile(double x, double successes, double succ_prob) {
+negative_binomial_quantile_imp(double x, double successes, double succ_prob) {
 	NEGATIVE_BINOMIAL_DOMAIN_CHECK(successes, succ_prob);
 	
 	if ( x < 0 || x > 1 ) {
@@ -146,7 +146,7 @@ negative_binomial_quantile::run(AnyType &args) {
 	double successes = args[1].getAs<double>();
 	double succ_prob = args[2].getAs<double>();
 
-	return _negative_binomial_quantile(x, successes, succ_prob);
+	return negative_binomial_quantile_imp(x, successes, succ_prob);
 }
 
 double
@@ -154,9 +154,9 @@ negative_binomial_QUANTILE(double x, double successes, double succ_prob) {
 	double res = 0;
 
 	try {
-		res = _negative_binomial_quantile(x, successes, succ_prob);
+		res = negative_binomial_quantile_imp(x, successes, succ_prob);
 	}
-	catch (...) {
+	catch (const std::domain_error & de) {
 		res = std::numeric_limits<double>::quiet_NaN();
 	}
 
