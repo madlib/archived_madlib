@@ -14,6 +14,8 @@
 // We use string concatenation with the + operator
 #include <string>
 
+#include "one_way_anova.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -23,11 +25,6 @@ using prob::fisherF_CDF;
 
 namespace stats {
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "one_way_anova.hpp"
-
 /**
  * @brief Transition state for one-way ANOVA functions
  *
@@ -36,7 +33,7 @@ namespace stats {
  * perform bounds checking.
  */
 template <class Handle>
-class OWATransitionState : public AbstractionLayer {
+class OWATransitionState {
 public:
     OWATransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()) {
@@ -96,7 +93,7 @@ public:
 
 template <>
 uint32_t
-OWATransitionState<AbstractionLayer::ArrayHandle<double> >::idxOfGroup(
+OWATransitionState<ArrayHandle<double> >::idxOfGroup(
     const Allocator&, uint16_t inValue) {
     
     uint16_t pos = std::lower_bound(
@@ -112,7 +109,7 @@ OWATransitionState<AbstractionLayer::ArrayHandle<double> >::idxOfGroup(
 
 template <>
 uint32_t
-OWATransitionState<AbstractionLayer::MutableArrayHandle<double> >::idxOfGroup(
+OWATransitionState<MutableArrayHandle<double> >::idxOfGroup(
     const Allocator& inAllocator, uint16_t inValue) {
     
     // FIXME: Think of using proper iterators. Add some safety. Overflow checks.

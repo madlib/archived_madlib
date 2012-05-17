@@ -34,7 +34,7 @@ extern "C" {
 
 #include "Compatibility.hpp"
 
-#endif MADLIB_POSTGRES_HEADERS
+#endif // !defined(MADLIB_POSTGRES_HEADERS)
 
 // Unfortunately, we have to clean up some #defines in PostgreSQL headers. They
 // interfere with C++ code.
@@ -151,11 +151,14 @@ madlib ## _ ## _pgfunc _arglist { \
     } MADLIB_PG_DEFAULT_CATCH_AND_END_TRY; \
 }
 
-// The maximum number of arguments that can be passed to a function
-// Note that PostgreSQL defines FUNC_MAX_ARGS, which we could use here. However,
-// this can be a fairly large number that might exceed BOOST_PP_LIMIT_REPEAT.
-// In fmgr.h, PostgreSQL provides support functions (FunctionCall*Coll) for only
-// up to 9 arguments.
+/**
+ * The maximum number of arguments that can be passed to a function via a
+ * FunctionHandle.
+ * Note that PostgreSQL defines FUNC_MAX_ARGS, which we could use here. However,
+ * this can be a fairly large number that might exceed BOOST_PP_LIMIT_REPEAT.
+ * In fmgr.h, PostgreSQL provides support functions (FunctionCall*Coll) for only
+ * up to 9 arguments.
+ */
 #define MADLIB_FUNC_MAX_ARGS 9
 
 

@@ -13,6 +13,8 @@
 // We use string concatenation with the + operator
 #include <string>
 
+#include "t_test.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -24,14 +26,9 @@ using prob::studentT_CDF;
 
 namespace stats {
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "t_test.hpp"
-
-struct internal : public AbstractionLayer {
-    static AnyType tStatsToResult(double inT, double inDegreeOfFreedom);
-};
+namespace {
+    AnyType tStatsToResult(double inT, double inDegreeOfFreedom);
+}
 
 /**
  * @brief Transition state for t-Test functions
@@ -40,7 +37,7 @@ struct internal : public AbstractionLayer {
  * database with length 6, and all elemenets are 0.
  */
 template <class Handle>
-class TTestTransitionState : public AbstractionLayer {
+class TTestTransitionState {
 public:
     TTestTransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()),
@@ -191,7 +188,7 @@ t_test_one_final::run(AnyType &args) {
     double t = std::sqrt(state.numX / sampleVariance)
              * (state.x_sum / state.numX);
     
-    return internal::tStatsToResult(t, degreeOfFreedom);
+    return tStatsToResult(t, degreeOfFreedom);
 }
 
 /**
@@ -219,7 +216,7 @@ t_test_two_pooled_final::run(AnyType &args) {
         = std::sqrt(sampleVariancePooled * (1. / state.numX + 1. / state.numY));
     double tEqualVar = diffInMeans / tDenomEqualVar;
     
-    return internal::tStatsToResult(tEqualVar, dfEqualVar);
+    return tStatsToResult(tEqualVar, dfEqualVar);
 }
 
 /**
@@ -255,7 +252,7 @@ t_test_two_unpooled_final::run(AnyType &args) {
         = std::sqrt(sampleVarianceX / state.numX + sampleVarianceY / state.numY);
     double tUnequalVar = diffInMeans / tDenomUnequalVar;
     
-    return internal::tStatsToResult(tUnequalVar, dfUnequalVar);
+    return tStatsToResult(tUnequalVar, dfUnequalVar);
 }
 
 /**
@@ -292,9 +289,11 @@ f_test_final::run(AnyType &args) {
     return tuple;
 }
 
+namespace {
+
 inline
 AnyType
-internal::tStatsToResult(double inT, double inDegreeOfFreedom) {
+tStatsToResult(double inT, double inDegreeOfFreedom) {
     // Return t statistic, degrees of freedom, one-tailed p-value (Null
     // hypothesis \mu <= \mu_0), and two-tailed p-value (\mu = \mu_0).
     // Recall definition of p-value: The probability of observating a
@@ -307,6 +306,8 @@ internal::tStatsToResult(double inT, double inDegreeOfFreedom) {
         << 1. - studentT_CDF(inT, inDegreeOfFreedom)
         << 2. * (1. - studentT_CDF(std::fabs(inT), inDegreeOfFreedom));
     return tuple;
+}
+
 }
 
 } // namespace stats

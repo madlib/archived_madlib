@@ -13,6 +13,8 @@
 // We use string concatenation with the + operator
 #include <string>
 
+#include "kolmogorov_smirnov_test.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -22,11 +24,6 @@ using prob::kolmogorovCDF;
 
 namespace stats {
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "kolmogorov_smirnov_test.hpp"
-
 /**
  * @brief Transition state for Kolmogorov-Smirnov-Test functions
  *
@@ -35,7 +32,7 @@ namespace stats {
  * perform bounds checking.
  */
 template <class Handle>
-class KSTestTransitionState : public AbstractionLayer {
+class KSTestTransitionState {
 public:
     KSTestTransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()),
@@ -69,7 +66,7 @@ ks_test_transition::run(AnyType &args) {
     KSTestTransitionState<MutableArrayHandle<double> > state = args[0];
     int sample = args[1].getAs<bool>() ? 0 : 1;
     double value = args[2].getAs<double>();
-    ColumnVector2 expectedNum;
+    Eigen::Vector2d expectedNum;
         expectedNum << args[3].getAs<int64_t>(), args[4].getAs<int64_t>();
     
     if (state.expectedNum != expectedNum) {

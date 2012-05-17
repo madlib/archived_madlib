@@ -32,9 +32,6 @@ struct HandleTraits<ArrayHandle<double> > {
     typedef dbal::eigen_integration::ColumnVector ColumnVector;
     typedef dbal::eigen_integration::Matrix Matrix;
 
-    typedef TransparentHandle<double> TransparentHandle;
-    typedef dbal::eigen_integration::HandleMap<const ColumnVector>
-        ColumnVectorArrayHandleMap;
     typedef utils::Reference<double, uint64_t> ReferenceToUInt64;
     typedef utils::Reference<double, int64_t> ReferenceToInt64;
     typedef utils::Reference<double, uint32_t> ReferenceToUInt32;
@@ -43,9 +40,10 @@ struct HandleTraits<ArrayHandle<double> > {
     typedef utils::Reference<double> ReferenceToDouble;
     typedef const double* DoublePtr;
     typedef dbal::eigen_integration::HandleMap<
-        const ColumnVector, TransparentHandle> ColumnVectorTransparentHandleMap;
-    typedef dbal::eigen_integration::HandleMap<const Matrix, TransparentHandle>
-        MatrixTransparentHandleMap;
+        const ColumnVector, TransparentHandle<double> >
+        ColumnVectorTransparentHandleMap;
+    typedef dbal::eigen_integration::HandleMap<const Matrix,
+        TransparentHandle<double> > MatrixTransparentHandleMap;
 };
 
 template <>
@@ -53,9 +51,6 @@ struct HandleTraits<MutableArrayHandle<double> > {
     typedef dbal::eigen_integration::ColumnVector ColumnVector;
     typedef dbal::eigen_integration::Matrix Matrix;
 
-    typedef MutableTransparentHandle<double> TransparentHandle;
-    typedef dbal::eigen_integration::HandleMap<ColumnVector>
-        ColumnVectorArrayHandleMap;
     typedef utils::MutableReference<double, uint64_t> ReferenceToUInt64;
     typedef utils::MutableReference<double, int64_t> ReferenceToInt64;
     typedef utils::MutableReference<double, uint32_t> ReferenceToUInt32;
@@ -63,10 +58,10 @@ struct HandleTraits<MutableArrayHandle<double> > {
     typedef utils::MutableReference<double, bool> ReferenceToBool;
     typedef utils::MutableReference<double> ReferenceToDouble;
     typedef double* DoublePtr;
-    typedef dbal::eigen_integration::HandleMap<ColumnVector, TransparentHandle>
-        ColumnVectorTransparentHandleMap;
-    typedef dbal::eigen_integration::HandleMap<Matrix, TransparentHandle>
-        MatrixTransparentHandleMap;
+    typedef dbal::eigen_integration::HandleMap<ColumnVector,
+        MutableTransparentHandle<double> > ColumnVectorTransparentHandleMap;
+    typedef dbal::eigen_integration::HandleMap<Matrix,
+        MutableTransparentHandle<double> > MatrixTransparentHandleMap;
 };
 
 } // namespace modules

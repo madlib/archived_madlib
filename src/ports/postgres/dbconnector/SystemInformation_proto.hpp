@@ -91,7 +91,7 @@ struct FunctionInformation {
     /**
      * Holds system-catalog information that must be looked up before a
      * function can be called through fmgr. We store it here, because the
-     * information can be resued for multiple function calls.
+     * information can be reused for multiple function calls.
      * An uninitialized flinfo is indicated by <tt>flinfo.fn_oid</tt> not
      * being equal to \c oid.
      *
@@ -171,7 +171,7 @@ struct FunctionInformation {
 /**
  * @brief Cached information about the PostgreSQL system catalog
  *
- * In order to guarantee tyoe-safety through reflection/type-introspection, the
+ * In order to guarantee type-safety through reflection/type-introspection, the
  * C++ AL has to call many PostgreSQL functions that are tagged as expensive due
  * to lookups in the type cache or even in the system catalog. We therefore wrap
  * all catalog lookups in this class and store the results in our own cache.
