@@ -59,6 +59,7 @@
 
 // Use boost implementation for non-natural nu
 #include <boost/math/distributions/students_t.hpp>
+#include <cmath>
 
 
 namespace madlib {
@@ -70,8 +71,8 @@ namespace prob {
 // Workaround for Doxygen: A header file that does not declare namespaces is to
 // be ignored if and only if it is processed stand-alone
 #undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "student.hpp"
-#include "boost.hpp"
+#include "students_t.hpp"
+#include "normal.hpp"
 
 namespace {
     // Anonymous namespace for internal functions
@@ -131,7 +132,7 @@ namespace {
  * Another idea for handling this case can be found in reference [8].
  */
 
-double studentT_CDF(double inT, double inNu) {
+double students_t_CDF(double inT, double inNu) {
     double&     t = inT;
     double      z,
                 t_by_sqrt_nu;
@@ -147,7 +148,7 @@ double studentT_CDF(double inT, double inNu) {
     else if (t == -std::numeric_limits<double>::infinity())
         return 0;
     else if (inNu >= 1000000)
-        return normalCDF(t);
+        return normal_CDF(t);
     else if (inNu >= 200)
         return studentT_cdf_approx(t, inNu);
     
@@ -218,7 +219,7 @@ double studentT_cdf_approx(double t, double nu)
     if (t < 0)
         z *= -1.;
     
-    return normalCDF(z);
+    return normal_CDF(z);
 }
 
 }
@@ -227,20 +228,109 @@ double studentT_cdf_approx(double t, double nu)
  * @brief Student-t cumulative distribution function: In-database interface
  */
 AnyType
-student_t_cdf::run(AnyType &args) {
+students_t_cdf::run(AnyType &args) {
     double t = args[0].getAs<double>();
     double nu = args[1].getAs<double>();
     
     /* We want to ensure nu > 0 */
-    if (nu <= 0.)
-        throw std::domain_error("Student-t distribution undefined for "
+    if (nu <= 0.) {
+        throw std::domain_error("Student's t distribution undefined for "
             "degree of freedom <= 0");
+	}
 
-    return studentT_CDF(t, nu);
+    return students_t_CDF(t, nu);
 }
 
-} // namespace prob
 
-} // namespace modules
+#define STUDENTS_T_DOMAIN_CHECK(df)\
+	do {\
+		if ( std::isnan(x) || std::isnan(df) ) {\
+			return std::numeric_limits<double>::quiet_NaN();\
+		}\
+		else if ( !(df > 0) ) {\
+			throw std::domain_error("Student's t distribution is undefined when df doesn't conform to (df > 0).");\
+		}\
+	} while(0)
 
-} // namespace regress
+
+inline double 
+students_t_pdf_imp(double x, double df) {
+	STUDENTS_T_DOMAIN_CHECK(df);
+	
+	
+	if ( std::isinf(x) ) {
+		return 0.0;
+	}
+	return boost::math::pdf(boost::math::students_t_distribution<>(df), x); 
+}
+
+/**
+ * @brief Student's t distribution probability density function: In-database interface
+ */
+AnyType
+students_t_pdf::run(AnyType &args) {
+	double x = args[0].getAs<double>();
+	double df = args[1].getAs<double>();
+
+	return students_t_pdf_imp(x, df);
+}
+
+double
+students_t_PDF(double x, double df) {
+	double res = 0;
+
+	try {
+		res = students_t_pdf_imp(x, df);
+	}
+	catch (const std::domain_error & de) {
+		res = std::numeric_limits<double>::quiet_NaN();
+	}
+
+	return res;
+}
+
+
+
+inline double 
+students_t_quantile_imp(double x, double df) {
+	STUDENTS_T_DOMAIN_CHECK(df);
+	
+	if ( x < 0 || x > 1 ) {
+		throw std::domain_error("CDF of Student's t distribution must be in range [0, 1].");
+	}
+	else if ( 0 == x ) {
+		return -std::numeric_limits<double>::infinity();
+	}
+	else if ( 1 == x ) {
+		return std::numeric_limits<double>::infinity();
+	}
+	return boost::math::quantile(boost::math::students_t_distribution<>(df), x); 
+}
+
+/**
+ * @brief Student's t distribution quantile function: In-database interface
+ */
+AnyType
+students_t_quantile::run(AnyType &args) {
+	double x = args[0].getAs<double>();
+	double df = args[1].getAs<double>();
+
+	return students_t_quantile_imp(x, df);
+}
+
+double
+students_t_QUANTILE(double x, double df) {
+	double res = 0;
+
+	try {
+		res = students_t_quantile_imp(x, df);
+	}
+	catch (const std::domain_error & de) {
+		res = std::numeric_limits<double>::quiet_NaN();
+	}
+
+	return res;
+}
+}
+}
+}
