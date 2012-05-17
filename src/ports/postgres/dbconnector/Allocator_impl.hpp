@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_ALLOCATOR_IMPL_HPP
+#define MADLIB_POSTGRES_ALLOCATOR_IMPL_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Construct an empty postgres array of the given size.
@@ -21,8 +27,8 @@
 template <typename T, dbal::MemoryContext MC, dbal::ZeroMemory ZM,
     dbal::OnMemoryAllocationFailure F>
 inline
-AbstractionLayer::MutableArrayHandle<T>
-AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {    
+MutableArrayHandle<T>
+Allocator::allocateArray(size_t inNumElements) const {    
     /*
      * Check that the size will not exceed addressable memory. Therefore, the
      * following precondition has to hold:
@@ -55,8 +61,8 @@ AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
 
 template <typename T>
 inline
-AbstractionLayer::MutableArrayHandle<T>
-AbstractionLayer::Allocator::allocateArray(size_t inNumElements) const {
+MutableArrayHandle<T>
+Allocator::allocateArray(size_t inNumElements) const {
     return allocateArray<T, dbal::FunctionContext, dbal::DoZero,    
         dbal::ThrowBadAlloc>(inNumElements);
 }
@@ -72,13 +78,13 @@ template <dbal::MemoryContext MC, dbal::ZeroMemory ZM,
     dbal::OnMemoryAllocationFailure F>
 inline
 void *
-AbstractionLayer::Allocator::allocate(size_t inSize) const {
+Allocator::allocate(size_t inSize) const {
     return internalAllocate<MC, ZM, F, NewAllocation>(NULL, inSize);
 }
 
 /**
  * @brief Change the size of a block of memory previously allocated with
- *     AbstractionLayer::Allocator allocation functions
+ *     Allocator allocation functions
  *
  * There is no guerantee that the returned pointer is the same as \c inPtr.
  *
@@ -94,14 +100,14 @@ template <dbal::MemoryContext MC, dbal::ZeroMemory ZM,
     dbal::OnMemoryAllocationFailure F>
 inline
 void *
-AbstractionLayer::Allocator::reallocate(void *inPtr, const size_t inSize) const {
+Allocator::reallocate(void *inPtr, const size_t inSize) const {
     return internalAllocate<MC, ZM, F, Reallocation>(inPtr, inSize);
 }
 
 
 /**
  * @brief Free a block of memory previously allocated with
- *     AbstractionLayer::Allocator allocation functions
+ *     Allocator allocation functions
  *
  * @internal 
  *     This function uses the PostgreSQL pfree() macro. This calls
@@ -122,7 +128,7 @@ AbstractionLayer::Allocator::reallocate(void *inPtr, const size_t inSize) const 
 template <dbal::MemoryContext MC>
 inline
 void
-AbstractionLayer::Allocator::free(void *inPtr) const {
+Allocator::free(void *inPtr) const {
     if (inPtr == NULL)
         return;
         
@@ -156,7 +162,7 @@ AbstractionLayer::Allocator::free(void *inPtr) const {
 template <dbal::ZeroMemory ZM>
 inline
 void *
-AbstractionLayer::Allocator::internalPalloc(size_t inSize) const {
+Allocator::internalPalloc(size_t inSize) const {
 #if MAXIMUM_ALIGNOF >= 16
     return (ZM == dbal::DoZero) ? palloc0(inSize) : palloc(inSize);
 #else
@@ -188,7 +194,7 @@ AbstractionLayer::Allocator::internalPalloc(size_t inSize) const {
 template <dbal::ZeroMemory ZM>
 inline
 void *
-AbstractionLayer::Allocator::internalRePalloc(void *inPtr, size_t inSize) const {
+Allocator::internalRePalloc(void *inPtr, size_t inSize) const {
 #if MAXIMUM_ALIGNOF >= 16
     return repalloc(inPtr, inSize);
 #else
@@ -218,7 +224,7 @@ AbstractionLayer::Allocator::internalRePalloc(void *inPtr, size_t inSize) const 
  */
 inline
 void *
-AbstractionLayer::Allocator::makeAligned(void *inPtr) const {
+Allocator::makeAligned(void *inPtr) const {
     if (inPtr == NULL) return NULL;
 
     /*
@@ -243,7 +249,7 @@ AbstractionLayer::Allocator::makeAligned(void *inPtr) const {
  */
 inline
 void *
-AbstractionLayer::Allocator::unaligned(void *inPtr) const {
+Allocator::unaligned(void *inPtr) const {
 #if MAXIMUM_ALIGNOF >= 16
     return inPtr;
 #else
@@ -293,10 +299,10 @@ template <
     dbal::MemoryContext MC,
     dbal::ZeroMemory ZM,
     dbal::OnMemoryAllocationFailure F,
-    AbstractionLayer::Allocator::ReallocateMemory R>
+    Allocator::ReallocateMemory R>
 inline
 void *
-AbstractionLayer::Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
+Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
     // Avoid warning that inPtr is not used if R == NewAllocation
     (void) inPtr;
     
@@ -371,15 +377,31 @@ AbstractionLayer::Allocator::internalAllocate(void *inPtr, const size_t inSize) 
         } PG_END_TRY();
     }
     
-    if (errorOccurred || !ptr)
-        // We do not want to interleave PG exceptions and C++ exceptions.
-        throw std::bad_alloc();
-
     if (F == dbal::ReturnNULL) {
         RESUME_INTERRUPTS();
     }
    
+    if (errorOccurred || !ptr)
+        // We do not want to interleave PG exceptions and C++ exceptions.
+        throw std::bad_alloc();
+
     return ptr;
 }
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+/**
+ * @brief Get the default allocator
+ */
+inline
+Allocator&
+defaultAllocator() {
+    static Allocator sDefaultAllocator(NULL);
+    return sDefaultAllocator;
+}
+
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_ALLOCATOR_IMPL_HPP)

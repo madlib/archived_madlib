@@ -4,22 +4,30 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_UDF_PROTO_HPP
+#define MADLIB_POSTGRES_UDF_PROTO_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief User-defined function
  */
-class UDF
-  : public AbstractionLayer,
-    public AbstractionLayer::Allocator {
-
+class UDF : public Allocator {
 public:
-    UDF(FunctionCallInfo inFCInfo) : AbstractionLayer::Allocator(inFCInfo),
+    typedef AnyType (*Pointer)(FunctionCallInfo, AnyType&);
+
+    UDF(FunctionCallInfo inFCInfo) : Allocator(inFCInfo),
         dbout(&mOutStreamBuffer), dberr(&mErrStreamBuffer) { }
 
     template <class Function>
-    static inline Datum call(FunctionCallInfo fcinfo);
+    static Datum call(FunctionCallInfo fcinfo);
+
+    template <class Function>
+    static AnyType invoke(FunctionCallInfo fcinfo, AnyType& args);
 
 private:
     OutputStreamBuffer<INFO> mOutStreamBuffer;
@@ -37,4 +45,10 @@ protected:
     std::ostream dberr;
 };
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_UDF_PROTO_HPP)

@@ -4,19 +4,26 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#if !defined(_DOXYGEN_IGNORE_HEADER_FILE)
-
 /**
  * @brief Student-t cumulative distribution function
  */
-DECLARE_UDF(student_t_cdf)
+DECLARE_UDF(prob, student_t_cdf)
+
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
+namespace madlib {
+
+namespace modules {
+
+namespace prob {
+
 double studentT_CDF(double t, double nu);
 
-#endif // !defined(DECLARE_LIBRARY_EXPORTS)
+} // namespace prob
 
-#endif // workaround for Doxygen
+} // namespace modules
+
+} // namespace madlib
+
+#endif // !defined(DECLARE_LIBRARY_EXPORTS)

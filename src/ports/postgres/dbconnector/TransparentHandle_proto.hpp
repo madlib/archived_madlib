@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_TRANSPARENTHANDLE_PROTO_HPP
+#define MADLIB_POSTGRES_TRANSPARENTHANDLE_PROTO_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Handle without any meta data (essentially, a constant pointer)
@@ -14,7 +20,7 @@
  * need a type that conforms to the handle policy, but no meta data is required.
  */
 template <typename T>
-class AbstractionLayer::TransparentHandle {
+class TransparentHandle {
 public:
     enum { isMutable = false };
 
@@ -31,8 +37,8 @@ protected:
  * @brief Mutable handle without any meta data (essentially, a pointer)
  */
 template <typename T>
-class AbstractionLayer::MutableTransparentHandle
-  : public AbstractionLayer::TransparentHandle<T> {
+class MutableTransparentHandle
+  : public TransparentHandle<T> {
 
     typedef TransparentHandle<T> Base;
     
@@ -50,4 +56,10 @@ protected:
     using Base::mPtr;
 };
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_TRANSPARENTHANDLE_PROTO_HPP)

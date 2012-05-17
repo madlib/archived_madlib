@@ -4,15 +4,30 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by EigenLinAlgTypes.hpp
-#ifdef MADLIB_EIGEN_LINALGTYPES_HPP
+#ifndef MADLIB_DBAL_EIGEN_HANDLEMAP_PROTO_HPP
+#define MADLIB_DBAL_EIGEN_HANDLEMAP_PROTO_HPP
+
+namespace madlib {
+
+namespace dbal {
+
+namespace eigen_integration {
+
+// FIXME: This seems excessively complicated. It should be simpler.
+// Template specification has to be done by dbconnector
+template <
+    class EigenType,
+    bool EigenTypeIsConst = boost::is_const<EigenType>::value
+> struct DefaultHandle;
 
 /**
  * @brief Wrapper class for linear-algebra types based on Eigen
  */
-template <int MapOptions>
-template <class EigenType, class Handle>
-class EigenTypes<MapOptions>::HandleMap
+template <
+    class EigenType,
+    class Handle = typename DefaultHandle<EigenType>::type,
+    int MapOptions = Eigen::Unaligned
+> class HandleMap
   : public Eigen::Map<EigenType, MapOptions> {
 public:
     typedef Eigen::Map<EigenType, MapOptions> Base;
@@ -48,7 +63,12 @@ public:
      */
     HandleMap(const Handle &inHandle, Index inNumElem)
       : Base(const_cast<Scalar*>(inHandle.ptr()), inNumElem),
-        mMemoryHandle(inHandle) { }
+        mMemoryHandle(inHandle) {
+    
+//        madlib_assert(inHandle.size() >= inNumElem * sizeof(Scalar),
+//            std::runtime_error("Expected HandleMap to be larger than it "
+//                "actually is."));
+    }
     
     /**
      * @brief Initialize HandleMap backed by the given handle
@@ -67,7 +87,6 @@ public:
       : Base(const_cast<Scalar*>(inHandle.ptr()), inNumRows, inNumCols),
         mMemoryHandle(inHandle) { }
     
-    operator AbstractionLayer::AnyType() const;
     HandleMap& operator=(const HandleMap& other);
     HandleMap& rebind(const Handle &inHandle);
     HandleMap& rebind(const Handle &inHandle, Index inSize);
@@ -83,4 +102,10 @@ private:
         "non-const matrix cannot be backed by immutable handle");
 };
 
-#endif // MADLIB_EIGEN_LINALGTYPES_HPP (workaround for Doxygen)
+} // namespace eigen_integration
+
+} // namespace dbal
+
+} // namespace madlib
+
+#endif // defined(MADLIB_DBAL_EIGEN_HANDLEMAP_PROTO_HPP)

@@ -4,8 +4,8 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by EigenLinAlgTypes.hpp
-#ifdef MADLIB_EIGEN_LINALGTYPES_HPP
+// Workaround for Doxygen: Ignore if not included by EigenIntegration.hpp
+#ifdef MADLIB_DBAL_EIGEN_INTEGRATION_HPP
 
 inline bool is_finite() const {
     for (Index j = 0; j < size(); ++j)
@@ -14,4 +14,4 @@ inline bool is_finite() const {
     return true;
 }
 
-#endif // MADLIB_EIGEN_LINALGTYPES_HPP (workaround for Doxygen)
+#endif // MADLIB_DBAL_EIGEN_INTEGRATION_HPP (workaround for Doxygen)

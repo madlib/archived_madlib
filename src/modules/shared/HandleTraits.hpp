@@ -24,17 +24,14 @@ namespace modules {
  *
  * @see For an example usage, see linear.cpp.
  */
-template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
+template <class Handle>
 struct HandleTraits;
 
-template <class LinAlgTypes>
-struct HandleTraits<AbstractionLayer::ArrayHandle<double>, LinAlgTypes> {
-    typedef typename LinAlgTypes::ColumnVector ColumnVector;
-    typedef typename LinAlgTypes::Matrix Matrix;
+template <>
+struct HandleTraits<ArrayHandle<double> > {
+    typedef dbal::eigen_integration::ColumnVector ColumnVector;
+    typedef dbal::eigen_integration::Matrix Matrix;
 
-    typedef AbstractionLayer::TransparentHandle<double> TransparentHandle;
-    typedef typename LinAlgTypes::template HandleMap<const ColumnVector>
-        ColumnVectorArrayHandleMap;
     typedef utils::Reference<double, uint64_t> ReferenceToUInt64;
     typedef utils::Reference<double, int64_t> ReferenceToInt64;
     typedef utils::Reference<double, uint32_t> ReferenceToUInt32;
@@ -42,21 +39,18 @@ struct HandleTraits<AbstractionLayer::ArrayHandle<double>, LinAlgTypes> {
     typedef utils::Reference<double, bool> ReferenceToBool;
     typedef utils::Reference<double> ReferenceToDouble;
     typedef const double* DoublePtr;
-    typedef typename LinAlgTypes::template HandleMap<
-        const ColumnVector, TransparentHandle> ColumnVectorTransparentHandleMap;
-    typedef typename LinAlgTypes::template HandleMap<
-        const Matrix, TransparentHandle> MatrixTransparentHandleMap;
+    typedef dbal::eigen_integration::HandleMap<
+        const ColumnVector, TransparentHandle<double> >
+        ColumnVectorTransparentHandleMap;
+    typedef dbal::eigen_integration::HandleMap<const Matrix,
+        TransparentHandle<double> > MatrixTransparentHandleMap;
 };
 
-template <class LinAlgTypes>
-struct HandleTraits<AbstractionLayer::MutableArrayHandle<double>, LinAlgTypes> {
-    typedef typename LinAlgTypes::ColumnVector ColumnVector;
-    typedef typename LinAlgTypes::Matrix Matrix;
+template <>
+struct HandleTraits<MutableArrayHandle<double> > {
+    typedef dbal::eigen_integration::ColumnVector ColumnVector;
+    typedef dbal::eigen_integration::Matrix Matrix;
 
-    typedef AbstractionLayer::MutableTransparentHandle<double>
-        TransparentHandle;
-    typedef typename LinAlgTypes::template HandleMap<ColumnVector>
-        ColumnVectorArrayHandleMap;
     typedef utils::MutableReference<double, uint64_t> ReferenceToUInt64;
     typedef utils::MutableReference<double, int64_t> ReferenceToInt64;
     typedef utils::MutableReference<double, uint32_t> ReferenceToUInt32;
@@ -64,10 +58,10 @@ struct HandleTraits<AbstractionLayer::MutableArrayHandle<double>, LinAlgTypes> {
     typedef utils::MutableReference<double, bool> ReferenceToBool;
     typedef utils::MutableReference<double> ReferenceToDouble;
     typedef double* DoublePtr;
-    typedef typename LinAlgTypes::template HandleMap<
-        ColumnVector, TransparentHandle> ColumnVectorTransparentHandleMap;
-    typedef typename LinAlgTypes::template HandleMap<
-        Matrix, TransparentHandle> MatrixTransparentHandleMap;
+    typedef dbal::eigen_integration::HandleMap<ColumnVector,
+        MutableTransparentHandle<double> > ColumnVectorTransparentHandleMap;
+    typedef dbal::eigen_integration::HandleMap<Matrix,
+        MutableTransparentHandle<double> > MatrixTransparentHandleMap;
 };
 
 } // namespace modules

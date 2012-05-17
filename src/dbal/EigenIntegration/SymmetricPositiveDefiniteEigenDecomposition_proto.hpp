@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by EigenLinAlgTypes.hpp
-#ifdef MADLIB_EIGEN_LINALGTYPES_HPP
+#ifndef MADLIB_DBAL_EIGEN_INTEGRATION_SPDEIGENDECOMPOSITION_PROTO_HPP
+#define MADLIB_DBAL_EIGEN_INTEGRATION_SPDEIGENDECOMPOSITION_PROTO_HPP
+
+namespace madlib {
+
+namespace dbal {
+
+namespace eigen_integration {
 
 /**
  * @brief Computes eigenvalues, eigenvectors, and pseudo-inverse of
@@ -16,9 +22,8 @@
  * computes the eigenvalues, the eigenvectors, and the Moore-Penrose
  * pseudo-inverse of a symmetric positive semi-definite matrix.
  */
-template <int MapOptions>
 template <class MatrixType>
-class EigenTypes<MapOptions>::SymmetricPositiveDefiniteEigenDecomposition
+class SymmetricPositiveDefiniteEigenDecomposition
   : public Eigen::SelfAdjointEigenSolver<MatrixType> {
   
     typedef Eigen::SelfAdjointEigenSolver<MatrixType> Base;
@@ -42,4 +47,10 @@ protected:
     MatrixType mPinv;
 };
 
-#endif // MADLIB_EIGEN_LINALGTYPES_HPP (workaround for Doxygen)
+} // namespace eigen_integration
+
+} // namespace dbal
+
+} // namespace madlib
+
+#endif // defined(MADLIB_DBAL_EIGEN_INTEGRATION_SPDEIGENDECOMPOSITION_PROTO_HPP)

@@ -14,6 +14,8 @@
 // We use string concatenation with the + operator
 #include <string>
 
+#include "mann_whitney_test.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -23,11 +25,6 @@ using prob::normalCDF;
 
 namespace stats {
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "mann_whitney_test.hpp"
-
 /**
  * @brief Transition state for Mann-Whitney-Test functions
  *
@@ -36,7 +33,7 @@ namespace stats {
  * perform bounds checking.
  */
 template <class Handle>
-class MWTestTransitionState : public AbstractionLayer {
+class MWTestTransitionState {
 public:
     MWTestTransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()),
@@ -94,7 +91,7 @@ AnyType
 mw_test_final::run(AnyType &args) {
     MWTestTransitionState<ArrayHandle<double> > state = args[0];
 
-    ColumnVector2 U;
+    Eigen::Vector2d U;
     double numProd = state.num.prod();
     
     U(0) = state.rankSum(1) - state.num(1) * (state.num(1) + 1.) / 2.;

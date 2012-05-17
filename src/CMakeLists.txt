@@ -159,7 +159,7 @@ ExternalProject_Add(EP_eigen
     BINARY_DIR ${MAD_THIRD_PARTY}/src/EP_eigen
 )
 
-include_directories(${MAD_THIRD_PARTY}/src/EP_eigen)
+include_directories(SYSTEM ${MAD_THIRD_PARTY}/src/EP_eigen)
 
 
 # -- Macros to be used by ports ------------------------------------------------

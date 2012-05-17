@@ -13,6 +13,8 @@
 // We use string concatenation with the + operator
 #include <string>
 
+#include "chi_squared_test.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -22,11 +24,6 @@ using prob::chiSquaredCDF;
 
 namespace stats {
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "chi_squared_test.hpp"
-
 /**
  * @brief Transition state for chi-squared functions
  *
@@ -35,7 +32,7 @@ namespace stats {
  * perform bounds checking.
  */
 template <class Handle>
-class Chi2TestTransitionState : public AbstractionLayer {
+class Chi2TestTransitionState {
 public:
     Chi2TestTransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()),

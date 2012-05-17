@@ -14,6 +14,8 @@
 // We use string concatenation with the + operator
 #include <string>
 
+#include "wilcoxon_signed_rank_test.hpp"
+
 namespace madlib {
 
 namespace modules {
@@ -23,11 +25,6 @@ using prob::normalCDF;
 
 namespace stats {
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "wilcoxon_signed_rank_test.hpp"
-
 /**
  * @brief Transition state for Wilcoxon signed-rank functions
  *
@@ -35,7 +32,7 @@ namespace stats {
  * database with length 9, and all elemenets are 0.
  */
 template <class Handle>
-class WSRTestTransitionState : public AbstractionLayer {
+class WSRTestTransitionState {
 public:
     WSRTestTransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()),
