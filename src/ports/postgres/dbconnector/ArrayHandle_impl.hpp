@@ -37,6 +37,8 @@ template <typename T>
 inline 
 const T&
 AbstractionLayer::ArrayHandle<T>::operator[](size_t inIndex) const {
+    madlib_assert(inIndex < size(), std::runtime_error(
+        "Out-of-bounds array access detected."));
     return ptr()[inIndex];
 }
 

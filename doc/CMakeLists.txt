@@ -105,10 +105,22 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
     set(_DOXYGEN_UNNEEDED_WARNINGS_FILTER egrep -v
         "warning:.*\\(@param is not found in the argument list.*kwargs\\)\$|The following parameters.*kwargs\\) are not documented\\)|parameter 'kwargs'\$")
 
+    # Doxygen 1.7.5 does not accept absolute or relative paths for
+    # CITE_BIB_FILES (this is a bug). We therefore need to copy all bib files
+    # into "${CMAKE_BINARY_DIR}/doc/etc".
+    add_custom_command(
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${CMAKE_SOURCE_DIR}/doc/literature.bib"
+            "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
+        COMMENT "Copying bibliography into doxygen configuration directory."
+    )
+
     add_custom_target(doc
         COMMAND ${DOXYGEN_EXECUTABLE} user.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/etc"
         DEPENDS doxysql doxyBinFiles doxygen_css ${_MATHJAX_DEPENDENCY_USER}
+            "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
         COMMENT "Generating user-level documentation..."
         VERBATIM
     )
@@ -117,6 +129,7 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
         COMMAND ${DOXYGEN_EXECUTABLE} developer.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/etc"
         DEPENDS doxysql doxyBinFiles doxygen_css update_mathjax
+            "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
         COMMENT "Generating developer documentation..."
         VERBATIM
     )

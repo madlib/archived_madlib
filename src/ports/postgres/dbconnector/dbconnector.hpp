@@ -17,6 +17,7 @@
 #include <boost/type_traits/is_const.hpp>
 #include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/logic/tribool.hpp>
+#include <boost/utility/enable_if.hpp>
 #include <limits>
 #include <stdexcept>
 #include <vector>
