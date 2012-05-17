@@ -68,7 +68,10 @@ MADLIB_WRAP_PG_FUNC(
     void*, hash_search, (HTAB* hashp, const void* keyPtr, HASHACTION action,
         bool* foundPtr),
     (hashp, keyPtr, action, foundPtr))
-    
+
+// Calls to SearchSysCache and related functions have been wrapped using macros
+// with commit e26c539e by Robert Haas <rhaas@postgresql.org>
+// on Sun, 14 Feb 2010 18:42:19 UTC. First release: PG9.0.
 MADLIB_WRAP_PG_FUNC(
     HeapTuple, SearchSysCache1, (int cacheId, Datum key1), (cacheId, key1))
 
@@ -94,6 +97,9 @@ madlib_InitFunctionCallInfoData(FunctionCallInfoData& fcinfo, FmgrInfo* flinfo,
     short nargs, Oid fncollation, fmNodePtr context, fmNodePtr resultinfo) {
 
 #if PG_VERSION_NUM >= 90100
+    // Collation support has been added to PostgreSQL with commit
+    // d64713df by Tom Lane <tgl@sss.pgh.pa.us>
+    // on Tue Apr 12 2011 23:19:24 UTC. First release: PG9.1.
     InitFunctionCallInfoData(fcinfo, flinfo, nargs, fncollation, context,
         resultinfo);
 #else

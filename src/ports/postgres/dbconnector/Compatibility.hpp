@@ -20,6 +20,17 @@ namespace {
     #define FLOAT8ARRAYOID 1022
 #endif
 
+#ifndef PG_GET_COLLATION
+// See madlib_InitFunctionCallInfoData()
+#define PG_GET_COLLATION()	InvalidOid
+#endif
+
+#ifndef SearchSysCache1
+// See madlib_SearchSysCache1()
+#define SearchSysCache1(cacheId, key1) \
+	SearchSysCache(cacheId, key1, 0, 0, 0)
+#endif
+
 /*
  * In commit 2d4db3675fa7a2f4831b755bc98242421901042f,
  * by Tom Lane <tgl@sss.pgh.pa.us> Wed, 6 Jun 2007 23:00:50 +0000,

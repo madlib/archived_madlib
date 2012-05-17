@@ -21,6 +21,12 @@ namespace {
 #define PG_GET_COLLATION()	InvalidOid
 #endif
 
+#ifndef SearchSysCache1
+// See madlib_SearchSysCache1()
+#define SearchSysCache1(cacheId, key1) \
+	SearchSysCache(cacheId, key1, 0, 0, 0)
+#endif
+
 /**
  * The following has existed in PostgresSQL since commit ID
  * d5768dce10576c2fb1254c03fb29475d4fac6bb4, by
