@@ -101,6 +101,10 @@ public:
         return *this;
     }
     
+    operator T&() {
+        return *mPtr;
+    }
+    
 protected:
     using Base::mPtr;
 };

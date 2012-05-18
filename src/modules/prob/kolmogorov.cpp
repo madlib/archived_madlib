@@ -12,16 +12,13 @@
 
 #include <dbconnector/dbconnector.hpp>
 
+#include "kolmogorov.hpp"
+
 namespace madlib {
 
 namespace modules {
 
 namespace prob {
-
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "kolmogorov.hpp"
 
 // CERN ROOT type definitions in: core/base/inc/Rtypes.h
 typedef int32_t Int_t;

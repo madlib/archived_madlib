@@ -10,7 +10,12 @@
 #include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/prob.hpp>
 
+#include "linear.hpp"
+
 namespace madlib {
+
+// Use Eigen
+using namespace dbal::eigen_integration;
 
 namespace modules {
 
@@ -18,11 +23,6 @@ namespace modules {
 using prob::studentT_CDF;
 
 namespace regress {
-
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "linear.hpp"
 
 /**
  * @brief Transition state for linear-regression functions
@@ -35,11 +35,11 @@ namespace regress {
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 5, and all elemenets are 0.
  */
-template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
-class LinRegrTransitionState : public AbstractionLayer {
+template <class Handle>
+class LinRegrTransitionState {
     // By §14.5.3/9: "Friend declarations shall not declare partial
     // specializations." We do access protected members in operator+=().
-    template <class OtherHandle, class OtherLinAlgTypes>
+    template <class OtherHandle>
     friend class LinRegrTransitionState;
 
 public:
@@ -80,7 +80,7 @@ public:
      */
     template <class OtherHandle>
     LinRegrTransitionState &operator+=(
-        const LinRegrTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        const LinRegrTransitionState<OtherHandle> &inOtherState) {
         
         if (mStorage.size() != inOtherState.mStorage.size())
             throw std::logic_error("Internal error: Incompatible transition states");
@@ -127,12 +127,12 @@ private:
     Handle mStorage;
 
 public:
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble y_sum;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble y_square_sum;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap X_transp_Y;
-    typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_X;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToDouble y_sum;
+    typename HandleTraits<Handle>::ReferenceToDouble y_square_sum;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap X_transp_Y;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_X;
 };
 
 

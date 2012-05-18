@@ -4,34 +4,24 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by EigenLinAlgTypes.hpp
-#ifdef MADLIB_EIGEN_LINALGTYPES_HPP
+#ifndef MADLIB_DBAL_EIGEN_HANDLEMAP_IMPL_HPP
+#define MADLIB_DBAL_EIGEN_HANDLEMAP_IMPL_HPP
 
-/**
- * @brief Conversion operator for AnyType
- *
- * A matrix or vector is just an array to the backend. We use the usual
- * conversion operations for arrays.
- */
-template <int MapOptions>
-template <class EigenType, class Handle>
-inline
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::
-    operator AbstractionLayer::AnyType() const {
+namespace madlib {
 
-    return mMemoryHandle;
-}
+namespace dbal {
+
+namespace eigen_integration {
 
 /**
  * @brief Assignment operator
  *
  * Handle in the same way as assignments of any other matrix object.
  */
-template <int MapOptions>
-template <class EigenType, class Handle>
+template <class EigenType, class Handle, int MapOptions>
 inline
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>&
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::operator=(
+HandleMap<EigenType, Handle, MapOptions>&
+HandleMap<EigenType, Handle, MapOptions>::operator=(
     const HandleMap& other) {
 
     Base::operator=(other);
@@ -44,11 +34,10 @@ EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::operator=(
  * This rebind method requires that Handle has a size() method, which is
  * called to determine the length of the vector.
  */
-template <int MapOptions>
-template <class EigenType, class Handle>
+template <class EigenType, class Handle, int MapOptions>
 inline
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>&
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::rebind(
+HandleMap<EigenType, Handle, MapOptions>&
+HandleMap<EigenType, Handle, MapOptions>::rebind(
     const Handle &inHandle) {
 
     return rebind(inHandle, inHandle.size());
@@ -60,11 +49,10 @@ EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::rebind(
  * This ignores any size information the handle may have. This
  * rebind method can be used with any Handle.
  */
-template <int MapOptions>
-template <class EigenType, class Handle>
+template <class EigenType, class Handle, int MapOptions>
 inline
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>&
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::rebind(
+HandleMap<EigenType, Handle, MapOptions>&
+HandleMap<EigenType, Handle, MapOptions>::rebind(
     const Handle &inHandle, const Index inSize) {
     
     new (this) HandleMap(inHandle, inSize);
@@ -82,11 +70,10 @@ EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::rebind(
  *     Using the placement new syntax is endorsed by the Eigen developers
  *     http://eigen.tuxfamily.org/dox-devel/classEigen_1_1Map.html
  */
-template <int MapOptions>
-template <class EigenType, class Handle>
+template <class EigenType, class Handle, int MapOptions>
 inline
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>&
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::rebind(
+HandleMap<EigenType, Handle, MapOptions>&
+HandleMap<EigenType, Handle, MapOptions>::rebind(
     const Handle &inHandle, const Index inRows, const Index inCols) {
     
     new (this) HandleMap(inHandle, inRows, inCols);
@@ -97,12 +84,17 @@ EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::rebind(
 /**
  * @brief Return the Handle that backs this HandleMap.
  */
-template <int MapOptions>
-template <class EigenType, class Handle>
+template <class EigenType, class Handle, int MapOptions>
 inline
 const Handle&
-EigenTypes<MapOptions>::HandleMap<EigenType, Handle>::memoryHandle() const {
+HandleMap<EigenType, Handle, MapOptions>::memoryHandle() const {
     return mMemoryHandle;
 }
 
-#endif // MADLIB_EIGEN_LINALGTYPES_HPP (workaround for Doxygen)
+} // namespace eigen_integration
+
+} // namespace dbal
+
+} // namespace madlib
+
+#endif // defined(MADLIB_DBAL_EIGEN_HANDLEMAP_IMPL_HPP)

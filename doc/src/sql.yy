@@ -222,6 +222,7 @@
 %token	<str>	INTEGER_LITERAL
 %token  <str>   FLOAT_LITERAL
 %token	<str>	STRING_LITERAL
+%token  <str>   NULL_KEYWORD
 
 /* Special tokens, for extending SQL syntax in C commands */
 %token          BEGIN_SPECIAL
@@ -324,9 +325,9 @@ defaultArgument:
 ;
 
 aggArgument:
-	  type
-	| argname type {
-		asprintf(&($$), "%s %s", $2, $1);
+	  type optDefaultArgument
+	| argname type optDefaultArgument {
+		asprintf(&($$), "%s %s%s", $2, $1, $3);
 	}
 ;
 
@@ -443,6 +444,7 @@ expr:
     | FLOAT_LITERAL
 	| STRING_LITERAL
     | IDENTIFIER
+    | NULL_KEYWORD
 	/* FIXME: Support more or ignore completely */
 ;
 

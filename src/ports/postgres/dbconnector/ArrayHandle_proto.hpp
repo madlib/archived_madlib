@@ -4,11 +4,17 @@
  *
  *//* ----------------------------------------------------------------------- */
  
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_ARRAYHANDLE_PROTO_HPP
+#define MADLIB_POSTGRES_ARRAYHANDLE_PROTO_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 template <typename T>
-class AbstractionLayer::ArrayHandle {
+class ArrayHandle {
 public:
     enum { isMutable = false };
 
@@ -26,9 +32,7 @@ protected:
 
 
 template <typename T>
-class AbstractionLayer::MutableArrayHandle
-  : public AbstractionLayer::ArrayHandle<T> {
-
+class MutableArrayHandle : public ArrayHandle<T> {
     typedef ArrayHandle<T> Base;
     
 public:
@@ -45,4 +49,10 @@ public:
     T& operator[](size_t inIndex);
 };
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_ARRAYHANDLE_PROTO_HPP)

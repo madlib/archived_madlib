@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_TRANSPARENTHANDLE_IMPL_HPP
+#define MADLIB_POSTGRES_TRANSPARENTHANDLE_IMPL_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 /**
  * @brief Return the (constant) pointer of this handle
@@ -13,7 +19,7 @@
 template <typename T>
 inline
 const T*
-AbstractionLayer::TransparentHandle<T>::ptr() const {
+TransparentHandle<T>::ptr() const {
     return mPtr;
 }
 
@@ -23,8 +29,14 @@ AbstractionLayer::TransparentHandle<T>::ptr() const {
 template <typename T>
 inline
 T*
-AbstractionLayer::MutableTransparentHandle<T>::ptr() {
+MutableTransparentHandle<T>::ptr() {
     return mPtr;
 }
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_TRANSPARENTHANDLE_IMPL_HPP)

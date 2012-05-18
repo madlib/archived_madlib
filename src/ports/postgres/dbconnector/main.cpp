@@ -6,7 +6,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-#include "dbconnector.hpp"
+// We do not write #include "dbconnector.hpp" here because we want to rely on
+// the search paths, which might point to a port-specific dbconnector.hpp
+#include <dbconnector/dbconnector.hpp>
 
 extern "C" {
     PG_MODULE_MAGIC;

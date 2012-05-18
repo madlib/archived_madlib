@@ -4,8 +4,14 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by EigenLinAlgTypes.hpp
-#ifdef MADLIB_EIGEN_LINALGTYPES_HPP
+#ifndef MADLIB_DBAL_EIGEN_INTEGRATION_SPDEIGENDECOMPOSITION_IMPL_HPP
+#define MADLIB_DBAL_EIGEN_INTEGRATION_SPDEIGENDECOMPOSITION_IMPL_HPP
+
+namespace madlib {
+
+namespace dbal {
+
+namespace eigen_integration {
 
 /**
  * @brief Constructor that invokes the computation
@@ -18,11 +24,9 @@
  * @param inOptions A combination of DecompositionOptions
  * @param inExtras A combination of SPDDecompositionExtras
  */
-template <int MapOptions>
 template <class MatrixType>
 inline
-EigenTypes<MapOptions>
-    ::SymmetricPositiveDefiniteEigenDecomposition<MatrixType>
+SymmetricPositiveDefiniteEigenDecomposition<MatrixType>
     ::SymmetricPositiveDefiniteEigenDecomposition(
     const MatrixType &inMatrix, int inOptions, int inExtras)
   : Base(inMatrix, inOptions) {
@@ -38,12 +42,10 @@ EigenTypes<MapOptions>
  * is symmetric positive semi-definite, all eigenvalues are also singular
  * values. Moreover, all eigenvalues are non-negative.
  */
-template <int MapOptions>
 template <class MatrixType>
 inline
 double
-EigenTypes<MapOptions>
-    ::SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::conditionNo()
+SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::conditionNo()
     const {
 
     const RealVectorType& ev = eigenvalues();
@@ -68,14 +70,10 @@ EigenTypes<MapOptions>
  * The result of this function is undefined if computeExtras() has not been
  * called or the pseudo-inverse was not set to be computed.
  */
-template <int MapOptions>
 template <class MatrixType>
 inline
 const MatrixType&
-EigenTypes<MapOptions>
-    ::SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::pseudoInverse()
-    const {
-    
+SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::pseudoInverse() const {
     return mPinv;
 }
 
@@ -109,12 +107,10 @@ EigenTypes<MapOptions>
  * Only the <b>lower triangular part</b> of the input matrix
  * is referenced.
  */
-template <int MapOptions>
 template <class MatrixType>
 inline
 void
-EigenTypes<MapOptions>
-    ::SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::computeExtras(
+SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::computeExtras(
     const MatrixType &inMatrix, int inExtras) {
     
     if (inExtras & ComputePseudoInverse) {
@@ -151,4 +147,10 @@ EigenTypes<MapOptions>
     }            
 }
 
-#endif // MADLIB_EIGEN_LINALGTYPES_HPP (workaround for Doxygen)
+} // namespace eigen_integration
+
+} // namespace dbal
+
+} // namespace madlib
+
+#endif // defined(MADLIB_DBAL_EIGEN_INTEGRATION_SPDEIGENDECOMPOSITION_IMPL_HPP)

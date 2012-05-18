@@ -25,3 +25,4 @@
 
 #include <modules/prob/prob.hpp>
 #include <modules/regress/regress.hpp>
+#include <modules/stats/stats.hpp>
