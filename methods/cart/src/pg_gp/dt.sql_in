@@ -1282,6 +1282,8 @@ CREATE TYPE MADLIB_SCHEMA.__best_split_result AS
  * @param continue_gow        It specifies whether we should still grow the tree
  *                            on the selected branch.
  * @param output_table        It specifies the table used to store the chosen splits.
+ * @param h2hmv_routine_id    Specifies how to handle missing values. 
+ *							  1 ignore, 2 explicit.
  *                    
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
@@ -1291,7 +1293,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
     feature_table_name      TEXT, 
     sp_criterion            INT, 
     continue_gow            INT,
-    output_table            TEXT
+    output_table            TEXT,
+	h2hmv_routine_id        INT
     ) 
 RETURNS VOID AS $$
 DECLARE
@@ -1302,26 +1305,42 @@ DECLARE
     result_rec         RECORD;
     begin_func_exec    TIMESTAMP;
     best_answer        FLOAT8[];
+	stmt			   TEXT;
 BEGIN    
     begin_func_exec = clock_timestamp();
     
-    TRUNCATE node_size_aux;
+	IF (h2hmv_routine_id=1) THEN
+		-- For ignore, we need the true size of nodes to handle the missing values.
+    	TRUNCATE node_size_aux;
     
-    SELECT MADLIB_SCHEMA.__format
-        (
-        'INSERT INTO node_size_aux 
-        SELECT tid,nid, 
-             MAX(le) 
-        FROM %
-        WHERE fid IS NULL 
-        AND nid IS NOT NULL 
-        AND class IS NULL
-        GROUP BY tid,nid;',
-        table_name
-        )
-    INTO curstmt;
+    	SELECT MADLIB_SCHEMA.__format
+        	(
+        	'INSERT INTO node_size_aux 
+        	SELECT tid,nid, 
+             	MAX(le) 
+        	FROM %
+        	WHERE fid IS NULL 
+        	AND nid IS NOT NULL 
+			AND tid IS NOT NULL 
+        	AND class IS NULL
+        	GROUP BY tid,nid;',
+        	table_name
+        	)
+    	INTO curstmt;
     
-    EXECUTE curstmt;
+    	EXECUTE curstmt;
+
+		stmt = 'SELECT t1.*, t2.total_size FROM '||table_name||' t1, node_size_aux t2
+                WHERE t1.nid = t2.nid AND t1.tid=t2.tid AND 
+                        (t1.fid IS NOT NULL) AND (t1.tid IS NOT NULL) AND
+                        (t1.nid IS NOT NULL AND t2.nid IS NOT NULL)';
+	ELSE
+	    -- For explicit, the calculated node size from the aggregation is correct.
+		-- We can set NULL, which denotes we can safely use the counted value.
+		stmt = 'SELECT t1.*, null as total_size FROM '||table_name||' t1
+                WHERE (t1.fid IS NOT NULL) AND (t1.tid IS NOT NULL) AND 
+                        (t1.nid IS NOT NULL)';		
+	END IF;
 
     EXECUTE 'DROP TABLE IF EXISTS '||output_table;
     EXECUTE 'CREATE TEMP TABLE '||output_table||' 
@@ -1357,17 +1376,14 @@ m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
                         ORDER BY fval desc,class desc)
                     )::MADLIB_SCHEMA.__scv_aggr_result).*
             FROM (
-                SELECT t1.*, t2.total_size FROM % t1, node_size_aux t2
-                WHERE t1.nid = t2.nid AND t1.tid=t2.tid AND
-                        (t1.fid IS NOT NULL) 
-                        AND (t1.nid IS NOT NULL AND t2.nid IS NOT NULL)
+                %
                 ) y 
             GROUP BY tid, nid,fid,split_value 
             ) s1  
         GROUP BY s1.tid, s1.nid
         ORDER BY s1.tid, s1.nid;',
         MADLIB_SCHEMA.__to_char(sp_criterion),
-        table_name
+        stmt
         )
     INTO curstmt;   
 <<<, >>>
@@ -1392,22 +1408,20 @@ m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
                          ORDER BY fval desc,class desc)
                     )::MADLIB_SCHEMA.__scv_aggr_result).*
               FROM (
-                SELECT t1.*, t2.total_size FROM % t1, node_size_aux t2
-                WHERE t1.nid = t2.nid AND t1.tid=t2.tid AND 
-                        (t1.fid IS NOT NULL) AND 
-                        (t1.nid IS NOT NULL AND t2.nid IS NOT NULL)
+                %
                 ) y 
               ) k where row_num =1 
             ) s1    
         GROUP BY s1.tid, s1.nid
         ORDER BY s1.tid, s1.nid;',
         MADLIB_SCHEMA.__to_char(sp_criterion),
-        table_name
+        stmt
         )
     INTO curstmt;   
 <<<)
 m4_changequote(>>>`<<<, >>>'<<<)
     
+	RAISE INFO 'curstmt:%', curstmt;
     -- s1.info_impurity[1], s1.fid[2], s1.split_value[3], 
     -- s2.class_prob[4], s2.class_id[5], s1.total_size[6]
     FOR result_rec IN EXECUTE (curstmt) LOOP
@@ -2088,6 +2102,8 @@ CREATE TYPE MADLIB_SCHEMA.__train_result AS
  * @param sampling_needed             Whether enabling the sampling functionality.  
  * @param max_split_point             The upper limit of sampled split points for 
  *                                    continuous features.
+ * @param h2hmv_routine_id            Specifies how to handle missing values. 
+ *									  1 ignore, 2 explicit.
  * @param verbosity                   > 0 means this function runs in verbose mode. 
  *  
  * @return The record including training related information.
@@ -2112,6 +2128,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__train_tree
     node_split_threshold    FLOAT,
     sampling_needed         BOOLEAN,    
     max_split_point         INT,
+	h2hmv_routine_id	    INT,
     verbosity               INT
     ) 
 RETURNS RECORD AS $$
@@ -2323,7 +2340,8 @@ m4_changequote(>>>`<<<, >>>'<<<)
                training_table_meta,
                sp_crit,
                grow_tree,
-               'find_best_answer_table'
+               'find_best_answer_table',
+			   h2hmv_routine_id
                );
         grow_tree = grow_tree - 1;
         
