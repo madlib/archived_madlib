@@ -4,38 +4,50 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_ANYTYPE_IMPL_HPP
+#define MADLIB_POSTGRES_ANYTYPE_IMPL_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 inline
-AbstractionLayer::AnyType::AnyType(FunctionCallInfo inFnCallInfo)
+AnyType::AnyType(FunctionCallInfo inFnCallInfo)
   : mContent(FunctionComposite),
     mDatum(0),
     fcinfo(inFnCallInfo),
+    mSysInfo(SystemInformation::get(inFnCallInfo)),
     mTupleHeader(NULL),
     mTypeID(InvalidOid),
+    mTypeName(NULL),
     mIsMutable(false)
     { }
 
 inline    
-AbstractionLayer::AnyType::AnyType(HeapTupleHeader inTuple, Datum inDatum,
-    Oid inTypeID)
+AnyType::AnyType(SystemInformation* inSysInfo,
+    HeapTupleHeader inTuple, Datum inDatum, Oid inTypeID)
   : mContent(NativeComposite),
     mDatum(inDatum),
     fcinfo(NULL),
+    mSysInfo(inSysInfo),
     mTupleHeader(inTuple),
     mTypeID(inTypeID),
+    mTypeName(inSysInfo->typeInformation(inTypeID)->getName()),
     mIsMutable(false)
     { }
 
 inline
-AbstractionLayer::AnyType::AnyType(Datum inDatum, Oid inTypeID,
-    bool inIsMutable)
+AnyType::AnyType(SystemInformation* inSysInfo, Datum inDatum,
+    Oid inTypeID, bool inIsMutable)
   : mContent(Scalar),
     mDatum(inDatum),
     fcinfo(NULL),
+    mSysInfo(inSysInfo),
     mTupleHeader(NULL),
     mTypeID(inTypeID),
+    mTypeName(inSysInfo->typeInformation(inTypeID)->getName()),
     mIsMutable(inIsMutable)
     { }
 
@@ -52,12 +64,14 @@ AbstractionLayer::AnyType::AnyType(Datum inDatum, Oid inTypeID,
  */
 template <typename T>
 inline
-AbstractionLayer::AnyType::AnyType(const T &inValue)
+AnyType::AnyType(const T& inValue)
   : mContent(Scalar),
     mDatum(TypeTraits<T>::toDatum(inValue)),
     fcinfo(NULL),
+    mSysInfo(TypeTraits<T>::toSysInfo(inValue)),
     mTupleHeader(NULL),
     mTypeID(TypeTraits<T>::oid),
+    mTypeName(TypeTraits<T>::typeName()),
     mIsMutable(false)
     { }
 
@@ -69,12 +83,14 @@ AbstractionLayer::AnyType::AnyType(const T &inValue)
  * values to the composite object.
  */
 inline
-AbstractionLayer::AnyType::AnyType()
+AnyType::AnyType()
   : mContent(Null),
     mDatum(0),
     fcinfo(NULL),
+    mSysInfo(NULL),
     mTupleHeader(NULL),
     mTypeID(InvalidOid),
+    mTypeName(NULL),
     mIsMutable(false)
     { }
 
@@ -83,12 +99,13 @@ AbstractionLayer::AnyType::AnyType()
  */
 inline
 void
-AbstractionLayer::AnyType::consistencyCheck() const {
+AnyType::consistencyCheck() const {
     const char *kMsg("Inconsistency detected while converting between "
         "PostgreSQL and C++ types.");
 
     madlib_assert(mContent != Null || (mDatum == 0 && fcinfo == NULL &&
-        mTupleHeader == NULL && mChildren.empty()),
+        mSysInfo == NULL && mTupleHeader == NULL && mTypeID == InvalidOid &&
+        mTypeName == NULL && mChildren.empty()),
         std::logic_error(kMsg));
     madlib_assert(mContent != FunctionComposite || fcinfo != NULL,
         std::logic_error(kMsg));
@@ -96,6 +113,11 @@ AbstractionLayer::AnyType::consistencyCheck() const {
         std::logic_error(kMsg));
     madlib_assert(mContent != ReturnComposite || (!mChildren.empty() &&
         mTypeID == InvalidOid),
+        std::logic_error(kMsg));
+    madlib_assert(mContent == ReturnComposite || mChildren.empty(),
+        std::logic_error(kMsg));
+    madlib_assert((mContent != FunctionComposite && mContent != NativeComposite)
+        || mSysInfo != NULL,
         std::logic_error(kMsg));
 }
 
@@ -105,26 +127,48 @@ AbstractionLayer::AnyType::consistencyCheck() const {
  * @tparam T Type to convert object to
  */
 template <typename T>
-T AbstractionLayer::AnyType::getAs() const {
+inline
+T
+AnyType::getAs() const {
     consistencyCheck();
     
     if (isNull())
-        throw std::invalid_argument("Invalid type conversion requested. Got "
-            "Null from backend.");
+        throw std::invalid_argument("Invalid type conversion. "
+            "Null where not expected.");
     
     if (isComposite())
-        throw std::invalid_argument("Invalid type conversion requested. "
-            "Expected simple or array type but got composite type from "
-            "backend.");
+        throw std::invalid_argument("Invalid type conversion. "
+            "Composite type where not expected.");
 
-    if (mTypeID != TypeTraits<T>::oid)
-        throw std::invalid_argument(
-            "Invalid type conversion requested. PostgreSQL type does not match "
-                "C++ type.");
+    // Verify type OID
+    if (TypeTraits<T>::oid != InvalidOid && mTypeID != TypeTraits<T>::oid) {
+        std::stringstream errorMsg;
+        errorMsg << "Invalid type conversion. Expected type ID "
+            << TypeTraits<T>::oid;
+        if (mSysInfo)    
+            errorMsg << " ('"
+                << mSysInfo->typeInformation(TypeTraits<T>::oid)->getName()
+                << "')";
+        errorMsg << " but got " << mTypeID;
+        if (mSysInfo)
+            errorMsg << " ('"
+                << mSysInfo->typeInformation(mTypeID)->getName() << "')";
+        errorMsg << '.';
+        throw std::invalid_argument(errorMsg.str());
+    }
     
+    // Verify type name
+    if (TypeTraits<T>::typeName() &&
+        std::strncmp(mTypeName, TypeTraits<T>::typeName(), NAMEDATALEN)) {
+
+        std::stringstream errorMsg;
+        errorMsg << "Invalid type conversion. Expected type '"
+            << TypeTraits<T>::typeName() << "' but backend type name is '"
+            << mTypeName << "' (ID " << mTypeID << ").";
+    }
+
     bool needMutableClone = (TypeTraits<T>::isMutable && !mIsMutable);
-    
-    return TypeTraits<T>::toCXXType(mDatum, needMutableClone);
+    return TypeTraits<T>::toCXXType(mDatum, needMutableClone, mSysInfo);
 }
 
 /**
@@ -132,7 +176,7 @@ T AbstractionLayer::AnyType::getAs() const {
  */
 inline
 bool
-AbstractionLayer::AnyType::isNull() const {
+AnyType::isNull() const {
     return mContent == Null;
 }
 
@@ -142,178 +186,30 @@ AbstractionLayer::AnyType::isNull() const {
  */
 inline
 bool
-AbstractionLayer::AnyType::isComposite() const {
+AnyType::isComposite() const {
     return mContent == FunctionComposite || mContent == NativeComposite ||
         mContent == ReturnComposite;
 }
 
 /**
- * @brief Internal function for determining the type of a function argument
+ * @brief Return the number of fields in a composite value.
  *
- * @param inID Number of function argument
- * @param[out] outTypeID PostgreSQL OID of the function argument's type
- * @param[out] outIsMutable True if the data structure of this function argument
- *     can be safely modified. For objects passed by reference (like arrays)
- *     this is only true when passed as the first argument of a transition
- *     function.
- *
- * @internal
- *     Having this as separate function isolates the PG_TRY block. Otherwise,
- *     the compiler might warn that the longjmp could clobber local variables.
+ * @returns The number of fields in a composite value. In the case of a scalar
+ *     value, return 1. If the content is NULL, return 0.
  */
 inline
-void
-AbstractionLayer::AnyType::backendGetTypeIDForFunctionArg(uint16_t inID,
-    Oid &outTypeID, bool &outIsMutable) const {
-    
-    madlib_assert(mContent == FunctionComposite, std::logic_error(
-        "Inconsistency detected while converting from PostgreSQL to C++ types."));
-    
-    bool exceptionOccurred = false;
-
-    PG_TRY(); {
-        outTypeID = get_fn_expr_argtype(fcinfo->flinfo, inID);    
-
-        // If we are called as an aggregate function, the first argument is the
-        // transition state. In that case, we are free to modify the data.
-        // In fact, for performance reasons, we *should* even do all modifications
-        // in-place. In all other cases, directly modifying memory is dangerous.
-        // See warning at:
-        // http://www.postgresql.org/docs/current/static/xfunc-c.html#XFUNC-C-BASETYPE
-        outIsMutable = (inID == 0 && AggCheckCallContext(fcinfo, NULL));
-    } PG_CATCH(); {
-        exceptionOccurred = true;
-    } PG_END_TRY();
-    
-    if (exceptionOccurred)
-        throw PGException();
-}
-
-/**
- * @brief Internal function for retrieving the type ID and datum for an element
- *     of a native composite type
- *
- * @param inID Number of function argument
- * @param[out] outTypeID PostgreSQL OID of the function argument's type
- * @param[out] outDatum PostgreSQL Datum for the function argument
- *
- * @internal
- *     Having this as separate function isolates the PG_TRY block. Otherwise,
- *     the compiler might warn that the longjmp could clobber local variables.
- */
-inline
-void
-AbstractionLayer::AnyType::backendGetTypeIDAndDatumForTupleElement(
-    uint16_t inID, Oid &outTypeID, Datum &outDatum) const {
-
-    madlib_assert(mContent == NativeComposite, std::logic_error(
-        "Inconsistency detected while converting from PostgreSQL to C++ types."));
-    
-    bool exceptionOccurred = false;
-    Oid tupType;
-    int32 tupTypmod;
-    TupleDesc tupDesc;
-    bool isNull = false;
-    
-    PG_TRY(); {
-        tupType = HeapTupleHeaderGetTypeId(mTupleHeader);
-        tupTypmod = HeapTupleHeaderGetTypMod(mTupleHeader);
-        tupDesc = lookup_rowtype_tupdesc(tupType, tupTypmod);
-        outTypeID = tupDesc->attrs[inID]->atttypid;
-        ReleaseTupleDesc(tupDesc);
-        outDatum = GetAttributeByNum(mTupleHeader, inID, &isNull);
-    } PG_CATCH(); {
-        exceptionOccurred = true;
-    } PG_END_TRY();
-    
-    if (exceptionOccurred)
-        throw PGException();
-}
-
-/**
- * @brief Internal function for retrieving if the type is composite and, if
- *     yes, the PostgreSQL HeapTupleHeader
- *
- * @param inTypeID PostgreSQL OID for the type
- * @param inDatum PostgreSQL Datum
- * @param[out] outIsTuple True if the type is a composite type
- * @param[out] outTupleHeader A PostgreSQL HeapTupleHeader that will be updated
- *     if type is composite
- *
- * @internal
- *     Having this as separate function isolates the PG_TRY block. Otherwise,
- *     the compiler might warn that the longjmp could clobber local variables. 
- */
-inline
-void
-AbstractionLayer::AnyType::backendGetIsCompositeTypeAndHeapTupleHeader(
-    Oid inTypeID, Datum inDatum, bool &outIsTuple,
-    HeapTupleHeader &outTupleHeader) const {
-
-    boost::tribool isComposite = isRowTypeInCache(inTypeID);
-    
-    if (!isComposite) {
-        outIsTuple = false;
-        return;
+uint16_t
+AnyType::numFields() const {
+    switch (mContent) {
+        case Null: return 0;
+        case Scalar: return 1;
+        case ReturnComposite: return mChildren.size();
+        case FunctionComposite: return PG_NARGS();
+        case NativeComposite: return HeapTupleHeaderGetNatts(mTupleHeader);
+        default:
+            // This should never happen
+            throw std::logic_error("Unhandled case in AnyType::numFields().");
     }
-
-    bool exceptionOccurred = false;
-    PG_TRY(); {
-        if (boost::indeterminate(isComposite))
-            outIsTuple = isRowTypeInCache(inTypeID, type_is_rowtype(inTypeID));
-        
-        if (outIsTuple)
-            outTupleHeader = DatumGetHeapTupleHeader(inDatum);
-    } PG_CATCH(); {
-        exceptionOccurred = true;
-    } PG_END_TRY();
-
-    if (exceptionOccurred)
-        throw PGException();
-}
-
-/**
- * @brief Internal function for retrieving if the type is composite and, if
- *     yes, the PostgreSQL TupleDesc
- *
- * @param inTargetTypeID PostgreSQL OID for the type
- * @param[in,out] ioTargetIsComposite On input, whether the type is composite.
- *     \c indeterminate if unknown. On return, the updated boolean value.
- * @param[out] outTupleHandle TupleHandle that will be updated if type is
- *     composite
- *
- * @internal
- *     Having this as separate function isolates the PG_TRY block. Otherwise,
- *     the compiler might warn that the longjmp could clobber local variables.
- */
-inline
-void
-AbstractionLayer::AnyType::backendGetIsCompositeTypeAndTupleHandle(
-    Oid inTargetTypeID, boost::tribool &ioTargetIsComposite,
-    TupleHandle &outTupleHandle) const {
-    
-    bool exceptionOccurred = false;
-
-    PG_TRY(); {
-        if (boost::indeterminate(ioTargetIsComposite))
-            ioTargetIsComposite = isRowTypeInCache(inTargetTypeID,
-                type_is_rowtype(inTargetTypeID));
-        
-        if (ioTargetIsComposite) {
-            // Don't ereport errors. We set typmod < 0, and this should
-            // not cause an error because compound types in another
-            // compound can never be transient. (I think)
-
-            outTupleHandle.desc = lookup_rowtype_tupdesc_noerror(
-                inTargetTypeID, -1, true);
-            outTupleHandle.shouldReleaseDesc = true;
-        }
-    } PG_CATCH(); {
-        exceptionOccurred = true;
-    } PG_END_TRY();
-
-    if (exceptionOccurred)
-        throw PGException();
 }
 
 /**
@@ -321,64 +217,95 @@ AbstractionLayer::AnyType::backendGetIsCompositeTypeAndTupleHandle(
  *
  * To the user, AnyType is a fully recursive type: Each AnyType object can be a
  * composite object and be composed of a number of other AnyType objects.
- * On top of the C++ abstraction layer, function have a single-top level
- * AnyType object as parameter.
+ * Function written using the C++ abstraction layer have a single logical
+ * argument of type AnyType.
  */
 inline
-AbstractionLayer::AnyType
-AbstractionLayer::AnyType::operator[](uint16_t inID) const {
+AnyType
+AnyType::operator[](uint16_t inID) const {
     consistencyCheck();
 
-    if (isNull())
-        throw std::invalid_argument("Unexpected Null value in function "
-            "argument.");
-    if (!isComposite())
-        throw std::invalid_argument("Invalid type conversion requested. "
-            "Expected composite type but got simple type.");
+    if (isNull()) {
+        // Handle case mContent == NULL
+        throw std::invalid_argument("Invalid type conversion. "
+            "Null where not expected.");
+    }
+    if (!isComposite()) {
+        // Handle case mContent == Scalar
+        throw std::invalid_argument("Invalid type conversion. "
+            "Composite type where not expected.");
+    }
     
     if (mContent == ReturnComposite)
         return mChildren[inID];
 
+    // It holds now that mContent is either FunctionComposite or NativeComposite
+    // In this case, it is guaranteed that fcinfo != NULL
     Oid typeID = 0;
     bool isMutable = false;
     Datum datum = 0;
-    bool isTuple = false;
-    HeapTupleHeader pgTuple = NULL;
 
-    try {
-        if (mContent == FunctionComposite) {
-            if (inID >= size_t(PG_NARGS()))
-                throw std::out_of_range("Access behind end of argument list");
-            
-            if (PG_ARGISNULL(inID))
-                return AnyType();
-                    
-            backendGetTypeIDForFunctionArg(inID, typeID, isMutable);
-            datum = PG_GETARG_DATUM(inID);
-        } else if (mContent == NativeComposite)
-            backendGetTypeIDAndDatumForTupleElement(inID, typeID, datum);
+    if (mContent == FunctionComposite) {
+        // This AnyType object represents to composite value consisting of all
+        // function arguments
+
+        if (inID >= size_t(PG_NARGS()))
+            throw std::out_of_range("Invalid type conversion. Access behind "
+                "end of argument list.");
         
-        if (typeID == InvalidOid)
-            throw std::invalid_argument("Backend returned invalid type ID.");
+        if (PG_ARGISNULL(inID))
+            return AnyType();
         
-        backendGetIsCompositeTypeAndHeapTupleHeader(typeID, datum, isTuple,
-            pgTuple);
-    } catch (PGException &e) {
-        throw std::invalid_argument("An exception occurred while "
-            "gathering information about PostgreSQL function arguments.");
+        typeID = mSysInfo->functionInformation(fcinfo->flinfo->fn_oid)
+            ->getArgumentType(inID, fcinfo->flinfo);
+        if (inID == 0) {
+            // If we are called as an aggregate function, the first argument is
+            // the transition state. In that case, we are free to modify the 
+            // data. In fact, for performance reasons, we *should* even do all
+            // modifications in-place. In all other cases, directly modifying
+            // memory is dangerous.
+            // See warning at:
+            // http://www.postgresql.org/docs/current/static/xfunc-c.html#XFUNC-C-BASETYPE
+
+            // BACKEND: AggCheckCallContext currently will never raise an
+            // exception
+            isMutable = AggCheckCallContext(fcinfo, NULL);
+        }
+        datum = PG_GETARG_DATUM(inID);
+    } else /* if (mContent == NativeComposite) */ {
+        // This AnyType objects represents a tuple that was passed from the
+        // backend
+        
+        TupleDesc tupdesc = mSysInfo
+            ->typeInformation(HeapTupleHeaderGetTypeId(mTupleHeader))
+            ->getTupleDesc(HeapTupleHeaderGetTypMod(mTupleHeader));
+        
+        if (inID >= tupdesc->natts)
+            throw std::out_of_range("Invalid type conversion. Access behind "
+                "end of composite object.");
+        
+        typeID = tupdesc->attrs[inID]->atttypid;
+        bool isNull = false;
+        datum = madlib_GetAttributeByNum(mTupleHeader, inID, &isNull);
+        if (isNull)
+            return AnyType();
     }
-
-    return isTuple ?
-        AnyType(pgTuple, datum, typeID) :
-        AnyType(datum, typeID, isMutable);
+    
+    if (typeID == InvalidOid)
+        throw std::invalid_argument("Backend returned invalid type ID.");
+    
+    return mSysInfo->typeInformation(typeID)->isCompositeType()
+        ? AnyType(mSysInfo, madlib_DatumGetHeapTupleHeader(datum), datum,   
+            typeID)
+        : AnyType(mSysInfo, datum, typeID, isMutable);
 }
 
 /**
  * @brief Add an element to a composite value, for returning to the backend
  */
 inline
-AbstractionLayer::AnyType&
-AbstractionLayer::AnyType::operator<<(const AnyType &inValue) {
+AnyType&
+AnyType::operator<<(const AnyType &inValue) {
     consistencyCheck();
 
     madlib_assert(mContent == Null || mContent == ReturnComposite,
@@ -390,116 +317,31 @@ AbstractionLayer::AnyType::operator<<(const AnyType &inValue) {
     return *this;
 }
 
-inline
-AbstractionLayer::AnyType::TupleHandle::~TupleHandle() {
-    if (shouldReleaseDesc)
-        ReleaseTupleDesc(desc);
-}
-
 /**
- * @brief Get or set in our own cache whether a type ID is a composite type
- *
- * In order to minimize calls into the backend, we keep our own cache of whether
- * a type ID is a tuple type or not.
- * FIXME: In theory, this information can change during the lifetime of the hash
- * table if the user deletes a type and then creates another type that happens
- * to get the old OID.
- *
- * @param inTypeID The type ID
- * @param inIsRowType If indeterminate, just retrieve value from cache.
- *     Otherwise, update cache with the supplied value.
- * @returns Whether \c inTypeID is a composite type, indeterminate if no
- *     information is available in the cache.
- *
- * We store type information in an unordered_map. Memory for this hash
- * table is taken from malloc because the default memory context (the
- * current function) is too short-lived.
- */
-inline
-boost::tribool
-AbstractionLayer::AnyType::isRowTypeInCache(Oid inTypeID,
-    boost::tribool inIsRowType) const {
-    
-    typedef std::unordered_map<
-        Oid, bool, std::hash<Oid>, std::equal_to<Oid>,
-        utils::MallocAllocator<std::pair<const Oid, bool> > > Oid2BoolHashMap;
-
-    static Oid2BoolHashMap sIsTuple(32);
-    
-    if (inIsRowType != boost::indeterminate)
-        return sIsTuple[inTypeID] = inIsRowType;
-    else if (sIsTuple.find(inTypeID) != sIsTuple.end())
-        return sIsTuple[inTypeID];
-    else
-        return boost::indeterminate;
-}
-
-/**
- * @brief Convert the current object to a PostbreSQL Datum
+ * @brief Return a PostgreSQL Datum representing the current object
  *
  * If the current object is Null, we still return <tt>Datum(0)</tt>, i.e., we
  * return a valid Datum. It is the responsibilty of the caller to separately
  * call isNull().
  *
- * @param inFCInfo The PostgreSQL FunctionCallInfo that was passed to the UDF.
- *     This is necessary for verifying that the top-level AnyType has the
- *     correct type.
- */
-inline
-Datum
-AbstractionLayer::AnyType::getAsDatum(const FunctionCallInfo inFCInfo) {
-    consistencyCheck();
-
-    Oid targetTypeID;
-    TupleDesc tupleDesc;
-    TypeFuncClass funcClass;
-    bool exceptionOccurred = false;
-
-    PG_TRY(); {
-        // FIXME: get_call_result_type is tagged as expensive in funcapi.c
-        // It seems not to be necessary to release the tupleDesc
-        // E.g., in plython.c ReleaseTupleDesc() is not called
-        funcClass = get_call_result_type(inFCInfo, &targetTypeID, &tupleDesc);
-    } PG_CATCH(); {
-        exceptionOccurred = true;
-    } PG_END_TRY();
-    
-    if (exceptionOccurred)
-        throw std::invalid_argument("An exception occurred while "
-            "gathering inormation about the PostgreSQL return type.");
-
-    bool targetIsComposite = (funcClass == TYPEFUNC_COMPOSITE);
-    if (targetIsComposite && !isComposite())
-        throw std::logic_error("Invalid type conversion requested. "
-            "Simple type supplied but PostgreSQL expects composite type.");
-
-    if (!targetIsComposite && isComposite())
-        throw std::logic_error("Invalid type conversion requested. "
-            "Composite type supplied but PostgreSQL expects simple type.");
-
-    // tupleDesc can be NULL if the return type is not composite
-    return getAsDatum(targetTypeID, isComposite(), tupleDesc);
-}
-
-/**
- * @brief Return a PostgreSQL Datum representing the current object
- *
  * The only *conversion* taking place in this function is *combining* Datums
  * into a tuple. At this place, we do not have to worry any more about retaining
  * memory.
  *
- * @param inTargetTypeID PostgreSQL OID of the target type to convert to
- * @param inTargetIsComposite Whether the target type is composite.
- *     \c indeterminate if unknown.
- * @param inTargetTupleDesc If target type is known to be composite, then
- *     (optionally) the PostgreSQL TupleDesc. NULL is always a valid argument.
+ * @param inFnCallInfo The PostgreSQL FunctionCallInfo that was passed to the
+ *     UDF. For polymorphic functions or functions that return RECORD, the
+ *     function-call information (specifically, the expression parse tree)
+ *     is necessary to dynamically resolve type information.
+ * @param inTargetTypeID PostgreSQL OID of the target type to convert to. If
+ *     omitted the target type is the return type of the function specified by
+ *     \c inFnCallInfo.
  *
  * @see getAsDatum(const FunctionCallInfo)
  */
 inline
 Datum
-AbstractionLayer::AnyType::getAsDatum(Oid inTargetTypeID,
-    boost::tribool inTargetIsComposite, TupleDesc inTargetTupleDesc) const {
+AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
+    Oid inTargetTypeID) const {
     
     consistencyCheck();
 
@@ -508,77 +350,118 @@ AbstractionLayer::AnyType::getAsDatum(Oid inTargetTypeID,
     // responsibility to call isNull() separately.
     if (isNull())
         return 0;
-
-    try {
-        bool exceptionOccurred = false;
-        TupleHandle tupleHandle(inTargetTupleDesc);
-        
-        if (boost::indeterminate(inTargetIsComposite)) {
-            inTargetIsComposite = isRowTypeInCache(inTargetTypeID);
-            backendGetIsCompositeTypeAndTupleHandle(inTargetTypeID,
-                inTargetIsComposite, tupleHandle);
-        }
-        
-        if (inTargetIsComposite && !isComposite())
-            throw std::runtime_error("Invalid type conversion requested. "
-                "Simple type supplied but PostgreSQL expects composite type.");
-
-        if (!inTargetIsComposite && isComposite())
-            throw std::runtime_error("Invalid type conversion requested. "
-                "Composite type supplied but PostgreSQL expects simple type.");
-        
-        madlib_assert(inTargetIsComposite == (tupleHandle.desc != NULL),
-            MADLIB_DEFAULT_EXCEPTION);
-        
-        if (inTargetIsComposite) {
-            if (static_cast<size_t>(tupleHandle.desc->natts) < mChildren.size())
-                throw std::runtime_error("Invalid type conversion requested. "
-                    "Internal composite type has more elements than PostgreSQL "
-                    "composite type.");
-
-            std::vector<Datum> values;
-            std::vector<char> nulls;
-
-            for (uint16_t pos = 0; pos < mChildren.size(); ++pos) {
-                Oid targetTypeID = tupleHandle.desc->attrs[pos]->atttypid;
-                                    
-                values.push_back(mChildren[pos].getAsDatum(targetTypeID));
-                nulls.push_back(mChildren[pos].isNull());
-            }
-            // All elements that have not been initialized will be set to Null
-            for (uint16_t pos = mChildren.size();
-                pos < static_cast<size_t>(tupleHandle.desc->natts);
-                ++pos) {
-                
-                values.push_back(Datum(0));
-                nulls.push_back(true);
-            }
-            
-            Datum returnValue;
-            PG_TRY(); {
-                HeapTuple heapTuple = heap_form_tuple(tupleHandle.desc,
-                    &values[0], reinterpret_cast<bool*>(&nulls[0]));
-                
-                returnValue = HeapTupleGetDatum(heapTuple);
-            } PG_CATCH(); {
-                exceptionOccurred = true;
-            } PG_END_TRY();
-            
-            if (exceptionOccurred)
-                throw PGException();
-            
-            return returnValue;
-        }
-    } catch (PGException &e) {
-        throw std::invalid_argument("An exception occurred while "
-            "gathering inormation about the PostgreSQL return type.");
-    }
-        
-    if (inTargetTypeID != mTypeID)
-        throw std::invalid_argument("Invalid type conversion requested. "
-            "C++ type and PostgreSQL return type do not match.");
     
-    return mDatum;
+    // Note: mSysInfo is NULL if this object was not an argument from the
+    // backend.
+    SystemInformation* sysInfo = SystemInformation::get(inFnCallInfo);
+    FunctionInformation* funcInfo = sysInfo
+        ->functionInformation(inFnCallInfo->flinfo->fn_oid);
+    TupleDesc targetTupleDesc;
+    if (inTargetTypeID == InvalidOid) {
+        inTargetTypeID = funcInfo->getReturnType(inFnCallInfo);
+
+        // If inTargetTypeID is \c RECORDOID, the tuple description needs to be
+        // derived from the function call
+        targetTupleDesc = funcInfo->getReturnTupleDesc(inFnCallInfo);
+    } else {
+        // If we are here, we should not see inTargetTypeID == RECORDOID because
+        // that should only happen for the first non-recursive call of
+        // getAsDatum where inTargetTypeID == InvalidOid by default.
+        // If it would happen, then the following would return NULL and an
+        // exception would be raised a few line below. So no need to add a check
+        // here.
+        targetTupleDesc = sysInfo->typeInformation(inTargetTypeID)
+            ->getTupleDesc();
+    }
+
+    bool targetIsComposite = targetTupleDesc != NULL;        
+    Datum returnValue = mDatum;
+    
+    if (targetIsComposite && !isComposite())
+        throw std::runtime_error("Invalid type conversion. "
+            "Simple type supplied but backend expects composite type.");
+
+    if (!targetIsComposite && isComposite())
+        throw std::runtime_error("Invalid type conversion. "
+            "Composite type supplied but backend expects simple type.");
+    
+    if (targetIsComposite) {
+        if (static_cast<size_t>(targetTupleDesc->natts) < mChildren.size())
+            throw std::runtime_error("Invalid type conversion. "
+                "Internal composite type has more elements than backend "
+                "composite type.");
+
+        std::vector<Datum> values;
+        std::vector<char> nulls;
+
+        for (uint16_t pos = 0; pos < mChildren.size(); ++pos) {
+            Oid targetTypeID = targetTupleDesc->attrs[pos]->atttypid;
+                                
+            values.push_back(mChildren[pos].getAsDatum(inFnCallInfo,
+                targetTypeID));
+            nulls.push_back(mChildren[pos].isNull());
+        }
+        // All elements that have not been initialized will be set to Null
+        for (uint16_t pos = mChildren.size();
+            pos < static_cast<size_t>(targetTupleDesc->natts);
+            ++pos) {
+            
+            values.push_back(Datum(0));
+            nulls.push_back(true);
+        }
+        
+        HeapTuple heapTuple = madlib_heap_form_tuple(targetTupleDesc,
+            &values[0], reinterpret_cast<bool*>(&nulls[0]));
+        // BACKEND: HeapTupleGetDatum is a macro that will not cause an
+        // exception
+        returnValue = HeapTupleGetDatum(heapTuple);
+    } else /* if (!targetIsComposite) */ {        
+        if (mTypeID != InvalidOid && inTargetTypeID != mTypeID) {
+            std::stringstream errorMsg;
+            errorMsg << "Invalid type conversion. "
+                "Backend expects type ID " << inTargetTypeID << " ('"
+                << sysInfo->typeInformation(inTargetTypeID)->getName() << "') "
+                "but supplied type ID is " << mTypeID << + " ('"
+                << sysInfo->typeInformation(mTypeID)->getName() << "').";
+            throw std::invalid_argument(errorMsg.str());
+        }
+        
+        if (mTypeName && std::strncmp(mTypeName,
+            sysInfo->typeInformation(inTargetTypeID)->getName(),
+            NAMEDATALEN)) {
+            
+            std::stringstream errorMsg;
+            errorMsg << "Invalid type conversion. Backend expects type '"
+                << sysInfo->typeInformation(inTargetTypeID)->getName() <<
+                "' (ID " << inTargetTypeID << ") but internal type name is '"
+                << mTypeName << "'.";
+            throw std::invalid_argument(errorMsg.str());
+        }
+    }
+    
+    return returnValue;
 }
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+/**
+ * @brief Return an AnyType object representing Null.
+ *
+ * @internal
+ *     An object representing Null is not guaranteed to be unique. In fact, here
+ *     we simply return an AnyType object initialized by the default
+ *     constructor.
+ *
+ * @see AbstractionLayer::AnyType::AnyType()
+ */
+inline
+AnyType
+Null() {
+    return AnyType();
+}
+
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_ANYTYPE_IMPL_HPP)

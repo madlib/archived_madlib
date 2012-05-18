@@ -4,46 +4,54 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_POSTGRES_ARRAYHANDLE_IMPL_HPP
+#define MADLIB_POSTGRES_ARRAYHANDLE_IMPL_HPP
+
+namespace madlib {
+
+namespace dbconnector {
+
+namespace postgres {
 
 template <typename T>
 inline
-AbstractionLayer::ArrayHandle<T>::ArrayHandle(const ArrayType *inArray)
+ArrayHandle<T>::ArrayHandle(const ArrayType *inArray)
   : mArray(inArray) { }
 
 template <typename T>
 inline 
 const T*
-AbstractionLayer::ArrayHandle<T>::ptr() const {
+ArrayHandle<T>::ptr() const {
     return reinterpret_cast<T*>(ARR_DATA_PTR(mArray));
 }
 
 template <typename T>
 inline 
 size_t
-AbstractionLayer::ArrayHandle<T>::size() const {
+ArrayHandle<T>::size() const {
     return internalArraySize(mArray);
 }
 
 template <typename T>
 inline 
 const ArrayType*
-AbstractionLayer::ArrayHandle<T>::array() const {
+ArrayHandle<T>::array() const {
     return mArray;
 }
 
 template <typename T>
 inline 
 const T&
-AbstractionLayer::ArrayHandle<T>::operator[](size_t inIndex) const {
+ArrayHandle<T>::operator[](size_t inIndex) const {
+    madlib_assert(inIndex < size(), std::runtime_error(
+        "Out-of-bounds array access detected."));
     return ptr()[inIndex];
 }
 
 template <typename T>
 inline
 size_t
-AbstractionLayer::ArrayHandle<T>::internalArraySize(const ArrayType *inArray) {
+ArrayHandle<T>::internalArraySize(const ArrayType *inArray) {
     // FIXME: Add support for multi-dimensional array
     return ARR_DIMS(inArray)[0];
 }
@@ -51,24 +59,30 @@ AbstractionLayer::ArrayHandle<T>::internalArraySize(const ArrayType *inArray) {
 template <typename T>
 inline 
 T*
-AbstractionLayer::MutableArrayHandle<T>::ptr() {
+MutableArrayHandle<T>::ptr() {
     return const_cast<T*>(static_cast<const ArrayHandle<T>*>(this)->ptr());
 }
 
 template <typename T>
 inline 
 ArrayType*
-AbstractionLayer::MutableArrayHandle<T>::array() {
+MutableArrayHandle<T>::array() {
     return const_cast< ArrayType* >(Base::mArray);
 }
 
 template <typename T>
 inline 
 T&
-AbstractionLayer::MutableArrayHandle<T>::operator[](size_t inIndex) {
+MutableArrayHandle<T>::operator[](size_t inIndex) {
     return const_cast<T&>(
         static_cast<const ArrayHandle<T>*>(this)->operator[](inIndex)
     );
 }
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace postgres
+
+} // namespace dbconnector
+
+} // namespace madlib
+
+#endif // defined(MADLIB_POSTGRES_ARRAYHANDLE_IMPL_HPP)

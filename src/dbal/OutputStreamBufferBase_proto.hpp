@@ -4,8 +4,12 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by EigenLinAlgTypes.hpp
-#ifdef MADLIB_DBAL_HPP
+#ifndef MADLIB_DBAL_OUTPUTSTREAMBUFFERBASE_PROTO_HPP
+#define MADLIB_DBAL_OUTPUTSTREAMBUFFERBASE_PROTO_HPP
+
+namespace madlib {
+
+namespace dbal {
 
 /**
  * @brief Base class for an output stream buffer
@@ -39,4 +43,8 @@ private:
     C* mStorage;
 };
 
-#endif // MADLIB_DBAL_HPP (workaround for Doxygen)
+} // namespace dbal
+
+} // namespace madlib
+
+#endif // defined(MADLIB_DBAL_OUTPUTSTREAMBUFFERBASE_PROTO_HPP)

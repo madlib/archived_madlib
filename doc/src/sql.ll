@@ -219,7 +219,12 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
 }
 
 <sFUNC_DECL,sFUNC_ARGLIST,sFUNC_OPTIONS,sAGG_DECL,sAGG_ARGLIST,sAGG_OPTIONS>{
-	{QUOTED_IDENTIFIER} {
+    "NULL" {
+        yylval->str = strdup("NULL");
+        return token::NULL_KEYWORD;
+    }
+
+    {QUOTED_IDENTIFIER} {
 		yytext[yyleng - 1] = 0;
 		yylval->str = strdup(yytext + 1);
 		return token::IDENTIFIER;

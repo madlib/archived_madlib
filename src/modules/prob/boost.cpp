@@ -13,16 +13,13 @@
 #include <boost/math/distributions/fisher_f.hpp>
 #include <boost/math/distributions/normal.hpp>
 
+#include "boost.hpp"
+
 namespace madlib {
 
 namespace modules {
 
 namespace prob {
-
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "boost.hpp"
 
 /**
  * @brief Chi-squared cumulative distribution function: In-database interface

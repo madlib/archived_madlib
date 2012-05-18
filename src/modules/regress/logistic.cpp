@@ -13,7 +13,12 @@
 #include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/prob.hpp>
 
+#include "logistic.hpp"
+
 namespace madlib {
+
+// Use Eigen
+using namespace dbal::eigen_integration;
 
 namespace modules {
 
@@ -23,28 +28,12 @@ using prob::normalCDF;
 
 namespace regress {
 
-// Workaround for Doxygen: A header file that does not declare namespaces is to
-// be ignored if and only if it is processed stand-alone
-#undef _DOXYGEN_IGNORE_HEADER_FILE
-#include "logistic.hpp"
-
 // Internal functions
-template <class LinAlgTypes>
-struct internal : public AbstractionLayer {
-    typedef typename HandleTraits<ArrayHandle<double>, LinAlgTypes>::
-        ColumnVectorTransparentHandleMap ColumnVectorTransparentHandleMap;
-    typedef typename LinAlgTypes::ColumnVector ColumnVector;
-    typedef typename LinAlgTypes::template HandleMap<ColumnVector>
-        ColumnVectorArrayHandleMap;
-    typedef typename LinAlgTypes::Index Index;
-
-    static AnyType stateToResult(
-        const Allocator &inAllocator,
-        const ColumnVectorTransparentHandleMap &coef,
-        const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-        double logLikelihood,
-        double conditionNo);
-};
+AnyType stateToResult(const Allocator &inAllocator,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &coef,
+    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+    double logLikelihood,
+    double conditionNo);
 
 /**
  * @brief Inter- and intra-iteration state for conjugate-gradient method for
@@ -59,9 +48,9 @@ struct internal : public AbstractionLayer {
  * database with length at least 5, and all elemenets are 0.
  *
  */
-template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
-class LogRegrCGTransitionState : public AbstractionLayer {
-    template <class OtherHandle, class OtherLinAlgTypes>
+template <class Handle>
+class LogRegrCGTransitionState {
+    template <class OtherHandle>
     friend class LogRegrCGTransitionState;
 
 public:
@@ -98,7 +87,7 @@ public:
      */
     template <class OtherHandle>
     LogRegrCGTransitionState &operator=(
-        const LogRegrCGTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        const LogRegrCGTransitionState<OtherHandle> &inOtherState) {
         
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] = inOtherState.mStorage[i];
@@ -111,7 +100,7 @@ public:
      */
     template <class OtherHandle>
     LogRegrCGTransitionState &operator+=(
-        const LogRegrCGTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        const LogRegrCGTransitionState<OtherHandle> &inOtherState) {
         
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
@@ -176,17 +165,17 @@ private:
     Handle mStorage;
 
 public:
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt32 iteration;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap coef;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap dir;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap grad;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble beta;
+    typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap dir;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;
+    typename HandleTraits<Handle>::ReferenceToDouble beta;
     
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap gradNew;
-    typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_AX;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble logLikelihood;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradNew;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
 };
 
 /**
@@ -352,7 +341,7 @@ internal_logregr_cg_result::run(AnyType &args) {
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
         
-    return internal<LinAlgTypes>::stateToResult(*this, state.coef,
+    return stateToResult(*this, state.coef,
         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
         decomposition.conditionNo());
 }
@@ -369,9 +358,9 @@ internal_logregr_cg_result::run(AnyType &args) {
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 4, and all elemenets are 0.
  */
-template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
-class LogRegrIRLSTransitionState : public AbstractionLayer {
-    template <class OtherHandle, class OtherLinAlgTypes>
+template <class Handle>
+class LogRegrIRLSTransitionState {
+    template <class OtherHandle>
     friend class LogRegrIRLSTransitionState;
 
 public:
@@ -408,7 +397,7 @@ public:
      */
     template <class OtherHandle>
     LogRegrIRLSTransitionState &operator=(
-        const LogRegrIRLSTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        const LogRegrIRLSTransitionState<OtherHandle> &inOtherState) {
         
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] = inOtherState.mStorage[i];
@@ -421,7 +410,7 @@ public:
      */
     template <class OtherHandle>
     LogRegrIRLSTransitionState &operator+=(
-        const LogRegrIRLSTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        const LogRegrIRLSTransitionState<OtherHandle> &inOtherState) {
         
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
@@ -478,13 +467,13 @@ private:
     Handle mStorage;
 
 public:
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
 
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap X_transp_Az;
-    typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_AX;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble logLikelihood;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap X_transp_Az;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
 };
 
 AnyType
@@ -618,7 +607,7 @@ AnyType
 internal_logregr_irls_result::run(AnyType &args) {
     LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
 
-    return internal<LinAlgTypes>::stateToResult(*this, state.coef,
+    return stateToResult(*this, state.coef,
         state.X_transp_Az, state.logLikelihood, state.X_transp_AX(0,0));
 }
 
@@ -634,9 +623,9 @@ internal_logregr_irls_result::run(AnyType &args) {
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
  * database with length at least 4, and all elemenets are 0.
  */
-template <class Handle, class LinAlgTypes = DefaultLinAlgTypes>
-class LogRegrIGDTransitionState : public AbstractionLayer {
-    template <class OtherHandle, class OtherLinAlgTypes>
+template <class Handle>
+class LogRegrIGDTransitionState {
+    template <class OtherHandle>
     friend class LogRegrIGDTransitionState;
 
 public:
@@ -673,7 +662,7 @@ public:
      */
     template <class OtherHandle>
     LogRegrIGDTransitionState &operator=(
-        const LogRegrIGDTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        const LogRegrIGDTransitionState<OtherHandle> &inOtherState) {
         
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] = inOtherState.mStorage[i];
@@ -686,7 +675,7 @@ public:
      */
     template <class OtherHandle>
     LogRegrIGDTransitionState &operator+=(
-        const LogRegrIGDTransitionState<OtherHandle, LinAlgTypes> &inOtherState) {
+        const LogRegrIGDTransitionState<OtherHandle> &inOtherState) {
 
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
@@ -752,13 +741,13 @@ private:
     Handle mStorage;
 
 public:
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble stepsize;
-    typename HandleTraits<Handle, LinAlgTypes>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToDouble stepsize;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
 
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToUInt64 numRows;
-	typename HandleTraits<Handle, LinAlgTypes>::MatrixTransparentHandleMap X_transp_AX;
-    typename HandleTraits<Handle, LinAlgTypes>::ReferenceToDouble logLikelihood;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+	typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
 };
 
 AnyType
@@ -873,7 +862,7 @@ internal_logregr_igd_result::run(AnyType &args) {
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
     
-    return internal<LinAlgTypes>::stateToResult(*this, state.coef,
+    return stateToResult(*this, state.coef,
         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
         decomposition.conditionNo());
 }
@@ -884,27 +873,26 @@ internal_logregr_igd_result::run(AnyType &args) {
  * This function wraps the common parts of computing the results for both the
  * CG and the IRLS method.
  */
-template <class LinAlgTypes>
-AnyType internal<LinAlgTypes>::stateToResult(
-    const AbstractionLayer::Allocator &inAllocator,
-    const ColumnVectorTransparentHandleMap &inCoef,
+AnyType stateToResult(
+    const Allocator &inAllocator,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
     const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
     double logLikelihood,
     double conditionNo) {
     
     // FIXME: We currently need to copy the coefficient to a native array
     // This should be transparent to user code
-    ColumnVectorArrayHandleMap coef(
+    HandleMap<ColumnVector> coef(
         inAllocator.allocateArray<double>(inCoef.size()));
     coef = inCoef;
     
-    ColumnVectorArrayHandleMap stdErr(
+    HandleMap<ColumnVector> stdErr(
         inAllocator.allocateArray<double>(coef.size()));
-    ColumnVectorArrayHandleMap waldZStats(
+    HandleMap<ColumnVector> waldZStats(
         inAllocator.allocateArray<double>(coef.size()));
-    ColumnVectorArrayHandleMap waldPValues(
+    HandleMap<ColumnVector> waldPValues(
         inAllocator.allocateArray<double>(coef.size()));
-    ColumnVectorArrayHandleMap oddsRatios(
+    HandleMap<ColumnVector> oddsRatios(
         inAllocator.allocateArray<double>(coef.size()));
     
     for (Index i = 0; i < coef.size(); ++i) {

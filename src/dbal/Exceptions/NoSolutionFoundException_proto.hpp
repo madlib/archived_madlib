@@ -4,8 +4,12 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-// Workaround for Doxygen: Ignore if not included by dbconnector.hpp
-#ifdef MADLIB_DBCONNECTOR_HPP
+#ifndef MADLIB_DBAL_NOSOLUTIONFOUNDEXCEPTION_PROTO_HPP
+#define MADLIB_DBAL_NOSOLUTIONFOUNDEXCEPTION_PROTO_HPP
+
+namespace madlib {
+
+namespace dbal {
 
 /**
  * @brief Exception indicating that no solution was found, e.g., because
@@ -24,4 +28,8 @@ public:
       : std::runtime_error(inMsg) { }
 };
 
-#endif // MADLIB_DBCONNECTOR_HPP (workaround for Doxygen)
+} // namespace dbal
+
+} // namespace madlib
+
+#endif // defined(MADLIB_DBAL_NOSOLUTIONFOUNDEXCEPTION_PROTO_HPP)
