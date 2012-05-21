@@ -8,19 +8,13 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
-
-// We use string concatenation with the + operator
-#include <string>
+#include <modules/prob/boost.hpp>
 
 #include "chi_squared_test.hpp"
 
 namespace madlib {
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::chiSquaredCDF;
 
 namespace stats {
 
@@ -157,6 +151,8 @@ chi2_gof_test_merge_states::run(AnyType &args) {
 
 AnyType
 chi2_gof_test_final::run(AnyType &args) {
+    using boost::math::complement;
+
     Chi2TestTransitionState<ArrayHandle<double> > state = args[0];
 
     // If we haven't seen any data, just return Null. This is the standard
@@ -177,7 +173,7 @@ chi2_gof_test_final::run(AnyType &args) {
     AnyType tuple;
     tuple
         << statistic
-        << 1. - chiSquaredCDF(statistic, degreeOfFreedom)
+        << prob::cdf(complement(prob::chi_squared(degreeOfFreedom), statistic))
         << degreeOfFreedom
         << phi
         << C;

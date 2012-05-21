@@ -47,6 +47,9 @@ enum OnMemoryAllocationFailure {
 
 } // namespace madlib
 
+// Boost integration is non-optional
+#include "BoostIntegration/BoostIntegration.hpp"
+
 #include "OutputStreamBufferBase_proto.hpp"
 #include "OutputStreamBufferBase_impl.hpp"
 #include "Exceptions/NoSolutionFoundException_proto.hpp"

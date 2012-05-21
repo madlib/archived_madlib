@@ -7,21 +7,15 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
+#include <modules/prob/boost.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
 #include <utils/Math.hpp>
-
-// We use string concatenation with the + operator
-#include <string>
 
 #include "mann_whitney_test.hpp"
 
 namespace madlib {
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::normalCDF;
 
 namespace stats {
 
@@ -89,6 +83,8 @@ mw_test_transition::run(AnyType &args) {
 
 AnyType
 mw_test_final::run(AnyType &args) {
+    using boost::math::complement;
+
     MWTestTransitionState<ArrayHandle<double> > state = args[0];
 
     Eigen::Vector2d U;
@@ -105,8 +101,8 @@ mw_test_final::run(AnyType &args) {
     tuple
         << z_statistic
         << u_statistic
-        << 1. - normalCDF(z_statistic)
-        << 2. * (1. - normalCDF(std::fabs(z_statistic)));
+        << prob::cdf(complement(prob::normal(), z_statistic))
+        << 2. * prob::cdf(complement(prob::normal(), std::fabs(z_statistic)));
     return tuple;
 }
 

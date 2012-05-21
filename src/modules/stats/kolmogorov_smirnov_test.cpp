@@ -8,10 +8,7 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
-
-// We use string concatenation with the + operator
-#include <string>
+#include <modules/prob/kolmogorov.hpp>
 
 #include "kolmogorov_smirnov_test.hpp"
 

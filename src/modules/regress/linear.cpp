@@ -8,7 +8,7 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
+#include <modules/prob/student.hpp>
 
 #include "linear.hpp"
 
@@ -18,9 +18,6 @@ namespace madlib {
 using namespace dbal::eigen_integration;
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::studentT_CDF;
 
 namespace regress {
 
@@ -301,9 +298,13 @@ linregr_final::run(AnyType &args) {
     // by reference, so we need to bind to db memory
     HandleMap<ColumnVector> pValues(allocateArray<double>(state.widthOfX));
     for (int i = 0; i < state.widthOfX; i++)
-        pValues(i) = 2. * (1. - studentT_CDF(
-                                    std::fabs( tStats(i) ),
-                                    state.numRows - state.widthOfX));
+        pValues(i) = 2. * prob::cdf(
+            boost::math::complement(
+                prob::students_t(
+                    state.numRows - state.widthOfX),
+                    std::fabs(tStats(i)
+                )
+            ));
     
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
