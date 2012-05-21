@@ -146,7 +146,7 @@ Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 	// Check if dictionary is sorted
 	for (int i=0; i<num_features-1; i++) {
 		
-		result = strcmp(*(features+i),*(features+i+1));
+		result = strcoll(*(features+i),*(features+i+1));
 		
 		if (result > 0) {
 			elog(ERROR,"Dictionary is unsorted: '%s' is out of order.\n",*(features+i+1));
@@ -187,7 +187,7 @@ int str_bsearch(char * word, char ** features, int num_features)
 		mid = low + (high - low)/2;
 		Assert(mid >= 0 && mid < num_features);
 
-		cmp_result = strcmp(word, features[mid]);
+		cmp_result = strcoll(word, features[mid]);
 
 		if (cmp_result == 0) return mid;
 		if (cmp_result > 0) low = mid + 1;
@@ -197,7 +197,7 @@ int str_bsearch(char * word, char ** features, int num_features)
 	/*
 	int i;
 	for (i=0; i!=num_features; i++) 
-		if (strcmp(word, features[i]) == 0)
+		if (strcoll(word, features[i]) == 0)
 			return i;
 	return -5;
 	*/
