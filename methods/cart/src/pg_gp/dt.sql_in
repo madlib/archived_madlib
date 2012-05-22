@@ -2358,10 +2358,22 @@ m4_changequote(>>>`<<<, >>>'<<<)
              ) INTO curstmt;
             
         EXECUTE curstmt;
-    
-        EXECUTE 'DELETE FROM find_best_answer_table WHERE feature=0 OR 
-			feature IS NULL OR node_size<'||total_size*node_prune_threshold||
-			' OR node_size<'||total_size*node_split_threshold||';';
+		
+		-- delete the nodes which is not satified with the specified thresholds
+		-- from the best answer table, so that those nodes will not be grown.
+        curstmt = MADLIB_SCHEMA.__format
+                    (
+                        'DELETE FROM find_best_answer_table 
+                         WHERE  feature = 0     OR
+                                feature IS NULL OR
+                                node_size < %   OR
+                                node_size < %',
+                        ARRAY[
+                            (total_size * node_prune_threshold)::TEXT,
+                            (total_size * node_split_threshold)::TEXT
+                        ]
+                    );
+		EXECUTE curstmt;
         
         calc_update_best    = calc_update_best + 
                               (clock_timestamp() - begin_update_best);
@@ -2524,18 +2536,22 @@ m4_changequote(>>>`<<<, >>>'<<<)
 
         -- delete the unused nodes on the previous level
         -- delete those nodes with a size less than node_prune_threshold
-        SELECT MADLIB_SCHEMA.__format
-            (
-                'DELETE FROM % t 
-                 WHERE t.case_size<% OR live=%;',
-                 ARRAY[
-                    result_tree_table_name::TEXT,
-                    (total_size*node_prune_threshold)::TEXT,
-                    (curr_level - 1)::TEXT
-                 ]
-             ) INTO curstmt;       
-        EXECUTE curstmt;
-        
+        -- node_prune_threshold will not apply to root node, 
+        -- the level is 1 (curr_level - 1 = 1);
+        IF (curr_level > 2) THEN
+            curstmt = MADLIB_SCHEMA.__format
+                        (
+                            'DELETE FROM % t 
+                             WHERE t.case_size < % OR live = %;',
+                            ARRAY[
+                                result_tree_table_name::TEXT,
+                                (total_size * node_prune_threshold)::TEXT,
+                                (curr_level - 1)::TEXT
+                            ]
+                        );
+            EXECUTE curstmt;
+        END IF;
+		
         calc_update_child   = calc_update_child + (clock_timestamp() - begin_update_child);
         begin_update_nid    = clock_timestamp();
         
