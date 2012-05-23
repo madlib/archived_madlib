@@ -6,11 +6,39 @@
 
 #define LIST_CONTINUOUS_PROB_DISTR \
     MADLIB_ITEM(beta) \
+    MADLIB_ITEM(cauchy) \
     MADLIB_ITEM(chi_squared) \
     MADLIB_ITEM(fisher_f) \
     MADLIB_ITEM(exponential) \
+    MADLIB_ITEM(extreme_value) \
     MADLIB_ITEM(gamma) \
-    MADLIB_ITEM(normal)
+    MADLIB_ITEM(inverse_chi_squared) \
+    MADLIB_ITEM(inverse_gamma) \
+    MADLIB_ITEM(laplace) \
+    MADLIB_ITEM(logistic) \
+    MADLIB_ITEM(lognormal) \
+    MADLIB_ITEM(non_central_beta) \
+    MADLIB_ITEM(non_central_chi_squared) \
+    MADLIB_ITEM(non_central_f) \
+    MADLIB_ITEM(non_central_t) \
+    MADLIB_ITEM(normal) \
+    MADLIB_ITEM(pareto) \
+    MADLIB_ITEM(rayleigh) \
+    MADLIB_ITEM(triangular) \
+    MADLIB_ITEM(uniform) \
+    MADLIB_ITEM(weibull)
+// FIXME: Pending Boost bug 6934, we currently do not support the
+// inverse Gaussian distribution. https://svn.boost.org/trac/boost/ticket/6934
+//    MADLIB_ITEM(inverse_gaussian)
+
+
+#define LIST_DISCRETE_PROB_DISTR \
+    MADLIB_ITEM(bernoulli) \
+    MADLIB_ITEM(binomial) \
+    MADLIB_ITEM(geometric) \
+    MADLIB_ITEM(hypergeometric) \
+    MADLIB_ITEM(negative_binomial)
+
 
 #define MADLIB_ITEM(dist) \
     DECLARE_UDF(prob, dist ## _cdf) \
@@ -21,15 +49,19 @@ LIST_CONTINUOUS_PROB_DISTR
 
 #undef MADLIB_ITEM
 
+#define MADLIB_ITEM(dist) \
+    DECLARE_UDF(prob, dist ## _cdf) \
+    DECLARE_UDF(prob, dist ## _pmf) \
+    DECLARE_UDF(prob, dist ## _quantile)
+
+LIST_DISCRETE_PROB_DISTR
+
+#undef MADLIB_ITEM
+
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
-#include <boost/math/distributions/beta.hpp>
-#include <boost/math/distributions/chi_squared.hpp>
-#include <boost/math/distributions/exponential.hpp>
-#include <boost/math/distributions/fisher_f.hpp>
-#include <boost/math/distributions/gamma.hpp>
-#include <boost/math/distributions/normal.hpp>
+#include <boost/math/distributions.hpp>
 
 namespace madlib {
 
@@ -141,12 +173,7 @@ struct DomainCheck<boost::math::fisher_f_distribution<RealType, Policy> > {
             : result; \
     }
 
-#define DEFINE_BOOST_WRAPPERS(dist) \
-    DEFINE_BOOST_WRAPPER(dist, cdf) \
-    DEFINE_BOOST_WRAPPER(dist, pdf) \
-    DEFINE_BOOST_WRAPPER(dist, quantile)
-
-#define MADLIB_ITEM(dist) \
+#define DEFINE_BOOST_PROBABILITY_DISTR(dist) \
     typedef boost::math::dist ## _distribution< \
         double, boost_mathkit_policy> dist; \
     \
@@ -154,10 +181,19 @@ struct DomainCheck<boost::math::fisher_f_distribution<RealType, Policy> > {
     DEFINE_BOOST_WRAPPER(dist, pdf) \
     DEFINE_BOOST_WRAPPER(dist, quantile)
 
+
+#define MADLIB_ITEM(dist) \
+    DEFINE_BOOST_PROBABILITY_DISTR(dist)
+
+// Note that boost also uses the pdf() if actually a probability mass function
+// is meant
 LIST_CONTINUOUS_PROB_DISTR
+LIST_DISCRETE_PROB_DISTR
 
 #undef MADLIB_ITEM
-#undef DEFINE_BOOST_WRAPPERS
+
+
+#undef DEFINE_PROBABILITY_DISTR
 #undef DEFINE_BOOST_WRAPPER
 #undef LIST_CONTINUOUS_PROB_DISTR
 

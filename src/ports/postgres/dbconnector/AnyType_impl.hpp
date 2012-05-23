@@ -165,6 +165,7 @@ AnyType::getAs() const {
         errorMsg << "Invalid type conversion. Expected type '"
             << TypeTraits<T>::typeName() << "' but backend type name is '"
             << mTypeName << "' (ID " << mTypeID << ").";
+        throw std::invalid_argument(errorMsg.str());
     }
 
     bool needMutableClone = (TypeTraits<T>::isMutable && !mIsMutable);

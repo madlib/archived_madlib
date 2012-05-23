@@ -164,6 +164,7 @@ madlib ## _ ## _pgfunc _arglist { \
 
 #include <dbal/dbal.hpp>
 #include <utils/Reference.hpp>
+#include <utils/Math.hpp>
 
 #include "Allocator_proto.hpp"
 #include "ArrayHandle_proto.hpp"

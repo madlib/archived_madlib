@@ -29,7 +29,7 @@ nextPowerOfTwo(T inValue) {
 }
 
 /**
- * @return Return if two floating point numbers are almost equal.
+ * @brief Return if two floating point numbers are almost equal.
  */
 template<class T>
 typename boost::enable_if_c<!std::numeric_limits<T>::is_integer, bool>::type
@@ -40,6 +40,33 @@ almostEqual(T inX, T inY, int inULP) {
         <= std::numeric_limits<T>::epsilon()
             * std::max(std::fabs(inX), std::fabs(inY))
             * inULP;
+}
+
+/**
+ * @brief Test if value is negative
+ *
+ * This is the implementation for unsigned T. We use SFINAE because
+ * otherwise the compiler would warn that a comparison < 0 is always false
+ * for unsigned types.
+ */
+template <class T>
+inline
+typename boost::enable_if_c<
+    std::numeric_limits<T>::is_integer && !std::numeric_limits<T>::is_signed,
+    bool
+>::type
+isNegative(const T&) {
+    return false;
+}
+
+template <class T>
+inline
+typename boost::enable_if_c<
+    !std::numeric_limits<T>::is_integer || std::numeric_limits<T>::is_signed,
+    bool
+>::type
+isNegative(const T& inValue) {
+    return inValue < static_cast<T>(0);
 }
 
 } // namespace utils
