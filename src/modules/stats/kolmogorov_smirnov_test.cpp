@@ -16,9 +16,6 @@ namespace madlib {
 
 namespace modules {
 
-// Import names from other MADlib modules
-using prob::kolmogorovCDF;
-
 namespace stats {
 
 /**
@@ -110,6 +107,8 @@ ks_test_transition::run(AnyType &args) {
  */
 AnyType
 ks_test_final::run(AnyType &args) {
+    using boost::math::complement;
+
     KSTestTransitionState<ArrayHandle<double> > state = args[0];
 
     if (state.num != state.expectedNum) {
@@ -129,7 +128,7 @@ ks_test_final::run(AnyType &args) {
     tuple
         << static_cast<double>(state.maxDiff) // The Kolmogorov-Smirnov statistic
         << kolmogorov_statistic
-        << 1. - kolmogorovCDF( kolmogorov_statistic );
+        << prob::cdf(complement(prob::kolmogorov(), kolmogorov_statistic));
     return tuple;
 }
 

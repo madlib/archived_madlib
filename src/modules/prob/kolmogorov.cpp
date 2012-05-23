@@ -20,13 +20,24 @@ namespace modules {
 
 namespace prob {
 
-// CERN ROOT type definitions in: core/base/inc/Rtypes.h
-typedef int32_t Int_t;
-typedef double Double_t;
+/**
+ * @brief Komogorov cumulative distribution function: In-database interface
+ */
+AnyType
+kolmogorov_cdf::run(AnyType &args) {
+    return prob::cdf(kolmogorov(), args[0].getAs<double>());
+}
+
+// Following is the CERN ROOT implementation. We gather a few namespace
+// and minor function definitions so that we can then copy the actual Kolmogorov
+// implementation verbatim.
+
+using namespace TMath;
 
 namespace TMath {
+    // KolmogorovProb(Double_t) is defined in header file.
+
     Int_t Nint(Double_t x);
-    Double_t KolmogorovProb(Double_t z);
     
     inline Double_t Exp(Double_t x) {
         return std::exp(x);
@@ -39,26 +50,6 @@ namespace TMath {
     inline Double_t Max(Double_t a, Double_t b) {
         return std::max(a, b);
     }
-}
-
-/**
- * @brief Komogorov cumulative distribution function: In-database interface
- */
-AnyType
-kolmogorov_cdf::run(AnyType &args) {
-    return kolmogorovCDF(args[0].getAs<double>());
-}
-
-double
-kolmogorovCDF(double t) {
-    if (std::isnan(t))
-        return std::numeric_limits<double>::quiet_NaN();
-    else if (t == std::numeric_limits<double>::infinity())
-        return 1;
-    else if (t < 0)
-        return 0;
-    
-    return 1. - TMath::KolmogorovProb(t);
 }
 
 /*
