@@ -86,19 +86,11 @@ public:
     void train(FILE * fout);
     
     // compute log-likelihood vector gradient 
-    double compute_logli_gradient_1order(double * lambda, double * gradlogli,
+    double compute_logli_gradient(double * lambda, double * gradlogli,
 		int num_iters, FILE * fout);
 		
     // compute log Mi
-    void compute_log_Mi_1order(sequence & seq, int pos, doublematrix * Mi,
-		doublevector * Vi, int is_exp);
-
-    // compute log-likelihood vector gradient 
-    double compute_logli_gradient_2order(double * lambda, double * gradlogli,
-		int num_iters, FILE * fout);
-
-    // compute log Mi
-    void compute_log_Mi_2order(sequence & seq, int pos, doublematrix * Mi,
+    void compute_log_Mi(sequence & seq, int pos, doublematrix * Mi,
 		doublevector * Vi, int is_exp);
 };
 
