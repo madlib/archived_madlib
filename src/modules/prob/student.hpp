@@ -19,7 +19,7 @@
  * [1] Abramowitz and Stegun, Handbook of Mathematical Functions with Formulas,
  *     Graphs, and Mathematical Tables, 1972
  *     page 948: http://people.math.sfu.ca/~cbm/aands/page_948.htm
- * 
+ *
  * Further reading (for computing the Student-T cdf via the incomplete beta
  * function):
  *
@@ -59,10 +59,13 @@
  * @brief Student-t cumulative distribution function
  */
 DECLARE_UDF(prob, students_t_cdf)
+DECLARE_UDF(prob, students_t_pdf)
+DECLARE_UDF(prob, students_t_quantile)
 
 
 #if !defined(DECLARE_LIBRARY_EXPORTS)
 
+#include <boost/math/distributions/detail/common_error_handling.hpp>
 #include <boost/math/distributions/normal.hpp>
 #include <boost/math/distributions/students_t.hpp>
 
@@ -128,7 +131,7 @@ oneSidedStudentsT_CDF(const RealType& t,  uint64_t nu) {
     /* Handle main case (nu \in {1, ..., 200}) in the rest of the function. */
     z = 1. + t * t / nu;
     t_by_sqrt_nu = std::fabs(t) / std::sqrt(static_cast<double>(nu));
-    
+
     if (nu == 1)
     {
         A = 2. / M_PI * std::atan(t_by_sqrt_nu);
@@ -151,14 +154,14 @@ oneSidedStudentsT_CDF(const RealType& t,  uint64_t nu) {
         }
         A = t_by_sqrt_nu / std::sqrt(z) * sum;
     }
-    
+
     /* A should obviously be within the interval [0,1] plus minus (hopefully
      * small) rounding errors. */
     if (A > 1.)
         A = 1.;
     else if (A < 0.)
         A = 0.;
-    
+
     return A;
 }
 
@@ -175,7 +178,7 @@ oneSidedStudentsT_CDF(const RealType& t,  uint64_t nu) {
  * @param t
  * @param nu Degree of freedom \f$ \nu > 0 \f$
  * @returns A value \f$ z \f$ such that for a Student's t-distributed
- *     random variable \f$ T \f$ with \f$ nu \f$ degrees of freedom and a 
+ *     random variable \f$ T \f$ with \f$ nu \f$ degrees of freedom and a
  *     standard normally distributed random variable \f$ Z \f$, it holds that
  *     \f$ \Pr[T \leq t] \approx \Pr[Z \leq z] \f$.
  */
@@ -188,7 +191,7 @@ GleasonsNormalApproxForStudentsT(const RealType& t, const RealType& nu) {
 
     if (t < 0)
         z *= -1.;
-    
+
     return z;
 }
 
@@ -208,7 +211,7 @@ GleasonsNormalApproxForStudentsT(const RealType& t, const RealType& nu) {
  * afford the extra work as this function is not designed to be called from
  * inner loops. Performance should still be reasonably good, with at most ~100
  * iterations in any case (just one if nu >= 200).
- * 
+ *
  * For nu < 200, we use the series expansions 26.7.3 and 26.7.4 from [1] and
  * substitute sin(theta) = t/sqrt(n * z), where z = 1 + t^2/nu (using
  * oneSidedStudentsT_CDF()).
@@ -225,7 +228,7 @@ inline
 RealType
 cdf(const boost::math::students_t_distribution<RealType, Policy>& dist,
     const RealType& t) {
-    
+
     RealType df = dist.degrees_of_freedom();
     uint64_t dfInteger = df;
 
@@ -240,10 +243,10 @@ cdf(const boost::math::students_t_distribution<RealType, Policy>& dist,
                     ? t
                     : GleasonsNormalApproxForStudentsT(t, df)
             );
-    
+
     // We first compute A = Pr[|T| < t]
     RealType A = oneSidedStudentsT_CDF(t, df);
-    
+
     /* The Student-T distribution is obviously symmetric around t=0... */
     if (t < 0)
         /* FIXME: If A is approximately 1, we will face a loss of significance.
@@ -279,6 +282,61 @@ cdf(
             ));
     else
         return boost::math::cdf(c.dist, -c.param);
+}
+
+template <class RealType, class Policy>
+inline
+RealType
+pdf(const boost::math::students_t_distribution<RealType, Policy>& dist,
+    const RealType& t) {
+    return boost::math::pdf(dist, t);
+}
+
+template <class RealType, class Policy>
+inline
+RealType
+pdf(
+    const boost::math::complemented2_type<
+        boost::math::students_t_distribution<RealType, Policy>,
+        RealType
+    >& c
+) {
+    return boost::math::pdf(c);
+}
+
+template <class RealType, class Policy>
+inline
+RealType
+quantile(const boost::math::students_t_distribution<RealType, Policy>& dist,
+    const RealType& p) {
+
+    using namespace boost::math;
+
+    static const char* function = "madlib::modules::prob::quantile("
+        "const students_t_distribution<%1%>&, %1%)";
+
+    // FIXME: Boost bug 6937 prevent proper argument validation.
+    // https://svn.boost.org/trac/boost/ticket/6937
+    // Until this is fixed upstream, we do the following checks here.
+    RealType df = dist.degrees_of_freedom();
+    RealType result;
+    if (!detail::check_df(function, df, &result, Policy())
+        || !detail::check_probability(function, p, &result, Policy()))
+        return result;
+
+    return boost::math::quantile(dist, p);
+}
+
+template <class RealType, class Policy>
+inline
+RealType
+quantile(
+    const boost::math::complemented2_type<
+        boost::math::students_t_distribution<RealType, Policy>,
+        RealType
+    >& c
+) {
+    return boost::math::quantile(c);
 }
 
 } // namespace prob

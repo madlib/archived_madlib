@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file boost.cpp
  *
@@ -118,6 +118,7 @@ DEFINE_CONTINUOUS_PROB_DISTR_2(non_central_t, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(normal, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(pareto, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_1(rayleigh, double)
+// For Student's t distribution, see student.cpp
 DEFINE_CONTINUOUS_PROB_DISTR_3(triangular, double, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(uniform, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(weibull, double, double)
@@ -128,6 +129,7 @@ DEFINE_DISCRETE_PROB_DISTR_1(geometric, uint64_t, double)
 DEFINE_DISCRETE_PROB_DISTR_3(hypergeometric, uint64_t, uint64_t, uint64_t,
     uint64_t)
 DEFINE_DISCRETE_PROB_DISTR_2(negative_binomial, uint64_t, double, double)
+DEFINE_DISCRETE_PROB_DISTR_1(poisson, uint64_t, double)
 
 } // namespace prob
 
