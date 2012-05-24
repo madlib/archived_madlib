@@ -67,6 +67,9 @@ extern "C" {
 #undef dngettext
 #endif
 
+#include <dbal/dbal.hpp>
+#include <utils/Reference.hpp>
+#include <utils/Math.hpp>
 
 // Note: If errors occur in the following include files, it could indicate that
 // new macros have been added to PostgreSQL header files.
@@ -77,13 +80,6 @@ extern "C" {
 #include <stdexcept>
 #include <vector>
 #include <fstream>
-
-#define MADLIB_DEFAULT_EXCEPTION std::runtime_error("Internal error")
-#define madlib_assert(_cond, _exception) \
-    do { \
-        if(!(_cond)) \
-            throw _exception; \
-    } while(false)
 
 #define eigen_assert(x) \
     do { \
@@ -161,10 +157,6 @@ madlib ## _ ## _pgfunc _arglist { \
  */
 #define MADLIB_FUNC_MAX_ARGS 9
 
-
-#include <dbal/dbal.hpp>
-#include <utils/Reference.hpp>
-#include <utils/Math.hpp>
 
 #include "Allocator_proto.hpp"
 #include "ArrayHandle_proto.hpp"

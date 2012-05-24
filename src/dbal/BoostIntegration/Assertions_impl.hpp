@@ -8,6 +8,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#include <sstream>
+#include <stdexcept>
+
 #include <boost/assert.hpp>
 
 namespace boost {
@@ -26,14 +29,14 @@ inline
 void
 assertion_failed_msg(char const *inExpr, char const *inMsg,
     char const *inFunction, char const *inFile, long inLine) {
-    
+
     std::stringstream tmp;
     tmp << inMsg
         << "\nDetails (for developers): \n"
         "Failed BOOST_ASSERT: " << inExpr <<
         "\nFunction: " << inFunction <<
         "\nFile: " << inFile << ":" << inLine;
-    
+
     throw std::runtime_error( tmp.str() );
 }
 
@@ -50,7 +53,7 @@ inline
 void
 assertion_failed(char const *inExpr, char const *inFunction,
     char const *inFile, long inLine) {
-    
+
     assertion_failed_msg("A run-time error occured.", inExpr, inFunction,
         inFile, inLine);
 }

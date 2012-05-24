@@ -18,6 +18,9 @@
 #ifndef MADLIB_DBAL_BOOST_INTEGRATION_HPP
 #define MADLIB_DBAL_BOOST_INTEGRATION_HPP
 
+// See dbal/BoostIntegration/Assertions_impl.hpp
+#define BOOST_ENABLE_ASSERT_HANDLER
+
 #include "Assertions_impl.hpp"
 #include "MathToolkit_impl.hpp"
 

@@ -7,6 +7,8 @@
 #ifndef MADLIB_MATH_HPP
 #define MADLIB_MATH_HPP
 
+#include <boost/utility/enable_if.hpp>
+
 namespace madlib {
 
 namespace utils {
@@ -21,7 +23,7 @@ typename boost::enable_if_c<std::numeric_limits<T>::is_integer, T>::type
 nextPowerOfTwo(T inValue) {
     if (std::numeric_limits<T>::is_signed && inValue == 0)
         return 1;
-    
+
     inValue--;
     for (int i = 1; i < std::numeric_limits<T>::digits; i <<= 1)
         inValue = inValue | (inValue >> i);
