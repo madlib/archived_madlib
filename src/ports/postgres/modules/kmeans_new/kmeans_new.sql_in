@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file kmeans.sql_in
  *
@@ -12,7 +12,7 @@
 m4_include(`SQLCommon.m4')
 
 /**
-@addtogroup grp_kmeans 
+@addtogroup grp_kmeans
 
 @about
 
@@ -41,7 +41,7 @@ often referred to as the <em>standard algorithm</em> or even just the
     assigned to it
 -# Convergence is achieved when no points change their assignments during step 2a.
 
-This algorithm is guaranteed to converge to a local optimum, as it can be 
+This algorithm is guaranteed to converge to a local optimum, as it can be
 shown that the objective function decreases in every step.
 
 @implementation
@@ -53,7 +53,7 @@ Data points with with non-finite values (NULL, NaN, infinity) in any component
 will be skipped during analysis.
 
 The following methods are available for the centroid seeding:
- - <strong>random selection</strong>: 
+ - <strong>random selection</strong>:
    Select \f$ k \f$ centroids randomly among the input points.
  - <strong>kmeans++</strong> [2]:
    Start with a single centroid chosen randomly among the input points. Then
@@ -96,7 +96,7 @@ to be implicitly convertible into the following form):
 where:
  - <em>point_id</em> is the name of an optional column with a unique ID of the
    data point.
- - <em>point_coordinates</em> is the name of a column with point coordinates. 
+ - <em>point_coordinates</em> is the name of a column with point coordinates.
    Types such as \c svec or <tt>INTEGER[]</tt> are implicitly convertible to
    <tt>FLOAT8[]</tt>.
 
@@ -108,14 +108,14 @@ expected to be of the following form:
     ...
 )</pre>
 where:
- - <em>centroid_coordinates</em> is the name of a column with coordinates 
- 
-@warning This documentation needs an update! 
+ - <em>centroid_coordinates</em> is the name of a column with coordinates
+
+@warning This documentation needs an update!
 
 @usage
 The k-means algorithm can be invoked in four possible ways:
 
-- using <em>random</em> centroid seeding method for a 
+- using <em>random</em> centroid seeding method for a
 provided \f$ k \f$:
 <pre>SELECT * FROM \ref kmeans_random(
   '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
@@ -126,7 +126,7 @@ provided \f$ k \f$:
   <em>k</em>
 );</pre>
 
-- using <em>kmeans++</em> centroid seeding method for a 
+- using <em>kmeans++</em> centroid seeding method for a
 provided \f$ k \f$:
 <pre>SELECT * FROM \ref kmeans_plusplus(
   '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
@@ -147,10 +147,10 @@ provided \f$ k \f$:
   '<em>init_cset_rel</em>', '<em>init_cset_col</em>'
 );</pre>
 
-The output centroid set will be stored in the <tt>out_centroids</tt> table 
+The output centroid set will be stored in the <tt>out_centroids</tt> table
 with the following structure:
 <pre>
- cid |  coords                   
+ cid |  coords
 -----+-------------
         ...
 </pre>
@@ -158,7 +158,7 @@ with the following structure:
 The cluster assignments for each data point will be stored in the
 <tt>out_points</tt> table with the following structure:
 <pre>
- pid |  coords  | cid 
+ pid |  coords  | cid
 -----+----------+-----
          ...
 </pre>
@@ -168,7 +168,7 @@ The cluster assignments for each data point will be stored in the
 -#  Prepare some input data.
 \code
 sql> SELECT * FROM public.km_sample LIMIT 5;
-          coords          
+          coords
 --------------------------
  {1,1}:{6.76976,39.89516}
  {1,1}:{6.92655,39.54273}
@@ -176,11 +176,11 @@ sql> SELECT * FROM public.km_sample LIMIT 5;
  {1,1}:{7.24073,39.61291}
  {1,1}:{6.72292,39.05652}
 (5 rows)
-\endcode    
+\endcode
 -#  Run k-means clustering using kmeans++ for centroid seeding
 (below example is executed in Verbose mode):
 \code
-sql> SELECT * FROM madlib.kmeans_plusplus( 
+sql> SELECT * FROM madlib.kmeans_plusplus(
     'km_sample', 'coords', null,
     'km_p', 'km_c',
     'l2norm',
@@ -230,7 +230,7 @@ iterations    | 10
 cost_func     | 36424.9019377
 silhouette    | 0.710664950775
 out_points    | km_p
-out_centorids | km_c              
+out_centorids | km_c
 \endcode
 
 @literature
@@ -247,7 +247,7 @@ out_centorids | km_c
     Gene-Expression Data: A Hybrid Approach that Iterates Between k-Means and
     Evolutionary Search. In: Studies in Computational Intelligence - Hybrid
     Evolutionary Algorithms. pp. 313-335. Springer. 2007.
-    
+
 [4] Lloyd, Stuart: Least squares quantization in PCM. Technical Note, Bell
     Laboratories. Published much later in: IEEE Transactions on Information
     Theory 28(2), pp. 128-137. 1982.
@@ -259,73 +259,21 @@ out_centorids | km_c
 @endinternal
 */
 
+/*
+ * @brief k-Means return type
+ *
+ * A composite value:
+ *  - <tt>centroids</tt> - Matrix containing the new \f$ l \leq k \f$
+ *    repositioned centroids as columns. If this matrix has \f$ l < k \f$
+ *    columns, one or more old centroids no longer were closest to any point.
+ *  - <tt>frac_reassigned</tt> - Fraction of points that was assigned a
+ *    different centroid in the current iteration.
+ *  - <tt>num_iterations</tt> - Number of iterations performed (so far).
+ */
 CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
     centroids DOUBLE PRECISION[][],
     frac_reassigned DOUBLE PRECISION,
     num_iterations INTEGER
-);
-
-CREATE FUNCTION MADLIB_SCHEMA.kmeans_step_transition(
-    state DOUBLE PRECISION[],
-    x DOUBLE PRECISION[],
-    centroids DOUBLE PRECISION[][],
-    previous_centroids DOUBLE PRECISION[][], -- may be NULL
-    dist REGPROC
-) RETURNS DOUBLE PRECISION[]
-LANGUAGE c
-IMMUTABLE
-CALLED ON NULL INPUT
-AS 'MODULE_PATHNAME';
-
-CREATE FUNCTION MADLIB_SCHEMA.kmeans_step_merge(
-    state_left DOUBLE PRECISION[],
-    state_right DOUBLE PRECISION[]
-) RETURNS DOUBLE PRECISION[]
-LANGUAGE c
-IMMUTABLE
-STRICT
-AS 'MODULE_PATHNAME';
-
-CREATE FUNCTION MADLIB_SCHEMA.kmeans_step_final(
-    state DOUBLE PRECISION[]
-) RETURNS MADLIB_SCHEMA.kmeans_result
-LANGUAGE c
-IMMUTABLE
-STRICT
-AS 'MODULE_PATHNAME';
-
-/**
- * @internal
- * @brief Perform one iteration of Lloyd's k-means local-search heuristic
- *
- * @param x Point \f$ x \f$
- * @param centroids Matrix containing \f$ k \f$ centroids as columns
- * @param previous_centroids Matrix containing the previous \f$ k \f$ centroids 
- *     as columns. This would be NULL in the first iteration.
- * @param dist A distance function with signature
- *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt>.
- * @returns A composite value:
- *  - <tt>centroids</tt> - Matrix containing the new \f$ l \leq k \f$
- *    repositioned centroids as columns. If this matrix has \f$ l < k \f$
- *    columns, one or more old centroids no longer were closest to any point.
- *    (See kmeans.kmeans() how this is being dealt with.)
- *  - <tt>frac_reassigned</tt> - Fraction of points that was assigned a
- *    different centroid in the current iteration.
- *
- * The return composite value also contains a field <tt>num_iterations</tt>,
- * which will not be set by the aggregate function, though.
- */
-CREATE AGGREGATE MADLIB_SCHEMA.kmeans_step(
-    /*+ x */ DOUBLE PRECISION[],
-    /*+ centroids */ DOUBLE PRECISION[][],
-    /*+ previous_centroids */ DOUBLE PRECISION[][],
-    /*+ dist */ REGPROC
-) (
-    STYPE=DOUBLE PRECISION[],
-    SFUNC=MADLIB_SCHEMA.kmeans_step_transition,
-    m4_ifdef(`__GREENPLUM__', `PREFUNC=MADLIB_SCHEMA.kmeans_step_merge,')
-    FINALFUNC=MADLIB_SCHEMA.kmeans_step_final,
-    INITCOND='{0,0,0,0}'
 );
 
 /**
@@ -346,7 +294,8 @@ CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeans(
     rel_state VARCHAR,
     rel_source VARCHAR,
     col_id VARCHAR,
-    col_point VARCHAR)
+    col_point VARCHAR,
+    agg_mean VARCHAR)
 RETURNS INTEGER
 VOLATILE
 LANGUAGE plpythonu
@@ -362,6 +311,9 @@ AS $$PythonFunction(kmeans, kmeans, compute_kmeans)$$;
  * @param squared_dist_metric A function with signature
  *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
  *     returns the square of the distance between two points
+ * @param agg_mean An aggregate function with signature
+ *     <tt>DOUBLE PRECISION[] -> DOUBLE PRECISION[]</tt> that returns the mean
+ *     of a (non-empty) set of points
  * @param max_num_iterations Maximum number of iterations
  * @param min_frac_reassigned Fraction of reassigned points below which
  *     convergence is assumed and the algorithm terminates
@@ -399,8 +351,8 @@ BEGIN
     -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
     -- We therefore have to emulate.
     PERFORM MADLIB_SCHEMA.internal_execute_using_kmeans_args($sql$
-        DROP TABLE IF EXISTS _madlib_kmeans_args;
-        CREATE TABLE _madlib_kmeans_args AS
+        DROP TABLE IF EXISTS pg_temp._madlib_kmeans_args;
+        CREATE TABLE pg_temp._madlib_kmeans_args AS
         SELECT
             $1 AS initial_centroids, array_upper($1, 1) AS k,
             $2 AS squared_dist_metric, $3 AS max_num_iterations,
@@ -411,12 +363,13 @@ BEGIN
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
     -- Perform acutal computation.
-    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion 
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
     -- operators from regclass to varchar/text.
     theIteration := MADLIB_SCHEMA.internal_compute_kmeans('_madlib_kmeans_args',
             '_madlib_kmeans_state',
-            textin(regclassout(rel_source)), col_id, col_point);
-    
+            textin(regclassout(rel_source)), col_id, col_point,
+            textin(regprocout(agg_mean)));
+
     -- Retrieve result from state table and return it
     EXECUTE
         $sql$
@@ -499,14 +452,14 @@ BEGIN
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
     -- Perform acutal computation.
-    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion 
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
     -- operators from regclass to varchar/text.
     theIteration := (
         SELECT MADLIB_SCHEMA.internal_compute_kmeanspp_seeding(
             '_madlib_kmeanspp_args', '_madlib_kmeanspp_state',
             textin(regclassout(rel_source)), col_id, col_point)
     );
-    
+
     -- Retrieve result from state table and return it
     EXECUTE
         $sql$
@@ -556,6 +509,7 @@ $$;
         squared_dist_metric
     ),
     squared_dist_metric,
+    agg_mean,
     max_num_iterations,
     min_frac_reassigned
 )</pre>

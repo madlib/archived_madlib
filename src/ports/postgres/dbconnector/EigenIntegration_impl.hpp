@@ -239,8 +239,9 @@ MatrixToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix) {
             inMatrix.cols(), inMatrix.rows());
 
     T* ptr = arrayHandle.ptr();
-    for (Index row = 0; row < inMatrix.rows(); ++row)
-        for (Index col = 0; col < inMatrix.cols(); ++col)
+    // We use columnar storage, i.e., each column is a contiguous block
+    for (Index col = 0; col < inMatrix.cols(); ++col)
+        for (Index row = 0; row < inMatrix.rows(); ++row)
             *(ptr++) = inMatrix(row, col);
 
     return arrayHandle.array();

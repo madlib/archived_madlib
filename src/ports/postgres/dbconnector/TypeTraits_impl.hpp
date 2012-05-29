@@ -467,7 +467,7 @@ struct TypeTraits<
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    // MappedMatrix instead.
 };
 
 template <>
@@ -480,7 +480,7 @@ struct TypeTraits<dbal::eigen_integration::Matrix> {
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    // MappedMatrix instead.
 };
 
 template<class Derived>
@@ -499,7 +499,24 @@ struct TypeTraits<Eigen::MatrixBase<Derived> > {
         )
     );
     // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    // MappedColumnVector or MappedMatrix instead.
+};
+
+template<class XprType, int BlockRows, int BlockCols, bool InnerPanel,
+    bool HasDirectAccess>
+struct TypeTraits<
+    Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel, HasDirectAccess> > {
+
+    typedef Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel,
+        HasDirectAccess> value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // MappedMatrix instead.
 };
 
 template<class XprType, int BlockRows, bool InnerPanel, bool HasDirectAccess>
@@ -516,7 +533,26 @@ struct TypeTraits<
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    // MappedColumnVector instead.
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::Matrix,
+        MutableTransparentHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::Matrix,
+        MutableTransparentHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // MappedMatrix instead.
 };
 
 template <>

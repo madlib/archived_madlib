@@ -16,7 +16,7 @@ import plpy
 class MinWarning:
     def __init__(self, warningLevel = 'error'):
         self.warningLevel = warningLevel
-    
+
     def __enter__(self):
         self.oldMsgLevel = plpy.execute("""
             SELECT setting FROM pg_settings WHERE name='client_min_messages'
@@ -25,7 +25,7 @@ class MinWarning:
             SET client_min_messages = {warningLevel}
             """.format(warningLevel = self.warningLevel))
         return self
-    
+
     def __exit__(self, *args):
         plpy.execute("""
             SET client_min_messages = {oldMsgLevel};
@@ -34,7 +34,7 @@ class MinWarning:
 class IterationController:
     """
     @brief Abstraction for implementing driver functions in PL/Python
-    
+
     This class encapsulates handling of the inter-iteration state. The design
     goal is to avoid any conversion between backend-native types and those of
     procedureal languages like PL/Python. Therefore, the expectation is that
@@ -42,17 +42,18 @@ class IterationController:
     non-template arguments are provided in an argument table. Here, "template"
     arguments are those parameters that cannot be SQL parameters, such as table
     and column names.
-    
+
     The inter-state iteration table contains two columns:
     - <tt>_iteration INTEGER</tt> - The 0-based iteration number
     - <tt>_state <em>self.kwargs.stateType</em></tt> - The state (after
       iteration \c _interation)
     """
-    
+
     def __init__(self, rel_args, rel_state, stateType,
             temporaryTables = True,
             truncAfterIteration = False,
             schema_madlib = "MADLIB_SCHEMA_MISSING",
+            verbose = False,
             **kwargs):
         self.kwargs = kwargs
         self.kwargs.update(
@@ -63,12 +64,13 @@ class IterationController:
             schema_madlib = schema_madlib)
         self.temporaryTables = temporaryTables
         self.truncAfterIteration = truncAfterIteration
+        self.verbose = verbose
         self.inWith = False
         self.iteration = -1
-    
+
     def __enter__(self):
         with MinWarning('warning'):
-            plpy.execute("""
+            self.runSQL("""
                 DROP TABLE IF EXISTS {rel_state};
                 CREATE {temp} TABLE {unualified_rel_state} (
                     _iteration INTEGER PRIMARY KEY,
@@ -79,15 +81,20 @@ class IterationController:
                     **self.kwargs))
         self.inWith = True
         return self
-    
+
     def __exit__(self, type, value, tb):
         self.inWith = False
-    
+
+    def runSQL(self, sql):
+        if self.verbose:
+            plpy.notice(sql)
+        return plpy.execute(sql)
+
     def test(self, condition):
         """
         Test if the given condition is satisfied. The condition may depend on
         the current inter-iteration state and all arguments
-        
+
         @param condition Boolean SQL expressions. The
             following names are defined and can be used in the condition:
             - \c _args - The (single-row) argument table
@@ -96,15 +103,15 @@ class IterationController:
         @return None if \c condition evaluates to NULL, otherwise the Boolean
             value of \c condition
         """
-        
-        resultObject = plpy.execute("""
-            SELECT ({condition})::BOOLEAN AS condition
+
+        resultObject = self.runSQL("""
+            SELECT CAST(({condition}) AS BOOLEAN) AS condition
             FROM {{rel_args}} AS _args
                 LEFT OUTER JOIN (
                     SELECT *
                     FROM {{rel_state}} AS _state
                     WHERE _state._iteration = {{iteration}}
-                ) AS _state
+                ) AS _state ON True
             """.format(condition = condition).format(
                 iteration = self.iteration,
                 **self.kwargs))
@@ -112,11 +119,11 @@ class IterationController:
             return None
         else:
             return resultObject[0]['condition']
-    
+
     def update(self, newState):
         """
         Update the inter-iteration state
-        
+
         @param newState SQL expression of type
             <tt>stateType.kwargs.stateType</tt>. The
             following names are defined and can be used in the condition:
@@ -127,18 +134,18 @@ class IterationController:
             Note that <tt>{iteration}</tt> will still be the current iteration.
             For instance, it could be used in the expression as a WHERE
             condition: <tt>[...] WHERE _state._iteration = {iteration}</tt>
-        
+
         This updates the current inter-iteration state to the result of
         evaluating \c newState. If <tt>self.truncAfterIteration</tt> is true,
         this will replace the old state, otherwise the history of all old states
         is kept.
         """
-        
+
         newState = newState.format(
             iteration = self.iteration,
             **self.kwargs)
         self.iteration = self.iteration + 1
-        plpy.execute("""
+        self.runSQL("""
             INSERT INTO {rel_state}
             SELECT
                 {iteration},
@@ -148,7 +155,7 @@ class IterationController:
                 newState = newState,
                 **self.kwargs))
         if self.truncAfterIteration:
-            plpy.execute("""
+            self.runSQL("""
                 DELETE FROM {rel_state} AS _state
                 WHERE _state._iteration < {iteration}
                 """.format(iteration = self.iteration, **self.kwargs))
@@ -157,7 +164,7 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     col_id, col_point, **kwargs):
     """
     Driver function for k-Means++ seeding
-    
+
     @param schema_madlib Name of the MADlib schema, properly escaped/quoted
     @rel_args Name of the (temporary) table containing all non-template
         arguments
@@ -168,7 +175,7 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     @param col_point Name of the column containing the point coordinates
     @param kwargs We allow the caller to specify additional arguments (all of
         which will be ignored though). The purpose of this is to allow the
-        caller to unpack a dictionary whose element set is a superset of 
+        caller to unpack a dictionary whose element set is a superset of
         the required arguments by this function.
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
@@ -222,13 +229,13 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                     AND _state._iteration = {iteration}
                 """)
     return iterationCtrl.iteration
-    
 
-def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id, 
-    col_point, **kwargs):
+
+def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
+    col_point, agg_mean, **kwargs):
     """
     Driver function for Lloyd's k-means local-search heuristic
-    
+
     @param schema_madlib Name of the MADlib schema, properly escaped/quoted
     @rel_args Name of the (temporary) table containing all non-template
         arguments
@@ -239,7 +246,7 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
     @param col_point Name of the column containing the point coordinates
     @param kwargs We allow the caller to specify additional arguments (all of
         which will be ignored though). The purpose of this is to allow the
-        caller to unpack a dictionary whose element set is a superset of 
+        caller to unpack a dictionary whose element set is a superset of
         the required arguments by this function.
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
@@ -249,12 +256,12 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
         rel_args = rel_args,
         rel_state = rel_state,
         stateType = "{schema_madlib}.kmeans_result",
-        temporaryTables = False,
         truncAfterIteration = False,
         schema_madlib = schema_madlib,
         rel_source = rel_source,
         col_id = col_id,
-        col_point = col_point)
+        col_point = col_point,
+        agg_mean = agg_mean)
     with iterationCtrl as it:
         # Create the initial inter-iteration state of type kmeans_result
         it.update("""
@@ -268,22 +275,47 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
             (_state._state).frac_reassigned > _args.min_frac_reassigned
             """):
             it.update("""
-                SELECT {schema_madlib}.kmeans_step(
-                    CAST(_src.{col_point} AS DOUBLE PRECISION[]),
-                    (_state._state).centroids,
-                    (_state_old._state).centroids,
-                    _args.squared_dist_metric
-                ) FROM
-                    {rel_source} AS _src, {rel_state} AS _state,
-                    {rel_args} AS _args
-                    LEFT OUTER JOIN (
-                        SELECT *
-                        FROM {rel_state} AS _state
-                        WHERE _state._iteration = {iteration} - 1
-                    ) AS _state_old ON True
-                WHERE _state._iteration = {iteration}
+                SELECT
+                    CAST((
+                        {schema_madlib}.matrix_agg(_centroid),
+                        CAST(sum(_num_reassigned) AS DOUBLE PRECISION)
+                            / sum(_num_points),
+                        NULL
+                    ) AS {schema_madlib}.kmeans_result)
+                FROM (
+                    SELECT
+                        count(*) AS _num_points,
+                        sum(CAST(coalesce(
+                            _new_centroid_id != _old_centroid_id, TRUE
+                        ) AS INTEGER)) AS _num_reassigned,
+                        {agg_mean}(_point) AS _centroid
+                    FROM (
+                        SELECT
+                            _src.{col_point} AS _point,
+                            ({schema_madlib}.closest_column(
+                                (_state._state).centroids,
+                                _src.{col_point},
+                                _args.squared_dist_metric
+                            )).column_id AS _new_centroid_id,
+                            ({schema_madlib}.closest_column(
+                                (_state_old._state).centroids,
+                                _src.{col_point},
+                                _args.squared_dist_metric
+                            )).column_id AS _old_centroid_id
+                        FROM
+                            {rel_source} AS _src,
+                            {rel_args} AS _args, {rel_state} AS _state
+                            LEFT OUTER JOIN (
+                                SELECT *
+                                FROM {rel_state} AS _state
+                                WHERE _state._iteration = {iteration} - 1
+                            ) AS _state_old ON True
+                        WHERE _state._iteration = {iteration}
+                    ) AS _points_with_assignments
+                    GROUP BY _new_centroid_id
+                ) AS _new_centroids
                 """)
-            
+
             if it.test(
                 "array_upper((_state._state).centroids, 1) < _args.k"):
                 it.update("""
