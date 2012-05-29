@@ -27,7 +27,6 @@
 #ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
-
 /* Indicate "version 1" calling conventions for all exported functions. */
 PG_FUNCTION_INFO_V1(sampleNewTopics);
 PG_FUNCTION_INFO_V1(randomTopics);
@@ -244,6 +243,7 @@ static int32 sampleTopic
 	return ret;
 }
 
+
 /**
  * This function checks the validity of array parameters for "sampleNewTopics".
  *
@@ -256,7 +256,7 @@ static int32 sampleTopic
 static void check_array_sampleNewTopics
 	(ArrayType * p_array, Oid fn_oid, const char * array_name)
 {
-	if (ARR_NULLBITMAP(p_array))
+	if (ARR_HASNULL(p_array))
 	{
 		ereport(ERROR,
 		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -350,8 +350,10 @@ Datum sampleNewTopics(PG_FUNCTION_ARGS)
 		     ereport
 		      (ERROR,
 		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("function \"%s\" called with invalid parameters",
-			       format_procedure(fcinfo->flinfo->fn_oid))));
+			errmsg("function \"%s\" called with invalid parameters. Word index is: %d. "
+                    " Dictionary size is: %d. Word index should be in the range of [1, "
+                    " dict_size]",
+			       format_procedure(fcinfo->flinfo->fn_oid), widx, dsize)));
 
 		wtopic = topics[i];
 		rtopic = sampleTopic(num_topics,widx,wtopic,global_count,
