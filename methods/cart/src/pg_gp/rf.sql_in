@@ -611,7 +611,6 @@ BEGIN
                 'invalid parameter value for num_trees, features_per_node or sampling_percentage'
             );
 
-
     PERFORM MADLIB_SCHEMA.__assert
             (
                 max_tree_depth IS NOT NULL    AND
@@ -684,6 +683,50 @@ BEGIN
             '> does not have column ''' || class_col_name || ''''
         );
 
+    cont_feature_col_names  = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
+    feature_name_array      = MADLIB_SCHEMA.__csvstr_to_array(feature_col_names);
+
+    IF ( verbosity > 0 ) THEN
+        RAISE INFO 'continuous features:%', cont_feature_col_names;
+    END IF;
+
+    IF (feature_name_array IS NULL) THEN
+        -- 2 means the id and class column
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                features_per_node IS NULL OR
+                MADLIB_SCHEMA.__num_of_columns(training_table_name) - 2 >= features_per_node,
+                'the value of features_per_node must be less than or equal to the total number ' ||
+                'of features of the training table'
+           );
+
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__columns_in_table(cont_feature_col_names, training_table_name),
+                'each feature in continuous_feature_names must be a column of the training table'
+            );
+    ELSE
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                features_per_node IS NULL OR
+                array_upper(feature_name_array, 1) >= features_per_node,
+                'the value of features_per_node must be less than or equal to the total number ' ||
+                'of features of the training table'
+           );
+
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__columns_in_table(feature_name_array, training_table_name),
+                'each feature in feature_col_names must be a column of the training table'
+            );
+
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                coalesce(cont_feature_col_names, '{}'::TEXT[]) <@ feature_name_array,
+                'each feature in continuous_feature_names must be in the feature_col_names'
+            );
+    END IF;
+
     PERFORM MADLIB_SCHEMA.__assert
             (
                 result_rf_table_name IS NOT NULL,
@@ -702,7 +745,7 @@ BEGIN
                 rf_table_name                     || 
                 '> exists' 
             );
-            
+    
     -- create tree table and auxiliary tables, so that we can get the schema 
     -- name of the table  
     PERFORM MADLIB_SCHEMA.__create_tree_tables(rf_table_name);
@@ -730,12 +773,6 @@ BEGIN
         h2hmv_routine_id = 2;
     END IF;
 
-    cont_feature_col_names = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
-    
-    IF ( verbosity > 0 ) THEN
-        RAISE INFO 'continuous features:%', cont_feature_col_names;
-    END IF;
- 
     -- the encoded table and meta table will be under the specified schema
     training_encoded_table_name = rf_schema_name || '.' || 
         replace(rf_table_name, '.', '_') || '_ed';
@@ -751,7 +788,7 @@ BEGIN
         (
         training_table_name,
         lower(id_col_name),
-        MADLIB_SCHEMA.__csvstr_to_array(feature_col_names),
+        feature_name_array,
         lower(class_col_name),
         cont_feature_col_names,
         training_encoded_table_name,
