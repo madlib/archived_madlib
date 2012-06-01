@@ -105,7 +105,7 @@ DEFINE_CONTINUOUS_PROB_DISTR_2(fisher_f, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(gamma, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(inverse_chi_squared, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(inverse_gamma, double, double)
-// FIXME: Pending Boost bug 6934, we currently do not support the
+// FIXME: MADLIB-513: Pending Boost bug 6934, we currently do not support the
 // inverse Gaussian distribution. https://svn.boost.org/trac/boost/ticket/6934
 // DEFINE_CONTINUOUS_PROB_DISTR_2(inverse_gaussian, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(laplace, double, double)
@@ -123,13 +123,13 @@ DEFINE_CONTINUOUS_PROB_DISTR_3(triangular, double, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(uniform, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(weibull, double, double)
 
-DEFINE_DISCRETE_PROB_DISTR_1(bernoulli, uint32_t, double)
-DEFINE_DISCRETE_PROB_DISTR_2(binomial, uint64_t, uint64_t, double)
-DEFINE_DISCRETE_PROB_DISTR_1(geometric, uint64_t, double)
-DEFINE_DISCRETE_PROB_DISTR_3(hypergeometric, uint64_t, uint64_t, uint64_t,
-    uint64_t)
-DEFINE_DISCRETE_PROB_DISTR_2(negative_binomial, uint64_t, double, double)
-DEFINE_DISCRETE_PROB_DISTR_1(poisson, uint64_t, double)
+DEFINE_DISCRETE_PROB_DISTR_1(bernoulli, int32_t, double)
+DEFINE_DISCRETE_PROB_DISTR_2(binomial, int64_t, int64_t, double)
+DEFINE_DISCRETE_PROB_DISTR_1(geometric, int64_t, double)
+DEFINE_DISCRETE_PROB_DISTR_3(hypergeometric, int32_t, uint32_t, uint32_t,
+    uint32_t)
+DEFINE_DISCRETE_PROB_DISTR_2(negative_binomial, int64_t, double, double)
+DEFINE_DISCRETE_PROB_DISTR_1(poisson, int64_t, double)
 
 } // namespace prob
 

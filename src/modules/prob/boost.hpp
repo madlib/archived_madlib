@@ -27,7 +27,7 @@
     MADLIB_ITEM(triangular) \
     MADLIB_ITEM(uniform) \
     MADLIB_ITEM(weibull)
-// FIXME: Pending Boost bug 6934, we currently do not support the
+// FIXME: MADLIB-513: Pending Boost bug 6934, we currently do not support the
 // inverse Gaussian distribution. https://svn.boost.org/trac/boost/ticket/6934
 //    MADLIB_ITEM(inverse_gaussian)
 // For Student's t distribution, see student.hpp
@@ -72,10 +72,16 @@ namespace modules {
 namespace prob {
 
 namespace {
-// No need to make this visiable beyond this translation unit.
+// No need to make this visable beyond this translation unit.
+
+enum ProbFnOverride {
+    kResultIsReady = 0,
+    kLetBoostCalculate,
+    kLetBoostCalculateUsingValue
+};
 
 /**
- * @brief Via (partial) spezialization, this class offers a way to override
+ * @brief Via (partial) specialization, this class offers a way to override
  *     boost's domain checks
  *
  * Some boost functions have domain checks we would like to override. E.g.,
@@ -99,17 +105,19 @@ struct DomainCheck {
     typedef typename Distribution::value_type RealType;
 
     template <bool Complement>
-    static bool cdf(const Distribution&, const RealType&, RealType&) {
-        return true;
+    static ProbFnOverride cdf(const Distribution&, const RealType&, RealType&) {
+        return kLetBoostCalculate;
     }
 
-    static bool pdf(const Distribution&, const RealType&, RealType&) {
-        return true;
+    static ProbFnOverride pdf(const Distribution&, const RealType&, RealType&) {
+        return kLetBoostCalculate;
     }
 
     template <bool Complement>
-    static bool quantile(const Distribution&, const RealType&, RealType&) {
-        return true;
+    static ProbFnOverride quantile(const Distribution&, const RealType&,
+        RealType&) {
+
+        return kLetBoostCalculate;
     }
 };
 
@@ -127,7 +135,7 @@ struct RealDomainCheck {
     typedef typename Distribution::value_type RealType;
 
     template <bool Complement>
-    static bool cdf(const Distribution&, const RealType& inX,
+    static ProbFnOverride cdf(const Distribution&, const RealType& inX,
         RealType& outResult) {
 
         if (boost::math::isinf(inX)) {
@@ -135,24 +143,24 @@ struct RealDomainCheck {
                 outResult = Complement ? 1 : 0;
             else
                 outResult = Complement ? 0 : 1;
-            return false;
+            return kResultIsReady;
         }
-        return true;
+        return kLetBoostCalculate;
     }
 
-    static bool pdf(const Distribution&, const RealType& inX,
+    static ProbFnOverride pdf(const Distribution&, const RealType& inX,
         RealType& outResult) {
 
         if (boost::math::isinf(inX)) {
             outResult = 0;
-            return false;
+            return kResultIsReady;
         }
-        return true;
+        return kLetBoostCalculate;
     }
 
     template <bool Complement>
-    static bool quantile(const Distribution&, const RealType&, RealType&) {
-        return true;
+    static ProbFnOverride quantile(const Distribution&, const RealType&, RealType&) {
+        return kLetBoostCalculate;
     }
 };
 
@@ -166,22 +174,22 @@ struct PositiveDomainCheck : public RealDomainCheck<Distribution> {
     typedef typename Base::RealType RealType;
 
     template <bool Complement>
-    static bool cdf(const Distribution& inDist, const RealType& inX,
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
         RealType& outResult) {
 
         if (inX < 0) {
             outResult = Complement ? 1 : 0;
-            return false;
+            return kResultIsReady;
         }
         return Base::template cdf<Complement>(inDist, inX, outResult);
     }
 
-    static bool pdf(const Distribution& inDist, const RealType& inX,
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
         RealType& outResult) {
 
         if (inX < 0) {
             outResult = 0;
-            return false;
+            return kResultIsReady;
         }
         return Base::pdf(inDist, inX, outResult);
     }
@@ -197,7 +205,7 @@ struct ZeroOneDomainCheck : public PositiveDomainCheck<Distribution> {
     typedef typename Base::RealType RealType;
 
     template <bool Complement>
-    static bool cdf(const Distribution&, const RealType& inX,
+    static ProbFnOverride cdf(const Distribution&, const RealType& inX,
         RealType& outResult) {
 
         if (inX < 0)
@@ -205,19 +213,286 @@ struct ZeroOneDomainCheck : public PositiveDomainCheck<Distribution> {
         else if (inX > 1)
             outResult = Complement ? 0 : 1;
         else
-            return true;
+            return kLetBoostCalculate;
 
-        return false;
+        return kResultIsReady;
     }
 
-    static bool pdf(const Distribution&, const RealType& inX,
+    static ProbFnOverride pdf(const Distribution&, const RealType& inX,
         RealType& outResult) {
 
         if (inX < 0 || inX > 1) {
             outResult = 0;
-            return false;
+            return kResultIsReady;
         }
-        return true;
+        return kLetBoostCalculate;
+    }
+};
+
+/**
+ * @brief Domain-check overrides for distribution functions with support in
+ *     \f$ \mathbb Z \f$
+ */
+template <class Distribution>
+struct IntegerDomainCheck : public RealDomainCheck<Distribution> {
+    typedef RealDomainCheck<Distribution> Base;
+    typedef typename Base::RealType RealType;
+
+    static ProbFnOverride internalMakeIntegral(ProbFnOverride inAction,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "IntegerDomainCheck::internalMakeIntegral(...)";
+
+        if (inAction != kResultIsReady) {
+            if (std::isnan(inX)) {
+                outResult = boost::math::policies::raise_domain_error<RealType>(
+                    function,
+                    "Random variate must be integral but was: %1%.",
+                    inX,
+                    typename Distribution::policy_type());
+                inAction = kResultIsReady;
+            } else {
+                outResult = std::floor(inX);
+                inAction = kLetBoostCalculateUsingValue;
+            }
+        }
+        return inAction;
+    }
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        return internalMakeIntegral(
+            Base::template cdf<Complement>(inDist, inX, outResult), inX,
+                outResult);
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        return internalMakeIntegral(
+            Base::pdf(inDist, inX, outResult), inX, outResult);
+    }
+};
+
+/**
+ * @brief Domain-check overrides for distribution functions with support in
+ *     \f$ \mathbb N_0 \f$
+ */
+template <class Distribution>
+struct NonNegativeIntegerDomainCheck : public IntegerDomainCheck<Distribution> {
+    typedef IntegerDomainCheck<Distribution> Base;
+    typedef typename Base::RealType RealType;
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        if (inX < 0) {
+            outResult = Complement ? 1 : 0;
+            return kResultIsReady;
+        }
+        return Base::template cdf<Complement>(inDist, inX, outResult);
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        if (inX < 0) {
+            outResult = 0;
+            return kResultIsReady;
+        }
+        return Base::pdf(inDist, inX, outResult);
+    }
+};
+
+
+/**
+ * @brief Boost only accepts 0 or 1 for random variate
+ *
+ * Due to boost bug 6937, we also need to override the domain check for quantile
+ *
+ * https://svn.boost.org/trac/boost/ticket/6937
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::bernoulli_distribution<RealType, Policy> >
+  : public IntegerDomainCheck<
+        boost::math::bernoulli_distribution<RealType, Policy>
+    > {
+    typedef boost::math::bernoulli_distribution<RealType, Policy> Distribution;
+    typedef IntegerDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        if (inX < 0)
+            outResult = Complement ? 1 : 0;
+        else if (inX > 1)
+            outResult = Complement ? 0 : 1;
+        else
+            return Base::template cdf<Complement>(inDist, inX, outResult);
+
+        return kResultIsReady;
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        if (inX < 0 || inX > 1) {
+            outResult = 0;
+            return kResultIsReady;
+        } else
+            return Base::pdf(inDist, inX, outResult);
+    }
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<bernoulli_distribution<%1%> >::quantile(...)";
+
+        if (!boost::math::detail::check_probability(function,
+            inDist.success_fraction(), &outResult, Policy()))
+            return kResultIsReady;
+
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+/**
+ * @brief Boost only accepts a limited range for random variates
+ *
+ * Due to boost bug 6937, we also need to override the domain check for quantile
+ *
+ * https://svn.boost.org/trac/boost/ticket/6937
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::binomial_distribution<RealType, Policy> >
+  : public IntegerDomainCheck<
+        boost::math::binomial_distribution<RealType, Policy>
+    > {
+    typedef boost::math::binomial_distribution<RealType, Policy> Distribution;
+    typedef IntegerDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        if (inX < 0)
+            outResult = Complement ? 1 : 0;
+        else if (inX > inDist.trials())
+            outResult = Complement ? 0 : 1;
+        else
+            return Base::template cdf<Complement>(inDist, inX, outResult);
+
+        return kResultIsReady;
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        if (inX < 0 || inX > inDist.trials()) {
+            outResult = 0;
+            return kResultIsReady;
+        } else
+            return Base::pdf(inDist, inX, outResult);
+    }
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<binomial_distribution<%1%> >::quantile(...)";
+
+        if (!boost::math::detail::check_probability(function,
+            inDist.success_fraction(), &outResult, Policy()))
+            return kResultIsReady;
+
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug XXX, we need to override the domain check for
+ *     quantile
+ *
+ * FIXME: No boost bug filed so far
+ * Boost does not catch the case where lambda is NaN.
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::exponential_distribution<RealType, Policy> >
+  : public PositiveDomainCheck<
+        boost::math::exponential_distribution<RealType, Policy>
+    > {
+    typedef boost::math::exponential_distribution<RealType, Policy> Distribution;
+    typedef PositiveDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<exponential_distribution<%1%> >::quantile(...)";
+
+        RealType lambda = inDist.lambda();
+        if (!boost::math::isfinite(lambda)) {
+            outResult = boost::math::policies::raise_domain_error<RealType>(
+                function,
+                "The scale parameter \"lambda\" must be > 0, but was: %1%.",
+                lambda,
+                Policy());
+            return kResultIsReady;
+        }
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug XXX, we need to override the domain check for
+ *     quantile
+ *
+ * FIXME: No boost bug filed so far
+ * Boost does not catch the case where the location parameter is NaN.
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::extreme_value_distribution<RealType, Policy> >
+  : public RealDomainCheck<
+        boost::math::extreme_value_distribution<RealType, Policy>
+    > {
+    typedef boost::math::extreme_value_distribution<RealType, Policy> Distribution;
+    typedef PositiveDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<extreme_value_distribution<%1%> >::quantile(...)";
+
+        if (!boost::math::detail::check_location(function,
+            inDist.location(), &outResult, Policy()))
+            return kResultIsReady;
+
+        RealType b = inDist.scale();
+        if (!boost::math::isfinite(b)) {
+            outResult = boost::math::policies::raise_domain_error<RealType>(
+                function,
+                "The scale parameter \"b\" must be > 0, but was: %1%.",
+                b,
+                Policy());
+            return kResultIsReady;
+        }
+
+        return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };
 
@@ -237,8 +512,8 @@ struct DomainCheck<boost::math::fisher_f_distribution<RealType, Policy> >
     typedef PositiveDomainCheck<Distribution> Base;
 
     template <bool Complement>
-    static bool quantile(const Distribution& inDist, const RealType& inP,
-        RealType& outResult) {
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
 
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<fisher_f_distribution<%1%> >::quantile(...)";
@@ -248,7 +523,7 @@ struct DomainCheck<boost::math::fisher_f_distribution<RealType, Policy> >
                 function,
                 "Probability argument is %1%, but must be >= 0 and <= 1!", inP,
                 Policy());
-            return false;
+            return kResultIsReady;
         }
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
@@ -269,7 +544,7 @@ struct DomainCheck<boost::math::gamma_distribution<RealType, Policy> >
     typedef boost::math::gamma_distribution<RealType, Policy> Distribution;
     typedef PositiveDomainCheck<Distribution> Base;
 
-    static bool pdf(const Distribution& inDist, const RealType& inX,
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
         RealType& outResult) {
 
         static const char* function = "madlib::modules::prob::<unnamed>::"
@@ -278,7 +553,7 @@ struct DomainCheck<boost::math::gamma_distribution<RealType, Policy> >
         RealType scale = inDist.scale();
         if (!boost::math::detail::check_gamma(function, scale, shape,
             &outResult, Policy()))
-            return false;
+            return kResultIsReady;
 
         if (inX == 0) {
             if (shape == 1)
@@ -288,9 +563,286 @@ struct DomainCheck<boost::math::gamma_distribution<RealType, Policy> >
                     = boost::math::policies::raise_overflow_error<RealType>(
                         function, 0, Policy());
             else
-                return true;
+                return kLetBoostCalculate;
 
-            return false;
+            return kResultIsReady;
+        }
+        return Base::pdf(inDist, inX, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug 6937, we need to override the domain check for
+ *     quantile
+ *
+ * https://svn.boost.org/trac/boost/ticket/6937
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::geometric_distribution<RealType, Policy> >
+  : public NonNegativeIntegerDomainCheck<
+        boost::math::geometric_distribution<RealType, Policy>
+    > {
+    typedef boost::math::geometric_distribution<RealType, Policy> Distribution;
+    typedef NonNegativeIntegerDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<geometric_distribution<%1%> >::quantile(...)";
+
+        if (!boost::math::detail::check_probability(function,
+            inDist.success_fraction(), &outResult, Policy()))
+            return kResultIsReady;
+
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+
+/**
+ * @brief Boost only accepts a limited range for random variates
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::hypergeometric_distribution<RealType, Policy> >
+  : public NonNegativeIntegerDomainCheck<
+        boost::math::hypergeometric_distribution<RealType, Policy>
+    > {
+    typedef boost::math::hypergeometric_distribution<RealType, Policy> Distribution;
+    typedef NonNegativeIntegerDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        // inDist's parameters are all unsigned, so we need to be careful in the
+        // comparison!
+        if (inX + inDist.total() < inDist.defective() + inDist.sample_count())
+            outResult = Complement ? 1 : 0;
+        else if (inX > inDist.sample_count() || inX > inDist.defective())
+            outResult = Complement ? 0 : 1;
+        else
+            return Base::template cdf<Complement>(inDist, inX, outResult);
+
+        return kResultIsReady;
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        // inDist's parameters are all unsigned, so we need to be careful in the
+        // comparison!
+        if (inX + inDist.total() < inDist.defective() + inDist.sample_count()
+            || inX > inDist.sample_count() || inX > inDist.defective()) {
+            outResult = 0;
+            return kResultIsReady;
+        } else
+            return Base::pdf(inDist, inX, outResult);
+    }
+};
+
+
+/**
+ * @brief Due to boost bug XXX, we need to override the domain check for
+ *     quantile
+ *
+ * FIXME: No boost bug filed so far
+ * Boost does not catch the case where scale is NaN.
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::lognormal_distribution<RealType, Policy> >
+  : public PositiveDomainCheck<
+        boost::math::lognormal_distribution<RealType, Policy>
+    > {
+    typedef boost::math::lognormal_distribution<RealType, Policy> Distribution;
+    typedef PositiveDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<lognormal_distribution<%1%> >::quantile(...)";
+
+        if (!boost::math::detail::check_location(function, inDist.location(),
+                &outResult, Policy())
+            || !boost::math::detail::check_scale(function, inDist.scale(),
+                &outResult, Policy()))
+            return kResultIsReady;
+
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug 6937, we need to override the domain check for
+ *     quantile
+ *
+ * https://svn.boost.org/trac/boost/ticket/6937
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::negative_binomial_distribution<RealType, Policy> >
+  : public NonNegativeIntegerDomainCheck<
+        boost::math::negative_binomial_distribution<RealType, Policy>
+    > {
+    typedef boost::math::negative_binomial_distribution<RealType, Policy> Distribution;
+    typedef NonNegativeIntegerDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<negative_binomial_distribution<%1%> >::quantile(...)";
+
+        if (!boost::math::detail::check_probability(function,
+            inDist.success_fraction(), &outResult, Policy()))
+            return kResultIsReady;
+
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug XXX, we need to check the corner cases for the pdf
+ *
+ * FIXME: No boost bug filed so far
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::non_central_beta_distribution<RealType, Policy> >
+  : public ZeroOneDomainCheck<
+        boost::math::non_central_beta_distribution<RealType, Policy>
+    > {
+    typedef boost::math::non_central_beta_distribution<RealType, Policy> Distribution;
+    typedef ZeroOneDomainCheck<Distribution> Base;
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<non_central_beta_distribution<%1%> >::quantile(...)";
+
+        if (inX == 0 || inX == 1) {
+            if(!boost::math::beta_detail::check_alpha(function, inDist.alpha(),
+                    &outResult, Policy())
+                || !boost::math::beta_detail::check_beta(function,
+                    inDist.beta(), &outResult, Policy())
+                || !boost::math::detail::check_non_centrality(function,
+                    inDist.non_centrality(), &outResult, Policy()))
+                return kResultIsReady;
+
+            if (inX == 0) {
+                if (inDist.alpha() < 1)
+                    outResult = boost::math::policies
+                        ::raise_overflow_error<RealType>(function, 0, Policy());
+                else if (inDist.alpha() == 1)
+                    outResult = inDist.beta()
+                              * std::exp(-inDist.non_centrality()/2.);
+                else /* if (inDist.alpha() > 1) */
+                    outResult = 0;
+                return kResultIsReady;
+            } else /* if (inX == 1) */ {
+                if (inDist.beta() < 1)
+                    outResult = boost::math::policies
+                        ::raise_overflow_error<RealType>(function, 0, Policy());
+                else if (inDist.beta() == 1)
+                    outResult = inDist.alpha() + inDist.non_centrality()/2.;
+                else /* if (inDist.beta() > 1) */
+                    outResult = 0;
+                return kResultIsReady;
+            }
+        }
+        return Base::pdf(inDist, inX, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug XXX, we need to check the corner cases for the pdf
+ *
+ * FIXME: No boost bug filed so far
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::non_central_chi_squared_distribution<RealType, Policy> >
+  : public PositiveDomainCheck<
+        boost::math::non_central_chi_squared_distribution<RealType, Policy>
+    > {
+    typedef boost::math::non_central_chi_squared_distribution<RealType, Policy> Distribution;
+    typedef PositiveDomainCheck<Distribution> Base;
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<non_central_chi_squared_distribution<%1%> >::quantile(...)";
+
+        if (inX == 0) {
+            if(!boost::math::detail::check_df(function,
+                    inDist.degrees_of_freedom(), &outResult, Policy())
+                || !boost::math::detail::check_non_centrality(function,
+                    inDist.non_centrality(), &outResult, Policy()))
+                return kResultIsReady;
+
+            if (inDist.degrees_of_freedom() < 2)
+                outResult = boost::math::policies
+                    ::raise_overflow_error<RealType>(function, 0, Policy());
+            else if (inDist.degrees_of_freedom() == 2)
+                // In this case, f(x) = exp(-lambda/2) * g(x), where g(x)
+                // is the densitiy of a chi-squared distributed RV with 2
+                // degrees of freedom, i.e., f(x) = exp(-lambda/2) / 2
+                outResult = std::exp(-inDist.non_centrality()/2.) / 2.;
+            else /* if (inDist.degrees_of_freedom() > 2) */
+                outResult = 0;
+            return kResultIsReady;
+        }
+        return Base::pdf(inDist, inX, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug XXX, we need to check the corner cases for the pdf
+ *
+ * FIXME: No boost bug filed so far
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::non_central_f_distribution<RealType, Policy> >
+  : public PositiveDomainCheck<
+        boost::math::non_central_f_distribution<RealType, Policy>
+    > {
+    typedef boost::math::non_central_f_distribution<RealType, Policy> Distribution;
+    typedef PositiveDomainCheck<Distribution> Base;
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<non_central_f_distribution<%1%> >::quantile(...)";
+
+        if (inX == 0) {
+            if(!boost::math::detail::check_df(function,
+                    inDist.degrees_of_freedom1(), &outResult, Policy())
+                || !boost::math::detail::check_df(function,
+                    inDist.degrees_of_freedom2(), &outResult, Policy())
+                || !boost::math::detail::check_non_centrality(function,
+                    inDist.non_centrality(), &outResult, Policy()))
+                return kResultIsReady;
+
+            if (inDist.degrees_of_freedom1() < 2)
+                outResult = boost::math::policies
+                    ::raise_overflow_error<RealType>(function, 0, Policy());
+            else if (inDist.degrees_of_freedom1() == 2)
+                // In this case, f(x) = exp(-lambda/2)
+                outResult = std::exp(-inDist.non_centrality()/2.);
+            else /* if (inDist.degrees_of_freedom1() > 2) */
+                outResult = 0;
+            return kResultIsReady;
         }
         return Base::pdf(inDist, inX, outResult);
     }
@@ -312,20 +864,55 @@ struct DomainCheck<boost::math::pareto_distribution<RealType, Policy> >
     typedef PositiveDomainCheck<Distribution> Base;
 
     template <bool Complement>
-    static bool quantile(const Distribution& inDist, const RealType& inP,
-        RealType& outResult) {
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
 
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<pareto_distribution<%1%> >::quantile(...)";
 
         if (!boost::math::detail::check_pareto(function, inDist.scale(),
             inDist.shape(), &outResult, Policy()))
-            return false;
+            return kResultIsReady;
         else if (inP == 1) {
             outResult = boost::math::policies::raise_overflow_error<RealType>(
                 function, 0, Policy());
-            return false;
+            return kResultIsReady;
         }
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+/**
+ * @brief Due to boost bug 6937, we need to override the domain check for
+ *     quantile
+ *
+ * https://svn.boost.org/trac/boost/ticket/6937
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::poisson_distribution<RealType, Policy> >
+  : public NonNegativeIntegerDomainCheck<
+        boost::math::poisson_distribution<RealType, Policy>
+    > {
+    typedef boost::math::poisson_distribution<RealType, Policy> Distribution;
+    typedef NonNegativeIntegerDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<poisson_distribution<%1%> >::quantile(...)";
+
+        if (!boost::math::poisson_detail::check_dist(function,
+            inDist.mean(), &outResult, Policy()))
+            return kResultIsReady;
+        else if (inP == 1) {
+            outResult = boost::math::policies::raise_overflow_error<RealType>(
+                function, 0, Policy());
+            return kResultIsReady;
+        }
+
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };
@@ -347,8 +934,8 @@ struct DomainCheck<boost::math::rayleigh_distribution<RealType, Policy> >
     typedef PositiveDomainCheck<Distribution> Base;
 
     template <bool Complement>
-    static bool quantile(const Distribution& inDist, const RealType& inP,
-        RealType& outResult) {
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
 
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<rayleigh_distribution<%1%> >::quantile(...)";
@@ -360,7 +947,7 @@ struct DomainCheck<boost::math::rayleigh_distribution<RealType, Policy> >
                 "The scale parameter \"sigma\" must be > 0, but was: %1%.",
                 sigma,
                 Policy());
-            return false;
+            return kResultIsReady;
         }
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
@@ -399,26 +986,26 @@ struct DomainCheck<boost::math::weibull_distribution<RealType, Policy> >
     // END Copied from boost/math/distributions/weibull.hpp (v1.49)
 
     template <bool Complement>
-    static bool cdf(const Distribution& inDist, const RealType& inX,
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
         RealType& outResult) {
 
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<weibull_distribution<%1%> >::cdf(...)";
         RealType shape = inDist.shape();
         if (!check_weibull_shape(function, shape, &outResult, Policy()))
-            return false;
+            return kResultIsReady;
 
         return Base::template cdf<Complement>(inDist, inX, outResult);
     }
 
-    static bool pdf(const Distribution& inDist, const RealType& inX,
+    static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
         RealType& outResult) {
 
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<weibull_distribution<%1%> >::pdf(...)";
         RealType shape = inDist.shape();
         if (!check_weibull_shape(function, shape, &outResult, Policy()))
-            return false;
+            return kResultIsReady;
 
         if (inX == 0) {
             if (shape == 1)
@@ -427,22 +1014,22 @@ struct DomainCheck<boost::math::weibull_distribution<RealType, Policy> >
                 outResult = boost::math::policies::raise_overflow_error<RealType>(
                     function, 0, Policy());
             else
-                return true;
+                return kLetBoostCalculate;
 
-            return false;
+            return kResultIsReady;
         }
         return Base::pdf(inDist, inX, outResult);
     }
 
     template <bool Complement>
-    static bool quantile(const Distribution& inDist, const RealType& inP,
-        RealType& outResult) {
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
 
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<weibull_distribution<%1%> >::quantile(...)";
         RealType shape = inDist.shape();
         if (!check_weibull_shape(function, shape, &outResult, Policy()))
-            return false;
+            return kResultIsReady;
 
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
@@ -458,12 +1045,24 @@ struct DomainCheck<boost::math::weibull_distribution<RealType, Policy> >
 
 DOMAIN_CHECK_OVERRIDE(beta, ZeroOneDomainCheck)
 DOMAIN_CHECK_OVERRIDE(chi_squared, PositiveDomainCheck)
+DOMAIN_CHECK_OVERRIDE(inverse_gamma, PositiveDomainCheck)
 DOMAIN_CHECK_OVERRIDE(laplace, RealDomainCheck)
 DOMAIN_CHECK_OVERRIDE(non_central_t, RealDomainCheck)
-// The following lines are currently commented out. See above.
+// The following lines are currently commented out. Each of these is a boost
+// deficiency unfortunately. See above.
+// DOMAIN_CHECK_OVERRIDE(exponential, PositiveDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(extreme_value, RealDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(fisher_f, PositiveDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(gamma, PositiveDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(geometric, NonNegativeIntegerDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(lognormal, PositiveDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(hypergeometric, NonNegativeIntegerDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(negative_binomial, NonNegativeIntegerDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(non_central_beta, ZeroOneDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(non_central_chi_squared, PositiveDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(non_central_f, PositiveDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(pareto, PositiveDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(poisson, NonNegativeIntegerDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(rayleigh, PositiveDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(weibull, PositiveDomainCheck)
 
@@ -475,15 +1074,20 @@ DOMAIN_CHECK_OVERRIDE(non_central_t, RealDomainCheck)
     template <class RealType, class Policy> \
     inline \
     RealType \
-    _what(const boost::math::_dist ## _distribution<RealType, Policy>& _dist, \
-        const RealType& t) { \
+    _what(const boost::math::_dist ## _distribution<RealType, Policy>& dist, \
+        const RealType& x) { \
         \
         typedef boost::math::_dist ## _distribution<RealType, Policy> Dist; \
         RealType result; \
-        return DomainCheck<Dist>::_domain_check_what(_dist, t, result) \
-            ? boost::math::_what(_dist, t) \
-            : result; \
-    } \
+        switch (DomainCheck<Dist>::_domain_check_what(dist, x, result)) { \
+            case kResultIsReady: return result; \
+            case kLetBoostCalculate: return boost::math::_what(dist, x); \
+            case kLetBoostCalculateUsingValue: \
+                return boost::math::_what(dist, result); \
+            default: throw std::logic_error("Unexpected case detected in " \
+                "domain-check override for a boost probability function."); \
+        } \
+    }
 
 #define DEFINE_BOOST_COMPLEMENT_WRAPPER(_dist, _what) \
     template <class RealType, class Policy> \
@@ -494,10 +1098,16 @@ DOMAIN_CHECK_OVERRIDE(non_central_t, RealDomainCheck)
         RealType \
     >& c) { \
         typedef boost::math::_dist ## _distribution<RealType, Policy> Dist; \
+        typedef boost::math::complemented2_type<Dist, RealType> Complement; \
         RealType result; \
-        return DomainCheck<Dist>::template _what<true>(c.dist, c.param, result) \
-            ? boost::math::_what(c) \
-            : result; \
+        switch (DomainCheck<Dist>::template _what<true>(c.dist, c.param, result)) { \
+            case kResultIsReady: return result; \
+            case kLetBoostCalculate: return boost::math::_what(c); \
+            case kLetBoostCalculateUsingValue: \
+                return boost::math::_what(Complement(c.dist, result)); \
+            default: throw std::logic_error("Unexpected case detected in " \
+                "domain-check override for a boost probability function."); \
+        } \
     }
 
 #define DEFINE_BOOST_PROBABILITY_DISTR(_dist) \
