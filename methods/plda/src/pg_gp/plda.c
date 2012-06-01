@@ -245,52 +245,6 @@ static int32 sampleTopic
 
 
 /**
- * This function detects whether an array has any null elements
- *
- * This gives an accurate answer, whereas testing ARR_HASNULL only tells
- * if the array *might* contain a null.
- * Parameters
- *  @param p_array The array to be checked
- *
- */
-static bool
-check_array_null_elem(ArrayType *array)
-{
-   int        nelems;
-   bits8      *bitmap;
-   int        bitmask;
-
-   /* Easy answer if there's no null bitmap */
-   if (!ARR_HASNULL(array))
-       return false;
-
-   nelems = ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array));
-
-   bitmap = ARR_NULLBITMAP(array);
-
-   /* check whole bytes of the bitmap byte-at-a-time */
-   while (nelems >= 8)
-   {
-        if (*bitmap != 0xFF)
-            return true;
-        bitmap++;
-        nelems -= 8;
-   }
-
-   /* check last partial byte */
-   bitmask = 1;
-   while (nelems > 0)
-   {
-       if ((*bitmap & bitmask) == 0)
-           return true;
-       bitmask <<= 1;
-       nelems--;
-   }
-
-   return false;
-}
-
-/**
  * This function checks the validity of array parameters for "sampleNewTopics".
  *
  * Parameters
@@ -302,7 +256,7 @@ check_array_null_elem(ArrayType *array)
 static void check_array_sampleNewTopics
 	(ArrayType * p_array, Oid fn_oid, const char * array_name)
 {
-	if (check_array_null_elem(p_array))
+	if (ARR_HASNULL(p_array))
 	{
 		ereport(ERROR,
 		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
