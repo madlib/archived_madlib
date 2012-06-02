@@ -15,6 +15,37 @@ namespace postgres {
 
 template <typename T>
 struct TypeTraits;
+
+template <class T, class U>
+class convertTo {
+public:
+    convertTo(const T& inOrig) : mOrig(inOrig) { }
+    
+    operator U() {
+        if (std::numeric_limits<T>::is_signed
+            && !std::numeric_limits<U>::is_signed
+            && utils::isNegative(mOrig)) {
+            
+            std::stringstream errorMsg;
+            errorMsg << "Invalid value conversion. Expected unsigned value but "
+                "got " << mOrig << ".";
+            throw std::invalid_argument(errorMsg.str());
+        } else if (
+            (std::numeric_limits<T>::digits > std::numeric_limits<U>::digits
+                ||  (!std::numeric_limits<T>::is_signed
+                    && std::numeric_limits<U>::is_signed))
+            &&  mOrig > static_cast<T>(std::numeric_limits<U>::max())) {
+            
+            std::stringstream errorMsg;
+            errorMsg << "Invalid value conversion. Cannot represent "
+                << mOrig << "in target type (" << typeid(T).name() << ").";
+            throw std::invalid_argument(errorMsg.str());
+        }
+        return static_cast<U>(mOrig);
+    }
+private:
+    const T& mOrig;
+};
     
 /*
  * The type OID (_oid) can be set to InvalidOid if it should not be used for
@@ -99,12 +130,28 @@ DECLARE_CXX_TYPE(
     DatumGetInt64(value)
 );
 DECLARE_CXX_TYPE(
+    INT8OID,
+    uint64_t,
+    dbal::SimpleType,
+    dbal::Immutable,
+    Int64GetDatum((convertTo<uint64_t, int64_t>(value))),
+    (convertTo<int64_t, uint64_t>(DatumGetInt64(value)))
+);
+DECLARE_CXX_TYPE(
     INT4OID,
     int32_t,
     dbal::SimpleType,
     dbal::Immutable,
     Int32GetDatum(value),
     DatumGetInt32(value)
+);
+DECLARE_CXX_TYPE(
+    INT4OID,
+    uint32_t,
+    dbal::SimpleType,
+    dbal::Immutable,
+    Int32GetDatum((convertTo<uint32_t, int32_t>(value))),
+    (convertTo<int32_t, uint32_t>(DatumGetInt32(value)))
 );
 DECLARE_CXX_TYPE(
     BOOLOID,

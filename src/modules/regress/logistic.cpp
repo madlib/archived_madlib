@@ -11,7 +11,7 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
+#include <modules/prob/boost.hpp>
 
 #include "logistic.hpp"
 
@@ -24,7 +24,6 @@ namespace modules {
 
 // Import names from other MADlib modules
 using dbal::NoSolutionFoundException;
-using prob::normalCDF;
 
 namespace regress {
 
@@ -898,7 +897,8 @@ AnyType stateToResult(
     for (Index i = 0; i < coef.size(); ++i) {
         stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
         waldZStats(i) = coef(i) / stdErr(i);
-        waldPValues(i) = 2. * normalCDF( -std::abs(waldZStats(i)) );
+        waldPValues(i) = 2. * prob::cdf( prob::normal(),
+            -std::abs(waldZStats(i)));
         oddsRatios(i) = std::exp( coef(i) );
     }
     

@@ -7,21 +7,15 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
+#include <modules/prob/boost.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
 #include <utils/Math.hpp>
-
-// We use string concatenation with the + operator
-#include <string>
 
 #include "one_way_anova.hpp"
 
 namespace madlib {
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::fisherF_CDF;
 
 namespace stats {
 
@@ -254,6 +248,8 @@ one_way_anova_merge_states::run(AnyType &args) {
  */
 AnyType
 one_way_anova_final::run(AnyType &args) {
+    using boost::math::complement;
+
     OWATransitionState<ArrayHandle<double> > state = args[0];
 
     // If we haven't seen any data, just return Null. This is the standard
@@ -286,7 +282,8 @@ one_way_anova_final::run(AnyType &args) {
         << mean_square_between
         << mean_square_within
         << statistic
-        << 1. - fisherF_CDF(statistic, df_between, df_within);
+        << prob::cdf(
+            complement(prob::fisher_f(df_between, df_within), statistic));
     return tuple;
 }
 

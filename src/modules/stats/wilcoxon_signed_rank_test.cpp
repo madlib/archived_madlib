@@ -7,21 +7,15 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
+#include <modules/prob/boost.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
 #include <utils/Math.hpp>
-
-// We use string concatenation with the + operator
-#include <string>
 
 #include "wilcoxon_signed_rank_test.hpp"
 
 namespace madlib {
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::normalCDF;
 
 namespace stats {
 
@@ -125,6 +119,8 @@ wsr_test_transition::run(AnyType &args) {
 
 AnyType
 wsr_test_final::run(AnyType &args) {
+    using boost::math::complement;
+
     WSRTestTransitionState<ArrayHandle<double> > state = args[0];
 
     double n_n1 = state.num.sum() * (state.num.sum() + 1);
@@ -140,8 +136,8 @@ wsr_test_final::run(AnyType &args) {
         << static_cast<double>(state.rankSum(1))
         << static_cast<int64_t>(state.num.sum())
         << z_statistic
-        << 1. - normalCDF(z_statistic)
-        << 2. * (1. - normalCDF(std::fabs(z_statistic)));
+        << prob::cdf(complement(prob::normal(), z_statistic))
+        << 2. * prob::cdf(complement(prob::normal(), std::fabs(z_statistic)));
     return tuple;
 }
 

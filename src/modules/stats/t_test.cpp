@@ -7,22 +7,15 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
+#include <modules/prob/boost.hpp>
+#include <modules/prob/student.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
-
-// We use string concatenation with the + operator
-#include <string>
 
 #include "t_test.hpp"
 
 namespace madlib {
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::chiSquaredCDF;
-using prob::fisherF_CDF;
-using prob::studentT_CDF;
 
 namespace stats {
 
@@ -260,6 +253,8 @@ t_test_two_unpooled_final::run(AnyType &args) {
  */
 AnyType
 f_test_final::run(AnyType &args) {
+    using boost::math::complement;
+
     TTestTransitionState<ArrayHandle<double> > state = args[0];
 
     // If we haven't seen enough data, just return Null. This is the standard
@@ -277,7 +272,8 @@ f_test_final::run(AnyType &args) {
     double statistic = sampleVarianceX / sampleVarianceY;
     
     AnyType tuple;
-    double pvalue_one_sided = 1. - fisherF_CDF(statistic, dfX, dfY);
+    double pvalue_one_sided
+        = prob::cdf(complement(prob::fisher_f(dfX, dfY), statistic));
     double pvalue_two_sided = 2. * std::min(pvalue_one_sided,
         1. - pvalue_one_sided);
     tuple
@@ -299,12 +295,15 @@ tStatsToResult(double inT, double inDegreeOfFreedom) {
     // Recall definition of p-value: The probability of observating a
     // value at least as extreme as the one observed, assuming that the null
     // hypothesis is true.
+    using boost::math::complement;
+
     AnyType tuple;
     tuple
         << inT
         << inDegreeOfFreedom
-        << 1. - studentT_CDF(inT, inDegreeOfFreedom)
-        << 2. * (1. - studentT_CDF(std::fabs(inT), inDegreeOfFreedom));
+        << prob::cdf(complement(prob::students_t(inDegreeOfFreedom), inT))
+        << 2. * prob::cdf(boost::math::complement(
+            prob::students_t(inDegreeOfFreedom), std::fabs(inT)));
     return tuple;
 }
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file boost.cpp
  *
@@ -8,11 +8,6 @@
 
 #include <dbconnector/dbconnector.hpp>
 
-// We use the Boost implementation
-#include <boost/math/distributions/chi_squared.hpp>
-#include <boost/math/distributions/fisher_f.hpp>
-#include <boost/math/distributions/normal.hpp>
-
 #include "boost.hpp"
 
 namespace madlib {
@@ -21,92 +16,120 @@ namespace modules {
 
 namespace prob {
 
-/**
- * @brief Chi-squared cumulative distribution function: In-database interface
- */
-AnyType
-chi_squared_cdf::run(AnyType &args) {
-    double t = args[0].getAs<double>();
-    double nu = args[1].getAs<double>();
-        
-    /* We want to ensure nu > 0 */
-    if (nu <= 0)
-        throw std::domain_error("Chi Squared distribution undefined for "
-            "degree of freedom <= 0");
+#define DEFINE_PROBABILITY_FUNCTION_1(dist, what, boost_what, rvtype, argtype1) \
+    AnyType \
+    dist ## _ ## what::run(AnyType &args) { \
+        return prob::boost_what( \
+                dist( \
+                    args[1].getAs< argtype1 >() \
+                ), \
+                static_cast<double>(args[0].getAs< rvtype >()) \
+            ); \
+    }
 
-    return chiSquaredCDF(t, nu);
-}
+#define DEFINE_PROBABILITY_FUNCTION_2(dist, what, boost_what, rvtype, \
+    argtype1, argtype2) \
+    AnyType \
+    dist ## _ ## what::run(AnyType &args) { \
+        return prob::boost_what( \
+                dist( \
+                    args[1].getAs< argtype1 >(), \
+                    args[2].getAs< argtype2 >() \
+                ), \
+                static_cast<double>(args[0].getAs< rvtype >()) \
+            ); \
+    }
 
-double
-chiSquaredCDF(double t, double nu) {
-    if (nu <= 0 || std::isnan(t) || std::isnan(nu))
-        return std::numeric_limits<double>::quiet_NaN();
-    else if (t == std::numeric_limits<double>::infinity())
-        return 1;
-    else if (t < 0)
-        return 0;
+#define DEFINE_PROBABILITY_FUNCTION_3(dist, what, boost_what, rvtype, \
+    argtype1, argtype2, argtype3) \
+    AnyType \
+    dist ## _ ## what::run(AnyType &args) { \
+        return prob::boost_what( \
+                dist( \
+                    args[1].getAs< argtype1 >(), \
+                    args[2].getAs< argtype1 >(), \
+                    args[3].getAs< argtype2 >() \
+                ), \
+                static_cast<double>(args[0].getAs< rvtype >()) \
+            ); \
+    }
 
-    return boost::math::cdf( boost::math::chi_squared(nu), t );
-}
+#define DEFINE_PROBABILITY_DISTR_1(dist, pdf_or_pmf, rvtype, argtype1) \
+    DEFINE_PROBABILITY_FUNCTION_1(dist, cdf, cdf, double, argtype1) \
+    DEFINE_PROBABILITY_FUNCTION_1(dist, pdf_or_pmf, pdf, rvtype, argtype1) \
+    DEFINE_PROBABILITY_FUNCTION_1(dist, quantile, quantile, double, argtype1)
 
+#define DEFINE_PROBABILITY_DISTR_2(dist, pdf_or_pmf, rvtype, argtype1, \
+    argtype2) \
+    DEFINE_PROBABILITY_FUNCTION_2(dist, cdf, cdf, double, \
+        argtype1, argtype2) \
+    DEFINE_PROBABILITY_FUNCTION_2(dist, pdf_or_pmf, pdf, rvtype, \
+        argtype1, argtype2) \
+    DEFINE_PROBABILITY_FUNCTION_2(dist, quantile, quantile, double, \
+        argtype1, argtype2)
 
-/**
- * @brief Fisher F cumulate distribution function: In-database interface
- */
-AnyType
-fisher_f_cdf::run(AnyType &args) {
-    double t = args[0].getAs<double>();
-    double df1 = args[1].getAs<double>();
-    double df2 = args[2].getAs<double>();
-        
-    if (df1 <= 0 || df2 <= 0)
-        throw std::domain_error("Fisher F distribution undefined for "
-            "degrees of freedom <= 0");
+#define DEFINE_PROBABILITY_DISTR_3(dist, pdf_or_pmf, rvtype, \
+    argtype1, argtype2, argtype3) \
+    DEFINE_PROBABILITY_FUNCTION_3(dist, cdf, cdf, double, \
+        argtype1, argtype2, argtype3) \
+    DEFINE_PROBABILITY_FUNCTION_3(dist, pdf_or_pmf, pdf, rvtype, \
+        argtype1, argtype2, argtype3) \
+    DEFINE_PROBABILITY_FUNCTION_3(dist, quantile, quantile, double, \
+        argtype1, argtype2, argtype3)
 
-    return fisherF_CDF(t, df1, df2);
-}
+#define DEFINE_CONTINUOUS_PROB_DISTR_1(dist, argtype1) \
+    DEFINE_PROBABILITY_DISTR_1(dist, pdf, double, argtype1)
 
-double
-fisherF_CDF(double t, double df1, double df2) {
-    if (df1 <= 0 || df2 <= 0 ||
-        std::isnan(t) || std::isnan(df1) || std::isnan(df2))
-        return std::numeric_limits<double>::quiet_NaN();
-    else if (t == std::numeric_limits<double>::infinity())
-        return 1;
-    else if (t < 0)
-        return 0;
-    
-    return boost::math::cdf( boost::math::fisher_f(df1, df2), t );
-}
+#define DEFINE_CONTINUOUS_PROB_DISTR_2(dist, argtype1, argtype2) \
+    DEFINE_PROBABILITY_DISTR_2(dist, pdf, double, argtype1, argtype2)
 
+#define DEFINE_CONTINUOUS_PROB_DISTR_3(dist, argtype1, argtype2, argtype3) \
+    DEFINE_PROBABILITY_DISTR_3(dist, pdf, double, argtype1, argtype2, argtype3)
 
-/**
- * @brief Normal cumulative distribution function: In-database interface
- */
-AnyType
-normal_cdf::run(AnyType &args) {
-    double t = args[0].getAs<double>();
-    double mu = args[1].getAs<double>();
-    double sigma = args[2].getAs<double>();
+#define DEFINE_DISCRETE_PROB_DISTR_1(dist, rvtype, argtype1) \
+    DEFINE_PROBABILITY_DISTR_1(dist, pmf, rvtype, argtype1)
 
-    if (sigma < 0)
-        throw std::domain_error("Normal distribtion distribution undefined for "
-            "standard deviation < 0");
-    
-    return normalCDF(t, mu, sigma);
-}
+#define DEFINE_DISCRETE_PROB_DISTR_2(dist, rvtype, argtype1, argtype2) \
+    DEFINE_PROBABILITY_DISTR_2(dist, pmf, rvtype, argtype1, argtype2)
 
-double
-normalCDF(double t, double mu, double sigma) {
-    if (sigma < 0 || std::isnan(t) || std::isnan(mu) || std::isnan(sigma))
-        return std::numeric_limits<double>::quiet_NaN();
-    else if (t == std::numeric_limits<double>::infinity())
-        return 1;
-    else if (t == -std::numeric_limits<double>::infinity())
-        return 0;
-    
-    return boost::math::cdf( boost::math::normal(mu, sigma), t );
-}
+#define DEFINE_DISCRETE_PROB_DISTR_3(dist, rvtype, \
+    argtype1, argtype2, argtype3) \
+    DEFINE_PROBABILITY_DISTR_3(dist, pmf, rvtype, argtype1, argtype2, argtype3)
+
+DEFINE_CONTINUOUS_PROB_DISTR_2(beta, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(cauchy, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_1(chi_squared, double)
+DEFINE_CONTINUOUS_PROB_DISTR_1(exponential, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(extreme_value, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(fisher_f, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(gamma, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(inverse_chi_squared, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(inverse_gamma, double, double)
+// FIXME: MADLIB-513: Pending Boost bug 6934, we currently do not support the
+// inverse Gaussian distribution. https://svn.boost.org/trac/boost/ticket/6934
+// DEFINE_CONTINUOUS_PROB_DISTR_2(inverse_gaussian, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(laplace, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(logistic, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(lognormal, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_3(non_central_beta, double, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(non_central_chi_squared, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_3(non_central_f, double, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(non_central_t, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(normal, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(pareto, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_1(rayleigh, double)
+// For Student's t distribution, see student.cpp
+DEFINE_CONTINUOUS_PROB_DISTR_3(triangular, double, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(uniform, double, double)
+DEFINE_CONTINUOUS_PROB_DISTR_2(weibull, double, double)
+
+DEFINE_DISCRETE_PROB_DISTR_1(bernoulli, int32_t, double)
+DEFINE_DISCRETE_PROB_DISTR_2(binomial, int64_t, int64_t, double)
+DEFINE_DISCRETE_PROB_DISTR_1(geometric, int64_t, double)
+DEFINE_DISCRETE_PROB_DISTR_3(hypergeometric, int32_t, uint32_t, uint32_t,
+    uint32_t)
+DEFINE_DISCRETE_PROB_DISTR_2(negative_binomial, int64_t, double, double)
+DEFINE_DISCRETE_PROB_DISTR_1(poisson, int64_t, double)
 
 } // namespace prob
 
