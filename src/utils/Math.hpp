@@ -8,6 +8,7 @@
 #define MADLIB_MATH_HPP
 
 #include <boost/utility/enable_if.hpp>
+#include <boost/math/special_functions/fpclassify.hpp>
 
 namespace madlib {
 
@@ -32,16 +33,25 @@ nextPowerOfTwo(T inValue) {
 
 /**
  * @brief Return if two floating point numbers are almost equal.
+ *
+ * If either of \c inX or \c inY is infinity, the other value has to be infinity
+ * as well in order to be considered equal (irrespective of the units in the
+ * last place).
  */
 template<class T>
 typename boost::enable_if_c<!std::numeric_limits<T>::is_integer, bool>::type
 almostEqual(T inX, T inY, int inULP) {
     // The machine epsilon has to be scaled to the magnitude of the larger value
     // and multiplied by the desired precision in ULPs (units in the last place)
-    return std::fabs(inX - inY)
+    return (
+           std::fabs(inX - inY)
         <= std::numeric_limits<T>::epsilon()
             * std::max(std::fabs(inX), std::fabs(inY))
-            * inULP;
+            * inULP
+        ) || (
+            boost::math::isinf(inX) && boost::math::isinf(inY)
+            && ((inX < 0) == (inY < 0))
+        );
 }
 
 /**

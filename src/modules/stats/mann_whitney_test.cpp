@@ -35,11 +35,11 @@ public:
         numTies(&mStorage[2], 2),
         rankSum(&mStorage[4], 2),
         last(&mStorage[6]) { }
-    
+
     inline operator AnyType() const {
         return mStorage;
     }
-    
+
 private:
     Handle mStorage;
 
@@ -58,7 +58,7 @@ mw_test_transition::run(AnyType &args) {
     MWTestTransitionState<MutableArrayHandle<double> > state = args[0];
     int sample = args[1].getAs<bool>() ? 0 : 1;
     double value = args[2].getAs<double>();
-    
+
     // For almostEqual, we choose a precision of 2 * 1 units in the last place.
     // This is because we assume that value is original data, so the only
     // precision loss is due to representation as floating-point number.
@@ -67,17 +67,21 @@ mw_test_transition::run(AnyType &args) {
             state.rankSum(i) += state.numTies(i) * 0.5;
     } else if (state.last < value) {
         state.numTies.setZero();
+    } else if (std::isnan(value)) {
+        // If the input contains NaN, we'll have it propagate
+        state.rankSum(0) = state.rankSum(1)
+            = std::numeric_limits<double>::quiet_NaN();
     } else if (state.num.sum() > 0) {
         // also satisfied here: state.last > value
         throw std::invalid_argument("Must be used as an ordered aggregate, "
             "in ascending order of the second argument.");
     }
-    
+
     state.num(sample)++;
     state.rankSum(sample) += (2. * state.num.sum() - state.numTies.sum()) / 2.;
     state.numTies(sample)++;
     state.last = value;
-    
+
     return state;
 }
 
@@ -89,14 +93,14 @@ mw_test_final::run(AnyType &args) {
 
     Eigen::Vector2d U;
     double numProd = state.num.prod();
-    
+
     U(0) = state.rankSum(1) - state.num(1) * (state.num(1) + 1.) / 2.;
     U(1) = numProd - U(0);
-    
+
     double u_statistic = U.minCoeff();
     double z_statistic = (u_statistic - (numProd / 2.))
                        / (std::sqrt( numProd * (state.num.sum() + 1) / 12. ));
-    
+
     AnyType tuple;
     tuple
         << z_statistic
