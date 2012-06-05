@@ -465,6 +465,8 @@ $$ LANGUAGE PLPGSQL;
  *                              for current leaf nodes.
  * @param class_table_name      The name of the class table.
  * @param acc_table_name        The name of the table containing ACC set.
+ * @param max_split_point       The upper limit of sampled split points for 
+ *                              continuous features. 
  * @param verbosity             > 0 means this function runs in verbose mode.
  *                    
  */
@@ -473,13 +475,20 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_training_instance
     instance_table_name         TEXT,
     class_table_name            TEXT,
     acc_table_name              TEXT,
+    max_split_point             INT,
     verbosity                   INT
     )
 RETURNS void AS $$
 DECLARE
     curstmt             TEXT := '';
     window_func_stmt    TEXT := '';
+    temp_table_name     TEXT := 'training_instance_temp';
 BEGIN
+    IF (coalesce(max_split_point,0)<1) THEN
+        temp_table_name=instance_table_name;
+    END IF;
+
+    EXECUTE 'TRUNCATE '||temp_table_name;
 m4_changequote(`>>>', `<<<')
 m4_ifdef(>>>__POSTGRESQL_PRE_9_0__<<<, >>>
     -- old db version does not support starting from 1 following/curr row.
@@ -570,7 +579,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                    coalesce(n2.fval,0) = coalesce(n1.fval,0)  
             ) t;',
             ARRAY[
-                instance_table_name,
+                temp_table_name,
                 window_func_stmt,
                 acc_table_name,
                 class_table_name,
@@ -590,11 +599,67 @@ m4_changequote(>>>`<<<, >>>'<<<)
              SELECT fid, null, class, sum(le), null, nid, tid 
              FROM % 
              WHERE not is_cont group by fid, class, nid, tid;',
-            instance_table_name,
-            instance_table_name
+            temp_table_name,
+            temp_table_name
         ) INTO curstmt;
 
     EXECUTE curstmt;     
+
+    IF (coalesce(max_split_point,0)>=1) THEN
+        -- We used two inserts rather than one insert to use the hash join.
+        -- If we add those conditions in the second insert to the first one,
+        -- gpdb will use nested loop join instead.
+        SELECT MADLIB_SCHEMA.__format
+            (
+                E'INSERT INTO %  
+                 SELECT t.* FROM % t
+                    INNER JOIN
+                    (SELECT l.tid, l.nid, l.fid,
+                            l.fval 
+                     FROM 
+                        (SELECT tid,nid,fid,fval,
+                            row_number() over
+                                (PARTITION BY tid,nid,fid 
+                                ORDER BY fval desc) as desc_row_num
+                         FROM % 
+                         WHERE class is NULL AND is_cont 
+                        ) l,
+                        (SELECT tid,nid,fid,
+                             count(fval)::FLOAT8 as num_dist_val
+                         FROM % 
+                         WHERE class is NULL AND is_cont
+                         GROUP BY tid,nid,fid) m 
+                     WHERE l.tid=m.tid AND l.nid=m.nid AND l.fid=m.fid 
+                       AND l.desc_row_num\\%ceil(m.num_dist_val/(%+1))::BIGINT=0
+                     ) k
+                ON 
+                (t.tid=k.tid AND t.nid=k.nid AND 
+                 t.fid=k.fid AND t.fval=k.fval);',
+                ARRAY[
+                    instance_table_name,
+                    temp_table_name,
+                    temp_table_name,
+                    temp_table_name,
+                    max_split_point::TEXT
+                ]
+            ) INTO curstmt;
+        EXECUTE curstmt;
+        
+        IF(verbosity > 0) THEN
+            RAISE INFO 'stmt: %', curstmt;
+        END IF;    
+        
+        SELECT MADLIB_SCHEMA.__format
+            (
+                'INSERT INTO %  
+                 SELECT * FROM % 
+                 WHERE (NOT is_cont) OR (is_cont IS NULL);',
+                instance_table_name,
+                temp_table_name
+            ) INTO curstmt;
+        EXECUTE curstmt;
+    
+    END IF;
 END
 $$ LANGUAGE PLPGSQL;
 
@@ -764,89 +829,48 @@ $$ LANGUAGE PLPGSQL;
  *                      chosen the feature.
  * @param ed_name       The full name of the encoded table.
  * @param sup_olap      Whether the database supports olap extensions or not.
- * @param max_split_point   The upper limit of sampled split points for 
- *                          continuous features. 
  *                    
  * @return The SQL statement which is used to generate the ACC set.
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__construct_grouping_stmt_by_feature
     (
-    fid               TEXT, 
-    fname             TEXT,
-    cont              BOOLEAN,
-    stmt_in           TEXT,
-    ed_name           TEXT,
-    sup_olap          BOOL,
-    max_split_point   INT
+    fid         TEXT, 
+    fname       TEXT,
+    cont        TEXT,
+    stmt_in     TEXT,
+    ed_name     TEXT,
+    sup_olap    BOOL  
     ) 
 RETURNS TEXT AS $$
 DECLARE
-    stmt    TEXT;
 BEGIN
-
-    IF (coalesce(max_split_point,0)>0 AND cont) THEN
-        stmt = MADLIB_SCHEMA.__format
-                (
-                    'SELECT tid,nid,
-                        avg(fval) OVER  
-                        (PARTITION BY tid,nid, (row_percent*%)::INTEGER )
-                        as %,
-                        class,weight
-                     FROM 
-                     (
-                        SELECT tid, nid, class, fval, weight, 
-                        cume_dist() OVER 
-                        (partition by tid,nid order by fval desc) as row_percent
-                        FROM 
-                        (
-                            -- We should filter out null value.
-                            -- We use inner join here. Outer join may introduce 
-                            -- unexpected null values.
-                            SELECT t1.% AS fval, t1.class, nid, tid, weight 
-                            FROM % t1, tr_association t2 
-                            WHERE t1.id = t2.id AND t1.% IS NOT NULL
-                        ) l
-                    ) k',
-                    ARRAY [
-                        max_split_point::TEXT,
-                        fname,
-                        fname,
-                        ed_name,
-                        fname
-                    ]
-                );
-    ELSE
-        stmt = MADLIB_SCHEMA.__format
-                (
-                    'SELECT t1.%, t1.class, nid, tid, weight 
-                     FROM % t1, tr_association t2 
-                     WHERE t1.id = t2.id AND t1.% IS NOT NULL',
-                    fname,
-                    ed_name,
-                    fname
-                );
-    END IF;
-
     IF (sup_olap) THEN
         RETURN MADLIB_SCHEMA.__format
                 (
                     'INSERT INTO training_instance_aux 
-                     SELECT ((%, %, ''%''::BOOL)::MADLIB_SCHEMA.__attr_info).*,
+                     SELECT ((%, %::FLOAT8, ''%''::BOOL)::MADLIB_SCHEMA.__attr_info).*,
                             class,
                             sum(weight)::INT4,
                             nid,
                             tid 
                      FROM (
-                            %
+                            -- We should filter out null value.
+                            -- We use inner join here. Outer join may introduce 
+                            -- unexpected null values.
+                            SELECT t1.%, t1.class, nid, tid, weight 
+                            FROM % t1, tr_association t2 
+                            WHERE t1.id = t2.id AND t1.% IS NOT NULL
                           ) s 
                      WHERE nid IN (%) 
                      GROUP BY GROUPING SETS((%, nid, tid), (%, class, nid, tid))',
                     ARRAY[
-                        fid,
+                        fid, 
+                        fname, 
+                        cont,
                         fname,
-                        MADLIB_SCHEMA.__to_char(cont),
-                        stmt,
+                        ed_name,
+                        fname,
                         stmt_in, 
                         fname, 
                         fname
@@ -857,38 +881,46 @@ BEGIN
         RETURN MADLIB_SCHEMA.__format
                 (
                     'INSERT INTO training_instance_aux 
-                     SELECT ((%, %, ''%''::BOOL)::MADLIB_SCHEMA.__attr_info).*,
+                     SELECT ((%, %::FLOAT8, ''%''::BOOL)::MADLIB_SCHEMA.__attr_info).*,
                             null as class,
                             sum(weight)::INT4,
                             nid,
                             tid 
                      FROM (
-                            %
+                            SELECT t1.%, t1.class, nid, tid, weight 
+                            FROM % t1, tr_association t2 
+                            WHERE t1.id = t2.id AND t1.% IS NOT NULL
                           ) s 
                      WHERE nid IN (%) 
                      GROUP BY %, nid, tid
                      UNION ALL
-                     SELECT ((%, %, ''%''::BOOL)::MADLIB_SCHEMA.__attr_info).*,
+                     SELECT ((%, %::FLOAT8, ''%''::BOOL)::MADLIB_SCHEMA.__attr_info).*,
                             class,
                             sum(weight)::INT4,
                             nid,
                             tid 
                      FROM (
-                            %
-						  ) s 
+                            SELECT t1.%, t1.class, nid, tid, weight 
+                            FROM % t1, tr_association t2 
+                            WHERE t1.id = t2.id AND t1.% IS NOT NULL
+                          ) s 
                      WHERE nid IN (%) 
                      GROUP BY %, class, nid, tid',
                     ARRAY[
                         fid, 
+                        fname, 
+                        cont, 
                         fname,
-                        MADLIB_SCHEMA.__to_char(cont), 
-                        stmt,
+                        ed_name,
+                        fname,
                         stmt_in, 
                         fname, 
                         fid, 
+                        fname, 
+                        cont, 
                         fname,
-                        MADLIB_SCHEMA.__to_char(cont), 
-                        stmt,
+                        ed_name, 
+                        fname,
                         stmt_in, 
                         fname                        
                     ]
@@ -896,6 +928,7 @@ BEGIN
     END IF;
 END
 $$ LANGUAGE PLPGSQL;
+
 
 /*
  * This UDT is used to keep the times of generating acs.
@@ -1013,11 +1046,10 @@ BEGIN
                         (
                         fid::TEXT,
                         fname::TEXT,
-                        iscont,
+                        MADLIB_SCHEMA.__to_char(iscont),
                         ''SELECT nid FROM sf_association WHERE fid='' || fid,
                         ''%'',
-                        ''%''::BOOLEAN,
-                        %
+                        ''%''::BOOLEAN
                         )
                      FROM 
                         (
@@ -1032,10 +1064,9 @@ BEGIN
                     ARRAY[
                         encoded_table_name,
                         MADLIB_SCHEMA.__to_char(sup_olap),
-                        max_split_point::TEXT,
                         metatable_name
                     ]
-                );     
+                );  
 
     
     IF (verbosity > 0) THEN
@@ -1059,6 +1090,7 @@ BEGIN
         'training_instance',
         classtable_name,
         'training_instance_aux',
+        max_split_point,
         verbosity
         );
     ret.calc_acs_time = clock_timestamp() - begin_calc_acs;
@@ -1492,6 +1524,25 @@ BEGIN
     --      tid:            The tree id.
     DROP TABLE IF EXISTS training_instance CASCADE;
     CREATE TEMP TABLE training_instance
+    (
+        fid            INTEGER,
+        fval           FLOAT8,
+        class          INTEGER,
+        is_cont        BOOLEAN,
+        split_value    FLOAT8,
+        le             BIGINT,
+        gt             BIGINT,
+        nid            INT,
+        tid            INT
+    ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (fid, fval)');
+
+
+    --  The table of training_instance_temp is of the same structure
+    --  as table above. It is used when we need modify the training_instance
+    --  before feeding it to the scv aggregation. Currently, we only use 
+    --  it when max_split_points is set to a positive number.
+    DROP TABLE IF EXISTS training_instance_temp CASCADE;
+    CREATE TEMP TABLE training_instance_temp
     (
         fid            INTEGER,
         fval           FLOAT8,
