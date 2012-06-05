@@ -27,23 +27,24 @@ Eigen::SparseVector<double>
 LegacySparseVectorToSparseColumnVector(SvecType* inVec) {
     SparseData sdata = sdata_from_svec(inVec);
     Eigen::SparseVector<double> vec(sdata->total_value_count);
-    
-	char* ix = sdata->index->data;
-	double* vals = reinterpret_cast<double*>(sdata->vals->data);
-    
-    int logicalIdx = 0;
-	for (int physicalIdx = 0; physicalIdx < sdata->unique_value_count;
+
+    char* ix = sdata->index->data;
+    double* vals = reinterpret_cast<double*>(sdata->vals->data);
+
+    int64_t logicalIdx = 0;
+    for (int64_t physicalIdx = 0; physicalIdx < sdata->unique_value_count;
         ++physicalIdx) {
-        
-        int64 runLength = compword_to_int8(ix);
+
+        int64_t runLength = compword_to_int8(ix);
         if (vals[physicalIdx] == 0.) {
             logicalIdx += runLength;
         } else {
-            for (int i = 0; i < runLength; ++i)
-                vec.insertBack(logicalIdx++) = vals[physicalIdx];
+            for (int64_t i = 0; i < runLength; ++i)
+                vec.insertBack(static_cast<int>(logicalIdx++))
+                    = vals[physicalIdx];
         }
         ix += int8compstoragesize(ix);
-	}
+    }
     return vec;
 }
 
@@ -62,7 +63,7 @@ inline
 SvecType*
 SparseColumnVectorToLegacySparseVector(
     const Eigen::SparseVector<double> &inVec) {
-    
+
     typedef Eigen::SparseVector<double>::Index Index;
     const size_t kValueLength = sizeof(double);
 
@@ -73,14 +74,14 @@ SparseColumnVectorToLegacySparseVector(
 
     Index lastIndex = 0;
     double runValue = 0.;
-	SparseData sdata = makeSparseData();
+    SparseData sdata = makeSparseData();
 
-	sdata->type_of_data = FLOAT8OID;
-    
+    sdata->type_of_data = FLOAT8OID;
+
     madlib_assert(nnz == 0 || (indices && values), std::logic_error(
         "SparseColumnVectorToLegacySparseVector(): Missing values or indices "
         "in Eigen sparse vector."));
-    
+
     if (nnz > 0) {
         if (indices[0] == 0) {
             runValue = values[0];
@@ -101,18 +102,19 @@ SparseColumnVectorToLegacySparseVector(
         if (std::memcmp(&values[i], &runValue, kValueLength)) {
             add_run_to_sdata(reinterpret_cast<char*>(&runValue),
                 indices[i] - lastIndex, kValueLength, sdata);
-			runValue = values[i];
+            runValue = values[i];
             lastIndex = indices[i];
         }
     }
     add_run_to_sdata(reinterpret_cast<char*>(&runValue),
         size - lastIndex, kValueLength, sdata);
 
-	// Add the final tallies
-	sdata->unique_value_count = sdata->vals->len / kValueLength;
-	sdata->total_value_count = size;
+    // Add the final tallies
+    sdata->unique_value_count
+        = static_cast<int>(sdata->vals->len / kValueLength);
+    sdata->total_value_count = static_cast<int>(size);
 
-	return svec_from_sparsedata(sdata, true /* trim */);
+    return svec_from_sparsedata(sdata, true /* trim */);
 }
 
 } // namespace postgres

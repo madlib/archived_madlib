@@ -40,40 +40,40 @@ FunctionHandle::getFunctionCallOptions() const {
     return mFuncCallOptions;
 }
 
-inline 
+inline
 AnyType
 FunctionHandle::invoke(AnyType &args) {
     madlib_assert(args.isComposite(), std::logic_error(
         "FunctionHandle::invoke() called with simple type."));
-    
+
     FunctionCallInfoData funcPtrCallInfo;
     // Initializes all the fields of a FunctionCallInfoData except for the arg[]
     // and argnull[] arrays
     madlib_InitFunctionCallInfoData(
         funcPtrCallInfo,
-        
+
         // FmgrInfo *flinfo -- ptr to lookup info used for this call
         mFuncInfo->getFuncMgrInfo(),
 
         // short nargs -- # arguments actually passed
         args.numFields(),
-        
+
         // Oid fncollation -- collation for function to use
         mSysInfo->collationOID,
-        
+
         // fmNodePtr context -- pass info about context of call
         NULL,
-        
+
         // fmNodePtr resultinfo -- pass or return extra info about result
         NULL
     );
-    
+
     if (funcPtrCallInfo.nargs > mFuncInfo->nargs)
         throw std::invalid_argument(std::string("More arguments given than "
             "expected by '")
             + mSysInfo->functionInformation(mFuncInfo->oid)->getFullName()
             + "'.");
-    
+
     bool hasNulls = false;
     for (uint16_t i = 0; i < funcPtrCallInfo.nargs; ++i) {
         funcPtrCallInfo.arg[i] = args[i].getAsDatum(&funcPtrCallInfo,
@@ -81,11 +81,11 @@ FunctionHandle::invoke(AnyType &args) {
         funcPtrCallInfo.argnull[i] = args[i].isNull();
         hasNulls |= funcPtrCallInfo.argnull[i];
     }
-    
+
     // If function is strict, we must not call the function at all
     if (mFuncInfo->isstrict && hasNulls)
         return AnyType();
-    
+
     MemoryContext oldContext = NULL;
     MemoryContext callContext = NULL;
     if (mFuncCallOptions | GarbageCollectionAfterCall) {
@@ -98,7 +98,7 @@ FunctionHandle::invoke(AnyType &args) {
             ALLOCSET_DEFAULT_MAXSIZE);
         oldContext = MemoryContextSwitchTo(callContext);
     }
-    
+
     Datum result = 0;
     MADLIB_PG_TRY {
         result = FunctionCallInvoke(&funcPtrCallInfo);
@@ -107,7 +107,7 @@ FunctionHandle::invoke(AnyType &args) {
             + mSysInfo->functionInformation(mFuncInfo->oid)->getFullName()
             + "'. Error was:\n" + MADLIB_PG_ERROR_DATA()->message);
     } MADLIB_PG_END_TRY;
-    
+
     if (oldContext) {
         MemoryContextSwitchTo(oldContext);
         TypeInformation* typeInfo
@@ -115,7 +115,7 @@ FunctionHandle::invoke(AnyType &args) {
         result = datumCopy(result, typeInfo->isByValue(), typeInfo->getLen());
         MemoryContextDelete(callContext);
     }
-    
+
     return funcPtrCallInfo.isnull
         ? AnyType()
         : AnyType(mSysInfo, result, mFuncInfo->rettype, /* isMutable */ true);
@@ -127,7 +127,7 @@ FunctionHandle::operator()() {
     AnyType nil;
     return invoke(nil);
 }
-    
+
 // In the following, we define
 // AnyType operator()(AnyType& inArgs1, ..., AnyType& inArgsN)
 // using Boost.Preprocessor.
@@ -143,7 +143,7 @@ FunctionHandle::operator()() {
         args BOOST_PP_REPEAT(BOOST_PP_INC(n), MADLIB_APPEND_ARG, inArg); \
         return invoke(args); \
     }
-BOOST_PP_REPEAT(MADLIB_FUNC_MAX_ARGS, MADLIB_OPERATOR_DEF, )
+BOOST_PP_REPEAT(MADLIB_FUNC_MAX_ARGS, MADLIB_OPERATOR_DEF, 0 /* ignored */)
 #undef MADLIB_OPERATOR_DEF
 #undef MADLIB_APPEND_ARG
 

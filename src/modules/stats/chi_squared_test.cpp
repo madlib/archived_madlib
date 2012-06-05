@@ -91,7 +91,7 @@ chi2_gof_test_transition::run(AnyType &args) {
     //        return state;
 
     Chi2TestTransitionState<MutableArrayHandle<double> > state = args[0];
-    int64_t observed = args[1].getAs<int64_t>();
+    double observed = static_cast<double>(args[1].getAs<int64_t>());
     double expected = args.numFields() <= 2 ? 1 : args[2].getAs<double>();
     int64_t df = args.numFields() <= 3 ? 0 : args[3].getAs<int64_t>();
 
@@ -103,10 +103,10 @@ chi2_gof_test_transition::run(AnyType &args) {
         state.df = df;
     }
 
-    updateSumSquaredDeviations(state.numRows, state.sum_expect,
-        state.sum_obs_square_over_expect, state.sum_obs,
-        state.sumSquaredDeviations,
-        1, expected, static_cast<double>(observed) * observed / expected,
+    updateSumSquaredDeviations(state.numRows.ref(), state.sum_expect.ref(),
+        state.sum_obs_square_over_expect.ref(), state.sum_obs.ref(),
+        state.sumSquaredDeviations.ref(),
+        1, expected, observed * observed / expected,
         observed, 0);
 
     return state;
@@ -126,10 +126,10 @@ chi2_gof_test_merge_states::run(AnyType &args) {
 
     // Merge states together and return
     updateSumSquaredDeviations(
-        stateLeft.numRows, stateLeft.sum_expect,
-            stateLeft.sum_obs_square_over_expect,
-            stateLeft.sum_obs, stateLeft.sumSquaredDeviations,
-        stateRight.numRows, stateRight.sum_expect,
+        stateLeft.numRows.ref(), stateLeft.sum_expect.ref(),
+            stateLeft.sum_obs_square_over_expect.ref(),
+            stateLeft.sum_obs.ref(), stateLeft.sumSquaredDeviations.ref(),
+        stateRight.numRows.ref(), stateRight.sum_expect,
             stateRight.sum_obs_square_over_expect,
             stateRight.sum_obs, stateRight.sumSquaredDeviations);
 
@@ -152,15 +152,17 @@ chi2_gof_test_final::run(AnyType &args) {
     double statistic = state.sumSquaredDeviations / state.sum_obs;
 
     // Phi coefficient
-    double phi = std::sqrt(statistic / state.numRows);
+    double phi = std::sqrt(statistic / static_cast<double>(state.numRows));
 
     // Contingency coefficient
-    double C = std::sqrt(statistic / (state.numRows + statistic));
+    double C = std::sqrt(statistic
+             / (static_cast<double>(state.numRows) + statistic));
 
     AnyType tuple;
     tuple
         << statistic
-        << prob::cdf(complement(prob::chi_squared(degreeOfFreedom), statistic))
+        << prob::cdf(complement(prob::chi_squared(
+            static_cast<double>(degreeOfFreedom)), statistic))
         << degreeOfFreedom
         << phi
         << C;

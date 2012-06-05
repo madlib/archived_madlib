@@ -23,8 +23,8 @@ template <int ErrorLevel>
 inline
 void
 OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
-    uint32_t /* inLength */) const {
-    
+    std::size_t /* inLength */) const {
+
     volatile bool errorOccurred = false;
     PG_TRY(); {
         ereport(ErrorLevel,
@@ -32,7 +32,7 @@ OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
     } PG_CATCH(); {
         errorOccurred = true;
     } PG_END_TRY();
-    
+
     if (errorOccurred)
         throw std::runtime_error("An exception occured during message output.");
 }

@@ -129,7 +129,7 @@ oneSidedStudentsT_CDF(const RealType& t,  uint64_t nu) {
                 sum = 1.;
 
     /* Handle main case (nu \in {1, ..., 200}) in the rest of the function. */
-    z = 1. + t * t / nu;
+    z = 1. + t * t / static_cast<double>(nu);
     t_by_sqrt_nu = std::fabs(t) / std::sqrt(static_cast<double>(nu));
 
     if (nu == 1)
@@ -140,7 +140,8 @@ oneSidedStudentsT_CDF(const RealType& t,  uint64_t nu) {
     {
         for (uint64_t j = 2; j + 3 <= nu; j += 2)
         {
-            prod = prod * j / ((j + 1) * z);
+            prod = prod * static_cast<double>(j)
+                 / (static_cast<double>(j + 1) * z);
             sum = sum + prod;
         }
         A = 2 / M_PI * ( std::atan(t_by_sqrt_nu) + t_by_sqrt_nu / z * sum );
@@ -149,7 +150,8 @@ oneSidedStudentsT_CDF(const RealType& t,  uint64_t nu) {
     {
         for (uint64_t j = 2; j + 2 <= nu; j += 2)
         {
-            prod = prod * (j - 1) / (j * z);
+            prod = prod * static_cast<double>(j - 1)
+                 / (static_cast<double>(j) * z);
             sum = sum + prod;
         }
         A = t_by_sqrt_nu / std::sqrt(z) * sum;
@@ -230,12 +232,19 @@ cdf(const boost::math::students_t_distribution<RealType, Policy>& dist,
     const RealType& t) {
 
     RealType df = dist.degrees_of_freedom();
-    uint64_t dfInteger = df;
 
     // FIXME: Add some justification/do some tests.
-    if (!std::isfinite(df) || std::fabs(df - dfInteger)/df > 0.01)
+    if (!std::isfinite(df) || std::fabs(df - std::floor(df))/df > 0.01)
         return boost::math::cdf(dist, t);
-    else if (df >= 200)
+
+    static const char* function = "madlib::modules::prob::cdf("
+        "const students_t_distribution<%1%>&, %1%)";
+
+    RealType result;
+    if (!boost::math::detail::check_df(function, df, &result, Policy()))
+        return result;
+
+    if (df >= 200)
         return
             boost::math::cdf(
                 boost::math::normal_distribution<RealType, Policy>(),
@@ -245,7 +254,7 @@ cdf(const boost::math::students_t_distribution<RealType, Policy>& dist,
             );
 
     // We first compute A = Pr[|T| < t]
-    RealType A = oneSidedStudentsT_CDF(t, df);
+    RealType A = oneSidedStudentsT_CDF(t, static_cast<uint64_t>(df));
 
     /* The Student-T distribution is obviously symmetric around t=0... */
     if (t < 0)
@@ -272,7 +281,14 @@ cdf(
     >& c
 ) {
     RealType df = c.dist.degrees_of_freedom();
-    if (df >= 200)
+    if (df >= 200) {
+        static const char* function = "madlib::modules::prob::cdf("
+            "const complement(students_t_distribution<%1%>&), %1%)";
+
+        RealType result;
+        if (!boost::math::detail::check_df(function, df, &result, Policy()))
+            return result;
+
         return
             boost::math::cdf(complement(
                 boost::math::normal_distribution<RealType, Policy>(),
@@ -280,8 +296,9 @@ cdf(
                     ? c.param
                     : GleasonsNormalApproxForStudentsT(c.param, df)
             ));
-    else
-        return boost::math::cdf(c.dist, -c.param);
+    }
+
+    return prob::cdf(c.dist, -c.param);
 }
 
 template <class RealType, class Policy>

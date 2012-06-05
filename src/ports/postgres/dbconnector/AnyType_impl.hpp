@@ -25,7 +25,7 @@ AnyType::AnyType(FunctionCallInfo inFnCallInfo)
     mIsMutable(false)
     { }
 
-inline    
+inline
 AnyType::AnyType(SystemInformation* inSysInfo,
     HeapTupleHeader inTuple, Datum inDatum, Oid inTypeID)
   : mContent(NativeComposite),
@@ -119,6 +119,8 @@ AnyType::consistencyCheck() const {
     madlib_assert((mContent != FunctionComposite && mContent != NativeComposite)
         || mSysInfo != NULL,
         std::logic_error(kMsg));
+    madlib_assert(mChildren.size() <= std::numeric_limits<uint16_t>::max(),
+        std::runtime_error("Too many fields in composite type."));
 }
 
 /**
@@ -131,11 +133,11 @@ inline
 T
 AnyType::getAs() const {
     consistencyCheck();
-    
+
     if (isNull())
         throw std::invalid_argument("Invalid type conversion. "
             "Null where not expected.");
-    
+
     if (isComposite())
         throw std::invalid_argument("Invalid type conversion. "
             "Composite type where not expected.");
@@ -145,7 +147,7 @@ AnyType::getAs() const {
         std::stringstream errorMsg;
         errorMsg << "Invalid type conversion. Expected type ID "
             << TypeTraits<T>::oid;
-        if (mSysInfo)    
+        if (mSysInfo)
             errorMsg << " ('"
                 << mSysInfo->typeInformation(TypeTraits<T>::oid)->getName()
                 << "')";
@@ -156,7 +158,7 @@ AnyType::getAs() const {
         errorMsg << '.';
         throw std::invalid_argument(errorMsg.str());
     }
-    
+
     // Verify type name
     if (TypeTraits<T>::typeName() &&
         std::strncmp(mTypeName, TypeTraits<T>::typeName(), NAMEDATALEN)) {
@@ -201,10 +203,12 @@ AnyType::isComposite() const {
 inline
 uint16_t
 AnyType::numFields() const {
+    consistencyCheck();
+
     switch (mContent) {
         case Null: return 0;
         case Scalar: return 1;
-        case ReturnComposite: return mChildren.size();
+        case ReturnComposite: return static_cast<uint16_t>(mChildren.size());
         case FunctionComposite: return PG_NARGS();
         case NativeComposite: return HeapTupleHeaderGetNatts(mTupleHeader);
         default:
@@ -236,7 +240,7 @@ AnyType::operator[](uint16_t inID) const {
         throw std::invalid_argument("Invalid type conversion. "
             "Composite type where not expected.");
     }
-    
+
     if (mContent == ReturnComposite)
         return mChildren[inID];
 
@@ -253,15 +257,15 @@ AnyType::operator[](uint16_t inID) const {
         if (inID >= size_t(PG_NARGS()))
             throw std::out_of_range("Invalid type conversion. Access behind "
                 "end of argument list.");
-        
+
         if (PG_ARGISNULL(inID))
             return AnyType();
-        
+
         typeID = mSysInfo->functionInformation(fcinfo->flinfo->fn_oid)
             ->getArgumentType(inID, fcinfo->flinfo);
         if (inID == 0) {
             // If we are called as an aggregate function, the first argument is
-            // the transition state. In that case, we are free to modify the 
+            // the transition state. In that case, we are free to modify the
             // data. In fact, for performance reasons, we *should* even do all
             // modifications in-place. In all other cases, directly modifying
             // memory is dangerous.
@@ -276,27 +280,27 @@ AnyType::operator[](uint16_t inID) const {
     } else /* if (mContent == NativeComposite) */ {
         // This AnyType objects represents a tuple that was passed from the
         // backend
-        
+
         TupleDesc tupdesc = mSysInfo
             ->typeInformation(HeapTupleHeaderGetTypeId(mTupleHeader))
             ->getTupleDesc(HeapTupleHeaderGetTypMod(mTupleHeader));
-        
+
         if (inID >= tupdesc->natts)
             throw std::out_of_range("Invalid type conversion. Access behind "
                 "end of composite object.");
-        
+
         typeID = tupdesc->attrs[inID]->atttypid;
         bool isNull = false;
         datum = madlib_GetAttributeByNum(mTupleHeader, inID, &isNull);
         if (isNull)
             return AnyType();
     }
-    
+
     if (typeID == InvalidOid)
         throw std::invalid_argument("Backend returned invalid type ID.");
-    
+
     return mSysInfo->typeInformation(typeID)->isCompositeType()
-        ? AnyType(mSysInfo, madlib_DatumGetHeapTupleHeader(datum), datum,   
+        ? AnyType(mSysInfo, madlib_DatumGetHeapTupleHeader(datum), datum,
             typeID)
         : AnyType(mSysInfo, datum, typeID, isMutable);
 }
@@ -312,9 +316,9 @@ AnyType::operator<<(const AnyType &inValue) {
     madlib_assert(mContent == Null || mContent == ReturnComposite,
         std::logic_error("Internal inconsistency while creating composite "
             "return value."));
-    
+
     mContent = ReturnComposite;
-    mChildren.push_back(inValue);    
+    mChildren.push_back(inValue);
     return *this;
 }
 
@@ -343,7 +347,7 @@ inline
 Datum
 AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
     Oid inTargetTypeID) const {
-    
+
     consistencyCheck();
 
     // The default value to return in case of Null is 0. Note, however, that
@@ -351,7 +355,7 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
     // responsibility to call isNull() separately.
     if (isNull())
         return 0;
-    
+
     // Note: mSysInfo is NULL if this object was not an argument from the
     // backend.
     SystemInformation* sysInfo = SystemInformation::get(inFnCallInfo);
@@ -375,9 +379,9 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
             ->getTupleDesc();
     }
 
-    bool targetIsComposite = targetTupleDesc != NULL;        
+    bool targetIsComposite = targetTupleDesc != NULL;
     Datum returnValue = mDatum;
-    
+
     if (targetIsComposite && !isComposite())
         throw std::runtime_error("Invalid type conversion. "
             "Simple type supplied but backend expects composite type.");
@@ -385,7 +389,7 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
     if (!targetIsComposite && isComposite())
         throw std::runtime_error("Invalid type conversion. "
             "Composite type supplied but backend expects simple type.");
-    
+
     if (targetIsComposite) {
         if (static_cast<size_t>(targetTupleDesc->natts) < mChildren.size())
             throw std::runtime_error("Invalid type conversion. "
@@ -397,26 +401,26 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
 
         for (uint16_t pos = 0; pos < mChildren.size(); ++pos) {
             Oid targetTypeID = targetTupleDesc->attrs[pos]->atttypid;
-                                
+
             values.push_back(mChildren[pos].getAsDatum(inFnCallInfo,
                 targetTypeID));
             nulls.push_back(mChildren[pos].isNull());
         }
         // All elements that have not been initialized will be set to Null
-        for (uint16_t pos = mChildren.size();
+        for (uint16_t pos = static_cast<uint16_t>(mChildren.size());
             pos < static_cast<size_t>(targetTupleDesc->natts);
             ++pos) {
-            
+
             values.push_back(Datum(0));
             nulls.push_back(true);
         }
-        
+
         HeapTuple heapTuple = madlib_heap_form_tuple(targetTupleDesc,
             &values[0], reinterpret_cast<bool*>(&nulls[0]));
         // BACKEND: HeapTupleGetDatum is a macro that will not cause an
         // exception
         returnValue = HeapTupleGetDatum(heapTuple);
-    } else /* if (!targetIsComposite) */ {        
+    } else /* if (!targetIsComposite) */ {
         if (mTypeID != InvalidOid && inTargetTypeID != mTypeID) {
             std::stringstream errorMsg;
             errorMsg << "Invalid type conversion. "
@@ -426,11 +430,11 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
                 << sysInfo->typeInformation(mTypeID)->getName() << "').";
             throw std::invalid_argument(errorMsg.str());
         }
-        
+
         if (mTypeName && std::strncmp(mTypeName,
             sysInfo->typeInformation(inTargetTypeID)->getName(),
             NAMEDATALEN)) {
-            
+
             std::stringstream errorMsg;
             errorMsg << "Invalid type conversion. Backend expects type '"
                 << sysInfo->typeInformation(inTargetTypeID)->getName() <<
@@ -439,7 +443,7 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
             throw std::invalid_argument(errorMsg.str());
         }
     }
-    
+
     return returnValue;
 }
 

@@ -27,7 +27,7 @@ public:
     // FIXME: Is it better to have the const_cast in the mutable class
     // and declare mPtr as const?
     Reference(const T *inPtr) : mPtr(const_cast<T*>(inPtr)) { }
-    
+
     Reference &rebind(const T *inPtr) {
         mPtr = const_cast<T*>(inPtr);
         return *this;
@@ -39,11 +39,15 @@ public:
     operator U() const {
         return static_cast<U>(*mPtr);
     }
-    
+
     const T* ptr() const {
         return mPtr;
     }
-    
+
+    const T& ref() const {
+        return *mPtr;
+    }
+
 protected:
     /**
      * Defined but protected.
@@ -66,7 +70,7 @@ public:
     /**
      * @internal
      * It is important to define this operator because C++ will otherwise
-     * perform an assignment as a bit-by-bit copy. Note that this default 
+     * perform an assignment as a bit-by-bit copy. Note that this default
      * operator= would be used even though there is a conversion path
      * through dest.operator=(orig.operator U())
      */
@@ -74,37 +78,41 @@ public:
         *mPtr = *inReference.ptr();
         return *this;
     }
-    
+
     MutableReference &operator=(const U &inValue) {
-        *mPtr = inValue;
+        *mPtr = static_cast<T>(inValue);
         return *this;
     }
-    
+
     MutableReference &operator+=(const U &inValue) {
-        *mPtr += inValue;
+        *mPtr += static_cast<T>(inValue);
         return *this;
     }
 
     MutableReference &operator-=(const U &inValue) {
-        *mPtr -= inValue;
+        *mPtr -= static_cast<T>(inValue);
         return *this;
     }
-    
+
     U operator++(int) {
         U returnValue = static_cast<U>(*mPtr);
-        *mPtr += 1;
+        *mPtr += static_cast<T>(1);
         return returnValue;
     }
-    
+
     MutableReference &operator++() {
-        *mPtr += 1;
+        *mPtr += static_cast<T>(1);
         return *this;
     }
-    
-    operator T&() {
+
+    T* ptr() {
+        return mPtr;
+    }
+
+    T& ref() {
         return *mPtr;
     }
-    
+
 protected:
     using Base::mPtr;
 };

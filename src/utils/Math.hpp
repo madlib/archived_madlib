@@ -15,7 +15,7 @@ namespace madlib {
 namespace utils {
 
 /**
- * @brief Return the next higher power of 2.
+ * @brief Return the smallest power of 2 that is greater or equal to a number
  *
  * This implementation is for integers only.
  */
@@ -27,8 +27,10 @@ nextPowerOfTwo(T inValue) {
 
     inValue--;
     for (int i = 1; i < std::numeric_limits<T>::digits; i <<= 1)
-        inValue = inValue | (inValue >> i);
-    return inValue + 1;
+        // Note: No overflow can occur in the following line
+        inValue = static_cast<T>(inValue | (inValue >> i));
+
+    return static_cast<T>(inValue + 1);
 }
 
 /**

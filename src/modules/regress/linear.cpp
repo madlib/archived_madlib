@@ -162,7 +162,7 @@ linregr_transition::run(AnyType &args) {
             throw std::domain_error("Number of independent variables cannot be "
                 "larger than 65535.");
 
-        state.initialize(*this, x.size());
+        state.initialize(*this, static_cast<uint16_t>(x.size()));
     }
     state.numRows++;
     state.y_sum += y;
@@ -234,12 +234,14 @@ linregr_final::run(AnyType &args) {
     // explained sum of squares (regression sum of squares)
     double ess
         = dot(state.X_transp_Y, coef)
-            - ((state.y_sum * state.y_sum) / state.numRows);
+            - ((state.y_sum * state.y_sum)
+        / static_cast<double>(state.numRows));
 
     // total sum of squares
     double tss
         = state.y_square_sum
-            - ((state.y_sum * state.y_sum) / state.numRows);
+            - ((state.y_sum * state.y_sum)
+        / static_cast<double>(state.numRows));
 
     // With infinite precision, the following checks are pointless. But due to
     // floating-point arithmetic, this need not hold at this point.
@@ -266,7 +268,7 @@ linregr_final::run(AnyType &args) {
     double rss = tss - ess;
 
     // Variance is also called the mean square error
-	double variance = rss / (state.numRows - state.widthOfX);
+	double variance = rss / static_cast<double>(state.numRows - state.widthOfX);
 
     // Vector of standard errors and t-statistics: For efficiency reasons, we
     // want to return these by reference, so we need to bind to db memory
@@ -301,7 +303,8 @@ linregr_final::run(AnyType &args) {
         for (int i = 0; i < state.widthOfX; i++)
             pValues(i) = 2. * prob::cdf(
                 boost::math::complement(
-                    prob::students_t(state.numRows - state.widthOfX),
+                    prob::students_t(
+                        static_cast<double>(state.numRows - state.widthOfX)),
                     std::fabs(tStats(i))
                 ));
 

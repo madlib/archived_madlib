@@ -17,7 +17,7 @@ namespace postgres {
 
 /**
  * @brief Cached information about PostgreSQL types
- * 
+ *
  * For explanations, see struct FormData_pg_type defined in pg_type.h
  * and struct TypeCacheEntry defined in typcache.h.
  */
@@ -26,12 +26,12 @@ struct TypeInformation {
      * OID and hash key. Must be the first element.
      */
     Oid oid;
-    
+
     /**
      * Type name
      */
     char name[NAMEDATALEN];
-    
+
 	/**
 	 * For a fixed-size type, typlen is the number of bytes PostgreSQL uses to
 	 * represent a value of this type, e.g., 4 for an int4.	But for a
@@ -58,7 +58,7 @@ struct TypeInformation {
      * on the PostgreSQL garbage collection for cleanup.
      */
     TupleDesc tupdesc;
-    
+
     TupleDesc getTupleDesc(int32_t inTypMod = -1);
     bool isCompositeType();
     const char* getName();
@@ -79,7 +79,7 @@ struct FunctionInformation {
      * OID and hash key. Must be the first element.
      */
     Oid oid;
-    
+
     /**
      * Function pointer to C++ function. If this is non-null, the function
      * is known to be implemented on top of the C++ abstraction layer. NULL
@@ -87,7 +87,7 @@ struct FunctionInformation {
      * called directly, thus circumventing any detour through the backend.
      */
     UDF::Pointer cxx_func;
-    
+
     /**
      * Holds system-catalog information that must be looked up before a
      * function can be called through fmgr. We store it here, because the
@@ -103,46 +103,46 @@ struct FunctionInformation {
      * - Anonymous return tuples
      */
     FmgrInfo flinfo;
-    
+
     /**
      * funcapi.h defines the following classes:
      * <tt>TYPEFUNC_{SCALAR|COMPOSITE|RECORD|OTHER}</tt>
      */
     TypeFuncClass funcclass;
-    
-    
+
+
     /**
      * Number of input arguments. Note that short is the data type used in
      * <tt>struct FunctionCallInfoData</tt>.
      */
-    short nargs;
+    uint16_t nargs;
 
     /**
      * Array (of length nargs) containing the argument type IDs (excludes
      * OUT parameters).
      */
     Oid *argtypes;
-    
+
     /**
      * True if we the function may have different return types.
      * False if we the function will always have the same return type.
      */
     bool polymorphic;
-    
+
     /**
      * True if the function always returns null whenever any of its
      * arguments are null. If this parameter is specified, the function is
      * not executed when there are null arguments.
      */
     bool isstrict;
-    
+
     /**
      * True if function is to be executed with the privileges of the user
      * that created it. The attribute is called SECURITY DEFINER in
      * PostgreSQL.
      */
     bool secdef;
-    
+
     /**
      * OID of result type
      */
@@ -155,12 +155,12 @@ struct FunctionInformation {
      * on the PostgreSQL garbage collection for cleanup.
      */
     TupleDesc tupdesc;
-    
+
     /**
      * Backpointer to SystemInformation
      */
     SystemInformation* mSysInfo;
-    
+
     Oid getArgumentType(uint16_t inArgID, FmgrInfo* inFmgrInfo = NULL);
     Oid getReturnType(FunctionCallInfo fcinfo);
     TupleDesc getReturnTupleDesc(FunctionCallInfo fcinfo);
@@ -195,12 +195,12 @@ struct SystemInformation {
      * OID of first C++ AL function in the current execution stack.
      */
     Oid entryFuncOID;
-    
+
     /**
      * The memory context used for the hash tables.
      */
     MemoryContext cacheContext;
-    
+
     /**
      * Collation for function(s) to use. This will be set to fncollation
      * of struct FunctionCallInfoData if the entry-function call (i.e., the
@@ -211,18 +211,18 @@ struct SystemInformation {
      * to this, collationOID will be InvalidOid.
      */
     Oid collationOID;
-    
+
     /**
      * Hash table containing information about all accessed types
      */
     HTAB *types;
-    
+
     /**
      * Hash table containing information about all accessed functions
      * (starting from the function called by the backend).
      */
     HTAB *functions;
-    
+
     static SystemInformation* get(FunctionCallInfo fcinfo);
     TypeInformation* typeInformation(Oid inTypeID);
     FunctionInformation* functionInformation(Oid inFuncID);

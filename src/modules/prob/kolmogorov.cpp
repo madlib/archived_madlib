@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file kolmogorov.cpp
  *
@@ -38,16 +38,16 @@ namespace TMath {
     // KolmogorovProb(Double_t) is defined in header file.
 
     Int_t Nint(Double_t x);
-    
+
     inline Double_t Exp(Double_t x) {
         return std::exp(x);
     }
-    
+
     inline Double_t Abs(Double_t x) {
         return std::fabs(x);
     }
-    
-    inline Double_t Max(Double_t a, Double_t b) {
+
+    inline Int_t Max(Int_t a, Int_t b) {
         return std::max(a, b);
     }
 }
@@ -56,7 +56,7 @@ namespace TMath {
  * Code for computing the Kolmogorov distribution copied from CERN ROOT project.
  * Comments mention Routine ID: G102 from CERNLIB as original source.
  */
- 
+
 // BEGIN Copied from CERN ROOT, math/mathcore/src/TMath.cxx
 // (SVN Rev. 41830, ll. 122-137)
 Int_t TMath::Nint(Double_t x)

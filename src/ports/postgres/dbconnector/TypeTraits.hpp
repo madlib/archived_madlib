@@ -20,12 +20,12 @@ template <class T, class U>
 class convertTo {
 public:
     convertTo(const T& inOrig) : mOrig(inOrig) { }
-    
+
     operator U() {
         if (std::numeric_limits<T>::is_signed
             && !std::numeric_limits<U>::is_signed
             && utils::isNegative(mOrig)) {
-            
+
             std::stringstream errorMsg;
             errorMsg << "Invalid value conversion. Expected unsigned value but "
                 "got " << mOrig << ".";
@@ -35,7 +35,7 @@ public:
                 ||  (!std::numeric_limits<T>::is_signed
                     && std::numeric_limits<U>::is_signed))
             &&  mOrig > static_cast<T>(std::numeric_limits<U>::max())) {
-            
+
             std::stringstream errorMsg;
             errorMsg << "Invalid value conversion. Cannot represent "
                 << mOrig << "in target type (" << typeid(T).name() << ").";
@@ -46,7 +46,7 @@ public:
 private:
     const T& mOrig;
 };
-    
+
 /*
  * The type OID (_oid) can be set to InvalidOid if it should not be used for
  * type verification. This is the case for types that are not built-in and for
@@ -152,6 +152,14 @@ DECLARE_CXX_TYPE(
     dbal::Immutable,
     Int32GetDatum((convertTo<uint32_t, int32_t>(value))),
     (convertTo<int32_t, uint32_t>(DatumGetInt32(value)))
+);
+DECLARE_CXX_TYPE(
+    INT2OID,
+    int16_t,
+    dbal::SimpleType,
+    dbal::Immutable,
+    Int16GetDatum(value),
+    DatumGetInt16(value)
 );
 DECLARE_CXX_TYPE(
     BOOLOID,

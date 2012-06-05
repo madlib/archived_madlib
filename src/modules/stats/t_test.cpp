@@ -40,7 +40,7 @@ public:
         numY(&mStorage[3]),
         y_sum(&mStorage[4]),
         correctedY_square_sum(&mStorage[5]) { }
-    
+
     /**
      * @brief Convert to backend representation
      *
@@ -50,7 +50,7 @@ public:
     inline operator AnyType() const {
         return mStorage;
     }
-    
+
 private:
     Handle mStorage;
 
@@ -86,10 +86,10 @@ void
 updateCorrectedSumOfSquares(double &ioLeftWeight, double &ioLeftSum,
     double &ioLeftCorrectedSumSquares, double inRightWeight, double inRightSum,
     double inRightCorrectedSumSquares) {
-    
+
     if (inRightWeight <= 0)
         return;
-    
+
     // FIXME: Use compensated sums for numerical stability
     // See Ogita et al., "Accurate Sum and Dot Product", SIAM Journal on
     // Scientific Computing (SISC), 26(6):1955-1988, 2005.
@@ -102,7 +102,7 @@ updateCorrectedSumOfSquares(double &ioLeftWeight, double &ioLeftSum,
                 + ioLeftWeight / (inRightWeight * (ioLeftWeight + inRightWeight))
                     * diff * diff;
     }
-    
+
     ioLeftSum += inRightSum;
     ioLeftWeight += inRightWeight;
 }
@@ -114,9 +114,9 @@ AnyType
 t_test_one_transition::run(AnyType &args) {
     TTestTransitionState<MutableArrayHandle<double> > state = args[0];
     double x = args[1].getAs<double>();
-    
+
     updateCorrectedSumOfSquares(
-        state.numX, state.x_sum, state.correctedX_square_sum,
+        state.numX.ref(), state.x_sum.ref(), state.correctedX_square_sum.ref(),
         1, x, 0);
 
     return state;
@@ -130,14 +130,16 @@ t_test_two_transition::run(AnyType &args) {
     TTestTransitionState<MutableArrayHandle<double> > state = args[0];
     bool firstSample = args[1].getAs<bool>();
     double value = args[2].getAs<double>();
-    
+
     if (firstSample)
         updateCorrectedSumOfSquares(
-            state.numX, state.x_sum, state.correctedX_square_sum,
+            state.numX.ref(), state.x_sum.ref(),
+                state.correctedX_square_sum.ref(),
             1, value, 0);
     else
         updateCorrectedSumOfSquares(
-            state.numY, state.y_sum, state.correctedY_square_sum,
+            state.numY.ref(), state.y_sum.ref(),
+                state.correctedY_square_sum.ref(),
             1, value, 0);
 
     return state;
@@ -150,15 +152,19 @@ AnyType
 t_test_merge_states::run(AnyType &args) {
     TTestTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     TTestTransitionState<ArrayHandle<double> > stateRight = args[1];
-    
+
     // Merge states together and return
     updateCorrectedSumOfSquares(
-        stateLeft.numX, stateLeft.x_sum, stateLeft.correctedX_square_sum,
-        stateRight.numX, stateRight.x_sum, stateRight.correctedX_square_sum);
+        stateLeft.numX.ref(), stateLeft.x_sum.ref(),
+            stateLeft.correctedX_square_sum.ref(),
+        stateRight.numX.ref(), stateRight.x_sum,
+            stateRight.correctedX_square_sum);
     updateCorrectedSumOfSquares(
-        stateLeft.numY, stateLeft.y_sum, stateLeft.correctedY_square_sum,
-        stateRight.numY, stateRight.y_sum, stateRight.correctedY_square_sum);
-    
+        stateLeft.numY.ref(), stateLeft.y_sum.ref(),
+            stateLeft.correctedY_square_sum.ref(),
+        stateRight.numY.ref(), stateRight.y_sum,
+            stateRight.correctedY_square_sum);
+
     return stateLeft;
 }
 
@@ -174,13 +180,13 @@ t_test_one_final::run(AnyType &args) {
     // how PostgreSQL handles stddev_samp on quasi-empty inputs)
     if (state.numX <= 1)
         return Null();
-    
-    double degreeOfFreedom = state.numX - 1;
+
+    const double& numX = state.numX.ref();
+    double degreeOfFreedom = numX - 1;
     double sampleVariance = state.correctedX_square_sum
                           / degreeOfFreedom;
-    double t = std::sqrt(state.numX / sampleVariance)
-             * (state.x_sum / state.numX);
-    
+    double t = std::sqrt(numX / sampleVariance) * (state.x_sum / numX);
+
     return tStatsToResult(t, degreeOfFreedom);
 }
 
@@ -200,15 +206,17 @@ t_test_two_pooled_final::run(AnyType &args) {
 
     // Formulas taken from:
     // http://www.itl.nist.gov/div898/handbook/eda/section3/eda353.htm
-    double dfEqualVar = state.numX + state.numY - 2;
-    double diffInMeans = state.x_sum / state.numX - state.y_sum / state.numY;
+    const double& numX = state.numX.ref();
+    const double& numY = state.numY.ref();
+    double dfEqualVar = numX + numY - 2;
+    double diffInMeans = state.x_sum / numX - state.y_sum / numY;
     double sampleVariancePooled
         = (state.correctedX_square_sum + state.correctedY_square_sum)
         / dfEqualVar;
     double tDenomEqualVar
-        = std::sqrt(sampleVariancePooled * (1. / state.numX + 1. / state.numY));
+        = std::sqrt(sampleVariancePooled * (1. / numX + 1. / numY));
     double tEqualVar = diffInMeans / tDenomEqualVar;
-    
+
     return tStatsToResult(tEqualVar, dfEqualVar);
 }
 
@@ -228,23 +236,25 @@ t_test_two_unpooled_final::run(AnyType &args) {
 
     // Formulas taken from:
     // http://www.itl.nist.gov/div898/handbook/eda/section3/eda353.htm
-    double sampleVarianceX = state.correctedX_square_sum / (state.numX - 1);
-    double sampleVarianceY = state.correctedY_square_sum / (state.numY - 1);
-    
-    double sampleVarianceX_over_numX = sampleVarianceX / state.numX;
-    double sampleVarianceY_over_numY = sampleVarianceY / state.numY;
-    
+    const double& numX = state.numX.ref();
+    const double& numY = state.numY.ref();
+    double sampleVarianceX = state.correctedX_square_sum / (numX - 1);
+    double sampleVarianceY = state.correctedY_square_sum / (numY - 1);
+
+    double sampleVarianceX_over_numX = sampleVarianceX / numX;
+    double sampleVarianceY_over_numY = sampleVarianceY / numY;
+
     double dfUnequalVar
         = std::pow(sampleVarianceX_over_numX + sampleVarianceY_over_numY, 2)
         / (
-            std::pow(sampleVarianceX_over_numX, 2) / (state.numX - 1.)
-          + std::pow(sampleVarianceY_over_numY, 2) / (state.numY - 1.)
+            std::pow(sampleVarianceX_over_numX, 2) / (numX - 1)
+          + std::pow(sampleVarianceY_over_numY, 2) / (numY - 1)
           );
-    double diffInMeans = state.x_sum / state.numX - state.y_sum / state.numY;
+    double diffInMeans = state.x_sum / numX - state.y_sum / numY;
     double tDenomUnequalVar
-        = std::sqrt(sampleVarianceX / state.numX + sampleVarianceY / state.numY);
+        = std::sqrt(sampleVarianceX / numX + sampleVarianceY / numY);
     double tUnequalVar = diffInMeans / tDenomUnequalVar;
-    
+
     return tStatsToResult(tUnequalVar, dfUnequalVar);
 }
 
@@ -265,12 +275,12 @@ f_test_final::run(AnyType &args) {
 
     // Formulas taken from:
     // http://www.itl.nist.gov/div898/handbook/eda/section3/eda359.htm
-    double dfX = state.numX - 1;
-    double dfY = state.numY - 1;
+    double dfX = static_cast<double>(state.numX - 1);
+    double dfY = static_cast<double>(state.numY - 1);
     double sampleVarianceX = state.correctedX_square_sum / dfX;
     double sampleVarianceY = state.correctedY_square_sum / dfY;
     double statistic = sampleVarianceX / sampleVarianceY;
-    
+
     AnyType tuple;
     double pvalue_one_sided
         = prob::cdf(complement(prob::fisher_f(dfX, dfY), statistic));

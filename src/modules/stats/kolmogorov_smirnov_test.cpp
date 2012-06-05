@@ -37,11 +37,11 @@ public:
         madlib_assert(mStorage.size() >= 6, std::runtime_error(
             "Out-of-bounds array access detected."));
     }
-    
+
     inline operator AnyType() const {
         return mStorage;
     }
-    
+
 private:
     Handle mStorage;
 
@@ -61,27 +61,28 @@ ks_test_transition::run(AnyType &args) {
     int sample = args[1].getAs<bool>() ? 0 : 1;
     double value = args[2].getAs<double>();
     Eigen::Vector2d expectedNum;
-        expectedNum << args[3].getAs<int64_t>(), args[4].getAs<int64_t>();
-    
+        expectedNum << static_cast<double>(args[3].getAs<int64_t>()),
+                       static_cast<double>(args[4].getAs<int64_t>());
+
     if (state.expectedNum != expectedNum) {
         if (state.num.sum() > 0)
             throw std::invalid_argument("Number of samples must be constant "
                 "parameters.");
-        
+
         state.expectedNum = expectedNum;
     }
-    
+
     if (state.last > value && state.num.sum() > 0)
         throw std::invalid_argument("Must be used as an ordered "
             "aggregate, in ascending order of the second argument.");
     state.num(sample)++;
     state.last = value;
-    
+
     double diff = std::fabs(state.num(0) / state.expectedNum(0)
                     - state.num(1) / state.expectedNum(1));
     if (state.maxDiff < diff)
         state.maxDiff = diff;
-    
+
     return state;
 }
 
@@ -101,7 +102,7 @@ ks_test_transition::run(AnyType &args) {
  * where \f$ F_{\text{KS}} \f$ is the cumulative distribution function of the
  * Kolmogorov-Smirnov distribution. This is suggested by:
  *
- * M. A. Stephens, "Use of the Kolmogorov-Smirnov, Cramer-Von Mises and Related 
+ * M. A. Stephens, "Use of the Kolmogorov-Smirnov, Cramer-Von Mises and Related
  * Statistics Without Extensive Tables", Journal of the Royal Statistical
  * Society. Series B (Methodological), Vol. 32, No. 1. (1970), pp. 115-122.
  */

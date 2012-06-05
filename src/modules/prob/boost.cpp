@@ -124,12 +124,12 @@ DEFINE_CONTINUOUS_PROB_DISTR_2(uniform, double, double)
 DEFINE_CONTINUOUS_PROB_DISTR_2(weibull, double, double)
 
 DEFINE_DISCRETE_PROB_DISTR_1(bernoulli, int32_t, double)
-DEFINE_DISCRETE_PROB_DISTR_2(binomial, int64_t, int64_t, double)
-DEFINE_DISCRETE_PROB_DISTR_1(geometric, int64_t, double)
+DEFINE_DISCRETE_PROB_DISTR_2(binomial, int32_t, int32_t, double)
+DEFINE_DISCRETE_PROB_DISTR_1(geometric, int32_t, double)
 DEFINE_DISCRETE_PROB_DISTR_3(hypergeometric, int32_t, uint32_t, uint32_t,
     uint32_t)
-DEFINE_DISCRETE_PROB_DISTR_2(negative_binomial, int64_t, double, double)
-DEFINE_DISCRETE_PROB_DISTR_1(poisson, int64_t, double)
+DEFINE_DISCRETE_PROB_DISTR_2(negative_binomial, int32_t, double, double)
+DEFINE_DISCRETE_PROB_DISTR_1(poisson, int32_t, double)
 
 } // namespace prob
 
