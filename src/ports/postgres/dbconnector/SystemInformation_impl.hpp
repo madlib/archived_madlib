@@ -43,39 +43,56 @@ initializeOidHashTable(HTAB*& ioHashTable, MemoryContext inCacheContext,
 }
 
 /**
- * @brief Get pointer to where cached system-catalog information is stored
+ * @brief Store cached system-catalog information in backend function handle
  *
- * @param inFmgrInfo System-catalog information about the function.
- * @param outSysInfo[out] If not NULL, <tt>*outSysInfo</tt> will be set to the
- *     address of where the <tt>SystemInformation*</tt> value for this function
- *     should be stored.
- * @param outMemCtxt[out] If not NULL, <tt>*outMemCtxt</tt> will be set to the
- *     MemoryContext that should be used to store used data.
+ * @param inFmgrInfo Backend handle to the function
+ * @param inSysInfo Our system-catalog information that should be stored
+ *
+ * A set-returning function uses \c fn_extra to store cross-call information.
+ * See, e.g., init_MultiFuncCall() in funcapi.c. Fortunately, it stores a point
+ * to a <tt>struct FuncCallContext</tt> in \c fn_extra, which in turn allows to
+ * store user-defined data.
  */
 inline
 void
-getSystemInformationAndMemoryContext(FmgrInfo* inFmgrInfo,
-    SystemInformation*** outSysInfo, MemoryContext* outMemCtxt) {
-    
-    if (inFmgrInfo->fn_retset) {
-        // A set-returning function uses fn_extra to store cross-call
-        // information. See, e.g., init_MultiFuncCall() in funcapi.c.
-        // Fortunately, it stores a point to a struct FuncCallContext in
-        // fn_extra, which in turn allows to store user-defined data.
-        if (outSysInfo)
-            *outSysInfo = reinterpret_cast<SystemInformation**>(
-                &static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)
-                    ->user_fctx);
-        if (outMemCtxt)
-            *outMemCtxt = static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)
-                ->multi_call_memory_ctx;
-    } else {
-        if (outSysInfo)
-            *outSysInfo = reinterpret_cast<SystemInformation**>(
-                &inFmgrInfo->fn_extra);
-        if (outMemCtxt)
-            *outMemCtxt = inFmgrInfo->fn_mcxt;
-    }
+setSystemInformationInFmgrInfo(FmgrInfo* inFmgrInfo,
+    SystemInformation* inSysInfo) {
+
+    (inFmgrInfo->fn_retset
+        ? static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)->user_fctx
+        : inFmgrInfo->fn_extra)
+        = inSysInfo;
+}
+
+/**
+ * @brief Get cached system-catalog information from backend function handle
+ *
+ * @see setSystemInformationInFmgrInfo()
+ */
+inline
+SystemInformation*
+getSystemInformationFromFmgrInfo(FmgrInfo* inFmgrInfo) {
+    return static_cast<SystemInformation*>(inFmgrInfo->fn_retset
+        ? static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)->user_fctx
+        : inFmgrInfo->fn_extra);
+}
+
+/**
+ * @brief Get memory context from backend function handle
+ *
+ * The memory context returned may be used for storing user-defined data. In
+ * SystemInformation::get(), we will use it for allocating a
+ * <tt>struct SystemInformation</tt>.
+ *
+ * @see setSystemInformationInFmgrInfo()
+ */
+inline
+MemoryContext
+getMemoryContextFromFmgrInfo(FmgrInfo* inFmgrInfo) {
+    return inFmgrInfo->fn_retset
+        ? static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)
+            ->multi_call_memory_ctx
+        : inFmgrInfo->fn_mcxt;
 }
 
 } // namespace
@@ -92,21 +109,22 @@ SystemInformation*
 SystemInformation::get(FunctionCallInfo fcinfo) {
     madlib_assert(fcinfo->flinfo,
         std::invalid_argument("Incomplete FunctionCallInfoData."));
-    
-    SystemInformation** sysInfo = NULL;
-    MemoryContext memCtxt = NULL;
-    getSystemInformationAndMemoryContext(fcinfo->flinfo, &sysInfo, &memCtxt);
-    
-    if (!*sysInfo) {
-        *sysInfo = static_cast<SystemInformation*>(
+
+    SystemInformation* sysInfo
+        = getSystemInformationFromFmgrInfo(fcinfo->flinfo);
+
+    if (!sysInfo) {
+        MemoryContext memCtxt = getMemoryContextFromFmgrInfo(fcinfo->flinfo);
+
+        sysInfo = static_cast<SystemInformation*>(
             madlib_MemoryContextAllocZero(
                 memCtxt, sizeof(SystemInformation)));
-        (*sysInfo)->entryFuncOID = fcinfo->flinfo->fn_oid;
-        (*sysInfo)->cacheContext = memCtxt;
-        (*sysInfo)->collationOID = PG_GET_COLLATION();
+        sysInfo->entryFuncOID = fcinfo->flinfo->fn_oid;
+        sysInfo->cacheContext = memCtxt;
+        sysInfo->collationOID = PG_GET_COLLATION();
+        setSystemInformationInFmgrInfo(fcinfo->flinfo, sysInfo);
     }
-
-    return *sysInfo;
+    return sysInfo;
 }
 
 /**
@@ -527,14 +545,10 @@ FunctionInformation::getFuncMgrInfo() {
             // struct FmgrInfo in an opaque way (it points to a struct that is
             // local to fmgr.c), we only initialize the cache if the function
             // is *not* SECURITY DEFINER.
-            
-            SystemInformation** sysInfo;
-            getSystemInformationAndMemoryContext(&flinfo,
-                &sysInfo, /* outMemCtxt */ NULL);
-            *sysInfo = mSysInfo;
+            setSystemInformationInFmgrInfo(&flinfo, mSysInfo);
         }
     }
-    
+
     return &flinfo;
 }
 

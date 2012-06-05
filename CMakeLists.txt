@@ -89,7 +89,7 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # common (and useful) extension that we do not want to hear warnings about
     # it.
     # FIXME: -msse2 should only be added on i386
-    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -msse2" CACHE STRING
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -msse2 -fstrict-aliasing" CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
 
     # We want to include some header files as system header files in order to

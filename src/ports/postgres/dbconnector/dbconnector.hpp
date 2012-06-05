@@ -81,6 +81,8 @@ extern "C" {
 #include <vector>
 #include <fstream>
 
+#ifndef NDEBUG
+#ifndef EIGEN_NO_DEBUG
 #define eigen_assert(x) \
     do { \
         if(!Eigen::internal::copy_bool(x)) \
@@ -89,6 +91,8 @@ extern "C" {
                 EIGEN_MAKESTRING(x) ") in function ") + __PRETTY_FUNCTION__ + \
                 " at " __FILE__ ":" EIGEN_MAKESTRING(__LINE__)); \
     } while(false)
+#endif
+#endif
 
 // We need to make _oldContext volatile because if an exception occurs, the
 // register holding its value might have been overwritten (and the variable
