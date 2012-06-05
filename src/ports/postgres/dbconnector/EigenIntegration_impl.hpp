@@ -1,15 +1,54 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file SparseVector_impl.cpp
+ * @file EigenIntegration_impl.cpp
  *
- * @brief Wrap MADlib legacy sparse vectors
+ * @brief Convert between PostgreSQL types and Eigen types
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_SPARSEVECTOR_IMPL_HPP
-#define MADLIB_POSTGRES_SPARSEVECTOR_IMPL_HPP
+#ifndef MADLIB_POSTGRES_EIGEN_INTEGRATION_IMPL_HPP
+#define MADLIB_POSTGRES_EIGEN_INTEGRATION_IMPL_HPP
 
 namespace madlib {
+
+namespace dbal {
+
+namespace eigen_integration {
+
+// Specializations for DBMS-specific types
+
+/**
+ * @brief Initialize HandleMap backed by the given handle
+ *
+ * In PostgreSQL, we represent a matrix as an array of columns. Therefore, the
+ * index 0 is the number of columns, and index 1 is the number of rows.
+ */
+template <>
+inline
+HandleMap<const Matrix, ArrayHandle<double> >::HandleMap(
+    const ArrayHandle<double>& inHandle)
+  : Base(const_cast<double*>(inHandle.ptr()), inHandle.sizeOfDim(1),
+        inHandle.sizeOfDim(0)),
+    mMemoryHandle(inHandle) { }
+
+/**
+ * @brief Initialize HandleMap backed by the given handle
+ *
+ * In PostgreSQL, we represent a matrix as an array of columns. Therefore, the
+ * index 0 is the number of columns, and index 1 is the number of rows.
+ */
+template <>
+inline
+HandleMap<Matrix, MutableArrayHandle<double> >::HandleMap(
+    const MutableArrayHandle<double>& inHandle)
+  : Base(const_cast<double*>(inHandle.ptr()), inHandle.sizeOfDim(1),
+        inHandle.sizeOfDim(0)),
+    mMemoryHandle(inHandle) { }
+
+} // namespace eigen_integration
+
+} // namespace dbal
+
 
 namespace dbconnector {
 
@@ -117,10 +156,51 @@ SparseColumnVectorToLegacySparseVector(
     return svec_from_sparsedata(sdata, true /* trim */);
 }
 
+/**
+ * @brief Convert an Eigen row or column vector to a one-dimensional
+ *     PostgreSQL array
+ */
+template <typename Derived>
+ArrayType*
+VectorToNativeArray(const Eigen::MatrixBase<Derived>& inVector) {
+    typedef typename Derived::Scalar T;
+    typedef typename Derived::Index Index;
+
+    MutableArrayHandle<T> arrayHandle
+        = defaultAllocator().allocateArray<T>(inVector.size());
+
+    T* ptr = arrayHandle.ptr();
+    for (Index el = 0; el < inVector.size(); ++el)
+        *(ptr++) = inVector(el);
+
+    return arrayHandle.array();
+}
+
+/**
+ * @brief Convert an Eigen matrix to a two-dimensional PostgreSQL array
+ */
+template <typename Derived>
+ArrayType*
+MatrixToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix) {
+    typedef typename Derived::Scalar T;
+    typedef typename Derived::Index Index;
+
+    MutableArrayHandle<T> arrayHandle
+        = defaultAllocator().allocateArray<T>(
+            inMatrix.cols(), inMatrix.rows());
+
+    T* ptr = arrayHandle.ptr();
+    for (Index row = 0; row < inMatrix.rows(); ++row)
+        for (Index col = 0; col < inMatrix.cols(); ++col)
+            *(ptr++) = inMatrix(row, col);
+
+    return arrayHandle.array();
+}
+
 } // namespace postgres
 
 } // namespace dbconnector
 
 } // namespace madlib
 
-#endif // defined(MADLIB_POSTGRES_SPARSEVECTOR_IMPL_HPP)
+#endif // defined(MADLIB_POSTGRES_EIGEN_INTEGRATION_IMPL_HPP)

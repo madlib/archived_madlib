@@ -40,7 +40,7 @@ public:
 #undef MADLIB_OPERATOR_DECL
 
 protected:
-    template <typename T>
+    template <typename T, class>
     friend struct TypeTraits;
 
     SystemInformation* getSysInfo() const;

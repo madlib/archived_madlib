@@ -24,23 +24,30 @@ namespace postgres {
  *     <tt>MC = dbal::FunctionContext</tt>, <tt>ZM = dbal::DoZero</tt>,
  *     <tt>F = dbal::ThrowBadAlloc</tt>
  */
-template <typename T, dbal::MemoryContext MC, dbal::ZeroMemory ZM,
-    dbal::OnMemoryAllocationFailure F>
+template <typename T, std::size_t Dimensions, dbal::MemoryContext MC,
+    dbal::ZeroMemory ZM, dbal::OnMemoryAllocationFailure F>
 inline
 MutableArrayHandle<T>
-Allocator::allocateArray(size_t inNumElements) const {
+Allocator::internalAllocateArray(
+    const std::array<std::size_t, Dimensions>& inNumElements) const {
+
+    std::size_t numElements = Dimensions ? 1 : 0;
+    for (std::size_t i = 0; i < Dimensions; ++i)
+        numElements *= inNumElements[i];
+
     /*
      * Check that the size will not exceed addressable memory. Therefore, the
      * following precondition has to hold:
-     * ((std::numeric_limits<size_t>::max() - ARR_OVERHEAD_NONULLS(1)) /
-     *     inElementSize >= inNumElements)
+     * ((std::numeric_limits<std::size_t>::max()
+     *     - ARR_OVERHEAD_NONULLS(Dimensions)) / inElementSize >= numElements)
      */
-    if ((std::numeric_limits<size_t>::max() - ARR_OVERHEAD_NONULLS(1)) /
-            sizeof(T) < inNumElements)
+    if ((std::numeric_limits<std::size_t>::max()
+        - ARR_OVERHEAD_NONULLS(Dimensions)) / sizeof(T) < numElements)
         throw std::bad_alloc();
 
-    size_t		size = sizeof(T) * inNumElements + ARR_OVERHEAD_NONULLS(1);
-    ArrayType	*array;
+    std::size_t size = sizeof(T) * numElements
+        + ARR_OVERHEAD_NONULLS(Dimensions);
+    ArrayType *array;
 
     // Note: Except for the allocate call, the following statements do not call
     // into the PostgreSQL backend. We are only using macros here.
@@ -50,22 +57,48 @@ Allocator::allocateArray(size_t inNumElements) const {
     array = static_cast<ArrayType*>(allocate<MC, dbal::DoZero, F>(size));
 
     SET_VARSIZE(array, size);
-    array->ndim = 1;
+    array->ndim = Dimensions;
     array->dataoffset = 0;
     array->elemtype = TypeTraits<T>::oid;
-    ARR_DIMS(array)[0] = static_cast<int>(inNumElements);
-    ARR_LBOUND(array)[0] = 1;
+    for (std::size_t i = 0; i < Dimensions; ++i) {
+        ARR_DIMS(array)[i] = static_cast<int>(inNumElements[i]);
+        ARR_LBOUND(array)[i] = 1;
+    }
 
     return MutableArrayHandle<T>(array);
 }
 
-template <typename T>
-inline
-MutableArrayHandle<T>
-Allocator::allocateArray(size_t inNumElements) const {
-    return allocateArray<T, dbal::FunctionContext, dbal::DoZero,
-        dbal::ThrowBadAlloc>(inNumElements);
-}
+#define MADLIB_ALLOCATE_ARRAY_DEF(z, n, _ignored) \
+    template <typename T> \
+    inline \
+    MutableArrayHandle<T> \
+    Allocator::allocateArray( \
+        BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), std::size_t inDim) \
+    ) const { \
+        std::array<std::size_t, BOOST_PP_INC(n)> numElements = {{ \
+            BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), inDim) \
+        }}; \
+        return internalAllocateArray<T, BOOST_PP_INC(n), \
+            dbal::FunctionContext, dbal::DoZero, dbal::ThrowBadAlloc> \
+            (numElements); \
+    } \
+    \
+    template <typename T, dbal::MemoryContext MC, \
+        dbal::ZeroMemory ZM, dbal::OnMemoryAllocationFailure F> \
+    inline \
+    MutableArrayHandle<T> \
+    Allocator::allocateArray( \
+        BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), std::size_t inDim) \
+    ) const { \
+        std::array<std::size_t, BOOST_PP_INC(n)> numElements = {{ \
+            BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), inDim) \
+        }}; \
+        return internalAllocateArray<T, BOOST_PP_INC(n), MC, ZM, F> \
+        (numElements); \
+    }
+BOOST_PP_REPEAT(MADLIB_MAX_ARRAY_DIMS, MADLIB_ALLOCATE_ARRAY_DEF,
+    0 /* ignored */)
+#undef MADLIB_ALLOCATE_ARRAY_DEF
 
 /**
  * @brief Allocate a block of memory

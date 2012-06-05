@@ -13,7 +13,8 @@ namespace dbconnector {
 
 namespace postgres {
 
-template <typename T>
+// The second template parameter can be used for SFINAE.
+template <typename T, class = void>
 struct TypeTraits;
 
 template <class T, class U>
@@ -47,194 +48,457 @@ private:
     const T& mOrig;
 };
 
+#define WITH_OID(_oid) enum { oid = _oid }
+
 /*
  * The type OID (_oid) can be set to InvalidOid if it should not be used for
  * type verification. This is the case for types that are not built-in and for
  * which no fixed OID is known at compile time.
- * The type name (_type_name) can be NULL if it should not be used for type
+ */
+#define WITHOUT_OID enum { oid = InvalidOid }
+
+#define WITH_TYPE_CLASS(_typeClass) enum { typeClass = _typeClass }
+
+#define WITH_TYPE_NAME(_type_name) \
+    static inline const char* typeName() { \
+        return _type_name; \
+    }
+
+/* The type name (_type_name) can be NULL if it should not be used for type
  * verification. This is the case for built-in types, for which only the type
  * OID should be verified, but not the type name.
+ */
+#define WITHOUT_TYPE_NAME \
+    static inline const char* typeName() { \
+        return NULL; \
+    }
+
+/*
  * Mutable means in this context that the value of a variable can be changed and
  * that it would change the value for the backend
  */
-#define DECLARE_CXX_TYPE_EXT( \
-        _oid, \
-        _type_name, \
-        _type, \
-        _typeClass, \
-        _isMutable, \
-        _convertToPG, \
-        _convertToCXX, \
-        _convertToSysInfo \
-    ) \
-    template <> \
-    struct TypeTraits<_type > { \
-        enum { oid = _oid }; \
-        enum { typeClass = _typeClass }; \
-        enum { isMutable = _isMutable }; \
-        static inline const char* typeName() { \
-            static char const* TYPE_NAME = _type_name; \
-            return TYPE_NAME; \
-        }; \
-        static inline Datum toDatum(const _type& value) { \
-            return _convertToPG; \
-        }; \
-        static inline SystemInformation* toSysInfo(const _type& value) { \
-            (void) value; \
-            return _convertToSysInfo; \
-        }; \
-        static inline _type toCXXType(Datum value, bool needMutableClone, \
-            SystemInformation* sysInfo) { \
-            \
-            (void) needMutableClone; \
-            (void) sysInfo; \
-            return _convertToCXX; \
-        }; \
+#define WITH_MUTABILITY(_isMutable) \
+    enum { isMutable = _isMutable }
+#define WITHOUT_SYSINFO \
+    static inline SystemInformation* toSysInfo(const value_type&) { \
+        return NULL; \
+    }
+#define WITH_DEFAULT_EXTENDED_TRAITS \
+    WITHOUT_TYPE_NAME \
+    WITHOUT_SYSINFO
+#define WITH_SYS_INFO_CONVERSION(_convertToSysInfo) \
+    static inline SystemInformation* toSysInfo(const value_type& value) { \
+        (void) value; \
+        return _convertToSysInfo; \
+    }
+#define WITH_TO_PG_CONVERSION(_convertToPG) \
+    static inline Datum toDatum(const value_type& value) { \
+        return _convertToPG; \
+    }
+#define WITH_TO_CXX_CONVERSION(_convertToCXX) \
+    static inline value_type toCXXType(Datum value, bool needMutableClone, \
+        SystemInformation* sysInfo) { \
+        \
+        (void) value; \
+        (void) needMutableClone; \
+        (void) sysInfo; \
+        return _convertToCXX; \
     }
 
-// Simplified macro to declare an OID <-> C++ type mapping. The return type name
-// and the SystemInformation pointer are always NULL
-#define DECLARE_CXX_TYPE( \
-        _oid, \
-        _type, \
-        _typeClass, \
-        _isMutable, \
-        _convertToPG, \
-        _convertToCXX \
-    ) \
-    DECLARE_CXX_TYPE_EXT(_oid, NULL, _type, _typeClass, _isMutable, \
-        _convertToPG, _convertToCXX, NULL)
+template <>
+struct TypeTraits<double> {
+    typedef double value_type;
 
-DECLARE_CXX_TYPE(
-    FLOAT8OID,
-    double,
-    dbal::SimpleType,
-    dbal::Immutable,
-    Float8GetDatum(value),
-    DatumGetFloat8(value)
-);
-DECLARE_CXX_TYPE(
-    FLOAT4OID,
-    float,
-    dbal::SimpleType,
-    dbal::Immutable,
-    Float4GetDatum(value),
-    DatumGetFloat4(value)
-);
-DECLARE_CXX_TYPE(
-    INT8OID,
-    int64_t,
-    dbal::SimpleType,
-    dbal::Immutable,
-    Int64GetDatum(value),
-    DatumGetInt64(value)
-);
-DECLARE_CXX_TYPE(
-    INT8OID,
-    uint64_t,
-    dbal::SimpleType,
-    dbal::Immutable,
-    Int64GetDatum((convertTo<uint64_t, int64_t>(value))),
-    (convertTo<int64_t, uint64_t>(DatumGetInt64(value)))
-);
-DECLARE_CXX_TYPE(
-    INT4OID,
-    int32_t,
-    dbal::SimpleType,
-    dbal::Immutable,
-    Int32GetDatum(value),
-    DatumGetInt32(value)
-);
-DECLARE_CXX_TYPE(
-    INT4OID,
-    uint32_t,
-    dbal::SimpleType,
-    dbal::Immutable,
-    Int32GetDatum((convertTo<uint32_t, int32_t>(value))),
-    (convertTo<int32_t, uint32_t>(DatumGetInt32(value)))
-);
-DECLARE_CXX_TYPE(
-    INT2OID,
-    int16_t,
-    dbal::SimpleType,
-    dbal::Immutable,
-    Int16GetDatum(value),
-    DatumGetInt16(value)
-);
-DECLARE_CXX_TYPE(
-    BOOLOID,
-    bool,
-    dbal::SimpleType,
-    dbal::Immutable,
-    BoolGetDatum(value),
-    DatumGetBool(value)
-);
-DECLARE_CXX_TYPE_EXT(
-    REGPROCOID,
-    NULL,
-    FunctionHandle,
-    dbal::SimpleType,
-    dbal::Immutable,
-    ObjectIdGetDatum(value.funcID()),
-    FunctionHandle(sysInfo, DatumGetObjectId(value)),
-    value.getSysInfo()
-);
-DECLARE_CXX_TYPE(
-    FLOAT8ARRAYOID,
-    ArrayHandle<double>,
-    dbal::ArrayType,
-    dbal::Immutable,
-    PointerGetDatum(value.array()),
-    reinterpret_cast<ArrayType*>(madlib_DatumGetArrayTypeP(value))
-);
-DECLARE_CXX_TYPE(
-    FLOAT8ARRAYOID,
-    dbal::eigen_integration::HandleMap<
-        const dbal::eigen_integration::ColumnVector>,
-    dbal::ArrayType,
-    dbal::Immutable,
-    PointerGetDatum(value.memoryHandle().array()),
-    ArrayHandle<double>(reinterpret_cast<ArrayType*>(madlib_DatumGetArrayTypeP(value)))
-);
+    WITH_OID( FLOAT8OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( Float8GetDatum(value) );
+    WITH_TO_CXX_CONVERSION( DatumGetFloat8(value) );
+};
+
+template <>
+struct TypeTraits<float> {
+    typedef float value_type;
+
+    WITH_OID( FLOAT4OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( Float4GetDatum(value) );
+    WITH_TO_CXX_CONVERSION( DatumGetFloat4(value) );
+};
+
+template <>
+struct TypeTraits<int64_t> {
+    typedef int64_t value_type;
+
+    WITH_OID( INT8OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( Int64GetDatum(value) );
+    WITH_TO_CXX_CONVERSION( DatumGetInt64(value) );
+};
+
+template <>
+struct TypeTraits<uint64_t> {
+    typedef uint64_t value_type;
+
+    WITH_OID( INT8OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(
+        Int64GetDatum((convertTo<uint64_t, int64_t>(value)))
+    );
+    WITH_TO_CXX_CONVERSION(
+        (convertTo<int64_t, uint64_t>(DatumGetInt64(value)))
+    );
+};
+
+template <>
+struct TypeTraits<int32_t> {
+    typedef int32_t value_type;
+
+    WITH_OID( INT4OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( Int32GetDatum(value) );
+    WITH_TO_CXX_CONVERSION( DatumGetInt32(value) );
+};
+
+template <>
+struct TypeTraits<uint32_t> {
+    typedef uint32_t value_type;
+
+    WITH_OID( INT4OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(
+        Int32GetDatum((convertTo<uint32_t, int32_t>(value)))
+    );
+    WITH_TO_CXX_CONVERSION(
+        (convertTo<int32_t, uint32_t>(DatumGetInt32(value)))
+    );
+};
+
+template <>
+struct TypeTraits<int16_t> {
+    typedef int16_t value_type;
+
+    WITH_OID( INT2OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( Int16GetDatum(value) );
+    WITH_TO_CXX_CONVERSION( DatumGetInt16(value) );
+};
+
+template <>
+struct TypeTraits<bool> {
+    typedef bool value_type;
+
+    WITH_OID( BOOLOID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( BoolGetDatum(value) );
+    WITH_TO_CXX_CONVERSION( DatumGetBool(value) );
+};
+
+template <>
+struct TypeTraits<FunctionHandle> {
+    typedef FunctionHandle value_type;
+
+    WITH_OID( REGPROCOID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITHOUT_TYPE_NAME;
+    WITH_SYS_INFO_CONVERSION( value.getSysInfo() );
+    WITH_TO_PG_CONVERSION( ObjectIdGetDatum(value.funcID()) );
+    WITH_TO_CXX_CONVERSION( FunctionHandle(sysInfo, DatumGetObjectId(value)) );
+};
+
+template <>
+struct TypeTraits<ArrayHandle<double> > {
+    typedef ArrayHandle<double> value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );
+    WITH_TO_CXX_CONVERSION(
+        reinterpret_cast<ArrayType*>(madlib_DatumGetArrayTypeP(value))
+    );
+};
+
 // Note: See the comment for PG_FREE_IF_COPY in fmgr.h. Essentially, when
 // writing UDFs, we do not have to worry about deallocating copies of immutable
 // arrays. They will simply be garbage collected.
-DECLARE_CXX_TYPE(
-    FLOAT8ARRAYOID,
-    MutableArrayHandle<double>,
-    dbal::ArrayType,
-    dbal::Mutable,
-    PointerGetDatum(value.array()),
-    needMutableClone
-      ? madlib_DatumGetArrayTypePCopy(value)
-      : madlib_DatumGetArrayTypeP(value)
-);
-DECLARE_CXX_TYPE(
-    FLOAT8ARRAYOID,
-    dbal::eigen_integration::HandleMap<dbal::eigen_integration::ColumnVector>,
-    dbal::ArrayType,
-    dbal::Mutable,
-    PointerGetDatum(value.memoryHandle().array()),
-    MutableArrayHandle<double>(reinterpret_cast<ArrayType*>(
-        needMutableClone
-            ? madlib_DatumGetArrayTypePCopy(value)
-            : madlib_DatumGetArrayTypeP(value)
-    ))
-);
-DECLARE_CXX_TYPE_EXT(
-    InvalidOid,
-    "svec",
-    dbal::eigen_integration::SparseColumnVector,
-    dbal::SimpleType,
-    dbal::Immutable,
-    PointerGetDatum(SparseColumnVectorToLegacySparseVector(value)),
-    LegacySparseVectorToSparseColumnVector(reinterpret_cast<SvecType*>(value)),
-    NULL
-);
+template <>
+struct TypeTraits<MutableArrayHandle<double> > {
+    typedef MutableArrayHandle<double> value_type;
 
-#undef DECLARE_OID_TO_TYPE_MAPPING
-#undef DECLARE_CXX_TYPE
-#undef DECLARE_OID
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );
+    WITH_TO_CXX_CONVERSION(
+        needMutableClone
+          ? madlib_DatumGetArrayTypePCopy(value)
+          : madlib_DatumGetArrayTypeP(value)
+    );
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::ColumnVector,
+        ArrayHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::ColumnVector,
+        ArrayHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.memoryHandle().array()) );
+    WITH_TO_CXX_CONVERSION(
+        ArrayHandle<double>(reinterpret_cast<ArrayType*>(
+            madlib_DatumGetArrayTypeP(value)))
+    );
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::ColumnVector,
+        MutableArrayHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::ColumnVector,
+        MutableArrayHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.memoryHandle().array()) );
+    WITH_TO_CXX_CONVERSION(
+        MutableArrayHandle<double>(reinterpret_cast<ArrayType*>(
+            needMutableClone
+                ? madlib_DatumGetArrayTypePCopy(value)
+                : madlib_DatumGetArrayTypeP(value)
+        ))
+    );
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::ColumnVector,
+        TransparentHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::ColumnVector,
+        TransparentHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::ColumnVector,
+        MutableTransparentHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::ColumnVector,
+        MutableTransparentHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::Matrix,
+        ArrayHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::Matrix,
+        ArrayHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.memoryHandle().array()) );
+    WITH_TO_CXX_CONVERSION(
+        ArrayHandle<double>(
+            reinterpret_cast<ArrayType*>(madlib_DatumGetArrayTypeP(value))
+        )
+    );
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::Matrix,
+        MutableArrayHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::Matrix,
+        MutableArrayHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.memoryHandle().array()) );
+    WITH_TO_CXX_CONVERSION(
+        MutableArrayHandle<double>(
+            reinterpret_cast<ArrayType*>(needMutableClone
+                ? madlib_DatumGetArrayTypePCopy(value)
+                : madlib_DatumGetArrayTypeP(value)
+        ))
+    );
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::Matrix,
+        TransparentHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::Matrix,
+        TransparentHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+};
+
+template <>
+struct TypeTraits<dbal::eigen_integration::Matrix> {
+    typedef dbal::eigen_integration::Matrix value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+};
+
+template<class Derived>
+struct TypeTraits<Eigen::MatrixBase<Derived> > {
+    typedef Eigen::MatrixBase<Derived> value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(
+        PointerGetDatum(
+            Derived::RowsAtCompileTime == 1 || Derived::ColsAtCompileTime == 1
+                ? VectorToNativeArray(value)
+                : MatrixToNativeArray(value)
+        )
+    );
+    // No need to support retrieving this type from the backend. Use
+    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+};
+
+template<class XprType, int BlockRows, bool InnerPanel, bool HasDirectAccess>
+struct TypeTraits<
+    Eigen::Block<XprType, BlockRows, /* BlockCols */ 1, InnerPanel,
+        HasDirectAccess> > {
+
+    typedef Eigen::Block<XprType, BlockRows, 1, InnerPanel,
+        HasDirectAccess> value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+};
+
+template <>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::Matrix,
+        MutableTransparentHandle<double> > > {
+
+    typedef dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::Matrix,
+        MutableTransparentHandle<double> > value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+};
+
+template <>
+struct TypeTraits<dbal::eigen_integration::SparseColumnVector> {
+    typedef dbal::eigen_integration::SparseColumnVector value_type;
+
+    WITHOUT_OID;
+    WITH_TYPE_NAME("svec");
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITHOUT_SYSINFO;
+    WITH_TO_PG_CONVERSION(
+        PointerGetDatum(SparseColumnVectorToLegacySparseVector(value))
+    );
+    WITH_TO_CXX_CONVERSION(
+        LegacySparseVectorToSparseColumnVector(reinterpret_cast<SvecType*>(value))
+    );
+};
+
+#undef WITH_OID
+#undef WITHOUT_OID
+#undef WITH_TYPE_CLASS
+#undef WITH_TYPE_NAME
+#undef WITHOUT_TYPE_NAME
+#undef WITH_MUTABILITY
+#undef WITHOUT_SYSINFO
+#undef WITH_DEFAULT_EXTENDED_TRAITS
+#undef WITH_SYS_INFO_CONVERSION
+#undef WITH_TO_PG_CONVERSION
+#undef WITH_TO_CXX_CONVERSION
 
 } // namespace postgres
 

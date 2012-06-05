@@ -63,7 +63,8 @@ DECLARE_UDF(prob, students_t_pdf)
 DECLARE_UDF(prob, students_t_quantile)
 
 
-#if !defined(DECLARE_LIBRARY_EXPORTS)
+#ifndef MADLIB_MODULES_PROB_STUDENT_T_HPP
+#define MADLIB_MODULES_PROB_STUDENT_T_HPP
 
 #include <boost/math/distributions/detail/common_error_handling.hpp>
 #include <boost/math/distributions/normal.hpp>
@@ -362,4 +363,4 @@ quantile(
 
 } // namespace madlib
 
-#endif // !defined(DECLARE_LIBRARY_EXPORTS)
+#endif // defined(MADLIB_MODULES_PROB_STUDENT_T_HPP)

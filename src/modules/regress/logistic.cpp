@@ -29,7 +29,7 @@ namespace regress {
 
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &coef,
+    const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
     const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
     double logLikelihood,
     double conditionNo);
@@ -191,7 +191,7 @@ AnyType
 logregr_cg_step_transition::run(AnyType &args) {
     LogRegrCGTransitionState<MutableArrayHandle<double> > state = args[0];
     double y = args[1].getAs<bool>() ? 1. : -1.;
-    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
+    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
     if (!isfinite(x))
@@ -483,7 +483,7 @@ AnyType
 logregr_irls_step_transition::run(AnyType &args) {
     LogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
     double y = args[1].getAs<bool>() ? 1. : -1.;
-    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
+    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite())
@@ -762,7 +762,7 @@ AnyType
 logregr_igd_step_transition::run(AnyType &args) {
     LogRegrIGDTransitionState<MutableArrayHandle<double> > state = args[0];
     double y = args[1].getAs<bool>() ? 1. : -1.;
-    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
+    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite())
@@ -892,32 +892,26 @@ AnyType stateToResult(
     double logLikelihood,
     double conditionNo) {
 
-    // FIXME: We currently need to copy the coefficient to a native array
-    // This should be transparent to user code
-    HandleMap<ColumnVector> coef(
+    MutableMappedColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
-    coef = inCoef;
+    MutableMappedColumnVector waldZStats(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableMappedColumnVector waldPValues(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableMappedColumnVector oddsRatios(
+        inAllocator.allocateArray<double>(inCoef.size()));
 
-    HandleMap<ColumnVector> stdErr(
-        inAllocator.allocateArray<double>(coef.size()));
-    HandleMap<ColumnVector> waldZStats(
-        inAllocator.allocateArray<double>(coef.size()));
-    HandleMap<ColumnVector> waldPValues(
-        inAllocator.allocateArray<double>(coef.size()));
-    HandleMap<ColumnVector> oddsRatios(
-        inAllocator.allocateArray<double>(coef.size()));
-
-    for (Index i = 0; i < coef.size(); ++i) {
+    for (Index i = 0; i < inCoef.size(); ++i) {
         stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
-        waldZStats(i) = coef(i) / stdErr(i);
+        waldZStats(i) = inCoef(i) / stdErr(i);
         waldPValues(i) = 2. * prob::cdf( prob::normal(),
             -std::abs(waldZStats(i)));
-        oddsRatios(i) = std::exp( coef(i) );
+        oddsRatios(i) = std::exp( inCoef(i) );
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << coef << logLikelihood << stdErr << waldZStats << waldPValues
+    tuple << inCoef << logLikelihood << stdErr << waldZStats << waldPValues
         << oddsRatios << conditionNo;
     return tuple;
 }

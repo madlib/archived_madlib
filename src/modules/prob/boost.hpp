@@ -61,7 +61,8 @@ LIST_DISCRETE_PROB_DISTR
 #undef MADLIB_ITEM
 
 
-#if !defined(DECLARE_LIBRARY_EXPORTS)
+#ifndef MADLIB_MODULES_PROB_BOOST_HPP
+#define MADLIB_MODULES_PROB_BOOST_HPP
 
 #include <boost/math/distributions.hpp>
 
@@ -1140,4 +1141,4 @@ LIST_DISCRETE_PROB_DISTR
 
 } // namespace regress
 
-#endif // !defined(DECLARE_LIBRARY_EXPORTS)
+#endif // defined(MADLIB_MODULES_PROB_BOOST_HPP)

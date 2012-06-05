@@ -10,7 +10,8 @@
 DECLARE_UDF(prob, kolmogorov_cdf)
 
 
-#if !defined(DECLARE_LIBRARY_EXPORTS)
+#ifndef MADLIB_MODULES_PROB_KOLMOGOROV_HPP
+#define MADLIB_MODULES_PROB_KOLMOGOROV_HPP
 
 #include <boost/math/policies/policy.hpp>
 #include <boost/math/distributions/complement.hpp>
@@ -118,4 +119,4 @@ cdf(
 
 } // namespace madlib
 
-#endif // !defined(DECLARE_LIBRARY_EXPORTS)
+#endif // defined(MADLIB_MODULES_PROB_KOLMOGOROV_HPP)

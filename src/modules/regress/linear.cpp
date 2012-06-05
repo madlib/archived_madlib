@@ -148,7 +148,7 @@ linregr_transition::run(AnyType &args) {
     // processor cycles).
     LinRegrTransitionState<MutableArrayHandle<double> > state = args[0];
     double y = args[1].getAs<double>();
-    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
+    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
     if (!std::isfinite(y))
@@ -228,7 +228,7 @@ linregr_final::run(AnyType &args) {
 
     // Vector of coefficients: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    HandleMap<ColumnVector> coef(allocateArray<double>(state.widthOfX));
+    MutableMappedColumnVector coef(allocateArray<double>(state.widthOfX));
     coef.noalias() = inverse_of_X_transp_X * state.X_transp_Y;
 
     // explained sum of squares (regression sum of squares)
@@ -272,8 +272,8 @@ linregr_final::run(AnyType &args) {
 
     // Vector of standard errors and t-statistics: For efficiency reasons, we
     // want to return these by reference, so we need to bind to db memory
-    HandleMap<ColumnVector> stdErr(allocateArray<double>(state.widthOfX));
-    HandleMap<ColumnVector> tStats(allocateArray<double>(state.widthOfX));
+    MutableMappedColumnVector stdErr(allocateArray<double>(state.widthOfX));
+    MutableMappedColumnVector tStats(allocateArray<double>(state.widthOfX));
     for (int i = 0; i < state.widthOfX; i++) {
         // In an abundance of caution, we see a tiny possibility that numerical
         // instabilities in the pinv operation can lead to negative values on
@@ -298,7 +298,7 @@ linregr_final::run(AnyType &args) {
 
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    HandleMap<ColumnVector> pValues(allocateArray<double>(state.widthOfX));
+    MutableMappedColumnVector pValues(allocateArray<double>(state.widthOfX));
     if (state.numRows > state.widthOfX)
         for (int i = 0; i < state.widthOfX; i++)
             pValues(i) = 2. * prob::cdf(

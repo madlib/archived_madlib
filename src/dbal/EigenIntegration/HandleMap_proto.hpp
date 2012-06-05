@@ -13,22 +13,11 @@ namespace dbal {
 
 namespace eigen_integration {
 
-// FIXME: This seems excessively complicated. It should be simpler.
-// Template specification has to be done by dbconnector
-template <
-    class EigenType,
-    bool EigenTypeIsConst = boost::is_const<EigenType>::value
-> struct DefaultHandle;
-
 /**
  * @brief Wrapper class for linear-algebra types based on Eigen
  */
-template <
-    class EigenType,
-    class Handle = typename DefaultHandle<EigenType>::type,
-    int MapOptions = Eigen::Unaligned
-> class HandleMap
-  : public Eigen::Map<EigenType, MapOptions> {
+template <class EigenType, class Handle, int MapOptions = Eigen::Unaligned>
+class HandleMap : public Eigen::Map<EigenType, MapOptions> {
 public:
     typedef Eigen::Map<EigenType, MapOptions> Base;
     typedef typename Base::Scalar Scalar;
