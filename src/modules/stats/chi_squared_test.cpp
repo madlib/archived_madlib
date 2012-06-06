@@ -95,8 +95,12 @@ chi2_gof_test_transition::run(AnyType &args) {
     double expected = args.numFields() <= 2 ? 1 : args[2].getAs<double>();
     int64_t df = args.numFields() <= 3 ? 0 : args[3].getAs<int64_t>();
 
-    if (df < 0)
-        throw std::invalid_argument("Degree of freedom must be positive.");
+    if (observed < 0)
+        throw std::invalid_argument("Number of observations must be "
+            "nonnegative.");
+    else if (df < 0)
+        throw std::invalid_argument("Degree of freedom must be positive (or 0 "
+            "to use the default of <number of rows> - 1).");
     else if (state.df != df) {
         if (state.numRows > 0)
             throw std::invalid_argument("Degree of freedom must be constant.");
