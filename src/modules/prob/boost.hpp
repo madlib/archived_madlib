@@ -519,6 +519,12 @@ struct DomainCheck<boost::math::fisher_f_distribution<RealType, Policy> >
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<fisher_f_distribution<%1%> >::quantile(...)";
 
+        if (!boost::math::detail::check_df(function,
+            inDist.degrees_of_freedom1(), &outResult, Policy())
+            || !boost::math::detail::check_df(function,
+                inDist.degrees_of_freedom2(), &outResult, Policy()))
+            return kResultIsReady;
+
         if (std::isnan(inP)) {
             outResult = boost::math::policies::raise_domain_error<RealType>(
                 function,
@@ -865,6 +871,37 @@ struct DomainCheck<boost::math::pareto_distribution<RealType, Policy> >
     typedef PositiveDomainCheck<Distribution> Base;
 
     template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<pareto_distribution<%1%> >::cdf(...)";
+
+        if (inX <= inDist.scale()) {
+            if (boost::math::detail::check_pareto(function, inDist.scale(),
+                inDist.shape(), &outResult, Policy()))
+                outResult = 0;
+            return kResultIsReady;
+        }
+        return Base::template cdf<Complement>(inDist, inX, outResult);
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<pareto_distribution<%1%> >::pdf(...)";
+
+        if (inX < inDist.scale()) {
+            if (boost::math::detail::check_pareto(function, inDist.scale(),
+                inDist.shape(), &outResult, Policy()))
+                outResult = 0;
+            return kResultIsReady;
+        }
+        return Base::pdf(inDist, inX, outResult);
+    }
+
+    template <bool Complement>
     static ProbFnOverride quantile(const Distribution& inDist,
         const RealType& inP, RealType& outResult) {
 
@@ -934,6 +971,44 @@ struct DomainCheck<boost::math::rayleigh_distribution<RealType, Policy> >
     typedef boost::math::rayleigh_distribution<RealType, Policy> Distribution;
     typedef PositiveDomainCheck<Distribution> Base;
 
+    static bool check_sigma_finite(const char* function, RealType sigma,
+        RealType* result, const Policy& pol) {
+
+        if (!boost::math::isfinite(sigma)) {
+            *result = boost::math::policies::raise_domain_error<RealType>(
+                function,
+                "The scale parameter \"sigma\" must be finite, but was: %1%.",
+                sigma, pol);
+            return false;
+        }
+        return true;
+    }
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<rayleigh_distribution<%1%> >::cdf(...)";
+
+        if (!check_sigma_finite(function, inDist.sigma(), &outResult, Policy()))
+            return kResultIsReady;
+
+        return Base::template cdf<Complement>(inDist, inX, outResult);
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<rayleigh_distribution<%1%> >::pdf(...)";
+
+        if (!check_sigma_finite(function, inDist.sigma(), &outResult, Policy()))
+            return kResultIsReady;
+
+        return Base::pdf(inDist, inX, outResult);
+    }
+
     template <bool Complement>
     static ProbFnOverride quantile(const Distribution& inDist,
         const RealType& inP, RealType& outResult) {
@@ -941,15 +1016,9 @@ struct DomainCheck<boost::math::rayleigh_distribution<RealType, Policy> >
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<rayleigh_distribution<%1%> >::quantile(...)";
 
-        RealType sigma = inDist.sigma();
-        if (!boost::math::isfinite(sigma)) {
-            outResult = boost::math::policies::raise_domain_error<RealType>(
-                function,
-                "The scale parameter \"sigma\" must be > 0, but was: %1%.",
-                sigma,
-                Policy());
+        if (!check_sigma_finite(function, inDist.sigma(), &outResult, Policy()))
             return kResultIsReady;
-        }
+
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };
@@ -1049,6 +1118,8 @@ DOMAIN_CHECK_OVERRIDE(chi_squared, PositiveDomainCheck)
 DOMAIN_CHECK_OVERRIDE(inverse_gamma, PositiveDomainCheck)
 DOMAIN_CHECK_OVERRIDE(laplace, RealDomainCheck)
 DOMAIN_CHECK_OVERRIDE(non_central_t, RealDomainCheck)
+DOMAIN_CHECK_OVERRIDE(triangular, RealDomainCheck)
+DOMAIN_CHECK_OVERRIDE(uniform, RealDomainCheck)
 // The following lines are currently commented out. Each of these is a boost
 // deficiency unfortunately. See above.
 // DOMAIN_CHECK_OVERRIDE(exponential, PositiveDomainCheck)
