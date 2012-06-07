@@ -6,22 +6,32 @@
 #include <stdlib.h>
 #include <math.h>
 
+#include "catalog/pg_type.h"
+#if PG_VERSION_NUM >= 90100
+#include "catalog/pg_collation.h"
+#endif
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
-#include "catalog/pg_type.h"
 #include "access/tupmacs.h"
 
 #include "sparse_vector.h"
 
-static char **get_text_array_contents(ArrayType *array, int *numitems);
-
-SvecType * classify_document(char **features, int num_features, 
-			     char **document, int num_words);
-
 Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS);
 
-void gp_extract_feature_histogram_errout(char *msg);
+static void gp_extract_feature_histogram_errout(char *msg);
+
+static SvecType * classify_document(Datum *features, int num_features,
+				  Datum *document, int num_words, bool *null_words);
+
+#if PG_VERSION_NUM >= 90100
+#include "catalog/pg_collation.h"
+#define TextDatumCmp(x, y) (DatumGetInt32( \
+			DirectFunctionCall2Coll(bttextcmp, DEFAULT_COLLATION_OID, (x), (y))))
+#else
+#define TextDatumCmp(x, y) (DatumGetInt32( \
+			DirectFunctionCall2(bttextcmp, (x), (y))))
+#endif
 
 /**
  * 	gp_extract_feature_histogram
@@ -115,17 +125,23 @@ void gp_extract_feature_histogram_errout(char *msg);
 PG_FUNCTION_INFO_V1( gp_extract_feature_histogram );
 Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 {
-	SvecType *returnval;
-	char **features, **document;
-	int num_features, num_words, result;
-	ArrayType * arr0, * arr1;
+	SvecType   *returnval;
+	ArrayType  *arr0, *arr1;
+	Datum	   *features, *document;
+	int			num_features, num_words;
+	bool	   *null_words;
+	int16		elmlen;
+	bool		elmbyval;
+	char		elmalign;
+	int			i;
 
-        if (PG_ARGISNULL(0)) PG_RETURN_NULL();
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
 
-        /* Error checking */
-        if (PG_NARGS() != 2) 
+	/* Error checking */
+	if (PG_NARGS() != 2) 
 		gp_extract_feature_histogram_errout(
-	          "gp_extract_feature_histogram called with wrong number of arguments");
+			"gp_extract_feature_histogram called with wrong number of arguments");
 
 	arr0 = PG_GETARG_ARRAYTYPE_P(0);
 	arr1 = PG_GETARG_ARRAYTYPE_P(1);
@@ -139,42 +155,48 @@ Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS)
 		gp_extract_feature_histogram_errout(
 		  "dictionary argument is empty");
 
-	/* Retrieve the C text array equivalents from the PG text[][] inputs */
-	features = get_text_array_contents(arr0, &num_features);
-	document = get_text_array_contents(arr1, &num_words);
-	
-	// Check if dictionary is sorted
-	for (int i=0; i<num_features-1; i++) {
-		
-		result = strcoll(*(features+i),*(features+i+1));
-		
-		if (result > 0) {
-			elog(ERROR,"Dictionary is unsorted: '%s' is out of order.\n",*(features+i+1));
-		}else if (result == 0) {
-			elog(ERROR,"Dictionary has duplicated word: '%s'\n",*(features+i+1));
-		}
+	if (ARR_ELEMTYPE(arr0) != TEXTOID || ARR_ELEMTYPE(arr1) != TEXTOID)
+		gp_extract_feature_histogram_errout("the input types must be text[]");
 
+	get_typlenbyvalalign(TEXTOID, &elmlen, &elmbyval, &elmalign);
+	deconstruct_array(arr0, TEXTOID, elmlen, elmbyval, elmalign,
+					  &features, NULL, &num_features);
+	deconstruct_array(arr1, TEXTOID, elmlen, elmbyval, elmalign,
+					  &document, &null_words, &num_words);
+
+	for (i = 0; i < num_features - 1; i++)
+	{
+		int		cmp;
+
+		cmp = TextDatumCmp(features[i], features[i + 1]);
+
+		if (cmp > 0)
+			elog(ERROR, "Dictionary is unsorted: '%s' is out of order.\n",
+					TextDatumGetCString(features[i + 1]));
+		else if (cmp == 0)
+			elog(ERROR, "Dictionary has duplicated word: '%s'\n",
+					TextDatumGetCString(features[i + 1]));
 	}
 
-	//elog(NOTICE,"Number of items in the feature array is: %d\n",num_features);
-	//elog(NOTICE,"Number of items in the document array is: %d\n",num_words);
-
-       	returnval = classify_document(features,num_features,document,num_words);
-
-	pfree(features);
-	pfree(document);
+	returnval = classify_document(features, num_features,
+								  document, num_words, null_words);
 
 	PG_RETURN_POINTER(returnval);
 }
 
-void gp_extract_feature_histogram_errout(char *msg) {
+static void
+gp_extract_feature_histogram_errout(char *msg) {
 	ereport(ERROR,
 		(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
 		 errmsg(
 		"%s\ngp_extract_feature_histogram internal error.",msg)));
 }
 
-int str_bsearch(char * word, char ** features, int num_features) 
+/*
+ * The reason we use this instead of standard bsearch is only historical.
+ */
+static int
+textdatum_bsearch(Datum word, Datum *features, int num_features)
 {
 	int low = 0;
 	int high = num_features - 1;
@@ -187,7 +209,7 @@ int str_bsearch(char * word, char ** features, int num_features)
 		mid = low + (high - low)/2;
 		Assert(mid >= 0 && mid < num_features);
 
-		cmp_result = strcoll(word, features[mid]);
+		cmp_result = TextDatumCmp(word, features[mid]);
 
 		if (cmp_result == 0) return mid;
 		if (cmp_result > 0) low = mid + 1;
@@ -203,80 +225,26 @@ int str_bsearch(char * word, char ** features, int num_features)
 	*/
 }
 
-SvecType *classify_document(char **features, int num_features, 
-			    char **document, int num_words) 
+static SvecType *
+classify_document(Datum *features, int num_features,
+				  Datum *document, int num_words, bool *null_words)
 {
 	float8 * histogram = (float8 *)palloc0(sizeof(float8)*num_features);
 	SvecType * output_sfv;
 	int i, idx;
 
-	for (i=0; i!=num_words; i++) {
-		if (document[i] == NULL) continue;
-		idx = str_bsearch(document[i], features, num_features);
+	for (i = 0; i < num_words; i++)
+	{
+		/* Skip if this word is NULL */
+		if (null_words[i])
+			continue;
+		idx = textdatum_bsearch(document[i], features, num_features);
+elog(INFO, "idx = %d", idx);
 		if (idx >= 0)
 			histogram[idx]++;
 	}
 	output_sfv = svec_from_float8arr(histogram, num_features);
+	pfree(histogram);
+
 	return output_sfv;
 }
-
-/**
- * Deconstruct a text[] into C-strings (note any NULL elements will be
- * returned as NULL pointers)
- */
-static char ** get_text_array_contents(ArrayType *array, int *numitems)
-{
-        int ndim = ARR_NDIM(array);
-        int * dims = ARR_DIMS(array);
-        int nitems;        
-	int16 typlen;
-        bool typbyval;
-        char typalign;
-        char ** values;
-        char * ptr;
-        bits8 * bitmap;
-        int bitmask;
-        int i;
-
-        Assert(ARR_ELEMTYPE(array) == TEXTOID);
-
-        if (ARR_ELEMTYPE(array) != TEXTOID) {
-		*numitems = 0;
-		elog(WARNING,"attempt to use a non-text[][] variable with a function that uses text[][] argumenst.\n");
-		return NULL;
-	}
-
-	nitems = ArrayGetNItems(ndim, dims);
-        *numitems = nitems;
-
-        get_typlenbyvalalign(ARR_ELEMTYPE(array),&typlen, &typbyval, &typalign);
-
-        values = (char **) palloc(nitems * sizeof(char *));
-
-        ptr = ARR_DATA_PTR(array);
-        bitmap = ARR_NULLBITMAP(array);
-        bitmask = 1;
-
-        for (i = 0; i < nitems; i++) {
-                if (bitmap && (*bitmap & bitmask) == 0) {
-                        values[i] = NULL;
-                } else {
-                        values[i] = DatumGetCString(DirectFunctionCall1(textout,
-					       	PointerGetDatum(ptr)));
-                        ptr = att_addlength_pointer(ptr, typlen, ptr);
-                        ptr = (char *) att_align_nominal(ptr, typalign);
-                }
-                /* advance bitmap pointer if any */
-                if (bitmap) {
-                        bitmask <<= 1;
-                        if (bitmask == 0x100) {
-                                bitmap++;
-                                bitmask = 1;
-                        }
-                }
-        }
-        return values;
-}
-
-
-
