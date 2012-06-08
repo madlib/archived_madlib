@@ -36,11 +36,11 @@ public:
         lastAbs(&mStorage[6]),
         lastAbsUpperBound(&mStorage[7]),
         reduceVariance(&mStorage[8]) { }
-    
+
     inline operator AnyType() const {
         return mStorage;
     }
-    
+
 private:
     Handle mStorage;
 
@@ -64,18 +64,23 @@ AnyType
 wsr_test_transition::run(AnyType &args) {
     WSRTestTransitionState<MutableArrayHandle<double> > state = args[0];
     double value = args[1].getAs<double>();
-    AnyType precisionArg = args.numFields() >= 3 ? args[2] : Null();
-    double precision = precisionArg.isNull()
-        ? value * std::numeric_limits<double>::epsilon()
-        : precisionArg.getAs<double>();
-    
+    double precision = args.numFields() >= 3
+        ? args[2].getAs<double>()
+        : -1;
+
+    if (!std::isfinite(precision))
+        throw std::invalid_argument((boost::format(
+            "Precision must be finite, but got %1%.") % precision).str());
+    else if (precision < 0)
+        precision = value * std::numeric_limits<double>::epsilon();
+
     // Ignore values of zero.
     if (value == 0)
         return state;
-    
+
     double absValue = std::fabs(value);
     int sample = value > 0 ? 0 : 1;
-    
+
     if (state.num.sum() > 0) {
         if (absValue < state.lastAbs)
             throw std::invalid_argument("Must be used as an ordered aggregate, "
@@ -84,19 +89,20 @@ wsr_test_transition::run(AnyType &args) {
         else if (absValue - precision <= state.lastAbsUpperBound) {
             for (int i = 0; i <= 1; i++)
                 state.rankSum(i) += state.numTies(i) * 0.5;
-            
-            // FIXME: There are conflicting sources for the variance reduction:
-            // http://mlsc.lboro.ac.uk/resources/statistics/wsrt.pdf
-            // http://de.wikipedia.org/wiki/Wilcoxon-Vorzeichen-Rang-Test
+
+            // Hollander, Wolfe ("Nonparametric statistical methods", 2nd ed.,
+            // p. 38, 1999) suggest the following:
             //
-            // For each *group*, we want to add (t^3 - t)/48 to state.reduceVariance
-            // where t denotes the number of ties in that group
+            // For each *group*, add (t^3 - t)/48 to state.reduceVariance where
+            // t denotes the number of ties in that group.
             // Note that t^3 - t == 0 if t = 0 or t = 1. So it is sufficient
             // to modify state.reduceVariance only in the current case of the
             // if-else block.
             //
-            // For each repeated occurrence, we add
-            // [ (t+1)^3 - (t+1) - (t^3 - t) ]/48 to state.reduceVariance.
+            // Instead of modifying state.reduceVariance only once per group,
+            // we modify it for each repeated occurrence. In detail, we add
+            // [ ((t+1)^3 - (t+1)) - (t^3 - t) ]/48 to state.reduceVariance.
+            // This is equal to t * (t + 1) / 16.
             double t = state.numTies.sum();
             state.reduceVariance += 1./16. * t * (t + 1);
         } else {
@@ -106,14 +112,14 @@ wsr_test_transition::run(AnyType &args) {
             state.numTies.setZero();
         }
     }
-    
+
     state.num(sample)++;
     state.rankSum(sample) += (2. * state.num.sum() - state.numTies.sum()) / 2.;
     state.numTies(sample)++;
     state.lastAbs = absValue;
     if (absValue + precision > state.lastAbsUpperBound)
         state.lastAbsUpperBound = absValue + precision;
-    
+
     return state;
 }
 
@@ -128,7 +134,7 @@ wsr_test_final::run(AnyType &args) {
     double z_statistic = (state.rankSum(0) - n_n1 / 4.)
                        / std::sqrt(n_n1 * (2 * state.num.sum() + 1.) / 24.
                             - state.reduceVariance);
-    
+
     AnyType tuple;
     tuple
         << statistic

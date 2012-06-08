@@ -1,6 +1,6 @@
 /* -----------------------------------------------------------------------------
  * sql.yy
- * 
+ *
  * A simple context-free grammar to parse SQL files and translating
  * CREATE FUNCTION statements into C++ function declarations.
  * This allows .sql files to be documented by documentation tools like Doxygen.
@@ -22,7 +22,7 @@
 	#include <map>
 	#include <fstream>
 	#include <cstring>
-	
+
 	/*
      * FIXME: We should not disable warnings. Without this option, we would
      * get the following warnings:
@@ -38,7 +38,7 @@
             #pragma GCC diagnostic ignored "-Wunused-result"
         #endif
     #endif
-	
+
 	#ifdef COMPILING_SCANNER
 		/* Flex expects the signature of yylex to be defined in the macro
 		 * YY_DECL. */
@@ -57,13 +57,13 @@
 		#include "FlexLexer.h"
 		#undef yyFlexLexer
 	#endif
-		
+
 	namespace bison {
 
 	/* Forward declaration because referenced by generated class declaration
 	 * SQLParser */
 	class SQLDriver;
-	
+
 	}
 }
 
@@ -84,24 +84,24 @@
 
             int     currentLine;
         };
-    
+
 		SQLDriver(const std::string &inExeName, const std::string &inFilename);
 		virtual ~SQLDriver();
 		void error(const SQLParser::location_type &l, const std::string &m);
 		void error(const std::string &m);
-    
+
         CountingOStream                 cout;
 		std::map<std::string, char *>	fnToReturnType;
 		SQLScanner						*scanner;
         std::string                     exeName;
         std::string                     filename;
 	};
-	
+
 	/* We need to subclass because SQLFlexLexer's yylex function does not have
 	 * the proper signature */
 	class SQLScanner : public SQLFlexLexer
 	{
-	public:    
+	public:
 		SQLScanner(std::istream *arg_yyin = 0, std::ostream* arg_yyout = 0);
 		virtual ~SQLScanner();
 		static inline char *strlowerdup(const char *inString);
@@ -114,17 +114,17 @@
         char            *stringLiteralQuotation;
         unsigned long   oldLength;
 	};
-	
+
 	class TaggedStr
 	{
 	public:
 		TaggedStr(int inTag, char *inStr) : tag(inTag), str(inStr) { };
 		virtual ~TaggedStr() { };
-	
+
 		int		tag;
 		char	*str;
 	};
-	
+
 	} // namespace bison
 
 	/* "Connect" the bison parser in the driver to the flex scanner class
@@ -213,10 +213,10 @@
 %token			DOUBLE
 %token			PRECISION
 %token			TIME
-%token			VARYING 
+%token			VARYING
 %token			VOID
 %token			WITH
-%token			WITHOUT 
+%token			WITHOUT
 %token			ZONE
 
 %token	<str>	INTEGER_LITERAL
@@ -229,6 +229,7 @@
 %token          END_SPECIAL
 
 %type   <str>   expr
+%type   <str>   prefixExpr
 %type	<str>	qualifiedIdent
 %type	<str>	optFnArgList fnArgList fnArgument
 %type   <str>   optDefaultArgument defaultArgument
@@ -294,7 +295,7 @@ fnArgList:
 
 aggArgList:
 	  aggArgList ',' aggArgument {
-		asprintf(&($$), "%s, %s", $1, $3);		
+		asprintf(&($$), "%s, %s", $1, $3);
 	}
 	| aggArgument
 
@@ -314,7 +315,7 @@ optDefaultArgument: { $$ = ""; }
     | defaultArgument
     | BEGIN_SPECIAL defaultArgument END_SPECIAL { $$ = $2; }
 ;
-    
+
 defaultArgument:
       DEFAULT expr {
         asprintf(&($$), " = %s", $2);
@@ -445,7 +446,17 @@ expr:
 	| STRING_LITERAL
     | IDENTIFIER
     | NULL_KEYWORD
+    | prefixExpr
 	/* FIXME: Support more or ignore completely */
+;
+
+prefixExpr:
+      '+' expr {
+        asprintf(&($$), "+%s", $2);
+    }
+    | '-' expr {
+        asprintf(&($$), "-%s", $2);
+    }
 ;
 
 %%
@@ -479,11 +490,11 @@ SQLDriver::CountingOStream &SQLDriver::CountingOStream::advance(int line) {
 
 SQLDriver::CountingOStream &SQLDriver::CountingOStream::operator<<(
     const char *str) {
-    
+
     for (int i = 0; str[i] != 0; i++)
         if (str[i] == '\n')
             currentLine++;
-    
+
     std::cout << str;
     return *this;
 }
@@ -497,7 +508,7 @@ SQLDriver::CountingOStream &SQLDriver::CountingOStream::operator<<(char c) {
 
 void SQLParser::error(const SQLParser::location_type &l,
 	const std::string &m) {
-	
+
 	driver->error(l, m);
 }
 
@@ -523,7 +534,7 @@ int	main(int argc, char **argv)
     std::string         filename = "<stdin>";
 	bool                error = false;
     bool                customFileName = false;
-    
+
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[1], "-f") == 0) {
             if (i < argc - 1) {
@@ -544,21 +555,21 @@ int	main(int argc, char **argv)
             << std::endl;
         return 1;
     }
-    
+
 	bison::SQLDriver	driver(argv[0], filename);
 	bison::SQLScanner	scanner(inStream); driver.scanner = &scanner;
 	bison::SQLParser	parser(&driver);
 
 	int result = parser.parse();
-	
+
 	if (inStream != NULL)
 		delete inStream;
 
 	if (result != 0)
 		return result;
-	
+
     std::cout << '\n';
-    
+
     /*
 	std::cout << "// List of functions:\n";
 	for (std::map<std::string,char *>::iterator it = driver.fnToReturnType.begin();
