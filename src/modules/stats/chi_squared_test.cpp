@@ -165,8 +165,10 @@ chi2_gof_test_final::run(AnyType &args) {
     AnyType tuple;
     tuple
         << statistic
-        << prob::cdf(complement(prob::chi_squared(
-            static_cast<double>(degreeOfFreedom)), statistic))
+        << (degreeOfFreedom > 0
+            ? prob::cdf(complement(prob::chi_squared(
+                static_cast<double>(degreeOfFreedom)), statistic))
+            : Null())
         << degreeOfFreedom
         << phi
         << C;
