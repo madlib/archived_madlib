@@ -181,28 +181,12 @@ gp_extract_feature_histogram_errout(char *msg) {
 }
 
 /*
- * The reason we use this instead of standard bsearch is only historical.
+ * The comparator for bsearch.
  */
 static int
-textdatum_bsearch(Datum word, Datum *features, int num_features)
+textdatum_cmp(const void *a, const void *b)
 {
-	int low = 0;
-	int high = num_features - 1;
-	int mid;
-	int cmp_result;
-
-	while (true) {
-		if (low > high) return -5;
-
-		mid = low + (high - low)/2;
-		Assert(mid >= 0 && mid < num_features);
-
-		cmp_result = TextDatumCmp(word, features[mid]);
-
-		if (cmp_result == 0) return mid;
-		if (cmp_result > 0) low = mid + 1;
-		else high = mid - 1;
-	}
+	return TextDatumCmp(*(Datum *) a, *(Datum *) b);
 }
 
 static SvecType *
@@ -211,16 +195,25 @@ classify_document(Datum *features, int num_features,
 {
 	float8 * histogram = (float8 *)palloc0(sizeof(float8)*num_features);
 	SvecType * output_sfv;
-	int i, idx;
+	int i;
 
 	for (i = 0; i < num_words; i++)
 	{
+		void   *found;
+
 		/* Skip if this word is NULL */
 		if (null_words[i])
 			continue;
-		idx = textdatum_bsearch(document[i], features, num_features);
-		if (idx >= 0)
+		found = bsearch(&document[i], features, num_features,
+						sizeof(Datum), textdatum_cmp);
+		if (found)
+		{
+			int		idx;
+
+			idx = ((uintptr_t) found - (uintptr_t) features) / sizeof(Datum);
 			histogram[idx]++;
+		}
+
 	}
 	output_sfv = svec_from_float8arr(histogram, num_features);
 	pfree(histogram);
