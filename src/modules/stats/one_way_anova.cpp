@@ -291,8 +291,10 @@ one_way_anova_final::run(AnyType &args) {
         << mean_square_between
         << mean_square_within
         << statistic
-        << prob::cdf(
-            complement(prob::fisher_f(df_between, df_within), statistic));
+        << ((df_between >= 1 && df_within >= 1)
+            ? prob::cdf(
+                complement(prob::fisher_f(df_between, df_within), statistic))
+            : Null());
     return tuple;
 }
 
