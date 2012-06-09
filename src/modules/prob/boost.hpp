@@ -421,11 +421,10 @@ struct DomainCheck<boost::math::binomial_distribution<RealType, Policy> >
 };
 
 /**
- * @brief Due to boost bug XXX, we need to override the domain check for
- *     quantile
+ * @brief Due to boost bug XXX, we need to override the domain checks
  *
  * FIXME: No boost bug filed so far
- * Boost does not catch the case where lambda is NaN.
+ * Boost does not catch the case where lambda is non-finite.
  */
 template <>
 template <class RealType, class Policy>
@@ -436,6 +435,42 @@ struct DomainCheck<boost::math::exponential_distribution<RealType, Policy> >
     typedef boost::math::exponential_distribution<RealType, Policy> Distribution;
     typedef PositiveDomainCheck<Distribution> Base;
 
+    static bool check_dist(const char* function, RealType lambda,
+        RealType* result, const Policy& pol) {
+
+        if (!boost::math::isfinite(lambda)) {
+            *result = boost::math::policies::raise_domain_error<RealType>(
+                function,
+                "The scale parameter \"lambda\" must be finite, but was: %1%.",
+                lambda, pol);
+            return false;
+        }
+        return true;
+    }
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<exponential_distribution<%1%> >::cdf(...)";
+
+        if (!check_dist(function, inDist.lambda(), &outResult, Policy()))
+            return kResultIsReady;
+        return Base::template cdf<Complement>(inDist, inX, outResult);
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<exponential_distribution<%1%> >::pdf(...)";
+
+        if (!check_dist(function, inDist.lambda(), &outResult, Policy()))
+            return kResultIsReady;
+        return Base::pdf(inDist, inX, outResult);
+    }
+
     template <bool Complement>
     static ProbFnOverride quantile(const Distribution& inDist,
         const RealType& inP, RealType& outResult) {
@@ -443,15 +478,8 @@ struct DomainCheck<boost::math::exponential_distribution<RealType, Policy> >
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<exponential_distribution<%1%> >::quantile(...)";
 
-        RealType lambda = inDist.lambda();
-        if (!boost::math::isfinite(lambda)) {
-            outResult = boost::math::policies::raise_domain_error<RealType>(
-                function,
-                "The scale parameter \"lambda\" must be > 0, but was: %1%.",
-                lambda,
-                Policy());
+        if (!check_dist(function, inDist.lambda(), &outResult, Policy()))
             return kResultIsReady;
-        }
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };
@@ -461,7 +489,8 @@ struct DomainCheck<boost::math::exponential_distribution<RealType, Policy> >
  *     quantile
  *
  * FIXME: No boost bug filed so far
- * Boost does not catch the case where the location parameter is NaN.
+ * Boost does not catch the case where the location or scale parameters are
+ * non-finite.
  */
 template <>
 template <class RealType, class Policy>
@@ -470,7 +499,47 @@ struct DomainCheck<boost::math::extreme_value_distribution<RealType, Policy> >
         boost::math::extreme_value_distribution<RealType, Policy>
     > {
     typedef boost::math::extreme_value_distribution<RealType, Policy> Distribution;
-    typedef PositiveDomainCheck<Distribution> Base;
+    typedef RealDomainCheck<Distribution> Base;
+
+    static bool check_dist(const char* function, RealType location,
+        RealType scale, RealType* result, const Policy& pol) {
+
+        if (!boost::math::detail::check_location(function, location, result, pol))
+            return false;
+        if (!boost::math::isfinite(scale)) {
+            *result = boost::math::policies::raise_domain_error<RealType>(
+                function,
+                "The scale parameter \"b\" must be finite, but was: %1%.",
+                scale, pol);
+            return false;
+        }
+        return true;
+    }
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<extreme_value_distribution<%1%> >::cdf(...)";
+
+        if (!check_dist(function, inDist.location(), inDist.scale(), &outResult,
+            Policy()))
+            return kResultIsReady;
+        return Base::template cdf<Complement>(inDist, inX, outResult);
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<extreme_value_distribution<%1%> >::pdf(...)";
+
+        if (!check_dist(function, inDist.location(), inDist.scale(), &outResult,
+            Policy()))
+            return kResultIsReady;
+        return Base::pdf(inDist, inX, outResult);
+    }
 
     template <bool Complement>
     static ProbFnOverride quantile(const Distribution& inDist,
@@ -479,20 +548,9 @@ struct DomainCheck<boost::math::extreme_value_distribution<RealType, Policy> >
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<extreme_value_distribution<%1%> >::quantile(...)";
 
-        if (!boost::math::detail::check_location(function,
-            inDist.location(), &outResult, Policy()))
+        if (!check_dist(function, inDist.location(), inDist.scale(), &outResult,
+            Policy()))
             return kResultIsReady;
-
-        RealType b = inDist.scale();
-        if (!boost::math::isfinite(b)) {
-            outResult = boost::math::policies::raise_domain_error<RealType>(
-                function,
-                "The scale parameter \"b\" must be > 0, but was: %1%.",
-                b,
-                Policy());
-            return kResultIsReady;
-        }
-
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };

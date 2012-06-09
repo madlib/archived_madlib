@@ -74,6 +74,10 @@ public:
      * operator= would be used even though there is a conversion path
      * through dest.operator=(orig.operator U())
      */
+    MutableReference &operator=(const MutableReference& inReference) {
+        return this->operator=(static_cast<const Base&>(inReference));
+    }
+
     MutableReference &operator=(const Base &inReference) {
         *mPtr = *inReference.ptr();
         return *this;
