@@ -385,24 +385,36 @@ struct DomainCheck<boost::math::binomial_distribution<RealType, Policy> >
     static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
         RealType& outResult) {
 
-        if (inX < 0)
-            outResult = Complement ? 1 : 0;
-        else if (inX > inDist.trials())
-            outResult = Complement ? 0 : 1;
-        else
-            return Base::template cdf<Complement>(inDist, inX, outResult);
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<binomial_distribution<%1%> >::cdf(...)";
 
-        return kResultIsReady;
+        if (!boost::math::binomial_detail::check_dist(function, inDist.trials(),
+            inDist.success_fraction(), &outResult, Policy())) {
+            return kResultIsReady;
+        } else if (inX < 0) {
+            outResult = Complement ? 1 : 0;
+            return kResultIsReady;
+        } else if (inX > inDist.trials()) {
+            outResult = Complement ? 0 : 1;
+            return kResultIsReady;
+        }
+        return Base::template cdf<Complement>(inDist, inX, outResult);
     }
 
     static ProbFnOverride pdf(const Distribution& inDist, const RealType& inX,
         RealType& outResult) {
 
-        if (inX < 0 || inX > inDist.trials()) {
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<binomial_distribution<%1%> >::pdf(...)";
+
+        if (!boost::math::binomial_detail::check_dist(function, inDist.trials(),
+            inDist.success_fraction(), &outResult, Policy())) {
+            return kResultIsReady;
+        } else if (inX < 0 || inX > inDist.trials()) {
             outResult = 0;
             return kResultIsReady;
-        } else
-            return Base::pdf(inDist, inX, outResult);
+        }
+        return Base::pdf(inDist, inX, outResult);
     }
 
     template <bool Complement>
@@ -412,10 +424,20 @@ struct DomainCheck<boost::math::binomial_distribution<RealType, Policy> >
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<binomial_distribution<%1%> >::quantile(...)";
 
-        if (!boost::math::detail::check_probability(function,
-            inDist.success_fraction(), &outResult, Policy()))
+        if (!boost::math::binomial_detail::check_dist(function, inDist.trials(),
+                inDist.success_fraction(), &outResult, Policy())
+            || !boost::math::detail::check_probability(function, inP,
+                &outResult, Policy())) {
             return kResultIsReady;
-
+        } else if (inDist.success_fraction() == 1) {
+            // distribution is single-point measure, i.e., same for complement
+            outResult = inDist.trials();
+            return kResultIsReady;
+        } else if (inDist.success_fraction() == 0) {
+            // distribution is single-point measure, i.e., same for complement
+            outResult = 0;
+            return kResultIsReady;
+        }
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };
@@ -787,9 +809,12 @@ struct DomainCheck<boost::math::lognormal_distribution<RealType, Policy> >
 
 /**
  * @brief Due to boost bug 6937, we need to override the domain check for
- *     quantile
+ *     quantile.
  *
  * https://svn.boost.org/trac/boost/ticket/6937
+ *
+ * Also, we want to raise an error if the success probability is 0, because the
+ * distribution is not well-defined in that case.
  */
 template <>
 template <class RealType, class Policy>
@@ -800,6 +825,47 @@ struct DomainCheck<boost::math::negative_binomial_distribution<RealType, Policy>
     typedef boost::math::negative_binomial_distribution<RealType, Policy> Distribution;
     typedef NonNegativeIntegerDomainCheck<Distribution> Base;
 
+    static bool check_dist(const char* function, const RealType& r,
+        const RealType& p, RealType* result, const Policy& pol) {
+
+        if (!boost::math::negative_binomial_detail::check_dist(function, r, p,
+                result, pol)) {
+            return false;
+        } else if (p == 0) {
+            *result = boost::math::policies::raise_domain_error<RealType>(
+                function,
+                "Probability argument is %1%, but must be > 0 and <= 1!",
+                p, pol);
+            return false;
+        }
+        return true;
+    }
+
+    template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<negative_binomial_distribution<%1%> >::cdf(...)";
+
+        if (!check_dist(function, inDist.successes(), inDist.success_fraction(),
+            &outResult, Policy()))
+            return kResultIsReady;
+        return Base::template cdf<Complement>(inDist, inX, outResult);
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<negative_binomial_distribution<%1%> >::pdf(...)";
+
+        if (!check_dist(function, inDist.successes(), inDist.success_fraction(),
+            &outResult, Policy()))
+            return kResultIsReady;
+        return Base::pdf(inDist, inX, outResult);
+    }
+
     template <bool Complement>
     static ProbFnOverride quantile(const Distribution& inDist,
         const RealType& inP, RealType& outResult) {
@@ -807,10 +873,14 @@ struct DomainCheck<boost::math::negative_binomial_distribution<RealType, Policy>
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<negative_binomial_distribution<%1%> >::quantile(...)";
 
-        if (!boost::math::detail::check_probability(function,
-            inDist.success_fraction(), &outResult, Policy()))
+        if (!check_dist(function, inDist.successes(), inDist.success_fraction(),
+            &outResult, Policy())) {
             return kResultIsReady;
-
+        } else if (inDist.success_fraction() == 1) {
+            // distribution is single-point measure, i.e., same for complement
+            outResult = 0;
+            return kResultIsReady;
+        }
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };
