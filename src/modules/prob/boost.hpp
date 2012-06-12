@@ -504,16 +504,9 @@ struct DomainCheck<boost::math::extreme_value_distribution<RealType, Policy> >
     static bool check_dist(const char* function, RealType location,
         RealType scale, RealType* result, const Policy& pol) {
 
-        if (!boost::math::detail::check_location(function, location, result, pol))
-            return false;
-        if (!boost::math::isfinite(scale)) {
-            *result = boost::math::policies::raise_domain_error<RealType>(
-                function,
-                "The scale parameter \"b\" must be finite, but was: %1%.",
-                scale, pol);
-            return false;
-        }
-        return true;
+        return
+            boost::math::detail::check_location(function, location, result, pol)
+            && boost::math::detail::check_scale(function, scale, result, pol);
     }
 
     template <bool Complement>
@@ -711,11 +704,41 @@ struct DomainCheck<boost::math::hypergeometric_distribution<RealType, Policy> >
 
 
 /**
+ * @brief Boost returns a small non-zero value for quantile(0) instead of 0
+ */
+template <>
+template <class RealType, class Policy>
+struct DomainCheck<boost::math::inverse_gamma_distribution<RealType, Policy> >
+  : public PositiveDomainCheck<
+        boost::math::inverse_gamma_distribution<RealType, Policy>
+    > {
+    typedef boost::math::inverse_gamma_distribution<RealType, Policy> Distribution;
+    typedef PositiveDomainCheck<Distribution> Base;
+
+    template <bool Complement>
+    static ProbFnOverride quantile(const Distribution& inDist,
+        const RealType& inP, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<inverse_gamma_distribution<%1%> >::quantile(...)";
+
+        if(!boost::math::detail::check_inverse_gamma(function, inDist.scale(),
+            inDist.shape(), &outResult, Policy()))
+            return kResultIsReady;
+        else if (inP == 0) {
+            outResult = 0;
+            return kResultIsReady;
+        }
+        return Base::template quantile<Complement>(inDist, inP, outResult);
+    }
+};
+
+/**
  * @brief Due to boost bug XXX, we need to override the domain check for
  *     quantile
  *
  * FIXME: No boost bug filed so far
- * Boost does not catch the case where scale is NaN.
+ * Boost does not catch the case where location or scale are not finite.
  */
 template <>
 template <class RealType, class Policy>
@@ -726,6 +749,28 @@ struct DomainCheck<boost::math::lognormal_distribution<RealType, Policy> >
     typedef boost::math::lognormal_distribution<RealType, Policy> Distribution;
     typedef PositiveDomainCheck<Distribution> Base;
 
+    static bool check_dist(const char* function, RealType location,
+        RealType scale, RealType* result, const Policy& pol) {
+
+        if (!boost::math::detail::check_location(function, location, result,
+                pol)
+            || !boost::math::detail::check_scale(function, scale, result, pol))
+            return false;
+        return true;
+    }
+
+    static ProbFnOverride pdf(const Distribution& inDist,
+        const RealType& inX, RealType& outResult) {
+
+        static const char* function = "madlib::modules::prob::<unnamed>::"
+            "DomainCheck<lognormal_distribution<%1%> >::pdf(...)";
+
+        if (!check_dist(function, inDist.location(), inDist.scale(), &outResult,
+            Policy()))
+            return kResultIsReady;
+        return Base::pdf(inDist, inX, outResult);
+    }
+
     template <bool Complement>
     static ProbFnOverride quantile(const Distribution& inDist,
         const RealType& inP, RealType& outResult) {
@@ -733,12 +778,9 @@ struct DomainCheck<boost::math::lognormal_distribution<RealType, Policy> >
         static const char* function = "madlib::modules::prob::<unnamed>::"
             "DomainCheck<lognormal_distribution<%1%> >::quantile(...)";
 
-        if (!boost::math::detail::check_location(function, inDist.location(),
-                &outResult, Policy())
-            || !boost::math::detail::check_scale(function, inDist.scale(),
-                &outResult, Policy()))
+        if (!check_dist(function, inDist.location(), inDist.scale(), &outResult,
+            Policy()))
             return kResultIsReady;
-
         return Base::template quantile<Complement>(inDist, inP, outResult);
     }
 };
@@ -1173,7 +1215,6 @@ struct DomainCheck<boost::math::weibull_distribution<RealType, Policy> >
 
 DOMAIN_CHECK_OVERRIDE(beta, ZeroOneDomainCheck)
 DOMAIN_CHECK_OVERRIDE(chi_squared, PositiveDomainCheck)
-DOMAIN_CHECK_OVERRIDE(inverse_gamma, PositiveDomainCheck)
 DOMAIN_CHECK_OVERRIDE(laplace, RealDomainCheck)
 DOMAIN_CHECK_OVERRIDE(non_central_t, RealDomainCheck)
 DOMAIN_CHECK_OVERRIDE(triangular, RealDomainCheck)
@@ -1187,6 +1228,7 @@ DOMAIN_CHECK_OVERRIDE(uniform, RealDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(geometric, NonNegativeIntegerDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(lognormal, PositiveDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(hypergeometric, NonNegativeIntegerDomainCheck)
+// DOMAIN_CHECK_OVERRIDE(inverse_gamma, PositiveDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(negative_binomial, NonNegativeIntegerDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(non_central_beta, ZeroOneDomainCheck)
 // DOMAIN_CHECK_OVERRIDE(non_central_chi_squared, PositiveDomainCheck)
