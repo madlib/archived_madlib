@@ -667,6 +667,22 @@ struct DomainCheck<boost::math::geometric_distribution<RealType, Policy> >
     typedef NonNegativeIntegerDomainCheck<Distribution> Base;
 
     template <bool Complement>
+    static ProbFnOverride cdf(const Distribution& inDist, const RealType& inX,
+        RealType& outResult) {
+
+        if (inDist.success_fraction() == 1 && !std::isnan(inX)) {
+            if (inX < 0)
+                outResult = Complement ? 1 : 0;
+            else if (inX > 0)
+                outResult = Complement ? 0 : 1;
+            else /* if (inX == 0) */
+                outResult = 1;
+            return kResultIsReady;
+        }
+        return Base::template cdf<Complement>(inDist, inX, outResult);
+    }
+
+    template <bool Complement>
     static ProbFnOverride quantile(const Distribution& inDist,
         const RealType& inP, RealType& outResult) {
 
