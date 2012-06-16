@@ -1,0 +1,60 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file train_data_loader.sql_in
+ *
+ * @brief create all the necessary tables to store the training data, then use the linear chain conditional 
+ *        random field to train the data
+ * @param datapath the path to the crf training data
+ * @date May 2012
+ * @sa For an introduction to the text feature extraction, see the module
+ *     description \ref grp_crf
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.traindata_textfex(datapath text) RETURNS void AS
+$$      
+        # insert into dictionary table
+        plpy.execute("""INSERT INTO textfex_dictionary(text,token_id,label,count,total)
+                        SELECT DISTINCT seg_text
+                        FROM   """ + textfex_segmentbl
+                        GROUP BY seg_tex, label""";""")
+ 
+        # create a temporary table to store all the features
+        
+        # extract all the edge features
+        INSERT INTO temp_feature(name,pre_label_id,label_id) 
+        SELECT DISTINCT 'E.', seg1.label, seg2.label 
+        FROM   textfex_segmenttbl seg1, textfex_segment seg2
+        WHERE  seg1.doc_id = seg2.doc_id AND seg1.start_pos+1 = seg2.start_pos   
+         
+        #extract all the regex features
+        INSERT INTO temp_feature(name,pre_label_id,label_id)
+        SELECT DISTINCT 'R_' || name, -1, label
+        FROM   textfex_regex, textfex_segmenttbl
+        WHERE  seg_text ~ pattern        
+           
+        #extract all the start feature
+        INSERT INTO temp_feature(name,pre_label_id,label_id)
+        SELECT DISTINCT 'S.', -1, label
+        FROM   textfex_segmenttbl
+        WHERE  start_pos = 0;
+        
+        #extract all the end featue
+        INSERT INTO temp_feature(name,pre_label_id,label_id)
+        SELECT DISTINCT 'End.', -1, label
+        FROM   textfex_segmenttbl
+        WHERE  start_pos = max_pos;
+
+        #word feature
+        INSERT INTO temp_feature(name,pre_label_id,label_id)
+        SELECT DISTINCT 'W_' || seg_text, -1, label
+        FROM   textfex_segmenttbl;
+        
+        #unknown feature
+        INSERT INTO temp_feature(name,pre_label_id,label_id)
+        SELECT DISTINCT 'U', -1, label
+        FROM   textfex_segmenttbl seg, textfex_dictionary dic
+        WHERE  seg.seg_text = dic.seg_text AND dic.total>1
+ 
+         
