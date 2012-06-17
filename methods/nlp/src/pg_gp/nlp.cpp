@@ -11,6 +11,14 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
+#include <fstream>
+#include "data.h"
+#include "feature.h"
+#include "featuregen.h"
+#include "dictionary.h"
+#include "option.h"
+#include "doublevector.h"
+#include "doublematrix.h"
 
 #include "nlp.hpp"
 
@@ -163,6 +171,35 @@ private:
     Handle mStorage;
 
 public:
+	model * pmodel;     // pointer to conditional random field object
+    option * popt;      // .......... option object
+    data * pdata;       // .......... data object
+    dictionary * pdict; // .......... dictionary object
+    featuregen * pfgen; // .......... featuregen object
+
+    int num_labels;
+    int num_features;
+    double * lambda;
+    double * temp_lambda;
+    int is_logging;
+
+    double * gradlogli; // log-likelihood vector gradient
+    double * diag;      // for optimization (used by L-BFGS)
+
+    doublematrix * Mi;  // for edge features (a small modification from published papers)
+    doublevector * Vi;  // for state features
+    doublevector * alpha, * next_alpha; // forward variable
+    vector<doublevector *> betas;       // backward variables
+    doublevector * temp;        // temporary vector used during computing
+
+    double * ExpF;      // feature expectation (according to the model)
+    double * ws;        // memory workspace used by L-BFGS
+
+    // for scaling (to avoid numerical problems during training)
+    vector<double> scale, rlogscale;
+
+    // this control the status information reported during training
+
     typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
@@ -174,6 +211,39 @@ public:
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradNew;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
     typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
+    
+
+
+    //define all data
+    option * popt;	// .......... option object
+    data * pdata;	// .......... data object
+    dictionary * pdict;	// .......... dictionary object
+    featuregen * pfgen;	// .......... featuregen object
+    
+    int num_labels;
+    int num_features;
+    double * lambda;
+    double * temp_lambda;
+    int is_logging;
+    
+    double * gradlogli;	// log-likelihood vector gradient
+    double * diag;	// for optimization (used by L-BFGS)
+    
+    doublematrix * Mi;	// for edge features (a small modification from published papers)
+    doublevector * Vi;	// for state features
+    doublevector * alpha, * next_alpha;	// forward variable
+    vector<doublevector *> betas;	// backward variables
+    doublevector * temp;	// temporary vector used during computing
+    
+    double * ExpF;	// feature expectation (according to the model)
+    double * ws;	// memory workspace used by L-BFGS
+    
+    // for scaling (to avoid numerical problems during training)
+    vector<double> scale, rlogscale;
+    
+    // this control the status information reported during training
+    int * iprint;
+
 };
 
 /**
