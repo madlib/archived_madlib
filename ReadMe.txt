@@ -18,18 +18,20 @@ doc/user/html/index.html.
 Changes between MADlib versions are described in the ReleaseNotes.txt file.
 
 MADlib incorporates material from the following third-party components:
-- Eigen 3.0.3 "is a C++ template library for linear algebra"
-  http://eigen.tuxfamily.org/index.php?title=Main_Page
-- Boost 1.46.1 (or newer) "provides peer-reviewed portable C++ source 
-  libraries"
-  http://www.boost.org/
-- doxypy 0.4.2 "is an input filter for Doxygen"
-  http://code.foosel.org/doxypy
 - argparse 1.2.1 "provides an easy, declarative interface for creating command
   line tools"
   http://code.google.com/p/argparse/
+- Boost 1.46.1 (or newer) "provides peer-reviewed portable C++ source 
+  libraries"
+  http://www.boost.org/
+- CERN ROOT is "an object oriented framework for large scale data analysis"
+  http://root.cern.ch/
+- doxypy 0.4.2 "is an input filter for Doxygen"
+  http://code.foosel.org/doxypy
+- Eigen 3.0.3 "is a C++ template library for linear algebra"
+  http://eigen.tuxfamily.org/index.php?title=Main_Page
 - PyYAML 3.10 "is a YAML parser and emitter for Python"
   http://pyyaml.org/wiki/PyYAML
 
-License information regarding MADlib and included 3rd party libraries can be 
+License information regarding MADlib and included third-party libraries can be 
 found inside the license directory.
