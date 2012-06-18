@@ -4,7 +4,7 @@
  *
  * @brief SQL function for text feature extraction
  * @date February 2012
- *  
+ *
  * @sa For an introduction to text feature extraction, see the module
  *     description \ref grp_textfex_viterbi
  *//* ----------------------------------------------------------------------- */
@@ -15,11 +15,11 @@ m4_include(`SQLCommon.m4')
 @addtogroup grp_textfex_viterbi
 
 @about
-This module provides a functionality of the feature extraction for basic text
-analysis tasks such as part-of-speech(POS) tagging, named entity resolution.
-In addition to the feature extraction, it also has a Viterbi implementation
+The Feature Extraction module provides functionality for basic text-analysis
+tasks such as part-of-speech (POS) tagging and named-entity resolution.
+In addition to feature extraction, it also has a Viterbi implementation
 to get the best label sequence and the conditional probability
-\f$ p(top1_label_sequence|sentence) \f$.
+\f$ \Pr( \text{best label sequence} \mid \text{Sentence}) \f$.
 
 At present, six feature types are implemented.
     - Edge Feature: transition feature that encodes the transition feature
@@ -37,7 +37,7 @@ You can add your own feature type according to the training model.
 
 Instead of scanning every token in a sentence and extracting features for
 each token on the fly, we extract features for each distinct token and
-materialize it in the table.  When we call viterbi function to get the best
+materialize it in the table.  When we call the Viterbi function to get the best
 label sequence, we only need a single lookup to get the feature weight.
 
 @usage
@@ -46,7 +46,7 @@ label sequence, we only need a single lookup to get the feature weight.
     to convert the data in the model files to the data format required by in
     this module.
 
-  - Load model from local drive to database 
+  - Load model from local drive to database
     <pre>SELECT madlib.load_crf_model(
          '<em>/path/to/data</em>');</pre>
 
@@ -110,7 +110,7 @@ label sequence, we only need a single lookup to get the feature weight.
  * ...
  * edgeFeature  44  a  a  a  a  a  a...a
  * endFeature   45  a  a  a  a  a  a...a</pre>
- * 
+ *
  * - viterbi_r table
  * is related to specific tokens.  It encodes the single state features,
  * e.g., wordFeature, RegexFeature for all tokens.  The r table is represented
@@ -180,46 +180,46 @@ $$
         rv = plpy.execute("SELECT COUNT(*) AS total_label FROM " + labeltbl + ";")
         nlabel = rv[0]['total_label']
 
-        plpy.execute("""INSERT INTO segment_hashtbl(seg_text) 
+        plpy.execute("""INSERT INTO segment_hashtbl(seg_text)
                         SELECT DISTINCT seg_text
                         FROM   """ + segmenttbl + """;""")
 
-        plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text) 
-                        ((SELECT DISTINCT seg_text 
-                          FROM   segment_hashtbl) 
+        plpy.execute("""INSERT INTO unknown_segment_hashtbl(seg_text)
+                        ((SELECT DISTINCT seg_text
+                          FROM   segment_hashtbl)
                          EXCEPT
-                         (SELECT DISTINCT token 
-                          FROM   """ + dictionary + """ 
+                         (SELECT DISTINCT token
+                          FROM   """ + dictionary + """
                           WHERE  total>1));""")
 
         plpy.execute("""INSERT INTO prev_labeltbl
                         SELECT id
                         FROM   """ + labeltbl + """;
-                        INSERT INTO prev_labeltbl VALUES(-1); 
+                        INSERT INTO prev_labeltbl VALUES(-1);
                         INSERT INTO prev_labeltbl VALUES( """ + str(nlabel) + """);""")
 
         # Generate sparse M factor table
-        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
-                        SELECT prev_label.id, label.id, 0 
-                        FROM   """ + labeltbl + """ AS label, 
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value)
+                        SELECT prev_label.id, label.id, 0
+                        FROM   """ + labeltbl + """ AS label,
                                prev_labeltbl as prev_label;""")
 
-        # EdgeFeature and startFeature, startFeature can be considered as a special edgeFeature  
-        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+        # EdgeFeature and startFeature, startFeature can be considered as a special edgeFeature
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value)
                         SELECT prev_label_id,label_id,weight
-                        FROM   """ + featuretbl + """ AS features 
+                        FROM   """ + featuretbl + """ AS features
                         WHERE  features.prev_label_id<>-1 OR features.name = 'S.';""")
 
         # EndFeature, endFeature can be considered as a special edgeFeature
-        plpy.execute("""INSERT INTO mtbl(prev_label, label, value) 
+        plpy.execute("""INSERT INTO mtbl(prev_label, label, value)
                         SELECT """ + str(nlabel) + """, label_id, weight
-                        FROM   """ + featuretbl + """ AS features 
+                        FROM   """ + featuretbl + """ AS features
                         WHERE  features.name = 'End.';""")
 
 m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
         plpy.execute("""INSERT INTO {viterbi_mtbl}
-                        SELECT array_agg(weight ORDER BY prev_label,label) 
-                        FROM   (SELECT prev_label, label, (SUM(value)*1000)::integer AS weight 
+                        SELECT array_agg(weight ORDER BY prev_label,label)
+                        FROM   (SELECT prev_label, label, (SUM(value)*1000)::integer AS weight
                                 FROM   mtbl
                                 GROUP BY prev_label,label
                                 ORDER BY prev_label,label) as TEMP_MTBL;""".format(
@@ -241,37 +241,37 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
                         ))
 ')
 
-        plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
-                        SELECT segment_hashtbl.seg_text, labels.id, 0 
-                        FROM   segment_hashtbl segment_hashtbl, 
+        plpy.execute("""INSERT INTO rtbl(seg_text, label, value)
+                        SELECT segment_hashtbl.seg_text, labels.id, 0
+                        FROM   segment_hashtbl segment_hashtbl,
                          """ + labeltbl + """ AS labels;""")
 
         # RegExFeature
-        plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
-                        SELECT segment_hashtbl.seg_text, features.label_id, features.weight 
-                        FROM   segment_hashtbl AS segment_hashtbl, 
+        plpy.execute("""INSERT INTO rtbl(seg_text, label, value)
+                        SELECT segment_hashtbl.seg_text, features.label_id, features.weight
+                        FROM   segment_hashtbl AS segment_hashtbl,
                          """ + featuretbl + """ AS features,
                          """ + regextbl + """ AS regex
-                        WHERE  segment_hashtbl.seg_text ~ regex.pattern 
+                        WHERE  segment_hashtbl.seg_text ~ regex.pattern
                                AND features.name||'%' ='R_' || regex.name;""")
 
         # UnknownFeature
-        plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
-                        SELECT segment_hashtbl.seg_text, features.label_id, features.weight 
-                        FROM   unknown_segment_hashtbl AS segment_hashtbl, 
-                         """ + featuretbl + """ AS features 
+        plpy.execute("""INSERT INTO rtbl(seg_text, label, value)
+                        SELECT segment_hashtbl.seg_text, features.label_id, features.weight
+                        FROM   unknown_segment_hashtbl AS segment_hashtbl,
+                         """ + featuretbl + """ AS features
                         WHERE  features.name = 'U';""")
 
         # Wordfeature
-        plpy.execute("""INSERT INTO rtbl(seg_text, label, value) 
-                        SELECT seg_text, label_id, weight 
-                        FROM   segment_hashtbl, 
-                        """  + featuretbl + """ 
+        plpy.execute("""INSERT INTO rtbl(seg_text, label, value)
+                        SELECT seg_text, label_id, weight
+                        FROM   segment_hashtbl,
+                        """  + featuretbl + """
                         WHERE  name = 'W_' || seg_text;""")
 
         # Factor table
-        plpy.execute("""INSERT INTO """ + viterbi_rtbl + """(seg_text, label, score) 
-                        SELECT seg_text,label,(SUM(value)*1000)::integer AS score 
+        plpy.execute("""INSERT INTO """ + viterbi_rtbl + """(seg_text, label, score)
+                        SELECT seg_text,label,(SUM(value)*1000)::integer AS score
                         FROM   rtbl
                         GROUP BY seg_text,label;""")
 

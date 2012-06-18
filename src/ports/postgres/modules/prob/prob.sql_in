@@ -9,12 +9,97 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+m4_include(`SQLCommon.m4')
+
 /**
 @addtogroup grp_prob
 
 @about
 
-Probability-distribution functions.
+The Probability Functions module provides cumulative distribution, density/mass,
+and quantile functions for a wide range of probability distributions.
+
+Unless otherwise documented, all of these functions are wrappers around
+functionality provided by the boost C++ library [1, “<a href=
+"http://www.boost.org/doc/libs/1_49_0/libs/math/doc/sf_and_dist/html/math_toolkit/dist.html"
+>Statistical Distributions and Functions</a>”].
+
+For convenience, all cumulative distribution and density/mass functions (CDFs
+and PDF/PMFs in short) are defined over the range of all floating-point numbers
+including infinity. Inputs that are \c NULL or \c NaN (not a number) will always
+produce a \c NULL or \c NaN result, respectively. Inputs that are plus or minus
+infinity will return the respective limits.
+
+A quantile function for a probability distrution with CDF \f$ F \f$ takes a
+probability argument \f$ p \in [0,1] \f$ and returns the value \f$ x \f$ so that
+\f$ F(x) = p \f$, provided such an \f$ x \f$ exists and it is unique. If it does
+not, the result will be
+\f$
+    \sup \{ x \in D \mid F(x) \leq p \}
+\f$
+(interpreted as 0 if the supremum is over an empty set) if \f$ p < 0.5 \f$, and
+\f$
+    \inf \{ x \in D \mid F(x) \geq p \}
+\f$
+if \f$ p \geq 0.5 \f$. Here \f$ D \f$ denotes the domain of the distribution,
+which is the set of reals \f$ \mathbb R \f$ for continuous and the set of
+nonnegative integers \f$ \mathbb N_0 \f$ for discrete distributions.
+
+Intuitively, the formulas in the previous paragraph deal with the following
+special cases. The 0-quantile will always be the “left end” of the support,
+and the 1-quantile will be the “right end” of the support of the distribution.
+For discrete distributions, most values of \f$ p \in [0,1] \f$ do not admit an
+\f$ x \f$ with \f$ F(x) = p \f$. Instead, there is an \f$ x \in \mathbb N_0 \f$
+so that \f$ F(x) < p < F(x + 1) \f$. The above formulas mean that the
+value returned as \f$ p \f$-quantile is \f$ x \f$ if \f$ p < 0.5 \f$, and it
+is \f$ x + 1 \f$ if \f$ p \geq 0.5 \f$. (As a special case, in order to ensure
+that quantiles are always within the support, the \f$ p \f$-quantile will be 0
+if \f$ p < F(0) \f$).
+
+The rationale for choosing this behavior is that \f$p\f$-quantiles for
+\f$ p < 0.5 \f$ are typically requested when interested in the value
+\f$ x \f$ such that with confidence level <strong>at least</strong>
+\f$ 1 - p \f$ a random variable will be \f$ > x \f$ (or equivalently, with
+probability <strong>at most</strong> \f$ p \f$, it will be \f$ \leq x \f$).
+Likewise, \f$p\f$-quantiles for \f$ p \geq 0.5 \f$ are typically requested when
+interested in the value \f$ x \f$ such that with confidence level <strong>at
+least</strong> \f$ p \f$ a random variable will be \f$ \leq x \f$. See also
+[1, “<a href=
+"http://www.boost.org/doc/libs/1_46_1/libs/math/doc/sf_and_dist/html/math_toolkit/policy/pol_tutorial/understand_dis_quant.html"
+>Understanding Quantiles of Discrete Distributions</a>”].
+
+@usage
+
+- Cumulative distribution functions:
+  <pre>SELECT <em>distribution</em>_cdf(<em>random variate</em>[, <em>parameter1</em> [, <em>parameter2</em> [, <em>parameter3</em>] ] ])</pre>
+- Probability density/mass functions:
+  <pre>SELECT <em>distribution</em>_{pdf|pmf}(<em>random variate</em>[, <em>parameter1</em> [, <em>parameter2</em> [, <em>parameter3</em>] ] ])</pre>
+- Quantile functions:
+  <pre>SELECT <em>distribution</em>_quantile(<em>probability</em>[, <em>parameter1</em> [, <em>parameter2</em> [, <em>parameter3</em>] ] ])</pre>
+
+For concrete function signatures, see \ref prob.sql_in.
+
+@examp
+
+@verbatim
+sql> SELECT normal_cdf(0);
+ normal_cdf
+------------
+        0.5
+
+sql> SELECT normal_quantile(0.5, 0, 1);
+ normal_quantile
+-----------------
+               0
+(1 row)
+@endverbatim
+
+@literature
+
+[1] John Maddock, Paul A. Bristow, Hubert Holin, Xiaogang Zhang, Bruno Lalande,
+    Johan Råde, Gautam Sewani and Thijs van den Berg:
+    <em>Boost Math Toolkit</em>, Version 1.49, available at:
+    http://www.boost.org/doc/libs/1_49_0/libs/math/doc/sf_and_dist/html/index.html
 
 @sa File prob.sql_in documenting the SQL functions.
 */
@@ -170,8 +255,8 @@ IMMUTABLE STRICT;
  * @param p Probability \f$ p \in [0,1] \f$
  * @param n The number of trials \f$ n \in \mathbb N_0 \f$
  * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
- * @return If \f$ p \leq 0.5 \f$ the maximum \f$ x \f$ such that
- *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p > 0.5 \f$ the minimum \f$ x \f$
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
  *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is a
  *     binomially distributed random variable with \f$ n \f$ trials and
  *     success probability \f$ \mathit{sp} \f$.
@@ -557,8 +642,8 @@ IMMUTABLE STRICT;
  *
  * @param p Probability \f$ p \in [0,1] \f$
  * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
- * @return If \f$ p \leq 0.5 \f$ the maximum \f$ x \f$ such that
- *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p > 0.5 \f$ the minimum \f$ x \f$
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
  *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is a
  *     geometrically distributed random variable with success probability
  *     \f$ \mathit{sp} \f$.
@@ -941,8 +1026,8 @@ IMMUTABLE STRICT;
  * @param r Total number \f$ r > 0 \f$ of successes in \f$ x + r \f$ trials
  *     (assuming success in the last trial)
  * @param sp Success probability \f$ \mathit{sp} \in (0,1] \f$ in each trial
- * @return If \f$ p \leq 0.5 \f$ the maximum \f$ x \f$ such that
- *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p > 0.5 \f$ the minimum \f$ x \f$
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
  *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is
  *     a negative-binomially distributed random variable with parameters
  *     \f$ r, \mathit{sp} \f$
@@ -1412,8 +1497,8 @@ IMMUTABLE STRICT;
  *
  * @param p Probability \f$ p \in [0,1] \f$
  * @param mean Average occurrence rate \f$ \lambda > 0 \f$
- * @return If \f$ p \leq 0.5 \f$ the maximum \f$ x \f$ such that
- *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p > 0.5 \f$ the minimum \f$ x \f$
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
  *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is a
  *     Poisson distributed random variable with mean \f$ \lambda \f$
  */
