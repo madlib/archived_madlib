@@ -7,17 +7,20 @@ if [ -z $GIT_URL ]; then
     exit;
 fi
 
-# This is the version string for the distribution
-TEMPDIR=`mktemp -d -t madlib`
 ORIG=`pwd`
-PGXNDIR=`dirname $0`
-PGXNDIR=`(cd $PGXNDIR; pwd)`
-VERSION=`cat $PGXNDIR/dist.ver`
+TEMPDIR=`mktemp -d -t madlib`
 cd $TEMPDIR
 
-git clone $GIT_URL madlib-$VERSION
+git clone $GIT_URL madlib
 
-m4 -DPGXN_VERSION=$VERSION $PGXNDIR/META.json_in > madlib-$VERSION/META.json
+# This is the version string for the distribution.
+VERSION=`cat madlib/deploy/PGXN/dist.ver`
+
+# For installation convention, add version string to the directory.
+mv madlib madlib-$VERSION
+
+m4 -DPGXN_VERSION=$VERSION madlib-$VERSION/deploy/PGXN/META.json_in > \
+    madlib-$VERSION/META.json
 zip -x "madlib-$VERSION/.git/*" -r $ORIG/madlib.zip ./madlib-$VERSION
 rm -rf madlib-$VERSION
 
