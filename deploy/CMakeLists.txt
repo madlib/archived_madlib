@@ -6,7 +6,7 @@
 #    platform ------------------------------------------------------------------
 
 if(APPLE)
-    list(APPEND CPACK_GENERATOR 
+    list(APPEND CPACK_GENERATOR
         PackageMaker
     )
 elseif(UNIX)
@@ -44,6 +44,8 @@ set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 
 add_subdirectory(PackageMaker)
 add_subdirectory(RPM)
+# gppkg depends on macros from RPM!
+add_subdirectory(gppkg)
 
 
 # -- Finally do the packaging! -------------------------------------------------
