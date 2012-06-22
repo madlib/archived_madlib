@@ -49,7 +49,11 @@ function(add_gppkg)
                 \"Please rerun cmake.\"
         )
     endif(GPPKG_BINARY AND RPMBUILD_BINARY)
-    # Unfortunately, we cannot set a dependency to the built-in package target
+    
+    # Unfortunately, we cannot set a dependency to the built-in package target,
+    # i.e., the following does not work:
     # add_dependencies(gppkg package)
+    
+    add_dependencies(gppkg gppkg_${PORT_VERSION_UNDERSCORE})
     ")
 endfunction(add_gppkg)

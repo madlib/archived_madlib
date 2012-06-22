@@ -19,6 +19,12 @@ find_program(
 )
 file(READ "${CPACK_PACKAGE_DESCRIPTION_FILE}" CPACK_RPM_PACKAGE_DESCRIPTION)
 
+# The target gppkg is a meta target that depends on all version-specific
+# gppkg targets
+add_custom_target(gppkg
+    COMMENT "Generating all Greenplum gppkg installers"
+)
+
 # We now run generated files, one for each Greenplum version
 file(GLOB GPPKG_VERSIONS "${CMAKE_CURRENT_BINARY_DIR}/Version_*.cmake")
 foreach(GPPKG_VERSION ${GPPKG_VERSIONS})
