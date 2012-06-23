@@ -23,8 +23,64 @@
  * along with FlexCRFs; if not, write to the Free Software Foundation,
  * Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
  */
+#include <iostream>
 
-#include "doublevector.h"
+using namespace std;
+
+class doublevector {
+public:
+    double * vect;	// vector content
+    int len;		// vector length	
+    
+    // default constructor
+    doublevector() {
+	len = 0; 
+	vect = NULL;
+    }
+    
+    // constructor with length
+    doublevector(int len);
+    
+    // constructor with length and content
+    doublevector(int len, double * vect);
+    
+    // copy constructor
+    doublevector(doublevector & dv);
+    
+    // destructor
+    ~doublevector() {
+	if (vect) {
+	    delete vect;
+	}
+    }
+    
+    // the size of vector
+    int size();
+    
+    // overloading assignment operator
+    void operator=(double val);
+    
+    // overloading assignment operator
+    void operator=(doublevector & dv);
+    
+    // assign the same value to all vector elements
+    void assign(double val);
+    
+    // assign values for all elements from another doublevector
+    void assign(doublevector & dv);
+    
+    // reference to an element of index "idx"
+    double & operator[](int idx);
+    
+    // sum of all vector elements
+    double sum();
+    
+    // component multiplication
+    void comp_mult(double val);
+    
+    // component multiplication
+    void comp_mult(doublevector * dv);
+};
 
 using namespace std;
 

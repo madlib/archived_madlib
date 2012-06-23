@@ -23,8 +23,14 @@
  * along with FlexCRFs; if not, write to the Free Software Foundation,
  * Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
  */
+#include "doublevector.h"
+#include "doublematrix.h"
 
-#include "mathlib.h"
+class mathlib {
+public:
+    static void mult(int size, doublevector * x, doublematrix * A,
+                     doublevector * y, int is_transposed = 0);
+};
 
 void mathlib::mult(int size, doublevector * x, doublematrix * A, doublevector * y, 
 		    int is_transposed) {
