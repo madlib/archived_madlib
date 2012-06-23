@@ -495,8 +495,17 @@ AnyType compute_log_Mi(sequence & seq, int pos, doublematrix * Mi,
 	    }
 	}
     }
+
 }
 
+// compute norm of a vector
+double trainer::norm(int len, double * vect) {
+    double res = 0.0;
+    for (int i = 0; i < len; i++) {
+	res += vect[i] * vect[i];
+    }
+    return sqrt(res);
+}
 } // namespace crf
 
 } // namespace modules
