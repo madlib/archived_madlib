@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file nlp.cpp
+ * @file crf.cpp
  *
  * @brief Logistic-Regression functions
  *
@@ -20,7 +20,7 @@
 #include "doublevector.h"
 #include "doublematrix.h"
 
-#include "nlp.hpp"
+#include "crf.hpp"
 
 namespace madlib {
 
@@ -32,7 +32,7 @@ namespace modules {
 // Import names from other MADlib modules
 using dbal::NoSolutionFoundException;
 
-namespace nlp {
+namespace crf {
 
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
@@ -43,10 +43,10 @@ AnyType stateToResult(const Allocator &inAllocator,
 
 /**
  * @brief Inter- and intra-iteration state for conjugate-gradient method for
- *        logistic nlpion
+ *        logistic crfion
  *
  * TransitionState encapsualtes the transition state during the
- * logistic-nlpion aggregate function. To the database, the state is
+ * logistic-crfion aggregate function. To the database, the state is
  * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
  * object containing scalars and vectors.
  *
@@ -155,17 +155,23 @@ private:
      * - 4 + 4 * widthOfX: X_transp_AX (X^T A X)
      * - 4 + widthOfX * widthOfX + 4 * widthOfX: logLikelihood ( ln(l(c)) )
      */
-    void rebind(uint16_t inWidthOfX) {
+    void rebind(uint32_t num_features, uint16_t num_labels) {
         iteration.rebind(&mStorage[0]);
-        widthOfX.rebind(&mStorage[1]);
-        coef.rebind(&mStorage[2], inWidthOfX);
-        dir.rebind(&mStorage[2 + inWidthOfX], inWidthOfX);
-        grad.rebind(&mStorage[2 + 2 * inWidthOfX], inWidthOfX);
-        beta.rebind(&mStorage[2 + 3 * inWidthOfX]);
-        numRows.rebind(&mStorage[3 + 3 * inWidthOfX]);
-        gradNew.rebind(&mStorage[4 + 3 * inWidthOfX], inWidthOfX);
-        X_transp_AX.rebind(&mStorage[4 + 4 * inWidthOfX], inWidthOfX, inWidthOfX);
-        logLikelihood.rebind(&mStorage[4 + inWidthOfX * inWidthOfX + 4 * inWidthOfX]);
+        num_features.rebind(&mStorage[1]);
+        num_labels.rebind(&mStorage[2]);
+        loglikelihood.rebind(&mStorage[3]);
+        gradlogli.rebind(&mStorage[4], num_features);
+        grad_itermediate.rebind(&mStorage[4 + num_features], num_features);
+        diag.rebind(&mStorage[4 + 2 * num_features], num_features);
+        Mi.rebind(&mStorage[4 + 3 * num_features], num_labels * num_labels);
+        Mi.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels], num_labels);
+        alpa.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + num_labels], num_labels);
+        next_alpa.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 2 * num_labels], num_labels);
+        temp.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 3 * num_labels], num_labels);
+        ExpF.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 4 * num_labels], num_features);
+        ws.rebind(&mStorage[4 + 5 * num_features + num_labels * num_labels + 4 * num_labels], num_features);
+        iprint.rebind(&mStorage[4 + 6 * num_features + num_labels * num_labels + 4 * num_labels], 2);
+        numRow.rebind(&mStorage[4 + 6 * num_features + num_labels * num_labels + 4 * num_labels +2 ], 3);
     }
 
     Handle mStorage;
@@ -174,63 +180,29 @@ public:
     // this control the status information reported during training
 
     typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
-    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap dir;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;
-    typename HandleTraits<Handle>::ReferenceToDouble beta;
-    
+    typename HandleTraits<Handle>::ReferenceToUInt32 num_features;
+    typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
+    typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradlogli;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_itermidiate;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap Mi;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap Vi;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap alpha;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap next_alpha;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap temp;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ExpF;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ws;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap iprint;
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradNew;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
-    typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
-    
-
-
-    //define all data
-    option * popt;	// .......... option object
-    data * pdata;	// .......... data object
-    dictionary * pdict;	// .......... dictionary object
-    featuregen * pfgen;	// .......... featuregen object
-    
-    int num_labels;
-    int num_features;
-    double * lambda;
-    double * temp_lambda;
-    int is_logging;
-    
-    double * gradlogli;	// log-likelihood vector gradient
-    double * diag;	// for optimization (used by L-BFGS)
-    
-    doublematrix * Mi;	// for edge features (a small modification from published papers)
-    doublevector * Vi;	// for state features
-    doublevector * alpha, * next_alpha;	// forward variable
-    vector<doublevector *> betas;	// backward variables
-    doublevector * temp;	// temporary vector used during computing
-    
-    double * ExpF;	// feature expectation (according to the model)
-    double * ws;	// memory workspace used by L-BFGS
-    
-    // for scaling (to avoid numerical problems during training)
-    vector<double> scale, rlogscale;
-    
-    // this control the status information reported during training
-    int * iprint;
-
 };
 
-/**
- * @brief Logistic function
- */
-inline double sigma(double x) {
-	return 1. / (1. + std::exp(-x));
-}
 
 /**
- * @brief Perform the logistic-nlpion transition step
+ * @brief Perform the logistic-crfion transition step
  */
 AnyType
-logregr_cg_step_transition::run(AnyType &args) {
+linear_crf_step_transition::run(AnyType &args) {
     GradientTransitionState<MutableArrayHandle<double> > state = args[0];
     double y = args[1].getAs<bool>() ? 1. : -1.;
     HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
@@ -273,7 +245,7 @@ logregr_cg_step_transition::run(AnyType &args) {
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
 AnyType
-logregr_cg_step_merge_states::run(AnyType &args) {
+linear_crf_step_merge_states::run(AnyType &args) {
     GradientTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     GradientTransitionState<ArrayHandle<double> > stateRight = args[1];
 
@@ -290,10 +262,10 @@ logregr_cg_step_merge_states::run(AnyType &args) {
 }
 
 /**
- * @brief Perform the logistic-nlpion final step
+ * @brief Perform the logistic-crfion final step
  */
 AnyType
-logregr_cg_step_final::run(AnyType &args) {
+linear_crf_step_final::run(AnyType &args) {
     // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
     GradientTransitionState<MutableArrayHandle<double> > state = args[0];
@@ -356,7 +328,8 @@ logregr_cg_step_final::run(AnyType &args) {
         throw NoSolutionFoundException("Over- or underflow in "
             "conjugate-gradient step, while updating coefficients. Input data "
             "is likely of poor numerical condition.");
-    
+    //invole lbfgs algorithm
+    lbfgs() 
     state.iteration++;
     return state;
 }
@@ -365,7 +338,7 @@ logregr_cg_step_final::run(AnyType &args) {
  * @brief Return the difference in log-likelihood between two states
  */
 AnyType
-internal_logregr_cg_step_distance::run(AnyType &args) {
+internal_linear_crf_step_distance::run(AnyType &args) {
     GradientTransitionState<ArrayHandle<double> > stateLeft = args[0];
     GradientTransitionState<ArrayHandle<double> > stateRight = args[1];
 
@@ -376,7 +349,7 @@ internal_logregr_cg_step_distance::run(AnyType &args) {
  * @brief Return the coefficients and diagnostic statistics of the state
  */
 AnyType
-internal_logregr_cg_result::run(AnyType &args) {
+internal_linear_crf_result::run(AnyType &args) {
     GradientTransitionState<ArrayHandle<double> > state = args[0];
     
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
@@ -429,7 +402,7 @@ AnyType stateToResult(
     return tuple;
 }
 
-} // namespace nlp
+} // namespace crf
 
 } // namespace modules
 
