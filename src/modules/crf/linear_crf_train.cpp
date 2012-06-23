@@ -36,10 +36,8 @@ namespace crf {
 
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &coef,
-    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-    double logLikelihood,
-    double conditionNo);
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
+    double logLikelihood);
 
 /**
  * @brief Inter- and intra-iteration state for conjugate-gradient method for
