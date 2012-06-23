@@ -226,16 +226,130 @@ linear_crf_step_transition::run(AnyType &args) {
     double xc = dot(x, state.coef);
     state.gradNew.noalias() += sigma(-y * xc) * y * trans(x);
     
-    // Note: sigma(-x) = 1 - sigma(x).
-    // a_i = sigma(x_i c) sigma(-x_i c)
-    double a = sigma(xc) * sigma(-xc);
-    triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+     double logli = 0.0;
+    
+    // counter variable
+    int i, j, k;
+    
+    for (i = 0; i < num_features; i++) {
+	gradlogli[i] = -1 * lambda[i] / popt->sigma_square;
+	logli -= (lambda[i] * lambda[i]) / (2 * popt->sigma_square);
+    }
+    
+    dataset::iterator datait;
+    sequence::iterator seqit;
+    
+    int seq_count = 0;
+    // go though all training data sequences
+    for (datait = pdata->ptrndata->begin(); datait != pdata->ptrndata->end(); datait++) {
+	seq_count++;
+	int seq_len = datait->size();
+	
+	*alpha = 1;
+	
+	for (i = 0; i < num_features; i++) {
+	    ExpF[i] = 0;
+	}
+	
+	int betassize = betas.size();
+	if (betassize < seq_len) {
+	    // allocate more beta vector		
+	    for (i = 0; i < seq_len - betassize; i++) {
+		betas.push_back(new doublevector(num_labels));
+	    }	    
+	}
+	
+	int scalesize = scale.size();
+	if (scalesize < seq_len) {
+	    // allocate more scale elements
+	    for (i = 0; i < seq_len - scalesize; i++) {
+		scale.push_back(1.0);
+	    }
+	}
+	
+	// compute beta values in a backward fashion
+	// also scale beta-values to 1 to avoid numerical problems
+	scale[seq_len - 1] = (popt->is_scaling) ? num_labels : 1;
+	betas[seq_len - 1]->assign(1.0 / scale[seq_len - 1]);
+	
+	// start to compute beta values in backward fashion
+	for (int i = seq_len - 1; i > 0; i--) {
+	    // compute the Mi matrix and Vi vector
+	    compute_log_Mi(*datait, i, Mi, Vi, 1);
+	    *temp = *(betas[i]);
+	    temp->comp_mult(Vi);
+	    mathlib::mult(num_labels, betas[i - 1], Mi, temp, 0);
+	    
+	    // scale for the next (backward) beta values
+	    scale[i - 1] = (popt->is_scaling) ? betas[i - 1]->sum() : 1;
+	    betas[i - 1]->comp_mult(1.0 / scale[i - 1]);
+	} // end of beta values computation
+	
+	// start to compute the log-likelihood of the current sequence
+	double seq_logli = 0;
+	for (j = 0; j < seq_len; j++) {
+	    compute_log_Mi(*datait, j, Mi, Vi, 1);
+	    
+	    if (j > 0) {
+		*temp = *alpha;
+		mathlib::mult(num_labels, next_alpha, Mi, temp, 1);
+		next_alpha->comp_mult(Vi);
+	    } else {
+		*next_alpha = *Vi;
+	    }
+	    
+	    // start to scan feature at "i" position of the current sequence
+	    pfgen->start_scan_features_at(*datait, j);
+	    while (pfgen->has_next_feature()) {
+		feature f;
+		pfgen->next_feature(f);
+		
+		if ((f.ftype == EDGE_FEATURE1 && f.y == (*datait)[j].label && 
+			(j > 0 && f.yp == (*datait)[j-1].label)) || 
+			(f.ftype == STAT_FEATURE1 && f.y == (*datait)[j].label)) {
+		    gradlogli[f.idx] += f.val;
+		    seq_logli += lambda[f.idx] * f.val;		    
+		}
+		
+		if (f.ftype == STAT_FEATURE1) {
+		    // state feature
+		    ExpF[f.idx] += (*next_alpha)[f.y] * f.val * (*(betas[j]))[f.y];
+		} else if (f.ftype == EDGE_FEATURE1) {
+		    // edge feature
+		    ExpF[f.idx] += (*alpha)[f.yp] * (*Vi)[f.y] * Mi->mtrx[f.yp][f.y] 
+				    * f.val * (*(betas[j]))[f.y];
+		}		
+	    }	    
+	    
+	    *alpha = *next_alpha;
+	    alpha->comp_mult(1.0 / scale[j]);	    
+	} 
 
-    //          n
-    //         --
-    // l(c) = -\  log(1 + exp(-y_i * c^T x_i))
-    //         /_
-    //         i=1
+	// Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
+	double Zx = alpha->sum();
+	
+	// Log-likelihood of the current sequence
+	// seq_logli = lambda * F(y_k, x_k) - log(Zx_k)
+	// where x_k is the current sequence
+	seq_logli -= log(Zx);
+	
+	// re-correct the value of seq_logli because Zx was computed from
+	// scaled alpha values
+	for (k = 0; k < seq_len; k++) {
+	    seq_logli -= log(scale[k]);
+	}
+
+	// Log-likelihood = sum_k[lambda * F(y_k, x_k) - log(Zx_k)]
+	logli += seq_logli;
+	
+	// update the gradient vector
+	for (k = 0; k < num_features; k++) {
+	    gradlogli[k] -= ExpF[k] / Zx;
+	}
+
+    } // end of the main loop
+
+   
     state.logLikelihood -= std::log( 1. + std::exp(-y * xc) );
     
     return state;
@@ -294,24 +408,18 @@ linear_crf_step_final::run(AnyType &args) {
 		state.grad = state.gradNew;
 	}
 
-    // H_k = - X^T A_k X
-    // where A_k = diag(a_1, ..., a_n) and a_i = sigma(x_i c_{k-1}) sigma(-x_i c_{k-1})
-    //
-    //             g_k^T d_k
-    // alpha_k = -------------
-    //           d_k^T H_k d_k
-    //
-    // c_k = c_{k-1} - alpha_k * d_k
-    state.coef += dot(state.grad, state.dir) /
-        as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
-        * state.dir;
-    
-    if(!state.coef.is_finite())
-        throw NoSolutionFoundException("Over- or underflow in "
-            "conjugate-gradient step, while updating coefficients. Input data "
-            "is likely of poor numerical condition.");
     //invole lbfgs algorithm
-    lbfgs() 
+    lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&statediagco,
+          state.diag,state.iprint,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog); 
+    // checking after calling LBFGS 
+        if (state.iflag < 0) {
+            // LBFGS error
+            printf("LBFGS routine encounters an error\n");
+            if (is_logging) {
+                fprintf(fout, "LBFGS routine encounters an error\n");
+            }
+            break;
+        }
     state.iteration++;
     return state;
 }
@@ -333,13 +441,7 @@ internal_linear_crf_step_distance::run(AnyType &args) {
 AnyType
 internal_linear_crf_result::run(AnyType &args) {
     GradientTransitionState<ArrayHandle<double> > state = args[0];
-    
-    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
-        state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
-        
-    return stateToResult(*this, state.coef,
-        decomposition.pseudoInverse().diagonal(), state.logLikelihood,
-        decomposition.conditionNo());
+    return stateToResult(*this, state.lambda, state.logLikelihood);
 }
 
 /**
@@ -350,38 +452,51 @@ internal_linear_crf_result::run(AnyType &args) {
  */
 AnyType stateToResult(
     const Allocator &inAllocator,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
-    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-    double logLikelihood,
-    double conditionNo) {
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
+    double logLikelihood) {
     
     // FIXME: We currently need to copy the coefficient to a native array
     // This should be transparent to user code
-    HandleMap<ColumnVector> coef(
+    HandleMap<ColumnVector> lambda(
         inAllocator.allocateArray<double>(inCoef.size()));
-    coef = inCoef;
-    
-    HandleMap<ColumnVector> stdErr(
-        inAllocator.allocateArray<double>(coef.size()));
-    HandleMap<ColumnVector> waldZStats(
-        inAllocator.allocateArray<double>(coef.size()));
-    HandleMap<ColumnVector> waldPValues(
-        inAllocator.allocateArray<double>(coef.size()));
-    HandleMap<ColumnVector> oddsRatios(
-        inAllocator.allocateArray<double>(coef.size()));
-    
-    for (Index i = 0; i < coef.size(); ++i) {
-        stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
-        waldZStats(i) = coef(i) / stdErr(i);
-        waldPValues(i) = 2. * normalCDF( -std::abs(waldZStats(i)) );
-        oddsRatios(i) = std::exp( coef(i) );
-    }
+    lambda = inlambda;
     
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << coef << logLikelihood << stdErr << waldZStats << waldPValues
-        << oddsRatios << conditionNo;
+    tuple << logLikelihood << lambda;
     return tuple;
+}
+// compute log Mi (first-order Markov)
+AnyType compute_log_Mi(sequence & seq, int pos, doublematrix * Mi, 
+		  doublevector * Vi, int is_exp) {
+    *Mi = 0.0;
+    *Vi = 0.0;
+    // start scan features for sequence "seq" at position "i"
+    pfgen->start_scan_features_at(seq, pos);
+    // examine all features at position "pos"
+    while (pfgen->has_next_feature()) {
+	feature f;
+	pfgen->next_feature(f);
+	
+	if (f.ftype == STAT_FEATURE1) {
+	    // state feature
+	    (*Vi)[f.y] += lambda[f.idx] * f.val;
+	} else if (f.ftype == EDGE_FEATURE1) /* if (pos > 0)*/ {
+	    // edge feature (i.e., f.ftype == EDGE_FEATURE)
+	    Mi->get(f.yp, f.y) += lambda[f.idx] * f.val;
+	}
+    }
+    // take exponential operator
+    if (is_exp) {
+	for (int i = 0; i < Mi->rows; i++) {
+	    // update for Vi
+	    (*Vi)[i] = exp((*Vi)[i]);
+	    // update for Mi
+	    for (int j = 0; j < Mi->cols; j++) {
+		Mi->get(i, j) = exp(Mi->get(i, j));
+	    }
+	}
+    }
 }
 
 } // namespace crf
