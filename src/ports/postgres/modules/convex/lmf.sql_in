@@ -170,7 +170,7 @@ BEGIN
                     || stepsize || ', '
                     || init_value || ') 
 				AS state
-			FROM ' || input_table;
+			FROM ' || textin(regclassout(input_table));
 
         iteration_run := iteration;
 
@@ -189,16 +189,36 @@ BEGIN
 	END LOOP;
 
     -- output model
+    -- A work-around for GPDB not supporting RETURNING for INSERT
+--    EXECUTE '
+--    INSERT INTO ' || output_table || '(flatten_matrix_u, flatten_matrix_v, rmse)
+--	SELECT (res).*
+--    FROM (
+--        SELECT MADLIB_SCHEMA.internal_lmf_igd_result(_madlib_state) AS res
+--        FROM _madlib_lmf_igd
+--        WHERE _madlib_iteration = ' || iteration_run || '
+--		) subq
+--    RETURNING id, rmse'
+--    INTO model_id, rmse;
+
     EXECUTE '
-    INSERT INTO ' || output_table || '(flatten_matrix_u, flatten_matrix_v, rmse)
-	SELECT (res).*
+    SELECT nextval(' || quote_literal(output_table || '_id_seq') ||'::regclass)'
+    INTO model_id;
+
+    EXECUTE '
+    INSERT INTO ' || output_table || '
+	SELECT ' || model_id || ', (res).*
     FROM (
         SELECT MADLIB_SCHEMA.internal_lmf_igd_result(_madlib_state) AS res
         FROM _madlib_lmf_igd
         WHERE _madlib_iteration = ' || iteration_run || '
-		) subq
-    RETURNING id, rmse'
-    INTO model_id, rmse;
+		) subq';
+
+    EXECUTE '
+    SELECT rmse
+    FROM ' || output_table || '
+    WHERE id = ' || model_id
+    INTO rmse;
 
 	-- return description
 	RAISE NOTICE '
@@ -271,7 +291,7 @@ DECLARE
 BEGIN
     EXECUTE '
     SELECT max(' || row_name || ') + 1, max(' || col_name || ') + 1
-    FROM ' || input_table
+    FROM ' || textin(regclassout(input_table))
     INTO row_dim, col_dim;
 
 	RETURN (SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, row_dim, col_dim, 20));
