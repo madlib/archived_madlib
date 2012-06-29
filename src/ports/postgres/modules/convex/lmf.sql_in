@@ -77,7 +77,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.lmf_igd_step(
     SFUNC=MADLIB_SCHEMA.lmf_igd_transition,
     m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.lmf_igd_merge,')
     FINALFUNC=MADLIB_SCHEMA.lmf_igd_final,
-	INITCOND='{0,0,0,0,0,0,0,0,0}'
+    INITCOND='{0,0,0,0,0,0,0,0,0}'
 );
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_lmf_igd_distance(
@@ -96,34 +96,34 @@ LANGUAGE c IMMUTABLE STRICT;
 -- Because Greenplum uses Postgres < 8.3, temp table access is
 -- required within dynamic SQL to avoid OID not exists
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
-	output_table    TEXT,
-	input_table     REGCLASS,
-	row_name        TEXT,
-	col_name        TEXT,
-	value_name      TEXT,
+    output_table    TEXT,
+    input_table     REGCLASS,
+    row_name        TEXT,
+    col_name        TEXT,
+    value_name      TEXT,
     row_dim         INTEGER,            /*+ DEFAULT SELECT max(row_name) FROM input_table */
     col_dim         INTEGER,            /*+ DEFAULT SELECT max(col_name) FROM input_table */
     max_rank        INTEGER,            /*+ DEFAULT 20 */
-	stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-	init_value      DOUBLE PRECISION,   /*+ DEFAULT 0.1 */
-	num_iterations  INTEGER,            /*+ DEFAULT 10 */
-	tolerance       DOUBLE PRECISION)   /*+ DEFAULT 0.0001 */
+    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
+    init_value      DOUBLE PRECISION,   /*+ DEFAULT 0.1 */
+    num_iterations  INTEGER,            /*+ DEFAULT 10 */
+    tolerance       DOUBLE PRECISION)   /*+ DEFAULT 0.0001 */
 RETURNS INTEGER AS $$
 DECLARE
     iteration_run   INTEGER;
-	distance        DOUBLE PRECISION;
+    distance        DOUBLE PRECISION;
     exist           INTEGER;
     model_id        INTEGER;
-	rmse            DOUBLE PRECISION;
+    rmse            DOUBLE PRECISION;
 BEGIN
-	RAISE NOTICE 'Matrix % to be factorized: % x %', input_table, row_dim, col_dim;
+    RAISE NOTICE 'Matrix % to be factorized: % x %', input_table, row_dim, col_dim;
 
-	-- Because GPDB does not support dynamic SQL with 'using',
-	-- we have to create temp table to store intermediate states
-	DROP TABLE IF EXISTS _madlib_lmf_igd;
-	CREATE TEMPORARY TABLE _madlib_lmf_igd (
-		_madlib_iteration INTEGER PRIMARY KEY,
-		_madlib_state DOUBLE PRECISION[]);
+    -- Because GPDB does not support dynamic SQL with 'using',
+    -- we have to create temp table to store intermediate states
+    DROP TABLE IF EXISTS _madlib_lmf_igd;
+    CREATE TEMPORARY TABLE _madlib_lmf_igd (
+        _madlib_iteration INTEGER PRIMARY KEY,
+        _madlib_state DOUBLE PRECISION[]);
 
     -- result table
 --    SELECT count(*) FROM pg_tables WHERE tablename = output_table INTO exist;
@@ -149,55 +149,55 @@ BEGIN
                 rmse                DOUBLE PRECISION)';
     END;
 
-	-- main loop
+    -- main loop
     iteration_run := 0;
-	FOR iteration IN 1..num_iterations LOOP
-		RAISE NOTICE 'Iteration % is starting.', iteration;
+    FOR iteration IN 1..num_iterations LOOP
+        RAISE NOTICE 'Iteration % is starting.', iteration;
 
-		-- update
-		EXECUTE 'INSERT INTO _madlib_lmf_igd 
-			SELECT ' || iteration || ' AS iter,
-				MADLIB_SCHEMA.lmf_igd_step('
-					|| row_name || ', '
-					|| col_name || ', '
-					|| value_name || ', 
-					(SELECT _madlib_state
-					FROM _madlib_lmf_igd
-					WHERE _madlib_iteration = ' || iteration - 1 || '), '
+        -- update by calling the aggregate function
+        EXECUTE 'INSERT INTO _madlib_lmf_igd 
+            SELECT ' || iteration || ' AS iter,
+                MADLIB_SCHEMA.lmf_igd_step('
+                    || row_name || ', '
+                    || col_name || ', '
+                    || value_name || ', 
+                    (SELECT _madlib_state
+                    FROM _madlib_lmf_igd
+                    WHERE _madlib_iteration = ' || iteration - 1 || '), '
                     || row_dim || ', '
                     || col_dim || ', '
                     || max_rank || ', '
                     || stepsize || ', '
                     || init_value || ') 
-				AS state
-			FROM ' || textin(regclassout(input_table));
+                AS state
+            FROM ' || textin(regclassout(input_table));
 
         iteration_run := iteration;
 
-		-- termination condition
-		EXECUTE 'SELECT MADLIB_SCHEMA.internal_lmf_igd_distance(
-			(SELECT _madlib_state 
-			FROM _madlib_lmf_igd
-			WHERE _madlib_iteration = ' || iteration || '),
-			(SELECT _madlib_state 
-			FROM _madlib_lmf_igd
-			WHERE _madlib_iteration = ' || iteration - 1 || '))'
-			INTO distance;
-		RAISE NOTICE ' RMSE distance: %', distance;
-		-- RAISE NOTICE 'min error %', tolerance;
-		EXIT WHEN distance < tolerance;
-	END LOOP;
+        -- termination condition
+        EXECUTE 'SELECT MADLIB_SCHEMA.internal_lmf_igd_distance(
+            (SELECT _madlib_state 
+            FROM _madlib_lmf_igd
+            WHERE _madlib_iteration = ' || iteration || '),
+            (SELECT _madlib_state 
+            FROM _madlib_lmf_igd
+            WHERE _madlib_iteration = ' || iteration - 1 || '))'
+            INTO distance;
+        RAISE NOTICE ' RMSE distance: %', distance;
+        -- RAISE NOTICE 'min error %', tolerance;
+        EXIT WHEN distance < tolerance;
+    END LOOP;
 
     -- output model
     -- A work-around for GPDB not supporting RETURNING for INSERT
 --    EXECUTE '
 --    INSERT INTO ' || output_table || '(flatten_matrix_u, flatten_matrix_v, rmse)
---	SELECT (res).*
+--  SELECT (res).*
 --    FROM (
 --        SELECT MADLIB_SCHEMA.internal_lmf_igd_result(_madlib_state) AS res
 --        FROM _madlib_lmf_igd
 --        WHERE _madlib_iteration = ' || iteration_run || '
---		) subq
+--      ) subq
 --    RETURNING id, rmse'
 --    INTO model_id, rmse;
 
@@ -207,12 +207,12 @@ BEGIN
 
     EXECUTE '
     INSERT INTO ' || output_table || '
-	SELECT ' || model_id || ', (res).*
+    SELECT ' || model_id || ', (res).*
     FROM (
         SELECT MADLIB_SCHEMA.internal_lmf_igd_result(_madlib_state) AS res
         FROM _madlib_lmf_igd
         WHERE _madlib_iteration = ' || iteration_run || '
-		) subq';
+        ) subq';
 
     EXECUTE '
     SELECT rmse
@@ -220,8 +220,8 @@ BEGIN
     WHERE id = ' || model_id
     INTO rmse;
 
-	-- return description
-	RAISE NOTICE '
+    -- return description
+    RAISE NOTICE '
 Finished low-rank matrix factorization using incremental gradient 
  * table : % (%, %, %)
 Results:
@@ -235,55 +235,55 @@ END;
 $$ LANGUAGE plpgsql VOLATILE;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
-	output_table    TEXT,
-	input_table     REGCLASS,
-	row_name        TEXT,
-	col_name        TEXT,
-	value_name      TEXT,
+    output_table    TEXT,
+    input_table     REGCLASS,
+    row_name        TEXT,
+    col_name        TEXT,
+    value_name      TEXT,
     row_dim         INTEGER,            /*+ DEFAULT SELECT max(row_name) FROM input_table */
     col_dim         INTEGER,            /*+ DEFAULT SELECT max(col_name) FROM input_table */
     max_rank        INTEGER,            /*+ DEFAULT 20 */
-	stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-	init_value      DOUBLE PRECISION)   /*+ DEFAULT 0.1 */
+    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
+    init_value      DOUBLE PRECISION)   /*+ DEFAULT 0.1 */
 RETURNS INTEGER AS $$
-	SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 10, 0.0001);
+    SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 10, 0.0001);
 $$ LANGUAGE sql VOLATILE;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
-	output_table    TEXT,
-	input_table     REGCLASS,
-	row_name        TEXT,
-	col_name        TEXT,
-	value_name      TEXT,
+    output_table    TEXT,
+    input_table     REGCLASS,
+    row_name        TEXT,
+    col_name        TEXT,
+    value_name      TEXT,
     row_dim         INTEGER,            /*+ DEFAULT SELECT max(row_name) FROM input_table */
     col_dim         INTEGER,            /*+ DEFAULT SELECT max(col_name) FROM input_table */
     max_rank        INTEGER,            /*+ DEFAULT 20 */
-	stepsize        DOUBLE PRECISION)   /*+ DEFAULT 0.01 */
+    stepsize        DOUBLE PRECISION)   /*+ DEFAULT 0.01 */
 RETURNS INTEGER AS $$
     -- set init_value as default 0.1
-	SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, 0.1);
+    SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, 0.1);
 $$ LANGUAGE sql VOLATILE;
-	
+    
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
-	output_table    TEXT,
-	input_table     REGCLASS,
-	row_name        TEXT,
-	col_name        TEXT,
-	value_name      TEXT,
+    output_table    TEXT,
+    input_table     REGCLASS,
+    row_name        TEXT,
+    col_name        TEXT,
+    value_name      TEXT,
     row_dim         INTEGER,            /*+ DEFAULT SELECT max(row_name) FROM input_table */
     col_dim         INTEGER,            /*+ DEFAULT SELECT max(col_name) FROM input_table */
     max_rank        INTEGER)            /*+ DEFAULT 20 */
 RETURNS INTEGER AS $$
     -- set stepsize as default 0.01
-	SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, 0.01);
+    SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, 0.01);
 $$ LANGUAGE sql VOLATILE;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
-	output_table    TEXT,
-	input_table     REGCLASS,
-	row_name        TEXT,
-	col_name        TEXT,
-	value_name      TEXT)
+    output_table    TEXT,
+    input_table     REGCLASS,
+    row_name        TEXT,
+    col_name        TEXT,
+    value_name      TEXT)
 RETURNS INTEGER AS $$
 DECLARE
     row_dim INTEGER;
@@ -294,7 +294,7 @@ BEGIN
     FROM ' || textin(regclassout(input_table))
     INTO row_dim, col_dim;
 
-	RETURN (SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, row_dim, col_dim, 20));
+    RETURN (SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, row_dim, col_dim, 20));
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 

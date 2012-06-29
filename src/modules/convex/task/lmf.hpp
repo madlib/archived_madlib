@@ -64,6 +64,7 @@ LMF<Model, Tuple>::gradientInPlace(
         const independent_variables_type    &x, 
         const dependent_variable_type       &y, 
         const double                        &stepsize) {
+    // Please refer to the design document for an explanation of the following
     double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
     RowVector temp = model.matrixU.row(x.i)
         - stepsize * e * model.matrixV.row(x.j);
@@ -77,11 +78,13 @@ LMF<Model, Tuple>::loss(
         const model_type                    &model, 
         const independent_variables_type    &x, 
         const dependent_variable_type       &y) {
-    // HAYING: A chance for improvement by reusing the e computed in gradient
+    // HAYING: A chance for improvement by reusing the e computed in gradient.
+    // Perhaps we can add a book-keeping data structure in the model...
     double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
     return e * e;
 }
 
+// Not currently used.
 template <class Model, class Tuple>
 typename Tuple::dependent_variable_type
 LMF<Model, Tuple>::predict(

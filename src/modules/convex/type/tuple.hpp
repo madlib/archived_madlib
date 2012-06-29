@@ -18,6 +18,8 @@ struct ExampleTuple {
     typedef IndependentVariables independent_variables_type;
     typedef DependentVariable dependent_variable_type;
 
+    // id may not be necessary all the time, keep it for now
+    // since harm is not observed
     int id;
     independent_variables_type indVar;
     dependent_variable_type depVar;

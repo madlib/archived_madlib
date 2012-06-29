@@ -13,6 +13,8 @@ namespace modules {
 
 namespace convex {
 
+// The necessity of this wrapper is to allow classes in algo/ and task/ to
+// have a type that they can template over
 template <class Handle>
 struct LMFModel {
     typename HandleTraits<Handle>::MatrixTransparentHandleMap matrixU;
@@ -20,6 +22,10 @@ struct LMFModel {
 
     /**
      * @brief Space needed.
+     *
+     * Extra information besides the values in the matrix, like dimension is
+     * necessary for a matrix, so that it can perform operations. These are
+     * stored in the HandleMap.
      */
     static inline uint32_t arraySize(const uint16_t inRowDim, 
             const uint16_t inColDim, const uint16_t inMaxRank) {
@@ -28,6 +34,9 @@ struct LMFModel {
 
     /**
      * HAYING: broken now thanks to the HandleTraits...
+     * Before modifying HandleTraits.hpp, we have to rebind the matrices
+     * in a higher level.
+     *
      * @brief Rebind to a provided double array.
      */
     //void rebind(const Handle &inHandle, uint16_t inRowDim, uint16_t inColDim,
@@ -54,8 +63,8 @@ struct LMFModel {
         }
     }
 
-    /**
-     * @brief Wrappers for two matrices.
+    /*
+     *  Some operator wrappers for two matrices.
      */
     LMFModel &operator*=(const double &c) {
         matrixU *= c;
@@ -82,6 +91,14 @@ struct LMFModel {
 
     template<class OtherHandle>
     LMFModel &operator=(const LMFModel<OtherHandle> &inOtherModel) {
+        // The semantic of operator= for HandleMap is a bit confusing:
+        // If matrixU acts like a "reference type" in C++, it should be 
+        // value-copying; if matrixU acts like a "pointer type" in C++,
+        // or reference in Java, it is a rebinding
+        // HAYING: I can rule out the possibility of the latter after I use
+        // this function in higher levels, but I am still wondering whether
+        // we can make it more explicit...
+
         matrixU = inOtherModel.matrixU;
         matrixV = inOtherModel.matrixV;
 

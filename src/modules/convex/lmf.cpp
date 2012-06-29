@@ -25,6 +25,7 @@ namespace modules {
 
 namespace convex {
 
+// This 2 classes contain public static methods to be called
 typedef IGD<LMFIGDState<MutableArrayHandle<double> >, LMFIGDState<ArrayHandle<double> >,
         LMF<LMFModel<MutableArrayHandle<double> >, LMFTuple > > LMFIGDAlgorithm;
 typedef Loss<LMFIGDState<MutableArrayHandle<double> >, LMFIGDState<ArrayHandle<double> >,
@@ -32,22 +33,28 @@ typedef Loss<LMFIGDState<MutableArrayHandle<double> >, LMFIGDState<ArrayHandle<d
 
 /**
  * @brief Perform the low-rank matrix factorization transition step
+ *
+ * Called for each tuple.
  */
 AnyType
 lmf_igd_transition::run(AnyType &args) {
-    // the real state, args[0] is actually not needed
+    // The real state. 
+    // For the first tuple: args[0] is nothing more than a marker that 
+    // indicates that we should do some initial operations.
+    // For other tuples: args[0] holds the computation state until last tuple
     LMFIGDState<MutableArrayHandle<double> > state = args[0];
 
-    // initilize the state if first row
+    // initilize the state if first tuple
     if (state.algo.numRows == 0) {
         if (!args[4].isNull()) {
             LMFIGDState<ArrayHandle<double> > previousState = args[4];
             state.allocate(*this, previousState.task.rowDim,
-                    previousState.task.colDim, previousState.task.maxRank,
-                    previousState.task.stepsize);
+                    previousState.task.colDim, previousState.task.maxRank);
             state = previousState;
         } else {
             // configuration parameters
+            // HAYING: all the checking of numeric_limis should be moved to
+            // the implementation of getAs()
             uint32_t m = args[5].getAs<int32_t>();
             uint32_t n = args[6].getAs<int32_t>();
             uint32_t r = args[7].getAs<int32_t>();
@@ -62,7 +69,8 @@ lmf_igd_transition::run(AnyType &args) {
             double stepsize = args[8].getAs<double>();
             double initValue = args[9].getAs<double>();
 
-            state.allocate(*this, rowDim, colDim, maxRank, stepsize);
+            state.allocate(*this, rowDim, colDim, maxRank);
+            state.task.stepsize = stepsize;
             state.task.model.initialize(initValue);
         }
         // resetting in either case
@@ -105,7 +113,9 @@ lmf_igd_merge::run(AnyType &args) {
     // Merge states together
     LMFIGDAlgorithm::merge(stateLeft, stateRight);
     LMFLossAlgorithm::merge(stateLeft, stateRight);
-    stateLeft.algo.numRows += stateRight.algo.numRows; // cannot be put above
+    // The following numRows update, cannot be put above, because the model
+    // averaging depends on their original values
+    stateLeft.algo.numRows += stateRight.algo.numRows;
 
     return stateLeft;
 }
@@ -124,7 +134,7 @@ lmf_igd_final::run(AnyType &args) {
 
     // finalizing
     LMFIGDAlgorithm::final(state);
-    // LMFLossAlgorithm::final(state); // empty function
+    // LMFLossAlgorithm::final(state); // empty function call causes a warning
     state.computeRMSE();
  
     return state;
@@ -132,6 +142,8 @@ lmf_igd_final::run(AnyType &args) {
 
 /**
  * @brief Return the difference in RMSE between two states
+ *
+ * HAYING: We may need a function for getting RMSE of a single state later.
  */
 AnyType
 internal_lmf_igd_distance::run(AnyType &args) {
@@ -152,6 +164,8 @@ internal_lmf_igd_result::run(AnyType &args) {
     tuple << state.task.model.matrixU
         << state.task.model.matrixV
         << static_cast<double>(state.task.RMSE);
+    // HAYING: I don't know why this casting is necessary, again, type
+    // checking thing...
 
     return tuple;
 }

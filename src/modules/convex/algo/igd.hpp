@@ -13,6 +13,7 @@ namespace modules {
 
 namespace convex {
 
+// The reason for using ConstState instead of const State: in loss.hpp
 template <class State, class ConstState, class Task>
 class IGD {
 public:
@@ -29,8 +30,11 @@ public:
 template <class State, class ConstState, class Task>
 void
 IGD<State, ConstState, Task>::transition(state_type &state, const tuple_type &tuple) {
-    // moved to upper-level
-    // s.algo.numRows ++;
+    // The reason for update model inside a Task:: function instead of
+    // returning the gradient and do it here: the gradient is a sparsere
+    // presentation of the model (which is dense), returning the gradient
+    // forces the algo to be aware of one more template type
+    // -- Task::sparse_model_type, which we do not explicit define
 
     // apply to the model directly
     Task::gradientInPlace(
@@ -43,6 +47,11 @@ IGD<State, ConstState, Task>::transition(state_type &state, const tuple_type &tu
 template <class State, class ConstState, class Task>
 void
 IGD<State, ConstState, Task>::merge(state_type &state, const_state_type &otherState) {
+    // The reason of this weird algorithm instead of an intuitive one
+    // -- (w1 * m1 + w2 * m2) / (w1 + w2): we have only one mutable state,
+    // therefore, (m1 / w2  + m2)  * w2 / (w1 + w2).
+    // Order:   11111111  22222  3333333333333333
+
     // model averaging, weighted by rows seen
     double totalNumRows = state.algo.numRows + otherState.algo.numRows;
     state.algo.incrModel *= (1. * state.algo.numRows) / otherState.algo.numRows;
@@ -53,6 +62,9 @@ IGD<State, ConstState, Task>::merge(state_type &state, const_state_type &otherSt
 template <class State, class ConstState, class Task>
 void
 IGD<State, ConstState, Task>::final(state_type &state) {
+    // The reason that we have to keep the task.model untouched in transition
+    // funtion: loss computation needs the model from last iteration cleanly
+
     state.task.model = state.algo.incrModel;
 }
 

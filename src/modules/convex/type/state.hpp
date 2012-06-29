@@ -23,8 +23,8 @@ namespace convex {
  * object containing scalars and vectors.
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length at least 8, and at least first 3 elemenets are 0
- * (exact values of other elements are ignored).
+ * database with length at least 8 (actually 9), and at least first 3 elemenets
+ * are 0 (exact values of other elements are ignored).
  *
  */
 template <class Handle>
@@ -51,22 +51,28 @@ public:
      * @brief Allocating the incremental gradient state.
      */
     inline void allocate(const Allocator &inAllocator, uint16_t inRowDim,
-            uint16_t inColDim, uint16_t inMaxRank, const double &inStepsize) {
+            uint16_t inColDim, uint16_t inMaxRank) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
                 dbal::DoZero, dbal::ThrowBadAlloc>(
                 arraySize(inRowDim, inColDim, inMaxRank));
 
+        // This rebind is totally for the following 3 lines of code to take
+        // effect. I can also do something like "mStorage[0] = inRowDim",
+        // but I am not clear about the type casting
         rebind();
         task.rowDim = inRowDim;
         task.colDim = inColDim;
         task.maxRank = inMaxRank;
-        task.stepsize = inStepsize;
         
+        // This time all the member fields are correctly binded
         rebind();
     }
 
     /**
      * @brief We need to support assigning the previous state
+     *
+     * HAYING: I suggest that this should be wrapped in the implementaion
+     * of Handle.
      */
     template <class OtherHandle>
     LMFIGDState &operator=(const LMFIGDState<OtherHandle> &inOtherState) {
@@ -83,12 +89,17 @@ public:
     inline void reset() {
         algo.numRows = 0;
         algo.loss = 0.;
-        // HAYING: need to verify whether this is value copying
+        // HAYING: need to verify whether this is value copying, also see: 
+        // model.hpp:operator=
         algo.incrModel = task.model;
     }
 
     /**
      * @brief Compute RMSE using loss and numRows
+     *
+     * This is the only function in this class that actually does
+     * something for the convex programming; therefore, it looks a bit weird to
+     * me. But I am not sure where I can move this to...
      */
     inline void computeRMSE() {
         task.RMSE = sqrt(algo.loss / algo.numRows);
@@ -118,6 +129,10 @@ private:
      * - 6 + modelLength: numRows (number of rows processed in this iteration)
      * - 7 + modelLength: loss (sum of squared errors)
      * - 8 + modelLength: incrModel (volatile model for incrementally update)
+     *
+     * HAYING: This function will currently causes a invalid memory access if
+     * an 8-length zero array is assigned to mStorage. The rebind of the last 
+     * two matrices seems to be touching the slot next to the last element
      */
     void rebind() {
         task.rowDim.rebind(&mStorage[0]);
