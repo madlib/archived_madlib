@@ -11,3 +11,4 @@
 #include "regress/regress.hpp"
 #include "sample/sample.hpp"
 #include "stats/stats.hpp"
+#include "convex/convex.hpp"
