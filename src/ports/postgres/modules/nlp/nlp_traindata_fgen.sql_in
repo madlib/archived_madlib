@@ -14,77 +14,74 @@
 m4_include(`SQLCommon.m4')
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.nlp_traindata_fgen(traindata text, labeltbl text, regextbl text) RETURNS void AS
 $$     
-        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.nlp_feature;" + \
-                "CREATE TABLE MADLIB_SCHEMA.nlp_feature(doc_id integer,featureArray integer[])";
-        plpy.execute(query);
+        plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.featuretbl;" + \
+                     "CREATE TABLE MADLIB_SCHEMA.featuretbl(doc_id integer,featureArray integer[]);")
 
         # dictionary table
-        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.nlp_dictionary;" + \
-                "CREATE TABLE MADLIB_SCHEMA.nlp_dictionary(token text,token_id integer,label text,count integer,total integer);"
-        plpy.execute(query);
+        plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.nlp_dictionary;" + \
+                     "CREATE TABLE MADLIB_SCHEMA.nlp_dictionary(token text,token_id integer,label text,count integer,total integer);")
 
         plpy.execute("DROP TABLE IF EXISTS temp_feature;" + \
-                     "CREATE TEMP TABLE temp_feature(start_pos integer, doc_id integer, name text, prev_label integer, label integer);");
+                     "CREATE TEMP TABLE temp_feature(start_pos integer,doc_id integer,name text,prev_label integer, label integer);")
 
         plpy.execute("DROP TABLE IF EXIST MADLIB_SCHEMA.nlp_feature_dic;" + \
-                     "CREATE TABLE MADLIB_SCHEMA.nlp_feature_dic(name text, prev_label integer, label integer)";);
+                     "CREATE TABLE MADLIB_SCHEMA.nlp_feature_dic(name text, prev_label integer, label integer);")
  
         # insert into dictionary table
         plpy.execute("""INSERT INTO nlp_dictionary(text,token_id,label,count,total)
                         SELECT DISTINCT seg_text
                         FROM   """ + traindatabl
-                        GROUP BY seg_tex, label""";""");
+                        GROUP BY seg_tex, label""";""")
  
         # create a temporary table to store all the features
         
         # extract all the edge features
         plpy.execute("""INSERT INTO temp_feature(start_pos, doc_id, f_name,pre_label,label) 
-                        SELECT seg1.start_pos, seg1.doc_id, 'E.', seg1.label, seg2.label 
-                        FROM   traindata seg1, traindata seg2
-                        WHERE  seg1.doc_id = seg2.doc_id AND seg1.start_pos+1 = seg2.start_pos;""");   
+                        SELECT doc1.start_pos, doc1.doc_id, 'E.', doc1.label, doc2.label 
+                        FROM  """ + traindata + """ doc1, """ + traindata + """ doc2
+                        WHERE  doc1.doc_id = doc2.doc_id AND doc1.start_pos+1 = doc2.start_pos;""")
          
         #extract all the regex features
         plpy.execute("""INSERT INTO temp_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'R_' || name, -1, label
-                        FROM   regextbl, traindata
-                        WHERE  seg_text ~ pattern;""");
+                        FROM   """ + regextbl, traindata + """
+                        WHERE  seg_text ~ pattern;""")
            
         #extract all the start feature
         plpy.execute("""INSERT INTO temp_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'S.', -1, label
-                        FROM   traindata
-                        WHERE  start_pos = 0;""");
+                        FROM  """ + traindata + """
+                        WHERE  start_pos = 0;""")
         
         #extract all the end featue
         plpy.execute("""INSERT INTO temp_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'End.', -1, label
-                        FROM   traindata
-                        WHERE  start_pos = max_p;""");
+                        FROM  """ + traindata + """
+                        WHERE  start_pos = max_p;""")
 
         #word feature
         plpy.execute("""INSERT INTO temp_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'W_' || seg_text, -1, label
-                        FROM   traindatat;""");
+                        FROM  """ + traindata + """;""")
         
         #unknown feature
         plpy.execute("""INSERT INTO temp_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos,doc_id, 'U', -1, label
-                        FROM   traindata seg, nlp_dictionary
+                        FROM  """ + traindata + """ seg, nlp_dictionary
                         WHERE  traindata.seg_text = nlp_dictionary.seg_text AND 
-                               nlp_dictionary.total;""");
+                               nlp_dictionary.total;""")
  
         #get all distcint features
-        
         plpy.execute("""CREATE SEQUENCE f_seq START 1 INCREMENT 1;
                         INSERT INTO nlp_feature_dic(f_index,f_name,pre_label,label) 
                         SELECT nextval(f_seq), DISTINCT ON f_name, prev_label, label
-                        FROM   temp_feature;""");
+                        FROM   temp_feature;""")
 
         plpy.execute("""INSERT INTO feature(start_pos, doc_id, f_name, f_index)
                         SELECT start_pos, doc_id, temp_feature.f_name, f_index
                         FROM   temp_feature, nlp_feature_dic
                         WHERE  temp_feature.f_name = nlp_feature_dic.f_name AND
                                temp_feature.pre_label = nlp_feature_dic.pre_label AND
-	                       temp_feature.label = nlp_feature_dic.label;""");
+	                       temp_feature.label = nlp_feature_dic.label;""")
          
 $$ LANGUAGE plpythonu STRICT;         
