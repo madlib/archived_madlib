@@ -15,14 +15,16 @@ m4_include(`SQLCommon.m4')
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.nlp_traindata_fgen(traindata text, labeltbl text, regextbl text) RETURNS void AS
 $$     
         plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.nlp_feature;" + \
-                     "CREATE TABLE MADLIB_SCHEMA.feature(doc_id integer,featureArray integer[]);")
+                     "CREATE TABLE MADLIB_SCHEMA.nlp_feature(doc_id integer,featureArray integer[]);")
+        plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_nlp_feature;" + \
+                     "CREATE TABLE MADLIB_SCHEMA.tmp_nlp_feature(start_pos integer,doc_id integer,f_name text, f_index integer);")
 
         # dictionary table
         plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.nlp_dictionary;" + \
                      "CREATE TABLE MADLIB_SCHEMA.nlp_dictionary(token text,total integer);")
 
-        plpy.execute("DROP TABLE IF EXISTS tmp_feature;" + \
-                     "CREATE TEMP TABLE tmp_feature(start_pos integer,doc_id integer,name text,prev_label integer, label integer);")
+        plpy.execute("DROP TABLE IF EXISTS tmp1_feature;" + \
+                     "CREATE TEMP TABLE tmp1_feature(start_pos integer,doc_id integer,name text,prev_label integer, label integer);")
 
         plpy.execute("DROP TABLE IF EXIST MADLIB_SCHEMA.nlp_feature_dic;" + \
                      "CREATE TABLE MADLIB_SCHEMA.nlp_feature_dic(name text, prev_label integer, label integer);")
@@ -36,36 +38,36 @@ $$
         # create a temporary table to store all the features
         
         # extract all the edge features
-        plpy.execute("""INSERT INTO tmp_feature(start_pos, doc_id, f_name,pre_label,label) 
+        plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT doc1.start_pos, doc1.doc_id, 'E.', doc1.label, doc2.label 
                         FROM  """ + traindata + """ doc1, """ + traindata + """ doc2
                         WHERE  doc1.doc_id = doc2.doc_id AND doc1.start_pos+1 = doc2.start_pos;""")
          
         #extract all the regex features
-        plpy.execute("""INSERT INTO tmp_feature(start_pos, doc_id, f_name,pre_label,label) 
+        plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'R_' || name, -1, label
                         FROM   """ + regextbl, traindata + """
                         WHERE  seg_text ~ pattern;""")
            
         #extract all the start feature
-        plpy.execute("""INSERT INTO tmp_feature(start_pos, doc_id, f_name,pre_label,label) 
+        plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'S.', -1, label
                         FROM  """ + traindata + """
                         WHERE  start_pos = 0;""")
         
         #extract all the end featue
-        plpy.execute("""INSERT INTO tmp_feature(start_pos, doc_id, f_name,pre_label,label) 
+        plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'End.', -1, label
                         FROM  """ + traindata + """
                         WHERE  start_pos = max_p;""")
 
         #word feature
-        plpy.execute("""INSERT INTO tmp_feature(start_pos, doc_id, f_name,pre_label,label) 
+        plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos, doc_id, 'W_' || seg_text, -1, label
                         FROM  """ + traindata + """;""")
         
         #unknown feature
-        plpy.execute("""INSERT INTO tmp_feature(start_pos, doc_id, f_name,pre_label,label) 
+        plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name,pre_label,label) 
                         SELECT start_pos,doc_id, 'U', -1, label
                         FROM  """ + traindata + """ seg, nlp_dictionary
                         WHERE  traindata.seg_text = nlp_dictionary.seg_text AND 
@@ -75,14 +77,25 @@ $$
         plpy.execute("""CREATE SEQUENCE f_seq START 1 INCREMENT 1;
                         INSERT INTO nlp_feature_dic(f_index,f_name,pre_label,label) 
                         SELECT nextval(f_seq), DISTINCT ON f_name, prev_label, label
-                        FROM   tmp_feature;""")
+                        FROM   tmp1_feature;""")
+       
+        plpy.execute("""INSERT INTO tmp2_feature(start_pos,doc_id,f_name,f_index)
+                        SELECT start_pos, doc_id, tmp1_feature.f_name, f_index
+                        FROM   tmp1_feature, nlp_feature_dic
+                        WHERE  tmp1_feature.f_name = nlp_feature_dic.f_name AND
+                               tmp1_feature.pre_label = nlp_feature_dic.pre_label AND
+	                       tmp1_feature.label = nlp_feature_dic.label;""")  
+
+        plpy.execute("""INSERT INTO tmp3_feature(start_pos,doc_id,f_name,f_index)
+                        SELECT start_pos, doc_id, f_name, f_index
+                        FROM   tmp2_feature;""")
+
+        plpy.execute("""INSERT INTO tmp3_feature(start_pos,doc_id,f_name,f_index)
+                        SELECT DISTINCT ON (start_pos, doc_id), "NULL", f_index
+                        FROM   tmp2_feature;""")
 
         plpy.execute("""INSERT INTO nlp_feature(doc_id, featureArray)
                         SELECT doc_id, array_agg(f_index ORDER BY start_pos, f_index)
-                        FROM   (SELECT start_pos, doc_id, tmp_feature.f_name, f_index
-                                FROM   tmp_feature, nlp_feature_dic
-                                WHERE  tmp_feature.f_name = nlp_feature_dic.f_name AND
-                                tmp_feature.pre_label = nlp_feature_dic.pre_label AND
-	                        tmp_feature.label = nlp_feature_dic.label;""") as TEMP_FTBL)   
+                        FROM   tmp3_feature;""")
          
 $$ LANGUAGE plpythonu STRICT;         
