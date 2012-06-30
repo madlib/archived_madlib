@@ -80,6 +80,8 @@ LMF<Model, Tuple>::loss(
         const dependent_variable_type       &y) {
     // HAYING: A chance for improvement by reusing the e computed in gradient.
     // Perhaps we can add a book-keeping data structure in the model...
+    // Note: the value of e is different from the e in gradient if the
+    // model passed in is different, which IS the case for IGD
     double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
     return e * e;
 }

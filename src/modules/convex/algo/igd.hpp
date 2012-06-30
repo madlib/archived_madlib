@@ -29,7 +29,8 @@ public:
 
 template <class State, class ConstState, class Task>
 void
-IGD<State, ConstState, Task>::transition(state_type &state, const tuple_type &tuple) {
+IGD<State, ConstState, Task>::transition(state_type &state,
+        const tuple_type &tuple) {
     // The reason for update model inside a Task:: function instead of
     // returning the gradient and do it here: the gradient is a sparsere
     // presentation of the model (which is dense), returning the gradient
@@ -46,11 +47,12 @@ IGD<State, ConstState, Task>::transition(state_type &state, const tuple_type &tu
 
 template <class State, class ConstState, class Task>
 void
-IGD<State, ConstState, Task>::merge(state_type &state, const_state_type &otherState) {
+IGD<State, ConstState, Task>::merge(state_type &state,
+        const_state_type &otherState) {
     // The reason of this weird algorithm instead of an intuitive one
     // -- (w1 * m1 + w2 * m2) / (w1 + w2): we have only one mutable state,
     // therefore, (m1 / w2  + m2)  * w2 / (w1 + w2).
-    // Order:   11111111  22222  3333333333333333
+    // Order:     11111111  22222  3333333333333333
 
     // model averaging, weighted by rows seen
     double totalNumRows = state.algo.numRows + otherState.algo.numRows;

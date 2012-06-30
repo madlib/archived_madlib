@@ -15,7 +15,7 @@ namespace convex {
 
 // The reason for using ConstState instead of const State to reduce the
 // template type list: flexibility to high-level for mutability control
-// More: cast<ConstState>(MutableState) may always work
+// More: cast<ConstState>(MutableState) may not always work
 template <class State, class ConstState, class Task>
 class Loss {
 public:
@@ -31,10 +31,10 @@ public:
 
 template <class State, class ConstState, class Task>
 void
-Loss<State, ConstState, Task>::transition(state_type &state, const tuple_type &tuple) {
-    // "task." NOT "algo."! Also see: igd.hpp:final
+Loss<State, ConstState, Task>::transition(state_type &state,
+        const tuple_type &tuple) {
+    // "task.model" NOT "algo.incrModel"! Also see: igd.hpp:final()
 
-    // apply to the model directly
     state.algo.loss += Task::loss(
             state.task.model, 
             tuple.indVar,
@@ -43,7 +43,8 @@ Loss<State, ConstState, Task>::transition(state_type &state, const tuple_type &t
 
 template <class State, class ConstState, class Task>
 void
-Loss<State, ConstState, Task>::merge(state_type &state, const_state_type &otherState) {
+Loss<State, ConstState, Task>::merge(state_type &state,
+        const_state_type &otherState) {
     state.algo.loss += otherState.algo.loss;
 }
 
