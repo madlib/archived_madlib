@@ -149,7 +149,7 @@ private:
         grad_intermediate.rebind(&mStorage[4 + num_features], num_features);
         diag.rebind(&mStorage[4 + 2 * num_features], num_features);
         Mi.rebind(&mStorage[4 + 3 * num_features], num_labels * num_labels);
-        Mi.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels], num_labels);
+        Vi.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels], num_labels);
         alpha.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + num_labels], num_labels);
         next_alpha.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 2 * num_labels], num_labels);
         temp.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 3 * num_labels], num_labels);
