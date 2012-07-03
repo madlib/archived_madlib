@@ -11,16 +11,8 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <fstream>
-#include "data.h"
-#include "feature.h"
-#include "featuregen.h"
-#include "dictionary.h"
-#include "option.h"
-#include "doublevector.h"
-#include "doublematrix.h"
-
-#include "crf.hpp"
+//#include "mathlib.cpp"
+#include "linear_crf_train.hpp"
 
 namespace madlib {
 
@@ -37,7 +29,7 @@ namespace crf {
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
-    double logLikelihood);
+    double loglikelihood);
 
 /**
  * @brief Inter- and intra-iteration state for conjugate-gradient method for
@@ -83,7 +75,6 @@ public:
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
-        widthOfX = inWidthOfX;
     }
     
     /**
@@ -106,15 +97,13 @@ public:
     GradientTransitionState &operator+=(
         const GradientTransitionState<OtherHandle> &inOtherState) {
         
-        if (mStorage.size() != inOtherState.mStorage.size() ||
-            widthOfX != inOtherState.widthOfX)
+        if (mStorage.size() != inOtherState.mStorage.size())
             throw std::logic_error("Internal error: Incompatible transition "
                 "states");
         
         numRows += inOtherState.numRows;
-        gradNew += inOtherState.gradNew;
-        X_transp_AX += inOtherState.X_transp_AX;
-        logLikelihood += inOtherState.logLikelihood;
+        grad_intermediate += inOtherState.grad_intermediate;
+        loglikelihood += inOtherState.loglikelihood;
         return *this;
     }
     
@@ -123,9 +112,8 @@ public:
      */
     inline void reset() {
         numRows = 0;
-        X_transp_AX.fill(0);
-        gradNew.fill(0);
-        logLikelihood = 0;
+        grad_intermediate.fill(0);
+        loglikelihood = 0;
     }
 
 private:
@@ -149,9 +137,8 @@ private:
      *
      * Intra-iteration components (updated in transition step):
      * - 3 + 3 * widthOfX: numRows (number of rows already processed in this iteration)
-     * - 4 + 3 * widthOfX: gradNew (intermediate value for gradient)
-     * - 4 + 4 * widthOfX: X_transp_AX (X^T A X)
-     * - 4 + widthOfX * widthOfX + 4 * widthOfX: logLikelihood ( ln(l(c)) )
+     * - 4 + 3 * widthOfX: grad_intermediate (intermediate value for gradient)
+     * - 4 + widthOfX * widthOfX + 4 * widthOfX: loglikelihood ( ln(l(c)) )
      */
     void rebind(uint32_t num_features, uint16_t num_labels) {
         iteration.rebind(&mStorage[0]);
@@ -159,17 +146,17 @@ private:
         num_labels.rebind(&mStorage[2]);
         loglikelihood.rebind(&mStorage[3]);
         gradlogli.rebind(&mStorage[4], num_features);
-        grad_itermediate.rebind(&mStorage[4 + num_features], num_features);
+        grad_intermediate.rebind(&mStorage[4 + num_features], num_features);
         diag.rebind(&mStorage[4 + 2 * num_features], num_features);
         Mi.rebind(&mStorage[4 + 3 * num_features], num_labels * num_labels);
         Mi.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels], num_labels);
-        alpa.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + num_labels], num_labels);
-        next_alpa.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 2 * num_labels], num_labels);
+        alpha.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + num_labels], num_labels);
+        next_alpha.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 2 * num_labels], num_labels);
         temp.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 3 * num_labels], num_labels);
         ExpF.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 4 * num_labels], num_features);
         ws.rebind(&mStorage[4 + 5 * num_features + num_labels * num_labels + 4 * num_labels], num_features);
         iprint.rebind(&mStorage[4 + 6 * num_features + num_labels * num_labels + 4 * num_labels], 2);
-        numRow.rebind(&mStorage[4 + 6 * num_features + num_labels * num_labels + 4 * num_labels +2 ], 3);
+        numRows.rebind(&mStorage[4 + 6 * num_features + num_labels * num_labels + 4 * num_labels +2 ], 3);
     }
 
     Handle mStorage;
@@ -182,7 +169,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradlogli;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_itermidiate;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_intermediate;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap Mi;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap Vi;
@@ -222,7 +209,7 @@ linear_crf_step_transition::run(AnyType &args) {
     // Now do the transition step
     state.numRows++;
     double xc = dot(x, state.coef);
-    state.gradNew.noalias() += sigma(-y * xc) * y * trans(x);
+    state.grad_intermediate.noalias() += sigma(-y * xc) * y * trans(x);
     
      double logli = 0.0;
     
@@ -238,8 +225,6 @@ linear_crf_step_transition::run(AnyType &args) {
     sequence::iterator seqit;
     
     int seq_count = 0;
-    // go though all training data sequences
-    for (datait = pdata->ptrndata->begin(); datait != pdata->ptrndata->end(); datait++) {
 	seq_count++;
 	int seq_len = datait->size();
 	
@@ -290,8 +275,8 @@ linear_crf_step_transition::run(AnyType &args) {
 	    
 	    if (j > 0) {
 		*temp = *alpha;
-		mathlib::mult(num_labels, next_alpha, Mi, temp, 1);
-		next_alpha->comp_mult(Vi);
+		mathlib::mult(num_labels, state.next_alpha, Mi, temp, 1);
+		state.next_alpha->comp_mult(Vi);
 	    } else {
 		*next_alpha = *Vi;
 	    }
@@ -345,10 +330,8 @@ linear_crf_step_transition::run(AnyType &args) {
 	    gradlogli[k] -= ExpF[k] / Zx;
 	}
 
-    } // end of the main loop
-
    
-    state.logLikelihood -= std::log( 1. + std::exp(-y * xc) );
+    state.loglikelihood -= std::log( 1. + std::exp(-y * xc) );
     
     return state;
 }
@@ -390,20 +373,20 @@ linear_crf_step_final::run(AnyType &args) {
     if (state.iteration == 0) {
 		// Iteration computes the gradient
 	
-		state.dir = state.gradNew;
-		state.grad = state.gradNew;
+		state.dir = state.grad_intermediate;
+		state.grad = state.grad_intermediate;
 	} else {
-        ColumnVector gradNewMinusGrad = state.gradNew - state.grad;
+        ColumnVector grad_intermediateMinusGrad = state.grad_intermediate - state.grad;
         state.beta
-            = dot(state.gradNew, gradNewMinusGrad)
-            / dot(state.dir, gradNewMinusGrad);
+            = dot(state.grad_intermediate, grad_intermediateMinusGrad)
+            / dot(state.dir, grad_intermediateMinusGrad);
         
-        if (dot(state.gradNew, gradNewMinusGrad)
+        if (dot(state.grad_intermediate, grad_intermediateMinusGrad)
             / dot(state.grad, state.grad) < 0) state.beta = 0;
         
         // d_k = g_k - beta_k * d_{k-1}
-        state.dir = state.gradNew - state.beta * state.dir;
-		state.grad = state.gradNew;
+        state.dir = state.grad_intermediate - state.beta * state.dir;
+		state.grad = state.grad_intermediate;
 	}
 
     //invole lbfgs algorithm
@@ -430,7 +413,7 @@ internal_linear_crf_step_distance::run(AnyType &args) {
     GradientTransitionState<ArrayHandle<double> > stateLeft = args[0];
     GradientTransitionState<ArrayHandle<double> > stateRight = args[1];
 
-    return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
+    return std::abs(stateLeft.loglikelihood - stateRight.loglikelihood);
 }
 
 /**
@@ -439,7 +422,7 @@ internal_linear_crf_step_distance::run(AnyType &args) {
 AnyType
 internal_linear_crf_result::run(AnyType &args) {
     GradientTransitionState<ArrayHandle<double> > state = args[0];
-    return stateToResult(*this, state.lambda, state.logLikelihood);
+    return stateToResult(*this, state.lambda, state.loglikelihood);
 }
 
 /**
@@ -451,7 +434,7 @@ internal_linear_crf_result::run(AnyType &args) {
 AnyType stateToResult(
     const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
-    double logLikelihood) {
+    double loglikelihood) {
     
     // FIXME: We currently need to copy the coefficient to a native array
     // This should be transparent to user code
@@ -461,7 +444,7 @@ AnyType stateToResult(
     
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << logLikelihood << lambda;
+    tuple << loglikelihood << lambda;
     return tuple;
 }
 // compute log Mi (first-order Markov)
