@@ -6,7 +6,7 @@
 /**
  * @brief Logistic crfion (conjugate-gradient step): Transition function
  */
-DECLARE_UDF(crf, linear_crf__step_transition)
+DECLARE_UDF(crf, linear_crf_step_transition)
 
 /**
  * @brief Logistic crfion (conjugate-gradient step): State merge function

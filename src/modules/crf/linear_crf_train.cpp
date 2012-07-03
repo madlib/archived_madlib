@@ -208,21 +208,11 @@ linear_crf_step_transition::run(AnyType &args) {
     
     // Now do the transition step
     state.numRows++;
-    double xc = dot(x, state.coef);
-    state.grad_intermediate.noalias() += sigma(-y * xc) * y * trans(x);
     
-     double logli = 0.0;
+    double logli = 0.0;
     
     // counter variable
     int i, j, k;
-    
-    for (i = 0; i < num_features; i++) {
-	gradlogli[i] = -1 * lambda[i] / popt->sigma_square;
-	logli -= (lambda[i] * lambda[i]) / (2 * popt->sigma_square);
-    }
-    
-    dataset::iterator datait;
-    sequence::iterator seqit;
     
     int seq_count = 0;
 	seq_count++;
@@ -230,8 +220,8 @@ linear_crf_step_transition::run(AnyType &args) {
 	
 	*alpha = 1;
 	
-	for (i = 0; i < num_features; i++) {
-	    ExpF[i] = 0;
+	for (i = 0; i < state.num_features; i++) {
+	    state.ExpF(i) = 0;
 	}
 	
 	int betassize = betas.size();
@@ -252,7 +242,7 @@ linear_crf_step_transition::run(AnyType &args) {
 	
 	// compute beta values in a backward fashion
 	// also scale beta-values to 1 to avoid numerical problems
-	scale[seq_len - 1] = (popt->is_scaling) ? num_labels : 1;
+	scale[seq_len - 1] = (popt->is_scaling) ? state.num_labels : 1;
 	betas[seq_len - 1]->assign(1.0 / scale[seq_len - 1]);
 	
 	// start to compute beta values in backward fashion
@@ -261,7 +251,7 @@ linear_crf_step_transition::run(AnyType &args) {
 	    compute_log_Mi(*datait, i, Mi, Vi, 1);
 	    *temp = *(betas[i]);
 	    temp->comp_mult(Vi);
-	    mathlib::mult(num_labels, betas[i - 1], Mi, temp, 0);
+	    mathlib::mult(state.num_labels, betas[i - 1], Mi, temp, 0);
 	    
 	    // scale for the next (backward) beta values
 	    scale[i - 1] = (popt->is_scaling) ? betas[i - 1]->sum() : 1;
@@ -290,16 +280,16 @@ linear_crf_step_transition::run(AnyType &args) {
 		if ((f.ftype == EDGE_FEATURE1 && f.y == (*datait)[j].label && 
 			(j > 0 && f.yp == (*datait)[j-1].label)) || 
 			(f.ftype == STAT_FEATURE1 && f.y == (*datait)[j].label)) {
-		    gradlogli[f.idx] += f.val;
+		    state.gradlogli(f.idx) += f.val;
 		    seq_logli += lambda[f.idx] * f.val;		    
 		}
 		
 		if (f.ftype == STAT_FEATURE1) {
 		    // state feature
-		    ExpF[f.idx] += (*next_alpha)[f.y] * f.val * (*(betas[j]))[f.y];
+		    state.ExpF(f.idx) += (*next_alpha)[f.y] * f.val * (*(betas[j]))[f.y];
 		} else if (f.ftype == EDGE_FEATURE1) {
 		    // edge feature
-		    ExpF[f.idx] += (*alpha)[f.yp] * (*Vi)[f.y] * Mi->mtrx[f.yp][f.y] 
+		    state.ExpF(f.idx) += (*alpha)[f.yp] * (*Vi)[f.y] * Mi->mtrx[f.yp][f.y] 
 				    * f.val * (*(betas[j]))[f.y];
 		}		
 	    }	    
@@ -384,11 +374,12 @@ linear_crf_step_final::run(AnyType &args) {
         if (dot(state.grad_intermediate, grad_intermediateMinusGrad)
             / dot(state.grad, state.grad) < 0) state.beta = 0;
         
-        // d_k = g_k - beta_k * d_{k-1}
-        state.dir = state.grad_intermediate - state.beta * state.dir;
 		state.grad = state.grad_intermediate;
 	}
 
+    for (i = 0; i < state.num_features; i++) {
+	gradlogli[i] = -1 * lambda[i] / popt->sigma_square;
+	logli -= (lambda[i] * lambda[i]) / (2 * popt->sigma_square);
     //invole lbfgs algorithm
     lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&statediagco,
           state.diag,state.iprint,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog); 
@@ -481,14 +472,6 @@ AnyType compute_log_Mi(sequence & seq, int pos, doublematrix * Mi,
 
 }
 
-// compute norm of a vector
-double trainer::norm(int len, double * vect) {
-    double res = 0.0;
-    for (int i = 0; i < len; i++) {
-	res += vect[i] * vect[i];
-    }
-    return sqrt(res);
-}
 } // namespace crf
 
 } // namespace modules
