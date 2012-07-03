@@ -247,7 +247,34 @@ linear_crf_step_transition::run(AnyType &args) {
 	
 	// start to compute beta values in backward fashion
 	for (int i = seq_len - 1; i > 0; i--) {
-	    // compute the Mi matrix and Vi vector
+		// compute the Mi matrix and Vi vector 
+		*Mi = 0.0;
+		*Vi = 0.0;
+		// start scan features for sequence "seq" at position "i"
+		pfgen->start_scan_features_at(seq, pos);
+		// examine all features at position "pos"
+		while (pfgen->has_next_feature()) {
+			feature f;
+			pfgen->next_feature(f);
+
+			if (f.ftype == STAT_FEATURE1) {
+				// state feature
+				(*Vi)[f.y] += lambda[f.idx] * f.val;
+			} else if (f.ftype == EDGE_FEATURE1) /* if (pos > 0)*/ {
+				// edge feature (i.e., f.ftype == EDGE_FEATURE)
+				Mi->get(f.yp, f.y) += lambda[f.idx] * f.val;
+			}
+		}
+		// take exponential operator
+			for (int i = 0; i < Mi->rows; i++) {
+				// update for Vi
+				(*Vi)[i] = exp((*Vi)[i]);
+				// update for Mi
+				for (int j = 0; j < Mi->cols; j++) {
+					Mi->get(i, j) = exp(Mi->get(i, j));
+				}
+			}
+
 	    compute_log_Mi(*datait, i, Mi, Vi, 1);
 	    *temp = *(betas[i]);
 	    temp->comp_mult(Vi);
@@ -359,24 +386,6 @@ linear_crf_step_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
-    // Note: k = state.iteration
-    if (state.iteration == 0) {
-		// Iteration computes the gradient
-	
-		state.dir = state.grad_intermediate;
-		state.grad = state.grad_intermediate;
-	} else {
-        ColumnVector grad_intermediateMinusGrad = state.grad_intermediate - state.grad;
-        state.beta
-            = dot(state.grad_intermediate, grad_intermediateMinusGrad)
-            / dot(state.dir, grad_intermediateMinusGrad);
-        
-        if (dot(state.grad_intermediate, grad_intermediateMinusGrad)
-            / dot(state.grad, state.grad) < 0) state.beta = 0;
-        
-		state.grad = state.grad_intermediate;
-	}
-
     for (i = 0; i < state.num_features; i++) {
 	gradlogli[i] = -1 * lambda[i] / popt->sigma_square;
 	logli -= (lambda[i] * lambda[i]) / (2 * popt->sigma_square);
@@ -438,37 +447,6 @@ AnyType stateToResult(
     tuple << loglikelihood << lambda;
     return tuple;
 }
-// compute log Mi (first-order Markov)
-AnyType compute_log_Mi(sequence & seq, int pos, doublematrix * Mi, 
-		  doublevector * Vi, int is_exp) {
-    *Mi = 0.0;
-    *Vi = 0.0;
-    // start scan features for sequence "seq" at position "i"
-    pfgen->start_scan_features_at(seq, pos);
-    // examine all features at position "pos"
-    while (pfgen->has_next_feature()) {
-	feature f;
-	pfgen->next_feature(f);
-	
-	if (f.ftype == STAT_FEATURE1) {
-	    // state feature
-	    (*Vi)[f.y] += lambda[f.idx] * f.val;
-	} else if (f.ftype == EDGE_FEATURE1) /* if (pos > 0)*/ {
-	    // edge feature (i.e., f.ftype == EDGE_FEATURE)
-	    Mi->get(f.yp, f.y) += lambda[f.idx] * f.val;
-	}
-    }
-    // take exponential operator
-    if (is_exp) {
-	for (int i = 0; i < Mi->rows; i++) {
-	    // update for Vi
-	    (*Vi)[i] = exp((*Vi)[i]);
-	    // update for Mi
-	    for (int j = 0; j < Mi->cols; j++) {
-		Mi->get(i, j) = exp(Mi->get(i, j));
-	    }
-	}
-    }
 
 }
 
