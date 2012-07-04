@@ -226,24 +226,7 @@ linear_crf_step_transition::run(AnyType &args) {
 
     size_t index=0; 
     for (size_t i = seq_len - 1; i > 0; i--) {
-        state.Mi.fill(0.0);
-        state.Vi.fill(0.0);
-        while(features(index)!=-1){
-                size_t f_index = features(index);
-                size_t prev_index = prevLable(index);
-                size_t curr_index = currLable(index);
-                size_t f_type =  featureType(index);
-                if (f_type == 1) {
-                    (*state.Vi[curr_label(index)] += lambda[index] * f.val;
-                } else if (f_type== 0) { /* if (pos > 0)*/
-                    state.Mi(prev_index, curr_index) += state.lambda(f_index);
-                }
-        for (size_t m = 0; m < state.num_lables; m++) {
-            state.Vi(m) = std::exp(state.Vi(m));
-            for (size_t n = 0; n < state.num_labels; n++) {
-                state.Mi(i, j) = std::exp(state.Mi(i, j));
-            }
-        }
+        compute_log_Mi(state.features,state.featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
         *temp = *(betas[i]);
         temp->comp_multstate.Vi;
         mathlib::mult(state.num_labels, betas[i - 1], Mi, temp, 0);
@@ -253,9 +236,8 @@ linear_crf_step_transition::run(AnyType &args) {
     } // end of beta values computation
 
     // start to compute the log-likelihood of the current sequence
-    double seq_logli = 0;
     for (j = 0; j < seq_len; j++) {
-        compute_log_Mi(*datait, j, Mi, Vi, 1);
+        compute_log_Mi(state.features,state.featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
         if (j > 0) {
             *temp = *alpha;
             mathlib::mult(num_labels, state.next_alpha, Mi, temp, 1);
@@ -264,49 +246,38 @@ linear_crf_step_transition::run(AnyType &args) {
             *next_alpha = *Vi;
         }
 
-        // start to scan feature at "i" position of the current sequence
-        pfgen->start_scan_features_at(*datait, j);
         while (pfgen->has_next_feature()) {
-            feature f;
-            pfgen->next_feature(f);
-
-            if ((f_type == 0 && curr_label(index) == (*datait)[j].label &&
-                    (j > 0 && prev_label(index) == (*datait)[j-1].label)) ||
-                    (f_type == 1 && curr_label(index) == (*datait)[j].label)) {
+        size_t f_index = state.features(index);
+        size_t prev_index = state.prevLable(index);
+        size_t curr_index = statecurrLable(index);
+        size_t f_type =  state.featureType(index);
+            if (f_type == 0 || f_type == 1) {
                 state.gradlogli(index) += f.val;
-                seq_logli += lambda[index] * f.val;
+                seq_logli += lambda(f_index) * f.val;
             }
-
             if (f_type == 1) {
-                state.ExpF(index) += state.next_alpha(curr_label) * f.val * (*(betas[j]))[curr_label(index)];
+                state.ExpF(f_index) += state.next_alpha(curr_label) * f.val * (*(betas[j]))[curr_label(index)];
             } else if (f_type == 0) {
-                state.ExpF(index) += state.alpha[prev_label] * state.Vi(curr_label) * state.Mi[prev_label][curr_label]
-                                     * f.val * (*(betas[j]))[curr_label];
+                state.ExpF(f_index) += state.alpha[prev_label] * state.Vi(curr_index) * state.Mi(prev_index,curr_index)
+                                     * f.val * (*(betas[j]))(curr_index);
             }
         }
-
         *alpha = *next_alpha;
         alpha->comp_mult(1.0 / scale[j]);
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
     double Zx = alpha->sum();
-
-    // Log-likelihood of the current sequence
-    // seq_logli = lambda * F(y_k, x_k) - log(Zx_k)
-    // where x_k is the current sequence
-    seq_logli -= std::log(Zx);
+    state.grad_intermediate -= std::log(Zx);
 
     // re-correct the value of seq_logli because Zx was computed from
     // scaled alpha values
-    for (k = 0; k < seq_len; k++) {
-        seq_logli -= std::log(scale[k]);
+    for (size_t k = 0; k < seq_len; k++) {
+        state.grad_intermediate -= std::log(scale[k]);
     }
-    // Log-likelihood = sum_k[lambda * F(y_k, x_k) - log(Zx_k)]
-    logli += seq_logli;
     // update the gradient vector
-    for (k = 0; k < num_features; k++) {
-        gradlogli[k] -= ExpF[k] / Zx;
+    for (k = 0; k < state.num_features; k++) {
+        grad_intermediate[k] -= ExpF[k] / Zx;
     }
 
     return state;
@@ -372,7 +343,6 @@ linear_crf_step_final::run(AnyType &args) {
     internal_linear_crf_step_distance::run(AnyType &args) {
         GradientTransitionState<ArrayHandle<double> > stateLeft = args[0];
         GradientTransitionState<ArrayHandle<double> > stateRight = args[1];
-
         return std::abs(stateLeft.loglikelihood - stateRight.loglikelihood);
     }
 
@@ -406,6 +376,44 @@ linear_crf_step_final::run(AnyType &args) {
         tuple << loglikelihood << lambda;
         return tuple;
     }
+
+    // compute log Mi (first-order Markov)
+    AnyType compute_log_Mi(
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &features,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &featureType,
+    HandleMap<const ColumnVector, TransparentHandle<double> > &Mi,
+    HandleMap<const ColumnVector, TransparentHandle<double> > &Vi,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &lambda,
+    uint32_t &index, uint32_t num_labels, const bool is_exp) {
+    Mi.fill(0) = 0.0;
+    Vi.fill(0) = 0.0;
+    // examine all features at position "pos"
+    while (features(index)!=-1) {
+        size_t f_index = features(index);
+        size_t prev_index = prevLable(index);
+        size_t curr_index = currLable(index);
+        size_t f_type =  featureType(index);
+	if (f_type == 0) {
+	    // state feature
+	    Vi(curr_index) += lambda(f_index);
+	} else if (f_type == 1) /* if (pos > 0)*/ {
+	    Mi(prev_index, curr_index) += lambda(f_index);
+	}
+        index++;
+    }
+    
+    // take exponential operator
+    if (is_exp) {
+	for (size_t i = 0; i < num_labels; i++) {
+	    // update for Vi
+	    Vi(i) = std::exp(Vi(i));
+	    // update for Mi
+	    for (size_t j = 0; j < num_labels; j++) {
+		Mi(i, j) = std::exp(Mi(i, j));
+	    }
+	}
+    }
+}
 
 }
 
