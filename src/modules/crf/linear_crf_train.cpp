@@ -190,8 +190,8 @@ linear_crf_step_transition::run(AnyType &args) {
     GradientTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<uint32_t> >();
     HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<uint32_t> >();
-    HandleMap<const ColumnVector> prev_label = args[3].getAs<ArrayHandle<uint32_t> >();
-    HandleMap<const ColumnVector> curr_label = args[4].getAs<ArrayHandle<uint32_t> >();
+    HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<uint32_t> >();
+    HandleMap<const ColumnVector> currLabel = args[4].getAs<ArrayHandle<uint32_t> >();
     uint32_t seq_len = args[3].getAs<uint32_t>();
 
     if (state.numRows == 0) {
@@ -202,7 +202,6 @@ linear_crf_step_transition::run(AnyType &args) {
             state.reset();
         }
     }
-
     // Now do the transition step
     state.numRows++;
     *alpha = 1;
@@ -213,7 +212,6 @@ linear_crf_step_transition::run(AnyType &args) {
             betas.push_back(new doublevector(num_labels));
         }
     }
-
     int scalesize = scale.size();
     if (scalesize < seq_len) {
         // allocate more scale elements
@@ -221,45 +219,34 @@ linear_crf_step_transition::run(AnyType &args) {
             scale.push_back(1.0);
         }
     }
-
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
     scale[seq_len - 1] = (popt->is_scaling) ? state.num_labels : 1;
     betas[seq_len - 1]->assign(1.0 / scale[seq_len - 1]);
 
-    // start to compute beta values in backward fashion
+    size_t index=0; 
     for (size_t i = seq_len - 1; i > 0; i--) {
-        // compute the Mi matrix and Vi vector
         state.Mi.fill(0.0);
         state.Vi.fill(0.0);
-        // examine all features at position "pos"
-        while()
-            while (pfgen->has_next_feature()) {
-                feature f;
-                pfgen->next_feature(f);
-
-                if (f.ftype == STAT_FEATURE1) {
-                    // state feature
-                    (*Vi)[f.y] += lambda[f.idx] * f.val;
-                } else if (f.ftype == EDGE_FEATURE1) { /* if (pos > 0)*/
-                    // edge feature (i.e., f.ftype == EDGE_FEATURE)
-                    Mi->get(f.yp, f.y) += lambda[f.idx] * f.val;
+        while(features(index)!=-1){
+                size_t f_index = features(index);
+                size_t prev_index = prevLable(index);
+                size_t curr_index = currLable(index);
+                size_t f_type =  featureType(index);
+                if (f_type == 1) {
+                    (*state.Vi[curr_label(index)] += lambda[index] * f.val;
+                } else if (f_type== 0) { /* if (pos > 0)*/
+                    state.Mi(prev_index, curr_index) += state.lambda(f_index);
                 }
-            }
-        // take std::exponential operator
         for (size_t m = 0; m < state.num_lables; m++) {
-            // update for Vi
             state.Vi(m) = std::exp(state.Vi(m));
-            // update for Mi
             for (size_t n = 0; n < state.num_labels; n++) {
                 state.Mi(i, j) = std::exp(state.Mi(i, j));
             }
         }
-
         *temp = *(betas[i]);
-        temp->comp_mult(Vi);
+        temp->comp_multstate.Vi;
         mathlib::mult(state.num_labels, betas[i - 1], Mi, temp, 0);
-
         // scale for the next (backward) beta values
         scale[i - 1] = (popt->is_scaling) ? betas[i - 1]->sum() : 1;
         betas[i - 1]->comp_mult(1.0 / scale[i - 1]);
@@ -269,11 +256,10 @@ linear_crf_step_transition::run(AnyType &args) {
     double seq_logli = 0;
     for (j = 0; j < seq_len; j++) {
         compute_log_Mi(*datait, j, Mi, Vi, 1);
-
         if (j > 0) {
             *temp = *alpha;
             mathlib::mult(num_labels, state.next_alpha, Mi, temp, 1);
-            state.next_alpha->comp_mult(Vi);
+            state.next_alpha->comp_multstate.Vi;
         } else {
             *next_alpha = *Vi;
         }
@@ -284,20 +270,18 @@ linear_crf_step_transition::run(AnyType &args) {
             feature f;
             pfgen->next_feature(f);
 
-            if ((f.ftype == EDGE_FEATURE1 && f.y == (*datait)[j].label &&
-                    (j > 0 && f.yp == (*datait)[j-1].label)) ||
-                    (f.ftype == STAT_FEATURE1 && f.y == (*datait)[j].label)) {
-                state.gradlogli(f.idx) += f.val;
-                seq_logli += lambda[f.idx] * f.val;
+            if ((f_type == 0 && curr_label(index) == (*datait)[j].label &&
+                    (j > 0 && prev_label(index) == (*datait)[j-1].label)) ||
+                    (f_type == 1 && curr_label(index) == (*datait)[j].label)) {
+                state.gradlogli(index) += f.val;
+                seq_logli += lambda[index] * f.val;
             }
 
-            if (f.ftype == STAT_FEATURE1) {
-                // state feature
-                state.ExpF(f.idx) += (*next_alpha)[f.y] * f.val * (*(betas[j]))[f.y];
-            } else if (f.ftype == EDGE_FEATURE1) {
-                // edge feature
-                state.ExpF(f.idx) += (*alpha)[f.yp] * (*Vi)[f.y] * Mi->mtrx[f.yp][f.y]
-                                     * f.val * (*(betas[j]))[f.y];
+            if (f_type == 1) {
+                state.ExpF(index) += state.next_alpha(curr_label) * f.val * (*(betas[j]))[curr_label(index)];
+            } else if (f_type == 0) {
+                state.ExpF(index) += state.alpha[prev_label] * state.Vi(curr_label) * state.Mi[prev_label][curr_label]
+                                     * f.val * (*(betas[j]))[curr_label];
             }
         }
 
@@ -311,24 +295,19 @@ linear_crf_step_transition::run(AnyType &args) {
     // Log-likelihood of the current sequence
     // seq_logli = lambda * F(y_k, x_k) - log(Zx_k)
     // where x_k is the current sequence
-    seq_logli -= log(Zx);
+    seq_logli -= std::log(Zx);
 
     // re-correct the value of seq_logli because Zx was computed from
     // scaled alpha values
     for (k = 0; k < seq_len; k++) {
-        seq_logli -= log(scale[k]);
+        seq_logli -= std::log(scale[k]);
     }
-
     // Log-likelihood = sum_k[lambda * F(y_k, x_k) - log(Zx_k)]
     logli += seq_logli;
-
     // update the gradient vector
     for (k = 0; k < num_features; k++) {
         gradlogli[k] -= ExpF[k] / Zx;
     }
-
-
-    state.loglikelihood -= std::log( 1. + std::std::exp(-y * xc) );
 
     return state;
 }
@@ -369,6 +348,7 @@ linear_crf_step_final::run(AnyType &args) {
     for (i = 0; i < state.num_features; i++) {
         gradlogli[i] = -1 * lambda[i] / popt->sigma_square;
         logli -= (lambda[i] * lambda[i]) / (2 * popt->sigma_square);
+     }
         //invole lbfgs algorithm
         lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&statediagco,
               state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
