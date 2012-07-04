@@ -17,3 +17,4 @@ DECLARE_UDF(crf, linear_crf_step_merge_states)
  * @brief Logistic crfion (conjugate-gradient step): Final function
  */
 DECLARE_UDF(crf, linear_crf_step_final)
+DECLARE_UDF(crf, internal_linear_crf_step_distance)

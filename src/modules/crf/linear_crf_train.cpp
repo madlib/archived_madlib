@@ -53,7 +53,7 @@ public:
     GradientTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
-        rebind(static_cast<uint16_t>(mStorage[1]));
+        rebind(static_cast<uint16_t>(mStorage[1]),static_cast<uint16_t>(mStorage[2]));
     }
 
     /**
@@ -71,10 +71,10 @@ public:
      *
      * This function is only called for the first iteration, for the first row.
      */
-    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
+    inline void initialize(const Allocator &inAllocator, uint16_t num_features, uint16_t num_labels) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-        dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
-        rebind(inWidthOfX);
+        dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(num_features,num_labels));
+        rebind(num_features,num_labels);
     }
 
     /**
@@ -147,6 +147,7 @@ private:
         num_labels.rebind(&mStorage[2]);
         loglikelihood.rebind(&mStorage[3]);
         gradlogli.rebind(&mStorage[4], num_features);
+        lambda.rebind(&mStorage[4 + num_features], num_features);
         grad_intermediate.rebind(&mStorage[4 + num_features], num_features);
         diag.rebind(&mStorage[4 + 2 * num_features], num_features);
         Mi.rebind(&mStorage[4 + 3 * num_features], num_labels * num_labels);
@@ -169,6 +170,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradlogli;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap lambda;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_intermediate;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap Mi;
@@ -188,82 +190,70 @@ public:
 AnyType
 linear_crf_step_transition::run(AnyType &args) {
     GradientTransitionState<MutableArrayHandle<double> > state = args[0];
-    HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<uint32_t> >();
-    HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<uint32_t> >();
-    HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<uint32_t> >();
-    HandleMap<const ColumnVector> currLabel = args[4].getAs<ArrayHandle<uint32_t> >();
-    uint32_t seq_len = args[3].getAs<uint32_t>();
-
+    HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
+    HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<double> >();
+    HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<double> >();
+    HandleMap<const ColumnVector> currLabel = args[4].getAs<ArrayHandle<double> >();
+    double seq_len_double = args[5].getAs<double>();
+    
     if (state.numRows == 0) {
-        state.initialize(*this, x.size());
+        state.initialize(*this, state.num_features, state.num_labels);
         if (!args[3].isNull()) {
             GradientTransitionState<ArrayHandle<double> > previousState = args[3];
             state = previousState;
             state.reset();
         }
     }
+    HandleMap<ColumnVector> betas(inAllocator.allocateArray<double>(seq_len));
+    HandleMap<ColumnVector> scale(inAllocator.allocateArray<double>(seq_len));
     // Now do the transition step
     state.numRows++;
-    *alpha = 1;
-    int betassize = betas.size();
-    if (betassize < seq_len) {
-        // allocate more beta vector
-        for (i = 0; i < seq_len - betassize; i++) {
-            betas.push_back(new doublevector(num_labels));
-        }
-    }
-    int scalesize = scale.size();
-    if (scalesize < seq_len) {
-        // allocate more scale elements
-        for (i = 0; i < seq_len - scalesize; i++) {
-            scale.push_back(1.0);
-        }
-    }
+    state.alpha.fill(1);
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
-    scale[seq_len - 1] = (popt->is_scaling) ? state.num_labels : 1;
-    betas[seq_len - 1]->assign(1.0 / scale[seq_len - 1]);
+    scale(seq_len - 1) = true ? state.num_labels : 1;//TODO
+    betas(seq_len - 1) = (1.0 / scale(seq_len - 1));
 
     size_t index=0; 
     for (size_t i = seq_len - 1; i > 0; i--) {
-        compute_log_Mi(state.features,state.featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
+        compute_log_Mi(features,prevLabel, currLabel, featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
         *temp = *(betas[i]);
         temp->comp_multstate.Vi;
-        mathlib::mult(state.num_labels, betas[i - 1], Mi, temp, 0);
+        mathlib::mult(state.num_labels, betas(i - 1), state.Mi, temp, 0);
         // scale for the next (backward) beta values
-        scale[i - 1] = (popt->is_scaling) ? betas[i - 1]->sum() : 1;
-        betas[i - 1]->comp_mult(1.0 / scale[i - 1]);
+        scale(i - 1) = true ? betas(i - 1)->sum() : 1;
+        betas(i - 1)->comp_mult(1.0 / scale(i - 1));
     } // end of beta values computation
 
     // start to compute the log-likelihood of the current sequence
-    for (j = 0; j < seq_len; j++) {
-        compute_log_Mi(state.features,state.featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
+    for (size_t j = 0; j < seq_len; j++) {
+        compute_log_Mi(features,featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
         if (j > 0) {
-            *temp = *alpha;
-            mathlib::mult(num_labels, state.next_alpha, Mi, temp, 1);
+            *temp = state.alpha;
+            //mathlib::mult(state.num_labels, state.next_alpha, state.Mi, temp, 1);
             state.next_alpha->comp_multstate.Vi;
         } else {
-            *next_alpha = *Vi;
+            state.next_alpha = state.Vi;
         }
 
-        while (pfgen->has_next_feature()) {
-        size_t f_index = state.features(index);
-        size_t prev_index = state.prevLable(index);
-        size_t curr_index = statecurrLable(index);
-        size_t f_type =  state.featureType(index);
+        while (features(index)!=-1) {
+        size_t f_index = features(index);
+        size_t prev_index = prevLabel(index);
+        size_t curr_index = currLabel(index);
+        size_t f_type =  featureType(index);
             if (f_type == 0 || f_type == 1) {
-                state.gradlogli(index) += f.val;
-                seq_logli += lambda(f_index) * f.val;
+                state.gradlogli(f_index) += 1;
+                state.grad_intermediate += state.lambda(f_index) * 1;
             }
             if (f_type == 1) {
-                state.ExpF(f_index) += state.next_alpha(curr_label) * f.val * (*(betas[j]))[curr_label(index)];
+                state.ExpF(f_index) += state.next_alpha(curr_index) * 1 * (betas[j])[curr_index(index)];
             } else if (f_type == 0) {
-                state.ExpF(f_index) += state.alpha[prev_label] * state.Vi(curr_index) * state.Mi(prev_index,curr_index)
-                                     * f.val * (*(betas[j]))(curr_index);
+                state.ExpF(f_index) += state.alpha[prev_index] * state.Vi(curr_index) * state.Mi(prev_index,curr_index)
+                                     * 1 * (*(betas[j]))(curr_index);
             }
         }
-        *alpha = *next_alpha;
-        alpha->comp_mult(1.0 / scale[j]);
+        state.alpha = state.next_alpha;
+        state.alpha->comp_mult(1.0 / scale[j]);
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
@@ -276,8 +266,8 @@ linear_crf_step_transition::run(AnyType &args) {
         state.grad_intermediate -= std::log(scale[k]);
     }
     // update the gradient vector
-    for (k = 0; k < state.num_features; k++) {
-        grad_intermediate[k] -= ExpF[k] / Zx;
+    for (size_t k = 0; k < state.num_features; k++) {
+        state.grad_intermediate(k) -= state.ExpF(k) / Zx;
     }
 
     return state;
@@ -316,21 +306,17 @@ linear_crf_step_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
-    for (i = 0; i < state.num_features; i++) {
-        gradlogli[i] = -1 * lambda[i] / popt->sigma_square;
-        logli -= (lambda[i] * lambda[i]) / (2 * popt->sigma_square);
+    for (size_t i = 0; i < state.num_features; i++) {
+        state.gradlogli(i) = -1 * state.lambda(i) / 1;//TODO
+        state.loglikelihood -= (state.lambda(i) * state.lambda(i)) / (2 * 1);
      }
         //invole lbfgs algorithm
-        lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&statediagco,
+        lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&state.diagco,
               state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
         // checking after calling LBFGS
         if (state.iflag < 0) {
             // LBFGS error
             printf("LBFGS routine encounters an error\n");
-            if (is_logging) {
-                fprintf(fout, "LBFGS routine encounters an error\n");
-            }
-            break;
         }
         state.iteration++;
         return state;
@@ -380,18 +366,20 @@ linear_crf_step_final::run(AnyType &args) {
     // compute log Mi (first-order Markov)
     AnyType compute_log_Mi(
     const HandleMap<const ColumnVector, TransparentHandle<double> > &features,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &prevLabel,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &currLabel,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &featureType,
     HandleMap<const ColumnVector, TransparentHandle<double> > &Mi,
     HandleMap<const ColumnVector, TransparentHandle<double> > &Vi,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &lambda,
     uint32_t &index, uint32_t num_labels, const bool is_exp) {
-    Mi.fill(0) = 0.0;
-    Vi.fill(0) = 0.0;
+    Mi.fill(0);
+    Vi.fill(0);
     // examine all features at position "pos"
     while (features(index)!=-1) {
         size_t f_index = features(index);
-        size_t prev_index = prevLable(index);
-        size_t curr_index = currLable(index);
+        size_t prev_index = prevLabel(index);
+        size_t curr_index = currLabel(index);
         size_t f_type =  featureType(index);
 	if (f_type == 0) {
 	    // state feature
