@@ -149,23 +149,23 @@ linear_crf_step_transition::run(AnyType &args) {
     state.alpha.fill(1);
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
-    scale(seq_len - 1) = true ? state.num_labels : 1;//TODO
+    scale(seq_len - 1) = state.num_labels;
     betas(seq_len - 1) = (1.0 / scale(seq_len - 1));
 
     size_t index=0;
     for (size_t i = seq_len - 1; i > 0; i--) {
-        compute_log_Mi(features,prevLabel, currLabel, featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
+        compute_log_Mi(features,prevLabel, currLabel, featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels);
         *temp = *(betas[i]);
         temp->comp_multstate.Vi;
         mathlib::mult(state.num_labels, betas(i - 1), state.Mi, temp, 0);
         // scale for the next (backward) beta values
-        scale(i - 1) = true ? betas(i - 1)->sum() : 1;
+        scale(i - 1) = betas(i - 1).sum();
         betas(i - 1)->comp_mult(1.0 / scale(i - 1));
     } // end of beta values computation
 
     // start to compute the log-likelihood of the current sequence
     for (size_t j = 0; j < seq_len; j++) {
-        compute_log_Mi(features,featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels,true);
+        compute_log_Mi(features,featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels);
         if (j > 0) {
             *temp = state.alpha;
             //mathlib::mult(state.num_labels, state.next_alpha, state.Mi, temp, 1);
@@ -311,7 +311,7 @@ AnyType compute_log_Mi(
     HandleMap<const ColumnVector, TransparentHandle<double> > &Mi,
     HandleMap<const ColumnVector, TransparentHandle<double> > &Vi,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &lambda,
-    uint32_t &index, uint32_t num_labels, const bool is_exp) {
+    uint32_t &index, uint32_t num_labels) {
     Mi.fill(0);
     Vi.fill(0);
     // examine all features at position "pos"
@@ -330,15 +330,13 @@ AnyType compute_log_Mi(
     }
 
     // take exponential operator
-    if (is_exp) {
-        for (size_t i = 0; i < num_labels; i++) {
-            // update for Vi
-            Vi(i) = std::exp(Vi(i));
-            // update for Mi
-            for (size_t j = 0; j < num_labels; j++) {
-                Mi(i, j) = std::exp(Mi(i, j));
-            }
-        }
+    for (size_t i = 0; i < num_labels; i++) {
+	    // update for Vi
+	    Vi(i) = std::exp(Vi(i));
+	    // update for Mi
+	    for (size_t j = 0; j < num_labels; j++) {
+		    Mi(i, j) = std::exp(Mi(i, j));
+	    }
     }
 }
 
