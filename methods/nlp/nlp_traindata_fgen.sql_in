@@ -15,16 +15,16 @@ m4_include(`SQLCommon.m4')
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.nlp_traindata_fgen(traindata text, regextbl text) RETURNS void AS
 $$     
         plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.nlp_feature;" + \
-                     "CREATE TABLE MADLIB_SCHEMA.nlp_feature(doc_id integer,feature_ids integer[],feature_names text[]);")
+                     "CREATE TABLE MADLIB_SCHEMA.nlp_feature(doc_id integer,feature_ids integer[],feature_names text[],prev_labels integer[], labels integer[]);")
 
         plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp1_feature;" + \
                      "CREATE TABLE MADLIB_SCHEMA.tmp1_feature(start_pos integer,doc_id integer,f_name text,prev_label integer,label integer);")
 
         plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp2_feature;" + \
-                     "CREATE TABLE MADLIB_SCHEMA.tmp2_feature(start_pos integer,doc_id integer,f_name text,f_index integer);")
+                     "CREATE TABLE MADLIB_SCHEMA.tmp2_feature(start_pos integer,doc_id integer,f_name text,f_index integer,prev_label integer, label integer);")
 
         plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp3_feature;" + \
-                     "CREATE TABLE MADLIB_SCHEMA.tmp3_feature(start_pos integer,doc_id integer,f_name text,f_index integer);")
+                     "CREATE TABLE MADLIB_SCHEMA.tmp3_feature(start_pos integer,doc_id integer,f_name text,f_index integer,prev_label integer, label integer);")
 
         # dictionary table
         plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.nlp_dictionary;" + \
@@ -84,23 +84,26 @@ $$
                         SELECT DISTINCT ON (f_name,prev_label,label) nextval('seq'), f_name, prev_label, label
                         FROM   tmp1_feature;""")
        
-        plpy.execute("""INSERT INTO tmp2_feature(start_pos,doc_id,f_name,f_index)
-                        SELECT start_pos, doc_id, tmp1_feature.f_name, f_index
+        plpy.execute("""INSERT INTO tmp2_feature(start_pos,doc_id,f_name,f_index,prev_label,label)
+                        SELECT start_pos, doc_id, tmp1_feature.f_name, f_index, tmp1_feature.prev_label, tmp1_feature.label
                         FROM   tmp1_feature, nlp_feature_dic
                         WHERE  tmp1_feature.f_name = nlp_feature_dic.f_name AND
                                tmp1_feature.prev_label = nlp_feature_dic.prev_label AND
 	                       tmp1_feature.label = nlp_feature_dic.label;""")  
 
-        plpy.execute("""INSERT INTO tmp3_feature(start_pos,doc_id,f_name,f_index)
-                        SELECT start_pos, doc_id, f_name, f_index
+        plpy.execute("""INSERT INTO tmp3_feature(start_pos,doc_id,f_name,f_index, prev_label, label)
+                        SELECT start_pos, doc_id, f_name, f_index, prev_label, label
                         FROM   tmp2_feature;""")
 
-        plpy.execute("""INSERT INTO tmp3_feature(start_pos,doc_id,f_name,f_index)
-                        SELECT DISTINCT ON (start_pos, doc_id) start_pos, doc_id, 'empty', -1
+        plpy.execute("""INSERT INTO tmp3_feature(start_pos,doc_id,f_name,f_index, prev_label, label)
+                        SELECT DISTINCT ON (start_pos, doc_id) start_pos, doc_id, 'empty', -1, -1, -1
                         FROM   tmp2_feature;""")
 
-        plpy.execute("""INSERT INTO nlp_feature(doc_id, feature_ids, feature_names)
-                        SELECT doc_id, array_agg(f_index ORDER BY start_pos, f_index), array_agg(f_name ORDER BY start_pos, f_index)
+        plpy.execute("""INSERT INTO nlp_feature(doc_id, feature_ids, feature_names, prev_labels, labels)
+                        SELECT doc_id, array_agg(f_index ORDER BY start_pos, f_index), 
+                                       array_agg(f_name ORDER BY start_pos, f_index)
+                                       array_agg(prev_label ORDER BY start_pos, f_index)
+                                       array_agg(label ORDER BY start_pos, f_index)
                         FROM   tmp3_feature
                         GROUP BY doc_id;""")
          
