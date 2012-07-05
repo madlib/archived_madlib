@@ -310,7 +310,7 @@ AnyType stateToResult(
 }
 
 // compute log Mi (first-order Markov)
-AnyType compute_log_Mi(
+void compute_log_Mi(
     const HandleMap<const ColumnVector, TransparentHandle<double> > &features,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &prevLabel,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &currLabel,
