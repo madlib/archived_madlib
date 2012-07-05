@@ -347,7 +347,6 @@ void compute_log_Mi(
     }
 }
 
-}
 
 } // namespace crf
 
