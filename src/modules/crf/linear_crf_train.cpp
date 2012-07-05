@@ -31,17 +31,6 @@ AnyType stateToResult(const Allocator &inAllocator,
                       const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
                       double loglikelihood);
 
-AnyType compute_log_Mi(
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &features,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &prevLabel,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &currLabel,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &featureType,
-    HandleMap<const ColumnVector, TransparentHandle<double> > &Mi,
-    HandleMap<const ColumnVector, TransparentHandle<double> > &Vi,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &lambda,
-    uint32_t &index, uint32_t num_labels);
- 
-
 template <class Handle>
 class GradientTransitionState {
     template <class OtherHandle>
@@ -165,7 +154,32 @@ linear_crf_step_transition::run(AnyType &args) {
 
     size_t index=0;
     for (size_t i = seq_len - 1; i > 0; i--) {
-        compute_log_Mi(features,prevLabel, currLabel, featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels);
+    Mi.fill(0);
+    Vi.fill(0);
+    // examine all features at position "pos"
+    while (features(index)!=-1) {
+        size_t f_index = features(index);
+        size_t prev_index = prevLabel(index);
+        size_t curr_index = currLabel(index);
+        size_t f_type =  featureType(index);
+        if (f_type == 0) {
+            // state feature
+            state.Vi(curr_index) += state.lambda(f_index);
+        } else if (f_type == 1) { /* if (pos > 0)*/
+            state.Mi(prev_index, curr_index) += state.lambda(f_index);
+        }
+        index++;
+    }
+
+    // take exponential operator
+    for (size_t i = 0; i < state.num_labels; i++) {
+	    // update for Vi
+	    state.Vi(i) = std::exp(state.Vi(i));
+	    // update for Mi
+	    for (size_t j = 0; j < state.num_labels; j++) {
+		    state.Mi(i, j) = std::exp(state.Mi(i, j));
+	    }
+    }
         betas(i-1)=state.Mi*(betas(i)*state.Vi);
         // scale for the next (backward) beta values
         scale(i - 1) = betas(i - 1).sum();
@@ -174,7 +188,33 @@ linear_crf_step_transition::run(AnyType &args) {
 
     // start to compute the log-likelihood of the current sequence
     for (size_t j = 0; j < seq_len; j++) {
-        compute_log_Mi(features,featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels);
+    Mi.fill(0);
+    Vi.fill(0);
+    // examine all features at position "pos"
+    while (features(index)!=-1) {
+        size_t f_index = features(index);
+        size_t prev_index = prevLabel(index);
+        size_t curr_index = currLabel(index);
+        size_t f_type =  featureType(index);
+        if (f_type == 0) {
+            // state feature
+            state.Vi(curr_index) += state.lambda(f_index);
+        } else if (f_type == 1) { /* if (pos > 0)*/
+            state.Mi(prev_index, curr_index) += state.lambda(f_index);
+        }
+        index++;
+    }
+
+    // take exponential operator
+    for (size_t i = 0; i < state.num_labels; i++) {
+	    // update for Vi
+	    state.Vi(i) = std::exp(state.Vi(i));
+	    // update for Mi
+	    for (size_t j = 0; j < state.num_labels; j++) {
+		    state.Mi(i, j) = std::exp(state.Mi(i, j));
+	    }
+    }
+       
         if (j > 0) {
             state.next_alpha=state.Mi*state.alpha;
         } else {
@@ -308,45 +348,6 @@ AnyType stateToResult(
     tuple << loglikelihood << lambda;
     return tuple;
 }
-
-// compute log Mi (first-order Markov)
-void compute_log_Mi(
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &features,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &prevLabel,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &currLabel,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &featureType,
-    HandleMap<const ColumnVector, TransparentHandle<double> > &Mi,
-    HandleMap<const ColumnVector, TransparentHandle<double> > &Vi,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &lambda,
-    uint32_t &index, uint32_t num_labels) {
-    Mi.fill(0);
-    Vi.fill(0);
-    // examine all features at position "pos"
-    while (features(index)!=-1) {
-        size_t f_index = features(index);
-        size_t prev_index = prevLabel(index);
-        size_t curr_index = currLabel(index);
-        size_t f_type =  featureType(index);
-        if (f_type == 0) {
-            // state feature
-            Vi(curr_index) += lambda(f_index);
-        } else if (f_type == 1) { /* if (pos > 0)*/
-            Mi(prev_index, curr_index) += lambda(f_index);
-        }
-        index++;
-    }
-
-    // take exponential operator
-    for (size_t i = 0; i < num_labels; i++) {
-	    // update for Vi
-	    Vi(i) = std::exp(Vi(i));
-	    // update for Mi
-	    for (size_t j = 0; j < num_labels; j++) {
-		    Mi(i, j) = std::exp(Mi(i, j));
-	    }
-    }
-}
-
 
 } // namespace crf
 
