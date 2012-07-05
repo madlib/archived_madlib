@@ -97,23 +97,23 @@ private:
         return 4 + 6 * num_features + num_labels * num_labels + 4 * num_labels + 1;
     }
 
-    void rebind(uint32_t num_features, uint32_t num_labels) {
+    void rebind(uint32_t inWidthOfFeature, uint32_t inWidthOfLabel) {
         iteration.rebind(&mStorage[0]);
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
         loglikelihood.rebind(&mStorage[3]);
-        gradlogli.rebind(&mStorage[4], num_features);
-        lambda.rebind(&mStorage[4 + num_features], num_features);
-        grad_new.rebind(&mStorage[4 + num_features], num_features);
-        diag.rebind(&mStorage[4 + 2 * num_features], num_features);
-        Mi.rebind(&mStorage[4 + 3 * num_features], num_labels * num_labels);
-        Vi.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels], num_labels);
-        alpha.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + num_labels], num_labels);
-        next_alpha.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 2 * num_labels], num_labels);
-        temp.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 3 * num_labels], num_labels);
-        ExpF.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels + 4 * num_labels], num_features);
-        ws.rebind(&mStorage[4 + 5 * num_features + num_labels * num_labels + 4 * num_labels], num_features);
-        numRows.rebind(&mStorage[4 + 6 * num_features + num_labels * num_labels + 4 * num_labels +1 ]);
+        gradlogli.rebind(&mStorage[4], inWidthOfFeature);
+        lambda.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
+        grad_new.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
+        diag.rebind(&mStorage[4 + 2 * inWidthOfFeature], inWidthOfFeature);
+        Mi.rebind(&mStorage[4 + 3 * inWidthOfFeature], inWidthOfLabel * inWidthOfLabel);
+        Vi.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel], inWidthOfLabel);
+        alpha.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + inWidthOfLabel], inWidthOfLabel);
+        next_alpha.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 2 * inWidthOfLabel], inWidthOfLabel);
+        temp.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 3 * inWidthOfLabel], inWidthOfLabel);
+        ExpF.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel], inWidthOfFeature);
+        ws.rebind(&mStorage[4 + 5 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel], inWidthOfFeature);
+        numRows.rebind(&mStorage[4 + 6 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel +1 ]);
     }
 
     Handle mStorage;
