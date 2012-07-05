@@ -102,7 +102,7 @@ public:
                                    "states");
 
         numRows += inOtherState.numRows;
-        grad_intermediate += inOtherState.grad_intermediate;
+        grad_new += inOtherState.grad_new;
         loglikelihood += inOtherState.loglikelihood;
         return *this;
     }
@@ -112,7 +112,7 @@ public:
      */
     inline void reset() {
         numRows = 0;
-        grad_intermediate.fill(0);
+        grad_new.fill(0);
         ExpF.fill(0);
         loglikelihood = 0;
     }
@@ -138,7 +138,7 @@ private:
      *
      * Intra-iteration components (updated in transition step):
      * - 3 + 3 * widthOfX: numRows (number of rows already processed in this iteration)
-     * - 4 + 3 * widthOfX: grad_intermediate (intermediate value for gradient)
+     * - 4 + 3 * widthOfX: grad_new (intermediate value for gradient)
      * - 4 + widthOfX * widthOfX + 4 * widthOfX: loglikelihood ( ln(l(c)) )
      */
     void rebind(uint32_t num_features, uint32_t num_labels) {
@@ -148,7 +148,7 @@ private:
         loglikelihood.rebind(&mStorage[3]);
         gradlogli.rebind(&mStorage[4], num_features);
         lambda.rebind(&mStorage[4 + num_features], num_features);
-        grad_intermediate.rebind(&mStorage[4 + num_features], num_features);
+        grad_new.rebind(&mStorage[4 + num_features], num_features);
         diag.rebind(&mStorage[4 + 2 * num_features], num_features);
         Mi.rebind(&mStorage[4 + 3 * num_features], num_labels * num_labels);
         Vi.rebind(&mStorage[4 + 3 * num_features + num_labels * num_labels], num_labels);
@@ -171,7 +171,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradlogli;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap lambda;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_intermediate;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_new;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap Mi;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap Vi;
@@ -243,7 +243,7 @@ linear_crf_step_transition::run(AnyType &args) {
         size_t f_type =  featureType(index);
             if (f_type == 0 || f_type == 1) {
                 state.gradlogli(f_index) += 1;
-                state.grad_intermediate += state.lambda(f_index) * 1;
+                state.grad_new += state.lambda(f_index) * 1;
             }
             if (f_type == 1) {
                 state.ExpF(f_index) += state.next_alpha(curr_index) * 1 * (betas[j])[curr_index(index)];
@@ -258,16 +258,16 @@ linear_crf_step_transition::run(AnyType &args) {
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
     double Zx = alpha->sum();
-    state.grad_intermediate -= std::log(Zx);
+    state.grad_new -= std::log(Zx);
 
     // re-correct the value of seq_logli because Zx was computed from
     // scaled alpha values
     for (size_t k = 0; k < seq_len; k++) {
-        state.grad_intermediate -= std::log(scale[k]);
+        state.grad_new -= std::log(scale[k]);
     }
     // update the gradient vector
     for (size_t k = 0; k < state.num_features; k++) {
-        state.grad_intermediate(k) -= state.ExpF(k) / Zx;
+        state.grad_new(k) -= state.ExpF(k) / Zx;
     }
 
     return state;
@@ -310,6 +310,7 @@ linear_crf_step_final::run(AnyType &args) {
         state.gradlogli(i) = -1 * state.lambda(i) / 1;//TODO
         state.loglikelihood -= (state.lambda(i) * state.lambda(i)) / (2 * 1);
      }
+     state.gradlogli+=state.grad_new;
         //invole lbfgs algorithm
         lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&state.diagco,
               state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
@@ -354,7 +355,7 @@ linear_crf_step_final::run(AnyType &args) {
         // FIXME: We currently need to copy the coefficient to a native array
         // This should be transparent to user code
         HandleMap<ColumnVector> lambda(
-            inAllocator.allocateArray<double>(inCoef.size()));
+            inAllocator.allocateArray<double>(inlambda.size()));
         lambda = inlambda;
 
         // Return all coefficients, standard errors, etc. in a tuple
