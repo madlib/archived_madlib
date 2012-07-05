@@ -31,6 +31,17 @@ AnyType stateToResult(const Allocator &inAllocator,
                       const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
                       double loglikelihood);
 
+AnyType compute_log_Mi(
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &features,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &prevLabel,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &currLabel,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &featureType,
+    HandleMap<const ColumnVector, TransparentHandle<double> > &Mi,
+    HandleMap<const ColumnVector, TransparentHandle<double> > &Vi,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &lambda,
+    uint32_t &index, uint32_t num_labels);
+ 
+
 template <class Handle>
 class GradientTransitionState {
     template <class OtherHandle>
@@ -165,9 +176,7 @@ linear_crf_step_transition::run(AnyType &args) {
     for (size_t j = 0; j < seq_len; j++) {
         compute_log_Mi(features,featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels);
         if (j > 0) {
-            *temp = state.alpha;
-            //mathlib::mult(state.num_labels, state.next_alpha, state.Mi, temp, 1);
-            state.next_alpha->comp_multstate.Vi;
+            state.next_alpha=state.Mi*state.alpha;
         } else {
             state.next_alpha = state.Vi;
         }
@@ -182,10 +191,10 @@ linear_crf_step_transition::run(AnyType &args) {
                 state.grad_new += state.lambda(f_index) * 1;
             }
             if (f_type == 1) {
-                state.ExpF(f_index) += state.next_alpha(curr_index) * 1 * (betas[j])[curr_index(index)];
+                state.ExpF(f_index) += state.next_alpha(curr_index) * 1 * betas(j,curr_index);
             } else if (f_type == 0) {
                 state.ExpF(f_index) += state.alpha[prev_index] * state.Vi(curr_index) * state.Mi(prev_index,curr_index)
-                                       * 1 * (*(betas[j]))(curr_index);
+                                       * 1 * betas(j,curr_index);
             }
         }
         state.alpha = state.next_alpha;
