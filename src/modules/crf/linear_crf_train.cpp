@@ -133,7 +133,7 @@ linear_crf_step_transition::run(AnyType &args) {
     HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> currLabel = args[4].getAs<ArrayHandle<double> >();
-    double seq_len_double = args[5].getAs<double>();
+    size_t seq_len = args[5].getAs<double>();
     if (state.numRows == 0) {
         state.initialize(*this, state.num_features, state.num_labels);
         if (!args[3].isNull()) {
@@ -155,12 +155,10 @@ linear_crf_step_transition::run(AnyType &args) {
     size_t index=0;
     for (size_t i = seq_len - 1; i > 0; i--) {
         compute_log_Mi(features,prevLabel, currLabel, featureType,state.Mi,state.Vi,state.lambda,index,state.num_labels);
-        *temp = *(betas[i]);
-        temp->comp_multstate.Vi;
-        mathlib::mult(state.num_labels, betas(i - 1), state.Mi, temp, 0);
+        betas(i-1)=state.Mi*(betas(i)*state.Vi);
         // scale for the next (backward) beta values
         scale(i - 1) = betas(i - 1).sum();
-        betas(i - 1)->comp_mult(1.0 / scale(i - 1));
+        betas(i - 1)*=(1.0 / scale(i - 1));
     } // end of beta values computation
 
     // start to compute the log-likelihood of the current sequence
