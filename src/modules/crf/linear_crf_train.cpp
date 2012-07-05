@@ -142,8 +142,9 @@ linear_crf_step_transition::run(AnyType &args) {
             state.reset();
         }
     }
-    HandleMap<ColumnVector> betas(inAllocator.allocateArray<double>(seq_len));
-    HandleMap<ColumnVector> scale(inAllocator.allocateArray<double>(seq_len));
+    
+    HandleMap<ColumnVector> betas(this->allocateArray<double>(seq_len));
+    HandleMap<ColumnVector> scale(this->allocateArray<double>(seq_len));
     // Now do the transition step
     state.numRows++;
     state.alpha.fill(1);
@@ -154,8 +155,8 @@ linear_crf_step_transition::run(AnyType &args) {
 
     size_t index=0;
     for (size_t i = seq_len - 1; i > 0; i--) {
-    Mi.fill(0);
-    Vi.fill(0);
+    state.Mi.fill(0);
+    state.Vi.fill(0);
     // examine all features at position "pos"
     while (features(index)!=-1) {
         size_t f_index = features(index);
@@ -172,12 +173,12 @@ linear_crf_step_transition::run(AnyType &args) {
     }
 
     // take exponential operator
-    for (size_t i = 0; i < state.num_labels; i++) {
+    for (size_t m = 0; m < state.num_labels; m++) {
 	    // update for Vi
-	    state.Vi(i) = std::exp(state.Vi(i));
+	    state.Vi(m) = std::exp(state.Vi(m));
 	    // update for Mi
-	    for (size_t j = 0; j < state.num_labels; j++) {
-		    state.Mi(i, j) = std::exp(state.Mi(i, j));
+	    for (size_t n = 0; n < state.num_labels; n++) {
+		    state.Mi(m, n) = std::exp(state.Mi(m, n));
 	    }
     }
         betas(i-1)=state.Mi*(betas(i)*state.Vi);
@@ -188,8 +189,8 @@ linear_crf_step_transition::run(AnyType &args) {
 
     // start to compute the log-likelihood of the current sequence
     for (size_t j = 0; j < seq_len; j++) {
-    Mi.fill(0);
-    Vi.fill(0);
+    state.Mi.fill(0);
+    state.Vi.fill(0);
     // examine all features at position "pos"
     while (features(index)!=-1) {
         size_t f_index = features(index);
@@ -238,11 +239,11 @@ linear_crf_step_transition::run(AnyType &args) {
             }
         }
         state.alpha = state.next_alpha;
-        state.alpha->comp_mult(1.0 / scale[j]);
+        state.alpha.fill(1.0 / scale[j]);
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
-    double Zx = alpha->sum();
+    double Zx = state.alpha->sum();
     state.grad_new -= std::log(Zx);
 
     // re-correct the value of seq_logli because Zx was computed from
@@ -297,8 +298,8 @@ linear_crf_step_final::run(AnyType &args) {
     }
     state.gradlogli+=state.grad_new;
     //invole lbfgs algorithm
-    lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&state.diagco,
-          state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
+    //lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&state.diagco,
+     //     state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
     // checking after calling LBFGS
     if (state.iflag < 0) {
         // LBFGS error
