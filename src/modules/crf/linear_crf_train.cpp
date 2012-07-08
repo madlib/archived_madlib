@@ -77,7 +77,6 @@ public:
     inline void reset() {
         numRows = 0;
         grad_new.fill(0);
-        ExpF.fill(0);
         loglikelihood = 0;
     }
 
@@ -95,12 +94,6 @@ private:
         lambda.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
         grad_new.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
         diag.rebind(&mStorage[4 + 2 * inWidthOfFeature], inWidthOfFeature);
-        Mi.rebind(&mStorage[4 + 3 * inWidthOfFeature], inWidthOfLabel * inWidthOfLabel);
-        Vi.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel], inWidthOfLabel);
-        alpha.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + inWidthOfLabel], inWidthOfLabel);
-        next_alpha.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 2 * inWidthOfLabel], inWidthOfLabel);
-        temp.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 3 * inWidthOfLabel], inWidthOfLabel);
-        ExpF.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel], inWidthOfFeature);
         ws.rebind(&mStorage[4 + 5 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel], inWidthOfFeature);
         numRows.rebind(&mStorage[4 + 6 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel +1 ]);
     }
@@ -116,12 +109,6 @@ public:
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap lambda;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_new;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap Mi;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap Vi;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap alpha;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap next_alpha;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap temp;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ExpF;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ws;
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
 };
@@ -142,12 +129,17 @@ linear_crf_step_transition::run(AnyType &args) {
             state.reset();
         }
     }
-    
-    HandleMap<ColumnVector> betas(this->allocateArray<double>(seq_len));
-    HandleMap<ColumnVector> scale(this->allocateArray<double>(seq_len));
+    Eigen::MatrixXd betas(seq_len,state.num_labels);
+    Eigen::VectorXd scale(seq_len);
+    Eigen::VectorXd Mi(state.num_labels,state.num_labels);
+    Eigen::VectorXd Vi(state.num_labels);
+    Eigen::VectorXd alpha(state.num_labels);
+    Eigen::VectorXd next_alpha(state.num_labels);
+    Eigen::VectorXd temp(state.num_labels);
+    Eigen::VectorXd ExpF(state.num_features);
     // Now do the transition step
     state.numRows++;
-    state.alpha.fill(1);
+    alpha.fill(1);
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
     scale(seq_len - 1) = state.num_labels;
@@ -155,71 +147,70 @@ linear_crf_step_transition::run(AnyType &args) {
 
     size_t index=0;
     for (size_t i = seq_len - 1; i > 0; i--) {
-    state.Mi.fill(0);
-    state.Vi.fill(0);
-    // examine all features at position "pos"
-    while (features(index)!=-1) {
-        size_t f_index = features(index);
-        size_t prev_index = prevLabel(index);
-        size_t curr_index = currLabel(index);
-        size_t f_type =  featureType(index);
-        if (f_type == 0) {
-            // state feature
-            state.Vi(curr_index) += state.lambda(f_index);
-        } else if (f_type == 1) { /* if (pos > 0)*/
-            state.Mi(prev_index, curr_index) += state.lambda(f_index);
+        Mi.fill(0);
+        Vi.fill(0);
+        // examine all features at position "pos"
+        while (features(index)!=-1) {
+            size_t f_index = features(index);
+            size_t prev_index = prevLabel(index);
+            size_t curr_index = currLabel(index);
+            size_t f_type =  featureType(index);
+            if (f_type == 0) {
+                // state feature
+                Vi(curr_index) += state.lambda(f_index);
+            } else if (f_type == 1) { /* if (pos > 0)*/
+                Mi(prev_index, curr_index) += state.lambda(f_index);
+            }
+            index++;
         }
-        index++;
-    }
 
-    // take exponential operator
-    for (size_t m = 0; m < state.num_labels; m++) {
-	    // update for Vi
-	    state.Vi(m) = std::exp(state.Vi(m));
-	    // update for Mi
-	    for (size_t n = 0; n < state.num_labels; n++) {
-		    state.Mi(m, n) = std::exp(state.Mi(m, n));
-	    }
-    }
-        betas(i-1)=state.Mi*(betas(i)*state.Vi);
+        // take exponential operator
+        for (size_t m = 0; m < state.num_labels; m++) {
+            // update for Vi
+            Vi(m) = std::exp(Vi(m));
+            // update for Mi
+            for (size_t n = 0; n < state.num_labels; n++) {
+                Mi(m, n) = std::exp(Mi(m, n));
+            }
+        }
         // scale for the next (backward) beta values
-        scale(i - 1) = betas(i - 1).sum();
+        scale(i - 1)=betas.row(i-1).sum();
         betas(i - 1)*=(1.0 / scale(i - 1));
     } // end of beta values computation
 
     // start to compute the log-likelihood of the current sequence
     for (size_t j = 0; j < seq_len; j++) {
-    state.Mi.fill(0);
-    state.Vi.fill(0);
-    // examine all features at position "pos"
-    while (features(index)!=-1) {
-        size_t f_index = features(index);
-        size_t prev_index = prevLabel(index);
-        size_t curr_index = currLabel(index);
-        size_t f_type =  featureType(index);
-        if (f_type == 0) {
-            // state feature
-            state.Vi(curr_index) += state.lambda(f_index);
-        } else if (f_type == 1) { /* if (pos > 0)*/
-            state.Mi(prev_index, curr_index) += state.lambda(f_index);
+        Mi.fill(0);
+        Vi.fill(0);
+        // examine all features at position "pos"
+        while (features(index)!=-1) {
+            size_t f_index = features(index);
+            size_t prev_index = prevLabel(index);
+            size_t curr_index = currLabel(index);
+            size_t f_type =  featureType(index);
+            if (f_type == 0) {
+                // state feature
+                Vi(curr_index) += state.lambda(f_index);
+            } else if (f_type == 1) { /* if (pos > 0)*/
+                Mi(prev_index, curr_index) += state.lambda(f_index);
+            }
+            index++;
         }
-        index++;
-    }
 
-    // take exponential operator
-    for (size_t i = 0; i < state.num_labels; i++) {
-	    // update for Vi
-	    state.Vi(i) = std::exp(state.Vi(i));
-	    // update for Mi
-	    for (size_t j = 0; j < state.num_labels; j++) {
-		    state.Mi(i, j) = std::exp(state.Mi(i, j));
-	    }
-    }
-       
+        // take exponential operator
+        for (size_t i = 0; i < state.num_labels; i++) {
+            // update for Vi
+            Vi(i) = std::exp(Vi(i));
+            // update for Mi
+            for (size_t j = 0; j < state.num_labels; j++) {
+                Mi(i, j) = std::exp(Mi(i, j));
+            }
+        }
+
         if (j > 0) {
-            state.next_alpha=state.Mi*state.alpha;
+            next_alpha=Mi*alpha;
         } else {
-            state.next_alpha = state.Vi;
+            next_alpha = Vi;
         }
 
         while (features(index)!=-1) {
@@ -229,31 +220,31 @@ linear_crf_step_transition::run(AnyType &args) {
             size_t f_type =  featureType(index);
             if (f_type == 0 || f_type == 1) {
                 state.gradlogli(f_index) += 1;
-                state.grad_new += state.lambda(f_index) * 1;
+                state.loglikelihood += state.lambda(f_index);
             }
             if (f_type == 1) {
-                state.ExpF(f_index) += state.next_alpha(curr_index) * 1 * betas(j,curr_index);
+                ExpF(f_index) += next_alpha(curr_index) * 1 * betas(j,curr_index);
             } else if (f_type == 0) {
-                state.ExpF(f_index) += state.alpha[prev_index] * state.Vi(curr_index) * state.Mi(prev_index,curr_index)
-                                       * 1 * betas(j,curr_index);
+                ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index)
+                                 * 1 * betas(j,curr_index);
             }
         }
-        state.alpha = state.next_alpha;
-        state.alpha.fill(1.0 / scale[j]);
+        alpha = next_alpha;
+        alpha.fill(1.0 / scale[j]);
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
-    double Zx = state.alpha->sum();
-    state.grad_new -= std::log(Zx);
+    double Zx = alpha.sum();
+    state.loglikelihood -= std::log(Zx);
 
     // re-correct the value of seq_logli because Zx was computed from
     // scaled alpha values
     for (size_t k = 0; k < seq_len; k++) {
-        state.grad_new -= std::log(scale[k]);
+        state.loglikelihood -= std::log(scale[k]);
     }
     // update the gradient vector
     for (size_t k = 0; k < state.num_features; k++) {
-        state.grad_new(k) -= state.ExpF(k) / Zx;
+        state.grad_new(k) -= ExpF(k) / Zx;
     }
 
     return state;
@@ -297,13 +288,15 @@ linear_crf_step_final::run(AnyType &args) {
         state.loglikelihood -= (state.lambda(i) * state.lambda(i)) / (2 * 1);
     }
     state.gradlogli+=state.grad_new;
+    int iflag=0;
     //invole lbfgs algorithm
     //lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&state.diagco,
-     //     state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
+    //     state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
     // checking after calling LBFGS
-    if (state.iflag < 0) {
+
+    if (iflag < 0) {
         // LBFGS error
-        printf("LBFGS routine encounters an error\n");
+        throw std::domain_error("LBFGS routine encounters an error\n");
     }
     state.iteration++;
     return state;
