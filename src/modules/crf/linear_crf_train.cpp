@@ -28,7 +28,7 @@ namespace crf {
 
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
-                      const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
+                      const HandleMap<const ColumnVector, TransparentHandle<double> > &incoef,
                       double loglikelihood);
 
 template <class Handle>
@@ -91,7 +91,7 @@ private:
         num_labels.rebind(&mStorage[2]);
         loglikelihood.rebind(&mStorage[3]);
         gradlogli.rebind(&mStorage[4], inWidthOfFeature);
-        lambda.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
+        coef.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
         grad_new.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
         diag.rebind(&mStorage[4 + 2 * inWidthOfFeature], inWidthOfFeature);
         ws.rebind(&mStorage[4 + 5 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel], inWidthOfFeature);
@@ -106,7 +106,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradlogli;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap lambda;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_new;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ws;
@@ -157,9 +157,9 @@ linear_crf_step_transition::run(AnyType &args) {
             size_t f_type =  featureType(index);
             if (f_type == 0) {
                 // state feature
-                Vi(curr_index) += state.lambda(f_index);
+                Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { /* if (pos > 0)*/
-                Mi(prev_index, curr_index) += state.lambda(f_index);
+                Mi(prev_index, curr_index) += state.coef(f_index);
             }
             index++;
         }
@@ -190,9 +190,9 @@ linear_crf_step_transition::run(AnyType &args) {
             size_t f_type =  featureType(index);
             if (f_type == 0) {
                 // state feature
-                Vi(curr_index) += state.lambda(f_index);
+                Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { /* if (pos > 0)*/
-                Mi(prev_index, curr_index) += state.lambda(f_index);
+                Mi(prev_index, curr_index) += state.coef(f_index);
             }
             index++;
         }
@@ -220,7 +220,7 @@ linear_crf_step_transition::run(AnyType &args) {
             size_t f_type =  featureType(index);
             if (f_type == 0 || f_type == 1) {
                 state.gradlogli(f_index) += 1;
-                state.loglikelihood += state.lambda(f_index);
+                state.loglikelihood += state.coef(f_index);
             }
             if (f_type == 1) {
                 ExpF(f_index) += next_alpha(curr_index) * 1 * betas(j,curr_index);
@@ -284,13 +284,13 @@ linear_crf_step_final::run(AnyType &args) {
         return Null();
 
     for (size_t i = 0; i < state.num_features; i++) {
-        state.gradlogli(i) = -1 * state.lambda(i) / 1;//TODO
-        state.loglikelihood -= (state.lambda(i) * state.lambda(i)) / (2 * 1);
+        state.gradlogli(i) = -1 * state.coef(i) / 1;//TODO
+        state.loglikelihood -= (state.coef(i) * state.coef(i)) / (2 * 1);
     }
     state.gradlogli+=state.grad_new;
     int iflag=0;
     //invole lbfgs algorithm
-    //lbfgs(&state.num_features,&state.m_for_hessian,state.lambda,&state.loglikelihood,state.gradlogli,&state.diagco,
+    //lbfgs(&state.num_features,&state.m_for_hessian,state.coef,&state.loglikelihood,state.gradlogli,&state.diagco,
     //     state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
     // checking after calling LBFGS
 
@@ -318,7 +318,7 @@ internal_linear_crf_step_distance::run(AnyType &args) {
 AnyType
 internal_linear_crf_result::run(AnyType &args) {
     GradientTransitionState<ArrayHandle<double> > state = args[0];
-    return stateToResult(*this, state.lambda, state.loglikelihood);
+    return stateToResult(*this, state.coef, state.loglikelihood);
 }
 
 /**
@@ -329,17 +329,17 @@ internal_linear_crf_result::run(AnyType &args) {
  */
 AnyType stateToResult(
     const Allocator &inAllocator,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &inlambda,
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &incoef,
     double loglikelihood) {
     // FIXME: We currently need to copy the coefficient to a native array
     // This should be transparent to user code
-    HandleMap<ColumnVector> lambda(
-        inAllocator.allocateArray<double>(inlambda.size()));
-    lambda = inlambda;
+    HandleMap<ColumnVector> coef(
+        inAllocator.allocateArray<double>(incoef.size()));
+    coef = incoef;
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << loglikelihood << lambda;
+    tuple << loglikelihood << coef;
     return tuple;
 }
 
