@@ -81,21 +81,21 @@ public:
     }
 
 private:
-    static inline uint64_t arraySize(const uint32_t num_features, const uint32_t num_labels) {
-        return 4 + 6 * num_features + num_labels * num_labels + 4 * num_labels + 1;
+    static inline uint64_t arraySize(const uint32_t num_features) {
+        return 5 + 5 * num_features;
     }
 
     void rebind(uint32_t inWidthOfFeature, uint32_t inWidthOfLabel) {
         iteration.rebind(&mStorage[0]);
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
-        loglikelihood.rebind(&mStorage[3]);
-        gradlogli.rebind(&mStorage[4], inWidthOfFeature);
-        coef.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
-        grad_new.rebind(&mStorage[4 + inWidthOfFeature], inWidthOfFeature);
-        diag.rebind(&mStorage[4 + 2 * inWidthOfFeature], inWidthOfFeature);
-        ws.rebind(&mStorage[4 + 5 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel], inWidthOfFeature);
-        numRows.rebind(&mStorage[4 + 6 * inWidthOfFeature + inWidthOfLabel * inWidthOfLabel + 4 * inWidthOfLabel +1 ]);
+        numRows.rebind(&mStorage[3]);
+        loglikelihood.rebind(&mStorage[4]);
+        gradlogli.rebind(&mStorage[5], inWidthOfFeature);
+        coef.rebind(&mStorage[5 + inWidthOfFeature], inWidthOfFeature);
+        grad_new.rebind(&mStorage[5 + 2 * inWidthOfFeature], inWidthOfFeature);
+        diag.rebind(&mStorage[5 + 3 * inWidthOfFeature], inWidthOfFeature);
+        ws.rebind(&mStorage[5 + 4 * inWidthOfFeature], inWidthOfFeature);
     }
 
     Handle mStorage;
