@@ -144,7 +144,7 @@ linear_crf_step_transition::run(AnyType &args) {
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
     scale(seq_len - 1) = state.num_labels;
-    betas(seq_len - 1) = (1.0 / scale(seq_len - 1));
+    betas.row(seq_len - 1).fill(1.0 / scale(seq_len - 1));
 
     size_t index=0;
     for (size_t i = seq_len - 1; i > 0; i--) {
@@ -176,9 +176,11 @@ linear_crf_step_transition::run(AnyType &args) {
         }
         // scale for the next (backward) beta values
         scale(i - 1)=betas.row(i-1).sum();
-        betas(i - 1)*=(1.0 / scale(i - 1));
+        betas.row(i - 1)*=(1.0 / scale(i - 1));
     } // end of beta values computation
+  
 
+    state.loglikelihood = 0;
     // start to compute the log-likelihood of the current sequence
     for (size_t j = 0; j < seq_len; j++) {
         Mi.fill(0);
@@ -231,7 +233,7 @@ linear_crf_step_transition::run(AnyType &args) {
             }
         }
         alpha = next_alpha;
-        alpha.fill(1.0 / scale[j]);
+        alpha*=(1.0 / scale[j]);
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
