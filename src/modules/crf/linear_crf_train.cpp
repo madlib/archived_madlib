@@ -140,6 +140,7 @@ linear_crf_step_transition::run(AnyType &args) {
     // Now do the transition step
     state.numRows++;
     alpha.fill(1);
+    ExpF.fill(0);
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
     scale(seq_len - 1) = state.num_labels;
