@@ -1,0 +1,407 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file cox_prop_hazards.sql_in
+ *
+ * @brief SQL functions for cox proportional hazards
+ * @date July 2012
+ *
+ * @sa For a brief introduction to cox regression, see the
+ *     module description \ref grp_cox_prop_hazards
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_cox_prop_hazards
+
+@about
+Proportional-Hazard models enable the comparison of various survival models. 
+These survival models are functions describing the probability of an one-item 
+event (prototypically, this event is death) with respect to time. 
+The interval of time before death occurs is the survival time. 
+Let T be a random variable representing the survival time, 
+with a cumulative probability function P(t). Informally, P(t) is 
+the probability that death has happened before time t.
+
+Generally, applications start with a list of \f$ \boldsymbol n \f$ observations, 
+each with \f$ \boldsymbol m \f$ covariates and a time of death. From this 
+\f$ \boldsymbol n \times m \f$ matrix, we would like to derive the correlation 
+between the covariates and the hazard function. This amounts to finding 
+the parameters \f$ \boldsymbol \beta \f$ that best fit the model described below.
+
+Let us define:
+- \f$ \boldsymbol t \in  \mathbf R^{m} \f$ denote the vector of observed dependent
+  variables, with \f$ n \f$ rows.
+- \f$ X \in \mathbf R^{m} \f$ denote the design matrix with \f$ m \f$
+  columns and \f$ n \f$ rows, containing all observed vectors of independent
+  variables \f$ \boldsymbol x_i \f$ as rows.
+- \f$ R(t_i) \f$ denote the set of observations still alive at time \f$ t_i \f$
+
+Note that this model <b>does not</b> include a <b>constant term</b>, and the data
+cannot contain a column of 1s.
+
+By definition,
+\f[
+    P[T_k = t_i | \boldsymbol R(t_i)]
+    =    \frac{e^{\beta^T x_k} }{ \sum_{j \in R(t_i)} e^{\beta^T x_j}}.
+    \,.
+\f]
+
+The <b>partial likelihood </b>function can now be generated as the product of 
+conditional probabilities:
+\f[
+\mathcal L = \prod_{i = 1}^n 
+				\left(
+				\frac{e^{\beta^T x_i}}{ \sum_{j \in R(t_i)} e^{\beta^T x_j}}
+				\right).
+\f]
+
+The log-likelihood form of this equation is
+\f[
+L = \sum_{i = 1}^n 
+					\left[  \beta^T x_i
+									- \log\left(\sum_{j \in R(t_i)} e^{\beta^T x_j }\right)
+					\right].
+\f]
+
+Using this score function and Hessian matrix, the partial likelihood can be 
+maximized using the <b> Newton-Raphson algorithm </b>.<b> Breslow's method </b> 
+is used to resolved tied times of deaths. The time of death for two records are 
+considered "equal" if they differ by less than 1.0e-6
+
+The inverse of the Hessian matrix, evaluated at the estimate of 
+\f$ \boldsymbol \beta \f$, can be used as an <b>approximate variance-covariance 
+matrix </b> for the estimate, and used to produce approximate 
+<b>standard errors</b> for the regression coefficients.
+
+\f[
+    \mathit{se}(c_i) = \left( (H)^{-1} \right)_{ii}
+    \,.
+\f]
+The Wald z-statistic is
+\f[
+    z_i = \frac{c_i}{\mathit{se}(c_i)}
+    \,.
+\f]
+
+The Wald \f$ p \f$-value for coefficient \f$ i \f$ gives the probability (under
+the assumptions inherent in the Wald test) of seeing a value at least as extreme
+as the one observed, provided that the null hypothesis (\f$ c_i = 0 \f$) is
+true. Letting \f$ F \f$ denote the cumulative density function of a standard
+normal distribution, the Wald \f$ p \f$-value for coefficient \f$ i \f$ is
+therefore
+\f[
+    p_i = \Pr(|Z| \geq |z_i|) = 2 \cdot (1 - F( |z_i| ))
+\f]
+where \f$ Z \f$ is a standard normally distributed random variable.
+
+
+The condition number is computed as \f$ \kappa(H) \f$ during the iteration
+immediately <em>preceding</em> convergence (i.e., \f$ A \f$ is computed using
+the coefficients of the previous iteration). A large condition number (say, more
+than 1000) indicates the presence of significant multicollinearity.
+
+
+@input
+
+The training data is expected to be of the following form:\n
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>dependentVariable</em> FLOAT8,
+    <em>independentVariables</em> FLOAT8[],
+    ...
+)</pre>
+Note: Dependent Variables refer to the time of death. There is no need to
+pre-sort the data. Additionally, all the data is assumed
+
+
+@usage
+- Get vector of coefficients \f$ \boldsymbol \beta \f$ and all diagnostic
+  statistics:\n
+  <pre>SELECT * FROM \ref cox_prop_hazards(
+    '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
+    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
+);</pre>
+  Output:
+  Output:
+  <pre>coef | log_likelihood | std_err | z_stats | p_values  | condition_no | num_iterations
+                                               ...
+</pre>
+- Get vector of coefficients \f$ \boldsymbol \beta \f$:\n
+  <pre>SELECT (\ref cox_prop_hazards('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
+- Get a subset of the output columns, e.g., only the array of coefficients
+  \f$ \boldsymbol \beta \f$, the log-likelihood of determination:
+  <pre>SELECT coef, log_likelihood
+FROM \ref cox_prop_hazards('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+
+@examp
+
+-# Create the sample data set:
+@verbatim 
+sql> SELECT * FROM data;
+      val   | time
+------------|--------------
+ {0,1.95}   | 35
+ {0,2.20}   | 28
+ {1,1.45}   | 32
+ {1,5.25}   | 31
+ {1,0.38}   | 21
+...
+@endverbatim
+-# Run the cox regression function:
+@verbatim
+sql> SELECT * FROM cox_prop_hazards('data', 'val', 'time', 100, 'newto', 0.001);
+---------------|--------------------------------------------------------------
+coef           | {0.881089349817059,-0.0756817768938055}
+log_likelihood | -4.46535157957394
+std_err        | {1.16954914708414,0.338426252282655}
+z_stats        | {0.753356711368689,-0.223628410729811}
+p_values       | {0.451235588326831,0.823046454908087}
+condition_no   | 12.1135391339082
+num_iterations | 4
+
+@endverbatim
+
+@literature
+
+A somewhat random selection of nice write-ups, with valuable pointers into
+further literature:
+
+[1] John Fox: Cox Proportional-Hazards Regression for Survival Data,
+		Appendix to An R and S-PLUS companion to Applied Regression Feb 2012,
+    http://cran.r-project.org/doc/contrib/Fox-Companion/appendix-cox-regression.pdf
+
+[2] Stephen J Walters: What is a Cox model?
+    http://www.medicine.ox.ac.uk/bandolier/painres/download/whatis/cox_model.pdf
+
+
+@note Source and column names have to be passed as strings (due to limitations 
+of the SQL syntax).
+
+
+@sa File cox_prop_hazards.sql_in (documenting the SQL functions)
+
+@internal
+@sa Namespace cox_prop_hazards 
+    \ref madlib::modules::stats documenting the implementation in C++
+@endinternal
+
+*/
+
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.intermediate_cox_prop_hazards_result;
+CREATE TYPE MADLIB_SCHEMA.intermediate_cox_prop_hazards_result AS (
+    x DOUBLE PRECISION[],
+    exp_coef_x DOUBLE PRECISION,
+    x_exp_coef_x DOUBLE PRECISION[],
+    x_xTrans_exp_coef_x DOUBLE PRECISION[]
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.intermediate_cox_prop_hazards(
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  coef */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.intermediate_cox_prop_hazards_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE;
+
+
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.cox_prop_hazards_result;
+CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
+    coef DOUBLE PRECISION[],
+    logLikelihood DOUBLE PRECISION,
+    std_err DOUBLE PRECISION[],
+    z_stats DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[],
+    condition_no DOUBLE PRECISION,
+    num_iterations INTEGER
+);
+
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_transition(
+    /*+  state */ DOUBLE PRECISION[],
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,		
+    /*+  exp_coef_x */ DOUBLE PRECISION,
+    /*+  xexp_coef_x */ DOUBLE PRECISION[],
+    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+  previous_state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS 
+'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+
+/**
+ * @internal
+ * @brief Perform one iteration the Newton-Rhapson method.
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__',m4_ifdef(`__HAS_ORDERED_AGGREGATES__',`ORDERED'))
+AGGREGATE MADLIB_SCHEMA.cox_prop_hazards_step(
+
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,
+    /*+  exp_coef_x */ DOUBLE PRECISION,
+    /*+  xexp_coef_x */ DOUBLE PRECISION[],
+    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.cox_prop_hazards_step_transition,
+    FINALFUNC=MADLIB_SCHEMA.cox_prop_hazards_step_final,
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_cox_prop_hazards_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_cox_prop_hazards_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+-- We only need to document the last one (unfortunately, in Greenplum we have to
+-- use function overloading instead of default arguments).
+CREATE FUNCTION MADLIB_SCHEMA.compute_cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR,
+    "maxNumIterations" INTEGER,
+    "optimizer" VARCHAR,
+    "precision" DOUBLE PRECISION)
+RETURNS INTEGER
+AS $$PythonFunction(stats, cox_prop_hazards, compute_cox_prop_hazards)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief Compute cox-regression coefficients and diagnostic statistics
+ *
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ * 
+ * @param source Name of the source relation containing the training data
+ * @param indepColumn Name of the independent column
+ * @param depColumn Name of the dependant column measuring time of death
+ * @param maxNumIterations The maximum number of iterations
+ * @param optimizer The optimizer to use (either
+ *        <tt>'newton'</tt>/<tt>'newton'</tt> for the newton method
+ * @param precision The difference between log-likelihood values in successive
+ *        iterations that should indicate convergence. Note that a non-positive
+ *        value here disables the convergence criterion, and execution will only
+ *        stop after \c maxNumIterations iterations.
+ *
+ * @return A composite value:
+ *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol \beta \f$
+ *  - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$l(\boldsymbol \beta)\f$
+ *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *  - <tt>condition_no FLOAT8</tt> - The condition number of matrix
+ *    \f$ H \f$ during the iteration immediately <em>preceding</em>
+ *    convergence (i.e., \f$ H \f$ is computed using the coefficients of the
+ *    previous iteration)
+ *  - <tt>num_iterations INTEGER</tt> - The number of iterations before the
+ *    algorithm terminated
+ *
+ * - Get vector of coefficients \f$ \boldsymbol \beta \f$ and all diagnostic
+ *  statistics:\n
+ *  <pre>SELECT * FROM \ref cox_prop_hazards(
+ *    '<em>sourceName</em>', '<em>dependentVariable</em>', 
+ * 		'<em>independentVariables</em>'
+ *    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
+ * );</pre>
+ * - Get vector of coefficients \f$ \boldsymbol \beta \f$:\n
+ *  <pre>SELECT (\ref cox_prop_hazards('<em>sourceName</em>', 
+ * '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
+ * - Get a subset of the output columns, e.g., only the array of coefficients
+ *  \f$ \boldsymbol \beta \f$, the log-likelihood of determination:
+ *  <pre>SELECT coef, log_likelihood
+ * FROM \ref cox_prop_hazards('<em>sourceName</em>', '<em>dependentVariable</em>',
+ * '<em>independentVariables</em>');</pre>
+ */
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR,
+    "maxNumIterations" INTEGER /*+ DEFAULT 20 */,
+    "optimizer" VARCHAR /*+ DEFAULT 'newton' */,
+    "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS $$
+DECLARE
+    theIteration INTEGER;
+    fnName VARCHAR;
+    theResult MADLIB_SCHEMA.cox_prop_hazards_result;
+BEGIN
+    theIteration := (
+        SELECT MADLIB_SCHEMA.compute_cox_prop_hazards($1, $2, $3, $4, $5, $6)
+    );
+    IF optimizer = 'newton' THEN
+        fnName := 'internal_cox_prop_hazards_result';
+    ELSE
+        RAISE EXCEPTION 'Unknown optimizer (''%'')', optimizer;
+    END IF;
+    EXECUTE
+        $sql$
+        SELECT (result).*
+        FROM (
+            SELECT
+                MADLIB_SCHEMA.$sql$ || fnName || $sql$(_madlib_state) AS result
+                FROM _madlib_iterative_alg
+                WHERE _madlib_iteration = $sql$ || theIteration || $sql$
+            ) subq
+        $sql$
+        INTO theResult;
+				
+    -- The number of iterations are not updated in the C++ code. We do it here.
+    IF NOT (theResult IS NULL) THEN
+        theResult.num_iterations = theIteration;
+    END IF;
+    RETURN theResult;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR)
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
+$$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, 20, 'newton', 0.0001);$$
+LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR,
+    "maxNumIterations" INTEGER)
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
+$$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, $4, 'newton', 0.0001);$$
+LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR,
+    "maxNumIterations" INTEGER,
+    "optimizer" VARCHAR)
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
+$$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, $4, $5, 0.0001);$$
+LANGUAGE sql VOLATILE;
