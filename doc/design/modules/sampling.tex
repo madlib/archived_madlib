@@ -1,0 +1,172 @@
+% When using TeXShop on the Mac, let it know the root document. The following must be one of the first 20 lines.
+% !TEX root = ../design.tex
+
+\chapter{Sampling}
+
+\section{Sampling without Replacement} \label{sec:SampingWOReplacement}
+
+Given a list of known size $n$ through that we can iterate with arbitrary increments, sampling $m$ elements without replacement can be implemented in time $O(m)$, i.e., proportional to the sample size and independent of the list size \cite{V84a}. Even if the list size $n$ is unknown in advance, sampling can still be implemented in time $O(m(1 + \log \frac nm))$ \cite{V85a}.
+
+While being able to iterate through a list with arbitrary increments might seem like a very modest requirement, it is still not always an option in real-world databases (e.g., in PostgreSQL). It is therefore important to also consider more constrained algorithms.
+
+\subsection{Probabilistic Sampling}
+
+Probabilistic sampling selects each element in the list with probability $p$. Hence, the sample size is a random variable with Binomial distribution $B(n, p)$ and expectation $np$. The standard deviation is $\sqrt{np(1 - p)}$, i.e., approximately $\sqrt{np}$ if $p$ is small. In many applications a fixed sample size $m$ is needed, however. In this case, we could choose $p$ slightly larger than $m/n$, so that with high probability at least $m$ items are selected. Items in excess of $m$ are then discarded.
+
+\subsubsection{Formal Description}
+
+In the following, we discuss how to choose $p$ so that with high probability at least $m$ elements are sampled, but also not ``much'' more than $m$ (in fact, only $O(\sqrt m)$ more in expectation).
+
+In mathematical terms: What is a lower bound on the probability $p$ so that for a random variable $X \sim B(n,p)$ we have that $\Pr[X < m] \leq \epsilon$? We use the Chernoff bound for a fairly good estimate. It says
+%
+\begin{align*}
+	\Pr[X < (1 - \delta) \cdot \mu] \leq \exp\left( \frac{-\delta^2}{2} \cdot \mu \right)
+	\SiM,
+\end{align*}
+where $\mu = np$ is the expectation of $X$, and $\delta \geq 0$. We set $m = (1 - \delta) \cdot \mu$, or equivalently $\delta = \frac{\mu - m}{\mu}$.
+%
+This yields
+\begin{align}
+	\Pr[X < m] \leq \exp\left( \frac{-(\mu - m)^2}{2 \mu} \right)
+	\SiM. \label{eq:SamplingWOReplacent:GP:2}
+\end{align}
+%
+We want the right-hand side of \eqref{eq:SamplingWOReplacent:GP:2} to be bounded by $\epsilon$ from above. Rearranging this gives
+\begin{align*}
+	\mu \geq m - \ln(\epsilon) + \sqrt{\ln^2(\epsilon) - 2 m \ln(\epsilon)}
+	\SiM.
+\end{align*}
+Since $p = \mu / n$, this immediately translates into a lower bound for $p$. For instance, suppose we require $\epsilon = 10^{-6}$, i.e., we want the probability of our sample being too small to be less than one in a million. $\ln(10^{-6}) \approx -13.8$, so we could choose
+\begin{align*}
+	p \geq \frac{m + 14 + \sqrt{196 + 28m}}{n}
+	\SiM.
+\end{align*}
+
+Note that the bound on $\mu$ does not depend on $n$. So in expectation, only $O(m + \sqrt m)$ items are selected. At the same time, at least $m$ items are selected with very high probability.
+
+\subsubsection{Implementation in SQL}
+
+In real-world DBMSs, probabilistic sampling has the advantage that it is trivially data-parallel. Discarding excessive items can be done using the well-known \texttt{ORDER BY random() LIMIT} idiom. Tests show that PostgreSQL is very efficient in doing the sorting (today's CPUs can easily sort 1 million numbers in less than a couple hundred milliseconds). In fact, the sorting cost is almost not measurable if the sample size is only at the scale of several million or less. Since \texttt{ORDER BY random() LIMIT} is an often-used idiom, there is also hope that advanced optimizers might give it special treatment. Put together, in order to sample $m$ random rows uniformly at random, we write:
+\begin{lstlisting}[language=SQL]
+	SELECT * FROM list WHERE random() < p ORDER BY random() LIMIT m
+\end{lstlisting}
+If necessary, checks can be added that indeed $m$ rows have been selected.
+
+
+\subsection{Generating a Random Variate According to a Discrete Probability Distribution}
+
+In practice, probability distributions are often induced by weights (that are not necessarily normalized to add up to 1). The following algorithm is a special case of the ``unequal probability sampling plan'' proposed by \textcite{C82a}. Its idea is very similar to reservoir sampling \cite{MB83a}.
+
+\subsubsection{Formal Description}
+
+\begin{algorithm}[DiscreteSample$(A, w)$] \label{alg:DiscreteSample}
+\alginput{Finite set $A$, Mapping $w$ of each element $a \in A$ to its weight $w[a] \geq 0$}
+\algoutput{Random element $\Sample \in A$ sampled according to distribution induced by $w$}
+\begin{algorithmic}[1]
+	\State $W \set 0$
+	\For{$a \in A$}
+		\State $W \set W + w[a]$ \label{alg:DiscreteSample:UpdateWeight}
+		\With{probability $\frac{w[a]}{W}$} \label{alg:DiscreteSample:Prob}
+			\State $\Sample \set a$ \label{alg:DiscreteSample:SetSample}
+		\EndWith
+	\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\begin{description}
+	\item[Runtime] $O(n)$, single-pass streaming algorithm
+	\item[Space] $O(1)$, constant memory
+	\item[Correctness]
+		Let $a_1, \dots, a_n$ be the order in which the algorithm processes the elements. Denote by $\Sample_t$ the value of $\Sample$ at the end of iteration $t \in \Nupto n$. We prove by induction over $t$ that it holds for all $i \in \Nupto t$ that $\Pr[\Sample_t = a_i] = \frac{w[a_i]}{W_t}$ where $W_t := \sum_{j=1}^t w[a_j]$.
+
+		The base case $t = 1$ holds immediately by lines~\ref{alg:DiscreteSample:Prob}--\ref{alg:DiscreteSample:SetSample}. To see the induction step $t - 1 \to t$, note that $\Pr[\Sample_t = a_t] = \frac{w[a_t]}{W_t}$ (again by lines~\ref{alg:DiscreteSample:Prob}--\ref{alg:DiscreteSample:SetSample}) and that for all $i \in \Nupto{t-1}$
+		\begin{align*}
+			\Pr[\Sample_t = a_i]
+			=	\Pr[\Sample_t \neq a_t] \cdot \Pr[\Sample_{t-1} = a_i]
+			\stackrel{\text{IH}}{=}
+				\left(1 - \frac{w[a_t]}{W_t}\right) \cdot \frac{w[a_i]}{W_{t-1}}
+			=	\frac{w[a_i]}{W_t}
+			\SiM.
+		\end{align*}
+	\item[Scalability]
+		The algorithm can easily be transformed into a divide-and-conquer algorithm, as shown in the following.
+\end{description}
+
+\begin{algorithm}[RecursiveDiscreteSample$(A_1, A_2, w)$] \label{alg:RecursiveDiscreteSample}
+\alginput{Disjoint finite sets $A_1, A_2$, Mapping $w$ of each element $a \in A_1 \cup A_2$ to its weight $w[a] \geq 0$}
+\algoutput{Random element $\Sample \in A_1 \cup A_2$ sampled according to distribution induced by $w$}
+\begin{algorithmic}[1]
+	\State $\tilde A \set \emptyset$
+	\For{$i = 1,2$}
+		\State $\Sample_i \set \texttt{DiscreteSample}(A_i, w)$
+		\State $\tilde A \set \tilde A \cup \{ \Sample_i \}$
+		\State $\tilde w[\Sample_i] \set \sum_{a \in A_i} w[a]$
+	\EndFor
+	\State $\Sample \set \texttt{DiscreteSample}(\tilde A, \tilde w)$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Correctness}
+
+Define $W_i := \sum_{a \in A_i} w[a]$. Let $a \in A_i$ be arbitrary. Then $\Pr[\Sample = a] = \Pr[\Sample_i = a] \cdot \Pr[\Sample \in A_i] = \frac{w[a]}{W_i} \cdot \frac{W_i}{W} = \frac{w[a]}{W}.$
+
+\paragraph{Numerical Considerations}
+
+\begin{itemize}
+	\item When Algorithm~\ref{alg:DiscreteSample} is used for large sets $A$, line~\ref{alg:DiscreteSample:UpdateWeight} will eventually add two numbers that are very different in size. Compensated summation should be used \cite{ORO05a}.
+\end{itemize}
+
+\subsubsection{Implementation as User-Defined Aggregate}
+
+Algorithm~\ref{alg:DiscreteSample} is implemented as the user-defined aggregate \symlabel{discrete\_sample}{sym:discrete_sample}. Data-parallelism is implemented as in Algorithm~\ref{alg:RecursiveDiscreteSample}.
+
+\paragraph{Input} The aggregate expects the following arguments:
+
+\begin{center}
+	\begin{tabularx}{\linewidth}{lXl}
+		\toprule%
+		\textbf{Column} & \textbf{Description} & \textbf{Type}
+		\\\otoprule
+		\texttt{id} &
+		Row identifier, each row corresponds to an $a \in A$. There is no need to enforce uniqueness. If an identifier occurs multiple times, the probability of sampling this identifier is proportional to the sum of its weights. &
+		integer
+		\\\midrule
+		\texttt{weight} &
+		weight for row, corresponds to $w[a]$ &
+		floating-point
+		\\\bottomrule
+	\end{tabularx}
+\end{center}
+%
+While it would be desirable for \texttt{id} to be of generic type, this would also require a generic transition type (see below). However, this is currently not supported in PostgreSQL and Greenplum.
+
+\paragraph{Output}
+
+Value of column \texttt{id} in row that was selected.
+
+\paragraph{Components}
+
+\begin{itemize}
+	\item Transition State:
+		\begin{center}
+			\begin{tabularx}{\linewidth}{lXl}
+				\toprule%
+				\textbf{Field Name} & \textbf{Description} & \textbf{Type}
+				\\\otoprule
+				\texttt{weight\_sum} &
+				corresponds to $W$ in Algorithm~\ref{alg:DiscreteSample} &
+				floating-point
+				\\\midrule
+				\texttt{sample\_id} &
+				corresponds to $\Sample$ in Algorithm~\ref{alg:DiscreteSample}, takes value of column \texttt{id} &
+				integer
+				\\\bottomrule
+			\end{tabularx}
+		\end{center}
+	\item Transition Function (\texttt{state, id, weight}): Lines~\ref{alg:DiscreteSample:UpdateWeight}--\ref{alg:DiscreteSample:SetSample} of Algorithm~\ref{alg:DiscreteSample}
+	\item Merge Function (\texttt{state1, state2}): It is enough to call the transition function with arguments (\texttt{state1, state2.sample\_id, state2.weight\_sum})
+\end{itemize}
+
+\paragraph{Tool Set}
+
+While the user-defined aggregate is simple enough to be implemented in plain SQL, we choose a C++ implementation for performance. Moreover, a C++ implementation allows us to reuse the existing compensated-sum component. \todo{Not documented yet.}
