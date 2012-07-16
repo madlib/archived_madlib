@@ -4,20 +4,29 @@
  *
  *//* ----------------------------------------------------------------------- */
 /**
- * @brief Logistic crfion (conjugate-gradient step): Transition function
+ * @brief Linear-chain CRF (conjugate-gradient step): Transition function
  */
-DECLARE_UDF(crf, linear_crf_step_transition)
+DECLARE_UDF(crf, lincrf_cg_step_transition)
 
 /**
- * @brief Logistic crfion (conjugate-gradient step): State merge function
+ * @brief Linear-chain CRF (conjugate-gradient step): State merge function
  */
-DECLARE_UDF(crf, linear_crf_step_merge_states)
+DECLARE_UDF(crf, lincrf_cg_step_merge_states)
 
 /**
- * @brief Logistic crfion (conjugate-gradient step): Final function
+ * @brief Linear-chain CRF (conjugate-gradient step): Final function
  */
-DECLARE_UDF(crf, linear_crf_step_final)
+DECLARE_UDF(crf, lincrf_cg_step_final)
 
-DECLARE_UDF(crf, internal_linear_crf_step_distance)
-DECLARE_UDF(crf, internal_linear_crf_result)
+/**
+ * @brief Linear-chain CRF (conjugate-gradient): Difference in log-likelihood
+ *     between two transition states
+ */
+DECLARE_UDF(crf, internal_lincrf_cg_step_distance)
+
+/**
+ * @brief Linear-chain CRF (conjugate-gradient): Convert transition state to 
+ *     result tuple
+ */
+DECLARE_UDF(crf, internal_lincrf_cg_result)
 

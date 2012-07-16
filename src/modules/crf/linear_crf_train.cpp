@@ -89,13 +89,13 @@ private:
         iteration.rebind(&mStorage[0]);
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
-        numRows.rebind(&mStorage[3]);
-        loglikelihood.rebind(&mStorage[4]);
-        grad.rebind(&mStorage[5], inWidthOfFeature);
-        coef.rebind(&mStorage[5 + inWidthOfFeature], inWidthOfFeature);
-        grad_new.rebind(&mStorage[5 + 2 * inWidthOfFeature], inWidthOfFeature);
-        diag.rebind(&mStorage[5 + 3 * inWidthOfFeature], inWidthOfFeature);
-        ws.rebind(&mStorage[5 + 4 * inWidthOfFeature], inWidthOfFeature);
+        coef.rebind(&mStorage[3], inWidthOfFeature);
+        dir.rebind(&mStorage[3 + inWidthOfFeature], inWidthOfFeature);
+        grad.rebind(&mStorage[3 + 2 * inWidthOfFeature], inWidthOfFeature);
+        beta.rebind(&mStorage[3 + 3 * inWidthOfFeature]);
+        numRows.rebind(&mStorage[4 + 3 * inWidthOfFeature]);
+        gradNew.rebind(&mStorage[5 + 3 * inWidthOfFeature], inWidthOfFeature);
+        loglikelihood.rebind(&mStorage[5 + 4 * inWidthOfFeature]);
     }
 
     Handle mStorage;
@@ -115,7 +115,7 @@ public:
 };
 
 AnyType
-linear_crf_step_transition::run(AnyType &args) {
+lincrf_cg_step_transition::run(AnyType &args) {
     LinCrfCGTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<double> >();
@@ -268,7 +268,7 @@ linear_crf_step_transition::run(AnyType &args) {
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
 AnyType
-linear_crf_step_merge_states::run(AnyType &args) {
+lincrf_cg_step_merge_states::run(AnyType &args) {
     LinCrfCGTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     LinCrfCGTransitionState<ArrayHandle<double> > stateRight = args[1];
 
@@ -288,7 +288,7 @@ linear_crf_step_merge_states::run(AnyType &args) {
  * @brief Perform the logistic-crfion final step
  */
 AnyType
-linear_crf_step_final::run(AnyType &args) {
+lincrf_cg_step_final::run(AnyType &args) {
  // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
     LinCrfCGTransitionState<MutableArrayHandle<double> > state = args[0];
@@ -360,7 +360,7 @@ linear_crf_step_final::run(AnyType &args) {
  * @brief Return the difference in log-likelihood between two states
  */
 AnyType
-internal_linear_crf_step_distance::run(AnyType &args) {
+internal_lincrf_cg_step_distance::run(AnyType &args) {
     LinCrfCGTransitionState<ArrayHandle<double> > stateLeft = args[0];
     LinCrfCGTransitionState<ArrayHandle<double> > stateRight = args[1];
     return std::abs(stateLeft.loglikelihood - stateRight.loglikelihood);
@@ -370,7 +370,7 @@ internal_linear_crf_step_distance::run(AnyType &args) {
  * @brief Return the coefficients and diagnostic statistics of the state
  */
 AnyType
-internal_linear_crf_result::run(AnyType &args) {
+internal_lincrf_cg_result::run(AnyType &args) {
     LinCrfCGTransitionState<ArrayHandle<double> > state = args[0];
     return stateToResult(*this, state.coef, state.loglikelihood);
 }
