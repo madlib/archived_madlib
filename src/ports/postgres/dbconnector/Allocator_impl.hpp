@@ -101,6 +101,21 @@ BOOST_PP_REPEAT(MADLIB_MAX_ARRAY_DIMS, MADLIB_ALLOCATE_ARRAY_DEF,
 #undef MADLIB_ALLOCATE_ARRAY_DEF
 
 /**
+ * @brief Construct a byte string of the given size
+ */
+template <dbal::MemoryContext MC, dbal::ZeroMemory ZM,
+    dbal::OnMemoryAllocationFailure F>
+inline
+MutableByteString
+Allocator::allocateByteString(std::size_t inSize) const {
+    bytea* byteString = static_cast<bytea*>(
+        allocate<MC, dbal::DoZero, F>(ByteString::kEffectiveHeaderSize + inSize)
+    );
+    SET_VARSIZE(byteString, ByteString::kEffectiveHeaderSize + inSize);
+    return byteString;
+}
+
+/**
  * @brief Allocate a block of memory
  *
  * @return The address of a 16-byte aligned block of memory large enough to hold

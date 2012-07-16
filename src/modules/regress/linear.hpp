@@ -18,3 +18,4 @@ DECLARE_UDF(regress, linregr_merge_states)
  * @brief Linear regression: Final function
  */
 DECLARE_UDF(regress, linregr_final)
+
