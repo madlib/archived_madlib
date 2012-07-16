@@ -40,17 +40,17 @@ public:
     LinCrfCGTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
-        rebind(static_cast<uint16_t>(mStorage[1]),static_cast<uint16_t>(mStorage[2]));
+        rebind(static_cast<uint16_t>(mStorage[1]));
     }
 
     inline operator AnyType() const {
         return mStorage;
     }
 
-    inline void initialize(const Allocator &inAllocator, uint16_t num_features, uint16_t num_labels) {
+    inline void initialize(const Allocator &inAllocator, uint16_t num_features) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-        dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(num_features,num_labels));
-        rebind(num_features,num_labels);
+        dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(num_features));
+        rebind(num_features);
     }
 
     template <class OtherHandle>
@@ -69,14 +69,14 @@ public:
             throw std::logic_error("Internal error: Incompatible transition "
                                    "states");
         numRows += inOtherState.numRows;
-        grad_new += inOtherState.grad_new;
+        gradNew += inOtherState.gradNew;
         loglikelihood += inOtherState.loglikelihood;
         return *this;
     }
 
     inline void reset() {
         numRows = 0;
-        grad_new.fill(0);
+        gradNew.fill(0);
         loglikelihood = 0;
     }
 
@@ -85,7 +85,7 @@ private:
         return 5 + 5 * num_features;
     }
 
-    void rebind(uint32_t inWidthOfFeature, uint32_t inWidthOfLabel) {
+    void rebind(uint32_t inWidthOfFeature) {
         iteration.rebind(&mStorage[0]);
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
@@ -110,7 +110,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToDouble beta;
 
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_new;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradNew;
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
 };
 
@@ -123,7 +123,7 @@ lincrf_cg_step_transition::run(AnyType &args) {
     HandleMap<const ColumnVector> currLabel = args[4].getAs<ArrayHandle<double> >();
     size_t seq_len = args[5].getAs<double>();
     if (state.numRows == 0) {
-        state.initialize(*this, state.num_features, state.num_labels);
+        state.initialize(*this, state.num_features);
         if (!args[3].isNull()) {
             LinCrfCGTransitionState<ArrayHandle<double> > previousState = args[3];
             state = previousState;
@@ -259,7 +259,7 @@ lincrf_cg_step_transition::run(AnyType &args) {
     }
     // update the gradient vector
     for (size_t k = 0; k < state.num_features; k++) {
-        state.grad_new(k) -= ExpF(k) / Zx;
+        state.gradNew(k) -= ExpF(k) / Zx;
     }
 
     return state;
@@ -344,9 +344,9 @@ lincrf_cg_step_final::run(AnyType &args) {
     //           d_k^T H_k d_k
     //
     // c_k = c_{k-1} - alpha_k * d_k
-    state.coef += dot(state.grad, state.dir) /
-        as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
-        * state.dir;
+    //state.coef += dot(state.grad, state.dir) /
+    //    as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
+    //    * state.dir;
     
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
