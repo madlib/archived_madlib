@@ -22,7 +22,7 @@ public:
     typedef Eigen::Map<EigenType, MapOptions> Base;
     typedef typename Base::Scalar Scalar;
     typedef typename Base::Index Index;
-    
+
     using Base::operator=;
 
     /**
@@ -53,12 +53,12 @@ public:
     HandleMap(const Handle &inHandle, Index inNumElem)
       : Base(const_cast<Scalar*>(inHandle.ptr()), inNumElem),
         mMemoryHandle(inHandle) {
-    
+
 //        madlib_assert(inHandle.size() >= inNumElem * sizeof(Scalar),
 //            std::runtime_error("Expected HandleMap to be larger than it "
 //                "actually is."));
     }
-    
+
     /**
      * @brief Initialize HandleMap backed by the given handle
      *
@@ -75,16 +75,18 @@ public:
     HandleMap(const Handle &inHandle, Index inNumRows, Index inNumCols)
       : Base(const_cast<Scalar*>(inHandle.ptr()), inNumRows, inNumCols),
         mMemoryHandle(inHandle) { }
-    
+
     HandleMap& operator=(const HandleMap& other);
     HandleMap& rebind(const Handle &inHandle);
     HandleMap& rebind(const Handle &inHandle, Index inSize);
     HandleMap& rebind(const Handle &inHandle, Index inRows, Index inCols);
+    HandleMap& rebind(Index inSize);
+    HandleMap& rebind(Index inRows, Index inCols);
     const Handle &memoryHandle() const;
 
 protected:
     Handle mMemoryHandle;
-    
+
 private:
     BOOST_STATIC_ASSERT_MSG(
         Handle::isMutable || boost::is_const<EigenType>::value,

@@ -45,6 +45,55 @@ HandleMap<Matrix, MutableArrayHandle<double> >::HandleMap(
         inHandle.sizeOfDim(0)),
     mMemoryHandle(inHandle) { }
 
+/**
+ * @brief Rebind HandleMap to a different one-dimensional array
+ */
+template <>
+inline
+HandleMap<const ColumnVector, ArrayHandle<double> >&
+HandleMap<const ColumnVector, ArrayHandle<double> >::rebind(
+    const ArrayHandle<double>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(0));
+}
+
+/**
+ * @brief Rebind HandleMap to a different one-dimensional array
+ */
+template <>
+inline
+HandleMap<ColumnVector, MutableArrayHandle<double> >&
+HandleMap<ColumnVector, MutableArrayHandle<double> >::rebind(
+    const MutableArrayHandle<double>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(0));
+}
+
+
+/**
+ * @brief Rebind HandleMap to a different two-dimensional array
+ */
+template <>
+inline
+HandleMap<const Matrix, ArrayHandle<double> >&
+HandleMap<const Matrix, ArrayHandle<double> >::rebind(
+    const ArrayHandle<double>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(1), inHandle.sizeOfDim(0));
+}
+
+/**
+ * @brief Rebind HandleMap to a different two-dimensional array
+ */
+template <>
+inline
+HandleMap<Matrix, MutableArrayHandle<double> >&
+HandleMap<Matrix, MutableArrayHandle<double> >::rebind(
+    const MutableArrayHandle<double>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(1), inHandle.sizeOfDim(0));
+}
+
 } // namespace eigen_integration
 
 } // namespace dbal

@@ -74,6 +74,7 @@ extern "C" {
 // Note: If errors occur in the following include files, it could indicate that
 // new macros have been added to PostgreSQL header files.
 #include <boost/type_traits/is_const.hpp>
+#include <boost/type_traits/remove_cv.hpp>
 #include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/utility/enable_if.hpp>
 #include <boost/tr1/array.hpp>
@@ -179,10 +180,12 @@ madlib ## _ ## _pgfunc _arglist { \
 #include "Allocator_proto.hpp"
 #include "ArrayHandle_proto.hpp"
 #include "AnyType_proto.hpp"
+#include "ByteString_proto.hpp"
 #include "FunctionHandle_proto.hpp"
 #include "NativeRandomNumberGenerator_proto.hpp"
 #include "PGException_proto.hpp"
 #include "OutputStreamBuffer_proto.hpp"
+#include "State_proto.hpp"
 #include "SystemInformation_proto.hpp"
 #include "TransparentHandle_proto.hpp"
 #include "UDF_proto.hpp"
@@ -197,10 +200,15 @@ namespace madlib {
 using dbconnector::postgres::Allocator;
 using dbconnector::postgres::AnyType;
 using dbconnector::postgres::ArrayHandle;
+using dbconnector::postgres::ByteString;
 using dbconnector::postgres::FunctionHandle;
 using dbconnector::postgres::MutableArrayHandle;
+using dbconnector::postgres::MutableByteString;
 using dbconnector::postgres::MutableTransparentHandle;
 using dbconnector::postgres::NativeRandomNumberGenerator;
+using dbconnector::postgres::Ref;
+using dbconnector::postgres::RootState;
+using dbconnector::postgres::State;
 using dbconnector::postgres::TransparentHandle;
 
 // Import MADlib functions into madlib namespace
@@ -218,10 +226,12 @@ using dbconnector::postgres::Null;
 #include "Allocator_impl.hpp"
 #include "AnyType_impl.hpp"
 #include "ArrayHandle_impl.hpp"
+#include "ByteString_impl.hpp"
 #include "EigenIntegration_impl.hpp"
 #include "FunctionHandle_impl.hpp"
 #include "NativeRandomNumberGenerator_impl.hpp"
 #include "OutputStreamBuffer_impl.hpp"
+#include "State_impl.hpp"
 #include "TransparentHandle_impl.hpp"
 #include "UDF_impl.hpp"
 #include "SystemInformation_impl.hpp"

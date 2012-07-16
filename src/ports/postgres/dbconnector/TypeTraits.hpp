@@ -69,7 +69,7 @@ private:
  * OID should be verified, but not the type name.
  */
 #define WITHOUT_TYPE_NAME \
-    static inline const char* typeName() { \
+    static const char* typeName() { \
         return NULL; \
     }
 
@@ -80,23 +80,23 @@ private:
 #define WITH_MUTABILITY(_isMutable) \
     enum { isMutable = _isMutable }
 #define WITHOUT_SYSINFO \
-    static inline SystemInformation* toSysInfo(const value_type&) { \
+    static SystemInformation* toSysInfo(const value_type&) { \
         return NULL; \
     }
 #define WITH_DEFAULT_EXTENDED_TRAITS \
     WITHOUT_TYPE_NAME \
     WITHOUT_SYSINFO
 #define WITH_SYS_INFO_CONVERSION(_convertToSysInfo) \
-    static inline SystemInformation* toSysInfo(const value_type& value) { \
+    static SystemInformation* toSysInfo(const value_type& value) { \
         (void) value; \
         return _convertToSysInfo; \
     }
 #define WITH_TO_PG_CONVERSION(_convertToPG) \
-    static inline Datum toDatum(const value_type& value) { \
+    static Datum toDatum(const value_type& value) { \
         return _convertToPG; \
     }
 #define WITH_TO_CXX_CONVERSION(_convertToCXX) \
-    static inline value_type toCXXType(Datum value, bool needMutableClone, \
+    static value_type toCXXType(Datum value, bool needMutableClone, \
         SystemInformation* sysInfo) { \
         \
         (void) value; \
@@ -104,21 +104,52 @@ private:
         (void) sysInfo; \
         return _convertToCXX; \
     }
+#define WITH_BIND_TO_STREAM(_bindToStream) \
+    template <class StreamBuf> \
+    static void bindToStream(BinaryStream<StreamBuf>& stream, \
+        reference_type& ref) { \
+        \
+        _bindToStream; \
+    }
+
+
+template <typename T>
+struct TypeTraitsBase {
+    enum { oid = InvalidOid };
+
+    enum { alignment = MAXIMUM_ALIGNOF };
+    enum { isMutable = dbal::Immutable };
+    enum { typeClass = dbal::SimpleType };
+
+    typedef T value_type;
+    typedef Reference<T> reference_type;
+
+    static const char* typeName() {
+        return NULL;
+    }
+
+    static SystemInformation* toSysInfo(const value_type&) {
+        return NULL;
+    }
+
+    template <class StreamBuf>
+    static void bindToStream(BinaryStream<StreamBuf>& inStream,
+        reference_type& inRef) {
+
+        inRef.rebind(inStream.template read<value_type>());
+    }
+};
 
 template <>
-struct TypeTraits<double> {
-    typedef double value_type;
-
-    WITH_OID( FLOAT8OID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+struct TypeTraits<double> : public TypeTraitsBase<double> {
+    enum { oid = FLOAT8OID };
+    enum { alignment = ALIGNOF_DOUBLE };
     WITH_TO_PG_CONVERSION( Float8GetDatum(value) );
     WITH_TO_CXX_CONVERSION( DatumGetFloat8(value) );
 };
 
 template <>
-struct TypeTraits<float> {
+struct TypeTraits<float>{
     typedef float value_type;
 
     WITH_OID( FLOAT4OID );
@@ -142,13 +173,9 @@ struct TypeTraits<int64_t> {
 };
 
 template <>
-struct TypeTraits<uint64_t> {
-    typedef uint64_t value_type;
-
-    WITH_OID( INT8OID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+struct TypeTraits<uint64_t> : public TypeTraitsBase<uint64_t> {
+    enum { oid = INT8OID };
+    enum { alignment = ALIGNOF_DOUBLE };
     WITH_TO_PG_CONVERSION(
         Int64GetDatum((convertTo<uint64_t, int64_t>(value)))
     );
@@ -186,25 +213,17 @@ struct TypeTraits<uint32_t> {
 };
 
 template <>
-struct TypeTraits<int16_t> {
-    typedef int16_t value_type;
-
-    WITH_OID( INT2OID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+struct TypeTraits<int16_t> : public TypeTraitsBase<int16_t> {
+    enum { oid = INT2OID };
+    enum { alignment = ALIGNOF_SHORT };
     WITH_TO_PG_CONVERSION( Int16GetDatum(value) );
     WITH_TO_CXX_CONVERSION( DatumGetInt16(value) );
 };
 
 template <>
-struct TypeTraits<uint16_t> {
-    typedef uint16_t value_type;
-
-    WITH_OID( INT2OID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+struct TypeTraits<uint16_t> : public TypeTraitsBase<uint16_t> {
+    enum { oid = INT2OID };
+    enum { alignment = ALIGNOF_SHORT };
     WITH_TO_PG_CONVERSION(
         Int16GetDatum((convertTo<uint16_t, int16_t>(value)))
     );
@@ -223,6 +242,27 @@ struct TypeTraits<bool> {
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( BoolGetDatum(value) );
     WITH_TO_CXX_CONVERSION( DatumGetBool(value) );
+};
+
+template <>
+struct TypeTraits<ByteString> : public TypeTraitsBase<ByteString> {
+    enum { alignment = MAXIMUM_ALIGNOF };
+    WITH_TYPE_NAME("blob");
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.byteString()) );
+    WITH_TO_CXX_CONVERSION( madlib_DatumGetByteaP(value) );
+};
+
+template <>
+struct TypeTraits<MutableByteString> : public TypeTraitsBase<MutableByteString> {
+    enum { alignment = MAXIMUM_ALIGNOF };
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_TYPE_NAME("blob");
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.byteString()) );
+    WITH_TO_CXX_CONVERSION(
+            needMutableClone
+          ? madlib_DatumGetByteaPCopy(value)
+          : madlib_DatumGetByteaP(value)
+    );
 };
 
 template <>
@@ -247,9 +287,7 @@ struct TypeTraits<ArrayHandle<double> > {
     WITH_MUTABILITY( dbal::Immutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );
-    WITH_TO_CXX_CONVERSION(
-        reinterpret_cast<ArrayType*>(madlib_DatumGetArrayTypeP(value))
-    );
+    WITH_TO_CXX_CONVERSION( madlib_DatumGetArrayTypeP(value) );
 };
 
 // Note: See the comment for PG_FREE_IF_COPY in fmgr.h. Essentially, when
@@ -320,19 +358,21 @@ template <>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
         const dbal::eigen_integration::ColumnVector,
+        TransparentHandle<double> > >
+  : public TypeTraitsBase<
+    dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::ColumnVector,
         TransparentHandle<double> > > {
 
-    typedef dbal::eigen_integration::HandleMap<
-        const dbal::eigen_integration::ColumnVector,
-        TransparentHandle<double> > value_type;
+    enum { oid = FLOAT8ARRAYOID };
+    enum { alignment = ALIGNOF_DOUBLE };
+    enum { typeClass = dbal::ArrayType };
+    typedef value_type reference_type;
 
-    WITH_OID( FLOAT8ARRAYOID );
-    WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
-    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) )
     // No need to support retrieving this type from the backend. Use
     // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    WITH_BIND_TO_STREAM( ref.rebind(stream.template read<double>(ref.size())) )
 };
 
 template <>
