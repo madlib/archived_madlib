@@ -207,6 +207,8 @@ lincrf_cg_step_transition::run(AnyType &args) {
         }
 
         // take exponential operator
+        
+        //Mi.noalias() = Mi.exp();// update for Mi
         for (size_t i = 0; i < state.num_labels; i++) {
             // update for Vi
             Vi(i) = std::exp(Vi(i));
