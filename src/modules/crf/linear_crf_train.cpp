@@ -174,6 +174,9 @@ linear_crf_step_transition::run(AnyType &args) {
                 Mi(m, n) = std::exp(Mi(m, n));
             }
         }
+        temp=betas.row(i);
+        temp=temp.cwiseProduct(Vi);
+        betas.row(i -1) = Mi*temp; 
         // scale for the next (backward) beta values
         scale(i - 1)=betas.row(i-1).sum();
         betas.row(i - 1)*=(1.0 / scale(i - 1));
@@ -198,6 +201,13 @@ linear_crf_step_transition::run(AnyType &args) {
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
             index++;
+        }
+        if(j>0){
+          temp = alpha;
+          next_alpha=(temp.transpose()*Mi.transpose()).transpose();
+          next_alpha=next_alpha.cwiseProduct(Vi);
+        } else {
+          next_alpha=Vi;
         }
 
         // take exponential operator
