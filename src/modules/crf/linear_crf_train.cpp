@@ -32,12 +32,12 @@ AnyType stateToResult(const Allocator &inAllocator,
                       double loglikelihood);
 
 template <class Handle>
-class GradientTransitionState {
+class LinCrfCGTransitionState {
     template <class OtherHandle>
-    friend class GradientTransitionState;
+    friend class LinCrfCGTransitionState;
 
 public:
-    GradientTransitionState(const AnyType &inArray)
+    LinCrfCGTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
         rebind(static_cast<uint16_t>(mStorage[1]),static_cast<uint16_t>(mStorage[2]));
@@ -54,8 +54,8 @@ public:
     }
 
     template <class OtherHandle>
-    GradientTransitionState &operator=(
-        const GradientTransitionState<OtherHandle> &inOtherState) {
+    LinCrfCGTransitionState &operator=(
+        const LinCrfCGTransitionState<OtherHandle> &inOtherState) {
 
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] = inOtherState.mStorage[i];
@@ -63,8 +63,8 @@ public:
     }
 
     template <class OtherHandle>
-    GradientTransitionState &operator+=(
-        const GradientTransitionState<OtherHandle> &inOtherState) {
+    LinCrfCGTransitionState &operator+=(
+        const LinCrfCGTransitionState<OtherHandle> &inOtherState) {
         if (mStorage.size() != inOtherState.mStorage.size())
             throw std::logic_error("Internal error: Incompatible transition "
                                    "states");
@@ -91,7 +91,7 @@ private:
         num_labels.rebind(&mStorage[2]);
         numRows.rebind(&mStorage[3]);
         loglikelihood.rebind(&mStorage[4]);
-        gradlogli.rebind(&mStorage[5], inWidthOfFeature);
+        grad.rebind(&mStorage[5], inWidthOfFeature);
         coef.rebind(&mStorage[5 + inWidthOfFeature], inWidthOfFeature);
         grad_new.rebind(&mStorage[5 + 2 * inWidthOfFeature], inWidthOfFeature);
         diag.rebind(&mStorage[5 + 3 * inWidthOfFeature], inWidthOfFeature);
@@ -104,18 +104,19 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
     typename HandleTraits<Handle>::ReferenceToUInt32 num_features;
     typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
-    typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradlogli;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_new;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ws;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap dir;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;
+    typename HandleTraits<Handle>::ReferenceToDouble beta;
+
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad_new;
+    typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
 };
 
 AnyType
 linear_crf_step_transition::run(AnyType &args) {
-    GradientTransitionState<MutableArrayHandle<double> > state = args[0];
+    LinCrfCGTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<double> >();
@@ -124,7 +125,7 @@ linear_crf_step_transition::run(AnyType &args) {
     if (state.numRows == 0) {
         state.initialize(*this, state.num_features, state.num_labels);
         if (!args[3].isNull()) {
-            GradientTransitionState<ArrayHandle<double> > previousState = args[3];
+            LinCrfCGTransitionState<ArrayHandle<double> > previousState = args[3];
             state = previousState;
             state.reset();
         }
@@ -232,7 +233,7 @@ linear_crf_step_transition::run(AnyType &args) {
             size_t curr_index = currLabel(index);
             size_t f_type =  featureType(index);
             if (f_type == 0 || f_type == 1) {
-                state.gradlogli(f_index) += 1;
+                state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
             }
             if (f_type == 1) {
@@ -268,8 +269,8 @@ linear_crf_step_transition::run(AnyType &args) {
  */
 AnyType
 linear_crf_step_merge_states::run(AnyType &args) {
-    GradientTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
-    GradientTransitionState<ArrayHandle<double> > stateRight = args[1];
+    LinCrfCGTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    LinCrfCGTransitionState<ArrayHandle<double> > stateRight = args[1];
 
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -288,29 +289,69 @@ linear_crf_step_merge_states::run(AnyType &args) {
  */
 AnyType
 linear_crf_step_final::run(AnyType &args) {
-    // We request a mutable object. Depending on the backend, this might perform
+ // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
-    GradientTransitionState<MutableArrayHandle<double> > state = args[0];
-
+    LinCrfCGTransitionState<MutableArrayHandle<double> > state = args[0];
+    
     // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
         return Null();
 
-    for (size_t i = 0; i < state.num_features; i++) {
-        state.gradlogli(i) = -1 * state.coef(i) / 1;//TODO
-        state.loglikelihood -= (state.coef(i) * state.coef(i)) / (2 * 1);
-    }
-    state.gradlogli+=state.grad_new;
-    int iflag=0;
-    //invole lbfgs algorithm
-    //lbfgs(&state.num_features,&state.m_for_hessian,state.coef,&state.loglikelihood,state.gradlogli,&state.diagco,
-    //     state.diag,state.eps_for_convergence,&state.xtol,state.ws,&state.iflog);
-    // checking after calling LBFGS
+    // Note: k = state.iteration
+    if (state.iteration == 0) {
+		// Iteration computes the gradient
 
-    if (iflag < 0) {
-        // LBFGS error
-        throw std::domain_error("LBFGS routine encounters an error\n");
-    }
+		state.dir = state.gradNew;
+		state.grad = state.gradNew;
+	} else {
+        // We use the Hestenes-Stiefel update formula:
+        //
+		//            g_k^T (g_k - g_{k-1})
+		// beta_k = -------------------------
+		//          d_{k-1}^T (g_k - g_{k-1})
+        ColumnVector gradNewMinusGrad = state.gradNew - state.grad;
+        state.beta
+            = dot(state.gradNew, gradNewMinusGrad)
+            / dot(state.dir, gradNewMinusGrad);
+        
+        // Alternatively, we could use Polak-Ribière
+        // state.beta
+        //     = dot(state.gradNew, gradNewMinusGrad)
+        //     / dot(state.grad, state.grad);
+        
+        // Or Fletcher–Reeves
+        // state.beta
+        //     = dot(state.gradNew, state.gradNew)
+        //     / dot(state.grad, state.grad);
+        
+        // Do a direction restart (Powell restart)
+        // Note: This is testing whether state.beta < 0 if state.beta were
+        // assigned according to Polak-Ribière
+        if (dot(state.gradNew, gradNewMinusGrad)
+            / dot(state.grad, state.grad) < 0) state.beta = 0;
+        
+        // d_k = g_k - beta_k * d_{k-1}
+        state.dir = state.gradNew - state.beta * state.dir;
+		state.grad = state.gradNew;
+	}
+
+    // H_k = - X^T A_k X
+    // where A_k = diag(a_1, ..., a_n) and a_i = sigma(x_i c_{k-1}) sigma(-x_i c_{k-1})
+    //
+    //             g_k^T d_k
+    // alpha_k = -------------
+    //           d_k^T H_k d_k
+    //
+    // c_k = c_{k-1} - alpha_k * d_k
+    state.coef += dot(state.grad, state.dir) /
+        as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
+        * state.dir;
+    
+    if(!state.coef.is_finite())
+        throw NoSolutionFoundException("Over- or underflow in "
+            "conjugate-gradient step, while updating coefficients. Input data "
+            "is likely of poor numerical condition.");
+    
     state.iteration++;
     return state;
 }
@@ -320,8 +361,8 @@ linear_crf_step_final::run(AnyType &args) {
  */
 AnyType
 internal_linear_crf_step_distance::run(AnyType &args) {
-    GradientTransitionState<ArrayHandle<double> > stateLeft = args[0];
-    GradientTransitionState<ArrayHandle<double> > stateRight = args[1];
+    LinCrfCGTransitionState<ArrayHandle<double> > stateLeft = args[0];
+    LinCrfCGTransitionState<ArrayHandle<double> > stateRight = args[1];
     return std::abs(stateLeft.loglikelihood - stateRight.loglikelihood);
 }
 
@@ -330,7 +371,7 @@ internal_linear_crf_step_distance::run(AnyType &args) {
  */
 AnyType
 internal_linear_crf_result::run(AnyType &args) {
-    GradientTransitionState<ArrayHandle<double> > state = args[0];
+    LinCrfCGTransitionState<ArrayHandle<double> > state = args[0];
     return stateToResult(*this, state.coef, state.loglikelihood);
 }
 
