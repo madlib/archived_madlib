@@ -181,15 +181,17 @@ lincrf_cg_step_transition::run(AnyType &args) {
         // scale for the next (backward) beta values
         scale(i - 1)=betas.row(i-1).sum();
         betas.row(i - 1)*=(1.0 / scale(i - 1));
+        index++;
     } // end of beta values computation
   
-
+    index = 0;
     state.loglikelihood = 0;
     // start to compute the log-likelihood of the current sequence
     for (size_t j = 0; j < seq_len; j++) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
+        size_t ori_index = index;
         while (features(index)!=-1) {
             size_t f_index = features(index);
             size_t prev_index = prevLabel(index);
@@ -203,13 +205,6 @@ lincrf_cg_step_transition::run(AnyType &args) {
             }
             index++;
         }
-        if(j>0){
-          temp = alpha;
-          next_alpha=(temp.transpose()*Mi.transpose()).transpose();
-          next_alpha=next_alpha.cwiseProduct(Vi);
-        } else {
-          next_alpha=Vi;
-        }
 
         // take exponential operator
         for (size_t i = 0; i < state.num_labels; i++) {
@@ -221,12 +216,15 @@ lincrf_cg_step_transition::run(AnyType &args) {
             }
         }
 
-        if (j > 0) {
-            next_alpha=Mi*alpha;
+        if(j>0){
+          temp = alpha;
+          next_alpha=(temp.transpose()*Mi.transpose()).transpose();
+          next_alpha=next_alpha.cwiseProduct(Vi);
         } else {
-            next_alpha = Vi;
+          next_alpha=Vi;
         }
 
+        index = ori_index;
         while (features(index)!=-1) {
             size_t f_index = features(index);
             size_t prev_index = prevLabel(index);
@@ -245,6 +243,7 @@ lincrf_cg_step_transition::run(AnyType &args) {
         }
         alpha = next_alpha;
         alpha*=(1.0 / scale[j]);
+        index++;
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
