@@ -11,7 +11,7 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-//#include "mathlib.cpp"
+#include "lbfgs.cpp"
 #include "linear_crf_train.hpp"
 
 namespace madlib {
@@ -32,12 +32,12 @@ AnyType stateToResult(const Allocator &inAllocator,
                       double loglikelihood);
 
 template <class Handle>
-class LinCrfCGTransitionState {
+class LinCrfLBFGSTransitionState {
     template <class OtherHandle>
-    friend class LinCrfCGTransitionState;
+    friend class LinCrfLBFGSTransitionState;
 
 public:
-    LinCrfCGTransitionState(const AnyType &inArray)
+    LinCrfLBFGSTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
         rebind(static_cast<uint16_t>(mStorage[1]));
@@ -54,8 +54,8 @@ public:
     }
 
     template <class OtherHandle>
-    LinCrfCGTransitionState &operator=(
-        const LinCrfCGTransitionState<OtherHandle> &inOtherState) {
+    LinCrfLBFGSTransitionState &operator=(
+        const LinCrfLBFGSTransitionState<OtherHandle> &inOtherState) {
 
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] = inOtherState.mStorage[i];
@@ -63,8 +63,8 @@ public:
     }
 
     template <class OtherHandle>
-    LinCrfCGTransitionState &operator+=(
-        const LinCrfCGTransitionState<OtherHandle> &inOtherState) {
+    LinCrfLBFGSTransitionState &operator+=(
+        const LinCrfLBFGSTransitionState<OtherHandle> &inOtherState) {
         if (mStorage.size() != inOtherState.mStorage.size())
             throw std::logic_error("Internal error: Incompatible transition "
                                    "states");
@@ -115,8 +115,8 @@ public:
 };
 
 AnyType
-lincrf_cg_step_transition::run(AnyType &args) {
-    LinCrfCGTransitionState<MutableArrayHandle<double> > state = args[0];
+lincrf_lbfgs_step_transition::run(AnyType &args) {
+    LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<double> >();
@@ -125,7 +125,7 @@ lincrf_cg_step_transition::run(AnyType &args) {
     if (state.numRows == 0) {
         state.initialize(*this, state.num_features);
         if (!args[3].isNull()) {
-            LinCrfCGTransitionState<ArrayHandle<double> > previousState = args[3];
+            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[3];
             state = previousState;
             state.reset();
         }
@@ -269,9 +269,9 @@ lincrf_cg_step_transition::run(AnyType &args) {
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
 AnyType
-lincrf_cg_step_merge_states::run(AnyType &args) {
-    LinCrfCGTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
-    LinCrfCGTransitionState<ArrayHandle<double> > stateRight = args[1];
+lincrf_lbfgs_step_merge_states::run(AnyType &args) {
+    LinCrfLBFGSTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    LinCrfLBFGSTransitionState<ArrayHandle<double> > stateRight = args[1];
 
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
@@ -289,10 +289,10 @@ lincrf_cg_step_merge_states::run(AnyType &args) {
  * @brief Perform the logistic-crfion final step
  */
 AnyType
-lincrf_cg_step_final::run(AnyType &args) {
+lincrf_lbfgs_step_final::run(AnyType &args) {
  // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
-    LinCrfCGTransitionState<MutableArrayHandle<double> > state = args[0];
+    LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
     
     // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
@@ -321,9 +321,9 @@ lincrf_cg_step_final::run(AnyType &args) {
  * @brief Return the difference in log-likelihood between two states
  */
 AnyType
-internal_lincrf_cg_step_distance::run(AnyType &args) {
-    LinCrfCGTransitionState<ArrayHandle<double> > stateLeft = args[0];
-    LinCrfCGTransitionState<ArrayHandle<double> > stateRight = args[1];
+internal_lincrf_lbfgs_step_distance::run(AnyType &args) {
+    LinCrfLBFGSTransitionState<ArrayHandle<double> > stateLeft = args[0];
+    LinCrfLBFGSTransitionState<ArrayHandle<double> > stateRight = args[1];
     return std::abs(stateLeft.loglikelihood - stateRight.loglikelihood);
 }
 
@@ -331,8 +331,8 @@ internal_lincrf_cg_step_distance::run(AnyType &args) {
  * @brief Return the coefficients and diagnostic statistics of the state
  */
 AnyType
-internal_lincrf_cg_result::run(AnyType &args) {
-    LinCrfCGTransitionState<ArrayHandle<double> > state = args[0];
+internal_lincrf_lbfgs_result::run(AnyType &args) {
+    LinCrfLBFGSTransitionState<ArrayHandle<double> > state = args[0];
     return stateToResult(*this, state.coef, state.loglikelihood);
 }
 
