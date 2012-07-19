@@ -90,9 +90,9 @@ private:
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
         coef.rebind(&mStorage[3], inWidthOfFeature);
-        dir.rebind(&mStorage[3 + inWidthOfFeature], inWidthOfFeature);
+        diag.rebind(&mStorage[3 + inWidthOfFeature], inWidthOfFeature);
         grad.rebind(&mStorage[3 + 2 * inWidthOfFeature], inWidthOfFeature);
-        beta.rebind(&mStorage[3 + 3 * inWidthOfFeature]);
+        ws.rebind(&mStorage[3 + 3 * inWidthOfFeature]);
         numRows.rebind(&mStorage[4 + 3 * inWidthOfFeature]);
         gradNew.rebind(&mStorage[5 + 3 * inWidthOfFeature], inWidthOfFeature);
         loglikelihood.rebind(&mStorage[5 + 4 * inWidthOfFeature]);
@@ -105,9 +105,9 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt32 num_features;
     typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap dir;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;
-    typename HandleTraits<Handle>::ReferenceToDouble beta;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ws;
 
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradNew;
@@ -301,53 +301,13 @@ lincrf_cg_step_final::run(AnyType &args) {
     // Note: k = state.iteration
     if (state.iteration == 0) {
 		// Iteration computes the gradient
-
-		state.dir = state.gradNew;
-		state.grad = state.gradNew;
-	} else {
-        // We use the Hestenes-Stiefel update formula:
-        //
-		//            g_k^T (g_k - g_{k-1})
-		// beta_k = -------------------------
-		//          d_{k-1}^T (g_k - g_{k-1})
-        ColumnVector gradNewMinusGrad = state.gradNew - state.grad;
-        state.beta
-            = dot(state.gradNew, gradNewMinusGrad)
-            / dot(state.dir, gradNewMinusGrad);
-        
-        // Alternatively, we could use Polak-Ribière
-        // state.beta
-        //     = dot(state.gradNew, gradNewMinusGrad)
-        //     / dot(state.grad, state.grad);
-        
-        // Or Fletcher–Reeves
-        // state.beta
-        //     = dot(state.gradNew, state.gradNew)
-        //     / dot(state.grad, state.grad);
-        
-        // Do a direction restart (Powell restart)
-        // Note: This is testing whether state.beta < 0 if state.beta were
-        // assigned according to Polak-Ribière
-        if (dot(state.gradNew, gradNewMinusGrad)
-            / dot(state.grad, state.grad) < 0) state.beta = 0;
-        
-        // d_k = g_k - beta_k * d_{k-1}
-        state.dir = state.gradNew - state.beta * state.dir;
-		state.grad = state.gradNew;
-	}
-
-    // H_k = - X^T A_k X
-    // where A_k = diag(a_1, ..., a_n) and a_i = sigma(x_i c_{k-1}) sigma(-x_i c_{k-1})
-    //
-    //             g_k^T d_k
-    // alpha_k = -------------
-    //           d_k^T H_k d_k
-    //
-    // c_k = c_{k-1} - alpha_k * d_k
-    //state.coef += dot(state.grad, state.dir) /
-    //    as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
-    //    * state.dir;
-    
+		state.grad = state.gradNew; 
+    } else {
+       lbfgsMinimize(3, state.iteration,
+                   0.001, 0.001, 0.001, state.num_features, 
+                   state.coef, state.loglikelihood,
+                   state.grad, state.diag, state.ws);
+    }    
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
             "conjugate-gradient step, while updating coefficients. Input data "
