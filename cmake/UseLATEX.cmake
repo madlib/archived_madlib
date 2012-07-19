@@ -1,3 +1,5 @@
+## Modification by Florian Schoppmann, July 18, 2012:
+## The dvi target is never added to the default target.
 ## Modification by Florian Schoppmann, Mar 12, 2012:
 ## Move check for IMAGEMAGICK_CONVERT from immediately behind
 ## "FIND_PROGRAM(... convert" into LATEX_ADD_CONVERT_COMMAND
@@ -1167,13 +1169,17 @@ FUNCTION(ADD_LATEX_TARGETS_INTERNAL)
     COMMAND ${make_dvi_command}
     DEPENDS ${make_dvi_depends}
     )
-  IF (LATEX_DEFAULT_PDF OR LATEX_DEFAULT_SAFEPDF)
+# BEGIN Removed by Florian Schoppmann
+#  IF (LATEX_DEFAULT_PDF OR LATEX_DEFAULT_SAFEPDF)
+# END Removed by Florian Schoppmann
     ADD_CUSTOM_TARGET(${dvi_target}
       DEPENDS ${output_dir}/${LATEX_TARGET}.dvi)
-  ELSE (LATEX_DEFAULT_PDF OR LATEX_DEFAULT_SAFEPDF)
-    ADD_CUSTOM_TARGET(${dvi_target} ALL
-      DEPENDS ${output_dir}/${LATEX_TARGET}.dvi)
-  ENDIF (LATEX_DEFAULT_PDF OR LATEX_DEFAULT_SAFEPDF)
+# BEGIN Removed by Florian Schoppmann
+#  ELSE (LATEX_DEFAULT_PDF OR LATEX_DEFAULT_SAFEPDF)
+#    ADD_CUSTOM_TARGET(${dvi_target} ALL
+#      DEPENDS ${output_dir}/${LATEX_TARGET}.dvi)
+#  ENDIF (LATEX_DEFAULT_PDF OR LATEX_DEFAULT_SAFEPDF)
+# END Removed by Florian Schoppmann
 
   # Add commands and targets for building pdf outputs (with pdflatex).
   IF (PDFLATEX_COMPILER)

@@ -180,6 +180,7 @@ madlib ## _ ## _pgfunc _arglist { \
 #include "ArrayHandle_proto.hpp"
 #include "AnyType_proto.hpp"
 #include "FunctionHandle_proto.hpp"
+#include "NativeRandomNumberGenerator_proto.hpp"
 #include "PGException_proto.hpp"
 #include "OutputStreamBuffer_proto.hpp"
 #include "SystemInformation_proto.hpp"
@@ -199,6 +200,7 @@ using dbconnector::postgres::ArrayHandle;
 using dbconnector::postgres::FunctionHandle;
 using dbconnector::postgres::MutableArrayHandle;
 using dbconnector::postgres::MutableTransparentHandle;
+using dbconnector::postgres::NativeRandomNumberGenerator;
 using dbconnector::postgres::TransparentHandle;
 
 // Import MADlib functions into madlib namespace
@@ -218,6 +220,7 @@ using dbconnector::postgres::Null;
 #include "ArrayHandle_impl.hpp"
 #include "EigenIntegration_impl.hpp"
 #include "FunctionHandle_impl.hpp"
+#include "NativeRandomNumberGenerator_impl.hpp"
 #include "OutputStreamBuffer_impl.hpp"
 #include "TransparentHandle_impl.hpp"
 #include "UDF_impl.hpp"
