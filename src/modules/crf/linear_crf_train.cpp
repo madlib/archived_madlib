@@ -92,7 +92,7 @@ private:
         coef.rebind(&mStorage[3], inWidthOfFeature);
         diag.rebind(&mStorage[3 + inWidthOfFeature], inWidthOfFeature);
         grad.rebind(&mStorage[3 + 2 * inWidthOfFeature], inWidthOfFeature);
-        ws.rebind(&mStorage[3 + 3 * inWidthOfFeature]);
+        ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature);
         numRows.rebind(&mStorage[4 + 3 * inWidthOfFeature]);
         gradNew.rebind(&mStorage[5 + 3 * inWidthOfFeature], inWidthOfFeature);
         loglikelihood.rebind(&mStorage[5 + 4 * inWidthOfFeature]);
@@ -303,10 +303,14 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 		// Iteration computes the gradient
 		state.grad = state.gradNew; 
     } else {
-       lbfgsMinimize(3, state.iteration,
+       Eigen::VectorXd coef(state.num_features);
+       Eigen::VectorXd grad(state.num_features);
+       Eigen::VectorXd diag(state.num_features);
+       Eigen::VectorXd ws(state.num_features);
+       /*lbfgsMinimize(3, state.iteration,
                    0.001, 0.001, 0.001, state.num_features, 
-                   state.coef, state.loglikelihood,
-                   state.grad, state.diag, state.ws);
+                   coef, state.loglikelihood,
+                   grad, diag, ws);*/
     }    
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
