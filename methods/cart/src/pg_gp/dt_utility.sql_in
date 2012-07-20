@@ -18,34 +18,13 @@
  * @note Greenplum doesn't support boolean to text casting.
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__to_char
-    (
-    val anyelement
-    );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
     (
     val anyelement
-    )
-RETURNS TEXT AS $$
-DECLARE
-    is_bool BOOLEAN;
-BEGIN
-    IF (val is NULL) THEN
-        return 'null'::text;
-    END IF;
-    SELECT pg_typeof(val) = 'boolean'::regtype INTO is_bool;
-    IF (is_bool) THEN
-         IF (val::boolean) THEN
-            RETURN 'true';
-         ELSE
-            RETURN 'false';
-         END IF;
-    END IF;
-    
-    RETURN val::TEXT;
-
-END
-$$ LANGUAGE PLPGSQL;
+    ) 
+RETURNS TEXT
+AS 'MODULE_PATHNAME', 'dt_to_text'
+LANGUAGE C STRICT IMMUTABLE;
 
 
 /*
@@ -528,3 +507,52 @@ BEGIN
     RETURN ret;
 END
 $$ LANGUAGE PLPGSQL;
+
+
+/*
+ * @brief Retrieve an BOOL array. The ith element in the array
+ *        indicate whether arr2[i] is in arr1 or not. The size
+ *        of the BOOL array is the same as arr2. For example,
+ *          arr1 = ['aa', 'bb', 'dd'],
+ *          arr2 = ['aa', 'dd', 'bb', 'ee', 'ccc']
+ *        then the BOOL array is:
+ *          ['t', 't', 't', 'f', 'f']
+ *
+ * @param src_arr  The source array.
+ * @param tst_arr  The array to be tested.
+ *
+ * @return A BOOL array. 
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__array_elem_in
+	(
+	src_arr ANYARRAY, 
+	tst_arr ANYARRAY
+	)
+RETURNS BOOLEAN[] AS $$
+    SELECT array_agg(elem in (SELECT unnest($1)))
+    FROM
+       (
+       SELECT unnest($2) as elem
+       ) t
+$$ LANGUAGE sql STABLE;
+
+
+/*
+ * @brief Sort the given array.
+ *
+ * @param arr   The array to be sorted.
+ *
+ * @return The sorted array. 
+ *
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__array_sort
+	(
+	arr ANYARRAY 
+	)
+RETURNS ANYARRAY AS $$
+	SELECT ARRAY
+    (SELECT elem FROM unnest($1) elem ORDER BY elem LIMIT ALL)
+$$ LANGUAGE sql STABLE;
+
