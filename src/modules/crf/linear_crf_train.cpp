@@ -635,14 +635,14 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 		// Iteration computes the gradient
 		state.grad = state.gradNew; 
     } else {
-       Eigen::VectorXd coef(state.num_features);
-       Eigen::VectorXd grad(state.num_features);
-       Eigen::VectorXd diag(state.num_features);
-       Eigen::VectorXd ws(state.num_features);
+       //Eigen::VectorXd coef(state.num_features);
+       //Eigen::VectorXd grad(state.num_features);
+       //Eigen::VectorXd diag(state.num_features);
+       //Eigen::VectorXd ws(state.num_features);
        lbfgsMinimize(3, state.iteration,
                    0.001, 0.001, 0.001, state.num_features, 
-                   coef, state.loglikelihood,
-                   grad, diag, ws);
+                   state.coef, state.loglikelihood,
+                   state.grad, state.diag, state.ws);
     }    
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
