@@ -2,10 +2,14 @@
  *
  * @file independent_variables.hpp
  *
+ * Types of independent variables can be simply vectors/matrices that are
+ * offered by standard or third party libraries. Classes in this files are
+ * for some special ones.
+ *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_CONVEX_TYPE_INDEPENDENT_VARIABLES_HPP_
-#define MADLIB_CONVEX_TYPE_INDEPENDENT_VARIABLES_HPP_
+#ifndef MADLIB_MODULES_CONVEX_TYPE_INDEPENDENT_VARIABLES_HPP_
+#define MADLIB_MODULES_CONVEX_TYPE_INDEPENDENT_VARIABLES_HPP_
 
 namespace madlib {
 

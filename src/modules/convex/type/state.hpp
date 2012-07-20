@@ -2,10 +2,14 @@
  *
  * @file state.hpp
  *
+ * This file contains definitions of user-defined aggregates.
+ *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_CONVEX_TYPE_STATE_HPP_
-#define MADLIB_CONVEX_TYPE_STATE_HPP_
+#ifndef MADLIB_MODULES_CONVEX_TYPE_STATE_HPP_
+#define MADLIB_MODULES_CONVEX_TYPE_STATE_HPP_
+
+#include "model.hpp"
 
 namespace madlib {
 
@@ -70,9 +74,6 @@ public:
 
     /**
      * @brief We need to support assigning the previous state
-     *
-     * HAYING: I suggest that this should be wrapped in the implementaion
-     * of Handle.
      */
     template <class OtherHandle>
     LMFIGDState &operator=(const LMFIGDState<OtherHandle> &inOtherState) {
@@ -89,8 +90,6 @@ public:
     inline void reset() {
         algo.numRows = 0;
         algo.loss = 0.;
-        // HAYING: need to verify whether this is value copying, also see: 
-        // model.hpp:operator=
         algo.incrModel = task.model;
     }
 
@@ -129,10 +128,6 @@ private:
      * - 6 + modelLength: numRows (number of rows processed in this iteration)
      * - 7 + modelLength: loss (sum of squared errors)
      * - 8 + modelLength: incrModel (volatile model for incrementally update)
-     *
-     * HAYING: This function will currently causes a invalid memory access if
-     * an 8-length zero array is assigned to mStorage. The rebind of the last 
-     * two matrices seems to be touching the slot next to the last element
      */
     void rebind() {
         task.rowDim.rebind(&mStorage[0]);
@@ -145,10 +140,14 @@ private:
                 task.colDim, task.maxRank);
         uint32_t modelLength = LMFModel<Handle>::arraySize(task.rowDim,
                 task.colDim, task.maxRank);
+//        task.model.rebind(&mStorage[5], task.rowDim,
+//                task.colDim, task.maxRank);
         task.RMSE.rebind(&mStorage[5 + modelLength]);
 
         algo.numRows.rebind(&mStorage[6 + modelLength]);
         algo.loss.rebind(&mStorage[7 + modelLength]);
+//        algo.incrModel.rebind(&mStorage[8 + modelLength], task.rowDim,
+//                task.colDim, task.maxRank);
         algo.incrModel.matrixU.rebind(&mStorage[8 + modelLength],
                 task.rowDim, task.maxRank);
         algo.incrModel.matrixV.rebind(&mStorage[8 + modelLength +

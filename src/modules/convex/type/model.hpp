@@ -2,10 +2,13 @@
  *
  * @file model.hpp
  *
+ * This file contians classes of coefficients (or model), which usually has
+ * fields that maps to transition states for user-defined aggregates.
+ *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_CONVEX_TYPE_MODEL_HPP_
-#define MADLIB_CONVEX_TYPE_MODEL_HPP_
+#ifndef MADLIB_MODULES_CONVEX_TYPE_MODEL_HPP_
+#define MADLIB_MODULES_CONVEX_TYPE_MODEL_HPP_
 
 namespace madlib {
 
@@ -33,32 +36,22 @@ struct LMFModel {
     }
 
     /**
-     * HAYING: broken now thanks to the HandleTraits...
-     * Before modifying HandleTraits.hpp, we have to rebind the matrices
-     * in a higher level.
-     *
-     * @brief Rebind to a provided double array.
-     */
-    //void rebind(const Handle &inHandle, uint16_t inRowDim, uint16_t inColDim,
-    //        uint16_t inMaxRank) {
-    //    matrixU.rebind(&inHandle[0], inRowDim, inMaxRank);
-    //    matrixV.rebind(&inHandle[inRowDim * inMaxRank], inColDim, inMaxRank);
-    //}
-
-    /**
      * @brief Initialize the model randomly with a user-provided scale factor
      */
-    void initialize(const double &inInitValue) {
-        srand(static_cast<unsigned>(time(NULL)));
-        int i, j, r;
-        for (i = 0; i < matrixU.rows(); i ++) {
-            for (r = 0; r < matrixU.cols(); r ++) {
-                matrixU(i, r) = (inInitValue * rand()) / RAND_MAX;
+    void initialize(const double &inScaleFactor) {
+        // using madlib::dbconnector::$database::NativeRandomNumberGenerator
+        NativeRandomNumberGenerator rng;
+        int i, j, rr;
+        double base = rng.min();
+        double span = rng.max() - base;
+        for (rr = 0; rr < matrixU.cols(); rr ++) {
+            for (i = 0; i < matrixU.rows(); i ++) {
+                matrixU(i, rr) = inScaleFactor * (rng() - base) / span;
             }
         }
-        for (j = 0; j < matrixV.rows(); j ++) {
-            for (r = 0; r < matrixV.cols(); r ++) {
-                matrixV(j, r) = (inInitValue * rand()) / RAND_MAX;
+        for (rr = 0; rr < matrixV.cols(); rr ++) {
+            for (j = 0; j < matrixV.rows(); j ++) {
+                matrixV(j, rr) = inScaleFactor * (rng() - base) / span;
             }
         }
     }
@@ -91,14 +84,6 @@ struct LMFModel {
 
     template<class OtherHandle>
     LMFModel &operator=(const LMFModel<OtherHandle> &inOtherModel) {
-        // The semantic of operator= for HandleMap is a bit confusing:
-        // If matrixU acts like a "reference type" in C++, it should be 
-        // value-copying; if matrixU acts like a "pointer type" in C++,
-        // or reference in Java, it is a rebinding
-        // HAYING: I can rule out the possibility of the latter after I use
-        // this function in higher levels, but I am still wondering whether
-        // we can make it more explicit...
-
         matrixU = inOtherModel.matrixU;
         matrixV = inOtherModel.matrixV;
 

@@ -2,10 +2,13 @@
  *
  * @file lmf.hpp
  *
+ * This file contains objective function related computation, which is called
+ * by classes in algo/, e.g.,  loss, gradient functions
+ *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_CONVEX_TASK_LMF_H_
-#define MADLIB_CONVEX_TASK_LMF_H_
+#ifndef MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
+#define MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
 
 namespace madlib {
 
@@ -82,6 +85,8 @@ LMF<Model, Tuple>::loss(
     // Perhaps we can add a book-keeping data structure in the model...
     // Note: the value of e is different from the e in gradient if the
     // model passed in is different, which IS the case for IGD
+    // Note 2: this can actually be a problem of having the computation 
+    // around model (algo/ & task/) detached from the model classes 
     double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
     return e * e;
 }

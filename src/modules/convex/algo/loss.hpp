@@ -2,10 +2,14 @@
  *
  * @file loss.hpp
  *
+ * Generic implementaion of computing loss in the fashion of  user-definied
+ * aggregates. They should be called by actually database functions, after
+ * arguments are properly parsed.
+ *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_CONVEX_ALGO_LOSS_HPP_
-#define MADLIB_CONVEX_ALGO_LOSS_HPP_
+#ifndef MADLIB_MODULES_CONVEX_ALGO_LOSS_HPP_
+#define MADLIB_MODULES_CONVEX_ALGO_LOSS_HPP_
 
 namespace madlib {
 

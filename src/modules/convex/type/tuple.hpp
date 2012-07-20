@@ -2,10 +2,16 @@
  *
  * @file tuple.hpp
  *
+ * Tuple classes are defined so that algorithm code can be shared
+ * for different kinds of tuples.
+ *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_CONVEX_TYPE_TUPLE_HPP_
-#define MADLIB_CONVEX_TYPE_TUPLE_HPP_
+#ifndef MADLIB_MODULES_CONVEX_TYPE_TUPLE_HPP_
+#define MADLIB_MODULES_CONVEX_TYPE_TUPLE_HPP_
+
+#include "independent_variables.hpp"
+#include "dependent_variable.hpp"
 
 namespace madlib {
 
@@ -38,7 +44,7 @@ struct ExampleTuple {
         }
         return *this;
     }
-    ~ExampleTuple() {}
+    ~ExampleTuple() { }
 };
 
 typedef ExampleTuple<MatrixIndex, double> LMFTuple;

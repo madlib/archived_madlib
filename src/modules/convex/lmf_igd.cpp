@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file lmf.cpp
+ * @file lmf_igd.cpp
  *
  * @brief Low-rank Matrix Factorization functions
  *
@@ -9,12 +9,12 @@
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 
-#include "lmf.hpp"
+#include "lmf_igd.hpp"
+
 #include "task/lmf.hpp"
 #include "algo/igd.hpp"
 #include "algo/loss.hpp"
-#include "type/independent_variables.hpp"
-#include "type/dependent_variable.hpp"
+
 #include "type/tuple.hpp"
 #include "type/model.hpp"
 #include "type/state.hpp"
@@ -25,9 +25,10 @@ namespace modules {
 
 namespace convex {
 
-// This 2 classes contain public static methods to be called
+// This 2 classes contain public static methods that can be called
 typedef IGD<LMFIGDState<MutableArrayHandle<double> >, LMFIGDState<ArrayHandle<double> >,
         LMF<LMFModel<MutableArrayHandle<double> >, LMFTuple > > LMFIGDAlgorithm;
+
 typedef Loss<LMFIGDState<MutableArrayHandle<double> >, LMFIGDState<ArrayHandle<double> >,
         LMF<LMFModel<MutableArrayHandle<double> >, LMFTuple > > LMFLossAlgorithm;
 
@@ -53,25 +54,15 @@ lmf_igd_transition::run(AnyType &args) {
             state = previousState;
         } else {
             // configuration parameters
-            // HAYING: all the checking of numeric_limis should be moved to
-            // the implementation of getAs()
-            uint32_t m = args[5].getAs<int32_t>();
-            uint32_t n = args[6].getAs<int32_t>();
-            uint32_t r = args[7].getAs<int32_t>();
-            if (m > std::numeric_limits<uint16_t>::max() ||
-                    n > std::numeric_limits<uint16_t>::max() ||
-                    r > std::numeric_limits<uint16_t>::max()) {
-                throw std::domain_error("m, n, r cannot be larger than 65535");
-            }
-            uint16_t rowDim = static_cast<uint16_t>(m);
-            uint16_t colDim = static_cast<uint16_t>(n);
-            uint16_t maxRank = static_cast<uint16_t>(r);
+            uint16_t rowDim = args[5].getAs<uint16_t>();
+            uint16_t colDim = args[6].getAs<uint16_t>();
+            uint16_t maxRank = args[7].getAs<uint16_t>();
             double stepsize = args[8].getAs<double>();
-            double initValue = args[9].getAs<double>();
+            double scaleFactor = args[9].getAs<double>();
 
             state.allocate(*this, rowDim, colDim, maxRank);
             state.task.stepsize = stepsize;
-            state.task.model.initialize(initValue);
+            state.task.model.initialize(scaleFactor);
         }
         // resetting in either case
         state.reset();
@@ -79,15 +70,9 @@ lmf_igd_transition::run(AnyType &args) {
 
     // tuple
     LMFTuple tuple;
-    uint32_t i = args[1].getAs<int32_t>();
-    uint32_t j = args[2].getAs<int32_t>();
+    tuple.indVar.i = args[1].getAs<uint16_t>();
+    tuple.indVar.j = args[2].getAs<uint16_t>();
     tuple.depVar = args[3].getAs<double>();
-    if (i > std::numeric_limits<uint16_t>::max() ||
-            j > std::numeric_limits<uint16_t>::max()) {
-        throw std::domain_error("Indices cannot be larger than 65535.");
-    }
-    tuple.indVar.i = static_cast<uint16_t>(i);
-    tuple.indVar.j = static_cast<uint16_t>(j);
 
     // Now do the transition step
     LMFIGDAlgorithm::transition(state, tuple);
@@ -142,8 +127,6 @@ lmf_igd_final::run(AnyType &args) {
 
 /**
  * @brief Return the difference in RMSE between two states
- *
- * HAYING: We may need a function for getting RMSE of a single state later.
  */
 AnyType
 internal_lmf_igd_distance::run(AnyType &args) {
@@ -164,8 +147,6 @@ internal_lmf_igd_result::run(AnyType &args) {
     tuple << state.task.model.matrixU
         << state.task.model.matrixV
         << static_cast<double>(state.task.RMSE);
-    // HAYING: I don't know why this casting is necessary, again, type
-    // checking thing...
 
     return tuple;
 }
