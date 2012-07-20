@@ -18,13 +18,15 @@
 #include <assert.h>
 #include <limits>
 #include <iomanip>
+//#include <dbconnector/dbconnector.hpp>
+//#include <modules/shared/HandleTraits.hpp>
 
-// Eigen library
-#include "/usr/include/eigen3/Eigen/Dense"
-#include "/usr/include/eigen3/Eigen/Core"
+//#include "/usr/include/eigen3/Eigen/Dense"
+//#include "/usr/include/eigen3/Eigen/Core"
 
 using namespace std;
 using namespace Eigen;
+//using namespace dbal::eigen_integration;
 
 
 // Protected Member Functions ------------------------------------------------
@@ -162,7 +164,7 @@ bool lbfgsStep(double& stx, double& fx, double& dx,
     return true;
 }
 
-bool lbfgsSearch(double &f, const VectorXd &s, double& stp, VectorXd& diag, VectorXd& x, VectorXd& g)
+bool lbfgsSearch(double &f, const Eigen::VectorXd &s, double& stp, Eigen::VectorXd& diag, Eigen::VectorXd& x, Eigen::VectorXd& g)
 {
     static const int MAXFEV = 20;
     static const double STPMIN = pow(10.0, -20.0);
