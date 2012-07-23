@@ -482,7 +482,7 @@ BEGIN
     
     -- drop the metatable
     EXECUTE 'DROP TABLE ' || meta_tbl_name || ' CASCADE;';
-end
+END
 $$ LANGUAGE PLPGSQL;
 
 
@@ -591,6 +591,48 @@ BEGIN
 END
 $$ LANGUAGE PLPGSQL;
 
+
+/*
+ * @brief Validate if the metatable exists or not.
+ *        Validate if the tables in "table_oid" column exists or not.
+ *
+ * @param meta_tbl_name     The full name of the metatable.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_metatable 
+    (
+    meta_tbl_name TEXT
+    )
+RETURNS VOID AS $$
+DECLARE
+    curstmt TEXT;
+    name    TEXT;
+BEGIN
+    PERFORM MADLIB_SCHEMA.__assert_table(meta_tbl_name, 't');
+    
+    -- get the Key-Value tables
+    curstmt = MADLIB_SCHEMA.__format
+        (
+            'SELECT MADLIB_SCHEMA.__regclass_to_text
+                (table_oid) as table_name 
+             FROM 
+                (
+                SELECT table_oid
+                FROM %
+                WHERE table_oid IS NOT NULL
+                GROUP BY table_oid
+                ) t',
+             ARRAY[
+                 meta_tbl_name
+             ]
+        );
+    
+    -- drop all the Key-Value tables
+    FOR name IN EXECUTE curstmt LOOP
+        PERFORM MADLIB_SCHEMA.__assert_table(name, 't');
+    END LOOP;
+END
+$$ LANGUAGE PLPGSQL;
 
 /*
  * @brief Get the number of distinct values for the feature with given ID.
