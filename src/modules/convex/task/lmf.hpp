@@ -17,7 +17,7 @@ namespace modules {
 namespace convex {
 
 // Use Eigen
-using namespace dbal::eigen_integration;
+using namespace madlib::dbal::eigen_integration;
 
 template <class Model, class Tuple>
 class LMF {
