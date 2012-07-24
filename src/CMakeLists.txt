@@ -5,12 +5,18 @@
 # -- Paths and MD5 hashes of third-party downloadable source code (third-party
 #    components needed only by specific ports are downloaded there) ------------
 
+set(MADLIB_REDIRECT_PREFIX "http://madlib.net/redirects/third_party.php?url=")
+
 # For in-house testing, we might want to change the base URLs of code-hosting
 # sites to something local
 # "-DSOURCEFORGE_BASE_URL=http://test.local/projects"
-set(SOURCEFORGE_BASE_URL "http://sourceforge.net/projects" CACHE STRING
+set(SOURCEFORGE_BASE_URL
+    "${MADLIB_REDIRECT_PREFIX}http://sourceforge.net/projects"
+    CACHE STRING
     "Base URL for Sourceforge projects. May be overridden for testing purposes.")
-set(BITBUCKET_BASE_URL "https://bitbucket.org" CACHE STRING
+set(BITBUCKET_BASE_URL
+    "${MADLIB_REDIRECT_PREFIX}https://bitbucket.org"
+    CACHE STRING
     "Base URL for Bitbucket projects. May be overridden for testing purposes.")
 
 # Boost might not be present on the system (or simply too old). In this case, we
@@ -46,7 +52,6 @@ set(EIGEN_TAR_MD5 695f24be85c4fe957ce6a4dd11161f48)
 
 set(EIGEN_TAR "eigen-${EIGEN_VERSION}.tar.gz")
 set(EIGEN_URL "${BITBUCKET_BASE_URL}/eigen/eigen/get/${EIGEN_VERSION}.tar.gz")
-set(EIGEN_SVN "${BITBUCKET_BASE_URL}/eigen/eigen/tags/${EIGEN_VERSION}")
 
 if(NOT EIGEN_TAR_SOURCE)
     find_file(EIGEN_TAR_SOURCE ${EIGEN_TAR}
@@ -130,28 +135,13 @@ endif(Boost_FOUND)
 
 # -- Third-party dependencies: Download the C++ linear-algebra library Eigen ---
 
-string(REGEX MATCH "^[a-zA-Z]+" _EIGEN_PROTOCOL ${EIGEN_TAR_SOURCE})
-if(_EIGEN_PROTOCOL STREQUAL "https")
-    # FIXME: This is somewhat ugly
-    # Unfortunately, CMake does not come with SSL support for file downloads.
-    # See: http://www.cmake.org/pipermail/cmake/2009-November/thread.html#33589
-    # Bitbucket on the other hand only provides SSL downloads
-    # We therefore assume that a "https" protocol refers to a SVN repository
-    set(_EIGEN_SOURCE
-        SVN_REPOSITORY ${EIGEN_SVN} UPDATE_COMMAND /usr/bin/env echo Ignored: svn update
-    )
-else(_EIGEN_PROTOCOL STREQUAL "https")
-    set(_EIGEN_SOURCE
-        URL ${EIGEN_TAR_SOURCE} URL_MD5 ${EIGEN_TAR_MD5}
-    )
-endif(_EIGEN_PROTOCOL STREQUAL "https")
-
 # FIXME: Eigen is a third-party source that is patched in-place. Other
 # third-party headers are patched in the patch directory.
 ExternalProject_Add(EP_eigen
     PREFIX ${MAD_THIRD_PARTY}
     DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
-    ${_EIGEN_SOURCE}
+    URL ${EIGEN_TAR_SOURCE}
+    URL_MD5 ${EIGEN_TAR_MD5}
     PATCH_COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/Eigen.sh"
     CMAKE_COMMAND /usr/bin/env echo Ignored: cmake
     BUILD_COMMAND /usr/bin/env echo Ignored: make
