@@ -326,7 +326,7 @@ function(add_extension_support)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_BINARY_DIR}/modules ${${DBMS_UC}_SHARE_DIR}/madlib/modules
         COMMAND ${CMAKE_COMMAND} -E copy
-            ${CMAKE_CURRENT_BINARY_DIR}/lib/libmadlib.so ${${DBMS_UC}_LIB_DIR}
+            ${CMAKE_CURRENT_BINARY_DIR}/lib/libmadlib.so ${${DBMS_UC}_PKGLIB_DIR}
         COMMAND ${CMAKE_COMMAND} -E copy
             ${EXTENSION_SQL} ${${DBMS_UC}_SHARE_DIR}/extension/
         COMMAND ${CMAKE_COMMAND} -E copy
