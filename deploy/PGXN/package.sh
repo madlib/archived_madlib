@@ -1,9 +1,10 @@
 #!/bin/sh
 
 GIT_URL=$1
+BRANCH=$2
 
 if [ -z $GIT_URL ]; then
-    echo "$0 GIT_URL"
+    echo "$0 GIT_URL BRANCH"
     exit;
 fi
 
@@ -11,7 +12,7 @@ ORIG=`pwd`
 TEMPDIR=`mktemp -d -t madlib`
 cd $TEMPDIR
 
-git clone $GIT_URL madlib
+git clone $GIT_URL madlib && (cd madlib; git checkout $BRANCH)
 
 # This is the version string for the distribution.
 VERSION=`cat madlib/deploy/PGXN/dist.ver`
