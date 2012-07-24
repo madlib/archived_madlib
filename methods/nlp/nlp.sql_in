@@ -1,87 +1,135 @@
 /* ----------------------------------------------------------------------- *//** 
  *
- * @file nlp.sql_in
+ * @file lincrf.sql_in
  *
  * @brief SQL functions for logistic regression
  * @date January 2011
  *
  * @sa For a brief introduction to logistic regression, see the
- *     module description \ref grp_nlp.
+ *     module description \ref grp_lincrf.
  *
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
 
 /**
-@addtogroup grp_nlp
+@addtogroup grp_lincrf
 @about
 @input
 @usage
 @examp
 @literature
-@sa File nlp.sql_in (documenting the SQL functions)
+@sa File lincrf.sql_in (documenting the SQL functions)
 @sa Namespace logistic (documenting the driver/outer loop implemented in
 
 */
 
-DROP TYPE IF EXISTS MADLIB_SCHEMA.nlp_result;
-CREATE TYPE MADLIB_SCHEMA.nlp_result AS (
+DROP TYPE IF EXISTS MADLIB_SCHEMA.lincrf_result;
+CREATE TYPE MADLIB_SCHEMA.lincrf_result AS (
+    coef DOUBLE PRECISION[],
     log_likelihood DOUBLE PRECISION,
-    lambda DOUBLE PRECISION[],
     num_iterations INTEGER
 );
 
-/*CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_gradient_step_transition(
+/*CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_gradient_step_transition(
     DOUBLE PRECISION[],
-    BOOLEAN,
+    DOUBLE PRECISION[],
     DOUBLE PRECISION[],
     DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_gradient_step_merge_states(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_gradient_step_merge_states(
     state1 DOUBLE PRECISION[],
     state2 DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_gradient_step_final(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_gradient_step_final(
     state DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;*/
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_lincrf_lbfgs_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_lincrf_lbfgs_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.lincrf_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
 /**
- * @brief Compute logistic-regression coefficients and diagnostic statistics
+ * @internal
+ * @brief Perform one iteration of the conjugate-gradient method for computing
+ * logistic regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.logregr_cg_step(
+    /*+ feature ids */ DOUBLE PRECISION[],
+    /*+ feature types */ DOUBLE PRECISION[],
+    /*+ previous labels */ DOUBLE PRECISION[],
+    /*+ current labels */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.lincrf_lbfgs_step_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.lincrf_lbfgs_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.lincrf_lbfgs_step_final,
+    INITCOND='{0,0,0,0,0,0}'
+);
+
+-- We only need to document the last one (unfortunately, in Greenplum we have to
+-- use function overloading instead of default arguments).
+CREATE FUNCTION MADLIB_SCHEMA.compute_lincrf(
+    "source" VARCHAR,
+    "featureCol" VARCHAR,
+    "featureTypeCol" VARCHAR,
+    "prevLabelCol" VARCHAR,
+    "currLabelCol" VARCHAR,
+    "maxNumIterations" INTEGER,
+    "optimizer" VARCHAR,
+    "precision" DOUBLE PRECISION)
+RETURNS INTEGER
+AS $$PythonFunction(crf, linear, compute_lincrf)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief Compute linear-chain crf coefficients 
  *
  */
-CREATE FUNCTION MADLIB_SCHEMA.nlp(
+CREATE FUNCTION MADLIB_SCHEMA.lincrf(
     "source" VARCHAR,
-    "featureTColumn" VARCHAR,
-    "featureColumn" VARCHAR,
+    "featureCol" VARCHAR,
+    "featureTypeCol" VARCHAR,
+    "prevLabelCol" VARCHAR,
+    "currLabelCol" VARCHAR,
     "maxNumIterations" INTEGER /*+ DEFAULT 20 */,
     "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
-RETURNS MADLIB_SCHEMA.nlp_result AS $$
+RETURNS MADLIB_SCHEMA.lincrf_result AS $$
 DECLARE
     theIteration INTEGER;
-    theResult MADLIB_SCHEMA.nlp_result;
+    theResult MADLIB_SCHEMA.lincrf_result;
 BEGIN
     theIteration := (
-        SELECT MADLIB_SCHEMA.compute_linear_crf($1, $2, $3, $4, $5, $6)
+        SELECT MADLIB_SCHEMA.compute_lincrf($1, $2, $3, $4, $5, $6)
     );
-    --EXECUTE
-        --$sql$
-        --SELECT (result).*
-        --FROM (
-            --SELECT
-                --MADLIB_SCHEMA.$sql$ || fnName || $sql$(_madlib_state) AS result
-                --FROM _madlib_iterative_alg
-                --WHERE _madlib_iteration = $sql$ || theIteration || $sql$
-            --) subq
-        --$sql$
-        --INTO theResult;
+    EXECUTE
+        $sql$
+        SELECT (result).*
+        FROM (
+              SELECT MADLIB_SCHEMA._madlib_state AS result
+              FROM   _madlib_iterative_alg
+              WHERE  _madlib_iteration = $sql$ || theIteration || $sql$
+             ) subq
+        $sql$
+        INTO theResult;
     -- The number of iterations are not updated in the C++ code. We do it here.
     IF NOT (theResult IS NULL) THEN
         theResult.num_iterations = theIteration;
