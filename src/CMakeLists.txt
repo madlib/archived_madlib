@@ -36,26 +36,21 @@ if(NOT BOOST_TAR_SOURCE)
     set(BOOST_TAR_SOURCE ${BOOST_URL})
 endif (NOT BOOST_TAR_SOURCE)
 
-# We always download Eigen (unless it is already present in
-# ${CMAKE_CURRENT_BINARY_DIR}/third_party/downloads). It is also possible to
-# specify an alternative path to the Eigen tarball:
+# We include Eigen snapshot file in third_party/ directory.  Once before
+# we used to download it via svn, but relying on the svn access to Bitbucket,
+# which is not officially supported, seems not like a good idea anymore.
+# It is also possible to specify an alternative path to the Eigen tarball:
 # -DEIGEN_TAR_SOURCE=/path/to/eigen-x.x.x.tar.gz
 
 set(EIGEN_VERSION "3.0.3")
 set(EIGEN_TAR_MD5 695f24be85c4fe957ce6a4dd11161f48)
 
 set(EIGEN_TAR "eigen-${EIGEN_VERSION}.tar.gz")
-set(EIGEN_URL "${BITBUCKET_BASE_URL}/eigen/eigen/get/${EIGEN_VERSION}.tar.gz")
-set(EIGEN_SVN "${BITBUCKET_BASE_URL}/eigen/eigen/tags/${EIGEN_VERSION}")
 
 if(NOT EIGEN_TAR_SOURCE)
     find_file(EIGEN_TAR_SOURCE ${EIGEN_TAR}
-        PATHS ${MAD_THIRD_PARTY}/downloads)
+        PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 endif(NOT EIGEN_TAR_SOURCE)
-
-if(NOT EIGEN_TAR_SOURCE)
-    set(EIGEN_TAR_SOURCE ${EIGEN_URL})
-endif (NOT EIGEN_TAR_SOURCE)
 
 # -- Paths for madpack third-party components (those that are used by multiple
 #    ports) --------------------------------------------------------------------
@@ -130,21 +125,9 @@ endif(Boost_FOUND)
 
 # -- Third-party dependencies: Download the C++ linear-algebra library Eigen ---
 
-string(REGEX MATCH "^[a-zA-Z]+" _EIGEN_PROTOCOL ${EIGEN_TAR_SOURCE})
-if(_EIGEN_PROTOCOL STREQUAL "https")
-    # FIXME: This is somewhat ugly
-    # Unfortunately, CMake does not come with SSL support for file downloads.
-    # See: http://www.cmake.org/pipermail/cmake/2009-November/thread.html#33589
-    # Bitbucket on the other hand only provides SSL downloads
-    # We therefore assume that a "https" protocol refers to a SVN repository
-    set(_EIGEN_SOURCE
-        SVN_REPOSITORY ${EIGEN_SVN} UPDATE_COMMAND /usr/bin/env echo Ignored: svn update
-    )
-else(_EIGEN_PROTOCOL STREQUAL "https")
-    set(_EIGEN_SOURCE
-        URL ${EIGEN_TAR_SOURCE} URL_MD5 ${EIGEN_TAR_MD5}
-    )
-endif(_EIGEN_PROTOCOL STREQUAL "https")
+set(_EIGEN_SOURCE
+    URL ${EIGEN_TAR_SOURCE} URL_MD5 ${EIGEN_TAR_MD5}
+)
 
 # FIXME: Eigen is a third-party source that is patched in-place. Other
 # third-party headers are patched in the patch directory.
