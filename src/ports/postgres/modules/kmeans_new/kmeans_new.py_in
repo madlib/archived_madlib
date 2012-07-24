@@ -161,7 +161,7 @@ class IterationController:
                 """.format(iteration = self.iteration, **self.kwargs))
 
 def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
-    col_id, col_point, **kwargs):
+    expr_id, expr_point, **kwargs):
     """
     Driver function for k-Means++ seeding
 
@@ -171,8 +171,8 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     @rel_state Name of the (temporary) table containing the inter-iteration
         states
     @param rel_source Name of the relation containing input points
-    @param col_id Name of the column containing the unique identifiers
-    @param col_point Name of the column containing the point coordinates
+    @param expr_id Expression containing the unique identifiers
+    @param expr_point Expression containing the point coordinates
     @param kwargs We allow the caller to specify additional arguments (all of
         which will be ignored though). The purpose of this is to allow the
         caller to unpack a dictionary whose element set is a superset of
@@ -187,16 +187,16 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
         truncAfterIteration = True,
         schema_madlib = schema_madlib, # Identifiers start here
         rel_source = rel_source,
-        col_id = col_id,
-        col_point = col_point)
+        expr_id = expr_id,
+        expr_point = expr_point)
     with iterationCtrl as it:
         if it.test("_args.initial_centroids IS NULL"):
             it.update("""
                 SELECT ARRAY[(
-                    SELECT CAST(_src.{col_point} AS DOUBLE PRECISION[])
+                    SELECT CAST(_src.{expr_point} AS DOUBLE PRECISION[])
                     FROM {rel_source} AS _src
-                    WHERE _src.{col_id} = (
-                        SELECT {schema_madlib}.weighted_sample(_src.{col_id}, 1)
+                    WHERE _src.{expr_id} = (
+                        SELECT {schema_madlib}.weighted_sample(_src.{expr_id}, 1)
                         FROM {rel_source} AS _src
                     )
                 )]
@@ -207,16 +207,16 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                 """)
         while it.test("array_upper(_state._state, 1) < _args.k"):
             it.update("""
-                SELECT _state._state || _src.{col_point}
+                SELECT _state._state || _src.{expr_point}
                 FROM {rel_source} AS _src, {rel_state} AS _state
                 WHERE
-                    _src.{col_id} = (
+                    _src.{expr_id} = (
                         SELECT
                             {schema_madlib}.weighted_sample(
-                                _src.{col_id},
+                                _src.{expr_id},
                                 ({schema_madlib}.closest_column(
                                     _state._state,
-                                    _src.{col_point},
+                                    _src.{expr_point},
                                     _args.squared_dist_metric
                                 )).distance
                             )
@@ -231,8 +231,8 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     return iterationCtrl.iteration
 
 
-def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
-    col_point, agg_mean, **kwargs):
+def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, expr_id,
+    expr_point, agg_mean, **kwargs):
     """
     Driver function for Lloyd's k-means local-search heuristic
 
@@ -242,8 +242,8 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
     @rel_state Name of the (temporary) table containing the inter-iteration
         states
     @param rel_source Name of the relation containing input points
-    @param col_id Name of the column containing the unique identifiers
-    @param col_point Name of the column containing the point coordinates
+    @param expr_id Expression containing the unique identifiers
+    @param expr_point Expression containing the point coordinates
     @param kwargs We allow the caller to specify additional arguments (all of
         which will be ignored though). The purpose of this is to allow the
         caller to unpack a dictionary whose element set is a superset of
@@ -259,8 +259,8 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
         truncAfterIteration = False,
         schema_madlib = schema_madlib,
         rel_source = rel_source,
-        col_id = col_id,
-        col_point = col_point,
+        expr_id = expr_id,
+        expr_point = expr_point,
         agg_mean = agg_mean)
     with iterationCtrl as it:
         # Create the initial inter-iteration state of type kmeans_result
@@ -291,15 +291,15 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
                         {agg_mean}(_point) AS _centroid
                     FROM (
                         SELECT
-                            _src.{col_point} AS _point,
+                            _src.{expr_point} AS _point,
                             ({schema_madlib}.closest_column(
                                 (_state._state).centroids,
-                                _src.{col_point},
+                                _src.{expr_point},
                                 _args.squared_dist_metric
                             )).column_id AS _new_centroid_id,
                             ({schema_madlib}.closest_column(
                                 (_state_old._state).centroids,
-                                _src.{col_point},
+                                _src.{expr_point},
                                 _args.squared_dist_metric
                             )).column_id AS _old_centroid_id
                         FROM
@@ -323,8 +323,8 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, col_id,
                         ((_state._state).centroids
                             || {schema_madlib}.kmeanspp_seeding(
                             '{rel_source}',
-                            '{col_id}',
-                            '{col_point}',
+                            '{expr_id}',
+                            '{expr_point}',
                             CAST(_args.k AS INT2),
                             _args.squared_dist_metric,
                             (_state._state).centroids

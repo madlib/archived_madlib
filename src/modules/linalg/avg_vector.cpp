@@ -109,7 +109,8 @@ avg_vector_transition::run(AnyType& args) {
     if (state.numRows == 0)
         state.initialize(*this, x.size());
     else if (x.size() != state.sumOfVectors.size()
-        || state.numDimensions != state.sumOfVectors.size())
+        || state.numDimensions !=
+            static_cast<uint32_t>(state.sumOfVectors.size()))
         throw std::invalid_argument("Invalid arguments: Dimensions of points "
             "not consistent.");
 
