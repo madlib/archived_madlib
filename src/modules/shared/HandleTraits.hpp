@@ -7,6 +7,8 @@
 #ifndef MADLIB_SHARED_HANDLE_TRAITS_HPP_
 #define MADLIB_SHARED_HANDLE_TRAITS_HPP_
 
+#include <dbconnector/dbconnector.hpp>
+
 namespace madlib {
 
 namespace modules {
