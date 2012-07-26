@@ -11,7 +11,7 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include "linear_crf_train.hpp"
+#include "linear_crf.hpp"
 
 namespace madlib {
 

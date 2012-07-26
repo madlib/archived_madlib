@@ -25,4 +25,5 @@
 
 #include <modules/prob/prob.hpp>
 #include <modules/regress/regress.hpp>
+#include <modules/crf/linear_crf.hpp>
 #include <modules/stats/stats.hpp>
