@@ -1,0 +1,167 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file cox_prop_hazards.sql_in
+ *
+ * @brief SQL functions for cox proportional hazards
+ * @date July 2012
+ *
+ * @sa For a brief introduction to logistic regression, see the
+ *     module description \ref grp_logreg.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_cox_prop_hazards
+
+@about
+
+
+@input
+
+
+@examp
+
+
+@endverbatim
+
+@literature
+
+
+@sa File cox_prop_hazards.sql_in (documenting the SQL functions)
+
+@internal
+@sa Namespace cox_prop_hazards 
+    \ref madlib::modules::stats documenting the implementation in C++
+@endinternal
+
+*/
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.cox_prop_hazards_result;
+CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
+    coef DOUBLE PRECISION[],
+    num_iterations INTEGER
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_transition(
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+/**
+ * @internal
+ * @brief Perform one iteration of the newton method
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__',`ORDERED')
+AGGREGATE MADLIB_SCHEMA.cox_prop_hazards_step(
+
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.cox_prop_hazards_step_transition,
+    FINALFUNC=MADLIB_SCHEMA.cox_prop_hazards_step_final,
+    INITCOND='{0,0,0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_cox_prop_hazards_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_cox_prop_hazards_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+-- We only need to document the last one (unfortunately, in Greenplum we have to
+-- use function overloading instead of default arguments).
+CREATE FUNCTION MADLIB_SCHEMA.compute_cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "maxNumIterations" INTEGER,
+    "optimizer" VARCHAR,
+    "precision" DOUBLE PRECISION)
+RETURNS INTEGER
+AS $$PythonFunction(stats, cox_prop_hazards, compute_cox_prop_hazards)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief Compute logistic-regression coefficients and diagnostic statistics
+ *
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ * 
+ * @param source Name of the source relation containing the training data
+ * @param indepColumn Independent column (of type DOUBLE PRECISION[])
+ * @param maxNumIterations The maximum number of iterations
+ * @param optimizer The optimizer to use (either
+ *        <tt>'newton'</tt>/<tt>'newton'</tt> for the newton method
+ * @param precision The difference between log-likelihood values in successive
+ *        iterations that should indicate convergence. Note that a non-positive
+ *        value here disables the convergence criterion, and execution will only
+ *        stop after \c maxNumIterations iterations.
+ *
+ * @return TODO
+ *
+ * @usage
+ *
+ */
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "maxNumIterations" INTEGER /*+ DEFAULT 20 */,
+    "optimizer" VARCHAR /*+ DEFAULT 'newton' */,
+    "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
+RETURNS MADLIB_SCHEMA.logregr_result AS $$
+DECLARE
+    theIteration INTEGER;
+    fnName VARCHAR;
+    theResult MADLIB_SCHEMA.cox_prop_hazards_result;
+BEGIN
+    theIteration := (
+        SELECT MADLIB_SCHEMA.compute_cox_prop_hazards($1, $2, $3, $4, $5)
+    );
+    IF optimizer = 'gd' THEN
+        fnName := 'internal_cox_prop_hazards_result';
+    ELSE
+        RAISE EXCEPTION 'Unknown optimizer (''%'')', optimizer;
+    END IF;
+    EXECUTE
+        $sql$
+        SELECT (result).*
+        FROM (
+            SELECT
+                MADLIB_SCHEMA.$sql$ || fnName || $sql$(_madlib_state) AS result
+                FROM _madlib_iterative_alg
+                WHERE _madlib_iteration = $sql$ || theIteration || $sql$
+            ) subq
+        $sql$
+        INTO theResult;
+				
+    -- The number of iterations are not updated in the C++ code. We do it here.
+    IF NOT (theResult IS NULL) THEN
+        theResult.num_iterations = theIteration;
+    END IF;
+    RETURN theResult;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
