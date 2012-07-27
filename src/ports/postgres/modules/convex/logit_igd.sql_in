@@ -1,0 +1,237 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file logit_igd.sql_in
+ *
+ * @brief SQL functions for logistic regression
+ * @date July 2012
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+CREATE TYPE MADLIB_SCHEMA.logit_result AS (
+        coefficients    DOUBLE PRECISION[],
+        loss            DOUBLE PRECISION
+);
+
+--------------------------------------------------------------------------
+-- create SQL functions for IGD optimizer
+--------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_transition(
+        state           DOUBLE PRECISION[],
+        ind_var         DOUBLE PRECISION[],
+        dep_var         BOOLEAN,
+        previous_state  DOUBLE PRECISION[],
+        dimension       INTEGER,
+        stepsize        DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_merge(
+        state1 DOUBLE PRECISION[],
+        state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_final(
+        state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing logistic regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.logit_igd_step(
+        /*+ ind_var */          DOUBLE PRECISION[],
+        /*+ dep_var */          BOOLEAN,
+        /*+ previous_state */   DOUBLE PRECISION[],
+        /*+ dimension */        INTEGER,
+        /*+ stepsize */         DOUBLE PRECISION) (
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.logit_igd_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.logit_igd_merge,')
+    FINALFUNC=MADLIB_SCHEMA.logit_igd_final,
+    INITCOND='{0,0,0,0,0}'
+);
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_logit_igd_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_logit_igd_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.logit_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_logit_igd_args(
+    sql VARCHAR, INTEGER, DOUBLE PRECISION, INTEGER, DOUBLE PRECISION)
+RETURNS VOID
+IMMUTABLE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_compute_logit_igd(
+    rel_args        VARCHAR,
+    rel_state       VARCHAR,
+    rel_source      VARCHAR,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR)
+RETURNS INTEGER
+AS $$PythonFunction(convex, logit_igd, compute_logit_igd)$$
+LANGUAGE plpythonu VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
+    num_iterations  INTEGER,            /*+ DEFAULT 10 */
+    tolerance       DOUBLE PRECISION)   /*+ DEFAULT 0.000001 */
+RETURNS INTEGER AS $$
+DECLARE
+    iteration_run   INTEGER;
+    model_id        INTEGER;
+    loss            DOUBLE PRECISION;
+    old_messages    VARCHAR;
+BEGIN
+    RAISE NOTICE 'Source table % to be used: dimension %', rel_source, dimension;
+
+    -- We first setup the argument table. Rationale: We want to avoid all data
+    -- conversion between native types and Python code. Instead, we use Python
+    -- as a pure driver layer.
+    old_messages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+    -- Unfortunately, the EXECUTE USING syntax is only available starting
+    -- PostgreSQL 8.4:
+    -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
+    -- We therefore have to emulate.
+    PERFORM MADLIB_SCHEMA.internal_execute_using_logit_igd_args($sql$
+        DROP TABLE IF EXISTS pg_temp._madlib_logit_igd_args;
+        CREATE TABLE pg_temp._madlib_logit_igd_args AS
+        SELECT 
+            $1 AS dimension, 
+            $2 AS stepsize,
+            $3 AS num_iterations, 
+            $4 AS tolerance;
+        $sql$,
+        dimension, stepsize, num_iterations, tolerance);
+    EXECUTE 'SET client_min_messages TO ' || old_messages;
+
+    -- Perform acutal computation.
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
+    -- operators from regclass to varchar/text.
+    iteration_run := MADLIB_SCHEMA.internal_compute_logit_igd(
+            '_madlib_logit_igd_args', '_madlib_logit_igd_state',
+            textin(regclassout(rel_source)), col_ind_var, col_dep_var);
+
+    -- create result table if it does not exist
+    BEGIN
+        EXECUTE 'SELECT 1 FROM ' || rel_output || ' LIMIT 0';
+    EXCEPTION
+        WHEN undefined_table THEN
+            EXECUTE '
+            CREATE TABLE ' || rel_output || ' (
+                id              serial,
+                coefficients    DOUBLE PRECISION[],
+                loss            DOUBLE PRECISION)';
+    END;
+
+    -- A work-around for GPDB not supporting RETURNING for INSERT
+    -- We generate an id using nextval before INSERT
+    EXECUTE '
+    SELECT nextval(' || quote_literal(rel_output || '_id_seq') ||'::regclass)'
+    INTO model_id;
+
+    -- output model
+    -- Retrieve result from state table and insert it
+    EXECUTE '
+    INSERT INTO ' || rel_output || '
+    SELECT ' || model_id || ', (result).*
+    FROM (
+        SELECT MADLIB_SCHEMA.internal_logit_igd_result(_state) AS result
+        FROM _madlib_logit_igd_state
+        WHERE _iteration = ' || iteration_run || '
+        ) subq';
+
+    EXECUTE '
+    SELECT loss
+    FROM ' || rel_output || '
+    WHERE id = ' || model_id
+    INTO loss;
+
+    -- return description
+    RAISE NOTICE '
+Finished logistic regression using incremental gradient 
+ * table : % (%, %)
+Results:
+ * loss = %
+Output:
+ * view : SELECT * FROM % WHERE id = %',
+    rel_source, col_ind_var, col_dep_var, loss, rel_output, model_id;
+    
+    RETURN model_id;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+    stepsize        DOUBLE PRECISION)   /*+ DEFAULT 0.01 */
+RETURNS INTEGER AS $$
+    SELECT MADLIB_SCHEMA.logit_igd_run($1, $2, $3, $4, $5, $6, 10, 0.000001);
+$$ LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    dimension       INTEGER)            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+RETURNS INTEGER AS $$
+    -- set stepsize as default 0.01
+    SELECT MADLIB_SCHEMA.logit_igd_run($1, $2, $3, $4, $5, 0.1);
+$$ LANGUAGE sql VOLATILE;
+    
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR)
+RETURNS INTEGER AS $$
+DECLARE
+    dimension INTEGER;
+BEGIN
+    EXECUTE '
+    SELECT max(array_upper(' || col_ind_var || ', 1) + 1
+    FROM ' || textin(regclassout(rel_source))
+    INTO dimension;
+
+    RETURN (SELECT MADLIB_SCHEMA.logit_igd_run($1, $2, $3, $4, dimension));
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logit_igd_predict(
+        coefficients    DOUBLE PRECISION[],
+        ind_var         DOUBLE PRECISION[])
+RETURNS BOOLEAN
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
