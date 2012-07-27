@@ -40,6 +40,16 @@ DECLARE_UDF(linalg, squared_dist_norm2)
  */
 DECLARE_UDF(linalg, squared_dist_norm1)
 
+/**
+ * @brief Compute the squared angle between two dense vectors
+ */
+DECLARE_UDF(linalg, squared_angle)
+
+/**
+ * @brief Compute the squared Tanimoto "distance" between two dense vectors
+ */
+DECLARE_UDF(linalg, squared_tanimoto)
+
 
 #ifndef MADLIB_MODULES_LINALG_LINALG_HPP
 #define MADLIB_MODULES_LINALG_LINALG_HPP

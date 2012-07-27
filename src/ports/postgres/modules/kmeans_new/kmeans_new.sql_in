@@ -308,12 +308,14 @@ AS $$PythonFunction(kmeans, kmeans, compute_kmeans)$$;
  * @param expr_id Expression evaluating to unique identifier for each tuple
  * @param expr_point Expression evaluting to point coordinates for each tuple
  * @param initial_centroids Matrix containing the initial centroids as columns
- * @param squared_dist_metric A function with signature
+ * @param fn_squared_dist Name of a function with signature
  *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
- *     returns the square of the distance between two points
- * @param agg_mean An aggregate function with signature
+ *     returns the square of the distance between two points. The default is
+ *     the \ref squared_dist_norm2(float8[],float8[]) "squared Euclidean distance".
+ * @param agg_mean Name of an aggregate function with signature
  *     <tt>DOUBLE PRECISION[] -> DOUBLE PRECISION[]</tt> that returns the mean
- *     of a (non-empty) set of points
+ *     of a (non-empty) set of points. The default is
+ *     the \ref avg(float8[]) "average (barycenter in Euclidean space)".
  * @param max_num_iterations Maximum number of iterations
  * @param min_frac_reassigned Fraction of reassigned points below which
  *     convergence is assumed and the algorithm terminates
@@ -329,8 +331,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     expr_id VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
-    squared_dist_metric REGPROC /*+ DEFAULT 'squared_dist_norm2' */,
-    agg_mean REGPROC /*+ DEFAULT 'avg(float8)' */,
+    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_mean VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
     min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
 ) RETURNS MADLIB_SCHEMA.kmeans_result AS $$
@@ -338,7 +340,14 @@ DECLARE
     theIteration INTEGER;
     theResult MADLIB_SCHEMA.kmeans_result;
     oldClientMinMessages VARCHAR;
+    proc_fn_squared_dist REGPROCEDURE;
+    proc_agg_mean REGPROCEDURE;
 BEGIN
+    proc_fn_squared_dist := fn_squared_dist
+        || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
+    proc_agg_mean := agg_mean
+        || '(DOUBLE PRECISION[])';
+
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
     -- as a pure driver layer.
@@ -355,10 +364,10 @@ BEGIN
         CREATE TABLE pg_temp._madlib_kmeans_args AS
         SELECT
             $1 AS initial_centroids, array_upper($1, 1) AS k,
-            $2 AS squared_dist_metric, $3 AS max_num_iterations,
+            $2 AS fn_squared_dist, $3 AS max_num_iterations,
             $4 AS min_frac_reassigned;
         $sql$,
-        initial_centroids, squared_dist_metric, max_num_iterations,
+        initial_centroids, proc_fn_squared_dist, max_num_iterations,
         min_frac_reassigned);
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
@@ -368,7 +377,7 @@ BEGIN
     theIteration := MADLIB_SCHEMA.internal_compute_kmeans('_madlib_kmeans_args',
             '_madlib_kmeans_state',
             textin(regclassout(rel_source)), expr_id, expr_point,
-            textin(regprocout(agg_mean)));
+            textin(regprocout(proc_agg_mean)));
 
     -- Retrieve result from state table and return it
     EXECUTE
@@ -410,7 +419,7 @@ LANGUAGE plpythonu VOLATILE;
  * @param expr_id Name of the column containing the unique identifiers
  * @param expr_point Name of the column containing the point coordinates
  * @param k Number of centroids
- * @param squared_dist_metric A function with signature
+ * @param fn_squared_dist Name of a function with signature
  *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
  *     returns the square of the distance between two points
  * @param initial_centroids A matrix containing up to \f$ k \f$ columns as
@@ -424,14 +433,18 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    squared_dist_metric REGPROC,
+    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
     initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
 ) RETURNS DOUBLE PRECISION[][] AS $$
 DECLARE
     theIteration INTEGER;
     theResult DOUBLE PRECISION[][];
     oldClientMinMessages VARCHAR;
+    proc_fn_squared_dist REGPROCEDURE;
 BEGIN
+    proc_fn_squared_dist := fn_squared_dist
+        || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
+
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
     -- as a pure driver layer.
@@ -446,9 +459,9 @@ BEGIN
     PERFORM MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args($sql$
         DROP TABLE IF EXISTS pg_temp._madlib_kmeanspp_args;
         CREATE TEMPORARY TABLE _madlib_kmeanspp_args AS
-        SELECT $1 AS k, $2 AS squared_dist_metric, $3 AS initial_centroids;
+        SELECT $1 AS k, $2 AS fn_squared_dist, $3 AS initial_centroids;
         $sql$,
-        k, squared_dist_metric, initial_centroids);
+        k, proc_fn_squared_dist, initial_centroids);
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
     -- Perform acutal computation.
@@ -476,7 +489,7 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    squared_dist_metric REGPROC
+    fn_squared_dist VARCHAR
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5, NULL)
@@ -506,9 +519,9 @@ $$;
         expr_id,
         expr_point,
         k,
-        squared_dist_metric
+        fn_squared_dist
     ),
-    squared_dist_metric,
+    fn_squared_dist,
     agg_mean,
     max_num_iterations,
     min_frac_reassigned
@@ -519,8 +532,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    squared_dist_metric REGPROC /*+ DEFAULT "squared_dist_norm2" */,
-    agg_mean REGPROC /*+ DEFAULT 'avg(float8)' */,
+    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_mean VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
     min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
 ) RETURNS MADLIB_SCHEMA.kmeans_result
@@ -537,8 +550,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    squared_dist_metric REGPROC,
-    agg_mean REGPROC,
+    fn_squared_dist VARCHAR,
+    agg_mean VARCHAR,
     max_num_iterations INTEGER
 ) RETURNS MADLIB_SCHEMA.kmeans_result
 VOLATILE
@@ -554,8 +567,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    squared_dist_metric REGPROC,
-    agg_mean REGPROC
+    fn_squared_dist VARCHAR,
+    agg_mean VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_result
 VOLATILE
 STRICT
@@ -570,14 +583,14 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    squared_dist_metric REGPROC
+    fn_squared_dist VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_result
 VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
         $1, $2, $3, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5),
-        $5, 'MADLIB_SCHEMA.avg_vector', 20, 0.001)
+        $5, 'MADLIB_SCHEMA.avg', 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
@@ -593,6 +606,6 @@ LANGUAGE sql AS $$
         $1, $2, $3,
         MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4,
             'MADLIB_SCHEMA.squared_dist_norm2'),
-        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg_vector',
+        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg',
         20, 0.001)
 $$;

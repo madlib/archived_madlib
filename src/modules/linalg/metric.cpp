@@ -115,6 +115,32 @@ squared_dist_norm1::run(AnyType& args) {
     return l1norm * l1norm;
 }
 
+AnyType
+squared_angle::run(AnyType& args) {
+    MappedColumnVector x = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector y = args[1].getAs<MappedColumnVector>();
+
+    double cosine = dot(x, y) / (x.norm() * y.norm());
+    if (cosine > 1)
+        cosine = 1;
+    else if (cosine < -1)
+        cosine = -1;
+    double angle = std::acos(cosine);
+    return angle * angle;
+}
+
+AnyType
+squared_tanimoto::run(AnyType& args) {
+    MappedColumnVector x = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector y = args[1].getAs<MappedColumnVector>();
+
+    // Note that this is not a metric in general!
+    double dotProduct = dot(x,y);
+    double tanimoto = x.squaredNorm() + y.squaredNorm();
+    tanimoto = (tanimoto - 2 * dotProduct) / (tanimoto - dotProduct);
+    return tanimoto * tanimoto;
+}
+
 } // namespace linalg
 
 } // namespace modules

@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file avg_vector.cpp
+ * @file avgerage.cpp
  *
  * @brief Compute the average of vectors
  *
@@ -9,7 +9,7 @@
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 
-#include "avg_vector.hpp"
+#include "average.hpp"
 
 namespace madlib {
 
@@ -144,6 +144,36 @@ avg_vector_final::run(AnyType& args) {
     avgVector = state.sumOfVectors / state.numRows;
     return avgVector;
 }
+
+
+AnyType
+normalized_avg_vector_transition::run(AnyType& args) {
+    AvgVectorState<MutableArrayHandle<double> > state = args[0];
+    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+
+    if (state.numRows == 0)
+        state.initialize(*this, x.size());
+    else if (x.size() != state.sumOfVectors.size()
+        || state.numDimensions !=
+            static_cast<uint32_t>(state.sumOfVectors.size()))
+        throw std::invalid_argument("Invalid arguments: Dimensions of points "
+            "not consistent.");
+
+    ++state.numRows;
+    state.sumOfVectors += x.normalized();
+    return state;
+}
+
+AnyType
+normalized_avg_vector_final::run(AnyType& args) {
+    AvgVectorState<ArrayHandle<double> > state = args[0];
+
+    MutableMappedColumnVector avgVector(allocateArray<double>(
+        state.sumOfVectors.size()));
+    avgVector = (state.sumOfVectors / state.numRows).normalized();
+    return avgVector;
+}
+
 
 } // namespace linalg
 
