@@ -7,6 +7,8 @@
 #ifndef MADLIB_MODULES_CONVEX_TASK_LOGIT_HPP_
 #define MADLIB_MODULES_CONVEX_TASK_LOGIT_HPP_
 
+#include <dbconnector/dbconnector.hpp>
+
 namespace madlib {
 
 namespace modules {
@@ -62,7 +64,7 @@ Logit<Model, Tuple>::gradient(
     double wx = dot(model, x);
     double sig = sigma(-wx * y);
     double c = -sig * y; // minus for "-loglik"
-    gradient = c * x;
+    gradient += c * x;
 }
 
 template <class Model, class Tuple>

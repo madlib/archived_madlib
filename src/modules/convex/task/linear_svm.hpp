@@ -7,6 +7,8 @@
 #ifndef MADLIB_MODULES_CONVEX_TASK_LINEAR_SVM_HPP_
 #define MADLIB_MODULES_CONVEX_TASK_LINEAR_SVM_HPP_
 
+#include <dbconnector/dbconnector.hpp>
+
 namespace madlib {
 
 namespace modules {
@@ -57,8 +59,8 @@ LinearSVM<Model, Tuple>::gradient(
     double wx = dot(model, x);
     if (1 - wx * y > 0) {
         double c = -y; // minus for "-loglik"
-        gradient = c * x;
-    } else { gradient = 0. * x; }
+        gradient += c * x;
+    } else { }
 }
 
 template <class Model, class Tuple>

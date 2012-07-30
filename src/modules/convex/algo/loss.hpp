@@ -11,12 +11,17 @@
 #ifndef MADLIB_MODULES_CONVEX_ALGO_LOSS_HPP_
 #define MADLIB_MODULES_CONVEX_ALGO_LOSS_HPP_
 
+#include <dbconnector/dbconnector.hpp>
+
 namespace madlib {
 
 namespace modules {
 
 namespace convex {
 
+// use Eigen
+using namespace madlib::dbal::eigen_integration;
+    
 // The reason for using ConstState instead of const State to reduce the
 // template type list: flexibility to high-level for mutability control
 // More: cast<ConstState>(MutableState) may not always work

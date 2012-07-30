@@ -9,6 +9,7 @@
 #ifndef MADLIB_MODULES_CONVEX_TYPE_STATE_HPP_
 #define MADLIB_MODULES_CONVEX_TYPE_STATE_HPP_
 
+#include <dbconnector/dbconnector.hpp>
 #include "model.hpp"
 
 namespace madlib {
@@ -16,6 +17,9 @@ namespace madlib {
 namespace modules {
 
 namespace convex {
+
+// use Eign
+using namespace madlib::dbal::eigen_integration;
 
 /**
  * @brief Inter- (Task State) and intra-iteration (Algo State) state of
@@ -283,6 +287,134 @@ public:
         typename HandleTraits<Handle>::ReferenceToDouble loss;
         typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap
             incrModel;
+    } algo;
+};
+
+/**
+ * @brief Inter- (Task State) and intra-iteration (Algo State) state of
+ *        Conjugate Gradient for generalized linear models
+ * 
+ * Generalized Linear Models (GLMs): Logistic regression, Linear SVM
+ *
+ * TransitionState encapsualtes the transition state during the
+ * aggregate function during an iteration. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars and vectors.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 5, and at least first elemenet is 0
+ * (exact values of other elements are ignored).
+ *
+ */
+template <class Handle>
+class GLMCGState {
+    template <class OtherHandle>
+    friend class GLMCGState;
+
+public:
+    GLMCGState(const AnyType &inArray) : mStorage(inArray.getAs<Handle>()) {
+        rebind();
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Allocating the incremental gradient state.
+     */
+    inline void allocate(const Allocator &inAllocator, uint16_t inDimension) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+                dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inDimension));
+
+        task.dimension.rebind(&mStorage[0]);
+        task.dimension = inDimension;
+        
+        rebind();
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    GLMCGState &operator=(const GLMCGState<OtherHandle> &inOtherState) {
+        for (size_t i = 0; i < mStorage.size(); i++) {
+            mStorage[i] = inOtherState.mStorage[i];
+        }
+
+        return *this;
+    }
+
+    /**
+     * @brief Reset the intra-iteration fields.
+     */
+    inline void reset() {
+        algo.numRows = 0;
+        algo.loss = 0.;
+        algo.incrGradient = ColumnVector::Zero(task.dimension);
+    }
+
+    static inline uint32_t arraySize(const uint16_t inDimension) {
+        return 5 + 4 * inDimension;
+    }
+
+private:
+    /**
+     * @brief Rebind to a new storage array.
+     *
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: dimension (dimension of the model)
+     * - 1: iteration (current number of iterations executed)
+     * - 2: stepsize (step size of gradient steps)
+     * - 3: model (coefficients)
+     * - 3 + dimension: direction (conjugate direction)
+     * - 3 + 2 * dimension: gradient (gradient of loss functions)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 3 + 3 * dimension: numRows (number of rows processed in this iteration)
+     * - 4 + 3 * dimension: loss (sum of loss for each rows)
+     * - 5 + 3 * dimension: incrGradient (volatile gradient for update)
+     */
+    void rebind() {
+        task.dimension.rebind(&mStorage[0]);
+        task.iteration.rebind(&mStorage[1]);
+        task.stepsize.rebind(&mStorage[2]);
+        task.model.rebind(&mStorage[3], task.dimension);
+        task.direction.rebind(&mStorage[3 + task.dimension], task.dimension);
+        task.gradient.rebind(&mStorage[3 + 2 * task.dimension], task.dimension);
+
+        algo.numRows.rebind(&mStorage[3 + 3 * task.dimension]);
+        algo.loss.rebind(&mStorage[4 + 3 * task.dimension]);
+        algo.incrGradient.rebind(&mStorage[5 + 3 * task.dimension],
+                task.dimension);
+    }
+
+    Handle mStorage;
+
+public:
+    typedef typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap
+        TransparentColumnVector;
+
+    struct TaskState {
+        typename HandleTraits<Handle>::ReferenceToUInt32 dimension;
+        typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
+        typename HandleTraits<Handle>::ReferenceToDouble stepsize;
+        TransparentColumnVector model;
+        TransparentColumnVector direction;
+        TransparentColumnVector gradient;
+    } task;
+
+    struct AlgoState {
+        typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+        typename HandleTraits<Handle>::ReferenceToDouble loss;
+        TransparentColumnVector incrGradient;
     } algo;
 };
 

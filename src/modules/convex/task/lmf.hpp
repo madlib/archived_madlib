@@ -10,6 +10,8 @@
 #ifndef MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
 #define MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
 
+#include <dbconnector/dbconnector.hpp>
+
 namespace madlib {
 
 namespace modules {

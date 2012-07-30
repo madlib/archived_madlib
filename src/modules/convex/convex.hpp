@@ -8,5 +8,6 @@
 
 #include "lmf_igd.hpp"
 #include "linear_svm_igd.hpp"
+#include "linear_svm_cg.hpp"
 #include "logit_igd.hpp"
 
