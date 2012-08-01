@@ -81,7 +81,7 @@ public:
     static const int m=3;
 private:
     static inline uint64_t arraySize(const uint32_t num_features) {
-        return 5 + 5 * num_features;
+        return 5 + 4 * num_features + num_features*(2*m+1)+2*m;
     }
 
     void rebind(uint32_t inWidthOfFeature) {
@@ -454,10 +454,11 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<double> >();
     HandleMap<const ColumnVector> currLabel = args[4].getAs<ArrayHandle<double> >();
     size_t seq_len = args[5].getAs<double>();
+    size_t feature_size = args[6].getAs<double>();
     if (state.numRows == 0) {
-        state.initialize(*this, state.num_features);
-        if (!args[6].isNull()) {
-            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[6];
+        state.initialize(*this, feature_size);
+        if (!args[7].isNull()) {
+            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[7];
             state = previousState;
             state.reset();
         }
