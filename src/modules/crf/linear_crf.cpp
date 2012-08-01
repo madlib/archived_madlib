@@ -489,7 +489,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             size_t prev_index = prevLabel(index);
             size_t curr_index = currLabel(index);
             size_t f_type =  featureType(index);
-            if (f_type == 0) {
+            if (f_type == 2) {
                 // state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { /* if (pos > 0)*/
