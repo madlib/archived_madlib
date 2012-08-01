@@ -456,8 +456,8 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     size_t seq_len = args[5].getAs<double>();
     if (state.numRows == 0) {
         state.initialize(*this, state.num_features);
-        if (!args[3].isNull()) {
-            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[3];
+        if (!args[6].isNull()) {
+            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[6];
             state = previousState;
             state.reset();
         }
