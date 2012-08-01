@@ -341,8 +341,6 @@ Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
 
     void *ptr;
     bool errorOccurred = false;
-    MemoryContext oldContext = NULL;
-    MemoryContext aggContext = NULL;
 
     if (F == dbal::ReturnNULL) {
         /*
@@ -355,19 +353,20 @@ Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
     }
 
     PG_TRY(); {
-        if (MC == dbal::AggregateContext) {
-            if (!AggCheckCallContext(fcinfo, &aggContext))
-                errorOccurred = true;
-            else {
-                oldContext = MemoryContextSwitchTo(aggContext);
-                ptr = (R == Reallocation) ? internalRePalloc<ZM>(inPtr, inSize)
-                                          : internalPalloc<ZM>(inSize);
-                MemoryContextSwitchTo(oldContext);
-            }
-        } else {
-            ptr = R ? internalRePalloc<ZM>(inPtr, inSize)
-                    : internalPalloc<ZM>(inSize);
-        }
+        /*
+         * We used to respect the request for MC == dbal::AggregateContext here,
+         * but current PostgreSQL/Greenplum versions do not take any advantage
+         * of transition states allocated in the aggregate context anyways.
+         * They still copy the transition state, whenever the address of the
+         * returned state is different from the address of the input state.
+         *
+         * Any other use of the aggregate context (say, auxiliary data/caches
+         * for transition states) is not currently supported by the C++ AL.
+         *
+         * See also: MADLIB-606 (issue that triggered this code change).
+         */
+        ptr = R ? internalRePalloc<ZM>(inPtr, inSize)
+                : internalPalloc<ZM>(inSize);
     } PG_CATCH(); {
         if (F == dbal::ReturnNULL) {
             /*
@@ -393,22 +392,6 @@ Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
             errorOccurred = true;
         }
     } PG_END_TRY();
-
-    if (errorOccurred) {
-        PG_TRY(); {
-            // Clean up after ourselves
-            if (oldContext != NULL)
-                MemoryContextSwitchTo(oldContext);
-        } PG_CATCH(); {
-            if (F == dbal::ReturnNULL) {
-                // We tried to clean up after ourselves. If this fails, we can
-                // only ignore the issue.
-                FlushErrorState();
-            }
-            // Else do nothing. We will add a bad-allocation exception on top of
-            // the existing PostgreSQL exception stack.
-        } PG_END_TRY();
-    }
 
     if (F == dbal::ReturnNULL) {
         RESUME_INTERRUPTS();
