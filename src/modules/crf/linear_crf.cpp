@@ -78,7 +78,7 @@ public:
         gradNew.fill(0);
         loglikelihood = 0;
     }
-
+    static const int m=3;
 private:
     static inline uint64_t arraySize(const uint32_t num_features) {
         return 5 + 5 * num_features;
@@ -91,10 +91,10 @@ private:
         coef.rebind(&mStorage[3], inWidthOfFeature);
         diag.rebind(&mStorage[3 + inWidthOfFeature], inWidthOfFeature);
         grad.rebind(&mStorage[3 + 2 * inWidthOfFeature], inWidthOfFeature);
-        ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature);
-        numRows.rebind(&mStorage[4 + 3 * inWidthOfFeature]);
-        gradNew.rebind(&mStorage[5 + 3 * inWidthOfFeature], inWidthOfFeature);
-        loglikelihood.rebind(&mStorage[5 + 4 * inWidthOfFeature]);
+        ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
+        numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        gradNew.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m], inWidthOfFeature);
+        loglikelihood.rebind(&mStorage[4 + 4 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
     }
 
     Handle mStorage;
