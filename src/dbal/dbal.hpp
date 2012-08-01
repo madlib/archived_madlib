@@ -35,6 +35,14 @@ enum Mutability {
     Mutable
 };
 
+/**
+ * @brief Memory context to use for allocation (hint only)
+ *
+ * This is only meant to be a hint to the platform-specific parts of the AL.
+ * An implementation may choose to perform an allocation in a specific aggregate
+ * context if the memory needs to live longer than the current function call.
+ * It should be used, e.g., when allocating transition states.
+ */
 enum MemoryContext {
     FunctionContext,
     AggregateContext

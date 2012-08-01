@@ -42,6 +42,10 @@ namespace {
  *
  * This function is essentially a copy of AggCheckCallContext from
  * backend/executor/nodeAgg.c, which is part of PostgreSQL >= 9.0.
+ *
+ * @warning The AggState struct is known to have changed between GPDB 4.2.1 and
+ *     GPDB 4.2.2. Essentially, this imnplies that it is not safe to ever rely
+ *     on what \c aggcontext will be set to!
  */
 inline
 int
