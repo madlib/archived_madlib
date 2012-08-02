@@ -216,7 +216,7 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
                 "larger than 65535.");
 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
-        if (!args[3].isNull()) {
+        if (!args[2].isNull()) {
             CoxPropHazardsTransitionState<ArrayHandle<double> > previousState = args[2];
             state = previousState;
             state.reset();
@@ -226,7 +226,6 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 
     state.numRows++;
 		
-		// S = exp(x^T \beta)
 		double xc = trans(state.coef)*x;
 		double s = std::exp(xc);
 
@@ -238,6 +237,8 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 		state.hessian += (state.H * trans(state.H))/(s*s) - state.V/s;
 		state.logLikelihood += xc - std::log(state.S);
 		
+		dbout << "S:" << state.S << std::endl;
+		dbout << "L:" << state.logLikelihood << std::endl;
 		
     return state;
 }
@@ -280,6 +281,9 @@ AnyType internal_cox_prop_hazards_step_distance::run(AnyType &args) {
     CoxPropHazardsTransitionState<ArrayHandle<double> > stateLeft = args[0];
     CoxPropHazardsTransitionState<ArrayHandle<double> > stateRight = args[1];
 
+		double diff = std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
+		
+		dbout << "T:"<< diff <<std::endl;
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
 
