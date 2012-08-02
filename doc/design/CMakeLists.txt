@@ -18,15 +18,17 @@ find_program(
     DOC "Path to makeindex"
 )
 
+file(GLOB_RECURSE DESIGN_DOC_MODULES
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/modules/*.tex")
+
 if(LATEX_BINARY AND BIBTEX_BINARY AND MAKEINDEX_BINARY)
     include(UseLATEX)
 
     add_latex_document(design.tex
         BIBFILES ../literature.bib
         INPUTS
-            modules/sampling.tex
-            modules/k-means.tex
-            modules/low-rank-matrix-decomposition.tex
+            ${DESIGN_DOC_MODULES}
         MANGLE_TARGET_NAMES
     )
 else()

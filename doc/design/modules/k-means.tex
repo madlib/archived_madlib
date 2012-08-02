@@ -73,18 +73,21 @@ Uniform-at-random sampling just uses the algorithms described in Section~\ref{se
 
 \subsection[k-means++]{$k$-means++}
 
-\texttt{$k$-means++} seeding \cite{AV07a} starts with a single centroid chosen randomly among the input points. It then iteratively chooses new centroids from the input points until there is a total of $k$ centroids. The probability for picking a particular point is proportional to its minimum squared distance to any existing centroid. Intuitively, \texttt{$k$-means++} favors seedings where centroids are spread out over the whole range of the input points, while at the same time not being too susceptible to outliers.
+\texttt{$k$-means++} seeding \cite{AV07a} starts with a single centroid chosen randomly among the input points. It then iteratively chooses new centroids from the input points until there are a total of $k$ centroids. The probability for picking a particular point is proportional to its minimum squared distance to any existing centroid. Intuitively, \texttt{$k$-means++} favors seedings where centroids are spread out over the whole range of the input points, while at the same time not being too susceptible to outliers.
 
 \subsubsection{Formal Description}
 
-\begin{algorithm}[$k$-means++$(k, P, \dist)$] \label{alg:kmeans++}
-\alginput{Number of desired centroids $k$, set $P$ of points in $\R^d$, metric $\dist$}
+\begin{algorithm}[$k$-means++$(k, P, \dist, C)$] \label{alg:kmeans++}
+\alginput{Number of desired centroids $k$, set $P$ of points in $\R^d$, metric $\dist$, \\
+	set $C$ of initial centroids}
 \algoutput{Set of centroids $C$}
 \begin{algorithmic}[1]
-	\State $C \set \{ \text{initial centroid chosen uniformly at random from } P \}$ \label{alg:kmeanspp:firstCentroid}
-	\For{$i \to 1, \dots, k - 1$} \label{alg:kmeans++:for}
+	\If{$C = \emptyset$}
+		\State $C \set \{ \text{initial centroid chosen uniformly at random from } P \}$ \label{alg:kmeanspp:firstCentroid}
+	\EndIf
+	\While{$|C| < k$} \label{alg:kmeans++:for}
 		\State $C \set C \cup \{ \text{random $p \in P$ with probability proportional to }\min_{c \in C} \dist(p,c)^2 \}$ \label{alg:kmeanspp:nextcentroid}
-	\EndFor
+	\EndWhile
 \end{algorithmic}
 \end{algorithm}
 
@@ -92,109 +95,118 @@ Uniform-at-random sampling just uses the algorithms described in Section~\ref{se
 	\item[Runtime] A naive implementation needs $\Theta(k^2 n)$ distance calculations, where $n = |P|$. A single distance calculation takes $O(d)$ time.
 	\item[Space] Store $k$ centroids.
 	\item[Subproblems]
-		Existing subroutines should be used for:
+		The existing \ref{sym:weighted_sample} subroutine can be used for:
 		\begin{itemize}
 			\item Line~\ref{alg:kmeanspp:firstCentroid}: Sample uniformly at random
 			\item Line~\ref{alg:kmeanspp:nextcentroid}: Sample according to a discrete probability distribution.
 		\end{itemize}
-		In each case, see Section~\ref{sec:SampingWOReplacement}.
 \end{description}
 
-The runtime can be reduced by a factor of $k$ if we store, for each point $p \in P$, the distance to its closest centroid. Then, each iteration only needs $n$ distance calculations (i.e., only between the most recently added centroid and all points). In total, these are $\Theta(k n)$ distance calculations. Making this idea explicit leads to the following algorithm.
+The number of distance calculations could be reduced by a factor of $k$ if we store, for each point $p \in P$, the distance to its closest centroid. Then, each iteration only needs $n$ distance calculations (i.e., only between the most recently added centroid and all points). In total, these are $\Theta(k n)$ distance calculations. Making this idea explicit leads to the following algorithm.
 
 \begin{algorithm}[$k$-means++-ext$(k, P, \dist)$] \label{alg:kmeans++ext}
-\alginput{Number of desired centroids $k$, set $P$ of points in $\R^d$, metric $\dist$}
+\alginput{Number of desired centroids $k$, set $P$ of points in $\R^d$, metric $\dist$, \\
+	set $C$ of initial centroids}
 \algoutput{Set of centroids $C$}
-\algprecond{For all $p \in P: \delta[p] = \infty$}
+\algprecond{For all $p \in P: \delta[p] = \min_{c \in C} \dist(p, c)^2$ (or $\delta[p] = \infty$ if $C = \emptyset$)}
 \begin{algorithmic}[1]
-	\State $\mathit{lastCentroid} \set \ref{sym:discrete_sample}(P, 1)$ \label{alg:kmeans++ext:firstCentroid} \Comment{1 denotes the constant mapping $p \mapsto 1$}
-	\State $C \set \{ \mathit{lastCentroid} \}$
-	\For{$i \to 1, \dots, k - 1$} \label{alg:kmeans++ext:for}
+	\While{$|C| < k$} \label{alg:kmeans++ext:for}
+		\State $\mathit{lastCentroid} \set \ref{sym:weighted_sample}(P, \delta^2)$ \label{alg:kmeans++ext:nextCentroid} \Comment{$\delta^2$ denotes the mapping $p \mapsto \delta[p]^2$}
+		\State $C \set C \cup \{ \mathit{lastCentroid} \}$
 		\For{$p \in P$} \label{alg:kmeans++ext:pointLoop}
 			\If{$\dist(p, \mathit{lastCentroid}) < \delta[p]$}
 				\State $\delta[p] \set \dist(p, \mathit{lastCentroid})$
 			\EndIf
 		\EndFor
-		\State $\mathit{lastCentroid} \set \ref{sym:discrete_sample}(P, \delta^2)$ \Comment{$\delta^2$ denotes the mapping $p \mapsto \delta[p]^2$} \label{alg:kmeans++ext:nextCentroid}
-		\State $C \set C \cup \{ \mathit{lastCentroid} \}$
-	\EndFor
+	\EndWhile
 \end{algorithmic}
 \end{algorithm}
 
 \begin{description}
-	\item[Tuning] \label{kmeans++ext:tuning} The inner for-loop in line~\ref{alg:kmeans++ext:pointLoop} could be combined with \ref{sym:discrete_sample} in line~\ref{alg:kmeans++ext:nextCentroid}. With this improvement, only one pass over $P$ is necessary.
+	\item[Tuning] \label{kmeans++ext:tuning} The inner for-loop in line~\ref{alg:kmeans++ext:pointLoop} and \ref{sym:weighted_sample} in line~\ref{alg:kmeans++ext:nextCentroid} could be combined. With this improvement, only one pass over $P$ is necessary.
 	\item[Runtime] $O(dkn)$ as explained before.
 	\item[Space] Store $k$ centroids and $n$ distances.
-	\item[Scalability] The outer for-loop is inherently sequential because the random variates in each iteration depend on all previous iterations. The inner loop, however, can be executed with data parallelism.
+	\item[Scalability] The outer while-loop is inherently sequential because the random variates in each iteration depend on all previous iterations. The inner loop, however, can be executed with data parallelism.
 \end{description}
 
 \subsubsection{Implementation as User-Defined Function}
 
-Algorithm~\ref{alg:kmeans++ext} is implemented as the user-defined function \symlabel{kmeans\_pp}{sym:kmeans++}.
+In general, the performance benefit of explicitly storing points (i.e., choosing \ref{alg:kmeans++ext} over \ref{alg:kmeans++}) depends on the DBMS, the data, and the operating environment. The pattern of updating temporary state is made a bit more awkward in PostgreSQL due to its legacy of versioned storage. PostgreSQL performs an update by first inserting a new row and then marking the old row as invisible \cite[Section~23.1.2]{postgres:9.1.3}. As a result, for updates that touch many rows it is typically faster to copy the updated data into a new table (i.e., \texttt{CREATE TABLE AS SELECT} and \texttt{DROP TABLE}) rather than issue an \texttt{UPDATE}. Given these constraints, we currently choose to only implement algorithm~\ref{alg:kmeans++} (but not \ref{alg:kmeans++ext}) as the user-defined function \symlabel{kmeanspp\_seeding}{sym:kmeans++}.
 
-\paragraph{In- and Output} The function expects the following arguments:
+\paragraph{In- and Output} The UDF expects the following arguments, and returns the following values:
 
 \begin{center}
-	\begin{tabular}{lll}
+	\begin{tabularx}{\textwidth}{rlXl}
 		\toprule%
 		\textbf{Name} & \textbf{Description} & \textbf{Type}
 		\\\otoprule
+		In &
+		\texttt{rel\_source} &
+		Relation containing the points as rows &
+		relation
+		\\\midrule
+		In &
+		\texttt{expr\_id} &
+		Tuple identifier, each tuple corresponds to a point $p \in P$ &
+		\specialcell{l}{expression\\ (integer)}
+		\\\midrule
+		In &
+		\texttt{expr\_point} &
+		Point coordinates, i.e., the point $p$ &
+		\specialcell{l}{expression\\ (floating-point vector)}
+		\\\midrule
+		In &
 		\texttt{k} &
 		Number of centroids &
 		integer
 		\\\midrule
-		\texttt{dist} &
-		Metric to use &
-		functor
-		\\\midrule
-		\texttt{points} &
-		Relation containing the points as rows &
-		relation
-		\\\bottomrule
-	\end{tabular}
-\end{center}
-%
-Here, \texttt{points} refers to a relation with at least the following columns.
-%
-\begin{center}
-	\begin{tabularx}{\linewidth}{rlXl}
-		\toprule%
-		& \textbf{Column} & \textbf{Description} & \textbf{Type}
-		\\\otoprule
 		In &
-		\texttt{id} &
-		Row identifier, each row corresponds to a point $p \in P$ &
-		integer
+		\texttt{fn\_squared\_dist} &
+		Function returning the squared distance between two vectors &
+		function
 		\\\midrule
 		In &
-		\texttt{coords} &
-		Point coordinates, i.e., the point $p$ &
-		sparse vector
+		\texttt{initial\_centroids} &
+		Matrix containing the initial centroids as columns. This argument may be omitted (corresponding to an empty set $C$ of initial centroids). &
+		floating-point matrix
 		\\\midrule
-		Temp &
-		\texttt{centroid\_dist} &
-		distance to closest centroid, corresponds to $\delta[p]$ in Algorithm~\ref{alg:kmeans++ext} &
-		floating-point
+		Out &
+		&
+		Matrix containing the $k$ centroids as columns &
+		floating-point matrix
 		\\\bottomrule
 	\end{tabularx}
 \end{center}
-%
-The return value of \ref{sym:kmeans++} is an array of centroids of type sparse vector.
 
-\paragraph{Components} The set of centroids $C$ is stored as an array of sparse vectors. Algoritm~\ref{alg:kmeans++ext} can be translated into SQL in a straightforward fashion. Unfortunately, PostgreSQL and Greenplum do not support an \texttt{UPDATE} statement that returns an aggregate (i.e., \ref{sym:discrete_sample}), so we cannot implement the aforementioned tuning.
-
-The inner for-loop in line~\ref{alg:kmeans++ext:pointLoop} becomes:
-\begin{lstlisting}[language=SQL]
-	UPDATE points
-	SET centroid_id = last_centroid,
-	    centroid_dist = dist(coords, last_centroid)
-	WHERE
-	    dist(coords, last_centroid) < centroid_dist
+\paragraph{Components} The set of centroids $C$ is stored as a dense floating-point matrix that contains the centroids as columns vectors. Algoritm~\ref{alg:kmeans++} can be (roughly) translated into SQL as follow. We assume here that all function arguments are available as constants, and the matrix containing the centroids as columns is available as \texttt{centroids}. Line~\ref{alg:kmeanspp:firstCentroid} becomes:
+\begin{lstlisting}[language=SQL,gobble=4]
+    SELECT ARRAY[(
+        SELECT CAST($expr_point AS DOUBLE PRECISION[])
+        FROM $rel_source
+        WHERE $expr_id = (
+            SELECT weighted_sample($expr_id, 1)
+            FROM $rel_source
+        )
+    )]
 \end{lstlisting}
-Lines~\ref{alg:kmeans++ext:firstCentroid} and \ref{alg:kmeans++ext:nextCentroid} are implemented using \ref{sym:discrete_sample}. That is, \texttt{last\_centroid} is set to the output of:
-\begin{lstlisting}[language=SQL]
-	SELECT discrete_sample(id, centroid_dist^2) FROM points
+Line~\ref{alg:kmeanspp:nextcentroid} is implemented using essentially the following SQL.
+\begin{lstlisting}[language=SQL,gobble=4]
+    SELECT centroids || $expr_point
+    FROM $rel_source
+    WHERE $expr_id = (
+        SELECT
+            weighted_sample(
+                $expr_id, (
+                closest_column(
+                    centroids,
+                    $expr_point,
+                    fn_squared_dist
+                )).distance
+            )
+        FROM $rel_source
+    )
 \end{lstlisting}
+See Section~\ref{sec:matrix:closestColumn} for a description of \ref{sym:closestColumn}.
 
 \subsubsection{Historical Implementations}
 
@@ -221,159 +233,108 @@ The standard algorithm has been outlined in Section~\ref{sec:kmeans:Algorithms}.
 \subsection{Formal Description}
 
 \begin{algorithm}[$k$-means$(k, P, \dist)$] \label{alg:kmeans}
-\alginput{Number of desired centroids $k$, seeding strategy $\mathit{Seeding}$, set $P$ of points, metric $\dist$,\\convergence strategy $\mathit{Convergence}$}
-\algoutput{Set $C$ of final means, mapping $m$ of each $p \in P$ to closest mean $m[p]$}
-\algprecond{$m = $ empty mapping, $i = 0$}
+\alginput{Set of initial centroids $C$, set $P$ of points, seeding strategy $\mathit{Seeding}$, metric $\dist$, \\
+averaging function $\mathit{mean}$, convergence strategy $\mathit{Convergence}$}
+\algoutput{Set $C$ of final means}
+\algprecond{$i = 0$}
 \begin{algorithmic}[1]
-	\State $C \set \mathit{Seeding}(k, P, \dist)$ \label{alg:kmeans:Seed}
 	\Repeat
 		\State $i \set i + 1$
-		\State $m_\text{old} \set m$
-%		\For{$p \in P$} \label{alg:kmeans:ForReassign}
-%			\State $m[p] \set \arg\min_{c \in C} \dist(p, c)$ \Comment{Break ties arbitrarily}
-%		\EndFor
-		\State $C \set \bigcup_{c \in C} \{ \operatorname{avg} \{p \in P \mid \arg\min_{c' \in C} \dist(p, c') = c \} \}$ \label{alg:kmeans:MoveCentroids}
-		\State $C \set C \cup \mathit{Seeding}(k - |C|, P, \dist)$ \label{alg:kmeans:Reseed}
-	\Until{$Convergence(m_\text{old}, m, i)$} \label{alg:kmeans:ConvergenceCond}
+		\State $C_\text{old} \set C$
+		\State $C \set \bigcup_{c \in C} \{ \mathit{mean} \{p \in P \mid \arg\min_{c' \in C} \dist(p, c') = c \} \}$ \label{alg:kmeans:MoveCentroids}
+		\State $C \set \mathit{Seeding}(k, P, \dist, C)$ \label{alg:kmeans:Reseed} \Comment{Reseed ``lost'' centroids (if any)}
+	\Until{$Convergence(C, C_\text{old}, P, i)$} \label{alg:kmeans:ConvergenceCond}
 \end{algorithmic}
 \end{algorithm}
 
 \begin{description}
 	\item[Runtime] See discussion in Section~\ref{sec:kmeans:Algorithms}.
-	\item[Space] Store the $k$ centroids plus the closest centroid for each of the $n$ points
-	\item[Scalability] The outer loop is inherently sequential. The inner loop is data-parallel (provided that the set $C$ is available on all computation nodes).
-	\item[Heuristics] The following are straightforward heuristic modifications that improve performance but that we expect to have little impact on the quality of output:
-		\begin{itemize}
-			\item Random Sampling: In lines~\ref{alg:kmeans:Seed} and \ref{alg:kmeans:Reseed} use a random sample $P' \subsetneq P$.
-		\end{itemize}
+	\item[Space] Store $2k$ centroids (both sets $C$ and $C_\text{old}$)
+	\item[Scalability] The outer loop is inherently sequential. The recentering in line~\ref{alg:kmeans:MoveCentroids} is data-parallel (provided that the sets $C$ and $C_\text{old}$ are available on all computation nodes). Likewise, the convergence check in line~\ref{alg:kmeans:ConvergenceCond} is data-parallel if it only relies on distances between points $p$ and the set of centroids $C$, or the number of iterations.
 \end{description}
 
 \subsection{Implementation as User-Defined Function}
 
-Algorithm~\ref{alg:kmeans} is implemented as the user-defined function \symlabel{kmeans}{sym:kmeans}. Since specifying higher-order arguments is problematic in SQL, we choose to not make the convergence criterion a function argument but instead settle for parameters for the most typical criteria.
+Algorithm~\ref{alg:kmeans} is implemented as the user-defined function \symlabel{kmeans}{sym:kmeans}. We choose to not make the convergence criterion a function argument but instead settle for parameters for the most typical criteria. Should the need arise, we might revoke that decision in the future. Moreover, the seeding strategy is currently not an argument, but \ref{sym:kmeans++} is always used in line~\ref{alg:kmeans:Reseed}.
 
-\paragraph{In- and Output} The function expects the following arguments:
+\paragraph{In- and Output} The UDF expects the following arguments, and returns the following values:
 
-\begin{center}
-	\begin{tabularx}{\linewidth}{lXl}
-		\toprule%
-		\textbf{Name} & \textbf{Description} & \textbf{Type}
-		\\\otoprule
-		\texttt{k} &
-		Number of centroids &
-		integer
-		\\\midrule
-		\texttt{seeding} &
-		Seeding strategy &
-		functor
-		\\\midrule
-		\texttt{dist} &
-		Metric &
-		functor
-		\\\midrule
-		\texttt{points} &
-		Relation containing the points as rows &
-		relation
-		\\\midrule
-		\texttt{max\_iterations} &
-		Convergence criterion: Maximum number of iterations &
-		integer
-		\\\midrule
-		\texttt{conv\_level} &
-		Convergence criterion: Convergence is reached if the fraction of points being reassigned to another centroid drops below \texttt{conv\_level} &
-		floating-point
-		\\\midrule
-		\texttt{seeding\_sample} &
-		Relative size of sample used for seeding, i.e., the size of $P'$ (relative to $P$) passed to $\mathit{Seeding}$ in lines~\ref{alg:kmeans:Seed} and \ref{alg:kmeans:Reseed}  &
-		floating-point
-		\\\bottomrule
-	\end{tabularx}
-\end{center}
-%
-Here, \texttt{points} refers to a relation with at least the following columns.
-%
 \begin{center}
 	\begin{tabularx}{\linewidth}{rlXl}
 		\toprule%
-		& \textbf{Column} & \textbf{Description} & \textbf{Type}
+		\textbf{Name} & \textbf{Description} & \textbf{Type}
 		\\\otoprule
 		In &
-		\texttt{id} &
-		Row identifier, each row corresponds to a point $p \in P$ &
+		\texttt{rel\_source} &
+		Relation containing the points as tuples &
+		relation
+		\\\midrule
+		In &
+		\texttt{expr\_id} &
+		Tuple identifier, each tuple corresponds to a point $p \in P$ &
+		\specialcell{l}{expression\\ (integer)}
+		\\\midrule
+		In &
+		\texttt{expr\_point} &
+		Point coordinates, i.e., the point $p$ &
+		\specialcell{l}{expression\\ (floating-point vector)}
+		\\\midrule
+		In &
+		\texttt{initial\_centroids} &
+		Matrix containing the initial centroids as columns &
+		floating-point matrix
+		\\\midrule
+		In &
+		\texttt{fn\_squared\_dist} &
+		Function returning the squared distance between two vectors &
+		function
+		\\\midrule
+		In &
+		\texttt{agg\_mean} &
+		Aggregate returning the mean of a set of points &
+		function
+		\\\midrule
+		In &
+		\texttt{max\_num\_iterations} &
+		Convergence criterion: Maximum number of iterations &
 		integer
 		\\\midrule
 		In &
-		\texttt{coords} &
-		Point coordinates, i.e., the point $p$ &
-		sparse vector
+		\texttt{min\_frac\_reassigned} &
+		Convergence criterion: Convergence is reached if the fraction of points being reassigned to another centroid drops below \texttt{conv\_level} &
+		floating-point
 		\\\midrule
-		Out &
-		\texttt{centroid\_id} &
-		id of closest centroid, corresponds to $m[p]$ in Algorithm~\ref{alg:kmeans} &
-		integer
+		Out & &
+		Matrix containing the $k$ centroids as columns &
+		floating-point matrix
 		\\\bottomrule
 	\end{tabularx}
 \end{center}
-%
-The return value of \ref{sym:kmeans++} is an array of centroids of type sparse vector.
 
 \paragraph{Components}
 
-The set of centroids $C$ is stored as an array of sparse vectors \texttt{centroids}. Algoritm~\ref{alg:kmeans} can be translated into SQL in a straightforward fashion. The point-reassignment phase in the inner for-loop in line~\ref{alg:kmeans:ForReassign} becomes
-\begin{lstlisting}[language=SQL]
-	UPDATE points SET centroid_id = closest_centroid(centroids, coords, dist)
+The set of centroids $C$ is stored as a dense floating-point matrix that contains the centroids as columns vectors. Algoritm~\ref{alg:kmeans} can be (roughly) translated into SQL as follow. We assume here that all function arguments are available as constants, and the matrix containing the centroids is available as \texttt{centroids}. Line~\ref{alg:kmeans:MoveCentroids} becomes:
+%
+\begin{lstlisting}[language=SQL,gobble=4]
+    SELECT matrix_agg(_centroid)
+    FROM (
+        SELECT $agg_mean(_point) AS _centroid
+        FROM (
+            SELECT
+                $expr_point AS _point,
+                (closest_column(
+                    centroids,
+                    $expr_point,
+                    fn_squared_dist
+                )).column_id AS _new_centroid_id
+            FROM $rel_source
+        ) AS _points_with_assignments
+        GROUP BY _new_centroid_id
+    ) AS _new_centroids
 \end{lstlisting}
-Here, \texttt{closest\_centroid} is a simple function that takes an array of sparse vectors, a sparse vector, and a metric. It returns the index of the closest vector in the array. \todo{With higher-order constructs we can avoid the need for specialized functions and express this much more elegantly. While SQL makes this hard, we should still think about ways that make this possible.}
+See Section~\ref{sec:matrix:matrixAgg} for a description of \ref{sym:matrixAgg}.
 
-Likewise, moving the centroids in line~\ref{alg:kmeans:MoveCentroids} is implemented as follows.
-\begin{lstlisting}[language=SQL]
-	CREATE TEMPORARY TABLE updated_centroids AS
-	SELECT centroid_id, avg(coords) FROM points GROUP BY centroid_id
-\end{lstlisting}
-Since there might be stray centroids now, \texttt{updated\_centroids} may have less than $k$ rows. As in line~\ref{alg:kmeans:Reseed}, we therefore call the $\texttt{seeding}$ function again and store the returned array of centroids in \texttt{reseeded}. Unfortunately, some fiddling is necessary to assign the vacant \texttt{centroid\_id}s among the the centroids in \texttt{reseeded}:
-\begin{lstlisting}[language=SQL]
-	INSERT INTO updated_centroids
-	SELECT centroid_id, reseeded[sub_id] AS coords
-	FROM (
-	    SELECT *, row_number() OVER () AS sub_id
-	    FROM (
-	        SELECT generate_series(1,k) AS centroid_id
-	        EXCEPT
-	        SELECT centroid_id FROM updated_centroids
-	    ) vacant_ids
-	) vacant_ids_with_sub_ids
-\end{lstlisting}
-The centroids are then converted to an array again:
-\begin{lstlisting}[language=SQL]
-	SELECT array_agg(coords ORDER BY centroid_id) FROM updated_centroids
-\end{lstlisting}
+It is a a good idea to also compute the number of reassigned centroids, so that both line~\ref{alg:kmeans:MoveCentroids} and the convergence check in line~\ref{alg:kmeans:ConvergenceCond} can be computed with one pass over the data. To that end, we extend the inner-most query to also compute the previous closest centroid (i.e., we do a second \ref{sym:closestColumn} call where we pass matrix \texttt{old\_centroids} as first argument). During the aggregations in the two outer queries, we can then count (or sum up, respectively) the number of points that have been reassigned.
 
+Finally, line~\ref{alg:kmeans:Reseed} is simply implemented by calling function \ref{sym:kmeans++}. For a slight performance benefit, this function call should be guarded by a check if the number of centroids is lower than $k$.
 
-\section{Variants}
-
-\subsection{Canopy clustering}
-
-\todo{Unfinished. To be completed.}
-\textcite{MNU00a}
-
-\begin{algorithm}[Canopy$(t_1, t_2, P, \dist)$]
-\alginput{Parameters $t_1 > t_2$, set $P$ of points, metric $\dist$}
-\algoutput{Set of canopies (points) $C$,\\Mapping $D$ of each point $p \in P$ to the set $D[p] \subseteq C$ of canopies that contain $p$}
-\begin{algorithmic}[1]
-	\State $C \set \emptyset$
-	\For{$p \in P$}
-		\If{$\min_{c \in C} \dist(p, c) \geq T_2$}
-			\State $C \set C \cup \{ p \}$
-		\EndIf
-	\EndFor
-	\For{$p \in P$}
-		\State $D[p] \set \{ c \in C \mid \dist(p, c) < T_1 \}$
-	\EndFor
-\end{algorithmic}
-\end{algorithm}
-
-\paragraph{Properties:}
-\begin{itemize}
-	\item Runtime: Naive implementation needs $\Theta(k^2 n)$ distance calculations, where $k = |C|, n = |P|$. (But $k$ is not a parameter!)
-	\item Space: $O(dn)$. Without further knowledge, no better bound can be given.
-\end{itemize}
