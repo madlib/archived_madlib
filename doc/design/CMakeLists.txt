@@ -27,6 +27,7 @@ if(LATEX_BINARY AND BIBTEX_BINARY AND MAKEINDEX_BINARY)
             modules/sampling.tex
             modules/k-means.tex
             modules/low-rank-matrix-decomposition.tex
+            modules/convex-programming.tex
         MANGLE_TARGET_NAMES
     )
 else()
