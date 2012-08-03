@@ -28,12 +28,12 @@ Note: given $z_{1:M}$, let $F(w) = \sum_{m=1}^M f_{z_m}(w),$ and $F : \mathbb{R}
 \subsection{Examples}
 Many popular model can be formulated in the above form, with $f_{z_m}$ being properly specified.
 
-\paragraph{Logistic Regression.} Component function is given by
-\[f_{(x_m, y_m)} = \log(1 + e^{- y_m w^{T} x_m}),\]
+\paragraph{Logistic Regression.} The component function is given by
+\[f_{(x_m, y_m)}(w) = \log(1 + e^{- y_m w^{T} x_m}),\]
 where $x_m \in \mathbb{R}^N$ are values of independent variables, and $y_m \in \mathbb{R}$ are values of the dependent variable, $m = 1,...,M.$
 
-\paragraph{Linear SVM with hinge loss.} Component function is given by
-\[f_{(x_m, y_m)} = \max(0, 1 - y_m w^{T} x_m),\]
+\paragraph{Linear SVM with hinge loss.} The component function is given by
+\[f_{(x_m, y_m)}(w) = \max(0, 1 - y_m w^{T} x_m),\]
 where $x_m \in \mathbb{R}^N$ are values of features, and $y_m \in \mathbb{R}$ are values of the label, $m = 1,...,M.$
 Bertsekas \cite{springerlink:10.1007/s10107-011-0472-0} gives many other examples across application domains.
 
@@ -47,13 +47,13 @@ Gradient descent algorithm is simple but usually recognized as a slow algorithm 
 
 \paragraph{Line Search Strategy}
 % line search & trust region
-Convex programming has been well studied in the past few decades, and two main classes of algorithms are widely considered (\cite{nocedal2006numerical}, section 2.2): line search and trust region.
+Convex programming has been well studied in the past few decades, and two main classes of algorithms are widely considered: line search and trust region (\cite{nocedal2006numerical}, section 2.2).
 Because line search is more commonly deployed and discussed, we focus on line search in MADlib, although some of the algorithms we discuss in this section can also easily be formulated as trust region strategy.
 % general form of line search: w += \alpha p_k
 All algorithms of line search strategies have the iteration given by
 \[w_{k+1} = w_k + \alpha_k p_k,\]
-where $p_k \in \mathbb{R}^N$ is search direction, and stepsize $\alpha_k$.
-In gradient descent, $p_k$ is the steepest descent direction $- \nabla \sum_{m=1}^M f_{z_m}(w_k)$.
+where $p_k \in \mathbb{R}^N$ is search direction, and stepsize $\alpha_k$ \cite{nocedal2006numerical}.
+Specifiedly, for gradient descent, $p_k$ is the steepest descent direction $- \nabla \sum_{m=1}^M f_{z_m}(w_k)$.
 
 \subsection{Formal Description of Line Search}
 \begin{algorithm}[line-search$(z_{1:M})$] \label{alg:line-search}
@@ -80,40 +80,43 @@ finalization strategy $\mathit{Finalization}()$}
 \end{algorithmic}
 \end{algorithm}
 
+\paragraph{Programming Model.}
+We above give the algorithm of generic line search strategy, in the fashion of the selected programming model supported by MADlib (mainly user-defined aggregate).
+
 \paragraph{Parallelism.}
 The outer loop is inherently sequential.
 We require the inner loop is data-parallel.
 Simple component-wise addition or model averaging \cite{DBLP:conf/nips/DuchiAW10} are used to merge two states.
-A merge function is not explicitly added to the pseudo-code for simplicity.
-Separate discussion will be made when necessary.
+A merge function is not explicitly added to the pseudocode for simplicity.
+A separate discussion will be made when necessary.
 
 \paragraph{Convergence criterion.}
 Usually, following conditions are combined by AND, OR, or NOT.
 \begin{enumerate}
-    \item The change in the objective drops below a given threshold (E.g., RMSE).
+    \item The change in the objective drops below a given threshold (E.g., negative log-likelihood, root-mean-square error).
     \item The value of the objective matches some pre-computed value.
     \item The maximum number of iterations has been reached.
     \item There could be more.
 \end{enumerate}
-In the implementation, the computation of objective is paired up with line-search to share data I/O.
+In MADlib implementation, the computation of objective is paired up with line-search to share data I/O.
 
 \paragraph{Start strategy.}
 In most cases, zeros are used unless otherwise specified.
 
 \paragraph{Transition and finalization strategies.}
-The coefficients update code ($w_{k+1} \set w_k + \alpha_k p_k, k \set k + 1$) is put into either $\mathit{Transition}()$ or $\mathit{Finalization}()$.
-These two functions contain most of the computation logic, for computing $p_k$.
-We discuss individual design of an algorithm in the following sections.
+The coefficients update code ($w_{k+1} \set w_k + \alpha_k p_k$) is put into either $\mathit{Transition}()$ or $\mathit{Finalization}()$.
+These two functions contain most of the computation logic, for computing the search direction $p_k$.
+We discuss details of individual algorithms in the following sections.
 For simplicity, global iterator $k$ is read and updated in place by these functions without specifed as an additional argument.
 
 \subsection{Incremental Gradient Descent (IGD)}
 % motivation and introduction of IGD
-A main challenge arises when we are handling large amount of data, $M >> 1,$ the computation of $\nabla (\sum_{m=1}^M f_{z_m})$ requires a whole pass of the observation data.
+A main challenge arises when we are handling large amount of data, $M >> 1,$ where the computation of $\nabla (\sum_{m=1}^M f_{z_m})$ requires a whole pass of the observation data which is usually expensive.
 What distinguishes IGD from other algorithms is that it approximates  $\nabla (\sum_{m=1}^M f_{z_m}) = \sum_{m=1}^M (\nabla f_{z_m})$ by the gradient of a single component function $\nabla f_{z_m}$
 \footnote{$z_m$ is usually selected in a stochastic fashion.
 Therefore, IGD is also referred as stochastic gradient descent.
 The convergence and convergence rate of IGD are well developed \cite{springerlink:10.1007/s10107-011-0472-0}, and IGD is often considered to be very effective with $M$ being very large \cite{DBLP:conf/nips/BottouB07}.}.
-The reflection of this to the pseudocode makes the coefficients update code ($w_{k+1} \set w_k + \alpha_k p_k, k \set k + 1$) in $\mathit{Transition}()$ instead of in $\mathit{Finalization}()$.
+The reflection of this to the pseudocode makes the coefficients update code ($w_{k+1} \set w_k + \alpha_k p_k$) in $\mathit{Transition}()$ instead of in $\mathit{Finalization}()$.
 
 \subsubsection{Initialization Strategy}
 \begin{algorithm}[initialization-igd$(w)$] \label{alg:initialization-igd}
@@ -146,11 +149,11 @@ gradient function $\mathit{Gradient}()$}
 In MADlib, we support only constant stepsize for simplicity.
 Although IGD with constant stepsizes does not even have convergence guarantee \cite{springerlink:10.1007/s10107-011-0472-0}, but it works reasonably well in practice so far \cite{DBLP:conf/sigmod/FengKRR12} with some proper tuning.
 Commonly-used algorithms to tune stepsize (\cite{bertsekas1999nonlinear}, appendix C) are mostly heuristics and do not have strong guarantees on convergence rate.
-More importantly, these algorithms require many evaluations of the objective, which is usually very costly in use cases of MADlib.
+More importantly, these algorithms require many evaluations of the objective function, which is usually very costly in use cases of MADlib.
 
 \paragraph{Gradient function.}
 A function where IGD accepts computational logic of specified modules.
-In MADlib, currently, there is no support of objective functions that does not have gradient or subgradient.
+In MADlib convex programming framework, currently, there is no support of objective functions that does not have gradient or subgradient.
 
 \subsubsection{Finalization Strategy}
 \begin{algorithm}[finalization-igd$(\mathit{state})$] \label{alg:finalization-igd}
@@ -171,7 +174,7 @@ We skip the formal desciption of conjugate gradient methods that can be found in
 \subsubsection{Initialization Strategy}
 \begin{algorithm}[initialization-cg$(w)$] \label{alg:initialization-cg}
 \alginput{Coefficients $w \in \mathbb{R}^N$,\\
-gradient value $g \in \mathbb{R}^N$ (i.e., $\sum_{m=1}^M (\nabla f_{z_m})(w)$),\\
+gradient value $g \in \mathbb{R}^N$ (i.e., $\sum_{m=1}^M \nabla f_{z_m}(w_{k-1})$),\\
 previous search direction $p \in \mathbb{R}^N$}
 \algoutput{Transition state $\mathit{state}$}
 \begin{algorithmic}[1]
@@ -201,7 +204,7 @@ gradient function $\mathit{Gradient}()$}
 stepsize $\alpha \in \mathbb{R}^+$,\\
 update parameter strategy $\mathit{Beta}()$}
 \algoutput{Coefficients $w \in \mathbb{R}^N$,\\
-gradient value $g \in \mathbb{R}^N$ (i.e., $\sum_{m=1}^M (\nabla f_{z_m})(w)$),\\
+gradient value $g \in \mathbb{R}^N$ (i.e., $\sum_{m=1}^M \nabla f_{z_m}(w_{k-1})$),\\
 previous search direction $p \in \mathbb{R}^N$}
 \begin{algorithmic}[1]
     \If{k = 0}
@@ -212,9 +215,9 @@ previous search direction $p \in \mathbb{R}^N$}
     \EndIf
     \State $\mathit{state}.w_{k+1} \set \mathit{state}.w_k + \alpha p_k$
     \State $k \set k + 1$
-    \State $p \set \mathit{state}.p_k$
+    \State $p \set \mathit{state}.p_{k-1}$
         \Comment{Implicitly returning}
-    \State $g \set \mathit{state}.g_k$
+    \State $g \set \mathit{state}.g_{k-1}$
         \Comment{Implicitly returning again}
     \State \Return $\mathit{state}.w_k$
 \end{algorithmic}
