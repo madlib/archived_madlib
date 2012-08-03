@@ -27,7 +27,8 @@ namespace stats {
 
 // Internal functions
 AnyType stateToResult(
-	const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef);
+	const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
+	double logLikelihood);
 
 
 
@@ -124,8 +125,11 @@ public:
         numRows = 0;
 				S = 0;
         H.fill(0);
+        V.fill(0);				
+        grad.fill(0);
+        hessian.fill(0);
         logLikelihood = 0;
-        V.fill(0);
+
     }
 
 
@@ -228,17 +232,15 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 		
 		double xc = trans(state.coef)*x;
 		double s = std::exp(xc);
-
+		
 		state.S += s;
 		state.H += s*x;		
 		state.V += x * trans(x) * s;
 
-		state.grad += x + state.H/s;
-		state.hessian += (state.H * trans(state.H))/(s*s) - state.V/s;
+		state.grad += x - state.H/state.S;
+		state.hessian += (state.H * trans(state.H))/(state.S*state.S) - state.V/state.S;
 		state.logLikelihood += xc - std::log(state.S);
 		
-		dbout << "S:" << state.S << std::endl;
-		dbout << "L:" << state.logLikelihood << std::endl;
 		
     return state;
 }
@@ -249,15 +251,13 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
  *
  */
 AnyType cox_prop_hazards_step_final::run(AnyType &args) {
-    CoxPropHazardsTransitionState<ArrayHandle<double> > state = args[0];
 
+    CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
 
     // If we haven't seen any data, just return Null. 
     if (state.numRows == 0)
         return Null();
 
-		// Fixed Step size of 1
-		double stepSize = 1;
 
     if (!state.hessian.is_finite() || !state.grad.is_finite())
         throw NoSolutionFoundException("Over- or underflow in intermediate "
@@ -265,11 +265,10 @@ AnyType cox_prop_hazards_step_final::run(AnyType &args) {
 
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.hessian, EigenvaluesOnly, ComputePseudoInverse);
-		
 		Matrix inverse_of_hessian = decomposition.pseudoInverse();
-		
-		state.coef + state.coef - stepSize*inverse_of_hessian*state.grad;
-		
+
+		// Fixed Step size of 1		
+		state.coef = state.coef - state.hessian.inverse()*state.grad;
     // Return all coefficients etc. in a tuple
     return state;
 }
@@ -281,9 +280,7 @@ AnyType internal_cox_prop_hazards_step_distance::run(AnyType &args) {
     CoxPropHazardsTransitionState<ArrayHandle<double> > stateLeft = args[0];
     CoxPropHazardsTransitionState<ArrayHandle<double> > stateRight = args[1];
 
-		double diff = std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 		
-		dbout << "T:"<< diff <<std::endl;
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
 
@@ -293,7 +290,7 @@ AnyType internal_cox_prop_hazards_step_distance::run(AnyType &args) {
 AnyType internal_cox_prop_hazards_result::run(AnyType &args) {
 
     CoxPropHazardsTransitionState<ArrayHandle<double> > state = args[0];
-    return stateToResult(state.coef);
+    return stateToResult(state.coef, state.logLikelihood);
 }
 
 /**
@@ -301,11 +298,12 @@ AnyType internal_cox_prop_hazards_result::run(AnyType &args) {
  *
  */
 AnyType stateToResult(
-		const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef) {
+		const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
+		double logLikelihood) {
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << inCoef;
+		tuple << inCoef << logLikelihood;
 		
     return tuple;
 }
