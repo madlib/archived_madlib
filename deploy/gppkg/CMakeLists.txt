@@ -2,10 +2,19 @@
 # Packaging for Greenplum's gppkg
 # ------------------------------------------------------------------------------
 
+set(MADLIB_GPPKG_VERSION "1.1")
 set(MADLIB_GPPKG_RELEASE_NUMBER 1)
-set(MADLIB_GPPKG_RPM_FILES
+set(MADLIB_GPPKG_RPM_SOURCE_DIR
     "${CMAKE_BINARY_DIR}/_CPack_Packages/Linux/RPM/${CPACK_PACKAGE_FILE_NAME}"
 )
+# gppkg expects that the file name for the RPM from which the gppkg is generated
+# follows the pattern "<name>-<version>-<release>.<arch>.rpm". Otherwise,
+# uninstallation will not work (MPP-18078). Note that <version> has to be
+# consistent with the version in madlib.spec.in. gppkg deduces the
+# uninstallation command line options from the filename!
+set(MADLIB_GPPKG_RPM_FILE_NAME
+    "madlib-${MADLIB_VERSION_STRING}-${MADLIB_GPPKG_RELEASE_NUMBER}.${CPACK_RPM_PACKAGE_ARCHITECTURE}.rpm")
+
 find_program(
     GPPKG_BINARY
     gppkg

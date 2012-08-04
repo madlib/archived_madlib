@@ -32,11 +32,11 @@ function(add_gppkg)
     )
     if(GPPKG_BINARY AND RPMBUILD_BINARY)
         add_custom_target(gppkg_${PORT_VERSION_UNDERSCORE}
-            COMMAND cmake -E create_symlink \"\${MADLIB_GPPKG_RPM_FILES}\"
+            COMMAND cmake -E create_symlink \"\${MADLIB_GPPKG_RPM_SOURCE_DIR}\"
                 \"\${CPACK_PACKAGE_FILE_NAME}-gppkg\"
             COMMAND \"\${RPMBUILD_BINARY}\" -bb SPECS/madlib.spec
-            COMMAND cmake -E rename RPMS/\${CPACK_PACKAGE_FILE_NAME}-gppkg.rpm
-                gppkg/\${CPACK_PACKAGE_FILE_NAME}-gppkg.rpm
+            COMMAND cmake -E rename "RPMS/\${MADLIB_GPPKG_RPM_FILE_NAME}"
+                "gppkg/\${MADLIB_GPPKG_RPM_FILE_NAME}"
             COMMAND \"\${GPPKG_BINARY}\" --build gppkg
             DEPENDS \"${CMAKE_BINARY_DIR}/\${CPACK_PACKAGE_FILE_NAME}.rpm\"
             WORKING_DIRECTORY \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}\"
