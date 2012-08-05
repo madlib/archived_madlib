@@ -450,15 +450,12 @@ AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
-    HandleMap<const ColumnVector> featureType = args[2].getAs<ArrayHandle<double> >();
-    HandleMap<const ColumnVector> prevLabel = args[3].getAs<ArrayHandle<double> >();
-    HandleMap<const ColumnVector> currLabel = args[4].getAs<ArrayHandle<double> >();
-    size_t seq_len = args[5].getAs<double>();
-    size_t feature_size = args[6].getAs<double>();
+    size_t feature_size = args[2].getAs<double>();
+    size_t seq_len = features(features.size()-1) + 1;
     if (state.numRows == 0) {
         state.initialize(*this, feature_size);
-        if (!args[7].isNull()) {
-            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[7];
+        if (!args[3].isNull()) {
+            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[3];
             state = previousState;
             state.reset();
         }
@@ -485,18 +482,18 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        while (features(index)!=-1) {
-            size_t f_index = features(index);
-            size_t prev_index = prevLabel(index);
-            size_t curr_index = currLabel(index);
-            size_t f_type =  featureType(index);
+        while (features(index+4) == i) {
+            size_t f_type =  features(index);
+            size_t prev_index =  features(index+1);
+            size_t curr_index =  features(index+2);
+            size_t f_index =  features(index+3);
             if (f_type == 2) {
                 // state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { /* if (pos > 0)*/
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
-            index++;
+            index+=4;
         }
 
         // take exponential operator
@@ -514,7 +511,6 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         // scale for the next (backward) beta values
         scale(i - 1)=betas.row(i-1).sum();
         betas.row(i - 1)*=(1.0 / scale(i - 1));
-        index++;
     } // end of beta values computation
   
     index = 0;
@@ -524,20 +520,20 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        size_t ori_index = index;
-        while (features(index)!=-1) {
-            size_t f_index = features(index);
-            size_t prev_index = prevLabel(index);
-            size_t curr_index = currLabel(index);
-            size_t f_type =  featureType(index);
-            if (f_type == 0) {
+        while (features(index+4) == i) {
+            size_t f_type =  features(index);
+            size_t prev_index =  features(index+1);
+            size_t curr_index =  features(index+2);
+            size_t f_index =  features(index+3);
+            if (f_type == 2) {
                 // state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { /* if (pos > 0)*/
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
-            index++;
+            index+=4;
         }
+        size_t ori_index = index;
 
         // take exponential operator
         
@@ -561,10 +557,10 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         index = ori_index;
         while (features(index)!=-1) {
-            size_t f_index = features(index);
-            size_t prev_index = prevLabel(index);
-            size_t curr_index = currLabel(index);
-            size_t f_type =  featureType(index);
+            size_t f_type =  features(index);
+            size_t prev_index =  features(index+1);
+            size_t curr_index =  features(index+2);
+            size_t f_index =  features(index+3);
             if (f_type == 0 || f_type == 1) {
                 state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
