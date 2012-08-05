@@ -520,7 +520,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        while (features(index+4) == i) {
+        while (features(index+4) == j) {
             size_t f_type =  features(index);
             size_t prev_index =  features(index+1);
             size_t curr_index =  features(index+2);
