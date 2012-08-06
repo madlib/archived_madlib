@@ -42,16 +42,37 @@ m4_include(`SQLCommon.m4')
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.intermediate_cox_prop_hazards_result;
 CREATE TYPE MADLIB_SCHEMA.intermediate_cox_prop_hazards_result AS (
-    state DOUBLE PRECISION[],
+    x DOUBLE PRECISION[],
+    timeDeath DOUBLE PRECISION,
+    coef DOUBLE PRECISION[],
     exp_coef_x DOUBLE PRECISION,
     x_exp_coef_x DOUBLE PRECISION[],
     x_xTrans_exp_coef_x DOUBLE PRECISION[]
 );
 
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.intermediate_cox_prop_hazards(
-    /*+  x */ DOUBLE PRECISION[],
-    /*+  coef */ DOUBLE PRECISION[])
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.intermediate_cox_prop_hazards_step_transition(
+    /**  state ** /DOUBLE PRECISION[],
+    /**  x ** /DOUBLE PRECISION[],
+    /**  timeDeath ** /DOUBLE PRECISION,
+    /**  coef ** /DOUBLE PRECISION[],
+    /**  previous state ** /DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.intermediate_cox_prop_hazards_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.intermediate_internal_cox_prop_hazards_result(
+    /*+ state */ DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.intermediate_cox_prop_hazards_result AS
 'MODULE_PATHNAME'
 LANGUAGE c IMMUTABLE STRICT;
@@ -66,12 +87,12 @@ CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
 );
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_transition(
-    /*+  state */ DOUBLE PRECISION[],
-    /*+  x */ DOUBLE PRECISION[],
-    /*+  exp_coef_x */ DOUBLE PRECISION,
-    /*+  xexp_coef_x */ DOUBLE PRECISION[],
-    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
-    /*+  previous state */ DOUBLE PRECISION[])
+    /**  state ** / DOUBLE PRECISION[],
+    /**  x ** / DOUBLE PRECISION[],		
+    /**  exp_coef_x ** / DOUBLE PRECISION,
+    /**  exp_coef_x ** / DOUBLE PRECISION[],
+    /**  x_xTrans_exp_coef_x ** / DOUBLE PRECISION[],
+    /**  previous state ** / DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE;
@@ -93,10 +114,7 @@ CREATE
 m4_ifdef(`__GREENPLUM__',`ORDERED')
 AGGREGATE MADLIB_SCHEMA.cox_prop_hazards_step(
 
-    /*+  x */ DOUBLE PRECISION[],
-    /*+  exp_coef_x */ DOUBLE PRECISION,
-    /*+  xexp_coef_x */ DOUBLE PRECISION[],
-    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+ x */ DOUBLE PRECISION[],
     /*+ previous_state */ DOUBLE PRECISION[]) (
     
     STYPE=DOUBLE PRECISION[],
@@ -134,7 +152,7 @@ AS $$PythonFunction(stats, cox_prop_hazards, compute_cox_prop_hazards)$$
 LANGUAGE plpythonu VOLATILE;
 
 /**
- * @brief Compute cox-regression coefficients and diagnostic statistics
+ * @brief Compute logistic-regression coefficients and diagnostic statistics
  *
  * To include an intercept in the model, set one coordinate in the
  * <tt>independentVariables</tt> array to 1.
@@ -223,3 +241,19 @@ CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
 RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
 $$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, $4, $5, 0.0001);$$
 LANGUAGE sql VOLATILE;
+
+/**
+ * @internal
+ * @brief Intermediate step of the Cox-proportional hazards
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.intermediate_cox_prop_hazards_step(
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ timeDeath */ DOUBLE PRECISION,
+    /*+ coef */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.intermediate_cox_prop_hazards_step_transition,
+    FINALFUNC=MADLIB_SCHEMA.intermediate_cox_prop_hazards_step_final,
+    INITCOND='{0,0,0,0,0,0}'
+);

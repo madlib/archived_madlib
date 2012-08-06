@@ -25,7 +25,17 @@ DECLARE_UDF(stats, internal_cox_prop_hazards_result)
 DECLARE_UDF(stats, internal_cox_prop_hazards_step_distance)
 
 /**
+ * @brief Intermadiate Cox Proportional Hazard computation: Transition function
+ */
+DECLARE_UDF(stats, intermediate_cox_prop_hazards_step_transition)
+
+/**
+ * @brief Intermadiate Cox Proportional Hazard computation: Final function
+ */
+DECLARE_UDF(stats, intermediate_cox_prop_hazards_step_final)
+
+/**
  * @brief Intermadiate Cox Proportional Hazard computation: Intermadiate Results
  */
-DECLARE_UDF(stats, intermediate_cox_prop_hazards)
+DECLARE_UDF(stats, intermediate_internal_cox_prop_hazards_result)
 
