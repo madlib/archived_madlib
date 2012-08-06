@@ -32,6 +32,7 @@ AnyType stateToResult(
 
 // Internal functions
 AnyType intermediate_stateToResult(
+		const HandleMap<const ColumnVector, TransparentHandle<double> >& x,
 		const double inTimeDeath,
 		const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
 		const double inExp_coef_x,
@@ -209,47 +210,38 @@ public:
  *
  * Arguments (Matched with PSQL wrapped)
  * - 0: Current State
- * - 1: X value (Column Vector)
- * - 2: Previous State
+ * - 1: x
+ * - 2: exp_coef_x
+ * - 3: x_exp_coef_x value (Column Vector)
+ * - 4: x_xTrans_exp_coef_x value (Matrix)
+ * - 5: Previous State
 */
 
 AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 
-    CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
+		CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    double exp_coef_x = args[2].getAs<double>();
+    MappedColumnVector x_exp_coef_x = args[3].getAs<MappedColumnVector>();
+    MappedColumnVector x_xTrans_exp_coef_x = args[4].getAs<MappedColumnVector>();
+		
 
-    // The following check was added with MADLIB-138.
-    if (!isfinite(x)){
-        throw std::domain_error("Design matrix is not finite.");
+		state.initialize(*this, static_cast<uint16_t>(x.size()));
+		if (!args[5].isNull()) {
+				CoxPropHazardsTransitionState<ArrayHandle<double> > previousState = args[5];
+				state = previousState;
+				state.reset();
 		}
 
-    // Now do the transition step.
-    if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                "larger than 65535.");
-
-        state.initialize(*this, static_cast<uint16_t>(x.size()));
-        if (!args[2].isNull()) {
-            CoxPropHazardsTransitionState<ArrayHandle<double> > previousState = args[2];
-            state = previousState;
-            state.reset();
-        }
-
-    }
-
     state.numRows++;
-		
-		double xc = trans(state.coef)*x;
-		double s = std::exp(xc);
-		
-		state.S += s;
-		state.H += s*x;		
-		state.V += x * trans(x) * s;
+				
+		state.S += exp_coef_x;
+		state.H += x_exp_coef_x;
+		state.V += x_xTrans_exp_coef_x;
 
 		state.grad += x - state.H/state.S;
 		state.hessian += (state.H * trans(state.H))/(state.S*state.S) - state.V/state.S;
-		state.logLikelihood += xc - std::log(state.S);
+		state.logLikelihood += std::log(exp_coef_x) - std::log(state.S);
 		
 		
     return state;
@@ -394,7 +386,7 @@ public:
      */
     template <class OtherHandle>
     IntermediateCoxPropHazardsTransitionState &operator+=(
-        const CoxPropHazardsTransitionState<OtherHandle> &inOtherState) {
+        const IntermediateCoxPropHazardsTransitionState<OtherHandle> &inOtherState) {
 
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
@@ -402,7 +394,6 @@ public:
                 "states");
 
         numRows += inOtherState.numRows;
-
         return *this;
     }
 
@@ -419,7 +410,7 @@ public:
 
 private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
-        return 4 + 2*inWidthOfX + inWidthOfX*inWidthOfX;
+        return 4 + 3*inWidthOfX + inWidthOfX*inWidthOfX;
     }
 
     /**
@@ -444,11 +435,12 @@ private:
         numRows.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
         timeDeath.rebind(&mStorage[2]);
-        coef.rebind(&mStorage[3],inWidthOfX);
+        x.rebind(&mStorage[3]);
+        coef.rebind(&mStorage[3+inWidthOfX],inWidthOfX);
 
-        exp_coef_x.rebind(&mStorage[3+inWidthOfX]);
-        x_exp_coef_x.rebind(&mStorage[4+inWidthOfX], inWidthOfX);
-        x_xTrans_exp_coef_x.rebind(&mStorage[4+2*inWidthOfX],
+        exp_coef_x.rebind(&mStorage[3+2*inWidthOfX]);
+        x_exp_coef_x.rebind(&mStorage[4+2*inWidthOfX], inWidthOfX);
+        x_xTrans_exp_coef_x.rebind(&mStorage[4+3*inWidthOfX],
 																					inWidthOfX, inWidthOfX);
 
     }
@@ -459,6 +451,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ReferenceToDouble timeDeath;
+		typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap x;
 		typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
 
     typename HandleTraits<Handle>::ReferenceToDouble exp_coef_x;
@@ -512,6 +505,7 @@ AnyType intermediate_cox_prop_hazards_step_transition::run(AnyType &args) {
 		double s = std::exp(trans(coef)*x);
 		
 		state.timeDeath += timeDeath;
+		state.x += x;
 		state.exp_coef_x += s;
 		state.coef += coef;
 		state.x_exp_coef_x += s*x;
@@ -544,10 +538,10 @@ AnyType intermediate_cox_prop_hazards_step_final::run(AnyType &args) {
 AnyType intermediate_internal_cox_prop_hazards_result::run(AnyType &args) {
 
     IntermediateCoxPropHazardsTransitionState<ArrayHandle<double> > state = args[0];
-    double timeDeath = args[1].getAs<double>();
 		
     return intermediate_stateToResult(
-				timeDeath,
+				state.x,
+				state.timeDeath,
 				state.coef,
 				state.exp_coef_x,
 				state.x_exp_coef_x,
@@ -559,15 +553,16 @@ AnyType intermediate_internal_cox_prop_hazards_result::run(AnyType &args) {
  *
  */
 AnyType intermediate_stateToResult(
+		const HandleMap<const ColumnVector, TransparentHandle<double> > x,
 		double inTimeDeath,
 		const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
-		double &inExp_coef_x,
+		double inExp_coef_x,
 		const HandleMap<const ColumnVector, TransparentHandle<double> > &inX_exp_coef_x,
 		const HandleMap<const Matrix, TransparentHandle<double> >& inX_xTrans_exp_coef_x){
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-		tuple << inTimeDeath << inCoef << inExp_coef_x
+		tuple << x << inTimeDeath << inCoef << inExp_coef_x
 					<< inX_exp_coef_x << inX_xTrans_exp_coef_x;
 		
     return tuple;
