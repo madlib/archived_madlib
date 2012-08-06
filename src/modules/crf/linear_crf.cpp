@@ -450,6 +450,8 @@ bool lbfgsMinimize(int m, int iter,
 
 AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
+    printf("Insert employee record - OK\n");
+    throw std::domain_error("here1"+args.size());
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
     size_t feature_size = args[2].getAs<double>();
@@ -457,7 +459,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     size_t tag_size = args[3].getAs<double>();
     if (state.numRows == 0) {
         state.initialize(*this, feature_size, tag_size);
-        if (!args[3].isNull()) {
+        if (!args[4].isNull()) {
             LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[4];
             state = previousState;
             state.reset();
