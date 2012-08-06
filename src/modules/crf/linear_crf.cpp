@@ -46,10 +46,11 @@ public:
         return mStorage;
     }
 
-    inline void initialize(const Allocator &inAllocator, uint16_t num_features) {
+    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
         dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(num_features));
         rebind(num_features);
+        num_features = inWidthOfX;
     }
 
     template <class OtherHandle>
