@@ -47,6 +47,7 @@ public:
     }
 
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX, uint16_t tagSize) {
+        throw std::domain_error("here2.9");
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
         dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
@@ -88,8 +89,6 @@ private:
     }
 
     void rebind(uint16_t inWidthOfFeature) {
-        if(inWidthOfFeature==1)
-        throw std::domain_error("here2"+inWidthOfFeature);
         iteration.rebind(&mStorage[0]);
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
@@ -98,6 +97,7 @@ private:
         grad.rebind(&mStorage[3 + 2 * inWidthOfFeature], inWidthOfFeature);
         ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
         numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        throw std::domain_error("here2"+inWidthOfFeature);
         gradNew.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m], inWidthOfFeature);
         loglikelihood.rebind(&mStorage[4 + 4 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
     }
@@ -455,11 +455,15 @@ AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
+        throw std::domain_error("here6");
     size_t feature_size = args[2].getAs<double>();
+        throw std::domain_error("here5");
     size_t seq_len = features(features.size()-1) + 1;
+        throw std::domain_error("here4");
     size_t tag_size = args[3].getAs<double>();
     if (state.numRows == 0) {
         state.initialize(*this, feature_size, tag_size);
+        throw std::domain_error("here3");
         if (!args[4].isNull()) {
             LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[4];
             state = previousState;
