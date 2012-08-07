@@ -2,7 +2,7 @@
  *
  * @file linear_crf.cpp
  *
- * @brief Linear-Chain Conditional Random Field functions
+ * @brief Linear-chain Conditional Random Field functions
  *
  * We implement limited-memory BFGS method.
  *
