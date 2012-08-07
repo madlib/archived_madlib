@@ -40,6 +40,7 @@ public:
         : mStorage(inArray.getAs<Handle>()) {
 
         rebind(static_cast<uint16_t>(mStorage[1]));
+        throw std::domain_error("here2");
     }
 
     inline operator AnyType() const {
@@ -48,8 +49,8 @@ public:
 
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX, uint16_t tagSize) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-        dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(num_features));
-        rebind(num_features);
+        dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
+        rebind(inWidthOfX);
         num_features = inWidthOfX;
         num_labels =  tagSize;
     }
@@ -57,6 +58,7 @@ public:
     template <class OtherHandle>
     LinCrfLBFGSTransitionState &operator=(
         const LinCrfLBFGSTransitionState<OtherHandle> &inOtherState) {
+        throw std::domain_error("here1");
 
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] = inOtherState.mStorage[i];
