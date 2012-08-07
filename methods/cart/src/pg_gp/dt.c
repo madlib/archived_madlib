@@ -2605,34 +2605,24 @@ Datum dt_array_indexed_agg_sfunc(PG_FUNCTION_ARGS)
 		 */ 
 		build_state.alen    = (elem_cnt << 1);
 		build_state.dvalues = (Datum *) palloc(build_state.alen * sizeof(Datum));
-		build_state.dnulls  = (bool *) palloc(build_state.alen * sizeof(bool));
+		build_state.dnulls  = NULL;
 		build_state.nelems  = build_state.alen;
 		build_state.element_type = elem_typ;
 
 		for (iterator_idx = 0; iterator_idx < build_state.alen; iterator_idx++)
 		{
-			build_state.dnulls[iterator_idx]    = 0;
 			build_state.dvalues[iterator_idx]   = Float8GetDatum(1);
 		}
 
 		/* put the elem into the target slot */
 		build_state.dvalues[elem_idx << 1]       = elem;
-		build_state.dvalues[(elem_idx << 1) + 1] = 
-            Float8GetDatum(PG_ARGISNULL(1) ? 1 : 0);
+		build_state.dvalues[(elem_idx << 1) + 1] =  
+			Float8GetDatum(PG_ARGISNULL(1) ? 1 : 0);
 		lbs[0] = 1;
 
-		state = construct_md_array
-            (
-                build_state.dvalues, 
-                build_state.dnulls, 
-                1, 
-                &(build_state.nelems), 
-                lbs, 
-			    build_state.element_type, 
-                build_state.typlen, 
-                build_state.typbyval, 
-                build_state.typalign
-            );
+		state = construct_array(build_state.dvalues, build_state.nelems,
+			build_state.element_type, build_state.typlen, 
+			build_state.typbyval, build_state.typalign);
 
 		PG_RETURN_ARRAYTYPE_P(state);
 	}
@@ -2718,6 +2708,10 @@ Datum dt_array_indexed_agg_prefunc(PG_FUNCTION_ARGS)
 	{
         elem_idx = iterator_idx << 1;
 
+		/* 
+		 * just taking the non-null one, pre-steps must make 
+		 * sure there is no duplicate 
+		 */
 		if (0 == (int)((float8*)ARR_DATA_PTR(arg1))[elem_idx + 1])
 		{
 			((float8*)ARR_DATA_PTR(arg0))[elem_idx] = 
