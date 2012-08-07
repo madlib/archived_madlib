@@ -1,11 +1,10 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file crf.cpp
+ * @file linear_crf.cpp
  *
- * @brief Logistic-Regression functions
+ * @brief Linear-Chain Conditional Random Field functions
  *
- * We implement the conjugate-gradient method and the iteratively-reweighted-
- * least-squares method.
+ * We implement limited-memory BFGS method.
  *
  *//* ----------------------------------------------------------------------- */
 
