@@ -40,7 +40,7 @@ public:
         : mStorage(inArray.getAs<Handle>()) {
 
         rebind(static_cast<uint16_t>(mStorage[1]));
-        throw std::domain_error("here2");
+        //throw std::domain_error("here2");
     }
 
     inline operator AnyType() const {
@@ -84,11 +84,13 @@ public:
     }
     static const int m=3;
 private:
-    static inline uint64_t arraySize(const uint32_t num_features) {
+    static inline uint64_t arraySize(const uint16_t num_features) {
         return 5 + 4 * num_features + num_features*(2*m+1)+2*m;
     }
 
-    void rebind(uint32_t inWidthOfFeature) {
+    void rebind(uint16_t inWidthOfFeature) {
+        if(inWidthOfFeature==1)
+        throw std::domain_error("here2"+inWidthOfFeature);
         iteration.rebind(&mStorage[0]);
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
@@ -105,7 +107,7 @@ private:
 
 public:
     typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
-    typename HandleTraits<Handle>::ReferenceToUInt32 num_features;
+    typename HandleTraits<Handle>::ReferenceToUInt16 num_features;
     typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
