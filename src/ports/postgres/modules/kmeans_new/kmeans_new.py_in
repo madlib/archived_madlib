@@ -90,12 +90,42 @@ class IterationController:
             plpy.notice(sql)
         return plpy.execute(sql)
 
+    def evaluate(self, expression):
+        """
+        Evaluate the given expression. The expression may depend on
+        the current inter-iteration state and all arguments
+
+        @param expression SQL expression. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+        @return None if \c expression evaluates to NULL, otherwise the value of
+            \c expression
+        """
+
+        resultObject = self.runSQL("""
+            SELECT ({expression}) AS expression
+            FROM {{rel_args}} AS _args
+                LEFT OUTER JOIN (
+                    SELECT *
+                    FROM {{rel_state}} AS _state
+                    WHERE _state._iteration = {{iteration}}
+                ) AS _state ON True
+            """.format(expression = expression).format(
+                iteration = self.iteration,
+                **self.kwargs))
+        if resultObject.nrows() == 0:
+            return None
+        else:
+            return resultObject[0]['expression']
+
     def test(self, condition):
         """
         Test if the given condition is satisfied. The condition may depend on
         the current inter-iteration state and all arguments
 
-        @param condition Boolean SQL expressions. The
+        @param condition Boolean SQL expression. The
             following names are defined and can be used in the condition:
             - \c _args - The (single-row) argument table
             - \c _state - The row of the state table containing the latest
@@ -104,23 +134,11 @@ class IterationController:
             value of \c condition
         """
 
-        resultObject = self.runSQL("""
-            SELECT CAST(({condition}) AS BOOLEAN) AS condition
-            FROM {{rel_args}} AS _args
-                LEFT OUTER JOIN (
-                    SELECT *
-                    FROM {{rel_state}} AS _state
-                    WHERE _state._iteration = {{iteration}}
-                ) AS _state ON True
-            """.format(condition = condition).format(
-                iteration = self.iteration,
-                **self.kwargs))
-        if resultObject.nrows() == 0:
-            return None
-        else:
-            return resultObject[0]['condition']
+        return self.evaluate("""
+            CAST(({condition}) AS BOOLEAN)
+            """.format(condition = condition))
 
-    def update(self, newState):
+    def update(self, newState, **updateKwargs):
         """
         Update the inter-iteration state
 
@@ -134,6 +152,8 @@ class IterationController:
             Note that <tt>{iteration}</tt> will still be the current iteration.
             For instance, it could be used in the expression as a WHERE
             condition: <tt>[...] WHERE _state._iteration = {iteration}</tt>
+        @param updateKwargs Additional keyword arguments that will be available
+            when \c newState is formatted
 
         This updates the current inter-iteration state to the result of
         evaluating \c newState. If <tt>self.truncAfterIteration</tt> is true,
@@ -141,9 +161,10 @@ class IterationController:
         is kept.
         """
 
+        updateKwargs.update(**self.kwargs)
         newState = newState.format(
             iteration = self.iteration,
-            **self.kwargs)
+            **updateKwargs)
         self.iteration = self.iteration + 1
         self.runSQL("""
             INSERT INTO {rel_state}
@@ -230,6 +251,67 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                 """)
     return iterationCtrl.iteration
 
+def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
+    rel_source, expr_point, **kwargs):
+    """
+    Driver function for k-Means random seeding
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @rel_args Name of the (temporary) table containing all non-template
+        arguments
+    @rel_state Name of the (temporary) table containing the inter-iteration
+        states
+    @param rel_source Name of the relation containing input points
+    @param expr_point Expression containing the point coordinates
+    @param kwargs We allow the caller to specify additional arguments (all of
+        which will be ignored though). The purpose of this is to allow the
+        caller to unpack a dictionary whose element set is a superset of
+        the required arguments by this function.
+    @return The iteration number (i.e., the key) with which to look up the
+        result in \c rel_state
+    """
+    iterationCtrl = IterationController(
+        rel_args = rel_args,
+        rel_state = rel_state,
+        stateType = "DOUBLE PRECISION[][]",
+        truncAfterIteration = True,
+        schema_madlib = schema_madlib, # Identifiers start here
+        rel_source = rel_source,
+        expr_point = expr_point)
+    with iterationCtrl as it:
+        it.update("""
+            SELECT _args.initial_centroids FROM {rel_args} AS _args
+            """)
+        m = it.evaluate("_args.k - coalesce(array_upper(_state._state, 1), 0)")
+        while m > 0:
+            it.update("""
+                SELECT
+                    _state._state || {schema_madlib}.matrix_agg(_point)
+                FROM (
+                        SELECT
+                            {expr_point} AS _point
+                        FROM
+                            {rel_source} AS _src, (
+                                SELECT
+                                    count(*) AS _n
+                                FROM {rel_source}
+                            ) AS _stats
+                        WHERE
+                            random() < CAST(
+                                ({m} + 14 + sqrt(196 + 28 * {m}))/_n
+                                AS DOUBLE PRECISION
+                            )
+                        ORDER BY random()
+                        LIMIT {m}
+                    ) AS _src,
+                    {rel_state} AS _state
+                WHERE
+                    _state._iteration = {iteration}
+                GROUP BY
+                    _state._state
+                """, m = m)
+            m = it.evaluate("_args.k - coalesce(array_upper(_state._state, 1), 0)")
+    return iterationCtrl.iteration
 
 def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, expr_id,
     expr_point, agg_mean, **kwargs):
@@ -266,7 +348,7 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, expr_id,
         # Create the initial inter-iteration state of type kmeans_result
         it.update("""
             SELECT
-                CAST((_args.initial_centroids, 1.0, 0) AS
+                CAST((_args.initial_centroids, 'Inf', 1.0, 0) AS
                     {schema_madlib}.kmeans_result)
             FROM {rel_args} AS _args
             """)
@@ -278,25 +360,27 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, expr_id,
                 SELECT
                     CAST((
                         {schema_madlib}.matrix_agg(_centroid),
+                        sum(_objective_fn),
                         CAST(sum(_num_reassigned) AS DOUBLE PRECISION)
                             / sum(_num_points),
                         NULL
                     ) AS {schema_madlib}.kmeans_result)
                 FROM (
                     SELECT
+                        sum((_new_centroid).distance) AS _objective_fn,
                         count(*) AS _num_points,
                         sum(CAST(coalesce(
-                            _new_centroid_id != _old_centroid_id, TRUE
+                            (_new_centroid).column_id != _old_centroid_id, TRUE
                         ) AS INTEGER)) AS _num_reassigned,
                         {agg_mean}(_point) AS _centroid
                     FROM (
                         SELECT
                             _src.{expr_point} AS _point,
-                            ({schema_madlib}.closest_column(
+                            {schema_madlib}.closest_column(
                                 (_state._state).centroids,
                                 _src.{expr_point},
                                 _args.fn_squared_dist
-                            )).column_id AS _new_centroid_id,
+                            ) AS _new_centroid,
                             ({schema_madlib}.closest_column(
                                 (_state_old._state).centroids,
                                 _src.{expr_point},
@@ -312,7 +396,7 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source, expr_id,
                             ) AS _state_old ON True
                         WHERE _state._iteration = {iteration}
                     ) AS _points_with_assignments
-                    GROUP BY _new_centroid_id
+                    GROUP BY (_new_centroid).column_id
                 ) AS _new_centroids
                 """)
 

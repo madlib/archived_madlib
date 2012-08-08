@@ -266,12 +266,17 @@ out_centorids | km_c
  *  - <tt>centroids</tt> - Matrix containing the new \f$ l \leq k \f$
  *    repositioned centroids as columns. If this matrix has \f$ l < k \f$
  *    columns, one or more old centroids no longer were closest to any point.
+ *  - <tt>objective_fn</tt> - Value of the objective function, i.e.,
+ *    \f$ \sum_{x \in P} \dist(x, C)^2 \f$ where
+ *    \f$ P \f$ is the set of points, \f$ C \f$ is the set of centroids, and
+ *    \f$ \dist(x, C) := \min_{c \in C} \operatorname{dist}(x, c) \f$.
  *  - <tt>frac_reassigned</tt> - Fraction of points that was assigned a
  *    different centroid in the current iteration.
  *  - <tt>num_iterations</tt> - Number of iterations performed (so far).
  */
 CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
     centroids DOUBLE PRECISION[][],
+    objective_fn DOUBLE PRECISION,
     frac_reassigned DOUBLE PRECISION,
     num_iterations INTEGER
 );
@@ -617,6 +622,200 @@ LANGUAGE sql AS $$
         $1, $2, $3,
         MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4,
             'MADLIB_SCHEMA.squared_dist_norm2'),
+        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg',
+        20, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_random_seeding_args(
+    sql VARCHAR, INT2, DOUBLE PRECISION[][]
+) RETURNS VOID
+IMMUTABLE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeans_random_seeding(
+    rel_args VARCHAR,
+    rel_state VARCHAR,
+    rel_source VARCHAR,
+    expr_point VARCHAR)
+RETURNS INTEGER
+AS $$PythonFunction(kmeans, kmeans, compute_kmeans_random_seeding)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief k-Means Random Seeding
+ *
+ * @param rel_source Name of the relation containing input points
+ * @param expr_point Name of the column containing the point coordinates
+ * @param k Number of centroids
+ * @param initial_centroids A matrix containing up to \f$ k \f$ columns as
+ *     columns. kmeanspp_seeding() proceeds exactly as if these centroids had
+ *     already been generated in previous iterations. This parameter may be
+ *     NULL in which all \f$ k \f$ centroids will be generated.
+ * @returns A matrix containing \f$ k \f$ centroids as columns
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random_seeding(
+    rel_source REGCLASS,
+    expr_point VARCHAR,
+    k INT2,
+    initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
+) RETURNS DOUBLE PRECISION[][] AS $$
+DECLARE
+    theIteration INTEGER;
+    theResult DOUBLE PRECISION[][];
+    oldClientMinMessages VARCHAR;
+    proc_fn_squared_dist REGPROCEDURE;
+BEGIN
+    -- We first setup the argument table. Rationale: We want to avoid all data
+    -- conversion between native types and Python code. Instead, we use Python
+    -- as a pure driver layer.
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+    -- Unfortunately, the EXECUTE USING syntax is only available starting
+    -- PostgreSQL 8.4:
+    -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
+    -- We therefore have to emulate.
+    PERFORM MADLIB_SCHEMA.internal_execute_using_kmeans_random_seeding_args($sql$
+        DROP TABLE IF EXISTS pg_temp._madlib_kmeans_random_args;
+        CREATE TEMPORARY TABLE _madlib_kmeans_random_args AS
+        SELECT $1 AS k, $2 AS initial_centroids;
+        $sql$,
+        k, initial_centroids);
+    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+
+    -- Perform acutal computation.
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
+    -- operators from regclass to varchar/text.
+    theIteration := (
+        SELECT MADLIB_SCHEMA.internal_compute_kmeans_random_seeding(
+            '_madlib_kmeans_random_args', '_madlib_kmeans_random_state',
+            textin(regclassout(rel_source)), expr_point)
+    );
+
+    -- Retrieve result from state table and return it
+    EXECUTE
+        $sql$
+        SELECT _state FROM _madlib_kmeans_random_state
+        WHERE _iteration = $sql$ || theIteration || $sql$
+        $sql$
+        INTO theResult;
+    RETURN theResult;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random_seeding(
+    rel_source REGCLASS,
+    expr_point VARCHAR,
+    k INT2
+) RETURNS DOUBLE PRECISION[][]
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3, NULL)
+$$;
+
+/**
+ * @brief Run k-Means with random seeding.
+ *
+ * This is a shortcut for running k-means with random seeding. It is equivalent
+ * to
+ * <pre>SELECT \ref kmeans(
+    rel_source,
+    expr_id,
+    expr_point,
+    \ref kmeans_random_seeding(
+        rel_source,
+        expr_point,
+        k
+    ),
+    fn_squared_dist,
+    agg_mean,
+    max_num_iterations,
+    min_frac_reassigned
+)</pre>
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source REGCLASS,
+    expr_id VARCHAR,
+    expr_point VARCHAR,
+    k INT2,
+    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_mean VARCHAR /*+ DEFAULT 'avg' */,
+    max_num_iterations INTEGER /*+ DEFAULT 20 */,
+    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2, $3, MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
+        $5, $6, $7, $8)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source REGCLASS,
+    expr_id VARCHAR,
+    expr_point VARCHAR,
+    k INT2,
+    fn_squared_dist VARCHAR,
+    agg_mean VARCHAR,
+    max_num_iterations INTEGER
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2, $3,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
+        $5, $6, $7, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source REGCLASS,
+    expr_id VARCHAR,
+    expr_point VARCHAR,
+    k INT2,
+    fn_squared_dist VARCHAR,
+    agg_mean VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2, $3,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
+        $5, $6, 20, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source REGCLASS,
+    expr_id VARCHAR,
+    expr_point VARCHAR,
+    k INT2,
+    fn_squared_dist VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2, $3,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
+        $5, 'MADLIB_SCHEMA.avg', 20, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source REGCLASS,
+    expr_id VARCHAR,
+    expr_point VARCHAR,
+    k INT2
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2, $3,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg',
         20, 0.001)
 $$;
