@@ -447,9 +447,9 @@ bool lbfgsMinimize(int m, int iter,
 
 void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi){
 	// take exponential operator
-	for (size_t m = 0; m < num_labels; m++) {
+	for (int m = 0; m < num_labels; m++) {
 		Vi(m) = std::exp(Vi(m));
-		for (size_t n = 0; n < num_labels; n++) {
+		for (int n = 0; n < num_labels; n++) {
 			Mi(m, n) = std::exp(Mi(m, n));
 		}
 	}
@@ -459,13 +459,12 @@ AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
-    size_t feature_size = args[2].getAs<double>();
-    size_t seq_len = features(features.size()-1) + 1;
-    size_t tag_size = args[3].getAs<double>();
-    if(tag_size!=45 || feature_size!=69 || features.size()%5!=0)
-    throw std::domain_error("here1");
+    int feature_size = features.size();
+    int seq_len = features(feature_size-1) + 1;
+    //if(tag_size!=45 || feature_size!=69 || features.size()%5!=0 || features.size() !=555)
+    //throw std::domain_error("here1");
     if (state.numRows == 0) {
-        state.initialize(*this, feature_size, tag_size);
+        state.initialize(*this, args[2].getAs<double>(), args[3].getAs<double>());
         if (!args[4].isNull()) {
             LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[4];
             state = previousState;
@@ -492,12 +491,12 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     scale(seq_len - 1) = state.num_labels;
     betas.row(seq_len - 1).fill(1.0 / scale(seq_len - 1));
 
-    size_t index = features.size()-1;
-    for (size_t i = seq_len - 1; i > 0; i--) {
+    int index = feature_size-1;
+    for (int i = seq_len - 1; i > 0; i--) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        while (features(index) == i) {
+        while (index-4>=0 && features(index) == i) {
             size_t f_type =  features(index-4);
             size_t prev_index =  features(index-3);
             size_t curr_index =  features(index-2);
@@ -523,12 +522,12 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     index = 0;
     state.loglikelihood = 0;
     // start to compute the log-likelihood of the current sequence
-    for (size_t j = 0; j < seq_len; j++) {
+    for (int j = 0; j < seq_len; j++) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
         size_t ori_index = index;
-        while (features(index+4) == j) {
+        while (((index+4) <= (feature_size-1)) && features(index+4) == j) {
             size_t f_type =  features(index);
             size_t prev_index =  features(index+1);
             size_t curr_index =  features(index+2);
@@ -553,7 +552,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         
         index = ori_index;
-        while (features(index+4) == j) {
+        while (((index+4) <= (feature_size-1)) && features(index+4) == j) {
             size_t f_type =  features(index);
             size_t prev_index =  features(index+1);
             size_t curr_index =  features(index+2);
@@ -580,7 +579,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
     // re-correct the value of seq_logli because Zx was computed from
     // scaled alpha values
-    for (size_t k = 0; k < seq_len; k++) {
+    for (int k = 0; k < seq_len; k++) {
         state.loglikelihood -= std::log(scale[k]);
     }
     // update the gradient vector
