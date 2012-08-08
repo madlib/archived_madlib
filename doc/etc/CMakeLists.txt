@@ -4,6 +4,7 @@
 
 configure_file(user.doxyfile.in user.doxyfile)
 configure_file(developer.doxyfile.in developer.doxyfile)
+configure_file(SQLCommon.m4_in SQLCommon.m4)
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/doxygen.css
