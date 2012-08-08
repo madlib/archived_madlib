@@ -90,16 +90,15 @@ def __get_feature_probs_sql(**kwargs):
         (
             SELECT
                 trainingSource.{trainingClassColumn} AS class,
-                attr.attr,
-                trainingSource.{trainingAttrColumn}[attr.attr] AS value,
+                generate_series(1, {numAttrs}) AS attr,
+                unnest(trainingSource.{trainingAttrColumn}) AS value,
                 count(*) AS cnt
             FROM
-                generate_series(1, {numAttrs}) AS attr,
                 {trainingSource} AS trainingSource
             GROUP BY
-                trainingSource.{trainingClassColumn},
-                attr.attr,
-                trainingSource.{trainingAttrColumn}[attr.attr]
+                class,
+                attr,
+                value
         ) AS triple_counts
         USING (class, attr, value)
         INNER JOIN
@@ -130,12 +129,12 @@ def __get_attr_values_sql(**kwargs):
     """
 
     return """
-        SELECT DISTINCT
-            attr.attr,
-            trainingSource.{trainingAttrColumn}[attr.attr] AS value
-        FROM
+        SELECT 
             generate_series(1, {numAttrs}) AS attr,
+            unnest(trainingSource.{trainingAttrColumn}) AS value
+        FROM
             {trainingSource} AS trainingSource
+        GROUP BY attr, value
         """.format(**kwargs)
 
 
@@ -152,15 +151,22 @@ def __get_attr_counts_sql(**kwargs):
     """
 
     return """
-        SELECT
-            attr.attr,
-            count(
-                DISTINCT trainingSource.{trainingAttrColumn}[attr.attr]
-            ) AS attr_cnt
+        SELECT 
+            attr, count(value) AS attr_cnt
         FROM
-            generate_series(1, {numAttrs}) AS attr,
-            {trainingSource} AS trainingSource
-        GROUP BY attr.attr
+        (
+            SELECT 
+                attr, value            
+            FROM (
+                SELECT 
+                    generate_series(1, {numAttrs}) AS attr,
+                    unnest(trainingSource.{trainingAttrColumn}) AS value
+                FROM
+                    {trainingSource} AS trainingSource 
+                ) l
+            GROUP BY attr, value
+        ) m
+        GROUP BY attr
         """.format(**kwargs)
 
 
@@ -177,12 +183,20 @@ def __get_class_priors_sql(**kwargs):
     """
 
     return """
-        SELECT
-            trainingSource.{trainingClassColumn} AS class,
-            count(*) AS class_cnt,
-            sum(count(*)) OVER () AS all_cnt
-        FROM {trainingSource} AS trainingSource
-        GROUP BY trainingSource.{trainingClassColumn}
+        SELECT * FROM 
+            (
+            SELECT
+                trainingSource.{trainingClassColumn} AS class,
+                count(*) AS class_cnt
+            FROM {trainingSource} AS trainingSource
+            GROUP BY trainingSource.{trainingClassColumn}
+            ) l
+        CROSS JOIN
+            (
+            SELECT
+                count(*) AS all_cnt
+            FROM {trainingSource} AS trainingSource
+            ) m
         """.format(**kwargs)
 
 
@@ -218,46 +232,48 @@ def __get_keys_and_prob_values_sql(**kwargs):
     # {classifySource} cannot be a subquery, because we use it more than once in
     # our generated SQL.
     return """
-    SELECT
-        classify.key,
-        classPriors.class,
-        CASE WHEN count(*) < {numAttrs} THEN NULL
-             ELSE
-                log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
-                + sum( log((featureProbs.cnt::DOUBLE PRECISION + {smoothingFactor})
-                    / (classPriors.class_cnt + {smoothingFactor} * featureProbs.attr_cnt)) )
-             END
-        AS log_prob
-    FROM
-        {featureProbsSource} AS featureProbs,
-        {classPriorsSource} AS classPriors,
-        (
-            SELECT
-                classifySource.{classifyKeyColumn} AS key,
-                attr.attr,
-                classifySource.{classifyAttrColumn}[attr.attr] AS value
-            FROM
-                {classifySource} AS classifySource,
-                generate_series(1, {numAttrs}) AS attr
-        ) AS classify
-    WHERE
-        featureProbs.class = classPriors.class AND
-        featureProbs.attr = classify.attr AND
-        featureProbs.value = classify.value AND
-        ({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
-    GROUP BY
-        classify.key, classPriors.class, classPriors.class_cnt, classPriors.all_cnt
-    
-    UNION
-    
-    SELECT
-        classify.{classifyKeyColumn} AS key,
-        classes.class,
-        NULL
-    FROM
-        {classifySource} AS classify,
-        {classPriorsSource} AS classes
-    GROUP BY classify.{classifyKeyColumn}, classes.class
+    SELECT t2.key, t2.class, t1.log_prob FROM
+    (
+        SELECT
+            classify.key,
+            classPriors.class,
+            CASE WHEN count(*) < {numAttrs} THEN NULL
+                 ELSE
+                    log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
+                    + sum( log((featureProbs.cnt::DOUBLE PRECISION + {smoothingFactor})
+                        / (classPriors.class_cnt + {smoothingFactor} * featureProbs.attr_cnt)) )
+                 END
+            AS log_prob
+        FROM
+            {featureProbsSource} AS featureProbs,
+            {classPriorsSource} AS classPriors,
+            (
+                SELECT
+                    classifySource.{classifyKeyColumn} AS key,
+                    generate_series(1, {numAttrs}) AS attr,
+                    unnest(classifySource.{classifyAttrColumn}) AS value
+                FROM
+                    {classifySource} AS classifySource
+            ) AS classify
+        WHERE
+            featureProbs.class = classPriors.class AND
+            featureProbs.attr = classify.attr AND
+            featureProbs.value = classify.value AND
+            ({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
+        GROUP BY
+            classify.key, classPriors.class, classPriors.class_cnt, classPriors.all_cnt
+    ) t1
+    RIGHT OUTER JOIN
+    (
+        SELECT
+            classify.{classifyKeyColumn} AS key,
+            classes.class
+        FROM
+            {classifySource} AS classify,
+            {classPriorsSource} AS classes
+        GROUP BY classify.{classifyKeyColumn}, classes.class
+    ) t2 
+    ON t1.key = t2.key AND t1.class=t2.class
     """.format(**kwargs)
 
 
@@ -375,7 +391,20 @@ def create_prepared_data(**kwargs):
     @param featureProbsDestName Name of feature-probabilities relation to create 
         
     """
+    if not kwargs.has_key('numAttrs'):
+        plpy.error("'numAttrs' must be provided")
     
+    if not kwargs.has_key('trainingSource'):
+        plpy.error("'trainingSource' must be provided")
+
+    if not kwargs.has_key('trainingAttrColumn'):
+        plpy.error("'trainingAttrColumn' must be provided")
+
+    __verify_attr_num( 
+        kwargs["trainingSource"], 
+        kwargs["trainingAttrColumn"],
+        kwargs["numAttrs"])
+
     if kwargs['whatToCreate'] == 'TABLE':
         # FIXME: ANALYZE is not portable.
         kwargs.update(dict(
@@ -490,6 +519,30 @@ def create_classification(**kwargs):
     """
     
     __init_prepared_data(kwargs)
+
+    if kwargs.has_key('trainingSource') <> kwargs.has_key('trainingAttrColumn'):
+        plpy.error("'trainingSource' and 'trainingAttrColumn' must be provided together")
+
+    if not kwargs.has_key('numAttrs'):
+        plpy.error("'numAttrs' must be provided")
+    
+    if 'trainingSource' in kwargs:
+        __verify_attr_num( 
+            kwargs["trainingSource"], 
+            kwargs["trainingAttrColumn"],
+            kwargs["numAttrs"])
+
+    if not kwargs.has_key('classifySource'):
+        plpy.error("'classifySource' must be provided")
+
+    if not kwargs.has_key('classifyAttrColumn'):
+        plpy.error("'classifyAttrColumn' must be provided")
+
+    __verify_attr_num( 
+        kwargs["classifySource"], 
+        kwargs["classifyAttrColumn"],
+        kwargs["numAttrs"])
+    
     kwargs.update(
         keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
         )
@@ -577,6 +630,30 @@ where P(A = a | C = c) = ||  P(A_i = a_i | C = c).
     """
 
     __init_prepared_data(kwargs)
+
+    if kwargs.has_key('trainingSource') <> kwargs.has_key('trainingAttrColumn'):
+        plpy.error("'trainingSource' and 'trainingAttrColumn' must be provided together")
+
+    if not kwargs.has_key('numAttrs'):
+        plpy.error("'numAttrs' must be provided")
+    
+    if 'trainingSource' in kwargs:
+        __verify_attr_num( 
+            kwargs["trainingSource"], 
+            kwargs["trainingAttrColumn"],
+            kwargs["numAttrs"])
+
+    if not kwargs.has_key('classifySource'):
+        plpy.error("'classifySource' must be provided")
+
+    if not kwargs.has_key('classifyAttrColumn'):
+        plpy.error("'classifyAttrColumn' must be provided")
+
+    __verify_attr_num( 
+        kwargs["classifySource"], 
+        kwargs["classifyAttrColumn"],
+        kwargs["numAttrs"])
+
     kwargs.update(dict(
         keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
         ))
@@ -639,7 +716,6 @@ def create_classification_function(**kwargs):
     Note: Greenplum does not support executing STABLE and VOLATILE functions on
     segments. The created function can therefore only be called on the master.
     """
-    
     kwargs.update(dict(
         classifyAttrColumn = "$1",
         smoothingFactor = "$2"
@@ -666,7 +742,7 @@ def __init_prepared_data(kwargs):
     a relation.
 
     """
-
+    
     if not 'classPriorsSource' in kwargs:
         kwargs.update(dict(
                 classPriorsSource = "(" + __get_class_priors_sql(**kwargs) + ")" 
@@ -679,3 +755,18 @@ def __init_prepared_data(kwargs):
         kwargs.update(dict(
                 smoothingFactor = 1
             ))
+
+def __verify_attr_num(sourceTable, attrColumn, numAttr):
+    """
+    Verify the number of attributes for each record is as expected.
+    """
+    result = plpy.execute("""
+        SELECT count(*) size FROM {0}
+        WHERE array_upper({1}, 1) <> {2}
+        """.format(sourceTable, attrColumn, numAttr)
+        )
+
+    dsize = result[0]['size']
+    if (dsize <> 0):
+        plpy.error('found %d records in "%s" where "%s" was not of expected length (%d)'\
+            % (dsize, sourceTable, attrColumn, numAttr))    
