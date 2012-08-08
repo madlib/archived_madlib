@@ -480,23 +480,22 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     betas.row(seq_len - 1).fill(1.0 / scale(seq_len - 1));
 
     throw std::domain_error("here3");
-    size_t index=0;
+    size_t index = features.size()-1;
     for (size_t i = seq_len - 1; i > 0; i--) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        while (features(index+4) == i) {
-            size_t f_type =  features(index);
-            size_t prev_index =  features(index+1);
-            size_t curr_index =  features(index+2);
-            size_t f_index =  features(index+3);
-            if (f_type == 2) {
-                // state feature
+        while (features(index) == i) {
+            size_t f_type =  features(index-4);
+            size_t prev_index =  features(index-3);
+            size_t curr_index =  features(index-2);
+            size_t f_index =  features(index-1);
+            if (f_type == 2) {// state feature
                 Vi(curr_index) += state.coef(f_index);
-            } else if (f_type == 1) { /* if (pos > 0)*/
+            } else if (f_type == 1) { // edge feature
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
-            index+=5;
+            index-=5;
         }
 
         // take exponential operator
@@ -523,20 +522,19 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
+        size_t ori_index = index;
         while (features(index+4) == j) {
             size_t f_type =  features(index);
             size_t prev_index =  features(index+1);
             size_t curr_index =  features(index+2);
             size_t f_index =  features(index+3);
-            if (f_type == 2) {
-                // state feature
+            if (f_type == 2) {// state feature
                 Vi(curr_index) += state.coef(f_index);
-            } else if (f_type == 1) { /* if (pos > 0)*/
+            } else if (f_type == 1) { //edge feature
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
             index+=5;
         }
-        size_t ori_index = index;
 
         // take exponential operator
         
@@ -559,18 +557,18 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         }
 
         index = ori_index;
-        while (features(index)!=-1) {
+        while (features(index+4) == j) {
             size_t f_type =  features(index);
             size_t prev_index =  features(index+1);
             size_t curr_index =  features(index+2);
             size_t f_index =  features(index+3);
-            if (f_type == 0 || f_type == 1) {
+            if (f_type == 1 || f_type == 2) {
                 state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
             }
-            if (f_type == 1) {
+            if (f_type == 2) {
                 ExpF(f_index) += next_alpha(curr_index) * 1 * betas(j,curr_index);
-            } else if (f_type == 0) {
+            } else if (f_type == 1) {
                 ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index)
                                  * 1 * betas(j,curr_index);
             }
