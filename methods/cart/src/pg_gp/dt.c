@@ -2497,44 +2497,6 @@ PG_FUNCTION_INFO_V1(dt_to_text);
 
 
 /*
- * @brief Test if the input value is a missing value or not.
- *
- * @param 1 arg   The text value to be tested.
- *
- * @return true     if the input string is '', '?', or NULL
- *         false    otherwise
- *
- * @note The supported missing values are: '', '?' and NULL.
- *       The input value will be trimed before it is tested. 
- *       We define this test simply because a lot of datasets
- *       use these three representations for missing values before 
- *       they are loaded into databases. After loading, if these
- *       strings are not properly translated, the tables will contain 
- *       '', '?' instead of NULL. 
- *
- */
-Datum
-dt_is_miss_value
-    (
-    PG_FUNCTION_ARGS
-    )
-{
-    bool    result  = true;
-    char*   p       = NULL;
-
-    if (!(PG_ARGISNULL(0)))
-    {
-        p = text_to_cstring(DatumGetTextP(btrim1(fcinfo)));
-		dtelog(NOTICE, "char:%s", p);
-        result = ('\0' == p[0]) || ('?' == p[0] && 1 ==  strlen(p));
-    }
-
-    PG_RETURN_BOOL(result);
-}
-PG_FUNCTION_INFO_V1(dt_is_miss_value);
-
-
-/*
  * @brief The step function of the aggregate array_indexed_agg.
  *        To avoid allocating memory in each step function and manipulating
  *        the array bitmap for null values, we keep the null values by 
