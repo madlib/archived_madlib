@@ -51,6 +51,19 @@ set(DOXYGEN_HTML_OUTPUT html CACHE STRING
     "Path (relative to \${DOXYGEN_OUTPUT_<config>} where HTML docs will be put."
 )
 
+# -- Set macros for SQL/Python files -------------------------------------------
+
+set(PORT_UC "DOXYGEN")
+set(DBMS "doxygen")
+set(DBMS_UC "${PORT_UC}")
+set(${DBMS_UC}_VERSION_STRING "0.0.0")
+set(${DBMS_UC}_VERSION_MAJOR "0")
+set(${DBMS_UC}_VERSION_MINOR "0")
+set(${DBMS_UC}_VERSION_PATCH "0")
+set(${DBMS_UC}_ARCHITECTURE "all")
+set(DBMS_FEATURES "__HAS_ORDERED_AGGREGATES__")
+define_m4_macros(M4_DEFINES_CMD_LINE M4_DEFINES_CODE ${DBMS_FEATURES})
+
 
 # -- Build doxysql (the SQL parser) using flex and bison -----------------------
 

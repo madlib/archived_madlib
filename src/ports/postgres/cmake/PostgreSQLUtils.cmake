@@ -9,48 +9,6 @@ function(define_postgresql_features IN_VERSION OUT_FEATURES)
     set(${OUT_FEATURES} "${${OUT_FEATURES}}" PARENT_SCOPE)
 endfunction(define_postgresql_features)
 
-# Define GNU M4 preprocessor macros
-#
-# Generate M4 code and M4 command-line arguments to define a set of macros that
-# will be available to non-compiled source code (SQL, Python).
-#
-function(define_m4_macros OUT_M4_CMD_LINE OUT_M4_CODE)
-    set(IN_FEATURES ${ARGN})
-
-    set(MACROS
-        "${PORT_UC}"
-        "__${PORT_UC}__"
-        "__PORT__=${PORT_UC}"
-        "__DBMS__=${DBMS}"
-        "__DBMS_VERSION__=${${DBMS_UC}_VERSION_STRING}"
-        "__DBMS_VERSION_MAJOR__=${${DBMS_UC}_VERSION_MAJOR}"
-        "__DBMS_VERSION_MINOR__=${${DBMS_UC}_VERSION_MINOR}"
-        "__DBMS_VERSION_PATCH__=${${DBMS_UC}_VERSION_PATCH}"
-        "__DBMS_ARCHITECTURE__=${${DBMS_UC}_ARCHITECTURE}"
-        "__MADLIB_VERSION__=${MADLIB_VERSION_STRING}"
-        "__MADLIB_VERSION_MAJOR__=${MADLIB_VERSION_MAJOR}"
-        "__MADLIB_VERSION_MINOR__=${MADLIB_VERSION_MINOR}"
-        "__MADLIB_VERSION_PATCH__=${MADLIB_VERSION_PATCH}"
-        "__MADLIB_GIT_REVISION__=${MADLIB_GIT_REVISION}"
-        "__MADLIB_BUILD_TIME__=${MADLIB_BUILD_TIME}"
-        "__MADLIB_BUILD_TYPE__=${CMAKE_BUILD_TYPE}"
-        "__MADLIB_BUILD_SYSTEM__=${CMAKE_SYSTEM}"
-        "__MADLIB_C_COMPILER__=${MADLIB_C_COMPILER}"
-        "__MADLIB_CXX_COMPILER__=${MADLIB_CXX_COMPILER}"
-        ${IN_FEATURES}
-    )
-    list_replace("^(.+)$" "-D\\\\1" ${OUT_M4_CMD_LINE} ${MACROS})
-    list_replace("^([^=]+)$" "m4_define(`\\\\1')" ${OUT_M4_CODE} ${MACROS})
-    list_replace("^([^=]+)=(.+)$" "m4_define(`\\\\1', ``\\\\2'')" ${OUT_M4_CODE}
-        ${${OUT_M4_CODE}})
-    string(REGEX REPLACE ";" "\\n" ${OUT_M4_CODE} "${${OUT_M4_CODE}}")
-    
-    # Pass values to caller
-    set(${OUT_M4_CMD_LINE} "${${OUT_M4_CMD_LINE}}" PARENT_SCOPE)
-    set(${OUT_M4_CODE} "${${OUT_M4_CODE}}" PARENT_SCOPE)
-endfunction(define_m4_macros)
-
-
 # Add the installer group for this port and a component for all files that are
 # not version-specific
 #

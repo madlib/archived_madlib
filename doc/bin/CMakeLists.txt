@@ -10,19 +10,11 @@ add_custom_target(doxyBinFiles ALL DEPENDS ${BIN_TARGET_FILES})
 
 list(APPEND M4_ARGUMENTS
     "\"-DMADLIB_SCHEMA=MADlib\""
-    "\"-I${CMAKE_CURRENT_BINARY_DIR}/tmp\""
+    "\"-I${CMAKE_BINARY_DIR}/doc/etc\""
 )
-
 join_strings(_M4_ARGUMENTS " " "${M4_ARGUMENTS}")
+set(_M4_ARGUMENTS "${_M4_ARGUMENTS}")
+
 configure_file(py_filter.sh.in py_filter.sh @ONLY)
-
-execute_process(
-    COMMAND
-        "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/tmp"
-    COMMAND
-        "${CMAKE_COMMAND}" -E touch
-            "${CMAKE_CURRENT_BINARY_DIR}/tmp/SQLCommon.m4"
-)
 configure_file(sql_filter.sh.in sql_filter.sh @ONLY)
-
 configure_file(update_mathjax.sh.in update_mathjax.sh @ONLY)
