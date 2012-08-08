@@ -461,8 +461,6 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
     int feature_size = features.size();
     int seq_len = features(feature_size-1) + 1;
-    //if(tag_size!=45 || feature_size!=69 || features.size()%5!=0 || features.size() !=555)
-    //throw std::domain_error("here1");
     if (state.numRows == 0) {
         state.initialize(*this, args[2].getAs<double>(), args[3].getAs<double>());
         if (!args[4].isNull()) {
@@ -471,10 +469,8 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             state.reset();
         }
     }
-    if(state.num_labels!=45 || state.num_features!=69 || features.size()%5!=0)
-    throw std::domain_error("here1");
 
-    Eigen::MatrixXd betas(seq_len,state.num_labels);
+    Eigen::MatrixXd betas(state.num_labels, seq_len);
     Eigen::VectorXd scale(seq_len);
     Eigen::MatrixXd Mi(state.num_labels,state.num_labels);
     Eigen::VectorXd Vi(state.num_labels);
@@ -489,7 +485,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
     scale(seq_len - 1) = state.num_labels;
-    betas.row(seq_len - 1).fill(1.0 / scale(seq_len - 1));
+    betas.col(seq_len - 1).fill(1.0 / scale(seq_len - 1));
 
     int index = feature_size-1;
     for (int i = seq_len - 1; i > 0; i--) {
@@ -511,12 +507,12 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         compute_log_Mi(state.num_labels, Mi, Vi);
 
-        temp=betas.row(i);
+        temp=betas.col(i);
         temp=temp.cwiseProduct(Vi);
-        betas.row(i -1) = Mi*temp; 
+        betas.col(i -1) = Mi*temp; 
         // scale for the next (backward) beta values
-        scale(i - 1)=betas.row(i-1).sum();
-        betas.row(i - 1)*=(1.0 / scale(i - 1));
+        scale(i - 1)=betas.col(i-1).sum();
+        betas.col(i - 1)*=(1.0 / scale(i - 1));
     } // end of beta values computation
   
     index = 0;
@@ -544,7 +540,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         if(j>0){
           temp = alpha;
-          next_alpha=(temp.transpose()*Mi.transpose()).transpose();
+          next_alpha=Mi*temp;
           next_alpha=next_alpha.cwiseProduct(Vi);
         } else {
           next_alpha=Vi;
@@ -562,10 +558,9 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
                 state.loglikelihood += state.coef(f_index);
             }
             if (f_type == 2) {
-                ExpF(f_index) += next_alpha(curr_index) * 1 * betas(j,curr_index);
+                ExpF(f_index) += next_alpha(curr_index) * betas(curr_index,j);
             } else if (f_type == 1) {
-                ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index)
-                                 * 1 * betas(j,curr_index);
+                ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index) * betas(curr_index, j);
             }
             index+=5;
         }
