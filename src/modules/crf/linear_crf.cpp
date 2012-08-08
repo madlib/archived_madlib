@@ -445,7 +445,15 @@ bool lbfgsMinimize(int m, int iter,
     return true;
 }
 
-
+void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi){
+	// take exponential operator
+	for (size_t m = 0; m < num_labels; m++) {
+		Vi(m) = std::exp(Vi(m));
+		for (size_t n = 0; n < num_labels; n++) {
+			Mi(m, n) = std::exp(Mi(m, n));
+		}
+	}
+}
 
 AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
@@ -454,6 +462,8 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     size_t feature_size = args[2].getAs<double>();
     size_t seq_len = features(features.size()-1) + 1;
     size_t tag_size = args[3].getAs<double>();
+    if(tag_size!=45 || feature_size!=69 || features.size()%5!=0)
+    throw std::domain_error("here1");
     if (state.numRows == 0) {
         state.initialize(*this, feature_size, tag_size);
         if (!args[4].isNull()) {
@@ -462,6 +472,9 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             state.reset();
         }
     }
+    if(state.num_labels!=45 || state.num_features!=69 || features.size()%5!=0)
+    throw std::domain_error("here1");
+
     Eigen::MatrixXd betas(seq_len,state.num_labels);
     Eigen::VectorXd scale(seq_len);
     Eigen::MatrixXd Mi(state.num_labels,state.num_labels);
@@ -497,15 +510,8 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             index-=5;
         }
 
-        // take exponential operator
-        for (size_t m = 0; m < state.num_labels; m++) {
-            // update for Vi
-            Vi(m) = std::exp(Vi(m));
-            // update for Mi
-            for (size_t n = 0; n < state.num_labels; n++) {
-                Mi(m, n) = std::exp(Mi(m, n));
-            }
-        }
+        compute_log_Mi(state.num_labels, Mi, Vi);
+
         temp=betas.row(i);
         temp=temp.cwiseProduct(Vi);
         betas.row(i -1) = Mi*temp; 
@@ -535,17 +541,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             index+=5;
         }
 
-        // take exponential operator
-        
-        //Mi.noalias() = Mi.exp();// update for Mi
-        for (size_t i = 0; i < state.num_labels; i++) {
-            // update for Vi
-            Vi(i) = std::exp(Vi(i));
-            // update for Mi
-            for (size_t j = 0; j < state.num_labels; j++) {
-                Mi(i, j) = std::exp(Mi(i, j));
-            }
-        }
+        compute_log_Mi(state.num_labels, Mi, Vi);
 
         if(j>0){
           temp = alpha;
@@ -555,6 +551,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
           next_alpha=Vi;
         }
 
+        
         index = ori_index;
         while (features(index+4) == j) {
             size_t f_type =  features(index);
@@ -590,7 +587,6 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     for (size_t k = 0; k < state.num_features; k++) {
         state.gradNew(k) -= ExpF(k) / Zx;
     }
-
     return state;
 }
 
