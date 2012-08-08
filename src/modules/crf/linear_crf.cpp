@@ -479,7 +479,6 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     scale(seq_len - 1) = state.num_labels;
     betas.row(seq_len - 1).fill(1.0 / scale(seq_len - 1));
 
-    throw std::domain_error("here3");
     size_t index = features.size()-1;
     for (size_t i = seq_len - 1; i > 0; i--) {
         Mi.fill(0);
