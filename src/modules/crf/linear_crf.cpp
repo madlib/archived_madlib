@@ -56,7 +56,6 @@ public:
     template <class OtherHandle>
     LinCrfLBFGSTransitionState &operator=(
         const LinCrfLBFGSTransitionState<OtherHandle> &inOtherState) {
-        throw std::domain_error("here1");
 
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] = inOtherState.mStorage[i];
@@ -497,7 +496,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             } else if (f_type == 1) { /* if (pos > 0)*/
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
-            index+=4;
+            index+=5;
         }
 
         // take exponential operator
@@ -535,7 +534,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             } else if (f_type == 1) { /* if (pos > 0)*/
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
-            index+=4;
+            index+=5;
         }
         size_t ori_index = index;
 
