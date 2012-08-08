@@ -626,10 +626,11 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
        //Eigen::VectorXd grad(state.num_features);
        //Eigen::VectorXd diag(state.num_features);
        //Eigen::VectorXd ws(state.num_features);
-       lbfgsMinimize(3, state.iteration,
+       lbfgsMinimize(state.m, state.iteration,
                    0.001, 0.001, 0.001, state.num_features, 
                    state.coef, state.loglikelihood,
                    state.grad, state.diag, state.ws);
+       throw std::logic_error("Internal error: Incompatible transition states");
     }    
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
