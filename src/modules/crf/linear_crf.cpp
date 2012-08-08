@@ -571,10 +571,10 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
                 ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index)
                                  * 1 * betas(j,curr_index);
             }
+            index+=5;
         }
         alpha = next_alpha;
         alpha*=(1.0 / scale[j]);
-        index++;
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
