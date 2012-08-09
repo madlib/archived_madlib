@@ -80,6 +80,7 @@ public:
         loglikelihood = 0;
     }
     static const int m=3;
+    static const double eps=1.0e-6;
 private:
     static inline uint64_t arraySize(const uint16_t num_features) {
         return 5 + 4 * num_features + num_features*(2*m+1)+2*m;
@@ -567,7 +568,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             index+=5;
         }
         alpha = next_alpha;
-        alpha*=(1.0 / scale[j]);
+        alpha*=(1.0 / scale(j));
     }
 
     // Zx = sum(alpha_i_n) where i = 1..num_labels, n = seq_len
@@ -577,7 +578,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     // re-correct the value of seq_logli because Zx was computed from
     // scaled alpha values
     for (int k = 0; k < seq_len; k++) {
-        state.loglikelihood -= std::log(scale[k]);
+        state.loglikelihood -= std::log(scale(k));
     }
     // update the gradient vector
     for (size_t k = 0; k < state.num_features; k++) {
@@ -628,19 +629,27 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
        Eigen::VectorXd grad(state.num_features);
        Eigen::VectorXd diag(state.num_features);
        Eigen::VectorXd ws(state.num_features*(2*state.m+1)+2*state.m);
-       coef = state.coef;
-       grad = state.grad;
-       diag = state.diag;
-       ws = state.ws;
-
+       for(int i=0; i<state.num_features; i++){
+          coef(i) = state.coef(i);
+          grad(i) = state.grad(i);
+          diag(i) = state.diag(i);
+       }
+       int w_size=state.num_features*(2*state.m+1)+2*state.m;
+       for(int i=0; i<w_size; i++)
+          ws(i) = state.ws(i);
+       
        lbfgsMinimize(state.m, state.iteration,
-                   0.001, 0.001, 0.001, state.num_features, 
+                   state.eps, state.eps, state.eps, state.num_features, 
                    coef, state.loglikelihood, grad, diag, ws);
 
-       state.coef = coef;
-       state.grad = grad;
-       state.diag = diag;
-       state.ws = ws;
+       for(int i=0; i<state.num_features; i++){
+          state.coef(i) = coef(i);
+          state.grad(i) = grad(i);
+          state.diag(i) = diag(i);
+       }
+       for(int i=0; i<w_size; i++)
+          state.ws(i) = ws(i);
+
        //throw std::logic_error("Internal error: Incompatible transition states");
     }    
     if(!state.coef.is_finite())
