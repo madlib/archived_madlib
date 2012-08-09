@@ -80,7 +80,6 @@ public:
         loglikelihood = 0;
     }
     static const int m=3;
-    static const double eps=1.0e-6;
 private:
     static inline uint64_t arraySize(const uint16_t num_features) {
         return 5 + 4 * num_features + num_features*(2*m+1)+2*m;
@@ -638,8 +637,9 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
        for(int i=0; i<w_size; i++)
           ws(i) = state.ws(i);
        
+       double eps = 1.0e-6; 
        lbfgsMinimize(state.m, state.iteration,
-                   state.eps, state.eps, state.eps, state.num_features, 
+                   eps, eps, eps, state.num_features, 
                    coef, state.loglikelihood, grad, diag, ws);
 
        for(int i=0; i<state.num_features; i++){
