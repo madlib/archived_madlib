@@ -680,7 +680,7 @@ AnyType stateToResult(
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << loglikelihood << coef;
+    tuple << coef << loglikelihood;
     return tuple;
 }
 
