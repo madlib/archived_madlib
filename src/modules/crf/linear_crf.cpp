@@ -368,8 +368,8 @@ bool lbfgsSearch(double &f, const Eigen::VectorXd &s, double& stp, Eigen::Vector
 
 
 bool lbfgsMinimize(int m, int iter,
-                   double epsg, double epsf, double epsx, unsigned  _n, Eigen::VectorXd x, double f,
-                   Eigen::VectorXd g, Eigen::VectorXd diag, Eigen::VectorXd w)
+                   double epsg, double epsf, double epsx, unsigned  _n, Eigen::VectorXd& x, double f,
+                   Eigen::VectorXd& g, Eigen::VectorXd& diag, Eigen::VectorXd& w)
 {
     assert((m > 0) && (m <= (int)_n));
     assert((epsg >= 0.0) && (epsf >= 0.0) && (epsx >= 0.0));
@@ -624,19 +624,28 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 		// Iteration computes the gradient
 		state.grad = state.gradNew; 
     } else {
-       //Eigen::VectorXd coef(state.num_features);
-       //Eigen::VectorXd grad(state.num_features);
-       //Eigen::VectorXd diag(state.num_features);
-       //Eigen::VectorXd ws(state.num_features);
+       Eigen::VectorXd coef(state.num_features);
+       Eigen::VectorXd grad(state.num_features);
+       Eigen::VectorXd diag(state.num_features);
+       Eigen::VectorXd ws(state.num_features*(2*state.m+1)+2*state.m);
+       coef = state.coef;
+       grad = state.grad;
+       diag = state.diag;
+       ws = state.ws;
+
        lbfgsMinimize(state.m, state.iteration,
                    0.001, 0.001, 0.001, state.num_features, 
-                   state.coef, state.loglikelihood,
-                   state.grad, state.diag, state.ws);
+                   coef, state.loglikelihood, grad, diag, ws);
+
+       state.coef = coef;
+       state.grad = grad;
+       state.diag = diag;
+       state.ws = ws;
        //throw std::logic_error("Internal error: Incompatible transition states");
     }    
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
-            "conjugate-gradient step, while updating coefficients. Input data "
+            "L-BFGS step, while updating coefficients. Input data "
             "is likely of poor numerical condition.");
     
     state.iteration++;
