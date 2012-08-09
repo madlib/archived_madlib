@@ -373,7 +373,7 @@ bool lbfgsMinimize(int m, int iter,
 {
     assert((m > 0) && (m <= (int)_n));
     assert((epsg >= 0.0) && (epsf >= 0.0) && (epsx >= 0.0));
-
+    
     Eigen::VectorXd xold(_n);
 
     int point = 0;
@@ -408,6 +408,7 @@ bool lbfgsMinimize(int m, int iter,
             w.head(_n) -= w[inmc] * w.segment(iycn, _n);
         }
 
+    throw std::logic_error("Internal error: Incompatible transition states");
         w.head(_n) *= diag;
 
         for (int i = 0; i < bound; i++) {
