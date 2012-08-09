@@ -30,13 +30,24 @@ AnyType stateToResult(
 	const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
 	double logLikelihood);
 
+// Internal functions
+AnyType intermediate_stateToResult(
+		const HandleMap<const ColumnVector, TransparentHandle<double> >& x,
+		const double inTimeDeath,
+		const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
+		const double inExp_coef_x,
+		const HandleMap<const ColumnVector, TransparentHandle<double> >& inX_exp_coef_x,
+		const HandleMap<const Matrix, TransparentHandle<double> >& inX_xTrans_exp_coef_x
+		);
+
+
 
 
 /**
  * @brief Transition state for the Cox Proportional Hazards
  *
  * TransitionState encapsulates the transition state during the
- * linear-regression aggregate functions. To the database, the state is exposed
+ * aggregate functions. To the database, the state is exposed
  * as a single DOUBLE PRECISION array, to the C++ code it is a proper object
  * containing scalars, a vector, and a matrix.
  *
@@ -123,6 +134,7 @@ public:
      */
     inline void reset() {
         numRows = 0;
+				coef.fill(0);
 				S = 0;
         H.fill(0);
         V.fill(0);				
@@ -193,53 +205,44 @@ public:
 
 
 /**
- * @brief Gradient descent transition step for Cox Proportional Hazards
+ * @brief Newton method transition step for Cox Proportional Hazards
  *
  * @param args
  *
  * Arguments (Matched with PSQL wrapped)
  * - 0: Current State
- * - 1: X value (Column Vector)
- * - 2: Previous State
+ * - 1: x
+ * - 2: exp_coef_x
+ * - 3: x_exp_coef_x value (Column Vector)
+ * - 4: x_xTrans_exp_coef_x value (Matrix)
+ * - 5: Previous State
 */
 
 AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 
-    CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
+		CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    double exp_coef_x = args[2].getAs<double>();
+    MappedColumnVector x_exp_coef_x = args[3].getAs<MappedColumnVector>();
+    MappedMatrix x_xTrans_exp_coef_x = args[4].getAs<MappedMatrix>();
+		
 
-    // The following check was added with MADLIB-138.
-    if (!isfinite(x)){
-        throw std::domain_error("Design matrix is not finite.");
+		state.initialize(*this, static_cast<uint16_t>(x.size()));
+		if (!args[5].isNull()) {
+				CoxPropHazardsTransitionState<ArrayHandle<double> > previousState = args[5];
+				state = previousState;
+				state.reset();
 		}
 
-    // Now do the transition step.
-    if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                "larger than 65535.");
-
-        state.initialize(*this, static_cast<uint16_t>(x.size()));
-        if (!args[2].isNull()) {
-            CoxPropHazardsTransitionState<ArrayHandle<double> > previousState = args[2];
-            state = previousState;
-            state.reset();
-        }
-
-    }
-
     state.numRows++;
-		
-		double xc = trans(state.coef)*x;
-		double s = std::exp(xc);
-		
-		state.S += s;
-		state.H += s*x;		
-		state.V += x * trans(x) * s;
+				
+		state.S += exp_coef_x;
+		state.H += x_exp_coef_x;
+		state.V += x_xTrans_exp_coef_x;
 
 		state.grad += x - state.H/state.S;
 		state.hessian += (state.H * trans(state.H))/(state.S*state.S) - state.V/state.S;
-		state.logLikelihood += xc - std::log(state.S);
+		state.logLikelihood += std::log(exp_coef_x) - std::log(state.S);
 		
 		
     return state;
@@ -247,7 +250,7 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 
 
 /**
- * @brief Gradient descent final step for Cox Proportional Hazards
+ * @brief Newton method final step for Cox Proportional Hazards
  *
  */
 AnyType cox_prop_hazards_step_final::run(AnyType &args) {
@@ -306,6 +309,53 @@ AnyType stateToResult(
 		tuple << inCoef << logLikelihood;
 		
     return tuple;
+}
+
+
+
+
+/**
+ * @brief Newton method transition step for Cox Proportional Hazards
+ *
+ * @param args
+ *
+ * Arguments (Matched with PSQL wrapped)
+ * - 1: X value (Column Vector)
+ * - 2: coef value (Column Vector)
+*/
+
+AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
+
+    MappedColumnVector x = args[0].getAs<MappedColumnVector>();
+		MutableMappedColumnVector coef(allocateArray<double>(x.size()));
+		
+    // The following check was added with MADLIB-138.
+    if (!isfinite(x))
+        throw std::domain_error("Design matrix is not finite.");
+
+		if (x.size() > std::numeric_limits<uint16_t>::max())
+				throw std::domain_error("Number of independent variables cannot be "
+						"larger than 65535.");
+
+		double exp_coef_x;
+		MutableMappedColumnVector
+			x_exp_coef_x(allocateArray<double>(x.size()));
+		MutableMappedMatrix
+			x_xTrans_exp_coef_x(allocateArray<double>(x.size(), x.size()));
+							
+		coef = args[1].getAs<MappedColumnVector>();
+		exp_coef_x = std::exp(trans(coef)*x);
+		x_exp_coef_x = exp_coef_x*x;
+		x_xTrans_exp_coef_x = x * trans(x) * exp_coef_x;
+		
+    AnyType tuple;
+		tuple << x
+					<< exp_coef_x
+					<< x_exp_coef_x
+					<< x_xTrans_exp_coef_x;
+		
+    return tuple;
+
 }
 
 
