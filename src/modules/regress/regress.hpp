@@ -8,4 +8,3 @@
 
 #include "linear.hpp"
 #include "logistic.hpp"
-#include "multilogistic.hpp"
