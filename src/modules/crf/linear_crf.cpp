@@ -408,8 +408,9 @@ bool lbfgsMinimize(int m, int iter,
             w.head(_n) -= w[inmc] * w.segment(iycn, _n);
         }
 
-    throw std::logic_error("Internal error: Incompatible transition states");
-        w.head(_n) *= diag;
+        w.head(_n)=w.head(_n).cwiseProduct(diag);
+        //w.head(_n) *= diag;
+    //throw std::logic_error("Internal error: Incompatible transition states");
 
         for (int i = 0; i < bound; i++) {
             double yr = w.segment(iypt + cp * _n, _n).dot(w.head(_n));
@@ -631,7 +632,7 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
                    0.001, 0.001, 0.001, state.num_features, 
                    state.coef, state.loglikelihood,
                    state.grad, state.diag, state.ws);
-       throw std::logic_error("Internal error: Incompatible transition states");
+       //throw std::logic_error("Internal error: Incompatible transition states");
     }    
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
