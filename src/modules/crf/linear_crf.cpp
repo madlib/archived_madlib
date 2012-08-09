@@ -678,7 +678,7 @@ AnyType stateToResult(
         inAllocator.allocateArray<double>(incoef.size()));
     coef = incoef;
 
-    // Return all coefficients, standard errors, etc. in a tuple
+    // Return all coefficients, loglikelihood, etc. in a tuple
     AnyType tuple;
     tuple << coef << loglikelihood;
     return tuple;
