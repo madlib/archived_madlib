@@ -19,17 +19,17 @@ RETURNS void AS $$
                  "CREATE TABLE MADLIB_SCHEMA.crf_feature(doc_id integer,f_size FLOAT8,feature FLOAT8[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp1_feature;" + \
-                 "CREATE TABLE MADLIB_SCHEMA.tmp1_feature(start_pos integer,doc_id integer,feature integer[]);")
+                 "CREATE TABLE MADLIB_SCHEMA.tmp1_feature(start_pos integer,doc_id integer, f_name text, feature integer[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp2_feature;" + \
-                 "CREATE TABLE MADLIB_SCHEMA.tmp2_feature(start_pos integer,doc_id integer,feature integer[]);")
+                 "CREATE TABLE MADLIB_SCHEMA.tmp2_feature(start_pos integer,doc_id integer, f_name text, feature integer[]);")
 
     # dictionary table
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.crf_dictionary;" + \
                  "CREATE TABLE MADLIB_SCHEMA.crf_dictionary(seg_text text,total integer);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_crf_feature_dic;" + \
-                 "CREATE TABLE MADLIB_SCHEMA.tmp_crf_feature_dic(feature integer[]);")
+                 "CREATE TABLE MADLIB_SCHEMA.tmp_crf_feature_dic(f_name text, feature integer[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.crf_feature_dic;" + \
                  "CREATE TABLE MADLIB_SCHEMA.crf_feature_dic(f_index integer, feature integer[]);")
@@ -43,42 +43,42 @@ RETURNS void AS $$
     # create a temporary table to store all the features
         
     # extract all the edge features
-    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, feature) 
-                    SELECT doc1.start_pos, doc1.doc_id, ARRAY[1, doc1.label, doc2.label]
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT doc1.start_pos, doc1.doc_id, 'E.', ARRAY[1, doc1.label, doc2.label]
                     FROM  """ + traindata + """ doc1, """ + traindata + """ doc2
                     WHERE  doc1.doc_id = doc2.doc_id AND doc1.start_pos+1 = doc2.start_pos;""")
          
     #extract all the regex features
-    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, feature) 
-                    SELECT start_pos, doc_id, ARRAY[2, -1, label]
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'R_' || name, ARRAY[2, -1, label]
                     FROM   """ + regextbl + """, """ + traindata + """
                     WHERE  seg_text ~ pattern;""")
            
     #extract all the start feature
-    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, feature) 
-                    SELECT start_pos, doc_id, ARRAY[2, -1, label]
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'S.', ARRAY[2, -1, label]
                     FROM  """ + traindata + """
                     WHERE  start_pos = 0;""")
         
     #extract all the end featue
-    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, feature) 
-                    SELECT start_pos, doc_id, ARRAY[2, -1, label]
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'End.', ARRAY[2, -1, label]
                     FROM  """ + traindata + """
                     WHERE  start_pos = max_pos;""")
 
     #word feature
-    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, feature) 
-                    SELECT start_pos, doc_id, ARRAY[2, -1, label]
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'W_' || seg_text, ARRAY[2, -1, label]
                     FROM  """ + traindata + """;""")
         
     #unknown feature
-    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, feature) 
-                    SELECT start_pos,doc_id, ARRAY[2, -1, label]
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'U', ARRAY[2, -1, label]
                     FROM  """ + traindata + """ seg, crf_dictionary dic
                     WHERE  seg.seg_text = dic.seg_text AND dic.total <= 1;""")
  
-    plpy.execute("""INSERT INTO tmp_crf_feature_dic(feature) 
-                    SELECT DISTINCT feature
+    plpy.execute("""INSERT INTO tmp_crf_feature_dic(f_name, feature) 
+                    SELECT DISTINCT f_name, feature
                     FROM   tmp1_feature;""")
 
     plpy.execute("""DROP SEQUENCE IF EXISTS seq;
