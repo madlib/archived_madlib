@@ -51,6 +51,7 @@ public:
         rebind(inWidthOfX);
         num_features = inWidthOfX;
         num_labels =  tagSize;
+        diag.fill(1);
     }
 
     template <class OtherHandle>
@@ -69,20 +70,20 @@ public:
             throw std::logic_error("Internal error: Incompatible transition "
                                    "states");
         numRows += inOtherState.numRows;
-        gradNew += inOtherState.gradNew;
+        grad += inOtherState.grad;
         loglikelihood += inOtherState.loglikelihood;
         return *this;
     }
 
     inline void reset() {
         numRows = 0;
-        gradNew.fill(0);
+        grad.fill(0);
         loglikelihood = 0;
     }
     static const int m=3;
 private:
     static inline uint64_t arraySize(const uint16_t num_features) {
-        return 5 + 4 * num_features + num_features*(2*m+1)+2*m;
+        return 5 + 3 * num_features + num_features*(2*m+1)+2*m;
     }
 
     void rebind(uint16_t inWidthOfFeature) {
@@ -94,8 +95,7 @@ private:
         grad.rebind(&mStorage[3 + 2 * inWidthOfFeature], inWidthOfFeature);
         ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
         numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        gradNew.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m], inWidthOfFeature);
-        loglikelihood.rebind(&mStorage[4 + 4 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
     }
 
     Handle mStorage;
@@ -110,7 +110,6 @@ public:
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap ws;
 
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradNew;
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
 };
 // Protected Member Functions ------------------------------------------------
@@ -579,7 +578,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     }
     // update the gradient vector
     for (size_t k = 0; k < state.num_features; k++) {
-        state.gradNew(k) -= ExpF(k) / Zx;
+        state.grad(k) -= ExpF(k) / Zx;
     }
     return state;
 }
@@ -620,33 +619,28 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     // Note: k = state.iteration
     if (state.iteration == 0) {
 		// Iteration computes the gradient
-		state.grad = state.gradNew; 
     } else {
+       //Negation 
+       state.loglikelihood *= -1;
+       state.grad = -state.grad;
        Eigen::VectorXd coef(state.num_features);
        Eigen::VectorXd grad(state.num_features);
        Eigen::VectorXd diag(state.num_features);
        Eigen::VectorXd ws(state.num_features*(2*state.m+1)+2*state.m);
-       for(int i=0; i<state.num_features; i++){
-          coef(i) = state.coef(i);
-          grad(i) = state.grad(i);
-          diag(i) = state.diag(i);
-       }
-       int w_size=state.num_features*(2*state.m+1)+2*state.m;
-       for(int i=0; i<w_size; i++)
-          ws(i) = state.ws(i);
+       coef= state.coef;
+       grad = state.grad;
+       diag = state.diag;
+       ws = state.ws;
        
        double eps = 1.0e-6; 
        lbfgsMinimize(state.m, state.iteration,
                    eps, eps, eps, state.num_features, 
                    coef, state.loglikelihood, grad, diag, ws);
 
-       for(int i=0; i<state.num_features; i++){
-          state.coef(i) = coef(i);
-          state.grad(i) = grad(i);
-          state.diag(i) = diag(i);
-       }
-       for(int i=0; i<w_size; i++)
-          state.ws(i) = ws(i);
+        state.coef = coef;
+        state.grad = grad;
+        state.diag = diag;
+        state.ws = ws;
 
        //throw std::logic_error("Internal error: Incompatible transition states");
     }    
