@@ -373,8 +373,6 @@ bool lbfgsMinimize(int m, int iter,
     assert((m > 0) && (m <= (int)_n));
     assert((epsg >= 0.0) && (epsf >= 0.0) && (epsx >= 0.0));
     
-    Eigen::VectorXd xold(_n);
-
     int point = 0;
     int ispt = _n + 2*m;
     int iypt = ispt + _n*m;
@@ -382,8 +380,6 @@ bool lbfgsMinimize(int m, int iter,
 
     w.segment(ispt, _n) = (-g).cwiseProduct(diag);
     double stp1 = 1.0 / g.norm();
-
-    xold = x;
 
     int bound = std::min(iter, m);
     if (iter != 0) {
