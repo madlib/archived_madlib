@@ -621,8 +621,13 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 		// Iteration computes the gradient
     } else {
        //Negation 
+       double sigma_square = 100;
+
+       state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square; 
        state.loglikelihood *= -1;
+       state.grad -= state.coef;
        state.grad = -state.grad;
+
        Eigen::VectorXd coef(state.num_features);
        Eigen::VectorXd grad(state.num_features);
        Eigen::VectorXd diag(state.num_features);
@@ -645,9 +650,9 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
        //throw std::logic_error("Internal error: Incompatible transition states");
     }    
     if(!state.coef.is_finite())
-        throw NoSolutionFoundException("Over- or underflow in "
-            "L-BFGS step, while updating coefficients. Input data "
-            "is likely of poor numerical condition.");
+     //   throw NoSolutionFoundException("Over- or underflow in "
+       //     "L-BFGS step, while updating coefficients. Input data "
+        //    "is likely of poor numerical condition.");
     
     state.iteration++;
     return state;
