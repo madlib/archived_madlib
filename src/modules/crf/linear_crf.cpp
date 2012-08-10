@@ -409,8 +409,6 @@ bool lbfgsMinimize(int m, int iter,
         }
 
         w.head(_n)=w.head(_n).cwiseProduct(diag);
-        //w.head(_n) *= diag;
-    //throw std::logic_error("Internal error: Incompatible transition states");
 
         for (int i = 0; i < bound; i++) {
             double yr = w.segment(iypt + cp * _n, _n).dot(w.head(_n));
