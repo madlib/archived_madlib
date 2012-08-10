@@ -381,7 +381,7 @@ bool lbfgsMinimize(int m, int iter,
     int iypt = ispt + _n*m;
     int npt = 0;
 
-    w.segment(ispt, _n) = -g;
+    w.segment(ispt, _n) = (-g).cwiseProduct(diag);
     double stp1 = 1.0 / g.norm();
 
     xold = x;
