@@ -18,11 +18,12 @@ namespace convex {
 // Use Eigen
 using namespace madlib::dbal::eigen_integration;
 
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian = Matrix>
 class Logit {
 public:
     typedef Model model_type;
     typedef Tuple tuple_type;
+    typedef Hessian hessian_type;
     typedef typename Tuple::independent_variables_type 
         independent_variables_type;
     typedef typename Tuple::dependent_variable_type dependent_variable_type;
@@ -39,6 +40,11 @@ public:
             const dependent_variable_type       &y, 
             const double                        &stepsize);
     
+    static void hessian(
+            const model_type                    &model,
+            const independent_variables_type    &x,
+            hessian_type                        &hessian);
+
     static double loss(
             const model_type                    &model, 
             const independent_variables_type    &x, 
@@ -54,9 +60,9 @@ private:
     }
 };
 
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
 void
-Logit<Model, Tuple>::gradient(
+Logit<Model, Tuple, Hessian>::gradient(
         const model_type                    &model,
         const independent_variables_type    &x,
         const dependent_variable_type       &y,
@@ -67,9 +73,9 @@ Logit<Model, Tuple>::gradient(
     gradient += c * x;
 }
 
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
 void
-Logit<Model, Tuple>::gradientInPlace(
+Logit<Model, Tuple, Hessian>::gradientInPlace(
         model_type                          &model,
         const independent_variables_type    &x, 
         const dependent_variable_type       &y, 
@@ -80,9 +86,21 @@ Logit<Model, Tuple>::gradientInPlace(
     model -= stepsize * c * x;
 }
 
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
+void
+Logit<Model, Tuple, Hessian>::hessian(
+        const model_type                    &model,
+        const independent_variables_type    &x,
+        hessian_type                        &hessian) {
+    double wx = dot(model, x);
+    double sig = sigma(wx);
+    double a = sig * (1 - sig);
+    hessian += a * x * trans(x);
+}
+
+template <class Model, class Tuple, class Hessian>
 double 
-Logit<Model, Tuple>::loss(
+Logit<Model, Tuple, Hessian>::loss(
         const model_type                    &model, 
         const independent_variables_type    &x, 
         const dependent_variable_type       &y) {
@@ -90,10 +108,9 @@ Logit<Model, Tuple>::loss(
     return log(1. + std::exp(-wx * y)); //  = -log(sigma(y * wx))
 }
 
-// Not currently used.
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
 typename Tuple::dependent_variable_type
-Logit<Model, Tuple>::predict(
+Logit<Model, Tuple, Hessian>::predict(
         const model_type                    &model, 
         const independent_variables_type    &x) {
     double wx = dot(model, x);

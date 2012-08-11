@@ -418,6 +418,124 @@ public:
     } algo;
 };
 
+/**
+ * @brief Inter- (Task State) and intra-iteration (Algo State) state of
+ *        Newton's method for generic objective functions (any tasks)
+ *
+ * This class assumes that the coefficients are of type vector. Low-rank 
+ * matrix factorization, neural networks would not be able to use this.
+ * 
+ * TransitionState encapsualtes the transition state during the
+ * aggregate function during an iteration. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars and vectors.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 5, and at least first elemenet is 0
+ * (exact values of other elements are ignored).
+ *
+ */
+template <class Handle>
+class NewtonState {
+    template <class OtherHandle>
+    friend class NewtonState;
+
+public:
+    NewtonState(const AnyType &inArray) : mStorage(inArray.getAs<Handle>()) {
+        rebind();
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Allocating the incremental gradient state.
+     */
+    inline void allocate(const Allocator &inAllocator, uint16_t inDimension) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+                dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inDimension));
+
+        task.dimension.rebind(&mStorage[0]);
+        task.dimension = inDimension;
+        
+        rebind();
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    NewtonState &operator=(const NewtonState<OtherHandle> &inOtherState) {
+        for (size_t i = 0; i < mStorage.size(); i++) {
+            mStorage[i] = inOtherState.mStorage[i];
+        }
+
+        return *this;
+    }
+
+    /**
+     * @brief Reset the intra-iteration fields.
+     */
+    inline void reset() {
+        algo.numRows = 0;
+        algo.loss = 0.;
+        algo.gradient = ColumnVector::Zero(task.dimension);
+        algo.hessian = Matrix::Zero(task.dimension, task.dimension);
+    }
+
+    static inline uint32_t arraySize(const uint16_t inDimension) {
+        return 3 + (inDimension + 2) * inDimension;
+    }
+
+private:
+    /**
+     * @brief Rebind to a new storage array.
+     *
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: dimension (dimension of the model)
+     * - 1: model (coefficients)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 1 + dimension: numRows (number of rows processed in this iteration)
+     * - 2 + dimension: loss (sum of loss for each rows)
+     * - 3 + dimension: gradient (volatile gradient for update)
+     * - 3 + 2 * dimension: hessian (volatile hessian for update)
+     */
+    void rebind() {
+        task.dimension.rebind(&mStorage[0]);
+        task.model.rebind(&mStorage[1], task.dimension);
+
+        algo.numRows.rebind(&mStorage[1 + task.dimension]);
+        algo.loss.rebind(&mStorage[2 + task.dimension]);
+        algo.gradient.rebind(&mStorage[3 + task.dimension], task.dimension);
+        algo.hessian.rebind(&mStorage[3 + 2 * task.dimension], task.dimension,
+                task.dimension);
+    }
+
+    Handle mStorage;
+
+public:
+    struct TaskState {
+        typename HandleTraits<Handle>::ReferenceToUInt32 dimension;
+        typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap model;
+    } task;
+
+    struct AlgoState {
+        typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+        typename HandleTraits<Handle>::ReferenceToDouble loss;
+        typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradient;
+        typename HandleTraits<Handle>::MatrixTransparentHandleMap hessian;
+    } algo;
+};
+
 } // namespace convex
 
 } // namespace modules

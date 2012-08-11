@@ -7177,7 +7177,6 @@ WHERE test_linear_svm_model.id = _temp_model_id.id;
 
 -- testing
 -- checking precision > 80% on testing set
--- > 90% can be acheived with single segment, but model averaging may not
 CREATE TABLE predict_svmguide1_test_cg AS
 SELECT s.id, linear_svm_cg_predict(coefficients, features), class
 FROM
@@ -7239,7 +7238,7 @@ FROM predict_svmguide1_test_igd
 WHERE linear_svm_igd_predict <> class;
   
 /* -----------------------------------------------------------------------------
- * Logistic Regression
+ * Logistic Regression, Conjugate Gradient
  * -------------------------------------------------------------------------- */
 
 -- learning
@@ -7266,8 +7265,7 @@ WHERE test_logit_model.id = _temp_model_id.id;
 
 -- testing
 -- checking precision > 80% on testing set
--- > 90% can be acheived with single segment, but model averaging may not
-CREATE TABLE predict_logit_test AS
+CREATE TABLE predict_logit_test_igd AS
 SELECT s.id, logit_igd_predict(coefficients, features), class
 FROM
     (
@@ -7280,6 +7278,49 @@ FROM
 SELECT assert(
     count(*) < 800,
     'Logistic regression using incremental gradient: test error is too high (> 800). Wrong result.')
-FROM predict_logit_test
+FROM predict_logit_test_igd
+WHERE logit_igd_predict <> class;
+
+/* -----------------------------------------------------------------------------
+ * Logistic Regression, Newton's Method
+ * -------------------------------------------------------------------------- */
+
+-- learning
+DROP TABLE IF EXISTS _temp_model_id CASCADE;
+CREATE TEMPORARY TABLE _temp_model_id (id INTEGER);
+
+INSERT INTO _temp_model_id 
+SELECT logit_newton_run(
+    'test_logit_model',
+    'svmguide1_normalized',
+    'features', 
+    'class',
+    5,          -- row_dimension
+    5,          -- num_iterations
+    1e-6        -- tolerance
+);
+
+SELECT assert(
+    loss < 800,
+    'Logistic regression using incremental gradient: loss is too high (> 800). Wrong result.')
+FROM test_logit_model, _temp_model_id
+WHERE test_logit_model.id = _temp_model_id.id;
+
+-- testing
+-- checking precision > 80% on testing set
+CREATE TABLE predict_logit_test_newton AS
+SELECT s.id, logit_igd_predict(coefficients, features), class
+FROM
+    (
+        SELECT coefficients
+        FROM test_logit_model, _temp_model_id 
+        WHERE test_logit_model.id = _temp_model_id.id
+    ) AS m,
+    svmguide1_test_normalized AS s;
+
+SELECT assert(
+    count(*) < 800,
+    'Logistic regression using incremental gradient: test error is too high (> 800). Wrong result.')
+FROM predict_logit_test_newton
 WHERE logit_igd_predict <> class;
 
