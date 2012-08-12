@@ -487,17 +487,17 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        while (index-4>=0 && features(index) == i) {
-            size_t f_type =  features(index-4);
-            size_t prev_index =  features(index-3);
-            size_t curr_index =  features(index-2);
-            size_t f_index =  features(index-1);
+        while (index-5>=0 && features(index-1) == i) {
+            size_t f_type =  features(index-5);
+            size_t prev_index =  features(index-4);
+            size_t curr_index =  features(index-3);
+            size_t f_index =  features(index-2);
             if (f_type == 2) {// state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { // edge feature
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
-            index-=5;
+            index-=6;
         }
 
         compute_log_Mi(state.num_labels, Mi, Vi);
@@ -518,7 +518,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Vi.fill(0);
         // examine all features at position "pos"
         size_t ori_index = index;
-        while (((index+4) <= (feature_size-1)) && features(index+4) == j) {
+        while (((index+5) <= (feature_size-1)) && features(index+4) == j) {
             size_t f_type =  features(index);
             size_t prev_index =  features(index+1);
             size_t curr_index =  features(index+2);
@@ -528,7 +528,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             } else if (f_type == 1) { //edge feature
                 Mi(prev_index, curr_index) += state.coef(f_index);
             }
-            index+=5;
+            index+=6;
         }
 
         compute_log_Mi(state.num_labels, Mi, Vi);
@@ -543,12 +543,13 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         
         index = ori_index;
-        while (((index+4) <= (feature_size-1)) && features(index+4) == j) {
+        while (((index+5) <= (feature_size-1)) && features(index+4) == j) {
             size_t f_type =  features(index);
             size_t prev_index =  features(index+1);
             size_t curr_index =  features(index+2);
             size_t f_index =  features(index+3);
-            if (f_type == 1 || f_type == 2) {
+            size_t exist = features(index+5);
+            if (exist == 1) {
                 state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
             }
@@ -557,7 +558,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             } else if (f_type == 1) {
                 ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index) * betas(curr_index, j);
             }
-            index+=5;
+            index+=6;
         }
         alpha = next_alpha;
         alpha*=(1.0 / scale(j));
