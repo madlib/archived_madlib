@@ -403,19 +403,35 @@ SET client_min_messages= warning;
   m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)')  
   ';
 
--- Association rules output 
+  -- the auxiliary table to generate the readable rules
+  EXECUTE 'DROP TABLE IF EXISTS assoc_rules_aux_tmp';
+  EXECUTE 
+    'CREATE TABLE assoc_rules_aux_tmp 
+    (
+        ruleId      SERIAL,
+        pre         MADLIB_SCHEMA.svec,
+        post        MADLIB_SCHEMA.svec,
+        support     FLOAT8,
+        confidence  FLOAT8,
+        lift        FLOAT8,
+        conviction  FLOAT8
+    )
+    m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (ruleId)')';
+
+  -- Association rules output 
   EXECUTE 'DROP TABLE IF EXISTS '|| output_schema ||'.assoc_rules';
-  EXECUTE 'CREATE TABLE '|| output_schema ||'.assoc_rules ( 
-    set_list MADLIB_SCHEMA.svec 
-    , hash_key int
-    , subset_x MADLIB_SCHEMA.svec
-    , subset_y MADLIB_SCHEMA.svec 
-    , support_xy numeric
-    , confidence_xy numeric
-    , lift_xy numeric
-    , conviction_xy numeric) 
-  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)') 
-  ';
+  EXECUTE 
+    'CREATE TABLE '|| output_schema ||'.assoc_rules 
+    ( 
+        ruleId      INT,
+        pre         TEXT[],
+        post        TEXT[],
+        support     FLOAT8,
+        confidence  FLOAT8,
+        lift        FLOAT8,
+        conviction  FLOAT8
+    )
+  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (ruleId)')';
 
 
 -- User data uniqueness check 
@@ -573,7 +589,7 @@ LOOP
   EXECUTE 'SELECT MADLIB_SCHEMA.assoc_svec_list_parts(''set_list '', '' list_b'', ''assoc_set_list_parts'')';
  
   EXECUTE 'DROP TABLE IF EXISTS list_c'; 
-  EXECUTE 'CREATE TABLE list_c AS 
+  EXECUTE 'CREATE TEMP TABLE list_c AS 
   SELECT
     d.set_list
     , c.*
@@ -652,11 +668,11 @@ LOOP
   END IF;
 
 
-  EXECUTE 'INSERT INTO ' || output_schema || '.assoc_rules
+  EXECUTE 
+  'INSERT INTO assoc_rules_aux_tmp 
+    (pre, post, support, confidence, lift, conviction)
   SELECT
-    c.set_list
-    , c.hash_key
-    , c.product_x
+      c.product_x
     , c.product_y 
     , c.support_xy
     , c.support_xy/c.support_x as confidence_xy
@@ -684,6 +700,39 @@ LOOP
   WHERE
     c.support_xy/c.support_x >= ' || i_confidence || ' 
      AND MADLIB_SCHEMA.svec_l1norm(c.set_list)>=2'; 
+
+  EXECUTE 
+    'INSERT INTO ' || output_schema || '.assoc_rules
+     SELECT t1.ruleId, t2.pre, t3.post, support, confidence, lift, conviction
+     FROM
+        assoc_rules_aux_tmp t1,
+        (
+         SELECT ruleId, array_agg(orig_col) as pre
+         FROM
+            (   
+                SELECT 
+                    ruleId,
+                    unnest(MADLIB_SCHEMA.svec_nonbase_positions(pre, 0)) as pre_id
+                FROM assoc_rules_aux_tmp
+            ) s1, assoc_prod_uniq s2
+         WHERE s1.pre_id = s2.prod_id
+         GROUP BY ruleId
+         ) t2,
+        (
+         SELECT ruleId, array_agg(orig_col) as post
+         FROM
+            (   
+                SELECT 
+                    ruleId,
+                    unnest(MADLIB_SCHEMA.svec_nonbase_positions(post, 0)) as post_id
+                FROM assoc_rules_aux_tmp
+            ) s1, assoc_prod_uniq s2
+         WHERE s1.post_id = s2.prod_id
+         GROUP BY ruleId
+         ) t3
+     WHERE t1.ruleId = t2.ruleId AND t1.ruleId = t3.ruleId';        
+
+  EXECUTE 'DROP TABLE assoc_rules_aux_tmp';
 
   IF p_verbose is true THEN 
     EXECUTE 'SELECT count(*) FROM ' || output_schema || '.assoc_rules' into l; 
