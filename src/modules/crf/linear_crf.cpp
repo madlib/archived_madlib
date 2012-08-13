@@ -51,8 +51,7 @@ public:
         rebind(inWidthOfX);
         num_features = inWidthOfX;
         num_labels =  tagSize;
-        if(iteration == 0)
-          diag.fill(1);
+        diag.fill(1);
     }
 
     template <class OtherHandle>
@@ -426,7 +425,7 @@ bool lbfgsMinimize(int m, double eps, unsigned  _n, Eigen::VectorXd& x, double f
 
     bool success = lbfgsSearch(f, w.segment(ispt + point * _n, _n), stp, diag, x, g);
     if (!success) {
-        return 0;
+        return false;
     }
 
     npt = point * _n;
@@ -634,7 +633,9 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     ws = state.ws;
 
     double eps = 1.0e-6; 
-    lbfgsMinimize(state.m, eps, state.num_features, coef, state.loglikelihood, grad, diag, ws);
+    bool status = lbfgsMinimize(state.m, eps, state.num_features, coef, state.loglikelihood, grad, diag, ws);
+    if(status == false) 
+      throw std::logic_error("lbfgs failed");
 
     state.coef = coef;
     state.grad = grad;
