@@ -51,7 +51,8 @@ public:
         rebind(inWidthOfX);
         num_features = inWidthOfX;
         num_labels =  tagSize;
-        diag.fill(1);
+        if(iteration == 0)
+          diag.fill(1);
     }
 
     template <class OtherHandle>
@@ -366,30 +367,30 @@ bool lbfgsSearch(double &f, const Eigen::VectorXd &s, double& stp, Eigen::Vector
 
 
 
-bool lbfgsMinimize(int m, int iter,
-                   double epsg, double epsf, double epsx, unsigned  _n, Eigen::VectorXd& x, double f,
+bool lbfgsMinimize(int m, double eps, unsigned  _n, Eigen::VectorXd& x, double f,
                    Eigen::VectorXd& g, Eigen::VectorXd& diag, Eigen::VectorXd& w)
 {
-    assert((m > 0) && (m <= (int)_n));
-    assert((epsg >= 0.0) && (epsf >= 0.0) && (epsx >= 0.0));
-    
+    assert((m > 0) && (m <= (int)_n) && (eps >= 0.0));
+    int iter=0;
+    int cp=0; 
+    //throw std::logic_error("Internal error: Incompatible transition states");
     int point = 0;
     int ispt = _n + 2*m;
     int iypt = ispt + _n*m;
     int npt = 0;
-
+    
     w.segment(ispt, _n) = (-g).cwiseProduct(diag);
     double stp1 = 1.0 / g.norm();
 
+    while(true){
+    iter++;
     int bound = std::min(iter, m);
-    if (iter != 0) {
         double ys = w.segment(iypt + npt, _n).dot(w.segment(ispt + npt, _n));
         double yy = w.segment(iypt + npt, _n).squaredNorm();
         diag.setConstant(ys / yy);
         w[_n + ((point == 0) ? m - 1 : point - 1)] = 1.0 / ys;
         w.head(_n) = -g;
 
-        int cp = point;
         for (int i = 0; i < bound; i++) {
             cp -= 1;
             if (cp == -1) {
@@ -419,9 +420,8 @@ bool lbfgsMinimize(int m, int iter,
         }
 
         w.segment(ispt + point * _n, _n) = w.head(_n);
-    }
 
-    double stp = (iter == 0) ? stp1 : 1.0;
+    double stp = (iter == 1) ? stp1 : 1.0;
     w.head(_n) = g;
 
     bool success = lbfgsSearch(f, w.segment(ispt + point * _n, _n), stp, diag, x, g);
@@ -436,8 +436,9 @@ bool lbfgsMinimize(int m, int iter,
     if (point == m) {
         point = 0;
     }
-
-    return true;
+    if(g.norm()/std::max(1.0,x.norm())<=eps || iter>20) return true;
+   }
+   return true;
 }
 
 void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi){
@@ -611,41 +612,36 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     
     // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
-        return Null();
+	    return Null();
 
     // Note: k = state.iteration
-    if (state.iteration == 0) {
-		// Iteration computes the gradient
-    } else {
-       //Negation 
-       double sigma_square = 100;
+    //Negation 
+    double sigma_square = 100;
+    //throw std::logic_error("Internal error: Incompatible transition states");
 
-       state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square; 
-       state.loglikelihood *= -1;
-       state.grad -= state.coef;
-       state.grad = -state.grad;
+    state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square; 
+    state.loglikelihood *= -1;
+    state.grad -= state.coef;
+    state.grad = -state.grad;
 
-       Eigen::VectorXd coef(state.num_features);
-       Eigen::VectorXd grad(state.num_features);
-       Eigen::VectorXd diag(state.num_features);
-       Eigen::VectorXd ws(state.num_features*(2*state.m+1)+2*state.m);
-       coef= state.coef;
-       grad = state.grad;
-       diag = state.diag;
-       ws = state.ws;
-       
-       double eps = 1.0e-6; 
-       lbfgsMinimize(state.m, state.iteration,
-                   eps, eps, eps, state.num_features, 
-                   coef, state.loglikelihood, grad, diag, ws);
+    Eigen::VectorXd coef(state.num_features);
+    Eigen::VectorXd grad(state.num_features);
+    Eigen::VectorXd diag(state.num_features);
+    Eigen::VectorXd ws(state.num_features*(2*state.m+1)+2*state.m);
+    coef= state.coef;
+    grad = state.grad;
+    diag = state.diag;
+    ws = state.ws;
 
-        state.coef = coef;
-        state.grad = grad;
-        state.diag = diag;
-        state.ws = ws;
+    double eps = 1.0e-6; 
+    lbfgsMinimize(state.m, eps, state.num_features, coef, state.loglikelihood, grad, diag, ws);
 
-       //throw std::logic_error("Internal error: Incompatible transition states");
-    }    
+    state.coef = coef;
+    state.grad = grad;
+    state.diag = diag;
+    state.ws = ws;
+
+    //throw std::logic_error("Internal error: Incompatible transition states");
     if(!state.coef.is_finite())
      //   throw NoSolutionFoundException("Over- or underflow in "
        //     "L-BFGS step, while updating coefficients. Input data "
