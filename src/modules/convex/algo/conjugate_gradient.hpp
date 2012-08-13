@@ -8,10 +8,10 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#include <dbconnector/dbconnector.hpp>
+
 #ifndef MADLIB_MODULES_CONVEX_ALGO_CONJUGATE_GRADIENT_HPP_
 #define MADLIB_MODULES_CONVEX_ALGO_CONJUGATE_GRADIENT_HPP_
-
-#include <dbconnector/dbconnector.hpp>
 
 namespace madlib {
 

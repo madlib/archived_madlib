@@ -1,0 +1,157 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file ridge.sql_in
+ *
+ * @brief SQL functions for ridge regression
+ * @date July 2012
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+--------------------------------------------------------------------------
+-- create SQL functions for Newton's method optimizer
+--------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_transition(
+        state           DOUBLE PRECISION[],
+        ind_var         DOUBLE PRECISION[],
+        dep_var         DOUBLE PRECISION,
+        previous_state  DOUBLE PRECISION[],
+        dimension       SMALLINT,
+        lambda          DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_merge(
+        state1 DOUBLE PRECISION[],
+        state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_final(
+        state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing ridge regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.ridge_newton_step(
+        /*+ ind_var */          DOUBLE PRECISION[],
+        /*+ dep_var */          DOUBLE PRECISION,
+        /*+ previous_state */   DOUBLE PRECISION[],
+        /*+ dimension */        SMALLINT,
+        /*+ lambda */           DOUBLE PRECISION) (
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.ridge_newton_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.ridge_newton_merge,')
+    FINALFUNC=MADLIB_SCHEMA.ridge_newton_final,
+    INITCOND='{0,0,0,0,0,0}'
+);
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_ridge_newton_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+    lambda          DOUBLE PRECISION)   /*+ DEFAULT 0.1 */
+RETURNS INTEGER AS $$
+DECLARE
+    model_id        INTEGER;
+    old_messages    VARCHAR;
+BEGIN
+    RAISE NOTICE 'Source table % to be used: dimension %', rel_source, dimension;
+
+    -- create result table if it does not exist
+    BEGIN
+        EXECUTE 'SELECT 1 FROM ' || rel_output || ' LIMIT 0';
+    EXCEPTION
+        WHEN undefined_table THEN
+            EXECUTE '
+            CREATE TABLE ' || rel_output || ' (
+                id              serial,
+                coefficients    DOUBLE PRECISION[])';
+    END;
+
+    -- A work-around for GPDB not supporting RETURNING for INSERT
+    -- We generate an id using nextval before INSERT
+    EXECUTE '
+    SELECT nextval(' || quote_literal(rel_output || '_id_seq') ||'::regclass)'
+    INTO model_id;
+
+    -- Perform acutal computation and output model
+    EXECUTE '
+    INSERT INTO ' || rel_output || '
+    SELECT ' || model_id || ', result
+    FROM (
+        SELECT MADLIB_SCHEMA.internal_ridge_newton_result(
+            ridge_newton_step((' || col_ind_var || ')::FLOAT8[],
+                (' || col_dep_var || ')::FLOAT8, 
+                NULL,
+                (' || dimension || ')::INT2,
+                (' || lambda || ')::FLOAT8
+                )
+            ) AS result
+        FROM ' || textin(regclassout(rel_source)) || ' 
+        ) subq';
+
+    -- return description
+    RAISE NOTICE $notice$
+Finished ridge regression using Newton's method
+ * table : % (%, %)
+Results:
+ * view : SELECT * FROM % WHERE id = %$notice$,
+    rel_source, col_ind_var, col_dep_var, rel_output, model_id;
+    
+    RETURN model_id;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    dimension       INTEGER)            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+RETURNS INTEGER AS $$
+    SELECT MADLIB_SCHEMA.ridge_newton_run($1, $2, $3, $4, $5, 0.1);
+$$ LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR)
+RETURNS INTEGER AS $$
+DECLARE
+    dimension INTEGER;
+BEGIN
+    EXECUTE '
+    SELECT max(array_upper(' || col_ind_var || ', 1)
+    FROM ' || textin(regclassout(rel_source))
+    INTO dimension;
+
+    RETURN (SELECT MADLIB_SCHEMA.ridge_newton_run($1, $2, $3, $4, dimension));
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_predict(
+        coefficients    DOUBLE PRECISION[],
+        ind_var         DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+

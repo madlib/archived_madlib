@@ -8,10 +8,10 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#include <dbconnector/dbconnector.hpp>
+
 #ifndef MADLIB_MODULES_CONVEX_ALGO_IGD_HPP_
 #define MADLIB_MODULES_CONVEX_ALGO_IGD_HPP_
-
-#include <dbconnector/dbconnector.hpp>
 
 namespace madlib {
 

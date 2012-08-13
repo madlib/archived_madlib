@@ -11,4 +11,5 @@
 #include "linear_svm_cg.hpp"
 #include "logit_igd.hpp"
 #include "logit_newton.hpp"
+#include "ridge_newton.hpp"
 

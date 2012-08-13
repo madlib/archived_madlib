@@ -8,10 +8,10 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#include <dbconnector/dbconnector.hpp>
+
 #ifndef MADLIB_MODULES_CONVEX_ALGO_NEWTON_HPP_
 #define MADLIB_MODULES_CONVEX_ALGO_NEWTON_HPP_
-
-#include <dbconnector/dbconnector.hpp>
 
 namespace madlib {
 
@@ -48,11 +48,10 @@ Newton<State, ConstState, Task>::transition(state_type &state,
             tuple.indVar,
             tuple.depVar,
             state.algo.gradient);
-    // The hessian of logit does not require depVar,
-    // but this is not true for general objectives
     Task::hessian(
             state.task.model,
             tuple.indVar,
+            tuple.depVar,
             state.algo.hessian);
 }
 

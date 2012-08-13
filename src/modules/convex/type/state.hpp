@@ -436,12 +436,12 @@ public:
  *
  */
 template <class Handle>
-class NewtonState {
+class GLMNewtonState {
     template <class OtherHandle>
-    friend class NewtonState;
+    friend class GLMNewtonState;
 
 public:
-    NewtonState(const AnyType &inArray) : mStorage(inArray.getAs<Handle>()) {
+    GLMNewtonState(const AnyType &inArray) : mStorage(inArray.getAs<Handle>()) {
         rebind();
     }
 
@@ -472,7 +472,7 @@ public:
      * @brief We need to support assigning the previous state
      */
     template <class OtherHandle>
-    NewtonState &operator=(const NewtonState<OtherHandle> &inOtherState) {
+    GLMNewtonState &operator=(const GLMNewtonState<OtherHandle> &inOtherState) {
         for (size_t i = 0; i < mStorage.size(); i++) {
             mStorage[i] = inOtherState.mStorage[i];
         }
