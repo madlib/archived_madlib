@@ -34,6 +34,30 @@ INSERT INTO houses(tax, bedroom, bath, price, size, lot) VALUES
 (2070, 2, 3,   148000, 1550, 14000),
 ( 650, 3, 1.5,  65000, 1450, 12000);
 
+CREATE TABLE houses_array AS
+SELECT array[1, bedroom, bath, size] AS features, price
+FROM houses;
+
+-- pre-conditioning
+CREATE TABLE houses_stddev AS
+SELECT stddev(bedroom) AS stddev_bedroom, stddev(bath) AS stddev_bath,
+    stddev(size) AS stddev_size, stddev(price) AS stddev_price
+FROM houses;
+
+CREATE TABLE houses_avg AS
+SELECT avg(bedroom) AS avg_bedroom, avg(bath) AS avg_bath,
+    avg(size) AS avg_size, avg(price) AS avg_price
+FROM houses;
+
+CREATE TABLE houses_array_normalized AS
+SELECT 
+    array[1, 
+        (bedroom - avg_bedroom) / stddev_bedroom,
+        (bath - avg_bath) / stddev_bath,
+        (size - avg_size) / stddev_size] AS features,
+    (price - avg_price) / stddev_price AS price
+FROM houses, houses_avg, houses_stddev;
+
 /* ---------------------------------------------------------------------------
  * Ridge Regression
  * -------------------------------------------------------------------------*/
@@ -44,8 +68,8 @@ CREATE TEMPORARY TABLE _temp_id_1 (id INTEGER);
 INSERT INTO _temp_id_1
 SELECT ridge_newton_run(
     'test_ridge_model',
-    'houses',
-    'array[1, bedroom, bath, size]',
+    'houses_array',
+    'features',
     'price',
     4,
     0);
@@ -63,8 +87,8 @@ CREATE TEMPORARY TABLE _temp_id_2 (id INTEGER);
 INSERT INTO _temp_id_2
 SELECT ridge_newton_run(
     'test_ridge_model',
-    'houses',
-    'array[1, bedroom, bath, size]',
+    'houses_array',
+    'features',
     'price',
     4,
     0.1);
@@ -81,5 +105,56 @@ SELECT assert(
     SELECT array_dot(coefficients, coefficients) as norm2
     FROM test_ridge_model, _temp_id_2
     WHERE test_ridge_model.id = _temp_id_2.id
+) AS t;
+
+/* ---------------------------------------------------------------------------
+ * LASSO
+ * -------------------------------------------------------------------------*/
+-- 3. same result as linear regression with lambda = 0
+DROP TABLE IF EXISTS _temp_id_3 CASCADE;
+CREATE TEMPORARY TABLE _temp_id_3 (id INTEGER);
+
+INSERT INTO _temp_id_3
+SELECT lasso_igd_run(
+    'test_lasso_model',
+    'houses_array_normalized',
+    'features',
+    'price',
+    4,
+    0.05,
+    0);
+
+SELECT assert(
+    loss < 3,
+    'LASSO with lambda = 0 (houses): Wrong results'
+) FROM test_lasso_model, _temp_id_3
+WHERE test_lasso_model.id = _temp_id_3.id;
+
+-- 4. with lambda > 0, l1-norm has decreased
+DROP TABLE IF EXISTS _temp_id_4 CASCADE;
+CREATE TEMPORARY TABLE _temp_id_4 (id INTEGER);
+
+INSERT INTO _temp_id_4
+SELECT lasso_igd_run(
+    'test_lasso_model',
+    'houses_array_normalized',
+    'features',
+    'price',
+    4,
+    0.06,
+    1);
+
+SELECT assert(
+    norm1 > norm2,
+    'LASSO with lambda > 0 should have a smaller 1-norm: Wrong results'
+) FROM (
+    SELECT @ coefficients[1] + @ coefficients[2] + @ coefficients[3] + @ coefficients[4] as norm1
+    FROM test_lasso_model, _temp_id_3
+    WHERE test_lasso_model.id = _temp_id_3.id
+) AS s,
+(
+    SELECT @ coefficients[1] + @ coefficients[2] + @ coefficients[3] + @ coefficients[4] as norm2
+    FROM test_lasso_model, _temp_id_4
+    WHERE test_lasso_model.id = _temp_id_4.id
 ) AS t;
 

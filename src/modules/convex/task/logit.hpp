@@ -98,6 +98,9 @@ Logit<Model, Tuple, Hessian>::hessian(
     double sig = sigma(wx);
     double a = sig * (1 - sig);
     hessian += a * x * trans(x);
+
+    // to avoid unused parameter
+    a = y;
 }
 
 template <class Model, class Tuple, class Hessian>

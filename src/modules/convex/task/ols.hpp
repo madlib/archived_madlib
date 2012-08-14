@@ -70,6 +70,10 @@ OLS<Model, Tuple, Hessian>::hessian(
         const dependent_variable_type       &y, 
         hessian_type                        &hessian) {
     hessian += x * trans(x);
+
+    // to avoid unused parameter
+    double a = y;
+    a = dot(model, x);
 }
 
 template <class Model, class Tuple, class Hessian>
