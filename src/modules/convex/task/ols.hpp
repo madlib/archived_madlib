@@ -35,9 +35,9 @@ public:
             model_type                          &gradient);
 
     static void hessian(
-            const model_type                    &model,
+            const model_type                    & /* model */,
             const independent_variables_type    &x,
-            const dependent_variable_type       &y, 
+            const dependent_variable_type       & /* y */, 
             hessian_type                        &hessian);
 
     static double loss(
@@ -65,15 +65,11 @@ OLS<Model, Tuple, Hessian>::gradient(
 template <class Model, class Tuple, class Hessian>
 void
 OLS<Model, Tuple, Hessian>::hessian(
-        const model_type                    &model,
+        const model_type                    & /* model */,
         const independent_variables_type    &x,
-        const dependent_variable_type       &y, 
+        const dependent_variable_type       & /* y */, 
         hessian_type                        &hessian) {
     hessian += x * trans(x);
-
-    // to avoid unused parameter
-    double a = y;
-    a = dot(model, x);
 }
 
 template <class Model, class Tuple, class Hessian>

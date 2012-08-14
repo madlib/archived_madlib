@@ -43,7 +43,7 @@ public:
     static void hessian(
             const model_type                    &model,
             const independent_variables_type    &x,
-            const dependent_variable_type       &y, 
+            const dependent_variable_type       & /* y */, 
             hessian_type                        &hessian);
 
     static double loss(
@@ -92,15 +92,12 @@ void
 Logit<Model, Tuple, Hessian>::hessian(
         const model_type                    &model,
         const independent_variables_type    &x,
-        const dependent_variable_type       &y, 
+        const dependent_variable_type       & /* y */, 
         hessian_type                        &hessian) {
     double wx = dot(model, x);
     double sig = sigma(wx);
     double a = sig * (1 - sig);
     hessian += a * x * trans(x);
-
-    // to avoid unused parameter
-    a = y;
 }
 
 template <class Model, class Tuple, class Hessian>
