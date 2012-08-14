@@ -3,9 +3,29 @@
 #include <funcapi.h>
 #include <catalog/pg_proc.h>
 #include <catalog/pg_type.h>
-#include <executor/spi.h>
 #include <utils/builtins.h>
 #include <utils/syscache.h>
+
+// On Greenplum 4.2.0, spi.h indirectly includes <emcconnect/api.h>. However,
+// this file is not shipped with GPDB 4.2 (MPP-15620). We undefine
+// USE_CONNECTEMC here as a workaround.
+#if defined(GP_VERSION_NUM) && GP_VERSION_NUM == 40200
+    #if defined(USE_CONNECTEMC)
+        #undef USE_CONNECTEMC
+    #endif  // defined(USE_CONNECTEMC)
+#endif // defined(GP_VERSION_NUM) && GP_VERSION_NUM == 40200
+
+#include <executor/spi.h>
+
+// SearchSysCache1 first appeared with commit e26c539 by Robert Haas
+// <rhaas@postgresql.org> on Sun, 14 Feb 2010 18:42:19 +0000. If this macro is
+// not defined, we assume to be on a version of PostgreSQL that expects five
+// arguments to SearchSysCache().
+#if !defined(SearchSysCache1)
+    #define SearchSysCache1(cacheId, key1) \
+        SearchSysCache(cacheId, key1, 0, 0, 0)
+#endif // defined(SearchSysCache1)
+
 
 PG_FUNCTION_INFO_V1(exec_sql_using);
 Datum
