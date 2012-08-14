@@ -198,6 +198,22 @@ struct TypeTraits<int16_t> {
 };
 
 template <>
+struct TypeTraits<uint16_t> {
+    typedef uint16_t value_type;
+
+    WITH_OID( INT2OID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(
+        Int16GetDatum((convertTo<uint16_t, int16_t>(value)))
+    );
+    WITH_TO_CXX_CONVERSION(
+        (convertTo<int16_t, uint16_t>(DatumGetInt16(value)))
+    );
+};
+
+template <>
 struct TypeTraits<bool> {
     typedef bool value_type;
 
