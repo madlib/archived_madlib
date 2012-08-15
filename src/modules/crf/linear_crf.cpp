@@ -294,7 +294,7 @@ void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
     return;
 }
 
-void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, const Eigen::VectorXd &s)
+void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T)
 {
     static const int MAXFEV = 20;
     int nfev = 0;
@@ -304,13 +304,14 @@ void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, const E
     static const double GTOL = 0.9;
     static const double FTOL = 0.0001;
     static const double XTRAPF = 4.0;
-    const int f = T.loglikelihood;
+    const double f = T.loglikelihood;
+    const int n = T.num_features;
     int infoc=0;
     if(T.info != -1) {
         infoc = 1;
         if (T.stp <= 0)  return ;
 
-        T.dginit = T.grad.dot(s);
+        T.dginit = T.grad.dot(T.ws.segment(T.ispt + T.point * n, n));
         if (T.dginit >= 0.0) {
             std::cout<<"The search direction is not a descent direction."<<std::endl;
             return;
@@ -362,14 +363,14 @@ void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, const E
             }
 
             //std::cout<<"s:"<<s<<std::endl;
-            T.coef = T.diag + T.stp * s;
+            T.coef = T.diag + T.stp * T.ws.segment(T.ispt + T.point * n, n);
             T.info = -1;
             return;
         }
         T.info = 0;
         //std::cout<<"x2:"<<x<<std::endl;
         //return false;
-        double dg = T.grad.dot(s);
+        double dg = T.grad.dot(T.ws.segment(T.ispt + T.point * n, n));
         double ftest1 = T.finit + T.stp * T.dgtest;
 
         if ((T.brackt && ((T.stp <= T.stmin) || (T.stp >= T.stmax))) || (!infoc)) {
@@ -401,13 +402,13 @@ void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, const E
             double dgm = dg - T.dgtest;
             double dgxm = T.dgx - T.dgtest;
             double dgym = T.dgy - T.dgtest;
-            mcstep(T, T.stx, fxm, dgxm, T.sty, fym, dgym, T.stp, fm, dgm,T.stmin, T.stmax, infoc);
+            //mcstep(T, T.stx, fxm, dgxm, T.sty, fym, dgym, T.stp, fm, dgm,T.stmin, T.stmax, infoc);
             T.fx = fxm + T.stx * T.dgtest;
             T.fy = fym + T.sty * T.dgtest;
             T.dgx = dgxm + T.dgtest;
             T.dgy = dgym + T.dgtest;
         } else {
-            mcstep(T, T.stx, T.fx, T.dgx, T.sty, T.fy, T.dgy, T.stp, f, dg, T.stmin, T.stmax, infoc);
+            //mcstep(T, T.stx, T.fx, T.dgx, T.sty, T.fy, T.dgy, T.stp, f, dg, T.stmin, T.stmax, infoc);
         }
 
         if (T.brackt) {
@@ -485,7 +486,7 @@ void lbfgs(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, double ep
             T.stp = (T.iter == 1) ? T.stp1 : 1.0;
             T.ws.head(n) = T.grad;
         }
-        mcsrch(T, T.ws.segment(T.ispt + T.point * n, n));
+        mcsrch(T);
         if(T.info == -1) {
             T.iflag = 1;
             return;
