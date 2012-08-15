@@ -167,18 +167,35 @@ public:
     typename HandleTraits<Handle>::ReferenceToDouble width1;
 };
 
-void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
-              double& stx, double& fx, double& dx,
-              double& sty, double& fy, double& dy,
-              double& stp, const double& fp, const double& dp,
-              const double& stmin, const double& stmax, int& info)
+class LBFGS {
+    //shared variables in the lbfgs
+public:
+    static  const double gtol = 0.9;
+    public static double stpmin = 1e-20;
+    public static double stpmax = 1e20;
+    public double gnorm = 0, stp1 = 0, ftol = 0, stp = 0, ys = 0, yy = 0, sq = 0, yr = 0, beta = 0, xnorm = 0;
+    public int iter = 0, nfun = 0, point = 0, ispt = 0, iypt = 0, maxfev = 0, info=0, bound = 0, npt = 0, cp = 0, i = 0, nfev = 0, inmc = 0, iycn = 0, iscn = 0;
+    //shared varibles in the mcscrch
+    public int infoc = 0, j = 0;
+    public double dg = 0, dgm = 0, dginit = 0, dgtest = 0, dgx = 0, dgxm = 0, dgy = 0, dgym[] = 0, finit = 0, ftest1 = 0, fm = 0, fx = 0, fxm = 0, fy = 0, fym = 0, p5 = 0, p66 = 0, stx = 0, sty = 0, stmin = 0, stmax = 0, width = 0, width1 = 0, xtrapf = 0;
+    public bool brackt = false, stage1 = false;
+
+    public void mcstep ( double&, double& , double&, double&, double& , double&, double&, double fp , double dp, bool brackt, double, double, int&);
+
+    public void mcsrch ( int, double&, double f , Eigen::VectorXd& g , Eigen::VectorXd& s , int is0 , double&, double ftol , double xtol, int maxfev , int&, int&, Eigen::VectorXd& wa );
+};
+
+void LBFGS::mcstep(double& stx, double& fx, double& dx,
+                   double& sty, double& fy, double& dy,
+                   double& stp, const double& fp, const double& dp, bool& brackt,
+                   const double& stmin, const double& stmax, int& info)
 {
     bool bound;
     double gamma, p, q, r, sgnd, stpc, stpf, stpq, theta, s;
 
     info = 0;
 
-    if ((T.brackt && ((stp <= std::min(stx, sty)) || (stp >= std::max(stx, sty)))) ||
+    if ((brackt && ((stp <= std::min(stx, sty)) || (stp >= std::max(stx, sty)))) ||
             (dx * (stp - stx) >= 0) || (stmax < stmin)) {
         return;
     }
@@ -203,7 +220,7 @@ void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
         } else {
             stpf = stpc + (stpq - stpc)/2;
         }
-        T.brackt = true;
+        brackt = true;
 
     } else if (sgnd < 0.0) {
         info = 2;
@@ -220,7 +237,7 @@ void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
         stpc = stp + r * (stx - stp);
         stpq = stp + dp / (dp - dx) * (stx - stp);
         stpf = (fabs(stpc - stp) > fabs(stpq - stp)) ? stpc : stpq;
-        T.brackt = true;
+        brackt = true;
 
     } else if (fabs(dp) < fabs(dx)) {
         info = 3;
@@ -241,7 +258,7 @@ void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
         }
 
         stpq = stp + dp / (dp - dx) * (stx - stp);
-        if (T.brackt) {
+        if (brackt) {
             stpf = (fabs(stp - stpc) < fabs(stp - stpq)) ? stpc : stpq;
         } else {
             stpf = (fabs(stp - stpc) > fabs(stp - stpq)) ? stpc : stpq;
@@ -250,7 +267,7 @@ void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
     } else {
         info = 4;
         bound = false;
-        if (T.brackt) {
+        if (brackt) {
             theta = 3.0 * (fp - fy) / (sty - stp) + dy + dp;
             s = std::max(fabs(theta), std::max(fabs(dy), fabs(dp)));
             gamma = s * sqrt((theta/s)*(theta/s) - (dy/s)*(dp/s));
@@ -294,215 +311,224 @@ void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
     return;
 }
 
-void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T)
+void LBFGS::mcsrch(int n , Eigen::VectorXd& x,, double f , Eigen::VectorXd& g , Eigen::VectorXd& s , int is0 , double[] stp , double ftol , double xtol , int maxfev , int& info , int& nfev , Eigen::VectorXd& wa)
 {
-    static const int MAXFEV = 20;
-    int nfev = 0;
-    static const double STPMIN = pow(10.0, -20.0);
-    static const double STPMAX = pow(10.0, 20.0);
-    static const double XTOL = 100.0 * std::numeric_limits<double>::min();
-    static const double GTOL = 0.9;
-    static const double FTOL = 0.0001;
-    static const double XTRAPF = 4.0;
-    const double f = T.loglikelihood;
-    const int n = T.num_features;
-    int infoc=0;
-    if(T.info != -1) {
+    p5 = 0.5;
+    p66 = 0.66;
+    xtrapf = 4.0;
+    if(info != -1) {
         infoc = 1;
-        if (T.stp <= 0)  return ;
+        if (n <= 0 || stp[0] <= 0 || ftol < 0 || LBFGS.gtol < 0 || xtol < 0 || LBFGS.stpmin < 0 || LBFGS.stpmax < LBFGS.stpmin || maxfev <= 0 )
+            return;
 
-        T.dginit = T.grad.dot(T.ws.segment(T.ispt + T.point * n, n));
-        if (T.dginit >= 0.0) {
+        dginit = grad.dot(ws.segment(ispt + point * n, n));
+        if (dginit >= 0.0) {
             std::cout<<"The search direction is not a descent direction."<<std::endl;
             return;
         }
 
-        T.brackt = false;
-        T.stage1 = true;
-        T.finit = f;
-        T.dgtest = FTOL * T.dginit;
-        T.width = STPMAX - STPMIN;
-        T.width1 = 2.0 * T.width;
+        brackt = false;
+        stage1 = true;
+        nfev = 0;
+        finit = f;
+        dgtest = ftol * dginit;
+        width = LBFGS.stpmax - LBFGS.stpmin;
+        width1 = width/p5;
 
-        T.diag = T.coef;
+        wa = x;
 
-        T.stx = 0.0;
-        T.fx = T.finit;
-        T.dgx = T.dginit;
-        T.sty = 0.0;
-        T.fy = T.finit;
-        T.dgy = T.dginit;
+        stx = 0.0;
+        fx = finit;
+        dgx = dginit;
+        sty = 0.0;
+        fy = finit;
+        dgy = dginit;
     }
 
     while(true)
     {
-        if(T.info != -1)
+        if(info != -1)
         {
-            if (T.brackt) {
-                if (T.stx < T.sty) {
-                    T.stmin = T.stx;
-                    T.stmax = T.sty;
+            if (brackt) {
+                if (stx < sty) {
+                    stmin = stx;
+                    stmax = sty;
                 } else {
-                    T.stmin = T.sty;
-                    T.stmax = T.stx;
+                    stmin = sty;
+                    stmax = stx;
                 }
             } else {
-                T.stmin = T.stx;
-                T.stmax = T.stp + XTRAPF * (T.stp - T.stx);
+                stmin = stx;
+                stmax = stp + xtrapf * (stp - stx);
             }
 
-            if (T.stp > STPMAX) {
-                T.stp = STPMAX;
+            if (stp > LBFGS.stpmax) {
+                stp = LBFGS.stpmax;
             }
-            if (T.stp < STPMIN) {
-                T.stp = STPMIN;
+            if (stp < LBFGS.stpmin) {
+                stp = LBFGS.stpmin;
             }
-            if ((T.brackt && ((T.stp <= T.stmin) || (T.stp >= T.stmax))) || (nfev == MAXFEV - 1) ||
-                    (!infoc) || (T.brackt && ((T.stmax - T.stmin) <= XTOL * T.stmax))) {
-                T.stp = T.stx;
+            if ((brackt && ((stp <= stmin) || (stp >= stmax))) || (nfev == maxfev - 1) ||
+                    (!infoc) || (brackt && ((stmax - stmin) <= xtol * stmax))) {
+                stp = stx;
             }
 
-            //std::cout<<"s:"<<s<<std::endl;
-            T.coef = T.diag + T.stp * T.ws.segment(T.ispt + T.point * n, n);
-            T.info = -1;
+            x = wa + stp * s;
+            info = -1;
             return;
         }
-        T.info = 0;
+        info = 0;
+        nfev= nfev + 1;
         //std::cout<<"x2:"<<x<<std::endl;
         //return false;
-        double dg = T.grad.dot(T.ws.segment(T.ispt + T.point * n, n));
-        double ftest1 = T.finit + T.stp * T.dgtest;
+        dg = grad.dot(s);
+        ftest1 = finit + stp * dgtest;
 
-        if ((T.brackt && ((T.stp <= T.stmin) || (T.stp >= T.stmax))) || (!infoc)) {
-            T.info = 6;
+        if ((brackt && ((stp <= stmin) || (stp >= stmax))) || (!infoc)) {
+            info = 6;
         }
-        if ((T.stp == STPMAX) && (f <= ftest1) && (dg <= T.dgtest)) {
-            T.info = 5;
+        if ((stp == LBFGS.stpmax) && (f <= ftest1) && (dg <= dgtest)) {
+            info = 5;
         }
-        if ((T.stp == STPMIN) && ((f >= ftest1) || (dg >= T.dgtest))) {
-            T.info = 4;
+        if ((stp == LBFGS.stpmin) && ((f >= ftest1) || (dg >= dgtest))) {
+            info = 4;
         }
-        if (nfev >= MAXFEV) {
-            T.info = 3;
+        if (nfev >= maxfev) {
+            info = 3;
         }
-        if (T.brackt && (T.stmax - T.stmin <= XTOL * T.stmax)) {
-            T.info = 2;
+        if (brackt && (stmax - stmin <= xtol * stmax)) {
+            info = 2;
         }
-        if ((f <= ftest1) && (fabs(dg) <= -GTOL * T.dginit)) {
-            T.info = 1;
+        if ((f <= ftest1) && (fabs(dg) <= -LBFGS.gtol * dginit)) {
+            info = 1;
         }
-        if (T.info !=0 )
+        if (info !=0 )
             return ;
-        T.stage1 = T.stage1 && ((f > ftest1) || (dg < std::min(FTOL, GTOL) * T.dginit));
 
-        if (T.stage1) {
-            double fm = f - T.stp * T.dgtest;
-            double fxm = T.fx - T.stx * T.dgtest;
-            double fym = T.fy - T.sty * T.dgtest;
-            double dgm = dg - T.dgtest;
-            double dgxm = T.dgx - T.dgtest;
-            double dgym = T.dgy - T.dgtest;
-            //mcstep(T, T.stx, fxm, dgxm, T.sty, fym, dgym, T.stp, fm, dgm,T.stmin, T.stmax, infoc);
-            T.fx = fxm + T.stx * T.dgtest;
-            T.fy = fym + T.sty * T.dgtest;
-            T.dgx = dgxm + T.dgtest;
-            T.dgy = dgym + T.dgtest;
+
+        if ( stage1 && f <= ftest1 && dg >= std::min(ftol , LBFGS.gtol) * dginit ) stage1 = false;
+
+        if (stage1 && f <= fx[0] && f > ftest1) {
+            fm = f - stp * dgtest;
+            fxm = fx - stx * dgtest;
+            fym = fy - sty * dgtest;
+            dgm = dg - dgtest;
+            dgxm = dgx - dgtest;
+            dgym = dgy - dgtest;
+            mcstep(stx, fxm, dgxm, sty, fym, dgym, stp, fm, dgm, brackt, stmin, stmax, infoc);
+            fx = fxm + stx * dgtest;
+            fy = fym + sty * dgtest;
+            dgx = dgxm + dgtest;
+            dgy = dgym + dgtest;
         } else {
-            //mcstep(T, T.stx, T.fx, T.dgx, T.sty, T.fy, T.dgy, T.stp, f, dg, T.stmin, T.stmax, infoc);
+            mcstep(stx, fx, dgx, sty, fy, dgy, stp, f, dg, brackt, stmin, stmax, infoc);
         }
 
-        if (T.brackt) {
-            if (fabs(T.sty - T.stx) >= 0.66 * T.width1) {
-                T.stp = T.stx + 0.5 * (T.sty - T.stx);
+        if (brackt) {
+            if (fabs(sty - stx) >= p66 * width1) {
+                stp = stx + p5 * (sty - stx);
             }
-            T.width1 = T.width;
-            T.width = fabs(T.sty - T.stx);
+            width1 = width;
+            width = fabs(sty - stx);
         }
     }
 }
 
 
 
-void lbfgs(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, double eps)
+void LBFGS::lbfgs(int n, int m, Eigen::VectorXd x, double f, Eigen::VectorXd g, bool diagco, double[] diag, double eps , double xtol , int[] iflag)
 {
-    //local variables
     bool execute_entire_while_loop = false;
-    const int n = T.num_features;
-    const int m = T.m;
-    int cp ;
-    if(T.iflag == 0) {
-        T.iter=0;
-        cp=0;
-        T.info=0;
-        T.point = 0;
-        T.ispt = n + 2*m;
-        T.iypt = T.ispt + n*m;
-        T.npt = 0;
-        T.ws.segment(T.ispt, n) = (-T.grad).cwiseProduct(T.diag);
-        T.stp1 = 1.0 / T.grad.norm();
+    if(iflag == 0) {
+        iter=0;
+        if ( n <= 0 || m <= 0 )
+        {
+            iflag[0]= -3;
+        }
+
+        if ( gtol <= 0.0001 )
+        {
+            gtol= 0.9;
+        }
+
+        nfun= 1;
+        point = 0;
+        finish = false;
+        ispt = n + 2*m;
+        iypt = ispt + n*m;
+        npt = 0;
+        ws.segment(ispt, n) = (-grad).cwiseProduct(diag);
+        stp1 = 1.0 / grad.norm();
+        ftol= 0.0001;
+        maxfev= 20;
         execute_entire_while_loop = true;
     }
     while(true) {
         if(execute_entire_while_loop) {
-            T.iter++;
-            T.info = 0;
-            int bound = std::min(int(T.iter-1), m);
-            if (T.iter!=1) {
-                double ys = T.ws.segment(T.iypt + T.npt, n).dot(T.ws.segment(T.ispt + T.npt, n));
-                double yy = T.ws.segment(T.iypt + T.npt, n).squaredNorm();
-                T.diag.setConstant(ys / yy);
-                cp = T.point;
-                if (T.point ==0 ) cp =m;
-                T.ws[n + cp-1] = 1.0 / ys;
-                T.ws.head(n) = -T.grad;
-                cp = T.point;
+            iter++;
+            info = 0;
+            bound=iter-1;
+            if (iter!=1) {
+                if (iter > m) bound = m;
+                ys = ws.segment(iypt + npt, n).dot(ws.segment(ispt + npt, n));
+                yy = ws.segment(iypt + npt, n).squaredNorm();
+                diag.setConstant(ys / yy);
+                cp = point;
+                if (point ==0 ) cp =m;
+                ws[n + cp-1] = 1.0 / ys;
+                ws.head(n) = -grad;
+                cp = point;
                 for (int i = 0; i < bound; i++) {
                     cp -= 1;
                     if (cp == -1) {
                         cp = m - 1;
                     }
-                    double sq = T.ws.segment(T.ispt + cp *n,n).dot(T.ws.head(n));
-                    int inmc = n + m + cp;
-                    int iycn = T.iypt + cp * n;
-                    T.ws[inmc] = sq * T.ws[n + cp];
-                    T.ws.head(n) -= T.ws[inmc] * T.ws.segment(iycn, n);
+                    sq = ws.segment(ispt + cp *n,n).dot(ws.head(n));
+                    inmc = n + m + cp;
+                    iycn = iypt + cp * n;
+                    w[inmc] = sq * w[n + cp];
+                    w.head(n) -= w[inmc] * w.segment(iycn, n);
                 }
-                T.ws.head(n)=T.ws.head(n).cwiseProduct(T.diag);
+                w.head(n)=w.head(n).cwiseProduct(diag);
 
                 for (int i = 0; i < bound; i++) {
-                    double yr = T.ws.segment(T.iypt + cp * n, n).dot(T.ws.head(n));
-                    int inmc = n + m + cp;
-                    int iscn = T.ispt + cp * n;
-                    double beta = T.ws[inmc] - T.ws[n + cp] * yr;
-                    T.ws.head(n) += beta * T.ws.segment(iscn, n);
+                    yr = ws.segment(iypt + cp * n, n).dot(ws.head(n));
+                    inmc = n + m + cp;
+                    beta = w[inmc] - w[n + cp] * yr;
+                    iscn = ispt + cp * n;
+                    ws.head(n) += beta * ws.segment(iscn, n);
                     cp += 1;
                     if (cp == m) {
                         cp = 0;
                     }
                 }
-                T.ws.segment(T.ispt + T.point * n, n) = T.ws.head(n);
-
+                ws.segment(ispt + point * n, n) = ws.head(n);
             }
-            T.stp = (T.iter == 1) ? T.stp1 : 1.0;
-            T.ws.head(n) = T.grad;
+            nfev = 0;
+            stp = (iter == 1) ? stp1 : 1.0;
+            ws.head(n) = grad;
         }
-        mcsrch(T);
-        if(T.info == -1) {
-            T.iflag = 1;
+        mcsrch(n, x, f, g, w, ispt + point * n, stp, ftol, xtol, maxfev, info, nfev, diag);
+        if(info == -1) {
+            iflag = 1;
             return;
         } else {
-            std::cout<<"error"<<std::endl;
+            iflag = -1;
         }
-        T.npt = T.point * n;
-        T.ws.segment(T.ispt + T.npt,n) *=T.stp;
-        T.ws.segment(T.iypt + T.npt,n) =T.grad - T.ws.head(n);
-        T.point = T.point + 1;
-        if (T.point == m) {
-            T.point = 0;
+        nfun = nfun + nfev;
+        npt = point * n;
+        ws.segment(ispt + npt,n) *=stp;
+        ws.segment(iypt + npt,n) =grad - ws.head(n);
+        point = point + 1;
+        if (point == m) {
+            point = 0;
         }
-        if(T.grad.norm()/std::max(1.0,T.coef.norm())<=eps || T.iter>20) {
-            T.iflag = 0;
-            return ;
+        if(grad.norm()/std::max(1.0,coef.norm())<=eps) {
+            finish = true;
+        }
+        if (finish) {
+            iflag = 0;
+            return;
         }
         execute_entire_while_loop = true;
     }
