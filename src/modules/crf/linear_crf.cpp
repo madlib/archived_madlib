@@ -140,31 +140,8 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
 
-    typename HandleTraits<Handle>::ReferenceToUInt16 iflag;
-    typename HandleTraits<Handle>::ReferenceToDouble stp1;
-    typename HandleTraits<Handle>::ReferenceToDouble stp;
-    typename HandleTraits<Handle>::ReferenceToUInt32 iter;
-    typename HandleTraits<Handle>::ReferenceToUInt32 point;
-    typename HandleTraits<Handle>::ReferenceToUInt32 ispt;
-    typename HandleTraits<Handle>::ReferenceToUInt32 iypt;
-    typename HandleTraits<Handle>::ReferenceToUInt32 info;
-    typename HandleTraits<Handle>::ReferenceToUInt32 npt;
-
-    typename HandleTraits<Handle>::ReferenceToDouble dgtest;
-    typename HandleTraits<Handle>::ReferenceToDouble dginit;
-    typename HandleTraits<Handle>::ReferenceToDouble dgx;
-    typename HandleTraits<Handle>::ReferenceToDouble dgy;
-    typename HandleTraits<Handle>::ReferenceToDouble finit;
-    typename HandleTraits<Handle>::ReferenceToDouble fx;
-    typename HandleTraits<Handle>::ReferenceToDouble fy;
-    typename HandleTraits<Handle>::ReferenceToDouble stx;
-    typename HandleTraits<Handle>::ReferenceToDouble sty;
-    typename HandleTraits<Handle>::ReferenceToBool  brackt;
-    typename HandleTraits<Handle>::ReferenceToDouble stage1;
-    typename HandleTraits<Handle>::ReferenceToDouble stmin;
-    typename HandleTraits<Handle>::ReferenceToDouble stmax;
-    typename HandleTraits<Handle>::ReferenceToDouble width;
-    typename HandleTraits<Handle>::ReferenceToDouble width1;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap lbfgs_state;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap mcsrch_state;
 };
 
 class LBFGS {
@@ -174,21 +151,20 @@ public:
     static double gtol;
     //double stpmin = 1e-20;
     static double stpmin;
-    //double stpmax = 1e20;
+    //double stpmax = 1e20
     static double stpmax;
+    //shared variable in lbfgs
     double stp1, ftol, stp, ys, yy, sq, yr, beta;
-    int iter, nfun, point, ispt, iypt, maxfev, info, bound, npt, cp, i, nfev, inmc, iycn, iscn;
-    //shared varibles in the mcscrch
-    int infoc, j;
+    int iter, nfun, point, ispt, iypt, maxfev, info, bound, npt, cp, nfev, inmc, iycn, iscn;
+    //shared varibles in mcscrch
+    int infoc;
     double dg, dgm, dginit, dgtest, dgx, dgxm, dgy, dgym, finit, ftest1, fm, fx, fxm, fy, fym, p5, p66, stx, sty, stmin, stmax, width, width1, xtrapf;
-    //bool brackt = false, stage1 = false;
+    bool brackt, stage1, finish;
 
     LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >);
-    bool brackt, stage1, finish;
+    void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state){
     void mcstep (double&, double& , double&, double&, double& , double&, double&, double, double, bool&, double, double, int&);
-
     void mcsrch (int, Eigen::VectorXd&, double, Eigen::VectorXd&, Eigen::VectorXd&, double&, double, double, int, int&, int&, Eigen::VectorXd&);
-      
     void lbfgs(int, int, Eigen::VectorXd&, double, Eigen::VectorXd, Eigen::VectorXd&, double, double, int&);
 };
 
@@ -197,7 +173,59 @@ double LBFGS::stpmin = 1e-20;
 double LBFGS::stpmax = 1e20; 
 
 void LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state){
-      
+    stp1=state.lbfgs_state(0); 
+    ftol=state.lbfgs_state(0);
+    stp=state.lbfgs_state(0);
+    ys=state.lbfgs_state(0);
+    yy=state.lbfgs_state(0);
+    sq=state.lbfgs_state(0);
+    yr=state.lbfgs_state(0);
+    beta=state.lbfgs_state(0);
+    iter=state.lbfgs_state(0);
+    nfun=state.lbfgs_state(0);
+    point=state.lbfgs_state(0);
+    ispt=state.lbfgs_state(0);
+    iypt=state.lbfgs_state(0);
+    maxfev=state.lbfgs_state(0);
+    info=state.lbfgs_state(0);
+    bound=state.lbfgs_state(0);
+    npt=state.lbfgs_state(0);
+    cp=state.lbfgs_state(0);
+    nfev=state.lbfgs_state(0);
+    inmc=state.lbfgs_state(0);
+    iycn=state.lbfgs_state(0);
+    iscn=state.lbfgs_state(0);
+
+    infoc=state.mcsrch_sate(0);
+    dg=state.mcsrch_sate(0);
+    dgm=state.mcsrch_sate(0);
+    dginit=state.mcsrch_sate(0);
+    dgtest=state.mcsrch_sate(0);
+    dgx=state.mcsrch_sate(0);
+    dgxm=state.mcsrch_sate(0);
+    dgy=state.mcsrch_sate(0);
+    dgym=state.mcsrch_sate(0);
+    finit=state.mcsrch_sate(0);
+    fest1=state.mcsrch_sate(0);
+    fm=state.mcsrch_sate(0);
+    fx=state.mcsrch_sate(0);
+    fxm=state.mcsrch_sate(0);
+    fy=state.mcsrch_sate(0);
+    fym=state.mcsrch_sate(0);
+    p5=state.mcsrch_sate(0);
+    p66=state.mcsrch_sate(0);
+    stx=state.mcsrch_sate(0);
+    sty=state.mcsrch_sate(0);
+    stmin=state.mcsrch_sate(0);
+    stmax=state.mcsrch_sate(0);
+    width=state.mcsrch_sate(0);
+    width1=state.mcsrch_sate(0);
+    xrapf=state.mcsrch_sate(0);
+    bracket=state.mcsrch_sate(0);
+    stage1=state.mcsrch_sate(0);
+    finish=state.mcsrch_sate(0);
+}
+void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state){
 }
 void LBFGS::mcstep(double& stx, double& fx, double& dx,
                    double& sty, double& fy, double& dy,
