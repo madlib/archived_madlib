@@ -18,9 +18,10 @@ ByteString::ByteString(const bytea* inByteString)
   : mByteString(inByteString) { }
 
 inline
-const char*
+const ByteString::char_type*
 ByteString::ptr() const {
-    return reinterpret_cast<const char*>(mByteString) + kEffectiveHeaderSize;
+    return reinterpret_cast<const char_type*>(mByteString)
+        + kEffectiveHeaderSize;
 }
 
 inline
@@ -38,7 +39,7 @@ ByteString::byteString() const {
 }
 
 inline
-const char&
+const ByteString::char_type&
 ByteString::operator[](size_t inIndex) const {
     madlib_assert(inIndex < size(), std::runtime_error(
         "Out-of-bounds byte-string access detected."));
@@ -51,9 +52,9 @@ MutableByteString::MutableByteString(bytea* inByteString)
   : ByteString(inByteString) { }
 
 inline
-char*
+ByteString::char_type*
 MutableByteString::ptr() {
-    return const_cast<char*>(static_cast<const ByteString*>(this)->ptr());
+    return const_cast<char_type*>(static_cast<const ByteString*>(this)->ptr());
 }
 
 inline
@@ -63,9 +64,9 @@ MutableByteString::byteString() {
 }
 
 inline
-char&
+ByteString::char_type&
 MutableByteString::operator[](size_t inIndex) {
-    return const_cast<char&>(
+    return const_cast<char_type&>(
         static_cast<const ByteString*>(this)->operator[](inIndex)
     );
 }

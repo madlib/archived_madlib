@@ -1,21 +1,17 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file TypeTraits.hpp
+ * @file TypeTraits_impl.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_TYPETRAITS_HPP
-#define MADLIB_POSTGRES_TYPETRAITS_HPP
+#ifndef MADLIB_POSTGRES_TYPETRAITS_IMPL_HPP
+#define MADLIB_POSTGRES_TYPETRAITS_IMPL_HPP
 
 namespace madlib {
 
 namespace dbconnector {
 
 namespace postgres {
-
-// The second template parameter can be used for SFINAE.
-template <typename T, class = void>
-struct TypeTraits;
 
 template <class T, class U>
 class convertTo {
@@ -106,7 +102,7 @@ private:
     }
 #define WITH_BIND_TO_STREAM(_bindToStream) \
     template <class StreamBuf> \
-    static void bindToStream(BinaryStream<StreamBuf>& stream, \
+    static void bindToStream(dbal::ByteStream<StreamBuf>& stream, \
         reference_type& ref) { \
         \
         _bindToStream; \
@@ -122,7 +118,6 @@ struct TypeTraitsBase {
     enum { typeClass = dbal::SimpleType };
 
     typedef T value_type;
-    typedef Reference<T> reference_type;
 
     static const char* typeName() {
         return NULL;
@@ -130,13 +125,6 @@ struct TypeTraitsBase {
 
     static SystemInformation* toSysInfo(const value_type&) {
         return NULL;
-    }
-
-    template <class StreamBuf>
-    static void bindToStream(BinaryStream<StreamBuf>& inStream,
-        reference_type& inRef) {
-
-        inRef.rebind(inStream.template read<value_type>());
     }
 };
 
@@ -247,7 +235,7 @@ struct TypeTraits<bool> {
 template <>
 struct TypeTraits<ByteString> : public TypeTraitsBase<ByteString> {
     enum { alignment = MAXIMUM_ALIGNOF };
-    WITH_TYPE_NAME("blob");
+    WITH_TYPE_NAME("bytea8");
     WITH_TO_PG_CONVERSION( PointerGetDatum(value.byteString()) );
     WITH_TO_CXX_CONVERSION( madlib_DatumGetByteaP(value) );
 };
@@ -256,7 +244,7 @@ template <>
 struct TypeTraits<MutableByteString> : public TypeTraitsBase<MutableByteString> {
     enum { alignment = MAXIMUM_ALIGNOF };
     WITH_MUTABILITY( dbal::Mutable );
-    WITH_TYPE_NAME("blob");
+    WITH_TYPE_NAME("bytea8");
     WITH_TO_PG_CONVERSION( PointerGetDatum(value.byteString()) );
     WITH_TO_CXX_CONVERSION(
             needMutableClone
@@ -354,44 +342,37 @@ struct TypeTraits<
     );
 };
 
-template <>
+// FIXME: This looks gross. We want to express this without hurting our eyes.
+template <bool IsMutable>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
-        const dbal::eigen_integration::ColumnVector,
-        TransparentHandle<double> > >
-  : public TypeTraitsBase<
-    dbal::eigen_integration::HandleMap<
-        const dbal::eigen_integration::ColumnVector,
-        TransparentHandle<double> > > {
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::ColumnVector,
+            const dbal::eigen_integration::ColumnVector>::type,
+        TransparentHandle<double, IsMutable> > >
+  : public TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::ColumnVector,
+            const dbal::eigen_integration::ColumnVector>::type,
+        TransparentHandle<double, IsMutable> > > {
+
+    typedef TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::ColumnVector,
+            const dbal::eigen_integration::ColumnVector>::type,
+        TransparentHandle<double, IsMutable> > > Base;
+    typedef typename Base::value_type value_type;
 
     enum { oid = FLOAT8ARRAYOID };
     enum { alignment = ALIGNOF_DOUBLE };
+    enum { isMutable = IsMutable };
     enum { typeClass = dbal::ArrayType };
-    typedef value_type reference_type;
 
     WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) )
     // No need to support retrieving this type from the backend. Use
     // HandleMap<ColumnVector, ArrayHandle<double> > instead.
-    WITH_BIND_TO_STREAM( ref.rebind(stream.template read<double>(ref.size())) )
-};
 
-template <>
-struct TypeTraits<
-    dbal::eigen_integration::HandleMap<
-        dbal::eigen_integration::ColumnVector,
-        MutableTransparentHandle<double> > > {
-
-    typedef dbal::eigen_integration::HandleMap<
-        dbal::eigen_integration::ColumnVector,
-        MutableTransparentHandle<double> > value_type;
-
-    WITH_OID( FLOAT8ARRAYOID );
-    WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( dbal::Mutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
-    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
-    // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+//    WITH_BIND_TO_STREAM( ref.rebind(stream.template read<double>(ref.size())) )
 };
 
 template <>
@@ -440,19 +421,23 @@ struct TypeTraits<
     );
 };
 
-template <>
+template <bool IsMutable>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
-        const dbal::eigen_integration::Matrix,
-        TransparentHandle<double> > > {
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::Matrix,
+            const dbal::eigen_integration::Matrix>::type,
+        TransparentHandle<double, IsMutable> > > {
 
     typedef dbal::eigen_integration::HandleMap<
-        const dbal::eigen_integration::Matrix,
-        TransparentHandle<double> > value_type;
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::Matrix,
+            const dbal::eigen_integration::Matrix>::type,
+        TransparentHandle<double, IsMutable> > value_type;
 
     WITH_OID( FLOAT8ARRAYOID );
     WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( dbal::Immutable );
+    WITH_MUTABILITY( IsMutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
@@ -509,25 +494,6 @@ struct TypeTraits<
 };
 
 template <>
-struct TypeTraits<
-    dbal::eigen_integration::HandleMap<
-        dbal::eigen_integration::Matrix,
-        MutableTransparentHandle<double> > > {
-
-    typedef dbal::eigen_integration::HandleMap<
-        dbal::eigen_integration::Matrix,
-        MutableTransparentHandle<double> > value_type;
-
-    WITH_OID( FLOAT8ARRAYOID );
-    WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( dbal::Mutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
-    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
-    // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
-};
-
-template <>
 struct TypeTraits<dbal::eigen_integration::SparseColumnVector> {
     typedef dbal::eigen_integration::SparseColumnVector value_type;
 
@@ -542,6 +508,15 @@ struct TypeTraits<dbal::eigen_integration::SparseColumnVector> {
     WITH_TO_CXX_CONVERSION(
         LegacySparseVectorToSparseColumnVector(reinterpret_cast<SvecType*>(value))
     );
+};
+
+// Special cases
+
+template <>
+struct TypeTraits<dbal::ByteStreamMaximumAlignmentType>
+  : public TypeTraitsBase<dbal::ByteStreamMaximumAlignmentType> {
+
+    enum { alignment = MAXIMUM_ALIGNOF };
 };
 
 #undef WITH_OID
@@ -562,4 +537,4 @@ struct TypeTraits<dbal::eigen_integration::SparseColumnVector> {
 
 } // namespace madlib
 
-#endif // defined(MADLIB_POSTGRES_TYPETRAITS_HPP)
+#endif // defined(MADLIB_POSTGRES_TYPETRAITS_IMPL_HPP)

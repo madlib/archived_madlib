@@ -67,12 +67,9 @@ extern "C" {
 #undef dngettext
 #endif
 
-#include <dbal/dbal.hpp>
-#include <utils/Reference.hpp>
-#include <utils/Math.hpp>
-
 // Note: If errors occur in the following include files, it could indicate that
 // new macros have been added to PostgreSQL header files.
+#include <boost/mpl/if.hpp>
 #include <boost/type_traits/is_const.hpp>
 #include <boost/type_traits/remove_cv.hpp>
 #include <boost/math/special_functions/fpclassify.hpp>
@@ -83,6 +80,10 @@ extern "C" {
 #include <stdexcept>
 #include <vector>
 #include <fstream>
+
+#include <dbal/dbal_proto.hpp>
+#include <utils/Reference.hpp>
+#include <utils/Math.hpp>
 
 namespace std {
     // Import names from TR1.
@@ -185,9 +186,9 @@ madlib ## _ ## _pgfunc _arglist { \
 #include "NativeRandomNumberGenerator_proto.hpp"
 #include "PGException_proto.hpp"
 #include "OutputStreamBuffer_proto.hpp"
-#include "State_proto.hpp"
 #include "SystemInformation_proto.hpp"
 #include "TransparentHandle_proto.hpp"
+#include "TypeTraits_proto.hpp"
 #include "UDF_proto.hpp"
 
 // Several backend functions (APIs) need a wrapper, so that they can be called
@@ -204,11 +205,7 @@ using dbconnector::postgres::ByteString;
 using dbconnector::postgres::FunctionHandle;
 using dbconnector::postgres::MutableArrayHandle;
 using dbconnector::postgres::MutableByteString;
-using dbconnector::postgres::MutableTransparentHandle;
 using dbconnector::postgres::NativeRandomNumberGenerator;
-using dbconnector::postgres::Ref;
-using dbconnector::postgres::RootState;
-using dbconnector::postgres::State;
 using dbconnector::postgres::TransparentHandle;
 
 // Import MADlib functions into madlib namespace
@@ -217,12 +214,12 @@ using dbconnector::postgres::Null;
 
 } // namespace madlib
 
+#include <dbal/dbal_impl.hpp>
+
 // FIXME: The following include should be further up. Currently dependent on
-// Allocator
-#include <dbal/EigenIntegration/EigenIntegration.hpp>
+// dbal_impl.hpp which depends on the memory allocator.
 #include "EigenIntegration_proto.hpp"
 
-#include "TypeTraits.hpp"
 #include "Allocator_impl.hpp"
 #include "AnyType_impl.hpp"
 #include "ArrayHandle_impl.hpp"
@@ -231,11 +228,19 @@ using dbconnector::postgres::Null;
 #include "FunctionHandle_impl.hpp"
 #include "NativeRandomNumberGenerator_impl.hpp"
 #include "OutputStreamBuffer_impl.hpp"
-#include "State_impl.hpp"
 #include "TransparentHandle_impl.hpp"
+#include "TypeTraits_impl.hpp"
 #include "UDF_impl.hpp"
 #include "SystemInformation_impl.hpp"
 
+namespace madlib {
+
+typedef dbal::DynamicStructRootContainer<
+    ByteString, dbconnector::postgres::TypeTraits> RootContainer;
+typedef dbal::DynamicStructRootContainer<
+    MutableByteString, dbconnector::postgres::TypeTraits> MutableRootContainer;
+
+} // namespace madlib
 
 #define DECLARE_UDF(_module, _name) \
     namespace madlib { \

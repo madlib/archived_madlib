@@ -18,16 +18,18 @@ class Reference;
 
 class ByteString {
 public:
-    enum { isMutable = false };
+    enum { isMutable = dbal::Immutable };
     enum { kEffectiveHeaderSize
         = ((VARHDRSZ - 1) & ~(MAXIMUM_ALIGNOF - 1)) + MAXIMUM_ALIGNOF };
+    
+    typedef char char_type;
 
     ByteString(const bytea* inByteString);
 
-    const char* ptr() const;
+    const char_type* ptr() const;
     size_t size() const;
     const bytea* byteString() const;
-    const char& operator[](size_t inIndex) const;
+    const char_type& operator[](size_t inIndex) const;
 
 protected:
     const bytea* mByteString;
@@ -38,16 +40,16 @@ class MutableByteString : public ByteString {
     typedef ByteString Base;
 
 public:
-    enum { isMutable = true };
+    enum { isMutable = dbal::Mutable };
 
     MutableByteString(bytea* inByteString);
 
     using Base::ptr;
     using Base::byteString;
 
-    char* ptr();
+    char_type* ptr();
     bytea* byteString();
-    char& operator[](size_t inIndex);
+    char_type& operator[](size_t inIndex);
 };
 
 } // namespace postgres

@@ -19,38 +19,37 @@ namespace postgres {
  * A TransparentHandle is simply a (constant) pointer. It is used whenever we
  * need a type that conforms to the handle policy, but no meta data is required.
  */
-template <typename T>
+template <typename T, bool IsMutable = false>
 class TransparentHandle {
 public:
-    enum { isMutable = false };
+    typedef const T val_type;
+    enum { isMutable = IsMutable };
 
-    TransparentHandle(const T* inPtr)
-      : mPtr(const_cast<T*>(inPtr)) { }
-    
-    const T* ptr() const;
-        
+    TransparentHandle(val_type* inPtr);
+
+    val_type* ptr() const;
+
 protected:
-    T *mPtr;
+    val_type *mPtr;
 };
 
 /**
  * @brief Mutable handle without any meta data (essentially, a pointer)
  */
 template <typename T>
-class MutableTransparentHandle
-  : public TransparentHandle<T> {
+class TransparentHandle<T, dbal::Mutable>
+  : public TransparentHandle<T, dbal::Immutable> {
 
-    typedef TransparentHandle<T> Base;
-    
 public:
-    enum { isMutable = true };
+    typedef TransparentHandle<T, dbal::Immutable> Base;
+    typedef T val_type;
+    enum { isMutable = dbal::Mutable };
 
-    MutableTransparentHandle(T* inPtr)
-      : Base(inPtr) { }
-    
+    TransparentHandle(val_type* inPtr);
+
     // Import the const version as well
     using Base::ptr;
-    T* ptr();
+    val_type* ptr();
 
 protected:
     using Base::mPtr;
