@@ -52,7 +52,7 @@ public:
         num_features = inWidthOfX;
         num_labels =  tagSize;
         if(iteration == 0)
-        diag.fill(1);
+            diag.fill(1);
     }
 
     template <class OtherHandle>
@@ -97,8 +97,8 @@ private:
         ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
         numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
         loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        uint32_t model_size = 4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m;    
-        //mcsrch states 
+        uint32_t model_size = 4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m;
+        //mcsrch states
         iflag.rebind(&mStorage[model_size + 1]);
         stp1.rebind(&mStorage[model_size + 2]);
         stp.rebind(&mStorage[model_size + 3]);
@@ -168,10 +168,10 @@ public:
 };
 
 void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
-               double& stx, double& fx, double& dx,
-               double& sty, double& fy, double& dy,
-               double& stp, const double& fp, const double& dp,
-               const double& stmin, const double& stmax, int& info)
+              double& stx, double& fx, double& dx,
+              double& sty, double& fy, double& dy,
+              double& stp, const double& fp, const double& dp,
+              const double& stmin, const double& stmax, int& info)
 {
     bool bound;
     double gamma, p, q, r, sgnd, stpc, stpf, stpq, theta, s;
@@ -424,7 +424,7 @@ void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, const E
 
 void lbfgs(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, double eps)
 {
-    //local variables   
+    //local variables
     bool execute_entire_while_loop = false;
     const int n = T.num_features;
     const int m = T.m;
@@ -507,14 +507,14 @@ void lbfgs(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, double ep
     }
 }
 
-void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi){
-	// take exponential operator
-	for (int m = 0; m < num_labels; m++) {
-		Vi(m) = std::exp(Vi(m));
-		for (int n = 0; n < num_labels; n++) {
-			Mi(m, n) = std::exp(Mi(m, n));
-		}
-	}
+void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
+    // take exponential operator
+    for (int m = 0; m < num_labels; m++) {
+        Vi(m) = std::exp(Vi(m));
+        for (int n = 0; n < num_labels; n++) {
+            Mi(m, n) = std::exp(Mi(m, n));
+        }
+    }
 }
 
 AnyType
@@ -571,12 +571,12 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         temp=betas.col(i);
         temp=temp.cwiseProduct(Vi);
-        betas.col(i -1) = Mi*temp; 
+        betas.col(i -1) = Mi*temp;
         // scale for the next (backward) beta values
         scale(i - 1)=betas.col(i-1).sum();
         betas.col(i - 1)*=(1.0 / scale(i - 1));
     } // end of beta values computation
-  
+
     index = 0;
     state.loglikelihood = 0;
     // start to compute the log-likelihood of the current sequence
@@ -600,15 +600,15 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         compute_log_Mi(state.num_labels, Mi, Vi);
 
-        if(j>0){
-          temp = alpha;
-          next_alpha=Mi*temp;
-          next_alpha=next_alpha.cwiseProduct(Vi);
+        if(j>0) {
+            temp = alpha;
+            next_alpha=Mi*temp;
+            next_alpha=next_alpha.cwiseProduct(Vi);
         } else {
-          next_alpha=Vi;
+            next_alpha=Vi;
         }
 
-        
+
         index = ori_index;
         while (((index+5) <= (feature_size-1)) && features(index+4) == j) {
             size_t f_type =  features(index);
@@ -672,33 +672,33 @@ lincrf_lbfgs_step_merge_states::run(AnyType &args) {
  */
 AnyType
 lincrf_lbfgs_step_final::run(AnyType &args) {
- // We request a mutable object. Depending on the backend, this might perform
+// We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
-    
+
     // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
-	    return Null();
+        return Null();
 
     double sigma_square = 100;
 
-    state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square; 
+    state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square;
     state.loglikelihood *= -1;
     state.grad -= state.coef;
     state.grad = -state.grad;
 
-    double eps = 1.0e-6; 
+    double eps = 1.0e-6;
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
     lbfgs(state, eps);
     if(state.iflag < 0)  throw std::logic_error("lbfgs failed");
 
     //throw std::logic_error("Internal error: Incompatible transition states");
     if(!state.coef.is_finite())
-     //   throw NoSolutionFoundException("Over- or underflow in "
-       //     "L-BFGS step, while updating coefficients. Input data "
+        //   throw NoSolutionFoundException("Over- or underflow in "
+        //     "L-BFGS step, while updating coefficients. Input data "
         //    "is likely of poor numerical condition.");
-    
-    state.iteration++;
+
+        state.iteration++;
     return state;
 }
 
