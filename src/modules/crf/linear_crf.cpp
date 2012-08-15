@@ -38,19 +38,20 @@ public:
     LinCrfLBFGSTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
-        rebind(static_cast<uint16_t>(mStorage[1]));
+        rebind(static_cast<uint32_t>(mStorage[1]));
     }
 
     inline operator AnyType() const {
         return mStorage;
     }
 
-    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX, uint16_t tagSize) {
+    inline void initialize(const Allocator &inAllocator, uint32_t inWidthOfX, uint32_t tagSize) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
         dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         num_features = inWidthOfX;
         num_labels =  tagSize;
+        if(iteration == 0)
         diag.fill(1);
     }
 
@@ -82,11 +83,11 @@ public:
     }
     static const int m=3;
 private:
-    static inline uint64_t arraySize(const uint16_t num_features) {
-        return 5 + 3 * num_features + num_features*(2*m+1)+2*m;
+    static inline uint32_t arraySize(const uint32_t num_features) {
+        return 29 + 3 * num_features + num_features*(2*m+1)+2*m;
     }
 
-    void rebind(uint16_t inWidthOfFeature) {
+    void rebind(uint32_t inWidthOfFeature) {
         iteration.rebind(&mStorage[0]);
         num_features.rebind(&mStorage[1]);
         num_labels.rebind(&mStorage[2]);
@@ -96,36 +97,35 @@ private:
         ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
         numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
         loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-         
-        //mcsrch step states 
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        uint32_t model_size = 4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m;    
+        //mcsrch states 
+        iflag.rebind(&mStorage[model_size + 1]);
+        stp1.rebind(&mStorage[model_size + 2]);
+        stp.rebind(&mStorage[model_size + 3]);
+        iter.rebind(&mStorage[model_size + 4]);
+        point.rebind(&mStorage[model_size + 5]);
+        ispt.rebind(&mStorage[model_size + 6]);
+        iypt.rebind(&mStorage[model_size + 7]);
+        info.rebind(&mStorage[model_size + 8]);
+        npt.rebind(&mStorage[model_size + 9]);
+        uint32_t srch_size = model_size + 9;
+        //mcstep states
+        dgtest.rebind(&mStorage[srch_size + 1]);
+        dginit.rebind(&mStorage[srch_size + 2]);
+        dgx.rebind(&mStorage[srch_size + 3]);
+        dgy.rebind(&mStorage[srch_size + 4]);
+        finit.rebind(&mStorage[srch_size + 5]);
+        fx.rebind(&mStorage[srch_size + 6]);
+        fy.rebind(&mStorage[srch_size + 7]);
+        stx.rebind(&mStorage[srch_size + 8]);
+        sty.rebind(&mStorage[srch_size + 9]);
+        brackt.rebind(&mStorage[srch_size + 10]);
+        stage1.rebind(&mStorage[srch_size + 11]);
+        stmin.rebind(&mStorage[srch_size + 12]);
+        stmax.rebind(&mStorage[srch_size + 13]);
+        width.rebind(&mStorage[srch_size + 14]);
+        width1.rebind(&mStorage[srch_size + 15]);
     }
-
     Handle mStorage;
 
 public:
