@@ -100016,28 +100016,38 @@ COPY mlens100k (user_id, movie_id, rating) FROM STDIN;
 12	203	3
 \.
 
-DROP TABLE IF EXISTS _temp_model_id CASCADE;
-CREATE TEMPORARY TABLE _temp_model_id (id INTEGER);
+-- GPDB < 4.2.1 has issues of executing "CREATE TABLE .. AS SELECT" or 
+-- "INSERT INTO ... SELECT"
+-- To be compatiable with historical versions of GPDB, we use plpgsql 
+-- local variables instead
+CREATE FUNCTION check_rmse()
+RETURNS VOID AS $$
+DECLARE
+    model_id    INTEGER;
+BEGIN
+    SELECT lmf_igd_run(
+        'test_lmf_model',
+        'mlens100k',
+        'user_id',
+        'movie_id',
+        'rating',
+        944,        -- row_dim
+        1683,       -- col_dim
+        2,          -- max_rank
+        0.03,       -- stepsize
+        0.1,        -- init_value
+        5,          -- num_iterations
+        1e-3        -- tolerance
+        )
+    INTO model_id;
 
-INSERT INTO _temp_model_id 
-SELECT lmf_igd_run(
-    'test_lmf_model',
-    'mlens100k',
-    'user_id', 
-    'movie_id',
-    'rating', 
-    944,        -- row_dim
-    1683,       -- col_dim
-    2,          -- max_rank
-    0.03,       -- stepsize
-    0.1,        -- init_value
-    5,         -- num_iterations
-    1e-3        -- tolerance
-);
+    PERFORM assert(
+        rmse < 2.0,
+        'Low-rank Matrix Factorization using incremental gradient: RMSE is too high (> 2.0). Wrong result.'
+    ) FROM test_lmf_model
+    WHERE test_lmf_model.id = model_id;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
-SELECT assert(
-    rmse < 2.0,
-    'Low-rank Matrix Factorization using incremental gradient: RMSE is too high (> 2.0). Wrong result.'
-) FROM test_lmf_model, _temp_model_id
-WHERE test_lmf_model.id = _temp_model_id.id;
+SELECT check_rmse();
 
