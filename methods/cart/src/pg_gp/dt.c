@@ -2363,26 +2363,31 @@ dt_acc_count_sfunc
     int *p_array_dim             = NULL;
     int array_length             = 0;
     int64 *count_array           = NULL;
+    dt_check_error_value
+		(
+			!PG_ARGISNULL(1),
+			"In function: %s. "
+			"The parameter of 'max_num_of_classes' should not be null",
+			__FUNCTION__
+		);
     int max_num_of_classes  	 = PG_GETARG_INT32(1);
     int64  count                 = PG_ARGISNULL(2)?0:PG_GETARG_INT64(2);
     int    class                 = PG_ARGISNULL(3)?0:PG_GETARG_INT32(3);
     bool rebuild_array     		 = false;
 
-    dtelog(WARNING, "max_num_of_classes:%d, count:%d, class:%d",
-            max_num_of_classes, count, class);
     dt_check_error_value
 		(
-			max_num_of_classes >= 2,
+			max_num_of_classes >= 2 && max_num_of_classes <= 1e6,
 			"invalid value: %d. "
-			"The number of classes must be greater than or equal to 2",
+			"The number of classes must be in the range of [2, 1e6]",
 			max_num_of_classes
 		);
 
     dt_check_error_value
 		(
-			class >= 0 && class <= max_num_of_classes,
+			class >= 1 && class <= max_num_of_classes,
 			"invalid real class value: %d. "
-			"It must be in range from 0 to the number of classes",
+			"It must be in range from 1 to the number of classes",
 			class
 		);
 
@@ -2393,7 +2398,6 @@ dt_acc_count_sfunc
     	 * We assume the maximum number of classes is limited (up to millions),
     	 * so that the allocated array won't break our memory limitation.
     	 */
-        dtelog(WARNING, "null internal state, new array here");
         count_array 	 = palloc0(sizeof(int64) * max_num_of_classes);
         array_length 	 = max_num_of_classes;
         rebuild_array 	 = true;
