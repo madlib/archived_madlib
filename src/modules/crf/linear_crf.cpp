@@ -96,6 +96,34 @@ private:
         ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
         numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
         loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+         
+        //mcsrch step states 
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
     }
 
     Handle mStorage;
@@ -111,31 +139,53 @@ public:
 
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;
+
+    typename HandleTraits<Handle>::ReferenceToUInt16 iflag;
+    typename HandleTraits<Handle>::ReferenceToDouble stp1;
+    typename HandleTraits<Handle>::ReferenceToDouble stp;
+    typename HandleTraits<Handle>::ReferenceToUInt32 iter;
+    typename HandleTraits<Handle>::ReferenceToUInt32 point;
+    typename HandleTraits<Handle>::ReferenceToUInt32 ispt;
+    typename HandleTraits<Handle>::ReferenceToUInt32 iypt;
+    typename HandleTraits<Handle>::ReferenceToUInt32 info;
+    typename HandleTraits<Handle>::ReferenceToUInt32 npt;
+
+    typename HandleTraits<Handle>::ReferenceToDouble dgtest;
+    typename HandleTraits<Handle>::ReferenceToDouble dginit;
+    typename HandleTraits<Handle>::ReferenceToDouble dgx;
+    typename HandleTraits<Handle>::ReferenceToDouble dgy;
+    typename HandleTraits<Handle>::ReferenceToDouble finit;
+    typename HandleTraits<Handle>::ReferenceToDouble fx;
+    typename HandleTraits<Handle>::ReferenceToDouble fy;
+    typename HandleTraits<Handle>::ReferenceToDouble stx;
+    typename HandleTraits<Handle>::ReferenceToDouble sty;
+    typename HandleTraits<Handle>::ReferenceToBool  brackt;
+    typename HandleTraits<Handle>::ReferenceToDouble stage1;
+    typename HandleTraits<Handle>::ReferenceToDouble stmin;
+    typename HandleTraits<Handle>::ReferenceToDouble stmax;
+    typename HandleTraits<Handle>::ReferenceToDouble width;
+    typename HandleTraits<Handle>::ReferenceToDouble width1;
 };
-// Protected Member Functions ------------------------------------------------
-bool lbfgsStep(double& stx, double& fx, double& dx,
+
+void mcstep(  LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T,
+               double& stx, double& fx, double& dx,
                double& sty, double& fy, double& dy,
                double& stp, const double& fp, const double& dp,
-               bool& brackt, const double& stmin, const double& stmax)
+               const double& stmin, const double& stmax, int& info)
 {
     bool bound;
-    double gamma;
-    double p;
-    double q;
-    double r;
-    double s;
-    double stpc;
-    double stpf;
-    double stpq;
-    double theta;
+    double gamma, p, q, r, sgnd, stpc, stpf, stpq, theta, s;
 
-    if ((brackt && ((stp <= std::min(stx, sty)) || (stp >= std::max(stx, sty)))) ||
+    info = 0;
+
+    if ((T.brackt && ((stp <= std::min(stx, sty)) || (stp >= std::max(stx, sty)))) ||
             (dx * (stp - stx) >= 0) || (stmax < stmin)) {
-        return false;
+        return;
     }
 
-    double sgnd = dp*(dx/fabs(dx));
+    sgnd = dp*(dx/fabs(dx));
     if (fp > fx) {
+        info = 1;
         bound = true;
         theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp;
         s = std::max(fabs(theta), std::max(fabs(dx), fabs(dp)));
@@ -153,70 +203,67 @@ bool lbfgsStep(double& stx, double& fx, double& dx,
         } else {
             stpf = stpc + (stpq - stpc)/2;
         }
-        brackt = true;
+        T.brackt = true;
+
+    } else if (sgnd < 0.0) {
+        info = 2;
+        bound = false;
+        theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp;
+        s = std::max(fabs(theta), std::max(fabs(dx), fabs(dp)));
+        gamma = s * sqrt((theta / s) * (theta / s) - (dx / s) * (dp / s));
+        if (stp > stx) {
+            gamma = -gamma;
+        }
+        p = gamma - dp + theta;
+        q = gamma - dp + gamma + dx;
+        r = p / q;
+        stpc = stp + r * (stx - stp);
+        stpq = stp + dp / (dp - dx) * (stx - stp);
+        stpf = (fabs(stpc - stp) > fabs(stpq - stp)) ? stpc : stpq;
+        T.brackt = true;
+
+    } else if (fabs(dp) < fabs(dx)) {
+        info = 3;
+        bound = true;
+        theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp;
+        s = std::max(fabs(theta), std::max(fabs(dx), fabs(dp)));
+        gamma = s * sqrt(std::max(0.0, (theta/s)*(theta/s) - (dx/s)*(dp/s)));
+        if (stp > stx) {
+            gamma = -gamma;
+        }
+        p = gamma - dp + theta;
+        q = gamma + (dx - dp) + gamma;
+        r = p / q;
+        if ((r < 0.0) && (gamma != 0.0)) {
+            stpc = stp + r * (stx - stp);
+        } else {
+            stpc = (stp > stx) ? stmax : stmin;
+        }
+
+        stpq = stp + dp / (dp - dx) * (stx - stp);
+        if (T.brackt) {
+            stpf = (fabs(stp - stpc) < fabs(stp - stpq)) ? stpc : stpq;
+        } else {
+            stpf = (fabs(stp - stpc) > fabs(stp - stpq)) ? stpc : stpq;
+        }
 
     } else {
-
-        if (sgnd < 0.0) {
-            bound = false;
-            theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp;
-            s = std::max(fabs(theta), std::max(fabs(dx), fabs(dp)));
-            gamma = s * sqrt((theta / s) * (theta / s) - (dx / s) * (dp / s));
-            if (stp > stx) {
+        info = 4;
+        bound = false;
+        if (T.brackt) {
+            theta = 3.0 * (fp - fy) / (sty - stp) + dy + dp;
+            s = std::max(fabs(theta), std::max(fabs(dy), fabs(dp)));
+            gamma = s * sqrt((theta/s)*(theta/s) - (dy/s)*(dp/s));
+            if (stp > sty) {
                 gamma = -gamma;
             }
             p = gamma - dp + theta;
-            q = gamma - dp + gamma + dx;
+            q = gamma - dp + gamma + dy;
             r = p / q;
-            stpc = stp + r * (stx - stp);
-            stpq = stp + dp / (dp - dx) * (stx - stp);
-            stpf = (fabs(stpc - stp) > fabs(stpq - stp)) ? stpc : stpq;
-            brackt = true;
-
+            stpc = stp + r * (sty - stp);
+            stpf = stpc;
         } else {
-
-            if (fabs(dp) < fabs(dx)) {
-                bound = true;
-                theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp;
-                s = std::max(fabs(theta), std::max(fabs(dx), fabs(dp)));
-                gamma = s * sqrt(std::max(0.0, (theta/s)*(theta/s) - (dx/s)*(dp/s)));
-                if (stp > stx) {
-                    gamma = -gamma;
-                }
-                p = gamma - dp + theta;
-                q = gamma + (dx - dp) + gamma;
-                r = p / q;
-                if ((r < 0.0) && (gamma != 0.0)) {
-                    stpc = stp + r * (stx - stp);
-                } else {
-                    stpc = (stp > stx) ? stmax : stmin;
-                }
-
-                stpq = stp + dp / (dp - dx) * (stx - stp);
-                if (brackt) {
-                    stpf = (fabs(stp - stpc) < fabs(stp - stpq)) ? stpc : stpq;
-                } else {
-                    stpf = (fabs(stp - stpc) > fabs(stp - stpq)) ? stpc : stpq;
-                }
-
-            } else {
-                bound = false;
-                if (brackt) {
-                    theta = 3.0 * (fp - fy) / (sty - stp) + dy + dp;
-                    s = std::max(fabs(theta), std::max(fabs(dy), fabs(dp)));
-                    gamma = s * sqrt((theta/s)*(theta/s) - (dy/s)*(dp/s));
-                    if (stp > sty) {
-                        gamma = -gamma;
-                    }
-                    p = gamma - dp + theta;
-                    q = gamma - dp + gamma + dy;
-                    r = p / q;
-                    stpc = stp + r * (sty - stp);
-                    stpf = stpc;
-                } else {
-                    stpf = (stp > stx) ? stmax : stmin;
-                }
-            }
+            stpf = (stp > stx) ? stmax : stmin;
         }
     }
 
@@ -236,7 +283,7 @@ bool lbfgsStep(double& stx, double& fx, double& dx,
     }
 
     stp = std::max(stmin, std::min(stmax, stpf));
-    if (brackt && bound) {
+    if (T.brackt && bound) {
         if (sty > stx) {
             stp = std::min(stx + 0.66*(sty - stx), stp);
         } else {
@@ -244,200 +291,220 @@ bool lbfgsStep(double& stx, double& fx, double& dx,
         }
     }
 
-    return true;
+    return;
 }
 
-bool lbfgsSearch(double &f, const Eigen::VectorXd &s, double& stp, Eigen::VectorXd& diag, Eigen::VectorXd& x, Eigen::VectorXd& g)
+void mcsrch( LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, const Eigen::VectorXd &s)
 {
     static const int MAXFEV = 20;
+    int nfev = 0;
     static const double STPMIN = pow(10.0, -20.0);
     static const double STPMAX = pow(10.0, 20.0);
     static const double XTOL = 100.0 * std::numeric_limits<double>::min();
     static const double GTOL = 0.9;
     static const double FTOL = 0.0001;
     static const double XTRAPF = 4.0;
+    const int f = T.loglikelihood;
+    int infoc=0;
+    if(T.info != -1) {
+        infoc = 1;
+        if (T.stp <= 0)  return ;
 
-    if (stp <= 0) {
-        return false;
+        T.dginit = T.grad.dot(s);
+        if (T.dginit >= 0.0) {
+            std::cout<<"The search direction is not a descent direction."<<std::endl;
+            return;
+        }
+
+        T.brackt = false;
+        T.stage1 = true;
+        T.finit = f;
+        T.dgtest = FTOL * T.dginit;
+        T.width = STPMAX - STPMIN;
+        T.width1 = 2.0 * T.width;
+
+        T.diag = T.coef;
+
+        T.stx = 0.0;
+        T.fx = T.finit;
+        T.dgx = T.dginit;
+        T.sty = 0.0;
+        T.fy = T.finit;
+        T.dgy = T.dginit;
     }
 
-    double dginit = g.dot(s);
-    if (dginit >= 0.0) {
-        return false;
-    }
-
-    bool brackt = false;
-    bool stage1 = true;
-    double finit = f;
-    double dgtest = FTOL * dginit;
-    double width = STPMAX - STPMIN;
-    double width1 = 2.0 * width;
-
-    diag = x;
-
-    double stx = 0.0;
-    double fx = finit;
-    double dgx = dginit;
-    double sty = 0.0;
-    double fy = finit;
-    double dgy = dginit;
-    bool infoc = true;
-
-
-    double fm, fxm, fym;
-    double dgm, dgxm, dgym;
-    double stmin, stmax;
-
-    for (int nfev = 0; nfev < MAXFEV; nfev++) {
-        if (brackt) {
-            if (stx < sty) {
-                stmin = stx;
-                stmax = sty;
+    while(true)
+    {
+        if(T.info != -1)
+        {
+            if (T.brackt) {
+                if (T.stx < T.sty) {
+                    T.stmin = T.stx;
+                    T.stmax = T.sty;
+                } else {
+                    T.stmin = T.sty;
+                    T.stmax = T.stx;
+                }
             } else {
-                stmin = sty;
-                stmax = stx;
+                T.stmin = T.stx;
+                T.stmax = T.stp + XTRAPF * (T.stp - T.stx);
             }
-        } else {
-            stmin = stx;
-            stmax = stp + XTRAPF * (stp - stx);
-        }
 
-        if (stp > STPMAX) {
-            stp = STPMAX;
-        }
-        if (stp < STPMIN) {
-            stp = STPMIN;
-        }
-        if ((brackt && ((stp <= stmin) || (stp >= stmax))) || (nfev == MAXFEV - 1) ||
-                (!infoc) || (brackt && ((stmax - stmin) <= XTOL * stmax))) {
-            stp = stx;
-        }
-
-        x = diag + stp * s;
-
-        double dg = g.dot(s);
-        double ftest1 = finit + stp * dgtest;
-
-        if ((brackt && ((stp <= stmin) || (stp >= stmax))) || (!infoc)) {
-            return true;
-        }
-        if ((stp == STPMAX) && (f <= ftest1) && (dg <= dgtest)) {
-            return true;
-        }
-        if ((stp == STPMIN) && ((f >= ftest1) || (dg >= dgtest))) {
-            return true;
-        }
-        if (brackt && (stmax - stmin <= XTOL * stmax)) {
-            return true;
-        }
-        if ((f <= ftest1) && (fabs(dg) <= -GTOL * dginit)) {
-            return true;
-        }
-
-        stage1 = stage1 && ((f > ftest1) || (dg < std::min(FTOL, GTOL) * dginit));
-
-        if (stage1) {
-            fm = f - stp * dgtest;
-            fxm = fx - stx * dgtest;
-            fym = fy - sty * dgtest;
-            dgm = dg - dgtest;
-            dgxm = dgx - dgtest;
-            dgym = dgy - dgtest;
-            infoc = lbfgsStep(stx, fxm, dgxm, sty, fym, dgym, stp, fm, dgm, brackt, stmin, stmax);
-            fx = fxm + stx * dgtest;
-            fy = fym + sty * dgtest;
-            dgx = dgxm + dgtest;
-            dgy = dgym + dgtest;
-        } else {
-            infoc = lbfgsStep(stx, fx, dgx, sty, fy, dgy, stp, f, dg, brackt, stmin, stmax);
-        }
-
-        if (brackt) {
-            if (fabs(sty - stx) >= 0.66 * width1) {
-                stp = stx + 0.5 * (sty - stx);
+            if (T.stp > STPMAX) {
+                T.stp = STPMAX;
             }
-            width1 = width;
-            width = fabs(sty - stx);
+            if (T.stp < STPMIN) {
+                T.stp = STPMIN;
+            }
+            if ((T.brackt && ((T.stp <= T.stmin) || (T.stp >= T.stmax))) || (nfev == MAXFEV - 1) ||
+                    (!infoc) || (T.brackt && ((T.stmax - T.stmin) <= XTOL * T.stmax))) {
+                T.stp = T.stx;
+            }
+
+            //std::cout<<"s:"<<s<<std::endl;
+            T.coef = T.diag + T.stp * s;
+            T.info = -1;
+            return;
+        }
+        T.info = 0;
+        //std::cout<<"x2:"<<x<<std::endl;
+        //return false;
+        double dg = T.grad.dot(s);
+        double ftest1 = T.finit + T.stp * T.dgtest;
+
+        if ((T.brackt && ((T.stp <= T.stmin) || (T.stp >= T.stmax))) || (!infoc)) {
+            T.info = 6;
+        }
+        if ((T.stp == STPMAX) && (f <= ftest1) && (dg <= T.dgtest)) {
+            T.info = 5;
+        }
+        if ((T.stp == STPMIN) && ((f >= ftest1) || (dg >= T.dgtest))) {
+            T.info = 4;
+        }
+        if (nfev >= MAXFEV) {
+            T.info = 3;
+        }
+        if (T.brackt && (T.stmax - T.stmin <= XTOL * T.stmax)) {
+            T.info = 2;
+        }
+        if ((f <= ftest1) && (fabs(dg) <= -GTOL * T.dginit)) {
+            T.info = 1;
+        }
+        if (T.info !=0 )
+            return ;
+        T.stage1 = T.stage1 && ((f > ftest1) || (dg < std::min(FTOL, GTOL) * T.dginit));
+
+        if (T.stage1) {
+            double fm = f - T.stp * T.dgtest;
+            double fxm = T.fx - T.stx * T.dgtest;
+            double fym = T.fy - T.sty * T.dgtest;
+            double dgm = dg - T.dgtest;
+            double dgxm = T.dgx - T.dgtest;
+            double dgym = T.dgy - T.dgtest;
+            mcstep(T, T.stx, fxm, dgxm, T.sty, fym, dgym, T.stp, fm, dgm,T.stmin, T.stmax, infoc);
+            T.fx = fxm + T.stx * T.dgtest;
+            T.fy = fym + T.sty * T.dgtest;
+            T.dgx = dgxm + T.dgtest;
+            T.dgy = dgym + T.dgtest;
+        } else {
+            mcstep(T, T.stx, T.fx, T.dgx, T.sty, T.fy, T.dgy, T.stp, f, dg, T.stmin, T.stmax, infoc);
+        }
+
+        if (T.brackt) {
+            if (fabs(T.sty - T.stx) >= 0.66 * T.width1) {
+                T.stp = T.stx + 0.5 * (T.sty - T.stx);
+            }
+            T.width1 = T.width;
+            T.width = fabs(T.sty - T.stx);
         }
     }
-
-    return true;
 }
 
 
 
-bool lbfgsMinimize(int m, double eps, unsigned  _n, Eigen::VectorXd& x, double f,
-                   Eigen::VectorXd& g, Eigen::VectorXd& diag, Eigen::VectorXd& w)
+void lbfgs(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& T, double eps)
 {
-    assert((m > 0) && (m <= (int)_n) && (eps >= 0.0));
-    int iter=0;
-    int cp=0; 
-    //throw std::logic_error("Internal error: Incompatible transition states");
-    int point = 0;
-    int ispt = _n + 2*m;
-    int iypt = ispt + _n*m;
-    int npt = 0;
-    
-    w.segment(ispt, _n) = (-g).cwiseProduct(diag);
-    double stp1 = 1.0 / g.norm();
-
-    while(true){
-    iter++;
-    int bound = std::min(iter, m);
-        double ys = w.segment(iypt + npt, _n).dot(w.segment(ispt + npt, _n));
-        double yy = w.segment(iypt + npt, _n).squaredNorm();
-        diag.setConstant(ys / yy);
-        w[_n + ((point == 0) ? m - 1 : point - 1)] = 1.0 / ys;
-        w.head(_n) = -g;
-
-        for (int i = 0; i < bound; i++) {
-            cp -= 1;
-            if (cp == -1) {
-                cp = m - 1;
-            }
-            double sq = w.segment(ispt + cp * _n, _n).dot(w.head(_n));
-            int inmc = _n + m + cp;
-            int iycn = iypt + cp * _n;
-            w[inmc] = sq * w[_n + cp];
-
-            w.head(_n) -= w[inmc] * w.segment(iycn, _n);
-        }
-
-        w.head(_n)=w.head(_n).cwiseProduct(diag);
-
-        for (int i = 0; i < bound; i++) {
-            double yr = w.segment(iypt + cp * _n, _n).dot(w.head(_n));
-            int inmc = _n + m + cp;
-            int iscn = ispt + cp * _n;
-            double beta = w[inmc] - w[_n + cp] * yr;
-
-            w.head(_n) += beta * w.segment(iscn, _n);
-            cp += 1;
-            if (cp == m) {
-                cp = 0;
-            }
-        }
-
-        w.segment(ispt + point * _n, _n) = w.head(_n);
-
-    double stp = (iter == 1) ? stp1 : 1.0;
-    w.head(_n) = g;
-
-    bool success = lbfgsSearch(f, w.segment(ispt + point * _n, _n), stp, diag, x, g);
-    if (!success) {
-        return false;
+    //local variables   
+    bool execute_entire_while_loop = false;
+    const int n = T.num_features;
+    const int m = T.m;
+    int cp ;
+    if(T.iflag == 0) {
+        T.iter=0;
+        cp=0;
+        T.info=0;
+        T.point = 0;
+        T.ispt = n + 2*m;
+        T.iypt = T.ispt + n*m;
+        T.npt = 0;
+        T.ws.segment(T.ispt, n) = (-T.grad).cwiseProduct(T.diag);
+        T.stp1 = 1.0 / T.grad.norm();
+        execute_entire_while_loop = true;
     }
+    while(true) {
+        if(execute_entire_while_loop) {
+            T.iter++;
+            T.info = 0;
+            int bound = std::min(int(T.iter-1), m);
+            if (T.iter!=1) {
+                double ys = T.ws.segment(T.iypt + T.npt, n).dot(T.ws.segment(T.ispt + T.npt, n));
+                double yy = T.ws.segment(T.iypt + T.npt, n).squaredNorm();
+                T.diag.setConstant(ys / yy);
+                cp = T.point;
+                if (T.point ==0 ) cp =m;
+                T.ws[n + cp-1] = 1.0 / ys;
+                T.ws.head(n) = -T.grad;
+                cp = T.point;
+                for (int i = 0; i < bound; i++) {
+                    cp -= 1;
+                    if (cp == -1) {
+                        cp = m - 1;
+                    }
+                    double sq = T.ws.segment(T.ispt + cp *n,n).dot(T.ws.head(n));
+                    int inmc = n + m + cp;
+                    int iycn = T.iypt + cp * n;
+                    T.ws[inmc] = sq * T.ws[n + cp];
+                    T.ws.head(n) -= T.ws[inmc] * T.ws.segment(iycn, n);
+                }
+                T.ws.head(n)=T.ws.head(n).cwiseProduct(T.diag);
 
-    npt = point * _n;
-    w.segment(ispt + npt, _n) *= stp;
-    w.segment(iypt + npt, _n) = g - w.head(_n);
-    point += 1;
-    if (point == m) {
-        point = 0;
+                for (int i = 0; i < bound; i++) {
+                    double yr = T.ws.segment(T.iypt + cp * n, n).dot(T.ws.head(n));
+                    int inmc = n + m + cp;
+                    int iscn = T.ispt + cp * n;
+                    double beta = T.ws[inmc] - T.ws[n + cp] * yr;
+                    T.ws.head(n) += beta * T.ws.segment(iscn, n);
+                    cp += 1;
+                    if (cp == m) {
+                        cp = 0;
+                    }
+                }
+                T.ws.segment(T.ispt + T.point * n, n) = T.ws.head(n);
+
+            }
+            T.stp = (T.iter == 1) ? T.stp1 : 1.0;
+            T.ws.head(n) = T.grad;
+        }
+        mcsrch(T, T.ws.segment(T.ispt + T.point * n, n));
+        if(T.info == -1) {
+            T.iflag = 1;
+            return;
+        } else {
+            std::cout<<"error"<<std::endl;
+        }
+        T.npt = T.point * n;
+        T.ws.segment(T.ispt + T.npt,n) *=T.stp;
+        T.ws.segment(T.iypt + T.npt,n) =T.grad - T.ws.head(n);
+        T.point = T.point + 1;
+        if (T.point == m) {
+            T.point = 0;
+        }
+        if(T.grad.norm()/std::max(1.0,T.coef.norm())<=eps || T.iter>20) {
+            T.iflag = 0;
+            return ;
+        }
+        execute_entire_while_loop = true;
     }
-    if(g.norm()/std::max(1.0,x.norm())<=eps || iter>20) return true;
-   }
-   return true;
 }
 
 void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi){
@@ -613,34 +680,17 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     if (state.numRows == 0)
 	    return Null();
 
-    // Note: k = state.iteration
-    //Negation 
     double sigma_square = 100;
-    //throw std::logic_error("Internal error: Incompatible transition states");
 
     state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square; 
     state.loglikelihood *= -1;
     state.grad -= state.coef;
     state.grad = -state.grad;
 
-    Eigen::VectorXd coef(state.num_features);
-    Eigen::VectorXd grad(state.num_features);
-    Eigen::VectorXd diag(state.num_features);
-    Eigen::VectorXd ws(state.num_features*(2*state.m+1)+2*state.m);
-    coef= state.coef;
-    grad = state.grad;
-    diag = state.diag;
-    ws = state.ws;
-
     double eps = 1.0e-6; 
-    bool status = lbfgsMinimize(state.m, eps, state.num_features, coef, state.loglikelihood, grad, diag, ws);
-    if(status == false) 
-      throw std::logic_error("lbfgs failed");
-
-    state.coef = coef;
-    state.grad = grad;
-    state.diag = diag;
-    state.ws = ws;
+    assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
+    lbfgs(state, eps);
+    if(state.iflag < 0)  throw std::logic_error("lbfgs failed");
 
     //throw std::logic_error("Internal error: Incompatible transition states");
     if(!state.coef.is_finite())
