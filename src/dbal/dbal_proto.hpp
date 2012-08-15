@@ -64,9 +64,13 @@ enum OnMemoryAllocationFailure {
 
 // Boost integration is non-optional
 #include "BoostIntegration/BoostIntegration.hpp"
-
-#include "OutputStreamBufferBase_proto.hpp"
-#include "OutputStreamBufferBase_impl.hpp"
+// #include "EigenIntegration/EigenIntegration.hpp"
 #include "Exceptions/NoSolutionFoundException_proto.hpp"
+
+#include "ByteStream_proto.hpp"
+#include "ByteStreamHandleBuf_proto.hpp"
+#include "DynamicStruct_proto.hpp"
+#include "OutputStreamBufferBase_proto.hpp"
+#include "Reference_proto.hpp"
 
 #endif // defined(MADLIB_DBAL_HPP)

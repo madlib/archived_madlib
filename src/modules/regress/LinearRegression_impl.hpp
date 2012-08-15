@@ -16,9 +16,9 @@ namespace modules {
 
 namespace regress {
 
-template <class Parent>
+template <class Container>
 inline
-LinearRegressionAccumulator<Parent>::LinearRegressionAccumulator(
+LinearRegressionAccumulator<Container>::LinearRegressionAccumulator(
     Init_type& inInitialization)
   : Base(inInitialization) {
 
@@ -36,10 +36,10 @@ LinearRegressionAccumulator<Parent>::LinearRegressionAccumulator(
  * methods can, however, rely on that fact that all variables are correctly
  * initialized and accessible.
  */
-template <class Parent>
+template <class Container>
 inline
 void
-LinearRegressionAccumulator<Parent>::bind(BinaryStream_type& inStream) {
+LinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
     inStream
         >> numRows >> widthOfX >> y_sum >> y_square_sum;
     uint16_t actualWidthOfX = widthOfX.isNull()
@@ -57,11 +57,15 @@ LinearRegressionAccumulator<Parent>::bind(BinaryStream_type& inStream) {
  * sums \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
  * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
  */
-template <class Parent>
+template <class Container>
 inline
-LinearRegressionAccumulator<Parent>&
-LinearRegressionAccumulator<Parent>::feed(MappedColumnVector x, double y) {
-    // The following check was added with MADLIB-138.
+LinearRegressionAccumulator<Container>&
+LinearRegressionAccumulator<Container>::operator<<(const tuple_type& inTuple) {
+    const MappedColumnVector& x = std::get<0>(inTuple);
+    const double& y = std::get<1>(inTuple);
+
+    // The following checks were introduced with MADLIB-138. It still seems
+    // useful to have clear error messages in case of infinite input values.
     if (!std::isfinite(y))
         throw std::domain_error("Dependent variables are not finite.");
     else if (!isfinite(x))
@@ -90,12 +94,12 @@ LinearRegressionAccumulator<Parent>::feed(MappedColumnVector x, double y) {
 /**
  * @brief Merge with another accumulation state
  */
-template <class Parent>
-template <class OtherParent>
+template <class Container>
+template <class OtherContainer>
 inline
-LinearRegressionAccumulator<Parent>&
-LinearRegressionAccumulator<Parent>::feed(
-    const LinearRegressionAccumulator<OtherParent>& inOther) {
+LinearRegressionAccumulator<Container>&
+LinearRegressionAccumulator<Container>::operator<<(
+    const LinearRegressionAccumulator<OtherContainer>& inOther) {
 
     // Initialize if necessary
     if (numRows == 0) {
@@ -115,21 +119,21 @@ LinearRegressionAccumulator<Parent>::feed(
     return *this;
 }
 
-template <class Parent>
-template <class OtherParent>
+template <class Container>
+template <class OtherContainer>
 inline
-LinearRegressionAccumulator<Parent>&
-LinearRegressionAccumulator<Parent>::operator=(
-    const LinearRegressionAccumulator<OtherParent>& inOther) {
+LinearRegressionAccumulator<Container>&
+LinearRegressionAccumulator<Container>::operator=(
+    const LinearRegressionAccumulator<OtherContainer>& inOther) {
 
     this->copy(inOther);
     return *this;
 }
 
 
-template <class Parent>
+template <class Container>
 LinearRegression::LinearRegression(
-    const LinearRegressionAccumulator<Parent>& inState) {
+    const LinearRegressionAccumulator<Container>& inState) {
 
     compute(inState);
 }
@@ -143,15 +147,16 @@ LinearRegression::LinearRegression(
  *
  * @sa For the mathematical description, see \ref grp_linreg.
  */
-template <class Parent>
+template <class Container>
 inline
 LinearRegression&
-LinearRegression::compute(const LinearRegressionAccumulator<Parent>& inState) {
+LinearRegression::compute(
+    const LinearRegressionAccumulator<Container>& inState) {
+
     Allocator& allocator = defaultAllocator();
 
-    // See MADLIB-138. At least on certain platforms and with certain versions,
-    // LAPACK will run into an infinite loop if pinv() is called for non-finite
-    // matrices. We extend the check also to the dependent variables.
+    // The following checks were introduced with MADLIB-138. It still seems
+    // useful to have clear error messages in case of infinite input values.
     if (!isfinite(inState.X_transp_X) || !isfinite(inState.X_transp_Y))
         throw std::domain_error("Design matrix is not finite.");
 
