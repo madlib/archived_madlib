@@ -170,25 +170,39 @@ public:
 class LBFGS {
     //shared variables in the lbfgs
 public:
-    static  const double gtol = 0.9;
-    public static double stpmin = 1e-20;
-    public static double stpmax = 1e20;
-    public double gnorm = 0, stp1 = 0, ftol = 0, stp = 0, ys = 0, yy = 0, sq = 0, yr = 0, beta = 0, xnorm = 0;
-    public int iter = 0, nfun = 0, point = 0, ispt = 0, iypt = 0, maxfev = 0, info=0, bound = 0, npt = 0, cp = 0, i = 0, nfev = 0, inmc = 0, iycn = 0, iscn = 0;
+    //double gtol = 0.9;
+    static double gtol;
+    //double stpmin = 1e-20;
+    static double stpmin;
+    //double stpmax = 1e20;
+    static double stpmax;
+    double stp1, ftol, stp, ys, yy, sq, yr, beta;
+    int iter, nfun, point, ispt, iypt, maxfev, info, bound, npt, cp, i, nfev, inmc, iycn, iscn;
     //shared varibles in the mcscrch
-    public int infoc = 0, j = 0;
-    public double dg = 0, dgm = 0, dginit = 0, dgtest = 0, dgx = 0, dgxm = 0, dgy = 0, dgym[] = 0, finit = 0, ftest1 = 0, fm = 0, fx = 0, fxm = 0, fy = 0, fym = 0, p5 = 0, p66 = 0, stx = 0, sty = 0, stmin = 0, stmax = 0, width = 0, width1 = 0, xtrapf = 0;
-    public bool brackt = false, stage1 = false;
+    int infoc, j;
+    double dg, dgm, dginit, dgtest, dgx, dgxm, dgy, dgym, finit, ftest1, fm, fx, fxm, fy, fym, p5, p66, stx, sty, stmin, stmax, width, width1, xtrapf;
+    //bool brackt = false, stage1 = false;
 
-    public void mcstep ( double&, double& , double&, double&, double& , double&, double&, double fp , double dp, bool brackt, double, double, int&);
+    LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >);
+    bool brackt, stage1, finish;
+    void mcstep (double&, double& , double&, double&, double& , double&, double&, double, double, bool&, double, double, int&);
 
-    public void mcsrch ( int, double&, double f , Eigen::VectorXd& g , Eigen::VectorXd& s , int is0 , double&, double ftol , double xtol, int maxfev , int&, int&, Eigen::VectorXd& wa );
+    void mcsrch (int, Eigen::VectorXd&, double, Eigen::VectorXd&, Eigen::VectorXd&, double&, double, double, int, int&, int&, Eigen::VectorXd&);
+      
+    void lbfgs(int, int, Eigen::VectorXd&, double, Eigen::VectorXd, Eigen::VectorXd&, double, double, int&);
 };
 
+double LBFGS::gtol = 0.9; 
+double LBFGS::stpmin = 1e-20; 
+double LBFGS::stpmax = 1e20; 
+
+void LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state){
+      
+}
 void LBFGS::mcstep(double& stx, double& fx, double& dx,
                    double& sty, double& fy, double& dy,
-                   double& stp, const double& fp, const double& dp, bool& brackt,
-                   const double& stmin, const double& stmax, int& info)
+                   double& stp, double fp, double dp, bool& brackt,
+                   double stmin, double stmax, int& info)
 {
     bool bound;
     double gamma, p, q, r, sgnd, stpc, stpf, stpq, theta, s;
@@ -300,7 +314,7 @@ void LBFGS::mcstep(double& stx, double& fx, double& dx,
     }
 
     stp = std::max(stmin, std::min(stmax, stpf));
-    if (T.brackt && bound) {
+    if (brackt && bound) {
         if (sty > stx) {
             stp = std::min(stx + 0.66*(sty - stx), stp);
         } else {
@@ -311,17 +325,17 @@ void LBFGS::mcstep(double& stx, double& fx, double& dx,
     return;
 }
 
-void LBFGS::mcsrch(int n , Eigen::VectorXd& x,, double f , Eigen::VectorXd& g , Eigen::VectorXd& s , int is0 , double[] stp , double ftol , double xtol , int maxfev , int& info , int& nfev , Eigen::VectorXd& wa)
+void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, Eigen::VectorXd& s, double& stp, double ftol, double xtol, int maxfev, int& info, int& nfev, Eigen::VectorXd& wa)
 {
     p5 = 0.5;
     p66 = 0.66;
     xtrapf = 4.0;
     if(info != -1) {
         infoc = 1;
-        if (n <= 0 || stp[0] <= 0 || ftol < 0 || LBFGS.gtol < 0 || xtol < 0 || LBFGS.stpmin < 0 || LBFGS.stpmax < LBFGS.stpmin || maxfev <= 0 )
+        if (n <= 0 || stp <= 0 || ftol < 0 || gtol < 0 || xtol < 0 || stpmin < 0 || stpmax < stpmin || maxfev <= 0 )
             return;
 
-        dginit = grad.dot(ws.segment(ispt + point * n, n));
+        dginit = g.dot(s);
         if (dginit >= 0.0) {
             std::cout<<"The search direction is not a descent direction."<<std::endl;
             return;
@@ -332,7 +346,7 @@ void LBFGS::mcsrch(int n , Eigen::VectorXd& x,, double f , Eigen::VectorXd& g , 
         nfev = 0;
         finit = f;
         dgtest = ftol * dginit;
-        width = LBFGS.stpmax - LBFGS.stpmin;
+        width = stpmax - stpmin;
         width1 = width/p5;
 
         wa = x;
@@ -362,11 +376,11 @@ void LBFGS::mcsrch(int n , Eigen::VectorXd& x,, double f , Eigen::VectorXd& g , 
                 stmax = stp + xtrapf * (stp - stx);
             }
 
-            if (stp > LBFGS.stpmax) {
-                stp = LBFGS.stpmax;
+            if (stp > stpmax) {
+                stp = stpmax;
             }
-            if (stp < LBFGS.stpmin) {
-                stp = LBFGS.stpmin;
+            if (stp < stpmin) {
+                stp = stpmin;
             }
             if ((brackt && ((stp <= stmin) || (stp >= stmax))) || (nfev == maxfev - 1) ||
                     (!infoc) || (brackt && ((stmax - stmin) <= xtol * stmax))) {
@@ -381,16 +395,16 @@ void LBFGS::mcsrch(int n , Eigen::VectorXd& x,, double f , Eigen::VectorXd& g , 
         nfev= nfev + 1;
         //std::cout<<"x2:"<<x<<std::endl;
         //return false;
-        dg = grad.dot(s);
+        dg = g.dot(s);
         ftest1 = finit + stp * dgtest;
 
         if ((brackt && ((stp <= stmin) || (stp >= stmax))) || (!infoc)) {
             info = 6;
         }
-        if ((stp == LBFGS.stpmax) && (f <= ftest1) && (dg <= dgtest)) {
+        if ((stp == stpmax) && (f <= ftest1) && (dg <= dgtest)) {
             info = 5;
         }
-        if ((stp == LBFGS.stpmin) && ((f >= ftest1) || (dg >= dgtest))) {
+        if ((stp == stpmin) && ((f >= ftest1) || (dg >= dgtest))) {
             info = 4;
         }
         if (nfev >= maxfev) {
@@ -399,16 +413,16 @@ void LBFGS::mcsrch(int n , Eigen::VectorXd& x,, double f , Eigen::VectorXd& g , 
         if (brackt && (stmax - stmin <= xtol * stmax)) {
             info = 2;
         }
-        if ((f <= ftest1) && (fabs(dg) <= -LBFGS.gtol * dginit)) {
+        if ((f <= ftest1) && (fabs(dg) <= -gtol * dginit)) {
             info = 1;
         }
         if (info !=0 )
             return ;
 
 
-        if ( stage1 && f <= ftest1 && dg >= std::min(ftol , LBFGS.gtol) * dginit ) stage1 = false;
+        if ( stage1 && f <= ftest1 && dg >= std::min(ftol , gtol) * dginit ) stage1 = false;
 
-        if (stage1 && f <= fx[0] && f > ftest1) {
+        if (stage1 && f <= fx && f > ftest1) {
             fm = f - stp * dgtest;
             fxm = fx - stx * dgtest;
             fym = fy - sty * dgtest;
@@ -436,14 +450,14 @@ void LBFGS::mcsrch(int n , Eigen::VectorXd& x,, double f , Eigen::VectorXd& g , 
 
 
 
-void LBFGS::lbfgs(int n, int m, Eigen::VectorXd x, double f, Eigen::VectorXd g, bool diagco, double[] diag, double eps , double xtol , int[] iflag)
+void LBFGS::lbfgs(int n, int m, Eigen::VectorXd& x, double f, Eigen::VectorXd g, Eigen::VectorXd& diag, double eps , double xtol , int& iflag)
 {
     bool execute_entire_while_loop = false;
     if(iflag == 0) {
         iter=0;
         if ( n <= 0 || m <= 0 )
         {
-            iflag[0]= -3;
+            iflag= -3;
         }
 
         if ( gtol <= 0.0001 )
@@ -457,8 +471,8 @@ void LBFGS::lbfgs(int n, int m, Eigen::VectorXd x, double f, Eigen::VectorXd g, 
         ispt = n + 2*m;
         iypt = ispt + n*m;
         npt = 0;
-        ws.segment(ispt, n) = (-grad).cwiseProduct(diag);
-        stp1 = 1.0 / grad.norm();
+        w.segment(ispt, n) = (-g).cwiseProduct(diag);
+        stp1 = 1.0 / g.norm();
         ftol= 0.0001;
         maxfev= 20;
         execute_entire_while_loop = true;
@@ -470,20 +484,20 @@ void LBFGS::lbfgs(int n, int m, Eigen::VectorXd x, double f, Eigen::VectorXd g, 
             bound=iter-1;
             if (iter!=1) {
                 if (iter > m) bound = m;
-                ys = ws.segment(iypt + npt, n).dot(ws.segment(ispt + npt, n));
-                yy = ws.segment(iypt + npt, n).squaredNorm();
+                ys = w.segment(iypt + npt, n).dot(w.segment(ispt + npt, n));
+                yy = w.segment(iypt + npt, n).squaredNorm();
                 diag.setConstant(ys / yy);
                 cp = point;
                 if (point ==0 ) cp =m;
-                ws[n + cp-1] = 1.0 / ys;
-                ws.head(n) = -grad;
+                w[n + cp-1] = 1.0 / ys;
+                w.head(n) = -g;
                 cp = point;
                 for (int i = 0; i < bound; i++) {
                     cp -= 1;
                     if (cp == -1) {
                         cp = m - 1;
                     }
-                    sq = ws.segment(ispt + cp *n,n).dot(ws.head(n));
+                    sq = w.segment(ispt + cp *n,n).dot(w.head(n));
                     inmc = n + m + cp;
                     iycn = iypt + cp * n;
                     w[inmc] = sq * w[n + cp];
@@ -492,23 +506,23 @@ void LBFGS::lbfgs(int n, int m, Eigen::VectorXd x, double f, Eigen::VectorXd g, 
                 w.head(n)=w.head(n).cwiseProduct(diag);
 
                 for (int i = 0; i < bound; i++) {
-                    yr = ws.segment(iypt + cp * n, n).dot(ws.head(n));
+                    yr = w.segment(iypt + cp * n, n).dot(w.head(n));
                     inmc = n + m + cp;
                     beta = w[inmc] - w[n + cp] * yr;
                     iscn = ispt + cp * n;
-                    ws.head(n) += beta * ws.segment(iscn, n);
+                    w.head(n) += beta * w.segment(iscn, n);
                     cp += 1;
                     if (cp == m) {
                         cp = 0;
                     }
                 }
-                ws.segment(ispt + point * n, n) = ws.head(n);
+                w.segment(ispt + point * n, n) = w.head(n);
             }
             nfev = 0;
             stp = (iter == 1) ? stp1 : 1.0;
-            ws.head(n) = grad;
+            w.head(n) = g;
         }
-        mcsrch(n, x, f, g, w, ispt + point * n, stp, ftol, xtol, maxfev, info, nfev, diag);
+        mcsrch(n, x, f, g, w.segment(ispt + point * n, n), stp, ftol, xtol, maxfev, info, nfev, diag);
         if(info == -1) {
             iflag = 1;
             return;
@@ -517,13 +531,13 @@ void LBFGS::lbfgs(int n, int m, Eigen::VectorXd x, double f, Eigen::VectorXd g, 
         }
         nfun = nfun + nfev;
         npt = point * n;
-        ws.segment(ispt + npt,n) *=stp;
-        ws.segment(iypt + npt,n) =grad - ws.head(n);
+        w.segment(ispt + npt,n) *=stp;
+        w.segment(iypt + npt,n) =g - w.head(n);
         point = point + 1;
         if (point == m) {
             point = 0;
         }
-        if(grad.norm()/std::max(1.0,coef.norm())<=eps) {
+        if(g.norm()/std::max(1.0,x.norm())<=eps) {
             finish = true;
         }
         if (finish) {
@@ -715,17 +729,22 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     state.grad = -state.grad;
 
     double eps = 1.0e-6;
+    double xtol = 1.0e-16;
+
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
-    lbfgs(state, eps);
+   
+    LBFGS instance = new lbfgs(state);
+    instance.lbfgs(state.num_features, state.m, instance.x, state.loglikehood, state.grad, instance.diag, eps, xtol, instance.iflag)
+    instance.save_state(state); 
+
     if(state.iflag < 0)  throw std::logic_error("lbfgs failed");
 
-    //throw std::logic_error("Internal error: Incompatible transition states");
     if(!state.coef.is_finite())
-        //   throw NoSolutionFoundException("Over- or underflow in "
-        //     "L-BFGS step, while updating coefficients. Input data "
-        //    "is likely of poor numerical condition.");
+      throw NoSolutionFoundException("Over- or underflow in "
+         "L-BFGS step, while updating coefficients. Input data "
+         "is likely of poor numerical condition.");
 
-        state.iteration++;
+      state.iteration++;
     return state;
 }
 
