@@ -97,34 +97,10 @@ private:
         ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
         numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
         loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        uint32_t model_size = 5 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m;
         //mcsrch states
-        iflag.rebind(&mStorage[model_size + 0]);
-        stp1.rebind(&mStorage[model_size + 1]);
-        stp.rebind(&mStorage[model_size + 2]);
-        iter.rebind(&mStorage[model_size + 3]);
-        point.rebind(&mStorage[model_size + 4]);
-        ispt.rebind(&mStorage[model_size + 5]);
-        iypt.rebind(&mStorage[model_size + 6]);
-        info.rebind(&mStorage[model_size + 7]);
-        npt.rebind(&mStorage[model_size + 8]);
-        uint32_t srch_size = model_size + 9;
+        lbfgs_state.rebind(&mStorage[5 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m], 10);
         //mcstep states
-        dgtest.rebind(&mStorage[srch_size + 0]);
-        dginit.rebind(&mStorage[srch_size + 1]);
-        dgx.rebind(&mStorage[srch_size + 2]);
-        dgy.rebind(&mStorage[srch_size + 3]);
-        finit.rebind(&mStorage[srch_size + 4]);
-        fx.rebind(&mStorage[srch_size + 5]);
-        fy.rebind(&mStorage[srch_size + 6]);
-        stx.rebind(&mStorage[srch_size + 7]);
-        sty.rebind(&mStorage[srch_size + 8]);
-        brackt.rebind(&mStorage[srch_size + 9]);
-        stage1.rebind(&mStorage[srch_size + 10]);
-        stmin.rebind(&mStorage[srch_size + 11]);
-        stmax.rebind(&mStorage[srch_size + 12]);
-        width.rebind(&mStorage[srch_size + 13]);
-        width1.rebind(&mStorage[srch_size + 14]);
+        mcsrch_state.rebind(&mStorage[5 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m], 10);
     }
     Handle mStorage;
 
@@ -147,37 +123,30 @@ public:
 class LBFGS {
     //shared variables in the lbfgs
 public:
-    //double gtol = 0.9;
-    static double gtol;
-    //double stpmin = 1e-20;
-    static double stpmin;
-    //double stpmax = 1e20
-    static double stpmax;
     //shared variable in lbfgs
-    double stp1, ftol, stp, ys, yy, sq, yr, beta;
-    int iter, nfun, point, ispt, iypt, maxfev, info, bound, npt, cp, nfev, inmc, iycn, iscn;
+    double stp1, ftol, stp, sq, yr, beta;
+    int  iflag, iter, nfun, point, ispt, iypt, maxfev, info, bound, npt, cp, nfev, inmc, iycn, iscn;
     //shared varibles in mcscrch
     int infoc;
     double dg, dgm, dginit, dgtest, dgx, dgxm, dgy, dgym, finit, ftest1, fm, fx, fxm, fy, fym, p5, p66, stx, sty, stmin, stmax, width, width1, xtrapf;
     bool brackt, stage1, finish;
 
-    LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >);
-    void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state){
+    Eigen::VectorXd w;
+    Eigen::VectorXd x;
+    Eigen::VectorXd diag;
+
+    LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double>& >);
+    void save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > &state);
     void mcstep (double&, double& , double&, double&, double& , double&, double&, double, double, bool&, double, double, int&);
-    void mcsrch (int, Eigen::VectorXd&, double, Eigen::VectorXd&, Eigen::VectorXd&, double&, double, double, int, int&, int&, Eigen::VectorXd&);
+    void mcsrch (int, Eigen::VectorXd&, double, Eigen::VectorXd&, const Eigen::VectorXd&, double&, double, double, int, int&, int&, Eigen::VectorXd&);
     void lbfgs(int, int, Eigen::VectorXd&, double, Eigen::VectorXd, Eigen::VectorXd&, double, double, int&);
 };
 
-double LBFGS::gtol = 0.9; 
-double LBFGS::stpmin = 1e-20; 
-double LBFGS::stpmax = 1e20; 
-
-void LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state){
+//LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state){
+LBFGS::LBFGS(LinCrfLBFGSTransitionState & state){
     stp1=state.lbfgs_state(0); 
     ftol=state.lbfgs_state(0);
     stp=state.lbfgs_state(0);
-    ys=state.lbfgs_state(0);
-    yy=state.lbfgs_state(0);
     sq=state.lbfgs_state(0);
     yr=state.lbfgs_state(0);
     beta=state.lbfgs_state(0);
@@ -196,37 +165,35 @@ void LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state)
     iycn=state.lbfgs_state(0);
     iscn=state.lbfgs_state(0);
 
-    infoc=state.mcsrch_sate(0);
-    dg=state.mcsrch_sate(0);
-    dgm=state.mcsrch_sate(0);
-    dginit=state.mcsrch_sate(0);
-    dgtest=state.mcsrch_sate(0);
-    dgx=state.mcsrch_sate(0);
-    dgxm=state.mcsrch_sate(0);
-    dgy=state.mcsrch_sate(0);
-    dgym=state.mcsrch_sate(0);
-    finit=state.mcsrch_sate(0);
-    fest1=state.mcsrch_sate(0);
-    fm=state.mcsrch_sate(0);
-    fx=state.mcsrch_sate(0);
-    fxm=state.mcsrch_sate(0);
-    fy=state.mcsrch_sate(0);
-    fym=state.mcsrch_sate(0);
-    p5=state.mcsrch_sate(0);
-    p66=state.mcsrch_sate(0);
-    stx=state.mcsrch_sate(0);
-    sty=state.mcsrch_sate(0);
-    stmin=state.mcsrch_sate(0);
-    stmax=state.mcsrch_sate(0);
-    width=state.mcsrch_sate(0);
-    width1=state.mcsrch_sate(0);
-    xrapf=state.mcsrch_sate(0);
-    bracket=state.mcsrch_sate(0);
-    stage1=state.mcsrch_sate(0);
-    finish=state.mcsrch_sate(0);
+    infoc=state.mcsrch_state(0);
+    dg=state.mcsrch_state(0);
+    dgm=state.mcsrch_state(0);
+    dginit=state.mcsrch_state(0);
+    dgtest=state.mcsrch_state(0);
+    dgx=state.mcsrch_state(0);
+    dgxm=state.mcsrch_state(0);
+    dgy=state.mcsrch_state(0);
+    dgym=state.mcsrch_state(0);
+    finit=state.mcsrch_state(0);
+    fest1=state.mcsrch_state(0);
+    fm=state.mcsrch_state(0);
+    fx=state.mcsrch_state(0);
+    fxm=state.mcsrch_state(0);
+    fy=state.mcsrch_state(0);
+    fym=state.mcsrch_state(0);
+    stx=state.mcsrch_state(0);
+    sty=state.mcsrch_state(0);
+    stmin=state.mcsrch_state(0);
+    stmax=state.mcsrch_state(0);
+    width=state.mcsrch_state(0);
+    width1=state.mcsrch_state(0);
+    brackt=state.mcsrch_state(0);
+    stage1=state.mcsrch_state(0);
+    finish=state.mcsrch_state(0);
 }
-void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state){
-}
+/*
+void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > &state){
+}*/
 void LBFGS::mcstep(double& stx, double& fx, double& dx,
                    double& sty, double& fy, double& dy,
                    double& stp, double fp, double dp, bool& brackt,
@@ -353,11 +320,15 @@ void LBFGS::mcstep(double& stx, double& fx, double& dx,
     return;
 }
 
-void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, Eigen::VectorXd& s, double& stp, double ftol, double xtol, int maxfev, int& info, int& nfev, Eigen::VectorXd& wa)
-{
-    p5 = 0.5;
-    p66 = 0.66;
-    xtrapf = 4.0;
+void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, const Eigen::VectorXd& s, double& stp, double ftol, double xtol, int maxfev, int& info, int& nfev, Eigen::VectorXd& wa)
+{ 
+    double stpmin = 1e-20;
+    double stpmax = 1e20;
+    double p5 = 0.5;
+    double p66 = 0.66;
+    double xtrapf = 4.0;
+    double gtol = 0.9;
+
     if(info != -1) {
         infoc = 1;
         if (n <= 0 || stp <= 0 || ftol < 0 || gtol < 0 || xtol < 0 || stpmin < 0 || stpmax < stpmin || maxfev <= 0 )
@@ -421,8 +392,6 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, Eige
         }
         info = 0;
         nfev= nfev + 1;
-        //std::cout<<"x2:"<<x<<std::endl;
-        //return false;
         dg = g.dot(s);
         ftest1 = finit + stp * dgtest;
 
@@ -488,11 +457,6 @@ void LBFGS::lbfgs(int n, int m, Eigen::VectorXd& x, double f, Eigen::VectorXd g,
             iflag= -3;
         }
 
-        if ( gtol <= 0.0001 )
-        {
-            gtol= 0.9;
-        }
-
         nfun= 1;
         point = 0;
         finish = false;
@@ -512,8 +476,8 @@ void LBFGS::lbfgs(int n, int m, Eigen::VectorXd& x, double f, Eigen::VectorXd g,
             bound=iter-1;
             if (iter!=1) {
                 if (iter > m) bound = m;
-                ys = w.segment(iypt + npt, n).dot(w.segment(ispt + npt, n));
-                yy = w.segment(iypt + npt, n).squaredNorm();
+                double ys = w.segment(iypt + npt, n).dot(w.segment(ispt + npt, n));
+                double yy = w.segment(iypt + npt, n).squaredNorm();
                 diag.setConstant(ys / yy);
                 cp = point;
                 if (point ==0 ) cp =m;
@@ -761,11 +725,11 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
    
-    LBFGS instance = new lbfgs(state);
-    instance.lbfgs(state.num_features, state.m, instance.x, state.loglikehood, state.grad, instance.diag, eps, xtol, instance.iflag)
-    instance.save_state(state); 
+    LBFGS instance = new LBFGS(state);
+    //instance.lbfgs(state.num_features, state.m, instance.x, state.loglikelihood, state.grad, instance.diag, eps, xtol, instance.iflag);
+    //instance.save_state(state); 
 
-    if(state.iflag < 0)  throw std::logic_error("lbfgs failed");
+    //if(instance.iflag < 0)  throw std::logic_error("lbfgs failed");
 
     if(!state.coef.is_finite())
       throw NoSolutionFoundException("Over- or underflow in "
