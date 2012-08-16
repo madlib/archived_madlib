@@ -66,12 +66,40 @@ L = \sum_{i = 1}^n
 \f]
 
 Using this score function and Hessian matrix, the partial likelihood can be 
-maximized using the <b> Newton-Raphson algorithm </b>. The inverse of the Hessian matrix, 
-evaluated at the estimate of \f$ \boldsymbol \beta \f$, can be used as an 
-<b>approximate variance-covariance matrix </b> for the estimate, and used to produce
-approximate <b>standard errors</b> for the regression coefficients.
+maximized using the <b> Newton-Raphson algorithm </b>.<b> Breslow's method </b> 
+is used to resolved tied times of deaths.
 
-<b> Breslow's method </b> is used to resolved tied times of deaths.
+The inverse of the Hessian matrix, evaluated at the estimate of 
+\f$ \boldsymbol \beta \f$, can be used as an <b>approximate variance-covariance 
+matrix </b> for the estimate, and used to produce approximate 
+<b>standard errors</b> for the regression coefficients.
+
+\f[
+    \mathit{se}(c_i) = \left( (H)^{-1} \right)_{ii}
+    \,.
+\f]
+The Wald z-statistic is
+\f[
+    z_i = \frac{c_i}{\mathit{se}(c_i)}
+    \,.
+\f]
+
+The Wald \f$ p \f$-value for coefficient \f$ i \f$ gives the probability (under
+the assumptions inherent in the Wald test) of seeing a value at least as extreme
+as the one observed, provided that the null hypothesis (\f$ c_i = 0 \f$) is
+true. Letting \f$ F \f$ denote the cumulative density function of a standard
+normal distribution, the Wald \f$ p \f$-value for coefficient \f$ i \f$ is
+therefore
+\f[
+    p_i = \Pr(|Z| \geq |z_i|) = 2 \cdot (1 - F( |z_i| ))
+\f]
+where \f$ Z \f$ is a standard normally distributed random variable.
+
+
+The condition number is computed as \f$ \kappa(H) \f$ during the iteration
+immediately <em>preceding</em> convergence (i.e., \f$ A \f$ is computed using
+the coefficients of the previous iteration). A large condition number (say, more
+than 1000) indicates the presence of significant multicollinearity.
 
 
 @input
@@ -95,7 +123,8 @@ pre-sort the data. Additionally, all the data is assumed
     [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
 );</pre>
   Output:
-  <pre>coef | log_likelihood | num_iterations
+  Output:
+  <pre>coef | log_likelihood | std_err | z_stats | p_values  | condition_no | num_iterations
                                                ...
 </pre>
 - Get vector of coefficients \f$ \boldsymbol \beta \f$:\n
@@ -125,6 +154,10 @@ sql> SELECT * FROM cox_prop_hazards('data', 'val', 'time', 100, 'newto', 0.001);
 ---------------|--------------------------------------------------------------
 coef           | {0.881089349817059,-0.0756817768938055}
 log_likelihood | -4.46535157957394
+std_err        | {1.16954914708414,0.338426252282655}
+z_stats        | {0.753356711368689,-0.223628410729811}
+p_values       | {0.451235588326831,0.823046454908087}
+condition_no   | 12.1135391339082
 num_iterations | 4
 
 @endverbatim
@@ -178,6 +211,10 @@ DROP TYPE IF EXISTS MADLIB_SCHEMA.cox_prop_hazards_result;
 CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
     coef DOUBLE PRECISION[],
     logLikelihood DOUBLE PRECISION,
+    std_err DOUBLE PRECISION[],
+    z_stats DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[],
+    condition_no DOUBLE PRECISION,
     num_iterations INTEGER
 );
 
@@ -189,6 +226,18 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_final(
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_transition(
+    /*+  state */ DOUBLE PRECISION[],
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,		
+    /*+  exp_coef_x */ DOUBLE PRECISION,
+    /*+  xexp_coef_x */ DOUBLE PRECISION[],
+    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+  previous_state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS 
+'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
 
 
 /**
@@ -211,18 +260,6 @@ AGGREGATE MADLIB_SCHEMA.cox_prop_hazards_step(
     INITCOND='{0,0,0,0,0,0,0}'
 );
 
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_transition(
-    /*+  state */ DOUBLE PRECISION[],
-    /*+  x */ DOUBLE PRECISION[],
-    /*+  y */ DOUBLE PRECISION,		
-    /*+  exp_coef_x */ DOUBLE PRECISION,
-    /*+  xexp_coef_x */ DOUBLE PRECISION[],
-    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
-    /*+  previous_state */ DOUBLE PRECISION[])
-RETURNS DOUBLE PRECISION[] AS 
-'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE;
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_cox_prop_hazards_step_distance(
@@ -272,6 +309,14 @@ LANGUAGE plpythonu VOLATILE;
  * @return A composite value:
  *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol \beta \f$
  *  - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$l(\boldsymbol \beta)\f$
+ *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *  - <tt>condition_no FLOAT8</tt> - The condition number of matrix
+ *    \f$ H \f$ during the iteration immediately <em>preceding</em>
+ *    convergence (i.e., \f$ H \f$ is computed using the coefficients of the
+ *    previous iteration)
  *  - <tt>num_iterations INTEGER</tt> - The number of iterations before the
  *    algorithm terminated
  *

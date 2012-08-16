@@ -26,9 +26,11 @@ using dbal::NoSolutionFoundException;
 namespace stats {
 
 // Internal functions
-AnyType stateToResult(
-	const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
-	double logLikelihood);
+AnyType stateToResult(const Allocator &inAllocator,
+    const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
+    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+    double logLikelihood,
+    double conditionNo);
 
 // Internal functions
 AnyType intermediate_stateToResult(
@@ -351,7 +353,14 @@ AnyType internal_cox_prop_hazards_step_distance::run(AnyType &args) {
 AnyType internal_cox_prop_hazards_result::run(AnyType &args) {
 
     CoxPropHazardsTransitionState<ArrayHandle<double> > state = args[0];
-    return stateToResult(state.coef, state.logLikelihood);
+
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        state.hessian, EigenvaluesOnly, ComputePseudoInverse);
+
+    return stateToResult(*this, state.coef,
+					 decomposition.pseudoInverse().diagonal(),
+					 state.logLikelihood,
+					 decomposition.conditionNo());
 }
 
 /**
@@ -359,12 +368,30 @@ AnyType internal_cox_prop_hazards_result::run(AnyType &args) {
  *
  */
 AnyType stateToResult(
+		const Allocator &inAllocator,
 		const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
-		double logLikelihood) {
+		const ColumnVector &diagonal_of_inverse_of_hessian,
+    double logLikelihood,
+    double conditionNo) {
 
+    MutableMappedColumnVector std_err(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableMappedColumnVector waldZStats(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableMappedColumnVector waldPValues(
+        inAllocator.allocateArray<double>(inCoef.size()));
+
+    for (Index i = 0; i < inCoef.size(); ++i) {
+        std_err(i) = std::sqrt(diagonal_of_inverse_of_hessian(i));
+        waldZStats(i) = inCoef(i) / std_err(i);
+        waldPValues(i) = 2. * prob::cdf( prob::normal(),
+            -std::abs(waldZStats(i)));				
+		}
+		
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-		tuple << inCoef << logLikelihood;
+    tuple << inCoef << logLikelihood << std_err << waldZStats << waldPValues
+        << conditionNo;
 		
     return tuple;
 }
