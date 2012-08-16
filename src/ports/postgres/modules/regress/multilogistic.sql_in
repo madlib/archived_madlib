@@ -111,7 +111,7 @@ The training data is expected to be of the following form:\n
 - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
   statistics:\n
   <pre>SELECT * FROM \ref mlogregr(
-    '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>dependentVariable</em>' , '<em>independentVariables</em>'
+    '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>' , '<em>independentVariables</em>'
     [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
 );</pre>
   Output:
@@ -127,7 +127,7 @@ The training data is expected to be of the following form:\n
   <pre>SELECT coef, log_likelihood, p_values
 FROM \ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>',  '<em>independentVariables</em>');</pre>
 
-Note that the categories are encoded as integer with values from {0,1,2,numCategories}
+Note that the categories are encoded as integers with values from {0, 1, 2,...numCategories}
 @examp
 
 -# Create the sample data set:
@@ -147,7 +147,7 @@ sql> SELECT * FROM data;
 @verbatim
 sql> \x on
 Expanded display is off.
-sql> SELECT * FROM mlogregr('data', 'val', 'r1', 100, 'irls', 0.001);
+sql> SELECT * FROM mlogregr('data', 'val', '2', 'r1', 100, 'irls', 0.001);
 -[ RECORD 1 ]--+--------------------------------------------------------------
 coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
 log_likelihood | -467.214718489873
@@ -165,13 +165,15 @@ num_iterations | 9
 A collection of nice write-ups, with valuable pointers into
 further literature:
 
-[1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
+[1] Annette J . Dobson: An Introduction to Generalized Linear Models, Second Edition.  Nov 2001 
+
+[2] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
 
-[2] Srikrishna Sridhar, Mark Wellons, Caleb Welton: Multilogistic Regression: 
+[3] Srikrishna Sridhar, Mark Wellons, Caleb Welton: Multilogistic Regression: 
 		Notes and References, Jul 12 2012, http://www.cs.wisc.edu/~srikris/mlogit.pdf
 
-[3] Scott A. Czepiel: Maximum Likelihood Estimation 
+[4] Scott A. Czepiel: Maximum Likelihood Estimation 
 		of Logistic Regression Models: Theory and Implementation, 
 		Retrieved Jul 12 2012, http://czep.net/stat/mlelr.pdf
 		
@@ -407,36 +409,3 @@ RETURNS MADLIB_SCHEMA.mlogregr_result AS
 $$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, $6, 0.0001);$$
 LANGUAGE sql VOLATILE;
 
-
-
-/**
- * @brief Evaluate the usual logistic function in an under-/overflow-safe way
- *
- * @param x
- * @returns \f$ \frac{1}{1 + \exp(-x)} \f$
- *
- * Evaluating this expression directly can lead to under- or overflows.
- * This function performs the evaluation in a safe manner, making use of the
- * following observations:
- * 
- * In order for the outcome of \f$ \exp(x) \f$ to be within the range of the
- * minimum positive double-precision number (i.e., \f$ 2^{-1074} \f$) and the
- * maximum positive double-precision number (i.e.,
- * \f$ (1 + (1 - 2^{52})) * 2^{1023}) \f$, \f$ x \f$ has to be within the
- * natural logarithm of these numbers, so roughly in between -744 and 709.
- * However, \f$ 1 + \exp(x) \f$ will just evaluate to 1 if \f$ \exp(x) \f$ is
- * less than the machine epsilon (i.e., \f$ 2^{-52} \f$) or, equivalently, if
- * \f$ x \f$ is less than the natural logarithm of that; i.e., in any case if
- * \f$ x \f$ is less than -37.
- * Note that taking the reciprocal of the largest double-precision number will
- * not cause an underflow. Hence, no further checks are necessary.
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logistic(x DOUBLE PRECISION)
-RETURNS DOUBLE PRECISION
-LANGUAGE sql
-AS $$
-   SELECT CASE WHEN -$1 < -37 THEN 1
-               WHEN -$1 > 709 THEN 0
-               ELSE 1 / (1 + exp(-$1))
-          END;
-$$;
