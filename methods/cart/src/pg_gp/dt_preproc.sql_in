@@ -255,23 +255,6 @@ CREATE TYPE MADLIB_SCHEMA.__enc_tbl_result AS
     post_proc_time           INTERVAL
 );
 
-/*
- * @brief Test if the input value is a missing value or not.
- *
- * @param val   The value to be tested.
- *
- * @note The supported missing values are: '', '?', and NULL.
- *       The input value will be trimed.
- *
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__is_miss_value
-    (
-    val TEXT 
-    ) 
-RETURNS BOOL
-AS 'MODULE_PATHNAME', 'dt_is_miss_value'
-LANGUAGE C IMMUTABLE;
-
 
 /*
  * @brief Check if the input table has unsupported data type or not.
@@ -1087,20 +1070,16 @@ m4_changequote(>>>`<<<, >>>'<<<)
 
     EXECUTE curstmt;
 
-    IF (h2hmv_routine_id = 1) THEN
-        where_txt = ' WHERE NOT MADLIB_SCHEMA.__is_miss_value(fval)';
-    ELSE
-        fval_txt  = 'CASE WHEN (MADLIB_SCHEMA.__is_miss_value(fval)) THEN
-                        NULL::TEXT
-                     ELSE 
-                        fval
-                     END ';    
-    END IF;
-    
     -- the supported missing value representation (' ', '?' and NULL) will
     -- be replace with NULL for easy processing later.
     -- the function __to_char is needed because on some databases an explicit
     -- cast to text is unavailable.
+    IF (h2hmv_routine_id = 1) THEN
+        where_txt = ' WHERE NULLIF(NULLIF(btrim(fval, '' ''), ''?''), '''') IS NOT NULL';
+    ELSE
+        fval_txt  = ' NULLIF(NULLIF(btrim(fval, '' ''), ''?''), '''')';
+    END IF;
+    
     IF (cls_col_name IS NULL) THEN
         -- if the kv_cls_name is null, then the class column will be null        
         curstmt = MADLIB_SCHEMA.__format
