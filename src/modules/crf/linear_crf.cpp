@@ -137,15 +137,15 @@ public:
     void save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > &state);
     void mcstep (double&, double& , double&, double&, double& , double&, double&, double, double, bool&, double, double, int&);
     void mcsrch (int, Eigen::VectorXd&, double, Eigen::VectorXd&, const Eigen::VectorXd&, double&, double, double, int, int&, int&, Eigen::VectorXd&);
-    void lbfgs(int, int, double, Eigen::VectorXd, double, double); 
+    void lbfgs(int, int, double, Eigen::VectorXd, double, double);
 };
 
-LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state){
+LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state) {
     w = state.ws;
     diag = state.diag;
     x = state.coef;
 
-    stp1=state.lbfgs_state(0); 
+    stp1=state.lbfgs_state(0);
     ftol=state.lbfgs_state(1);
     stp=state.lbfgs_state(2);
     sq=state.lbfgs_state(3);
@@ -193,58 +193,58 @@ LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state){
     stage1=(state.mcsrch_state(23) == 1.0 ? true: false);
     finish=(state.mcsrch_state(24) == 1.0 ? true: false);
 }
-void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > &state){
-	state.ws =  w ;
-	state.diag =     diag ;
-	state.coef =     x ;
+void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > &state) {
+    state.ws =  w ;
+    state.diag =     diag ;
+    state.coef =     x ;
 
-	state.lbfgs_state(0) = stp1; 
-	state.lbfgs_state(1) = ftol;
-	state.lbfgs_state(2) = stp;
-	state.lbfgs_state(3) = sq;
-	state.lbfgs_state(4) = yr;
-	state.lbfgs_state(5) = beta;
-	state.lbfgs_state(6) = iflag;
-	state.lbfgs_state(7) = iter;
-	state.lbfgs_state(8) = nfun;
-	state.lbfgs_state(9) = point;
-	state.lbfgs_state(10) = ispt;
-	state.lbfgs_state(11) = iypt;
-	state.lbfgs_state(12) = maxfev;
-	state.lbfgs_state(13) = info;
-	state.lbfgs_state(14) = bound;
-	state.lbfgs_state(15) = npt;
-	state.lbfgs_state(16) = cp;
-	state.lbfgs_state(17) = nfev;
-	state.lbfgs_state(18) = inmc;
-	state.lbfgs_state(19) = iycn;
-	state.lbfgs_state(20) = iscn;
+    state.lbfgs_state(0) = stp1;
+    state.lbfgs_state(1) = ftol;
+    state.lbfgs_state(2) = stp;
+    state.lbfgs_state(3) = sq;
+    state.lbfgs_state(4) = yr;
+    state.lbfgs_state(5) = beta;
+    state.lbfgs_state(6) = iflag;
+    state.lbfgs_state(7) = iter;
+    state.lbfgs_state(8) = nfun;
+    state.lbfgs_state(9) = point;
+    state.lbfgs_state(10) = ispt;
+    state.lbfgs_state(11) = iypt;
+    state.lbfgs_state(12) = maxfev;
+    state.lbfgs_state(13) = info;
+    state.lbfgs_state(14) = bound;
+    state.lbfgs_state(15) = npt;
+    state.lbfgs_state(16) = cp;
+    state.lbfgs_state(17) = nfev;
+    state.lbfgs_state(18) = inmc;
+    state.lbfgs_state(19) = iycn;
+    state.lbfgs_state(20) = iscn;
 
-	state.mcsrch_state(0) = infoc;
-	state.mcsrch_state(1) =  dg;
-	state.mcsrch_state(2) = dgm;
-	state.mcsrch_state(3) = dginit;
-	state.mcsrch_state(4) = dgtest;
-	state.mcsrch_state(5) = dgx;
-	state.mcsrch_state(6) = dgxm;
-	state.mcsrch_state(7) = dgy;
-	state.mcsrch_state(8) = dgym;
-	state.mcsrch_state(9) = finit;
-	state.mcsrch_state(10) = ftest1;
-	state.mcsrch_state(11) = fm;
-	state.mcsrch_state(12) = fx;
-	state.mcsrch_state(13) = fxm;
-	state.mcsrch_state(14) = fy;
-	state.mcsrch_state(15) = fym;
-	state.mcsrch_state(16) = stx;
-	state.mcsrch_state(17) = sty;
-	state.mcsrch_state(18) = stmin;
-	state.mcsrch_state(19) = stmax;
-	state.mcsrch_state(20) = width;
-	state.mcsrch_state(21) = width1;
-	state.mcsrch_state(22) = (brackt == true ? 1.0 : 0.0);
-	state.mcsrch_state(23) = (stage1 == true ? 1.0 : 0.0);
-	state.mcsrch_state(24) = (finish == true ? 1.0 : 0.0);
+    state.mcsrch_state(0) = infoc;
+    state.mcsrch_state(1) =  dg;
+    state.mcsrch_state(2) = dgm;
+    state.mcsrch_state(3) = dginit;
+    state.mcsrch_state(4) = dgtest;
+    state.mcsrch_state(5) = dgx;
+    state.mcsrch_state(6) = dgxm;
+    state.mcsrch_state(7) = dgy;
+    state.mcsrch_state(8) = dgym;
+    state.mcsrch_state(9) = finit;
+    state.mcsrch_state(10) = ftest1;
+    state.mcsrch_state(11) = fm;
+    state.mcsrch_state(12) = fx;
+    state.mcsrch_state(13) = fxm;
+    state.mcsrch_state(14) = fy;
+    state.mcsrch_state(15) = fym;
+    state.mcsrch_state(16) = stx;
+    state.mcsrch_state(17) = sty;
+    state.mcsrch_state(18) = stmin;
+    state.mcsrch_state(19) = stmax;
+    state.mcsrch_state(20) = width;
+    state.mcsrch_state(21) = width1;
+    state.mcsrch_state(22) = (brackt == true ? 1.0 : 0.0);
+    state.mcsrch_state(23) = (stage1 == true ? 1.0 : 0.0);
+    state.mcsrch_state(24) = (finish == true ? 1.0 : 0.0);
 }
 void LBFGS::mcstep(double& stx, double& fx, double& dx,
                    double& sty, double& fy, double& dy,
@@ -373,7 +373,7 @@ void LBFGS::mcstep(double& stx, double& fx, double& dx,
 }
 
 void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, const Eigen::VectorXd& s, double& stp, double ftol, double xtol, int maxfev, int& info, int& nfev, Eigen::VectorXd& wa)
-{ 
+{
     double stpmin = 1e-20;
     double stpmax = 1e20;
     double p5 = 0.5;
@@ -776,19 +776,19 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     double xtol = 1.0e-16;
 
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
-   
+
     LBFGS instance(state);
     instance.lbfgs(state.num_features, state.m, state.loglikelihood, state.grad, eps, xtol);
-    instance.save_state(state); 
+    instance.save_state(state);
 
     if(instance.iflag < 0)  throw std::logic_error("lbfgs failed");
 
     if(!state.coef.is_finite())
-      throw NoSolutionFoundException("Over- or underflow in "
-         "L-BFGS step, while updating coefficients. Input data "
-         "is likely of poor numerical condition.");
+        throw NoSolutionFoundException("Over- or underflow in "
+                                       "L-BFGS step, while updating coefficients. Input data "
+                                       "is likely of poor numerical condition.");
 
-      state.iteration++;
+    state.iteration++;
     return state;
 }
 
