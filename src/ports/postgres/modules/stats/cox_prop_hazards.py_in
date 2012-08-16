@@ -13,8 +13,9 @@ Cox prop Hazards: Driver functions
 
 import plpy
 
-def __runIterativeAlg(stateType, initialState, source, updateExpr,
-    terminateExpr, maxNumIterations, cyclesPerIteration = 1):
+def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
+				depColumn, updateExpr, intermediateExpr, terminateExpr, resultExpr,
+				maxNumIterations, cyclesPerIteration = 1):
     """
     Driver for an iterative algorithm
     
@@ -40,18 +41,37 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
     @param cyclesPerIteration Number of aggregate function calls per iteration.
     """
-    
     updateSQL = """
-        INSERT INTO _madlib_iterative_alg
+				INSERT INTO _cox_intermediate_state (_cox_dependant_variable,_cox_iState)
+				SELECT 
+					({depColumn})::FLOAT8,
+					{intermediateExpr}
+				FROM
+					(
+						SELECT
+							{resultExpr} as result
+						FROM
+							_madlib_iterative_alg as st
+						WHERE 
+							_madlib_iteration = {{iteration}} - 1
+					) as result,
+					{{source}} as src;
+
+				INSERT INTO _madlib_iterative_alg
         SELECT
             {{iteration}},
             {updateExpr}
         FROM
             _madlib_iterative_alg AS st,
-            {{source}} AS src
+            _cox_intermediate_state AS src
         WHERE
-            st._madlib_iteration = {{iteration}} - 1
-        """.format(updateExpr = updateExpr)
+            st._madlib_iteration = {{iteration}}-1
+				;
+				DELETE FROM _cox_intermediate_state;
+        """.format(updateExpr = updateExpr,
+                intermediateExpr = intermediateExpr,
+                resultExpr = resultExpr,
+								depColumn=depColumn)
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
@@ -82,8 +102,15 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             _madlib_iteration INTEGER PRIMARY KEY,
             _madlib_state {stateType}
         );
+				DROP TABLE IF EXISTS _cox_intermediate_state;
+				CREATE TEMPORARY TABLE _cox_intermediate_state (
+			    _cox_dependant_variable FLOAT8,
+			    _cox_iState {intermediateStateType}
+				) DISTRIBUTED BY (_cox_dependant_variable);
         SET client_min_messages = {oldMsgLevel};
-        """.format(stateType = stateType, oldMsgLevel = oldMsgLevel))
+        """.format(stateType = stateType,
+				       intermediateStateType = intermediateStateType,
+				       oldMsgLevel = oldMsgLevel))
     
     iteration = 0
     plpy.execute("""
@@ -93,7 +120,11 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         iteration = iteration + 1
         plpy.execute(updateSQL.format(
             source = source,
+						depColumn = depColumn,
             state = "(st._madlib_state)",
+            intermediateState = "(_cox_iState)",
+						intermediateStateDepColumn = "_cox_dependant_variable",
+						oldCoef = "(result).coef",
             iteration = iteration,
             sourceAlias = "src"))
         if plpy.execute(checkForNullStateSQL.format(
@@ -144,21 +175,35 @@ def compute_cox_prop_hazards(MADlibSchema, source, indepColumn,
     
     if optimizer not in ['newton']:
         plpy.error("Unknown optimizer requested. Must be 'newton'")
-
+						
     return __runIterativeAlg(
         stateType = "FLOAT8[]",
-        initialState = "NULL",
+        intermediateStateType = "{MADlibSchema}.intermediate_cox_prop_hazards_result".format(MADlibSchema = MADlibSchema),
+        initialState = "NULL" ,
         source = source,
+        depColumn = depColumn,
         updateExpr = """
             {MADlibSchema}.cox_prop_hazards_step(
-                ({indepColumn})::FLOAT8[],
+                ({{intermediateState}}).x,
+								{{intermediateStateDepColumn}},
+                ({{intermediateState}}).exp_coef_x,
+                ({{intermediateState}}).x_exp_coef_x,
+                ({{intermediateState}}).x_xTrans_exp_coef_x,
                 {{state}}
-								ORDER BY {depColumn} DESC
+								ORDER BY {{intermediateStateDepColumn}} DESC
             )
             """.format(
                 MADlibSchema = MADlibSchema,
-                indepColumn = indepColumn,
                 depColumn = depColumn),
+        intermediateExpr = """
+            {MADlibSchema}.intermediate_cox_prop_hazards(
+                ({indepColumn})::FLOAT8[],
+                {{oldCoef}}::FLOAT8[]
+            )
+            """.format(
+                MADlibSchema = MADlibSchema,
+                indepColumn = indepColumn),
+
         terminateExpr = """
             {MADlibSchema}.internal_cox_prop_hazards_step_distance(
                 {{newState}}, {{oldState}}
@@ -166,5 +211,8 @@ def compute_cox_prop_hazards(MADlibSchema, source, indepColumn,
             """.format(
                 MADlibSchema = MADlibSchema,
                 precision = precision),
+				resultExpr = """
+						{MADlibSchema}.internal_cox_prop_hazards_result({{state}})
+						""".format(MADlibSchema = MADlibSchema),
         maxNumIterations = maxNumIterations)
 

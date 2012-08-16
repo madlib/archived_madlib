@@ -32,12 +32,16 @@ AnyType stateToResult(
 
 // Internal functions
 AnyType intermediate_stateToResult(
-		const HandleMap<const ColumnVector, TransparentHandle<double> >& x,
+		const HandleMap<const ColumnVector, TransparentHandle<double> >
+												& x,
 		const double inTimeDeath,
-		const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
 		const double inExp_coef_x,
-		const HandleMap<const ColumnVector, TransparentHandle<double> >& inX_exp_coef_x,
-		const HandleMap<const Matrix, TransparentHandle<double> >& inX_xTrans_exp_coef_x
+		const HandleMap<const ColumnVector, TransparentHandle<double> >
+												& inCoef,
+		const HandleMap<const ColumnVector, TransparentHandle<double> >
+												& inX_exp_coef_x,
+		const HandleMap<const Matrix, TransparentHandle<double> >
+												& inX_xTrans_exp_coef_x
 		);
 
 
@@ -134,10 +138,11 @@ public:
      */
     inline void reset() {
         numRows = 0;
-				coef.fill(0);
 				S = 0;
+				y_previous = 0;
+				multiplier = 0;
         H.fill(0);
-        V.fill(0);				
+        V.fill(0);
         grad.fill(0);
         hessian.fill(0);
         logLikelihood = 0;
@@ -147,7 +152,7 @@ public:
 
 private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
-        return 4 + 3*inWidthOfX + 2*inWidthOfX*inWidthOfX;
+        return 6 + 3*inWidthOfX + 2*inWidthOfX*inWidthOfX;
     }
 
     /**
@@ -171,17 +176,22 @@ private:
      *
      */
     void rebind(uint16_t inWidthOfX) {
+		
+				// Inter iteration components
         numRows.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
-        coef.rebind(&mStorage[2], inWidthOfX);
-		
-        S.rebind(&mStorage[2+inWidthOfX]);
-        H.rebind(&mStorage[3+inWidthOfX], inWidthOfX);
-        grad.rebind(&mStorage[3+2*inWidthOfX],inWidthOfX);
-				logLikelihood.rebind(&mStorage[3+3*inWidthOfX]);
-				V.rebind(&mStorage[4+3*inWidthOfX],
+        multiplier.rebind(&mStorage[2]);
+        y_previous.rebind(&mStorage[3]);
+        coef.rebind(&mStorage[4], inWidthOfX);
+
+				// Intra iteration components
+        S.rebind(&mStorage[4+inWidthOfX]);
+        H.rebind(&mStorage[5+inWidthOfX], inWidthOfX);
+        grad.rebind(&mStorage[5+2*inWidthOfX],inWidthOfX);
+				logLikelihood.rebind(&mStorage[5+3*inWidthOfX]);
+				V.rebind(&mStorage[6+3*inWidthOfX],
 					inWidthOfX, inWidthOfX);
-				hessian.rebind(&mStorage[4+3*inWidthOfX+inWidthOfX*inWidthOfX],
+				hessian.rebind(&mStorage[6+3*inWidthOfX+inWidthOfX*inWidthOfX],
 					inWidthOfX, inWidthOfX);
 				
 
@@ -192,12 +202,14 @@ private:
 public:
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToDouble multiplier;
+    typename HandleTraits<Handle>::ReferenceToDouble y_previous;
 		typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
 		
     typename HandleTraits<Handle>::ReferenceToDouble S;
-    typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap H;
-		typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;
+		typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;		
+    typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap V;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap hessian;
 
@@ -220,31 +232,68 @@ public:
 
 AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 
+		// Current state, independant variables & dependant variables
 		CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    double exp_coef_x = args[2].getAs<double>();
-    MappedColumnVector x_exp_coef_x = args[3].getAs<MappedColumnVector>();
-    MappedMatrix x_xTrans_exp_coef_x = args[4].getAs<MappedMatrix>();
+    double y = args[2].getAs<double>();
 		
-
-		state.initialize(*this, static_cast<uint16_t>(x.size()));
-		if (!args[5].isNull()) {
-				CoxPropHazardsTransitionState<ArrayHandle<double> > previousState = args[5];
-				state = previousState;
-				state.reset();
+		/** Note: These precomputations come from "intermediate_cox_prop_hazards".
+			They are precomputed and stored in a temporary table.
+		*/
+    double exp_coef_x = args[3].getAs<double>();
+    MappedColumnVector x_exp_coef_x = args[4].getAs<MappedColumnVector>();
+    MappedMatrix x_xTrans_exp_coef_x = args[5].getAs<MappedMatrix>();
+		
+    if (state.numRows == 0) {
+			state.initialize(*this, static_cast<uint16_t>(x.size()));
+			
+			if (!args[6].isNull()) {
+					CoxPropHazardsTransitionState<ArrayHandle<double> > previousState
+																																		= args[6];
+					state = previousState;
+					state.reset();
+					
+			}
+						
 		}
 
     state.numRows++;
+		
+		/** In case of a tied time of death or in the first iteration:
+				We must only perform the "pre compuations". When the tie is resolved
+				we add up all the precomputations once in for all. This is 
+				an implementation of Breslow's method.
+		*/
+		
+		if (y == state.y_previous || state.numRows == 1) {
+			state.multiplier++;
+		}
+		else {
+		
+		/** Resolve the ties by adding all the precomputations once in for all
+				Note: The hessian is the negative of the design document because we 
+				want it to stay PSD (makes it easier for inverse compuations)
+		*/
+			state.grad -= state.multiplier*state.H/state.S;
+			triangularView<Lower>(state.hessian) -=
+								((state.H*trans(state.H))/(state.S*state.S)
+												- state.V/state.S)*state.multiplier;
+			state.logLikelihood -=  state.multiplier*std::log(state.S);
+			state.multiplier = 1;
 				
+		}
+
+		/** These computations must always be performed irrespective of whether
+				there are ties or not.
+				Note: See design documentation for details on the implementation.
+		*/
 		state.S += exp_coef_x;
 		state.H += x_exp_coef_x;
 		state.V += x_xTrans_exp_coef_x;
-
-		state.grad += x - state.H/state.S;
-		state.hessian += (state.H * trans(state.H))/(state.S*state.S) - state.V/state.S;
-		state.logLikelihood += std::log(exp_coef_x) - std::log(state.S);
-		
-		
+		state.grad += x;
+		state.logLikelihood += std::log(exp_coef_x);
+		state.y_previous = y;
+				
     return state;
 }
 
@@ -261,17 +310,26 @@ AnyType cox_prop_hazards_step_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
-
     if (!state.hessian.is_finite() || !state.grad.is_finite())
         throw NoSolutionFoundException("Over- or underflow in intermediate "
             "calulation. Input data is likely of poor numerical condition.");
 
+		// First merge all tied times of death for the last column
+		state.grad -= state.multiplier*state.H/state.S;
+		triangularView<Lower>(state.hessian) -=
+						((state.H*trans(state.H))/(state.S*state.S)
+											- state.V/state.S)*state.multiplier;
+		state.logLikelihood -=  state.multiplier*std::log(state.S);
+
+
+		// Computing pseudo inverse of a PSD matrix
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.hessian, EigenvaluesOnly, ComputePseudoInverse);
-		Matrix inverse_of_hessian = decomposition.pseudoInverse();
+    Matrix inverse_of_hessian = decomposition.pseudoInverse();
 
-		// Fixed Step size of 1		
-		state.coef = state.coef - state.hessian.inverse()*state.grad;
+		// Newton step 
+		state.coef += state.hessian.inverse()*state.grad;
+		
     // Return all coefficients etc. in a tuple
     return state;
 }
@@ -337,13 +395,20 @@ AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
 				throw std::domain_error("Number of independent variables cannot be "
 						"larger than 65535.");
 
+		if (args[1].isNull()) {
+			for (int i=0; i<x.size() ; i++)
+				coef(i) = 0;
+		}
+		else {
+			coef = args[1].getAs<MappedColumnVector>();
+		}
+		
 		double exp_coef_x;
 		MutableMappedColumnVector
 			x_exp_coef_x(allocateArray<double>(x.size()));
 		MutableMappedMatrix
-			x_xTrans_exp_coef_x(allocateArray<double>(x.size(), x.size()));
-							
-		coef = args[1].getAs<MappedColumnVector>();
+			x_xTrans_exp_coef_x(allocateArray<double>(x.size(), x.size()));							
+
 		exp_coef_x = std::exp(trans(coef)*x);
 		x_exp_coef_x = exp_coef_x*x;
 		x_xTrans_exp_coef_x = x * trans(x) * exp_coef_x;
