@@ -265,9 +265,11 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 				We must only perform the "pre compuations". When the tie is resolved
 				we add up all the precomputations once in for all. This is 
 				an implementation of Breslow's method.
+				The time of death for two records are considered "equal" if they 
+				differ by less than 1.0e-6
 		*/
 		
-		if (y == state.y_previous || state.numRows == 1) {
+		if (std::abs(y-state.y_previous) < 1.0e-6 || state.numRows == 1) {
 			state.multiplier++;
 		}
 		else {
