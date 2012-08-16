@@ -135,15 +135,15 @@ public:
     Eigen::VectorXd x;
     Eigen::VectorXd diag;
 
-    LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double>& >);
+    LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >&);
+    //LBFGS(LinCrfLBFGSTransitionState & state);
     void save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > &state);
     void mcstep (double&, double& , double&, double&, double& , double&, double&, double, double, bool&, double, double, int&);
     void mcsrch (int, Eigen::VectorXd&, double, Eigen::VectorXd&, const Eigen::VectorXd&, double&, double, double, int, int&, int&, Eigen::VectorXd&);
     void lbfgs(int, int, Eigen::VectorXd&, double, Eigen::VectorXd, Eigen::VectorXd&, double, double, int&);
 };
 
-//LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state){
-LBFGS::LBFGS(LinCrfLBFGSTransitionState & state){
+LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state){
     stp1=state.lbfgs_state(0); 
     ftol=state.lbfgs_state(0);
     stp=state.lbfgs_state(0);
@@ -175,7 +175,7 @@ LBFGS::LBFGS(LinCrfLBFGSTransitionState & state){
     dgy=state.mcsrch_state(0);
     dgym=state.mcsrch_state(0);
     finit=state.mcsrch_state(0);
-    fest1=state.mcsrch_state(0);
+    ftest1=state.mcsrch_state(0);
     fm=state.mcsrch_state(0);
     fx=state.mcsrch_state(0);
     fxm=state.mcsrch_state(0);
@@ -725,9 +725,9 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
    
-    LBFGS instance = new LBFGS(state);
-    //instance.lbfgs(state.num_features, state.m, instance.x, state.loglikelihood, state.grad, instance.diag, eps, xtol, instance.iflag);
-    //instance.save_state(state); 
+    LBFGS instance(state);
+    instance.lbfgs(state.num_features, state.m, instance.x, state.loglikelihood, state.grad, instance.diag, eps, xtol, instance.iflag);
+    instance.save_state(state); 
 
     //if(instance.iflag < 0)  throw std::logic_error("lbfgs failed");
 
