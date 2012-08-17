@@ -1,14 +1,104 @@
 /* ----------------------------------------------------------------------- *//** 
  *
- * @file lmf_igd.sql_in
+ * @file lmf.sql_in
  *
  * @brief SQL functions for low-rank matrix factorization
  * @date June 2012
+ *
+ * @sa For a brief introduction to Low-rank Matrix Factorization, see the module
+ *     description \ref grp_lmf.
  *
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
 
+/**
+@addtogroup grp_lmf
+
+
+@about
+
+This module implements "factor model" for representing an incomplete matrix using a low-rank approximation [1].
+Mathematically, this model seeks to find matrices U and V (also referred as factors) that, for any given incomplete matrix A, minimizes:
+\f[ \|\boldsymbol A - \boldsymbol UV^{T} \|_2 \f]
+subject to \f$rank(\boldsymbol UV^{T}) \leq r\f$, where \f$\|\cdot\|_2\f$ denotes the Frobenius norm.
+Let \f$A\f$ be a \f$m \times n\f$ matrix, then \f$U\f$ will be \f$m \times r\f$ and \f$V\f$ will be \f$n \times r\f$, in dimension, and \f$1 \leq r \ll \min(m, n)\f$.
+This model is not intended to do the full decomposition, or to be used as part of inverse procedure.
+This model has been widely used in recommendation systems (e.g., Netflix [2]) and feature selection (e.g., image processing [3]).
+
+
+@input
+
+The <b>input matrix</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    <em>row</em> INTEGER,
+    <em>column</em> INTEGER,
+	<em>value</em> FLOAT8
+)</pre>
+
+Input is contained in a table that describes an incomplete matrix, by having available entries specified as (row, column, value).
+NULL values are not expected.
+
+
+@usage
+
+Please find descriptions of SQL functions in lmf.sql_in
+
+Output factors matrix U and V are in flatten format.
+<pre>RESULT AS (
+        flatten_matrix_u    DOUBLE PRECISION[],
+        flatten_matrix_v    DOUBLE PRECISION[],
+        rmse                DOUBLE PRECISION
+);</pre>
+
+Features correspond to row i is
+<code>flatten_matrix_u[max_rank * i + 1 : max_rank * (i+1)]</code>.
+Features correspond to column j is
+<code>flatten_matrix_v[max_rank * j + 1 : max_rank * (j+1)]</code>.
+
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE lmf_data (
+ column INT,
+ row INT,
+ value FLOAT8
+);
+\endcode
+
+-# Populate the input table with some data. e.g.:
+\code
+mydb=# INSERT INTO lmf_data VALUES (1, 1, 5.0);
+mydb=# INSERT INTO lmf_data VALUES (3, 100, 1.0);
+...
+mydb=# INSERT INTO lmf_data VALUES (10000, 10000, 2.0);
+\endcode
+
+-# Call lmf_igd_run() stored procedure, e.g.:
+\code
+mydb=# select madlib.lmf_igd_run('lmf_model', 'lmf_data', 'row', 'column', 'value', 10001, 10001, 3, 0.01, 0.1, 10, 1e-6);
+\endcode
+
+
+@literature
+
+[1] N. Srebro and T. Jaakkola. “Weighted Low-Rank Approximations.” In: ICML. Ed. by T. Fawcett and N. Mishra. AAAI Press, 2003, pp. 720–727. isbn: 1-57735-189-4.
+
+[2] Simon Funk, Netflix Update: Try This at Home, December 11 2006, http://sifter.org/~simon/journal/20061211.html
+
+[3] J. Wright, A. Ganesh, S. Rao, Y. Peng, and Y. Ma. “Robust Principal Component Analysis: Exact Recovery of Corrupted Low-Rank Matrices via Convex Optimization.” In: NIPS. Ed. by Y. Bengio, D. Schuurmans, J. D. Lafferty, C. K. I. Williams, and A. Culotta. Curran Associates, Inc., 2009, pp. 2080–2088. isbn: 9781615679119.
+
+*/
+
+/**
+ * @brief Factors matrix U and V in flatten format.
+ * Features correspond to row i is
+ * flatten_matrix_u[max_rank * i + 1 : max_rank * (i+1)].
+ * Features correspond to column j is
+ * flatten_matrix_v[max_rank * j + 1 : max_rank * (j+1)].
+ */
 CREATE TYPE MADLIB_SCHEMA.lmf_result AS (
         flatten_matrix_u    DOUBLE PRECISION[],
         flatten_matrix_v    DOUBLE PRECISION[],
@@ -102,19 +192,40 @@ RETURNS INTEGER
 AS $$PythonFunction(convex, lmf_igd, compute_lmf_igd)$$
 LANGUAGE plpythonu VOLATILE;
 
+/**
+ * @brief Low-rank matrix factorization of a incomplete matrix into two factors
+ *
+ * This function takes as input the table representation of a incomplete matrix
+ * in the sparse (i, j, value) format and decomposes it into the specified set
+ * of most significant features of matrices of U and V matrix.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_row  Name of the column containing cell row number
+ *   @param col_column  Name of the column containing cell column number
+ *   @param col_value  Name of the column containing cell value
+ *   @param row_dim  Maximum number of rows of input 
+ *   @param column_dim  Maximum number of columns of input
+ *   @param max_rank  Rank of desired approximation
+ *   @param stepsize  Hyper-parameter that decides how aggressive that the gradient steps are
+ *   @param scale_factor  Hyper-parameter that decides scale of initial factors
+ *   @param num_iterations  Maximum number if iterations to perform regardless of convergence
+ *   @param tolerance  Acceptable level of error in convergence.
+ *
+ */
 CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
     rel_output      VARCHAR,
     rel_source      REGCLASS,
     col_row         VARCHAR,
     col_column      VARCHAR,
     col_value       VARCHAR,
-    row_dim         INTEGER,            /*+ DEFAULT SELECT max(col_row) FROM rel_source */
-    column_dim      INTEGER,            /*+ DEFAULT SELECT max(col_column) FROM rel_source */
-    max_rank        INTEGER,            /*+ DEFAULT 20 */
-    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-    scale_factor    DOUBLE PRECISION,   /*+ DEFAULT 0.1 */
-    num_iterations  INTEGER,            /*+ DEFAULT 10 */
-    tolerance       DOUBLE PRECISION)   /*+ DEFAULT 0.0001 */
+    row_dim         INTEGER /*+ DEFAULT 'SELECT max(col_row) FROM rel_source' */,
+    column_dim      INTEGER /*+ DEFAULT 'SELECT max(col_col) FROM rel_source' */,
+    max_rank        INTEGER /*+ DEFAULT 20 */,
+    stepsize        DOUBLE PRECISION /*+ DEFAULT 0.01 */,
+    scale_factor    DOUBLE PRECISION /*+ DEFAULT 0.1 */,
+    num_iterations  INTEGER /*+ DEFAULT 10 */,
+    tolerance       DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
 RETURNS INTEGER AS $$
 DECLARE
     iteration_run   INTEGER;
@@ -214,11 +325,11 @@ CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
     col_row         VARCHAR,
     col_column      VARCHAR,
     col_value       VARCHAR,
-    row_dim         INTEGER,            /*+ DEFAULT SELECT max(col_row) FROM rel_source */
-    column_dim      INTEGER,            /*+ DEFAULT SELECT max(col_column) FROM rel_source */
-    max_rank        INTEGER,            /*+ DEFAULT 20 */
-    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-    scale_factor    DOUBLE PRECISION)   /*+ DEFAULT 0.1 */
+    row_dim         INTEGER,
+    column_dim      INTEGER,
+    max_rank        INTEGER,
+    stepsize        DOUBLE PRECISION,
+    scale_factor    DOUBLE PRECISION)
 RETURNS INTEGER AS $$
     SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 10, 0.0001);
 $$ LANGUAGE sql VOLATILE;
@@ -229,10 +340,10 @@ CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
     col_row         VARCHAR,
     col_column      VARCHAR,
     col_value       VARCHAR,
-    row_dim         INTEGER,            /*+ DEFAULT SELECT max(col_row) FROM rel_source */
-    column_dim      INTEGER,            /*+ DEFAULT SELECT max(col_column) FROM rel_source */
-    max_rank        INTEGER,            /*+ DEFAULT 20 */
-    stepsize        DOUBLE PRECISION)   /*+ DEFAULT 0.01 */
+    row_dim         INTEGER,
+    column_dim      INTEGER,
+    max_rank        INTEGER,
+    stepsize        DOUBLE PRECISION)
 RETURNS INTEGER AS $$
     -- set scale_factor as default 0.1
     SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, 0.1);
@@ -244,9 +355,9 @@ CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
     col_row         VARCHAR,
     col_column      VARCHAR,
     col_value       VARCHAR,
-    row_dim         INTEGER,            /*+ DEFAULT SELECT max(col_row) FROM rel_source */
-    column_dim      INTEGER,            /*+ DEFAULT SELECT max(col_column) FROM rel_source */
-    max_rank        INTEGER)            /*+ DEFAULT 20 */
+    row_dim         INTEGER,
+    column_dim      INTEGER,
+    max_rank        INTEGER)
 RETURNS INTEGER AS $$
     -- set stepsize as default 0.01
     SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, 0.01);
