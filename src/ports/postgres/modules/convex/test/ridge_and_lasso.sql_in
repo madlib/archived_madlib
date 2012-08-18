@@ -61,100 +61,112 @@ FROM houses, houses_avg, houses_stddev;
 /* ---------------------------------------------------------------------------
  * Ridge Regression
  * -------------------------------------------------------------------------*/
--- 1. same result as linear regression with lambda = 0
-DROP TABLE IF EXISTS _temp_id_1 CASCADE;
-CREATE TEMPORARY TABLE _temp_id_1 (id INTEGER);
+CREATE FUNCTION check_ridge_newton()
+RETURNS VOID AS $$
+DECLARE
+    model_id_1  INTEGER;
+    model_id_2  INTEGER;
+BEGIN
+    -- 1. same result as linear regression with lambda = 0
+    SELECT ridge_newton_run(
+        'test_ridge_model',
+        'houses_array',
+        'features',
+        'price',
+        4,
+        0
+        )
+    INTO model_id_1;
 
-INSERT INTO _temp_id_1
-SELECT ridge_newton_run(
-    'test_ridge_model',
-    'houses_array',
-    'features',
-    'price',
-    4,
-    0);
+    PERFORM assert(
+        relative_error(coefficients, ARRAY[27923.43, -35524.78, 2269.34, 130.79]) < 1e-4,
+        'Ridge with lambda = 0 (houses): Wrong results'
+    ) FROM test_ridge_model
+    WHERE test_ridge_model.id = model_id_1;
 
-SELECT assert(
-    relative_error(coefficients, ARRAY[27923.43, -35524.78, 2269.34, 130.79]) < 1e-4,
-    'Ridge with lambda = 0 (houses): Wrong results'
-) FROM test_ridge_model, _temp_id_1
-WHERE test_ridge_model.id = _temp_id_1.id;
+    -- 2. with lambda > 0, norm has decreased
+    SELECT ridge_newton_run(
+        'test_ridge_model',
+        'houses_array',
+        'features',
+        'price',
+        4,
+        0.1
+        )
+    INTO model_id_2;
 
--- 2. with lambda > 0, norm has decreased
-DROP TABLE IF EXISTS _temp_id_2 CASCADE;
-CREATE TEMPORARY TABLE _temp_id_2 (id INTEGER);
+    PERFORM assert(
+        norm1 > norm2,
+        'Ridge with lambda > 0 should have a smaller 2-norm: Wrong results'
+    ) FROM (
+        SELECT array_dot(coefficients, coefficients) as norm1
+        FROM test_ridge_model
+        WHERE test_ridge_model.id = model_id_1
+    ) AS s,
+    (
+        SELECT array_dot(coefficients, coefficients) as norm2
+        FROM test_ridge_model
+        WHERE test_ridge_model.id = model_id_2
+    ) AS t;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
-INSERT INTO _temp_id_2
-SELECT ridge_newton_run(
-    'test_ridge_model',
-    'houses_array',
-    'features',
-    'price',
-    4,
-    0.1);
-
-SELECT assert(
-    norm1 > norm2,
-    'Ridge with lambda > 0 should have a smaller 2-norm: Wrong results'
-) FROM (
-    SELECT array_dot(coefficients, coefficients) as norm1
-    FROM test_ridge_model, _temp_id_1
-    WHERE test_ridge_model.id = _temp_id_1.id
-) AS s,
-(
-    SELECT array_dot(coefficients, coefficients) as norm2
-    FROM test_ridge_model, _temp_id_2
-    WHERE test_ridge_model.id = _temp_id_2.id
-) AS t;
+SELECT check_ridge_newton();
 
 /* ---------------------------------------------------------------------------
  * LASSO
  * -------------------------------------------------------------------------*/
--- 3. same result as linear regression with lambda = 0
-DROP TABLE IF EXISTS _temp_id_3 CASCADE;
-CREATE TEMPORARY TABLE _temp_id_3 (id INTEGER);
+CREATE FUNCTION check_lasso_igd()
+RETURNS VOID AS $$
+DECLARE
+    model_id_1  INTEGER;
+    model_id_2  INTEGER;
+BEGIN
+    -- 1. same result as linear regression with lambda = 0
+    SELECT lasso_igd_run(
+        'test_lasso_model',
+        'houses_array_normalized',
+        'features',
+        'price',
+        4,
+        0.05,
+        0
+        )
+    INTO model_id_1;
 
-INSERT INTO _temp_id_3
-SELECT lasso_igd_run(
-    'test_lasso_model',
-    'houses_array_normalized',
-    'features',
-    'price',
-    4,
-    0.05,
-    0);
+    PERFORM assert(
+        loss < 3,
+        'LASSO with lambda = 0 (houses): Wrong results'
+    ) FROM test_lasso_model
+    WHERE test_lasso_model.id = model_id_1;
 
-SELECT assert(
-    loss < 3,
-    'LASSO with lambda = 0 (houses): Wrong results'
-) FROM test_lasso_model, _temp_id_3
-WHERE test_lasso_model.id = _temp_id_3.id;
+    -- 2. with lambda > 0, l1-norm has decreased
+    SELECT lasso_igd_run(
+        'test_lasso_model',
+        'houses_array_normalized',
+        'features',
+        'price',
+        4,
+        0.06,
+        1
+        )
+    INTO model_id_2;
 
--- 4. with lambda > 0, l1-norm has decreased
-DROP TABLE IF EXISTS _temp_id_4 CASCADE;
-CREATE TEMPORARY TABLE _temp_id_4 (id INTEGER);
+    PERFORM assert(
+        norm1 > norm2,
+        'LASSO with lambda > 0 should have a smaller 1-norm: Wrong results'
+    ) FROM (
+        SELECT @ coefficients[1] + @ coefficients[2] + @ coefficients[3] + @ coefficients[4] as norm1
+        FROM test_lasso_model
+        WHERE test_lasso_model.id = model_id_1
+    ) AS s,
+    (
+        SELECT @ coefficients[1] + @ coefficients[2] + @ coefficients[3] + @ coefficients[4] as norm2
+        FROM test_lasso_model
+        WHERE test_lasso_model.id = model_id_2
+    ) AS t;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
-INSERT INTO _temp_id_4
-SELECT lasso_igd_run(
-    'test_lasso_model',
-    'houses_array_normalized',
-    'features',
-    'price',
-    4,
-    0.06,
-    1);
-
-SELECT assert(
-    norm1 > norm2,
-    'LASSO with lambda > 0 should have a smaller 1-norm: Wrong results'
-) FROM (
-    SELECT @ coefficients[1] + @ coefficients[2] + @ coefficients[3] + @ coefficients[4] as norm1
-    FROM test_lasso_model, _temp_id_3
-    WHERE test_lasso_model.id = _temp_id_3.id
-) AS s,
-(
-    SELECT @ coefficients[1] + @ coefficients[2] + @ coefficients[3] + @ coefficients[4] as norm2
-    FROM test_lasso_model, _temp_id_4
-    WHERE test_lasso_model.id = _temp_id_4.id
-) AS t;
+SELECT check_lasso_igd();
 

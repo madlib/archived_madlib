@@ -7150,177 +7150,203 @@ FROM svmguide1_test,
         FROM svmguide1_test
     ) AS svmguide1_test_features_stddev;
 
+-- GPDB < 4.2.1 has issues of executing "CREATE TABLE .. AS SELECT" or 
+-- "INSERT INTO ... SELECT"
+-- To be compatiable with historical versions of GPDB, we use plpgsql 
+-- local variables instead
 /* -----------------------------------------------------------------------------
  * Linear Support Vector Machine, Conjugate Gradient
  * -------------------------------------------------------------------------- */
--- learning
-DROP TABLE IF EXISTS _temp_model_id CASCADE;
-CREATE TEMPORARY TABLE _temp_model_id (id INTEGER);
+CREATE FUNCTION check_linear_svm_cg()
+RETURNS VOID AS $$
+DECLARE
+    model_id    INTEGER;
+BEGIN
+    -- learning
+    SELECT linear_svm_cg_run(
+        'test_linear_svm_model',
+        'svmguide1_normalized',
+        'features', 
+        'class',
+        5,          -- row_dimension
+        0.0005,     -- stepsize
+        20,         -- num_iterations
+        1e-6        -- tolerance
+        )
+    INTO model_id;
 
-INSERT INTO _temp_model_id 
-SELECT linear_svm_cg_run(
-    'test_linear_svm_model',
-    'svmguide1_normalized',
-    'features', 
-    'class',
-    5,          -- row_dimension
-    0.0005,     -- stepsize
-    20,         -- num_iterations
-    1e-6        -- tolerance
-);
+    PERFORM assert(
+        loss < 800,
+        'Linear support vector machine using incremental gradient: loss is too high (> 800). Wrong result.')
+    FROM test_linear_svm_model
+    WHERE test_linear_svm_model.id = model_id;
 
-SELECT assert(
-    loss < 800,
-    'Linear support vector machine using incremental gradient: loss is too high (> 800). Wrong result.')
-FROM test_linear_svm_model, _temp_model_id
-WHERE test_linear_svm_model.id = _temp_model_id.id;
+    -- testing
+    -- checking precision > 80% on testing set
+    CREATE TABLE predict_svmguide1_test_cg AS
+    SELECT s.id, linear_svm_cg_predict(coefficients, features), class
+    FROM
+        (
+            SELECT coefficients
+            FROM test_linear_svm_model
+            WHERE test_linear_svm_model.id = model_id
+        ) AS m,
+        svmguide1_test_normalized AS s;
 
--- testing
--- checking precision > 80% on testing set
-CREATE TABLE predict_svmguide1_test_cg AS
-SELECT s.id, linear_svm_cg_predict(coefficients, features), class
-FROM
-    (
-        SELECT coefficients
-        FROM test_linear_svm_model, _temp_model_id 
-        WHERE test_linear_svm_model.id = _temp_model_id.id
-    ) AS m,
-    svmguide1_test_normalized AS s;
+    PERFORM assert(
+        count(*) < 800,
+        'Linear support vector machine using incremental gradient: test error is too high (> 800). Wrong result.')
+    FROM predict_svmguide1_test_cg
+    WHERE linear_svm_cg_predict <> class;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
-SELECT assert(
-    count(*) < 800,
-    'Linear support vector machine using incremental gradient: test error is too high (> 800). Wrong result.')
-FROM predict_svmguide1_test_cg
-WHERE linear_svm_cg_predict <> class;
-
+SELECT check_linear_svm_cg();
+  
 /* -----------------------------------------------------------------------------
  * Linear Support Vector Machine, IGD
  * -------------------------------------------------------------------------- */
--- learning
-DROP TABLE IF EXISTS _temp_model_id CASCADE;
-CREATE TEMPORARY TABLE _temp_model_id (id INTEGER);
+CREATE FUNCTION check_linear_svm_igd()
+RETURNS VOID AS $$
+DECLARE
+    model_id    INTEGER;
+BEGIN
+    -- learning
+    SELECT linear_svm_igd_run(
+        'test_linear_svm_model',
+        'svmguide1_normalized',
+        'features', 
+        'class',
+        5,          -- row_dimension
+        0.03,       -- stepsize
+        5,          -- num_iterations
+        1e-6        -- tolerance
+        )
+    INTO model_id;
 
-INSERT INTO _temp_model_id 
-SELECT linear_svm_igd_run(
-    'test_linear_svm_model',
-    'svmguide1_normalized',
-    'features', 
-    'class',
-    5,          -- row_dimension
-    0.03,       -- stepsize
-    5,          -- num_iterations
-    1e-6        -- tolerance
-);
+    PERFORM assert(
+        loss < 800,
+        'Linear support vector machine using incremental gradient: loss is too high (> 800). Wrong result.')
+    FROM test_linear_svm_model
+    WHERE test_linear_svm_model.id = model_id;
 
-SELECT assert(
-    loss < 800,
-    'Linear support vector machine using incremental gradient: loss is too high (> 800). Wrong result.')
-FROM test_linear_svm_model, _temp_model_id
-WHERE test_linear_svm_model.id = _temp_model_id.id;
+    -- testing
+    -- checking precision > 80% on testing set
+    -- > 90% can be acheived with single segment, but model averaging may not
+    CREATE TABLE predict_svmguide1_test_igd AS
+    SELECT s.id, linear_svm_igd_predict(coefficients, features), class
+    FROM
+        (
+            SELECT coefficients
+            FROM test_linear_svm_model
+            WHERE test_linear_svm_model.id = model_id
+        ) AS m,
+        svmguide1_test_normalized AS s;
 
--- testing
--- checking precision > 80% on testing set
--- > 90% can be acheived with single segment, but model averaging may not
-CREATE TABLE predict_svmguide1_test_igd AS
-SELECT s.id, linear_svm_igd_predict(coefficients, features), class
-FROM
-    (
-        SELECT coefficients
-        FROM test_linear_svm_model, _temp_model_id 
-        WHERE test_linear_svm_model.id = _temp_model_id.id
-    ) AS m,
-    svmguide1_test_normalized AS s;
+    PERFORM assert(
+        count(*) < 800,
+        'Linear support vector machine using incremental gradient: test error is too high (> 800). Wrong result.')
+    FROM predict_svmguide1_test_igd
+    WHERE linear_svm_igd_predict <> class;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
-SELECT assert(
-    count(*) < 800,
-    'Linear support vector machine using incremental gradient: test error is too high (> 800). Wrong result.')
-FROM predict_svmguide1_test_igd
-WHERE linear_svm_igd_predict <> class;
+SELECT check_linear_svm_igd();
   
 /* -----------------------------------------------------------------------------
  * Logistic Regression, Conjugate Gradient
  * -------------------------------------------------------------------------- */
+CREATE FUNCTION check_logit_cg()
+RETURNS VOID AS $$
+DECLARE
+    model_id    INTEGER;
+BEGIN
+    -- learning
+    SELECT logit_igd_run(
+        'test_logit_model',
+        'svmguide1_normalized',
+        'features', 
+        'class',
+        5,          -- row_dimension
+        0.1,       -- stepsize
+        5,          -- num_iterations
+        1e-6        -- tolerance
+        )
+    INTO model_id;
 
--- learning
-DROP TABLE IF EXISTS _temp_model_id CASCADE;
-CREATE TEMPORARY TABLE _temp_model_id (id INTEGER);
+    PERFORM assert(
+        loss < 800,
+        'Logistic regression using incremental gradient: loss is too high (> 800). Wrong result.')
+    FROM test_logit_model
+    WHERE test_logit_model.id = model_id;
 
-INSERT INTO _temp_model_id 
-SELECT logit_igd_run(
-    'test_logit_model',
-    'svmguide1_normalized',
-    'features', 
-    'class',
-    5,          -- row_dimension
-    0.1,       -- stepsize
-    5,          -- num_iterations
-    1e-6        -- tolerance
-);
+    -- testing
+    -- checking precision > 80% on testing set
+    CREATE TABLE predict_logit_test_igd AS
+    SELECT s.id, logit_igd_predict(coefficients, features), class
+    FROM
+        (
+            SELECT coefficients
+            FROM test_logit_model
+            WHERE test_logit_model.id = model_id
+        ) AS m,
+        svmguide1_test_normalized AS s;
 
-SELECT assert(
-    loss < 800,
-    'Logistic regression using incremental gradient: loss is too high (> 800). Wrong result.')
-FROM test_logit_model, _temp_model_id
-WHERE test_logit_model.id = _temp_model_id.id;
+    PERFORM assert(
+        count(*) < 800,
+        'Logistic regression using incremental gradient: test error is too high (> 800). Wrong result.')
+    FROM predict_logit_test_igd
+    WHERE logit_igd_predict <> class;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
--- testing
--- checking precision > 80% on testing set
-CREATE TABLE predict_logit_test_igd AS
-SELECT s.id, logit_igd_predict(coefficients, features), class
-FROM
-    (
-        SELECT coefficients
-        FROM test_logit_model, _temp_model_id 
-        WHERE test_logit_model.id = _temp_model_id.id
-    ) AS m,
-    svmguide1_test_normalized AS s;
-
-SELECT assert(
-    count(*) < 800,
-    'Logistic regression using incremental gradient: test error is too high (> 800). Wrong result.')
-FROM predict_logit_test_igd
-WHERE logit_igd_predict <> class;
+SELECT check_logit_cg();
 
 /* -----------------------------------------------------------------------------
  * Logistic Regression, Newton's Method
  * -------------------------------------------------------------------------- */
+CREATE FUNCTION check_logit_newton()
+RETURNS VOID AS $$
+DECLARE
+    model_id    INTEGER;
+BEGIN
+    -- learning
+    SELECT logit_newton_run(
+        'test_logit_model',
+        'svmguide1_normalized',
+        'features', 
+        'class',
+        5,          -- row_dimension
+        5,          -- num_iterations
+        1e-6        -- tolerance
+        )
+    INTO model_id;
 
--- learning
-DROP TABLE IF EXISTS _temp_model_id CASCADE;
-CREATE TEMPORARY TABLE _temp_model_id (id INTEGER);
+    PERFORM assert(
+        loss < 800,
+        'Logistic regression using incremental gradient: loss is too high (> 800). Wrong result.')
+    FROM test_logit_model
+    WHERE test_logit_model.id = model_id;
 
-INSERT INTO _temp_model_id 
-SELECT logit_newton_run(
-    'test_logit_model',
-    'svmguide1_normalized',
-    'features', 
-    'class',
-    5,          -- row_dimension
-    5,          -- num_iterations
-    1e-6        -- tolerance
-);
+    -- testing
+    -- checking precision > 80% on testing set
+    CREATE TABLE predict_logit_test_newton AS
+    SELECT s.id, logit_igd_predict(coefficients, features), class
+    FROM
+        (
+            SELECT coefficients
+            FROM test_logit_model
+            WHERE test_logit_model.id = model_id
+        ) AS m,
+        svmguide1_test_normalized AS s;
 
-SELECT assert(
-    loss < 800,
-    'Logistic regression using incremental gradient: loss is too high (> 800). Wrong result.')
-FROM test_logit_model, _temp_model_id
-WHERE test_logit_model.id = _temp_model_id.id;
+    PERFORM assert(
+        count(*) < 800,
+        'Logistic regression using incremental gradient: test error is too high (> 800). Wrong result.')
+    FROM predict_logit_test_newton
+    WHERE logit_igd_predict <> class;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
--- testing
--- checking precision > 80% on testing set
-CREATE TABLE predict_logit_test_newton AS
-SELECT s.id, logit_igd_predict(coefficients, features), class
-FROM
-    (
-        SELECT coefficients
-        FROM test_logit_model, _temp_model_id 
-        WHERE test_logit_model.id = _temp_model_id.id
-    ) AS m,
-    svmguide1_test_normalized AS s;
-
-SELECT assert(
-    count(*) < 800,
-    'Logistic regression using incremental gradient: test error is too high (> 800). Wrong result.')
-FROM predict_logit_test_newton
-WHERE logit_igd_predict <> class;
+SELECT check_logit_newton();
 
