@@ -770,8 +770,9 @@ BEGIN
                             nid,
                             tid 
                      FROM (
-                        SELECT t1.*, nid, tid, weight 
-                        FROM % t1 LEFT JOIN tr_association t2 ON t1.id = t2.id
+                        SELECT t2.id, t1.class, t2.nid, t2.tid, t2.weight 
+                        FROM % t1, tr_association t2 
+                        WHERE t1.id = t2.id
                         ) s 
                     GROUP BY GROUPING SETS((nid,tid),(class,nid,tid))',
                     ARRAY[
@@ -789,8 +790,9 @@ BEGIN
                             nid,
                             tid 
                      FROM (
-                        SELECT t1.*, nid, tid, weight 
-                        FROM % t1 LEFT JOIN tr_association t2 ON t1.id = t2.id
+                        SELECT t2.id, t2.nid, t2.tid, t2.weight 
+                        FROM % t1, tr_association t2 
+                        WHERE t1.id = t2.id
                         ) s 
                     GROUP BY nid,tid
                     UNION ALL
@@ -801,8 +803,9 @@ BEGIN
                             nid,
                             tid 
                      FROM (
-                        SELECT t1.*, nid, tid, weight 
-                        FROM % t1 LEFT JOIN tr_association t2 ON t1.id = t2.id
+                        SELECT t2.id, t1.class, t2.nid, t2.tid, t2.weight 
+                        FROM % t1, tr_association t2 
+                        WHERE t1.id = t2.id
                         ) s 
                     GROUP BY class,nid,tid',
                     ARRAY[
@@ -925,6 +928,7 @@ BEGIN
     END IF;
 END
 $$ LANGUAGE PLPGSQL;
+
 
 /*
  * This UDT is used to keep the times of generating acs.
@@ -1062,7 +1066,7 @@ BEGIN
                         MADLIB_SCHEMA.__to_char(sup_olap),
                         metatable_name
                     ]
-                );     
+                );  
 
     
     IF (verbosity > 0) THEN
@@ -1282,6 +1286,8 @@ CREATE TYPE MADLIB_SCHEMA.__best_split_result AS
  * @param continue_gow        It specifies whether we should still grow the tree
  *                            on the selected branch.
  * @param output_table        It specifies the table used to store the chosen splits.
+ * @param h2hmv_routine_id    Specifies how to handle missing values. 
+ *                            1 ignore, 2 explicit.
  *                    
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
@@ -1291,7 +1297,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__find_best_split
     feature_table_name      TEXT, 
     sp_criterion            INT, 
     continue_gow            INT,
-    output_table            TEXT
+    output_table            TEXT,
+    h2hmv_routine_id        INT
     ) 
 RETURNS VOID AS $$
 DECLARE
@@ -1302,26 +1309,42 @@ DECLARE
     result_rec         RECORD;
     begin_func_exec    TIMESTAMP;
     best_answer        FLOAT8[];
+    select_stmt		   TEXT;
 BEGIN    
     begin_func_exec = clock_timestamp();
     
-    TRUNCATE node_size_aux;
+    IF (h2hmv_routine_id=1) THEN
+        -- For ignore, we need the true size of nodes to handle the missing values.
+        TRUNCATE node_size_aux;
     
-    SELECT MADLIB_SCHEMA.__format
-        (
-        'INSERT INTO node_size_aux 
-        SELECT tid,nid, 
-             MAX(le) 
-        FROM %
-        WHERE fid IS NULL 
-        AND nid IS NOT NULL 
-        AND class IS NULL
-        GROUP BY tid,nid;',
-        table_name
-        )
-    INTO curstmt;
+        SELECT MADLIB_SCHEMA.__format
+           (
+           'INSERT INTO node_size_aux 
+            SELECT tid,nid, 
+               MAX(le) 
+            FROM %
+            WHERE fid IS NULL 
+            AND nid IS NOT NULL 
+	        AND tid IS NOT NULL 
+            AND class IS NULL
+            GROUP BY tid,nid;',
+            table_name
+           )
+        INTO curstmt;
     
-    EXECUTE curstmt;
+        EXECUTE curstmt;
+
+        select_stmt = 'SELECT t1.*, t2.total_size FROM '||table_name||' t1, node_size_aux t2
+                WHERE t1.nid = t2.nid AND t1.tid=t2.tid AND 
+                        (t1.fid IS NOT NULL) AND (t1.tid IS NOT NULL) AND
+                        (t1.nid IS NOT NULL AND t2.nid IS NOT NULL)';
+    ELSE
+        -- For explicit, the calculated node size from the aggregation is correct.
+        -- We can set NULL, which denotes we can safely use the counted value.
+        select_stmt = 'SELECT t1.*, NULL::float as total_size FROM '||table_name||' t1
+                WHERE (t1.fid IS NOT NULL) AND (t1.tid IS NOT NULL) AND 
+                        (t1.nid IS NOT NULL)';		
+    END IF;
 
     EXECUTE 'DROP TABLE IF EXISTS '||output_table;
     EXECUTE 'CREATE TEMP TABLE '||output_table||' 
@@ -1357,17 +1380,14 @@ m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
                         ORDER BY fval desc,class desc)
                     )::MADLIB_SCHEMA.__scv_aggr_result).*
             FROM (
-                SELECT t1.*, t2.total_size FROM % t1, node_size_aux t2
-                WHERE t1.nid = t2.nid AND t1.tid=t2.tid AND
-                        (t1.fid IS NOT NULL) 
-                        AND (t1.nid IS NOT NULL AND t2.nid IS NOT NULL)
+                %
                 ) y 
             GROUP BY tid, nid,fid,split_value 
             ) s1  
         GROUP BY s1.tid, s1.nid
         ORDER BY s1.tid, s1.nid;',
         MADLIB_SCHEMA.__to_char(sp_criterion),
-        table_name
+        select_stmt
         )
     INTO curstmt;   
 <<<, >>>
@@ -1392,17 +1412,14 @@ m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
                          ORDER BY fval desc,class desc)
                     )::MADLIB_SCHEMA.__scv_aggr_result).*
               FROM (
-                SELECT t1.*, t2.total_size FROM % t1, node_size_aux t2
-                WHERE t1.nid = t2.nid AND t1.tid=t2.tid AND 
-                        (t1.fid IS NOT NULL) AND 
-                        (t1.nid IS NOT NULL AND t2.nid IS NOT NULL)
+                %
                 ) y 
               ) k where row_num =1 
             ) s1    
         GROUP BY s1.tid, s1.nid
         ORDER BY s1.tid, s1.nid;',
         MADLIB_SCHEMA.__to_char(sp_criterion),
-        table_name
+        select_stmt
         )
     INTO curstmt;   
 <<<)
@@ -1519,6 +1536,7 @@ BEGIN
         tid            INT
     ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (fid, fval)');
 
+
     --  The table of training_instance_temp is of the same structure
     --  as table above. It is used when we need modify the training_instance
     --  before feeding it to the scv aggregation. Currently, we only use 
@@ -1537,6 +1555,7 @@ BEGIN
         tid            INT
     ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (fid, fval)');
 
+    
     --  The table of training_instance_aux is used to hold the results of ACC 
     --  generated by grouping sets. Based on this set, we use window function
     --  for further processing and generate the contents in training_instance.
@@ -2088,6 +2107,8 @@ CREATE TYPE MADLIB_SCHEMA.__train_result AS
  * @param sampling_needed             Whether enabling the sampling functionality.  
  * @param max_split_point             The upper limit of sampled split points for 
  *                                    continuous features.
+ * @param h2hmv_routine_id            Specifies how to handle missing values. 
+ *                                    1 ignore, 2 explicit.
  * @param verbosity                   > 0 means this function runs in verbose mode. 
  *  
  * @return The record including training related information.
@@ -2112,6 +2133,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__train_tree
     node_split_threshold    FLOAT,
     sampling_needed         BOOLEAN,    
     max_split_point         INT,
+    h2hmv_routine_id	    INT,
     verbosity               INT
     ) 
 RETURNS RECORD AS $$
@@ -2150,6 +2172,7 @@ DECLARE
     ret                         MADLIB_SCHEMA.__train_result;
     curr_level                  INT := 1;
     dp_ids                      INT[];
+    dp_ids_text                 TEXT;
     instance_time               MADLIB_SCHEMA.__gen_acs_time;
 BEGIN  
 	-- record the time costed in different steps when training
@@ -2174,6 +2197,16 @@ BEGIN
         sp_crit = 3;
     ELSE
         RAISE EXCEPTION '%', 'Invalid split criterion!';
+    END IF;
+
+    num_classes = MADLIB_SCHEMA.__num_of_class(training_table_meta); 
+    
+    IF(verbosity > 0) THEN
+        RAISE INFO 'NUMBER OF CLASSES IN THE TRAINING SET %', num_classes;
+    END IF;
+    
+    IF(num_classes < 2) THEN
+        RAISE EXCEPTION 'the number of classes must be greater than 2';
     END IF;
 
     EXECUTE 'SELECT count(*) FROM '|| training_table_name ||';' INTO total_size;
@@ -2213,16 +2246,6 @@ BEGIN
     END IF;
     
     bld_asso_time = clock_timestamp() - begin_bld_asso;
-
-    num_classes = MADLIB_SCHEMA.__num_of_class(training_table_meta); 
-    
-    IF(verbosity > 0) THEN
-        RAISE INFO 'NUMBER OF CLASSES IN THE TRAINING SET %', num_classes;
-    END IF;
-    
-    IF(num_classes < 2 OR num_classes > 8000000)THEN
-        RAISE EXCEPTION 'The number of classes must be in range 2 to 8,000,000!';
-    END IF;
 
     -- set the start ID of tree node
     nid = 1;
@@ -2323,7 +2346,8 @@ m4_changequote(>>>`<<<, >>>'<<<)
                training_table_meta,
                sp_crit,
                grow_tree,
-               'find_best_answer_table'
+               'find_best_answer_table',
+               h2hmv_routine_id
                );
         grow_tree = grow_tree - 1;
         
@@ -2354,10 +2378,22 @@ m4_changequote(>>>`<<<, >>>'<<<)
              ) INTO curstmt;
             
         EXECUTE curstmt;
-    
-        EXECUTE 'DELETE FROM find_best_answer_table WHERE feature=0 OR 
-			feature IS NULL OR node_size<'||total_size*node_prune_threshold||
-			' OR node_size<'||total_size*node_split_threshold||';';
+		
+		-- delete the nodes which is not satified with the specified thresholds
+		-- from the best answer table, so that those nodes will not be grown.
+        curstmt = MADLIB_SCHEMA.__format
+                    (
+                        'DELETE FROM find_best_answer_table 
+                         WHERE  feature = 0     OR
+                                feature IS NULL OR
+                                node_size < %   OR
+                                node_size < %',
+                        ARRAY[
+                            (total_size * node_prune_threshold)::TEXT,
+                            (total_size * node_split_threshold)::TEXT
+                        ]
+                    );
+		EXECUTE curstmt;
         
         calc_update_best    = calc_update_best + 
                               (clock_timestamp() - begin_update_best);
@@ -2483,22 +2519,32 @@ m4_changequote(>>>`<<<, >>>'<<<)
                 
                 EXECUTE curstmt;
                 
+                IF (dp_ids IS NULL) THEN
+                    dp_ids_text = 'NULL'::TEXT;
+                ELSE
+                    dp_ids_text = MADLIB_SCHEMA.__format
+                                    ('ARRAY[%]', array_to_string(dp_ids, ','));
+                END IF;
+
                 FOR i IN 1..2 LOOP
                     temp_location = location;
                     temp_location[array_upper(temp_location,1)+1] = i;
-
+                    
+                    -- if current best feature is continuous, the child nodes will
+                    -- inherit the dp_ids from its parent
                     SELECT MADLIB_SCHEMA.__format
                         (
                             'INSERT INTO %(id, tree_location, feature, probability, 
-                                 maxclass, scv, live, parent_id, tid) 
-                             VALUES(%, ARRAY[%], 0, 1, 1, 1, %, %, %);',
+                                 maxclass, scv, live, parent_id, tid, dp_ids) 
+                             VALUES(%, ARRAY[%], 0, 1, 1, 1, %, %, %, %);',
                              ARRAY[
                                 result_tree_table_name,
                                 nid::TEXT,
                                 array_to_string(temp_location, ','),
                                 curr_level::TEXT,
                                 answer.node_id::TEXT,
-                                answer.tid::TEXT
+                                answer.tid::TEXT,
+                                dp_ids_text
                              ]       
                          ) INTO curstmt;
                          
@@ -2510,18 +2556,22 @@ m4_changequote(>>>`<<<, >>>'<<<)
 
         -- delete the unused nodes on the previous level
         -- delete those nodes with a size less than node_prune_threshold
-        SELECT MADLIB_SCHEMA.__format
-            (
-                'DELETE FROM % t 
-                 WHERE t.case_size<% OR live=%;',
-                 ARRAY[
-                    result_tree_table_name::TEXT,
-                    (total_size*node_prune_threshold)::TEXT,
-                    (curr_level - 1)::TEXT
-                 ]
-             ) INTO curstmt;       
-        EXECUTE curstmt;
-        
+        -- node_prune_threshold will not apply to root node, 
+        -- the level is 1 (curr_level - 1 = 1);
+        IF (curr_level > 2) THEN
+            curstmt = MADLIB_SCHEMA.__format
+                        (
+                            'DELETE FROM % t 
+                             WHERE t.case_size < % OR live = %;',
+                            ARRAY[
+                                result_tree_table_name::TEXT,
+                                (total_size * node_prune_threshold)::TEXT,
+                                (curr_level - 1)::TEXT
+                            ]
+                        );
+            EXECUTE curstmt;
+        END IF;
+		
         calc_update_child   = calc_update_child + (clock_timestamp() - begin_update_child);
         begin_update_nid    = clock_timestamp();
         

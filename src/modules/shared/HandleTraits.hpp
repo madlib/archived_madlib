@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#ifndef MADLIB_SHARED_HANDLE_TRAITS_HPP_
+#define MADLIB_SHARED_HANDLE_TRAITS_HPP_
+
 namespace madlib {
 
 namespace modules {
@@ -67,3 +70,6 @@ struct HandleTraits<MutableArrayHandle<double> > {
 } // namespace modules
 
 } // namespace madlib
+
+#endif
+

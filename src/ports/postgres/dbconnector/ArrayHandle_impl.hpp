@@ -29,7 +29,28 @@ template <typename T>
 inline 
 size_t
 ArrayHandle<T>::size() const {
-    return internalArraySize(mArray);
+    // An empty array has dimensionality 0.
+    size_t arraySize = ARR_NDIM(mArray) ? 1 : 0;
+    for (int i = 0; i < ARR_NDIM(mArray); ++i)
+        arraySize *= ARR_DIMS(mArray)[i];
+    return arraySize;
+}
+
+template <typename T>
+inline 
+size_t
+ArrayHandle<T>::dims() const {
+    return ARR_NDIM(mArray);
+}
+
+template <typename T>
+inline 
+size_t
+ArrayHandle<T>::sizeOfDim(size_t inDim) const {
+    if (inDim >= dims())
+        throw std::invalid_argument("Invalid dimension.");
+    
+    return ARR_DIMS(mArray)[inDim];
 }
 
 template <typename T>
@@ -46,14 +67,6 @@ ArrayHandle<T>::operator[](size_t inIndex) const {
     madlib_assert(inIndex < size(), std::runtime_error(
         "Out-of-bounds array access detected."));
     return ptr()[inIndex];
-}
-
-template <typename T>
-inline
-size_t
-ArrayHandle<T>::internalArraySize(const ArrayType *inArray) {
-    // FIXME: Add support for multi-dimensional array
-    return ARR_DIMS(inArray)[0];
 }
 
 template <typename T>

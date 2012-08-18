@@ -243,7 +243,6 @@ sql> select t.id,t.outlook,t.temperature,t.humidity,t.windy,c.class from
  14 | rain     |          71 |       80 |  true  |  Do not Play
 (14 rows)
 \endverbatim
-
 -# Score the data against a validation set:
 \verbatim
 sql> select * from MADLIB_SCHEMA.c45_score(
@@ -255,8 +254,6 @@ sql> select * from MADLIB_SCHEMA.c45_score(
       1
 (1 row)
 \endverbatim
-
-
 -# clean up the tree and metadata: 
 \verbatim
 testdb=# select MADLIB_SCHEMA.c45_clean('trained_tree_infogain');
@@ -313,8 +310,12 @@ CREATE TYPE MADLIB_SCHEMA.c45_classify_result AS
  * @brief This is the long form API of training tree with all specified parameters.
  *
  * @param split_criterion           The name of the split criterion that should be used 
- *                                  for tree construction. Possible values are
- *                                  ‘gain’, ‘gainratio’, and ‘gini’.
+ *                                  for tree construction. The valid values are
+ *                                  ‘infogain’, ‘gainratio’, and ‘gini’. It can't be NULL.
+ *                                  Information gain(infogain) and gini index(gini) are biased 
+ *                                  toward multivalued attributes. Gain ratio(gainratio) adjusts 
+ *                                  for this bias. However, it tends to prefer unbalanced splits 
+ *                                  in which one partition is much smaller than the others.
  * @param training_table_name       The name of the table/view with the source data.
  * @param result_tree_table_name    The name of the table where the resulting DT 
  *                                  will be kept.
@@ -336,11 +337,17 @@ CREATE TYPE MADLIB_SCHEMA.c45_classify_result AS
  *                                  is 'explicit' or 'ignore'.
  * @param max_tree_depth            Specifies the maximum number of levels in the result DT 
  *                                  to avoid overgrown DTs. 
- * @param node_prune_threshold      The minimum number of cases required 
- *                                  in a child node.
- * @param node_split_threshold      The minimum number of cases required 
- *                                  in a node in order for a further split to 
- *                                  be possible.
+ * @param node_prune_threshold      The minimum percentage of the number of records required in a
+ *                                  child node. It can't be NULL. The range of it is in [0.0, 1.0].
+ *                                  This threshold only applies to the non-root nodes. Therefore,
+ *                                  if its value is 1, then the trained tree only has one node (the root node);
+ *                                  if its value is 0, then no nodes will be pruned by this parameter.
+ * @param node_split_threshold      The minimum percentage of the number of records required in a
+ *                                  node in order for a further split to be possible.
+ *                                  It can't be NULL. The range of it is in [0.0, 1.0].
+ *                                  If it's value is 1, then the trained tree only has two levels, since
+ *                                  only the root node can grow; if its value is 0, then trees can grow
+ *                                  extensively.
  * @param verbosity                 > 0 means this function runs in verbose mode.
  *
  * @return An c45_train_result object.
@@ -490,6 +497,33 @@ BEGIN
             ''''
         );
 
+    cont_feature_col_names  = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
+    feature_name_array      = MADLIB_SCHEMA.__csvstr_to_array(feature_col_names);
+
+    IF ( verbosity > 0 ) THEN
+        RAISE INFO 'continuous features:%', cont_feature_col_names;
+    END IF;
+
+    IF (feature_name_array IS NULL) THEN
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__columns_in_table(cont_feature_col_names, training_table_name),
+                'each feature in continuous_feature_names must be a column of the training table'
+            );
+    ELSE
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__columns_in_table(feature_name_array, training_table_name),
+                'each feature in feature_col_names must be a column of the training table'
+            );
+
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                coalesce(cont_feature_col_names, '{}'::TEXT[]) <@ feature_name_array,
+                'each feature in continuous_feature_names must be in the feature_col_names'
+            );
+    END IF;
+
     PERFORM MADLIB_SCHEMA.__assert
             (
                 result_tree_table_name IS NOT NULL,
@@ -535,13 +569,6 @@ BEGIN
         h2hmv_routine_id = 2;
     END IF;
 
-    cont_feature_col_names = MADLIB_SCHEMA.__csvstr_to_array
-                                (continuous_feature_names);
-    
-    IF ( verbosity > 0 ) THEN
-        RAISE INFO 'continuous features:%', cont_feature_col_names;
-    END IF;
- 
     -- the encoded table and meta table will be under the specified schema
     training_encoded_table_name = tree_schema_name                      || 
                                   '.'                                   || 
@@ -561,7 +588,7 @@ BEGIN
         (
             training_table_name,
             lower(id_col_name),
-            MADLIB_SCHEMA.__csvstr_to_array(feature_col_names),
+            feature_name_array,
             lower(class_col_name),
             cont_feature_col_names,
             training_encoded_table_name,
@@ -626,6 +653,7 @@ BEGIN
                     node_split_threshold,
                     'f',
                     0,
+                    h2hmv_routine_id,
                     verbosity
                 );
 

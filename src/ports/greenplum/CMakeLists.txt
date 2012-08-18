@@ -10,7 +10,7 @@ get_filename_component(PORT_DIR_NAME "${PORT_SOURCE_DIR}" NAME)
 set(PORT_DEPLOY_SCRIPT "${CMAKE_BINARY_DIR}/deploy/Component_${PORT}.cmake")
 
 if(APPLE)
-    # FIXME: This should be handled in a better way. 
+    # FIXME: This should be handled in a better way.
     # Greenplum is 32bit on the Mac.
     set(ADDITIONAL_GCC_FLAGS "-m32")
 else(APPLE)
@@ -41,15 +41,17 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/dbconnector.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/EigenIntegration_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/EigenIntegration_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/FunctionHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/FunctionHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NewDelete.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NativeRandomNumberGenerator_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/NativeRandomNumberGenerator_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/OutputStreamBuffer_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/OutputStreamBuffer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/PGException_proto.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SparseVector_impl.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SparseVector_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SystemInformation_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SystemInformation_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TransparentHandle_impl.hpp"
@@ -85,7 +87,7 @@ add_sql_files(
 )
 # FIXME: Check legacy code for compliance with new architecture
 # BEGIN Legacy Code
-    
+
     file(GLOB_RECURSE LEGACY_SQL_FILES RELATIVE
         "${CMAKE_SOURCE_DIR}/methods"
         "${CMAKE_SOURCE_DIR}/methods/*.sql_in")
@@ -102,7 +104,7 @@ add_sql_files(
         )
         list(APPEND SQL_TARGET_FILES ${OUTFILE})
     endforeach(CURRENT_FILE ${LEGACY_SQL_FILES})
-    
+
 # END Legacy Code
 add_custom_target(sqlFiles_${PORT_LC} ALL DEPENDS ${SQL_TARGET_FILES})
 
@@ -148,7 +150,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         "${${DBMS_UC}_EXECUTABLE}"
         ${MAD_DBAL_SOURCES}
     )
-    
+
     if(CMAKE_COMPILER_IS_GNUCXX)
         # The source code specifies that we are POSIX.1-2001 compliant:
         # On the Mac, this is done in $GP_HOME/include/pg_config_manual.h.
@@ -171,7 +173,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
 
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
-        
+
         # From the CMake documentation:
         # "Source file properties are visible only to targets added in the same
         # directory (CMakeLists.txt)." We therefore have to set them for each
@@ -194,18 +196,18 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         set_source_files_properties(${LEGACY_C_FILES} PROPERTIES
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
         )
-        
+
         # sparse_vector.c indirectly includes openssl/ssl.h (via libpq/libpq-be.h)
         include_directories(SYSTEM ${${DBMS_UC}_CLIENT_INCLUDE_DIR})
-    
+
     # END Legacy Code
 
 
 # -- 4.2. Preprocess all Python files ------------------------------------------
-    
+
     define_greenplum_features(${IN_PORT_VERSION} DBMS_FEATURES)
     define_m4_macros(M4_DEFINES_CMD_LINE M4_DEFINES_CODE ${DBMS_FEATURES})
-    
+
     add_python_files(
         PYTHON_TARGET_FILES
         "${PORT_SOURCE_DIR}/../postgres/modules"
@@ -214,7 +216,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
     )
     # FIXME: Check legacy code for compliance with new architecture
     # BEGIN Legacy Code
-        
+
         file(GLOB_RECURSE LEGACY_PYTHON_FILES RELATIVE
             "${CMAKE_SOURCE_DIR}/methods"
             "${CMAKE_SOURCE_DIR}/methods/*.py_in")
@@ -233,14 +235,14 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
             )
             list(APPEND PYTHON_TARGET_FILES ${OUTFILE})
         endforeach(CURRENT_FILE ${LEGACY_PYTHON_FILES})
-        
+
     # END Legacy Code
-    
+
     configure_file("${PORT_SOURCE_DIR}/../postgres/madpack/SQLCommon.m4_in"
         "${CMAKE_CURRENT_BINARY_DIR}/madpack/SQLCommon.m4"
         @ONLY
     )
-    
+
     add_custom_target(pythonFiles_${DBMS} ALL
         DEPENDS ${PYTHON_TARGET_FILES})
 
@@ -261,6 +263,10 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         DESTINATION ports/${PORT_DIR_NAME}/${IN_PORT_VERSION}/madpack
         COMPONENT ${DBMS}
     )
+
+# -- 5. Generate gppkg deployment scripts. Note: These are generated CMake
+#       scripts! ---------------------------------------------------------------
+    add_gppkg()
 endfunction(add_${PORT_LC}_library)
 
 
@@ -270,11 +276,11 @@ endfunction(add_${PORT_LC}_library)
 # Add the current version as a target. This is a macro because it calls
 # find_package, and we want the side effects (the defined variables) to be
 # visible after the invocation
-# 
+#
 macro(add_current_${PORT_LC}_version)
     get_filename_component(_VERSION "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
     string(REPLACE "." "_" _VERSION_UNDERSCORES ${_VERSION})
-    
+
     find_package(${PORT}_${_VERSION_UNDERSCORES})
     if(${PORT_UC}_${_VERSION_UNDERSCORES}_FOUND)
         add_greenplum_library(${_VERSION})

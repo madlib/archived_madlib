@@ -8,7 +8,7 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
+#include <modules/prob/student.hpp>
 
 #include "linear.hpp"
 
@@ -18,9 +18,6 @@ namespace madlib {
 using namespace dbal::eigen_integration;
 
 namespace modules {
-
-// Import names from other MADlib modules
-using prob::studentT_CDF;
 
 namespace regress {
 
@@ -45,10 +42,10 @@ class LinRegrTransitionState {
 public:
     LinRegrTransitionState(const AnyType &inArray)
       : mStorage(inArray.getAs<Handle>()) {
-        
+
         rebind(static_cast<uint16_t>(mStorage[1]));
     }
-    
+
     /**
      * @brief Convert to backend representation
      *
@@ -58,10 +55,10 @@ public:
     inline operator AnyType() const {
         return mStorage;
     }
-    
+
     /**
      * @brief Initialize the transition state. Only called for first row.
-     * 
+     *
      * @param inAllocator Allocator for the memory transition state. Must fill
      *     the memory block with zeros.
      * @param inWidthOfX Number of independent variables. The first row of data
@@ -74,25 +71,25 @@ public:
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
-    
+
     /**
      * @brief Merge with another TransitionState object
      */
     template <class OtherHandle>
     LinRegrTransitionState &operator+=(
         const LinRegrTransitionState<OtherHandle> &inOtherState) {
-        
+
         if (mStorage.size() != inOtherState.mStorage.size())
             throw std::logic_error("Internal error: Incompatible transition states");
-            
+
         for (size_t i = 0; i < mStorage.size(); i++)
             mStorage[i] += inOtherState.mStorage[i];
-        
+
         // Undo the addition of widthOfX
         widthOfX = inOtherState.widthOfX;
         return *this;
     }
-    
+
 private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
         return 4 + inWidthOfX + inWidthOfX % 2 + inWidthOfX * inWidthOfX;
@@ -151,21 +148,21 @@ linregr_transition::run(AnyType &args) {
     // processor cycles).
     LinRegrTransitionState<MutableArrayHandle<double> > state = args[0];
     double y = args[1].getAs<double>();
-    HandleMap<const ColumnVector> x = args[2].getAs<ArrayHandle<double> >();
-    
+    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+
     // The following check was added with MADLIB-138.
     if (!std::isfinite(y))
         throw std::domain_error("Dependent variables are not finite.");
     else if (!isfinite(x))
         throw std::domain_error("Design matrix is not finite.");
-    
+
     // Now do the transition step.
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
                 "larger than 65535.");
-        
-        state.initialize(*this, x.size());
+
+        state.initialize(*this, static_cast<uint16_t>(x.size()));
     }
     state.numRows++;
     state.y_sum += y;
@@ -174,7 +171,7 @@ linregr_transition::run(AnyType &args) {
     // X^T X is symmetric, so it is sufficient to only fill a triangular part
     // of the matrix
     triangularView<Lower>(state.X_transp_X) += x * trans(x);
-    
+
     return state;
 }
 
@@ -185,14 +182,14 @@ AnyType
 linregr_merge_states::run(AnyType &args) {
     LinRegrTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     LinRegrTransitionState<ArrayHandle<double> > stateRight = args[1];
-    
+
     // We first handle the trivial case where this function is called with one
     // of the states being the initial state
     if (stateLeft.numRows == 0)
         return stateRight;
     else if (stateRight.numRows == 0)
         return stateLeft;
-    
+
     // Merge states together and return
     stateLeft += stateRight;
     return stateLeft;
@@ -204,7 +201,7 @@ linregr_merge_states::run(AnyType &args) {
  * The result of the aggregation phase is \f$ X^T X \f$ and
  * \f$ X^T \boldsymbol y \f$. We first compute the pseudo-inverse, then the
  * regression coefficients, the model statistics, etc.
- * 
+ *
  * @sa For the mathematical description, see \ref grp_linreg.
  */
 AnyType
@@ -222,28 +219,30 @@ linregr_final::run(AnyType &args) {
     // matrices. We extend the check also to the dependent variables.
     if (!isfinite(state.X_transp_X) || !isfinite(state.X_transp_Y))
         throw std::domain_error("Design matrix is not finite.");
-    
+
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_X, EigenvaluesOnly, ComputePseudoInverse);
-    
+
     // Precompute (X^T * X)^+
     Matrix inverse_of_X_transp_X = decomposition.pseudoInverse();
 
     // Vector of coefficients: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    HandleMap<ColumnVector> coef(allocateArray<double>(state.widthOfX));
+    MutableMappedColumnVector coef(allocateArray<double>(state.widthOfX));
     coef.noalias() = inverse_of_X_transp_X * state.X_transp_Y;
-    
+
     // explained sum of squares (regression sum of squares)
     double ess
         = dot(state.X_transp_Y, coef)
-            - ((state.y_sum * state.y_sum) / state.numRows);
+            - ((state.y_sum * state.y_sum)
+        / static_cast<double>(state.numRows));
 
     // total sum of squares
     double tss
         = state.y_square_sum
-            - ((state.y_sum * state.y_sum) / state.numRows);
-    
+            - ((state.y_sum * state.y_sum)
+        / static_cast<double>(state.numRows));
+
     // With infinite precision, the following checks are pointless. But due to
     // floating-point arithmetic, this need not hold at this point.
     // Without a formal proof convincing us of the contrary, we should
@@ -269,12 +268,12 @@ linregr_final::run(AnyType &args) {
     double rss = tss - ess;
 
     // Variance is also called the mean square error
-	double variance = rss / (state.numRows - state.widthOfX);
-    
+	double variance = rss / static_cast<double>(state.numRows - state.widthOfX);
+
     // Vector of standard errors and t-statistics: For efficiency reasons, we
     // want to return these by reference, so we need to bind to db memory
-    HandleMap<ColumnVector> stdErr(allocateArray<double>(state.widthOfX));
-    HandleMap<ColumnVector> tStats(allocateArray<double>(state.widthOfX));
+    MutableMappedColumnVector stdErr(allocateArray<double>(state.widthOfX));
+    MutableMappedColumnVector tStats(allocateArray<double>(state.widthOfX));
     for (int i = 0; i < state.widthOfX; i++) {
         // In an abundance of caution, we see a tiny possibility that numerical
         // instabilities in the pinv operation can lead to negative values on
@@ -284,7 +283,7 @@ linregr_final::run(AnyType &args) {
         } else {
             stdErr(i) = std::sqrt( variance * inverse_of_X_transp_X(i,i) );
         }
-        
+
         if (coef(i) == 0 && stdErr(i) == 0) {
             // In this special case, 0/0 should be interpreted as 0:
             // We know that 0 is the exact value for the coefficient, so
@@ -296,18 +295,25 @@ linregr_final::run(AnyType &args) {
             tStats(i) = coef(i) / stdErr(i);
         }
     }
-    
+
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    HandleMap<ColumnVector> pValues(allocateArray<double>(state.widthOfX));
-    for (int i = 0; i < state.widthOfX; i++)
-        pValues(i) = 2. * (1. - studentT_CDF(
-                                    std::fabs( tStats(i) ),
-                                    state.numRows - state.widthOfX));
-    
+    MutableMappedColumnVector pValues(allocateArray<double>(state.widthOfX));
+    if (state.numRows > state.widthOfX)
+        for (int i = 0; i < state.widthOfX; i++)
+            pValues(i) = 2. * prob::cdf(
+                boost::math::complement(
+                    prob::students_t(
+                        static_cast<double>(state.numRows - state.widthOfX)),
+                    std::fabs(tStats(i))
+                ));
+
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << coef << r2 << stdErr << tStats << pValues
+    tuple << coef << r2 << stdErr << tStats
+        << (state.numRows > state.widthOfX
+            ? pValues
+            : Null())
         << decomposition.conditionNo();
     return tuple;
 }

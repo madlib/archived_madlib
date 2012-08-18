@@ -32,7 +32,7 @@ public:
 
     OutputStreamBufferBase();
     ~OutputStreamBufferBase();
-    void output(C* inMsg, uint32_t inLength) const;
+    void output(C* inMsg, std::size_t inLength) const;
 
 protected:
     int_type overflow(int_type c = traits_type::eof());

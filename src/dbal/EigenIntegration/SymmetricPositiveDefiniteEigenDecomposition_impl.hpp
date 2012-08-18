@@ -30,13 +30,13 @@ SymmetricPositiveDefiniteEigenDecomposition<MatrixType>
     ::SymmetricPositiveDefiniteEigenDecomposition(
     const MatrixType &inMatrix, int inOptions, int inExtras)
   : Base(inMatrix, inOptions) {
-    
+
     computeExtras(inMatrix, inExtras);
 }
 
 /**
  * @brief Return the condition number of the matrix
- * 
+ *
  * In general, the condition number of a matrix is the absolute value of the
  * largest singular value divided by the smallest singular value. When a matrix
  * is symmetric positive semi-definite, all eigenvalues are also singular
@@ -49,17 +49,17 @@ SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::conditionNo()
     const {
 
     const RealVectorType& ev = eigenvalues();
-    
+
     double numerator = ev(ev.size() - 1);
     double denominator = ev(0);
-    
+
     // All eigenvalues of a positive semi-definite matrix are
     // non-negative, so in theory no need to take absolute values.
     // Unfortunately, numerical instabilities can cause eigenvalues to
     // be slightly negative. We should interprete that as 0.
     if (denominator < 0)
         denominator = 0;
-    
+
     return numerator <= 0 ? std::numeric_limits<double>::infinity()
                           : numerator / denominator;
 }
@@ -81,14 +81,14 @@ SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::pseudoInverse() const {
  * @brief Perform extra computations after the decomposition
  *
  * If the matrix has a condition number of less than 1000 (currently
- * this is hard-coded), it necessarily has full rank and is invertible. 
+ * this is hard-coded), it necessarily has full rank and is invertible.
  * The Moore-Penrose pseudo-inverse coincides with the inverse and we
  * compute it directly, using a \f$ L D L^T \f$ Cholesky decomposition.
  *
  * If the matrix has a condition number of more than 1000, we are on the
  * safe side and use the eigen decomposition for computing the
  * pseudo-inverse.
- * 
+ *
  * Since the eigenvectors of a symmtric positive semi-definite matrix
  * are orthogonal, and Eigen moreover scales them to have norm 1 (i.e.,
  * the eigenvectors returned by Eigen are orthonormal), the Eigen
@@ -112,7 +112,7 @@ inline
 void
 SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::computeExtras(
     const MatrixType &inMatrix, int inExtras) {
-    
+
     if (inExtras & ComputePseudoInverse) {
         mPinv.resize(inMatrix.rows(), inMatrix.cols());
 
@@ -126,14 +126,14 @@ SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::computeExtras(
         } else {
             if (!Base::m_eigenvectorsOk)
                 Base::compute(inMatrix, Eigen::ComputeEigenvectors);
-            
+
             const RealVectorType& ev = eigenvalues();
-            
+
             // The eigenvalue are sorted in increasing order
-            Scalar epsilon = inMatrix.rows()
+            Scalar epsilon = static_cast<double>(inMatrix.rows())
                            * ev(ev.size() - 1)
                            * std::numeric_limits<Scalar>::epsilon();
-            
+
             RealVectorType eigenvectorsInverted(ev.size());
             for (Index i = 0; i < static_cast<Index>(ev.size()); ++i) {
                 eigenvectorsInverted(i) = ev(i) < epsilon
@@ -144,7 +144,7 @@ SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::computeExtras(
                   * eigenvectorsInverted.asDiagonal()
                   * Base::eigenvectors().transpose();
         }
-    }            
+    }
 }
 
 } // namespace eigen_integration

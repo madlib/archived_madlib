@@ -7,6 +7,8 @@
 #ifndef MADLIB_DBAL_OUTPUTSTREAMBUFFERBASE_IMPL_HPP
 #define MADLIB_DBAL_OUTPUTSTREAMBUFFERBASE_IMPL_HPP
 
+#include <cstring>      // Needed for std::memcpy
+
 namespace madlib {
 
 namespace dbal {
@@ -18,7 +20,7 @@ template <class Derived, typename C>
 OutputStreamBufferBase<Derived, C>::OutputStreamBufferBase()
 :   mStorageSize(kInitialBufferSize),
     mStorage(new C[kInitialBufferSize + 1]) {
-    
+
     setp(mStorage, mStorage + mStorageSize);
 }
 
@@ -37,7 +39,9 @@ OutputStreamBufferBase<Derived, C>::~OutputStreamBufferBase() {
  */
 template <class Derived, typename C>
 void
-OutputStreamBufferBase<Derived, C>::output(C* inMsg, uint32_t inLength) const {
+OutputStreamBufferBase<Derived, C>::output(C* inMsg, std::size_t inLength)
+    const {
+
     static_cast<const Derived*>(this)->output(inMsg, inLength);
 }
 
@@ -55,26 +59,26 @@ OutputStreamBufferBase<Derived, C>::overflow(int_type c) {
     if (this->pptr() >= this->epptr()) {
         if (mStorageSize >= kMaxBufferSize)
             return traits_type::eof();
-        
+
         uint32_t newStorageSize = mStorageSize * 2;
         C* newStorage = new C[newStorageSize + 1];
         std::memcpy(newStorage, mStorage, mStorageSize);
         delete mStorage;
         mStorage = newStorage;
-        
+
         madlib_assert(
             this->pptr() == this->epptr() &&
             this->pptr() - this->pbase() == static_cast<int64_t>(mStorageSize),
             std::logic_error("Internal error: Logging buffer has become "
                 "inconsistent"));
-        
+
         setp(mStorage, mStorage + newStorageSize);
         this->pbump(mStorageSize);
         mStorageSize = newStorageSize;
     } else if (c == traits_type::eof())
        return traits_type::eof();
 
-    *this->pptr() = c;
+    *this->pptr() = static_cast<C>(c);
     this->pbump(1);
     return traits_type::not_eof(c);
 }
@@ -85,8 +89,8 @@ OutputStreamBufferBase<Derived, C>::overflow(int_type c) {
 template <class Derived, typename C>
 int
 OutputStreamBufferBase<Derived, C>::sync() {
-    int length = this->pptr() - this->pbase();
-    
+    std::ptrdiff_t length = this->pptr() - this->pbase();
+
     mStorage[length] = '\0';
     output(mStorage, length);
 

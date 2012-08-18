@@ -476,9 +476,13 @@ CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
  * than discretizing on the whole dataset prior to training because local 
  * discretization takes into account the context sensitivity.
  *
- * @param split_criterion           The split criterion used for tree construction. 
- *                                  The valid values are infogain, gainratio, or
- *                                  gini. It can't be NULL.
+ * @param split_criterion           The name of the split criterion that should be used 
+ *                                  for tree construction. The valid values are
+ *                                  ‘infogain’, ‘gainratio’, and ‘gini’. It can't be NULL.
+ *                                  Information gain(infogain) and gini index(gini) are biased 
+ *                                  toward multivalued attributes. Gain ratio(gainratio) adjusts 
+ *                                  for this bias. However, it tends to prefer unbalanced splits 
+ *                                  in which one partition is much smaller than the others.
  * @param training_table_name       The name of the table/view with the training data.
  *									It can't be NULL and must exist.
  * @param result_rf_table_name      The name of the table where the resulting trees will  
@@ -504,14 +508,30 @@ CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
  * @param how2handle_missing_value  The way to handle missing value. The valid values are 
  *                                  'explicit' and 'ignore'. It can't be NULL.
  * @param max_tree_depth            The maximum tree depth. It can't be NULL.
- * @param node_prune_threshold      The minimum number of records required in a 
- *                                  child node. It can't be NULL.
- * @param node_split_threshold      The minimum number of records required in a 
+ * @param node_prune_threshold      The minimum percentage of the number of records required in a
+ *                                  child node. It can't be NULL. The range of it is in [0.0, 1.0].
+ *                                  This threshold only applies to the non-root nodes. Therefore,
+ *                                  if the percentage(p) between the sampled training set size of a tree
+ *                                  (the number of rows) and the total training set size is less than
+ *                                  or equal to the value of this parameter, then the tree only has
+ *                                  one node (the root node);
+ *                                  if its value is 1, then the percentage p is less than or equal to 1
+ *                                  definitely. Therefore, the tree only has one node (the root node).
+ *                                  if its value is 0, then no nodes will be pruned by this parameter.
+ * @param node_split_threshold      The minimum percentage of the number of records required in a
  *                                  node in order for a further split to be possible.
- *									It can't be NULL.
+ *                                  It can't be NULL. The range of it is in [0.0, 1.0].
+ *                                  If the percentage(p) between the sampled training set size of a tree
+ *                                  (the number of rows) and the total training set size is less than
+ *                                  the value of this parameter, then the root node will be a leaf one.
+ *                                  Therefore, the trained tree only has one node.
+ *                                  If the percentage p is equal to the value of this parameter, then the
+ *                                  trained tree only has two levels, since only the root node will grow.
+ *                                  (the root node);
+ *                                  if its value is 0, then trees can grow extensively.
  * @param max_split_point           The upper limit of sampled split points for continuous 
- *                                  features. If it's NULL, all the distinct values of the
- *									features will be used as split values.
+ *                                  features. If it's NULL or zero, all the distinct values of the
+ *                                  features will be used as split values.
  * @param verbosity                 > 0 means this function runs in verbose mode. 
  *                                  It can't be NULL.
  *
@@ -587,13 +607,13 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-                num_trees IS NOT NULL                   AND
-                sampling_percentage IS NOT NULL         AND
-                num_trees  > 0                          AND
+                num_trees IS NOT NULL                                   AND
+                sampling_percentage IS NOT NULL                         AND
+                num_trees  > 0                                          AND
+                (features_per_node IS NULL OR  features_per_node > 0)   AND
                 sampling_percentage > 0,
-                'invalid parameters value for num_trees, features_per_node  or sampling_percentage'
+                'invalid parameter value for num_trees, features_per_node or sampling_percentage'
             );
-
 
     PERFORM MADLIB_SCHEMA.__assert
             (
@@ -667,6 +687,50 @@ BEGIN
             '> does not have column ''' || class_col_name || ''''
         );
 
+    cont_feature_col_names  = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
+    feature_name_array      = MADLIB_SCHEMA.__csvstr_to_array(feature_col_names);
+
+    IF ( verbosity > 0 ) THEN
+        RAISE INFO 'continuous features:%', cont_feature_col_names;
+    END IF;
+
+    IF (feature_name_array IS NULL) THEN
+        -- 2 means the id and class column
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                features_per_node IS NULL OR
+                MADLIB_SCHEMA.__num_of_columns(training_table_name) - 2 >= features_per_node,
+                'the value of features_per_node must be less than or equal to the total number ' ||
+                'of features of the training table'
+           );
+
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__columns_in_table(cont_feature_col_names, training_table_name),
+                'each feature in continuous_feature_names must be a column of the training table'
+            );
+    ELSE
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                features_per_node IS NULL OR
+                array_upper(feature_name_array, 1) >= features_per_node,
+                'the value of features_per_node must be less than or equal to the total number ' ||
+                'of features of the training table'
+           );
+
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                MADLIB_SCHEMA.__columns_in_table(feature_name_array, training_table_name),
+                'each feature in feature_col_names must be a column of the training table'
+            );
+
+        PERFORM MADLIB_SCHEMA.__assert
+            (
+                coalesce(cont_feature_col_names, '{}'::TEXT[]) <@ feature_name_array,
+                'each feature in continuous_feature_names must be in the feature_col_names'
+            );
+    END IF;
+
     PERFORM MADLIB_SCHEMA.__assert
             (
                 result_rf_table_name IS NOT NULL,
@@ -685,7 +749,7 @@ BEGIN
                 rf_table_name                     || 
                 '> exists' 
             );
-            
+    
     -- create tree table and auxiliary tables, so that we can get the schema 
     -- name of the table  
     PERFORM MADLIB_SCHEMA.__create_tree_tables(rf_table_name);
@@ -713,12 +777,6 @@ BEGIN
         h2hmv_routine_id = 2;
     END IF;
 
-    cont_feature_col_names = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
-    
-    IF ( verbosity > 0 ) THEN
-        RAISE INFO 'continuous features:%', cont_feature_col_names;
-    END IF;
- 
     -- the encoded table and meta table will be under the specified schema
     training_encoded_table_name = rf_schema_name || '.' || 
         replace(rf_table_name, '.', '_') || '_ed';
@@ -734,7 +792,7 @@ BEGIN
         (
         training_table_name,
         lower(id_col_name),
-        MADLIB_SCHEMA.__csvstr_to_array(feature_col_names),
+        feature_name_array,
         lower(class_col_name),
         cont_feature_col_names,
         training_encoded_table_name,
@@ -804,6 +862,7 @@ BEGIN
                     node_split_threshold,
                     't',
                     max_split_point,
+                    h2hmv_routine_id,
                     verbosity
                 );
 

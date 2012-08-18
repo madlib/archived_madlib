@@ -22,13 +22,14 @@ Building and Installing from Source
 Optional:
 
 - For generating user-level documentation (using `make doc`, see below):
-  + doxygen >= 1.7.3 to generate the user-level API reference in HTML format
+  + doxygen >= 1.7.3, flex >= 2.5.33, and bison >= 2.4 to generate the
+    user-level API reference in HTML format
   + A recent LaTeX installation for generating the formulas in the user-level
     documentation.
   + graphviz >= 2.28 to generate graphs for the doxygen documentation
 
 - For generating developer-level documentation (using `make devdoc`, see below):
-  + doxygen as above
+  + doxygen, flex, and bison as above
   + git >= 1.7 to download/update the local MathJax installation, which is used
     for displaying formulas in the developer-level documentation
 

@@ -1,200 +1,126 @@
----------------------------------------------------------------------------
--- Rules: 
--- ------
--- 1) Any DB objects should be created w/o schema prefix,
---    since this file is executed in a separate schema context.
--- 2) There should be no DROP statements in this script, since
---    all objects created in the default schema will be cleaned-up outside.
----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
+ * Test Linear Regression.
+ * -------------------------------------------------------------------------- */
 
----------------------------------------------------------------------------
--- Setup: 
----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION install_test() RETURNS VOID AS $$ 
-declare
-    lr MADLIB_SCHEMA.linregr_result;
-    
-	n FLOAT;
-	xsq FLOAT;
-
-	acoef FLOAT[];
-	arsq FLOAT;
-	atst1 FLOAT;
-	atst2 FLOAT;
-	atst FLOAT[];
-
-	result INT;
-	result2 INT;
-	
-begin
-	-- DROP TABLE IF EXISTS data;	
-	CREATE TABLE data(x1 numeric,x2 float,noise numeric);
-	INSERT INTO data(x1,x2,noise) SELECT (random()-0.5),(random()-0.5),(random()-0.5) FROM generate_series(1,100) as a;
-
-	-- DROP TABLE IF EXISTS data2;
-	CREATE TABLE data2(r1 float, r2 float, r3 float, y numeric);
-	INSERT INTO data2(r1,r2,r3,y) SELECT x1,x2,noise,(x1*3.4+x2*2.5+noise) FROM data;
-
-	lr := (SELECT MADLIB_SCHEMA.linregr(y,array[r1,1]) FROM data2);
-
-	--check univariate results
-	SELECT count(y) INTO n FROM data2;
-	SELECT sum(r1*r1)::float INTO xsq FROM data2;
-	SELECT ARRAY[ ((count(y) * sum(r1*y) - sum(r1)*sum(y))/(count(y) * sum(r1*r1) - sum(r1)^2)),
-		((sum(y)*sum(r1*r1) - sum(r1)*sum(r1*y))/(count(y) * sum(r1*r1) - sum(r1)^2))]::float[] INTO acoef FROM data2;
-	SELECT ((count(y) * sum(r1*y) - sum(r1)*sum(y))^2/
-		((count(y) * sum(r1*r1) - sum(r1)^2) * (count(y) * sum(y*y) - sum(y)^2)))::float INTO arsq FROM data2;
-	SELECT |/ ( (count(y)-2) / ( 1/
-		( ((count(y) * sum(r1*y) - sum(r1)*sum(y))^2/
-		((count(y) * sum(r1*r1) - sum(r1)^2) * (count(y) * sum(y*y) - sum(y)^2))) ) - 1) ) ::float INTO atst1 FROM data2;      	         
-	atst = array[ atst1, acoef[2]/( (acoef[1]/atst1)*sqrt(xsq/n)) ];
-
-	result =  (MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(lr.coef,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(acoef,1000::FLOAT) ) ))::INT 
-		+((lr.r2*1000) - (arsq*1000))::INT
-		+(MADLIB_SCHEMA.array_sum( MADLIB_SCHEMA.array_sub( MADLIB_SCHEMA.array_scalar_mult(lr.t_stats,1000::FLOAT) , MADLIB_SCHEMA.array_scalar_mult(atst,1000::FLOAT) ) ))::INT; 
-
-	IF (result != 0) THEN
-		RAISE EXCEPTION 'Incorrect univariate results';
-	END IF;
-
-	--check multivariate results
-	lr := (SELECT MADLIB_SCHEMA.linregr(y,array[r1,r2,1]) FROM data2);
-
-	result = abs(lr.coef[1]*10 - 34)::INT;
-	result2 = abs(lr.coef[2]*10 - 25)::INT;
-
-	IF (result > 5) OR (result2 > 5) OR (lr.r2 < 0.9) THEN
-		RAISE EXCEPTION 'Incorrect multivariate results, got %,%',lr.coef,lr.r2;
-	END IF;
-	
-	RAISE INFO 'Linear regression install checks passed';
-	RETURN;
-	
-end 
-$$ language plpgsql;
-
-SELECT install_test();
-
-
--- The following example is taken from:
--- http://www.weibull.com/DOEWeb/estimating_regression_models_using_least_squares.htm#Example%205.1
--- http://www.weibull.com/DOEWeb/hypothesis_tests_in_multiple_linear_regression.htm#Example%205.3
-
--- No notice message while creating table (creating implicit index).
--- SET client_min_messages = error;
-CREATE TABLE weibull
-(
-	id INTEGER NOT NULL,
-	x1 DOUBLE PRECISION,
-	x2 DOUBLE PRECISION,
-	y DOUBLE PRECISION,
-	CONSTRAINT pk_weibull PRIMARY KEY (id)
+/*
+ * The following example is taken from:
+ * http://www.weibull.com/DOEWeb/estimating_regression_models_using_least_squares.htm#Example%205.1
+ * http://www.weibull.com/DOEWeb/hypothesis_tests_in_multiple_linear_regression.htm#Example%205.3
+ */
+CREATE TABLE weibull (
+    id INTEGER NOT NULL,
+    x1 DOUBLE PRECISION,
+    x2 DOUBLE PRECISION,
+    y DOUBLE PRECISION,
+    CONSTRAINT pk_weibull PRIMARY KEY (id)
 );
--- RESET client_min_messages;
 
-COPY weibull (id, x1, x2, y) FROM stdin;
-1	41.9	29.1	251.3
-2	43.4	29.3	251.3
-3	43.9	29.5	248.3
-4	44.5	29.7	267.5
-5	47.3	29.9	273.0
-6	47.5	30.3	276.5
-7	47.9	30.5	270.3
-8	50.2	30.7	274.9
-9	52.8	30.8	285.0
-10	53.2	30.9	290.0
-11	56.7	31.5	297.0
-12	57.0	31.7	302.5
-13	63.5	31.9	304.5
-14	65.3	32.0	309.3
-15	71.1	32.1	321.7
-16	77.0	32.5	330.7
-17	77.8	32.9	349.0
-\.
+/*
+ * We materialize the table here because on MPP systems we want to distribute
+ * the data to the segments (and not do the calculations in memory).
+ */
+INSERT INTO weibull(id, x1, x2, y) VALUES
+( 1, 41.9, 29.1, 251.3),
+( 2, 43.4, 29.3, 251.3),
+( 3, 43.9, 29.5, 248.3),
+( 4, 44.5, 29.7, 267.5),
+( 5, 47.3, 29.9, 273.0),
+( 6, 47.5, 30.3, 276.5),
+( 7, 47.9, 30.5, 270.3),
+( 8, 50.2, 30.7, 274.9),
+( 9, 52.8, 30.8, 285.0),
+(10, 53.2, 30.9, 290.0),
+(11, 56.7, 31.5, 297.0),
+(12, 57.0, 31.7, 302.5),
+(13, 63.5, 31.9, 304.5),
+(14, 65.3, 32.0, 309.3),
+(15, 71.1, 32.1, 321.7),
+(16, 77.0, 32.5, 330.7),
+(17, 77.8, 32.9, 349.0);
+
+SELECT assert(
+    relative_error(coef, ARRAY[-153.51, 1.24, 12.08]) < 1e-4 AND
+    relative_error(t_stats[2], 3.1393) < 1e-4 AND
+    relative_error(t_stats[3], 3.0726) < 1e-4 AND
+    relative_error(p_values[3], 0.0083) < 1e-2,
+    'Linear regression (weibull.com test): Wrong results'
+) FROM (
+    SELECT (linregr(y, ARRAY[1, x1, x2])).*
+    FROM weibull
+) q;
 
 
--- The following example is taken from:
--- http://biocomp.health.unm.edu/biomed505/Course/Cheminformatics/advanced/
--- data_classification_qsar/linear_multilinear_regression.pdf
-
--- SET client_min_messages = error;
-CREATE TABLE unm
-(
-	id INTEGER NOT NULL,
-	x1 DOUBLE PRECISION,
-	x2 DOUBLE PRECISION,
-	y DOUBLE PRECISION,
-	CONSTRAINT pk_unm PRIMARY KEY (id)
+/*
+ * The following example is taken from:
+ * http://biocomp.health.unm.edu/biomed505/Course/Cheminformatics/advanced/data_classification_qsar/linear_multilinear_regression.pdf
+ */
+CREATE TABLE unm (
+    id INTEGER NOT NULL,
+    x1 DOUBLE PRECISION,
+    x2 DOUBLE PRECISION,
+    y DOUBLE PRECISION,
+    CONSTRAINT pk_unm PRIMARY KEY (id)
 );
--- RESET client_min_messages;
 
-COPY unm (id, x1, x2, y) FROM stdin;
-1	0	0.30	10.14
-2	0.69	0.60	11.93
-3	1.10	0.90	13.57
-4	1.39	1.20	14.17
-5	1.61	1.50	15.25
-6	1.79	1.80	16.15
-\.
+INSERT INTO unm(id, x1, x2, y) VALUES
+(1, 0,    0.30, 10.14),
+(2, 0.69, 0.60, 11.93),
+(3, 1.10, 0.90, 13.57),
+(4, 1.39, 1.20, 14.17),
+(5, 1.61, 1.50, 15.25),
+(6, 1.79, 1.80, 16.15);
+
+SELECT assert(
+    relative_error(coef, ARRAY[9.69, 2.09, 1.50]) < 1e-2,
+    'Linear regression (unm): Wrong coefficients'
+) FROM (
+    SELECT (linregr(y, ARRAY[1, x1, x2])).*
+    FROM unm
+) q;
 
 
-
--- The following example is taken from:
--- http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf
-
--- SET client_min_messages = error;
-CREATE TABLE houses
-(
-	id SERIAL NOT NULL,
-	tax INTEGER,
-	bedroom REAL,
-	bath REAL,
-	price INTEGER,
-	size INTEGER,
-	lot INTEGER,
-	CONSTRAINT pk_houses PRIMARY KEY (id)
+/*
+ * The following example is taken from:
+ * http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf
+ */
+CREATE TABLE houses (
+    id SERIAL NOT NULL,
+    tax INTEGER,
+    bedroom REAL,
+    bath REAL,
+    price INTEGER,
+    size INTEGER,
+    lot INTEGER,
+    CONSTRAINT pk_houses PRIMARY KEY (id)
 );
--- RESET client_min_messages;
 
-COPY houses (tax, bedroom, bath, price, size, lot) FROM stdin;
-590	2	1	50000	770	22100
-1050	3	2	85000	1410	12000
-20	3	1	22500	1060	3500
-870	2	2	90000	1300	17500
-1320	3	2	133000	1500	30000
-1350	2	1	90500	820	25700
-2790	3	2.5	260000	2130	25000
-680	2	1	142500	1170	22000
-1840	3	2	160000	1500	19000
-3680	4	2	240000	2790	20000
-1660	3	1	87000	1030	17500
-1620	3	2	118600	1250	20000
-3100	3	2	140000	1760	38000
-2070	2	3	148000	1550	14000
-650	3	1.5	65000	1450	12000
-\.
+INSERT INTO houses(tax, bedroom, bath, price, size, lot) VALUES
+( 590, 2, 1,    50000,  770, 22100),
+(1050, 3, 2,    85000, 1410, 12000),
+(  20, 3, 1,    22500, 1060, 3500 ),
+( 870, 2, 2,    90000, 1300, 17500),
+(1320, 3, 2,   133000, 1500, 30000),
+(1350, 2, 1,    90500,  820, 25700),
+(2790, 3, 2.5, 260000, 2130, 25000),
+( 680, 2, 1,   142500, 1170, 22000),
+(1840, 3, 2,   160000, 1500, 19000),
+(3680, 4, 2,   240000, 2790, 20000),
+(1660, 3, 1,    87000, 1030, 17500),
+(1620, 3, 2,   118600, 1250, 20000),
+(3100, 3, 2,   140000, 1760, 38000),
+(2070, 2, 3,   148000, 1550, 14000),
+( 650, 3, 1.5,  65000, 1450, 12000);
 
---------------------------------------------------------------------------------
--- Test
---------------------------------------------------------------------------------
-
--- We convert to real in order to round to fewer significant digits. Otherwise,
--- different platform might produce slightly different results for the least
--- significant digits, depending on the implementation of internal library
--- functions.
-
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).coef::REAL[] from weibull;
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).r2::REAL from weibull;
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).t_stats::REAL[] from weibull;
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).p_values::REAL[] from weibull;
-
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).coef::REAL[] from unm;
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).r2::REAL from unm;
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).t_stats::REAL[] from unm;
-select (MADLIB_SCHEMA.linregr(y, array[1, x1, x2])).p_values::REAL[] from unm;
-
-select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).coef::REAL[] from houses;
-select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).r2::REAL from houses;
-select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).t_stats::REAL[] from houses;
-select (MADLIB_SCHEMA.linregr(price, array[1, bedroom, bath, size])).p_values::REAL[] from houses;
-
+-- Values computed with MADlib
+SELECT assert(
+    relative_error(coef, ARRAY[27923.43, -35524.78, 2269.34, 130.79]) < 1e-4 AND
+    relative_error(r2, 0.74537) < 1e-3 AND
+    relative_error(std_err, ARRAY[56306, 25037, 22208, 36.209]) < 1e-4 AND
+    relative_error(t_stats, ARRAY[0.49592, -1.4189, 0.10218, 3.6122]) < 1e-4 AND
+    relative_error(p_values, ARRAY[0.62971, 0.18363, 0.92045, 0.0040816]) < 1e-4 AND
+    relative_error(condition_no, 95707449) < 1e-4,
+    'Linear regression (houses): Wrong results'
+) FROM (
+    SELECT (linregr(price, array[1, bedroom, bath, size])).*
+    FROM houses
+) q;

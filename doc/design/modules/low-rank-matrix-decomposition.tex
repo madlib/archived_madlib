@@ -1,0 +1,70 @@
+% When using TeXShop on the Mac, let it know the root document.
+% The following must be one of the first 20 lines.
+% !TEX root = ../design.tex
+
+\chapter{Low-rank Matrix Factorization}
+
+% Abstract. What is the problem we want to solve?
+This module implements "factor model" for representing a sparse matrix using a low-rank approximation \cite{DBLP:conf/icml/SrebroJ03}.
+Mathematically, this model seeks to find matrices U and V (also referred as factors) that, for any given sparse matrix A, minimizes:
+\[ \|\boldsymbol A - \boldsymbol UV^{T} \|_2 \]
+subject to $rank(\boldsymbol UV^{T}) \leq r$, where $\|\cdot\|_2$ denotes the Frobenius norm and $1 \leq r \leq rank(\boldsymbol A)$.
+Let $A$ be a $m \times n$ matrix, then $U$ will be $m \times r$ and $V$ will be $n \times r$, in dimension.
+This model is not intended to do the full decomposition, or to be used as part of inverse procedure.
+This model has been widely used in recommendation systems (e.g., Netflix~\cite{:TheNetflixPrize07}) and feature selection (e.g., image processing~\cite{DBLP:conf/nips/WrightGRPM09}).
+
+\section{Incremental Gradient Descent}
+
+% Background. Why can we solve the problem with incremental gradient?
+\subsection{Solving as a Convex Program}
+Recent work \cite{DBLP:journals/cacm/CandesR12, DBLP:journals/siamrev/RechtFP10} has demonstrated that the low-rank matrix factorization can be solved as a convex programming problem.
+This body of work enables us to solve the problem by using gradient-based line search algorithms.
+Among many of these algorithms, incremental gradient descent algorithm is a popular choice, especially for really large input matrices \cite{DBLP:conf/sigmod/FengKRR12, DBLP:conf/kdd/GemullaNHS11}.
+
+\subsection{Formal Description}
+\begin{algorithm}[lmf-igd$(r, A, \alpha)$] \label{alg:lmf-igd}
+\alginput{Sparse matrix $A$,
+\\step size $\alpha$,
+\\low-rank constraint $r$, 
+\\convergence criterion $\mathit{Convergence}$,
+\\random factor generator $\mathit{GenerateFactor}$}
+\algoutput{Factors $U$ ($m \times r$) and $V$ ($n \times r$)}
+\algprecond{$\mathit{iteration} = 0$}
+\begin{algorithmic}[1]
+	\State $U \set \mathit{GenerateFactor}(m, r)$
+	\State $V \set \mathit{GenerateFactor}(n, r)$
+	\Repeat
+		\State $\mathit{iteration} \set \mathit{iteration} + 1$
+		\State $U_\text{old} \set U$
+		\State $V_\text{old} \set V$
+		\For{$(i, j, y) \in A$} \Comment{Single entry in sparse matrix A}
+			\State $e \set U_i \cdot V_j - y$
+			\State $\mathit{temp} \set U_i - \alpha e V_j$
+			\State $V_j \set V_j - \alpha e U_i$ \Comment{In-place update of V}
+			\State $U_i \set \mathit{temp}$ \Comment{In-place update of U}
+		\EndFor
+	\Until{$Convergence(U_\text{old}, V_\text{old}, U, V, \mathit{iteration})$}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{description}
+	\item[Runtime] $O(N_{A} (m + n) r + m n r)$ for one iteration,
+        where $N_{A}$ is the number of nonzero elements in $A$.
+
+	\item[Space] Store the $\mathit{temp}$, an $r$-floating-point vector.
+
+	\item[Parallelism] The outer loop is inherently sequential.
+        The inner loop is data-parallel and model averaging \cite{DBLP:conf/nips/DuchiAW10} is used.
+
+    \item[Factor initialization] The author of this document is not aware that significant differences are caused if random factors are initialized by different distributions.
+        But zero values should be avoided.
+        And entries in factors should not be initialized as the same value; otherwise, factors will always be rank 1.
+
+    \item[Convergence criterion] Usually, following conditions are combined by AND, OR, or NOT.
+        \begin{enumerate}
+            \item The change in the objective drops below a given threshold (E.g., RMSE).
+            \item The value of the objective matches some pre-computed value.
+            \item The maximum number of iterations has been reached.
+            \item There could be more.
+        \end{enumerate}
+\end{description}

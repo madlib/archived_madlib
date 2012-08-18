@@ -10,6 +10,13 @@
 #ifndef MADLIB_DBAL_HPP
 #define MADLIB_DBAL_HPP
 
+#define MADLIB_DEFAULT_EXCEPTION std::runtime_error("Internal error")
+#define madlib_assert(_cond, _exception) \
+    do { \
+        if(!(_cond)) \
+            throw _exception; \
+    } while(false)
+
 namespace madlib {
 
 /**
@@ -28,6 +35,14 @@ enum Mutability {
     Mutable
 };
 
+/**
+ * @brief Memory context to use for allocation (hint only)
+ *
+ * This is only meant to be a hint to the platform-specific parts of the AL.
+ * An implementation may choose to perform an allocation in a specific aggregate
+ * context if the memory needs to live longer than the current function call.
+ * It should be used, e.g., when allocating transition states.
+ */
 enum MemoryContext {
     FunctionContext,
     AggregateContext
@@ -46,6 +61,9 @@ enum OnMemoryAllocationFailure {
 } // namespace dbal
 
 } // namespace madlib
+
+// Boost integration is non-optional
+#include "BoostIntegration/BoostIntegration.hpp"
 
 #include "OutputStreamBufferBase_proto.hpp"
 #include "OutputStreamBufferBase_impl.hpp"

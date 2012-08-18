@@ -15,8 +15,8 @@ namespace postgres {
 
 /**
  * @brief Construct an empty postgres array of the given size.
- * 
- * This calls allocate() to allocate a block of memory and then initializes 
+ *
+ * This calls allocate() to allocate a block of memory and then initializes
  * PostgreSQL meta information.
  *
  * @note
@@ -24,48 +24,81 @@ namespace postgres {
  *     <tt>MC = dbal::FunctionContext</tt>, <tt>ZM = dbal::DoZero</tt>,
  *     <tt>F = dbal::ThrowBadAlloc</tt>
  */
-template <typename T, dbal::MemoryContext MC, dbal::ZeroMemory ZM,
-    dbal::OnMemoryAllocationFailure F>
+template <typename T, std::size_t Dimensions, dbal::MemoryContext MC,
+    dbal::ZeroMemory ZM, dbal::OnMemoryAllocationFailure F>
 inline
 MutableArrayHandle<T>
-Allocator::allocateArray(size_t inNumElements) const {    
+Allocator::internalAllocateArray(
+    const std::array<std::size_t, Dimensions>& inNumElements) const {
+
+    std::size_t numElements = Dimensions ? 1 : 0;
+    for (std::size_t i = 0; i < Dimensions; ++i)
+        numElements *= inNumElements[i];
+
     /*
      * Check that the size will not exceed addressable memory. Therefore, the
      * following precondition has to hold:
-     * ((std::numeric_limits<size_t>::max() - ARR_OVERHEAD_NONULLS(1)) /
-     *     inElementSize >= inNumElements)
+     * ((std::numeric_limits<std::size_t>::max()
+     *     - ARR_OVERHEAD_NONULLS(Dimensions)) / inElementSize >= numElements)
      */
-    if ((std::numeric_limits<size_t>::max() - ARR_OVERHEAD_NONULLS(1)) /
-            sizeof(T) < inNumElements)
+    if ((std::numeric_limits<std::size_t>::max()
+        - ARR_OVERHEAD_NONULLS(Dimensions)) / sizeof(T) < numElements)
         throw std::bad_alloc();
-    
-    size_t		size = sizeof(T) * inNumElements + ARR_OVERHEAD_NONULLS(1);
-    ArrayType	*array;
+
+    std::size_t size = sizeof(T) * numElements
+        + ARR_OVERHEAD_NONULLS(Dimensions);
+    ArrayType *array;
 
     // Note: Except for the allocate call, the following statements do not call
     // into the PostgreSQL backend. We are only using macros here.
-    
+
     // PostgreSQL requires that all memory is overwritten with zeros. So
     // we ingore ZM here
     array = static_cast<ArrayType*>(allocate<MC, dbal::DoZero, F>(size));
-        
+
     SET_VARSIZE(array, size);
-    array->ndim = 1;
+    array->ndim = Dimensions;
     array->dataoffset = 0;
     array->elemtype = TypeTraits<T>::oid;
-    ARR_DIMS(array)[0] = inNumElements;
-    ARR_LBOUND(array)[0] = 1;
-    
+    for (std::size_t i = 0; i < Dimensions; ++i) {
+        ARR_DIMS(array)[i] = static_cast<int>(inNumElements[i]);
+        ARR_LBOUND(array)[i] = 1;
+    }
+
     return MutableArrayHandle<T>(array);
 }
 
-template <typename T>
-inline
-MutableArrayHandle<T>
-Allocator::allocateArray(size_t inNumElements) const {
-    return allocateArray<T, dbal::FunctionContext, dbal::DoZero,    
-        dbal::ThrowBadAlloc>(inNumElements);
-}
+#define MADLIB_ALLOCATE_ARRAY_DEF(z, n, _ignored) \
+    template <typename T> \
+    inline \
+    MutableArrayHandle<T> \
+    Allocator::allocateArray( \
+        BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), std::size_t inDim) \
+    ) const { \
+        std::array<std::size_t, BOOST_PP_INC(n)> numElements = {{ \
+            BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), inDim) \
+        }}; \
+        return internalAllocateArray<T, BOOST_PP_INC(n), \
+            dbal::FunctionContext, dbal::DoZero, dbal::ThrowBadAlloc> \
+            (numElements); \
+    } \
+    \
+    template <typename T, dbal::MemoryContext MC, \
+        dbal::ZeroMemory ZM, dbal::OnMemoryAllocationFailure F> \
+    inline \
+    MutableArrayHandle<T> \
+    Allocator::allocateArray( \
+        BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), std::size_t inDim) \
+    ) const { \
+        std::array<std::size_t, BOOST_PP_INC(n)> numElements = {{ \
+            BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), inDim) \
+        }}; \
+        return internalAllocateArray<T, BOOST_PP_INC(n), MC, ZM, F> \
+        (numElements); \
+    }
+BOOST_PP_REPEAT(MADLIB_MAX_ARRAY_DIMS, MADLIB_ALLOCATE_ARRAY_DEF,
+    0 /* ignored */)
+#undef MADLIB_ALLOCATE_ARRAY_DEF
 
 /**
  * @brief Allocate a block of memory
@@ -109,7 +142,7 @@ Allocator::reallocate(void *inPtr, const size_t inSize) const {
  * @brief Free a block of memory previously allocated with
  *     Allocator allocation functions
  *
- * @internal 
+ * @internal
  *     This function uses the PostgreSQL pfree() macro. This calls
  *     MemoryContextFreeImpl, which again calls, by default, AllocSetFree() from
  *     utils/mmgr/aset.c.
@@ -131,7 +164,7 @@ void
 Allocator::free(void *inPtr) const {
     if (inPtr == NULL)
         return;
-        
+
     /*
      * See allocate(const size_t, const std::nothrow_t&) why we disable
      * processing of interrupts.
@@ -149,7 +182,7 @@ Allocator::free(void *inPtr) const {
  * @brief Thin wrapper around \c palloc() that returns a 16-byte-aligned
  *     pointer.
  *
- * @internal 
+ * @internal
  *     This function uses the PostgreSQL palloc() and palloc0() macros. They
  *     call MemoryContextAllocImpl() or MemoryContextAllocZeroImpl(),
  *     respectively, which then call, by default, AllocSetAlloc() from
@@ -168,7 +201,7 @@ Allocator::internalPalloc(size_t inSize) const {
 #else
     if (inSize > std::numeric_limits<size_t>::max() - 16)
         return NULL;
-    
+
     /* Precondition: inSize <= std::numeric_limits<size_t>::max() - 16 */
     const size_t size = inSize + 16;
     void *raw = (ZM == dbal::DoZero) ? palloc0(size) : palloc(size);
@@ -181,8 +214,8 @@ Allocator::internalPalloc(size_t inSize) const {
  *     pointer.
  *
  * @tparam ZM Initialize memory block by overwriting with zeros?
- * 
- * @internal 
+ *
+ * @internal
  *     This function uses the PostgreSQL repalloc() macro. This calls
  *     MemoryContextReallocImpl, which again calls, by default,
  *     AllocSetRealloc() from utils/mmgr/aset.c.
@@ -202,17 +235,17 @@ Allocator::internalRePalloc(void *inPtr, size_t inSize) const {
         pfree(unaligned(inPtr));
         return NULL;
     }
-    
+
     /* Precondition: inSize <= std::numeric_limits<size_t>::max() - 16 */
     const size_t size = inSize + 16;
     void *raw = repalloc(unaligned(inPtr), size);
-    
+
     if (ZM == dbal::DoZero) {
         std::fill(
             static_cast<char*>(raw),
             static_cast<char*>(raw) + inSize, 0);
     }
-    
+
     return makeAligned(raw);
 #endif
 }
@@ -259,7 +292,7 @@ Allocator::unaligned(void *inPtr) const {
 
 /**
  * @brief Allocate memory in our PostgreSQL memory context. Throws on fail.
- * 
+ *
  * @tparam MC Which memory context to allocate in?
  * @tparam ZM Initialize memory block by overwriting with zeros?
  * @tparam F What to do in case of failure?
@@ -305,11 +338,9 @@ void *
 Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
     // Avoid warning that inPtr is not used if R == NewAllocation
     (void) inPtr;
-    
+
     void *ptr;
     bool errorOccurred = false;
-    MemoryContext oldContext = NULL;
-    MemoryContext aggContext = NULL;
 
     if (F == dbal::ReturnNULL) {
         /*
@@ -320,21 +351,22 @@ Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
          */
         HOLD_INTERRUPTS();
     }
-        
+
     PG_TRY(); {
-        if (MC == dbal::AggregateContext) {
-            if (!AggCheckCallContext(fcinfo, &aggContext))
-                errorOccurred = true;
-            else {
-                oldContext = MemoryContextSwitchTo(aggContext);
-                ptr = (R == Reallocation) ? internalRePalloc<ZM>(inPtr, inSize)
-                                          : internalPalloc<ZM>(inSize);
-                MemoryContextSwitchTo(oldContext);
-            }
-        } else {
-            ptr = R ? internalRePalloc<ZM>(inPtr, inSize)
-                    : internalPalloc<ZM>(inSize);
-        }
+        /*
+         * We used to respect the request for MC == dbal::AggregateContext here,
+         * but current PostgreSQL/Greenplum versions do not take any advantage
+         * of transition states allocated in the aggregate context anyways.
+         * They still copy the transition state, whenever the address of the
+         * returned state is different from the address of the input state.
+         *
+         * Any other use of the aggregate context (say, auxiliary data/caches
+         * for transition states) is not currently supported by the C++ AL.
+         *
+         * See also: MADLIB-606 (issue that triggered this code change).
+         */
+        ptr = R ? internalRePalloc<ZM>(inPtr, inSize)
+                : internalPalloc<ZM>(inSize);
     } PG_CATCH(); {
         if (F == dbal::ReturnNULL) {
             /*
@@ -361,26 +393,10 @@ Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
         }
     } PG_END_TRY();
 
-    if (errorOccurred) {
-        PG_TRY(); {
-            // Clean up after ourselves
-            if (oldContext != NULL)
-                MemoryContextSwitchTo(oldContext);
-        } PG_CATCH(); {
-            if (F == dbal::ReturnNULL) {
-                // We tried to clean up after ourselves. If this fails, we can
-                // only ignore the issue.
-                FlushErrorState();
-            } 
-            // Else do nothing. We will add a bad-allocation exception on top of
-            // the existing PostgreSQL exception stack.
-        } PG_END_TRY();
-    }
-    
     if (F == dbal::ReturnNULL) {
         RESUME_INTERRUPTS();
     }
-   
+
     if (errorOccurred || !ptr)
         // We do not want to interleave PG exceptions and C++ exceptions.
         throw std::bad_alloc();

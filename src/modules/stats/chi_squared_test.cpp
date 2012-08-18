@@ -8,10 +8,7 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
-#include <modules/prob/prob.hpp>
-
-// We use string concatenation with the + operator
-#include <string>
+#include <modules/prob/boost.hpp>
 
 #include "chi_squared_test.hpp"
 
@@ -19,16 +16,13 @@ namespace madlib {
 
 namespace modules {
 
-// Import names from other MADlib modules
-using prob::chiSquaredCDF;
-
 namespace stats {
 
 /**
  * @brief Transition state for chi-squared functions
  *
  * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length 7, and all elements are 0. Handle::operator[] will
+ * database with length 6, and all elements are 0. Handle::operator[] will
  * perform bounds checking.
  */
 template <class Handle>
@@ -41,13 +35,12 @@ public:
         sum_obs_square_over_expect(&mStorage[2]),
         sum_obs(&mStorage[3]),
         sumSquaredDeviations(&mStorage[4]),
-        uniformDist(&mStorage[5]),
-        df(&mStorage[6]) { }
-    
+        df(&mStorage[5]) { }
+
     inline operator AnyType() const {
         return mStorage;
     }
-    
+
 private:
     Handle mStorage;
 
@@ -57,8 +50,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToDouble sum_obs_square_over_expect;
     typename HandleTraits<Handle>::ReferenceToDouble sum_obs;
     typename HandleTraits<Handle>::ReferenceToDouble sumSquaredDeviations;
-    
-    typename HandleTraits<Handle>::ReferenceToBool uniformDist;
+
     typename HandleTraits<Handle>::ReferenceToInt64 df;
 };
 
@@ -70,10 +62,10 @@ updateSumSquaredDeviations(double &ioLeftNumRows, double &ioLeftSumExp,
     double inRightNumRows, double inRightSumExp,
     double inRightSumObsSquareOverExp, double inRightSumObs,
     double inRightSumSquaredDeviations) {
-    
+
     if (inRightNumRows <= 0)
         return;
-    
+
     // FIXME: Use compensated sums for numerical stability
     // http://jira.madlib.net/browse/MADLIB-501
     ioLeftSumSquaredDeviations
@@ -81,7 +73,7 @@ updateSumSquaredDeviations(double &ioLeftNumRows, double &ioLeftSumExp,
             + ioLeftSumExp * inRightSumObsSquareOverExp
             + ioLeftSumObsSquareOverExp * inRightSumExp
             - 2 * ioLeftSumObs * inRightSumObs;
-    
+
     ioLeftNumRows += inRightNumRows;
     ioLeftSumExp += inRightSumExp;
     ioLeftSumObsSquareOverExp += inRightSumObsSquareOverExp;
@@ -90,35 +82,37 @@ updateSumSquaredDeviations(double &ioLeftNumRows, double &ioLeftSumExp,
 
 AnyType
 chi2_gof_test_transition::run(AnyType &args) {
+    // §4.15.4 ("Aggregate functions") of ISO/IEC 9075-2:2003, "SQL/Foundation"
+    // demands that rows containing NULLs are ignored
+    // We currently rely on the backend filtering out rows with NULLs, i.e., to
+    // perform an action equivalent to:
+    // for (uint16_t i = 0; i < args.numFields(); ++i)
+    //    if (args[i].isNull)
+    //        return state;
+
     Chi2TestTransitionState<MutableArrayHandle<double> > state = args[0];
-    int64_t observed = args[1].getAs<int64_t>();
-    AnyType expectedArg = args.numFields() >= 3 ? args[2] : Null();
-    double expected = expectedArg.isNull() ? 1 : expectedArg.getAs<double>();
-    AnyType dfArg = args.numFields() >= 4 ? args[3] : Null();
-    int64_t df = dfArg.isNull() ? -1 : dfArg.getAs<int64_t>();
-    
-    if (state.uniformDist != expectedArg.isNull()) {
-        if (state.numRows > 0)
-            throw std::invalid_argument("Expected number of observations must "
-                "be given for all events or must be NULL for all events, in "
-                "which case a discrete uniform distribution is assumed.");
-        state.uniformDist = expectedArg.isNull();
-    }
-    
-    if (!dfArg.isNull() && df <= 0)
-        throw std::invalid_argument("Degree of freedom must be positive.");
+    double observed = static_cast<double>(args[1].getAs<int64_t>());
+    double expected = args.numFields() <= 2 ? 1 : args[2].getAs<double>();
+    int64_t df = args.numFields() <= 3 ? 0 : args[3].getAs<int64_t>();
+
+    if (observed < 0)
+        throw std::invalid_argument("Number of observations must be "
+            "nonnegative.");
+    else if (df < 0)
+        throw std::invalid_argument("Degree of freedom must be positive (or 0 "
+            "to use the default of <number of rows> - 1).");
     else if (state.df != df) {
         if (state.numRows > 0)
             throw std::invalid_argument("Degree of freedom must be constant.");
         state.df = df;
     }
 
-    updateSumSquaredDeviations(state.numRows, state.sum_expect,
-        state.sum_obs_square_over_expect, state.sum_obs,
-        state.sumSquaredDeviations,
-        1, expected, static_cast<double>(observed) * observed / expected,
+    updateSumSquaredDeviations(state.numRows.ref(), state.sum_expect.ref(),
+        state.sum_obs_square_over_expect.ref(), state.sum_obs.ref(),
+        state.sumSquaredDeviations.ref(),
+        1, expected, observed * observed / expected,
         observed, 0);
-    
+
     return state;
 }
 
@@ -126,37 +120,30 @@ AnyType
 chi2_gof_test_merge_states::run(AnyType &args) {
     Chi2TestTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     Chi2TestTransitionState<ArrayHandle<double> > stateRight = args[1];
-    
-    if (stateLeft.uniformDist != stateRight.uniformDist) {
-        if (stateLeft.numRows == 0)
-            stateLeft.uniformDist = stateRight.uniformDist;
-        else if (stateRight.numRows > 0)
-            throw std::invalid_argument("Expected number of observations must "
-                "be given for all events or must be NULL for all events, in "
-                "which case a discrete uniform distribution is assumed.");
-    }
-    
+
     if (stateLeft.df != stateRight.df) {
         if (stateLeft.numRows == 0)
             stateLeft.df = stateRight.df;
         else if (stateRight.numRows > 0)
             throw std::invalid_argument("Degree of freedom must be constant.");
     }
-    
+
     // Merge states together and return
     updateSumSquaredDeviations(
-        stateLeft.numRows, stateLeft.sum_expect,
-            stateLeft.sum_obs_square_over_expect,
-            stateLeft.sum_obs, stateLeft.sumSquaredDeviations,
-        stateRight.numRows, stateRight.sum_expect,
+        stateLeft.numRows.ref(), stateLeft.sum_expect.ref(),
+            stateLeft.sum_obs_square_over_expect.ref(),
+            stateLeft.sum_obs.ref(), stateLeft.sumSquaredDeviations.ref(),
+        stateRight.numRows.ref(), stateRight.sum_expect,
             stateRight.sum_obs_square_over_expect,
             stateRight.sum_obs, stateRight.sumSquaredDeviations);
-    
+
     return stateLeft;
 }
 
 AnyType
 chi2_gof_test_final::run(AnyType &args) {
+    using boost::math::complement;
+
     Chi2TestTransitionState<ArrayHandle<double> > state = args[0];
 
     // If we haven't seen any data, just return Null. This is the standard
@@ -164,20 +151,24 @@ chi2_gof_test_final::run(AnyType &args) {
     // how PostgreSQL handles sum or avg on empty inputs)
     if (state.numRows == 0)
         return Null();
-    
-    int64_t degreeOfFreedom = state.df < 0 ? state.numRows - 1 : state.df;
+
+    int64_t degreeOfFreedom = state.df == 0 ? state.numRows - 1 : state.df;
     double statistic = state.sumSquaredDeviations / state.sum_obs;
-    
+
     // Phi coefficient
-    double phi = std::sqrt(statistic / state.numRows);
-    
+    double phi = std::sqrt(statistic / static_cast<double>(state.numRows));
+
     // Contingency coefficient
-    double C = std::sqrt(statistic / (state.numRows + statistic));
-    
+    double C = std::sqrt(statistic
+             / (static_cast<double>(state.numRows) + statistic));
+
     AnyType tuple;
     tuple
         << statistic
-        << 1. - chiSquaredCDF(statistic, degreeOfFreedom)
+        << (degreeOfFreedom > 0
+            ? prob::cdf(complement(prob::chi_squared(
+                static_cast<double>(degreeOfFreedom)), statistic))
+            : Null())
         << degreeOfFreedom
         << phi
         << C;

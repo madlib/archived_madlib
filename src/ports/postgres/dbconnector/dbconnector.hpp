@@ -67,24 +67,32 @@ extern "C" {
 #undef dngettext
 #endif
 
+#include <dbal/dbal.hpp>
+#include <utils/Reference.hpp>
+#include <utils/Math.hpp>
 
 // Note: If errors occur in the following include files, it could indicate that
 // new macros have been added to PostgreSQL header files.
 #include <boost/type_traits/is_const.hpp>
 #include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/utility/enable_if.hpp>
+#include <boost/tr1/array.hpp>
+#include <boost/tr1/tuple.hpp>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 #include <fstream>
 
-#define MADLIB_DEFAULT_EXCEPTION std::runtime_error("Internal error")
-#define madlib_assert(_cond, _exception) \
-    do { \
-        if(!(_cond)) \
-            throw _exception; \
-    } while(false)
+namespace std {
+    // Import names from TR1.
 
+    // The following are currently provided by boost.
+    using tr1::array;
+    using tr1::tuple;
+    using tr1::get;
+}
+
+#if !defined(NDEBUG) && !defined(EIGEN_NO_DEBUG)
 #define eigen_assert(x) \
     do { \
         if(!Eigen::internal::copy_bool(x)) \
@@ -93,6 +101,7 @@ extern "C" {
                 EIGEN_MAKESTRING(x) ") in function ") + __PRETTY_FUNCTION__ + \
                 " at " __FILE__ ":" EIGEN_MAKESTRING(__LINE__)); \
     } while(false)
+#endif // !defined(NDEBUG) && !defined(EIGEN_NO_DEBUG)
 
 // We need to make _oldContext volatile because if an exception occurs, the
 // register holding its value might have been overwritten (and the variable
@@ -161,14 +170,17 @@ madlib ## _ ## _pgfunc _arglist { \
  */
 #define MADLIB_FUNC_MAX_ARGS 9
 
+/**
+ * The maximum number of dimensions in an array
+ */
+#define MADLIB_MAX_ARRAY_DIMS 2
 
-#include <dbal/dbal.hpp>
-#include <utils/Reference.hpp>
 
 #include "Allocator_proto.hpp"
 #include "ArrayHandle_proto.hpp"
 #include "AnyType_proto.hpp"
 #include "FunctionHandle_proto.hpp"
+#include "NativeRandomNumberGenerator_proto.hpp"
 #include "PGException_proto.hpp"
 #include "OutputStreamBuffer_proto.hpp"
 #include "SystemInformation_proto.hpp"
@@ -188,6 +200,7 @@ using dbconnector::postgres::ArrayHandle;
 using dbconnector::postgres::FunctionHandle;
 using dbconnector::postgres::MutableArrayHandle;
 using dbconnector::postgres::MutableTransparentHandle;
+using dbconnector::postgres::NativeRandomNumberGenerator;
 using dbconnector::postgres::TransparentHandle;
 
 // Import MADlib functions into madlib namespace
@@ -196,45 +209,22 @@ using dbconnector::postgres::Null;
 
 } // namespace madlib
 
-
-// FIXME: This should be further up. Currently dependency on Allocator
+// FIXME: The following include should be further up. Currently dependent on
+// Allocator
 #include <dbal/EigenIntegration/EigenIntegration.hpp>
-
-// FIXME: The following is not the right place...
-namespace madlib {
-
-namespace dbal {
-
-namespace eigen_integration {
-
-template <class EigenType>
-struct DefaultHandle<EigenType, true> {
-    typedef dbconnector::postgres::ArrayHandle<typename EigenType::Scalar> type;
-};
-template <class EigenType>
-struct DefaultHandle<EigenType, false> {
-    typedef dbconnector::postgres::MutableArrayHandle<typename EigenType::Scalar> type;
-};
-
-} // namespace eigen_integration
-
-} // namespace dbal
-
-} // namespace madlib
-
-// FIXME: This is messy, having Sparse vector here
-#include "SparseVector_proto.hpp"
+#include "EigenIntegration_proto.hpp"
 
 #include "TypeTraits.hpp"
 #include "Allocator_impl.hpp"
 #include "AnyType_impl.hpp"
 #include "ArrayHandle_impl.hpp"
+#include "EigenIntegration_impl.hpp"
 #include "FunctionHandle_impl.hpp"
+#include "NativeRandomNumberGenerator_impl.hpp"
 #include "OutputStreamBuffer_impl.hpp"
 #include "TransparentHandle_impl.hpp"
 #include "UDF_impl.hpp"
 #include "SystemInformation_impl.hpp"
-#include "SparseVector_impl.hpp"
 
 
 #define DECLARE_UDF(_module, _name) \

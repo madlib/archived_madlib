@@ -1270,40 +1270,46 @@ RETURNS void AS $$
 DECLARE
     curstmt         TEXT := '';
     num             INT := 0;
-    min_val         FLOAT8;
+    avg_val         FLOAT8;
     coltable_name2  TEXT := coltable_name;
 BEGIN
     -- insert the continuous features
     IF (is_persistent) THEN
+        -- We use average value for a best guess here.
+        -- With average value, we expect to get the least deviations.
         SELECT MADLIB_SCHEMA.__format
             (
-                'SELECT coalesce(min(%), 1) - 1 FROM %', 
+                'SELECT coalesce(avg(%), 0) FROM %', 
                 column_name,
                 input_table_name
             ) INTO curstmt;
             
-        EXECUTE curstmt INTO min_val;
+        EXECUTE curstmt INTO avg_val;
 
+        -- Meta table is created for both 'explicit' and 'ignore'.
         SELECT MADLIB_SCHEMA.__format
             (
                 'CREATE TABLE %(key) AS SELECT % 
                  m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (key)')', 
                 coltable_name2,
-                MADLIB_SCHEMA.__to_char(min_val)
+                MADLIB_SCHEMA.__to_char(avg_val)
             ) INTO curstmt;
             
-        EXECUTE curstmt;
-                
-        SELECT MADLIB_SCHEMA.__format
-            (
-                'UPDATE % SET %=% WHERE % is null;',
-                      encoded_table_name,
-                      column_name,
-                      MADLIB_SCHEMA.__to_char(min_val),
-                      column_name
-            ) INTO curstmt;
+        EXECUTE curstmt;    
+
+        -- When 'explicit', replace these missing values with one explicit value.
+        IF (h2hmv_routine_id=2) THEN
+            SELECT MADLIB_SCHEMA.__format
+                (
+                    'UPDATE % SET %=% WHERE % is null;',
+                        encoded_table_name,
+                        column_name,
+                        MADLIB_SCHEMA.__to_char(avg_val),
+                        column_name
+                ) INTO curstmt;
              
-        EXECUTE curstmt;
+            EXECUTE curstmt;
+        END IF;
         
         SELECT MADLIB_SCHEMA.__format
             (
@@ -1317,24 +1323,27 @@ BEGIN
         PERFORM MADLIB_SCHEMA.__insert_into_metatable
             (metatable_name, column_name, 'f', 't', coltable_name2, num);
     ELSE
-         SELECT MADLIB_SCHEMA.__format
-            (
-                'SELECT key FROM % LIMIT 1', 
-                coltable_name2
-            ) INTO curstmt;
+        -- When 'explicit', replace these missing values with one explicit value.
+        IF (h2hmv_routine_id=2) THEN
+            SELECT MADLIB_SCHEMA.__format
+                (
+                    'SELECT key FROM % LIMIT 1', 
+                    coltable_name2
+                ) INTO curstmt;
             
-        EXECUTE curstmt INTO min_val;
+            EXECUTE curstmt INTO avg_val;
         
-        SELECT MADLIB_SCHEMA.__format
-            (
-                'UPDATE % SET %=% WHERE % is null',
-                 encoded_table_name,
-                 column_name,
-                 MADLIB_SCHEMA.__to_char(min_val),
-                 column_name
-            ) INTO curstmt;
+            SELECT MADLIB_SCHEMA.__format
+                (
+                    'UPDATE % SET %=% WHERE % is null',
+                    encoded_table_name,
+                    column_name,
+                    MADLIB_SCHEMA.__to_char(avg_val),
+                    column_name
+                ) INTO curstmt;
              
-        EXECUTE curstmt;
+            EXECUTE curstmt;
+        END IF;
     END IF;
 END
 $$ LANGUAGE PLPGSQL;

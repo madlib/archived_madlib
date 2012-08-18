@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file prob.sql_in
  *
@@ -9,55 +9,794 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+m4_include(`SQLCommon.m4')
+
 /**
 @addtogroup grp_prob
 
 @about
 
-Probability distribution functions.
+The Probability Functions module provides cumulative distribution, density/mass,
+and quantile functions for a wide range of probability distributions.
+
+Unless otherwise documented, all of these functions are wrappers around
+functionality provided by the boost C++ library [1, “<a href=
+"http://www.boost.org/doc/libs/1_49_0/libs/math/doc/sf_and_dist/html/math_toolkit/dist.html"
+>Statistical Distributions and Functions</a>”].
+
+For convenience, all cumulative distribution and density/mass functions (CDFs
+and PDF/PMFs in short) are defined over the range of all floating-point numbers
+including infinity. Inputs that are \c NULL or \c NaN (not a number) will always
+produce a \c NULL or \c NaN result, respectively. Inputs that are plus or minus
+infinity will return the respective limits.
+
+A quantile function for a probability distrution with CDF \f$ F \f$ takes a
+probability argument \f$ p \in [0,1] \f$ and returns the value \f$ x \f$ so that
+\f$ F(x) = p \f$, provided such an \f$ x \f$ exists and it is unique. If it does
+not, the result will be
+\f$
+    \sup \{ x \in D \mid F(x) \leq p \}
+\f$
+(interpreted as 0 if the supremum is over an empty set) if \f$ p < 0.5 \f$, and
+\f$
+    \inf \{ x \in D \mid F(x) \geq p \}
+\f$
+if \f$ p \geq 0.5 \f$. Here \f$ D \f$ denotes the domain of the distribution,
+which is the set of reals \f$ \mathbb R \f$ for continuous and the set of
+nonnegative integers \f$ \mathbb N_0 \f$ for discrete distributions.
+
+Intuitively, the formulas in the previous paragraph deal with the following
+special cases. The 0-quantile will always be the “left end” of the support,
+and the 1-quantile will be the “right end” of the support of the distribution.
+For discrete distributions, most values of \f$ p \in [0,1] \f$ do not admit an
+\f$ x \f$ with \f$ F(x) = p \f$. Instead, there is an \f$ x \in \mathbb N_0 \f$
+so that \f$ F(x) < p < F(x + 1) \f$. The above formulas mean that the
+value returned as \f$ p \f$-quantile is \f$ x \f$ if \f$ p < 0.5 \f$, and it
+is \f$ x + 1 \f$ if \f$ p \geq 0.5 \f$. (As a special case, in order to ensure
+that quantiles are always within the support, the \f$ p \f$-quantile will be 0
+if \f$ p < F(0) \f$).
+
+The rationale for choosing this behavior is that \f$p\f$-quantiles for
+\f$ p < 0.5 \f$ are typically requested when interested in the value
+\f$ x \f$ such that with confidence level <strong>at least</strong>
+\f$ 1 - p \f$ a random variable will be \f$ > x \f$ (or equivalently, with
+probability <strong>at most</strong> \f$ p \f$, it will be \f$ \leq x \f$).
+Likewise, \f$p\f$-quantiles for \f$ p \geq 0.5 \f$ are typically requested when
+interested in the value \f$ x \f$ such that with confidence level <strong>at
+least</strong> \f$ p \f$ a random variable will be \f$ \leq x \f$. See also
+[1, “<a href=
+"http://www.boost.org/doc/libs/1_46_1/libs/math/doc/sf_and_dist/html/math_toolkit/policy/pol_tutorial/understand_dis_quant.html"
+>Understanding Quantiles of Discrete Distributions</a>”].
+
+@usage
+
+- Cumulative distribution functions:
+  <pre>SELECT <em>distribution</em>_cdf(<em>random variate</em>[, <em>parameter1</em> [, <em>parameter2</em> [, <em>parameter3</em>] ] ])</pre>
+- Probability density/mass functions:
+  <pre>SELECT <em>distribution</em>_{pdf|pmf}(<em>random variate</em>[, <em>parameter1</em> [, <em>parameter2</em> [, <em>parameter3</em>] ] ])</pre>
+- Quantile functions:
+  <pre>SELECT <em>distribution</em>_quantile(<em>probability</em>[, <em>parameter1</em> [, <em>parameter2</em> [, <em>parameter3</em>] ] ])</pre>
+
+For concrete function signatures, see \ref prob.sql_in.
+
+@examp
+
+@verbatim
+sql> SELECT normal_cdf(0);
+ normal_cdf
+------------
+        0.5
+
+sql> SELECT normal_quantile(0.5, 0, 1);
+ normal_quantile
+-----------------
+               0
+(1 row)
+@endverbatim
+
+@literature
+
+[1] John Maddock, Paul A. Bristow, Hubert Holin, Xiaogang Zhang, Bruno Lalande,
+    Johan Råde, Gautam Sewani and Thijs van den Berg:
+    <em>Boost Math Toolkit</em>, Version 1.49, available at:
+    http://www.boost.org/doc/libs/1_49_0/libs/math/doc/sf_and_dist/html/index.html
+
+@sa File prob.sql_in documenting the SQL functions.
 */
 
-/**
- * @brief Chi-squared cumulative distribution function.
- *
- * @param x
- * @param nu Degree of freedom \f$ \nu >= 1 \f$.
- * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a chi-squared distributed random
- *     variable with \f$ nu \f$ degrees of freedom
- */
-CREATE FUNCTION MADLIB_SCHEMA.chi_squared_cdf(
-    x DOUBLE PRECISION,
-    nu INTEGER
-)
-RETURNS DOUBLE PRECISION
-AS 'MODULE_PATHNAME'
-LANGUAGE C
-IMMUTABLE STRICT;
 
 /**
- * @brief Fisher F cumulative distribution function.
+ * @brief Bernoulli cumulative distribution function
  *
- * @param x
- * @param d_1 Degree of freedom in numerator
- * @param d_2 Degree of freedom in denominator
- * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Fisher F distributed random
- *     variable with parameters \f$ d_1 \f$ and \f$ d_2 \f$
+ * @param x Random variate \f$ x \f$
+ * @param sp Success probability \f$ p \in [0,1] \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Bernoulli-distributed
+ *     random variable with success probability \f$ \mathit{sp} \f$
  */
-CREATE FUNCTION MADLIB_SCHEMA.fisher_f_cdf(
+CREATE FUNCTION MADLIB_SCHEMA.bernoulli_cdf(
     x DOUBLE PRECISION,
-    "d_1" DOUBLE PRECISION,
-    "d_2" DOUBLE PRECISION
+    sp DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE STRICT;
 
 /**
- * @brief Kolmogorov cumulative distribution function.
+ * @brief Bernoulli probability mass function
  *
- * @param x
- * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Kolmogorov distributed random
- *     variable
+ * @param x Random variate \f$ x \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability mass function of
+ *     a Bernoulli-distributed random variable with success probability
+ *     \f$ \mathit{sp} \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.bernoulli_pmf(
+    x INT4,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Bernoulli quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return 0 if \f$ p \leq 1 - \mathit{sp} \f$ and 1 otherwise
+ */
+CREATE FUNCTION MADLIB_SCHEMA.bernoulli_quantile(
+    p DOUBLE PRECISION,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Beta cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param alpha Shape \f$ \alpha > 0 \f$
+ * @param beta Shape \f$ \beta > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a beta distributed random
+ *     variable with shape parameters \f$ \alpha \f$ and \f$ \beta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.beta_cdf(
+    x DOUBLE PRECISION,
+    alpha DOUBLE PRECISION,
+    beta DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Beta probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param alpha Shape \f$ \alpha > 0 \f$
+ * @param beta Shape \f$ \beta > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a beta random variable with shape parameters \f$ \alpha \f$ and
+ *     \f$ \beta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.beta_pdf(
+    x DOUBLE PRECISION,
+    alpha DOUBLE PRECISION,
+    beta DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Beta quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param alpha Shape \f$ \alpha > 0 \f$
+ * @param beta Shape \f$ \beta > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     beta distribution random variable with shape parameters \f$ \alpha \f$
+ *     and \f$ \beta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.beta_quantile(
+    p DOUBLE PRECISION,
+    alpha DOUBLE PRECISION,
+    beta DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Binomial cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param n The number of trials \f$ n \in \mathbb N_0 \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a binomially distributed
+ *     random variable with \f$ n \f$ trials and success probability
+ *     \f$ \mathit{sp} \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.binomial_cdf(
+    x DOUBLE PRECISION,
+    n INT4,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Binomial probability mass function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param n The number of trials \f$ n \in \mathbb N_0 \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability mass function of
+ *     a binomially distributed random variable with \f$ n \f$ trials and
+ *     success probability \f$ \mathit{sp} \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.binomial_pmf(
+    x INT4,
+    n INT4,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Binomial quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param n The number of trials \f$ n \in \mathbb N_0 \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
+ *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is a
+ *     binomially distributed random variable with \f$ n \f$ trials and
+ *     success probability \f$ \mathit{sp} \f$.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.binomial_quantile(
+    p DOUBLE PRECISION,
+    n INT4,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Cauchy cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param location Location \f$ x_0 \f$
+ * @param scale Scale \f$ \gamma > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Cauchy-distributed random
+ *     variable with location and scale parameters \f$ x_0 \f$ and
+ *     \f$ \gamma \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.cauchy_cdf(
+    x DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Cauchy probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param location Location \f$ x_0 \f$
+ * @param scale Scale \f$ \gamma > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a Cauchy-distributed random variable with location and scale parameters
+ *     \f$ x_0 \f$ and \f$ \gamma \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.cauchy_pdf(
+    x DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Cauchy quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param location Location \f$ x_0 \f$
+ * @param scale Scale \f$ \gamma > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     Cauchy-distributed random variable with location and scale parameters
+ *     \f$ x_0 \f$ and \f$ \gamma \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.cauchy_quantile(
+    p DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Chi-squared cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a chi-squared distributed
+ *     random variable with \f$ \nu \f$ degrees of freedom
+ */
+CREATE FUNCTION MADLIB_SCHEMA.chi_squared_cdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Chi-squared distribution probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a chi-squared distributed random variable with \f$ \nu \f$ degrees of
+ *     freedom
+ */
+CREATE FUNCTION MADLIB_SCHEMA.chi_squared_pdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Chi-squared distribution quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param df Degrees of freedom \f$ \mu > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     chi-squared distributed random variable with \f$ \nu \f$ degrees of
+ *     freedom
+ */
+CREATE FUNCTION MADLIB_SCHEMA.chi_squared_quantile(
+    p DOUBLE PRECISION,
+    df DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Exponential cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param lambda Rate parameter \f$ \lambda > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is an exponentially distributed
+ *     random variable with rate parameter \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.exponential_cdf(
+    x DOUBLE PRECISION,
+    lambda DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Exponential probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param lambda Rate parameter \f$ \lambda > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     exponentially distributed random variable with rate parameter
+ *     \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.exponential_pdf(
+    x DOUBLE PRECISION,
+    lambda DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Exponential quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param lambda Rate parameter \f$ \lambda > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     exponentially distributed random variable with rate parameter
+ *     \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.exponential_quantile(
+    p DOUBLE PRECISION,
+    lambda DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Extreme Value cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param location Location \f$ \alpha \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is an extreme-value distributed
+ *     random variable with location and scale parameters \f$ \alpha \f$ and
+ *     \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.extreme_value_cdf(
+    x DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Extreme Value probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param location Location \f$ \alpha \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     an extreme-value distributed random variable with location and scale
+ *     parameters \f$ \alpha \f$ and \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.extreme_value_pdf(
+    x DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Extreme Value quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param location Location \f$ \alpha \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     an extreme-value distributed random variable with location and scale
+ *     parameters \f$ \alpha \f$ and \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.extreme_value_quantile(
+    p DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Fisher F cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df1 Degrees of freedom in numerator \f$ \nu_1 > 0 \f$
+ * @param df2 Degrees of freedom in denominator \f$ \nu_1 > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Fisher F-distributed
+ *     random variable with parameters \f$ \nu_1 \f$ and \f$ \nu_2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.fisher_f_cdf(
+    x DOUBLE PRECISION,
+    df1 DOUBLE PRECISION,
+    df2 DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Fisher F probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df1 Degrees of freedom in numerator \f$ \nu_1 > 0 \f$
+ * @param df2 Degrees of freedom in denominator \f$ \nu_1 > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a Fisher F-distributed random variable with parameters \f$ \nu_1 \f$ and
+ *     \f$ \nu_2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.fisher_f_pdf(
+    x DOUBLE PRECISION,
+    df1 DOUBLE PRECISION,
+    df2 DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Fisher F quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param df1 Degrees of freedom in numerator \f$ \nu_1 > 0 \f$
+ * @param df2 Degrees of freedom in denominator \f$ \nu_1 > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     Fisher F-distributed random variable with parameters \f$ \nu_1 \f$ and
+ *     \f$ \nu_2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.fisher_f_quantile(
+    p DOUBLE PRECISION,
+    df1 DOUBLE PRECISION,
+    df2 DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Gamma cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param shape Shape \f$ k > 0 \f$
+ * @param scale Scale \f$ \theta > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a gamma distributed random
+ *     variable with shape and scale parameters \f$ k \f$ and
+ *     \f$ \theta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.gamma_cdf(
+    x DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Gamma probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param shape Shape \f$ k > 0 \f$
+ * @param scale Scale \f$ \theta > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a gamma distributed random variable with shape and scale parameters
+ *     \f$ k \f$ and \f$ \theta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.gamma_pdf(
+    x DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Gamma quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param shape Shape \f$ k > 0 \f$
+ * @param scale Scale \f$ \theta > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     a gamma distributed random variable with shape and scale parameters
+ *     \f$ k \f$ and \f$ \theta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.gamma_quantile(
+    p DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Geometric cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a geometrically distributed
+ *     random variable with success probability \f$ \mathit{sp} \f$.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.geometric_cdf(
+    x DOUBLE PRECISION,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Geometric probability mass function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability mass function of a
+ *     geometrically distributed random variable with success probability
+ *     \f$ \mathit{sp} \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.geometric_pmf(
+    x INT4,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Geometric quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param sp Success probability \f$ \mathit{sp} \in [0,1] \f$
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
+ *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is a
+ *     geometrically distributed random variable with success probability
+ *     \f$ \mathit{sp} \f$.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.geometric_quantile(
+    p DOUBLE PRECISION,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Hypergeometric cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param r Number \f$ r \in \{ 0, 1, \dots, N \} \f$ of items with
+ *     distinct property (sometimes called the number of <em>success states</em>
+ *     in population)
+ * @param n Number \f$ n \in \{ 0, 1, \dots, N \} \f$ of draws (without
+ *     replacement)
+ * @param N Total number \f$ N \in \mathbb N \f$ of items
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a hypergeometrically
+ *     distributed random variable with parameters \f$ r, n, N \f$
+ *
+ * @internal Boost error messages refer to parameters 'r', 'n', 'N', so for now
+ *     we use the same identifiers for our function definition.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.hypergeometric_cdf(
+    x DOUBLE PRECISION,
+	r INT4,
+	n INT4,
+	"N" INT4
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Hypergeometric probability mass function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param r Number \f$ r \in \{ 0, 1, \dots, N \} \f$ of items with
+ *     distinct property (sometimes called the number of <em>success states</em>
+ *     in population)
+ * @param n Number \f$ n \in \{ 0, 1, \dots, N \} \f$ of draws (without
+ *     replacement)
+ * @param N Total number \f$ N \in \mathbb N \f$ of items
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability mass function of
+ *     a hypergeometrically distributed random variable with parameters
+ *     \f$ r, n, N \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.hypergeometric_pmf(
+    x INT4,
+	r INT4,
+	n INT4,
+	"N" INT4
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Hypergeometric quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param r Number \f$ r \in \{ 0, 1, \dots, N \} \f$ of items with
+ *     distinct property (sometimes called the number of <em>success states</em>
+ *     in population)
+ * @param n Number \f$ n \in \{ 0, 1, \dots, N \} \f$ of draws (without
+ *     replacement)
+ * @param N Total number \f$ N \in \mathbb N \f$ of items
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     a hypergeometrically distributed random variable with parameters
+ *     \f$ r, n, N \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.hypergeometric_quantile(
+    p DOUBLE PRECISION,
+	r INT4,
+	n INT4,
+	"N" INT4
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Inverse Gamma cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is an inverse-gamma distributed
+ *     random variable with shape and scale parameters \f$ \alpha \f$ and
+ *     \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.inverse_gamma_cdf(
+    x DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Inverse Gamma probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     an inverse-gamma distributed random variable with shape and scale
+ *     parameters \f$ \alpha \f$ and \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.inverse_gamma_pdf(
+    x DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Inverse Gamma quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     an inverse-gamma distributed random variable with shape and scale
+ *     parameters \f$ \alpha \f$ and \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.inverse_gamma_quantile(
+    p DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Kolmogorov cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Kolmogorov distributed
+ *     random variable
  *
  * @sa Kolmogorov-Smirnov test: ks_test()
  */
@@ -68,19 +807,500 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE STRICT;
 
+
 /**
- * @brief Normal cumulative distribution function.
+ * @brief Laplace cumulative distribution function
  *
- * @param x
- * @param mu Mean \f$ \mu \f$
- * @param sigma Standard deviation \f$ \sigma \geq 0 \f$
- * @return \f$ \Pr[X \leq x] \f$ where \f$ T \f$ is a normally distributed random
- *     variable with mean \f$ \mu \f$ and variance \f$ \sigma^2 \f$
+ * @param x Random variate \f$ x \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param scale Scale \f$ b > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Laplace-distributed random
+ *     variable with mean \f$ \mu \f$ and variance \f$ 2 b^2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.laplace_cdf(
+    x DOUBLE PRECISION,
+    mean DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Laplace probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param scale Scale \f$ b > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a Laplace-distributed random variable with mean \f$ \mu \f$ and variance
+ *     \f$ 2 b^2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.laplace_pdf(
+    x DOUBLE PRECISION,
+    mean DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Laplace quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param scale Scale \f$ b > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     Laplace-distributed random variable with mean \f$ \mu \f$ and variance
+ *     \f$ 2 b^2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.laplace_quantile(
+    p DOUBLE PRECISION,
+    mean DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Logistic cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param scale Scale \f$ s > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a logistically distributed
+ *     random variable with mean \f$ \mu \f$ and scale parameter \f$ s \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.logistic_cdf(
+    x DOUBLE PRECISION,
+    mean DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Logistic probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param scale Scale \f$ s > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a logistically distributed random variable with mean \f$ \mu \f$ and
+ *     scale parameter \f$ s \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.logistic_pdf(
+    x DOUBLE PRECISION,
+    mean DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Logistic quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param scale Scale \f$ s > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     a logistically distributed random variable with mean \f$ \mu \f$ and
+ *     scale parameter \f$ s \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.logistic_quantile(
+    p DOUBLE PRECISION,
+    mean DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Log-normal cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param location Location \f$ m \f$
+ * @param scale Scale \f$ s > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a lognormally distributed
+ *     random variable with location and scale parameters \f$ m \f$ and
+ *     \f$ s \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.lognormal_cdf(
+    x DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Log-normal probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param location Location \f$ m \f$
+ * @param scale Scale \f$ s > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a lognormally distributed random variable with location and scale
+ *     parameters \f$ m \f$ and \f$ s \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.lognormal_pdf(
+    x DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Log-normal quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param location Location \f$ m \f$
+ * @param scale Scale \f$ s > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     a lognormally distributed random variable with location and scale
+ *     parameters \f$ m \f$ and \f$ s \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.lognormal_quantile(
+    p DOUBLE PRECISION,
+    location DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Negative binomial cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param r Total number \f$ r > 0 \f$ of successes in \f$ x + r \f$ trials
+ *     (assuming success in the last trial)
+ * @param sp Success probability \f$ \mathit{sp} \in (0,1] \f$ in each trial
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a negative-binomially
+ *     distributed random variable with parameters \f$ r, \mathit{sp} \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.negative_binomial_cdf(
+    x DOUBLE PRECISION,
+    r DOUBLE PRECISION,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Negative binomial probability mass function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param r Total number \f$ r > 0 \f$ of successes in \f$ x + r \f$ trials
+ *     (assuming success in the last trial)
+ * @param sp Success probability \f$ \mathit{sp} \in (0,1] \f$ in each trial
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability mass function of
+ *     a negative-binomially distributed random variable with parameters
+ *     \f$ r, \mathit{sp} \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.negative_binomial_pmf(
+    x INT4,
+    r DOUBLE PRECISION,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Negative binomial quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param r Total number \f$ r > 0 \f$ of successes in \f$ x + r \f$ trials
+ *     (assuming success in the last trial)
+ * @param sp Success probability \f$ \mathit{sp} \in (0,1] \f$ in each trial
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
+ *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is
+ *     a negative-binomially distributed random variable with parameters
+ *     \f$ r, \mathit{sp} \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.negative_binomial_quantile(
+    p DOUBLE PRECISION,
+    r DOUBLE PRECISION,
+    sp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Noncentral beta cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param alpha Shape \f$ \alpha > 0 \f$
+ * @param beta Shape \f$ \beta > 0 \f$
+ * @param ncp Noncentrality parameter \f$ \delta \geq 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a noncentral-beta
+ *     distributed random variable with shape parameters \f$ shape_1 \f$ and
+ *     \f$ shape_2 \f$ and noncentrality parameter \f$ \delta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_beta_cdf(
+    x DOUBLE PRECISION,
+    alpha DOUBLE PRECISION,
+    beta DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral beta probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param alpha Shape \f$ \alpha > 0 \f$
+ * @param beta Shape \f$ \beta > 0 \f$
+ * @param ncp Noncentrality parameter \f$ \delta \geq 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a noncentral-beta distributed random variable with shape parameters
+ *     \f$ shape_1 \f$ and \f$ shape_2 \f$ and noncentrality parameter
+ *     \f$ \delta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_beta_pdf(
+    x DOUBLE PRECISION,
+    alpha DOUBLE PRECISION,
+    beta DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral beta quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param alpha Shape \f$ \alpha > 0 \f$
+ * @param beta Shape \f$ \beta > 0 \f$
+ * @param ncp Noncentrality parameter \f$ \delta \geq 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is
+ *     a noncentral-beta distributed random variable with shape parameters
+ *     \f$ shape_1 \f$ and \f$ shape_2 \f$ and noncentrality parameter
+ *     \f$ \delta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_beta_quantile(
+    p DOUBLE PRECISION,
+    alpha DOUBLE PRECISION,
+    beta DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Noncentral chi-squared cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @param ncp The noncentrality parameter \f$ \lambda \geq 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a noncentral-chi-squared
+ *     distributed random variable with \f$ \nu \f$ degrees of freedom and
+ *     noncentrality parameter \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_chi_squared_cdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral chi-squared distribution probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @param ncp The noncentrality parameter \f$ \lambda \geq 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a noncentral-chi-squared distributed random variable with \f$ \nu \f$
+ *     degrees of freedom and noncentrality parameter \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_chi_squared_pdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral chi-squared distribution quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @param ncp The noncentrality parameter \f$ \lambda \geq 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     noncentral-chi-squared distributed random variable with \f$ \nu \f$
+ *     degrees of freedom and noncentrality parameter \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_chi_squared_quantile(
+    p DOUBLE PRECISION,
+    df DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Noncentral Fisher F cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df1 Degrees of freedom in numerator \f$ \nu_1 > 0 \f$
+ * @param df2 Degrees of freedom in denominator \f$ \nu_1 > 0 \f$
+ * @param ncp The noncentrality parameter \f$ \lambda \geq 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     noncentral Fisher F-distributed random variable with parameters
+ *     \f$ \nu_1, \nu_2, \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_f_cdf(
+    x DOUBLE PRECISION,
+    df1 DOUBLE PRECISION,
+    df2 DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral Fisher F probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df1 Degrees of freedom in numerator \f$ \nu_1 > 0 \f$
+ * @param df2 Degrees of freedom in denominator \f$ \nu_1 > 0 \f$
+ * @param ncp The noncentrality parameter \f$ \lambda \geq 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of a
+ *     noncentral Fisher F-distributed random variable with parameters
+ *     \f$ \nu_1, \nu_2, \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_f_pdf(
+    x DOUBLE PRECISION,
+    df1 DOUBLE PRECISION,
+    df2 DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral Fisher F quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param df1 Degrees of freedom in numerator \f$ \nu_1 > 0 \f$
+ * @param df2 Degrees of freedom in denominator \f$ \nu_1 > 0 \f$
+ * @param ncp The noncentrality parameter \f$ \lambda \geq 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     noncentral Fisher F-distributed random variable with parameters
+ *     \f$ \nu_1, \nu_2, \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_f_quantile(
+    p DOUBLE PRECISION,
+    df1 DOUBLE PRECISION,
+    df2 DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Noncentral Student-t cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @param ncp Noncentrality parameter \f$ \delta \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a noncentral Student's
+ *     t-distributed random variable with \f$ \nu \f$ degrees of freedom and
+ *     noncentrality parameter \f$ \delta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_t_cdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral Student-t probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @param ncp Noncentrality parameter \f$ \delta \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     noncentral Student's t-distributed random variable with \f$ \nu \f$
+ *     degrees of freedom and noncentrality parameter \f$ \delta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_t_pdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Noncentral Student-t quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @param ncp Noncentrality parameter \f$ \delta \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     noncentral Student's t-distributed random variable with \f$ \nu \f$
+ *     degrees of freedom and noncentrality parameter \f$ \delta \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.non_central_t_quantile(
+    p DOUBLE PRECISION,
+    df DOUBLE PRECISION,
+	ncp DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Normal cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param sd Standard deviation \f$ \sigma > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ T \f$ is a normally distributed
+ *     random variable with mean \f$ \mu \f$ and variance \f$ \sigma^2 \f$
  */
 CREATE FUNCTION MADLIB_SCHEMA.normal_cdf(
     x DOUBLE PRECISION,
-    mu DOUBLE PRECISION /*+ DEFAULT 0 */,
-    sigma DOUBLE PRECISION  /*+ DEFAULT 1 */
+    mean DOUBLE PRECISION /*+ DEFAULT 0 */,
+    sd DOUBLE PRECISION  /*+ DEFAULT 1 */
 ) RETURNS DOUBLE PRECISION
 AS 'MODULE_PATHNAME'
 LANGUAGE C
@@ -88,30 +1308,477 @@ IMMUTABLE STRICT;
 
 CREATE FUNCTION MADLIB_SCHEMA.normal_cdf(
     x DOUBLE PRECISION,
-    mu DOUBLE PRECISION
+    mean DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION
-AS 'MODULE_PATHNAME'
-LANGUAGE C
-IMMUTABLE STRICT;
+IMMUTABLE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.normal_cdf($1, $2, 1)
+$$;
 
 CREATE FUNCTION MADLIB_SCHEMA.normal_cdf(
     x DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION
+IMMUTABLE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.normal_cdf($1, 0, 1)
+$$;
+
+/**
+ * @brief Normal probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param sd Standard deviation \f$ \sigma > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a normally distributed random variable with mean \f$ \mu \f$ and
+ *     variance \f$ \sigma^2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.normal_pdf(
+    x DOUBLE PRECISION,
+    mean DOUBLE PRECISION /*+ DEFAULT 0 */,
+    sd DOUBLE PRECISION  /*+ DEFAULT 1 */
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.normal_pdf(
+    x DOUBLE PRECISION,
+    mean DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+IMMUTABLE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.normal_pdf($1, $2, 1)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.normal_pdf(
+    x DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+IMMUTABLE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.normal_pdf($1, 0, 1)
+$$;
+
+/**
+ * @brief Normal quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param mean Mean \f$ \mu \f$
+ * @param sd Standard deviation \f$ \sigma > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     normally distributed random variable with mean \f$ \mu \f$ and
+ *     variance \f$ \sigma^2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.normal_quantile(
+    p DOUBLE PRECISION,
+    mean DOUBLE PRECISION /*+ DEFAULT 0 */,
+    sd DOUBLE PRECISION  /*+ DEFAULT 1 */
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.normal_quantile(
+    p DOUBLE PRECISION,
+    mean DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+IMMUTABLE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.normal_quantile($1, $2, 1)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.normal_quantile(
+    p DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+IMMUTABLE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.normal_quantile($1, 0, 1)
+$$;
+
+
+/**
+ * @brief Pareto cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Pareto-distributed random
+ *     variable with shape and scale parameters \f$ \alpha \f$ and
+ *     \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.pareto_cdf(
+    x DOUBLE PRECISION,
+    scale DOUBLE PRECISION,
+    shape DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE STRICT;
 
 /**
- * @brief Student-t cumulative distribution function.
+ * @brief Pareto probability density function
  *
- * @param x
- * @param nu Degree of freedom \f$ \nu >= 1 \f$.
- * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a student-t distributed
- *     random variable with \f$ nu \f$ degrees of freedom
+ * @param x Random variate \f$ x \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a Pareto-distributed random variable with shape and scale parameters
+ *     \f$ \alpha \f$ and \f$ \beta \f$, respectively
  */
-CREATE FUNCTION MADLIB_SCHEMA.student_t_cdf(
+CREATE FUNCTION MADLIB_SCHEMA.pareto_pdf(
     x DOUBLE PRECISION,
-    nu DOUBLE PRECISION
+    scale DOUBLE PRECISION,
+    shape DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Pareto quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     Pareto-distributed random variable with shape and scale parameters
+ *     \f$ \alpha \f$ and \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.pareto_quantile(
+    p DOUBLE PRECISION,
+    scale DOUBLE PRECISION,
+    shape DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Poisson cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param mean Average occurrence rate \f$ \lambda > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Poisson distributed random
+ *     variable with mean \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.poisson_cdf(
+    x DOUBLE PRECISION,
+    mean DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Poisson probability mass function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param mean Average occurrence rate \f$ \lambda > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability mass function of a
+ *     Poisson distributed random variable with mean \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.poisson_pmf(
+    x INT4,
+    mean DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Poisson quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param mean Average occurrence rate \f$ \lambda > 0 \f$
+ * @return If \f$ p < 0.5 \f$ the maximum \f$ x \f$ such that
+ *     \f$ p \geq \Pr[X \leq x] \f$. If \f$ p \geq 0.5 \f$ the minimum \f$ x \f$
+ *     such that \f$ p \leq \Pr[X \leq x] \f$. Here, \f$ X \f$ is a
+ *     Poisson distributed random variable with mean \f$ \lambda \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.poisson_quantile(
+    p DOUBLE PRECISION,
+    mean DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Rayleigh cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param scale Scale \f$ \sigma > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Rayleigh-distributed
+ *     random variable with parameter \f$ \sigma \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.rayleigh_cdf(
+    x DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Rayleigh probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param scale Scale \f$ \sigma > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a Rayleigh-distributed random variable with parameter \f$ \sigma \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.rayleigh_pdf(
+    x DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Rayleigh quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param scale Scale \f$ \sigma > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     Rayleigh-distributed random variable with parameter \f$ \sigma \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.rayleigh_quantile(
+    p DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Student's t cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a Student's t-distributed
+ *     random variable with \f$ \nu \f$ degrees of freedom
+ */
+CREATE FUNCTION MADLIB_SCHEMA.students_t_cdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Student's t probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a Stundent's t-distributed random variable with \f$ \nu \f$ degrees of
+ *     freedom
+ */
+CREATE FUNCTION MADLIB_SCHEMA.students_t_pdf(
+    x DOUBLE PRECISION,
+    df DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Student's t quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param df Degrees of freedom \f$ \nu > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     Student's t-distributed random variable with \f$ \nu \f$ degrees of
+ *     freedom
+ */
+CREATE FUNCTION MADLIB_SCHEMA.students_t_quantile(
+    p DOUBLE PRECISION,
+    df DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Triangular cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param lower Lower bound \f$ a \f$
+ * @param mode  Mode \f$ c \geq a \f$
+ * @param upper Upper bound \f$ b \geq c \f$, where \f$ b > a \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a triangular distributed
+ *     random variable with parameters \f$ a, b, c \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.triangular_cdf(
+    x DOUBLE PRECISION,
+    lower DOUBLE PRECISION,
+    mode DOUBLE PRECISION,
+    upper DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Triangular probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param lower Lower bound \f$ a \f$
+ * @param mode  Mode \f$ c \geq a \f$
+ * @param upper Upper bound \f$ b \geq c \f$, where \f$ b > a \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a triangular distributed random variable with parameters \f$ a, b, c \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.triangular_pdf(
+    x DOUBLE PRECISION,
+    lower DOUBLE PRECISION,
+    mode DOUBLE PRECISION,
+    upper DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Triangular quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param lower Lower bound \f$ a \f$
+ * @param mode  Mode \f$ c \geq a \f$
+ * @param upper Upper bound \f$ b \geq c \f$, where \f$ b > a \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     trianbular distributed random variable with parameters \f$ a, b, c \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.triangular_quantile(
+    p DOUBLE PRECISION,
+    lower DOUBLE PRECISION,
+    mode DOUBLE PRECISION,
+    upper DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Uniform cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param lower Lower bound \f$ a \f$
+ * @param upper Upper bound \f$ b \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a uniform distributed random
+ *     variable with support \f$ [a, b] \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.uniform_cdf(
+    x DOUBLE PRECISION,
+    lower DOUBLE PRECISION,
+    upper DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Uniform probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param lower Lower bound \f$ a \f$
+ * @param upper Upper bound \f$ b \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a uniform distributed random variable with support \f$ [a, b] \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.uniform_pdf(
+    x DOUBLE PRECISION,
+    lower DOUBLE PRECISION,
+    upper DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Uniform quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param lower Lower bound \f$ a \f$
+ * @param upper Upper bound \f$ b \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     uniform distributed random variable with support \f$ [a, b] \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.uniform_quantile(
+    p DOUBLE PRECISION,
+    lower DOUBLE PRECISION,
+    upper DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+
+/**
+ * @brief Weibull cumulative distribution function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ \Pr[X \leq x] \f$ where \f$ X \f$ is a weibull distributed random
+ *     variable with shape and scale parameters \f$ \alpha \f$ and
+ *     \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.weibull_cdf(
+    x DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Weibull probability density function
+ *
+ * @param x Random variate \f$ x \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ f(x) \f$ where \f$ f \f$ is the probability density function of
+ *     a weibull distributed random variable with shape and scale parameters
+ *     \f$ \alpha \f$ and \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.weibull_pdf(
+    x DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+/**
+ * @brief Weibull quantile function
+ *
+ * @param p Probability \f$ p \in [0,1] \f$
+ * @param shape Shape \f$ \alpha > 0 \f$
+ * @param scale Scale \f$ \beta > 0 \f$
+ * @return \f$ x \f$ such that \f$ p = \Pr[X \leq x] \f$ where \f$ X \f$ is a
+ *     weibull distributed random variable with shape and scale parameters
+ *     \f$ \alpha \f$ and \f$ \beta \f$, respectively
+ */
+CREATE FUNCTION MADLIB_SCHEMA.weibull_quantile(
+    p DOUBLE PRECISION,
+    shape DOUBLE PRECISION,
+    scale DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION
 AS 'MODULE_PATHNAME'
 LANGUAGE C

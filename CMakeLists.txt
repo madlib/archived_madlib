@@ -67,7 +67,7 @@ if(CMAKE_COMPILER_IS_GNUCC)
     set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra -D_XOPEN_SOURCE=600"
         CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
-    
+
     # See comments below for C++:
     # Weird enough, the following property is set only for C++ but not for C
     # http://stackoverflow.com/questions/3371127/use-isystem-instead-of-i-with-cmake
@@ -89,9 +89,9 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # common (and useful) extension that we do not want to hear warnings about
     # it.
     # FIXME: -msse2 should only be added on i386
-    set(CMAKE_CXX_FLAGS "-std=gnu++98 -Wall -Wextra -pedantic -Wno-long-long -msse2" CACHE STRING
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -msse2 -fstrict-aliasing" CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
-    
+
     # We want to include some header files as system header files in order to
     # disable warnings. However, on Mac OS X, a CMake variable is not set
     # correctly on Mac OS X. http://www.cmake.org/Bug/view.php?id=10837

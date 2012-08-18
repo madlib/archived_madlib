@@ -27,7 +27,6 @@
 #ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
-
 /* Indicate "version 1" calling conventions for all exported functions. */
 PG_FUNCTION_INFO_V1(sampleNewTopics);
 PG_FUNCTION_INFO_V1(randomTopics);
@@ -244,6 +243,49 @@ static int32 sampleTopic
 	return ret;
 }
 
+
+/**
+ * This function checks the validity of array parameters for "sampleNewTopics".
+ *
+ * Parameters
+ *  @param p_array The array to be checked
+ *  @param fn_oid The oid of the function to be checked
+ *  @param array_name The name of the array
+ *
+ */
+static void check_array_sampleNewTopics
+	(ArrayType * p_array, Oid fn_oid, const char * array_name)
+{
+	if (ARR_HASNULL(p_array))
+	{
+		ereport(ERROR,
+		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("In function \"%s\", the %s should not contain null "
+			       "elements",
+			       format_procedure(fn_oid),
+			       array_name)));
+	}
+
+	if (ARR_NDIM(p_array) != 1)
+	{
+		ereport(ERROR,
+		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("In function \"%s\", the dimension of %s should be 1",
+			       format_procedure(fn_oid),
+			       array_name)));
+	}
+
+	if (ARR_ELEMTYPE(p_array) != INT4OID)
+	{
+		ereport(ERROR,
+		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("In function \"%s\", the element type in the %s should "
+			       "be INT4",
+			       format_procedure(fn_oid),
+			       array_name)));
+	}
+}
+
 /**
  * This function assigns a topic to each word in a document using the count
  * statistics obtained so far on the corpus. The function returns an array
@@ -266,20 +308,13 @@ Datum sampleNewTopics(PG_FUNCTION_ARGS)
 	int32 dsize = PG_GETARG_INT32(6);
 	float8 alpha = PG_GETARG_FLOAT8(7);
 	float8 eta = PG_GETARG_FLOAT8(8);
+	Oid fn_oid = fcinfo->flinfo->fn_oid;
 
-	if (ARR_NULLBITMAP(doc_arr) || ARR_NDIM(doc_arr) != 1 || 
-	    ARR_ELEMTYPE(doc_arr) != INT4OID ||
-	    ARR_NDIM(topics_arr) != 1 || ARR_ELEMTYPE(topics_arr) != INT4OID ||
-	    ARR_NULLBITMAP(topic_d_arr) || ARR_NDIM(topic_d_arr) != 1 || 
-	    ARR_ELEMTYPE(topic_d_arr) != INT4OID ||
-	    ARR_NULLBITMAP(global_count_arr) || ARR_NDIM(global_count_arr) != 1
-	    || ARR_ELEMTYPE(global_count_arr) != INT4OID ||
-	    ARR_NULLBITMAP(topic_counts_arr) || ARR_NDIM(topic_counts_arr) != 1
-	    || ARR_ELEMTYPE(topic_counts_arr) != INT4OID)
-		ereport(ERROR,
-		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("function \"%s\" called with invalid parameters",
-			       format_procedure(fcinfo->flinfo->fn_oid))));
+	check_array_sampleNewTopics(doc_arr, fn_oid, "document array");
+	check_array_sampleNewTopics(topics_arr, fn_oid, "topic array");
+	check_array_sampleNewTopics(topic_d_arr, fn_oid, "topic distribution array");
+	check_array_sampleNewTopics(global_count_arr, fn_oid, "global count array");
+	check_array_sampleNewTopics(topic_counts_arr, fn_oid, "topic count array");
 
 	// the document array
 	int32 * doc = (int32 *)ARR_DATA_PTR(doc_arr);
@@ -315,8 +350,10 @@ Datum sampleNewTopics(PG_FUNCTION_ARGS)
 		     ereport
 		      (ERROR,
 		       (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("function \"%s\" called with invalid parameters",
-			       format_procedure(fcinfo->flinfo->fn_oid))));
+			errmsg("function \"%s\" called with invalid parameters. Word index is: %d. "
+                    " Dictionary size is: %d. Word index should be in the range of [1, "
+                    " dict_size]",
+			       format_procedure(fcinfo->flinfo->fn_oid), widx, dsize)));
 
 		wtopic = topics[i];
 		rtopic = sampleTopic(num_topics,widx,wtopic,global_count,

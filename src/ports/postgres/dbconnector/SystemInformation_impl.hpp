@@ -22,7 +22,7 @@ inline
 void
 initializeOidHashTable(HTAB*& ioHashTable, MemoryContext inCacheContext,
     size_t inEntrySize, const char* inTabName, uint32_t inMaxNElems) {
-    
+
     if (ioHashTable == NULL) {
         HASHCTL ctl;
         ctl.keysize = sizeof(Oid);
@@ -43,39 +43,56 @@ initializeOidHashTable(HTAB*& ioHashTable, MemoryContext inCacheContext,
 }
 
 /**
- * @brief Get pointer to where cached system-catalog information is stored
+ * @brief Store cached system-catalog information in backend function handle
  *
- * @param inFmgrInfo System-catalog information about the function.
- * @param outSysInfo[out] If not NULL, <tt>*outSysInfo</tt> will be set to the
- *     address of where the <tt>SystemInformation*</tt> value for this function
- *     should be stored.
- * @param outMemCtxt[out] If not NULL, <tt>*outMemCtxt</tt> will be set to the
- *     MemoryContext that should be used to store used data.
+ * @param inFmgrInfo Backend handle to the function
+ * @param inSysInfo Our system-catalog information that should be stored
+ *
+ * A set-returning function uses \c fn_extra to store cross-call information.
+ * See, e.g., init_MultiFuncCall() in funcapi.c. Fortunately, it stores a point
+ * to a <tt>struct FuncCallContext</tt> in \c fn_extra, which in turn allows to
+ * store user-defined data.
  */
 inline
 void
-getSystemInformationAndMemoryContext(FmgrInfo* inFmgrInfo,
-    SystemInformation*** outSysInfo, MemoryContext* outMemCtxt) {
-    
-    if (inFmgrInfo->fn_retset) {
-        // A set-returning function uses fn_extra to store cross-call
-        // information. See, e.g., init_MultiFuncCall() in funcapi.c.
-        // Fortunately, it stores a point to a struct FuncCallContext in
-        // fn_extra, which in turn allows to store user-defined data.
-        if (outSysInfo)
-            *outSysInfo = reinterpret_cast<SystemInformation**>(
-                &static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)
-                    ->user_fctx);
-        if (outMemCtxt)
-            *outMemCtxt = static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)
-                ->multi_call_memory_ctx;
-    } else {
-        if (outSysInfo)
-            *outSysInfo = reinterpret_cast<SystemInformation**>(
-                &inFmgrInfo->fn_extra);
-        if (outMemCtxt)
-            *outMemCtxt = inFmgrInfo->fn_mcxt;
-    }
+setSystemInformationInFmgrInfo(FmgrInfo* inFmgrInfo,
+    SystemInformation* inSysInfo) {
+
+    (inFmgrInfo->fn_retset
+        ? static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)->user_fctx
+        : inFmgrInfo->fn_extra)
+        = inSysInfo;
+}
+
+/**
+ * @brief Get cached system-catalog information from backend function handle
+ *
+ * @see setSystemInformationInFmgrInfo()
+ */
+inline
+SystemInformation*
+getSystemInformationFromFmgrInfo(FmgrInfo* inFmgrInfo) {
+    return static_cast<SystemInformation*>(inFmgrInfo->fn_retset
+        ? static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)->user_fctx
+        : inFmgrInfo->fn_extra);
+}
+
+/**
+ * @brief Get memory context from backend function handle
+ *
+ * The memory context returned may be used for storing user-defined data. In
+ * SystemInformation::get(), we will use it for allocating a
+ * <tt>struct SystemInformation</tt>.
+ *
+ * @see setSystemInformationInFmgrInfo()
+ */
+inline
+MemoryContext
+getMemoryContextFromFmgrInfo(FmgrInfo* inFmgrInfo) {
+    return inFmgrInfo->fn_retset
+        ? static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)
+            ->multi_call_memory_ctx
+        : inFmgrInfo->fn_mcxt;
 }
 
 } // namespace
@@ -92,21 +109,22 @@ SystemInformation*
 SystemInformation::get(FunctionCallInfo fcinfo) {
     madlib_assert(fcinfo->flinfo,
         std::invalid_argument("Incomplete FunctionCallInfoData."));
-    
-    SystemInformation** sysInfo = NULL;
-    MemoryContext memCtxt = NULL;
-    getSystemInformationAndMemoryContext(fcinfo->flinfo, &sysInfo, &memCtxt);
-    
-    if (!*sysInfo) {
-        *sysInfo = static_cast<SystemInformation*>(
+
+    SystemInformation* sysInfo
+        = getSystemInformationFromFmgrInfo(fcinfo->flinfo);
+
+    if (!sysInfo) {
+        MemoryContext memCtxt = getMemoryContextFromFmgrInfo(fcinfo->flinfo);
+
+        sysInfo = static_cast<SystemInformation*>(
             madlib_MemoryContextAllocZero(
                 memCtxt, sizeof(SystemInformation)));
-        (*sysInfo)->entryFuncOID = fcinfo->flinfo->fn_oid;
-        (*sysInfo)->cacheContext = memCtxt;
-        (*sysInfo)->collationOID = PG_GET_COLLATION();
+        sysInfo->entryFuncOID = fcinfo->flinfo->fn_oid;
+        sysInfo->cacheContext = memCtxt;
+        sysInfo->collationOID = PG_GET_COLLATION();
+        setSystemInformationInFmgrInfo(fcinfo->flinfo, sysInfo);
     }
-
-    return *sysInfo;
+    return sysInfo;
 }
 
 /**
@@ -137,7 +155,7 @@ SystemInformation::typeInformation(Oid inTypeID) {
     // block for performance reasons.
     cachedTypeInfo = static_cast<TypeInformation*>(
         hash_search(types, &inTypeID, HASH_FIND, &found));
-    
+
     if (!found) {
         cachedTypeInfo = static_cast<TypeInformation*>(
             madlib_hash_search(types, &inTypeID, HASH_ENTER, &found));
@@ -155,7 +173,7 @@ SystemInformation::typeInformation(Oid inTypeID) {
             cachedTypeInfo->len = pgType->typlen;
             cachedTypeInfo->byval = pgType->typbyval;
             cachedTypeInfo->type = pgType->typtype;
-            
+
             if (cachedTypeInfo->type == TYPTYPE_COMPOSITE) {
                 // BACKEND: MemoryContextSwitchTo just changes a global
                 // variable
@@ -175,7 +193,7 @@ SystemInformation::typeInformation(Oid inTypeID) {
             madlib_ReleaseSysCache(tup);
         }
     }
-    
+
     return cachedTypeInfo;
 }
 
@@ -183,7 +201,7 @@ SystemInformation::typeInformation(Oid inTypeID) {
  * @brief Get (and cache) information about a PostgreSQL function
  *
  * @param inFuncID The OID of the function of interest
- * @return 
+ * @return
  */
 inline
 FunctionInformation*
@@ -192,21 +210,21 @@ SystemInformation::functionInformation(Oid inFuncID) {
     bool found = true;
     HeapTuple tup;
     Form_pg_proc pgFunc;
-    
+
     // We arrange to look up info about functions only once per series of
     // calls, assuming the function info doesn't change underneath us.
     initializeOidHashTable(functions, cacheContext,
         sizeof(FunctionInformation),
         "C++ AL / FunctionInformation hash table",
         8);
-        
+
     // BACKEND: Since we pass HASH_FIND, this function call will never perform
     // an allocation. There is nothing in the code path that would raise an
     // exception (including oid_hash()), so we are *not* wrapping in a PG_TRY()
     // block for performance reasons.
     cachedFuncInfo = static_cast<FunctionInformation*>(
         hash_search(functions, &inFuncID, HASH_FIND, &found));
-    
+
     if (!found) {
         cachedFuncInfo = static_cast<FunctionInformation*>(
             madlib_hash_search(functions, &inFuncID, HASH_ENTER, &found));
@@ -222,18 +240,19 @@ SystemInformation::functionInformation(Oid inFuncID) {
             cachedFuncInfo->cxx_func = NULL;
             cachedFuncInfo->flinfo.fn_oid = InvalidOid;
             // The number of arguments (excluding OUT params)
-            cachedFuncInfo->nargs = pgFunc->proargtypes.dim1;
+            cachedFuncInfo->nargs
+                = static_cast<uint16_t>(pgFunc->proargtypes.dim1);
             cachedFuncInfo->polymorphic = false;
             cachedFuncInfo->isstrict = pgFunc->proisstrict;
             cachedFuncInfo->secdef = pgFunc->prosecdef;
-            
+
             Oid* allargs;
             // We could use get_func_arg_info() but unfortunately that also
             // copied names and modes
             bool onlyINArguments = false;
             Datum allargtypes = madlib_SysCacheGetAttr(PROCOID, tup,
                 Anum_pg_proc_proallargtypes, &onlyINArguments);
-            
+
             if (onlyINArguments) {
                 allargs = pgFunc->proargtypes.values;
             } else {
@@ -260,12 +279,12 @@ SystemInformation::functionInformation(Oid inFuncID) {
                 // (including OUT params)
                 if (typeInformation(allargs[i])->getType()
                     == TYPTYPE_PSEUDO) {
-                    
+
                     cachedFuncInfo->polymorphic = true;
                     break;
                 }
             }
-            
+
             if (cachedFuncInfo->nargs == 0) {
                 cachedFuncInfo->argtypes = NULL;
             } else {
@@ -276,9 +295,9 @@ SystemInformation::functionInformation(Oid inFuncID) {
                     pgFunc->proargtypes.values,
                     cachedFuncInfo->nargs * sizeof(Oid));
             }
-            
+
             cachedFuncInfo->rettype = pgFunc->prorettype;
-            
+
             // If the return type is RECORDOID, we cannot yet determine the
             // tuple description, even if the function is not polymorphic.
             // For that, the expression parse tree is required.
@@ -289,7 +308,7 @@ SystemInformation::functionInformation(Oid inFuncID) {
             madlib_ReleaseSysCache(tup);
         }
     }
-    
+
     return cachedFuncInfo;
 }
 
@@ -315,15 +334,15 @@ TypeInformation::getTupleDesc(int32_t inTypeMod) {
         // performance).
         TupleDesc pgCachedTupDesc = lookup_rowtype_tupdesc_noerror(oid,
             inTypeMod, /* noerror */ true);
-        
+
         // The tupleDesc is in the cache (RecordCacheArray defined in
-        // typcache.c) even before lookup_rowtype... is called. There is no 
+        // typcache.c) even before lookup_rowtype... is called. There is no
         // need to release the tupleDesc, though we do in order to avoid any
         // side effect.
         ReleaseTupleDesc(pgCachedTupDesc);
         return pgCachedTupDesc;
     }
-    
+
     return NULL;
 }
 
@@ -398,7 +417,7 @@ FunctionInformation::getArgumentType(uint16_t inArgID, FmgrInfo* inFmgrInfo) {
 
         typeID = madlib_get_fn_expr_argtype(inFmgrInfo, inArgID);
     }
-    
+
     return typeID;
 }
 
@@ -423,17 +442,17 @@ FunctionInformation::getReturnType(FunctionCallInfo fcinfo) {
         // sufficient condition for cachedFuncInfo->polymorphic, but not a
         // necessary condition. (A function could have input arguments with
         // pseudo types, but a fixed return type.)
-        
+
         madlib_assert(polymorphic,
             std::logic_error("Logical error: Function returns non-record "
                 "pseudo type but is not polymorphic."));
-        
+
         // This is not a composite type, so no need to pass anything for
         // resultTupleDesc
         madlib_get_call_result_type(fcinfo, &returnType,
             /* resultTupleDesc */ NULL);
     }
-        
+
     return returnType;
 }
 
@@ -451,7 +470,7 @@ FunctionInformation::getReturnTupleDesc(FunctionCallInfo fcinfo) {
         std::runtime_error("Invalid arguments passed to "
             "FunctionInformation::getReturnTupleDesc()."));
 
-    TupleDesc returnTupDesc = tupdesc;    
+    TupleDesc returnTupDesc = tupdesc;
     if (returnTupDesc == NULL) {
         if (rettype == RECORDOID) {
             MADLIB_PG_TRY {
@@ -475,12 +494,12 @@ FunctionInformation::getReturnTupleDesc(FunctionCallInfo fcinfo) {
         } else {
             TypeInformation* cachedTypeInfo
                 = mSysInfo->typeInformation(rettype);
-            
+
             if (cachedTypeInfo->type == TYPTYPE_COMPOSITE)
                 returnTupDesc = cachedTypeInfo->tupdesc;
         }
     }
-    
+
     return returnTupDesc;
 }
 
@@ -509,14 +528,14 @@ FunctionInformation::getFuncMgrInfo() {
         // Check permissions
         if (madlib_pg_proc_aclcheck(oid, GetUserId(), ACL_EXECUTE)
             != ACLCHECK_OK) {
-            
+
             throw std::invalid_argument(std::string("No privilege to run "
                 "function '") + getFullName() + "'.");
         }
 
         // cacheContext will be set as fn_mcxt.
         madlib_fmgr_info_cxt(oid, &flinfo, mSysInfo->cacheContext);
-        
+
         if (!secdef) {
             // If the function is SECURITY DEFINER then fmgr_info_cxt() has
             // set up flinfo so that what we will actually
@@ -526,14 +545,10 @@ FunctionInformation::getFuncMgrInfo() {
             // struct FmgrInfo in an opaque way (it points to a struct that is
             // local to fmgr.c), we only initialize the cache if the function
             // is *not* SECURITY DEFINER.
-            
-            SystemInformation** sysInfo;
-            getSystemInformationAndMemoryContext(&flinfo,
-                &sysInfo, /* outMemCtxt */ NULL);
-            *sysInfo = mSysInfo;
+            setSystemInformationInFmgrInfo(&flinfo, mSysInfo);
         }
     }
-    
+
     return &flinfo;
 }
 

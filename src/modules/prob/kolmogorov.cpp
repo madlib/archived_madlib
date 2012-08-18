@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file kolmogorov.cpp
  *
@@ -20,53 +20,45 @@ namespace modules {
 
 namespace prob {
 
-// CERN ROOT type definitions in: core/base/inc/Rtypes.h
-typedef int32_t Int_t;
-typedef double Double_t;
-
-namespace TMath {
-    Int_t Nint(Double_t x);
-    Double_t KolmogorovProb(Double_t z);
-    
-    inline Double_t Exp(Double_t x) {
-        return std::exp(x);
-    }
-    
-    inline Double_t Abs(Double_t x) {
-        return std::fabs(x);
-    }
-    
-    inline Double_t Max(Double_t a, Double_t b) {
-        return std::max(a, b);
-    }
-}
-
 /**
  * @brief Komogorov cumulative distribution function: In-database interface
  */
 AnyType
 kolmogorov_cdf::run(AnyType &args) {
-    return kolmogorovCDF(args[0].getAs<double>());
+    return prob::cdf(kolmogorov(), args[0].getAs<double>());
 }
 
-double
-kolmogorovCDF(double t) {
-    if (std::isnan(t))
-        return std::numeric_limits<double>::quiet_NaN();
-    else if (t == std::numeric_limits<double>::infinity())
-        return 1;
-    else if (t < 0)
-        return 0;
-    
-    return 1. - TMath::KolmogorovProb(t);
+// Following is the CERN ROOT implementation. We gather a few namespace
+// and minor function definitions so that we can then copy the actual Kolmogorov
+// implementation verbatim.
+
+using namespace TMath;
+
+namespace TMath {
+    // KolmogorovProb(Double_t) is defined in header file.
+
+    Int_t Nint(Double_t x);
+
+    inline Double_t Exp(Double_t x) {
+        return std::exp(x);
+    }
+
+    inline Double_t Abs(Double_t x) {
+        return std::fabs(x);
+    }
+
+    inline Int_t Max(Int_t a, Int_t b) {
+        return std::max(a, b);
+    }
 }
 
 /*
  * Code for computing the Kolmogorov distribution copied from CERN ROOT project.
  * Comments mention Routine ID: G102 from CERNLIB as original source.
  */
- 
+
 // BEGIN Copied from CERN ROOT, math/mathcore/src/TMath.cxx
+// http://root.cern.ch/viewvc/trunk/math/mathcore/src/TMath.cxx?view=markup&pathrev=41830
 // (SVN Rev. 41830, ll. 122-137)
 Int_t TMath::Nint(Double_t x)
 {
@@ -87,6 +79,7 @@ Int_t TMath::Nint(Double_t x)
 // END Copied from CERN ROOT, math/mathcore/src/TMath.cxx
 
 // BEGIN Copied from CERN ROOT, math/mathcore/src/TMath.cxx
+// http://root.cern.ch/viewvc/trunk/math/mathcore/src/TMath.cxx?view=markup&pathrev=41830
 // (SVN Rev. 41830, ll. 657-715)
 Double_t TMath::KolmogorovProb(Double_t z)
 {

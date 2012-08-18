@@ -22,6 +22,8 @@ public:
     
     const T* ptr() const;
     size_t size() const;
+    size_t dims() const;
+    size_t sizeOfDim(size_t inDim) const;
     const ArrayType *array() const;    
     const T& operator[](size_t inIndex) const;
 
@@ -43,6 +45,8 @@ public:
     
     using Base::ptr;
     using Base::array;
+    using Base::dims;
+    using Base::sizeOfDim;
     
     T* ptr();
     ArrayType *array();

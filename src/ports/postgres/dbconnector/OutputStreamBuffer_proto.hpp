@@ -22,7 +22,7 @@ class OutputStreamBuffer
   : public dbal::OutputStreamBufferBase<OutputStreamBuffer<ErrorLevel>, char> {
 
 public:
-    void output(char *inMsg, uint32_t inLength) const;
+    void output(char *inMsg, std::size_t inLength) const;
 };
 
 } // namespace postgres

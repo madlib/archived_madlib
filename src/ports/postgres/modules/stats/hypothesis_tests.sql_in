@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file hypothesis_tests.sql_in
  *
@@ -10,22 +10,104 @@
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
+m4_changequote(<!,!>)
 
 /**
 @addtogroup grp_stats_tests
 
 @about
 
-@anchor sample_mean
-Let \f$ x_1, \dots, x_n \f$ be a sample. The <em>sample mean</em> is:
-\f[
-    \bar x := \frac 1n \sum_{i=1}^n x_i
-\f]
-@anchor sample_variance
-The <em>sample variance</em> is:
-\f[
-    s^2 = \frac{1}{n-1} \cdot \sum_{i=1}^n (x_i - \bar x)^2
-\f]
+Hypothesis tests are used to confirm or reject a <em>“null” hypothesis</em>
+\f$ H_0 \f$ about the distribution of random variables, given realizations of
+these random variables. Since in general it is not possible to make statements
+with certainty, one is interested in the probability \f$ p \f$ of seeing random
+variates at least as extreme as the ones observed, assuming that \f$ H_0 \f$ is
+true. If this probability \f$ p \f$ is small, \f$ H_0 \f$ will be rejected by
+the test with <em>significance level</em> \f$ p \f$. Falsifying \f$ H_0 \f$ is
+the canonic goal when employing a hypothesis test. That is, hypothesis tests are
+typically used in order to substantiate that instead the <em>alternative
+hypothesis</em> \f$ H_1 \f$ is true.
+
+Hypothesis tests may be devided into parametric and non-parametric tests. A
+parametric test assumes certain distributions and makes inferences about
+parameters of the distributions (like, e.g., the mean of a normal distribution).
+Formally, there is a given domain of possible parameters \f$ \Gamma \f$ and the
+null hypothesis \f$ H_0 \f$ is the event that the true parameter
+\f$ \gamma_0 \in \Gamma_0 \f$, where \f$ \Gamma_0 \subsetneq \Gamma \f$.
+Non-parametric tests, on the other hand, do not assume any particular
+distribution of the sample (e.g., a non-parametric test may simply test if two
+distributions are similar).
+
+The first step of a hypothesis test is to compute a <em>test statistic</em>,
+which is a function of the random variates, i.e., a random variate itself.
+A hypothesis test relies on that the distribution of the test statistic is
+(approximately) known. Now, the \f$ p \f$-value is the probability of seeing a
+test statistic at least as extreme as the one observed, assuming that
+\f$ H_0 \f$ is true. In a case where the null hypothesis corresponds to a family
+of distributions (e.g., in a parametric test where \f$ \Gamma_0 \f$ is not a
+singleton set), the \f$ p \f$-value is the supremum, over all possible
+distributions according to the null hypothesis, of these probabilities.
+
+@input
+
+Input data is assumed to be normalized with all values stored row-wise. In
+general, the following inputs are expected.
+
+One-sample tests expect the following form:
+<pre>{TABLE|VIEW} <em>source</em> (
+    ...
+    <em>value</em> DOUBLE PRECISION
+    ...
+)</pre>
+
+Two-sample tests expect the following form:
+<pre>{TABLE|VIEW} <em>source</em> (
+    ...
+    <em>first</em> BOOLEAN,
+    <em>value</em> DOUBLE PRECISION
+    ...
+)</pre>
+Here, \c first indicates whether a value is from the first (if \c TRUE) or the
+second sample (if \c FALSE).
+
+Many-sample tests expect the following form:
+<pre>{TABLE|VIEW} <em>source</em> (
+    ...
+    <em>group</em> INTEGER,
+    <em>value</em> DOUBLE PRECISION
+    ...
+)</pre>
+
+@usage
+
+All tests are implemented as aggregate functions. The non-parametric
+(rank-based) tests are implemented as ordered aggregate functions and thus
+necessitate an <tt>ORDER BY</tt> clause. In the following, the most simple
+forms of usage are given. Specific function signatures, as described in
+\ref hypothesis_tests.sql_in, may ask for more arguments or for a different
+<tt>ORDER BY</tt> clause.
+
+- Run a parametric one-sample test:
+  <pre>SELECT <em>test</em>(<em>value</em>) FROM <em>source</em></pre>
+- Run a parametric two-sample test:
+  <pre>SELECT <em>test</em>(<em>first</em>, <em>value</em>) FROM <em>source</em></pre>
+- Run a non-parametric one-sample test:
+  <pre>SELECT <em>test</em>(<em>value</em> ORDER BY <em>value</em>) FROM <em>source</em></pre>
+- Run a non-parametric two-sample test:
+  <pre>SELECT <em>test</em>(<em>first</em>, <em>value</em> ORDER BY <em>value</em>) FROM <em>source</em></pre>
+
+@examp
+
+See \ref hypothesis_tests.sql_in for examples for each of the aggregate
+functions.
+
+@literature
+
+[1] M. Hollander, D. Wolfe: <em>Nonparametric Statistical Methods</em>,
+    2nd edition, Wiley, 1999
+
+[2] E. Lehmann, J. Romano: <em>Testing Statistical Hypotheses</em>, 3rd edition,
+    Springer, 2005
 
 @sa File hypothesis_tests.sql_in documenting the SQL functions.
 */
@@ -95,15 +177,15 @@ LANGUAGE C IMMUTABLE STRICT;
  *    The corresponding random
  *    variable is Student-t distributed with
  *    \f$ (n - 1) \f$ degrees of freedom.
- *  - <tt>df BIGINT</tt> - Degrees of freedom \f$ (n - 1) \f$
+ *  - <tt>df FLOAT8</tt> - Degrees of freedom \f$ (n - 1) \f$
  *  - <tt>p_value_one_sided FLOAT8</tt> - Lower bound on one-sided p-value.
  *    In detail, the result is \f$ \Pr[\bar X \geq \bar x \mid \mu = 0] \f$,
  *    which is a lower bound on
  *    \f$ \Pr[\bar X \geq \bar x \mid \mu \leq 0] \f$. Computed as
- *    <tt>(1.0 - \ref student_t_cdf "student_t_cdf"(statistic))</tt>.
+ *    <tt>(1.0 - \ref students_t_cdf "students_t_cdf"(statistic))</tt>.
  *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
  *    \f$ \Pr[ |\bar X| \geq |\bar x| \mid \mu = 0] \f$. Computed as
- *    <tt>(2 * \ref student_t_cdf "student_t_cdf"(-abs(statistic)))</tt>.
+ *    <tt>(2 * \ref students_t_cdf "students_t_cdf"(-abs(statistic)))</tt>.
  *
  * @usage
  *  - One-sample t-test: Test null hypothesis that the mean of a sample is at
@@ -116,18 +198,18 @@ LANGUAGE C IMMUTABLE STRICT;
  */
 CREATE AGGREGATE MADLIB_SCHEMA.t_test_one(
     /*+ value */ DOUBLE PRECISION) (
-    
+
     SFUNC=MADLIB_SCHEMA.t_test_one_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.t_test_one_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.t_test_merge_states,!>)
     INITCOND='{0,0,0,0,0,0,0}'
 );
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.t_test_two_transition(
     state DOUBLE PRECISION[],
-    "fromFirstSample" BOOLEAN,
+    "first" BOOLEAN,
     "value" DOUBLE PRECISION)
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
@@ -164,7 +246,7 @@ LANGUAGE C IMMUTABLE STRICT;
  *    \f]
  *    where
  *    \f[
- *        s_p^2 = \frac{\sum_{i=1}^n (x_i - \bar x)^2 
+ *        s_p^2 = \frac{\sum_{i=1}^n (x_i - \bar x)^2
  *                         + \sum_{i=1}^m (y_i - \bar y)^2}
  *                     {n + m - 2}
  *    \f]
@@ -172,17 +254,17 @@ LANGUAGE C IMMUTABLE STRICT;
  *    The corresponding random
  *    variable is Student-t distributed with
  *    \f$ (n + m - 2) \f$ degrees of freedom.
- *  - <tt>df BIGINT</tt> - Degrees of freedom \f$ (n + m - 2) \f$
+ *  - <tt>df FLOAT8</tt> - Degrees of freedom \f$ (n + m - 2) \f$
  *  - <tt>p_value_one_sided FLOAT8</tt> - Lower bound on one-sided p-value.
  *    In detail, the result is \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X = \mu_Y] \f$,
  *    which is a lower bound on
  *    \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X \leq \mu_Y] \f$.
  *    Computed as
- *    <tt>(1.0 - \ref student_t_cdf "student_t_cdf"(statistic))</tt>.
+ *    <tt>(1.0 - \ref students_t_cdf "students_t_cdf"(statistic))</tt>.
  *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
  *    \f$ \Pr[ |\bar X - \bar Y| \geq |\bar x - \bar y| \mid \mu_X = \mu_Y] \f$.
  *    Computed as
- *    <tt>(2 * \ref student_t_cdf "student_t_cdf"(-abs(statistic)))</tt>.
+ *    <tt>(2 * \ref students_t_cdf "students_t_cdf"(-abs(statistic)))</tt>.
  *
  * @usage
  *  - Two-sample pooled t-test: Test null hypothesis that the mean of the first
@@ -191,13 +273,13 @@ LANGUAGE C IMMUTABLE STRICT;
  *    <pre>SELECT (t_test_pooled(<em>first</em>, <em>value</em>)).* FROM <em>source</em></pre>
  */
 CREATE AGGREGATE MADLIB_SCHEMA.t_test_two_pooled(
-    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "first" */ BOOLEAN,
     /*+ "value" */ DOUBLE PRECISION) (
-    
+
     SFUNC=MADLIB_SCHEMA.t_test_two_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.t_test_two_pooled_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.t_test_merge_states,!>)
     INITCOND='{0,0,0,0,0,0,0}'
 );
 
@@ -236,32 +318,32 @@ LANGUAGE C IMMUTABLE STRICT;
  *        \frac{(s_X^2 / n + s_Y^2 / m)^2}{(s_X^2 / n)^2/(n-1) + (s_Y^2 / m)^2/(m-1)}
  *    \f]
  *    degrees of freedom (Welch–Satterthwaite formula).
- *  - <tt>df BIGINT</tt> - Degrees of freedom (as above)
+ *  - <tt>df FLOAT8</tt> - Degrees of freedom (as above)
  *  - <tt>p_value_one_sided FLOAT8</tt> - Lower bound on one-sided p-value.
  *    In detail, the result is \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X = \mu_Y] \f$,
  *    which is a lower bound on
  *    \f$ \Pr[\bar X - \bar Y \geq \bar x - \bar y \mid \mu_X \leq \mu_Y] \f$.
  *    Computed as
- *    <tt>(1.0 - \ref student_t_cdf "student_t_cdf"(statistic))</tt>.
+ *    <tt>(1.0 - \ref students_t_cdf "students_t_cdf"(statistic))</tt>.
  *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
  *    \f$ \Pr[ |\bar X - \bar Y| \geq |\bar x - \bar y| \mid \mu_X = \mu_Y] \f$.
  *    Computed as
- *    <tt>(2 * \ref student_t_cdf "student_t_cdf"(-abs(statistic)))</tt>.
+ *    <tt>(2 * \ref students_t_cdf "students_t_cdf"(-abs(statistic)))</tt>.
  *
  * @usage
  *  - Two-sample unpooled t-test: Test null hypothesis that the mean of the
  *    first sample is at most (or equal to, respectively) the mean of the second
  *    sample:
- *    <pre>SELECT (t_test_unpooled(<em>valueIsFromFirstSample</em>, <em>value</em>)).* FROM <em>source</em></pre>
+ *    <pre>SELECT (t_test_unpooled(<em>first</em>, <em>value</em>)).* FROM <em>source</em></pre>
  */
 CREATE AGGREGATE MADLIB_SCHEMA.t_test_two_unpooled(
-    /*+ first */ BOOLEAN,
-    /*+ value */ DOUBLE PRECISION) (
-    
+    /*+ "first" */ BOOLEAN,
+    /*+ "value" */ DOUBLE PRECISION) (
+
     SFUNC=MADLIB_SCHEMA.t_test_two_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.t_test_two_unpooled_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.t_test_merge_states,!>)
     INITCOND='{0,0,0,0,0,0,0}'
 );
 
@@ -305,21 +387,20 @@ CREATE AGGREGATE MADLIB_SCHEMA.t_test_two_unpooled(
  * @usage
  *  - Test null hypothesis that the variance of the first sample is at most (or
  *    equal to, respectively) the variance of the second sample:
- *    <pre>SELECT (f_test(<em>valueIsFromFirstSample</em>, <em>value</em>)).* FROM <em>source</em></pre>
+ *    <pre>SELECT (f_test(<em>first</em>, <em>value</em>)).* FROM <em>source</em></pre>
  *
  * @internal We reuse the two-sample t-test transition and merge functions.
  */
 CREATE AGGREGATE MADLIB_SCHEMA.f_test(
-    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "first" */ BOOLEAN,
     /*+ "value" */ DOUBLE PRECISION) (
-    
+
     SFUNC=MADLIB_SCHEMA.t_test_two_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.f_test_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.t_test_merge_states,')
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.t_test_merge_states,!>)
     INITCOND='{0,0,0,0,0,0,0}'
 );
-
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
@@ -329,8 +410,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
     df BIGINT
 ) RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE
-CALLED ON NULL INPUT;
+LANGUAGE C
+IMMUTABLE
+STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
     state DOUBLE PRECISION[],
@@ -338,17 +420,18 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
     expected DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE
-CALLED ON NULL INPUT;
+LANGUAGE C
+IMMUTABLE
+STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_transition(
     state DOUBLE PRECISION[],
     observed BIGINT
 ) RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE
-CALLED ON NULL INPUT;
-
+LANGUAGE C
+IMMUTABLE
+STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_merge_states(
     state1 DOUBLE PRECISION[],
@@ -356,7 +439,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_merge_states(
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C
-IMMUTABLE STRICT;
+IMMUTABLE
+STRICT;
 
 CREATE TYPE MADLIB_SCHEMA.chi2_test_result AS (
     statistic DOUBLE PRECISION,
@@ -370,7 +454,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.chi2_gof_test_final(
     state DOUBLE PRECISION[]
 ) RETURNS MADLIB_SCHEMA.chi2_test_result
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT;
+LANGUAGE C
+IMMUTABLE
+STRICT;
 
 /**
  * @brief Perform Pearson's chi-squared goodness-of-fit test
@@ -383,13 +469,13 @@ LANGUAGE C IMMUTABLE STRICT;
  * @param observed Number \f$ n_i \f$ of observations of the current event/row
  * @param expected Expected number of observations of current event/row. This
  *     number is not required to be normalized. That is, \f$ p^0_i \f$ will be
- *     taken as \c expected divided by <tt>sum(expected)</tt>. If this parameter
- *     is \c NULL, chi2_test() will use
+ *     taken as \c expected divided by <tt>sum(expected)</tt>. Hence, if this
+ *     parameter is not specified, chi2_test() will by default use
  *     \f$ p^0 = (\frac 1k, \dots, \frac 1k) \f$, i.e., test that \f$ p \f$ is a
  *     discrete uniform distribution.
  * @param df Degrees of freedom. This is the number of events reduced by the
  *     degree of freedom lost by using the observed numbers for defining the
- *     expected number of observations. If this parameter is \c NULL, the degree
+ *     expected number of observations. If this parameter is 0, the degree
  *     of freedom is taken as \f$ (k - 1) \f$.
  *
  * @return A composite value as follows. Let \f$ n = \sum_{i=1}^n n_i \f$.
@@ -437,40 +523,40 @@ LANGUAGE C IMMUTABLE STRICT;
  */
 CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
     /*+ observed */ BIGINT,
-    /*+ expected */ DOUBLE PRECISION /*+ DEFAULT NULL */,
-    /*+ df */ BIGINT /*+ DEFAULT NULL */
-) (    
+    /*+ expected */ DOUBLE PRECISION /*+ DEFAULT 1 */,
+    /*+ df */ BIGINT /*+ DEFAULT 0 */
+) (
     SFUNC=MADLIB_SCHEMA.chi2_gof_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.chi2_gof_test_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.chi2_gof_test_merge_states,')
-    INITCOND='{0,0,0,0,0,0,0}'
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.chi2_gof_test_merge_states,!>)
+    INITCOND='{0,0,0,0,0,0}'
 );
 
 CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
     /*+ observed */ BIGINT,
     /*+ expected */ DOUBLE PRECISION
-) (    
+) (
     SFUNC=MADLIB_SCHEMA.chi2_gof_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.chi2_gof_test_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.chi2_gof_test_merge_states,')
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.chi2_gof_test_merge_states,!>)
     INITCOND='{0,0,0,0,0,0,0}'
 );
 
 CREATE AGGREGATE MADLIB_SCHEMA.chi2_gof_test(
     /*+ observed */ BIGINT
-) (    
+) (
     SFUNC=MADLIB_SCHEMA.chi2_gof_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.chi2_gof_test_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.chi2_gof_test_merge_states,')
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.chi2_gof_test_merge_states,!>)
     INITCOND='{0,0,0,0,0,0,0}'
 );
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ks_test_transition(
     state DOUBLE PRECISION[],
-    "fromFirstSample" BOOLEAN,
+    "first" BOOLEAN,
     "value" DOUBLE PRECISION,
     "numFirst" BIGINT,
     "numSecond" BIGINT
@@ -540,24 +626,25 @@ LANGUAGE C IMMUTABLE STRICT;
  *     (<tt>ORDER BY \em value</tt>) and will raise an exception if values are
  *     not ordered.
  */
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,<!
 CREATE
-m4_ifdef(`__GREENPLUM__',`ORDERED')
+m4_ifdef(<!__GREENPLUM__!>,<!ORDERED!>)
 AGGREGATE MADLIB_SCHEMA.ks_test(
-    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "first" */ BOOLEAN,
     /*+ "value" */ DOUBLE PRECISION,
-    /*+ "numFirst" */ BIGINT,
-    /*+ "numSecond" */ BIGINT
+    /*+ m */ BIGINT,
+    /*+ n */ BIGINT
 ) (
     SFUNC=MADLIB_SCHEMA.ks_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.ks_test_final,
     INITCOND='{0,0,0,0,0,0,0}'
 );
-
+!>)
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mw_test_transition(
     state DOUBLE PRECISION[],
-    "fromFirstSample" BOOLEAN,
+    "first" BOOLEAN,
     "value" DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
@@ -606,7 +693,7 @@ LANGUAGE C IMMUTABLE STRICT;
  *    where
  *    \f[
  *        r_{x,i}
- *        =   \{ j \mid x_j < x_i \} + \{ j \mid y_j < x_i \} + 
+ *        =   \{ j \mid x_j < x_i \} + \{ j \mid y_j < x_i \} +
  *            \frac{\{ j \mid x_j = x_i \} + \{ j \mid y_j = x_i \} + 1}{2}
  *    \f]
  *    is defined as the rank of \f$ x_i \f$ in the combined list of all
@@ -628,18 +715,19 @@ LANGUAGE C IMMUTABLE STRICT;
  *     (<tt>ORDER BY \em value</tt>) and will raise an exception if values are
  *     not ordered.
  */
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,<!
 CREATE
-m4_ifdef(`__GREENPLUM__',`ORDERED')
+m4_ifdef(<!__GREENPLUM__!>,<!ORDERED!>)
 AGGREGATE MADLIB_SCHEMA.mw_test(
-    /*+ "fromFirstSample" */ BOOLEAN,
+    /*+ "first" */ BOOLEAN,
     /*+ "value" */ DOUBLE PRECISION
-) (    
+) (
     SFUNC=MADLIB_SCHEMA.mw_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.mw_test_final,
     INITCOND='{0,0,0,0,0,0,0}'
 );
-
+!>)
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.wsr_test_transition(
     state DOUBLE PRECISION[],
@@ -686,26 +774,20 @@ LANGUAGE C IMMUTABLE STRICT;
  *
  * @param value Value of random variate \f$ x_i \f$ or \f$ y_i \f$. Values of 0
  *     are ignored (i.e., they do not count towards \f$ n \f$).
- * @param precision The precision with which value is known. The precision
- *     determines the handling of ties. The current value is regarded a tie
- *     with the previous value if <tt>value - precision</tt> is at most
- *     <tt>value + precision</tt>, for any of the immediately preceeding rows
- *     that form a tie.
- *
- * @warning
- *      There are conflicting sources for the variance reduction in case of ties:
- *      - http://mlsc.lboro.ac.uk/resources/statistics/wsrt.pdf
- *      - http://de.wikipedia.org/wiki/Wilcoxon-Vorzeichen-Rang-Test
- *      .
- *      We currently use the former. This needs to be verified with some
- *      trusworthy sources.
+ * @param precision The precision \f$ \epsilon_i \f$ with which value is known.
+ *     The precision determines the handling of ties. The current value
+ *     \f$ v_i \f$ is regarded a tie with the previous value \f$ v_{i-1} \f$ if
+ *     \f$ v_i - \epsilon_i \leq \max_{j=1, \dots, i-1} v_j + \epsilon_j \f$.
+ *     If \c precision is negative, then it will be treated as
+ *     <tt>value * 2^(-52)</tt>. (Note that \f$ 2^{-52} \f$ is the machine
+ *     epsilon for type <tt>DOUBLE PRECISION</tt>.)
  *
  * @return A composite value:
  *  - <tt>statistic FLOAT8</tt> - statistic computed as follows. Let
  *    \f$
  *        w^+ = \sum_{i \mid x_i > 0} r_i
  *    \f$
- *    and 
+ *    and
  *    \f$
  *        w^- = \sum_{i \mid x_i < 0} r_i
  *    \f$
@@ -728,7 +810,7 @@ LANGUAGE C IMMUTABLE STRICT;
  *    where \f$ t_i \f$ is the number of
  *    values with absolute value equal to \f$ |x_i| \f$. The corresponding
  *    random variable is approximately standard normally distributed.
- *  - <tt>p_value_one_sided FLOAT8</tt> - One-sided p-value i.e., 
+ *  - <tt>p_value_one_sided FLOAT8</tt> - One-sided p-value i.e.,
  *    \f$ \Pr[Z \geq z \mid \mu \leq 0] \f$. Computed as
  *    <tt>(1.0 - \ref normal_cdf "normal_cdf"(z_statistic))</tt>.
  *  - <tt>p_value_two_sided FLOAT8</tt> - Two-sided p-value, i.e.,
@@ -743,7 +825,7 @@ LANGUAGE C IMMUTABLE STRICT;
  *    between the first and second value in a pair is at most (or equal to,
  *    respectively) \f$ \mu_0 \f$:
  *    <pre>SELECT (wsr_test(<em>first</em> - <em>second</em> - <em>mu_0</em> ORDER BY abs(<em>first</em> - <em>second</em>))).* FROM <em>source</em></pre>
- *    If correctly determining ties is important (e.g., you may want to do so 
+ *    If correctly determining ties is important (e.g., you may want to do so
  *    when comparing to software products that take \c first, \c second,
  *    and \c mu_0 as individual parameters), supply the precision parameter.
  *    This can be done as follows:
@@ -761,29 +843,32 @@ LANGUAGE C IMMUTABLE STRICT;
  *     (<tt>ORDER BY abs(\em value</tt>)) and will raise an exception if the
  *     absolute values are not ordered.
  */
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,<!
 CREATE
-m4_ifdef(`__GREENPLUM__',`ORDERED')
+m4_ifdef(<!__GREENPLUM__!>,<!ORDERED!>)
 AGGREGATE MADLIB_SCHEMA.wsr_test(
-    /*+ value */ DOUBLE PRECISION,
-    /*+ "precision" */ DOUBLE PRECISION /*+ DEFAULT NULL */
-) (    
+    /*+ "value" */ DOUBLE PRECISION,
+    /*+ "precision" */ DOUBLE PRECISION /*+ DEFAULT -1 */
+) (
     SFUNC=MADLIB_SCHEMA.wsr_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.wsr_test_final,
     INITCOND='{0,0,0,0,0,0,0,0,0}'
 );
+!>)
 
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,<!
 CREATE
-m4_ifdef(`__GREENPLUM__',`ORDERED')
+m4_ifdef(<!__GREENPLUM__!>,<!ORDERED!>)
 AGGREGATE MADLIB_SCHEMA.wsr_test(
     /*+ value */ DOUBLE PRECISION
-) (    
+) (
     SFUNC=MADLIB_SCHEMA.wsr_test_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.wsr_test_final,
     INITCOND='{0,0,0,0,0,0,0,0,0}'
 );
-
+!>)
 
 CREATE TYPE MADLIB_SCHEMA.one_way_anova_result AS (
     sum_squares_between DOUBLE PRECISION,
@@ -877,10 +962,12 @@ LANGUAGE C IMMUTABLE STRICT;
 CREATE AGGREGATE MADLIB_SCHEMA.one_way_anova(
     /*+ group */ INTEGER,
     /*+ value */ DOUBLE PRECISION) (
-    
+
     SFUNC=MADLIB_SCHEMA.one_way_anova_transition,
     STYPE=DOUBLE PRECISION[],
     FINALFUNC=MADLIB_SCHEMA.one_way_anova_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.one_way_anova_merge_states,')
+    m4_ifdef(<!__GREENPLUM__!>,<!PREFUNC=MADLIB_SCHEMA.one_way_anova_merge_states,!>)
     INITCOND='{0,0}'
 );
+
+m4_changequote(<!`!>,<!'!>)

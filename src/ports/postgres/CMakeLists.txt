@@ -31,15 +31,17 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/dbconnector.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/EigenIntegration_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/EigenIntegration_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/FunctionHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/FunctionHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NewDelete.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NativeRandomNumberGenerator_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/NativeRandomNumberGenerator_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/OutputStreamBuffer_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/PGException_proto.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SparseVector_impl.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SparseVector_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SystemInformation_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SystemInformation_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_impl.hpp"
@@ -324,7 +326,7 @@ function(add_extension_support)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_BINARY_DIR}/modules ${${DBMS_UC}_SHARE_DIR}/madlib/modules
         COMMAND ${CMAKE_COMMAND} -E copy
-            ${CMAKE_CURRENT_BINARY_DIR}/lib/libmadlib.so ${${DBMS_UC}_LIB_DIR}
+            ${CMAKE_CURRENT_BINARY_DIR}/lib/libmadlib.so ${${DBMS_UC}_PKGLIB_DIR}
         COMMAND ${CMAKE_COMMAND} -E copy
             ${EXTENSION_SQL} ${${DBMS_UC}_SHARE_DIR}/extension/
         COMMAND ${CMAKE_COMMAND} -E copy

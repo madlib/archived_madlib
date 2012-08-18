@@ -1,0 +1,70 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file sample.sql_in
+ *
+ * @brief SQL functions for random sampling
+ *
+ * @sa For an overview of random-sampling functions, see the module
+ *     description \ref grp_sample.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+/**
+@addtogroup grp_sample
+
+@about
+
+Random-sampling functions.
+
+@sa File sample.sql_in documenting the SQL functions.
+*/
+
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_transition(
+    state DOUBLE PRECISION[],
+    identifier BIGINT,
+    weight DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+VOLATILE
+STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_merge(
+    state_left DOUBLE PRECISION[],
+    state_right DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+VOLATILE
+STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_final(
+    state DOUBLE PRECISION[]
+) RETURNS BIGINT
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+/**
+ * @brief Sample a single row according to weights
+ *
+ * @param identifier Row identifier. Uniqueness is not enforced. If an
+ *     identifier occurs multiple times, the probability of sampling this
+ *     identifier is proportional to the sum of its weights.
+ * @param weight Weight for row. A negative value here is treated has zero
+ *     weight.
+ * @return \c identifier of the selected row. The probability of sampling any
+ *     particular row <tt>(identifier, weight)</tt> is
+ *     <tt>weight/SUM(weight)</tt>.
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.weighted_sample(
+    /*+ "identifier" */ BIGINT,
+    /*+ "weight" */ DOUBLE PRECISION) (
+
+    SFUNC=MADLIB_SCHEMA.weighted_sample_transition,
+    STYPE=DOUBLE PRECISION[],
+    FINALFUNC=MADLIB_SCHEMA.weighted_sample_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.weighted_sample_merge,')
+    INITCOND='{0,0}'
+);
