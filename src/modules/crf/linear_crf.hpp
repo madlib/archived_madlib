@@ -22,7 +22,7 @@ DECLARE_UDF(crf, lincrf_lbfgs_step_final)
  * @brief Linear-chain CRF (L-BFGS): Difference in log-likelihood
  *     between two transition states
  */
-DECLARE_UDF(crf, internal_lincrf_lbfgs_step_distance)
+DECLARE_UDF(crf, internal_lincrf_lbfgs_converge)
 
 /**
  * @brief Linear-chain CRF (L-BFGS): Convert transition state to 

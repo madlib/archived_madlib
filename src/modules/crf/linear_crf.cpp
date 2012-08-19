@@ -796,10 +796,9 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
  * @brief Return the difference in log-likelihood between two states
  */
 AnyType
-internal_lincrf_lbfgs_step_distance::run(AnyType &args) {
-    LinCrfLBFGSTransitionState<ArrayHandle<double> > stateLeft = args[0];
-    LinCrfLBFGSTransitionState<ArrayHandle<double> > stateRight = args[1];
-    return std::abs(stateLeft.loglikelihood - stateRight.loglikelihood);
+internal_lincrf_lbfgs_converge::run(AnyType &args) {
+    LinCrfLBFGSTransitionState<ArrayHandle<double> > state = args[0];
+    return state.lbfgs_state(6);
 }
 
 /**
