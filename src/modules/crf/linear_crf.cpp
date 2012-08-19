@@ -592,7 +592,7 @@ void LBFGS::lbfgs(int n, int m, double f, Eigen::VectorXd g, double eps , double
     }
 }
 
-void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
+void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
     // take exponential operator
     for (int m = 0; m < num_labels; m++) {
         Vi(m) = std::exp(Vi(m));
@@ -605,7 +605,7 @@ void compute_log_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
 AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
-    HandleMap<const ColumnVector> features = args[1].getAs<ArrayHandle<double> >();
+    MappedColumnVector features = args[1].getAs<MappedColumnVector>();
     int feature_size = features.size();
     int seq_len = features(feature_size-1) + 1;
     if (state.numRows == 0) {
@@ -652,7 +652,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             index-=6;
         }
 
-        compute_log_Mi(state.num_labels, Mi, Vi);
+        compute_exp_Mi(state.num_labels, Mi, Vi);
 
         temp=betas.col(i);
         temp=temp.cwiseProduct(Vi);
@@ -683,7 +683,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             index+=6;
         }
 
-        compute_log_Mi(state.num_labels, Mi, Vi);
+        compute_exp_Mi(state.num_labels, Mi, Vi);
 
         if(j>0) {
             temp = alpha;
@@ -768,7 +768,7 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     double sigma_square = 100;
 
     state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square;
-    state.loglikelihood *= -1;
+    state.loglikelihood = state.loglikelihood * -1;
     state.grad -= state.coef;
     state.grad = -state.grad;
 
@@ -823,7 +823,7 @@ AnyType stateToResult(
     double loglikelihood) {
     // FIXME: We currently need to copy the coefficient to a native array
     // This should be transparent to user code
-    HandleMap<ColumnVector> coef(
+    MutableMappedColumnVector coef(
         inAllocator.allocateArray<double>(incoef.size()));
     coef = incoef;
 
