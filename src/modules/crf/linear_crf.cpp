@@ -104,8 +104,8 @@ private:
 
 public:
     typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
-    typename HandleTraits<Handle>::ReferenceToUInt16 num_features;
-    typename HandleTraits<Handle>::ReferenceToUInt16 num_labels;
+    typename HandleTraits<Handle>::ReferenceToUInt32 num_features;
+    typename HandleTraits<Handle>::ReferenceToUInt32 num_labels;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap diag;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;
@@ -151,23 +151,23 @@ LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state) {
     sq = state.lbfgs_state(3);
     yr = state.lbfgs_state(4);
     beta = state.lbfgs_state(5);
-    iflag = state.lbfgs_state(6);
-    iter = state.lbfgs_state(7);
-    nfun = state.lbfgs_state(8);
-    point = state.lbfgs_state(9);
-    ispt = state.lbfgs_state(10);
-    iypt = state.lbfgs_state(11);
-    maxfev = state.lbfgs_state(12);
-    info = state.lbfgs_state(13);
-    bound = state.lbfgs_state(14);
-    npt = state.lbfgs_state(15);
-    cp = state.lbfgs_state(16);
-    nfev = state.lbfgs_state(17);
-    inmc = state.lbfgs_state(18);
-    iycn = state.lbfgs_state(19);
-    iscn = state.lbfgs_state(20);
+    iflag = static_cast<int>(state.lbfgs_state(6));
+    iter = static_cast<int>(state.lbfgs_state(7));
+    nfun = static_cast<int>(state.lbfgs_state(8));
+    point = static_cast<int>(state.lbfgs_state(9));
+    ispt = static_cast<int>(state.lbfgs_state(10));
+    iypt = static_cast<int>(state.lbfgs_state(11));
+    maxfev = static_cast<int>(state.lbfgs_state(12));
+    info = static_cast<int>(state.lbfgs_state(13));
+    bound = static_cast<int>(state.lbfgs_state(14));
+    npt = static_cast<int>(state.lbfgs_state(15));
+    cp = static_cast<int>(state.lbfgs_state(16));
+    nfev = static_cast<int>(state.lbfgs_state(17));
+    inmc = static_cast<int>(state.lbfgs_state(18));
+    iycn = static_cast<int>(state.lbfgs_state(19));
+    iscn = static_cast<int>(state.lbfgs_state(20));
 
-    infoc = state.mcsrch_state(0);
+    infoc = static_cast<int>(state.mcsrch_state(0));
     dg = state.mcsrch_state(1);
     dgm = state.mcsrch_state(2);
     dginit = state.mcsrch_state(3);
@@ -606,10 +606,10 @@ AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
     MappedColumnVector features = args[1].getAs<MappedColumnVector>();
-    int feature_size = features.size();
-    int seq_len = features(feature_size-1) + 1;
+    int feature_size = static_cast<int>(features.size());
+    int seq_len = static_cast<int>(features(feature_size-1)) + 1;
     if (state.numRows == 0) {
-        state.initialize(*this, args[2].getAs<double>(), args[3].getAs<double>());
+        state.initialize(*this, static_cast<uint32_t>(args[2].getAs<double>()), static_cast<uint32_t>(args[3].getAs<double>()));
         if (!args[4].isNull()) {
             LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[4];
             state = previousState;
@@ -640,10 +640,10 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Vi.fill(0);
         // examine all features at position "pos"
         while (index-5>=0 && features(index-1) == i) {
-            size_t f_type =  features(index-5);
-            size_t prev_index =  features(index-4);
-            size_t curr_index =  features(index-3);
-            size_t f_index =  features(index-2);
+            int f_type =  (int)features(index-5);
+            int prev_index =  (int)features(index-4);
+            int curr_index =  (int)features(index-3);
+            int f_index =  (int)features(index-2);
             if (f_type == 2) {// state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { // edge feature
@@ -669,12 +669,12 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        size_t ori_index = index;
+        int ori_index = index;
         while (((index+5) <= (feature_size-1)) && features(index+4) == j) {
-            size_t f_type =  features(index);
-            size_t prev_index =  features(index+1);
-            size_t curr_index =  features(index+2);
-            size_t f_index =  features(index+3);
+            int f_type =  (int)features(index);
+            int prev_index =  (int)features(index+1);
+            int curr_index =  (int)features(index+2);
+            int f_index =  (int)features(index+3);
             if (f_type == 2) {// state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { //edge feature
@@ -696,11 +696,11 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
         index = ori_index;
         while (((index+5) <= (feature_size-1)) && features(index+4) == j) {
-            size_t f_type =  features(index);
-            size_t prev_index =  features(index+1);
-            size_t curr_index =  features(index+2);
-            size_t f_index =  features(index+3);
-            size_t exist = features(index+5);
+            int f_type =  (int)features(index);
+            int prev_index =  (int)features(index+1);
+            int curr_index =  (int)features(index+2);
+            int f_index =  (int)features(index+3);
+            int exist = (int)features(index+5);
             if (exist == 1) {
                 state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
