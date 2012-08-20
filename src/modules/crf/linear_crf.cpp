@@ -116,7 +116,7 @@ public:
         loglikelihood = 0;
     }
 
-    static const int m=3;
+    static const int m=3;// The number of corrections used in the LBFGS update.
 
 private:
     static inline uint32_t arraySize(const uint32_t num_features) {
@@ -155,18 +155,24 @@ public:
 };
 
 class LBFGS {
-    //shared variables in the lbfgs
 public:
-    //shared variable in lbfgs
+    // shared variable in lbfgs
     double stp1, ftol, stp, sq, yr, beta;
+    // iflag A return with <code>iflag &lt; 0</code> indicates an error,
+    // and <code>iflag = 0</code> indicates that the routine has
+    // terminated without detecting errors. On a return with
+    // <code>iflag = 1</code>, the user must evaluate the function
+    // <code>f</code> and gradient <code>g</code>. On a return with
+    // iflag is negative , lbfgs failed
+
     int  iflag, iter, nfun, point, ispt, iypt, maxfev, info, bound, npt, cp, nfev, inmc, iycn, iscn;
-    //shared varibles in mcscrch
+    // shared varibles in mcscrch
     int infoc;
     double dg, dgm, dginit, dgtest, dgx, dgxm, dgy, dgym, finit, ftest1, fm, fx, fxm, fy, fym, p5, p66, stx, sty, stmin, stmax, width, width1, xtrapf;
     bool brackt, stage1, finish;
 
-    ColumnVector w;
-    ColumnVector x;
+    ColumnVector w;//  
+    ColumnVector x;// solution vector
     ColumnVector diag;
 
     LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >&);
