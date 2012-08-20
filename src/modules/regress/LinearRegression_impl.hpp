@@ -80,6 +80,12 @@ LinearRegressionAccumulator<Container>::operator<<(const tuple_type& inTuple) {
         this->resize();
     }
 
+    // dimension check
+    if (widthOfX != static_cast<uint16_t>(x.size())) {
+        throw std::runtime_error("Inconsistent numbers of independent "
+            "variables.");
+    }
+
     numRows++;
     y_sum += y;
     y_square_sum += y * y;
@@ -100,16 +106,6 @@ inline
 LinearRegressionAccumulator<Container>&
 LinearRegressionAccumulator<Container>::operator<<(
     const LinearRegressionAccumulator<OtherContainer>& inOther) {
-
-    // Initialize if necessary
-    if (numRows == 0) {
-        *this = inOther;
-        return *this;
-    }
-
-    if (widthOfX != inOther.widthOfX)
-        throw std::runtime_error("Inconsistent numbers of independent "
-            "variables.");
 
     numRows += inOther.numRows;
     y_sum += inOther.y_sum;
