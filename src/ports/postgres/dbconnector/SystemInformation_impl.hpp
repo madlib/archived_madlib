@@ -109,10 +109,8 @@ SystemInformation*
 SystemInformation::get(FunctionCallInfo fcinfo) {
     madlib_assert(fcinfo->flinfo,
         std::invalid_argument("Incomplete FunctionCallInfoData."));
-
     SystemInformation* sysInfo
         = getSystemInformationFromFmgrInfo(fcinfo->flinfo);
-
     if (!sysInfo) {
         MemoryContext memCtxt = getMemoryContextFromFmgrInfo(fcinfo->flinfo);
 

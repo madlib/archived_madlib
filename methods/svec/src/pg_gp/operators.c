@@ -555,6 +555,34 @@ Datum svec_mult(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(result);
 }
 
+PG_FUNCTION_INFO_V1(svec_agg_mult);
+Datum svec_agg_mult(PG_FUNCTION_ARGS)
+{
+	if (!(fcinfo->context && IsA(fcinfo->context, AggState)))
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_RAISE_EXCEPTION),
+			 errmsg("this function must be used in aggregations")));
+
+	}
+
+	if (PG_ARGISNULL(0) && !PG_ARGISNULL(1))
+	{
+		PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P_COPY(1));
+	}
+
+	if (!PG_ARGISNULL(0) && PG_ARGISNULL(1))
+	{
+		PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P_COPY(0));
+	}
+
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	check_dimension(svec1,svec2,"svec_mult");
+	SvecType *result = op_svec_by_svec_internal(2,svec1,svec2);
+	PG_RETURN_SVECTYPE_P(result);
+}
+
 PG_FUNCTION_INFO_V1( svec_div );
 Datum svec_div(PG_FUNCTION_ARGS)
 {

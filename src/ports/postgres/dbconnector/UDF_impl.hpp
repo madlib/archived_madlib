@@ -36,6 +36,49 @@ UDF::invoke(FunctionCallInfo fcinfo, AnyType& args) {
     return Function(fcinfo).run(args);
 }
 
+
+/**
+ * @brief Internal interface for calling a set return UDF
+ *
+ * We need the FunctionCallInfo in case some arguments or return values are
+ * of polymorphic types.
+ *
+ * @param fcinfo The PostgreSQL FunctionCallInfoData structure
+ *
+ */
+template <class Function>
+inline
+Datum
+UDF::SRF_invoke(FunctionCallInfo fcinfo) {
+    FuncCallContext *funcctx = NULL;
+    MemoryContext oldcontext;
+    bool is_last_call = false;
+    AnyType result;
+
+    if (SRF_IS_FIRSTCALL()) {
+        /* create a function context for cross-call persistence */
+        funcctx = SRF_FIRSTCALL_INIT();
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+        // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
+        // to init the pointer: fn_extra
+        AnyType args(fcinfo);
+        args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
+        MemoryContextSwitchTo(oldcontext);
+    }
+
+    funcctx = SRF_PERCALL_SETUP();
+
+    result = Function(fcinfo).SRF_next(
+            	static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
+            	&is_last_call);
+
+    if (is_last_call)
+    	SRF_RETURN_DONE(funcctx);
+
+    SRF_RETURN_NEXT(funcctx, result.getAsDatum(fcinfo));
+}
+
 /**
  * @brief Each exported C function calls this method (and nothing else)
  */
@@ -45,22 +88,25 @@ Datum
 UDF::call(FunctionCallInfo fcinfo) {
     int sqlerrcode;
     char msg[2048];
-
     try {
         // We want to store in the cache that this function is implemented on
         // top of the C++ AL. Should the same function be invoked again via a
         // FunctionHandle, it can be invoked directly.
-        SystemInformation::get(fcinfo)
-            ->functionInformation(fcinfo->flinfo->fn_oid)->cxx_func
-            = invoke<Function>;
+        if (fcinfo->flinfo->fn_retset) {
+            return SRF_invoke<Function>(fcinfo);
+        }
+        else {
+        	AnyType args(fcinfo);
+            SystemInformation::get(fcinfo)
+                ->functionInformation(fcinfo->flinfo->fn_oid)->cxx_func
+                = invoke<Function>;
+            AnyType result = invoke<Function>(fcinfo, args);
 
-        AnyType args(fcinfo);
-        AnyType result = invoke<Function>(fcinfo, args);
+            if ( result.isNull() )
+                PG_RETURN_NULL();
 
-        if (result.isNull())
-            PG_RETURN_NULL();
-        
-        return result.getAsDatum(fcinfo);
+            return result.getAsDatum(fcinfo);
+        }
     } catch (std::bad_alloc &) {
         sqlerrcode = ERRCODE_OUT_OF_MEMORY;
         strncpy(msg,
