@@ -602,21 +602,9 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
     }
 }
 
-AnyType
-lincrf_lbfgs_step_transition::run(AnyType &args) {
-    LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
-    MappedColumnVector features = args[1].getAs<MappedColumnVector>();
-    int feature_size = static_cast<int>(features.size());
-    int seq_len = static_cast<int>(features(feature_size-1)) + 1;
-    if (state.numRows == 0) {
-        state.initialize(*this, static_cast<uint32_t>(args[2].getAs<double>()), static_cast<uint32_t>(args[3].getAs<double>()));
-        if (!args[4].isNull()) {
-            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[4];
-            state = previousState;
-            state.reset();
-        }
-    }
-
+void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple){
+    int feature_size = static_cast<int>(featureTuple.size());
+    int seq_len = static_cast<int>(featureTuple(feature_size-1)) + 1;
     Eigen::MatrixXd betas(state.num_labels, seq_len);
     Eigen::VectorXd scale(seq_len);
     Eigen::MatrixXd Mi(state.num_labels,state.num_labels);
@@ -639,11 +627,11 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        while (index-5>=0 && features(index-1) == i) {
-            int f_type =  (int)features(index-5);
-            int prev_index =  (int)features(index-4);
-            int curr_index =  (int)features(index-3);
-            int f_index =  (int)features(index-2);
+        while (index-5>=0 && featureTuple(index-1) == i) {
+            int f_type =  (int)featureTuple(index-5);
+            int prev_index =  (int)featureTuple(index-4);
+            int curr_index =  (int)featureTuple(index-3);
+            int f_index =  (int)featureTuple(index-2);
             if (f_type == 2) {// state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { // edge feature
@@ -670,11 +658,11 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
         Vi.fill(0);
         // examine all features at position "pos"
         int ori_index = index;
-        while (((index+5) <= (feature_size-1)) && features(index+4) == j) {
-            int f_type =  (int)features(index);
-            int prev_index =  (int)features(index+1);
-            int curr_index =  (int)features(index+2);
-            int f_index =  (int)features(index+3);
+        while (((index+5) <= (feature_size-1)) && featureTuple(index+4) == j) {
+            int f_type =  (int)featureTuple(index);
+            int prev_index =  (int)featureTuple(index+1);
+            int curr_index =  (int)featureTuple(index+2);
+            int f_index =  (int)featureTuple(index+3);
             if (f_type == 2) {// state feature
                 Vi(curr_index) += state.coef(f_index);
             } else if (f_type == 1) { //edge feature
@@ -695,12 +683,12 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
 
 
         index = ori_index;
-        while (((index+5) <= (feature_size-1)) && features(index+4) == j) {
-            int f_type =  (int)features(index);
-            int prev_index =  (int)features(index+1);
-            int curr_index =  (int)features(index+2);
-            int f_index =  (int)features(index+3);
-            int exist = (int)features(index+5);
+        while (((index+5) <= (feature_size-1)) && featureTuple(index+4) == j) {
+            int f_type =  (int)featureTuple(index);
+            int prev_index =  (int)featureTuple(index+1);
+            int curr_index =  (int)featureTuple(index+2);
+            int f_index =  (int)featureTuple(index+3);
+            int exist = (int)featureTuple(index+5);
             if (exist == 1) {
                 state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
@@ -729,6 +717,22 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
     for (size_t k = 0; k < state.num_features; k++) {
         state.grad(k) -= ExpF(k) / Zx;
     }
+
+}
+
+AnyType
+lincrf_lbfgs_step_transition::run(AnyType &args) {
+    LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
+    MappedColumnVector featureTuple = args[1].getAs<MappedColumnVector>();
+    if (state.numRows == 0) {
+        state.initialize(*this, static_cast<uint32_t>(args[2].getAs<double>()), static_cast<uint32_t>(args[3].getAs<double>()));
+        if (!args[4].isNull()) {
+            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[4];
+            state = previousState;
+            state.reset();
+        }
+    }
+    compute_logli_gradient(state, featureTuple);
     return state;
 }
 
