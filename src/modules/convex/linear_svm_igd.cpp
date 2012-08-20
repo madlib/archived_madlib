@@ -116,7 +116,7 @@ linear_svm_igd_final::run(AnyType &args) {
     // LinearSVMLossAlgorithm::final(state); // empty function call causes a warning
     
     // debug code
-    // dberr << "loss: " << state.algo.loss << std::endl;
+    dberr << "loss: " << state.algo.loss << std::endl;
  
     return state;
 }

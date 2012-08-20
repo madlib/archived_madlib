@@ -5,9 +5,86 @@
  * @brief SQL functions for ridge regression
  * @date July 2012
  *
+ * @sa For a brief introduction to ridge regression, see the module
+ *     description \ref grp_ridge.
+ *
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_ridge
+
+
+@about
+
+This module implements ridge regression (linear regression with Tikhonov regularization [1]).
+Mathematically, this model seeks to find a weight vector \f$w\f$ (also referred as hyperplane) that, for any given training example set, minimizes:
+\f[\min_{w \in R^N} \left[ \sum_{m=1}^M (w^{t} x_m - y_m)^2 \right] + \lambda \|w\|_2^2,\f]
+where \f$x_m \in R^N\f$ are values of independent variables, and \f$y_m \in R\f$ are values of the dependent variable, \f$m = 1,...,M\f$.
+
+
+@input
+
+The <b>training examples</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    <em>ind_var</em>    DOUBLE PRECISION[],
+    <em>dep_var</em>    DOUBLE PRECISION
+)</pre>
+
+Null values are not expected.
+
+
+@usage
+
+Please find descriptions of SQL functions in ridge.sql_in
+
+Output includes coefficients and the loss value.
+<pre>Result as (
+        coefficients    DOUBLE PRECISION[],
+        loss            DOUBLE PRECISION
+);</pre>
+
+we offer Newton's method solver (optimizer) for ridge regression.
+For ridge regression, this is a one-pass algorithm.
+Since Hessian is stored in memory, we expect the number of coefficients is less than 32767 (2^15 - 1).
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE ridge_data (
+    ind_var DOUBLE PRECISION[],
+    dep_var DOUBLE PRECISION
+);
+\endcode     
+-# Populate the input table with some data, which should be well-conditioned, e.g.:
+\code
+mydb=# INSERT INTO ridge_data values ({1, 1}, 0.89);
+mydb=# INSERT INTO ridge_data values ({0.67, -0.06}, 0.3);
+...
+mydb=# INSERT INTO ridge_data values ({0.15, -1.3}, -1.3);
+\endcode   
+-# call ridge_newton_run() to learn coefficients, e.g.:  
+\code
+mydb=# SELECT madlib.ridge_newton_run('ridge_model', 'ridge_data', 'ind_var', 'dep_var', 2, 0.01, 0.1, 1000, 10, 1e-6);
+\endcode
+-# call ridge_newton_predict() to predict results. you usually need the model id output from the learning query to locate the model, assuming 1, e.g.:  
+\code
+mydb=# select madlib.ridge_newton_predict(coefficients, ind_var)
+mydb=# from ridge_data, ridge_model
+mydb=# where ridge_model.id = 1;
+\endcode
+
+
+@literature
+
+[1] Tikhonov regularization. http://en.wikipedia.org/wiki/Tikhonov_regularization
+
+[2] Regularization: Ridge Regression and the LASSO. http://www-stat.stanford.edu/~owen/courses/305/Rudyregularization.pdf
+
+*/
+
 
 --------------------------------------------------------------------------
 -- create SQL functions for Newton's method optimizer
@@ -61,13 +138,28 @@ RETURNS DOUBLE PRECISION[] AS
 LANGUAGE c IMMUTABLE STRICT;
 
 
+/**
+ * @brief Ridge regression using Newton's method
+ *
+ * This function takes as input the table representation of a set of examples
+ * in (FLOAT8[], FLOAT8) format and outputs the coefficients that minimizes
+ * the ordinary least squares with a L2 regularization term.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_ind_var  Name of the column containing feature vector (independent variables)
+ *   @param col_dep_var  Name of the column containing label (dependent variable)
+ *   @param dimension  Number of features (independent variables)
+ *   @param lambda  Hyper-parameter that decides how much the L1 regularization takes effect
+ * 
+ */
 CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_run(
     rel_output      VARCHAR,
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    lambda          DOUBLE PRECISION)   /*+ DEFAULT 0.1 */
+    dimension       INTEGER /*+ DEFAULT 'SELECT max(array_upper(col_ind_var, 1)) FROM rel_source' */,
+    lambda          DOUBLE PRECISION /*+ DEFAULT 0.1 */)
 RETURNS INTEGER AS $$
 DECLARE
     model_id        INTEGER;
@@ -128,7 +220,7 @@ CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER)            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+    dimension       INTEGER)
 RETURNS INTEGER AS $$
     SELECT MADLIB_SCHEMA.ridge_newton_run($1, $2, $3, $4, $5, 0.1);
 $$ LANGUAGE sql VOLATILE;
@@ -151,6 +243,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
+/**
+ * @brief Prediction (real value) using learned coefficients for a given example.
+ *
+ * @param coefficients  Weight vector (hyperplane, classifier)
+ * @param ind_var  Features (independent variables)
+ *
+ */
 CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_predict(
         coefficients    DOUBLE PRECISION[],
         ind_var         DOUBLE PRECISION[])

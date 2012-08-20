@@ -5,9 +5,94 @@
  * @brief SQL functions for linear support vector machine
  * @date July 2012
  *
+ * @sa For a brief introduction to Linear SVM, see the module
+ *     description \ref grp_linear_svm.
+ *
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_linear_svm
+
+
+@about
+
+This module implements support vector machines [1] with linear kernel (hinge loss [2]).
+Mathematically, this model seeks to find a weight vector \f$w\f$ (also referred as hyperplane) that, for any given training example set, minimizes:
+\f[\min_{w \in R^n} \sum_{m=1}^M \max(0, 1 - y_m w^{t} x_m),\f]
+where \f$x_m \in R^n\f$ are values of features, and \f$y_m \in \{-1, 1\}\f$ are values of the label, \f$m = 1,...,M\f$.
+
+
+@input
+
+The <b>training examples</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    <em>features</em>    DOUBLE PRECISION[],
+    <em>label</em>       BOOLEAN
+)</pre>
+
+Null values are not expected.
+
+
+@usage
+
+Please find descriptions of SQL functions in linear_svm.sql_in
+
+Output includes a weight vector (coefficients) and the loss value.
+<pre>Result as (
+        coefficients    DOUBLE PRECISION[],
+        loss            DOUBLE PRECISION
+);</pre>
+
+We offer two different solvers (optimizer) for linear SVM -- incremental gradient descent (IGD) and conjugate gradient method (CG).
+IGD is expected to be faster when the input data has a lot of examples.
+Both IGD and CG suffer slow convergence rates if the input features  renot well-conditioned or a bad stepsize is given.
+Before functions are called, we suggest that the features got normalized to have mean (average) to be 0.0, and standard deviation to be 1.0.
+
+<h3>Stepsize choice.</h3>
+Both solvers will output the loss value for the each iteration.
+In a simple description, a good stepsize is the maximal positive number that guarantees decreases of loss values iteration by iteration.
+Usually, users can try 0.01 first, and then follow this rule until the loss does not change much within reasonable numbers of iterations.
+If stepsize \f$\alpha\f$ is too large (loss is increasing), then \f$\alpha / 10\f$ should be tried next; otherwise \f$\alpha * 10\f$.
+The factor \f$10\f$ can be shrinked later for a more accurate stepsize if needed.
+
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE linear_svm_data (
+    features    DOUBLE PRECISION[],
+    label       BOOLEAN
+);
+\endcode     
+-# Populate the input table with some data, which should be well-conditioned, e.g.:
+\code
+mydb=# INSERT INTO linear_svm_data values ({1, 1}, t);
+mydb=# INSERT INTO linear_svm_data values ({0.67, -0.06}, f);
+...
+mydb=# INSERT INTO linear_svm_data values ({0.15, -1.3}, f);
+\endcode   
+-# Call linear_svm_igd_run() to learn coefficients, e.g.:  
+\code
+mydb=# SELECT madlib.linear_svm_igd_run('linear_svm_model', 'linear_svm_data', 'features', 'label', 2, 0.01, 10, 1e-6);
+\endcode
+-# Call linear_svm_igd_predict() to predict results. You usually need the model id output from the learning query to locate the model, assuming 1, e.g.:  
+\code
+mydb=# SELECT madlib.linear_svm_igd_predict(coefficients, features)
+mydb=# FROM linear_svm_data, linear_svm_model
+mydb=# WHERE linear_svm_model.id = 1;
+\endcode
+
+
+@literature
+
+[1] Support vector machine. http://en.wikipedia.org/wiki/support_vector_machine
+
+[2] Hinge loss. http://en.wikipedia.org/wiki/hinge_loss
+
+*/
 
 CREATE TYPE MADLIB_SCHEMA.linear_svm_result AS (
         coefficients    DOUBLE PRECISION[],
@@ -91,15 +176,32 @@ RETURNS INTEGER
 AS $$PythonFunction(convex, linear_svm_igd, compute_linear_svm_igd)$$
 LANGUAGE plpythonu VOLATILE;
 
+/**
+ * @brief Linear support vector machines using incremental gradient
+ *
+ * This function takes as input the table representation of a set of examples
+ * in (FLOAT8[], BOOLEAN) format and outputs the weight vector that minimizes
+ * the hinge loss for the given examples.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_ind_var  Name of the column containing feature vector (independent variables)
+ *   @param col_dep_var  Name of the column containing label (dependent variable)
+ *   @param dimension  Number of features (independent variables)
+ *   @param stepsize  Hyper-parameter that decides how aggressive that the gradient steps are
+ *   @param num_iterations  Maximum number if iterations to perform regardless of convergence
+ *   @param tolerance  Acceptable level of error in convergence.
+ * 
+ */
 CREATE FUNCTION MADLIB_SCHEMA.linear_svm_igd_run(
     rel_output      VARCHAR,
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-    num_iterations  INTEGER,            /*+ DEFAULT 10 */
-    tolerance       DOUBLE PRECISION)   /*+ DEFAULT 0.000001 */
+    dimension       INTEGER /*+ DEFAULT 'SELECT max(array_upper(col_ind_var, 1)) FROM rel_source' */,
+    stepsize        DOUBLE PRECISION /*+ DEFAULT 0.01 */,
+    num_iterations  INTEGER /*+ DEFAULT 10 */,
+    tolerance       DOUBLE PRECISION /*+ DEFAULT 0.000001 */)
 RETURNS INTEGER AS $$
 DECLARE
     iteration_run   INTEGER;
@@ -193,8 +295,8 @@ CREATE FUNCTION MADLIB_SCHEMA.linear_svm_igd_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION)   /*+ DEFAULT 0.01 */
+    dimension       INTEGER,
+    stepsize        DOUBLE PRECISION)
 RETURNS INTEGER AS $$
     SELECT MADLIB_SCHEMA.linear_svm_igd_run($1, $2, $3, $4, $5, $6, 10, 0.000001);
 $$ LANGUAGE sql VOLATILE;
@@ -204,7 +306,7 @@ CREATE FUNCTION MADLIB_SCHEMA.linear_svm_igd_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER)            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+    dimension       INTEGER)
 RETURNS INTEGER AS $$
     -- set stepsize as default 0.01
     SELECT MADLIB_SCHEMA.linear_svm_igd_run($1, $2, $3, $4, $5, 0.1);
@@ -228,6 +330,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
+/**
+ * @brief Prediction (true or false) using learned coefficients for a given example.
+ *
+ * @param coefficients  Weight vector (hyperplane, classifier)
+ * @param ind_var  Features (independent variables)
+ *
+ */
 CREATE FUNCTION MADLIB_SCHEMA.linear_svm_igd_predict(
         coefficients    DOUBLE PRECISION[],
         ind_var         DOUBLE PRECISION[])
@@ -312,15 +421,32 @@ RETURNS INTEGER
 AS $$PythonFunction(convex, linear_svm_cg, compute_linear_svm_cg)$$
 LANGUAGE plpythonu VOLATILE;
 
+/**
+ * @brief Linear support vector machines using conjugate gradient
+ *
+ * This function takes as input the table representation of a set of examples
+ * in (FLOAT8[], BOOLEAN) format and outputs the weight vector that minimizes
+ * the hinge loss for the given examples.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_ind_var  Name of the column containing feature vector (independent variables)
+ *   @param col_dep_var  Name of the column containing label (dependent variable)
+ *   @param dimension  Number of features (independent variables)
+ *   @param stepsize  Hyper-parameter that decides how aggressive that the gradient steps are
+ *   @param num_iterations  Maximum number if iterations to perform regardless of convergence
+ *   @param tolerance  Acceptable level of error in convergence.
+ * 
+ */
 CREATE FUNCTION MADLIB_SCHEMA.linear_svm_cg_run(
     rel_output      VARCHAR,
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-    num_iterations  INTEGER,            /*+ DEFAULT 10 */
-    tolerance       DOUBLE PRECISION)   /*+ DEFAULT 0.000001 */
+    dimension       INTEGER /*+ DEFAULT 'SELECT max(array_upper(col_ind_var, 1)) FROM rel_source' */,
+    stepsize        DOUBLE PRECISION /*+ DEFAULT 0.01 */,
+    num_iterations  INTEGER /*+ DEFAULT 10 */,
+    tolerance       DOUBLE PRECISION /*+ DEFAULT 0.000001 */)
 RETURNS INTEGER AS $$
 DECLARE
     iteration_run   INTEGER;
@@ -414,8 +540,8 @@ CREATE FUNCTION MADLIB_SCHEMA.linear_svm_cg_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION)   /*+ DEFAULT 0.01 */
+    dimension       INTEGER,
+    stepsize        DOUBLE PRECISION)
 RETURNS INTEGER AS $$
     SELECT MADLIB_SCHEMA.linear_svm_cg_run($1, $2, $3, $4, $5, $6, 10, 0.000001);
 $$ LANGUAGE sql VOLATILE;
@@ -425,7 +551,7 @@ CREATE FUNCTION MADLIB_SCHEMA.linear_svm_cg_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER)            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+    dimension       INTEGER)
 RETURNS INTEGER AS $$
     -- set stepsize as default 0.01
     SELECT MADLIB_SCHEMA.linear_svm_cg_run($1, $2, $3, $4, $5, 0.1);
@@ -449,6 +575,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
+/**
+ * @brief Prediction (true or false) using learned coefficients for a given example.
+ *
+ * @param coefficients  Weight vector (hyperplane, classifier)
+ * @param ind_var  Features (independent variables)
+ *
+ */
 CREATE FUNCTION MADLIB_SCHEMA.linear_svm_cg_predict(
         coefficients    DOUBLE PRECISION[],
         ind_var         DOUBLE PRECISION[])

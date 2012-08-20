@@ -162,8 +162,7 @@ internal_lasso_igd_result::run(AnyType &args) {
     
     AnyType tuple;
     tuple << state.task.model
-        << static_cast<double>(state.algo.loss)
-        << l1Norm;
+        << static_cast<double>(state.algo.loss);
 
     return tuple;
 }

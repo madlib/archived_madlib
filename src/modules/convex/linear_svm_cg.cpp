@@ -119,28 +119,7 @@ linear_svm_cg_final::run(AnyType &args) {
     state.task.iteration ++;
     
     // debug code
-//    if (dot(state.task.direction + state.task.gradient,
-//                state.task.direction + state.task.gradient) == 0.0) {
-    dberr << "loss: " << state.algo.loss
-       << ", direction: "
-       << state.task.direction[0] << " "
-       << state.task.direction[1] << " "
-       << state.task.direction[2] << " "
-       << state.task.direction[3] << " "
-       << state.task.direction[4] << " "
-       << ", grad: "
-       << state.task.gradient[0] << " "
-       << state.task.gradient[1] << " "
-       << state.task.gradient[2] << " "
-       << state.task.gradient[3] << " "
-       << state.task.gradient[4] << " "
-       << ", model: "
-       << state.task.model[0] << " "
-       << state.task.model[1] << " "
-       << state.task.model[2] << " "
-       << state.task.model[3] << " "
-       << state.task.model[4] << " "
-       << std::endl;
+    dberr << "loss: " << state.algo.loss << std::endl;
  
     return state;
 }

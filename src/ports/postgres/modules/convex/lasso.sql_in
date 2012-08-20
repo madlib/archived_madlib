@@ -5,14 +5,98 @@
  * @brief SQL functions for LASSO
  * @date July 2012
  *
+ * @sa For a brief introduction to LASSO, see the module
+ *     description \ref grp_lasso.
+ *
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
 
+/**
+@addtogroup grp_lasso
+
+
+@about
+
+This module implements LASSO (least absolute shrinkage and selection operator) [1].
+Mathematically, this model seeks to find a weight vector \f$w\f$ (also referred as hyperplane) that, for any given training example set, minimizes:
+\f[\min_{w \in R^N} \left[ \sum_{m=1}^M (w^{t} x_m - y_m)^2 \right] + \lambda \|w\|_1,\f]
+where \f$x_m \in R^N\f$ are values of independent variables, and \f$y_m \in R\f$ are values of the dependent variable, \f$m = 1,...,M\f$.
+
+@input
+
+The <b>training examples</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    <em>ind_var</em>    DOUBLE PRECISION[],
+    <em>dep_var</em>    DOUBLE PRECISION
+)</pre>
+
+Null values are not expected.
+
+
+@usage
+
+Please find descriptions of SQL functions in lasso.sql_in
+
+Output includes coefficients and the loss value.
+<pre>Result as (
+        coefficients    DOUBLE PRECISION[],
+        loss            DOUBLE PRECISION
+);</pre>
+
+we offer IGD solver (optimizer) for LASSO.
+IGD is expected to be fastwhen the input data has a lot of examples.
+But IGD suffers slow convergence rate if the input features is not well-conditioned or a bad stepsize is given.
+Before functions are called, we suggest that the features got normalized to have mean (average) to be 0.0, and standard deviation to be 1.0.
+
+<h3>Stepsize choice.</h3>
+Both solvers will output the loss value for the each iteration.
+In a simple description, a good stepsize is the maximal positive number that guarantees decreases of loss values iteration by iteration.
+Usually, users can try 0.01 first, and then follow this rule until the loss does not change much within reasonable numbers of iterations.
+If stepsize \f$\alpha\f$ is too large (loss is increasing), then \f$\alpha / 10\f$ should be tried next; otherwise \f$\alpha * 10\f$.
+The factor \f$10\f$ can be shrinked later for a more accurate stepsize if needed.
+
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE lasso_data (
+    ind_var DOUBLE PRECISION[],
+    dep_var DOUBLE PRECISION
+);
+\endcode     
+-# Populate the input table with some data, which should be well-conditioned, e.g.:
+\code
+mydb=# INSERT INTO lasso_data values ({1, 1}, 0.89);
+mydb=# INSERT INTO lasso_data values ({0.67, -0.06}, 0.3);
+...
+mydb=# INSERT INTO lasso_data values ({0.15, -1.3}, -1.3);
+\endcode   
+-# call lasso_igd_run() to learn coefficients, e.g.:  
+\code
+mydb=# SELECT madlib.lasso_igd_run('lasso_model', 'lasso_data', 'ind_var', 'dep_var', 2, 0.01, 0.1, 1000, 10, 1e-6);
+\endcode
+-# call lasso_igd_predict() to predict results. you usually need the model id output from the learning query to locate the model, assuming 1, e.g.:  
+\code
+mydb=# select madlib.lasso_igd_predict(coefficients, ind_var)
+mydb=# from lasso_data, lasso_model
+mydb=# where lasso_model.id = 1;
+\endcode
+
+
+@literature
+
+[1] LASSO method. http://en.wikipedia.org/wiki/Lasso_(statistics)#LASSO_method
+
+[2] Regularization: Ridge Regression and the LASSO. http://www-stat.stanford.edu/~owen/courses/305/Rudyregularization.pdf
+
+*/
+
+
 CREATE TYPE MADLIB_SCHEMA.lasso_result AS (
         coefficients    DOUBLE PRECISION[],
-        loss            DOUBLE PRECISION,
-        l1_norm         DOUBLE PRECISION
+        loss            DOUBLE PRECISION
 );
 
 --------------------------------------------------------------------------
@@ -97,17 +181,36 @@ RETURNS INTEGER
 AS $$PythonFunction(convex, lasso_igd, compute_lasso_igd)$$
 LANGUAGE plpythonu VOLATILE;
 
+/**
+ * @brief LASSO using incremental gradient
+ *
+ * This function takes as input the table representation of a set of examples
+ * in (FLOAT8[], FLOAT8) format and outputs the coefficients that minimizes
+ * the ordinary least squares with a L1 regularization term.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_ind_var  Name of the column containing feature vector (independent variables)
+ *   @param col_dep_var  Name of the column containing label (dependent variable)
+ *   @param dimension  Number of features (independent variables)
+ *   @param stepsize  Hyper-parameter that decides how aggressive that the gradient steps are
+ *   @param lambda  Hyper-parameter that decides how much the L1 regularization takes effect
+ *   @param total_rows  Number of rows of the input table
+ *   @param num_iterations  Maximum number if iterations to perform regardless of convergence
+ *   @param tolerance  Acceptable level of error in convergence.
+ * 
+ */
 CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_run(
     rel_output      VARCHAR,
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-    lambda          DOUBLE PRECISION,   /*+ DEFAULT 0.1 */
-    total_rows      BIGINT,             /*+ DEFAULT SELECT count(*) FROM rel_source */
-    num_iterations  INTEGER,            /*+ DEFAULT 10 */
-    tolerance       DOUBLE PRECISION)   /*+ DEFAULT 0.000001 */
+    dimension       INTEGER /*+ DEFAULT 'SELECT max(array_upper(col_ind_var, 1)) FROM rel_source' */,
+    stepsize        DOUBLE PRECISION /*+ DEFAULT 0.01 */,
+    lambda          DOUBLE PRECISION /*+ DEFAULT 0.1 */,
+    total_rows      BIGINT /*+ DEFAULT 'SELECT count(*) FROM rel_source' */,
+    num_iterations  INTEGER /*+ DEFAULT 10 */,
+    tolerance       DOUBLE PRECISION /*+ DEFAULT 0.000001 */)
 RETURNS INTEGER AS $$
 DECLARE
     iteration_run   INTEGER;
@@ -158,8 +261,7 @@ BEGIN
             CREATE TABLE ' || rel_output || ' (
                 id              serial,
                 coefficients    DOUBLE PRECISION[],
-                loss            DOUBLE PRECISION,
-                l1_norm         DOUBLE PRECISION)';
+                loss            DOUBLE PRECISION)';
     END;
 
     -- A work-around for GPDB not supporting RETURNING for INSERT
@@ -204,10 +306,10 @@ CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-    lambda          DOUBLE PRECISION,   /*+ DEFAULT 0.1 */
-    total_rows      BIGINT)             /*+ DEFAULT SELECT count(*) FROM rel_source */
+    dimension       INTEGER,
+    stepsize        DOUBLE PRECISION,
+    lambda          DOUBLE PRECISION,
+    total_rows      BIGINT)
 RETURNS INTEGER AS $$
     SELECT MADLIB_SCHEMA.lasso_igd_run($1, $2, $3, $4, $5, $6, $7, $8, 10, 0.000001);
 $$ LANGUAGE sql VOLATILE;
@@ -217,9 +319,9 @@ CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION,   /*+ DEFAULT 0.01 */
-    lambda          DOUBLE PRECISION)   /*+ DEFAULT 0.1 */
+    dimension       INTEGER,
+    stepsize        DOUBLE PRECISION,
+    lambda          DOUBLE PRECISION)
 RETURNS INTEGER AS $$
 DECLARE
     total_rows      BIGINT;
@@ -238,8 +340,8 @@ CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER,            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
-    stepsize        DOUBLE PRECISION)   /*+ DEFAULT 0.01 */
+    dimension       INTEGER,
+    stepsize        DOUBLE PRECISION)
 RETURNS INTEGER AS $$
     SELECT MADLIB_SCHEMA.lasso_igd_run($1, $2, $3, $4, $5, $6, 0.1);
 $$ LANGUAGE sql VOLATILE;
@@ -249,7 +351,7 @@ CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_run(
     rel_source      REGCLASS,
     col_ind_var     VARCHAR,
     col_dep_var     VARCHAR,
-    dimension       INTEGER)            /*+ DEFAULT SELECT max(array_upper(col_ind_var, 1)) FROM rel_source */
+    dimension       INTEGER)
 RETURNS INTEGER AS $$
     -- set stepsize as default 0.01
     SELECT MADLIB_SCHEMA.lasso_igd_run($1, $2, $3, $4, $5, 0.1);
@@ -273,6 +375,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
+
+/**
+ * @brief Prediction (real value) using learned coefficients for a given example.
+ *
+ * @param coefficients  Weight vector (hyperplane, classifier)
+ * @param ind_var  Features (independent variables)
+ *
+ */
 CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_predict(
         coefficients    DOUBLE PRECISION[],
         ind_var         DOUBLE PRECISION[])
