@@ -36,6 +36,14 @@ linregr_merge_states::run(AnyType& args) {
     MutableLinRegrState stateLeft = args[0].getAs<MutableByteString>();
     LinRegrState stateRight = args[1].getAs<ByteString>();
 
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0) {
+        return stateRight.storage();
+    } else if (stateRight.numRows == 0) {
+        return stateLeft.storage();
+    }
+
     stateLeft << stateRight;
     return stateLeft.storage();
 }
