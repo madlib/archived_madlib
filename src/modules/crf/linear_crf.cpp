@@ -29,6 +29,19 @@ AnyType stateToResult(const Allocator &inAllocator,
                       const HandleMap<const ColumnVector, TransparentHandle<double> > &incoef,
                       double loglikelihood);
 
+/**
+* @brief Inter- and intra-iteration state for lbfgs method for
+* linear-chain conditional random field
+*
+* TransitionState encapsualtes the transition state during the
+* linear-chain crf aggregate function. To the database, the state is
+* exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+* object containing scalars and vectors.
+*
+* Note: We assume that the DOUBLE PRECISION array is initialized by the
+* database with length at least 58, and all elemenets are 0.
+*
+*/
 template <class Handle>
 class LinCrfLBFGSTransitionState {
     template <class OtherHandle>
@@ -41,10 +54,21 @@ public:
         rebind(static_cast<uint32_t>(mStorage[1]));
     }
 
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
     inline operator AnyType() const {
         return mStorage;
     }
 
+    /**
+     * @brief Initialize the lbfgs state.
+     *
+     * This function is only called for the first row.
+     */
     inline void initialize(const Allocator &inAllocator, uint32_t inWidthOfX, uint32_t tagSize) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
         dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
@@ -55,6 +79,9 @@ public:
             diag.fill(1);
     }
 
+    /**
+     * @brief We need to support assigning the previous state
+     */
     template <class OtherHandle>
     LinCrfLBFGSTransitionState &operator=(
         const LinCrfLBFGSTransitionState<OtherHandle> &inOtherState) {
@@ -64,6 +91,10 @@ public:
         return *this;
     }
 
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     * fields
+     */
     template <class OtherHandle>
     LinCrfLBFGSTransitionState &operator+=(
         const LinCrfLBFGSTransitionState<OtherHandle> &inOtherState) {
@@ -76,12 +107,17 @@ public:
         return *this;
     }
 
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
     inline void reset() {
         numRows = 0;
         grad.fill(0);
         loglikelihood = 0;
     }
+
     static const int m=3;
+
 private:
     static inline uint32_t arraySize(const uint32_t num_features) {
         return 52 + 3 * num_features + num_features*(2*m+1)+2*m;
@@ -602,6 +638,10 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
     }
 }
 
+/**
+* @brief compute the log likelihood and gradient of the objective function 
+*/
+
 void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple){
     int feature_size = static_cast<int>(featureTuple.size());
     int seq_len = static_cast<int>(featureTuple(feature_size-1)) + 1;
@@ -718,6 +758,9 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
 
 }
 
+/**
+ * @brief Compute the log likelihood and gradient vector for each tuple
+ */
 AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
@@ -756,7 +799,7 @@ lincrf_lbfgs_step_merge_states::run(AnyType &args) {
 }
 
 /**
- * @brief Perform the logistic-crfion final step
+ * @brief Perform the licrf_lbfgs final step
  */
 AnyType
 lincrf_lbfgs_step_final::run(AnyType &args) {
@@ -768,19 +811,23 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
+    // To avoid overfitting, penalize the likelihood with a spherical Gaussian 
+    // weight prior
     double sigma_square = 100;
-
     state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square;
-    state.loglikelihood = state.loglikelihood * -1;
     state.grad -= state.coef;
+
+    // the lbfgs minimize function, we want to maximize loglikelihood 
+    state.loglikelihood = state.loglikelihood * -1;
     state.grad = -state.grad;
 
-    double eps = 1.0e-6;
-    double xtol = 1.0e-16;
+    double eps = 1.0e-6; //accuracy of the solution to be found
+    double xtol = 1.0e-16; //an estimate of the machine precision
 
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
 
     LBFGS instance(state);
+    // lbfgs optimization
     instance.lbfgs(state.num_features, state.m, state.loglikelihood, state.grad, eps, xtol);
     instance.save_state(state);
 
@@ -829,7 +876,7 @@ AnyType stateToResult(
         inAllocator.allocateArray<double>(incoef.size()));
     coef = incoef;
 
-    // Return all coefficients, loglikelihood, etc. in a tuple
+    // Return all coefficients, loglikelihood in a tuple
     AnyType tuple;
     tuple << coef << loglikelihood;
     return tuple;
