@@ -613,8 +613,6 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
     Eigen::VectorXd next_alpha(state.num_labels);
     Eigen::VectorXd temp(state.num_labels);
     Eigen::VectorXd ExpF(state.num_features);
-    // Now do the transition step
-    state.numRows++;
     alpha.fill(1);
     ExpF.fill(0);
     // compute beta values in a backward fashion
@@ -732,6 +730,7 @@ lincrf_lbfgs_step_transition::run(AnyType &args) {
             state.reset();
         }
     }
+    state.numRows++;
     compute_logli_gradient(state, featureTuple);
     return state;
 }
