@@ -820,8 +820,8 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     // To avoid overfitting, penalize the likelihood with a spherical Gaussian 
     // weight prior
     double sigma_square = 100;
-    state.loglikelihood -= state.coef.dot(state.coef)/ 2 * sigma_square;
-    state.grad -= state.coef;
+    state.loglikelihood -= (state.coef.dot(state.coef)/(2 * sigma_square));
+    state.grad -= state.coef/sigma_square;
 
     // the lbfgs minimize function, we want to maximize loglikelihood 
     state.loglikelihood = state.loglikelihood * -1;
