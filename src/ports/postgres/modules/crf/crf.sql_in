@@ -203,10 +203,9 @@ CREATE FUNCTION MADLIB_SCHEMA.lincrf(
     "featureSize" VARCHAR,
     "tagSize" INTEGER,
     "maxNumIterations" INTEGER /*+ DEFAULT 20 */)
-RETURNS MADLIB_SCHEMA.lincrf_result AS $$
+RETURNS VOID AS $$
 DECLARE
     theIteration INTEGER;
-    theResult MADLIB_SCHEMA.lincrf_result;
 BEGIN
     theIteration := (
         SELECT MADLIB_SCHEMA.compute_lincrf($1, $2, $3, $4, $5)
@@ -217,19 +216,14 @@ BEGIN
     -- function in a subquery
     EXECUTE
         $sql$
-        SELECT (result).*
+        INSERT INTO featuretbl
+        SELECT f_index, f_name, feature[1], feature[2], (result).coef[f_index+1]
         FROM (
               SELECT MADLIB_SCHEMA.internal_lincrf_lbfgs_result(_madlib_state) AS result
               FROM   _madlib_iterative_alg
               WHERE  _madlib_iteration = $sql$ || theIteration || $sql$
-             ) subq
-        $sql$
-        INTO theResult;
-    -- The number of iterations are not updated in the C++ code. We do it here.
-    IF NOT (theResult IS NULL) THEN
-        theResult.num_iterations = theIteration;
-    END IF;
-    RETURN theResult;
+             ) subq, crf_feature_dic
+        $sql$;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
@@ -239,6 +233,6 @@ CREATE FUNCTION MADLIB_SCHEMA.lincrf(
     "featureColumnn" VARCHAR,
     "featureSize" VARCHAR,
     "tagSize" INTEGER)
-RETURNS MADLIB_SCHEMA.lincrf_result AS
+RETURNS VOID AS
 $$SELECT MADLIB_SCHEMA.lincrf($1, $2, $3, $4, 20);$$
 LANGUAGE sql VOLATILE;
