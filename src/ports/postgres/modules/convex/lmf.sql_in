@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file lmf.sql_in
  *
@@ -31,12 +31,13 @@ This model has been widely used in recommendation systems (e.g., Netflix [2]) an
 
 The <b>input matrix</b> is expected to be of the following form:
 <pre>{TABLE|VIEW} <em>input_table</em> (
-    <em>row</em> INTEGER,
-    <em>column</em> INTEGER,
-	<em>value</em> FLOAT8
+    <em>row</em>    INTEGER,
+    <em>col</em> INTEGER,
+	<em>value</em>  DOUBLE PRECISION
 )</pre>
 
 Input is contained in a table that describes an incomplete matrix, by having available entries specified as (row, column, value).
+The input matrix is expected to be based 1, which means row >= 1, and col >= 1.
 NULL values are not expected.
 
 
@@ -46,15 +47,15 @@ Please find descriptions of SQL functions in lmf.sql_in
 
 Output factors matrix U and V are in flatten format.
 <pre>RESULT AS (
-        flatten_matrix_u    DOUBLE PRECISION[],
-        flatten_matrix_v    DOUBLE PRECISION[],
-        rmse                DOUBLE PRECISION
+        matrix_u    DOUBLE PRECISION[],
+        matrix_v    DOUBLE PRECISION[],
+        rmse        DOUBLE PRECISION
 );</pre>
 
 Features correspond to row i is
-<code>flatten_matrix_u[max_rank * i + 1 : max_rank * (i+1)]</code>.
+<code>matrix_u[i:i][1:r]</code>.
 Features correspond to column j is
-<code>flatten_matrix_v[max_rank * j + 1 : max_rank * (j+1)]</code>.
+<code>matrix_v[j:j][1:r]</code>.
 
 
 @examp
@@ -63,22 +64,66 @@ Features correspond to column j is
 \code
 CREATE TABLE lmf_data (
  column INT,
- row INT,
- value FLOAT8
+ row    INT,
+ value  FLOAT8
 );
 \endcode
-
 -# Populate the input table with some data. e.g.:
 \code
-mydb=# INSERT INTO lmf_data VALUES (1, 1, 5.0);
-mydb=# INSERT INTO lmf_data VALUES (3, 100, 1.0);
-...
-mydb=# INSERT INTO lmf_data VALUES (10000, 10000, 2.0);
+INSERT INTO lmf_data VALUES (1, 1, 5.0);
+INSERT INTO lmf_data VALUES (3, 100, 1.0);
+INSERT INTO lmf_data VALUES (999, 10000, 2.0);
 \endcode
-
 -# Call lmf_igd_run() stored procedure, e.g.:
 \code
-mydb=# select madlib.lmf_igd_run('lmf_model', 'lmf_data', 'row', 'column', 'value', 10001, 10001, 3, 0.01, 0.1, 10, 1e-6);
+SELECT madlib.lmf_igd_run(
+'lmf_model',                 -- result table
+'lmf_data',                  -- input table
+'row', 'col', 'value',       -- table column names
+999,                         -- row dimension
+10000,                       -- column dimension
+3,                           -- rank (number of features)
+0.1,                         -- stepsize
+2,                           -- initial value scale factor
+10,                          -- maximal number of iterations
+1e-9);                       -- error tolerance
+\endcode
+Example output (the exact result may not be the same):
+\code
+NOTICE:
+Finished low-rank matrix factorization using incremental gradient
+DETAIL:
+ * table : lmf_data (row, col, value)
+Results:
+ * RMSE = 4.31144557397543e-05
+Output:
+ * view : SELECT * FROM lmf_model WHERE id = 1
+ lmf_igd_run
+-------------
+           1
+(1 row)
+\endcode
+-# Sanity check of the result. You may need a model id returned and also indicated by the function lmf_igd_run(), assuming 1 here, e.g.:
+\code
+SELECT array_dims(matrix_u), array_dims(matrix_v) FROM lmf_model WHERE id = 1;
+\endcode
+Example output:
+\code
+  array_dims  |   array_dims
+--------------+----------------
+ [1:999][1:3] | [1:10000][1:3]
+(1 row)
+\endcode
+-# Query the result value, e.g.:
+\code
+SELECT matrix_u[2:2][1:3] AS row_2_features FROM lmf_model WHERE id = 1;
+\endcode
+Example output (the exact result may not be the same):
+\code
+                      row_2_features
+----------------------------------------------------------
+ {{0.51117920037359,0.169582297094166,0.837417622096837}}
+(1 row)
 \endcode
 
 
@@ -92,17 +137,10 @@ mydb=# select madlib.lmf_igd_run('lmf_model', 'lmf_data', 'row', 'column', 'valu
 
 */
 
-/**
- * @brief Factors matrix U and V in flatten format.
- * Features correspond to row i is
- * flatten_matrix_u[max_rank * i + 1 : max_rank * (i+1)].
- * Features correspond to column j is
- * flatten_matrix_v[max_rank * j + 1 : max_rank * (j+1)].
- */
 CREATE TYPE MADLIB_SCHEMA.lmf_result AS (
-        flatten_matrix_u    DOUBLE PRECISION[],
-        flatten_matrix_v    DOUBLE PRECISION[],
-        rmse                DOUBLE PRECISION
+        matrix_u    DOUBLE PRECISION[],
+        matrix_v    DOUBLE PRECISION[],
+        rmse        DOUBLE PRECISION
 );
 
 --------------------------------------------------------------------------
@@ -173,7 +211,7 @@ LANGUAGE c IMMUTABLE STRICT;
 
 
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_lmf_igd_args(
-    sql VARCHAR, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION, 
+    sql VARCHAR, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION,
     DOUBLE PRECISION, INTEGER, DOUBLE PRECISION
 ) RETURNS VOID
 IMMUTABLE
@@ -197,14 +235,16 @@ LANGUAGE plpythonu VOLATILE;
  *
  * This function takes as input the table representation of a incomplete matrix
  * in the sparse (i, j, value) format and decomposes it into the specified set
- * of most significant features of matrices of U and V matrix.
+ * of most significant features of matrices of U and V matrix. The input matrix
+ * is expected to have dimension [1:row_dim][1:column_dim], but in sparse
+ * format.
  *
  *   @param rel_output  Name of the table that the factors will be appended to
  *   @param rel_source  Name of the table/view with the source data
  *   @param col_row  Name of the column containing cell row number
  *   @param col_column  Name of the column containing cell column number
  *   @param col_value  Name of the column containing cell value
- *   @param row_dim  Maximum number of rows of input 
+ *   @param row_dim  Maximum number of rows of input
  *   @param column_dim  Maximum number of columns of input
  *   @param max_rank  Rank of desired approximation
  *   @param stepsize  Hyper-parameter that decides how aggressive that the gradient steps are
@@ -249,13 +289,13 @@ BEGIN
     PERFORM MADLIB_SCHEMA.internal_execute_using_lmf_igd_args($sql$
         DROP TABLE IF EXISTS pg_temp._madlib_lmf_igd_args;
         CREATE TABLE pg_temp._madlib_lmf_igd_args AS
-        SELECT 
-            $1 AS row_dim, 
+        SELECT
+            $1 AS row_dim,
             $2 AS column_dim,
-            $3 AS max_rank, 
+            $3 AS max_rank,
             $4 AS stepsize,
-            $5 AS scale_factor, 
-            $6 AS num_iterations, 
+            $5 AS scale_factor,
+            $6 AS num_iterations,
             $7 AS tolerance;
         $sql$,
         row_dim, column_dim, max_rank, stepsize,
@@ -276,10 +316,10 @@ BEGIN
         WHEN undefined_table THEN
             EXECUTE '
             CREATE TABLE ' || rel_output || ' (
-                id                  serial,
-                flatten_matrix_u    DOUBLE PRECISION[],
-                flatten_matrix_v    DOUBLE PRECISION[],
-                rmse                DOUBLE PRECISION)';
+                id          SERIAL,
+                matrix_u    DOUBLE PRECISION[],
+                matrix_v    DOUBLE PRECISION[],
+                rmse        DOUBLE PRECISION)';
     END;
 
     -- A work-around for GPDB not supporting RETURNING for INSERT
@@ -307,14 +347,14 @@ BEGIN
 
     -- return description
     RAISE NOTICE '
-Finished low-rank matrix factorization using incremental gradient 
+Finished low-rank matrix factorization using incremental gradient
  * table : % (%, %, %)
 Results:
  * RMSE = %
 Output:
  * view : SELECT * FROM % WHERE id = %',
     rel_source, col_row, col_column, col_value, rmse, rel_output, model_id;
-    
+
     RETURN model_id;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -348,7 +388,7 @@ RETURNS INTEGER AS $$
     -- set scale_factor as default 0.1
     SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, 0.1);
 $$ LANGUAGE sql VOLATILE;
-    
+
 CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
     rel_output      VARCHAR,
     rel_source      REGCLASS,
@@ -375,7 +415,7 @@ DECLARE
     column_dim INTEGER;
 BEGIN
     EXECUTE '
-    SELECT max(' || col_row || ') + 1, max(' || col_column || ') + 1
+    SELECT max(' || col_row || '), max(' || col_column || ')
     FROM ' || textin(regclassout(rel_source))
     INTO row_dim, column_dim;
 
