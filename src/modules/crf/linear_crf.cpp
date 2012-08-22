@@ -874,8 +874,7 @@ internal_lincrf_lbfgs_result::run(AnyType &args) {
 /**
  * @brief Compute the diagnostic statistics
  *
- * This function wraps the common parts of computing the results for both the
- * CG and the IRLS method.
+ * This function return the results for both the L-BFGS method.
  */
 AnyType stateToResult(
     const Allocator &inAllocator,
