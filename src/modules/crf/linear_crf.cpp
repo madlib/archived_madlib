@@ -649,11 +649,9 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
 */
 Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans, int num_label)
 {
-    int i=0, j=0,r=0,c=0;
+    int i=0,j=0,r=0,c=0;
     Eigen::VectorXd z(num_label);
-    for (i = 0; i < num_label; i++ ) {
-        z(i)=0;
-    }
+    z.fill(0);
     for (i = 0; i < num_label; i++ )
     {
         for (j=0; j< num_label; j++) {
