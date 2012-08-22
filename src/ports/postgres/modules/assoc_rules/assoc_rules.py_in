@@ -156,7 +156,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
         plpy.execute("""
              CREATE TEMP TABLE assoc_input_unique AS
              SELECT 
-                dense_rank() OVER (ORDER BY tid) as tid,
+                dense_rank() OVER (ORDER BY tid)::BIGINT as tid,
                 item
              FROM (
                 SELECT {0} as tid,
@@ -186,15 +186,15 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
     plpy.execute("DROP TABLE IF EXISTS assoc_item_uniq");
     plpy.execute(""" 
         CREATE TEMP TABLE assoc_item_uniq (item_id, item_text, cnt) AS
-        SELECT row_number() OVER (ORDER BY cnt DESC),
-           item,
-           cnt
+        SELECT row_number() OVER (ORDER BY cnt DESC)::BIGINT,
+           item::TEXT,
+           cnt::FLOAT8
         FROM (
            SELECT item AS item, count(tid) as cnt
            FROM assoc_input_unique
            GROUP BY item
         ) t
-        WHERE float8ge(cnt::FLOAT8,  {0})
+        WHERE cnt::FLOAT8 >= {0}
         m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (item_id)')
         """.format(min_supp_tranx));
 
@@ -396,7 +396,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
               WHERE t1.item = u.item_id
               GROUP BY id
             )  t
-            WHERE float8ge(cnt::FLOAT8, {6})
+            WHERE cnt::FLOAT8 >= {6}
             """.format(num_tranx, madlib_schema, num_supp_prod, 
                        madlib_schema, madlib_schema, madlib_schema, 
                        min_supp_tranx)
@@ -456,7 +456,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
             ) t, assoc_rule_sets x, assoc_rule_sets y
             WHERE t.item[1] = x.hash_text AND
                   t.item[2] = y.hash_text AND
-                  float8ge(t.support_xy / x.support, {1})
+                  (t.support_xy / x.support) >= {1}
             """.format(madlib_schema, confidence)
             );
     
@@ -469,7 +469,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
                 (   
                     SELECT 
                         ruleId,
-                        unnest(string_to_array(pre, ',')) as pre_id
+                        unnest(string_to_array(pre, ','))::BIGINT as pre_id
                     FROM assoc_rules_aux_tmp
                 ) s1, assoc_item_uniq s2
              WHERE s1.pre_id = s2.item_id
@@ -485,7 +485,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
                 (   
                     SELECT 
                         ruleId,
-                        unnest(string_to_array(post, ',')) as post_id
+                        unnest(string_to_array(post, ','))::BIGINT as post_id
                     FROM assoc_rules_aux_tmp
                 ) s1, assoc_item_uniq s2
              WHERE s1.post_id = s2.item_id
