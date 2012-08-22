@@ -171,7 +171,7 @@ public:
     double dg, dgm, dginit, dgtest, dgx, dgxm, dgy, dgym, finit, ftest1, fm, fx, fxm, fy, fym, p5, p66, stx, sty, stmin, stmax, width, width1, xtrapf;
     bool brackt, stage1, finish;
 
-    ColumnVector w;//  
+    ColumnVector w;//
     ColumnVector x;// solution vector
     ColumnVector diag;
 
@@ -645,34 +645,34 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
 }
 
 /**
-* @brief compute the log likelihood and gradient of the objective function 
+* @brief compute the log likelihood and gradient of the objective function
 */
 Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans, int num_label)
 {
-	int i=0, j=0,r=0,c=0;
-	Eigen::VectorXd z(num_label);
-	for (i = 0; i < num_label; i++ ){
-		z(i)=0;
-	}
-	for (i = 0; i < num_label; i++ )
-	{
-		for (j=0; j< num_label; j++){
-			r= i;
-			c=j;
-			if(trans){
-				r= j;
-				c=i;
-			}
-			z(r)+=Mi(i,j)*Vi(c);
-		}
-	}
-	return z;
+    int i=0, j=0,r=0,c=0;
+    Eigen::VectorXd z(num_label);
+    for (i = 0; i < num_label; i++ ) {
+        z(i)=0;
+    }
+    for (i = 0; i < num_label; i++ )
+    {
+        for (j=0; j< num_label; j++) {
+            r= i;
+            c=j;
+            if(trans) {
+                r= j;
+                c=i;
+            }
+            z(r)+=Mi(i,j)*Vi(c);
+        }
+    }
+    return z;
 }
 
-void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple){
+void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple) {
     int feature_size = static_cast<int>(featureTuple.size());
     int seq_len = static_cast<int>(featureTuple(feature_size-2)) + 1;
-     
+
     Eigen::MatrixXd betas(state.num_labels, seq_len);
     Eigen::VectorXd scale(seq_len);
     Eigen::MatrixXd Mi(state.num_labels,state.num_labels);
@@ -843,13 +843,13 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
-    // To avoid overfitting, penalize the likelihood with a spherical Gaussian 
+    // To avoid overfitting, penalize the likelihood with a spherical Gaussian
     // weight prior
     double sigma_square = 100;
     state.loglikelihood -= (state.coef.dot(state.coef)/(2 * sigma_square));
     state.grad -= state.coef/sigma_square;
 
-    // the lbfgs minimize function, we want to maximize loglikelihood 
+    // the lbfgs minimize function, we want to maximize loglikelihood
     state.loglikelihood = state.loglikelihood * -1;
     state.grad = -state.grad;
 
