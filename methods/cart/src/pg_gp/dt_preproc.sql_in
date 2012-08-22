@@ -1085,7 +1085,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                                 fval
                       END ';
     END IF;
-    
+
     IF (cls_col_name IS NULL) THEN
         -- if the kv_cls_name is null, then the class column will be null        
         curstmt = MADLIB_SCHEMA.__format
@@ -1459,9 +1459,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_table
     ) 
 RETURNS VOID AS $$
 DECLARE
-    column_name         TEXT :='';
     curstmt             TEXT := '';
     attr_col_names      TEXT[]; 
+    lit_attr_col_names  TEXT[];
     kv_attr_name        TEXT := enc_table_name || '_col';
     kv_cls_name         TEXT := enc_table_name || '_class';
     is_conts            BOOL[];
@@ -1489,7 +1489,7 @@ m4_changequote(`>>>', `<<<')
 m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
         curstmt = MADLIB_SCHEMA.__format
             (
-                'SELECT array_agg(attname ORDER BY attname) as attnames 
+                'SELECT array_agg(quote_ident(attname) ORDER BY attname) as attnames 
                  FROM   pg_attribute 
                  WHERE  attrelid = ''%''::regclass and attnum > 0 AND 
                         attname <> ''%'' AND
@@ -1508,7 +1508,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
             (
                 'SELECT ARRAY
                  (
-                 SELECT attname 
+                 SELECT quote_ident(attname) 
                  FROM   pg_attribute 
                  WHERE  attrelid = ''%''::regclass and attnum > 0 AND 
                         attname <> ''%'' AND
@@ -1536,7 +1536,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
 
     ret.pre_proc_time = clock_timestamp() - exec_begin;
     exec_begin = clock_timestamp();
-    
+
     -- create the KV table for the class column.
     EXECUTE 'DROP TABLE IF EXISTS ' || kv_cls_name;
     curstmt = MADLIB_SCHEMA.__format
@@ -1566,7 +1566,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
     
     ret.gen_kv_time = clock_timestamp() - exec_begin;
     exec_begin = clock_timestamp();
-
+    
     -- breakup each record of the training table and keep the result
     -- into a new table.
     PERFORM MADLIB_SCHEMA.__breakup_table
@@ -1612,11 +1612,13 @@ m4_changequote(>>>`<<<, >>>'<<<)
     ret.gen_enc_time = clock_timestamp() - exec_begin;
     exec_begin = clock_timestamp();
     
+    SELECT ARRAY(SELECT quote_literal(unnest(attr_col_names))) INTO lit_attr_col_names;
+    
     -- put the features' meta information to the metatable
     curstmt = MADLIB_SCHEMA.__format
         (
             'INSERT INTO %
-             SELECT fid as id, (ARRAY[''%''])[fid] as column_name,
+             SELECT fid as id, (ARRAY[%])[fid] as column_name,
                     ''f'' as column_type,
                     is_cont,
                     ''%''::regclass::OID,
@@ -1625,7 +1627,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
              GROUP BY fid, is_cont',
             ARRAY[
                 meta_tbl_name,
-                array_to_string(attr_col_names, ''','''),
+                array_to_string(lit_attr_col_names, ','),
                 kv_attr_name,                
                 'tmp_dist_table'
             ]
@@ -1639,7 +1641,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
         curstmt = MADLIB_SCHEMA.__format
             (
                 'INSERT INTO %
-                 SELECT id, (ARRAY[''%''])[id] as column_name,
+                 SELECT id, (ARRAY[%])[id] as column_name,
                         ''f'' as column_type, ''t'', NULL, 0
                  FROM (
                      SELECT generate_series(1, %) id
@@ -1648,7 +1650,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                  ) t',
                 ARRAY[
                     meta_tbl_name,
-                    array_to_string(attr_col_names, ''','''),
+                    array_to_string(lit_attr_col_names, ','),
                     array_upper(attr_col_names, 1)::TEXT,
                     meta_tbl_name
                 ]
