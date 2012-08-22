@@ -650,7 +650,8 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
 
 void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple){
     int feature_size = static_cast<int>(featureTuple.size());
-    int seq_len = static_cast<int>(featureTuple(feature_size-1)) + 1;
+    int seq_len = static_cast<int>(featureTuple(feature_size-2)) + 1;
+     
     Eigen::MatrixXd betas(state.num_labels, seq_len);
     Eigen::VectorXd scale(seq_len);
     Eigen::MatrixXd Mi(state.num_labels,state.num_labels);
@@ -659,7 +660,11 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
     Eigen::VectorXd next_alpha(state.num_labels);
     Eigen::VectorXd temp(state.num_labels);
     Eigen::VectorXd ExpF(state.num_features);
+    betas.fill(0);
+    scale.fill(0);
     alpha.fill(1);
+    next_alpha.fill(0);
+    temp.fill(0);
     ExpF.fill(0);
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
