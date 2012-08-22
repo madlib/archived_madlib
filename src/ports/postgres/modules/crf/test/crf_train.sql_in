@@ -11,14 +11,14 @@
 -- Setup:
 ---------------------------------------------------------------------------
 
-CREATE FUNCTION install_test() RETURNS TEXT AS $$
+CREATE FUNCTION crf_train_install_test() RETURNS TEXT AS $$
 DECLARE
         error FLOAT8;
 	result  TEXT;
 BEGIN     
 	-- Regex table
-        CREATE TABLE crf_regex(pattern text,name text); 
-        INSERT INTO crf_regex VALUES
+        CREATE TABLE crf_regex_train(pattern text,name text); 
+        INSERT INTO crf_regex_train VALUES
         ('^[A-Z][a-z]+$','InitCapital%'), ('^[A-Z]+$','isAllCapital%'),
         ('^.*[0-9]+.*$','containsDigit%'),('^.+[.]$','endsWithDot%'),
         ('^.+[,]$','endsWithComma%'),     ('^.+er$','endsWithER%'),
@@ -26,7 +26,7 @@ BEGIN
         ('^.+s$','endsWithS%'),           ('^.+ing$','endsWithIng%'),
         ('^.+ly$','endsWithly%'),         ('^.+-.+$','isDashSeparatedWords%'),
         ('^.*@.*$','isEmailId%');
-        analyze crf_regex;
+        analyze crf_regex_train;
 
         CREATE TABLE train_segmenttbl(start_pos integer,doc_id integer,seg_text text,label integer,max_pos integer);
         INSERT INTO train_segmenttbl VALUES
@@ -43,15 +43,17 @@ BEGIN
         (3,2,'exchequer',13,26),   (4,2,'nigel',13,26),     (5,2,'lawson',13,26),     (6,2,'''s',16,26),
         (7,2,'restated',29,26),    (8,2,'commitment',11,26),(9,2,'to',24,26),         (10,2,'a',2,26),
         (11,2,'firm',11,26),       (12,2,'monetary',6,26),  (13,2,'policy',11,26),    (14,2,'has',31,26),
-        (15,2,'helped',29,26),     (16,2,'to',24,26),       (17,2,'prevent',26),,26), (18,2,'a',2,26),
+        (15,2,'helped',29,26),     (16,2,'to',24,26),       (17,2,'prevent',26,26),   (18,2,'a',2,26),
         (19,2,'freefall',11,26),   (20,2,'in',5,26),        (21,2,'sterling',11,26),  (22,2,'over',5,26),
-        (23,2,'the',2,26),         (24,2,'past',6,26),      (25,2,'week',11,26),      (26,2,'.',43,26),
+        (23,2,'the',2,26),         (24,2,'past',6,26),      (25,2,'week',11,26),      (26,2,'.',43,26);
 
-        PERFORM MADLIB_SCHEMA.crf_train_fgen('train_segmenttbl', 'crf_regex');
+        PERFORM MADLIB_SCHEMA.crf_train_fgen('train_segmenttbl', 'crf_regex_train');
+
+        CREATE TABLE crf_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);
 
         PERFORM MADLIB_SCHEMA.lincrf('featuretbl','feature','f_size',45, 2);
 
-        -- Expected viterbi labeling result
+        -- Expected feature table
         CREATE TABLE expected_crf_feature(id integer,name text,prev_label integer,label integer,weight float);
 	INSERT INTO expected_crf_feature VALUES
 	(0,'W_for',-1,5,0.439850446732293),(1,'R_endsWithIng%',-1,11,0.219925223366146),
@@ -116,12 +118,12 @@ BEGIN
         
         SELECT SUM(abs(c1.weight-c2.weight)) INTO error 
         FROM expected_crf_feature c1, crf_feature c2
-        WHERE c1.name = c2.name AND c1.prev_label = c2.prev_label AND c1.label = c2.label;
+        WHERE c1.name = c2.name AND c1.prev_label = c2.prev_label_id AND c1.label = c2.label_id;
 
         SELECT INTO result CASE WHEN (error < 0.1) THEN 'PASS' ELSE 'FAIL' END;
 
 	IF result = 'FAIL' THEN
-	   RAISE EXCEPTION 'Failed install check %', result_count;
+	   RAISE EXCEPTION 'Failed install check %', error;
 	END IF;
 
 	RETURN result;
@@ -132,4 +134,4 @@ $$ language plpgsql;
 ---------------------------------------------------------------------------
 -- Test: 
 ---------------------------------------------------------------------------
-SELECT install_test();
+SELECT crf_train_install_test();
