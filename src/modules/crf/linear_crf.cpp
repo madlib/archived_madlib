@@ -647,6 +647,27 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
 /**
 * @brief compute the log likelihood and gradient of the objective function 
 */
+Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans, int num_label)
+{
+	int i=0, j=0,r=0,c=0;
+	Eigen::VectorXd z(num_label);
+	for (i = 0; i < num_label; i++ ){
+		z(i)=0;
+	}
+	for (i = 0; i < num_label; i++ )
+	{
+		for (j=0; j< num_label; j++){
+			r= i;
+			c=j;
+			if(trans){
+				r= j;
+				c=i;
+			}
+			z(r)+=Mi(i,j)*Vi(c);
+		}
+	}
+	return z;
+}
 
 void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple){
     int feature_size = static_cast<int>(featureTuple.size());
@@ -693,7 +714,7 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
 
         temp=betas.col(i);
         temp=temp.cwiseProduct(Vi);
-        betas.col(i -1) = Mi*temp;
+        betas.col(i -1) = mult(Mi,temp,false,state.num_labels);
         // scale for the next (backward) beta values
         scale(i - 1)=betas.col(i-1).sum();
         betas.col(i - 1)*=(1.0 / scale(i - 1));
@@ -724,7 +745,7 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
 
         if(j>0) {
             temp = alpha;
-            next_alpha=Mi*temp;
+            next_alpha=mult(Mi,temp,true,state.num_labels);
             next_alpha=next_alpha.cwiseProduct(Vi);
         } else {
             next_alpha=Vi;
