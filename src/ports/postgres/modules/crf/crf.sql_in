@@ -202,13 +202,15 @@ CREATE FUNCTION MADLIB_SCHEMA.lincrf(
     "featureColumn" VARCHAR,
     "featureSize" VARCHAR,
     "tagSize" INTEGER,
+    "featureset" VARCHAR,
+    "crf_feature" VARCHAR,
     "maxNumIterations" INTEGER /*+ DEFAULT 20 */)
 RETURNS VOID AS $$
 DECLARE
     theIteration INTEGER;
 BEGIN
     theIteration := (
-        SELECT MADLIB_SCHEMA.compute_lincrf($1, $2, $3, $4, $5)
+        SELECT MADLIB_SCHEMA.compute_lincrf($1, $2, $3, $4, $7)
     );
     -- Because of Greenplum bug MPP-10050, we have to use dynamic SQL (using
     -- EXECUTE) in the following
@@ -216,13 +218,13 @@ BEGIN
     -- function in a subquery
     EXECUTE
         $sql$
-        INSERT INTO crf_feature
+        INSERT INTO $sql$ || $6 || $sql$
         SELECT f_index, f_name, feature[2], feature[3], (result).coef[f_index+1]
         FROM (
               SELECT MADLIB_SCHEMA.internal_lincrf_lbfgs_result(_madlib_state) AS result
               FROM   _madlib_iterative_alg
               WHERE  _madlib_iteration = $sql$ || theIteration || $sql$
-             ) subq, crf_feature_dic
+             ) subq, $sql$ || $5 || $sql$
         $sql$;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -232,7 +234,9 @@ CREATE FUNCTION MADLIB_SCHEMA.lincrf(
     "source" VARCHAR,
     "featureColumnn" VARCHAR,
     "featureSize" VARCHAR,
-    "tagSize" INTEGER)
+    "tagSize" INTEGER,
+    "featureset" VARCHAR,
+    "crf_feature" VARCHAR)
 RETURNS VOID AS
-$$SELECT MADLIB_SCHEMA.lincrf($1, $2, $3, $4, 20);$$
+$$SELECT MADLIB_SCHEMA.lincrf($1, $2, $3, $4, $5, $6, 20);$$
 LANGUAGE sql VOLATILE;
