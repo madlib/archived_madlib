@@ -275,8 +275,18 @@ mlogregr_irls_step_transition::run(AnyType &args) {
 	*/
 	Matrix coef = state.coef;
 	coef.resize(numCategories, state.widthOfX);
+	
 	//Store the intermediate calculations because we'll reuse them in the LLH
-	ColumnVector t1 = -coef*x; //t1 is vector of size state.widthOfX
+	ColumnVector t1 = x; //t1 is vector of size state.widthOfX
+	t1 = -coef*x;
+	/* Note: The above 2 lines could have been written as:
+		ColumnVector t1 = -coef*x;
+		
+		but this creates warnings. These warnings are somehow related to the factor 
+		that x is of an immutable type. The following alternative could resolve 
+		the warnings (although not necessary the best alternative):
+	*/
+	
 	ColumnVector t2 = t1.array().exp();
 	double t3 = 1 + t2.sum(); 
 	ColumnVector pi = t2/t3;
@@ -300,8 +310,15 @@ mlogregr_irls_step_transition::run(AnyType &args) {
 	
 	//Start the Hessian calculations 
 	Matrix X_transp_AX(numCategories * state.widthOfX, numCategories * state.widthOfX);
-	
-	Matrix XXTrans = x * x.transpose();
+
+	/*
+		Again: The following 3 lines could have been written as
+		Matrix XXTrans = x * x.transpose();
+		but it creates warnings related to the type of x. Here is an easy fix
+	*/
+	Matrix cv_x = x;
+	Matrix XXTrans = trans(cv_x);
+	XXTrans = cv_x * XXTrans;
 	
 	//Eigen doesn't supported outer-products for matrices, so we have to do our own.  
 	//This operation is also known as a tensor-product.
