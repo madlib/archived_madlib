@@ -2,7 +2,7 @@
  *
  * @file crf_feature_gen.sql_in 
  *
- * @brief SQL function for testing data POS/NER feature extraction
+ * @brief SQL function for POS/NER feature extraction
  * @date February 2012
  *
  * @sa For an introduction to POS/NER feature extraction, see the module
@@ -21,17 +21,34 @@ materialize it in the table.  When we call the Viterbi function to get the best
 label sequence, we only need a single lookup to get the feature weight.
 
 @usage
-  - Use CRF PACKAGE [1] to generate the trained models. Basically CRF PACKAGE
-    generates two model files 'feature' and 'crf'.  Write some simple scripts
-    to convert the data in the model files to the data format required by in
-    this module.
+  - Create tables to store the input data, intermediate data and output data.
+    Also import the training related data to the database
+    <pre>SELECT madlib.crf_train_data(
+         '<em>/path/to/data</em>');</pre>
+ 
+  - POS/NER feature generation for the training data
+    <pre>SELECT madlib.crf_train_fgen(
+         '<em>segmenttbl</em>',
+         '<em>regextbl</em>',
+         '<em>dictionary</em>',
+         '<em>featuretbl</em>',
+         '<em>featureset</em>');</pre>
 
-  - Load model from local drive to database
-    <pre>SELECT madlib.load_crf_model(
+  - Linear-chain CRF learning
+    <pre>SELECT madlib.lincrf(
+         '<em>source</em>',
+         '<em>featureColumn</em>',
+         '<em>featureSize</em>',
+         '<em>tagSize</em>',
+         '<em>maxNumIterations</em>');</pre>
+    
+  - Import CRF model to the database.
+    Also load the crf testing data to the database
+    <pre>SELECT madlib.crf_test_data(
          '<em>/path/to/data</em>');</pre>
 
-  - Run feature extraction in batch mode or interactive mode
-    <pre>SELECT madlib.text_feature_extraction(
+  - POS/NER feature generation for the testing data
+    <pre>SELECT madlib.crf_test_fgen(
          '<em>segmenttbl</em>',
          '<em>dictionary</em>',
          '<em>labeltbl</em>',
@@ -57,15 +74,24 @@ label sequence, we only need a single lookup to get the feature weight.
 
 [3] http://en.wikipedia.org/wiki/Viterbi_algorithm
 
-@sa File model_loader.sql_in textfex.sql_in viterbi.sql_in documenting the SQL functions.
+[4] J. Nocedal. Updating Quasi-Newton Matrices with Limited Storage (1980), Mathematics of Computation 35, pp. 773-782
+
+[5] http://users.eecs.northwestern.edu/~nocedal/lbfgs.html
+
+[6] http://en.wikipedia.org/wiki/Conditional_random_field
+
+@sa File crf.sql_in crf_feature_gen.sql_in viterbi.sql_in documenting the SQL functions.
 
 */
 
 /**
- * @brief This function extracts training data POS/NER features.
- *
- * This feature extraction function will produce dictionary table and feature table
- * (start_pos,doc_id,feature)
+ * @brief This function extracts POS/NER features from the training data.
+ * 
+ * @param segmenttbl Name of table containing all the tokenized training sentences. 
+ * @param regextbl Name of table containing all the regular expressions to capture regex features.
+ * @param dictionary Name of table containing the dictionary.
+ * @param featuretbl features generated from the traning dataset
+ * @param featureset unique featrue set generated from the training dataset 
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_train_fgen(
@@ -166,7 +192,7 @@ $$ LANGUAGE plpythonu STRICT;
 
 
 /**
- * @brief This function extracts text features.
+ * @brief This function extracts POS/NER features from the testing data.
  *
  * This feature extraction function will produce two factor tables, "m table"
  * (\a viterbi_mtbl) and "r table" (\a viterbi_rtbl).  The \a viterbi_mtbl
@@ -205,7 +231,7 @@ $$ LANGUAGE plpythonu STRICT;
  * token1 a  a  a  a  a...a
  * token2 a  a  a  a  a...a</pre>
  *
- * @param segmenttbl Name of table containing all the testing sentences.
+ * @param segmenttbl Name of table containing all the tokenized testing sentences.
  * @param dictionary Name of table containing the dictionary.
  * @param labeltbl Name of table containing the the label space used in POS or other NLP tasks.
  * @param regextbl Name of table containing all the regular expressions to capture regex features.
