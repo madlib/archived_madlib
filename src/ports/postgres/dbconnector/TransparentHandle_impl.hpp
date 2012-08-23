@@ -13,24 +13,34 @@ namespace dbconnector {
 
 namespace postgres {
 
+template <typename T, bool IsMutable>
+TransparentHandle<T, IsMutable>::TransparentHandle(val_type* inPtr)
+  : mPtr(inPtr) { }
+
 /**
  * @brief Return the (constant) pointer of this handle
  */
-template <typename T>
+template <typename T, bool IsMutable>
 inline
-const T*
-TransparentHandle<T>::ptr() const {
+typename TransparentHandle<T, IsMutable>::val_type*
+TransparentHandle<T, IsMutable>::ptr() const {
     return mPtr;
 }
+
+// TransparentHandle<T, dbal::Mutable>
+
+template <typename T>
+TransparentHandle<T, dbal::Mutable>::TransparentHandle(val_type* inPtr)
+  : Base(inPtr) { }
 
 /**
  * @brief Return the pointer of this handle
  */
 template <typename T>
 inline
-T*
-MutableTransparentHandle<T>::ptr() {
-    return mPtr;
+typename TransparentHandle<T, dbal::Mutable>::val_type*
+TransparentHandle<T, dbal::Mutable>::ptr() {
+    return const_cast<val_type*>(static_cast<Base*>(this)->ptr());
 }
 
 } // namespace postgres

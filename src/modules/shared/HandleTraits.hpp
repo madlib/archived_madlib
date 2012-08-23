@@ -4,6 +4,9 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#ifndef MADLIB_SHARED_HANDLE_TRAITS_HPP_
+#define MADLIB_SHARED_HANDLE_TRAITS_HPP_
+
 namespace madlib {
 
 namespace modules {
@@ -40,10 +43,10 @@ struct HandleTraits<ArrayHandle<double> > {
     typedef utils::Reference<double> ReferenceToDouble;
     typedef const double* DoublePtr;
     typedef dbal::eigen_integration::HandleMap<
-        const ColumnVector, TransparentHandle<double> >
+        const ColumnVector, TransparentHandle<double, dbal::Immutable> >
         ColumnVectorTransparentHandleMap;
     typedef dbal::eigen_integration::HandleMap<const Matrix,
-        TransparentHandle<double> > MatrixTransparentHandleMap;
+        TransparentHandle<double, dbal::Immutable> > MatrixTransparentHandleMap;
 };
 
 template <>
@@ -59,11 +62,15 @@ struct HandleTraits<MutableArrayHandle<double> > {
     typedef utils::MutableReference<double> ReferenceToDouble;
     typedef double* DoublePtr;
     typedef dbal::eigen_integration::HandleMap<ColumnVector,
-        MutableTransparentHandle<double> > ColumnVectorTransparentHandleMap;
+        TransparentHandle<double, dbal::Mutable> >
+            ColumnVectorTransparentHandleMap;
     typedef dbal::eigen_integration::HandleMap<Matrix,
-        MutableTransparentHandle<double> > MatrixTransparentHandleMap;
+        TransparentHandle<double, dbal::Mutable> > MatrixTransparentHandleMap;
 };
 
 } // namespace modules
 
 } // namespace madlib
+
+#endif
+

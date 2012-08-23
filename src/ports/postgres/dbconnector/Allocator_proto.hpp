@@ -16,6 +16,8 @@ namespace postgres {
 template <typename T>
 class MutableArrayHandle;
 
+class MutableByteString;
+
 /**
  * @brief PostgreSQL memory allocator
  *
@@ -56,6 +58,10 @@ public:
     BOOST_PP_REPEAT(MADLIB_MAX_ARRAY_DIMS, MADLIB_ALLOCATE_ARRAY_DECL,
         0 /* ignored */)
 #undef MADLIB_ALLOCATE_ARRAY_DECL
+
+    template <dbal::MemoryContext MC, dbal::ZeroMemory ZM,
+        dbal::OnMemoryAllocationFailure F>
+    MutableByteString allocateByteString(std::size_t inSize) const;
 
     template <dbal::MemoryContext MC, dbal::ZeroMemory ZM,
         dbal::OnMemoryAllocationFailure F>

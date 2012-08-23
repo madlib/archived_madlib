@@ -1,0 +1,340 @@
+% When using TeXShop on the Mac, let it know the root document. The following must be one of the first 20 lines.
+% !TEX root = ../design.tex
+
+\chapter[k-Means Clustering]{$k$-Means Clustering}
+
+% Abstract. What is the problem we want to solve?
+Clustering refers to the problem of partitioning a set of objects into homogeneous subsets, i.e., such that objects in the same group have \emph{similar} properties. In $k$-means clustering,
+one is given $n$ points $x_1, \dots, x_n \in \R^d$, and the goal is
+to position $k$ centroids $c_1, \dots, c_k \in \R^d$ so that the sum of squared
+distances between each point and its closest centroid is minimized. A cluster
+is identified by its centroid and consists of all points for which this
+centroid is closest. Formally, we wish to minimize the following objective
+function:
+\begin{gather*}
+    (c_1, \dots, c_k) \mapsto \sum_{i=1}^n \min_{j=1}^k \dist(x_i, c_j)^2
+\end{gather*}
+
+\section{Overview of Algorithms} \label{sec:kmeans:Algorithms}
+
+% Explain the algorithm at a high-level -- do not talk about specific variations or implementation details. Give some theoretical background: Is the problem hard? What results can we expect?
+$k$-means clustering is NP-hard in general Euclidean space (even for just two clusters) \cite{ADH09a} and for a general number of clusters (even in the plane) \cite{MNV10a}. However, the local-search heuristic proposed by \citeauthor{L82a}~\cite{L82a} performs reasonably well in practice. In fact, it is so ubiquitous today that it is often referred to as the standard algorithm or even just the $k$-means algorithm. At a high level, it works as follows:
+
+\begin{enumerate}
+	\item Seeding phase: Find initial positions for $k$ centroids $c_1, \dots, c_k$.
+	\item Assign each point $x_1, \dots, x_n$ to its closest centroid. \label{enum:kmeans_abstract_points}
+	\item Reposition each centroid to the barycenter (mean) of all points assigned to it.
+	\item If convergence has been reached, stop. Otherwise, goto \eqref{enum:kmeans_abstract_points}.
+\end{enumerate}
+
+Since the value of the objective function decreases in every step, and there is only a finite number of clusterings, the algorithm is guaranteed to converge to a local minimum \cite[Section~16.4]{CS08a}. While it is known that there are instances for which the $k$-means algorithm takes exponentially many steps~\cite{V09a}, it has been shown that $k$-means has polynomial smoothed complexity \cite{AMR09a}---thus giving some theoretical explanation for good results in practice. With a clever seeding technique, $k$-means is moreover $O(\log k)$-competitive \cite{AV07a}.
+
+
+\subsection{Algorithm Variants}
+
+% Give an overview and references to variations that exist for this algorithm.
+\paragraph{Seeding}
+
+The quality of $k$-means is highly influenced by the choice of the seeding \cite{AV07a}. The following is a non-exhaustive list of options:
+\begin{enumerate}
+	\item Manual: User-specified list of initial centroid positions.
+	\item Uniformly at random: Choose the $k$ centroids uniformly at random among the point set
+	\item \texttt{$k$-means++}: Perform seeding so that the objective function is minimized in expectation \cite{AV07a}
+	\item Use a different clustering algorithm for determining the seeding \cite{MNU00a}
+	\item Run $k$-means with multiple seedings and choose the clustering with lowest cost
+\end{enumerate}
+
+\paragraph{Repositioning}
+
+Most $k$-means formulations in textbooks do not detail the case where a centroid has no points assigned to it. It is an easy observation that moving a stray centroid in this case can only decrease the objective function. This can be done in a simple way (move onto a random point) or more carefully (e.g., move so that the objective function is minimized in expectation).
+
+\paragraph{Convergence Criterion}
+
+There are several reasonable convergence criteria. E.g., stop when:
+\begin{enumerate}
+	\item The number of repositioned centroids is below a given threshold
+	\item The change in the objective drops below a given threshold
+	\item The maximum number of iterations has been reached
+	\item See, e.g., \textcite[Section~16.4]{CS08a} for more options.
+\end{enumerate}
+
+\paragraph{Variable Number of Clusters}
+
+The number of clusters $k$ could be determined by the seeding algorithm (instead of being a parameter) \cite{MNU00a}. Strictly speaking, however, the algorithm should not be called $k$-means in this case.
+
+
+\section{Seeding Algorithms}
+
+In the following, we describe the seeding methods to be implemented for MADlib.
+
+\subsection{Uniform-at-random Sampling}
+
+Uniform-at-random sampling just uses the algorithms described in Section~\ref{sec:SampingWOReplacement}.
+
+\subsection[k-means++]{$k$-means++}
+
+\texttt{$k$-means++} seeding \cite{AV07a} starts with a single centroid chosen randomly among the input points. It then iteratively chooses new centroids from the input points until there are a total of $k$ centroids. The probability for picking a particular point is proportional to its minimum squared distance to any existing centroid. Intuitively, \texttt{$k$-means++} favors seedings where centroids are spread out over the whole range of the input points, while at the same time not being too susceptible to outliers.
+
+\subsubsection{Formal Description}
+
+\begin{algorithm}[$k$-means++$(k, P, \dist, C)$] \label{alg:kmeans++}
+\alginput{Number of desired centroids $k$, set $P$ of points in $\R^d$, metric $\dist$, \\
+	set $C$ of initial centroids}
+\algoutput{Set of centroids $C$}
+\begin{algorithmic}[1]
+	\If{$C = \emptyset$}
+		\State $C \set \{ \text{initial centroid chosen uniformly at random from } P \}$ \label{alg:kmeanspp:firstCentroid}
+	\EndIf
+	\While{$|C| < k$} \label{alg:kmeans++:for}
+		\State $C \set C \cup \{ \text{random $p \in P$ with probability proportional to }\min_{c \in C} \dist(p,c)^2 \}$ \label{alg:kmeanspp:nextcentroid}
+	\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+\begin{description}
+	\item[Runtime] A naive implementation needs $\Theta(k^2 n)$ distance calculations, where $n = |P|$. A single distance calculation takes $O(d)$ time.
+	\item[Space] Store $k$ centroids.
+	\item[Subproblems]
+		The existing \ref{sym:weighted_sample} subroutine can be used for:
+		\begin{itemize}
+			\item Line~\ref{alg:kmeanspp:firstCentroid}: Sample uniformly at random
+			\item Line~\ref{alg:kmeanspp:nextcentroid}: Sample according to a discrete probability distribution.
+		\end{itemize}
+\end{description}
+
+The number of distance calculations could be reduced by a factor of $k$ if we store, for each point $p \in P$, the distance to its closest centroid. Then, each iteration only needs $n$ distance calculations (i.e., only between the most recently added centroid and all points). In total, these are $\Theta(k n)$ distance calculations. Making this idea explicit leads to the following algorithm.
+
+\begin{algorithm}[$k$-means++-ext$(k, P, \dist)$] \label{alg:kmeans++ext}
+\alginput{Number of desired centroids $k$, set $P$ of points in $\R^d$, metric $\dist$, \\
+	set $C$ of initial centroids}
+\algoutput{Set of centroids $C$}
+\algprecond{For all $p \in P: \delta[p] = \min_{c \in C} \dist(p, c)^2$ (or $\delta[p] = \infty$ if $C = \emptyset$)}
+\begin{algorithmic}[1]
+	\While{$|C| < k$} \label{alg:kmeans++ext:for}
+		\State $\mathit{lastCentroid} \set \ref{sym:weighted_sample}(P, \delta^2)$ \label{alg:kmeans++ext:nextCentroid} \Comment{$\delta^2$ denotes the mapping $p \mapsto \delta[p]^2$}
+		\State $C \set C \cup \{ \mathit{lastCentroid} \}$
+		\For{$p \in P$} \label{alg:kmeans++ext:pointLoop}
+			\If{$\dist(p, \mathit{lastCentroid}) < \delta[p]$}
+				\State $\delta[p] \set \dist(p, \mathit{lastCentroid})$
+			\EndIf
+		\EndFor
+	\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+\begin{description}
+	\item[Tuning] \label{kmeans++ext:tuning} The inner for-loop in line~\ref{alg:kmeans++ext:pointLoop} and \ref{sym:weighted_sample} in line~\ref{alg:kmeans++ext:nextCentroid} could be combined. With this improvement, only one pass over $P$ is necessary.
+	\item[Runtime] $O(dkn)$ as explained before.
+	\item[Space] Store $k$ centroids and $n$ distances.
+	\item[Scalability] The outer while-loop is inherently sequential because the random variates in each iteration depend on all previous iterations. The inner loop, however, can be executed with data parallelism.
+\end{description}
+
+\subsubsection{Implementation as User-Defined Function}
+
+In general, the performance benefit of explicitly storing points (i.e., choosing \ref{alg:kmeans++ext} over \ref{alg:kmeans++}) depends on the DBMS, the data, and the operating environment. The pattern of updating temporary state is made a bit more awkward in PostgreSQL due to its legacy of versioned storage. PostgreSQL performs an update by first inserting a new row and then marking the old row as invisible \cite[Section~23.1.2]{postgres:9.1.3}. As a result, for updates that touch many rows it is typically faster to copy the updated data into a new table (i.e., \texttt{CREATE TABLE AS SELECT} and \texttt{DROP TABLE}) rather than issue an \texttt{UPDATE}. Given these constraints, we currently choose to only implement algorithm~\ref{alg:kmeans++} (but not \ref{alg:kmeans++ext}) as the user-defined function \symlabel{kmeanspp\_seeding}{sym:kmeans++}.
+
+\paragraph{In- and Output} The UDF expects the following arguments, and returns the following values:
+
+\begin{center}
+	\begin{tabularx}{\textwidth}{rlXl}
+		\toprule%
+		\textbf{Name} & \textbf{Description} & \textbf{Type}
+		\\\otoprule
+		In &
+		\texttt{rel\_source} &
+		Relation containing the points as rows &
+		relation
+		\\\midrule
+		In &
+		\texttt{expr\_id} &
+		Tuple identifier, each tuple corresponds to a point $p \in P$ &
+		\specialcell{l}{expression\\ (integer)}
+		\\\midrule
+		In &
+		\texttt{expr\_point} &
+		Point coordinates, i.e., the point $p$ &
+		\specialcell{l}{expression\\ (floating-point vector)}
+		\\\midrule
+		In &
+		\texttt{k} &
+		Number of centroids &
+		integer
+		\\\midrule
+		In &
+		\texttt{fn\_squared\_dist} &
+		Function returning the squared distance between two vectors &
+		function
+		\\\midrule
+		In &
+		\texttt{initial\_centroids} &
+		Matrix containing the initial centroids as columns. This argument may be omitted (corresponding to an empty set $C$ of initial centroids). &
+		floating-point matrix
+		\\\midrule
+		Out &
+		&
+		Matrix containing the $k$ centroids as columns &
+		floating-point matrix
+		\\\bottomrule
+	\end{tabularx}
+\end{center}
+
+\paragraph{Components} The set of centroids $C$ is stored as a dense floating-point matrix that contains the centroids as columns vectors. Algoritm~\ref{alg:kmeans++} can be (roughly) translated into SQL as follow. We assume here that all function arguments are available as constants, and the matrix containing the centroids as columns is available as \texttt{centroids}. Line~\ref{alg:kmeanspp:firstCentroid} becomes:
+\begin{lstlisting}[language=SQL,gobble=4]
+    SELECT ARRAY[(
+        SELECT CAST($expr_point AS DOUBLE PRECISION[])
+        FROM $rel_source
+        WHERE $expr_id = (
+            SELECT weighted_sample($expr_id, 1)
+            FROM $rel_source
+        )
+    )]
+\end{lstlisting}
+Line~\ref{alg:kmeanspp:nextcentroid} is implemented using essentially the following SQL.
+\begin{lstlisting}[language=SQL,gobble=4]
+    SELECT centroids || $expr_point
+    FROM $rel_source
+    WHERE $expr_id = (
+        SELECT
+            weighted_sample(
+                $expr_id, (
+                closest_column(
+                    centroids,
+                    $expr_point,
+                    fn_squared_dist
+                )).distance
+            )
+        FROM $rel_source
+    )
+\end{lstlisting}
+See Section~\ref{sec:matrix:closestColumn} for a description of \ref{sym:closestColumn}.
+
+\subsubsection{Historical Implementations}
+
+Implementation details and big-data heuristics that were used in previous versions of MADlib are documented here for completeness.
+
+\begin{description}
+	\item[v0.2.1beta and earlier] In lines~\ref{alg:kmeanspp:firstCentroid} and \ref{alg:kmeanspp:nextcentroid} of Algorithm~\ref{alg:kmeans++} use a random sample $P' \subsetneq P$.
+
+		Here $P'$ will be a new random sample in each iteration. Under the a-priori assumption that a random point belongs to any of the $k$ (unknown) clusters with equal probability, sample enough points so that with high probability (e.g., $p = 0.999$) there is a point from each of the $k$ clusters.
+
+		This is the classical occupancy problem (also called balls-into-bins model) \cite{F68a}: Throwing $r$ balls into $k$ bins, what is the probability that no bin is empty? The exact value is
+		\begin{align*}
+			u(r, k) = k^{-r} \sum_{i=0}^k (-1)^i \binom ki (k - i)^r
+			\SiM.
+		\end{align*}
+
+		For $r,k \to \infty$ so that $r/k = O(1)$ we have the limiting form $u(r,k) \to (1 - e^{-r/k})^k =: \widetilde u(r, k)$. Rearranging $\widetilde u(r, k) > p$ gives $-\log(1 - \sqrt[k]p) \cdot k < r$. The smallest $r$ satisfying this inequality is chosen as the size of the sample set.
+\end{description}
+
+\section[Standard algorithm for k-means clustering]{Standard algorithm for $k$-means clustering}
+
+The standard algorithm has been outlined in Section~\ref{sec:kmeans:Algorithms}. The formal description and our implementation are given below.
+
+\subsection{Formal Description}
+
+\begin{algorithm}[$k$-means$(k, P, \dist)$] \label{alg:kmeans}
+\alginput{Set of initial centroids $C$, set $P$ of points, seeding strategy $\mathit{Seeding}$, metric $\dist$, \\
+averaging function $\mathit{mean}$, convergence strategy $\mathit{Convergence}$}
+\algoutput{Set $C$ of final means}
+\algprecond{$i = 0$}
+\begin{algorithmic}[1]
+	\Repeat
+		\State $i \set i + 1$
+		\State $C_\text{old} \set C$
+		\State $C \set \bigcup_{c \in C} \{ \mathit{mean} \{p \in P \mid \arg\min_{c' \in C} \dist(p, c') = c \} \}$ \label{alg:kmeans:MoveCentroids}
+		\State $C \set \mathit{Seeding}(k, P, \dist, C)$ \label{alg:kmeans:Reseed} \Comment{Reseed ``lost'' centroids (if any)}
+	\Until{$Convergence(C, C_\text{old}, P, i)$} \label{alg:kmeans:ConvergenceCond}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{description}
+	\item[Runtime] See discussion in Section~\ref{sec:kmeans:Algorithms}.
+	\item[Space] Store $2k$ centroids (both sets $C$ and $C_\text{old}$)
+	\item[Scalability] The outer loop is inherently sequential. The recentering in line~\ref{alg:kmeans:MoveCentroids} is data-parallel (provided that the sets $C$ and $C_\text{old}$ are available on all computation nodes). Likewise, the convergence check in line~\ref{alg:kmeans:ConvergenceCond} is data-parallel if it only relies on distances between points $p$ and the set of centroids $C$, or the number of iterations.
+\end{description}
+
+\subsection{Implementation as User-Defined Function}
+
+Algorithm~\ref{alg:kmeans} is implemented as the user-defined function \symlabel{kmeans}{sym:kmeans}. We choose to not make the convergence criterion a function argument but instead settle for parameters for the most typical criteria. Should the need arise, we might revoke that decision in the future. Moreover, the seeding strategy is currently not an argument, but \ref{sym:kmeans++} is always used in line~\ref{alg:kmeans:Reseed}.
+
+\paragraph{In- and Output} The UDF expects the following arguments, and returns the following values:
+
+\begin{center}
+	\begin{tabularx}{\linewidth}{rlXl}
+		\toprule%
+		\textbf{Name} & \textbf{Description} & \textbf{Type}
+		\\\otoprule
+		In &
+		\texttt{rel\_source} &
+		Relation containing the points as tuples &
+		relation
+		\\\midrule
+		In &
+		\texttt{expr\_id} &
+		Tuple identifier, each tuple corresponds to a point $p \in P$ &
+		\specialcell{l}{expression\\ (integer)}
+		\\\midrule
+		In &
+		\texttt{expr\_point} &
+		Point coordinates, i.e., the point $p$ &
+		\specialcell{l}{expression\\ (floating-point vector)}
+		\\\midrule
+		In &
+		\texttt{initial\_centroids} &
+		Matrix containing the initial centroids as columns &
+		floating-point matrix
+		\\\midrule
+		In &
+		\texttt{fn\_squared\_dist} &
+		Function returning the squared distance between two vectors &
+		function
+		\\\midrule
+		In &
+		\texttt{agg\_mean} &
+		Aggregate returning the mean of a set of points &
+		function
+		\\\midrule
+		In &
+		\texttt{max\_num\_iterations} &
+		Convergence criterion: Maximum number of iterations &
+		integer
+		\\\midrule
+		In &
+		\texttt{min\_frac\_reassigned} &
+		Convergence criterion: Convergence is reached if the fraction of points being reassigned to another centroid drops below \texttt{conv\_level} &
+		floating-point
+		\\\midrule
+		Out & &
+		Matrix containing the $k$ centroids as columns &
+		floating-point matrix
+		\\\bottomrule
+	\end{tabularx}
+\end{center}
+
+\paragraph{Components}
+
+The set of centroids $C$ is stored as a dense floating-point matrix that contains the centroids as columns vectors. Algoritm~\ref{alg:kmeans} can be (roughly) translated into SQL as follow. We assume here that all function arguments are available as constants, and the matrix containing the centroids is available as \texttt{centroids}. Line~\ref{alg:kmeans:MoveCentroids} becomes:
+%
+\begin{lstlisting}[language=SQL,gobble=4]
+    SELECT matrix_agg(_centroid)
+    FROM (
+        SELECT $agg_mean(_point) AS _centroid
+        FROM (
+            SELECT
+                $expr_point AS _point,
+                (closest_column(
+                    centroids,
+                    $expr_point,
+                    fn_squared_dist
+                )).column_id AS _new_centroid_id
+            FROM $rel_source
+        ) AS _points_with_assignments
+        GROUP BY _new_centroid_id
+    ) AS _new_centroids
+\end{lstlisting}
+See Section~\ref{sec:matrix:matrixAgg} for a description of \ref{sym:matrixAgg}.
+
+It is a a good idea to also compute the number of reassigned centroids, so that both line~\ref{alg:kmeans:MoveCentroids} and the convergence check in line~\ref{alg:kmeans:ConvergenceCond} can be computed with one pass over the data. To that end, we extend the inner-most query to also compute the previous closest centroid (i.e., we do a second \ref{sym:closestColumn} call where we pass matrix \texttt{old\_centroids} as first argument). During the aggregations in the two outer queries, we can then count (or sum up, respectively) the number of points that have been reassigned.
+
+Finally, line~\ref{alg:kmeans:Reseed} is simply implemented by calling function \ref{sym:kmeans++}. For a slight performance benefit, this function call should be guarded by a check if the number of centroids is lower than $k$.
+

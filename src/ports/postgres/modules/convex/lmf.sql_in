@@ -1,0 +1,425 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file lmf.sql_in
+ *
+ * @brief SQL functions for low-rank matrix factorization
+ * @date June 2012
+ *
+ * @sa For a brief introduction to Low-rank Matrix Factorization, see the module
+ *     description \ref grp_lmf.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_lmf
+
+
+@about
+
+This module implements "factor model" for representing an incomplete matrix using a low-rank approximation [1].
+Mathematically, this model seeks to find matrices U and V (also referred as factors) that, for any given incomplete matrix A, minimizes:
+\f[ \|\boldsymbol A - \boldsymbol UV^{T} \|_2 \f]
+subject to \f$rank(\boldsymbol UV^{T}) \leq r\f$, where \f$\|\cdot\|_2\f$ denotes the Frobenius norm.
+Let \f$A\f$ be a \f$m \times n\f$ matrix, then \f$U\f$ will be \f$m \times r\f$ and \f$V\f$ will be \f$n \times r\f$, in dimension, and \f$1 \leq r \ll \min(m, n)\f$.
+This model is not intended to do the full decomposition, or to be used as part of inverse procedure.
+This model has been widely used in recommendation systems (e.g., Netflix [2]) and feature selection (e.g., image processing [3]).
+
+
+@input
+
+The <b>input matrix</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    <em>row</em>    INTEGER,
+    <em>col</em>    INTEGER,
+    <em>value</em>  DOUBLE PRECISION
+)</pre>
+
+Input is contained in a table that describes an incomplete matrix, by having available entries specified as (row, column, value).
+The input matrix is expected to be based 1, which means row >= 1, and col >= 1.
+NULL values are not expected.
+
+
+@usage
+
+Please find descriptions of SQL functions in lmf.sql_in
+
+Output factors matrix U and V are in flatten format.
+<pre>RESULT AS (
+        matrix_u    DOUBLE PRECISION[],
+        matrix_v    DOUBLE PRECISION[],
+        rmse        DOUBLE PRECISION
+);</pre>
+
+Features correspond to row i is
+<code>matrix_u[i:i][1:r]</code>.
+Features correspond to column j is
+<code>matrix_v[j:j][1:r]</code>.
+
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE lmf_data (
+ column INT,
+ row    INT,
+ value  FLOAT8
+);
+\endcode
+-# Populate the input table with some data. e.g.:
+\code
+INSERT INTO lmf_data VALUES (1, 1, 5.0);
+INSERT INTO lmf_data VALUES (3, 100, 1.0);
+INSERT INTO lmf_data VALUES (999, 10000, 2.0);
+\endcode
+-# Call lmf_igd_run() stored procedure, e.g.:
+\code
+SELECT madlib.lmf_igd_run(
+'lmf_model',                 -- result table
+'lmf_data',                  -- input table
+'row', 'col', 'value',       -- table column names
+999,                         -- row dimension
+10000,                       -- column dimension
+3,                           -- rank (number of features)
+0.1,                         -- stepsize
+2,                           -- initial value scale factor
+10,                          -- maximal number of iterations
+1e-9);                       -- error tolerance
+\endcode
+Example output (the exact result may not be the same):
+\code
+NOTICE:
+Finished low-rank matrix factorization using incremental gradient
+DETAIL:
+ * table : lmf_data (row, col, value)
+Results:
+ * RMSE = 4.31144557397543e-05
+Output:
+ * view : SELECT * FROM lmf_model WHERE id = 1
+ lmf_igd_run
+-------------
+           1
+(1 row)
+\endcode
+-# Sanity check of the result. You may need a model id returned and also indicated by the function lmf_igd_run(), assuming 1 here, e.g.:
+\code
+SELECT array_dims(matrix_u), array_dims(matrix_v) FROM lmf_model WHERE id = 1;
+\endcode
+Example output:
+\code
+  array_dims  |   array_dims
+--------------+----------------
+ [1:999][1:3] | [1:10000][1:3]
+(1 row)
+\endcode
+-# Query the result value, e.g.:
+\code
+SELECT matrix_u[2:2][1:3] AS row_2_features FROM lmf_model WHERE id = 1;
+\endcode
+Example output (the exact result may not be the same):
+\code
+                      row_2_features
+----------------------------------------------------------
+ {{0.51117920037359,0.169582297094166,0.837417622096837}}
+(1 row)
+\endcode
+
+
+@literature
+
+[1] N. Srebro and T. Jaakkola. “Weighted Low-Rank Approximations.” In: ICML. Ed. by T. Fawcett and N. Mishra. AAAI Press, 2003, pp. 720–727. isbn: 1-57735-189-4.
+
+[2] Simon Funk, Netflix Update: Try This at Home, December 11 2006, http://sifter.org/~simon/journal/20061211.html
+
+[3] J. Wright, A. Ganesh, S. Rao, Y. Peng, and Y. Ma. “Robust Principal Component Analysis: Exact Recovery of Corrupted Low-Rank Matrices via Convex Optimization.” In: NIPS. Ed. by Y. Bengio, D. Schuurmans, J. D. Lafferty, C. K. I. Williams, and A. Culotta. Curran Associates, Inc., 2009, pp. 2080–2088. isbn: 9781615679119.
+
+*/
+
+CREATE TYPE MADLIB_SCHEMA.lmf_result AS (
+        matrix_u    DOUBLE PRECISION[],
+        matrix_v    DOUBLE PRECISION[],
+        rmse        DOUBLE PRECISION
+);
+
+--------------------------------------------------------------------------
+-- create SQL functions for IGD optimizer
+--------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_transition(
+        state           DOUBLE PRECISION[],
+        row_num         SMALLINT,
+        column_num      SMALLINT,
+        val             DOUBLE PRECISION,
+        previous_state  DOUBLE PRECISION[],
+        row_dim         SMALLINT,
+        column_dim      SMALLINT,
+        max_rank        SMALLINT,
+        stepsize        DOUBLE PRECISION,
+        scale_factor    DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_merge(
+        state1 DOUBLE PRECISION[],
+        state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_final(
+        state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing low-rank matrix factorization
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.lmf_igd_step(
+        /*+ row_num */          SMALLINT,
+        /*+ column_num */       SMALLINT,
+        /*+ val */              DOUBLE PRECISION,
+        /*+ previous_state */   DOUBLE PRECISION[],
+        /*+ row_dim */          SMALLINT,
+        /*+ column_dim */       SMALLINT,
+        /*+ max_rank */         SMALLINT,
+        /*+ stepsize */         DOUBLE PRECISION,
+        /*+ scale_factor */     DOUBLE PRECISION) (
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.lmf_igd_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.lmf_igd_merge,')
+    FINALFUNC=MADLIB_SCHEMA.lmf_igd_final,
+    INITCOND='{0,0,0,0,0,0,0,0,0}'
+);
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_lmf_igd_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_lmf_igd_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.lmf_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_lmf_igd_args(
+    sql VARCHAR, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION,
+    DOUBLE PRECISION, INTEGER, DOUBLE PRECISION
+) RETURNS VOID
+IMMUTABLE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_compute_lmf_igd(
+    rel_args        VARCHAR,
+    rel_state       VARCHAR,
+    rel_source      VARCHAR,
+    col_row         VARCHAR,
+    col_column      VARCHAR,
+    col_value       VARCHAR)
+RETURNS INTEGER
+AS $$PythonFunction(convex, lmf_igd, compute_lmf_igd)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief Low-rank matrix factorization of a incomplete matrix into two factors
+ *
+ * This function takes as input the table representation of a incomplete matrix
+ * in the sparse (i, j, value) format and decomposes it into the specified set
+ * of most significant features of matrices of U and V matrix. The input matrix
+ * is expected to have dimension [1:row_dim][1:column_dim], but in sparse
+ * format.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_row  Name of the column containing cell row number
+ *   @param col_column  Name of the column containing cell column number
+ *   @param col_value  Name of the column containing cell value
+ *   @param row_dim  Maximum number of rows of input
+ *   @param column_dim  Maximum number of columns of input
+ *   @param max_rank  Rank of desired approximation
+ *   @param stepsize  Hyper-parameter that decides how aggressive that the gradient steps are
+ *   @param scale_factor  Hyper-parameter that decides scale of initial factors
+ *   @param num_iterations  Maximum number if iterations to perform regardless of convergence
+ *   @param tolerance  Acceptable level of error in convergence.
+ *
+ */
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_row         VARCHAR,
+    col_column      VARCHAR,
+    col_value       VARCHAR,
+    row_dim         INTEGER /*+ DEFAULT 'SELECT max(col_row) FROM rel_source' */,
+    column_dim      INTEGER /*+ DEFAULT 'SELECT max(col_col) FROM rel_source' */,
+    max_rank        INTEGER /*+ DEFAULT 20 */,
+    stepsize        DOUBLE PRECISION /*+ DEFAULT 0.01 */,
+    scale_factor    DOUBLE PRECISION /*+ DEFAULT 0.1 */,
+    num_iterations  INTEGER /*+ DEFAULT 10 */,
+    tolerance       DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
+RETURNS INTEGER AS $$
+DECLARE
+    iteration_run   INTEGER;
+    model_id        INTEGER;
+    rmse            DOUBLE PRECISION;
+    old_messages    VARCHAR;
+BEGIN
+    RAISE NOTICE 'Matrix % to be factorized: % x %', rel_source, row_dim, column_dim;
+
+    -- We first setup the argument table. Rationale: We want to avoid all data
+    -- conversion between native types and Python code. Instead, we use Python
+    -- as a pure driver layer.
+    old_messages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+    -- Unfortunately, the EXECUTE USING syntax is only available starting
+    -- PostgreSQL 8.4:
+    -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
+    -- We therefore have to emulate.
+    PERFORM MADLIB_SCHEMA.internal_execute_using_lmf_igd_args($sql$
+        DROP TABLE IF EXISTS pg_temp._madlib_lmf_igd_args;
+        CREATE TABLE pg_temp._madlib_lmf_igd_args AS
+        SELECT
+            $1 AS row_dim,
+            $2 AS column_dim,
+            $3 AS max_rank,
+            $4 AS stepsize,
+            $5 AS scale_factor,
+            $6 AS num_iterations,
+            $7 AS tolerance;
+        $sql$,
+        row_dim, column_dim, max_rank, stepsize,
+        scale_factor, num_iterations, tolerance);
+    EXECUTE 'SET client_min_messages TO ' || old_messages;
+
+    -- Perform acutal computation.
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
+    -- operators from regclass to varchar/text.
+    iteration_run := MADLIB_SCHEMA.internal_compute_lmf_igd(
+            '_madlib_lmf_igd_args', '_madlib_lmf_igd_state',
+            textin(regclassout(rel_source)), col_row, col_column, col_value);
+
+    -- create result table if it does not exist
+    BEGIN
+        EXECUTE 'SELECT 1 FROM ' || rel_output || ' LIMIT 0';
+    EXCEPTION
+        WHEN undefined_table THEN
+            EXECUTE '
+            CREATE TABLE ' || rel_output || ' (
+                id          SERIAL,
+                matrix_u    DOUBLE PRECISION[],
+                matrix_v    DOUBLE PRECISION[],
+                rmse        DOUBLE PRECISION)';
+    END;
+
+    -- A work-around for GPDB not supporting RETURNING for INSERT
+    -- We generate an id using nextval before INSERT
+    EXECUTE '
+    SELECT nextval(' || quote_literal(rel_output || '_id_seq') ||'::regclass)'
+    INTO model_id;
+
+    -- output model
+    -- Retrieve result from state table and insert it
+    EXECUTE '
+    INSERT INTO ' || rel_output || '
+    SELECT ' || model_id || ', (result).*
+    FROM (
+        SELECT MADLIB_SCHEMA.internal_lmf_igd_result(_state) AS result
+        FROM _madlib_lmf_igd_state
+        WHERE _iteration = ' || iteration_run || '
+        ) subq';
+
+    EXECUTE '
+    SELECT rmse
+    FROM ' || rel_output || '
+    WHERE id = ' || model_id
+    INTO rmse;
+
+    -- return description
+    RAISE NOTICE '
+Finished low-rank matrix factorization using incremental gradient
+ * table : % (%, %, %)
+Results:
+ * RMSE = %
+Output:
+ * view : SELECT * FROM % WHERE id = %',
+    rel_source, col_row, col_column, col_value, rmse, rel_output, model_id;
+
+    RETURN model_id;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_row         VARCHAR,
+    col_column      VARCHAR,
+    col_value       VARCHAR,
+    row_dim         INTEGER,
+    column_dim      INTEGER,
+    max_rank        INTEGER,
+    stepsize        DOUBLE PRECISION,
+    scale_factor    DOUBLE PRECISION)
+RETURNS INTEGER AS $$
+    SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 10, 0.0001);
+$$ LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_row         VARCHAR,
+    col_column      VARCHAR,
+    col_value       VARCHAR,
+    row_dim         INTEGER,
+    column_dim      INTEGER,
+    max_rank        INTEGER,
+    stepsize        DOUBLE PRECISION)
+RETURNS INTEGER AS $$
+    -- set scale_factor as default 0.1
+    SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, $9, 0.1);
+$$ LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_row         VARCHAR,
+    col_column      VARCHAR,
+    col_value       VARCHAR,
+    row_dim         INTEGER,
+    column_dim      INTEGER,
+    max_rank        INTEGER)
+RETURNS INTEGER AS $$
+    -- set stepsize as default 0.01
+    SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, $6, $7, $8, 0.01);
+$$ LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.lmf_igd_run(
+    rel_output      VARCHAR,
+    rel_source      REGCLASS,
+    col_row         VARCHAR,
+    col_column      VARCHAR,
+    col_value       TEXT)
+RETURNS INTEGER AS $$
+DECLARE
+    row_dim INTEGER;
+    column_dim INTEGER;
+BEGIN
+    EXECUTE '
+    SELECT max(' || col_row || '), max(' || col_column || ')
+    FROM ' || textin(regclassout(rel_source))
+    INTO row_dim, column_dim;
+
+    RETURN (SELECT MADLIB_SCHEMA.lmf_igd_run($1, $2, $3, $4, $5, row_dim, column_dim, 20));
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+

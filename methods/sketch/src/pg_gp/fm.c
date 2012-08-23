@@ -378,7 +378,10 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
         fmtransval *newval;
         tblob_big = fm_new(transval1);
         newval = (fmtransval *)VARDATA(tblob_big);
-        big_or(transblob1, transblob2, (bytea *)newval->storage);
+
+        big_or((bytea *)transval1->storage, (bytea *)transval2->storage, 
+                (bytea *)newval->storage);
+
         PG_RETURN_DATUM(PointerGetDatum(tblob_big));
     }
     else if (transval1->status == SMALL && transval2->status == SMALL) {
@@ -451,14 +454,17 @@ void big_or(bytea *bitmap1, bytea *bitmap2, bytea *out)
              VARSIZE(bitmap1),
              VARSIZE(bitmap2));
 
-    out = (bytea *)palloc(VARSIZE(bitmap1));
-    SET_VARSIZE(out, VARSIZE(bitmap1));
+    if (VARSIZE(bitmap1) != VARSIZE(out))
+        elog(ERROR,
+             "target bitmap is of a different size from the source. "
+             "target bitmap size: %d, source bitmap size: %d",
+             VARSIZE(out),
+             VARSIZE(bitmap1));
 
     /* could probably be more efficient doing this 32 or 64 bits at a time */
-    for (i=0; i < VARSIZE(bitmap1) - VARHDRSZ; i+=8)
+    for (i=0; i < VARSIZE(bitmap1) - VARHDRSZ; i++)
         ((char *)(VARDATA(out)))[i] = ((char *)(VARDATA(bitmap1)))[i] |
                                       ((char *)(VARDATA(bitmap2)))[i];
-
 }
 
 /*!

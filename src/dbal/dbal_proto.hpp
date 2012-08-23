@@ -35,6 +35,14 @@ enum Mutability {
     Mutable
 };
 
+/**
+ * @brief Memory context to use for allocation (hint only)
+ *
+ * This is only meant to be a hint to the platform-specific parts of the AL.
+ * An implementation may choose to perform an allocation in a specific aggregate
+ * context if the memory needs to live longer than the current function call.
+ * It should be used, e.g., when allocating transition states.
+ */
 enum MemoryContext {
     FunctionContext,
     AggregateContext
@@ -56,9 +64,13 @@ enum OnMemoryAllocationFailure {
 
 // Boost integration is non-optional
 #include "BoostIntegration/BoostIntegration.hpp"
-
-#include "OutputStreamBufferBase_proto.hpp"
-#include "OutputStreamBufferBase_impl.hpp"
+// #include "EigenIntegration/EigenIntegration.hpp"
 #include "Exceptions/NoSolutionFoundException_proto.hpp"
+
+#include "ByteStream_proto.hpp"
+#include "ByteStreamHandleBuf_proto.hpp"
+#include "DynamicStruct_proto.hpp"
+#include "OutputStreamBufferBase_proto.hpp"
+#include "Reference_proto.hpp"
 
 #endif // defined(MADLIB_DBAL_HPP)

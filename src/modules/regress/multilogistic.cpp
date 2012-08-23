@@ -17,7 +17,7 @@
 
 #include <vector>
 #include <fstream>
- 
+
 namespace madlib {
 
 // Use Eigen
@@ -43,7 +43,7 @@ AnyType mLogstateToResult(const Allocator &inAllocator,
  * @brief Logistic function
  */
 inline double sigma(double x) {
-	return 1. / (1. + std::exp(-x));
+    return 1. / (1. + std::exp(-x));
 }
 
 
@@ -92,12 +92,12 @@ public:
      * This function is only called for the first iteration, for the first row.
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX, uint16_t inNumCategories) {
-		
-		mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
         rebind(inWidthOfX, inNumCategories);
         widthOfX = inWidthOfX;
-		numCategories = inNumCategories;
+        numCategories = inNumCategories;
     }
 
     /**
@@ -141,19 +141,19 @@ public:
     }
 
 private:
-    static inline uint32_t arraySize(const uint16_t inWidthOfX, 
-    	const uint16_t inNumCategories) {
+    static inline uint32_t arraySize(const uint16_t inWidthOfX,
+        const uint16_t inNumCategories) {
         return 4 + inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
-								 + 2 * inWidthOfX * inNumCategories;
+                                 + 2 * inWidthOfX * inNumCategories;
     }
 
     /**
      * @brief Rebind to a new storage array
      *
-     * @param inWidthOfX 			The number of independent variables.
+     * @param inWidthOfX             The number of independent variables.
      * @param inNumCategories The number of categories of the dependant var
-		 
-		 
+
+
      * Array layout (iteration refers to one aggregate-function call):
      * Inter-iteration components (updated in final function):
      * - 0: widthOfX (number of independant variables)
@@ -164,23 +164,23 @@ private:
      * - 2 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
      * - 3 + widthOfX*numCategories: gradient (X^T A z)
      * - 3 + 2 * widthOfX * inNumCategories: X_transp_AX (X^T A X)
-     * - 3 + widthOfX^2*numCategories^2 
-		 				+ 2 * widthOfX*numCategories: logLikelihood ( ln(l(c)) )
+     * - 3 + widthOfX^2*numCategories^2
+                         + 2 * widthOfX*numCategories: logLikelihood ( ln(l(c)) )
      */
     void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
-				
-        widthOfX.rebind(&mStorage[0]);				
-        numCategories.rebind(&mStorage[1]);				
-        coef.rebind(&mStorage[2], inWidthOfX*inNumCategories);				
-				
+
+        widthOfX.rebind(&mStorage[0]);
+        numCategories.rebind(&mStorage[1]);
+        coef.rebind(&mStorage[2], inWidthOfX*inNumCategories);
+
         numRows.rebind(&mStorage[2 + inWidthOfX*inNumCategories]);
-				
+
         gradient.rebind(&mStorage[3 + inWidthOfX*inNumCategories],inWidthOfX*inNumCategories);
-        X_transp_AX.rebind(&mStorage[3 + 2 * inWidthOfX*inNumCategories], 
-			inNumCategories*inWidthOfX, inWidthOfX*inNumCategories);
+        X_transp_AX.rebind(&mStorage[3 + 2 * inWidthOfX*inNumCategories],
+            inNumCategories*inWidthOfX, inWidthOfX*inNumCategories);
         logLikelihood.rebind(&mStorage[3 +
-        	 inNumCategories*inNumCategories*inWidthOfX*inWidthOfX 
-        	 + 2 * inWidthOfX*inNumCategories]);
+             inNumCategories*inNumCategories*inWidthOfX*inWidthOfX
+             + 2 * inWidthOfX*inNumCategories]);
     }
 
     Handle mStorage;
@@ -214,134 +214,134 @@ AnyType
 mlogregr_irls_step_transition::run(AnyType &args) {
 
 
-	MLogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
+    MLogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
 
-	// Get x as a vector of double
-	MappedColumnVector x = args[3].getAs<MappedColumnVector>();
-	
-	// Get the category & numCategories as integer
-	int16_t category = args[1].getAs<int>();	
-	// Number of categories after pivoting (We pivot around the first category)
-	int16_t numCategories = (args[2].getAs<int>() - 1);
+    // Get x as a vector of double
+    MappedColumnVector x = args[3].getAs<MappedColumnVector>();
 
-	// The following check was added with MADLIB-138.
-	if (!x.is_finite())
-			throw std::domain_error("Design matrix is not finite.");
+    // Get the category & numCategories as integer
+    int16_t category = args[1].getAs<int>();
+    // Number of categories after pivoting (We pivot around the first category)
+    int16_t numCategories = (args[2].getAs<int>() - 1);
 
-
-	if (state.numRows == 0) {
-		if (x.size() > std::numeric_limits<uint16_t>::max())
-				throw std::domain_error("Number of independent variables cannot be "
-						"larger than 65535.");
-
-		if (numCategories < 1)
-				throw std::domain_error("Number of cateogires must be at least 2");
-
-		if (category > numCategories)
-				throw std::domain_error("You have entered a category > numCategories"
-					"Categories must be of values {0,1... numCategories-1}");
-
-		// Init the state (requires x.size() and category.size())
-		state.initialize(*this, static_cast<uint16_t>(x.size())
-													, static_cast<uint16_t>(numCategories));
-													
-		if (!args[4].isNull()) {
-				MLogRegrIRLSTransitionState<ArrayHandle<double> > previousState = args[4];
-				state = previousState;
-				state.reset(); 
-		}
-	}
+    // The following check was added with MADLIB-138.
+    if (!x.is_finite())
+            throw std::domain_error("Design matrix is not finite.");
 
 
-	
+    if (state.numRows == 0) {
+        if (x.size() > std::numeric_limits<uint16_t>::max())
+                throw std::domain_error("Number of independent variables cannot be "
+                        "larger than 65535.");
 
-	// Now do the transition step
-	state.numRows++;	
-	/* 	Get y: Convert to 1/0 boolean vector
-			Example: Category 4 : 0 0 0 1 0 0
-			Storing it in this forms helps us get a nice closed form expression
-	*/
-	
-	ColumnVector y(numCategories+1);
-	y.fill(0);
-	y(category) = 1;
-	//We are pivoting around the last column, so we drop that column from the 'y' vector
-	y.conservativeResize(numCategories); 
+        if (numCategories < 1)
+                throw std::domain_error("Number of cateogires must be at least 2");
 
-	/*
-	Compute the parameter vector (the 'pi' vector in the documentation)
-	for the data point being processed.
-	Casting the coefficients into a matrix makes the calculation simple.   
-	*/
-	Matrix coef = state.coef;
-	coef.resize(numCategories, state.widthOfX);
-	
-	//Store the intermediate calculations because we'll reuse them in the LLH
-	ColumnVector t1 = x; //t1 is vector of size state.widthOfX
-	t1 = -coef*x;
-	/* Note: The above 2 lines could have been written as:
-		ColumnVector t1 = -coef*x;
-		
-		but this creates warnings. These warnings are somehow related to the factor 
-		that x is of an immutable type. The following alternative could resolve 
-		the warnings (although not necessary the best alternative):
-	*/
-	
-	ColumnVector t2 = t1.array().exp();
-	double t3 = 1 + t2.sum(); 
-	ColumnVector pi = t2/t3;
-	
-	//The gradient matrix has numCatergories rows and widthOfX columns 
-	Matrix grad = y*x.transpose() - pi*x.transpose();
-	//We cast the gradient into a vector to make the Newton step calculations much easier.  
-	grad.resize(numCategories*state.widthOfX,1);    
-	
-	/* 
-		 a is a matrix of size JxJ where J is the number of categories
-		 a_j1j2 = -pi(j1)*(1-pi(j2))if j1 == j2
-		 a_j1j2 =  pi(j1)*pi(j2) if j1 != j2	 
-	*/
-	Matrix a(numCategories,numCategories);
-	// Compute the 'a' matrix.  
-	Matrix piDiag = pi.asDiagonal();
-	a = pi * pi.transpose() - piDiag;
-	
-	state.gradient.noalias() += grad;
-	
-	//Start the Hessian calculations 
-	Matrix X_transp_AX(numCategories * state.widthOfX, numCategories * state.widthOfX);
+        if (category > numCategories)
+                throw std::domain_error("You have entered a category > numCategories"
+                    "Categories must be of values {0,1... numCategories-1}");
 
-	/*
-		Again: The following 3 lines could have been written as
-		Matrix XXTrans = x * x.transpose();
-		but it creates warnings related to the type of x. Here is an easy fix
-	*/
-	Matrix cv_x = x;
-	Matrix XXTrans = trans(cv_x);
-	XXTrans = cv_x * XXTrans;
-	
-	//Eigen doesn't supported outer-products for matrices, so we have to do our own.  
-	//This operation is also known as a tensor-product.
-	for (int i1 = 0; i1 < state.widthOfX; i1++){
-	 	for (int i2 = 0; i2 <state.widthOfX; i2++){ 
-			int rowOffset = numCategories * i1;
-			int colOffset = numCategories * i2;
-			
-			X_transp_AX.block(rowOffset, colOffset, numCategories,  numCategories) = XXTrans(i1,i2)*a;			
-		}
-	}
+        // Init the state (requires x.size() and category.size())
+        state.initialize(*this, static_cast<uint16_t>(x.size())
+                                                    , static_cast<uint16_t>(numCategories));
 
-	triangularView<Lower>(state.X_transp_AX) += X_transp_AX;
-	
-	state.logLikelihood +=  y.transpose()*t1 - log(t3);
-	
-	return state;
+        if (!args[4].isNull()) {
+                MLogRegrIRLSTransitionState<ArrayHandle<double> > previousState = args[4];
+                state = previousState;
+                state.reset();
+        }
+    }
+
+
+
+
+    // Now do the transition step
+    state.numRows++;
+    /*     Get y: Convert to 1/0 boolean vector
+            Example: Category 4 : 0 0 0 1 0 0
+            Storing it in this forms helps us get a nice closed form expression
+    */
+
+    ColumnVector y(numCategories+1);
+    y.fill(0);
+    y(category) = 1;
+    //We are pivoting around the last column, so we drop that column from the 'y' vector
+    y.conservativeResize(numCategories);
+
+    /*
+    Compute the parameter vector (the 'pi' vector in the documentation)
+    for the data point being processed.
+    Casting the coefficients into a matrix makes the calculation simple.
+    */
+    Matrix coef = state.coef;
+    coef.resize(numCategories, state.widthOfX);
+
+    //Store the intermediate calculations because we'll reuse them in the LLH
+    ColumnVector t1 = x; //t1 is vector of size state.widthOfX
+    t1 = -coef*x;
+    /* Note: The above 2 lines could have been written as:
+        ColumnVector t1 = -coef*x;
+
+        but this creates warnings. These warnings are somehow related to the factor
+        that x is of an immutable type. The following alternative could resolve
+        the warnings (although not necessary the best alternative):
+    */
+
+    ColumnVector t2 = t1.array().exp();
+    double t3 = 1 + t2.sum();
+    ColumnVector pi = t2/t3;
+
+    //The gradient matrix has numCatergories rows and widthOfX columns
+    Matrix grad = y*x.transpose() - pi*x.transpose();
+    //We cast the gradient into a vector to make the Newton step calculations much easier.
+    grad.resize(numCategories*state.widthOfX,1);
+
+    /*
+         a is a matrix of size JxJ where J is the number of categories
+         a_j1j2 = -pi(j1)*(1-pi(j2))if j1 == j2
+         a_j1j2 =  pi(j1)*pi(j2) if j1 != j2
+    */
+    Matrix a(numCategories,numCategories);
+    // Compute the 'a' matrix.
+    Matrix piDiag = pi.asDiagonal();
+    a = pi * pi.transpose() - piDiag;
+
+    state.gradient.noalias() += grad;
+
+    //Start the Hessian calculations
+    Matrix X_transp_AX(numCategories * state.widthOfX, numCategories * state.widthOfX);
+
+    /*
+        Again: The following 3 lines could have been written as
+        Matrix XXTrans = x * x.transpose();
+        but it creates warnings related to the type of x. Here is an easy fix
+    */
+    Matrix cv_x = x;
+    Matrix XXTrans = trans(cv_x);
+    XXTrans = cv_x * XXTrans;
+
+    //Eigen doesn't supported outer-products for matrices, so we have to do our own.
+    //This operation is also known as a tensor-product.
+    for (int i1 = 0; i1 < state.widthOfX; i1++){
+         for (int i2 = 0; i2 <state.widthOfX; i2++){
+            int rowOffset = numCategories * i1;
+            int colOffset = numCategories * i2;
+
+            X_transp_AX.block(rowOffset, colOffset, numCategories,  numCategories) = XXTrans(i1,i2)*a;
+        }
+    }
+
+    triangularView<Lower>(state.X_transp_AX) += X_transp_AX;
+
+    state.logLikelihood +=  y.transpose()*t1 - log(t3);
+
+    return state;
 
 }
 
 /**
  * @brief Perform the perliminary aggregation function: Merge transition states
-	 This merge step is the same as that of logistic regression.
+     This merge step is the same as that of logistic regression.
  */
 AnyType
 mlogregr_irls_step_merge_states::run(AnyType &args) {
@@ -382,13 +382,13 @@ mlogregr_irls_step_final::run(AnyType &args) {
 
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         -1*state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
-	
+
 
     // Precompute (X^T * A * X)^-1
     Matrix heissianInver = -1*decomposition.pseudoInverse();
-	
+
     state.coef.noalias() += heissianInver * state.gradient;
-       
+
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in Newton step, "
             "while updating coefficients. Input data is likely of poor "
@@ -400,7 +400,7 @@ mlogregr_irls_step_final::run(AnyType &args) {
     // FIXME: This feels a bit like a hack.
     state.gradient = -1*heissianInver.diagonal();
     state.X_transp_AX(0,0) = decomposition.conditionNo();
-	
+
 
     return state;
 }
