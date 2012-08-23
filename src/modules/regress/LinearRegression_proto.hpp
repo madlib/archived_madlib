@@ -58,6 +58,47 @@ public:
     double conditionNo;
 };
 
+// Accumulator class for Huber-White estimator
+template <class Container>
+class RobustLinearRegressionAccumulator
+  : public DynamicStruct<RobustLinearRegressionAccumulator<Container>, Container> {
+public:
+    enum { isMutable = Container::isMutable };
+    typedef std::tuple<MappedColumnVector, double, MappedColumnVector> tuple_type;
+
+    MADLIB_DYNAMIC_STRUCT_TYPEDEFS(RobustLinearRegressionAccumulator, Container)
+
+    RobustLinearRegressionAccumulator(Init_type& inInitialization);
+    void bind(ByteStream_type& inStream);
+
+    RobustLinearRegressionAccumulator& operator<<(const tuple_type& inTuple);
+    template <class OtherContainer> RobustLinearRegressionAccumulator& operator<<(
+        const RobustLinearRegressionAccumulator<OtherContainer>& inOther);
+    template <class OtherContainer> RobustLinearRegressionAccumulator& operator=(
+        const RobustLinearRegressionAccumulator<OtherContainer>& inOther);
+
+    uint64_type numRows;
+    uint16_type widthOfX;
+    MappedColumnVector_type ols_coef;
+    MappedMatrix_type X_transp_X;
+    MappedMatrix_type X_transp_r2_X;
+
+};
+
+class RobustLinearRegression {
+public:
+    template <class Container> RobustLinearRegression(
+        const RobustLinearRegressionAccumulator<Container>& inState);
+    template <class Container> RobustLinearRegression& compute(
+        const RobustLinearRegressionAccumulator<Container>& inState);
+				
+    MutableMappedColumnVector stdErr;
+    MutableMappedColumnVector tStats;
+    MutableMappedColumnVector pValues;
+    double conditionNo;
+
+};
+
 } // namespace regress
 
 } // namespace modules
