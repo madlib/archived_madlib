@@ -93,6 +93,11 @@ MADLIB_WRAP_PG_FUNC(
 MADLIB_WRAP_PG_FUNC(
     struct varlena*, pg_detoast_datum, (struct varlena* datum), (datum))
 
+MADLIB_WRAP_VOID_PG_FUNC(
+    get_typlenbyvalalign,
+    (Oid typid, int16 *typlen, bool *typbyval, char *typalign),
+    (typid, typlen, typbyval, typalign)
+    )
 
 inline
 void
