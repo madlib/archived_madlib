@@ -1068,7 +1068,6 @@ m4_ifdef(>>>__GREENPLUM_GE_4_2_1__<<<, >>>
         );
 <<<)
 m4_changequote(>>>`<<<, >>>'<<<)
-    RAISE INFO '%', curstmt;
 
     EXECUTE curstmt;
 
@@ -1079,7 +1078,11 @@ m4_changequote(>>>`<<<, >>>'<<<)
     IF (h2hmv_routine_id = 1) THEN
         where_txt = ' WHERE NULLIF(NULLIF(btrim(fval, '' ''), ''?''), '''') IS NOT NULL';
     ELSE
-        fval_txt  = ' NULLIF(NULLIF(btrim(fval, '' ''), ''?''), '''')';
+        fval_txt  = ' CASE WHEN NULLIF(NULLIF(btrim(fval, '' ''), ''?''), '''') IS NULL THEN
+                                NULL
+                            ELSE
+                                fval
+                      END ';
     END IF;
     
     IF (cls_col_name IS NULL) THEN
@@ -1110,6 +1113,11 @@ m4_changequote(>>>`<<<, >>>'<<<)
             );
 
     ELSE
+        -- for scoring, as the class column may have some values which are not 
+        -- appear in the training table, we need use left join here to ensure all
+        -- the rows of the input table were breakup. Here, we simple encode those 
+        -- values to 0. Therefore, during scoring, the samples with 0 (encoded
+        -- value) as class label will be recognized as mis-classified.
         curstmt = MADLIB_SCHEMA.__format
             (
                 'INSERT INTO %(id, fid, fval, is_cont, class)
@@ -1119,10 +1127,10 @@ m4_changequote(>>>`<<<, >>>'<<<)
                      SELECT %, generate_series(1, %) as fid, 
                         unnest(array[MADLIB_SCHEMA.__to_char(%)]) as fval, 
                         unnest(array[''%''::BOOL]::BOOL[]) as is_cont,
-                        code as class
+                        coalesce(code, 0::INT) as class
                      FROM
-                        % t1, % t2
-                     WHERE MADLIB_SCHEMA.__to_char(t1.%) = t2.fval                    
+                        % t1 LEFT JOIN % t2
+                     ON MADLIB_SCHEMA.__to_char(t1.%) = t2.fval                    
                     ) t
                  %',
                 ARRAY[
@@ -1814,7 +1822,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
             cls_col_name,
             attr_col_names,
             is_conts,
-            2,
+            h2hmv_routine_id,
             verbosity
         );  
     
