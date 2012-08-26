@@ -30,18 +30,17 @@ AnyType stateToResult(const Allocator &inAllocator,
                       double loglikelihood);
 
 /**
-* @brief Inter- and intra-iteration state for lbfgs method for
-* linear-chain conditional random field
-*
-* TransitionState encapsualtes the transition state during the
-* linear-chain crf aggregate function. To the database, the state is
-* exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
-* object containing scalars and vectors.
-*
-* Note: We assume that the DOUBLE PRECISION array is initialized by the
-* database with length at least 58, and all elemenets are 0.
-*
-*/
+ * @brief Inter- and intra-iteration state for lbfgs method for
+ * linear-chain conditional random field
+ *
+ * TransitionState encapsualtes the transition state during the
+ * linear-chain crf aggregate function. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars and vectors.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 58, and all elemenets are 0.
+ */
 template <class Handle>
 class LinCrfLBFGSTransitionState {
     template <class OtherHandle>
@@ -154,6 +153,11 @@ public:
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap mcsrch_state;
 };
 
+
+/** This class contains code for the limited-memory Broyden-Fletcher-Goldfarb-Shanno
+ * (LBFGS) algorithm for large-scale multidimensional unconstrained minimization problems.
+ * This following class is a translation of Fortran code written by Jorge Nocedal.
+ */
 class LBFGS {
 public:
     // shared variable in lbfgs
@@ -182,6 +186,9 @@ public:
     void lbfgs(int, int, double, Eigen::VectorXd, double, double);
 };
 
+/**
+ *@brief initialize state of current lbfgs iteration with the state of last iteration
+ */
 LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state) {
     w = state.ws;
     diag = state.diag;
@@ -235,6 +242,10 @@ LBFGS::LBFGS(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state) {
     stage1 = (state.mcsrch_state(23) == 1.0 ? true: false);
     finish = (state.mcsrch_state(24) == 1.0 ? true: false);
 }
+
+/**
+ *@brief save current lbfgs state for the next lbfgs iteration
+ */
 void LBFGS::save_state(LinCrfLBFGSTransitionState<MutableArrayHandle<double> > &state) {
     state.ws = w ;
     state.diag = diag ;
@@ -634,6 +645,9 @@ void LBFGS::lbfgs(int n, int m, double f, Eigen::VectorXd g, double eps , double
     }
 }
 
+/**
+ *@brief compute exponential of Mi and Vi
+ */
 void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
     // take exponential operator
     for (int m = 0; m < num_labels; m++) {
@@ -644,9 +658,6 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
     }
 }
 
-/**
-* @brief compute the log likelihood and gradient of the objective function
-*/
 Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans, int num_label)
 {
     int i=0,j=0,r=0,c=0;
@@ -667,6 +678,10 @@ Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans, int num
     return z;
 }
 
+
+/**
+ *@brief compute loglikelihood and gradient using forward-backward algorithm
+ */
 void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple) {
     int feature_size = static_cast<int>(featureTuple.size());
     int seq_len = static_cast<int>(featureTuple(feature_size-2)) + 1;
@@ -855,13 +870,20 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     double xtol = 1.0e-16; //an estimate of the machine precision
 
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
+    LBFGS instance(state);// initialize the lbfgs with state of last iteration
+    instance.lbfgs(state.num_features, state.m, state.loglikelihood, state.grad, eps, xtol);// lbfgs optimization
+    instance.save_state(state);//save current state for the next iteration of lbfgs
 
-    LBFGS instance(state);
-    // lbfgs optimization
-    instance.lbfgs(state.num_features, state.m, state.loglikelihood, state.grad, eps, xtol);
-    instance.save_state(state);
-
-    if(instance.iflag < 0)  throw std::logic_error("lbfgs failed");
+    switch(instance.iflag)
+    {
+      case -1: throw std::logic_error("The line search rountine mcsch failed");
+               break;
+      case -2: throw std::logic_error("The i-th diagonal element of the diagonal inverse Hessian 
+                                       approximation, given in DIAG, is not positive");
+               break;
+      case -3: throw std::logic_error("Improper input parameters for LBFGS n or m are not positive");
+               break;
+    }
 
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in "
@@ -873,7 +895,7 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 }
 
 /**
- * @brief Return the difference in log-likelihood between two states
+ * @brief Return iflag which indicates whether L-BFGS converge or not
  */
 AnyType
 internal_lincrf_lbfgs_converge::run(AnyType &args) {
@@ -891,9 +913,7 @@ internal_lincrf_lbfgs_result::run(AnyType &args) {
 }
 
 /**
- * @brief Compute the diagnostic statistics
- *
- * This function return the results for both the L-BFGS method.
+ * @brief Return the results for the L-BFGS method.
  */
 AnyType stateToResult(
     const Allocator &inAllocator,
