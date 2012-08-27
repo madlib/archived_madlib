@@ -7,11 +7,45 @@
 #ifndef MADLIB_POSTGRES_TYPETRAITS_IMPL_HPP
 #define MADLIB_POSTGRES_TYPETRAITS_IMPL_HPP
 
+#include <vector>
+
 namespace madlib {
 
 namespace dbconnector {
 
 namespace postgres {
+
+template <class T, class U>
+class vectorConvertTo {
+public:
+    vectorConvertTo(const std::vector<T> &inOrig) : mOrig(inOrig) { }
+
+    operator std::vector<U>() {
+        std::vector<U> ret;
+
+        typename std::vector<T>::const_iterator it = mOrig.begin();
+        for (; it != mOrig.end(); it ++) {
+            if (std::numeric_limits<T>::is_signed
+                    && !std::numeric_limits<U>::is_signed
+                    && utils::isNegative(*it)) {
+                std::stringstream errorMsg;
+                errorMsg << "Invalid value conversion. Expected unsigned value but "
+                    "got " << *it << ".";
+                throw std::invalid_argument(errorMsg.str());
+            } else if (*it > static_cast<T>(std::numeric_limits<U>::max())) {
+                std::stringstream errorMsg;
+                errorMsg << "Invalid value conversion. Cannot represent "
+                    << *it << "in target type (" << typeid(T).name() << ").";
+                throw std::invalid_argument(errorMsg.str());
+            }
+            ret.push_back(static_cast<U>(*it));
+        }
+
+        return ret;
+    }
+private:
+    const std::vector<T> &mOrig;
+};
 
 template <class T, class U>
 class convertTo {
@@ -509,6 +543,30 @@ struct TypeTraits<dbal::eigen_integration::SparseColumnVector> {
         LegacySparseVectorToSparseColumnVector(reinterpret_cast<SvecType*>(value))
     );
 };
+
+template <>
+struct TypeTraits<std::vector<uint16_t> > {
+    typedef std::vector<uint16_t> value_type;
+
+    WITH_OID( INT4ARRAYOID );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    // FIXME a quick hack
+    static value_type toCXXType(Datum value, bool needMutableClone,
+            SystemInformation* sysInfo) {
+        (void) value;
+        (void) needMutableClone;
+        (void) sysInfo;
+        return vectorConvertTo<int32_t, uint16_t>(
+            std::vector<int32_t>(
+                reinterpret_cast<int32_t*>(ARR_DATA_PTR(madlib_DatumGetArrayTypePCopy(value))),
+                reinterpret_cast<int32_t*>(ARR_DATA_PTR(madlib_DatumGetArrayTypePCopy(value)))
+                + ARR_DIMS(madlib_DatumGetArrayTypePCopy(value))[0]
+            )
+        );
+    }
+};
+
 
 // Special cases
 

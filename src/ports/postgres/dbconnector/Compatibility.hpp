@@ -16,6 +16,11 @@ namespace postgres {
 namespace {
 // No need to make these function accessible outside of the postgres namespace.
 
+// from pg_type.h
+#ifndef INT4ARRAYOID
+    #define INT4ARRAYOID 1007
+#endif
+
 #ifndef FLOAT8ARRAYOID
     #define FLOAT8ARRAYOID 1022
 #endif

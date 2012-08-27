@@ -13,11 +13,16 @@
 #include "independent_variables.hpp"
 #include "dependent_variable.hpp"
 
+#include <dbconnector/dbconnector.hpp>
+
 namespace madlib {
 
 namespace modules {
 
 namespace convex {
+
+// Use Eigen
+using namespace madlib::dbal::eigen_integration;
 
 template <class IndependentVariables, class DependentVariable>
 struct ExampleTuple {
@@ -48,6 +53,8 @@ struct ExampleTuple {
 };
 
 typedef ExampleTuple<MatrixIndex, double> LMFTuple;
+
+typedef ExampleTuple<MappedColumnVector, MappedColumnVector> MLPTuple;
 
 } // namespace convex
 

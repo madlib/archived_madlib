@@ -1,16 +1,14 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file lmf.hpp
+ * @file mlp.hpp
  *
  * This file contains objective function related computation, which is called
  * by classes in algo/, e.g.,  loss, gradient functions
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
-#define MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
-
-#include <dbconnector/dbconnector.hpp>
+#ifndef MADLIB_MODULES_CONVEX_TASK_MLP_HPP_
+#define MADLIB_MODULES_CONVEX_TASK_MLP_HPP_
 
 namespace madlib {
 
@@ -22,7 +20,7 @@ namespace convex {
 using namespace madlib::dbal::eigen_integration;
 
 template <class Model, class Tuple>
-class LMF {
+class MLP {
 public:
     typedef Model model_type;
     typedef Tuple tuple_type;
@@ -50,56 +48,84 @@ public:
     static dependent_variable_type predict(
             const model_type                    &model, 
             const independent_variables_type    &x);
+
+private:
+    static double logistic(const double         &xi) {
+        return 1. / (1. + std::exp(-xi));
+    }
+
+    static double logisticDerivative(
+            const double                        &xi) {
+        double value = logistic(xi);
+        return value * (1. - value);
+    }
+
+    static void feedForward(
+            const model_type                    &model,
+            const independent_variables_type    &y,
+            std::vector<ColumnVector>           &net,
+            std::vector<ColumnVector>           &x);
 };
 
 template <class Model, class Tuple>
 void
-LMF<Model, Tuple>::gradient(
+MLP<Model, Tuple>::gradient(
         const model_type                    &model,
         const independent_variables_type    &x,
         const dependent_variable_type       &y,
         model_type                          &gradient) {
-    throw std::runtime_error("Not implemented: LMF is good for sparse only.");
+    (void) model;
+    (void) x;
+    (void) y;
+    (void) gradient;
 }
 
 template <class Model, class Tuple>
 void
-LMF<Model, Tuple>::gradientInPlace(
+MLP<Model, Tuple>::gradientInPlace(
         model_type                          &model,
         const independent_variables_type    &x, 
         const dependent_variable_type       &y, 
         const double                        &stepsize) {
-    // Please refer to the design document for an explanation of the following
-    double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
-    RowVector temp = model.matrixU.row(x.i)
-        - stepsize * e * model.matrixV.row(x.j);
-    model.matrixV.row(x.j) -= stepsize * e * model.matrixU.row(x.i);
-    model.matrixU.row(x.i) = temp;
+    (void) model;
+    (void) x;
+    (void) y;
+    (void) stepsize;
 }
 
 template <class Model, class Tuple>
 double 
-LMF<Model, Tuple>::loss(
+MLP<Model, Tuple>::loss(
         const model_type                    &model, 
         const independent_variables_type    &x, 
         const dependent_variable_type       &y) {
-    // HAYING: A chance for improvement by reusing the e computed in gradient.
-    // Perhaps we can add a book-keeping data structure in the model...
-    // Note: the value of e is different from the e in gradient if the
-    // model passed in is different, which IS the case for IGD
-    // Note 2: this can actually be a problem of having the computation 
-    // around model (algo/ & task/) detached from the model classes 
-    double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
-    return e * e;
+    (void) model;
+    (void) x;
+    (void) y;
+    return 0.;
 }
 
-// Not currently used.
 template <class Model, class Tuple>
 typename Tuple::dependent_variable_type
-LMF<Model, Tuple>::predict(
+MLP<Model, Tuple>::predict(
         const model_type                    &model, 
         const independent_variables_type    &x) {
-    return model.matrixU.row(x.i) * trasn(model.matrixV.row(x.j));
+    (void) model;
+    (void) x;
+    return 0.;
+}
+
+template <class Model, class Tuple>
+void
+MLP<Model, Tuple>::feedForward(
+        const model_type                    &model,
+        const independent_variables_type    &y,
+        std::vector<ColumnVector>           &net,
+        std::vector<ColumnVector>           &x) {
+    (void) model;
+    (void) y;
+    (void) net;
+    (void) x;
 }
 
 } // namespace convex

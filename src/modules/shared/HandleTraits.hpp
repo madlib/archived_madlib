@@ -42,6 +42,7 @@ struct HandleTraits<ArrayHandle<double> > {
     typedef utils::Reference<double, bool> ReferenceToBool;
     typedef utils::Reference<double> ReferenceToDouble;
     typedef const double* DoublePtr;
+    typedef const uint16_t* UInt16Ptr;
     typedef dbal::eigen_integration::HandleMap<
         const ColumnVector, TransparentHandle<double, dbal::Immutable> >
         ColumnVectorTransparentHandleMap;
@@ -61,6 +62,7 @@ struct HandleTraits<MutableArrayHandle<double> > {
     typedef utils::MutableReference<double, bool> ReferenceToBool;
     typedef utils::MutableReference<double> ReferenceToDouble;
     typedef double* DoublePtr;
+    typedef uint16_t* UInt16Ptr;
     typedef dbal::eigen_integration::HandleMap<ColumnVector,
         TransparentHandle<double, dbal::Mutable> >
             ColumnVectorTransparentHandleMap;
