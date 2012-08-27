@@ -213,7 +213,7 @@ select * from assoc_prod_uniq order by 1;
 The association rules are stored in the myschema.assoc_rules: 
 
 \code 
-testdb=# select * from myschema.assoc_rules order by support desc;
+select * from myschema.assoc_rules order by support desc;
  ruleid |       pre       |      post      |      support      |    confidence     |       lift        |    conviction     
 --------+-----------------+----------------+-------------------+-------------------+-------------------+-------------------
       4 | {diapers}       | {beer}         | 0.714285714285714 |                 1 |                 1 |                 0
@@ -331,23 +331,23 @@ DECLARE
   prod_min int; 
   prod_max int;
   r  MADLIB_SCHEMA.assoc_rules_results; 
-  total_rules int;  
+  total_rules int;
 BEGIN
-SET client_min_messages= warning; 
+SET client_min_messages= warning;
 
--- Stores data as one row per transaction (transactions saved as MADLIB_SCHEMA.svec type) 
-  EXECUTE 'DROP TABLE IF EXISTS assoc_trans_svec'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_trans_svec (trans_id text, products MADLIB_SCHEMA.svec)'; 
+-- Stores data as one row per transaction (transactions saved as MADLIB_SCHEMA.svec type)
+  EXECUTE 'DROP TABLE IF EXISTS assoc_trans_svec';
+  EXECUTE 'CREATE TEMPORARY TABLE assoc_trans_svec (trans_id text, products MADLIB_SCHEMA.svec)';
 
 -- Frequently occurring itemsets 
   EXECUTE 'DROP TABLE IF EXISTS assoc_rule_sets';
   EXECUTE 'CREATE TEMPORARY TABLE assoc_rule_sets (
     set_name  text 
     , set_list MADLIB_SCHEMA.svec
-    , hash_key TEXT
+    , text_svec TEXT
     , support FLOAT8 
     , iteration int) 
-  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)')  
+  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (text_svec)')  
   ';
 
   -- the auxiliary table to generate the readable rules
@@ -498,24 +498,26 @@ LOOP
 
     EXECUTE 'DROP TABLE IF EXISTS list_b'; 
     EXECUTE 'CREATE TEMPORARY TABLE list_b AS
-    SELECT hash_key, set_list, tot_products
+    SELECT  MADLIB_SCHEMA.svec_to_string(set_list) text_svec, 
+            set_list, ' || n + 1 || ' as iteration
     FROM (
         SELECT
-            MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list)) as set_list,
-            MADLIB_SCHEMA.svec_l1norm(MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list))) as tot_products, 
-            MADLIB_SCHEMA.svec_to_string(MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list))) as hash_key
+            MADLIB_SCHEMA.svec_minus(
+                MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), 
+                MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list)
+            ) as set_list
         FROM
             assoc_rule_sets a 
        CROSS JOIN
             assoc_rule_sets b
        WHERE
-          a.hash_key <> b.hash_key
+          a.text_svec <> b.text_svec
           AND a.iteration = ' || n || ' 
           AND b.iteration = ' || n || '
-          AND MADLIB_SCHEMA.svec_l1norm(MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list)))= ' || n+1 || '  
     ) t
+    WHERE MADLIB_SCHEMA.svec_l1norm(set_list) = ' || n + 1 || '
     GROUP BY 1, 2, 3
-    m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)') 
+    m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (text_svec)') 
     '; 
 
   IF p_verbose is true THEN
@@ -524,28 +526,27 @@ LOOP
   END IF;  
 
 
-  EXECUTE 'INSERT INTO assoc_rule_sets (set_list, hash_key, support, iteration)
+  EXECUTE 'INSERT INTO assoc_rule_sets (set_list, text_svec, support, iteration)
   SELECT 
     c.set_list
-    , a.hash_key
+    , a.text_svec
     , support
     , iteration
   FROM (
     SELECT
-      a.hash_key
+      a.text_svec
       , (SUM(CASE WHEN MADLIB_SCHEMA.svec_contains(u.products,a.set_list) is TRUE THEN 1 ELSE 0 END))/b.tot::FLOAT8  AS support 
-      , MADLIB_SCHEMA.svec_l1norm(a.set_list) as iteration 
     FROM
       assoc_trans_svec u
     CROSS JOIN
       list_b a 
     CROSS JOIN
       max_t b 
-    GROUP BY 1,3, b.tot
+    GROUP BY 1, b.tot
     ) a
   JOIN
     list_b c
-     ON a.hash_key=c.hash_key
+     ON a.text_svec=c.text_svec
   WHERE
      support >= ' || i_support ;
   
@@ -582,7 +583,7 @@ LOOP
       a.set_list
       , b.set_list as product_x 
       , MADLIB_SCHEMA.svec_minus(a.set_list, b.set_list) as product_y 
-      , a.hash_key
+      , a.text_svec
       , a.support as support_xy 
       , b.support as support_x 
     FROM
@@ -595,7 +596,7 @@ LOOP
   ) c 
   JOIN
     assoc_rule_sets d
-      ON MADLIB_SCHEMA.svec_to_string(c.product_y)=d.hash_key
+      ON MADLIB_SCHEMA.svec_to_string(c.product_y)=d.text_svec
   WHERE
     c.support_xy/c.support_x >= ' || i_confidence || ' 
      AND MADLIB_SCHEMA.svec_l1norm(c.set_list)>=2'; 
@@ -631,17 +632,17 @@ LOOP
          ) t3
      WHERE t1.ruleId = t2.ruleId AND t1.ruleId = t3.ruleId';        
 
-  --EXECUTE 'DROP TABLE assoc_rules_aux_tmp';
+    EXECUTE 'DROP TABLE assoc_rules_aux_tmp';
 
-  IF p_verbose is true THEN 
-    EXECUTE 'SELECT count(*) FROM ' || output_schema || '.assoc_rules' into l; 
-    RAISE INFO '% Total association rules found', l; 
-  END IF; 
+ IF p_verbose is true THEN
+    EXECUTE 'SELECT count(*) FROM ' || output_schema || '.assoc_rules' into l;
+    RAISE INFO '% Total association rules found', l;
+  END IF;
 
   EXECUTE 'SELECT count(*) from ' || output_schema || '.assoc_rules' into total_rules;
-  EXECUTE 'SELECT '''|| output_schema || '''::text, ''assoc_rules''::text, ' || total_rules || '::int ' into r; 
+  EXECUTE 'SELECT '''|| output_schema || '''::text, ''assoc_rules''::text, ' || total_rules || '::int ' into r;
 
-  RETURN r ; 
+  RETURN r ;
 
 END;
 $$
