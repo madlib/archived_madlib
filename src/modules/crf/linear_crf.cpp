@@ -878,8 +878,8 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     {
       case -1: throw std::logic_error("The line search rountine mcsch failed");
                break;
-      case -2: throw std::logic_error("The i-th diagonal element of the diagonal inverse Hessian 
-                                       approximation, given in DIAG, is not positive");
+      case -2: throw std::logic_error("The i-th diagonal element of the diagonal inverse Hessian" 
+                                      "approximation, given in DIAG, is not positive");
                break;
       case -3: throw std::logic_error("Improper input parameters for LBFGS n or m are not positive");
                break;
