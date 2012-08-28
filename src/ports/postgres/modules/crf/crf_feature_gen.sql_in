@@ -105,7 +105,19 @@ $$
                  "CREATE TABLE MADLIB_SCHEMA.tmp1_feature(start_pos integer,doc_id integer, f_name text, feature integer[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_rtbl;" + \
-                 "CREATE TABLE MADLIB_SCHEMA.tmp_rtbl(start_pos integer,doc_id integer, f_name text, feature integer[]);")
+                 "CREATE TABLE MADLIB_SCHEMA.tmp_rtbl(start_pos integer,doc_id integer, feature integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_dense_mtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.tmp_dense_mtbl(start_pos integer,doc_id integer, feature integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.dense_mtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.dense_mtbl(doc_id integer, dense_m integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.sparse_rtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.sparse_rtbl(doc_id integer,f_size integer, rtbl integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.sparse_mtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.sparse_mtbl(sparse_m integer[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_featureset;" + \
                  "CREATE TABLE MADLIB_SCHEMA.tmp_featureset(f_name text, feature integer[]);")
@@ -171,18 +183,15 @@ $$
     rv = plpy.execute("""SELECT COUNT(*) AS total_feature FROM """ + featureset + """;""")
 
     plpy.execute("""INSERT INTO tmp_rtbl(start_pos,doc_id,feature)
-                    SELECT start_pos, doc_id, 
-                           array_cat(fset.feature, 
-                                     ARRAY[f_index,start_pos, 
-                                           CASE WHEN tmp1_feature.feature = fset.feature THEN 1
-                                                ELSE 0
-                                           END
-                                          ]
-                                    )
+                    SELECT start_pos, doc_id, array_cat(fset.feature, 
+                                                        ARRAY[f_index,start_pos, 
+                                                              CASE WHEN tmp1_feature.feature = fset.feature THEN 1
+                                                                   ELSE 0
+                                                              END] )
                     FROM   tmp1_feature, """ + featureset + """ fset
                     WHERE  tmp1_feature.f_name = fset.f_name AND fset.f_name <> 'E.';""")
 
-    plpy.execute("""INSERT INTO sparse_rtbl(doc_id, f_size, feature)
+    plpy.execute("""INSERT INTO sparse_rtbl(doc_id, f_size, sparse_r)
                     SELECT doc_id,""" + str(rv[0]['total_feature']) + """, 
                            MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
                     FROM   tmp_rtbl
@@ -194,7 +203,7 @@ $$
                     FROM   tmp1_feature, """ + featureset + """ fset
                     WHERE  start_pos > 0 AND tmp1_feature.f_name = fset.f_name AND tmp1_feature.feature = fset.feature AND fset.f_name = 'E.';""")
 
-    plpy.execute("""INSERT INTO dense_mtbl(doc_id, feature)
+    plpy.execute("""INSERT INTO dense_mtbl(doc_id, dense_m)
                     SELECT doc_id, MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
                     FROM   tmp_mtbl
                     GROUP BY doc_id;""")
