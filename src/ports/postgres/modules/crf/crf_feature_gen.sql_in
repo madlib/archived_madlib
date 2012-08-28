@@ -114,7 +114,7 @@ $$
                  "CREATE TABLE MADLIB_SCHEMA.dense_mtbl(doc_id integer, dense_m integer[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.sparse_rtbl;" + \
-                 "CREATE TABLE MADLIB_SCHEMA.sparse_rtbl(doc_id integer,f_size integer, rtbl integer[]);")
+                 "CREATE TABLE MADLIB_SCHEMA.sparse_rtbl(doc_id integer,f_size integer, sparse_r integer[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.sparse_mtbl;" + \
                  "CREATE TABLE MADLIB_SCHEMA.sparse_mtbl(sparse_m integer[]);")
@@ -135,36 +135,36 @@ $$
         
     # extract all the edge features
     plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
-                    SELECT doc2.start_pos, doc2.doc_id, 'E.', ARRAY[1, doc1.label, doc2.label]
+                    SELECT doc2.start_pos, doc2.doc_id, 'E.', ARRAY[doc1.label, doc2.label]
                     FROM  """ + segmenttbl + """ doc1, """ + segmenttbl + """ doc2
                     WHERE  doc1.doc_id = doc2.doc_id AND doc1.start_pos+1 = doc2.start_pos;""")
          
     #extract all the regex features
     plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
-                    SELECT start_pos, doc_id, 'R_' || name, ARRAY[2, -1, label]
+                    SELECT start_pos, doc_id, 'R_' || name, ARRAY[-1, label]
                     FROM   """ + regextbl + """, """ + segmenttbl + """
                     WHERE  seg_text ~ pattern;""")
            
     #extract all the start feature
     plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
-                    SELECT start_pos, doc_id, 'S.', ARRAY[2, -1, label]
+                    SELECT start_pos, doc_id, 'S.', ARRAY[-1, label]
                     FROM  """ + segmenttbl + """
                     WHERE  start_pos = 0;""")
         
     #extract all the end featue
     plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
-                    SELECT start_pos, doc_id, 'End.', ARRAY[2, -1, label]
+                    SELECT start_pos, doc_id, 'End.', ARRAY[-1, label]
                     FROM  """ + segmenttbl + """
                     WHERE  start_pos = max_pos;""")
 
     #word feature
     plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
-                    SELECT start_pos, doc_id, 'W_' || seg_text, ARRAY[2, -1, label]
+                    SELECT start_pos, doc_id, 'W_' || seg_text, ARRAY[-1, label]
                     FROM  """ + segmenttbl + """;""")
         
     #unknown feature
     plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
-                    SELECT start_pos, doc_id, 'U', ARRAY[2, -1, label]
+                    SELECT start_pos, doc_id, 'U', ARRAY[-1, label]
                     FROM  """ + segmenttbl + """ seg, """ + dictionary + """ dic
                     WHERE  seg.seg_text = dic.token AND dic.total <= 1;""")
  
@@ -197,7 +197,7 @@ $$
                     FROM   tmp_rtbl
                     GROUP BY doc_id;""")
 
-    plpy.execute("""INSERT INTO tmp_mtbl(start_pos,doc_id,feature)
+    plpy.execute("""INSERT INTO tmp_dense_mtbl(start_pos,doc_id,feature)
                     SELECT start_pos, doc_id, 
                            array_cat(fset.feature, ARRAY[f_index,start_pos,1])
                     FROM   tmp1_feature, """ + featureset + """ fset
@@ -205,12 +205,13 @@ $$
 
     plpy.execute("""INSERT INTO dense_mtbl(doc_id, dense_m)
                     SELECT doc_id, MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
-                    FROM   tmp_mtbl
+                    FROM   tmp_dense_mtbl
                     GROUP BY doc_id;""")
 
     plpy.execute("""INSERT INTO sparse_mtbl(sparse_m)
-                    SELECT MADLIB_SCHEMA.array_union(feature::integer[])
-                    FROM   """ + featureset + """ fset;""")
+                    SELECT MADLIB_SCHEMA.array_union(array_cat(ARRAY[f_index],feature))
+                    FROM   """ + featureset + """ fset
+                    WHERE  f_name = 'E.';""")
 
     plpy.execute("""INSERT INTO """ + featuretbl + """(doc_id, f_size, sparse_r, dense_m, sparse_m)
                     SELECT sparse_rtbl.doc_id, f_size, sparse_r, dense_m, sparse_m 

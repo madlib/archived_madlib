@@ -682,9 +682,13 @@ Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans, int num
 /**
  *@brief compute loglikelihood and gradient using forward-backward algorithm
  */
-void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state, MappedColumnVector& featureTuple) {
-    int feature_size = static_cast<int>(featureTuple.size());
-    int seq_len = static_cast<int>(featureTuple(feature_size-2)) + 1;
+void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state,
+                            MappedColumnVector& sparse_r,
+                            MappedColumnVector& dense_m,
+                            MappedColumnVector& sparse_m) {
+    int r_size = static_cast<int>(sparse_r.size());
+    int sparse_m_size = static_cast<int>(sparse_m.size());
+    int seq_len = static_cast<int>(sparse_r(r_size-2)) + 1;
 
     Eigen::MatrixXd betas(state.num_labels, seq_len);
     Eigen::VectorXd scale(seq_len);
@@ -705,22 +709,20 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
     scale(seq_len - 1) = state.num_labels;
     betas.col(seq_len - 1).fill(1.0 / scale(seq_len - 1));
 
-    int index = feature_size-1;
+    int index = r_size-1;
     for (int i = seq_len - 1; i > 0; i--) {
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
-        while (index-5>=0 && featureTuple(index-1) == i) {
-            int f_type =  (int)featureTuple(index-5);
-            int prev_index =  (int)featureTuple(index-4);
-            int curr_index =  (int)featureTuple(index-3);
-            int f_index =  (int)featureTuple(index-2);
-            if (f_type == 2) {// state feature
-                Vi(curr_index) += state.coef(f_index);
-            } else if (f_type == 1) { // edge feature
-                Mi(prev_index, curr_index) += state.coef(f_index);
-            }
-            index-=6;
+        while (index-4>=0 && sparse_r(index-1) == i) {
+            int curr_index =  (int)sparse_r(index-3);
+            int f_index =  (int)sparse_r(index-2);
+            Vi(curr_index) += state.coef(f_index);
+            index-=5;
+        }
+
+        for(int n=0; n+2<sparse_m_size ; n+=3) {
+            Mi((int)sparse_m(n+1), (int)sparse_m(n+2)) += state.coef((int)sparse_m(n));
         }
 
         compute_exp_Mi(state.num_labels, Mi, Vi);
@@ -741,18 +743,16 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
         Vi.fill(0);
         // examine all features at position "pos"
         int ori_index = index;
-        while (((index+5) <= (feature_size-1)) && featureTuple(index+4) == j) {
-            int f_type =  (int)featureTuple(index);
-            int prev_index =  (int)featureTuple(index+1);
-            int curr_index =  (int)featureTuple(index+2);
-            int f_index =  (int)featureTuple(index+3);
-            if (f_type == 2) {// state feature
-                Vi(curr_index) += state.coef(f_index);
-            } else if (f_type == 1) { //edge feature
-                Mi(prev_index, curr_index) += state.coef(f_index);
-            }
-            index+=6;
+        while (((index+4) <= (r_size-1)) && sparse_r(index+3) == j) {
+            int curr_index =  (int)sparse_r(index+1);
+            int f_index =  (int)sparse_r(index+2);
+            Vi(curr_index) += state.coef(f_index);
+            index+=5;
         }
+        if(j>=1)
+            for(int n=0; n+2<sparse_m_size ; n+=3) {
+                Mi((int)sparse_m(n+1), (int)sparse_m(n+2)) += state.coef((int)sparse_m(n));
+            }
 
         compute_exp_Mi(state.num_labels, Mi, Vi);
 
@@ -766,23 +766,30 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
 
 
         index = ori_index;
-        while (((index+5) <= (feature_size-1)) && featureTuple(index+4) == j) {
-            int f_type =  (int)featureTuple(index);
-            int prev_index =  (int)featureTuple(index+1);
-            int curr_index =  (int)featureTuple(index+2);
-            int f_index =  (int)featureTuple(index+3);
-            int exist = (int)featureTuple(index+5);
+        while (((index+4) <= (r_size-1)) && sparse_r(index+3) == j) {
+            int curr_index =  (int)sparse_r(index+1);
+            int f_index =  (int)sparse_r(index+2);
+            int exist = (int)sparse_r(index+4);
             if (exist == 1) {
                 state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
             }
-            if (f_type == 2) {
-                ExpF(f_index) += next_alpha(curr_index) * betas(curr_index,j);
-            } else if (f_type == 1) {
+            ExpF(f_index) += next_alpha(curr_index) * betas(curr_index,j);
+            index+=5;
+        }
+        // Edge feature
+        if(j>=1) {
+            int f_index = (int)dense_m((j-1)*5+2);
+            state.grad(f_index) += 1;
+            state.loglikelihood += state.coef(f_index);
+            for(int n=0; n+2<sparse_m_size ; n+=3) {
+                int f_index = (int)sparse_m(n);
+                int prev_index = (int)sparse_m(n+1);
+                int curr_index = (int)sparse_m(n+2);
                 ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index) * betas(curr_index, j);
             }
-            index+=6;
         }
+
         alpha = next_alpha;
         alpha*=(1.0 / scale(j));
     }
@@ -809,17 +816,19 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
 AnyType
 lincrf_lbfgs_step_transition::run(AnyType &args) {
     LinCrfLBFGSTransitionState<MutableArrayHandle<double> > state = args[0];
-    MappedColumnVector featureTuple = args[1].getAs<MappedColumnVector>();
+    MappedColumnVector sparse_r = args[1].getAs<MappedColumnVector>();
+    MappedColumnVector dense_m = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector sparse_m = args[3].getAs<MappedColumnVector>();
     if (state.numRows == 0) {
-        state.initialize(*this, static_cast<uint32_t>(args[2].getAs<double>()), static_cast<uint32_t>(args[3].getAs<double>()));
-        if (!args[4].isNull()) {
-            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[4];
+        state.initialize(*this, static_cast<uint32_t>(args[4].getAs<double>()), static_cast<uint32_t>(args[5].getAs<double>()));
+        if (!args[6].isNull()) {
+            LinCrfLBFGSTransitionState<ArrayHandle<double> > previousState = args[6];
             state = previousState;
             state.reset();
         }
     }
     state.numRows++;
-    compute_logli_gradient(state, featureTuple);
+    compute_logli_gradient(state, sparse_r, dense_m, sparse_m);
     return state;
 }
 
@@ -876,13 +885,16 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
 
     switch(instance.iflag)
     {
-      case -1: throw std::logic_error("The line search rountine mcsch failed");
-               break;
-      case -2: throw std::logic_error("The i-th diagonal element of the diagonal inverse Hessian" 
-                                      "approximation, given in DIAG, is not positive");
-               break;
-      case -3: throw std::logic_error("Improper input parameters for LBFGS n or m are not positive");
-               break;
+    case -1:
+        throw std::logic_error("The line search rountine mcsch failed");
+        break;
+    case -2:
+        throw std::logic_error("The i-th diagonal element of the diagonal inverse Hessian"
+                               "approximation, given in DIAG, is not positive");
+        break;
+    case -3:
+        throw std::logic_error("Improper input parameters for LBFGS n or m are not positive");
+        break;
     }
 
     if(!state.coef.is_finite())
