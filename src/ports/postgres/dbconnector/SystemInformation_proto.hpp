@@ -223,6 +223,14 @@ struct SystemInformation {
      */
     HTAB *functions;
 
+    /**
+     * As we will put the SystemInformation instance to the pointer
+     * static_cast<FuncCallContext*>(inFmgrInfo->fn_extra)->user_fctx
+     * (retset == 1) or inFmgrInfo->fn_extra (retset == -1), we provide this
+     * pointer for the users to put their own context to this pointer.
+     */
+    void *user_fctx;
+
     static SystemInformation* get(FunctionCallInfo fcinfo);
     TypeInformation* typeInformation(Oid inTypeID);
     FunctionInformation* functionInformation(Oid inFuncID);

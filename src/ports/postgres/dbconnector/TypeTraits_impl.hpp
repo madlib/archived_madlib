@@ -233,6 +233,18 @@ struct TypeTraits<bool> {
 };
 
 template <>
+struct TypeTraits<char*> {
+    typedef char* value_type;
+
+    WITH_OID( TEXTOID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(PointerGetDatum(cstring_to_text(value)));
+    WITH_TO_CXX_CONVERSION(text_to_cstring(DatumGetTextPP(value)));
+};
+
+template <>
 struct TypeTraits<ByteString> : public TypeTraitsBase<ByteString> {
     enum { alignment = MAXIMUM_ALIGNOF };
     WITH_TYPE_NAME("bytea8");
@@ -276,6 +288,20 @@ struct TypeTraits<ArrayHandle<double> > {
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );
     WITH_TO_CXX_CONVERSION( madlib_DatumGetArrayTypeP(value) );
+};
+
+template <>
+struct TypeTraits<ArrayHandle<text*> > {
+    typedef ArrayHandle<text*> value_type;
+
+    WITH_OID(TEXTARRAYOID);
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );
+    WITH_TO_CXX_CONVERSION(
+        reinterpret_cast<ArrayType*>(madlib_DatumGetArrayTypeP(value))
+    );
 };
 
 // Note: See the comment for PG_FREE_IF_COPY in fmgr.h. Essentially, when

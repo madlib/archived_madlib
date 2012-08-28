@@ -19,5 +19,7 @@ extern "C" {
 
 // Now export the symbols
 #undef DECLARE_UDF
+#undef DECLARE_SR_UDF
 #define DECLARE_UDF DECLARE_UDF_EXTERNAL
+#define DECLARE_SR_UDF DECLARE_UDF_EXTERNAL
 #include <modules/declarations.hpp>

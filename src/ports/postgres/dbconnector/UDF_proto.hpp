@@ -29,6 +29,8 @@ public:
     template <class Function>
     static AnyType invoke(FunctionCallInfo fcinfo, AnyType& args);
 
+    template <class Function>
+    static Datum SRF_invoke(FunctionCallInfo fcinfo);
 private:
     OutputStreamBuffer<INFO> mOutStreamBuffer;
     OutputStreamBuffer<WARNING> mErrStreamBuffer;
