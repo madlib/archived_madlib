@@ -104,8 +104,8 @@ $$
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp1_feature;" + \
                  "CREATE TABLE MADLIB_SCHEMA.tmp1_feature(start_pos integer,doc_id integer, f_name text, feature integer[]);")
 
-    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp2_feature;" + \
-                 "CREATE TABLE MADLIB_SCHEMA.tmp2_feature(start_pos integer,doc_id integer, f_name text, feature integer[]);")
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_rtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.tmp_rtbl(start_pos integer,doc_id integer, f_name text, feature integer[]);")
 
     plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_featureset;" + \
                  "CREATE TABLE MADLIB_SCHEMA.tmp_featureset(f_name text, feature integer[]);")
@@ -170,7 +170,7 @@ $$
     
     rv = plpy.execute("""SELECT COUNT(*) AS total_feature FROM """ + featureset + """;""")
 
-    plpy.execute("""INSERT INTO tmp2_feature(start_pos,doc_id,feature)
+    plpy.execute("""INSERT INTO tmp_rtbl(start_pos,doc_id,feature)
                     SELECT start_pos, doc_id, 
                            array_cat(fset.feature, 
                                      ARRAY[f_index,start_pos, 
@@ -180,13 +180,33 @@ $$
                                           ]
                                     )
                     FROM   tmp1_feature, """ + featureset + """ fset
-                    WHERE  tmp1_feature.f_name = fset.f_name;""")
+                    WHERE  tmp1_feature.f_name = fset.f_name AND fset.f_name <> 'E.';""")
 
-    plpy.execute("""INSERT INTO """ + featuretbl + """(doc_id, f_size, feature)
+    plpy.execute("""INSERT INTO sparse_rtbl(doc_id, f_size, feature)
                     SELECT doc_id,""" + str(rv[0]['total_feature']) + """, 
                            MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
-                    FROM   tmp2_feature
+                    FROM   tmp_rtbl
                     GROUP BY doc_id;""")
+
+    plpy.execute("""INSERT INTO tmp_mtbl(start_pos,doc_id,feature)
+                    SELECT start_pos, doc_id, 
+                           array_cat(fset.feature, ARRAY[f_index,start_pos,1])
+                    FROM   tmp1_feature, """ + featureset + """ fset
+                    WHERE  start_pos > 0 AND tmp1_feature.f_name = fset.f_name AND tmp1_feature.feature = fset.feature AND fset.f_name = 'E.';""")
+
+    plpy.execute("""INSERT INTO dense_mtbl(doc_id, feature)
+                    SELECT doc_id, MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
+                    FROM   tmp_mtbl
+                    GROUP BY doc_id;""")
+
+    plpy.execute("""INSERT INTO sparse_mtbl(sparse_m)
+                    SELECT MADLIB_SCHEMA.array_union(feature::integer[])
+                    FROM   """ + featureset + """ fset;""")
+
+    plpy.execute("""INSERT INTO """ + featuretbl + """(doc_id, f_size, sparse_r, dense_m, sparse_m)
+                    SELECT sparse_rtbl.doc_id, f_size, sparse_r, dense_m, sparse_m 
+                    FROM   sparse_rtbl, dense_mtbl, sparse_mtbl
+                    WHERE  sparse_rtbl.doc_id = dense_mtbl.doc_id;""")
 
 $$ LANGUAGE plpythonu STRICT;         
 
