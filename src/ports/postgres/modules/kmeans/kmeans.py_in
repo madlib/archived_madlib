@@ -742,20 +742,40 @@ def kmeans( madlib_schema
 
     # Create a view with PID and COORDS columns
     src_view = 'kmeans_src_view';
+    temp_tbl = 'kmeans_temp_table_for_view';
     src_type = madlib_schema + '.svec';
     # Depending on the existence of source ID column
     if (has_pid == False):
-        # Generate a new ID column        
-        sql = '''CREATE TEMP VIEW {src_view} 
-                AS SELECT 
-                    row_number() over() AS pid
-                    , {src_col_data}::{src_type} AS coords
-                FROM {src_relation}
-            '''.format(
-                src_view = src_view
+        # Generate a new ID column  
+        __run_quietly('DROP TABLE IF EXISTS '+temp_tbl+' CASCADE'); 
+        sql = '''CREATE TEMP TABLE {temp_tbl} (
+                    pid BIGSERIAL,
+                    coords  {src_type} )
+              '''.format(
+                temp_tbl = temp_tbl
+                , src_type = src_type
+            );
+        __run_quietly( sql)
+
+        sql = '''INSERT INTO {temp_tbl}(coords) 
+                    SELECT {src_col_data}::{src_type} AS coords
+                    FROM {src_relation}
+              '''.format(
+                temp_tbl = temp_tbl
                 , src_col_data = src_col_data
                 , src_type = src_type
                 , src_relation = src_relation
+            );
+        __run_quietly( sql)
+
+        sql = '''CREATE TEMP VIEW {src_view} 
+                AS SELECT 
+                    pid AS pid
+                    , coords AS coords
+                FROM {temp_tbl}
+            '''.format(
+                src_view = src_view
+                , temp_tbl = temp_tbl
             );
         __run_quietly( sql)
     else:
