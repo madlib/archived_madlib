@@ -114,6 +114,30 @@ The condition number of a problem is a worst-case measure of how sensitive the
 result is to small perturbations of the input. A large condition number (say,
 more than 1000) indicates the presence of significant multicollinearity.
 
+In regression and time-series modelling, basic forms of models make use of the 
+assumption that the errors or disturbances ui have the same variance across all 
+observation points. When this is not the case, the errors are said to be 
+heteroscedastic, or to have heteroscedasticity, and this behaviour will be 
+reflected in the residuals estimated from a fitted model.
+
+We test for heteroskedasticity using the studentized Breusch-Pagan test.
+The following four step procedure summarizes the test:
+- First, we run the regression to obtain ols coeffiencts \f$ \boldsymbol c \f$.
+- Compute the square of the residuals and regress against the vector of independent 
+variables (\f$ \boldsymbol x \f$)
+- The \f$ \boldsymbol nR^2 \f$ of the above auxilliary regression is the test statistic and 
+asymptotically follows the chi-squared distribution with k-1 degress of freedom
+- The p-values are calculated as: 1 - chicdf(k-1,test_statistic)
+
+The huber-white variance-covariance matrix is calculated using
+\f[
+    \boldsymbol V = (X^T X)^{-1} diag(r_1^2, \ldots r_n^2 ) (X^T X)^{-1}
+\f]
+where the residuals \f$ r_i = y_i - c^Tx_i \f$
+
+The robust standard errors, p-values and t-statistic is calculated in a manner 
+identical to the standard errors of the OLS estimator described above.
+
 @input
 
 The training data is expected to be of the following form:
@@ -125,7 +149,7 @@ The training data is expected to be of the following form:
 )</pre>
 
 @usage
-
+<b>Linear Regression</b>
 - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic statistics:
 <pre>SELECT (\ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).*
 FROM <em>sourceName</em>;</pre>
@@ -141,11 +165,23 @@ FROM <em>sourceName</em>;</pre>
 - Get a subset of the output columns, e.g., only the array of coefficients
   \f$ \boldsymbol c \f$, the coefficient of determination \f$ R^2 \f$, and
   the array of p-values \f$ \boldsymbol p \f$:
-  <pre>SELECT (lr).coef, (lr).r2, (lr).p_values
-FROM (
-    SELECT \ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>) AS lr
-    FROM <em>sourceName</em>
+  <pre>SELECT (lr).coef, (lr).r2, (lr).p_values FROM (
+	    SELECT \ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>) AS lr
+    FROM <em>sourceName</em>) AS subq;</pre>
+<b>Robust variance estimates</b>
+- Get a subset of the output columns, e.g., only the condition number
+	and the array of p-values \f$ \boldsymbol p \f$:
+	<pre>SELECT (lr).robust_condition_no, (lr).robust_p_values	FROM ( <pre> SELECT (robust_linregr(<em>dependentVariable</em>,	<em>independentVariables</em>, coef)).*
+	FROM ( SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef
+	) AS ols_coef, <em>sourceName</em> as src
 ) AS subq;</pre>
+<b>Tests for heteroskedasticity</b>
+- Perform the studentized Breuch-Pagan heteroskedasticity test for linear regression
+<pre>SELECT (heteoskedasticity_test_linregr(<em>dependentVariable</em>, <em>independentVariables</em>, coef)).* 
+	FROM (
+		SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef
+	) AS ols_coef, 
+<em>sourceName</em> as src;</pre>
 
 @examp
 
@@ -218,6 +254,35 @@ p_values     | {0.629711069315512,0.183633155781461,0.920450514073051,0.00408159
 condition_no | 95707449.2236497
 
 \endverbatim
+
+-#  You can ask for the robust variance estimates
+\verbatim
+sql> \x on
+Expanded display is on.
+sql> 	SELECT (robust_linregr(price, array[1, bedroom, bath, size], coef)).* FROM 
+	(	SELECT (linregr(price, array[1, bedroom, bath, size])).coef
+			FROM houses ) as mle_coef, houses as src
+-[ RECORD 1 ]+----------------------------------------------------------------------------
+robust_std_err      | {41855.7087373326,21052.4980417399,14969.5873386607,27.3843}
+robust_t_stats      | {0.6671,-1.6874,0.1515,4.7762}
+robust_p_values     | {0.5184,0.1196,0.8822,0.0005}
+robust_condition_no | 95707449.2236497
+
+\endverbatim
+
+-#  You can even test for heteroskedasticity
+\verbatim
+sql> \x on
+Expanded display is on.
+sql> 	SELECT (heteroskedasticity_test_linregr(price, array[1, bedroom, bath, size], coef)).* FROM
+	(	SELECT (linregr(price, array[1, bedroom, bath, size])).coef
+			FROM houses ) as mle_coef, houses as src
+-[ RECORD 1 ]+----------------------------------------------------------------------------
+test_statistic     |
+p_value    				 |
+
+\endverbatim
+
 
 @literature
 
@@ -343,6 +408,12 @@ CREATE AGGREGATE MADLIB_SCHEMA.linregr(
 );
 
 
+
+
+
+
+
+
 CREATE TYPE MADLIB_SCHEMA.robust_linregr_result AS (
     robust_std_err DOUBLE PRECISION[],
     robust_t_stats DOUBLE PRECISION[],
@@ -376,7 +447,6 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
 
-
 /**
  * @brief Compute robust regression diagnostic statistics.
  *
@@ -403,9 +473,9 @@ LANGUAGE C IMMUTABLE STRICT;
  *	FROM (
  *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
  * 	) AS ols_coef, <em>sourceName</em> as src; 
- *  - Get a subset of the output columns, e.g., only the coefficient of 
- * 		determination \f$ R^2 \f$, and the array of p-values \f$ \boldsymbol p \f$:
- *    <pre>SELECT (lr).r2, (lr).p_values
+ *  - Get a subset of the output columns, e.g., only the condition number 
+ *  and the array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT (lr).robust_condition_no, (lr).robust_p_values
  *FROM (
  *  <pre> SELECT (robust_linregr(<em>dependentVariable</em>,
  * 	<em>independentVariables</em>, coef)).*
@@ -430,29 +500,9 @@ CREATE AGGREGATE MADLIB_SCHEMA.robust_linregr(
 
 
 
-/**
- * @brief Compute studentized Breuch-Pagan heteroskedasticity test.
- *
- * @param dependentVariable Column containing the dependent variable
- * @param independentVariables Column containing the array of independent variables
- * @param olsCoefficients Column containing the array of the OLS coefficients (as obtained by linregr)
- *
- * @par
- * To include an intercept in the model, set one coordinate in the
- * <tt>independentVariables</tt> array to 1.
- *
- * @return A composite value:
- *  - <tt>test_statistic FLOAT8[]</tt> - Prob > test_statistc
- *  - <tt>p_value FLOAT8[]</tt> - Prob > test_statistc
- *
- * @usage
- *  <pre> SELECT (heteoskedasticity_test_linregr(<em>dependentVariable</em>,
- * 	<em>independentVariables</em>, coef)).*
- *	FROM (
- *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
- * 	) AS ols_coef, <em>sourceName</em> as src; 
- * </pre>
- */
+
+
+
 
 CREATE TYPE MADLIB_SCHEMA.heteroskedasticity_test_result AS (
     test_statistic DOUBLE PRECISION,
@@ -484,10 +534,34 @@ RETURNS MADLIB_SCHEMA.heteroskedasticity_test_result
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
+/**
+ * @brief Compute studentized Breuch-Pagan heteroskedasticity test for
+ * linear regression.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param olsCoefficients Column containing the array of the OLS coefficients (as obtained by linregr)
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>test_statistic FLOAT8[]</tt> - Prob > test_statistc
+ *  - <tt>p_value FLOAT8[]</tt> - Prob > test_statistc
+ *
+ * @usage
+ *  <pre> SELECT (heteoskedasticity_test_linregr(<em>dependentVariable</em>,
+ * 	<em>independentVariables</em>, coef)).*
+ *	FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
+ * 	) AS ols_coef, <em>sourceName</em> as src; 
+ * </pre>
+ */
 CREATE AGGREGATE MADLIB_SCHEMA.heteroskedasticity_test_linregr(
     /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[],
-    /*+ "coef" */ DOUBLE PRECISION[]) (
+    /*+ "olsCoefficients" */ DOUBLE PRECISION[]) (
 
     SFUNC=MADLIB_SCHEMA.hetero_linregr_transition,
     STYPE=MADLIB_SCHEMA.bytea8,
