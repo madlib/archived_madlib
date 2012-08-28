@@ -115,7 +115,7 @@ public:
         loglikelihood = 0;
     }
 
-    static const int m=3;// The number of corrections used in the LBFGS update.
+    static const int m=7;// The number of corrections used in the LBFGS update.
 
 private:
     static inline uint32_t arraySize(const uint32_t num_features) {
@@ -875,7 +875,7 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     state.loglikelihood = state.loglikelihood * -1;
     state.grad = -state.grad;
 
-    double eps = 1.0e-6; //accuracy of the solution to be found
+    double eps = 0.001; //accuracy of the solution to be found
     double xtol = 1.0e-16; //an estimate of the machine precision
 
     assert((state.m > 0) && (state.m <= state.num_features) && (eps >= 0.0));
