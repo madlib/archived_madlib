@@ -99,6 +99,47 @@ public:
 
 };
 
+// Accumulator class for Huber-White estimator
+template <class Container>
+class HeteroLinearRegressionAccumulator
+  : public DynamicStruct<HeteroLinearRegressionAccumulator<Container>, Container> {
+public:
+    enum { isMutable = Container::isMutable };
+    typedef std::tuple<MappedColumnVector, double, MappedColumnVector> hetero_tuple_type;
+
+    MADLIB_DYNAMIC_STRUCT_TYPEDEFS(HeteroLinearRegressionAccumulator, Container)
+
+    HeteroLinearRegressionAccumulator(Init_type& inInitialization);
+    void bind(ByteStream_type& inStream);
+
+    HeteroLinearRegressionAccumulator& operator<<(const hetero_tuple_type& inTuple);
+    template <class OtherContainer> HeteroLinearRegressionAccumulator& operator<<(
+        const HeteroLinearRegressionAccumulator<OtherContainer>& inOther);
+    template <class OtherContainer> HeteroLinearRegressionAccumulator& operator=(
+        const HeteroLinearRegressionAccumulator<OtherContainer>& inOther);
+
+    uint64_type numRows;
+    uint16_type widthOfX;
+    double_type a_sum;
+    double_type a_square_sum;
+    MappedColumnVector_type X_transp_A;
+    MappedMatrix_type X_transp_X;
+
+};
+
+class HeteroLinearRegression {
+public:
+    template <class Container> HeteroLinearRegression(
+        const HeteroLinearRegressionAccumulator<Container>& inState);
+    template <class Container> HeteroLinearRegression& compute(
+        const HeteroLinearRegressionAccumulator<Container>& inState);
+
+    double test_statistic;				
+    double pValue;
+
+};
+
+
 } // namespace regress
 
 } // namespace modules

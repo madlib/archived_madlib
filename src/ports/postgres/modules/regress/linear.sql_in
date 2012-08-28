@@ -375,6 +375,47 @@ RETURNS MADLIB_SCHEMA.robust_linregr_result
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
+
+
+/**
+ * @brief Compute robust regression diagnostic statistics.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param olsCoefficients Column containing the array of the OLS coefficients (as obtained by linregr)
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>robust_std_err FLOAT8[]</tt> - Array of huber-white standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>robust_t_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>robust_p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
+ *  - <tt>condition_no FLOAT8</tt> - The condition number of the robust vCov matrix.
+ *
+ * @usage
+ *  - Get all the diagnostic statistics:\n
+ * @usage
+ *  <pre> SELECT (robust_linregr(<em>dependentVariable</em>,
+ * 	<em>independentVariables</em>, coef)).*
+ *	FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
+ * 	) AS ols_coef, <em>sourceName</em> as src; 
+ *  - Get a subset of the output columns, e.g., only the coefficient of 
+ * 		determination \f$ R^2 \f$, and the array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT (lr).r2, (lr).p_values
+ *FROM (
+ *  <pre> SELECT (robust_linregr(<em>dependentVariable</em>,
+ * 	<em>independentVariables</em>, coef)).*
+ *	FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
+ * 	) AS ols_coef, <em>sourceName</em> as src
+ *) AS subq;</pre>
+ */
+
+
 CREATE AGGREGATE MADLIB_SCHEMA.robust_linregr(
     /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[],
@@ -384,5 +425,73 @@ CREATE AGGREGATE MADLIB_SCHEMA.robust_linregr(
     STYPE=MADLIB_SCHEMA.bytea8,
     FINALFUNC=MADLIB_SCHEMA.robust_linregr_final,
     m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.robust_linregr_merge_states,')
+    INITCOND=''
+);
+
+
+
+/**
+ * @brief Compute studentized Breuch-Pagan heteroskedasticity test.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param olsCoefficients Column containing the array of the OLS coefficients (as obtained by linregr)
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>test_statistic FLOAT8[]</tt> - Prob > test_statistc
+ *  - <tt>p_value FLOAT8[]</tt> - Prob > test_statistc
+ *
+ * @usage
+ *  <pre> SELECT (heteoskedasticity_test_linregr(<em>dependentVariable</em>,
+ * 	<em>independentVariables</em>, coef)).*
+ *	FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
+ * 	) AS ols_coef, <em>sourceName</em> as src; 
+ * </pre>
+ */
+
+CREATE TYPE MADLIB_SCHEMA.heteroskedasticity_test_result AS (
+    test_statistic DOUBLE PRECISION,
+    p_value DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hetero_linregr_transition(
+    state MADLIB_SCHEMA.bytea8,
+    y DOUBLE PRECISION,
+    x DOUBLE PRECISION[],
+    coef DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hetero_linregr_merge_states(
+    state1 MADLIB_SCHEMA.bytea8,
+    state2 MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+-- Final functions
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hetero_linregr_final(
+    state MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.heteroskedasticity_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE AGGREGATE MADLIB_SCHEMA.heteroskedasticity_test_linregr(
+    /*+ "dependentVariable" */ DOUBLE PRECISION,
+    /*+ "independentVariables" */ DOUBLE PRECISION[],
+    /*+ "coef" */ DOUBLE PRECISION[]) (
+
+    SFUNC=MADLIB_SCHEMA.hetero_linregr_transition,
+    STYPE=MADLIB_SCHEMA.bytea8,
+    FINALFUNC=MADLIB_SCHEMA.hetero_linregr_final,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.hetero_linregr_merge_states,')
     INITCOND=''
 );
