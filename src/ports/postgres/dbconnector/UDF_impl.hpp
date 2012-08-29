@@ -68,15 +68,14 @@ UDF::SRF_invoke(FunctionCallInfo fcinfo) {
     }
 
     funcctx = SRF_PERCALL_SETUP();
-    MADLIB_PG_TRY {
-        result = Function(fcinfo).SRF_next(
-            	static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
-            	&is_last_call);
-    }
-    MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
+
+    // the invoker function will handle the exceptions from this function
+    result = Function(fcinfo).SRF_next(
+        static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
+        &is_last_call);
 
     if (is_last_call)
-    	SRF_RETURN_DONE(funcctx);
+        SRF_RETURN_DONE(funcctx);
 
     SRF_RETURN_NEXT(funcctx, result.getAsDatum(fcinfo));
 }

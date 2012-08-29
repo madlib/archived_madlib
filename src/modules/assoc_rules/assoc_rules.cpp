@@ -94,12 +94,7 @@ namespace madlib
             int                 len = 0;
 
             if (!is_last_call)
-                ereport (
-                    ERROR, (
-                    errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("the paramter is_last_class should not be null")
-                    )
-                );
+                throw std::invalid_argument("the paramter is_last_class should not be null");
 
             if (myfctx->num_calls <= 0)
             {

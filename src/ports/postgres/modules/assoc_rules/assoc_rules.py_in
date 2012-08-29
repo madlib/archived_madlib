@@ -219,23 +219,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
    
     begin_step_exec = time.time();
     
-    plpy.execute("DROP TABLE IF EXISTS assoc_item_svec"); 
-    plpy.execute("""
-         CREATE TEMP TABLE assoc_item_svec 
-            (item_id, tids) AS
-         SELECT t.item as item_id, 
-                {0}.svec_cast_positions_float8arr
-                (array_agg(t.tid), array_agg(1), {1}, 0)
-         FROM  assoc_enc_input t
-         GROUP BY t.item
-         m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (item_id)')
-         """.format(madlib_schema, num_tranx));    
-         
-    if verbose : 
-        plpy.info("finished vertical table transforming: {0}".format(
-            time.time() - begin_step_exec));
-        plpy.info("Beginning iteration #1"); 
-
+    plpy.info("Beginning iteration #1"); 
 
     begin_step_exec = time.time();
     
@@ -244,12 +228,12 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
     plpy.execute("""
         CREATE TEMP TABLE assoc_rule_sets
             (
-            hash_text   TEXT,
+            text_svec   TEXT,
             set_list    {0}.svec,
             support     FLOAT8,
             iteration   INT
             )
-        m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_text)')
+        m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (text_svec)')
         """.format(madlib_schema)); 
     
     # this table keeps the patterns in the current iteration.        
@@ -257,23 +241,27 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
     plpy.execute("""
         CREATE TEMP TABLE assoc_rule_sets_loop
             (
-            id          BIGSERIAL,
+            id          BIGINT,
             set_list    {0}.svec,
-            support     FLOAT8
+            support     FLOAT8,
+            tids        {1}.svec
             )
         m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)')
-        """.format(madlib_schema)); 
+        """.format(madlib_schema, madlib_schema)); 
 
     plpy.execute(""" 
-         INSERT INTO assoc_rule_sets_loop (id, set_list, support) 
+         INSERT INTO assoc_rule_sets_loop (id, set_list, support, tids) 
          SELECT
              t.item,
             {0}.svec_cast_positions_float8arr
               (ARRAY[t.item], ARRAY[1], {1}, 0),
-            float8div(t.cnt, {2}) 
+            t.cnt::FLOAT8 / {2},
+            {3}.svec_cast_positions_float8arr
+                (array_agg(t.tid), array_agg(1), {4}, 0) 
          FROM assoc_enc_input t
          GROUP BY t.item, t.cnt
-         """.format(madlib_schema, num_supp_prod, num_tranx)
+         """.format(madlib_schema, num_supp_prod, num_tranx, madlib_schema,
+                    num_tranx)
          );
 
     rv = plpy.execute("""
@@ -309,10 +297,12 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
          CREATE TEMP TABLE assoc_loop_aux 
             (
             id              BIGSERIAL,
-            set_list        {0}.svec
+            set_list        {0}.svec,
+            support         FLOAT8,
+            tids            {1}.svec
             )
          m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (id)')
-         """.format(madlib_schema));
+         """.format(madlib_schema, madlib_schema));
                   
     if verbose  :
         plpy.info("{0} Frequent itemsets found in this iteration".format(
@@ -338,64 +328,50 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
                
         plpy.execute(""" 
              INSERT INTO assoc_rule_sets
-                (hash_text, set_list, support, iteration)
+                (text_svec, set_list, support, iteration)
              SELECT array_to_string(
                     {0}.svec_nonbase_positions(set_list, 0), ','), 
                     set_list, 
                     support, {1}
              FROM assoc_rule_sets_loop""".format(madlib_schema, iter)
              );
-                     
+
+        if verbose  :
+            plpy.info("time of preparing data: {0}".format(
+                 time.time() - begin_step_exec));
+                              
+        # generate the patterns for the next iteration
+        plpy.execute("ALTER SEQUENCE assoc_loop_aux_id_seq RESTART WITH 1");
         plpy.execute("TRUNCATE TABLE assoc_loop_aux");
         plpy.execute(""" 
-           INSERT INTO assoc_loop_aux(set_list)
-           SELECT DISTINCT ON({0}.svec_to_string(set_list)) set_list
+           INSERT INTO assoc_loop_aux(set_list, support, tids)
+           SELECT DISTINCT ON({0}.svec_to_string(set_list)) set_list,
+                   {1}.svec_l1norm(tids)::FLOAT8 / {2},
+                   tids
            FROM (
              SELECT
-                {1}.svec_minus(
-                    {2}.svec_plus(t1.set_list, t3.set_list), 
-                    {3}.svec_mult(t1.set_list, t3.set_list)
-                ) as set_list
+                {3}.svec_minus(
+                    {4}.svec_plus(t1.set_list, t3.set_list), 
+                    {5}.svec_mult(t1.set_list, t3.set_list)
+                ) as set_list,
+                {6}.svec_mult(t1.tids, t3.tids) as tids 
              FROM assoc_rule_sets_loop t1, 
                   rule_set_rel t2, 
                   assoc_rule_sets_loop t3
              WHERE t1.id = t2.sid and t2.did = t3.id
            ) t
-           WHERE {4}.svec_l1norm(set_list)::INT = {5}
-           """.format(madlib_schema, madlib_schema, madlib_schema, 
-                      madlib_schema, madlib_schema, iter + 1)
+           WHERE {7}.svec_l1norm(set_list)::INT = {8} AND
+                 {9}.svec_l1norm(tids)::FLOAT8 >= {10}
+           """.format(madlib_schema, madlib_schema, num_tranx, madlib_schema, 
+                      madlib_schema, madlib_schema, madlib_schema, madlib_schema,
+                      iter + 1, madlib_schema, min_supp_tranx)
            );
 
-        if verbose  :
-            plpy.info("time of generating rules: {0}".format(
-                 time.time() - begin_step_exec));
-                    
-        # generate the patterns for the next iteration
-        plpy.execute("ALTER SEQUENCE assoc_rule_sets_loop_id_seq RESTART WITH 1");
         plpy.execute("TRUNCATE TABLE assoc_rule_sets_loop");
         plpy.execute("""
-            INSERT INTO assoc_rule_sets_loop(set_list, support)
-            SELECT 
-              set_list, cnt::FLOAT8/{0} as support
-            FROM 
-            (
-              SELECT id,
-              {1}.svec_l1norm({2}.svec_agg_mult(u.tids))
-              AS cnt
-             FROM 
-               (
-                 SELECT id, 
-                    unnest({3}.svec_nonbase_positions(set_list, 0)) 
-                    as item
-                 FROM  assoc_loop_aux
-               ) t1,
-              assoc_item_svec u
-              WHERE t1.item = u.item_id
-              GROUP BY id
-            )  t, assoc_loop_aux u
-            WHERE t.id = u.id AND cnt::FLOAT8 >= {4}
-            """.format(num_tranx, madlib_schema, madlib_schema, madlib_schema, 
-                       min_supp_tranx)
+            INSERT INTO assoc_rule_sets_loop(id, set_list, support, tids)
+            SELECT * FROM assoc_loop_aux
+            """
             );
 
         rv = plpy.execute("""
@@ -445,13 +421,13 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
                 END 
             FROM (
                 SELECT  
-                    {0}.gen_rules_from_cfp(hash_text, iteration) as item, 
+                    {0}.gen_rules_from_cfp(text_svec, iteration) as item, 
                     support as support_xy
                 FROM assoc_rule_sets
                 WHERE iteration > 1
             ) t, assoc_rule_sets x, assoc_rule_sets y
-            WHERE t.item[1] = x.hash_text AND
-                  t.item[2] = y.hash_text AND
+            WHERE t.item[1] = x.text_svec AND
+                  t.item[2] = y.text_svec AND
                   (t.support_xy / x.support) >= {1}
             """.format(madlib_schema, confidence)
             );
