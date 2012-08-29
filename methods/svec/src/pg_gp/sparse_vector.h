@@ -120,7 +120,6 @@ Datum svec_dot(PG_FUNCTION_ARGS);
 Datum svec_l2norm(PG_FUNCTION_ARGS);
 Datum svec_count(PG_FUNCTION_ARGS);
 Datum svec_mult(PG_FUNCTION_ARGS);
-Datum svec_agg_mult(PG_FUNCTION_ARGS);
 Datum svec_log(PG_FUNCTION_ARGS);
 Datum svec_l1norm(PG_FUNCTION_ARGS);
 Datum svec_summate(PG_FUNCTION_ARGS);
