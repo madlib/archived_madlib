@@ -45,9 +45,10 @@ public:
             const independent_variables_type    &x, 
             const dependent_variable_type       &y);
     
-    static dependent_variable_type predict(
+    static void predict(
             const model_type                    &model, 
-            const independent_variables_type    &x);
+            const independent_variables_type    &y,
+            dependent_variable_type             &x_N);
 
 private:
     static double logistic(const double         &xi) {
@@ -106,12 +107,14 @@ MLP<Model, Tuple>::loss(
 }
 
 template <class Model, class Tuple>
-typename Tuple::dependent_variable_type
+void
 MLP<Model, Tuple>::predict(
         const model_type                    &model, 
-        const independent_variables_type    &x) {
+        const independent_variables_type    &y,
+        dependent_variable_type             &x_N) {
     (void) model;
-    (void) x;
+    (void) y;
+    (void) x_N;
     return 0.;
 }
 
@@ -122,10 +125,35 @@ MLP<Model, Tuple>::feedForward(
         const independent_variables_type    &y,
         std::vector<ColumnVector>           &net,
         std::vector<ColumnVector>           &x) {
-    (void) model;
-    (void) y;
-    (void) net;
-    (void) x;
+    // meta data and x_k^0 = 1
+    uint16_t k, j, s;
+    uint16_t N = model.u.size(); // assuming >= 1
+    net.resize(N + 1);
+    x.resize(N + 1);
+
+    std::vector<uint16_t> n; n.clear();
+    n.push_back(model.u[0].rows());
+    x[0].resize(n[0] + 1);
+    x[0](0) = 1.;
+    for (k = 1; k <= N; k ++) {
+        n.push_back(model.u[k-1].cols());
+        net[k].resize(n[k] + 1);
+        x[k].resize(n[k] + 1);
+        x[k](0) = 1.;
+    }
+
+    // y is a mapped parameter from DB, aligning with x here
+    for (j = 1; j <= n[0]; j ++) { x[0](j) = y(j-1); }
+
+    for (k = 1; k <= N; k ++) {
+        for (j = 1; j <= n[k]; j ++) {
+            net[k](j) = 0.;
+            for (s = 0; s <= n[k-1]; s ++) {
+                net[k](j) += x[k-1] * model.u[k-1](s, j);
+            }
+            x[k](j) = logistic(net[k](j));
+        }
+    }
 }
 
 } // namespace convex
