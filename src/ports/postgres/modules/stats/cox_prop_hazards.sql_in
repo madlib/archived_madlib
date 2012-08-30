@@ -220,8 +220,6 @@ CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
 );
 
 
-
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_final(
     state DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
@@ -405,3 +403,67 @@ CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
 RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
 $$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, $4, $5, 0.0001);$$
 LANGUAGE sql VOLATILE;
+
+
+
+
+
+
+
+
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.robust_cox_prop_hazards_result;
+CREATE TYPE MADLIB_SCHEMA.robust_cox_prop_hazards_result AS (
+    std_err DOUBLE PRECISION[],
+    z_stats DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[]
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_cox_prop_hazards_step_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.robust_cox_prop_hazards_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_cox_prop_hazards_step_transition(
+    /*+  state */ DOUBLE PRECISION[],
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,		
+    /*+  exp_coef_x */ DOUBLE PRECISION,
+    /*+  xexp_coef_x */ DOUBLE PRECISION[],
+    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+  previous_state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS 
+'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+/**
+ * @internal
+ * @brief Perform one step of computations of the robust variance analysis
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__',m4_ifdef(`__HAS_ORDERED_AGGREGATES__',`ORDERED'))
+AGGREGATE MADLIB_SCHEMA.compute_robust_cox_prop_hazards(
+
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,
+    /*+  exp_coef_x */ DOUBLE PRECISION,
+    /*+  xexp_coef_x */ DOUBLE PRECISION[],
+    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.robust_cox_prop_hazards_step_transition,
+    FINALFUNC=MADLIB_SCHEMA.robust_cox_prop_hazards_step_final,
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR,
+    "coef" VARCHAR)
+RETURNS MADLIB_SCHEMA.robust_cox_prop_hazards_result
+AS $$PythonFunction(stats, cox_prop_hazards, robust_cox_prop_hazards)$$
+LANGUAGE plpythonu VOLATILE;
+
