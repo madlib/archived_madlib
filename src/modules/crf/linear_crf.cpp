@@ -714,13 +714,14 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
         Mi.fill(0);
         Vi.fill(0);
         // examine all features at position "pos"
+        //(prev_labe, curr_label, f_index, start_pos, exist)
         while (index-4>=0 && sparse_r(index-1) == i) {
             int curr_index =  (int)sparse_r(index-3);
             int f_index =  (int)sparse_r(index-2);
             Vi(curr_index) += state.coef(f_index);
             index-=5;
         }
-
+        //(f_index, prev_label, curr_label)
         for(int n=0; n+2<sparse_m_size ; n+=3) {
             Mi((int)sparse_m(n+1), (int)sparse_m(n+2)) += state.coef((int)sparse_m(n));
         }
@@ -736,7 +737,6 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
     } // end of beta values computation
 
     index = 0;
-    state.loglikelihood = 0;
     // start to compute the log-likelihood of the current sequence
     for (int j = 0; j < seq_len; j++) {
         Mi.fill(0);
@@ -782,6 +782,7 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
             int f_index = (int)dense_m((j-1)*5+2);
             state.grad(f_index) += 1;
             state.loglikelihood += state.coef(f_index);
+            //(f_index, prev_label, curr_label)
             for(int n=0; n+2<sparse_m_size ; n+=3) {
                 int f_index = (int)sparse_m(n);
                 int prev_index = (int)sparse_m(n+1);
