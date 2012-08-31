@@ -334,7 +334,7 @@ AnyType cox_prop_hazards_step_final::run(AnyType &args) {
 
 		// Newton step 
 		state.coef += state.hessian.inverse()*state.grad;
-		
+
     // Return all coefficients etc. in a tuple
     return state;
 }
@@ -432,7 +432,7 @@ AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
 		else {
 			coef = args[1].getAs<MappedColumnVector>();
 		}
-		
+
 		double exp_coef_x;
 		MutableMappedColumnVector
 			x_exp_coef_x(allocateArray<double>(x.size()));
@@ -532,6 +532,7 @@ public:
         coef += inOtherState.coef;
         S += inOtherState.S;
         H += inOtherState.H;
+        x_tied_sum += inOtherState.x_tied_sum;
 				V += inOtherState.V;
         grad_grad_trans += inOtherState.grad_grad_trans;
         hessian += inOtherState.hessian;
@@ -549,6 +550,7 @@ public:
 				multiplier = 0;
         H.fill(0);
         V.fill(0);
+        x_tied_sum.fill(0);
         grad_grad_trans.fill(0);
         hessian.fill(0);
 
@@ -594,7 +596,7 @@ private:
 				// Intra iteration components
         S.rebind(&mStorage[4+inWidthOfX]);
         H.rebind(&mStorage[5+inWidthOfX], inWidthOfX);
-        grad.rebind(&mStorage[5+2*inWidthOfX], inWidthOfX);
+        x_tied_sum.rebind(&mStorage[5+2*inWidthOfX], inWidthOfX);
 				V.rebind(&mStorage[5+3*inWidthOfX],
 					inWidthOfX, inWidthOfX);
 				hessian.rebind(&mStorage[5+3*inWidthOfX+inWidthOfX*inWidthOfX],
@@ -616,7 +618,7 @@ public:
 		
     typename HandleTraits<Handle>::ReferenceToDouble S;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap H;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap grad;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap x_tied_sum;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap V;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap hessian;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap grad_grad_trans;
@@ -641,22 +643,24 @@ AnyType robust_cox_prop_hazards_step_transition::run(AnyType &args) {
 
 		// Current state, independant variables & dependant variables
 		RobustCoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    double y = args[2].getAs<double>();
+    MappedColumnVector coef = args[1].getAs<MappedColumnVector>();
+    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    double y = args[3].getAs<double>();
 		
 		/** Note: These precomputations come from "intermediate_cox_prop_hazards".
 			They are precomputed and stored in a temporary table.
 		*/
-    double exp_coef_x = args[3].getAs<double>();
-    MappedColumnVector x_exp_coef_x = args[4].getAs<MappedColumnVector>();
-    MappedMatrix x_xTrans_exp_coef_x = args[5].getAs<MappedMatrix>();
+    double exp_coef_x = args[4].getAs<double>();
+    MappedColumnVector x_exp_coef_x = args[5].getAs<MappedColumnVector>();
+    MappedMatrix x_xTrans_exp_coef_x = args[6].getAs<MappedMatrix>();
 		
     if (state.numRows == 0) {
 			state.initialize(*this, static_cast<uint16_t>(x.size()));
+			state.coef = coef;
 			
-			if (!args[6].isNull()) {
+			if (!args[7].isNull()) {
 					RobustCoxPropHazardsTransitionState<ArrayHandle<double> > previousState
-																																		= args[6];
+																																		= args[7];
 					state = previousState;
 					state.reset();
 					
@@ -683,13 +687,22 @@ AnyType robust_cox_prop_hazards_step_transition::run(AnyType &args) {
 				Note: The hessian is the negative of the design document because we 
 				want it to stay PSD (makes it easier for inverse compuations)
 		*/
-			state.grad -= state.multiplier*state.H/state.S;
 			triangularView<Lower>(state.hessian) -=
 								((state.H*trans(state.H))/(state.S*state.S)
 												- state.V/state.S)*state.multiplier;
-			triangularView<Lower>(state.grad_grad_trans) +=
-								state.grad*trans(state.grad);
+		
+			// Partial computation
+			ColumnVector pc;
+			pc = -state.H/state.S;
+			
+			// Note: You can't do symmetric multiplication here
+			state.grad_grad_trans += state.x_tied_sum*trans(pc)
+															 + 	pc*trans(state.x_tied_sum)
+															 +  state.multiplier*pc*trans(pc);
+
+			// Reset the multiplier and the x_tied_sum
 			state.multiplier = 1;
+			state.x_tied_sum.fill(0);
 				
 		}
 
@@ -700,9 +713,12 @@ AnyType robust_cox_prop_hazards_step_transition::run(AnyType &args) {
 		state.S += exp_coef_x;
 		state.H += x_exp_coef_x;
 		state.V += x_xTrans_exp_coef_x;
-		state.grad += x;
+		state.grad_grad_trans += x*trans(x);
+		
+		// Book keeping information for ties
 		state.y_previous = y;
-				
+		state.x_tied_sum += x;
+		
     return state;
 }
 
@@ -719,30 +735,27 @@ AnyType robust_cox_prop_hazards_step_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
-    if (!state.hessian.is_finite() || !state.grad.is_finite())
+    if (!state.hessian.is_finite())
         throw NoSolutionFoundException("Over- or underflow in intermediate "
             "calulation. Input data is likely of poor numerical condition.");
 
 		// First merge all tied times of death for the last column
-		state.grad -= state.multiplier*state.H/state.S;
 		triangularView<Lower>(state.hessian) -=
 						((state.H*trans(state.H))/(state.S*state.S)
 											- state.V/state.S)*state.multiplier;
-		triangularView<Lower>(state.grad_grad_trans) +=
-								state.grad*trans(state.grad);
-
+		ColumnVector pc;
+		pc = -state.H/state.S;
+			state.grad_grad_trans += state.x_tied_sum*trans(pc)
+															 + 	pc*trans(state.x_tied_sum)
+															 +  state.multiplier*pc*trans(pc);
 
 		// Computing pseudo inverse of a PSD matrix
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.hessian, EigenvaluesOnly, ComputePseudoInverse);
     Matrix inverse_of_hessian = decomposition.pseudoInverse();
-
-		// Newton step 
-		state.coef += state.hessian.inverse()*state.grad;
-
+		
 		// Compute the Variance-Covariance Matrix using the Huber-White estimator
-		Matrix varCovar = state.grad_grad_trans.triangularView<Eigen::StrictlyLower>();
-		varCovar = varCovar + trans(state.grad_grad_trans);
+		Matrix varCovar = state.grad_grad_trans;
 		varCovar = inverse_of_hessian * varCovar * inverse_of_hessian;
 		ColumnVector diagonal_of_varCovar = varCovar.diagonal();
 		
