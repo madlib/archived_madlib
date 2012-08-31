@@ -296,8 +296,8 @@ private:
         for (k = 1; k <= N; k ++) {
             task.model.u.push_back(Eigen::Map<Matrix >(
                     const_cast<double*>(
-                    &mStorage[N + 3 + sizeOfModel]), n[k-1], n[k]));
-            sizeOfModel += n[k-1] * n[k];
+                    &mStorage[N + 3 + sizeOfModel]), n[k-1] + 1, n[k] + 1));
+            sizeOfModel += (n[k-1] + 1) * (n[k] + 1);
         }
 
         algo.numRows.rebind(&mStorage[N + 3 + sizeOfModel]);
@@ -309,8 +309,8 @@ private:
             algo.incrModel.u.push_back(Eigen::Map<Matrix >(
                     const_cast<double*>(
                         &mStorage[N + 5 + sizeOfModel + sizeOfIncrModel]),
-                    n[k-1], n[k]));
-            sizeOfIncrModel += n[k-1] * n[k];
+                    n[k-1] + 1, n[k] + 1));
+            sizeOfIncrModel += (n[k-1] + 1) * (n[k] + 1);
         }
     }
 

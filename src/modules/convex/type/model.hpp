@@ -113,7 +113,7 @@ struct MLPModel {
         const uint16_t *n = inNumbersOfUnits;
         size_t k;
         for (k = 1; k <= N; k ++) {
-            size += n[k-1] * n[k];
+            size += (n[k-1] + 1) * (n[k] + 1);
         }
 
         return size;
