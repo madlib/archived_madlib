@@ -119,6 +119,24 @@ struct MLPModel {
         return size;
     }
 
+    uint32_t rebind(const double *data, const uint16_t &inNumberOfStages,
+            const uint16_t *inNumbersOfUnits) {
+        uint32_t sizeOfU = 0;
+        size_t N = inNumberOfStages;
+        const uint16_t *n = inNumbersOfUnits;
+        size_t k;
+
+        u.clear();
+        for (k = 1; k <= N; k ++) {
+            u.push_back(Eigen::Map<Matrix >(
+                    const_cast<double*>(data + sizeOfU), 
+                    n[k-1] + 1, n[k] + 1));
+            sizeOfU += (n[k-1] + 1) * (n[k] + 1);
+        }
+
+        return sizeOfU;
+    }
+
     /*
      *  Some operator wrappers for u.
      */

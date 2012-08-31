@@ -169,10 +169,15 @@ AnyType
 internal_mlp_igd_result::run(AnyType &args) {
     MLPIGDState<ArrayHandle<double> > state = args[0];
 
+    HandleTraits<ArrayHandle<double> >::ColumnVectorTransparentHandleMap 
+        flattenU;
+    flattenU.rebind(&state.task.model.u[0](0, 0), 
+            state.task.model.modelSize(state.task.numberOfStages,
+                    state.task.numbersOfUnits));
     double loss = state.algo.loss;
 
     AnyType tuple;
-    tuple << loss;
+    tuple << flattenU << loss;
 
     return tuple;
 }

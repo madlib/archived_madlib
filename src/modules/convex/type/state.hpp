@@ -283,35 +283,16 @@ private:
     void rebind() {
         task.numberOfStages.rebind(&mStorage[0]);
         size_t N = task.numberOfStages;
-        uint16_t k;
-
         task.numbersOfUnits = 
             reinterpret_cast<dimension_pointer_type >(&mStorage[1]);
-        const uint16_t *n = task.numbersOfUnits;
-        
         task.stepsize.rebind(&mStorage[N + 2]);
-
-        task.model.u.clear();
-        uint32_t sizeOfModel = 0;
-        for (k = 1; k <= N; k ++) {
-            task.model.u.push_back(Eigen::Map<Matrix >(
-                    const_cast<double*>(
-                    &mStorage[N + 3 + sizeOfModel]), n[k-1] + 1, n[k] + 1));
-            sizeOfModel += (n[k-1] + 1) * (n[k] + 1);
-        }
+        uint32_t sizeOfModel = task.model.rebind(&mStorage[N + 2],
+                task.numberOfStages, task.numbersOfUnits);
 
         algo.numRows.rebind(&mStorage[N + 3 + sizeOfModel]);
         algo.loss.rebind(&mStorage[N + 4 + sizeOfModel]);
-
-        algo.incrModel.u.clear();
-        uint32_t sizeOfIncrModel = 0;
-        for (k = 1; k <= N; k ++) {
-            algo.incrModel.u.push_back(Eigen::Map<Matrix >(
-                    const_cast<double*>(
-                        &mStorage[N + 5 + sizeOfModel + sizeOfIncrModel]),
-                    n[k-1] + 1, n[k] + 1));
-            sizeOfIncrModel += (n[k-1] + 1) * (n[k] + 1);
-        }
+        algo.incrModel.rebind(&mStorage[N + 5 + sizeOfModel],
+                task.numberOfStages, task.numbersOfUnits);
     }
 
     Handle mStorage;

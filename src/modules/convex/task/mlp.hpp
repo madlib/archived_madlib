@@ -28,12 +28,6 @@ public:
         independent_variables_type;
     typedef typename Tuple::dependent_variable_type dependent_variable_type;
 
-    static void gradient(
-            const model_type                    &model,
-            const independent_variables_type    &y,
-            const dependent_variable_type       &z, 
-            model_type                          &gradient);
-
     static void gradientInPlace(
             model_type                          &model, 
             const independent_variables_type    &y,
@@ -82,19 +76,6 @@ private:
 
 template <class Model, class Tuple>
 void
-MLP<Model, Tuple>::gradient(
-        const model_type                    &model,
-        const independent_variables_type    &y,
-        const dependent_variable_type       &z,
-        model_type                          &gradient) {
-    (void) model;
-    (void) z;
-    (void) y;
-    (void) gradient;
-}
-
-template <class Model, class Tuple>
-void
 MLP<Model, Tuple>::gradientInPlace(
         model_type                          &model,
         const independent_variables_type    &y,
@@ -104,6 +85,14 @@ MLP<Model, Tuple>::gradientInPlace(
     (void) z;
     (void) y;
     (void) stepsize;
+    std::vector<ColumnVector> net;
+    std::vector<ColumnVector> x;
+    std::vector<ColumnVector> delta;
+    ColumnVector delta_N;
+
+    feedForward(model, y, net, x);
+    endLayerDeltaError(net, x, z, delta_N);
+    errorBackPropagation(delta_N, net, model, delta);
 }
 
 template <class Model, class Tuple>
@@ -112,10 +101,18 @@ MLP<Model, Tuple>::loss(
         const model_type                    &model, 
         const independent_variables_type    &y, 
         const dependent_variable_type       &z) {
-    (void) model;
-    (void) z;
-    (void) y;
-    return 0.;
+    std::vector<ColumnVector> net;
+    std::vector<ColumnVector> x;
+
+    feedForward(model, y, net, x);
+    double loss = 0.;
+    uint16_t j;
+    for (j = 1; j < z.rows() + 1; j ++) {
+        double diff = x.back()(j) - z(j-1);
+        loss += diff * diff;
+    }
+    loss /= 2.;
+    return loss;
 }
 
 template <class Model, class Tuple>
@@ -127,7 +124,11 @@ MLP<Model, Tuple>::predict(
     (void) model;
     (void) y;
     (void) x_N;
-    return 0.;
+    std::vector<ColumnVector> net;
+    std::vector<ColumnVector> x;
+
+    feedForward(model, y, net, x);
+    x_N = x.back();
 }
 
 template <class Model, class Tuple>
@@ -144,11 +145,11 @@ MLP<Model, Tuple>::feedForward(
     x.resize(N + 1);
 
     std::vector<uint16_t> n; n.clear();
-    n.push_back(model.u[0].rows());
+    n.push_back(model.u[0].rows() - 1);
     x[0].resize(n[0] + 1);
     x[0](0) = 1.;
     for (k = 1; k <= N; k ++) {
-        n.push_back(model.u[k-1].cols());
+        n.push_back(model.u[k-1].cols() - 1);
         net[k].resize(n[k] + 1);
         x[k].resize(n[k] + 1);
         x[k](0) = 1.;
@@ -161,7 +162,7 @@ MLP<Model, Tuple>::feedForward(
         for (j = 1; j <= n[k]; j ++) {
             net[k](j) = 0.;
             for (s = 0; s <= n[k-1]; s ++) {
-                net[k](j) += x[k-1] * model.u[k-1](s, j);
+                net[k](j) += x[k-1](s) * model.u[k-1](s, j);
             }
             x[k](j) = logistic(net[k](j));
         }
@@ -178,7 +179,7 @@ MLP<Model, Tuple>::endLayerDeltaError(
     //meta data
     uint16_t t;
     uint16_t N = x.size() - 1; // assuming >= 1
-    uint16_t n_N = x[N].cols() - 1;
+    uint16_t n_N = x[N].rows() - 1;
     delta_N.resize(n_N + 1);
 
     for (t = 1; t <= n_N; t ++) {
@@ -198,9 +199,9 @@ MLP<Model, Tuple>::errorBackPropagation(
     uint16_t N = model.u.size(); // assuming >= 1
     delta.resize(N + 1);
     std::vector<uint16_t> n; n.clear();
-    n.push_back(model.u[0].rows());
+    n.push_back(model.u[0].rows() - 1);
     for (k = 1; k <= N; k ++) {
-        n.push_back(model.u[k-1].cols());
+        n.push_back(model.u[k-1].cols() - 1);
         delta[k].resize(n[k]);
     }
     delta[N] = delta_N;
