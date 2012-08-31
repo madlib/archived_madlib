@@ -30,7 +30,7 @@ PG_MODULE_MAGIC;
 static ArrayType *construct_zero_array(int inNumElements,
 									   Oid inElementType, int inElementSize)
 {
-	int64 size = inElementSize * inNumElements + ARR_OVERHEAD_NONULLS(1);
+	int64 size = ((int64)inElementSize) * inNumElements + ARR_OVERHEAD_NONULLS(1);
 	ArrayType * array;
 	
 	array = (ArrayType *) palloc0(size);
