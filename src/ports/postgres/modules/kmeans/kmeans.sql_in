@@ -285,24 +285,72 @@ STRICT;
  * @internal
  * @brief Given a point, find the closest centroid
  * @param point The point
+ * @param centroidCoordinates Array of centroids
+ * @param dimension Dimension of points
+ * @param numOfCentroids Total count of centroids
+ * @param distMetric ID of the metric to use
  * @param closeCentroids List of positions in the \c centroidCoordinates array
  *     that should be considered. The distance to all other centroids is
  *     conceptually infinity. If NULL, then all centroids in
  *     \c centroidCoordinates are considered.
- * @param centroidCoordinates Array of centroids
- * @param distMetric ID of the metric to use
  * @return The position in \c centroidCoordinates that is closest to \c point
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_closest_centroid( 
-    "point"               MADLIB_SCHEMA.SVEC,
-    "closeCentroids"      INTEGER[],
-    "centroidCoordinates" MADLIB_SCHEMA.SVEC[],
-    "dist_metric"         INTEGER
+    "point"               FLOAT8[],
+    "centroidCoordinates" FLOAT8[],
+    "dimension"           INTEGER,
+    "numOfCentroids"      INTEGER,
+    "dist_metric"         INTEGER,
+    "closeCentroids"      INTEGER[]
 )
 RETURNS INTEGER AS
 'MODULE_PATHNAME'
 LANGUAGE c
 IMMUTABLE; /* This function must *not* be declared STRICT! */
+
+/**
+ * @internal
+ * @brief Transition function for UDA:internal_kmeans_agg_centroid() 
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_agg_centroid_trans( 
+    "centroids_array"               FLOAT8[],
+    "centroidCoordinate"            FLOAT8[],
+    "dimension"                     INTEGER,
+    "numOfCentroids"                INTEGER,
+    "centroidIndex"                 INTEGER
+)
+RETURNS FLOAT8[] AS
+'MODULE_PATHNAME'
+LANGUAGE c
+IMMUTABLE; /* This function must *not* be declared STRICT! */
+
+/**
+ * @internal
+ * @brief Merge function for UDA:internal_kmeans_agg_centroid() 
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_agg_centroid_merge( 
+    "centroids_array"               FLOAT8[],
+    "centroids_array2"              FLOAT8[]    
+)
+RETURNS FLOAT8[] AS
+'MODULE_PATHNAME'
+LANGUAGE c
+IMMUTABLE STRICT;
+
+
+CREATE AGGREGATE MADLIB_SCHEMA.internal_kmeans_agg_centroid(
+    FLOAT8[],
+    INTEGER,
+    INTEGER,
+    INTEGER
+) (
+    sfunc = MADLIB_SCHEMA.internal_kmeans_agg_centroid_trans,
+    m4_ifdef(`__GREENPLUM__', `
+        prefunc = MADLIB_SCHEMA.internal_kmeans_agg_centroid_merge,
+    ')
+    stype = FLOAT8[]
+);
+
 
 /**
  * @internal
