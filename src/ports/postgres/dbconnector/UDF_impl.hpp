@@ -55,29 +55,35 @@ UDF::SRF_invoke(FunctionCallInfo fcinfo) {
     bool is_last_call = false;
     AnyType result;
 
-    if (SRF_IS_FIRSTCALL()) {
-        /* create a function context for cross-call persistence */
-        funcctx = SRF_FIRSTCALL_INIT();
-        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+    MADLIB_PG_TRY{
+        if (SRF_IS_FIRSTCALL()) {
+            /* create a function context for cross-call persistence */
+            funcctx = SRF_FIRSTCALL_INIT();
+            oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-        // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
-        // to init the pointer: fn_extra
-        AnyType args(fcinfo);
-        args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
-        MemoryContextSwitchTo(oldcontext);
+            // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
+            // to init the pointer: fn_extra
+            AnyType args(fcinfo);
+            args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
+            MemoryContextSwitchTo(oldcontext);
+        }
+
+        funcctx = SRF_PERCALL_SETUP();
+
+        // the invoker function will handle the exceptions from this function
+        result = Function(fcinfo).SRF_next(
+            static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
+            &is_last_call);
+
+        if (is_last_call)
+            SRF_RETURN_DONE(funcctx);
+
+        SRF_RETURN_NEXT(funcctx, result.getAsDatum(fcinfo));
     }
+    MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
 
-    funcctx = SRF_PERCALL_SETUP();
-
-    // the invoker function will handle the exceptions from this function
-    result = Function(fcinfo).SRF_next(
-        static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
-        &is_last_call);
-
-    if (is_last_call)
-        SRF_RETURN_DONE(funcctx);
-
-    SRF_RETURN_NEXT(funcctx, result.getAsDatum(fcinfo));
+    // should never come here
+    PG_RETURN_NULL();
 }
 
 /**
