@@ -17,6 +17,45 @@ namespace postgres {
     sqlerrcode = err; \
     strncpy(msg, exc.what(), sizeof(msg));
 
+#define MADLIB_SRF_PERCALL_SETUP() SRF_percall_setup<Function>(fcinfo)
+#define MADLIB_SRF_IS_FIRSTCALL() SRF_is_firstcall<Function>(fcinfo)
+
+/**
+ * @brief A wrapper for SRF_PERCALL_SETUP.
+ *
+ * We wrap SRF_PERCALL_SETUP inside the PG_TRY block to handle the errors
+ *
+ * @param fcinfo The PostgreSQL FunctionCallInfoData structure
+ */
+template <class Function>
+inline FuncCallContext*
+UDF::SRF_percall_setup(FunctionCallInfo fcinfo){
+    MADLIB_PG_TRY {
+        return SRF_PERCALL_SETUP();
+    } MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
+
+    return NULL;
+}
+
+
+/**
+ * @brief A wrapper for SRF_IS_FIRSTCALL.
+ *
+ * We wrap SRF_IS_FIRSTCALL inside the PG_TRY block to handle the errors
+ *
+ * @param fcinfo The PostgreSQL FunctionCallInfoData structure
+ */
+template <class Function>
+inline bool
+UDF::SRF_is_firstcall(FunctionCallInfo fcinfo){
+    MADLIB_PG_TRY {
+        return SRF_IS_FIRSTCALL();
+    } MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
+
+    return false;
+}
+
+
 /**
  * @brief Internal interface for calling a UDF
  *
@@ -55,35 +94,32 @@ UDF::SRF_invoke(FunctionCallInfo fcinfo) {
     bool is_last_call = false;
     AnyType result;
 
-    MADLIB_PG_TRY{
-        if (SRF_IS_FIRSTCALL()) {
-            /* create a function context for cross-call persistence */
-            funcctx = SRF_FIRSTCALL_INIT();
-            oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+    /* TODO: we may use a better way to handle the errors
+     * from SRF_IS_FIRSTCALL and SRF_PERCALL_SETUP
+     */
+    if (MADLIB_SRF_IS_FIRSTCALL()) {
+        /* create a function context for cross-call persistence */
+        funcctx = SRF_FIRSTCALL_INIT();
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-            // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
-            // to init the pointer: fn_extra
-            AnyType args(fcinfo);
-            args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
-            MemoryContextSwitchTo(oldcontext);
-        }
+        // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
+        // to init the pointer: fn_extra
+        AnyType args(fcinfo);
+        args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
+        MemoryContextSwitchTo(oldcontext);
+	}
 
-        funcctx = SRF_PERCALL_SETUP();
+    funcctx = MADLIB_SRF_PERCALL_SETUP();
 
-        // the invoker function will handle the exceptions from this function
-        result = Function(fcinfo).SRF_next(
-            static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
-            &is_last_call);
+    // the invoker function will handle the exceptions from this function
+    result = Function(fcinfo).SRF_next(
+        static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
+        &is_last_call);
 
-        if (is_last_call)
-            SRF_RETURN_DONE(funcctx);
+    if (is_last_call)
+        SRF_RETURN_DONE(funcctx);
 
-        SRF_RETURN_NEXT(funcctx, result.getAsDatum(fcinfo));
-    }
-    MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
-
-    // should never come here
-    PG_RETURN_NULL();
+    SRF_RETURN_NEXT(funcctx, result.getAsDatum(fcinfo));
 }
 
 /**

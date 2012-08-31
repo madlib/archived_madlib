@@ -31,6 +31,14 @@ public:
 
     template <class Function>
     static Datum SRF_invoke(FunctionCallInfo fcinfo);
+
+protected:
+    template <class Function>
+    static FuncCallContext* SRF_percall_setup(FunctionCallInfo fcinfo);
+
+    template <class Function>
+    static bool SRF_is_firstcall(FunctionCallInfo fcinfo);
+
 private:
     OutputStreamBuffer<INFO> mOutStreamBuffer;
     OutputStreamBuffer<WARNING> mErrStreamBuffer;
