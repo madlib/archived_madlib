@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
--- Rules: 
+-- Rules:
 -- ------
 -- 1) Any DB objects should be created w/o schema prefix,
 --    since this file is executed in a separate schema context.
@@ -8,76 +8,151 @@
 ---------------------------------------------------------------------------
 
 ---------------------------------------------------------------------------
--- Setup: 
+-- Setup:
 ---------------------------------------------------------------------------
-CREATE FUNCTION install_test() RETURNS VOID AS $$ 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_array_eq
+    (
+    arr1 TEXT[],
+    arr2 TEXT[]
+    )
+RETURNS BOOL AS $$
+    SELECT COUNT(*) = array_upper($1, 1) AND array_upper($1, 1) = array_upper($2, 1)
+    FROM (SELECT unnest($1) id) t1, (SELECT unnest($2) id) t2
+    WHERE t1.id = t2.id;
+
+$$ LANGUAGE sql IMMUTABLE;
+
+
+CREATE OR REPLACE FUNCTION install_test() RETURNS VOID AS $$
 declare
-	result1 TEXT;
-	result2 TEXT; 
-	result3 TEXT;  
+    result1        TEXT;
+    result2        TEXT;
+    result3        TEXT;
+    res            MADLIB_SCHEMA.assoc_rules_results;
+    output_schema  TEXT;
+    output_table   TEXT;
+    total_rules    INT;
+    total_time     INTERVAL;
 begin
-	-- DROP TABLE IF EXISTS test_data1;
-	CREATE TABLE test_data1 (
-		trans_id INT
-		, product INT
-	);
-	
-	-- DROP TABLE IF EXISTS test_data2; 
-	CREATE TABLE test_data2 (
-		trans_id INT
-		, product VARCHAR
-	); 
+    DROP TABLE IF EXISTS test_data1;
+    CREATE TABLE test_data1 (
+        trans_id INT
+        , product INT
+    );
+
+    DROP TABLE IF EXISTS test_data2;
+    CREATE TABLE test_data2 (
+        trans_id INT
+        , product VARCHAR
+    );
 
 
-	INSERT INTO test_data1 VALUES (1,1);
-	INSERT INTO test_data1 VALUES (1,2); 
-	INSERT INTO test_data1 VALUES (2,3); 
-	INSERT INTO test_data1 VALUES (3,4); 
-	INSERT INTO test_data1 VALUES (4,1); 
-	INSERT INTO test_data1 VALUES (4,2); 
-	INSERT INTO test_data1 VALUES (4,3); 
-	INSERT INTO test_data1 VALUES (5,2); 
+    INSERT INTO test_data1 VALUES (1,1);
+    INSERT INTO test_data1 VALUES (1,2);
+    INSERT INTO test_data1 VALUES (3,3);
+    INSERT INTO test_data1 VALUES (8,4);
+    INSERT INTO test_data1 VALUES (10,1);
+    INSERT INTO test_data1 VALUES (10,2);
+    INSERT INTO test_data1 VALUES (10,3);
+    INSERT INTO test_data1 VALUES (19,2);
 
-	INSERT INTO test_data2 VALUES (1, 'beer'); 
-	INSERT INTO test_data2 VALUES (1, 'diapers'); 
-	INSERT INTO test_data2 VALUES (1, 'chips'); 
-	INSERT INTO test_data2 VALUES (2, 'beer'); 
-	INSERT INTO test_data2 VALUES (2, 'diapers'); 
-	INSERT INTO test_data2 VALUES (3, 'beer'); 
-	INSERT INTO test_data2 VALUES (3, 'diapers');
-	INSERT INTO test_data2 VALUES (4, 'beer'); 
-	INSERT INTO test_data2 VALUES (4, 'chips'); 
-	INSERT INTO test_data2 VALUES (5, 'beer');
-	INSERT INTO test_data2 VALUES (6, 'beer'); 
-	INSERT INTO test_data2 VALUES (6, 'diapers'); 
-	INSERT INTO test_data2 VALUES (6, 'chips'); 
-	INSERT INTO test_data2 VALUES (7, 'beer'); 
-	INSERT INTO test_data2 VALUES (7, 'diapers'); 
+    INSERT INTO test_data2 VALUES (1, 'beer');
+    INSERT INTO test_data2 VALUES (1, 'diapers');
+    INSERT INTO test_data2 VALUES (1, 'chips');
+    INSERT INTO test_data2 VALUES (2, 'beer');
+    INSERT INTO test_data2 VALUES (2, 'diapers');
+    INSERT INTO test_data2 VALUES (3, 'beer');
+    INSERT INTO test_data2 VALUES (3, 'diapers');
+    INSERT INTO test_data2 VALUES (4, 'beer');
+    INSERT INTO test_data2 VALUES (4, 'chips');
+    INSERT INTO test_data2 VALUES (5, 'beer');
+    INSERT INTO test_data2 VALUES (6, 'beer');
+    INSERT INTO test_data2 VALUES (6, 'diapers');
+    INSERT INTO test_data2 VALUES (6, 'chips');
+    INSERT INTO test_data2 VALUES (7, 'beer');
+    INSERT INTO test_data2 VALUES (7, 'diapers');
 
-  
+    DROP TABLE IF EXISTS test1_exp_result;
+    CREATE TABLE test1_exp_result (
+        ruleid integer,
+        pre text[],
+        post text[],
+        support double precision,
+        confidence double precision,
+        lift double precision,
+        conviction double precision
+    ) ;
 
-	PERFORM MADLIB_SCHEMA.assoc_rules (.1, .5, 'trans_id', 'product', 'test_data1','madlib_installcheck_assoc_rules', false); 
-	SELECT INTO result1 CASE WHEN count(*)>0 then 'PASS' ELSE 'FAIL' END FROM assoc_rules; 
+    DROP TABLE IF EXISTS test2_exp_result;
+    CREATE TABLE test2_exp_result (
+        ruleid integer,
+        pre text[],
+        post text[],
+        support double precision,
+        confidence double precision,
+        lift double precision,
+        conviction double precision
+    ) ;
 
-	PERFORM MADLIB_SCHEMA.assoc_rules (.1, .5, 'trans_id', 'product', 'test_data2','madlib_installcheck_assoc_rules', false); 
-	SELECT INTO result2 CASE WHEN count(*)>0 then 'PASS' ELSE 'FAIL' END FROM assoc_rules; 
-	SELECT INTO result3 CASE WHEN count(*)>0 then 'PASS' ELSE 'FAIL' END FROM assoc_prod_uniq; 
 
+    INSERT INTO test1_exp_result VALUES (7, '{3}', '{1}', 0.20000000000000001, 0.5, 1.2499999999999998, 1.2);
+    INSERT INTO test1_exp_result VALUES (4, '{2}', '{1}', 0.40000000000000002, 0.66666666666666674, 1.6666666666666667, 1.8000000000000003);
+    INSERT INTO test1_exp_result VALUES (1, '{1}', '{2,3}', 0.20000000000000001, 0.5, 2.4999999999999996, 1.6000000000000001);
+    INSERT INTO test1_exp_result VALUES (9, '{2,3}', '{1}', 0.20000000000000001, 1, 2.4999999999999996, 0);
+    INSERT INTO test1_exp_result VALUES (6, '{1,2}', '{3}', 0.20000000000000001, 0.5, 1.2499999999999998, 1.2);
+    INSERT INTO test1_exp_result VALUES (8, '{3}', '{2}', 0.20000000000000001, 0.5, 0.83333333333333337, 0.80000000000000004);
+    INSERT INTO test1_exp_result VALUES (5, '{1}', '{2}', 0.40000000000000002, 1, 1.6666666666666667, 0);
+    INSERT INTO test1_exp_result VALUES (2, '{3}', '{2,1}', 0.20000000000000001, 0.5, 1.2499999999999998, 1.2);
+    INSERT INTO test1_exp_result VALUES (10, '{3,1}', '{2}', 0.20000000000000001, 1, 1.6666666666666667, 0);
+    INSERT INTO test1_exp_result VALUES (3, '{1}', '{3}', 0.20000000000000001, 0.5, 1.2499999999999998, 1.2);
 
-	-- DROP TABLE IF EXISTS test_data1;
-	-- DROP TABLE IF EXISTS test_data2; 
-	
+    INSERT INTO test2_exp_result VALUES (7, '{chips,diapers}', '{beer}', 0.2857142857142857, 1, 1, 0);
+    INSERT INTO test2_exp_result VALUES (2, '{chips}', '{diapers}', 0.2857142857142857, 0.66666666666666663, 0.93333333333333324, 0.85714285714285698);
+    INSERT INTO test2_exp_result VALUES (1, '{chips}', '{diapers,beer}', 0.2857142857142857, 0.66666666666666663, 0.93333333333333324, 0.85714285714285698);
+    INSERT INTO test2_exp_result VALUES (6, '{diapers}', '{beer}', 0.7142857142857143, 1, 1, 0);
+    INSERT INTO test2_exp_result VALUES (4, '{beer}', '{diapers}', 0.7142857142857143, 0.7142857142857143, 1, 1);
+    INSERT INTO test2_exp_result VALUES (3, '{chips,beer}', '{diapers}', 0.2857142857142857, 0.66666666666666663, 0.93333333333333324, 0.85714285714285698);
+    INSERT INTO test2_exp_result VALUES (5, '{chips}', '{beer}', 0.42857142857142855, 1, 1, 0);
+
+    res = MADLIB_SCHEMA.assoc_rules (.1, .5, 'trans_id', 'product', 'test_data1','madlib_installcheck_assoc_rules', false);
+
+    -- ensure the members in the returned type was not changed by mistake.
+    output_schema  = res.output_schema;
+    output_table   = res.output_table;
+    total_rules    = res.total_rules;
+    total_time     = res.total_time;
+
+    SELECT INTO result1 CASE WHEN count(*) = 10 then 'PASS' ELSE 'FAIL' END
+    FROM assoc_rules t1, test1_exp_result t2
+    WHERE MADLIB_SCHEMA.assoc_array_eq(t1.pre, t2.pre) AND
+          MADLIB_SCHEMA.assoc_array_eq(t1.post, t2.post) AND
+          abs(t1.support - t2.support) < 1E-10 AND
+          abs(t1.confidence - t2.confidence) < 1E-10;
+
+    PERFORM MADLIB_SCHEMA.assoc_rules (.1, .5, 'trans_id', 'product', 'test_data2','madlib_installcheck_assoc_rules', false);
+    SELECT INTO result2 CASE WHEN count(*) = 7 then 'PASS' ELSE 'FAIL' END
+    FROM assoc_rules t1, test2_exp_result t2
+    WHERE MADLIB_SCHEMA.assoc_array_eq(t1.pre, t2.pre) AND
+          MADLIB_SCHEMA.assoc_array_eq(t1.post, t2.post) AND
+          abs(t1.support - t2.support) < 1E-10 AND
+          abs(t1.confidence - t2.confidence) < 1E-10;
+
+    DROP TABLE IF EXISTS test_data1;
+    DROP TABLE IF EXISTS test_data2;
+    DROP TABLE IF EXISTS test2_exp_result;
+    DROP TABLE IF EXISTS test1_exp_result;
+
     IF result3 = 'FAIL' THEN
-        RAISE EXCEPTION 'Input data transformation failed'; 
-    END IF; 
-    
+        RAISE EXCEPTION 'Input data transformation failed';
+    END IF;
+
     IF (result1 = 'FAIL') OR (result2 = 'FAIL') THEN
         RAISE EXCEPTION 'Association rules mining failed. No results were returned.';
     END IF;
-    
+
     RAISE INFO 'Association rules install check passed.';
-	RETURN;
-	
+    RETURN;
+
 end $$ language plpgsql;
 
 ---------------------------------------------------------------------------

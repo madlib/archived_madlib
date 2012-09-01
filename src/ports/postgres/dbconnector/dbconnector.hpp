@@ -249,6 +249,22 @@ typedef dbal::DynamicStructRootContainer<
     struct _name : public dbconnector::postgres::UDF { \
         inline _name(FunctionCallInfo fcinfo) : dbconnector::postgres::UDF(fcinfo) { }  \
         AnyType run(AnyType &args); \
+        inline void *SRF_init(AnyType&) {return NULL;}; \
+        inline AnyType SRF_next(void *, bool *){return AnyType();}; \
+    }; \
+    } \
+    } \
+    }
+
+#define DECLARE_SR_UDF(_module, _name) \
+    namespace madlib { \
+    namespace modules { \
+    namespace _module { \
+    struct _name : public dbconnector::postgres::UDF { \
+        inline _name(FunctionCallInfo fcinfo) : dbconnector::postgres::UDF(fcinfo) { }  \
+        inline AnyType run(AnyType &){return AnyType();}; \
+        void *SRF_init(AnyType &args); \
+        AnyType SRF_next(void *user_fctx, bool *is_last_call); \
     }; \
     } \
     } \
