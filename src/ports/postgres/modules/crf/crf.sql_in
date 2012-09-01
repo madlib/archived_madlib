@@ -29,6 +29,49 @@ Where Z(X) is an instance specific normalizer
 Z(X) = \sum_{y} \exp{\sum_{m=1}^M \lambda_m f_m(y_n,y_{n-1},x_n)}
 \f]
 
+Train a CRF by maximizing the log-likelihood of a giving training set \f$ T=\{(x_k,y_k)\}_{k=1}^N \f$.
+Seek the zero of the gradient
+\f[
+    \ell_{\lambda}=\sum_k \log p_\lambda(y_k|x_k) =\sum_k[\lambda F(y_k,x_k)-\log Z_\lambda(x_k)]
+\f]
+
+\f[
+    \nabla \ell_{\lambda}=\sum_k[\lambda F(y_k,x_k)-E_{p\lambda(Y|x_k)}F(Y,x_k)]
+\f]
+
+\f$E_{p\lambda(Y|x)}F(Y,x)\f$ is computed using a variant of the forward-backward algorithm:
+
+\f[
+    E_{p\lambda(Y|x)}F(Y,x) = \sum_y p\lambda(y|x)F(y,x)
+                            = \sum_i\frac{\alpha_{i-1}(f_i*M_i)\beta_i^T}{Z_\lambda(x)}
+    Z_\lambda(x) = \alpha_n.1^T
+\f]
+    where \alpha_i and \lambda_i the forward and backward state_cost vectors defined by
+\f[
+    \alpha_i = 
+    \begin{cases}
+    \alpha_{i-1}M_i, & 0<i<=n\\
+    1, & i=0
+    \end{cases}\\
+    ,
+    \beta_i^T = 
+    \begin{cases}
+    M_{i+1}\lambda_{i+1}^T, & 1<=i<n\\
+    1, & i=n
+    \end{cases}
+\f]
+
+To avoid overfitting, we penalize the likelihood with a spherical Gaussian weight prior:
+\f[
+    \ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-\log Z_\lambda(x_k)]-\frac{\lVert \lambda \rVert^2}{2\sigma ^2}
+\f]
+
+\f[
+    \nabla \ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-E_{p\lambda(Y|x_k)}F(Y,x_k)]-\frac{\lambda}{\sigma ^2}
+\f]
+
+    
+
 The Feature Extraction module provides functionality for text-analysis
 tasks such as part-of-speech (POS) tagging and named-entity resolution(NER).
 In addition to feature extraction, it also has a Viterbi implementation
@@ -45,14 +88,20 @@ dictionary.
 - Unknown Feature: fired when the current token is not observed in the trained
 dictionary for at least certain times.
 - Regex Feature: fired when the current token can be matched by the regular
-expression.
+expression.\\
+
+Limited-memory BFGS(L-BFGS) is a limited memory variation of the Broyden–Fletcher–Goldfarb–Shanno (BFGS) update to approximate the inverse Hessian matrix (denoted by \f$ H_k \f$).
+L-BFGS estimates the Hessian matrix from previous gradients and updates.
+We translate the L-BFGS java in-memory implementation in package 'riso.numerical' to a C++ in-database implementation with Eigen types.
 
 @input
 
 The training data is the following form:\n
 <pre>{TABLE|VIEW} <em>sourceName</em> (
     ...
-    <em>featureColumn</em> FLOAT8[],
+    <em>sparse_r</em> FLOAT8[],
+    <em>dense_m</em> FLOAT8[],
+    <em>sparse_m</em> FLOAT8[],
     <em>featureSize</em> FLOAT8,
     <em>tagSize</em> FLOAT8,
     ...
@@ -62,7 +111,7 @@ The training data is the following form:\n
 - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
   statistics:\n
   <pre>SELECT * FROM \ref lincrf(
-    '<em>sourceName</em>', '<em>featureColumn</em>', '<em>featureSize</em>', '<em>tagSize</em>'
+    '<em>sourceName</em>', '<em>sparse_r</em>', '<em>dense_m</em>','<em>sparse_m</em>', '<em>featureSize</em>', '<em>tagSize</em>'
     [, <em>numberOfIterations</em> [, <em>precision</em> ] ] ]
 );</pre>
   Output:
@@ -70,8 +119,6 @@ The training data is the following form:\n
 -----+----------------+--------------+--------
                                               
 @examp
-@literature
-[1] http://en.wikipedia.org/wiki/Conditional_random_field
 
 @sa File crf.sql_in (documenting the SQL functions)
 
@@ -165,7 +212,9 @@ LANGUAGE plpythonu VOLATILE;
  * @brief Compute linear-chain crf coefficients and diagnostic statistics
  *
  * @param source Name of the source relation containing the training data
- * @param featureColumn Name of the feature column (of type DOUBLE PRECISION[])
+ * @param sparse_R Name of the sparse single state feature column (of type DOUBLE PRECISION[])
+ * @param dense_M Name of the dense two state feature column (of type DOUBLE PRECISION[])
+ * @param sparse_M Name of the sparse two state feature column (of type DOUBLE PRECISION[])
  * @param featureSize Name of feature size column (of type DOUBLE PRECISION)
  * @param tagSize The number of tags in the tag set
  * @param featureset The unique feature set
