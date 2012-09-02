@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file quantile.sql_in
  *
@@ -14,11 +14,11 @@
 @addtogroup grp_quantile
 
 @about
-This function computes the specified quantile value. It reads the name of the 
-table, the specific column, and computes the quantile value based on the 
-fraction specified as the third argument. 
+This function computes the specified quantile value. It reads the name of the
+table, the specific column, and computes the quantile value based on the
+fraction specified as the third argument.
 
-For an implementation of quantile using sketches, check out the cmsketch_centile() 
+For an implementation of quantile using sketches, check out the cmsketch_centile()
 aggregate in the \ref grp_countmin module.
 
 @implementation
@@ -45,14 +45,14 @@ sql> SELECT quantile( 'tab1', 'col1', .3);
 (1 row)
 \endverbatim
 
-@sa File quantile.sql_in documenting the SQL function.\n\n 
+@sa File quantile.sql_in documenting the SQL function.\n\n
 Module grp_countmin for an approximate quantile implementation.
 */
 
 
 /**
  * @brief Computes quantile
- * 
+ *
  * @param table_name name of the table from which quantile is to be taken
  * @param col_name name of the column that is to be used for quantile calculation
  * @param quantile desired quantile value \f$ \in (0,1) \f$
@@ -64,168 +64,165 @@ Module grp_countmin for an approximate quantile implementation.
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile_big(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
 declare
-  size FLOAT[];
-  increment INT := 0;
-  curr_old FLOAT;
-  last_values FLOAT[];
-  last_values1 FLOAT[];
-  last_values2 FLOAT[];
-  quantile_size FLOAT;
-  full_size FLOAT;
-  delta FLOAT;
-  rows_removed INT := 0;
- Begin
- 	/*
- 		This portion computes basic statistics on the table, finding: 
- 			MIN value
- 			AVG value
- 			MAX value
- 			COOUNT of the elemens
- 		Which at stored in that order into 'size' object
- 		'quantile_size' is computed in terms of element count
- 	*/
-	EXECUTE 'SELECT array[MIN('||col_name||'), AVG('||col_name||'), MAX('||col_name||'), COUNT(*)] FROM '||table_name||' ' INTO size;
-	quantile_size = size[4]*quantile;
-	full_size = size[4];
-	
-	-- check for bad input 
-	IF(quantile < 0) OR (quantile >= 1) THEN
-		RAISE EXCEPTION 'Quantile should be between 0 and 0.99';
-	ELSIF(quantile = 0) THEN
-		RETURN size[1];	
-	END IF;		
-	
-	-- create some temp tables to use as swap
-	DROP TABLE IF EXISTS temptable0;
-	CREATE TEMP TABLE temptable0(val FLOAT);
-	
-	DROP TABLE IF EXISTS temptable1;
-	CREATE TEMP TABLE temptable1(val FLOAT);	
-	
-
-	/*
-		This is the main loop of the algorithm. Its goal is to do a binarry search over the table to find the value that is the closest to the position corresponding to the 
-		quantile size.
-		
-		In each itteration for a given value 'size[2]' following are computed:
-			MIN value less than or equal to 'size[2]'
-			AVERAGE value less than or equal to 'size[2]'
-			MAX value less than or equal to 'size[2]'
-			COUNT of the values less than or equal to 'size[2]'
-		This results are stored into 'last_values' in that order
-	*/
-    LOOP
-    	--EXECUTE 'SELECT ARRAY[MIN(a_min),AVG(a_avg),MAX(a_max),SUM(a_count)] FROM (SELECT COUNT(*) AS a_count, MIN('||col_name||') a_min, AVG('||col_name||') a_avg, MAX('||col_name||') AS a_max FROM '||table_name||' WHERE '||col_name||' <= '||size[2]||' GROUP BY gp_segment_id ORDER BY a_max DESC) AS k' INTO last_values;  
-    	
-		IF(increment = 0) THEN
-			EXECUTE 'SELECT ARRAY[MIN('||col_name||'),AVG('||col_name||'),MAX('||col_name||'),COUNT(*)] FROM '||table_name||' WHERE '||col_name||' <= '||size[2]||';' INTO last_values;
-		ELSE
-			EXECUTE 'SELECT ARRAY[MIN(val),AVG(val),MAX(val),COUNT(*)] FROM temptable'||increment%2||' WHERE val <= '||size[2]||';' INTO last_values;
-		END IF;
-		last_values[4] = last_values[4] + rows_removed;			
-		
-			
-		IF(last_values[4]=rows_removed) THEN
-			/* 
-				If there are no more rows left, we exit.
-			*/
-			EXIT;		
-		
-    	ELSIF((increment > 0)AND(curr_old = last_values[4])) THEN
-    		/*
-    			We will exit the loop if there was not change in the count from previous itteration
-    			which mean that process will make no further progress.
-    		*/
-    		EXIT;
-    	ELSIF((last_values[4] - quantile_size) > 1) THEN
-    		/*
-    			If current COUNT is greater than 'size[2]' we will reduce the value of 'size[2]'
-    			in binarry search fashion. And then update upper limit to our search the max value observed in this round 
-    		*/
-    		size[2] =  (last_values[3]+size[1])/2.0;
-    		size[3] = last_values[3];
-			
-			--remove all rows that are larger than new max
-			IF(increment = 0) THEN
-				EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT '||col_name||' FROM '||table_name||' WHERE '||col_name||' <= '||size[3]||';';
-			ELSE
-				EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT val FROM temptable'||increment%2||' WHERE val <= '||size[3]||';';
-				EXECUTE 'TRUNCATE temptable'||increment%2||';';
-			END IF; 
-			
-			
-    	ELSIF((quantile_size - last_values[4]) > 1) THEN
-    		/*
-    			If current COUNT is less than 'size[2]' we will increse the value of 'size[2]'
-    			in binarry search fashion. And then update lower limit to our search the max value observed in this round 
-    		*/
-    		size[1] = last_values[3];
-    		size[2] = (last_values[3]+size[3])/2.0;
-			
-			--remove all rows that are smaller than new min
-			IF(increment = 0) THEN
-				--add a small offset to ensure the value that is equal to size[1] is NOT kept
-				EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT '||col_name||' FROM '||table_name||' WHERE '||col_name||' > '||size[1]||'+1e-10;';
-			ELSE
-				EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT val FROM temptable'||increment%2||' WHERE val > '||size[1]||'+1e-10;';
-				EXECUTE 'TRUNCATE temptable'||increment%2||';';
-			END IF; 			
-			rows_removed = last_values[4];
-			
-    	ELSE
-    		/*
-    			EXIT since we are closer than 1 element away from the quantile size
-    		*/
-    		IF((quantile_size - last_values[4]) < 0)THEN
-    			size[2] = last_values[3];
-    		END IF;
-    		EXIT;
-    	END IF;
-    	increment = increment+1;
-    	curr_old = last_values[4];
-    END LOOP;
-    
+    size            FLOAT[];
+    count           BIGINT;
+    increment       INT := 0;
+    curr_old        BIGINT;
+    last_values     FLOAT[];
+    last_count      BIGINT;
+    last_value1     FLOAT;
+    last_count1     BIGINT;
+    last_value2     FLOAT;
+    last_count2     BIGINT;
+    quantile_size   BIGINT;
+    full_size       BIGINT;
+    rows_removed    BIGINT := 0;
+Begin
     /*
-    	At this point we terminated the binary search but we do not know what the reason why no progress could be made
-    	following is the code that determines what is the reason for the termination, and finds the exact solution depending on the reason
+         This portion computes basic statistics on the table, finding:
+             MIN value
+             AVG value
+             MAX value
+             COOUNT of the elemens
+         Which at stored in that order into 'size', count object
+         'quantile_size' is computed in terms of element count
     */
-    --EXECUTE 'SELECT ARRAY[MAX(a_max),SUM(a_count)] FROM (SELECT COUNT(*) AS a_count, MAX('||col_name||') AS a_max FROM '||table_name||' WHERE '||col_name||' <'||size[2]||' GROUP BY gp_segment_id ORDER BY a_max DESC) AS k' INTO last_values1; 
-	EXECUTE 'SELECT ARRAY[MAX('||col_name||'),COUNT(*)] FROM '||table_name||' WHERE '||col_name||' < '||size[2]||';' INTO last_values1;
-	
-    IF(last_values1[2] >= quantile_size) THEN
-    	RETURN last_values1[1]; 
+    EXECUTE 'SELECT array[MIN('||col_name||'), AVG('||col_name||'), MAX('||col_name||')], COUNT(*) FROM '||table_name||' ' INTO size, count;
+    quantile_size = count*quantile;
+    full_size = count;
+
+    -- check for bad input
+    IF(quantile < 0) OR (quantile >= 1) THEN
+        RAISE EXCEPTION 'Quantile should be between 0 and 0.99';
+    ELSIF(quantile = 0) THEN
+        RETURN size[1];
     END IF;
-    	
-    --EXECUTE 'SELECT ARRAY[MIN(a_min),'||full_size||'-SUM(a_count)+1] FROM (SELECT COUNT(*) AS a_count, MIN('||col_name||') a_min FROM '||table_name||' WHERE '||col_name||' > '||size[2]||' GROUP BY gp_segment_id ORDER BY a_min DESC) AS k' INTO last_values2; 
-	EXECUTE 'SELECT ARRAY[MIN('||col_name||'),'||full_size||'-COUNT(*)+1] FROM '||table_name||' WHERE '||col_name||' > '||size[2]||';' INTO last_values2;
-	
-    last_values = last_values[3:4];
-   	
-   	 IF(last_values[2] >= quantile_size) THEN
-		
-		--If the difference is greater than 1 element away, then there are probably many repeated values
-		IF(last_values[2]-quantile_size >= 1) THEN			
-			RETURN last_values[1];
-		END IF;		
-   	 	RETURN last_values[1]*(quantile_size-last_values1[2])/(last_values[2]-last_values1[2])+last_values1[1]*(last_values[2]-quantile_size)/(last_values[2]-last_values1[2]); 
-   	 ELSE
-		--If the difference is greater than 1 element away, then there are probably many repeated values
-		IF(quantile_size-last_values[2] > 1) THEN
-			RETURN last_values2[1];
-		END IF;		
-   	 	RETURN last_values2[1]*(quantile_size-last_values[2])/(last_values2[2]-last_values[2])+last_values[1]*(last_values2[2]-quantile_size)/(last_values2[2]-last_values[2]);
-   	 END IF;
-	 
-	 -- Cleanup
-	 DROP TABLE IF EXISTS temptable0;
-	 DROP TABLE IF EXISTS temptable1;	 
-	 
+
+    -- create some temp tables to use as swap
+    DROP TABLE IF EXISTS temptable0;
+    CREATE TEMP TABLE temptable0(val FLOAT);
+
+    DROP TABLE IF EXISTS temptable1;
+    CREATE TEMP TABLE temptable1(val FLOAT);
+
+
+    /*
+        This is the main loop of the algorithm. Its goal is to do a binarry search over the table to find the value that is the closest to the position corresponding to the
+        quantile size.
+
+        In each itteration for a given value 'size[2]' following are computed:
+            MIN value less than or equal to 'size[2]'
+            AVERAGE value less than or equal to 'size[2]'
+            MAX value less than or equal to 'size[2]'
+            COUNT of the values less than or equal to 'size[2]'
+        This results are stored into 'last_values', last_count in that order
+    */
+    LOOP
+        IF(increment = 0) THEN
+            EXECUTE 'SELECT ARRAY[MIN('||col_name||'),AVG('||col_name||'),MAX('||col_name||')],COUNT(*) FROM '||table_name||' WHERE '||col_name||' <= '||size[2]||';' INTO last_values, last_count;
+        ELSE
+            EXECUTE 'SELECT ARRAY[MIN(val),AVG(val),MAX(val)],COUNT(*) FROM temptable'||increment%2||' WHERE val <= '||size[2]||';' INTO last_values, last_count;
+        END IF;
+        last_count = last_count + rows_removed;
+
+
+        IF(last_count=rows_removed) THEN
+            /*
+                If there are no more rows left, we exit.
+            */
+            EXIT;
+
+        ELSIF((increment > 0)AND(curr_old = last_count)) THEN
+            /*
+                We will exit the loop if there was not change in the count from previous itteration
+                which mean that process will make no further progress.
+            */
+            EXIT;
+        ELSIF((last_count - quantile_size) > 1) THEN
+            /*
+                If current COUNT is greater than 'size[2]' we will reduce the value of 'size[2]'
+                in binarry search fashion. And then update upper limit to our search the max value observed in this round
+            */
+            size[2] =  (last_values[3]+size[1])/2.0;
+            size[3] = last_values[3];
+
+            --remove all rows that are larger than new max
+            IF(increment = 0) THEN
+                EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT '||col_name||' FROM '||table_name||' WHERE '||col_name||' <= '||size[3]||';';
+            ELSE
+                EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT val FROM temptable'||increment%2||' WHERE val <= '||size[3]||';';
+                EXECUTE 'TRUNCATE temptable'||increment%2||';';
+            END IF;
+
+
+        ELSIF((quantile_size - last_count) > 1) THEN
+            /*
+                If current COUNT is less than 'size[2]' we will increse the value of 'size[2]'
+                in binarry search fashion. And then update lower limit to our search the max value observed in this round
+            */
+            size[1] = last_values[3];
+            size[2] = (last_values[3]+size[3])/2.0;
+
+            --remove all rows that are smaller than new min
+            IF(increment = 0) THEN
+                --add a small offset to ensure the value that is equal to size[1] is NOT kept
+                EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT '||col_name||' FROM '||table_name||' WHERE '||col_name||' > '||size[1]||'+1e-10;';
+            ELSE
+                EXECUTE 'INSERT INTO temptable'||(increment+1)%2||' SELECT val FROM temptable'||increment%2||' WHERE val > '||size[1]||'+1e-10;';
+                EXECUTE 'TRUNCATE temptable'||increment%2||';';
+            END IF;
+            rows_removed = last_count;
+
+        ELSE
+            /*
+                EXIT since we are closer than 1 element away from the quantile size
+            */
+            IF((quantile_size - last_count) < 0)THEN
+                size[2] = last_values[3];
+            END IF;
+            EXIT;
+        END IF;
+        increment = increment+1;
+        curr_old = last_count;
+    END LOOP;
+
+    /*
+        At this point we terminated the binary search but we do not know what the reason why no progress could be made
+        following is the code that determines what is the reason for the termination, and finds the exact solution depending on the reason
+    */
+    EXECUTE 'SELECT MAX('||col_name||'),COUNT(*) FROM '||table_name||' WHERE '||col_name||' < '||size[2]||';' INTO last_value1, last_count1;
+
+    IF(last_count1 >= quantile_size) THEN
+        RETURN last_value1;
+    END IF;
+
+    EXECUTE 'SELECT MIN('||col_name||'),'||full_size||'-COUNT(*)+1 FROM '||table_name||' WHERE '||col_name||' > '||size[2]||';' INTO last_value2, last_count2;
+
+
+    IF(last_count >= quantile_size) THEN
+        --If the difference is greater than 1 element away, then there are probably many repeated values
+        IF(last_count-quantile_size >= 1) THEN
+            RETURN last_values[3];
+        END IF;
+        RETURN last_values[3]*(quantile_size-last_count1)/(last_count-last_count1)+last_value1*(last_count-quantile_size)/(last_count-last_count1);
+    ELSE
+        --If the difference is greater than 1 element away, then there are probably many repeated values
+        IF(quantile_size-last_count > 1) THEN
+            RETURN last_value2;
+        END IF;
+        RETURN last_value2*(quantile_size-last_count)/(last_count2-last_count)+last_values[3]*(last_count2-quantile_size)/(last_count2-last_count);
+    END IF;
+
+    -- Cleanup
+    DROP TABLE IF EXISTS temptable0;
+    DROP TABLE IF EXISTS temptable1;
+
 end
 $$ LANGUAGE plpgsql;
 
 /**
  * @brief Computes quantile
- * 
+ *
  * @param table_name name of the table from which quantile is to be taken
  * @param col_name name of the column that is to be used for quantile calculation
  * @param quantile desired quantile value \f$ \in (0,1) \f$
@@ -237,18 +234,18 @@ $$ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.quantile(table_name TEXT, col_name TEXT, quantile FLOAT) RETURNS FLOAT AS $$
 declare
-	size FLOAT;
-	result FLOAT[];
-	res FLOAT;
+    size FLOAT;
+    result FLOAT[];
+    res FLOAT;
 begin
-	-- check for bad input 
-	IF(quantile < 0) OR (quantile >= 1) THEN
-		RAISE EXCEPTION 'Quantile should be between 0 and 0.99';
-	END IF;	
+    -- check for bad input
+    IF(quantile < 0) OR (quantile >= 1) THEN
+        RAISE EXCEPTION 'Quantile should be between 0 and 0.99';
+    END IF;
 
-	EXECUTE 'SELECT COUNT(*)*'||quantile||' FROM '||table_name||' ' INTO size;
-	EXECUTE 'SELECT ARRAY(SELECT '||col_name||' FROM (SELECT '||col_name||' FROM '||table_name||' ORDER BY '||col_name||' OFFSET '||floor(size)||'-1 LIMIT 2) AS g)' INTO result;
-	EXECUTE 'SELECT '||result[2]||'*('||size||'%1)+'||result[1]||'*(1-'||size||'%1)' INTO res;
-	return res;
+    EXECUTE 'SELECT COUNT(*)*'||quantile||' FROM '||table_name||' ' INTO size;
+    EXECUTE 'SELECT ARRAY(SELECT '||col_name||' FROM (SELECT '||col_name||' FROM '||table_name||' ORDER BY '||col_name||' OFFSET '||floor(size)||'-1 LIMIT 2) AS g)' INTO result;
+    EXECUTE 'SELECT '||result[2]||'*('||size||'%1)+'||result[1]||'*(1-'||size||'%1)' INTO res;
+    return res;
 end
 $$ LANGUAGE plpgsql;

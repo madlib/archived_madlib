@@ -67,13 +67,11 @@ extern "C" {
 #undef dngettext
 #endif
 
-#include <dbal/dbal.hpp>
-#include <utils/Reference.hpp>
-#include <utils/Math.hpp>
-
 // Note: If errors occur in the following include files, it could indicate that
 // new macros have been added to PostgreSQL header files.
+#include <boost/mpl/if.hpp>
 #include <boost/type_traits/is_const.hpp>
+#include <boost/type_traits/remove_cv.hpp>
 #include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/utility/enable_if.hpp>
 #include <boost/tr1/array.hpp>
@@ -82,6 +80,10 @@ extern "C" {
 #include <stdexcept>
 #include <vector>
 #include <fstream>
+
+#include <dbal/dbal_proto.hpp>
+#include <utils/Reference.hpp>
+#include <utils/Math.hpp>
 
 namespace std {
     // Import names from TR1.
@@ -179,12 +181,14 @@ madlib ## _ ## _pgfunc _arglist { \
 #include "Allocator_proto.hpp"
 #include "ArrayHandle_proto.hpp"
 #include "AnyType_proto.hpp"
+#include "ByteString_proto.hpp"
 #include "FunctionHandle_proto.hpp"
 #include "NativeRandomNumberGenerator_proto.hpp"
 #include "PGException_proto.hpp"
 #include "OutputStreamBuffer_proto.hpp"
 #include "SystemInformation_proto.hpp"
 #include "TransparentHandle_proto.hpp"
+#include "TypeTraits_proto.hpp"
 #include "UDF_proto.hpp"
 
 // Several backend functions (APIs) need a wrapper, so that they can be called
@@ -197,9 +201,10 @@ namespace madlib {
 using dbconnector::postgres::Allocator;
 using dbconnector::postgres::AnyType;
 using dbconnector::postgres::ArrayHandle;
+using dbconnector::postgres::ByteString;
 using dbconnector::postgres::FunctionHandle;
 using dbconnector::postgres::MutableArrayHandle;
-using dbconnector::postgres::MutableTransparentHandle;
+using dbconnector::postgres::MutableByteString;
 using dbconnector::postgres::NativeRandomNumberGenerator;
 using dbconnector::postgres::TransparentHandle;
 
@@ -209,23 +214,33 @@ using dbconnector::postgres::Null;
 
 } // namespace madlib
 
+#include <dbal/dbal_impl.hpp>
+
 // FIXME: The following include should be further up. Currently dependent on
-// Allocator
-#include <dbal/EigenIntegration/EigenIntegration.hpp>
+// dbal_impl.hpp which depends on the memory allocator.
 #include "EigenIntegration_proto.hpp"
 
-#include "TypeTraits.hpp"
 #include "Allocator_impl.hpp"
 #include "AnyType_impl.hpp"
 #include "ArrayHandle_impl.hpp"
+#include "ByteString_impl.hpp"
 #include "EigenIntegration_impl.hpp"
 #include "FunctionHandle_impl.hpp"
 #include "NativeRandomNumberGenerator_impl.hpp"
 #include "OutputStreamBuffer_impl.hpp"
 #include "TransparentHandle_impl.hpp"
+#include "TypeTraits_impl.hpp"
 #include "UDF_impl.hpp"
 #include "SystemInformation_impl.hpp"
 
+namespace madlib {
+
+typedef dbal::DynamicStructRootContainer<
+    ByteString, dbconnector::postgres::TypeTraits> RootContainer;
+typedef dbal::DynamicStructRootContainer<
+    MutableByteString, dbconnector::postgres::TypeTraits> MutableRootContainer;
+
+} // namespace madlib
 
 #define DECLARE_UDF(_module, _name) \
     namespace madlib { \
@@ -234,6 +249,22 @@ using dbconnector::postgres::Null;
     struct _name : public dbconnector::postgres::UDF { \
         inline _name(FunctionCallInfo fcinfo) : dbconnector::postgres::UDF(fcinfo) { }  \
         AnyType run(AnyType &args); \
+        inline void *SRF_init(AnyType&) {return NULL;}; \
+        inline AnyType SRF_next(void *, bool *){return AnyType();}; \
+    }; \
+    } \
+    } \
+    }
+
+#define DECLARE_SR_UDF(_module, _name) \
+    namespace madlib { \
+    namespace modules { \
+    namespace _module { \
+    struct _name : public dbconnector::postgres::UDF { \
+        inline _name(FunctionCallInfo fcinfo) : dbconnector::postgres::UDF(fcinfo) { }  \
+        inline AnyType run(AnyType &){return AnyType();}; \
+        void *SRF_init(AnyType &args); \
+        AnyType SRF_next(void *user_fctx, bool *is_last_call); \
     }; \
     } \
     } \

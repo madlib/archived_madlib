@@ -29,6 +29,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Backend.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ByteString_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ByteString_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/dbconnector.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/EigenIntegration_impl.hpp"
@@ -46,7 +48,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/SystemInformation_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TransparentHandle_proto.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TypeTraits.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TypeTraits_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/TypeTraits_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/UDF_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/UDF_proto.hpp"
 )

@@ -17,6 +17,48 @@ namespace postgres {
     sqlerrcode = err; \
     strncpy(msg, exc.what(), sizeof(msg));
 
+#define MADLIB_SRF_IS_FIRSTCALL() SRF_is_firstcall<Function>(fcinfo)
+#define MADLIB_SRF_FIRSTCALL_INIT() SRF_FIRSTCALL_INIT()
+#define MADLIB_SRF_PERCALL_SETUP() SRF_percall_setup<Function>(fcinfo)
+#define MADLIB_SRF_RETURN_NEXT(_funcctx, _result) SRF_RETURN_NEXT(_funcctx, _result)
+#define MADLIB_SRF_RETURN_DONE(_funcctx) SRF_RETURN_DONE(_funcctx)
+
+/**
+ * @brief A wrapper for SRF_IS_FIRSTCALL.
+ *
+ * We wrap SRF_IS_FIRSTCALL inside the PG_TRY block to handle the errors
+ *
+ * @param fcinfo The PostgreSQL FunctionCallInfoData structure
+ */
+template <class Function>
+inline bool
+UDF::SRF_is_firstcall(FunctionCallInfo fcinfo){
+    MADLIB_PG_TRY {
+        return SRF_IS_FIRSTCALL();
+    } MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
+
+    return false;
+}
+
+
+/**
+ * @brief A wrapper for SRF_PERCALL_SETUP.
+ *
+ * We wrap SRF_PERCALL_SETUP inside the PG_TRY block to handle the errors
+ *
+ * @param fcinfo The PostgreSQL FunctionCallInfoData structure
+ */
+template <class Function>
+inline FuncCallContext*
+UDF::SRF_percall_setup(FunctionCallInfo fcinfo){
+    MADLIB_PG_TRY {
+        return SRF_PERCALL_SETUP();
+    } MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
+
+    return NULL;
+}
+
+
 /**
  * @brief Internal interface for calling a UDF
  *
@@ -36,6 +78,61 @@ UDF::invoke(FunctionCallInfo fcinfo, AnyType& args) {
     return Function(fcinfo).run(args);
 }
 
+
+/**
+ * @brief Internal interface for calling a set return UDF
+ *
+ * We need the FunctionCallInfo in case some arguments or return values are
+ * of polymorphic types.
+ *
+ * @param fcinfo The PostgreSQL FunctionCallInfoData structure
+ *
+ */
+template <class Function>
+inline
+Datum
+UDF::SRF_invoke(FunctionCallInfo fcinfo) {
+    FuncCallContext *funcctx = NULL;
+    MemoryContext oldcontext;
+    bool is_last_call = false;
+
+    /* TODO: we may use a better way to handle the errors
+     * from SRF_IS_FIRSTCALL and SRF_PERCALL_SETUP
+     */
+    if (MADLIB_SRF_IS_FIRSTCALL()) {
+        /* create a function context for cross-call persistence */
+        funcctx = MADLIB_SRF_FIRSTCALL_INIT();
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+        // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
+        // to init the pointer: fn_extra
+        AnyType args(fcinfo);
+        args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
+        MemoryContextSwitchTo(oldcontext);
+    }
+
+    funcctx = MADLIB_SRF_PERCALL_SETUP();
+
+    // the invoker function will handle the exceptions from this function
+    // TODO: Don't we need args for "next"?
+    AnyType result = Function(fcinfo).SRF_next(
+        static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
+        &is_last_call);
+
+    if (is_last_call)
+        MADLIB_SRF_RETURN_DONE(funcctx);
+
+    Datum datum;
+    if (result.isNull()) {
+        fcinfo->isnull = true;
+        datum = (Datum) 0;
+    } else {
+        datum = result.getAsDatum(fcinfo);
+    }
+
+    MADLIB_SRF_RETURN_NEXT(funcctx, datum);
+}
+
 /**
  * @brief Each exported C function calls this method (and nothing else)
  */
@@ -45,22 +142,25 @@ Datum
 UDF::call(FunctionCallInfo fcinfo) {
     int sqlerrcode;
     char msg[2048];
-
     try {
         // We want to store in the cache that this function is implemented on
         // top of the C++ AL. Should the same function be invoked again via a
         // FunctionHandle, it can be invoked directly.
-        SystemInformation::get(fcinfo)
-            ->functionInformation(fcinfo->flinfo->fn_oid)->cxx_func
-            = invoke<Function>;
+        if (fcinfo->flinfo->fn_retset) {
+            return SRF_invoke<Function>(fcinfo);
+        }
+        else {
+            AnyType args(fcinfo);
+            SystemInformation::get(fcinfo)
+                ->functionInformation(fcinfo->flinfo->fn_oid)->cxx_func
+                = invoke<Function>;
+            AnyType result = invoke<Function>(fcinfo, args);
 
-        AnyType args(fcinfo);
-        AnyType result = invoke<Function>(fcinfo, args);
+            if ( result.isNull() )
+                PG_RETURN_NULL();
 
-        if (result.isNull())
-            PG_RETURN_NULL();
-        
-        return result.getAsDatum(fcinfo);
+            return result.getAsDatum(fcinfo);
+        }
     } catch (std::bad_alloc &) {
         sqlerrcode = ERRCODE_OUT_OF_MEMORY;
         strncpy(msg,

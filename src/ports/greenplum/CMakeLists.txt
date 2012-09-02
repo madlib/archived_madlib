@@ -39,6 +39,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Backend.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ByteString_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ByteString_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Compatibility.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/dbconnector.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/EigenIntegration_impl.hpp"
@@ -56,7 +58,8 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/SystemInformation_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TransparentHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TransparentHandle_proto.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TypeTraits.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TypeTraits_impl.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/TypeTraits_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/UDF_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/UDF_proto.hpp"
 )

@@ -27,12 +27,12 @@ HandleMap<EigenType, Handle, MapOptions>::operator=(
     Base::operator=(other);
     return *this;
 }
-        
+
 /**
  * @brief Rebind to a different handle
  *
- * This rebind method requires that Handle has a size() method, which is
- * called to determine the length of the vector.
+ * This ignores any size information the handle may have. The format of the
+ * matrix is not changed.
  */
 template <class EigenType, class Handle, int MapOptions>
 inline
@@ -40,12 +40,12 @@ HandleMap<EigenType, Handle, MapOptions>&
 HandleMap<EigenType, Handle, MapOptions>::rebind(
     const Handle &inHandle) {
 
-    return rebind(inHandle, inHandle.size());
+    return rebind(inHandle, this->rows(), this->cols());
 }
 
 /**
  * @brief Rebind to a different handle
- * 
+ *
  * This ignores any size information the handle may have. This
  * rebind method can be used with any Handle.
  */
@@ -54,15 +54,24 @@ inline
 HandleMap<EigenType, Handle, MapOptions>&
 HandleMap<EigenType, Handle, MapOptions>::rebind(
     const Handle &inHandle, const Index inSize) {
-    
+
     new (this) HandleMap(inHandle, inSize);
     mMemoryHandle = inHandle;
     return *this;
 }
-        
+
+template <class EigenType, class Handle, int MapOptions>
+inline
+HandleMap<EigenType, Handle, MapOptions>&
+HandleMap<EigenType, Handle, MapOptions>::rebind(
+    const Index inSize) {
+
+    return this->rebind(mMemoryHandle, inSize);
+}
+
 /**
  * @brief Rebind to a different handle
- * 
+ *
  * This ignores any size information the handle may have. This
  * rebind method can be used with any Handle.
  *
@@ -75,10 +84,19 @@ inline
 HandleMap<EigenType, Handle, MapOptions>&
 HandleMap<EigenType, Handle, MapOptions>::rebind(
     const Handle &inHandle, const Index inRows, const Index inCols) {
-    
+
     new (this) HandleMap(inHandle, inRows, inCols);
     mMemoryHandle = inHandle;
     return *this;
+}
+
+template <class EigenType, class Handle, int MapOptions>
+inline
+HandleMap<EigenType, Handle, MapOptions>&
+HandleMap<EigenType, Handle, MapOptions>::rebind(
+    const Index inRows, const Index inCols) {
+
+    return this->rebind(mMemoryHandle, inRows, inCols);
 }
 
 /**

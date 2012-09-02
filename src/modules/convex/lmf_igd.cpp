@@ -39,8 +39,8 @@ typedef Loss<LMFIGDState<MutableArrayHandle<double> >, LMFIGDState<ArrayHandle<d
  */
 AnyType
 lmf_igd_transition::run(AnyType &args) {
-    // The real state. 
-    // For the first tuple: args[0] is nothing more than a marker that 
+    // The real state.
+    // For the first tuple: args[0] is nothing more than a marker that
     // indicates that we should do some initial operations.
     // For other tuples: args[0] holds the computation state until last tuple
     LMFIGDState<MutableArrayHandle<double> > state = args[0];
@@ -55,12 +55,28 @@ lmf_igd_transition::run(AnyType &args) {
         } else {
             // configuration parameters
             uint16_t rowDim = args[5].getAs<uint16_t>();
-            uint16_t colDim = args[6].getAs<uint16_t>();
+            if (rowDim == 0) {
+                throw std::runtime_error("Invalid parameter: row_dim = 0");
+            }
+            uint16_t columnDim = args[6].getAs<uint16_t>();
+            if (columnDim == 0) {
+                throw std::runtime_error("Invalid parameter: column_dim = 0");
+            }
             uint16_t maxRank = args[7].getAs<uint16_t>();
+            if (maxRank == 0) {
+                throw std::runtime_error("Invalid parameter: max_rank = 0");
+            }
             double stepsize = args[8].getAs<double>();
+            if (stepsize <= 0.) {
+                throw std::runtime_error("Invalid parameter: stepsize <= 0.0");
+            }
             double scaleFactor = args[9].getAs<double>();
+            if (scaleFactor <= 0.) {
+                throw std::runtime_error("Invalid parameter: scale_factor <= "
+                        "0.0");
+            }
 
-            state.allocate(*this, rowDim, colDim, maxRank);
+            state.allocate(*this, rowDim, columnDim, maxRank);
             state.task.stepsize = stepsize;
             state.task.model.initialize(scaleFactor);
         }
@@ -72,6 +88,13 @@ lmf_igd_transition::run(AnyType &args) {
     LMFTuple tuple;
     tuple.indVar.i = args[1].getAs<uint16_t>();
     tuple.indVar.j = args[2].getAs<uint16_t>();
+    if (tuple.indVar.i == 0 || tuple.indVar.j == 0) {
+        throw std::runtime_error("Invalid parameter: [col_row] = 0 or "
+                "[col_column] = 0 in table [rel_source]");
+    }
+    // database starts from 1, while C++ starts from 0
+    tuple.indVar.i --;
+    tuple.indVar.j --;
     tuple.depVar = args[3].getAs<double>();
 
     // Now do the transition step
@@ -121,7 +144,10 @@ lmf_igd_final::run(AnyType &args) {
     LMFIGDAlgorithm::final(state);
     // LMFLossAlgorithm::final(state); // empty function call causes a warning
     state.computeRMSE();
- 
+
+    // for stepsize tuning
+    dberr << "RMSE: " << state.task.RMSE << std::endl;
+
     return state;
 }
 
@@ -143,10 +169,12 @@ AnyType
 internal_lmf_igd_result::run(AnyType &args) {
     LMFIGDState<ArrayHandle<double> > state = args[0];
 
+    Matrix U = trans(state.task.model.matrixU);
+    Matrix V = trans(state.task.model.matrixV);
+    double RMSE = state.task.RMSE;
+
     AnyType tuple;
-    tuple << state.task.model.matrixU
-        << state.task.model.matrixV
-        << static_cast<double>(state.task.RMSE);
+    tuple << U << V << RMSE;
 
     return tuple;
 }

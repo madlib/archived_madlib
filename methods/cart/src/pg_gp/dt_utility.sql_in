@@ -18,34 +18,13 @@
  * @note Greenplum doesn't support boolean to text casting.
  *
  */
-DROP FUNCTION IF EXISTS MADLIB_SCHEMA.__to_char
-    (
-    val anyelement
-    );
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__to_char
     (
     val anyelement
-    )
-RETURNS TEXT AS $$
-DECLARE
-    is_bool BOOLEAN;
-BEGIN
-    IF (val is NULL) THEN
-        return 'null'::text;
-    END IF;
-    SELECT pg_typeof(val) = 'boolean'::regtype INTO is_bool;
-    IF (is_bool) THEN
-         IF (val::boolean) THEN
-            RETURN 'true';
-         ELSE
-            RETURN 'false';
-         END IF;
-    END IF;
-    
-    RETURN val::TEXT;
-
-END
-$$ LANGUAGE PLPGSQL;
+    ) 
+RETURNS TEXT
+AS 'MODULE_PATHNAME', 'dt_to_text'
+LANGUAGE C STRICT IMMUTABLE;
 
 
 /*
@@ -70,7 +49,7 @@ AS $$
 BEGIN                
    RETURN rc;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL IMMUTABLE;
 
 
 /*
@@ -115,13 +94,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     arg4      TEXT
     )
 RETURNS TEXT AS $$
-DECLARE
-    stmt TEXT := '';
-BEGIN
-    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2, arg3, arg4]) INTO stmt;
-    RETURN stmt;
-END
-$$ LANGUAGE PLPGSQL;
+    SELECT MADLIB_SCHEMA.__format($1, ARRAY[$2, $3, $4, $5]);
+$$ LANGUAGE sql IMMUTABLE;
 
 
 /*
@@ -142,13 +116,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     arg3        TEXT
 )
 RETURNS TEXT AS $$
-DECLARE
-    stmt TEXT := '';
-BEGIN
-    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2, arg3]) INTO stmt;
-    RETURN stmt;
-END
-$$ LANGUAGE PLPGSQL;
+    SELECT MADLIB_SCHEMA.__format($1, ARRAY[$2, $3, $4]);
+$$ LANGUAGE sql IMMUTABLE;
 
 
 /*
@@ -167,13 +136,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     arg2        TEXT
     )
 RETURNS TEXT AS $$
-DECLARE
-    stmt TEXT := '';
-BEGIN
-    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1, arg2]) INTO stmt;
-    RETURN stmt;
-END
-$$ LANGUAGE PLPGSQL;
+    SELECT MADLIB_SCHEMA.__format($1, ARRAY[$2, $3]);
+$$ LANGUAGE sql IMMUTABLE;
 
 
 /*
@@ -190,13 +154,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__format
     arg1        TEXT
     )
 RETURNS TEXT AS $$
-DECLARE
-    stmt TEXT := '';
-BEGIN
-    SELECT MADLIB_SCHEMA.__format(fmt, ARRAY[arg1]) INTO stmt;
-    RETURN stmt;
-END
-$$ LANGUAGE PLPGSQL;
+    SELECT MADLIB_SCHEMA.__format($1, ARRAY[$2]);
+$$ LANGUAGE sql IMMUTABLE;
 
 
 /*
@@ -217,7 +176,7 @@ BEGIN
         RAISE EXCEPTION 'ERROR: %', reason;
     END IF;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL IMMUTABLE;
 
 
 /*
@@ -281,7 +240,7 @@ BEGIN
     
     RETURN 'f';
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL STABLE;
 
 
 /*
@@ -313,7 +272,7 @@ BEGIN
             err_msg
         );
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL STABLE;
 
 
 /*
@@ -347,7 +306,7 @@ BEGIN
 
     RETURN lower(str_val);
 end
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL IMMUTABLE;
 
 
 /*
@@ -360,6 +319,9 @@ $$ LANGUAGE PLPGSQL;
  * @param full_table_name   The full table name.
  *
  * @return The schema name of the table.
+ *
+ * @note This function should be VOLATILE, since we may get schema name 
+ *       from a new created table in the same transaction.
  *
  */       
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_schema_name
@@ -435,7 +397,7 @@ RETURNS BOOLEAN AS $$
 		SELECT unnest($2) as elem
 		) t 
 	WHERE $1 IS NOT DISTINCT FROM elem
-$$ LANGUAGE sql STABLE;
+$$ LANGUAGE sql IMMUTABLE;
 
 
 /*
@@ -458,7 +420,7 @@ RETURNS BOOLEAN AS $$
     (
         SELECT unnest($1)
         EXCEPT
-        SELECT attname
+        SELECT quote_ident(attname) 
         FROM pg_attribute
         WHERE attrelid = $2::regclass   AND
               attnum > 0                AND
@@ -522,9 +484,58 @@ BEGIN
 
     -- null or empty array will be filtered 
     FOR index IN 1..array_upper(ret, 1) LOOP
-        ret[index] = btrim(ret[index], ' ');
+        ret[index] = quote_ident(btrim(ret[index], ' '));
     END LOOP;
 
     RETURN ret;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL IMMUTABLE;
+
+
+/*
+ * @brief Retrieve a BOOL array. The ith element in the array
+ *        indicate whether arr2[i] is in arr1 or not. The size
+ *        of the BOOL array is the same as arr2. For example,
+ *          arr1 = ['aa', 'bb', 'dd'],
+ *          arr2 = ['aa', 'dd', 'bb', 'ee', 'ccc']
+ *        then the BOOL array is:
+ *          ['t', 't', 't', 'f', 'f']
+ *
+ * @param src_arr  The source array.
+ * @param tst_arr  The array to be tested.
+ *
+ * @return A BOOL array. 
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__array_elem_in
+	(
+	src_arr ANYARRAY, 
+	tst_arr ANYARRAY
+	)
+RETURNS BOOLEAN[] AS $$
+    SELECT array_agg(elem in (SELECT unnest($1)))
+    FROM
+       (
+       SELECT unnest($2) as elem
+       ) t
+$$ LANGUAGE sql IMMUTABLE;
+
+
+/*
+ * @brief Sort the given array.
+ *
+ * @param arr   The array to be sorted.
+ *
+ * @return The sorted array. 
+ *
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__array_sort
+	(
+	arr ANYARRAY 
+	)
+RETURNS ANYARRAY AS $$
+	SELECT ARRAY
+    (SELECT elem FROM unnest($1) elem ORDER BY elem LIMIT ALL)
+$$ LANGUAGE sql IMMUTABLE;
+

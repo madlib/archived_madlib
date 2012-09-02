@@ -97,7 +97,7 @@ that it does not need a class column.
   This will create the decision tree output table storing an abstract object
   (representing the model) used for further classification. Column names:
   <pre>    
- id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |        scv        | live | case_size | parent_id | lmc_nid | lmc_fval |  is_continuous  | split_value | tid | dp_ids 
+ id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |        scv        | live | sample_size | parent_id | lmc_nid | lmc_fval |  is_continuous  | split_value | tid | dp_ids 
 ----+---------------+---------+-------------------+------------------+----------+-------------------+------+-----------+-----------+---------+----------+-----------------+-------------+-----+--------
                                                      ...</pre>    
     
@@ -180,7 +180,7 @@ sql> SELECT * FROM MADLIB_SCHEMA.c45_train(
 -# Check few rows from the tree model table:
 \verbatim
 sql> select * from trained_tree_infogain order by id;
- id | tree_location | feature |    probability    | ebp_coeff | maxclass |       scv         | live |case_size | parent_id | lmc_nid | lmc_fval | is_continuous   | split_value 
+ id | tree_location | feature |    probability    | ebp_coeff | maxclass |       scv         | live |sample_size | parent_id | lmc_nid | lmc_fval | is_continuous   | split_value 
 ----+---------------+---------+-------------------+-----------+----------+-------------------+------+----------+-----------+---------+----------+-----------------+-------------
   1 | {0}           |       3 | 0.642857142857143 |         1 |        2 | 0.171033941880327 |    0 |       14 |         0 |       2 |        1 | f               |            
   2 | {0,1}         |       4 |                 1 |         1 |        2 |                 0 |    0 |        4 |         1 |         |          | f               |            
@@ -305,7 +305,6 @@ CREATE TYPE MADLIB_SCHEMA.c45_classify_result AS
     classification_time   INTERVAL
     );
 
-
 /**
  * @brief This is the long form API of training tree with all specified parameters.
  *
@@ -372,18 +371,10 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.c45_train
     ) 
 RETURNS MADLIB_SCHEMA.c45_train_result AS $$
 DECLARE
-    cont_feature_col_names          TEXT[];
-    feature_name_array              TEXT[];
     begin_func_exec                 TIMESTAMP;
-    tree_schema_name                TEXT;
     tree_table_name                 TEXT;
-    training_encoded_table_name     TEXT;
-    training_metatable_name         TEXT;
-    h2hmv_routine_id                INT := 1;  
     ret                             MADLIB_SCHEMA.c45_train_result;
     train_rs                        RECORD;
-    n_fids                          INT;
-    curstmt                         TEXT;
 BEGIN   
     begin_func_exec = clock_timestamp();
     
@@ -394,268 +385,66 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
         (
-            (split_criterion IS NOT NULL)   AND
-            (
-             split_criterion = 'infogain'   OR 
-             split_criterion = 'gainratio'  OR 
-             split_criterion = 'gini'
-            ),
-            'split_criterion must be infogain, gainratio or gini'
+            (confidence_level IS NOT NULL)      AND
+            float8ge(confidence_level, 0.001)   AND
+            float8le(confidence_level, 100),
+            'confidence level value must be in range from 0.001 to 100'
         );
 
     PERFORM MADLIB_SCHEMA.__assert
-            (
-                how2handle_missing_value = 'ignore' OR 
-                how2handle_missing_value = 'explicit',
-                'how2handle_missing_value must be ignore or explicit!'
-            );    
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                (confidence_level IS NOT NULL)      AND 
-                float8ge(confidence_level, 0.001)   AND 
-                float8le(confidence_level, 100), 
-                'confidence level value must be in range from 0.001 to 100'
-            );
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                node_prune_threshold IS NOT NULL    AND
-                float8ge(node_prune_threshold, 0)   AND
-                float8le(node_prune_threshold, 1),
-                'node_prune_threshold value must be in range from 0 to 1'
-            );
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                node_split_threshold IS NOT NULL   AND                
-                float8ge(node_split_threshold, 0)  AND
-                float8le(node_split_threshold, 1),                
-                'node_split_threshold value must be in range from 0 to 1'
-            );
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                max_tree_depth IS NOT NULL         AND
-                max_tree_depth > 0,
-                'max_tree_depth value must be greater than 0'
-            );			
-            
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                verbosity IS NOT NULL,                
-                'verbosity must be non-null'
-            );
-                        
-    PERFORM MADLIB_SCHEMA.__assert
         (
-                id_col_name IS NOT NULL AND
-                class_col_name IS NOT NULL AND
-                length(btrim(id_col_name, ' ')) > 0 AND
-                length(btrim(class_col_name, ' ')) > 0,
-                'invalid id column name or class column name'
-            );
-                        
-    PERFORM MADLIB_SCHEMA.__assert
-        (
-            training_table_name IS NOT NULL AND
+            validation_table_name IS NULL OR
             MADLIB_SCHEMA.__table_exists
                 (
-                    training_table_name
+                    validation_table_name
                 ),
-            'the specified training table' || 
-            coalesce('<'                   || 
-            training_table_name            || 
-            '> does not exist', ' is NULL')
+            'the specified validation table' ||
+            '<'                              ||
+            validation_table_name            ||
+            '> does not exist'
         );
 
-    PERFORM MADLIB_SCHEMA.__assert
-        (
-            MADLIB_SCHEMA.__column_exists
-                (
-                    training_table_name,
-                    lower(btrim(id_col_name, ' '))
-                ),
-            'the specified training table<' || 
-            training_table_name             || 
-            '> does not have column '''     || 
-            id_col_name                     || 
-            ''''
-        );
-
-    PERFORM MADLIB_SCHEMA.__assert
-        (
-            MADLIB_SCHEMA.__column_exists
-                (
-                    training_table_name,
-                    lower(btrim(class_col_name, ' '))
-                ),
-            'the specified training table<'     || 
-            training_table_name                 || 
-            '> does not have column '''         || 
-            class_col_name                      || 
-            ''''
-        );
-
-    cont_feature_col_names  = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
-    feature_name_array      = MADLIB_SCHEMA.__csvstr_to_array(feature_col_names);
-
-    IF ( verbosity > 0 ) THEN
-        RAISE INFO 'continuous features:%', cont_feature_col_names;
-    END IF;
-
-    IF (feature_name_array IS NULL) THEN
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                MADLIB_SCHEMA.__columns_in_table(cont_feature_col_names, training_table_name),
-                'each feature in continuous_feature_names must be a column of the training table'
-            );
-    ELSE
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                MADLIB_SCHEMA.__columns_in_table(feature_name_array, training_table_name),
-                'each feature in feature_col_names must be a column of the training table'
-            );
-
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                coalesce(cont_feature_col_names, '{}'::TEXT[]) <@ feature_name_array,
-                'each feature in continuous_feature_names must be in the feature_col_names'
-            );
-    END IF;
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                result_tree_table_name IS NOT NULL,
-                'the specified result tree table name is NULL'
-            );
-                    
     tree_table_name = btrim(lower(result_tree_table_name), ' ');
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                NOT MADLIB_SCHEMA.__table_exists
-                    (
-                        tree_table_name
-                    )
-                ,
-                'the specified result tree table<'  || 
-                tree_table_name                     || 
-                '> exists' 
-            );
-            
-    -- create tree table and auxiliary tables
-    -- so that we can get the schema name of the table  
-    PERFORM MADLIB_SCHEMA.__create_tree_tables(tree_table_name);
-        
-    tree_schema_name = MADLIB_SCHEMA.__get_schema_name(tree_table_name);
-            
-    -- the maximum length of an identifier 63
-    -- encoding table name convension:  <schema name>_<table name>_ed
-    -- data info table name convension: <schema name>_<table name>_di
-    -- the KV table name convension:    <schema name>_<table name>_<####>
-    -- therefore, the maximum length of '<schema name>_<table name>' is 58
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__check_dt_common_params
         (
-            length(
-                tree_schema_name      || 
-                '_'                   || 
-                tree_table_name) <= 58,
-            'the maximum length of ''<tree_schema_name>_<tree_table_name>'' is 58'
+            split_criterion,
+            training_table_name, 
+            tree_table_name,
+            continuous_feature_names, 
+            feature_col_names, 
+            id_col_name, 
+            class_col_name, 
+            how2handle_missing_value,
+            max_tree_depth,
+            node_prune_threshold,
+            node_split_threshold, 
+            verbosity,
+            'tree'
         );
-            
-    IF (how2handle_missing_value = 'ignore') THEN
-        h2hmv_routine_id = 1;
-    ELSE
-        h2hmv_routine_id = 2;
-    END IF;
-
-    -- the encoded table and meta table will be under the specified schema
-    training_encoded_table_name = tree_schema_name                      || 
-                                  '.'                                   || 
-                                  replace(tree_table_name, '.', '_')    || 
-                                  '_ed';
-    training_metatable_name     = tree_schema_name                      || 
-                                  '.'                                   || 
-                                  replace(tree_table_name, '.', '_')    || 
-                                  '_di';        
-    
-    IF(verbosity > 0) THEN
-        RAISE INFO 'Before encoding: %', clock_timestamp() - begin_func_exec;
-    END IF; 
-
         
-    PERFORM MADLIB_SCHEMA.__encode_tabular_table
+    train_rs = MADLIB_SCHEMA.__encode_and_train
         (
+            'C4.5',
+            split_criterion,
+            1,
+            NULL,
             training_table_name,
-            lower(id_col_name),
-            feature_name_array,
-            lower(class_col_name),
-            cont_feature_col_names,
-            training_encoded_table_name,
-            training_metatable_name,
-            h2hmv_routine_id,
+            validation_table_name,
+            tree_table_name,
+            continuous_feature_names, 
+            feature_col_names, 
+            id_col_name, 
+            class_col_name, 
+            confidence_level,
+            how2handle_missing_value,
+            max_tree_depth,
+            1.0,
+            'f',
+            node_prune_threshold,
+            node_split_threshold, 
+            '<tree_schema_name>_<tree_table_name>',
             verbosity
         );
-
-    IF(verbosity > 0) THEN
-            RAISE INFO 'After encoding: %', 
-                clock_timestamp() - begin_func_exec;
-            RAISE INFO 'successfully encode the input table :%',
-                training_encoded_table_name;
-    END IF;    
-
-    curstmt = MADLIB_SCHEMA.__format
-                (
-                    'SELECT COUNT(id)
-                     FROM % 
-                     WHERE column_type = ''f''',
-                    ARRAY[
-                        training_metatable_name
-                    ]
-                );
-    
-    EXECUTE curstmt INTO n_fids;
-    
-    IF (verbosity > 0) THEN
-        RAISE INFO 'features_per_node: %', n_fids;
-    END IF;
-
-    PERFORM MADLIB_SCHEMA.__insert_into_traininginfo
-        (
-            'C45',
-            tree_table_name,
-            training_table_name,
-            training_metatable_name,
-            training_encoded_table_name,
-            validation_table_name,
-            how2handle_missing_value,
-            split_criterion,
-            1.0,
-            n_fids,
-            1
-        );
-            
-    train_rs = MADLIB_SCHEMA.__train_tree
-                (
-                    split_criterion,
-                    1,
-                    n_fids ,
-                    training_encoded_table_name,
-                    training_metatable_name,
-                    tree_table_name,
-                    validation_table_name, 
-                    'id', 
-                    'class', 
-                    confidence_level,              
-                    max_tree_depth, 
-                    1.0,
-                    node_prune_threshold,
-                    node_split_threshold,
-                    'f',
-                    0,
-                    h2hmv_routine_id,
-                    verbosity
-                );
 
     IF ( verbosity > 0 ) THEN
             RAISE INFO 'Training Total Time: %', 
@@ -663,7 +452,7 @@ BEGIN
             RAISE INFO 'training result:%', train_rs;
     END IF;
   
-    ret.training_set_size   = train_rs.num_of_cases;     
+    ret.training_set_size   = train_rs.num_of_samples;     
     ret.tree_nodes          = train_rs.num_tree_nodes; 
     ret.tree_depth          = train_rs.max_tree_depth;
     ret.training_time       = clock_timestamp() - begin_func_exec;
@@ -876,7 +665,7 @@ BEGIN
     curstmt = MADLIB_SCHEMA.__format
                 (
                     'SELECT id, maxclass, probability, 
-                            case_size, lmc_nid, lmc_fval 
+                            sample_size, lmc_nid, lmc_fval 
                      FROM % 
                      WHERE id = 1',
                     ARRAY[
@@ -886,15 +675,15 @@ BEGIN
                     
     EXECUTE  curstmt INTO rec;
     
-    -- in case the root node is leaf
+    -- in sample the root node is leaf
     IF (rec.lmc_nid IS NULL) THEN
         RETURN NEXT 'All instances will be classified to class '    || 
                      MADLIB_SCHEMA.__get_class_value
                         (rec.maxclass, metatable_name)              ||
                      ' ['                                           || 
-                     (rec.probability * rec.case_size)::BIGINT       || 
+                     (rec.probability * rec.sample_size)::BIGINT       || 
                      '/'                                            || 
-                     rec.case_size                                   || 
+                     rec.sample_size                                   || 
                      ']'; 
         RETURN;       
     END IF;
@@ -983,15 +772,15 @@ BEGIN
                 ''  then class ''                   || 
                 class::TEXT                         || 
                 '' [''                              || 
-                (probability * case_size)::BIGINT    || 
+                (probability * sample_size)::BIGINT    || 
                 ''/''                               || 
-                case_size                            || 
+                sample_size                            || 
                 '']'' 
             as str,
             array_to_string(tree_location, '''') as location,
             1 as rlid
          FROM 
-            (SELECT id, maxclass, tree_location, probability, case_size
+            (SELECT id, maxclass, tree_location, probability, sample_size
              FROM %
              WHERE lmc_nid IS NULL
             ) n1
@@ -1285,13 +1074,12 @@ BEGIN
    -- translate the encoded class information back
     curstmt = MADLIB_SCHEMA.__format
                 (
-                    'CREATE TABLE % AS SELECT n.id, m.% as class, n.prob 
+                    'CREATE TABLE % AS SELECT n.id, m.fval as class, n.prob 
                      From % n, % m 
-                     WHERE n.class = m.key 
+                     WHERE n.class = m.code 
                      m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');',
                     ARRAY[
                         result_table_name,
-                        result_rec.column_name,
                         temp_result_table,
                         result_rec.table_name
                     ]

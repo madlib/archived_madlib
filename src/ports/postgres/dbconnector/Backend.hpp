@@ -43,6 +43,9 @@ MADLIB_WRAP_PG_FUNC(
     HeapTupleHeader, DatumGetHeapTupleHeader, (Datum d), (d))
 
 MADLIB_WRAP_PG_FUNC(
+    bytea*, DatumGetByteaPCopy, (Datum d), (d))
+
+MADLIB_WRAP_PG_FUNC(
     ArrayType*, DatumGetArrayTypePCopy, (Datum d), (d))
 
 MADLIB_WRAP_PG_FUNC(
@@ -53,7 +56,7 @@ MADLIB_WRAP_PG_FUNC(
 MADLIB_WRAP_VOID_PG_FUNC(
     fmgr_info_cxt, (Oid functionId, FmgrInfo* finfo, MemoryContext mcxt),
     (functionId, finfo, mcxt))
-    
+
 MADLIB_WRAP_PG_FUNC(
     HeapTuple, heap_form_tuple, (TupleDesc tupleDescriptor, Datum* values,
         bool* isnull),
@@ -90,6 +93,11 @@ MADLIB_WRAP_PG_FUNC(
 MADLIB_WRAP_PG_FUNC(
     struct varlena*, pg_detoast_datum, (struct varlena* datum), (datum))
 
+MADLIB_WRAP_VOID_PG_FUNC(
+    get_typlenbyvalalign,
+    (Oid typid, int16 *typlen, bool *typbyval, char *typalign),
+    (typid, typlen, typbyval, typalign)
+    )
 
 inline
 void
@@ -108,6 +116,30 @@ madlib_InitFunctionCallInfoData(FunctionCallInfoData& fcinfo, FmgrInfo* flinfo,
 #endif
 }
 
+template <typename T>
+inline
+T*
+madlib_detoast_verlena_datum_if_necessary(Datum inDatum) {
+    varlena* ptr = reinterpret_cast<varlena*>(DatumGetPointer(inDatum));
+
+    if (!VARATT_IS_EXTENDED(ptr))
+        return reinterpret_cast<T*>(ptr);
+    else
+        return reinterpret_cast<T*>(madlib_pg_detoast_datum(ptr));
+}
+
+/**
+ * @brief Convert a Datum into a bytea
+ *
+ * For performance reasons, we look into the varlena struct in order to check
+ * if we can avoid a PG_TRY block.
+ */
+inline
+bytea*
+madlib_DatumGetByteaP(Datum inDatum) {
+    return madlib_detoast_verlena_datum_if_necessary<bytea>(inDatum);
+}
+
 /**
  * @brief Convert a Datum into an ArrayType
  *
@@ -116,17 +148,12 @@ madlib_InitFunctionCallInfoData(FunctionCallInfoData& fcinfo, FmgrInfo* flinfo,
  */
 inline
 ArrayType*
-madlib_DatumGetArrayTypeP(Datum d) {
-    varlena* ptr = reinterpret_cast<varlena*>(DatumGetPointer(d));
-    
-    if (!VARATT_IS_EXTENDED(ptr))
-        return reinterpret_cast<ArrayType*>(ptr);
-    else
-        return reinterpret_cast<ArrayType*>(madlib_pg_detoast_datum(ptr));
+madlib_DatumGetArrayTypeP(Datum inDatum) {
+    return madlib_detoast_verlena_datum_if_necessary<ArrayType>(inDatum);
 }
 
 } // namespace
-    
+
 } // namespace postgres
 
 } // namespace dbconnector

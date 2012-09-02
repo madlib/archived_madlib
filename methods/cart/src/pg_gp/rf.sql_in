@@ -99,7 +99,6 @@ that it does not need a class column.
     '<em>max_tree_depth</em>',
     '<em>node_prune_threshold</em>',
     '<em>node_split_threshold</em>',
-    '<em>max_split_point</em>',    
     '<em>verbosity</em>');
   </pre>
   This will create the decision tree output table storing an abstract object
@@ -181,7 +180,7 @@ sql> SELECT * FROM MADLIB_SCHEMA.rf_train(
 	   0.0,                                  -- min percent split
        0                                     -- max split point
 	   0);                                   -- verbosity
- training_time  | num_of_cases | num_trees | features_per_node | num_tree_nodes | max_tree_depth | split_criterion |    acs_time     |    acc_time     |    olap_time    |   update_time   |    best_time    
+ training_time  | num_of_samples | num_trees | features_per_node | num_tree_nodes | max_tree_depth | split_criterion |    acs_time     |    acc_time     |    olap_time    |   update_time   |    best_time    
 ----------------+--------------+-----------+-------------------+----------------+----------------+-----------------+-----------------+-----------------+-----------------+-----------------+-----------------
  00:00:03.60498 |           14 |        10 |                 3 |             71 |              6 | infogain        | 00:00:00.154991 | 00:00:00.404411 | 00:00:00.736876 | 00:00:00.374084 | 00:00:01.722658
 (1 row)
@@ -416,7 +415,7 @@ testdb=# select MADLIB_SCHEMA.rf_clean('trained_tree_infogain');
  * This structure is used to store the results for the function of rf_train.
  *
  * training_time      The total training time.
- * num_of_cases       How many records there exist in the training set.   
+ * num_of_samples       How many records there exist in the training set.   
  * num_trees          The number of trees to be grown.
  * features_per_node  The number of features chosen for each node.
  * num_tree_nodes     The number of nodes in the resulting RF.
@@ -428,13 +427,14 @@ DROP TYPE IF EXISTS MADLIB_SCHEMA.rf_train_result;
 CREATE TYPE MADLIB_SCHEMA.rf_train_result AS 
 (   
     training_time            INTERVAL,
-    num_of_cases             BIGINT,   
+    num_of_samples           BIGINT,   
     num_trees                INT,
     features_per_node        INT,
     num_tree_nodes           INT,
     max_tree_depth           INT,
     split_criterion          TEXT
 );
+
 
 /*
  * This structure is used to store the results for the function of rf_classify.
@@ -451,7 +451,6 @@ CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
     classification_time   INTERVAL
     );
 
-
 /**
  * @brief This API is defined for training a random forest.  
  *        The training function provides a number of parameters that enables
@@ -460,17 +459,6 @@ CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
  *        which defines a set of features, an ID, and a labeled class. Features 
  *        could be either discrete or continuous. All the DTs of the result RF 
  *        will be kept in a single table. 
- *        For continuous features, each possible value could be used as a potential 
- *        split point for entropy/gini computation. If the number of distinct values 
- *        is large, the computation could be very costly. Users can specify the maximum
- *        split points with the parameter of 'max_split_point'. If the specified value
- *        is a positive number, we use equal-freqency algorithm to discretize the  
- *        continuous features. The discretization process is as follows:
- *        1) We determine the minimum and maximum values of a continuous feature. 
- *        2) We sort all values in ascending order and divides the range into K  
- *        intervals so that each interval contains the same number of sorted values.
- *        3) We only consider the values in the intervals' boundaries as potential
- *        split points.
  *
  * We discretize continuous features on local regions during training rather 
  * than discretizing on the whole dataset prior to training because local 
@@ -529,9 +517,6 @@ CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
  *                                  trained tree only has two levels, since only the root node will grow.
  *                                  (the root node);
  *                                  if its value is 0, then trees can grow extensively.
- * @param max_split_point           The upper limit of sampled split points for continuous 
- *                                  features. If it's NULL or zero, all the distinct values of the
- *                                  features will be used as split values.
  * @param verbosity                 > 0 means this function runs in verbose mode. 
  *                                  It can't be NULL.
  *
@@ -554,24 +539,19 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rf_train
     max_tree_depth              INT,
     node_prune_threshold        FLOAT,
     node_split_threshold        FLOAT, 
-    max_split_point             INT,
     verbosity                   INT
     ) 
 RETURNS MADLIB_SCHEMA.rf_train_result AS $$
 DECLARE
-    cont_feature_col_names          TEXT[];
-    feature_name_array              TEXT[];
     begin_func_exec                 TIMESTAMP;
-    rf_schema_name                  TEXT;
     rf_table_name                   TEXT;
-    training_encoded_table_name     TEXT;
-    training_metatable_name         TEXT;
-    h2hmv_routine_id                INT := 1;  
+    h2hmv_routine_id                INT := 1;
     ret                             MADLIB_SCHEMA.rf_train_result;
     train_rs                        RECORD;
     n_fids                          INT;
     features_per_node_tmp           INT;
     curstmt                         TEXT;
+    enc_info                        TEXT[];
 BEGIN   
     begin_func_exec = clock_timestamp();
     
@@ -582,289 +562,55 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
         (
-            (split_criterion IS NOT NULL)   AND
-            (
-             split_criterion = 'infogain'   OR 
-             split_criterion = 'gainratio'  OR 
-             split_criterion = 'gini'
-            ),
-            'split_criterion must be infogain, gainratio or gini'
+            num_trees IS NOT NULL                                   AND
+            sampling_percentage IS NOT NULL                         AND
+            num_trees  > 0                                          AND
+            (features_per_node IS NULL OR  features_per_node > 0)   AND
+            sampling_percentage > 0,
+            'invalid parameter value for num_trees, features_per_node or sampling_percentage'
         );
 
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                how2handle_missing_value = 'ignore' OR 
-                how2handle_missing_value = 'explicit',
-                'how2handle_missing_value must be ignore or explicit!'
-            );    
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-				max_split_point IS NULL				OR
-				max_split_point >= 0,
-                'max_split_point value must be greater than or equal to 0'
-            );
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                num_trees IS NOT NULL                                   AND
-                sampling_percentage IS NOT NULL                         AND
-                num_trees  > 0                                          AND
-                (features_per_node IS NULL OR  features_per_node > 0)   AND
-                sampling_percentage > 0,
-                'invalid parameter value for num_trees, features_per_node or sampling_percentage'
-            );
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                max_tree_depth IS NOT NULL    AND
-                max_tree_depth > 0,
-                'max_tree_depth value must be greater than 0'
-            );
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                node_prune_threshold IS NOT NULL    AND
-                float8ge(node_prune_threshold, 0)   AND
-                float8le(node_prune_threshold, 1),
-                'node_prune_threshold value must be in range from 0 to 1'
-            );
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                node_split_threshold IS NOT NULL   AND                
-                float8ge(node_split_threshold, 0)  AND
-                float8le(node_split_threshold, 1),                
-                'node_split_threshold value must be in range from 0 to 1'
-            );
-            
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                verbosity IS NOT NULL,                
-                'verbosity must be non-null'
-            );
-                        
-    PERFORM MADLIB_SCHEMA.__assert
-        (
-                id_col_name IS NOT NULL AND
-                class_col_name IS NOT NULL AND
-                length(btrim(id_col_name, ' ')) > 0 AND
-                length(btrim(class_col_name, ' ')) > 0,
-                'invalid id column name or class column name'
-            );
-                        
-    PERFORM MADLIB_SCHEMA.__assert
-        (
-            training_table_name IS NOT NULL AND
-            MADLIB_SCHEMA.__table_exists
-                (
-                    training_table_name
-                ),
-            'the specified training table' || 
-            coalesce('<' || training_table_name || 
-            '> does not exist', ' is NULL')
-        );
-
-    PERFORM MADLIB_SCHEMA.__assert
-        (
-            MADLIB_SCHEMA.__column_exists
-                (
-                    training_table_name,
-                    lower(btrim(id_col_name, ' '))
-                ),
-            'the specified training table<' || training_table_name 
-            || '> does not have column ''' || id_col_name || ''''
-        );
-
-    PERFORM MADLIB_SCHEMA.__assert
-        (
-            MADLIB_SCHEMA.__column_exists
-                (
-                    training_table_name,
-                    lower(btrim(class_col_name, ' '))
-                ),
-            'the specified training table<' || training_table_name || 
-            '> does not have column ''' || class_col_name || ''''
-        );
-
-    cont_feature_col_names  = MADLIB_SCHEMA.__csvstr_to_array(continuous_feature_names);
-    feature_name_array      = MADLIB_SCHEMA.__csvstr_to_array(feature_col_names);
-
-    IF ( verbosity > 0 ) THEN
-        RAISE INFO 'continuous features:%', cont_feature_col_names;
-    END IF;
-
-    IF (feature_name_array IS NULL) THEN
-        -- 2 means the id and class column
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                features_per_node IS NULL OR
-                MADLIB_SCHEMA.__num_of_columns(training_table_name) - 2 >= features_per_node,
-                'the value of features_per_node must be less than or equal to the total number ' ||
-                'of features of the training table'
-           );
-
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                MADLIB_SCHEMA.__columns_in_table(cont_feature_col_names, training_table_name),
-                'each feature in continuous_feature_names must be a column of the training table'
-            );
-    ELSE
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                features_per_node IS NULL OR
-                array_upper(feature_name_array, 1) >= features_per_node,
-                'the value of features_per_node must be less than or equal to the total number ' ||
-                'of features of the training table'
-           );
-
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                MADLIB_SCHEMA.__columns_in_table(feature_name_array, training_table_name),
-                'each feature in feature_col_names must be a column of the training table'
-            );
-
-        PERFORM MADLIB_SCHEMA.__assert
-            (
-                coalesce(cont_feature_col_names, '{}'::TEXT[]) <@ feature_name_array,
-                'each feature in continuous_feature_names must be in the feature_col_names'
-            );
-    END IF;
-
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                result_rf_table_name IS NOT NULL,
-                'the specified result random forest table name is NULL'
-            );
-                    
     rf_table_name = btrim(lower(result_rf_table_name), ' ');
-    PERFORM MADLIB_SCHEMA.__assert
-            (
-                NOT MADLIB_SCHEMA.__table_exists
-                    (
-                        rf_table_name
-                    )
-                ,
-                'the specified result random forest table<'  || 
-                rf_table_name                     || 
-                '> exists' 
-            );
-    
-    -- create tree table and auxiliary tables, so that we can get the schema 
-    -- name of the table  
-    PERFORM MADLIB_SCHEMA.__create_tree_tables(rf_table_name);
-        
-    rf_schema_name = MADLIB_SCHEMA.__get_schema_name(rf_table_name);
-            
-    -- the maximum length of an identifier is 63
-    -- encoding table name convension:  <rf table schema name>_<rf table name>_ed
-    -- data info table name convension: <rf table schema name>_<rf table name>_di
-    -- the KV table name convension:    <rf table schema name>_<rf table name>_<####>
-    -- therefore, the maximum length of '<rf table schema name>_<rf table name>' 
-    -- is 58
-    PERFORM MADLIB_SCHEMA.__assert
+    PERFORM MADLIB_SCHEMA.__check_dt_common_params
         (
-            length(
-                rf_schema_name      || 
-                '_'                   || 
-                rf_table_name) <= 58,
-            'the maximum length of ''<RF table schema name>_<RF table name>'' is 58'
-        );
-            
-    IF (how2handle_missing_value = 'ignore') THEN
-        h2hmv_routine_id = 1;
-    ELSE
-        h2hmv_routine_id = 2;
-    END IF;
-
-    -- the encoded table and meta table will be under the specified schema
-    training_encoded_table_name = rf_schema_name || '.' || 
-        replace(rf_table_name, '.', '_') || '_ed';
-    training_metatable_name     = rf_schema_name || '.' || 
-        replace(rf_table_name, '.', '_') || '_di';        
-    
-    IF(verbosity > 0) THEN
-        RAISE INFO 'Before encoding: %', clock_timestamp() - begin_func_exec;
-    END IF; 
-
-        
-    PERFORM MADLIB_SCHEMA.__encode_tabular_table
-        (
-        training_table_name,
-        lower(id_col_name),
-        feature_name_array,
-        lower(class_col_name),
-        cont_feature_col_names,
-        training_encoded_table_name,
-        training_metatable_name,
-        h2hmv_routine_id,
-        verbosity
+            split_criterion,
+            training_table_name, 
+            rf_table_name,
+            continuous_feature_names, 
+            feature_col_names, 
+            id_col_name, 
+            class_col_name, 
+            how2handle_missing_value,
+            max_tree_depth,
+            node_prune_threshold,
+            node_split_threshold, 
+            verbosity,
+            'random forest'
         );
 
-    IF(verbosity > 0) THEN
-            RAISE INFO 'After encoding: %', clock_timestamp() - begin_func_exec;
-            RAISE INFO 'successfully encode the input table :%',
-                training_encoded_table_name;
-    END IF;    
-
-    SELECT MADLIB_SCHEMA.__format
-        (
-        'SELECT COUNT(id)
-         FROM % 
-         WHERE column_type = ''f''',
-        ARRAY[
-            training_metatable_name
-            ]
-        ) INTO curstmt;
-    
-    EXECUTE curstmt INTO n_fids;
-    
-    if (features_per_node IS NULL) THEN
-        features_per_node_tmp = round(sqrt(n_fids) - 0.5)::INT + 1;
-    ELSE
-        features_per_node_tmp = features_per_node;
-    END IF;
-    
-    IF (verbosity > 0) THEN
-        RAISE INFO 'features_per_node: %', features_per_node_tmp;
-    END IF;
-
-    PERFORM MADLIB_SCHEMA.__insert_into_traininginfo
+    train_rs = MADLIB_SCHEMA.__encode_and_train
         (
             'RF',
-            rf_table_name,
-            training_table_name,
-            training_metatable_name,
-            training_encoded_table_name,
-            null,
-            how2handle_missing_value,
             split_criterion,
+            num_trees,
+            features_per_node,
+            training_table_name,
+            NULL,
+            rf_table_name,
+            continuous_feature_names, 
+            feature_col_names, 
+            id_col_name, 
+            class_col_name, 
+            100.0,
+            how2handle_missing_value,
+            max_tree_depth,
             sampling_percentage,
-            features_per_node_tmp,
-            num_trees
+            't',
+            node_prune_threshold,
+            node_split_threshold, 
+            '<RF table schema name>_<RF table name>',
+            verbosity
         );
-            
-    train_rs = MADLIB_SCHEMA.__train_tree
-                (
-                    split_criterion,
-                    num_trees,
-                    features_per_node_tmp ,
-                    training_encoded_table_name,
-                    training_metatable_name,
-                    rf_table_name,
-                    null, 
-                    'id', 
-                    'class', 
-                    100.0,              
-                    max_tree_depth, 
-                    sampling_percentage,
-                    node_prune_threshold,
-                    node_split_threshold,
-                    't',
-                    max_split_point,
-                    h2hmv_routine_id,
-                    verbosity
-                );
 
     IF ( verbosity > 0 ) THEN
             RAISE INFO 'Training Total Time: %', clock_timestamp() - begin_func_exec;
@@ -872,7 +618,7 @@ BEGIN
     END IF;
 
     ret.training_time           = clock_timestamp() - begin_func_exec;
-    ret.num_of_cases            = train_rs.num_of_cases;      
+    ret.num_of_samples          = train_rs.num_of_samples;      
     ret.num_trees               = num_trees; 
     ret.features_per_node       = train_rs.features_per_node; 
     ret.num_tree_nodes          = train_rs.num_tree_nodes; 
@@ -1218,9 +964,9 @@ BEGIN
     EXECUTE curstmt INTO result_rec;
             
    -- translate the encoded class information back
-    EXECUTE 'CREATE TABLE '||result_table_name||' AS SELECT n.id, m.'||
-        result_rec.column_name||' as class,n.prob from '||vote_result_table||
-        ' n,'||result_rec.table_name||' m where n.class=m.key 
+    EXECUTE 'CREATE TABLE '||result_table_name||' AS SELECT n.id, 
+             m.fval as class,n.prob from '||vote_result_table||
+        ' n,'||result_rec.table_name||' m where n.class=m.code 
         m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');';
         
     EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ';';
