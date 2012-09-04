@@ -30,6 +30,7 @@ Seek the zero of the gradient.\\
 To avoid overfitting, we penalize the likelihood with a spherical Gaussian weight prior:\\
     \[\ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-\log Z_\lambda(x_k)]-\frac{\lVert \lambda \rVert^2}{2\sigma ^2}\]
     \[\nabla \ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-E_{p\lambda(Y|x_k)}F(Y,x_k)]-\frac{\lambda}{\sigma ^2}\]
+We set the sigma to 100 in the implementation.
 
 \subsection{Parallel CRF Training}
 \begin{algorithm}[CRF training$(z_{1:M})$] \label{alg:CRF training}
@@ -83,6 +84,21 @@ There are various tag set used in the literature. The Pennsylvania Treebank tag-
   RP  & Particle            & up,off        &     &                     &\\
   \hline  
 \end{tabular}\]
+
+\subsection{Regular Expression Table}
+\[\begin{tabular}{ll||ll}
+  pattern & name             & pattern & name\\
+  \hline                        
+  ^[A-Z][a-z]+$    & InitCapital       & ^[A-Z]+$  & isAllCapital \\
+  ^.*[0-9]+.*$     & containsDigit     & ^.+[.]$   & endsWithDot\\
+  ^.+[,]$          & endsWithComma     & ^.+er$    & endsWithEr\\
+  ^.+est$	   & endsWithEst       & ^.+ed$    & endsWithEd\\
+  ^.+s$	           & endsWithS         & ^.+ing$   & endsWithIng\\
+  ^.+ly$	   & endsWithly        & ^.+-.+$   & isDashSeparatedWords\\
+  ^.*@.*$	   & isEmailId         &           & \\
+  \hline  
+\end{tabular}\]
+
 
 \section{Feature Extraction}
 The Feature Extraction module provides functionality for basic text-analysis
@@ -240,6 +256,54 @@ However, in the MADlib implementation, we define these variables in the state ob
 initialize one LBFGS interation using the current variables in the state object $LBFGS instance(state)$
 At the end of one iteration, we need to save the variables to the the state using $instance.save\_state(state)$
 
+
+\subsection{Learned Model}
+The CRF learning algorithm will generate two tables: feature table and dictionary table
+Feature table stores all the features and their corresponding feature weight.
+The dictionary constains all the tokens and their number of times they appears in the training data.
+
+\begin {table}
+\caption {Feature table} \label{tab:title} 
+\begin{center}
+    \scriptsize\tt
+    \begin{tabular}{ | l | l | l | l | l || l | l | l | l | l | }
+    \hline
+    f\_index & f\_name & prev\_label & label & weight & f\_index & f\_name & prev\_label & label & weight\\
+    \hline
+    0&'U'&-1&6&2.037& 1&'E.'&2&11&2.746   \\
+    2&'W\_exchequer'&-1&13&1.821& 3&'W\_is'&-1&31&1.802 \\
+    4&'E.'&11&31&2.469& 5&'W\_in'&-1&5&3.252 \\
+    6&'E.'&11&12&1.305& 7&'U'&-1&2&-0.385 \\
+    8&'E.'&31&29&1.958& 9&'U'&-1&29&1.422 \\
+    10&'R\_endsWithIng'&-1&11&1.061&11&'W\_of'&-1&5&3.652 \\
+    12&'S.'&-1&13&1.829& 13&'E.'&24&26&3.282 \\
+    14&'W\_helped'&-1&29&1.214& 15&'E.'&11&24&1.556 \\
+    \hline
+    \end{tabular}
+\end{center}
+\end {table}
+
+\begin {table}
+\caption {Dictionary table} \label{tab:title} 
+\begin{center}
+    \scriptsize\tt
+    \begin{tabular}{ | l | l || l | l || l | l || l | l | }
+    \hline
+    token & total & token & total & token & total & token & total\\
+    'freefall'&1& 'policy'&2& 'measures'&1& 'commitment'&1&
+    'new'&1& 'speech'&1& '''s'&2& 'reckon'&1&
+    'underlying'&1&'week'&1& 'prevent'&1& 'has'&2&
+    'failure'&1& 'restated'&1&'announce'&1& 'thursday'&1&
+    'but'&1& 'lawson'&1& 'last'&1& 'firm'&1&
+    'exchequer'&1& 'helped'&1& 'sterling'&2& .. & .. &
+    \hline
+       
+    \hline
+    \end{tabular}
+\end{center}
+\end {table}
+
+
 \section{Viterbi Inference}
 The Viterbi algorithm is the popular algorithm to find the top-k most likely labelingsof a document for CRF models. 
 We chose to implement a Python UDF that uses iterations to drive the Viterbi inference. Each iteration will finish the inference over one document.
@@ -252,25 +316,23 @@ V(i,y) =
 \end{cases}
 \]
 
+
 \subsection{Viterbi Inference output}
+\begin {table}
+\caption {Viterbi inference output} \label{tab:title} 
 \begin{center}
-    \begin{tabular}{ | l | l | l | 1 | 1 |}
+    \scriptsize\tt
+    \begin{tabular}{ | l | l | l | 1 | 1 || l | l | l | 1 | 1 |}
     \hline
-    doc\_id & start\_pos & token & label & probability  \\ \hline
-    1   & 0    & madlib        & noun &0.6 \\
-    1   & 1    & is            & noun &0.6 \\
-    1   & 2    & an            & noun &0.6 \\
-    1   & 2    & open-source   & noun &0.6 \\
-    1   & 4    & library       & noun &0.6 \\
-    1   & 5    & for           & noun &0.6 \\
-    1   & 6    & scalable      & noun &0.6 \\
-    1   & 7    & in-dababase   & noun &0.6 \\
-    1   & 8    & analytics     & noun &0.6 \\
-    1   & 9    & .             & noun &0.6 \\
-    2   & 0    & it            & noun &0.4 \\
-    2   & 1    & provides      & noun &0.4 \\
-    2   & 2    & data-parallel & noun &0.4 \\
-    ... & ...  & data-parallel & noun &0.4 \\
+    doc\_id & start\_pos & token & label & probability & doc\_id & start\_pos & token & label & probability \\ \hline
+    1   & 0    & madlib        & noun &0.6 & 1   & 1    & is            & noun &0.6 \\
+    1   & 2    & an            & noun &0.6 & 1   & 2    & open-source   & noun &0.6 \\
+    1   & 4    & library       & noun &0.6 & 1   & 5    & for           & noun &0.6 \\
+    1   & 6    & scalable      & noun &0.6 & 1   & 7    & in-dababase   & noun &0.6 \\
+    1   & 8    & analytics     & noun &0.6 & 1   & 9    & .             & noun &0.6 \\
+    2   & 0    & it            & noun &0.4 & 2   & 1    & provides      & noun &0.4 \\
+    2   & 2    & data-parallel & noun &0.4 & ..  & ..   & data-parallel & noun &0.4 \\
     \hline
     \end{tabular}
 \end{center}
+\end{table}
