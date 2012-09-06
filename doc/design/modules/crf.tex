@@ -6,9 +6,8 @@
 % Motivation. Why do we want to have this abstract layer?
 Conditional random field(CRFs) is a type of discriminative undirected probabilistic graphical model.
 Linear-chain CRFs are a special CRFs which assumes that the next state only depends on the current state. 
-CRFs have achieved the start of art accuracy in some real world natural language processing tasks such
-as part of speech tagging(POS) and named entity resolution(NER). POS has been widely used in information retrieval, 
-text to speech.
+Linear-chain CRFs have achieved the start of art accuracy in some real world natural language processing tasks such
+as part of speech tagging(POS) and named entity resolution(NER).
 
 \section{Introduction}
 
@@ -52,7 +51,7 @@ finalization strategy $\mathit{Finalization}()$}
                 \Comment{Usually computing derivative}
 		\EndFor
 		\State $w_\text{new} \set Finalization(\mathit{state})$
-	\Until{$Convergence(w_\text{old}, w_\text{new}, \mathit{iteration})$}
+	\Until{$Convergence(w_\text{new}, g_\text{new}, \mathit{iteration})$}
     \State \Return $w_\text{new}$
 \end{algorithmic}
 \end{algorithm}
@@ -82,53 +81,40 @@ In most cases, zeros are used unless otherwise specified.
 This function contains the logic of computing the gradient and log-likelihood for each tuple using the forward-backward
 algorithm. The algorithms will be discussed in the following sections.
 
-\paragraph{Merge strategy.}
-In most cases, zeros are used unless otherwise specified.
-
 \paragraph{Finalization strategy.}
 The finalization function will invoke the L-BFGS solver.\\
 
-\begin{algorithm}[Finalization$(z_{1:M})$] \label{alg:CRF training}
-\alginput{Observation set $z_{1:M}$,\\
-convergence criterion $\mathit{Convergence}()$,\\
-start strategy $\mathit{Start}()$,\\
-initialization strategy $\mathit{Initialization}()$,\\
-transition strategy $\mathit{Transition}()$,\\
-finalization strategy $\mathit{Finalization}()$}
-\algoutput{Coefficients $w \in \mathbb{R}^N$}
-\algprecond{$iteration = 0, k = 0$}
+\begin{algorithm}[Finalization$(state)$] \label{alg:CRF training}
+\alginput{Transition state $state$,\\
+LBFGS $\mathit{lbfgs}()$}
+\algoutput{Transition state  $state$}
 \begin{algorithmic}[1]
-	\State $w_\text{new} \set \mathit{Start}(z_{1:M})$
-	\Repeat
-        \State $w_\text{old} \set w_\text{new}$
-        \State $\mathit{state} \set \mathit{Initialization}(w_\text{new})$
-		\For{$m \in 1..M$} \Comment{Single entry in the observation set}
-			\State $\mathit{state} \set \mathit{Transition}(\mathit{state}, z_m)$
-                \Comment{Usually computing derivative}
-		\EndFor
-		\State $w_\text{new} \set Finalization(\mathit{state})$
-	\Until{$Convergence(w_\text{old}, w_\text{new}, \mathit{iteration})$}
-    \State \Return $w_\text{new}$
+        \State $penalty()$ \Comment{To avoid overfitting, penalize the likelihood/gradient with a Gaussian prior} 
+        \State $state.g \set -state.g; state.loglikeli\set -state.loglikeli$ \Comment{negation for maximization}
+        \State LBFGS instance($state)$ \Comment{initialize the L-BFGS instance with previous state}
+        \State instance.$lbfgs()$ \Comment{invoke the L-BFGS convex solver}
+        \State instance.save\_state$(state)$ \Comment{save updates variables to the state for next iteration}
+        \State \Return $state$
 \end{algorithmic}
 \end{algorithm}
 
-
-Feeding with current solution, gradient, log-likelihood, the L-BFGS will ouput a new solution.
-penalize the loglikelihood with a spherical Gaussian weight prior.\\
-Negation the gradient and loglikihood\\
-copy the state to the lbfgs\\
-invoke the lbfgs\\
-save the lbfgs state to database state\\
+Feeding with current solution, gradient, log-likelihood, etc., the L-BFGS will ouput a new solution.
+To avoid overfitting, a penalization function is needed. We choose to penalize the loglikelihood with a spherical Gaussian weight prior.
+Also, L-BFGS is to maximum objective, so we need to negate the gradient vector and loglikelihood to fit your needs to minimize the loglikehood.
 
 \section{Part of Speech Tagging}
 Part-of-speech tagging,also called grammatical tagging or word-category disambiguation, is the process of assigning 
-a part of speech to each word in a sentence. There are two distinct methods for POS task: rule-based and stochastic.
+a part of speech to each word in a sentence. POS has been widely used in information retrieval, text to speech. There are two distinct methods for 
+POS task: rule-based and stochastic.
 In rule-based method, it defines large collection of rules to indentify the tag. Stochastic method is based on probabilistic 
 graphic models such as hidden markov models, conditional random fields. In practice, condtional random files has been approved 
 to achieve the state of art of accuracy.
 \subsection{Tag Set}
 There are various tag set used in the literature. The Pennsylvania Treebank tag-set is the commonly used tag set used. It contains
 45 tags. The following list part of tags in the tag set.
+
+\begin {table}
+\caption {Pen Treebank III} \label{tab:title} 
 \[\begin{tabular}{lll||lll}
   Tag & Description         & Example       & Tag & Description         & Example\\
   \hline                        
@@ -142,21 +128,29 @@ There are various tag set used in the literature. The Pennsylvania Treebank tag-
   RP  & Particle            & up,off        &     &                     &\\
   \hline  
 \end{tabular}\]
+\end{table}
 
 \subsection{Regular Expression Table}
-\[\begin{tabular}{ll||ll}
+  Regex feature is to capture the relationship between the morphology of a token and it's corresponding tag.
+For example, a token end with 's' are mostly likely to be plural noun and a token end with 'ly' are more likely to be a
+adverb. You can define your own regular expressions to according to your specific training data.
+\begin {table}
+\caption {Regular expression table} \label{tab:title} 
+\begin{center}
+\begin{tabular}{ll||ll}
   pattern & name             & pattern & name\\
   \hline                        
-  ^[A-Z][a-z]+$    & InitCapital       & ^[A-Z]+$  & isAllCapital \\
-  ^.*[0-9]+.*$     & containsDigit     & ^.+[.]$   & endsWithDot\\
-  ^.+[,]$          & endsWithComma     & ^.+er$    & endsWithEr\\
-  ^.+est$	   & endsWithEst       & ^.+ed$    & endsWithEd\\
-  ^.+s$	           & endsWithS         & ^.+ing$   & endsWithIng\\
-  ^.+ly$	   & endsWithly        & ^.+-.+$   & isDashSeparatedWords\\
-  ^.*@.*$	   & isEmailId         &           & \\
+  \wedge[A-Z][a-z]+\$    & InitCapital       & \wedge[A-Z]+\$  & isAllCapital \\
+  \wedge.*[0-9]+.*\$          & containsDigit     & \wedge.+[.]\$   & endsWithDot\\
+  \wedge.+[,]\$               & endsWithComma     & \wedge.+er\$    & endsWithEr\\
+  \wedge.+est\$	         & endsWithEst       & \wedge.+ed\$    & endsWithEd\\
+  \wedge.+s\$	         & endsWithS         & \wedge.+ing\$   & endsWithIng\\
+  \wedge.+ly\$	         & endsWithly        & \wedge.+-.+\$   & isDashSeparatedWords\\
+  \wedge.*@.*\$	         & isEmailId         &           & \\
   \hline  
-\end{tabular}\]
-
+\end{tabular}
+\end{center}
+\end{table}
 
 \section{Feature Extraction}
 The Feature Extraction module provides functionality for basic text-analysis
@@ -189,9 +183,10 @@ The final input table schema which contains all the feature data for the crf lea
     \end{tabular}
 \end{center}
 
-for each document it has feature item
-sparse r feautre(single state feature) \\
-(prev\_label, label, f\_index, start\_pos, exist)
+\begin{itemize}
+
+\item 
+sparse r feautre(single state feature):(prev\_label, label, f\_index, start\_pos, exist)
 
 \begin{center}
     \begin{tabular}{ | l | l |}
@@ -206,7 +201,8 @@ sparse r feautre(single state feature) \\
     \end{tabular}
 \end{center}
 
-dense m feature\\
+\item 
+dense m feature:
 (prev\_label, label, f\_index, start\_pos, exist)
 \begin{center}
     \begin{tabular}{ | l | l |}
@@ -221,8 +217,8 @@ dense m feature\\
     \end{tabular}
 \end{center}
 
-sparse m feature\\
-(f\_index, prev\_label, label)
+\item 
+sparse m feature:(f\_index, prev\_label, label)
 \begin{center}
     \begin{tabular}{ | l | l |}
     \hline
@@ -234,6 +230,7 @@ sparse m feature\\
     \end{tabular}
 \end{center}
 
+\end{itemize}
 For performance consideraton, we split the m feature to dense\_m feature and spare m feature\\
 
 \subsection{Testing Data Feature Extraction}
@@ -256,6 +253,9 @@ For performance consideraton, we split the m feature to dense\_m feature and spa
   So m table encodes the edgeFeature, startFeature, and endFeature.
   If the total number of labels in the label space is 45 from 0 to 44,
   then the m factor array is as follows:
+\begin {table}
+\caption {viterbi\_mtbl table} \label{tab:title} 
+ 
   \[\begin{tabular}{l*{6}{c}r}
    token             & 0   & 1   & 2   & 3   & ... & 43 &  44 \\
    \hline
@@ -268,11 +268,15 @@ For performance consideraton, we split the m feature to dense\_m feature and spa
    44                & 8.2 & 1.8 & 3.7 & 2.1 & 7.2 & 1.3 & 7.2  \\
    45                & 1.8 & 7.8 & 5.6 & 9.8 & 2.3 & 9.4 & 1.1  \\
   \end{tabular}\]
+\end{table}
  
   $viterbi\_r$ table
   is related to specific tokens. It encodes the single state features,
   e.g., wordFeature, RegexFeature for all tokens. The r table is represented
   in the following way.\\
+\begin {table}
+\caption {viterbi\_rtbl table} \label{tab:title} 
+
   \[\begin{tabular}{l*{6}{c}r}
    token             & 0   & 1   & 2   & 3   & ... & 43 &  44 \\
    \hline
@@ -283,6 +287,7 @@ For performance consideraton, we split the m feature to dense\_m feature and spa
    library           & 1.8 & 1.9 & 1.8 & 8.7 & 0.2 & 1.8 & 1.1  \\
    ...               & ... & ... & ... & ... & ... & ... & ...  \\
   \end{tabular}\]
+\end{table}
 
 \section{Linear-chain CRF Learning}
 
@@ -380,16 +385,23 @@ V(i,y) =
 \caption {Viterbi inference output} \label{tab:title} 
 \begin{center}
     \scriptsize\tt
-    \begin{tabular}{ | l | l | l | 1 | 1 || l | l | l | 1 | 1 |}
+    \begin{tabular}{ | l | l | l | 1 | 1 | }
     \hline
-    doc\_id & start\_pos & token & label & probability & doc\_id & start\_pos & token & label & probability \\ \hline
-    1   & 0    & madlib        & noun &0.6 & 1   & 1    & is            & noun &0.6 \\
-    1   & 2    & an            & noun &0.6 & 1   & 2    & open-source   & noun &0.6 \\
-    1   & 4    & library       & noun &0.6 & 1   & 5    & for           & noun &0.6 \\
-    1   & 6    & scalable      & noun &0.6 & 1   & 7    & in-dababase   & noun &0.6 \\
-    1   & 8    & analytics     & noun &0.6 & 1   & 9    & .             & noun &0.6 \\
-    2   & 0    & it            & noun &0.4 & 2   & 1    & provides      & noun &0.4 \\
-    2   & 2    & data-parallel & noun &0.4 & ..  & ..   & data-parallel & noun &0.4 \\
+    doc\_id & start\_pos & token & label & probability     \\\hline
+    1   & 0    & madlib        & proper noun, singular &0.6\\ 
+    1   & 1    & is            & Verb, base form       &0.6 \\
+    1   & 2    & an            & determiner            &0.6 \\ 
+    1   & 2    & open-source   & adjective             &0.6 \\
+    1   & 4    & library       & noun                  &0.6 \\
+    1   & 5    & for           & preposition           &0.6 \\
+    1   & 6    & scalable      & adjective             &0.6 \\
+    1   & 7    & in-dababase   & adverb                &0.6 \\
+    1   & 8    & analytics     & noun, singular        &0.6 \\
+    1   & 9    & .             & sentence-final punc   &0.6 \\
+    2   & 0    & it            & personal pronoun      &0.4 \\ 
+    2   & 1    & provides      & verb, base form       &0.4 \\
+    2   & 2    & data-parallel & noun                  &0.4 \\
+    2   & 2    & ..            & ..                    &0.4 \\
     \hline
     \end{tabular}
 \end{center}
