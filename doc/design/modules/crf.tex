@@ -6,7 +6,7 @@
 % Motivation. Why do we want to have this abstract layer?
 Conditional random field(CRFs) is a type of discriminative undirected probabilistic graphical model.
 Linear-chain CRFs are a special CRFs which assumes that the next state only depends on the current state. 
-Linear-chain CRFs have achieved the start of art accuracy in some real world natural language processing tasks such
+Linear-chain CRFs achieved the start of art accuracy in some real world natural language processing tasks such
 as part of speech tagging(POS) and named entity resolution(NER).
 
 \section{Introduction}
@@ -81,16 +81,44 @@ In most cases, zeros are used unless otherwise specified.
 This function contains the logic of computing the gradient and log-likelihood for each tuple using the forward-backward
 algorithm. The algorithms will be discussed in the following sections.
 
-\paragraph{Finalization strategy.}
-The finalization function will invoke the L-BFGS solver.\\
+\begin{algorithm}[transition-lbfgs$(\mathit{state}, z_m)$] \label{alg:transition-lbfgs}
+\alginput{Transition state $\mathit{state}$,\\
+observation entry $z_m$,\\
+gradient function $\mathit{Gradient}()$}
+\algoutput{Transition state $\mathit{state}$}
+\begin{algorithmic}[1]
+    \State $\{state.g,state.loglikelihood\}  \set \mathit{Gradient}(\mathit{state}, z_m)$
+        \Comment{using forward-backward algorithm to calculate gradient and loglikelihood}
+    \State $\mathit{state}.num\_rows \set \mathit{state}.num\_rows + 1$
+    \State \Return $\mathit{state}$
+\end{algorithmic}
+\end{algorithm}
 
-\begin{algorithm}[Finalization$(state)$] \label{alg:CRF training}
+
+\paragraph{Merge strategies.}
+The merge function simply sums the gradient and loglikelihood over all training documents 
+\begin{algorithm}[merge-lbfgs$(\mathit{state1}, \mathit{state2})$] \label{alg:merge-lbfgs}
+\alginput{Transition state $\mathit{state1}$,\\
+Transition state $\mathit{state2}$}
+\algoutput{Transition state $\mathit{new\_state}$}
+\begin{algorithmic}[1]
+    \State $\mathit{new\_state}.g \set \mathit{state1}.g + \mathit{state2}.g$
+    \State $\mathit{new\_state}.loglikelihood \set \mathit{state1}.loglikelihood + \mathit{state2}.loglikelihood$
+    \State \Return $\mathit{new\_state}$
+\end{algorithmic}
+\end{algorithm}
+
+
+\paragraph{Finalization strategy.}
+The finalization function invokes the L-BFGS convex solver to get a new coefficent vector.\\
+
+\begin{algorithm}[finalization-lbfgs$(state)$] \label{alg:CRF training}
 \alginput{Transition state $state$,\\
 LBFGS $\mathit{lbfgs}()$}
 \algoutput{Transition state  $state$}
 \begin{algorithmic}[1]
         \State $penalty()$ \Comment{To avoid overfitting, penalize the likelihood/gradient with a Gaussian prior} 
-        \State $state.g \set -state.g; state.loglikeli\set -state.loglikeli$ \Comment{negation for maximization}
+        \State $\{state.g,state.loglikelihood\}\set-\{state.g,state.loglikelihood\}$ \Comment{negation for maximization}
         \State LBFGS instance($state)$ \Comment{initialize the L-BFGS instance with previous state}
         \State instance.$lbfgs()$ \Comment{invoke the L-BFGS convex solver}
         \State instance.save\_state$(state)$ \Comment{save updates variables to the state for next iteration}
@@ -192,10 +220,10 @@ sparse r feautre(single state feature):(prev\_label, label, f\_index, start\_pos
     \begin{tabular}{ | l | l |}
     \hline
     label & Description \\ \hline
-    prev\_label & it is a single state feature, prev\_label is always 0.\\ 
+    prev\_label & the label of previous token, it is always 0 in r table.\\ 
     label       & the label of the single state feature\\
     f\_index    & the index of the feature in the feature table\\
-    start\_pos  & the postion of the token in a sentence which has this feature\\
+    start\_pos  & the postion of the token(starting from 0)\\
     exist       & indicate whether the token exist or not in the acutal training data set\\
     \hline
     \end{tabular}
@@ -208,10 +236,10 @@ dense m feature:
     \begin{tabular}{ | l | l |}
     \hline
     label & Description \\ \hline
-    prev\_label & it is a single state feature, prev\_label is always 0.\\ 
-    label       & the label of the single state feature\\
-    f\_index    &  the index of the feature in the feature table\\
-    start\_pos  & the postion of the token in a sentence which has this feature\\
+    prev\_label & the label of previous token.\\ 
+    label       & the label of current token\\
+    f\_index    & the index of the feature in the feature table\\
+    start\_pos  & the postion of the token in a sentence(starting from 0)\\
     exist       & indicate whether the token exist or not in the acutal training data set\\
     \hline
     \end{tabular}
@@ -232,12 +260,22 @@ sparse m feature:(f\_index, prev\_label, label)
 
 \end{itemize}
 For performance consideraton, we split the m feature to dense\_m feature and spare m feature\\
+The acutal spare r table is array union of individal r features ordered by the start positon of tokens.
+So the function to compute the gradient vector and loglikelihood can scan the feature arrays from begining to end.
 
 \subsection{Testing Data Feature Extraction}
   This feature extraction function will produce two factor tables, "m table"
   $viterbi\_mtbl$ and "r table" $viterbi\_rtbl$. The $viterbi\_mtbl$
   table and a $viterbi\_rtbl$ table are used to calculate the best label
   sequence for each sentence.
+
+\begin{center}
+    \begin{tabular}{ | l | l | l | l |}
+    \hline
+    doc\_id & viterbi\_mtbl & viterbi\_rtbl \\ 
+    \hline
+    \end{tabular}
+\end{center}
  
   $viterbi\_mtbl$ table
   encodes the edge features which are solely dependent on upon current label and
