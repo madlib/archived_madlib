@@ -3844,6 +3844,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__check_dt_common_params
     ) 
 RETURNS void AS $$
 DECLARE
+    num_of_element  BIGINT;
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert
         (
@@ -3913,6 +3914,18 @@ BEGIN
             training_table_name            || 
             '> does not exist', ' is NULL')
         );
+
+    EXECUTE 'SELECT count(*) FROM
+                (SELECT * FROM '||training_table_name||' LIMIT 1) l' 
+        INTO num_of_element;
+
+    PERFORM MADLIB_SCHEMA.__assert
+            (
+                num_of_element > 0,
+                'the specified training table <'||training_table_name||
+                '> should not be empty'
+            );
+
     
     PERFORM MADLIB_SCHEMA.__assert
             (
@@ -4012,6 +4025,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__check_training_table
     ) 
 RETURNS VOID AS $$
 DECLARE
+    num_attrs                 INT;
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert
         (
@@ -4043,10 +4057,12 @@ BEGIN
 
     IF (feature_col_names IS NULL) THEN
         -- 2 means the id and class column
+        num_attrs = MADLIB_SCHEMA.__num_of_columns(training_table_name) - 2;
+        
         PERFORM MADLIB_SCHEMA.__assert
             (
-                features_per_node IS NULL OR
-                MADLIB_SCHEMA.__num_of_columns(training_table_name) - 2 >= features_per_node,
+                (features_per_node IS NULL AND num_attrs > 0)  OR
+                (features_per_node IS NOT NULL AND num_attrs >= features_per_node),
                 'the value of features_per_node must be less than or equal to the total number ' ||
                 'of features of the training table'
            );        
@@ -4056,10 +4072,11 @@ BEGIN
                 'each feature in continuous_feature_names must be a column of the training table'
             );
     ELSE
+        num_attrs = array_upper(feature_col_names, 1);
         PERFORM MADLIB_SCHEMA.__assert
             (
-                features_per_node IS NULL OR
-                array_upper(feature_col_names, 1) >= features_per_node,
+                (features_per_node IS NULL AND num_attrs > 0) OR
+                (features_per_node IS NOT NULL AND num_attrs >= features_per_node),
                 'the value of features_per_node must be less than or equal to the total number ' ||
                 'of features of the training table'
            );    

@@ -1,15 +1,19 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file assoc_rules.sql_in
  *
- * @brief The \ref assoc_rules function computes association rules for a given set of data. The data is assumed to have two dimensions; items (between which we are trying to discover associations), and a transaction id. This tranaction id groups the items by event and could also be a user id, date, etc. depending on the context of the data. This function assumes the data is stored in two columns with one transaction id and one item per row. 
+ * @brief The \ref assoc_rules function computes association rules for a given set of data. The data is assumed to have two dimensions; items (between which we are trying to discover associations), and a transaction id. This tranaction id groups the items by event and could also be a user id, date, etc. depending on the context of the data. This function assumes the data is stored in two columns with one transaction id and one item per row.
 
- * @date   June 2011
+ * @date June 2011
+ * @modified August 2012
  *
  * @sa For a brief introduction to the association rules implementation, see the module
- *     description \ref grp_assoc_rules.
+ * description \ref grp_assoc_rules.
  *
  *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
 
 /**
 @addtogroup grp_assoc_rules
@@ -17,31 +21,31 @@
 @about
 This module implements the association rules data mining technique on a transactional data set. Given the names of a table and the columns, minimum support and confidence values, this function generates all single and multidimensional association rules that meet the minimum thresholds.
 
-Association rule mining is a widely used technique for discovering relationships between variables in a large data set (e.g items in a store that are commonly purchased together). The classic market basket analysis example using association rules is the "beer and diapers" rule. According to data mining urban legend, a study of customers' purchase behavior in a supermarket found that men often purchased beer and diapers together. After making this discovery, the managers strategically placed beer and diapers closer together on the shelves and saw a dramatic increase in sales. In addition to market basket analysis, association rules are also used in bioinformatics, web analytics, and several other fields.  
+Association rule mining is a widely used technique for discovering relationships between variables in a large data set (e.g items in a store that are commonly purchased together). The classic market basket analysis example using association rules is the "beer and diapers" rule. According to data mining urban legend, a study of customers' purchase behavior in a supermarket found that men often purchased beer and diapers together. After making this discovery, the managers strategically placed beer and diapers closer together on the shelves and saw a dramatic increase in sales. In addition to market basket analysis, association rules are also used in bioinformatics, web analytics, and several other fields.
 
-This type of data mining algorithm uses transactional data. Every transaction event has a unique identification, and each transaction consists of a set of items (or itemset). Purchases are considered binary (either it was purchased or not), and this implementation does not take into consideration the quantity of each item. For the MADlib association rules function, it is assumed that the data is stored in two columns with one item and transaction id per row. Transactions with multiple items will span multiple rows with one row per item. 
+This type of data mining algorithm uses transactional data. Every transaction event has a unique identification, and each transaction consists of a set of items (or itemset). Purchases are considered binary (either it was purchased or not), and this implementation does not take into consideration the quantity of each item. For the MADlib association rules function, it is assumed that the data is stored in two columns with one item and transaction id per row. Transactions with multiple items will span multiple rows with one row per item.
 
 <pre>
-	 tran_id | product 
-	---------+---------
-	       1 |       1
-	       1 |       2
-	       1 |       3
-	       1 |       4
-	       2 |       3
-	       2 |       4
-	       2 |       5
-	       3 |       1
-	       3 |       4
-	       3 |       6
-	...
-</pre>  
+     tran_id | product
+    ---------+---------
+           1 | 1
+           1 | 2
+           1 | 3
+           1 | 4
+           2 | 3
+           2 | 4
+           2 | 5
+           3 | 1
+           3 | 4
+           3 | 6
+    ...
+</pre>
 
-\b Rules  
+\b Rules
 
-Association rules take the form "If X, then Y", where X and Y are non-empty itemsets. X and Y are called the antecedent and consequent, or the left-hand-side and right-hand-side, of the rule respectively. Using our previous example, the association rule may state "If {diapers}, then {beer}" with .2 support and .85 confidence. 
+Association rules take the form "If X, then Y", where X and Y are non-empty itemsets. X and Y are called the antecedent and consequent, or the left-hand-side and right-hand-side, of the rule respectively. Using our previous example, the association rule may state "If {diapers}, then {beer}" with .2 support and .85 confidence.
 
-Given any association rule "If X, then Y", the association rules function will also calculate the following metrics: 
+Given any association rule "If X, then Y", the association rules function will also calculate the following metrics:
 - Support: The ratio of transactions that contain X to all transactions, T
 \f[
 S (X) = \frac{Total X}{Total transactions}
@@ -50,700 +54,283 @@ S (X) = \frac{Total X}{Total transactions}
 - Confidence: The ratio of transactions that contain \f$ X,Y \f$ to transactions that contain \f$ X \f$. One could view this metric as the conditional probability of \f$ Y \f$ , given \f$ X \f$ . \f$ P(Y|X) \f$
 
 \f[
-C (X \Rightarrow Y) = \frac{s(X \cap Y )}{s(X)} 
+C (X \Rightarrow Y) = \frac{s(X \cap Y )}{s(X)}
 \f]
 
-- Lift: The ratio of observed support of \f$ X,Y \f$  to the expected support of \f$ X,Y \f$ , assuming \f$ X \f$ and \f$ Y \f$ are independent.  
+- Lift: The ratio of observed support of \f$ X,Y \f$ to the expected support of \f$ X,Y \f$ , assuming \f$ X \f$ and \f$ Y \f$ are independent.
 \f[
 L (X \Rightarrow Y) = \frac{s(X \cap Y )}{s(X) \cdot s(Y)}
 \f]
 
-- Conviction: The ratio of expected support of \f$ X \f$  occurring without\f$ Y \f$  assuming \f$ X \f$  and \f$ \neg Y \f$  are independent, to the observed support of \f$ X \f$ occuring without \f$ Y \f$. If conviction is greater than 1, then this metric shows that incorrect predictions ( \f$ X \Rightarrow Y \f$ ) occur less often than if these two actions were independent. This metric can be viewed as the ratio that the association rule would be incorrect if the actions were independent (i.e. a conviction of 1.5 indicates that if the variables were independent, this rule would be incorrect 50% more often.)  
+- Conviction: The ratio of expected support of \f$ X \f$ occurring without\f$ Y \f$ assuming \f$ X \f$ and \f$ \neg Y \f$ are independent, to the observed support of \f$ X \f$ occuring without \f$ Y \f$. If conviction is greater than 1, then this metric shows that incorrect predictions ( \f$ X \Rightarrow Y \f$ ) occur less often than if these two actions were independent. This metric can be viewed as the ratio that the association rule would be incorrect if the actions were independent (i.e. a conviction of 1.5 indicates that if the variables were independent, this rule would be incorrect 50% more often.)
 
 \f[
 Conv (X \Rightarrow Y) = \frac{1 - S(Y)}{1 - C(X \Rightarrow Y)}
 \f]
 
 
-\b Apriori  \b algorithm  
+\b Apriori \b algorithm
 
-Although there are many algorithms that generate association rules, the classic algorithm used is called Apriori (which we implemented in this module). It is a breadth-first search, as opposed to depth-first searches like eclat. Frequent itemsets of order \f$ n \f$ are generated from sets of order \f$ n - 1 \f$. Using the downward closure property, all sets must have frequent subsets. There are two steps in this algorithm; generating frequent itemsets, and using these itemsets to construct the association rules. A simplified version of the algorithm is as follows, and assumes a minimum level of support and confidence is provided: 
+Although there are many algorithms that generate association rules, the classic algorithm used is called Apriori (which we implemented in this module). It is a breadth-first search, as opposed to depth-first searches like eclat. Frequent itemsets of order \f$ n \f$ are generated from sets of order \f$ n - 1 \f$. Using the downward closure property, all sets must have frequent subsets. There are two steps in this algorithm; generating frequent itemsets, and using these itemsets to construct the association rules. A simplified version of the algorithm is as follows, and assumes a minimum level of support and confidence is provided:
 
 \e Initial \e step
--# Generate all itemsets of order 1 
--# Eliminate itemsets that have support is less than minimum support 
- 
-\e Main \e algorithm  
--# For \f$ n \ge 2 \f$, generate itemsets of order \f$ n \f$ by combining the itemsets of order \f$ n - 1 \f$. This is done by doing the union of two itemsets that have identical items except one. 
--# Eliminate itemsets that have (n-1) order subsets with insufficient support 	
--# Eliminate itemsets with insufficient support 
--# Repeat until itemsets cannot be generated 
+-# Generate all itemsets of order 1
+-# Eliminate itemsets that have support is less than minimum support
+
+\e Main \e algorithm
+-# For \f$ n \ge 2 \f$, generate itemsets of order \f$ n \f$ by combining the itemsets of order \f$ n - 1 \f$. This is done by doing the union of two itemsets that have identical items except one.
+-# Eliminate itemsets that have (n-1) order subsets with insufficient support
+-# Eliminate itemsets with insufficient support
+-# Repeat until itemsets cannot be generated
 
 \e Association \e rule \e generation
 
-Given a frequent itemset \f$ A \f$ generated from the Apriori algorithm, and all subsets \f$ B \f$ , we generate rules such that \f$ B \Rightarrow (A - B) \f$ meets minimum confidence requirements. 
+Given a frequent itemset \f$ A \f$ generated from the Apriori algorithm, and all subsets \f$ B \f$ , we generate rules such that \f$ B \Rightarrow (A - B) \f$ meets minimum confidence requirements.
 
 @input
 
 The input data is expected to be of the following form:
-<pre>{TABLE|VIEW} <em>input_table</em> (    
+<pre>{TABLE|VIEW} <em>input_table</em> (
     <em>trans_id</em> INTEGER,
     <em>product</em> TEXT
 )</pre>
 
-The algorithm will map the product names to consective integer ids starting at 1. If they are already structured this way, then the ids will not change. 
+The algorithm will map the product names to consective integer ids starting at 1. If they are already structured this way, then the ids will not change.
 
 @usage
 - Association rules can be called by:
   <pre>SELECT \ref assoc_rules(
-    <em>i_support</em>, <em>i_confidence</em>,'<em>id_col</em>','<em>product_col</em>',
-    '<em>input_table</em>','<em>output_schema</em>', <em> p_verbose </em>
+    <em>support</em>, <em>confidence</em>,'<em>tid_col</em>','<em>item_col</em>',
+    '<em>input_table</em>','<em>output_schema</em>', <em> verbose </em>
     );</pre>
-  This will generate all association rules that meet a minimum support of <em>i_support</em> and confidence of <em>i_confidence</em>. 
-  
+  This will generate all association rules that meet a minimum support of <em>support</em> and confidence of <em>confidence</em>.
+
 - The results containing the rules, support, confidence, lift, and conviction are stored in the table assoc_rules in the schema specified by <em>output_schema</em>.
 <pre>
-	 Table "output_schema.assoc_rules"
-	    Column     |    Type     | Modifiers 
-	---------------+-------------+-----------
-	 set_list      | madlib.svec | 
-	 hash_key      | integer     | 
-	 subset_x      | madlib.svec | 
-	 subset_y      | madlib.svec | 
-	 support_xy    | numeric     | 
-	 confidence_xy | numeric     | 
-	 lift_xy       | numeric     | 
-	 conviction_xy | numeric     | 
-	Distributed by: (hash_key)
+    Table "output_schema.assoc_rules"
+      Column   |       Type       | Modifiers 
+   ------------+------------------+-----------
+    ruleid     | integer          | 
+    pre        | text[]           | 
+    post       | text[]           | 
+    support    | double precision | 
+    confidence | double precision | 
+    lift       | double precision | 
+    conviction | double precision | 
+    Distributed by: (ruleid)
+
 </pre>
-	The \c set_list is the frequent itemset, and \c subset_x and \c subset_y are the itemsets of left and right hand sides of the association rule respectively. The \c hash_key is a hash of the \c set_list column, and the table is distributed by this key. The \c support_xy, \c confidence_xy, \c lift_xy, and \c conviction_xy columns are calculated as mentioned in the about section. 
+    The \c pre and \c post are the itemsets of left and right hand sides of the association rule respectively. The \c support, \c confidence, \c lift, and \c conviction columns are calculated as mentioned in the about section.
 
 @implementation
 
-All the underlying tables created by this function are temporary tables. Please make a copy of any tables that have information you would like to persist (e.g. assoc_prod_uniq) 
-
-The association rules function will always create a table named assoc_rules. Please make a copy of this table before running the function again if you would like to keep multiple association rule tables. 
-
-
+The association rules function will always create a table named assoc_rules. Please make a copy of this table before running the function again if you would like to keep multiple association rule tables.
 
 @examp
 
-Let us take a look at some sample transactional data and generate association rules: 
+Let us take a look at some sample transactional data and generate association rules:
 
-\code 
-DROP TABLE IF EXISTS test_data; 
+\code
+DROP TABLE IF EXISTS test_data;
 CREATE TABLE test_data (
-	trans_id INT
-	, product text
-); 
+    trans_id INT
+    , product text
+);
 
-INSERT INTO test_data VALUES (1, 'beer'); 
-INSERT INTO test_data VALUES (1, 'diapers'); 
-INSERT INTO test_data VALUES (1, 'chips'); 
-INSERT INTO test_data VALUES (2, 'beer'); 
-INSERT INTO test_data VALUES (2, 'diapers'); 
-INSERT INTO test_data VALUES (3, 'beer'); 
+INSERT INTO test_data VALUES (1, 'beer');
+INSERT INTO test_data VALUES (1, 'diapers');
+INSERT INTO test_data VALUES (1, 'chips');
+INSERT INTO test_data VALUES (2, 'beer');
+INSERT INTO test_data VALUES (2, 'diapers');
+INSERT INTO test_data VALUES (3, 'beer');
 INSERT INTO test_data VALUES (3, 'diapers');
-INSERT INTO test_data VALUES (4, 'beer'); 
-INSERT INTO test_data VALUES (4, 'chips'); 
+INSERT INTO test_data VALUES (4, 'beer');
+INSERT INTO test_data VALUES (4, 'chips');
 INSERT INTO test_data VALUES (5, 'beer');
-INSERT INTO test_data VALUES (6, 'beer'); 
-INSERT INTO test_data VALUES (6, 'diapers'); 
-INSERT INTO test_data VALUES (6, 'chips'); 
-INSERT INTO test_data VALUES (7, 'beer'); 
-INSERT INTO test_data VALUES (7, 'diapers'); 
+INSERT INTO test_data VALUES (6, 'beer');
+INSERT INTO test_data VALUES (6, 'diapers');
+INSERT INTO test_data VALUES (6, 'chips');
+INSERT INTO test_data VALUES (7, 'beer');
+INSERT INTO test_data VALUES (7, 'diapers');
 
-\endcode 
+\endcode
 
-Let \f$ min(support) = .25 \f$ and \f$ min(confidence) = .5 \f$, and the output schema be 'myschema'. For this example, we will set p_verbose to 'true' so that we have some insight into the progress of the function. We can now generate association rules as follows: 
+Let \f$ min(support) = .25 \f$ and \f$ min(confidence) = .5 \f$, and the output schema be 'myschema'. For this example, we will set verbose to 'true' so that we have some insight into the progress of the function. We can now generate association rules as follows:
 
-\code 
+\code
 
-SELECT * FROM MADLIB_SCHEMA.assoc_rules (.25, .5, 'trans_id', 'product', 'test_data','myschema', true);
+SELECT * FROM MADLIB_SCHEMA.assoc_rules (.25, .5, 'trans_id', 'product', 'test_data','myschema', false);
 
-\endcode 
+\endcode
 
-This should generate this output: 
+This should generate this output:
 
-\code 
+\code
 
-INFO:  Data set has 3 unique products.
-INFO:  Data set has 7 total transaction events.
-INFO:  Product ids need to increment from 1. Data will be modified. Please see table assoc_prod_uniq for lookup.
-INFO:  Product ids need to be consecutive integers from 1 ... n. Data will be modified. Please see table assoc_prod_uniq for lookup.
-INFO:  Transforming all data into svec format
-INFO:  Beginning iteration #1
-INFO:  3 Frequent itemsets found in this iteration
-INFO:  Completed iteration # 1
-INFO:  Beginning iteration # 2
-INFO:  3 potential itemsets found. Filtering out itemsets with infrequent subsets.
-INFO:  3 potential itemsets found. Filtering by support.
-INFO:  3 Frequent itemsets found in this iteration
-INFO:  Completed iteration # 2
-INFO:  Beginning iteration # 3
-INFO:  1 potential itemsets found. Filtering out itemsets with infrequent subsets.
-INFO:  1 potential itemsets found. Filtering by support.
-INFO:  1 Frequent itemsets found in this iteration
-INFO:  Completed iteration # 3
-INFO:  Beginning iteration # 4
-INFO:  0 potential itemsets found. Filtering out itemsets with infrequent subsets.
-INFO:  0 potential itemsets found. Filtering by support.
-INFO:  0 Frequent itemsets found in this iteration
-INFO:  Completed iteration # 4
-INFO:  7 Total association rules found
-	output_schema   | output_table | total_rules 
---------------------+--------------+-------------
-      myschema      | assoc_rules  |           7
-
-\endcode 
-
-The table assoc_prod_uniq is a temporary table generated by the function to map all names of the items into integers. 
-
-\code 
-select * from assoc_prod_uniq order by 1;
-
- prod_id | orig_col 
----------+----------
-	   1 | beer
-	   2 | chips
-	   3 | diapers
-
-\endcode 
-
-The association rules are stored in the myschema.assoc_rules: 
-
-\code 
-select * from myschema.assoc_rules order by support_xy desc; 
-
-	set_list     |  hash_key   |    subset_x     |    subset_y     |     support_xy     |   confidence_xy    |      lift_xy       |   conviction_xy    
------------------+-------------+-----------------+-----------------+--------------------+--------------------+--------------------+-------------------
- {1,1,1}:{1,0,1} |  -640301634 | {2,1}:{0,1}     | {1,2}:{1,0}     | 0.7142857142857142 | 1.0000000000000000 | 1.0000000000000000 |                  0 
- {1,1,1}:{1,0,1} |  -640301634 | {1,2}:{1,0}     | {2,1}:{0,1}     | 0.7142857142857142 | 0.7142857142857571 | 1.0000000000000000 | 1.0000000000000000
- {2,1}:{1,0}     |  1126614205 | {1,1,1}:{0,1,0} | {1,2}:{1,0}     | 0.4285714285714285 | 1.0000000000000000 | 1.0000000000000000 |                  0
- {3}:{1}         |  2106950333 | {2,1}:{1,0}     | {2,1}:{0,1}     | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
- {3}:{1}         |  2106950333 | {1,1,1}:{0,1,0} | {1,1,1}:{1,0,1} | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
- {3}:{1}         |  2106950333 | {1,2}:{0,1}     | {1,2}:{1,0}     | 0.2857142857142857 | 1.0000000000000000 | 1.0000000000000000 |                  0 
- {1,2}:{0,1}     | -2063121219 | {1,1,1}:{0,1,0} | {2,1}:{0,1}     | 0.2857142857142857 | 0.6666666666666667 | 0.9333333333333333 | 0.8142857142857142
+ output_schema | output_table | total_rules | total_time      
+---------------+--------------+-------------+-----------------
+ myschema      | assoc_rules  |           7 | 00:00:03.162094
+(1 row)
 
 
-\endcode 
+\endcode
+
+The association rules are stored in the myschema.assoc_rules:
+
+\code
+select * from myschema.assoc_rules order by support desc;
+ ruleid |       pre       |      post      |      support      |    confidence     |       lift        |    conviction     
+--------+-----------------+----------------+-------------------+-------------------+-------------------+-------------------
+      4 | {diapers}       | {beer}         | 0.714285714285714 |                 1 |                 1 |                 0
+      2 | {beer}          | {diapers}      | 0.714285714285714 | 0.714285714285714 |                 1 |                 1
+      1 | {chips}         | {beer}         | 0.428571428571429 |                 1 |                 1 |                 0
+      5 | {chips}         | {beer,diapers} | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+      6 | {chips,beer}    | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+      7 | {chips,diapers} | {beer}         | 0.285714285714286 |                 1 |                 1 |                 0
+      3 | {chips}         | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+(7 rows)
+
+\endcode
 
 @sa File assoc_rules.sql_in documenting the SQL function.
 
 */
 
---!
---!
-CREATE TYPE MADLIB_SCHEMA.assoc_rules_results AS (
-  output_schema text
- , output_table text
- , total_rules int
-)
-;
-
-/**
- * Modifies an existing svec's value at the given position to 1. If no svec is given, it first generates an svec of given length whose entries are all 0. 
+/*
+ * @brief The result data type for the association rule API
  *
- */ 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_make_svec_sfunc (p_svec MADLIB_SCHEMA.svec, p_position int, p_length int) 
-RETURNS MADLIB_SCHEMA.svec AS 
-$$
-DECLARE
-  ret_svec MADLIB_SCHEMA.svec; 
-BEGIN
-  ret_svec = p_svec; 
-  IF ret_svec IS NULL THEN 
-    ret_svec = '{' || p_length || '}:{0}'; 
-  END IF; 
-  SELECT INTO ret_svec MADLIB_SCHEMA.svec_change(ret_svec, p_position, '{1}:{1}'::MADLIB_SCHEMA.svec) ; 
-  RETURN ret_svec; 
-END; 
-$$
-LANGUAGE plpgsql; 
-
-/**
- * This aggregate function modifies an svec such that the values at the given positions are changed to 1. The first input is position, the second is the length of the svec. See \ref assoc_make_svec_sfunc 
- *
+ * output_schema the name of the output schema.
+ * output_table the name of the output table.
+ * total_rules the number of total rules.
+ * total_time the running time.
  */
-DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.assoc_make_svec (int, int); 
-CREATE AGGREGATE MADLIB_SCHEMA.assoc_make_svec (int, int) ( 
-  sfunc = MADLIB_SCHEMA.assoc_make_svec_sfunc
-  , stype = MADLIB_SCHEMA.svec
-)
-; 
-
-/**
- * @param input_column name of the column storing svec 
- * @param input_table name of the table with svec column
- * @param output_table name of the output table to store results  
- *
- *  This function takes an svec and creates a table with the deconstructed set parts. For each
- *  single element x in the svec y, it will find the remaining svec y - x.
- *
- *  The final table structure should have columns (orig_svec MADLIB_SCHEMA.svec, part_x MADLIB_SCHEMA.svec, part_y MADLIB_SCHEMA.svec, hash_key MADLIB_SCHEMA.svec, int) 
- */
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_svec_list_parts(input_column text, input_table text, output_table text) RETURNS VOID
- AS $$ 
-DECLARE
-  length integer;  
-  a_svec MADLIB_SCHEMA.svec; 
-BEGIN
-  CREATE TEMPORARY TABLE temp_svec (i_svec MADLIB_SCHEMA.svec) m4_ifdef(`GREENPLUM',`DISTRIBUTED RANDOMLY') ;
-  FOR a_svec IN EXECUTE ('SELECT ' || input_column ||' FROM ' || input_table) LOOP 
-  length = MADLIB_SCHEMA.svec_dimension(a_svec);
-  EXECUTE 'TRUNCATE temp_svec';
-  EXECUTE 'INSERT INTO temp_svec VALUES (''' || MADLIB_SCHEMA.svec_to_string(a_svec) ||'''::MADLIB_SCHEMA.svec)'; 
-    FOR i in 1..length LOOP 
-      IF MADLIB_SCHEMA.svec_proj(a_svec,i)>0 THEN 
-        EXECUTE 'INSERT INTO ' || output_table || ' 
-         SELECT  
-          t.i_svec
-         , MADLIB_SCHEMA.assoc_make_svec_sfunc(NULL, ' || i ||',' || length || ')
-         , MADLIB_SCHEMA.svec_minus(t.i_svec,MADLIB_SCHEMA.assoc_make_svec_sfunc(NULL,'|| i || ',' || length || '))
-         , MADLIB_SCHEMA.svec_hash(t.i_svec)
-        FROM temp_svec t'
-         ; 
-      END IF; 
-    END LOOP;
-  END LOOP;  
-  DROP TABLE temp_svec; 
-END
-$$
-  LANGUAGE plpgsql;
-
-
- 
-
-/**
- * 
- * @param i_support minimum level of support needed for each itemset to be included in result
- * @param i_confidence minimum level of confidence needed for each rule to be included in result
- * @param id_col name of the column storing the transaction ids
- * @param product_col name of the column storing the products 
- * @param input_table name of the table where the data is stored 
- * @param output_schema name of the schema where the final results will be stored 
- * @returns The schema and table name containing association rules, and total number of rules found. 
- *
- * This function computes the association rules between products in a data set. 
- * It reads the name of the table, the column names of the product and ids, and computes 
- * association rules using the Apriori algorithm, and subject to the support and confidence
- * constraints as input by the user.  
- */
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules(i_support float8, i_confidence float8, id_col text, product_col text, input_table text, output_schema text) 
-RETURNS MADLIB_SCHEMA.assoc_rules_results AS $$ 
-DECLARE 
-  r record; 
-BEGIN
-  EXECUTE 'SELECT * FROM MADLIB_SCHEMA.assoc_rules('''|| i_support || ''', ''' || i_confidence || ''', ''' || id_col || ''', ''' || product_col || ''', ''' || input_table || ''', ''' || output_schema || ''', false) ' into r;    
-  RETURN r ; 
-END
-$$
-  LANGUAGE plpgsql;
-
-/**
- * 
- * @param i_support minimum level of support needed for each itemset to be included in result
- * @param i_confidence minimum level of confidence needed for each rule to be included in result
- * @param id_col name of the column storing the transaction ids
- * @param product_col name of the column storing the products 
- * @param input_table name of the table where the data is stored 
- * @param output_schema name of the schema where the final results will be stored
- * @param p_verbose boolean determining if output contains comments 
- * @returns The schema and table name containing association rules, and total number of rules found. 
- *
- * This function computes the association rules between products in a data set. 
- * It reads the name of the table, the column names of the product and ids, and computes 
- * association rules using the Apriori algorithm, and subject to the support and confidence
- * constraints as input by the user. This version of association rules has verbose functionality. 
- * When verbose is true, output of function includes iteration steps and comments on Apriori algorithm steps. 
- */
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules (i_support float8, i_confidence float8, id_col text, product_col text, input_table text, output_schema text, p_verbose boolean)
-  RETURNS MADLIB_SCHEMA.assoc_rules_results
-AS $$
-DECLARE
-  l int; 
-  n int;
-  tot_rec int; 
-  tot_uniq int; 
-  id_tot int; 
-  prod_tot int; 
-  prod_min int; 
-  prod_max int;
-  r  MADLIB_SCHEMA.assoc_rules_results; 
-  total_rules int;  
-BEGIN
-SET client_min_messages= warning; 
-
--- Stores data as one row per transaction (transactions saved as MADLIB_SCHEMA.svec type) 
-  EXECUTE 'DROP TABLE IF EXISTS assoc_trans_svec'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_trans_svec (trans_id text, products MADLIB_SCHEMA.svec)'; 
-
--- Transaction svecs expressed as subsets in two columns 
-  EXECUTE 'DROP TABLE IF EXISTS assoc_set_list_parts'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_set_list_parts ( 
-    set_list MADLIB_SCHEMA.svec
-    , subset_x MADLIB_SCHEMA.svec
-    , subset_y MADLIB_SCHEMA.svec 
-    , hash_key int
-    , id serial) 
-    m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)') 
-   '; 
-
--- Frequently occurring itemsets 
-  EXECUTE 'DROP TABLE IF EXISTS assoc_rule_sets';
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_rule_sets (
-    set_name  text 
-    , set_list MADLIB_SCHEMA.svec
-    , hash_key int
-    , support numeric 
-    , iteration int) 
-  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)')  
-  ';
-
-  -- the auxiliary table to generate the readable rules
-  EXECUTE 'DROP TABLE IF EXISTS assoc_rules_aux_tmp';
-  EXECUTE 
-    'CREATE TEMP TABLE assoc_rules_aux_tmp 
+CREATE TYPE MADLIB_SCHEMA.assoc_rules_results AS
     (
-        ruleId      SERIAL,
-        pre         MADLIB_SCHEMA.svec,
-        post        MADLIB_SCHEMA.svec,
-        support     FLOAT8,
-        confidence  FLOAT8,
-        lift        FLOAT8,
-        conviction  FLOAT8
+    output_schema TEXT,
+    output_table TEXT,
+    total_rules INT,
+    total_time INTERVAL
+);
+
+
+/*
+ * @brief Given the text form of a closed frequent pattern (cfp), this function
+ * generates the association rules for that pattern. We use text format
+ * because text values are hash joinable. The output is a set of text
+ * array. For example, assuming the input pattern is '1,2,3'.
+ * The result rules:
+ * array['1', '2,3']
+ * array['2', '1,3']
+ * array['3', '1,2']
+ * array['1,2', '3']
+ * array['1,3', '2']
+ * array['2,3', '1']
+ * Note that two meaningless rules will be excluded:
+ * array['1,2,3', NULL]
+ * array[NULL, '1,2,3']
+ *
+ * @param arg 1 The text form of a closed frequent pattern.
+ * @param arg 2 The number of items in the pattern.
+ *
+ * @return A set of text array. Each array has two elements, corresponding to
+ * the left and right parts of an association rule.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.gen_rules_from_cfp
+    (
+    TEXT,
+    INT
     )
-    m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (ruleId)')';
+RETURNS SETOF TEXT[] AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
 
-  -- Association rules output 
-  EXECUTE 'DROP TABLE IF EXISTS '|| output_schema ||'.assoc_rules';
-  EXECUTE 
-    'CREATE TABLE '|| output_schema ||'.assoc_rules 
-    ( 
-        ruleId      INT,
-        pre         TEXT[],
-        post        TEXT[],
-        support     FLOAT8,
-        confidence  FLOAT8,
-        lift        FLOAT8,
-        conviction  FLOAT8
+
+/**
+ *
+ * @param support minimum level of support needed for each itemset to
+ * be included in result
+ * @param confidence minimum level of confidence needed for each rule to
+ * be included in result
+ * @param tid_col name of the column storing the transaction ids
+ * @param item_col name of the column storing the products
+ * @param input_table name of the table where the data is stored
+ * @param output_schema name of the schema where the final results will be stored
+ * @param verbose determining if output contains comments
+ *
+ * @returns The schema and table name containing association rules,
+ * and total number of rules found.
+ *
+ * This function computes the association rules between products in a data set.
+ * It reads the name of the table, the column names of the product and ids, and
+ * computes ssociation rules using the Apriori algorithm, and subject to the
+ * support and confidence constraints as input by the user. This version of
+ * association rules has verbose functionality. When verbose is true, output of
+ * function includes iteration steps and comments on Apriori algorithm steps.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules
+    (
+    support FLOAT8,
+    confidence FLOAT8,
+    tid_col TEXT,
+    item_col TEXT,
+    input_table TEXT,
+    output_schema TEXT,
+    verbose BOOLEAN
+   )
+RETURNS MADLIB_SCHEMA.assoc_rules_results
+AS $$
+
+    PythonFunctionBodyOnly(`assoc_rules', `assoc_rules')
+
+    plpy.execute("SET client_min_messages = error;")
+
+    # MADlibSchema comes from PythonFunctionBodyOnly
+    return assoc_rules.assoc_rules(
+        MADlibSchema,
+        support,
+        confidence,
+        tid_col,
+        item_col,
+        input_table,
+        output_schema,
+        verbose
+        );
+
+$$ LANGUAGE plpythonu;
+
+
+/**
+ *
+ * @brief The short form of the above function with vobose removed.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules
+    (
+    support FLOAT8,
+    confidence FLOAT8,
+    tid_col TEXT,
+    item_col TEXT,
+    input_table TEXT,
+    output_schema TEXT
     )
-  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (ruleId)')';
+RETURNS MADLIB_SCHEMA.assoc_rules_results
+AS $$
 
+    PythonFunctionBodyOnly(`assoc_rules', `assoc_rules')
 
--- User data uniqueness check 
+    plpy.execute("SET client_min_messages = error;")
 
--- Data clean up, unique transactions 
-  EXECUTE 'DROP TABLE IF EXISTS assoc_id_uniq'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_id_uniq AS
-    SELECT 
-    ' || id_col || ' as trans_id
-    , ' || product_col || '::text as product
-    FROM 
-    ' || input_table || '
-    GROUP BY 1,2
-  '; 
+    # MADlibSchema comes from PythonFunctionBodyOnly
+    return assoc_rules.assoc_rules(
+        MADlibSchema,
+        support,
+        confidence,
+        tid_col,
+        item_col,
+        input_table,
+        output_schema,
+        False
+        );
 
-  EXECUTE 'SELECT count(*) from ' || input_table INTO tot_rec;
-  EXECUTE 'SELECT count(*) FROM (SELECT ' || id_col || ', ' || product_col || ' FROM ' || input_table ||' GROUP BY 1,2) a' INTO tot_uniq ;  
-  IF (tot_rec <> tot_uniq) AND p_verbose is TRUE THEN
-    RAISE INFO 'Data set was not unique. Data was filtered into unique tuples';
-  END IF;
-
-
--- Product data indexing check (product ids must increment from 1...m) 
-  EXECUTE 'SELECT count(distinct '|| product_col ||') from ' || input_table INTO prod_tot;
-  EXECUTE 'SELECT count(distinct '|| id_col ||') from ' || input_table INTO id_tot;
-  IF p_verbose is true THEN 
-    RAISE INFO 'Data set has % unique products.', prod_tot; 
-    RAISE INFO 'Data set has % total transaction events.', id_tot; 
-  END IF; 
-
-
-  EXECUTE 'DROP TABLE IF EXISTS assoc_prod_uniq'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_prod_uniq (prod_id serial, orig_col text)';
-  EXECUTE 'INSERT INTO assoc_prod_uniq(orig_col)
-     SELECT
-       distinct ' || product_col || '
-     FROM '
-      || input_table || ' ORDER BY 1 LIMIT ' || prod_tot ; 
-
-  EXECUTE 'SELECT min( prod_id) from assoc_prod_uniq' INTO prod_min;
-  EXECUTE 'SELECT max( prod_id) from assoc_prod_uniq' INTO prod_max; 
-  IF prod_min > 1 AND p_verbose is true THEN
-    RAISE INFO 'Product ids need to increment from 1. Data will be modified. Please see table assoc_prod_uniq for lookup.'; 
-  END IF;
-  IF prod_tot <> prod_max AND p_verbose is true THEN
-    RAISE INFO 'Product ids need to be consecutive integers from 1 ... n. Data will be modified. Please see table assoc_prod_uniq for lookup.'; 
-  END IF;
- 
-
--- Max products 
-  EXECUTE 'DROP TABLE IF EXISTS max_p'; 
-  EXECUTE 'CREATE TEMPORARY TABLE max_p AS SELECT max(prod_id) as tot FROM assoc_prod_uniq'; 
-
--- Total transactions 
-  EXECUTE 'DROP TABLE IF EXISTS max_t';
-  EXECUTE 'CREATE TEMPORARY TABLE max_t AS SELECT count(distinct trans_id) as tot FROM assoc_id_uniq'; 
-
--- Unique set of input data  
-  EXECUTE 'DROP TABLE IF EXISTS assoc_input_data'; 
-  EXECUTE 'CREATE TEMPORARY TABLE assoc_input_data (trans_id text, prod int)'; 
-
--- Join the data in one unique set 
-  EXECUTE 'INSERT INTO assoc_input_data
-    SELECT 
-      i.trans_id
-      , p.prod_id  
-    FROM 
-      assoc_id_uniq i 
-    JOIN
-      assoc_prod_uniq p ON p.orig_col = i.product
-   '; 
-
--- Transforming transaction data into one entry per transaction 
-  EXECUTE 'INSERT INTO assoc_trans_svec
-    SELECT
-      i.trans_id 
-      , MADLIB_SCHEMA.assoc_make_svec(i.prod , a.tot)
-   FROM assoc_input_data i
-   CROSS JOIN max_p a GROUP BY 1';
-
-   IF p_verbose is true THEN RAISE INFO 'Transforming all data into svec format';
-   END IF;  
-
--- Inserting single dimension rule sets
-   IF p_verbose is true THEN RAISE INFO 'Beginning iteration #1'; 
-   END IF;
-
-  EXECUTE 'INSERT INTO assoc_rule_sets 
-    SELECT
-      i.prod 
-      , MADLIB_SCHEMA.assoc_make_svec_sfunc(NULL, i.prod , a.tot )
-      , MADLIB_SCHEMA.svec_hash(MADLIB_SCHEMA.assoc_make_svec_sfunc(NULL, i.prod,a.tot))
-      , count(*)/b.tot::numeric
-      , 1::int 
-    FROM
-      assoc_input_data i
-    CROSS JOIN max_p a 
-    CROSS JOIN max_t b
-    GROUP BY 1, b.tot, a.tot
-    HAVING count(*)/b.tot::numeric >=' || i_support;
-  IF p_verbose is true THEN
-    EXECUTE 'SELECT count(*) from assoc_rule_sets where iteration = 1' INTO l;
-    RAISE INFO '% Frequent itemsets found in this iteration', l; 
-    RAISE INFO 'Completed iteration # 1'; 
-  END IF; 
-  
--- START LOOP 
--- Apriori Algorithm 
-n := 0;
-l := 1; 
-
-LOOP
-   n := n+1;
-   IF p_verbose is true THEN RAISE INFO 'Beginning iteration # %', n+1;
-   END IF;
-
-
-   EXECUTE 'DROP TABLE IF EXISTS list_a'; 
-   EXECUTE 'CREATE TEMPORARY TABLE list_a AS
-   SELECT
-     MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list)) as set_list
-    , MADLIB_SCHEMA.svec_l1norm(MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list))) as tot_products 
-    , MADLIB_SCHEMA.svec_hash(MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list))) as hash_key
-  FROM
-    assoc_rule_sets a 
-  CROSS JOIN
-    assoc_rule_sets b
-  WHERE
-    MADLIB_SCHEMA.svec_hash(a.set_list) <> MADLIB_SCHEMA.svec_hash(b.set_list)
-    AND a.iteration = ' || n || ' 
-    AND b.iteration = ' || n || '  
-    AND MADLIB_SCHEMA.svec_l1norm(MADLIB_SCHEMA.svec_minus(MADLIB_SCHEMA.svec_plus(a.set_list, b.set_list), MADLIB_SCHEMA.svec_mult(a.set_list, b.set_list)))= ' || n+1 || '  
-  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)') 
-  '; 
-
--- uniques out the data in list_a 
-  EXECUTE 'DROP TABLE IF EXISTS list_b'; 
-  EXECUTE 'CREATE TEMPORARY TABLE list_b AS 
-  SELECT
-    hash_key 
-    , set_list
-    , tot_products as iteration 
-  FROM
-    list_a
-  GROUP BY 1,2,3
-  '; 
-
-  IF p_verbose is true THEN
-    EXECUTE 'SELECT count(*) from list_b' INTO l; 
-    RAISE INFO '% potential itemsets found. Filtering out itemsets with infrequent subsets.',l; 
-  END IF;  
-
-
--- Eliminate all n itemsets that has any n-m ( m<n) itemsets with insufficient support (Deconstruct the n itemset) 
-  EXECUTE 'SELECT MADLIB_SCHEMA.assoc_svec_list_parts(''set_list '', '' list_b'', ''assoc_set_list_parts'')';
- 
-  EXECUTE 'DROP TABLE IF EXISTS list_c'; 
-  EXECUTE 'CREATE TEMP TABLE list_c AS 
-  SELECT
-    d.set_list
-    , c.*
-  FROM (
-    SELECT
-      p.hash_key
-      , count(*) as tot_parts 
-      , count(a.hash_key) as tot_part1 
-      , count(b.hash_key) as tot_part2 
-    FROM
-      assoc_set_list_parts p
-    LEFT JOIN
-      assoc_rule_sets a 
-       ON MADLIB_SCHEMA.svec_hash(p.subset_x)=a.hash_key
-    LEFT JOIN
-      assoc_rule_sets b 
-       ON MADLIB_SCHEMA.svec_hash(p.subset_y)=b.hash_key 
-    WHERE
-      MADLIB_SCHEMA.svec_l1norm(p.set_list)= '|| n+1 || '
-    GROUP BY 1
-    HAVING 
-      count(*)=count(a.hash_key)
-      AND count(*)=count(b.hash_key)
-    ) c 
-  JOIN
-    list_b d 
-      ON c.hash_key=d.hash_key 
-  m4_ifdef(`GREENPLUM',`DISTRIBUTED BY (hash_key)') 
-  ';
-   
-  IF p_verbose is true THEN
-    EXECUTE 'SELECT count(*) from list_c' INTO l; 
-    RAISE INFO '% potential itemsets found. Filtering by support.',l; 
-  END IF;  
-
-  EXECUTE 'INSERT INTO assoc_rule_sets (set_list, hash_key, support, iteration)
-  SELECT 
-    c.set_list
-    , a.hash_key
-    , support
-    , iteration
-  FROM (
-    SELECT
-      a.hash_key
-      , (SUM(CASE WHEN MADLIB_SCHEMA.svec_contains(u.products,a.set_list) is TRUE THEN 1 ELSE 0 END))/b.tot::numeric  AS support 
-      , MADLIB_SCHEMA.svec_l1norm(a.set_list) as iteration 
-    FROM
-      assoc_trans_svec u
-    CROSS JOIN
-      list_c a 
-    CROSS JOIN
-      max_t b 
-    GROUP BY 1,3, b.tot
-    ) a
-  JOIN
-    list_c c
-     ON a.hash_key=c.hash_key
-  WHERE
-     support > ' || i_support ;
-  
-  EXECUTE 'SELECT count(*) from assoc_rule_sets where iteration =' || n+1 INTO l; 
-
-  IF p_verbose is true THEN
-    RAISE INFO '% Frequent itemsets found in this iteration', l; 
-    RAISE INFO 'Completed iteration # %', n+1;  
-  END IF;  
-
-  IF l = 0 THEN 
-     EXIT; -- exit loop 
-  END IF; 
-
-  END LOOP; 
-
-  IF ((l = 0) AND (n<2)) AND p_verbose is true THEN
-    RAISE INFO 'No association rules found that meet given criteria'; 
-  END IF;
-
-
-  EXECUTE 
-  'INSERT INTO assoc_rules_aux_tmp 
-    (pre, post, support, confidence, lift, conviction)
-  SELECT
-      c.product_x
-    , c.product_y 
-    , c.support_xy
-    , c.support_xy/c.support_x as confidence_xy
-    , c.support_xy/(c.support_x * d.support) as lift_xy
-    , case when c.support_xy/c.support_x = 1 then 0 else ( 1 - d.support)/( 1 - (c.support_xy/c.support_x)) end as conviction_xy 
-  FROM (
-    SELECT
-      a.set_list
-      , b.set_list as product_x 
-      , MADLIB_SCHEMA.svec_minus(a.set_list, b.set_list) as product_y 
-      , a.hash_key
-      , a.support as support_xy 
-      , b.support as support_x 
-    FROM
-      assoc_rule_sets a 
-    CROSS JOIN 
-      assoc_rule_sets b 
-    WHERE
-      a.iteration > b.iteration 
-      AND MADLIB_SCHEMA.svec_contains (a.set_list, b.set_list) IS TRUE
-  ) c 
-  JOIN
-    assoc_rule_sets d
-      ON MADLIB_SCHEMA.svec_hash(c.product_y)=d.hash_key
-  WHERE
-    c.support_xy/c.support_x >= ' || i_confidence || ' 
-     AND MADLIB_SCHEMA.svec_l1norm(c.set_list)>=2'; 
-
-  EXECUTE 
-    'INSERT INTO ' || output_schema || '.assoc_rules
-     SELECT t1.ruleId, t2.pre, t3.post, support, confidence, lift, conviction
-     FROM
-        assoc_rules_aux_tmp t1,
-        (
-         SELECT ruleId, array_agg(orig_col) as pre
-         FROM
-            (   
-                SELECT 
-                    ruleId,
-                    unnest(MADLIB_SCHEMA.svec_nonbase_positions(pre, 0)) as pre_id
-                FROM assoc_rules_aux_tmp
-            ) s1, assoc_prod_uniq s2
-         WHERE s1.pre_id = s2.prod_id
-         GROUP BY ruleId
-         ) t2,
-        (
-         SELECT ruleId, array_agg(orig_col) as post
-         FROM
-            (   
-                SELECT 
-                    ruleId,
-                    unnest(MADLIB_SCHEMA.svec_nonbase_positions(post, 0)) as post_id
-                FROM assoc_rules_aux_tmp
-            ) s1, assoc_prod_uniq s2
-         WHERE s1.post_id = s2.prod_id
-         GROUP BY ruleId
-         ) t3
-     WHERE t1.ruleId = t2.ruleId AND t1.ruleId = t3.ruleId';        
-
-  EXECUTE 'DROP TABLE assoc_rules_aux_tmp';
-
-  IF p_verbose is true THEN 
-    EXECUTE 'SELECT count(*) FROM ' || output_schema || '.assoc_rules' into l; 
-    RAISE INFO '% Total association rules found', l; 
-  END IF; 
-
-  EXECUTE 'SELECT count(*) from ' || output_schema || '.assoc_rules' into total_rules;
-  EXECUTE 'SELECT '''|| output_schema || '''::text, ''assoc_rules''::text, ' || total_rules || '::int ' into r; 
-
-  RETURN r ; 
-
-END;
-$$
-    LANGUAGE plpgsql;
+$$ LANGUAGE plpythonu;
