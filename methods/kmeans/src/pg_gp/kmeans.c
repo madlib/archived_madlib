@@ -224,12 +224,14 @@ static float8 calc_cosine_distance(float8* array1, float8* array2, int32 dimensi
 
     float8 distance = dot_product/(array1_l2norm*array2_l2norm);
 
-	if (distance > 1.0) {
-		distance = 1.0;
-	}
-	else if (distance < -1.0) {
-		distance = -1.0;
-	}
+    if (distance > 1.0) 
+    {
+        distance = 1.0;
+    }
+    else if (distance < -1.0) 
+    {
+        distance = -1.0;
+    }
 
     return acos(distance);
 }
@@ -250,12 +252,14 @@ static float8 calc_tanimoto_distance(float8* array1, float8* array2, int32 dimen
         array2_l2norm*array2_l2norm-dot_product;
     float8 distance = dot_product/denominator;
 
-	if (distance > 1.0) {
-		distance = 1.0;
-	}
-	else if (distance < 0) {
-		distance = 0;
-	}
+    if (distance > 1.0) 
+    {
+        distance = 1.0;
+    }
+    else if (distance < 0) 
+    {
+        distance = 0;
+    }
 
     return 1. - distance;
 }
@@ -303,9 +307,12 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
     ArrayType      *canopy_ids_arr = NULL;
     int4           *canopy_ids = NULL;
     bool            indirect;
-    if (PG_ARGISNULL(5)) {
+    if (PG_ARGISNULL(5)) 
+    {
         indirect = false;
-    } else {
+    } 
+    else 
+    {
         indirect = true;
         canopy_ids_arr = PG_GETARG_ARRAYTYPE_P(5);
         /* There should always be a close canopy, but let's be on the safe side. */
@@ -363,7 +370,8 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
                     centroids_array_len, array_length)));
     }
 
-    for (int i = 0; i< num_of_centroids; i++) {
+    for (int i = 0; i< num_of_centroids; i++) 
+    {
         cid = indirect ? canopy_ids[i] - ARR_LBOUND(canopy_ids_arr)[0] : i;
 	    double * centroid = c_centroids_array+cid*dimension;
         
