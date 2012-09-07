@@ -15,7 +15,6 @@ function(define_m4_macros OUT_M4_CMD_LINE OUT_M4_CODE)
     set(IN_FEATURES ${ARGN})
 
     set(MACROS
-        "${PORT_UC}"
         "__${PORT_UC}__"
         "__PORT__=${PORT_UC}"
         "__DBMS__=${DBMS}"
