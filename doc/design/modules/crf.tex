@@ -52,7 +52,7 @@ initialization strategy $\mathit{Initialization}()$,\\
 transition strategy $\mathit{Transition}()$,\\
 finalization strategy $\mathit{Finalization}()$}
 \algoutput{Coefficients $w \in \mathbb{R}^N$}
-\algprecond{$iteration = 0, k = 0$}
+\algprecond{$iteration = 0, diag = \boldsymbol 1$}
 \begin{algorithmic}[1]
 	\State $w_\text{new} \set \mathit{Start}(z_{1:M})$
 	\Repeat
@@ -60,23 +60,25 @@ finalization strategy $\mathit{Finalization}()$}
         \State $\mathit{state} \set \mathit{Initialization}(w_\text{new})$
 		\For{$m \in 1..M$} \Comment{Single entry in the observation set}
 			\State $\mathit{state} \set \mathit{Transition}(\mathit{state}, z_m)$
-                \Comment{Usually computing derivative}
+                \Comment{Computing gradient and log-likelihood.}
 		\EndFor
-		\State $w_\text{new} \set Finalization(\mathit{state})$
+		\State $w_\text{new} \set Finalization(\mathit{state})$ \Comment{Mainly invoke L-BFGS convex solver}
 	\Until{$Convergence(w_\text{new}, g_\text{new}, \mathit{iteration})$}
     \State \Return $w_\text{new}$
 \end{algorithmic}
 \end{algorithm}
 
 \paragraph{Programming Model.}
-We above give the algorithm of generic line search strategy, in the fashion of the selected programming model supported by MADlib (mainly user-defined aggregate).
+We above give the algorithm of parallel CRF training strategy, in the fashion of the selected programming model supported by MADlib (mainly user-defined aggregate).
 
 \paragraph{Parallelism.}
-The outer loop is inherently sequential.
-We require the inner loop is data-parallel.
-Simple component-wise addition or model averaging are used to merge two states.
+The outer loop is inherently sequential over multiple iterations.
+The iteration $n+1$ takes the output of iteration $n$ as input, so on so forth until the stop criterion is satisfied.
+The inner loop which calculates the gradient and log-likelihood for each document is data-parallel.
+Simple model averaging are used to merge two states.
 A merge function is not explicitly added to the pseudocode for simplicity.
-A separate discussion will be made when necessary.
+The finalization function invokes the L-BFGS convex solver to get a new solution. L-BFGS is sequential, but very fast.
+Experiments show that the speed-up ration approaches the number of segments configured in the Greenplum database.
 
 \paragraph{Convergence criterion.}
 Usually, following conditions are combined by AND, OR, or NOT.
@@ -129,7 +131,7 @@ The finalization function invokes the L-BFGS convex solver to get a new coeffice
 LBFGS $\mathit{lbfgs}()$}
 \algoutput{Transition state  $state$}
 \begin{algorithmic}[1]
-        \State $penalty()$ \Comment{To avoid overfitting, penalize the likelihood/gradient with a Gaussian prior} 
+        \State $\{state.g,state.loglikelihood\} \set penalty(state.g,state.loglikelihood)$ \Comment{To avoid overfitting, add penalization} 
         \State $\{state.g,state.loglikelihood\}\set-\{state.g,state.loglikelihood\}$ \Comment{negation for maximization}
         \State LBFGS instance($state)$ \Comment{initialize the L-BFGS instance with previous state}
         \State instance.$lbfgs()$ \Comment{invoke the L-BFGS convex solver}
@@ -142,19 +144,23 @@ Feeding with current solution, gradient, log-likelihood, etc., the L-BFGS will o
 To avoid overfitting, a penalization function is needed. We choose to penalize the loglikelihood with a spherical Gaussian weight prior.
 Also, L-BFGS is to maximum objective, so we need to negate the gradient vector and loglikelihood to fit your needs to minimize the loglikehood.
 
-\section{Part of Speech Tagging}
-Part-of-speech tagging,also called grammatical tagging or word-category disambiguation, is the process of assigning 
+\section{Linear-chain CRF Applications}
+Linear-chain CRF can be used in various applications such as  part of speech tagging and named entity resolution.
+All the following section assumes that the application is part of speech tagging. It can be fitted to named entity resolution with minimal effort. 
+
+\subsection{Part of Speech Tagging}
+Part-of-speech tagging, also called grammatical tagging or word-category disambiguation, is the process of assigning 
 a part of speech to each word in a sentence. POS has been widely used in information retrieval, text to speech. There are two distinct methods for 
 POS task: rule-based and stochastic.
 In rule-based method, it defines large collection of rules to indentify the tag. Stochastic method is based on probabilistic 
-graphic models such as hidden markov models, conditional random fields. In practice, condtional random files has been approved 
+graphic models such as hidden markov models, conditional random fields. In practice, conditional random fields have been approved 
 to achieve the state of art of accuracy.
 \subsection{Tag Set}
 There are various tag set used in the literature. The Pennsylvania Treebank tag-set is the commonly used tag set used. It contains
 45 tags. The following list part of tags in the tag set.
 
 \begin {table}
-\caption {Pen Treebank III} \label{tab:title} 
+\caption {Pen Treebank III Tag Set} \label{tab:title} 
 \[\begin{tabular}{lll||lll}
   Tag & Description         & Example       & Tag & Description         & Example\\
   \hline                        
@@ -172,8 +178,8 @@ There are various tag set used in the literature. The Pennsylvania Treebank tag-
 
 \subsection{Regular Expression Table}
   Regex feature is to capture the relationship between the morphology of a token and it's corresponding tag.
-For example, a token end with 's' are mostly likely to be plural noun and a token end with 'ly' are more likely to be a
-adverb. You can define your own regular expressions to according to your specific training data.
+For example, a token end with 's' are mostly likely to be plural noun and a token end with 'ly' are more likely to be an
+adverb. You can define your own regular expressions to capture the intrinsic characteristics of the given training data.
 \begin {table}
 \caption {Regular expression table} \label{tab:title} 
 \begin{center}
@@ -207,10 +213,10 @@ At present, six feature types are implemented.
 
 Advantage of extracting features using SQL statements:
 \begin{itemize}
-\item decoupling the feature extraction and convex solver.
-\item compared with procedure language, SQL is much more easier to understand.
-\item store all the features in tables which avoids the recomputing the features over iterations.Also boost the performance.
-\item SQL is naivelly paralleled
+\item [\star] Decoupling the feature extraction and convex solver.
+\item [\star] Compared with procedure language, SQL is much more easier to understand.
+\item [\star] Store all the features in tables which avoids the recomputing the features over iterations.Also boost the performance.
+\item [\star] SQL is naivelly paralleled
 \end{itemize}
 
 \subsection{Training Data Feature Extraction}
