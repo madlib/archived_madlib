@@ -246,10 +246,88 @@ Advantages of extracting features using SQL statements:
 \item [$\star$] Decoupling the feature extraction and other code.
 \item [$\star$] Compared with procedure language, SQL is much more easier to understand.
 \item [$\star$] Store all the features in tables which avoids the recomputing the features over iterations.Also boost the performance.
-\item [$\star$] SQL is naivelly paralleled
+\item [$\star$] SQL is naivelly paralleled.
 \end{itemize}
 
 \subsection{Training Data Feature Extraction}
+Given training data as described in the following table, SQLs are writen to extract all the features. It happened that any type of features mentioned above can be extracted out by one single SQL clause which makes the code succinct. We illustrate the training data feature extraction by SQL clause examples.
+\begin {table}
+\caption {Training data} \label{tab:trainingdata} 
+\begin{center}
+\begin{tabular}{lllll||lllll}
+  start\_pos & doc\_id & seg\_text & label & max\_pos & start\_pos & doc\_id & seg\_text & label & max\_pos\\
+  \hline                        
+        0&1&'confidence'&11&36& 1&1&'in'&5&36\\ 
+        2&1&'the'&2&36& 3&1&'pound'&11&36\\
+        4&1&'is'&31&36& 5&1&'widely'&19&36\\ 
+        6&1&'expected'&29&36& 7&1&'to'&24&36\\
+        8&1&'take'&26&36& 9&1&'another'&2&36\\
+        10&1&'sharp'&6&36& 11&1&'dive'&11&36\\
+        12&1&'if'&5&36& 13&1&'trade'&11&36\\
+        14&1&'figures'&12&36& 15&1&'for'&5&36\\
+        16&1&'september'&13&36& 17&1&','&42&36\\ 
+        18&1&'due'&6&36& 19&1&'for'&5&36\\\hline  
+\end{tabular}
+\end{center}
+\end{table}
+
+
+\begin{itemize}
+\item $SQL_1$: Extracting edge features:\\
+	       \fbox{%
+		       \parbox{0.95\linewidth}{%
+                        SELECT $doc2.start\_pos, doc2.doc\_id$, $'E.'$, $ARRAY[doc1.label, doc2.label]$\\
+                        FROM   segmenttbl  $doc1$, segmenttbl $doc2$\\
+                        WHERE  $doc1.doc\_id = doc2.doc\_id$ AND $doc1.start\_pos+1 = doc2.start\_pos$
+		       }%
+	       }\\
+        
+\item $SQL_2$: Extracting Regex features:\\
+	       \fbox{%
+		       \parbox{0.95\linewidth}{%
+                        SELECT $start\_pos, doc\_id, 'R\_' || name$, $ARRAY[-1, label]$\\
+                        FROM  regextbl, segmenttbl\\
+                        WHERE $seg\_text \sim pattern$
+		       }%
+	       }\\
+
+\item $SQL_3$: Extracting start features:\\
+	       \fbox{%
+		       \parbox{0.95\linewidth}{%
+                        SELECT $start\_pos, doc\_id$, $'S.'$, $ARRAY[-1, label]$\\
+                        FROM   segmenttbl\\
+                        WHERE $start\_pos = 0$
+		       }%
+	       }\\
+        
+\item $SQL_4$: Extracting end features:\\
+	       \fbox{%
+		       \parbox{0.95\linewidth}{%
+                        SELECT $start\_pos, doc\_id$, $'S.'$, $ARRAY[-1, label]$\\
+                        FROM   segmenttbl\\
+                        WHERE $start\_pos = max\_pos$
+		       }%
+	       }\\
+
+\item $SQL_5$: Extracting word features:\\
+	       \fbox{%
+		       \parbox{0.95\linewidth}{%
+                        SELECT $start\_pos, doc\_id$, $'W\_'||seg\_text$, $ARRAY[-1, label]$\\
+                        FROM   segmenttbl
+		       }%
+	       }\\
+\item $SQL_6$: Unknown features:\\
+	       \fbox{%
+		       \parbox{0.95\linewidth}{%
+                        SELECT $start\_pos, doc\_id$, $U$, $ARRAY[-1, label]$\\
+                        FROM segmenttbl  seg,  dictionary dic\\
+                        WHERE $seg.seg\_text = dic.token$ AND $dic.total <= 1$
+		       }%
+	       }\\
+
+\end{itemize}
+
+
 The final input table schema which contains all the feature data for the crf learning algorithm is as follows:
 \begin{center}
     \begin{tabular}{ | l | l | l | l |}
@@ -311,9 +389,55 @@ For performance consideraton, we split the m feature to dense\_m feature and spa
 The acutal spare r table is array union of individal r features ordered by the start positon of tokens.
 So the function to compute the gradient vector and loglikelihood can scan the feature arrays from begining to end.
 
+\subsection{Learned Model}
+The CRF learning algorithm will generate two tables: feature table and dictionary table
+Feature table stores all the features and their corresponding feature weight.
+The dictionary constains all the tokens and their number of times they appears in the training data.
+
+\begin {table}
+\caption {Feature table} \label{tab:title} 
+\begin{center}
+    \scriptsize\tt
+    \begin{tabular}{ | l | l | l | l | l || l | l | l | l | l | }
+    \hline
+    f\_index & f\_name & prev\_label & label & weight & f\_index & f\_name & prev\_label & label & weight\\
+    \hline
+    0&'U'&-1&6&2.037& 1&'E.'&2&11&2.746   \\
+    2&'W\_exchequer'&-1&13&1.821& 3&'W\_is'&-1&31&1.802 \\
+    4&'E.'&11&31&2.469& 5&'W\_in'&-1&5&3.252 \\
+    6&'E.'&11&12&1.305& 7&'U'&-1&2&-0.385 \\
+    8&'E.'&31&29&1.958& 9&'U'&-1&29&1.422 \\
+    10&'R\_endsWithIng'&-1&11&1.061&11&'W\_of'&-1&5&3.652 \\
+    12&'S.'&-1&13&1.829& 13&'E.'&24&26&3.282 \\
+    14&'W\_helped'&-1&29&1.214& 15&'E.'&11&24&1.556 \\
+    \hline
+    \end{tabular}
+\end{center}
+\end {table}
+
+\begin {table}
+\caption {Dictionary table} \label{tab:title} 
+\begin{center}
+    \scriptsize\tt
+    \begin{tabular}{ | l | l || l | l || l | l || l | l | }
+    \hline
+    token     & total & token   & total & token     & total & token       & total\\
+    'freefall'& 1     & 'policy'& 2     & 'measures'&1      & 'commitment'&1\\
+    'new'&1& 'speech'&1& '''s'&2& 'reckon'&1\\
+    'underlying'&1&'week'&1& 'prevent'&1& 'has'&2\\
+    'failure'&1& 'restated'&1&'announce'&1& 'thursday'&1\\
+    'but'&1& 'lawson'&1& 'last'&1& 'firm'&1\\
+    'exchequer'&1& 'helped'&1& 'sterling'&2& $\ldots$ & $\ldots$\\ 
+    \hline
+    \end{tabular}
+\end{center}
+\end {table}
+
+
 \subsection{Testing Data Feature Extraction}
-  This feature extraction function will produce two factor tables, "m table"
-  $viterbi\_mtbl$ and "r table" $viterbi\_rtbl$. The $viterbi\_mtbl$
+  This component extracts features from the testing data based on the learned models.
+  It will produce two factor tables
+  $viterbi\_mtbl$ and  $viterbi\_rtbl$. The $viterbi\_mtbl$
   table and a $viterbi\_rtbl$ table are used to calculate the best label
   sequence for each sentence.
 
@@ -378,50 +502,6 @@ So the function to compute the gradient vector and loglikelihood can scan the fe
   \end{tabular}\]
 \end{table}
 \end{itemize}
-
-\subsection{Learned Model}
-The CRF learning algorithm will generate two tables: feature table and dictionary table
-Feature table stores all the features and their corresponding feature weight.
-The dictionary constains all the tokens and their number of times they appears in the training data.
-
-\begin {table}
-\caption {Feature table} \label{tab:title} 
-\begin{center}
-    \scriptsize\tt
-    \begin{tabular}{ | l | l | l | l | l || l | l | l | l | l | }
-    \hline
-    f\_index & f\_name & prev\_label & label & weight & f\_index & f\_name & prev\_label & label & weight\\
-    \hline
-    0&'U'&-1&6&2.037& 1&'E.'&2&11&2.746   \\
-    2&'W\_exchequer'&-1&13&1.821& 3&'W\_is'&-1&31&1.802 \\
-    4&'E.'&11&31&2.469& 5&'W\_in'&-1&5&3.252 \\
-    6&'E.'&11&12&1.305& 7&'U'&-1&2&-0.385 \\
-    8&'E.'&31&29&1.958& 9&'U'&-1&29&1.422 \\
-    10&'R\_endsWithIng'&-1&11&1.061&11&'W\_of'&-1&5&3.652 \\
-    12&'S.'&-1&13&1.829& 13&'E.'&24&26&3.282 \\
-    14&'W\_helped'&-1&29&1.214& 15&'E.'&11&24&1.556 \\
-    \hline
-    \end{tabular}
-\end{center}
-\end {table}
-
-\begin {table}
-\caption {Dictionary table} \label{tab:title} 
-\begin{center}
-    \scriptsize\tt
-    \begin{tabular}{ | l | l || l | l || l | l || l | l | }
-    \hline
-    token     & total & token   & total & token     & total & token       & total\\
-    'freefall'& 1     & 'policy'& 2     & 'measures'&1      & 'commitment'&1\\
-    'new'&1& 'speech'&1& '''s'&2& 'reckon'&1\\
-    'underlying'&1&'week'&1& 'prevent'&1& 'has'&2\\
-    'failure'&1& 'restated'&1&'announce'&1& 'thursday'&1\\
-    'but'&1& 'lawson'&1& 'last'&1& 'firm'&1\\
-    'exchequer'&1& 'helped'&1& 'sterling'&2& $\ldots$ & $\ldots$\\ 
-    \hline
-    \end{tabular}
-\end{center}
-\end {table}
 
 
 \section{Linear-chain CRF Inference}
