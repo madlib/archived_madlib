@@ -9,14 +9,14 @@ Linear-chain CRFs are a special CRFs which assumes that the next state only depe
 Linear-chain CRFs achieved the start of art accuracy in some real world natural language processing tasks such
 as part of speech tagging(POS) and named entity resolution(NER).
 
-\section{Introduction}
+\section{Linear-chain CRF Learning}
 
 \subsection{Mathematical Notations}
 \begin{itemize}
-\item $p(\boldsymbol Y | \boldsymbol X)$: conditional probability distributions of label sequence \boldsymbol Y given input sequence \boldsymbol X.
+\item $p(\boldsymbol Y | \boldsymbol X)$: conditional probability distributions of label sequence $\boldsymbol Y$ given input sequence $\boldsymbol X$.
 \item $M$: total number of unique features.
-\item $N$: the positon of last token in a training sentence.
-\item $Q$: number of sentences in the training data set.
+\item $I$: the positon of last token in a training sentence.
+\item $N$: number of sentences in the training data set.
 \item $\lambda$: the coefficient(feature weight).
 \item $\ell_{\lambda}$: log-likelihood summarized over all training sentences.
 \item $\nabla \ell_{\lambda}$: gradient vector summarized over all training sentences.
@@ -28,12 +28,12 @@ as part of speech tagging(POS) and named entity resolution(NER).
 \subsection{Formulation}
 Conditional random fields(CRFs) is a type of discriminative undirected probabilistic graphical model.
 A linear-chain CRF is a distribution
-    \[p(\boldsymbol Y | \boldsymbol X) = \frac{\exp{\sum_{m=1}^M \sum_{n=0}^{N} \lambda_m f_m(y_n,y_{n-1},x_n)}}{Z(X)}\]
+    \[p(\boldsymbol Y | \boldsymbol X) = \frac{\exp{\sum_{m=1}^M \sum_{i=0}^{I} \lambda_m f_m(y_i,y_{i-1},x_i)}}{Z(X)}\]
 
 Where Z(X) is an instance specific normalizer
-\[Z(X) = \sum_{y} \exp{\sum_{m=1}^M \sum_{n=0}^{N} \lambda_m f_m(y_n,y_{n-1},x_n)}\].
+\[Z(X) = \sum_{y} \exp{\sum_{m=1}^M \sum_{i=0}^{I} \lambda_m f_m(y_i,y_{i-1},x_i)}\].
 
-Train a CRF by maximizing the log-likelihood of a giving training set \f$ T=\{(x_k,y_k)\}_{k=1}^Q \f$.
+Train a CRF by maximizing the log-likelihood of a giving training set $ T=\{(x_k,y_k)\}_{k=1}^N$.
 Seek the zero of the gradient.\\
     \[\ell_{\lambda}=\sum_k \log p_\lambda(y_k|x_k) =\sum_k[\lambda F(y_k,x_k)-\log Z_\lambda(x_k)]\]
     \[\nabla \ell_{\lambda}=\sum_k[\lambda F(y_k,x_k)-E_{p\lambda(Y|x_k)}F(Y,x_k)]\]
@@ -42,6 +42,36 @@ To avoid overfitting, we penalize the likelihood with a spherical Gaussian weigh
     \[\ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-\log Z_\lambda(x_k)]-\frac{\lVert \lambda \rVert^2}{2\sigma ^2}\]
     \[\nabla \ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-E_{p\lambda(Y|x_k)}F(Y,x_k)]-\frac{\lambda}{\sigma ^2}\]
 Note:We hard code sigma to $100$ in the implementation which follows other CRF packages in the literature.
+
+\subsection{Forward-backward Algorithm}
+$E_{p\lambda(Y|x)}F(Y,x)$ is computed using a variant of the forward-backward algorithm:
+
+    \[E_{p\lambda(Y|x)}F(Y,x) = \sum_y p\lambda(y|x)F(y,x) = \sum_i\frac{\alpha_{i-1}(f_i*M_i)\beta_i^T}{Z_\lambda(x)}\]
+    \[$Z_\lambda(x) = \alpha_I.1^T$\]
+    where $\alpha_i$ and $\lambda_i$ the forward and backward state cost vectors defined by\\
+  \[\alpha_i = 
+    \begin{cases}
+    \alpha_{i-1}M_i, & 0<i<=n\\
+    1, & i=0
+    \end{cases}
+    ,
+    \beta_i^T = 
+    \begin{cases}
+    M_{i+1}\lambda_{i+1}^T, & 1<=i<I\\
+    1, & i=n
+    \end{cases}
+  \]
+
+\subsection{L-BFGS Convex Solver}
+The limited-memory BFGS(L-BFGS) is the limited memory variation of the Broyden-Fletcher-Goldfarb-Shanno(BFGS).
+It is the state of art of large scale non-constraint convex optimization method.
+We translate a in-memory java implementation to a c++ in-database implementation with Eigen support.
+Eigen vector and Eigen matrix are used instead of the plain one dimentional and two dimentional arrays.
+In the java in-memeory implementation, it defines many static variables which are shared between the interations.
+However, in the MADlib implementation, we define these variables in the state object.
+Before one iteration of L-BFGS optimization, we need to initialize the L-BFGS with current the state object. 
+At the end of one iteration, we need to dump the updated variables to the the database state for next iteration.
+
 
 \subsection{Parallel CRF Training}
 \begin{algorithm}[CRF training$(z_{1:M})$] \label{alg:CRF training}
@@ -186,13 +216,13 @@ adverb. You can define your own regular expressions to capture the intrinsic cha
 \begin{tabular}{ll||ll}
   pattern & name             & pattern & name\\
   \hline                        
-  \wedge[A-Z][a-z]+\$    & InitCapital       & \wedge[A-Z]+\$  & isAllCapital \\
-  \wedge.*[0-9]+.*\$          & containsDigit     & \wedge.+[.]\$   & endsWithDot\\
-  \wedge.+[,]\$               & endsWithComma     & \wedge.+er\$    & endsWithEr\\
-  \wedge.+est\$	         & endsWithEst       & \wedge.+ed\$    & endsWithEd\\
-  \wedge.+s\$	         & endsWithS         & \wedge.+ing\$   & endsWithIng\\
-  \wedge.+ly\$	         & endsWithly        & \wedge.+-.+\$   & isDashSeparatedWords\\
-  \wedge.*@.*\$	         & isEmailId         &           & \\
+  $\wedge[A-Z][a-z]+\$$    & InitCapital       & $\wedge[A-Z]+\$$  & isAllCapital \\
+  $\wedge.*[0-9]+.*\$$     & containsDigit     & $\wedge.+[.]\$$   & endsWithDot\\
+  $\wedge.+[,]\$$          & endsWithComma     & $\wedge.+er\$$    & endsWithEr\\
+  $\wedge.+est\$$	   & endsWithEst       & $\wedge.+ed\$$    & endsWithEd\\
+  $\wedge.+s\$$	           & endsWithS         & $\wedge.+ing\$$   & endsWithIng\\
+  $\wedge.+ly\$$	   & endsWithly        & $\wedge.+-.+\$$   & isDashSeparatedWords\\
+  $\wedge.*@.*\$$	   & isEmailId         &           & \\
   \hline  
 \end{tabular}
 \end{center}
@@ -211,12 +241,12 @@ At present, six feature types are implemented.
     \item Regex Feature: fired when the current token can be matched by the regular expression.
     \end{itemize}
 
-Advantage of extracting features using SQL statements:
+Advantages of extracting features using SQL statements:
 \begin{itemize}
-\item [\star] Decoupling the feature extraction and convex solver.
-\item [\star] Compared with procedure language, SQL is much more easier to understand.
-\item [\star] Store all the features in tables which avoids the recomputing the features over iterations.Also boost the performance.
-\item [\star] SQL is naivelly paralleled
+\item [$\star$] Decoupling the feature extraction and other code.
+\item [$\star$] Compared with procedure language, SQL is much more easier to understand.
+\item [$\star$] Store all the features in tables which avoids the recomputing the features over iterations.Also boost the performance.
+\item [$\star$] SQL is naivelly paralleled
 \end{itemize}
 
 \subsection{Training Data Feature Extraction}
@@ -301,7 +331,7 @@ So the function to compute the gradient vector and loglikelihood can scan the fe
   encodes the edge features which are solely dependent on upon current label and
   previous y value. The m table has three columns which are prev\_label, label,
   and value respectively.
-  If the number of labels in \f$ n \f$, then the m factor table will \f$ n^2 \f$
+  If the number of labels in $n$, then the m factor table will $n^2$
   rows. Each row encodes the transition feature weight value from the previous label
   to the current label.
  
@@ -349,37 +379,6 @@ So the function to compute the gradient vector and loglikelihood can scan the fe
 \end{table}
 \end{itemize}
 
-\section{Linear-chain CRF Learning}
-
-\subsection{Forward-backward Algorithm}
-$E_{p\lambda(Y|x)}F(Y,x)$ is computed using a variant of the forward-backward algorithm:
-
-    \[E_{p\lambda(Y|x)}F(Y,x) = \sum_y p\lambda(y|x)F(y,x) = \sum_i\frac{\alpha_{i-1}(f_i*M_i)\beta_i^T}{Z_\lambda(x)}\]
-    \[$Z_\lambda(x) = \alpha_n.1^T$\] 
-    where $\alpha_i$ and $\lambda_i$ the forward and backward state cost vectors defined by\\
-  \[\alpha_i = 
-    \begin{cases}
-    \alpha_{i-1}M_i, & 0<i<=n\\
-    1, & i=0
-    \end{cases}
-    ,
-    \beta_i^T = 
-    \begin{cases}
-    M_{i+1}\lambda_{i+1}^T, & 1<=i<n\\
-    1, & i=n
-    \end{cases}
-  \]
-\subsection{L-BFGS Convex Solver}
-The limited-memory BFGS(L-BFGS) is the limited memory variation of the Broyden-Fletcher-Goldfarb-Shanno(BFGS).
-It is the state of art of large scale non-constraint convex optimization method.
-We translate a in-memory java implementation to a c++ in-database implementation with Eigen support.
-Eigen vector and Eigen matrix are used instead of the plain one dimentional and two dimentional arrays.
-In the java in-memeory implementation, it defines many static variables which are shared between the interations.
-However, in the MADlib implementation, we define these variables in the state object.
-initialize one LBFGS interation using the current variables in the state object $LBFGS instance(state)$
-At the end of one iteration, we need to save the variables to the the state using $instance.save\_state(state)$
-
-
 \subsection{Learned Model}
 The CRF learning algorithm will generate two tables: feature table and dictionary table
 Feature table stores all the features and their corresponding feature weight.
@@ -412,23 +411,21 @@ The dictionary constains all the tokens and their number of times they appears i
     \scriptsize\tt
     \begin{tabular}{ | l | l || l | l || l | l || l | l | }
     \hline
-    token & total & token & total & token & total & token & total\\
-    'freefall'&1& 'policy'&2& 'measures'&1& 'commitment'&1&
-    'new'&1& 'speech'&1& '''s'&2& 'reckon'&1&
-    'underlying'&1&'week'&1& 'prevent'&1& 'has'&2&
-    'failure'&1& 'restated'&1&'announce'&1& 'thursday'&1&
-    'but'&1& 'lawson'&1& 'last'&1& 'firm'&1&
-    'exchequer'&1& 'helped'&1& 'sterling'&2& .. & .. &
-    \hline
-       
+    token     & total & token   & total & token     & total & token       & total\\
+    'freefall'& 1     & 'policy'& 2     & 'measures'&1      & 'commitment'&1\\
+    'new'&1& 'speech'&1& '''s'&2& 'reckon'&1\\
+    'underlying'&1&'week'&1& 'prevent'&1& 'has'&2\\
+    'failure'&1& 'restated'&1&'announce'&1& 'thursday'&1\\
+    'but'&1& 'lawson'&1& 'last'&1& 'firm'&1\\
+    'exchequer'&1& 'helped'&1& 'sterling'&2& $\ldots$ & $\ldots$\\ 
     \hline
     \end{tabular}
 \end{center}
 \end {table}
 
 
-\section{Viterbi Inference}
-The Viterbi algorithm is the popular algorithm to find the top-k most likely labelingsof a document for CRF models. 
+\section{Linear-chain CRF Inference}
+The Viterbi algorithm is the popular algorithm to find the top-k most likely labelings of a document for CRF models. 
 We chose to implement a Python UDF that uses iterations to drive the Viterbi inference. Each iteration will finish the inference over one document.
 In Greenplum, Viterbi can be run in parallel over different subsets of the document on a multi-core machine.
 \[
@@ -445,7 +442,7 @@ V(i,y) =
 \caption {Viterbi inference output} \label{tab:title} 
 \begin{center}
     \scriptsize\tt
-    \begin{tabular}{ | l | l | l | 1 | 1 | }
+    \begin{tabular}{ | l | l | l | l | l | }
     \hline
     doc\_id & start\_pos & token & label & probability     \\\hline
     1   & 0    & madlib        & proper noun, singular &0.6\\ 
@@ -461,7 +458,7 @@ V(i,y) =
     2   & 0    & it            & personal pronoun      &0.4 \\ 
     2   & 1    & provides      & verb, base form       &0.4 \\
     2   & 2    & data-parallel & noun                  &0.4 \\
-    2   & 2    & ..            & ..                    &0.4 \\
+    2   & 2    & $\ldots$      & $\ldots$                    &0.4 \\
     \hline
     \end{tabular}
 \end{center}
