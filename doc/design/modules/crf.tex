@@ -189,7 +189,7 @@ to achieve the state of art of accuracy.
 There are various tag set used in the literature. The Pennsylvania Treebank tag-set is the commonly used tag set used. It contains
 45 tags. The following list part of tags in the tag set.
 
-\begin {table}
+\begin {table}[h]
 \caption {Pen Treebank III Tag Set} \label{tab:title} 
 \[\begin{tabular}{lll||lll}
   Tag & Description         & Example       & Tag & Description         & Example\\
@@ -210,7 +210,7 @@ There are various tag set used in the literature. The Pennsylvania Treebank tag-
   Regex feature is to capture the relationship between the morphology of a token and it's corresponding tag.
 For example, a token end with 's' are mostly likely to be plural noun and a token end with 'ly' are more likely to be an
 adverb. You can define your own regular expressions to capture the intrinsic characteristics of the given training data.
-\begin {table}
+\begin {table}[h]
 \caption {Regular expression table} \label{tab:title} 
 \begin{center}
 \begin{tabular}{ll||ll}
@@ -249,11 +249,30 @@ Advantages of extracting features using SQL statements:
 \item [$\star$] SQL is naivelly paralleled.
 \end{itemize}
 
-\subsection{Training Data Feature Extraction}
-Given training data as described in the following table, SQLs are writen to extract all the features. It happened that any type of features mentioned above can be extracted out by one single SQL clause which makes the code succinct. We illustrate the training data feature extraction by SQL clause examples.
-\begin {table}
-\caption {Training data} \label{tab:trainingdata} 
+\subsection{Column Names Convention and Table Schema}
+\subsubsection{Column Names Convention}
+The following column names are commonly used in the tables of the following sections.
+\begin{itemize}
+\item doc\_id: Unique integer indentifier of a document.
+\item start\_pos: Position of the token in the document starting from 0.
+\item seg\_text: Text token itself.
+\item prev\_label: Label of previous token.
+\item label: Label of current token.
+\item max\_pos: End positon of the document.
+\item weight: Feature weight associated with certain feature
+\item f\_index: Unique integer identifier of a feature
+\item f\_name: Feature name. 
+\end{itemize}
+
+\subsubsection{Training and Testing Data Schema}
+The text data has to been tokenized before it can be stored in the database. One of the commonly used tokenization program for part-of-speech 
+tagging is the Treebank tokenization script.
+The following table dipicts how the training/testing data is stored in the database table. 
+
+\begin {table}[h!]
+\caption {Training or Testing data} \label{tab:trainingdata} 
 \begin{center}
+    \footnotesize\tt
 \begin{tabular}{lllll||lllll}
   start\_pos & doc\_id & seg\_text & label & max\_pos & start\_pos & doc\_id & seg\_text & label & max\_pos\\
   \hline                        
@@ -271,25 +290,24 @@ Given training data as described in the following table, SQLs are writen to extr
 \end{center}
 \end{table}
 
+
+\subsection{Training Data Feature Extraction}
+Given training data as described in the following table, SQLs are writen to extract all the features. It happened that any type of features mentioned above can be extracted out by one single SQL clause which makes the code succinct. We illustrate the training data feature extraction by SQL clause examples.
 \paragram{Sample Feature Extraction SQLs}
 \begin{itemize}
 \item $SQL_1$: Extracting edge features:\\
-	       \fbox{%
-		       \parbox{0.95\linewidth}{%
-                        SELECT $doc2.start\_pos, doc2.doc\_id$, $'E.'$, $ARRAY[doc1.label, doc2.label]$\\
-                        FROM   segmenttbl  $doc1$, segmenttbl $doc2$\\
-                        WHERE  $doc1.doc\_id = doc2.doc\_id$ AND $doc1.start\_pos+1 = doc2.start\_pos$
-		       }%
-	       }\\
-        
+              \begin{lstlisting}[language=SQL,gobble=4]
+                        SELECT doc2.start_pos, doc2.doc_id, 'E.', ARRAY[doc1.label, doc2.label]
+                        FROM   segmenttbl doc1, segmenttbl doc2
+                        WHERE  doc1.doc_id = doc2.doc_id AND doc1.start_pos+1 = doc2.start_pos
+              \end{lstlisting}
+
 \item $SQL_2$: Extracting Regex features:\\
-	       \fbox{%
-		       \parbox{0.95\linewidth}{%
-                        SELECT $start\_pos, doc\_id, 'R\_' || name$, $ARRAY[-1, label]$\\
-                        FROM  regextbl, segmenttbl\\
-                        WHERE $seg\_text \sim pattern$
-		       }%
-	       }\\
+              \begin{lstlisting}[language=SQL,gobble=4]
+                        SELECT start_pos, doc_id, 'R_' || name, ARRAY[-1, label]
+                        FROM  regextbl, segmenttbl
+                        WHERE seg_text ~ pattern
+              \end{lstlisting}
 
 %\item $SQL_3$: Extracting start features:\\
 %	       \fbox{%
@@ -392,9 +410,8 @@ So the function to compute the gradient vector and loglikelihood can scan the fe
 \subsection{Learned Model}
 The CRF learning algorithm will generate two tables: feature table and dictionary table
 Feature table stores all the features and their corresponding feature weight.
-The dictionary constains all the tokens and their number of times they appears in the training data.
-
-\begin {table}
+The dictionary constains all the tokens and their number of times they appears in the training data.\\
+\begin {table}[h!]
 \caption {Feature table} \label{tab:title} 
 \begin{center}
     \scriptsize\tt
@@ -415,7 +432,7 @@ The dictionary constains all the tokens and their number of times they appears i
 \end{center}
 \end {table}
 
-\begin {table}
+\begin {table}[h!]
 \caption {Dictionary table} \label{tab:title} 
 \begin{center}
     \scriptsize\tt
@@ -443,24 +460,19 @@ The dictionary constains all the tokens and their number of times they appears i
 \paragram{Sample Feature Extraction SQLs}
 \begin{itemize}
 \item $SQL_1$: Extracting unique tokens:\\
-	       \fbox{%
-		       \parbox{0.95\linewidth}{%
-                        INSERT INTO $segment\_hashtbl$\\
-                        SELECT DISTINCT $seg\_text$\\
+              \begin{lstlisting}[language=SQL,gobble=4]
+                        INSERT INTO segment_hashtbl
+                        SELECT DISTINCT seg_text
                         FROM   segmenttbl
-		       }%
-	       }\\
-        
-\item $SQL_2$: Summerize over all single state features with respect to specific tokens and labels :\\
-	       \fbox{%
-		       \parbox{0.95\linewidth}{%
-                        INSERT INTO $viterbi\_rtbl$\\
-                        SELECT $seg\_text$, label, SUM(value)\\
-                        FROM   rtbl\\
-                        GROUP BY $seg\_text,label$
-		       }%
-	       }\\
+              \end{lstlisting}
 
+\item $SQL_2$: Summerize over all single state features with respect to specific tokens and labels :\\
+              \begin{lstlisting}[language=SQL,gobble=4]
+                        INSERT INTO viterbi_rtbl
+                        SELECT seg_text, label, SUM(value)
+                        FROM   rtbl
+                        GROUP BY seg_text,label
+              \end{lstlisting}
 \begin{center}
     \begin{tabular}{ | l | l | l | l |}
     \hline
@@ -485,7 +497,7 @@ The dictionary constains all the tokens and their number of times they appears i
   So m table encodes the edgeFeature, startFeature, and endFeature.
   If the total number of labels in the label space is 45 from 0 to 44,
   then the m factor array is as follows:
-\begin {table}
+\begin {table}[h]
 \caption {viterbi\_mtbl table} \label{tab:title} 
  
   \[\begin{tabular}{l*{6}{c}r}
@@ -507,7 +519,7 @@ The dictionary constains all the tokens and their number of times they appears i
   is related to specific tokens. It encodes the single state features,
   e.g., wordFeature, RegexFeature for all tokens. The r table is represented
   in the following way.\\
-\begin {table}
+\begin {table}[h]
 \caption {viterbi\_rtbl table} \label{tab:title} 
 
   \[\begin{tabular}{l*{6}{c}r}
@@ -526,8 +538,20 @@ The dictionary constains all the tokens and their number of times they appears i
 
 \section{Linear-chain CRF Inference}
 The Viterbi algorithm is the popular algorithm to find the top-k most likely labelings of a document for CRF models. 
-We chose to implement a Python UDF that uses iterations to drive the Viterbi inference. Each iteration will finish the inference over one document.
+For the tasks in natural language processing domain, it is sufficient to only generate the best label sequence.  
+We chose to use a SQL clause to drive the inference over all documents. 
 In Greenplum, Viterbi can be run in parallel over different subsets of the document on a multi-core machine.
+
+\subsection{Parallel CRF Inference}
+The $vcrf\_top\_label$ is implemented sequentially and each function call will finish labeling of one document. 
+The inference is paralledl in the level of document. We use a SQL statment to drive the inference of all documents.
+So, the CRF inference is naivelly parallel. 
+\begin{lstlisting}[language=SQL,gobble=4]
+        SELECT doc_id, vcrf_top1_label(mfactors.score, rfactors.score)
+        FROM   mfactors,rfactors
+\end{lstlisting}
+
+\subsection{Viterbi Inference Algorithm}
 \[
 V(i,y) =
 \begin{cases}
@@ -536,35 +560,11 @@ V(i,y) =
 \end{cases}
 \]
 
-\subsection{Parallel CRF Inference}
-\begin{algorithm}[CRF training$(z_{1:M})$] \label{alg:CRF training}
-\alginput{Observation set $z_{1:M}$,\\
-convergence criterion $\mathit{Convergence}()$,\\
-start strategy $\mathit{Start}()$,\\
-initialization strategy $\mathit{Initialization}()$,\\
-transition strategy $\mathit{Transition}()$,\\
-finalization strategy $\mathit{Finalization}()$}
-\algoutput{Coefficients $w \in \mathbb{R}^N$}
-\algprecond{$iteration = 0, diag = \boldsymbol 1$}
-\begin{algorithmic}[1]
-	\State $w_\text{new} \set \mathit{Start}(z_{1:M})$
-	\Repeat
-        \State $w_\text{old} \set w_\text{new}$
-        \State $\mathit{state} \set \mathit{Initialization}(w_\text{new})$
-		\For{$m \in 1..M$} \Comment{Single entry in the observation set}
-			\State $\mathit{state} \set \mathit{Transition}(\mathit{state}, z_m)$
-                \Comment{Computing gradient and log-likelihood.}
-		\EndFor
-		\State $w_\text{new} \set Finalization(\mathit{state})$ \Comment{Mainly invoke L-BFGS convex solver}
-	\Until{$Convergence(w_\text{new}, g_\text{new}, \mathit{iteration})$}
-    \State \Return $w_\text{new}$
-\end{algorithmic}
-\end{algorithm}
-
-
 \subsection{Viterbi Inference output}
-\begin {table}
-\caption {Viterbi inference output} \label{tab:title} 
+The final inference output will produce the the best label sequence for each document and also the conditional probability given the
+observed input sequence.
+\begin {table}[h]
+\caption {Viterbi inference output} 
 \begin{center}
     \scriptsize\tt
     \begin{tabular}{ | l | l | l | l | l | }
