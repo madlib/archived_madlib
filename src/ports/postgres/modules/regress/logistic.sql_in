@@ -102,9 +102,31 @@ the coefficients of the previous iteration). A large condition number (say, more
 than 1000) indicates the presence of significant multicollinearity.
 
 
+
+When doing regression analysis, we are sometimes interested in the variance of the computed coefficients \f$ \boldsymbol  c \f$. 
+This variance calculation can be expressed in a sandwich formation, which is the form
+\f[
+    S( \boldsymbol c) = B( \boldsymbol c) M( \boldsymbol c) B( \boldsymbol c)
+\f]
+where \f$ B( \boldsymbol c)\f$ and \f$ M( \boldsymbol c)\f$ are matrices.  The \f$ B( \boldsymbol c)\f$ matrix, 
+also known as the bread, is relatively straight forward, and can be computed as
+\f[
+B( \boldsymbol c) = n\left(\sum_i^n -H(y_i, x_i, \boldsymbol  c) \right)^{-1}
+\f]
+where $H$ is the hessian matrix.  
+
+The \f$ M( \boldsymbol c)\f$ matrix has several variation, each with different robustness properties.  
+The form implemented here is the White sandwich operator, which takes the form
+\f[
+M_{H} =\frac{1}{n} \sum_i^n \psi(y_i,x_i,  \boldsymbol c)^T  \psi(y_i,x_i,  \boldsymbol c).
+\f]
+
+
+
 @input
 
-The training data is expected to be of the following form:\n
+The training data for logistic regression is
+ expected to be of the following form:\n
 <pre>{TABLE|VIEW} <em>sourceName</em> (
     ...
     <em>dependentVariable</em> BOOLEAN,
@@ -112,7 +134,15 @@ The training data is expected to be of the following form:\n
     ...
 )</pre>
 
+The robust variance calculation is expecting input of the form
+<pre>(
+    <em>dependentVariable</em> BOOLEAN,
+    <em>independentVariables</em> FLOAT8[],
+    <em>coefficients</em>  FLOAT8[]
+)</pre>
+
 @usage
+The logistic regression has several options in what it can return:  
 - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
   statistics:\n
   <pre>SELECT * FROM \ref logregr(
@@ -131,6 +161,21 @@ The training data is expected to be of the following form:\n
   \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
   <pre>SELECT coef, log_likelihood, p_values
 FROM \ref logregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+
+The robust variance calculation is called as
+- Get robust variance and all diagnostic
+  statistics:\n
+  <pre>SELECT * FROM \ref robustLogregr(
+	<em>dependentVariable</em>, 
+	<em>independentVariables</em>,  
+	<em>coefficients</em>
+).* from sourceName;</pre>
+  Output:
+  <pre>
+ robust_variance | std_err | z_stats | p_values
+-----------------+---------+---------+----------
+                     ...
+<pre>
 
 @examp
 
@@ -161,13 +206,24 @@ p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
 odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
 condition_no   | 179.186118573205
 num_iterations | 9
+@endverbatim
+-# Run the robust variance using the coefficients from the previous example
+@verbatim
+
+sql> SELECT (robustLogregr( val, r1, ARRAY[5.59049410898112,2.11077546770772,-0.237276684606453]  )).* from data; 
+
+-[ RECORD 1 ]--+--------------------------------------------------------------
+robust_variance| {3.20488524344419,0.221288089372885,4.53395366505342}
+std_err        | {1.79021932830706,0.470412679859806,2.12930825975325}
+z_stats        | {12.7056444456771,13.922048203096,-12.22013967087}
+p_values       | {5.50143504274353e-37,4.65374116161233e-44,2.42667428408846e-34}
 
 @endverbatim
 
 @literature
 
 A somewhat random selection of nice write-ups, with valuable pointers into
-further literature:
+further literature.  The sandwich operator is well described by [6].
 
 [1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
@@ -189,6 +245,11 @@ further literature:
     approximation approach to stochastic programming, SIAM Journal on 
     Optimization, 19(4), 2009, http://www2.isye.gatech.edu/~nemirovs/SIOPT_RSA_2009.pdf
 
+[6] Achim Zeileis: Object-oriented Computation of Sandwich Estimators. 
+	Research Report Series / Department of Statistics and Mathematics, 37. 
+	Department of Statistics and Mathematics, WU Vienna University of Economics and Business, Vienna.
+	http://cran.r-project.org/web/packages/sandwich/vignettes/sandwich-OOP.pdf
+
 @sa File logistic.sql_in (documenting the SQL functions)
 
 @internal
@@ -196,7 +257,7 @@ further literature:
     Python), Namespace
     \ref madlib::modules::regress documenting the implementation in C++
 @endinternal
-
+</pre>
 */
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.logregr_result;
@@ -210,6 +271,7 @@ CREATE TYPE MADLIB_SCHEMA.logregr_result AS (
     condition_no DOUBLE PRECISION,
     num_iterations INTEGER
 );
+
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_cg_step_transition(
     DOUBLE PRECISION[],
@@ -293,6 +355,57 @@ CREATE AGGREGATE MADLIB_SCHEMA.logregr_cg_step(
     FINALFUNC=MADLIB_SCHEMA.logregr_cg_step_final,
     INITCOND='{0,0,0,0,0,0}'
 );
+
+
+/**
+ * @internal
+ * @bCompute the results of the sandwich estimator
+ *     
+ */
+ 
+DROP TYPE IF EXISTS MADLIB_SCHEMA.robust_result;
+CREATE TYPE MADLIB_SCHEMA.robust_result AS (
+    robust_variance DOUBLE PRECISION[],
+    std_err DOUBLE PRECISION[],
+    z_stats DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[]
+);
+ 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_logregr_step_transition(
+    state DOUBLE PRECISION[],
+    y BOOLEAN,
+    x DOUBLE PRECISION[],
+    coef DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_logregr_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_logregr_step_final(
+    state DOUBLE PRECISION[])
+RETURNS robust_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT; 
+
+CREATE AGGREGATE MADLIB_SCHEMA.robustLogregr(
+	BOOLEAN, /*+ y */
+	DOUBLE PRECISION[], /*+ x */ 
+    DOUBLE PRECISION[] /*+ coef */ ) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.robust_logregr_step_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.robust_logregr_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.robust_logregr_step_final,
+    INITCOND='{0,0,0,0,0.0}'
+);
+
 
 /**
  * @internal
