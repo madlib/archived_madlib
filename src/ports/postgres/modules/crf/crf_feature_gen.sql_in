@@ -1,57 +1,54 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file textfex.sql_in
+ * @file crf_feature_gen.sql_in 
  *
- * @brief SQL function for text feature extraction
+ * @brief SQL function for POS/NER feature extraction
  * @date February 2012
  *
- * @sa For an introduction to text feature extraction, see the module
- *     description \ref grp_textfex_viterbi
+ * @sa For an introduction to POS/NER feature extraction, see the module
+ *     description \ref grp_crf
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
 
 /**
-@addtogroup grp_textfex_viterbi
+@addtogroup grp_crf
 
 @about
-The Feature Extraction module provides functionality for basic text-analysis
-tasks such as part-of-speech (POS) tagging and named-entity resolution.
-In addition to feature extraction, it also has a Viterbi implementation
-to get the best label sequence and the conditional probability
-\f$ \Pr( \text{best label sequence} \mid \text{Sentence}) \f$.
-
-At present, six feature types are implemented.
-    - Edge Feature: transition feature that encodes the transition feature
-      weight from current label to next label.
-    - Start Feature: fired when the current token is the first token in a sentence.
-    - End Feature: fired when the current token is the last token in a sentence.
-    - Word Feature: fired when the current token is observed in the trained
-      dictionary.
-    - Unknown Feature: fired when the current token is not observed in the trained
-      dictionary for at least certain times.
-    - Regex Feature: fired when the current token can be matched by the regular
-      expression.
-
-You can add your own feature type according to the training model.
-
 Instead of scanning every token in a sentence and extracting features for
 each token on the fly, we extract features for each distinct token and
 materialize it in the table.  When we call the Viterbi function to get the best
 label sequence, we only need a single lookup to get the feature weight.
 
 @usage
-  - Use CRF PACKAGE [1] to generate the trained models. Basically CRF PACKAGE
-    generates two model files 'feature' and 'crf'.  Write some simple scripts
-    to convert the data in the model files to the data format required by in
-    this module.
+  - Create tables to store the input data, intermediate data and output data.
+    Also import the training related data to the database
+    <pre>SELECT madlib.crf_train_data(
+         '<em>/path/to/data</em>');</pre>
+ 
+  - POS/NER feature generation for the training data
+    <pre>SELECT madlib.crf_train_fgen(
+         '<em>segmenttbl</em>',
+         '<em>regextbl</em>',
+         '<em>dictionary</em>',
+         '<em>featuretbl</em>',
+         '<em>featureset</em>');</pre>
 
-  - Load model from local drive to database
-    <pre>SELECT madlib.load_crf_model(
+  - Linear-chain CRF learning
+    <pre>SELECT madlib.lincrf(
+         '<em>source</em>',
+         '<em>featureColumn</em>',
+         '<em>featureSize</em>',
+         '<em>tagSize</em>',
+         '<em>maxNumIterations</em>');</pre>
+    
+  - Import CRF model to the database.
+    Also load the crf testing data to the database
+    <pre>SELECT madlib.crf_test_data(
          '<em>/path/to/data</em>');</pre>
 
-  - Run feature extraction in batch mode or interactive mode
-    <pre>SELECT madlib.text_feature_extraction(
+  - POS/NER feature generation for the testing data
+    <pre>SELECT madlib.crf_test_fgen(
          '<em>segmenttbl</em>',
          '<em>dictionary</em>',
          '<em>labeltbl</em>',
@@ -77,11 +74,152 @@ label sequence, we only need a single lookup to get the feature weight.
 
 [3] http://en.wikipedia.org/wiki/Viterbi_algorithm
 
-@sa File model_loader.sql_in textfex.sql_in viterbi.sql_in documenting the SQL functions.
+[4] J. Nocedal. Updating Quasi-Newton Matrices with Limited Storage (1980), Mathematics of Computation 35, pp. 773-782
+
+[5] http://users.eecs.northwestern.edu/~nocedal/lbfgs.html
+
+[6] http://en.wikipedia.org/wiki/Conditional_random_field
+
+@sa File crf.sql_in crf_feature_gen.sql_in viterbi.sql_in documenting the SQL functions.
+
 */
 
 /**
- * @brief This function extracts text features.
+ * @brief This function extracts POS/NER features from the training data.
+ * 
+ * @param segmenttbl Name of table containing all the tokenized training sentences. 
+ * @param regextbl Name of table containing all the regular expressions to capture regex features.
+ * @param dictionary Name of table containing the dictionary.
+ * @param featuretbl features generated from the traning dataset
+ * @param featureset unique featrue set generated from the training dataset 
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_train_fgen(
+        segmenttbl text, 
+        regextbl text, 
+        dictionary text,
+        featuretbl text,
+        featureset text) RETURNS void AS 
+$$     
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp1_feature;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.tmp1_feature(start_pos integer,doc_id integer, f_name text, feature integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_rtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.tmp_rtbl(start_pos integer,doc_id integer, feature integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_dense_mtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.tmp_dense_mtbl(start_pos integer,doc_id integer, feature integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.dense_mtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.dense_mtbl(doc_id integer, dense_m integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.sparse_rtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.sparse_rtbl(doc_id integer,f_size integer, sparse_r integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.sparse_mtbl;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.sparse_mtbl(sparse_m integer[]);")
+
+    plpy.execute("DROP TABLE IF EXISTS MADLIB_SCHEMA.tmp_featureset;" + \
+                 "CREATE TABLE MADLIB_SCHEMA.tmp_featureset(f_name text, feature integer[]);")
+
+    # insert into dictionary table
+    plpy.execute("""INSERT INTO """ + dictionary + """(token, total)
+                    SELECT seg_text, count(*)
+                    FROM   """ + segmenttbl + """
+                    GROUP BY seg_text;""")
+ 
+    # create a temporary table to store all the features
+        
+    # extract all the edge features
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT doc2.start_pos, doc2.doc_id, 'E.', ARRAY[doc1.label, doc2.label]
+                    FROM  """ + segmenttbl + """ doc1, """ + segmenttbl + """ doc2
+                    WHERE  doc1.doc_id = doc2.doc_id AND doc1.start_pos+1 = doc2.start_pos;""")
+         
+    #extract all the regex features
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'R_' || name, ARRAY[-1, label]
+                    FROM   """ + regextbl + """, """ + segmenttbl + """
+                    WHERE  seg_text ~ pattern;""")
+           
+    #extract all the start feature
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'S.', ARRAY[-1, label]
+                    FROM  """ + segmenttbl + """
+                    WHERE  start_pos = 0;""")
+        
+    #extract all the end featue
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'End.', ARRAY[-1, label]
+                    FROM  """ + segmenttbl + """
+                    WHERE  start_pos = max_pos;""")
+
+    #word feature
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'W_' || seg_text, ARRAY[-1, label]
+                    FROM  """ + segmenttbl + """;""")
+        
+    #unknown feature
+    plpy.execute("""INSERT INTO tmp1_feature(start_pos, doc_id, f_name, feature) 
+                    SELECT start_pos, doc_id, 'U', ARRAY[-1, label]
+                    FROM  """ + segmenttbl + """ seg, """ + dictionary + """ dic
+                    WHERE  seg.seg_text = dic.token AND dic.total <= 1;""")
+ 
+    plpy.execute("""INSERT INTO tmp_featureset(f_name, feature) 
+                    SELECT DISTINCT f_name, feature
+                    FROM   tmp1_feature;""")
+
+    plpy.execute("""DROP SEQUENCE IF EXISTS seq;
+                    CREATE TEMP SEQUENCE seq START 1 INCREMENT 1;""")
+
+    #get all distcint features
+    plpy.execute("""INSERT INTO """ + featureset + """(f_index, f_name, feature) 
+                    SELECT nextval('seq')-1, f_name, feature
+                    FROM   tmp_featureset;""")
+    
+    rv = plpy.execute("""SELECT COUNT(*) AS total_feature FROM """ + featureset + """;""")
+
+    plpy.execute("""INSERT INTO tmp_rtbl(start_pos,doc_id,feature)
+                    SELECT start_pos, doc_id, array_cat(fset.feature, 
+                                                        ARRAY[f_index,start_pos, 
+                                                              CASE WHEN tmp1_feature.feature = fset.feature THEN 1
+                                                                   ELSE 0
+                                                              END] )
+                    FROM   tmp1_feature, """ + featureset + """ fset
+                    WHERE  tmp1_feature.f_name = fset.f_name AND fset.f_name <> 'E.';""")
+
+    plpy.execute("""INSERT INTO sparse_rtbl(doc_id, f_size, sparse_r)
+                    SELECT doc_id,""" + str(rv[0]['total_feature']) + """, 
+                           MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
+                    FROM   tmp_rtbl
+                    GROUP BY doc_id;""")
+
+    plpy.execute("""INSERT INTO tmp_dense_mtbl(start_pos,doc_id,feature)
+                    SELECT start_pos, doc_id, 
+                           array_cat(fset.feature, ARRAY[f_index,start_pos,1])
+                    FROM   tmp1_feature, """ + featureset + """ fset
+                    WHERE  start_pos > 0 AND tmp1_feature.f_name = fset.f_name AND tmp1_feature.feature = fset.feature AND fset.f_name = 'E.';""")
+
+    plpy.execute("""INSERT INTO dense_mtbl(doc_id, dense_m)
+                    SELECT doc_id, MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
+                    FROM   tmp_dense_mtbl
+                    GROUP BY doc_id;""")
+
+    plpy.execute("""INSERT INTO sparse_mtbl(sparse_m)
+                    SELECT MADLIB_SCHEMA.array_union(array_cat(ARRAY[f_index],feature))
+                    FROM   """ + featureset + """ fset
+                    WHERE  f_name = 'E.';""")
+
+    plpy.execute("""INSERT INTO """ + featuretbl + """(doc_id, f_size, sparse_r, dense_m, sparse_m)
+                    SELECT sparse_rtbl.doc_id, f_size, sparse_r, dense_m, sparse_m 
+                    FROM   sparse_rtbl, dense_mtbl, sparse_mtbl
+                    WHERE  sparse_rtbl.doc_id = dense_mtbl.doc_id;""")
+
+$$ LANGUAGE plpythonu STRICT;         
+
+
+/**
+ * @brief This function extracts POS/NER features from the testing data.
  *
  * This feature extraction function will produce two factor tables, "m table"
  * (\a viterbi_mtbl) and "r table" (\a viterbi_rtbl).  The \a viterbi_mtbl
@@ -120,7 +258,7 @@ label sequence, we only need a single lookup to get the feature weight.
  * token1 a  a  a  a  a...a
  * token2 a  a  a  a  a...a</pre>
  *
- * @param segmenttbl Name of table containing all the testing sentences.
+ * @param segmenttbl Name of table containing all the tokenized testing sentences.
  * @param dictionary Name of table containing the dictionary.
  * @param labeltbl Name of table containing the the label space used in POS or other NLP tasks.
  * @param regextbl Name of table containing all the regular expressions to capture regex features.
@@ -129,7 +267,7 @@ label sequence, we only need a single lookup to get the feature weight.
  *
  */
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.text_feature_extraction(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_test_fgen(
         segmenttbl text,
         dictionary  text,
         labeltbl text,
