@@ -179,7 +179,7 @@ def compute_cox_prop_hazards(MADlibSchema, source, indepColumn,
     return __runIterativeAlg(
         stateType = "FLOAT8[]",
         intermediateStateType = "{MADlibSchema}.intermediate_cox_prop_hazards_result".format(MADlibSchema = MADlibSchema),
-        initialState = "NULL" ,
+        initialState = "NULL",
         source = source,
         depColumn = depColumn,
         updateExpr = """
@@ -216,3 +216,30 @@ def compute_cox_prop_hazards(MADlibSchema, source, indepColumn,
 						""".format(MADlibSchema = MADlibSchema),
         maxNumIterations = maxNumIterations)
 
+
+def robust_cox_prop_hazards(MADlibSchema, source, indepColumn,
+		depColumn, coef, **kwargs):
+		
+    result = plpy.execute("""
+		SELECT (compute_robust_cox_prop_hazards(
+			ARRAY{coef},
+			(_cox_intermediate_state).x,
+			_cox_dep_column,
+			(_cox_intermediate_state).exp_coef_x,
+			(_cox_intermediate_state).x_exp_coef_x,
+			(_cox_intermediate_state).x_xTrans_exp_coef_x,
+			NULL ORDER by _cox_dep_column DESC
+		)).* FROM
+		(
+			SELECT {depColumn} as _cox_dep_column,
+					 intermediate_cox_prop_hazards({indepColumn}, ARRAY{coef})
+									as _cox_intermediate_state
+			FROM {source}
+		) AS subq;""".format(
+									MADlibSchema = MADlibSchema,
+									source = source,
+									indepColumn = indepColumn,
+									depColumn = depColumn,
+									coef = coef)
+		)
+    return result[0]['std_err'], result[0]['z_stats'],result[0]['p_values']

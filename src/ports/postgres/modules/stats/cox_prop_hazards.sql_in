@@ -103,6 +103,21 @@ the coefficients of the previous iteration). A large condition number (say, more
 than 1000) indicates the presence of significant multicollinearity.
 
 
+
+There is also an option to calculate the variance-covariance matrix using the 
+Huber-White-Sandwich estimator as
+\f[
+    V = A(\hat{\beta})^{-1} B(\hat{\beta}) A(\hat{\beta})^{-1}
+\f]
+Where \f$ A(\hat{\beta}) \f$ denotes the hessian of the log-likelihood funciton 
+evaluated at the MLE estimate of the coefficients (\f$ \hat{\beta} \f$). 
+And \f$ B((\hat{\beta})) \f$ is computed as
+\f[
+    B(\hat{\beta})=\sum_{i=1}^{n} \nabla L_i(\hat{\beta})\nabla L_i(\hat{\beta})^T
+\f]
+The robust standard errors and p-values are computed from the huber-white 
+estimator in the same manner as the regular standard errors and p-values.
+
 @input
 
 The training data is expected to be of the following form:\n
@@ -113,8 +128,7 @@ The training data is expected to be of the following form:\n
     ...
 )</pre>
 Note: Dependent Variables refer to the time of death. There is no need to
-pre-sort the data. Additionally, all the data is assumed
-
+sort the data. The function autmatically does so.
 
 @usage
 - Get vector of coefficients \f$ \boldsymbol \beta \f$ and all diagnostic
@@ -123,7 +137,6 @@ pre-sort the data. Additionally, all the data is assumed
     '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
     [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
 );</pre>
-  Output:
   Output:
   <pre>coef | log_likelihood | std_err | z_stats | p_values  | condition_no | num_iterations
                                                ...
@@ -134,6 +147,19 @@ pre-sort the data. Additionally, all the data is assumed
   \f$ \boldsymbol \beta \f$, the log-likelihood of determination:
   <pre>SELECT coef, log_likelihood
 FROM \ref cox_prop_hazards('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+
+- Get the Huber-White estimates of standard error and p-values:\n
+  <pre>
+SELECT * FROM \ref (robust_cox_prop_hazards(
+	'<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
+coef)).* FROM (
+	SELECT \ref (cox_prop_hazards(
+	'<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
+	[, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
+).coef as coef )q;
+</pre>
+  Output:
+  <pre> robust_std_err | robust_z_stats | robust_p_values
 
 @examp
 
@@ -160,6 +186,17 @@ z_stats        | {0.753356711368689,-0.223628410729811}
 p_values       | {0.451235588326831,0.823046454908087}
 condition_no   | 12.1135391339082
 num_iterations | 4
+@endverbatim
+-# Evaluate the huber-white sandwich estimator
+@verbatim
+sql>
+SELECT (madlib.robust_cox_prop_hazards('data', 'val', 'time', coef)).* FROM (
+ SELECT (cox_prop_hazards('data', 'val', 'time', 100, 'newto', 0.001)).coef as coef
+) as q;
+---------------|--------------------------------------------------------------
+robust_std_err        | {1.07685554385,0.335368871419}
+robust_z_stats        | {0.818204172565,-0.225667112833}
+robust_p_values       | {0.413240612994,0.821460338439}
 
 @endverbatim
 
@@ -218,8 +255,6 @@ CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
     condition_no DOUBLE PRECISION,
     num_iterations INTEGER
 );
-
-
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_final(
@@ -405,3 +440,88 @@ CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
 RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
 $$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, $4, $5, 0.0001);$$
 LANGUAGE sql VOLATILE;
+
+
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.robust_cox_prop_hazards_result;
+CREATE TYPE MADLIB_SCHEMA.robust_cox_prop_hazards_result AS (
+    robust_std_err DOUBLE PRECISION[],
+    robust_z_stats DOUBLE PRECISION[],
+    robust_p_values DOUBLE PRECISION[]
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_cox_prop_hazards_step_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.robust_cox_prop_hazards_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_cox_prop_hazards_step_transition(
+    /*+  state */ DOUBLE PRECISION[],
+    /*+  coef */ DOUBLE PRECISION[],
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,		
+    /*+  exp_coef_x */ DOUBLE PRECISION,
+    /*+  xexp_coef_x */ DOUBLE PRECISION[],
+    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+  previous_state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS 
+'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+/**
+ * @internal
+ * @brief Perform one step of computations of the robust variance analysis
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__',m4_ifdef(`__HAS_ORDERED_AGGREGATES__',`ORDERED'))
+AGGREGATE MADLIB_SCHEMA.compute_robust_cox_prop_hazards(
+
+    /*+  coef */ DOUBLE PRECISION[],
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,
+    /*+  exp_coef_x */ DOUBLE PRECISION,
+    /*+  xexp_coef_x */ DOUBLE PRECISION[],
+    /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.robust_cox_prop_hazards_step_transition,
+    FINALFUNC=MADLIB_SCHEMA.robust_cox_prop_hazards_step_final,
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+/**
+ * @brief Compute huber-white standard errors for the cox-regression coefficients.
+ *
+ *
+ * @param source Name of the source relation containing the training data
+ * @param indepColumn Name of the independent column
+ * @param depColumn Name of the dependant column measuring time of death
+ * @param coef Maximum likelihood coefficient (computed using cox_prop_hazards)
+ *
+ * @return A composite value:
+ *  - <tt>robust_std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>robust_z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *  - <tt>robust_p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *
+- Get the Huber-White estimates of standard error and p-values:\n
+  <pre>
+SELECT * FROM \ref (robust_cox_prop_hazards(
+	'<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
+coef)).* FROM (
+	SELECT \ref (cox_prop_hazards(
+	'<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
+	[, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
+).coef as coef )q;
+</pre>
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_cox_prop_hazards(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR,
+    "coef" DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.robust_cox_prop_hazards_result
+AS $$PythonFunction(stats, cox_prop_hazards, robust_cox_prop_hazards)$$
+LANGUAGE plpythonu VOLATILE;
+
