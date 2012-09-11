@@ -43,6 +43,11 @@ public:
     inline HandleMap(const Handle &inHandle)
       : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
         mMemoryHandle(inHandle) { }
+    
+    template <class Derived>
+    inline HandleMap(const Eigen::MapBase<Derived>& inMappedData)
+      : Base(inMappedData.data(), inMappedData.size()),
+        mMemoryHandle(inMappedData.data()) { }
 
     /**
      * @brief Initialize HandleMap backed by the given handle
@@ -52,13 +57,8 @@ public:
      */
     HandleMap(const Handle &inHandle, Index inNumElem)
       : Base(const_cast<Scalar*>(inHandle.ptr()), inNumElem),
-        mMemoryHandle(inHandle) {
-
-//        madlib_assert(inHandle.size() >= inNumElem * sizeof(Scalar),
-//            std::runtime_error("Expected HandleMap to be larger than it "
-//                "actually is."));
-    }
-
+        mMemoryHandle(inHandle) { }
+    
     /**
      * @brief Initialize HandleMap backed by the given handle
      *

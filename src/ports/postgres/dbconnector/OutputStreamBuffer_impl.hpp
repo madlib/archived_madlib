@@ -19,10 +19,10 @@ namespace postgres {
  * @param inMsg Null-terminated C string
  * @param inLength length of inMsg
  */
-template <int ErrorLevel>
+template <int ErrorLevel, template <class> class Allocator>
 inline
 void
-OutputStreamBuffer<ErrorLevel>::output(char *inMsg,
+OutputStreamBuffer<ErrorLevel, Allocator>::output(char *inMsg,
     std::size_t /* inLength */) const {
 
     volatile bool errorOccurred = false;

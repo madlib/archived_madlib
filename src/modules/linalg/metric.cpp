@@ -12,18 +12,14 @@
 
 namespace madlib {
 
-// Use Eigen
-using namespace dbal::eigen_integration;
-
 namespace modules {
 
 namespace linalg {
 
-template <class Derived, class OtherDerived>
 std::tuple<Index, double>
 closestColumnAndDistance(
-    const Eigen::MatrixBase<Derived>& inMatrix,
-    const Eigen::MatrixBase<OtherDerived>& inVector,
+    const MappedMatrix& inMatrix,
+    const MappedColumnVector& inVector,
     FunctionHandle& inMetric) {
 
     Index closestColumn = 0;
@@ -31,7 +27,8 @@ closestColumnAndDistance(
 
     for (Index i = 0; i < inMatrix.cols(); ++i) {
         double currentDist
-            = inMetric(inMatrix.col(i), inVector).template getAs<double>();
+            = inMetric(MappedColumnVector(inMatrix.col(i)), inVector)
+                .getAs<double>();
         if (currentDist < minDist) {
             closestColumn = i;
             minDist = currentDist;
@@ -44,15 +41,28 @@ closestColumnAndDistance(
 /**
  * @brief Compute the minimum distance between a vector and any column of a
  *     matrix
+ *
+ * This function calls a user-supplied function, for which it does not do
+ * garbage collection. It is therefore meant to be called only constantly many
+ * times before control is returned to the backend.
  */
 AnyType
 closest_column::run(AnyType& args) {
     MappedMatrix M = args[0].getAs<MappedMatrix>();
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    FunctionHandle dist = args[2].getAs<FunctionHandle>();
+    FunctionHandle dist = args[2].getAs<FunctionHandle>()
+        .unsetFunctionCallOptions(FunctionHandle::GarbageCollectionAfterCall);
 
     std::tuple<Index, double> result = closestColumnAndDistance(M, x, dist);
-
+/*    std::tuple<Index, double> result(0, std::numeric_limits<double>::infinity());
+    for (Index i = 0; i < M.cols(); ++i) {
+        double currentDist = (M.col(i) - x).squaredNorm();
+        if (currentDist < std::get<1>(result)) {
+            std::get<0>(result) = i;
+            std::get<1>(result) = currentDist;
+        }
+    }
+*/
     AnyType tuple;
     return tuple
         << static_cast<int16_t>(std::get<0>(result))

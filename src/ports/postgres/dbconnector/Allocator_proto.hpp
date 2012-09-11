@@ -42,7 +42,7 @@ class MutableByteString;
  */
 class Allocator {
 public:
-    Allocator(FunctionCallInfo inFCInfo) : fcinfo(inFCInfo) { }
+    Allocator() { }
 
 #define MADLIB_ALLOCATE_ARRAY_DECL(z, n, _ignored) \
     template <typename T, dbal::MemoryContext MC, \

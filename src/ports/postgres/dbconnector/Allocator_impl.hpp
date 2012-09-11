@@ -425,7 +425,7 @@ Allocator::internalAllocate(void *inPtr, const size_t inSize) const {
 inline
 Allocator&
 defaultAllocator() {
-    static Allocator sDefaultAllocator(NULL);
+    static Allocator sDefaultAllocator;
     return sDefaultAllocator;
 }
 

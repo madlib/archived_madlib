@@ -60,10 +60,12 @@ namespace modules {
 
 namespace linalg {
 
-template <typename Derived, typename OtherDerived>
+// Use Eigen
+using namespace dbal::eigen_integration;
+
 std::tuple<dbal::eigen_integration::Index, double>
-closestColumnAndDistance(const Eigen::MatrixBase<Derived>& inMatrix,
-    const Eigen::MatrixBase<OtherDerived>& inVector, FunctionHandle& inMetric);
+closestColumnAndDistance(const MappedMatrix& inMatrix,
+    const MappedColumnVector& inVector, FunctionHandle& inMetric);
 
 } // namespace linalg
 

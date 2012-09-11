@@ -395,9 +395,9 @@ struct TypeTraits<
     enum { typeClass = dbal::ArrayType };
 
     WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) )
-    // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
-
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedVector<value_type>(value, needMutableClone)
+    ));
 //    WITH_BIND_TO_STREAM( ref.rebind(stream.template read<double>(ref.size())) )
 };
 
@@ -466,8 +466,9 @@ struct TypeTraits<
     WITH_MUTABILITY( IsMutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
-    // No need to support retrieving this type from the backend. Use
-    // MappedMatrix instead.
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedMatrix<value_type>(value, needMutableClone)
+    ));
 };
 
 template <>
@@ -551,8 +552,9 @@ struct TypeTraits<
     WITH_MUTABILITY( dbal::Mutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
-    // No need to support retrieving this type from the backend. Use
-    // MappedMatrix instead.
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedMatrix<value_type>(value, needMutableClone)
+    ));
 };
 
 template <>

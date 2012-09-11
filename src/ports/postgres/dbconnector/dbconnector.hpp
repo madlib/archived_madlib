@@ -70,11 +70,13 @@ extern "C" {
 // Note: If errors occur in the following include files, it could indicate that
 // new macros have been added to PostgreSQL header files.
 #include <boost/mpl/if.hpp>
+#include <boost/any.hpp>
 #include <boost/type_traits/is_const.hpp>
 #include <boost/type_traits/remove_cv.hpp>
 #include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/utility/enable_if.hpp>
 #include <boost/tr1/array.hpp>
+#include <boost/tr1/functional.hpp>
 #include <boost/tr1/tuple.hpp>
 #include <limits>
 #include <stdexcept>
@@ -90,8 +92,10 @@ namespace std {
 
     // The following are currently provided by boost.
     using tr1::array;
-    using tr1::tuple;
+    using tr1::bind;
+    using tr1::function;
     using tr1::get;
+    using tr1::tuple;
 }
 
 #if !defined(NDEBUG) && !defined(EIGEN_NO_DEBUG)
@@ -212,6 +216,21 @@ using dbconnector::postgres::TransparentHandle;
 using dbconnector::postgres::defaultAllocator;
 using dbconnector::postgres::Null;
 
+namespace dbconnector {
+
+namespace postgres {
+
+extern std::ostream dbout;
+extern std::ostream dberr;
+
+} // namespace postgres
+
+} // namespace dbconnector
+
+// Import MADlib global variables into madlib namespace
+using dbconnector::postgres::dbout;
+using dbconnector::postgres::dberr;
+
 } // namespace madlib
 
 #include <dbal/dbal_impl.hpp>
@@ -247,7 +266,7 @@ typedef dbal::DynamicStructRootContainer<
     namespace modules { \
     namespace _module { \
     struct _name : public dbconnector::postgres::UDF { \
-        inline _name(FunctionCallInfo fcinfo) : dbconnector::postgres::UDF(fcinfo) { }  \
+        inline _name() { }  \
         AnyType run(AnyType &args); \
         inline void *SRF_init(AnyType&) {return NULL;}; \
         inline AnyType SRF_next(void *, bool *){return AnyType();}; \

@@ -139,7 +139,7 @@ AnyType
 avg_vector_final::run(AnyType& args) {
     AvgVectorState<ArrayHandle<double> > state = args[0];
 
-    MutableMappedColumnVector avgVector(allocateArray<double>(
+    MutableNativeColumnVector avgVector(allocateArray<double>(
         state.sumOfVectors.size()));
     avgVector = state.sumOfVectors / state.numRows;
     return avgVector;
@@ -168,7 +168,7 @@ AnyType
 normalized_avg_vector_final::run(AnyType& args) {
     AvgVectorState<ArrayHandle<double> > state = args[0];
 
-    MutableMappedColumnVector avgVector(allocateArray<double>(
+    MutableNativeColumnVector avgVector(allocateArray<double>(
         state.sumOfVectors.size()));
     avgVector = (state.sumOfVectors / state.numRows).normalized();
     return avgVector;

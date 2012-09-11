@@ -23,11 +23,17 @@ template <>
 HandleMap<Matrix, MutableArrayHandle<double> >::HandleMap(
     const MutableArrayHandle<double>& inHandle);
 
-typedef HandleMap<const ColumnVector, ArrayHandle<double> > MappedColumnVector;
+typedef HandleMap<const ColumnVector, ArrayHandle<double> > NativeColumnVector;
 typedef HandleMap<ColumnVector, MutableArrayHandle<double> >
+    MutableNativeColumnVector;
+typedef HandleMap<const Matrix, ArrayHandle<double> > NativeMatrix;
+typedef HandleMap<Matrix, MutableArrayHandle<double> > MutableNativeMatrix;
+
+typedef HandleMap<const ColumnVector, TransparentHandle<double> > MappedColumnVector;
+typedef HandleMap<ColumnVector, MutableTransparentHandle<double> >
     MutableMappedColumnVector;
-typedef HandleMap<const Matrix, ArrayHandle<double> > MappedMatrix;
-typedef HandleMap<Matrix, MutableArrayHandle<double> > MutableMappedMatrix;
+typedef HandleMap<const Matrix, TransparentHandle<double> > MappedMatrix;
+typedef HandleMap<Matrix, MutableTransparentHandle<double> > MutableMappedMatrix;
 
 } // namespace dbal
 
@@ -49,6 +55,14 @@ ArrayType* VectorToNativeArray(const Eigen::MatrixBase<Derived>& inVector);
 
 template <typename Derived>
 ArrayType* MatrixToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix);
+
+template <class MatrixType>
+MatrixType
+NativeArrayToMappedMatrix(Datum inDatum, bool inNeedMutableClone);
+
+template <class VectorType>
+VectorType
+NativeArrayToMappedVector(Datum inDatum, bool inNeedMutableClone);
 
 } // namespace postgres
 
