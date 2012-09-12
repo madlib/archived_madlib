@@ -63,9 +63,10 @@ namespace linalg {
 // Use Eigen
 using namespace dbal::eigen_integration;
 
+template <class DistanceFunction>
 std::tuple<dbal::eigen_integration::Index, double>
 closestColumnAndDistance(const MappedMatrix& inMatrix,
-    const MappedColumnVector& inVector, FunctionHandle& inMetric);
+    const MappedColumnVector& inVector, DistanceFunction& inMetric);
 
 } // namespace linalg
 

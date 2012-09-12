@@ -26,6 +26,7 @@ public:
 
     FunctionHandle(SystemInformation* inSysInfo, Oid inFuncID);
 
+    UDF::Pointer funcPtr();
     Oid funcID() const;
     FunctionHandle& setFunctionCallOptions(uint32_t inFlags);
     FunctionHandle& unsetFunctionCallOptions(uint32_t inFlags);

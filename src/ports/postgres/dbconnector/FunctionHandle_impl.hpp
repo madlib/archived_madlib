@@ -28,6 +28,12 @@ FunctionHandle::FunctionHandle(SystemInformation* inSysInfo, Oid inFuncID)
     mFuncInfo(inSysInfo->functionInformation(inFuncID)),
     mFuncCallOptions(GarbageCollectionAfterCall) { }
 
+inline
+UDF::Pointer
+FunctionHandle::funcPtr() {
+    return mFuncInfo->cxx_func;
+}
+
 /**
  * @brief Return the OID of this function
  */

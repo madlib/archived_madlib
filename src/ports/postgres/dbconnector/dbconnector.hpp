@@ -186,7 +186,6 @@ madlib ## _ ## _pgfunc _arglist { \
 #include "ArrayHandle_proto.hpp"
 #include "AnyType_proto.hpp"
 #include "ByteString_proto.hpp"
-#include "FunctionHandle_proto.hpp"
 #include "NativeRandomNumberGenerator_proto.hpp"
 #include "PGException_proto.hpp"
 #include "OutputStreamBuffer_proto.hpp"
@@ -194,6 +193,8 @@ madlib ## _ ## _pgfunc _arglist { \
 #include "TransparentHandle_proto.hpp"
 #include "TypeTraits_proto.hpp"
 #include "UDF_proto.hpp"
+// Need to move FunctionHandle down because it has dependencies
+#include "FunctionHandle_proto.hpp"
 
 // Several backend functions (APIs) need a wrapper, so that they can be called
 // safely from a C++ context.
@@ -213,7 +214,9 @@ using dbconnector::postgres::NativeRandomNumberGenerator;
 using dbconnector::postgres::TransparentHandle;
 
 // Import MADlib functions into madlib namespace
+using dbconnector::postgres::AnyType_cast;
 using dbconnector::postgres::defaultAllocator;
+using dbconnector::postgres::funcPtr;
 using dbconnector::postgres::Null;
 
 namespace dbconnector {

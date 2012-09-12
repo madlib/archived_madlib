@@ -41,6 +41,11 @@ protected:
     static bool SRF_is_firstcall(FunctionCallInfo fcinfo);
 };
 
+template <class Function>
+UDF::Pointer funcPtr() {
+    return UDF::invoke<Function>;
+}
+
 } // namespace postgres
 
 } // namespace dbconnector

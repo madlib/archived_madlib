@@ -16,19 +16,21 @@ namespace modules {
 
 namespace linalg {
 
+template <class DistanceFunction>
 std::tuple<Index, double>
 closestColumnAndDistance(
     const MappedMatrix& inMatrix,
     const MappedColumnVector& inVector,
-    FunctionHandle& inMetric) {
+    DistanceFunction& inMetric) {
 
     Index closestColumn = 0;
     double minDist = std::numeric_limits<double>::infinity();
 
     for (Index i = 0; i < inMatrix.cols(); ++i) {
         double currentDist
-            = inMetric(MappedColumnVector(inMatrix.col(i)), inVector)
-                .getAs<double>();
+            = AnyType_cast<double>(
+                inMetric(MappedColumnVector(inMatrix.col(i)), inVector)
+            );
         if (currentDist < minDist) {
             closestColumn = i;
             minDist = currentDist;
@@ -36,6 +38,48 @@ closestColumnAndDistance(
     }
 
     return std::tuple<Index, double>(closestColumn, minDist);
+}
+
+double
+squaredDistNorm1(
+    const MappedColumnVector& inX,
+    const MappedColumnVector& inY) {
+
+    return (inX - inY).lpNorm<1>();
+}
+
+double
+squaredDistNorm2(
+    const MappedColumnVector& inX,
+    const MappedColumnVector& inY) {
+
+    return (inX - inY).squaredNorm();
+}
+
+double
+squaredAngle(
+    const MappedColumnVector& inX,
+    const MappedColumnVector& inY) {
+
+    double cosine = dot(inX, inY) / (inX.norm() * inY.norm());
+    if (cosine > 1)
+        cosine = 1;
+    else if (cosine < -1)
+        cosine = -1;
+    double angle = std::acos(cosine);
+    return angle * angle;
+}
+
+double
+squaredTanimoto(
+    const MappedColumnVector& inX,
+    const MappedColumnVector& inY) {
+
+    // Note that this is not a metric in general!
+    double dotProduct = dot(inX, inY);
+    double tanimoto = inX.squaredNorm() + inY.squaredNorm();
+    tanimoto = (tanimoto - 2 * dotProduct) / (tanimoto - dotProduct);
+    return tanimoto * tanimoto;
 }
 
 /**
@@ -53,16 +97,23 @@ closest_column::run(AnyType& args) {
     FunctionHandle dist = args[2].getAs<FunctionHandle>()
         .unsetFunctionCallOptions(FunctionHandle::GarbageCollectionAfterCall);
 
-    std::tuple<Index, double> result = closestColumnAndDistance(M, x, dist);
-/*    std::tuple<Index, double> result(0, std::numeric_limits<double>::infinity());
-    for (Index i = 0; i < M.cols(); ++i) {
-        double currentDist = (M.col(i) - x).squaredNorm();
-        if (currentDist < std::get<1>(result)) {
-            std::get<0>(result) = i;
-            std::get<1>(result) = currentDist;
-        }
-    }
-*/
+    std::tuple<Index, double> result;
+
+    // For performance, we cheat here: For the following four distance
+    // functions, we take a special shortcut
+    // FIXME: FunctionHandle should be tuned so that this shortcut no longer
+    //     impacts performance by more than, say, ~10%.
+    if (dist.funcPtr() == funcPtr<squared_dist_norm1>())
+        result = closestColumnAndDistance(M, x, squaredDistNorm1);
+    else if (dist.funcPtr() == funcPtr<squared_dist_norm2>())
+        result = closestColumnAndDistance(M, x, squaredDistNorm2);
+    else if (dist.funcPtr() == funcPtr<squared_angle>())
+        result = closestColumnAndDistance(M, x, squaredAngle);
+    else if (dist.funcPtr() == funcPtr<squared_tanimoto>())
+        result = closestColumnAndDistance(M, x, squaredTanimoto);
+    else
+        result = closestColumnAndDistance(M, x, dist);
+
     AnyType tuple;
     return tuple
         << static_cast<int16_t>(std::get<0>(result))
@@ -107,10 +158,10 @@ squared_dist_norm2::run(AnyType& args) {
     // FIXME: it would be nice to declare this as a template function (so it
     // works for dense and sparse vectors), and the C++ AL takes care of the
     // rest...
-    MappedColumnVector x = args[0].getAs<MappedColumnVector>();
-    MappedColumnVector y = args[1].getAs<MappedColumnVector>();
-
-    return static_cast<double>( (x-y).squaredNorm() );
+    return squaredDistNorm2(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>()
+    );
 }
 
 AnyType
@@ -118,37 +169,26 @@ squared_dist_norm1::run(AnyType& args) {
     // FIXME: it would be nice to declare this as a template function (so it
     // works for dense and sparse vectors), and the C++ AL takes care of the
     // rest...
-    MappedColumnVector x = args[0].getAs<MappedColumnVector>();
-    MappedColumnVector y = args[1].getAs<MappedColumnVector>();
-    double l1norm = (x-y).lpNorm<1>();
-
-    return l1norm * l1norm;
+    return squaredDistNorm1(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>()
+    );
 }
 
 AnyType
 squared_angle::run(AnyType& args) {
-    MappedColumnVector x = args[0].getAs<MappedColumnVector>();
-    MappedColumnVector y = args[1].getAs<MappedColumnVector>();
-
-    double cosine = dot(x, y) / (x.norm() * y.norm());
-    if (cosine > 1)
-        cosine = 1;
-    else if (cosine < -1)
-        cosine = -1;
-    double angle = std::acos(cosine);
-    return angle * angle;
+    return squaredAngle(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>()
+    );
 }
 
 AnyType
 squared_tanimoto::run(AnyType& args) {
-    MappedColumnVector x = args[0].getAs<MappedColumnVector>();
-    MappedColumnVector y = args[1].getAs<MappedColumnVector>();
-
-    // Note that this is not a metric in general!
-    double dotProduct = dot(x,y);
-    double tanimoto = x.squaredNorm() + y.squaredNorm();
-    tanimoto = (tanimoto - 2 * dotProduct) / (tanimoto - dotProduct);
-    return tanimoto * tanimoto;
+    return squaredTanimoto(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>()
+    );
 }
 
 } // namespace linalg
