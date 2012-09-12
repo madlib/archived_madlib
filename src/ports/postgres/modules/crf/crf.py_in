@@ -1,0 +1,162 @@
+# coding=utf-8
+
+"""
+@file crf.py_in
+
+@brief Conditional Random Field: Driver functions
+
+@namespace crf 
+
+Conditional Random Field: Driver functions
+"""
+
+import plpy
+
+def __runIterativeAlg(stateType, initialState, source, updateExpr,
+    terminateExpr, maxNumIterations, cyclesPerIteration = 1):
+    """
+    Driver for an iterative algorithm
+    
+    A general driver function for most iterative algorithms: The state between
+    iterations is kept in a variable of type <tt>stateType</tt>, which is
+    initialized with <tt><em>initialState</em></tt>. During each iteration, the
+    SQL statement <tt>updateSQL</tt> is executed in the database. Afterwards,
+    the SQL query <tt>updateSQL</tt> decides whether the algorithm terminates.
+    
+    @param stateType SQL type of the state between iterations
+    @param initialState The initial value of the SQL state variable
+    @param source The source relation
+    @param updateExpr SQL expression that returns the new state of type
+        <tt>stateType</tt>. The expression may use the replacement fields
+        <tt>"{state}"</tt>, <tt>"{iteration}"</tt>, and
+        <tt>"{sourceAlias}"</tt>. Source alias is an alias for the source
+        relation <tt><em>source</em></tt>.
+    @param terminateExpr SQL expression that returns whether the algorithm should
+        terminate. The expression may use the replacement fields
+        <tt>"{newState}"</tt> and <tt>"{iteration}"</tt>. It must return a BOOLEAN value.
+    @param maxNumIterations Maximum number of iterations. Algorithm will then
+        terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
+    @param cyclesPerIteration Number of aggregate function calls per iteration.
+    """ 
+
+    updateSQL = """
+        INSERT INTO _madlib_iterative_alg
+        SELECT
+            {{iteration}},
+            {updateExpr}
+        FROM
+            _madlib_iterative_alg AS st,
+            {{source}} AS src
+        WHERE
+            st._madlib_iteration = {{iteration}} - 1
+        """.format(updateExpr = updateExpr)
+    terminateSQL = """
+        SELECT
+            {terminateExpr} AS should_terminate
+        FROM    
+        (
+            SELECT _madlib_state
+            FROM _madlib_iterative_alg
+            WHERE _madlib_iteration = {{iteration}} - {{cyclesPerIteration}}
+        ) AS older,
+        (
+            SELECT _madlib_state
+            FROM _madlib_iterative_alg
+            WHERE _madlib_iteration = {{iteration}}
+        ) AS newer
+        """.format(terminateExpr = terminateExpr)
+    checkForNullStateSQL = """
+        SELECT _madlib_state IS NULL AS should_terminate
+        FROM _madlib_iterative_alg
+        WHERE _madlib_iteration = {iteration}
+        """
+
+    oldMsgLevel = plpy.execute("SELECT setting FROM pg_settings WHERE name='client_min_messages'"
+        )[0]['setting']
+    plpy.execute("""
+        SET client_min_messages = error;
+        DROP TABLE IF EXISTS _madlib_iterative_alg;
+        CREATE TEMPORARY TABLE _madlib_iterative_alg (
+            _madlib_iteration INTEGER PRIMARY KEY,
+            _madlib_state {stateType}
+        );
+        SET client_min_messages = {oldMsgLevel};
+        """.format(stateType = stateType, oldMsgLevel = oldMsgLevel))
+    
+    iteration = 0
+    plpy.execute("""
+        INSERT INTO _madlib_iterative_alg VALUES ({iteration}, {initialState})
+        """.format(iteration = iteration, initialState = initialState))
+    while True:
+        iteration = iteration + 1
+        plpy.execute(updateSQL.format(
+            source = source,
+            state = "(st._madlib_state)",
+            iteration = iteration,
+            sourceAlias = "src"))
+        if plpy.execute(checkForNullStateSQL.format(
+                iteration = iteration))[0]['should_terminate'] or (
+            iteration > cyclesPerIteration and (
+            iteration >= cyclesPerIteration * maxNumIterations or
+            plpy.execute(terminateSQL.format(
+                iteration = iteration,
+                cyclesPerIteration = cyclesPerIteration,
+                oldState = "(older._madlib_state)",
+                newState = "(newer._madlib_state)"))[0]['should_terminate'])):
+            break
+    
+    # Note: We do not drop the temporary table
+    return iteration
+
+
+def compute_lincrf(MADlibSchema, source, sparse_R, dense_M, sparse_M, featureSize, tagSize, maxNumIterations, **kwargs):
+    """
+    Compute conditional random field coefficients
+    
+    This method serves as an interface to L-BFGS optimization algorithms.
+    
+    @param MADlibSchema Name of the MADlib schema, properly escaped/quoted
+    @param source Name of relation containing the training data
+    @param sparse_R Name of the sparse single state feature column (of type DOUBLE PRECISION[])
+    @param dense_M Name of the dense two state feature column (of type DOUBLE PRECISION[])
+    @param sparse_M Name of the sparse two state feature column (of type DOUBLE PRECISION[])
+    @param featureSize Name of feature size column in training data (of type
+           DOUBLE PRECISION)
+    @param tagSize The size of the tag set
+    @param maxNumIterations Maximum number of iterations
+    @param kwargs We allow the caller to specify additional arguments (all of
+           which will be ignored though). The purpose of this is to allow the
+           caller to unpack a dictionary whose element set is a superset of
+           the required arguments by this function.
+    @return array with coefficients in case of convergence, otherwise None
+    """
+
+    if maxNumIterations < 1:
+        plpy.error("Number of iterations must be positive")
+    
+    return __runIterativeAlg(
+        stateType = "FLOAT8[]",
+        initialState = "NULL",
+        source = source,
+        updateExpr = """
+            {MADlibSchema}.lincrf_lbfgs_step(
+                ({sparse_R})::FLOAT8[],
+                ({dense_M})::FLOAT8[],
+                ({sparse_M})::FLOAT8[],
+                ({featureSize})::FLOAT8,
+                ({tagSize})::FLOAT8,
+                {{state}}
+            )
+            """.format(
+                MADlibSchema = MADlibSchema,
+                sparse_R = sparse_R,
+                dense_M = dense_M,
+                sparse_M = sparse_M,
+                featureSize = featureSize,
+                tagSize = tagSize),
+        terminateExpr = """
+            {MADlibSchema}.internal_lincrf_lbfgs_converge(
+                {{newState}}) = 0
+            """.format(
+                MADlibSchema = MADlibSchema),
+        maxNumIterations = maxNumIterations)

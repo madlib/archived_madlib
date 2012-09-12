@@ -1,0 +1,154 @@
+---------------------------------------------------------------------------
+-- Rules:
+-- ------
+-- 1) Any DB objects should be created w/o schema prefix,
+--    since this file is executed in a separate schema context.
+-- 2) There should be no DROP statements in this script, since
+--    all objects created in the default schema will be cleaned-up outside.
+--
+-- This test is not performed in those platforms which don't support
+-- ORDERED AGGREGATES.
+---------------------------------------------------------------------------
+
+m4_include(`SQLCommon.m4')
+m4_changequote(<!,!>)
+
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,<!
+
+---------------------------------------------------------------------------
+-- Setup:
+---------------------------------------------------------------------------
+
+CREATE FUNCTION crf_train_install_test() RETURNS TEXT AS $$
+DECLARE
+        error FLOAT8;
+	result  TEXT;
+BEGIN     
+	-- Regex table
+        CREATE TABLE train_regex(pattern text,name text); 
+        INSERT INTO train_regex VALUES
+        ('^[A-Z][a-z]+$','InitCapital%'), ('^[A-Z]+$','isAllCapital%'),
+        ('^.*[0-9]+.*$','containsDigit%'),('^.+[.]$','endsWithDot%'),
+        ('^.+[,]$','endsWithComma%'),     ('^.+er$','endsWithER%'),
+        ('^.+est$','endsWithEst%'),       ('^.+ed$','endsWithED%'),
+        ('^.+s$','endsWithS%'),           ('^.+ing$','endsWithIng%'),
+        ('^.+ly$','endsWithly%'),         ('^.+-.+$','isDashSeparatedWords%'),
+        ('^.*@.*$','isEmailId%');
+        analyze train_regex;
+
+        CREATE TABLE train_segmenttbl(start_pos integer,doc_id integer,seg_text text,label integer,max_pos integer);
+        INSERT INTO train_segmenttbl VALUES
+        (0,1,'confidence',11,36),  (1,1,'in',5,36),         (2,1,'the',2,36),         (3,1,'pound',11,36),
+        (4,1,'is',31,36),          (5,1,'widely',19,36),    (6,1,'expected',29,36),   (7,1,'to',24,36),
+        (8,1,'take',26,36),        (9,1,'another',2,36),    (10,1,'sharp',6,36),      (11,1,'dive',11,36),
+        (12,1,'if',5,36),          (13,1,'trade',11,36),    (14,1,'figures',12,36),   (15,1,'for',5,36),
+        (16,1,'september',13,36),  (17,1,',',42,36),        (18,1,'due',6,36),        (19,1,'for',5,36),
+        (20,1,'release',11,36),    (21,1,'tomorrow',11,36), (22,1,',',42,36),         (23,1,'fail',26,36),
+        (24,1,'to',24,36),         (25,1,'show',26,36),     (26,1,'a',2,36),          (27,1,'substantial',6,36),
+        (28,1,'improvement',11,36),(29,1,'from',5,36),      (30,1,'july',13,36),      (31,1,'and',0,36),
+        (32,1,'august',13,36),     (33,1,'''s',16,36),      (34,1,'near-record',6,36),(35,1,'deficits',12,36),
+        (36,1,'.',43,36),          (0,2,'chancellor',13,26),(1,2,'of',5,26),          (2,2,'the',2,26),
+        (3,2,'exchequer',13,26),   (4,2,'nigel',13,26),     (5,2,'lawson',13,26),     (6,2,'''s',16,26),
+        (7,2,'restated',29,26),    (8,2,'commitment',11,26),(9,2,'to',24,26),         (10,2,'a',2,26),
+        (11,2,'firm',11,26),       (12,2,'monetary',6,26),  (13,2,'policy',11,26),    (14,2,'has',31,26),
+        (15,2,'helped',29,26),     (16,2,'to',24,26),       (17,2,'prevent',26,26),   (18,2,'a',2,26),
+        (19,2,'freefall',11,26),   (20,2,'in',5,26),        (21,2,'sterling',11,26),  (22,2,'over',5,26),
+        (23,2,'the',2,26),         (24,2,'past',6,26),      (25,2,'week',11,26),      (26,2,'.',43,26);
+
+        CREATE TABLE train_dictionary(token text,total integer);
+
+        CREATE TABLE train_featuretbl(doc_id integer,f_size FLOAT8,sparse_r FLOAT8[],dense_m FLOAT8[],sparse_m FLOAT8[]);
+
+        CREATE TABLE train_featureset(f_index integer, f_name text, feature integer[]);
+
+        PERFORM MADLIB_SCHEMA.crf_train_fgen('train_segmenttbl', 'train_regex', 'train_dictionary', 'train_featuretbl','train_featureset');
+
+        CREATE TABLE train_crf_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);
+
+        PERFORM MADLIB_SCHEMA.lincrf('train_featuretbl','sparse_r','dense_m','sparse_m','f_size',45, 'train_featureset','train_crf_feature', 20);
+
+        -- Expected feature table
+        -- The result is produced from Dr. Sunita's CRF java package with the same input
+        CREATE TABLE expected_crf_feature(id integer,name text,prev_label integer,label integer,weight float);
+	INSERT INTO expected_crf_feature VALUES
+	(0,'U',-1,6,2.03722251114241),               (1,'E.',2,11,2.74617537223778),
+	(2,'W_exchequer',-1,13,1.82177698489332),    (3,'W_is',-1,31,1.802385230083),
+	(4,'E.',11,31,2.46925702503352),             (5,'W_in',-1,5,3.252359364881),
+	(6,'E.',11,12,1.30565415536303),             (7,'U',-1,2,-0.385936767525155),
+	(8,'E.',31,29,1.95816439028514),             (9,'U',-1,29,1.42284032323052),
+	(10,'R_endsWithIng%',-1,11,1.06107711527577),(11,'W_of',-1,5,3.65295433311112),
+	(12,'S.',-1,13,1.82987757221008),            (13,'E.',24,26,3.28278206865014),
+	(14,'W_helped',-1,29,1.21452412817747),      (15,'E.',11,24,1.5567743891308),
+	(16,'W_freefall',-1,11,2.39212599502655),    (17,'W_chancellor',-1,13,4.07117751351007),
+	(18,'R_endsWithly%',-1,19,1.80826054380731), (19,'R_endsWithS%',-1,31,2.53099843051424),
+	(20,'E.',11,42,2.28570181337111),            (21,'W_to',-1,24,5.09639332107322),
+	(22,'W_''s',-1,16,2.7288337760029),          (23,'E.',5,13,2.48962334080407),
+	(24,'R_endsWithS%',-1,12,3.55652271260539),  (25,'W_from',-1,5,2.80284597986732),
+	(26,'S.',-1,11,0.141368455521256),           (27,'W_confidence',-1,11,3.26245533963349),
+	(28,'W_dive',-1,11,1.29592338493044),        (29,'E.',6,11,3.32147229704132),
+	(30,'E.',26,24,1.87855269498337),            (31,'W_commitment',-1,11,1.96406781710126),
+	(32,'W_trade',-1,11,2.10065153867223),       (33,'E.',42,26,3.01594067651091),
+	(34,'E.',13,13,2.03515687113842),            (35,'E.',5,11,3.06727298680823),
+	(36,'E.',0,13,2.32674448027563),             (37,'U',-1,26,1.98387304732704),
+	(38,'E.',6,5,1.92223183930121),              (39,'E.',29,24,1.80599049616213),
+	(40,'W_tomorrow',-1,11,3.34106414300749),    (41,'E.',11,6,1.03508232843802),
+	(42,'R_endsWithly%',-1,13,1.53563812818195), (43,'W_figures',-1,12,2.78002901173385),
+	(44,'W_week',-1,11,1.88508053467186),        (45,'W_restated',-1,29,1.58503375875973),
+	(46,'W_due',-1,6,3.39258895715363),          (47,'W_august',-1,13,1.34455487966969),
+	(48,'W_take',-1,26,1.44523808187943),        (49,'W_monetary',-1,6,4.05870827285358),
+	(50,'E.',2,6,3.11382961918855),              (51,'W_improvement',-1,11,1.40352707737839),
+	(52,'W_past',-1,6,2.16725372894534),         (53,'W_for',-1,5,3.98832124009076),
+	(54,'E.',13,5,1.55918826214718),             (55,'E.',26,2,3.34688050245804),
+	(56,'R_endsWithER%',-1,2,1.89184024107101),  (57,'E.',13,0,2.40815194836302),
+	(58,'E.',6,12,1.9178899227945),              (59,'W_nigel',-1,13,3.67154306653685),
+	(60,'R_endsWithS%',-1,16,2.52266546833986),  (61,'W_september',-1,13,2.47229643365359),
+	(62,'W_over',-1,5,1.72285539674115),         (63,'E.',16,29,1.86715666934797),
+	(64,'W_if',-1,5,3.21948182538101),           (65,'E.',19,29,2.11563252627385),
+	(66,'E.',16,6,1.43031410102084),             (67,'W_the',-1,2,3.93840509018036),
+	(68,'U',-1,5,0.928194516517659),             (69,'W_pound',-1,11,1.73917338002567),
+	(70,'W_firm',-1,11,2.65768224731759),        (71,'W_lawson',-1,13,1.73698153439168),
+	(72,'W_expected',-1,29,0.9794597248659),     (73,'W_show',-1,26,1.27116786883383),
+	(74,'W_prevent',-1,26,1.37958745070806),     (75,'End.',-1,43,3.31987423296349),
+	(76,'W_substantial',-1,6,2.14611716740351),  (77,'E.',5,2,3.4024258508775),
+	(78,'E.',24,2,3.1742588055445),              (79,'W_sterling',-1,11,1.06107711527577),
+	(80,'U',-1,13,2.20779920646185),             (81,'E.',13,42,2.23657409199101),
+	(82,'W_widely',-1,19,1.86114513803379),      (83,'W_another',-1,2,2.0317791611429),
+	(84,'W_fail',-1,26,2.67978550279999),        (85,'U',-1,0,1.13363354450703),
+	(86,'E.',11,5,3.00584804510012),             (87,'W_deficits',-1,12,2.747158855043),
+	(88,'R_endsWithER%',-1,13,2.76776898649185), (89,'E.',31,19,2.63372257558732),
+	(90,'U',-1,19,1.10718052473034),             (91,'R_isDashSeparatedWords%',-1,6,1.85284586706307),
+	(92,'W_sharp',-1,6,2.21218045077608),        (93,'E.',11,43,1.46745796387309),
+	(94,'R_endsWithED%',-1,29,3.77901761180312), (95,'W_policy',-1,11,0.862039501946008),
+	(96,'W_near-record',-1,6,1.85284586706307),  (97,'U',-1,31,1.28095963969112),
+	(98,'U',-1,12,0.972489859004352),            (99,'E.',13,16,3.37480330473993),
+	(100,'E.',29,11,2.1852156927695),            (101,'W_has',-1,31,2.19831004450907),
+	(102,'R_endsWithER%',-1,5,1.42946480149656), (103,'U',-1,11,3.03749222923604),
+	(104,'E.',12,43,2.24487997642474),           (105,'W_july',-1,13,2.03893082794191),
+	(106,'E.',12,5,2.20042084572669),            (107,'E.',2,13,1.87183716602929),
+	(108,'W_,',-1,42,4.35067339378978),          (109,'E.',11,11,0.363824439333992),
+	(110,'W_a',-1,2,3.43362694716039),           (111,'W_release',-1,11,3.76470309834533),
+	(112,'W_and',-1,0,4.16183350730113),         (113,'W_.',-1,43,3.31987423296349),
+	(114,'E.',42,6,2.79544657270948);
+
+	SELECT SUM(abs(c1.weight-c2.weight)) INTO error 
+        FROM expected_crf_feature c1, train_crf_feature c2
+        WHERE c1.name = c2.name AND c1.prev_label = c2.prev_label_id AND c1.label = c2.label_id;
+
+        SELECT INTO result CASE WHEN (error <0.1) THEN 'PASS' ELSE 'FAIL' END;
+
+	IF result = 'FAIL' THEN
+	   RAISE EXCEPTION 'Failed install check %', error;
+	END IF;
+
+	RETURN result;
+
+END
+$$ language plpgsql;
+
+---------------------------------------------------------------------------
+-- Test: 
+---------------------------------------------------------------------------
+SELECT crf_train_install_test();
+
+!>)
+m4_changequote(<!`!>,<!'!>)

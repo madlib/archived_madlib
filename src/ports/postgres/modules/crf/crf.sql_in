@@ -1,0 +1,292 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file crf.sql_in
+ *
+ * @brief SQL functions for conditional random field
+ * @date July 2012
+ *
+ * @sa For a brief introduction to conditional random field, see the
+ *     module description \ref grp_crf.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_crf
+
+@about
+Conditional random fields(CRFs) is a type of discriminative undirected probabilistic graphical model.
+A linear-chain CRF is a distribution
+\f[
+    p(\boldsymbol Y | \boldsymbol X) =
+        \frac{\exp{\sum_{m=1}^M \lambda_m f_m(y_n,y_{n-1},x_n)}}{Z(X)}
+    \,.
+\f]
+
+Where Z(X) is an instance specific normalizer
+\f[
+Z(X) = \sum_{y} \exp{\sum_{m=1}^M \lambda_m f_m(y_n,y_{n-1},x_n)}
+\f]
+
+Train a CRF by maximizing the log-likelihood of a giving training set \f$ T=\{(x_k,y_k)\}_{k=1}^N \f$.
+Seek the zero of the gradient
+\f[
+    \ell_{\lambda}=\sum_k \log p_\lambda(y_k|x_k) =\sum_k[\lambda F(y_k,x_k)-\log Z_\lambda(x_k)]
+\f]
+
+\f[
+    \nabla \ell_{\lambda}=\sum_k[\lambda F(y_k,x_k)-E_{p\lambda(Y|x_k)}F(Y,x_k)]
+\f]
+
+\f$E_{p\lambda(Y|x)}F(Y,x)\f$ is computed using a variant of the forward-backward algorithm:
+
+\f[
+    E_{p\lambda(Y|x)}F(Y,x) = \sum_y p\lambda(y|x)F(y,x)
+                            = \sum_i\frac{\alpha_{i-1}(f_i*M_i)\beta_i^T}{Z_\lambda(x)}
+    Z_\lambda(x) = \alpha_n.1^T
+\f]
+    where \alpha_i and \lambda_i the forward and backward state_cost vectors defined by
+\f[
+    \alpha_i = 
+    \begin{cases}
+    \alpha_{i-1}M_i, & 0<i<=n\\
+    1, & i=0
+    \end{cases}\\
+    ,
+    \beta_i^T = 
+    \begin{cases}
+    M_{i+1}\lambda_{i+1}^T, & 1<=i<n\\
+    1, & i=n
+    \end{cases}
+\f]
+
+To avoid overfitting, we penalize the likelihood with a spherical Gaussian weight prior:
+\f[
+    \ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-\log Z_\lambda(x_k)]-\frac{\lVert \lambda \rVert^2}{2\sigma ^2}
+\f]
+
+\f[
+    \nabla \ell_{\lambda}^\prime=\sum_k[\lambda F(y_k,x_k)-E_{p\lambda(Y|x_k)}F(Y,x_k)]-\frac{\lambda}{\sigma ^2}
+\f]
+
+    
+
+The Feature Extraction module provides functionality for text-analysis
+tasks such as part-of-speech (POS) tagging and named-entity resolution(NER).
+In addition to feature extraction, it also has a Viterbi implementation
+to get the best label sequence and the conditional probability
+\f$ \Pr( \text{best label sequence} \mid \text{Sentence}) \f$.
+
+At present, six feature types are implemented.
+- Edge Feature: transition feature that encodes the transition feature
+weight from current label to next label.
+- Start Feature: fired when the current token is the first token in a sentence.
+- End Feature: fired when the current token is the last token in a sentence.
+- Word Feature: fired when the current token is observed in the trained
+dictionary.
+- Unknown Feature: fired when the current token is not observed in the trained
+dictionary for at least certain times.
+- Regex Feature: fired when the current token can be matched by the regular
+expression.\\
+
+Limited-memory BFGS(L-BFGS) is a limited memory variation of the Broyden–Fletcher–Goldfarb–Shanno (BFGS) update to approximate the inverse Hessian matrix (denoted by \f$ H_k \f$).
+L-BFGS estimates the Hessian matrix from previous gradients and updates.
+We translate the L-BFGS java in-memory implementation in package 'riso.numerical' to a C++ in-database implementation with Eigen types.
+
+@input
+
+The training data is the following form:\n
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>sparse_r</em> FLOAT8[],
+    <em>dense_m</em> FLOAT8[],
+    <em>sparse_m</em> FLOAT8[],
+    <em>featureSize</em> FLOAT8,
+    <em>tagSize</em> FLOAT8,
+    ...
+)</pre>
+
+@usage
+- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+  statistics:\n
+  <pre>SELECT * FROM \ref lincrf(
+    '<em>sourceName</em>', '<em>sparse_r</em>', '<em>dense_m</em>','<em>sparse_m</em>', '<em>featureSize</em>', '<em>tagSize</em>'
+    [, <em>numberOfIterations</em> [, <em>precision</em> ] ] ]
+);</pre>
+  Output:
+  <pre>coef | log_likelihood |  num_iterations
+-----+----------------+--------------+--------
+                                              
+@examp
+
+@sa File crf.sql_in (documenting the SQL functions)
+
+*/
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.lincrf_result;
+CREATE TYPE MADLIB_SCHEMA.lincrf_result AS (
+    coef DOUBLE PRECISION[],
+    log_likelihood DOUBLE PRECISION,
+    num_iterations INTEGER
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_step_transition(
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION,
+    DOUBLE PRECISION,
+    DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_lincrf_lbfgs_converge(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_lincrf_lbfgs_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.lincrf_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration of the L-BFGS method for computing
+ * conditional random field
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.lincrf_lbfgs_step(
+    /* sparse_r columns */ DOUBLE PRECISION[],
+    /* dense_m columns */ DOUBLE PRECISION[],
+    /* sparse_m columns */ DOUBLE PRECISION[],
+    /* feature size */ DOUBLE PRECISION,
+    /* tag size */ DOUBLE PRECISION,
+    /* previous_state */ DOUBLE PRECISION[]) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.lincrf_lbfgs_step_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.lincrf_lbfgs_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.lincrf_lbfgs_step_final,
+    INITCOND='{0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+);
+
+m4_changequote(<!,!>)
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,<!
+CREATE
+m4_ifdef(<!__GREENPLUM__!>,<!ORDERED!>)
+AGGREGATE MADLIB_SCHEMA.array_union(anyarray) (
+    SFUNC = array_cat, 
+    STYPE = anyarray
+); 
+!>)
+m4_changequote(`,')
+
+-- We only need to document the last one (unfortunately, in Greenplum we have to
+-- use function overloading instead of default arguments).
+CREATE FUNCTION MADLIB_SCHEMA.compute_lincrf(
+    "source" VARCHAR,
+    "sparse_R" VARCHAR,
+    "dense_M" VARCHAR,
+    "sparse_M" VARCHAR,
+    "featureSize" VARCHAR,
+    "tagSize" INTEGER,
+    "maxNumIterations" INTEGER)
+RETURNS INTEGER
+AS $$PythonFunction(crf, crf, compute_lincrf)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief Compute linear-chain crf coefficients and diagnostic statistics
+ *
+ * @param source Name of the source relation containing the training data
+ * @param sparse_R Name of the sparse single state feature column (of type DOUBLE PRECISION[])
+ * @param dense_M Name of the dense two state feature column (of type DOUBLE PRECISION[])
+ * @param sparse_M Name of the sparse two state feature column (of type DOUBLE PRECISION[])
+ * @param featureSize Name of feature size column (of type DOUBLE PRECISION)
+ * @param tagSize The number of tags in the tag set
+ * @param featureset The unique feature set
+ * @param crf_feature The Name of output feature table
+ * @param maxNumIterations The maximum number of iterations
+ *
+ * @return a composite value:
+ * - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$    
+ * - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
+ * - <tt>num_iterations INTEGER</tt> - The number of iterations before the
+ *   algorithm terminated \n\n
+ * A 'crf_feature' table is used to store all the features and corresponding weights
+ *
+ * @note This function starts an iterative algorithm. It is not an aggregate
+ * function. Source and column names have to be passed as strings (due to
+ * limitations of the SQL syntax).
+ *
+ * @internal
+ * @sa This function is a wrapper for crf::compute_lincrf(), which
+ * sets the default values.
+ */
+
+CREATE FUNCTION MADLIB_SCHEMA.lincrf(
+    "source" VARCHAR,
+    "sparse_R" VARCHAR,
+    "dense_M" VARCHAR,
+    "sparse_M" VARCHAR,
+    "featureSize" VARCHAR,
+    "tagSize" INTEGER,
+    "featureset" VARCHAR,
+    "crf_feature" VARCHAR,
+    "maxNumIterations" INTEGER /*+ DEFAULT 20 */)
+RETURNS INTEGER AS $$
+DECLARE
+    theIteration INTEGER;
+BEGIN
+    theIteration := (
+        SELECT MADLIB_SCHEMA.compute_lincrf($1, $2, $3, $4, $5, $6, $9)
+    );
+    -- Because of Greenplum bug MPP-10050, we have to use dynamic SQL (using
+    -- EXECUTE) in the following
+    -- Because of Greenplum bug MPP-6731, we have to hide the tuple-returning
+    -- function in a subquery
+    EXECUTE
+        $sql$
+        INSERT INTO $sql$ || $8 || $sql$
+        SELECT f_index, f_name, feature[1], feature[2], (result).coef[f_index+1]
+        FROM (
+              SELECT MADLIB_SCHEMA.internal_lincrf_lbfgs_result(_madlib_state) AS result
+              FROM   _madlib_iterative_alg
+              WHERE  _madlib_iteration = $sql$ || theIteration || $sql$
+             ) subq, $sql$ || $7 || $sql$
+        $sql$;
+    RETURN theIteration;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.lincrf(
+    "source" VARCHAR,
+    "sparse_R" VARCHAR,
+    "dense_M" VARCHAR,
+    "sparse_M" VARCHAR,
+    "featureSize" VARCHAR,
+    "tagSize" INTEGER,
+    "featureset" VARCHAR,
+    "crf_feature" VARCHAR)
+RETURNS INTEGER AS
+$$SELECT MADLIB_SCHEMA.lincrf($1, $2, $3, $4, $5, $6, $7, $8, 20);$$
+LANGUAGE sql VOLATILE;
