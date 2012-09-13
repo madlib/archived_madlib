@@ -30,14 +30,22 @@ typedef HandleMap<const Matrix, ArrayHandle<double> > NativeMatrix;
 typedef HandleMap<Matrix, MutableArrayHandle<double> > MutableNativeMatrix;
 
 typedef HandleMap<const ColumnVector, TransparentHandle<double> > MappedColumnVector;
-typedef HandleMap<ColumnVector, MutableTransparentHandle<double> >
+typedef HandleMap<ColumnVector, TransparentHandle<double, Mutable> >
     MutableMappedColumnVector;
 typedef HandleMap<const Matrix, TransparentHandle<double> > MappedMatrix;
-typedef HandleMap<Matrix, MutableTransparentHandle<double> > MutableMappedMatrix;
-
-} // namespace dbal
+typedef HandleMap<Matrix, TransparentHandle<double, Mutable> > MutableMappedMatrix;
 
 } // namespace eigen_integration
+
+// DynamicStructType
+template <bool IsMutable>
+struct DynamicStructType<eigen_integration::MappedColumnVector, IsMutable> {
+    typedef typename
+        DynamicStructType<eigen_integration::ColumnVector, IsMutable>::type
+        type;
+};
+
+} // namespace dbal
 
 
 namespace dbconnector {

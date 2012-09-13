@@ -132,7 +132,7 @@ AnyType
 matrix_agg_final::run(AnyType& args) {
     MatrixAggState<ArrayHandle<double> > state = args[0];
 
-    return state.matrix.leftCols(state.numCols);
+    return MappedMatrix(state.matrix.leftCols(state.numCols));
 }
 
 } // namespace linalg
