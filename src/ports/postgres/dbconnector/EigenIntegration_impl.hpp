@@ -235,7 +235,7 @@ NativeArrayToMappedMatrix(Datum inDatum, bool inNeedMutableClone) {
 
     ArrayType* array = reinterpret_cast<ArrayType*>(
         madlib_DatumGetArrayTypeP(inDatum));
-    size_t arraySize = ARR_DIMS(array)[0];
+    size_t arraySize = ARR_DIMS(array)[0] * ARR_DIMS(array)[1];
 
     if (ARR_NDIM(array) != 2) {
         std::stringstream errorMsg;
@@ -270,9 +270,14 @@ NativeArrayToMappedVector(Datum inDatum, bool inNeedMutableClone) {
 
     ArrayType* array = reinterpret_cast<ArrayType*>(
         madlib_DatumGetArrayTypeP(inDatum));
-    size_t arraySize = ARR_DIMS(array)[0] * ARR_DIMS(array)[1];
+    size_t arraySize = ARR_NDIM(array) == 1
+        ? ARR_DIMS(array)[0]
+        : ARR_DIMS(array)[0] * ARR_DIMS(array)[1];
 
-    if (ARR_NDIM(array) != 1) {
+    if (!(ARR_NDIM(array) == 1
+        || (ARR_NDIM(array) == 2
+            && (ARR_DIMS(array)[0] == 1 || ARR_DIMS(array)[1] == 1)))) {
+
         std::stringstream errorMsg;
         errorMsg << "Invalid type conversion to matrix. Expected one-"
             "dimensional array but got " << ARR_NDIM(array)

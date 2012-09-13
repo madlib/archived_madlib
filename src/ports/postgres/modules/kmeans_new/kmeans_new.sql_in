@@ -1,18 +1,18 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file kmeans.sql_in
+ * @file kmeans_new.sql_in
  *
  * @brief Set of functions for k-means clustering.
  *
  * @sa For a brief introduction to k-means clustering, see the module
- *     description \ref grp_kmeans.
+ *     description \ref grp_kmeans_new.
  *
  *//* ----------------------------------------------------------------------- */
 
 m4_include(`SQLCommon.m4')
 
 /**
-@addtogroup grp_kmeans
+@addtogroup grp_kmeans_new
 
 @about
 
@@ -252,10 +252,10 @@ out_centorids | km_c
     Laboratories. Published much later in: IEEE Transactions on Information
     Theory 28(2), pp. 128-137. 1982.
 
-@sa File kmeans.sql_in documenting the SQL functions.
+@sa File kmeans_new.sql_in documenting the SQL functions.
 
 @internal
-@sa namespace kmeans (documenting the implementation in Python)
+@sa namespace kmeans_new (documenting the implementation in Python)
 @endinternal
 */
 
@@ -323,7 +323,6 @@ CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeans(
     rel_args VARCHAR,
     rel_state VARCHAR,
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     agg_mean VARCHAR)
 RETURNS INTEGER
@@ -335,7 +334,6 @@ AS $$PythonFunction(kmeans_new, kmeans_new, compute_kmeans)$$;
  * @brief Perform Lloyd's k-means local-search heuristic
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_id Expression evaluating to unique identifier for each tuple
  * @param expr_point Expression evaluting to point coordinates for each tuple
  * @param initial_centroids Matrix containing the initial centroids as columns
  * @param fn_squared_dist Name of a function with signature
@@ -358,7 +356,6 @@ AS $$PythonFunction(kmeans_new, kmeans_new, compute_kmeans)$$;
  */
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
     fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
@@ -415,7 +412,7 @@ BEGIN
     -- operators from regclass to varchar/text.
     theIteration := MADLIB_SCHEMA.internal_compute_kmeans('_madlib_kmeans_args',
             '_madlib_kmeans_state',
-            textin(regclassout(class_rel_source)), expr_id, expr_point,
+            textin(regclassout(class_rel_source)), expr_point,
             textin(regprocout(proc_agg_mean)));
 
     -- Retrieve result from state table and return it
@@ -437,7 +434,6 @@ $$ LANGUAGE plpgsql VOLATILE;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
     fn_squared_dist VARCHAR,
@@ -447,12 +443,11 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
 VOLATILE
 STRICT
 LANGUAGE sql AS $$
-    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, $5, $6, $7, 0.001)
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, $5, $6, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
     fn_squared_dist VARCHAR,
@@ -461,12 +456,11 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
 VOLATILE
 STRICT
 LANGUAGE sql AS $$
-    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, $5, $6, 20, 0.001)
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, $5, 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
     fn_squared_dist VARCHAR
@@ -474,20 +468,19 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
 VOLATILE
 STRICT
 LANGUAGE sql AS $$
-    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, $5, 'MADLIB_SCHEMA.avg', 20,
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, 'MADLIB_SCHEMA.avg', 20,
         0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][]
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
 LANGUAGE sql AS $$
-    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4,
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3,
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001)
 $$;
 
@@ -503,7 +496,6 @@ CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeanspp_seeding(
     rel_args VARCHAR,
     rel_state VARCHAR,
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR)
 RETURNS INTEGER
 AS $$PythonFunction(kmeans_new, kmeans_new, compute_kmeanspp_seeding)$$
@@ -513,7 +505,6 @@ LANGUAGE plpythonu VOLATILE;
  * @brief k-Means++ Seeding
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_id Name of the column containing the unique identifiers
  * @param expr_point Name of the column containing the point coordinates
  * @param k Number of centroids
  * @param fn_squared_dist Name of a function with signature
@@ -527,7 +518,6 @@ LANGUAGE plpythonu VOLATILE;
  */
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
@@ -573,7 +563,7 @@ BEGIN
     theIteration := (
         SELECT MADLIB_SCHEMA.internal_compute_kmeanspp_seeding(
             '_madlib_kmeanspp_args', '_madlib_kmeanspp_state',
-            textin(regclassout(class_rel_source)), expr_id, expr_point)
+            textin(regclassout(class_rel_source)), expr_point)
     );
 
     -- Retrieve result from state table and return it
@@ -589,23 +579,21 @@ $$ LANGUAGE plpgsql VOLATILE;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
-    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5, NULL)
+    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, NULL)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
-    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4,
+    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3,
         'MADLIB_SCHEMA.squared_dist_norm2', NULL)
 $$;
 
@@ -615,11 +603,9 @@ $$;
  * This is a shortcut for running k-means++. It is equivalent to
  * <pre>SELECT \ref kmeans(
     rel_source,
-    expr_id,
     expr_point,
     \ref kmeanspp_seeding(
         rel_source,
-        expr_id,
         expr_point,
         k,
         fn_squared_dist
@@ -632,7 +618,6 @@ $$;
  */
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
@@ -644,13 +629,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5),
-        $5, $6, $7, $8)
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, $5, $6, $7)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR,
@@ -661,13 +645,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5),
-        $5, $6, $7, 0.001)
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, $5, $6, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR,
@@ -677,13 +660,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5),
-        $5, $6, 20, 0.001)
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, $5, 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR
@@ -692,13 +674,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5),
-        $5, 'MADLIB_SCHEMA.avg', 20, 0.001)
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, 'MADLIB_SCHEMA.avg', 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -706,8 +687,8 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4,
+        $1, $2,
+        MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3,
             'MADLIB_SCHEMA.squared_dist_norm2'),
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg',
         20, 0.001)
@@ -755,6 +736,8 @@ DECLARE
     class_rel_source REGCLASS;
     proc_fn_squared_dist REGPROCEDURE;
 BEGIN
+    class_rel_source := rel_source;
+
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
     -- as a pure driver layer.
@@ -810,7 +793,6 @@ $$;
  * to
  * <pre>SELECT \ref kmeans(
     rel_source,
-    expr_id,
     expr_point,
     \ref kmeans_random_seeding(
         rel_source,
@@ -825,7 +807,6 @@ $$;
  */
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
@@ -837,13 +818,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3, MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
-        $5, $6, $7, $8)
+        $1, $2, MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, $5, $6, $7)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR,
@@ -854,14 +834,13 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
-        $5, $6, $7, 0.001)
+        $1, $2,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, $5, $6, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR,
@@ -871,14 +850,13 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
-        $5, $6, 20, 0.001)
+        $1, $2,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, $5, 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2,
     fn_squared_dist VARCHAR
@@ -887,14 +865,13 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
-        $5, 'MADLIB_SCHEMA.avg', 20, 0.001)
+        $1, $2,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, 'MADLIB_SCHEMA.avg', 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     k INT2
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -902,19 +879,19 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        MADLIB_SCHEMA.kmeans_random_seeding($1, $3, $4),
+        $1, $2,
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg',
         20, 0.001)
 $$;
 
 /**
  * @internal
- * @brief Execute a SQL command where $1, ..., $7 are substituted with the
+ * @brief Execute a SQL command where $1, ..., $6 are substituted with the
  *     given arguments.
  */
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
-    sql VARCHAR, rel_source VARCHAR, expr_id VARCHAR, expr_point VARCHAR,
+    sql VARCHAR, rel_source VARCHAR, expr_point VARCHAR,
     fn_squared_dist VARCHAR, agg_mean VARCHAR, max_num_iterations INTEGER,
     min_frac_reassigned DOUBLE PRECISION
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -932,7 +909,6 @@ AS 'MODULE_PATHNAME', 'exec_sql_using';
  * to
  * <pre>SELECT \ref kmeans(
     rel_source,
-    expr_id,
     expr_point,
     (SELECT \ref matrix_agg($expr_centroid) FROM $rel_initial_centroids),
     fn_squared_dist,
@@ -945,7 +921,6 @@ AS 'MODULE_PATHNAME', 'exec_sql_using';
  */
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
@@ -965,15 +940,15 @@ BEGIN
     class_rel_initial_centroids := rel_initial_centroids;
     SELECT * FROM MADLIB_SCHEMA.internal_execute_using_kmeans_args($sql$
         SELECT MADLIB_SCHEMA.kmeans(
-            $1, $2, $3,
+            $1, $2,
             (
                 SELECT MADLIB_SCHEMA.matrix_agg($sql$ || expr_centroid || $sql$)
                 FROM $sql$ || textin(regclassout(class_rel_initial_centroids))
                     || $sql$
             ),
-            $4, $5, $6, $7)
+            $3, $4, $5, $6)
             $sql$,
-            rel_source, expr_id, expr_point,
+            rel_source, expr_point,
             fn_squared_dist, agg_mean, max_num_iterations, min_frac_reassigned)
         INTO theResult;
     RETURN theResult;
@@ -982,7 +957,6 @@ $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
@@ -994,13 +968,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        $4, $5, $6, $7, $8, 0.001)
+        $1, $2,
+        $3, $4, $5, $6, $7, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
@@ -1011,13 +984,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        $4, $5, $6, $7, 20, 0.001)
+        $1, $2,
+        $3, $4, $5, $6, 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
@@ -1027,13 +999,12 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        $4, $5, $6, 'MADLIB_SCHEMA.avg', 20, 0.001)
+        $1, $2,
+        $3, $4, $5, 'MADLIB_SCHEMA.avg', 20, 0.001)
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
-    expr_id VARCHAR,
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR
@@ -1042,7 +1013,7 @@ VOLATILE
 STRICT
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans(
-        $1, $2, $3,
-        $4, $5,
+        $1, $2,
+        $3, $4,
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001)
 $$;

@@ -86,8 +86,9 @@ prepareSample(
     WeightedSampleAccumulator<Container, MappedColumnVector>& ioAccumulator,
     const MappedColumnVector& inX) {
     
-    if (inX.size() != ioAccumulator.header.width) {
-        ioAccumulator.header.width = static_cast<uint32_t>(inX.size());
+    uint32_t width = static_cast<uint32_t>(inX.size());
+    if (width != ioAccumulator.header.width) {
+        ioAccumulator.header.width = width;
         ioAccumulator.resize();
     }
 }

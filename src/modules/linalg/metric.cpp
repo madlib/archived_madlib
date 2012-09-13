@@ -45,7 +45,8 @@ squaredDistNorm1(
     const MappedColumnVector& inX,
     const MappedColumnVector& inY) {
 
-    return (inX - inY).lpNorm<1>();
+    double l1norm = (inX - inY).lpNorm<1>();
+    return l1norm * l1norm;
 }
 
 double

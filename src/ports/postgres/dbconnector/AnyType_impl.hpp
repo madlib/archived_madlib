@@ -194,7 +194,7 @@ AnyType::getAs() const {
         throw std::invalid_argument(errorMsg.str());
     }
 
-    if (mDatum) {
+    if (mContent.empty()) {
         bool needMutableClone = (TypeTraits<T>::isMutable && !mIsMutable);
         return TypeTraits<T>::toCXXType(mDatum, needMutableClone, mSysInfo);
     } else {
