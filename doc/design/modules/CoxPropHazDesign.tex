@@ -1,0 +1,153 @@
+\documentclass[12pt]{article}
+\bibliographystyle{plain}
+
+\usepackage{geometry}
+\usepackage{algpseudocode}
+\usepackage{algorithm}
+
+
+\geometry{letterpaper,
+          left   = 1in,
+          right  = 1in,
+          top    = 1in,
+          bottom = 1in}
+\renewcommand{\baselinestretch}{1.1}
+\renewcommand{\arraystretch}{1.1}
+\usepackage{amsmath, amsthm, amssymb} % Latex Math Include
+
+
+% Custom commands
+% ----------------------------------------------------------------------------------------------------
+\newcounter{count}
+\newcommand{\bS}[1] {\boldsymbol  #1}
+\newcommand{\aI}{\forall i \in \{1,2,\ldots, N\}}
+\newcommand{\aJ}{\forall j \in \{1,2,\ldots, J\}}
+\newcommand{\MLE}{\hat{\bS{\beta}}_{MLE}}
+
+% Title
+% ----------------------------------------------------------------------------------------------------
+
+\author{Srikrishna Sridhar, Mark Wellons, Caleb Welton}
+\title{Cox Proportional-Hazards Regression Design Document}
+\begin{document}
+\maketitle
+\large
+\begin{center}
+{\sc \bf Design Document -- Not for Distribution}
+\end{center}
+\normalsize
+
+\section{Introduction}
+% Abstract. What is the problem we want to solve?
+Proportional-Hazard models\cite{cox} enable comparison of \textit{survival models}. Survival models are functions describing the probability of an one-item event (prototypically, this event is death) with respect to time.  The interval of time before death occurs is the \textit{survival time}.   Let $T$ be a random variable representing the survival time, with a cumulative probability function $P(t)$.  Informally, $P(t)$ represents the probability that death has happened before time $t$.  
+
+An equivalent formation is the \textit{survival function} $S(t)$, defined as $S(t) \equiv 1 - P(t)$.  Informally, this is the probability that death hasn't happened by time $t$.  The \textit{hazard function} $h(t)$ which assesses the instantaneous risk of demise at time $t$, conditional on survival upto time $t$.  The relationship between $h(t)$ and $S(t)$ is 
+\begin{align}
+h(t) &= \lim_{\Delta_t \rightarrow 0}  \frac{\mbox{Pr}[(S(t) - S(t + \Delta_t) | S(t) ]}{\Delta_t}\\
+& = \frac{-S'(t)}{S(t)}
+\end{align}
+where $S'(t)$ denotes the derivative of $S(t)$.
+
+In the simplest case, the Cox model assumes that $h(t)$ is
+\begin{equation}
+h(t) = e^{\alpha(t)}
+\end{equation}
+where exp$(\alpha(t))$ is the \textit{baseline function}, which depends only on $t$.  However, in many applications, the probability of death may depend on more than just $t$.  Other covariates, such as age or weight, may be important.  Let $x_i$ denote the observed value of the  $i$th covariate, then the Cox model is written as 
+\begin{equation}
+h(t) = e^{\alpha(t)} e^{\beta_1 x_1 + \beta_2 x_2 + \dots + \beta_m x_m} = e^{\alpha(t)} e^{\bold{\beta^T x}}
+\end{equation}
+where $\beta_i$ is the coefficient associated with the $i$th covariate.  
+
+Many applications take values from multiple observations, measuring the values of $x_i$ for each observation.  %The $j$th observation has the hazard function
+%\begin{equation}
+%h_j(t) = e^{\alpha(t)} e^{\beta_1 x_{j1} + \beta_2 x_{j2}+ \dots + \beta_k x_{jk}}= e^{\alpha(t)} e^{\bold{\beta^T x_j}}.
+%\end{equation}
+In the \textit{proportional-hazard model}, the hazard functions of two observations $j$ and $k$ are compared.  The ratio of the two is
+\begin{equation}
+\frac{h_j(t)}{h_k(t)} = \frac{e^{\alpha(t)} e^{\bold{\beta^T x_j}} }{e^{\alpha(t)} e^{\bold{\beta^T x_k}} } = \frac{e^{\bold{\beta^T x_j} }}{ e^{\bold{\beta^T x_k}}}
+\end{equation}
+The critical idea here is that the ratio of the two hazard functions is completely independent of the baseline function.  This allows meaningful comparisons between samples without knowing the baseline function, which may be difficult to measure or specify.
+
+% SECTION:  Applications 
+\section{Applications}\label{cox:Application}
+Generally, applications start with a list of $n$ observations, each with $m$ covariates and a time of death.  From this $n \times (m+1)$ matrix, we would like to derive the correlation between the covariates and the hazard function.  This amounts to finding the values of  $\beta$.  
+
+The values of $\beta$ can be estimated with the method of \textit{partial likelihood}.  This method begins by sorting the observations by time of death into a list $[t_1, t_2, \dots, t_n]$ such that $t_i \le t_j : i < j\ \forall i,j$.  For any time $t_i$, let $R(t_i)$ be the set of observations still alive at time $t_i$.  
+
+Given that there was a death at time $t_i$ and observation $k$ was alive prior to $t_i$, the probability that the death happened to observation $k$  is
+\begin{equation}\label{cox:equ:prod of death}
+\Pr(T_k = t_i | R(t_i)) =  \frac{e^{\bold{\beta^T x_k} }}{ \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j}}}.
+\end{equation}
+The \textit{partial likelihood function} can now be generated as the product of conditional probabilities described in \ref{cox:equ:prod of death}.  More formally,
+\begin{equation}\label{cox:equ:likelihood}
+\mathcal{L} = \prod_{i = 1}^n \left(  \frac{e^{\bold{\beta^T x_i} }}{ \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j}}} \right).
+\end{equation}
+ The log-likelihood form of this equation is 
+\begin{equation}\label{cox:equ:LLH}
+L = \sum_{i = 1}^n \left[  \bold{\beta^T x_i} - \log\left(\sum_{j \in R(t_i)} e^{\bold{\beta^T x_j} } \right) \right].
+\end{equation}
+An estimation of $\beta$ can be found by simply maximizing this log-likelihood.  To maximize the likelihood, it helps to have the derivative of equation \ref{cox:equ:LLH}, which is 
+\begin{equation}\label{cox:equ:LLH derivative}
+\frac{\partial L}{\partial \beta_k} = \sum_{i = 1}^n \left( x_{ik} - \frac{\sum_{j \in R(t_i)} x_{jk} e^{\bold{\beta^T x_j} } }{\sum_{j \in R(t_i)} e^{\bold{\beta^T x_j} } } \right).
+\end{equation}
+It follows that the second derivative is
+\begin{equation}\label{cox:equ:LLH second derivative}
+\frac{\partial^2 L}{\partial \beta_k \beta_l} = \sum_{i = 1}^n \left(  \frac{\left(  \sum_{j \in R(t_i)} x_{jk} e^{\bold{\beta^T x_j} } \right) \left(  \sum_{j \in R(t_i)} x_{jl} e^{\bold{\beta^T x_j} } \right)}{\left( \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j} } \right)^2 }   -  \frac{  \sum_{j \in R(t_i)} x_{jk}x_{jl} e^{\bold{\beta^T x_j} } }{\sum_{j \in R(t_i)} e^{\bold{\beta^T x_j} } } \right).
+\end{equation}  
+
+% Incomplete Data
+\subsection{Incomplete Data}
+Frequently, not every observation will have an associated time of death.  Typically, this arises when the period of observation terminates before the entire population being studied has died.  This is known as \textit{censoring} the data.  To account for this, an additional indicator variable is introduced $\delta_i$, which is set to 1 if the $i$th observation has an associated time of death, and 0 otherwise.
+
+Incorporating this indicator variable into equation \ref{cox:equ:likelihood} gives
+\begin{equation}\label{cox:equ:likelihood-censoring}
+\mathcal{L} = \prod_{i = 1}^n \left(  \frac{e^{\bold{\beta^T x_i} }}{ \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j}}} \right)^{\delta_i}.
+\end{equation}
+The appropriate changes to the LLH function and its derivatives are trivial.   
+
+
+% SECTION: Implementation
+\subsection{Implementation of Newton's Method}
+Newton's method is the most common choice for estimating $\beta$ by minimizing \ref{cox:equ:likelihood} using the following update rule:
+\begin{equation}
+\beta_{k} = \beta_{k} - \alpha_k \left( {\nabla^2 L}^{-1} \nabla L \right)
+\end{equation}
+where $\alpha_k$ is a positive scalar denoting the step length in the newton direction ${\nabla^2 L}^{-1} \nabla L$ determined using the first and second derivative information. We would like to emphasize that the problems we are designing this system for are those with many records and few features i.e. $n \gg m$, thereby keeping the inverse operation on the hessian matrix relatively cheap.
+
+The gradient and Hessian matrix may be hard to parallelize therefore reducing an advantage for large number of observations. To elaborate, consider equations  \ref{cox:equ:LLH derivative} and \ref{cox:equ:LLH second derivative} which are sums with independent terms. One might think it is natural to reduce the computational by parallelization. Efficient parallelization may be achieved if each term could be computed independently in parallel by a set of worker tasks and a master task could collect the output from each worker node sum them together. However, this might not work well in this setting. To see why, consider parallelizing equation \ref{cox:equ:LLH second derivative}.  Each worker task is given one term in the sum, which looks like
+\begin{equation}
+ \frac{\left(  \sum_{j \in R(t_i)} x_{jk} e^{\bold{\beta^T x _j} } \right) \left(  \sum_{j \in R(t_i)} x_{jl} e^{\bold{\beta^T x _j} } \right)}{\left( \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j} } \right)^2 }   -  \frac{  \sum_{j \in R(t_i)} x_{jk}x_{jl} e^{\bold{\beta^T x_j} } }{\sum_{j \in R(t_i)} e^{\bold{\beta^T x_j} } }.  
+\end{equation}
+Note that the sums in the numerator are summing over all the data points in the data matrix. A similar such issue is encountered while computing the first derivative terms as defined in \ref{cox:equ:LLH derivative}. However, we note that this sum has a structure that allows it to be computed in linear time (with respect to the number of data points) using the following quantities.
+\begin{align}
+H_{i} &=   \sum_{j \in R(t_i)} x_{j} e^{\bold{\beta^T x_j}}\\
+S_{i}&=   \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j}} \\
+V_{i}&=   \sum_{j \in R(t_i)} x_{j}x_{j}^T e^{\bold{\beta^T x_j} }
+\end{align}
+Note that $H_{i}$ is a column vector with $m$ elements ( $H_{i}\in \mathbb{R}^m$), $S_{i}$ is a scalar and and $V_{i}$ is an $m \times m$ matrix.
+We can now write the first derivative of the maximum likelihood estimator, defined in Equation \ref{cox:equ:LLH derivative} as
+\begin{align}
+\frac{\partial L}{\partial \beta_k} = \sum_{i = 1}^n \left( x_{i} - \frac{H_{i} }{ S_{i}}  \right)
+\end{align}
+while the second derivative, defined in Equation \ref{cox:equ:LLH second derivative}, can be reduced to
+\begin{align}
+\frac{\partial^2 L}{\partial \beta_k \beta_l} = \sum_{i = 1}^n \left( \frac{H_{i}H_{i}^T }{ S_{i}^2 } -  \frac{V_{i}}{ S_{i} } \right) 
+\end{align}
+Since we assume that the data points are sorted in increasing order i.e $R(t_i) = \{i, i+1 \ldots n \}$, we can calculate the above summation as 
+\begin{align}
+H_{i}& =   H_{i+1} +  x_{i} e^{\bold{\beta^T x_i}}\\
+S_i & = S_{i+1} + e^{\bold{\beta^T x_i}} \\
+V_i & = V_{i+1} +  \frac{H_{i}H_{i}^T }{ S_{i}^2 } -  \frac{V_{i}}{ S_{i}}.
+\end{align}
+With this recurrence relationship, the hessian matrix and the gradient direction can be computed in linear time.
+
+
+%In addition to the computational expense of computing the Hessian, the inverse Hessian must be computed as well.  Unfortunately, matrix inversion is an expensive operation, and  cannot be parallelized.  
+
+
+%\printbibliography[maxnames=20]
+
+\bibliography{CoxPropHazDesign}
+
+
+\end{document}
