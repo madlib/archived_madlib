@@ -106,7 +106,7 @@ UDF::SRF_invoke(FunctionCallInfo fcinfo) {
         // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
         // to init the pointer: fn_extra
         AnyType args(fcinfo);
-        args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
+        args.mSysInfo->user_fctx = Function().SRF_init(args);
         MemoryContextSwitchTo(oldcontext);
     }
 
@@ -114,7 +114,7 @@ UDF::SRF_invoke(FunctionCallInfo fcinfo) {
 
     // the invoker function will handle the exceptions from this function
     // TODO: Don't we need args for "next"?
-    AnyType result = Function(fcinfo).SRF_next(
+    AnyType result = Function().SRF_next(
         static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
         &is_last_call);
 

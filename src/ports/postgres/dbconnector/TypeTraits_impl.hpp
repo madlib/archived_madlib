@@ -465,20 +465,20 @@ struct TypeTraits<
     ))
 };
 
-/*
 template <>
-struct TypeTraits<dbal::eigen_integration::Matrix> {
+struct TypeTraits<dbal::eigen_integration::Matrix>
+  : public TypeTraitsBase<dbal::eigen_integration::Matrix> {
     typedef dbal::eigen_integration::Matrix value_type;
 
-    WITH_OID( FLOAT8ARRAYOID );
-    WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+    enum { oid = FLOAT8ARRAYOID };
+    enum { isMutable = dbal::Immutable };
+    enum { typeClass = dbal::ArrayType };
     WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
     // MappedMatrix instead.
 };
 
+/*
 template<class Derived>
 struct TypeTraits<Eigen::MatrixBase<Derived> > {
     typedef Eigen::MatrixBase<Derived> value_type;

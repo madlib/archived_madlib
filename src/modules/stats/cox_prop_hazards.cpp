@@ -376,11 +376,11 @@ AnyType stateToResult(
     double logLikelihood,
     double conditionNo) {
 
-    MutableMappedColumnVector std_err(
+    MutableNativeColumnVector std_err(
         inAllocator.allocateArray<double>(inCoef.size()));
-    MutableMappedColumnVector waldZStats(
+    MutableNativeColumnVector waldZStats(
         inAllocator.allocateArray<double>(inCoef.size()));
-    MutableMappedColumnVector waldPValues(
+    MutableNativeColumnVector waldPValues(
         inAllocator.allocateArray<double>(inCoef.size()));
 
     for (Index i = 0; i < inCoef.size(); ++i) {
@@ -414,7 +414,7 @@ AnyType stateToResult(
 AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
 
     MappedColumnVector x = args[0].getAs<MappedColumnVector>();
-		MutableMappedColumnVector coef(allocateArray<double>(x.size()));
+    MutableNativeColumnVector coef(allocateArray<double>(x.size()));
 		
     // The following check was added with MADLIB-138.
     if (!isfinite(x))
@@ -433,9 +433,9 @@ AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
 		}
 		
 		double exp_coef_x;
-		MutableMappedColumnVector
+		MutableNativeColumnVector
 			x_exp_coef_x(allocateArray<double>(x.size()));
-		MutableMappedMatrix
+		MutableNativeMatrix
 			x_xTrans_exp_coef_x(allocateArray<double>(x.size(), x.size()));							
 
 		exp_coef_x = std::exp(trans(coef)*x);

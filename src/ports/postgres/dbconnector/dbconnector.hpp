@@ -283,7 +283,7 @@ typedef dbal::DynamicStructRootContainer<
     namespace modules { \
     namespace _module { \
     struct _name : public dbconnector::postgres::UDF { \
-        inline _name(FunctionCallInfo fcinfo) : dbconnector::postgres::UDF(fcinfo) { }  \
+        inline _name() { }  \
         inline AnyType run(AnyType &){return AnyType();}; \
         void *SRF_init(AnyType &args); \
         AnyType SRF_next(void *user_fctx, bool *is_last_call); \
