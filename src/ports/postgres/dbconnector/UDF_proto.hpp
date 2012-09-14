@@ -18,17 +18,18 @@ namespace postgres {
  */
 class UDF : public Allocator {
 public:
-    typedef AnyType (*Pointer)(FunctionCallInfo, AnyType&);
+    typedef AnyType (*Pointer)(AnyType&);
 
-    UDF(FunctionCallInfo inFCInfo) : Allocator(inFCInfo),
-        dbout(&mOutStreamBuffer), dberr(&mErrStreamBuffer) { }
+    UDF() { }
 
     template <class Function>
     static Datum call(FunctionCallInfo fcinfo);
 
     template <class Function>
-    static AnyType invoke(FunctionCallInfo fcinfo, AnyType& args);
-
+    static AnyType invoke(AnyType& args);
+    
+    // FIXME: The following code until the end of this class is a dirty hack
+    // that needs to go
     template <class Function>
     static Datum SRF_invoke(FunctionCallInfo fcinfo);
 
@@ -38,22 +39,12 @@ protected:
 
     template <class Function>
     static bool SRF_is_firstcall(FunctionCallInfo fcinfo);
-
-private:
-    OutputStreamBuffer<INFO> mOutStreamBuffer;
-    OutputStreamBuffer<WARNING> mErrStreamBuffer;
-
-protected:
-    /**
-     * @brief Informational output stream
-     */
-    std::ostream dbout;
-    
-    /**
-     * @brief Warning and non-fatal error output stream
-     */
-    std::ostream dberr;
 };
+
+template <class Function>
+UDF::Pointer funcPtr() {
+    return UDF::invoke<Function>;
+}
 
 } // namespace postgres
 

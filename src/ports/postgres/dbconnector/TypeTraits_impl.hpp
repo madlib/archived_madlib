@@ -149,13 +149,9 @@ struct TypeTraits<float>{
 };
 
 template <>
-struct TypeTraits<int64_t> {
-    typedef int64_t value_type;
-
-    WITH_OID( INT8OID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+struct TypeTraits<int64_t> : public TypeTraitsBase<int64_t> {
+    enum { oid = INT8OID };
+    enum { alignment = ALIGNOF_DOUBLE };
     WITH_TO_PG_CONVERSION( Int64GetDatum(value) );
     WITH_TO_CXX_CONVERSION( DatumGetInt64(value) );
 };
@@ -173,25 +169,17 @@ struct TypeTraits<uint64_t> : public TypeTraitsBase<uint64_t> {
 };
 
 template <>
-struct TypeTraits<int32_t> {
-    typedef int32_t value_type;
-
-    WITH_OID( INT4OID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+struct TypeTraits<int32_t> : public TypeTraitsBase<int32_t> {
+    enum { oid = INT4OID };
+    enum { alignment = ALIGNOF_INT };
     WITH_TO_PG_CONVERSION( Int32GetDatum(value) );
     WITH_TO_CXX_CONVERSION( DatumGetInt32(value) );
 };
 
 template <>
-struct TypeTraits<uint32_t> {
-    typedef uint32_t value_type;
-
-    WITH_OID( INT4OID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+struct TypeTraits<uint32_t> : public TypeTraitsBase<uint32_t> {
+    enum { oid = INT4OID };
+    enum { alignment = ALIGNOF_INT };
     WITH_TO_PG_CONVERSION(
         Int32GetDatum((convertTo<uint32_t, int32_t>(value)))
     );
@@ -395,10 +383,9 @@ struct TypeTraits<
     enum { typeClass = dbal::ArrayType };
 
     WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) )
-    // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
-
-//    WITH_BIND_TO_STREAM( ref.rebind(stream.template read<double>(ref.size())) )
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedVector<value_type>(value, needMutableClone)
+    ));
 };
 
 template <>
@@ -453,36 +440,45 @@ struct TypeTraits<
         typename boost::mpl::if_c<IsMutable,
             dbal::eigen_integration::Matrix,
             const dbal::eigen_integration::Matrix>::type,
-        TransparentHandle<double, IsMutable> > > {
-
-    typedef dbal::eigen_integration::HandleMap<
+        TransparentHandle<double, IsMutable> > >
+  : public TypeTraitsBase<dbal::eigen_integration::HandleMap<
         typename boost::mpl::if_c<IsMutable,
             dbal::eigen_integration::Matrix,
             const dbal::eigen_integration::Matrix>::type,
-        TransparentHandle<double, IsMutable> > value_type;
+        TransparentHandle<double, IsMutable> > > {
 
-    WITH_OID( FLOAT8ARRAYOID );
-    WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( IsMutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
-    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
-    // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    typedef TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::Matrix,
+            const dbal::eigen_integration::Matrix>::type,
+        TransparentHandle<double, IsMutable> > > Base;
+    typedef typename Base::value_type value_type;
+
+    enum { oid = FLOAT8ARRAYOID };
+    enum { alignment = ALIGNOF_DOUBLE };
+    enum { isMutable = IsMutable };
+    enum { typeClass = dbal::ArrayType };
+
+    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) )
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedMatrix<value_type>(value, needMutableClone)
+    ))
 };
 
 template <>
-struct TypeTraits<dbal::eigen_integration::Matrix> {
+struct TypeTraits<dbal::eigen_integration::Matrix>
+  : public TypeTraitsBase<dbal::eigen_integration::Matrix> {
     typedef dbal::eigen_integration::Matrix value_type;
 
-    WITH_OID( FLOAT8ARRAYOID );
-    WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
+    enum { oid = FLOAT8ARRAYOID };
+    enum { isMutable = dbal::Immutable };
+    enum { typeClass = dbal::ArrayType };
     WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    // MappedMatrix instead.
 };
 
+/*
 template<class Derived>
 struct TypeTraits<Eigen::MatrixBase<Derived> > {
     typedef Eigen::MatrixBase<Derived> value_type;
@@ -499,12 +495,29 @@ struct TypeTraits<Eigen::MatrixBase<Derived> > {
         )
     );
     // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
+    // MappedColumnVector or MappedMatrix instead.
+};
+
+template<class XprType, int BlockRows, int BlockCols, bool InnerPanel,
+    bool HasDirectAccess>
+struct TypeTraits<
+    Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel, HasDirectAccess> > {
+
+    typedef Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel,
+        HasDirectAccess> value_type;
+
+    WITH_OID( FLOAT8ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(MatrixToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // MappedMatrix instead.
 };
 
 template<class XprType, int BlockRows, bool InnerPanel, bool HasDirectAccess>
 struct TypeTraits<
-    Eigen::Block<XprType, BlockRows, /* BlockCols */ 1, InnerPanel,
+    Eigen::Block<XprType, BlockRows, *//* BlockCols *//* 1, InnerPanel,
         HasDirectAccess> > {
 
     typedef Eigen::Block<XprType, BlockRows, 1, InnerPanel,
@@ -516,8 +529,8 @@ struct TypeTraits<
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
-    // HandleMap<ColumnVector, ArrayHandle<double> > instead.
-};
+    // MappedColumnVector instead.
+};*/
 
 template <>
 struct TypeTraits<dbal::eigen_integration::SparseColumnVector> {

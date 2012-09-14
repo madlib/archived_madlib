@@ -23,15 +23,29 @@ template <>
 HandleMap<Matrix, MutableArrayHandle<double> >::HandleMap(
     const MutableArrayHandle<double>& inHandle);
 
-typedef HandleMap<const ColumnVector, ArrayHandle<double> > MappedColumnVector;
+typedef HandleMap<const ColumnVector, ArrayHandle<double> > NativeColumnVector;
 typedef HandleMap<ColumnVector, MutableArrayHandle<double> >
-    MutableMappedColumnVector;
-typedef HandleMap<const Matrix, ArrayHandle<double> > MappedMatrix;
-typedef HandleMap<Matrix, MutableArrayHandle<double> > MutableMappedMatrix;
+    MutableNativeColumnVector;
+typedef HandleMap<const Matrix, ArrayHandle<double> > NativeMatrix;
+typedef HandleMap<Matrix, MutableArrayHandle<double> > MutableNativeMatrix;
 
-} // namespace dbal
+typedef HandleMap<const ColumnVector, TransparentHandle<double> > MappedColumnVector;
+typedef HandleMap<ColumnVector, TransparentHandle<double, Mutable> >
+    MutableMappedColumnVector;
+typedef HandleMap<const Matrix, TransparentHandle<double> > MappedMatrix;
+typedef HandleMap<Matrix, TransparentHandle<double, Mutable> > MutableMappedMatrix;
 
 } // namespace eigen_integration
+
+// DynamicStructType
+template <bool IsMutable>
+struct DynamicStructType<eigen_integration::MappedColumnVector, IsMutable> {
+    typedef typename
+        DynamicStructType<eigen_integration::ColumnVector, IsMutable>::type
+        type;
+};
+
+} // namespace dbal
 
 
 namespace dbconnector {
@@ -49,6 +63,14 @@ ArrayType* VectorToNativeArray(const Eigen::MatrixBase<Derived>& inVector);
 
 template <typename Derived>
 ArrayType* MatrixToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix);
+
+template <class MatrixType>
+MatrixType
+NativeArrayToMappedMatrix(Datum inDatum, bool inNeedMutableClone);
+
+template <class VectorType>
+VectorType
+NativeArrayToMappedVector(Datum inDatum, bool inNeedMutableClone);
 
 } // namespace postgres
 

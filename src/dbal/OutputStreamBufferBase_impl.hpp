@@ -16,17 +16,17 @@ namespace dbal {
 /**
  * @internal One extra byte is allocated for the terminating null character.
  */
-template <class Derived, typename C>
-OutputStreamBufferBase<Derived, C>::OutputStreamBufferBase()
-:   mStorageSize(kInitialBufferSize),
-    mStorage(new C[kInitialBufferSize + 1]) {
+template <class Derived, typename C, class Allocator>
+OutputStreamBufferBase<Derived, C, Allocator>::OutputStreamBufferBase()
+ :  mAllocator(), mStorageSize(kInitialBufferSize),
+    mStorage(mAllocator.allocate(mStorageSize + 1)) {
 
     setp(mStorage, mStorage + mStorageSize);
 }
 
-template <class Derived, typename C>
-OutputStreamBufferBase<Derived, C>::~OutputStreamBufferBase() {
-    delete mStorage;
+template <class Derived, typename C, class Allocator>
+OutputStreamBufferBase<Derived, C, Allocator>::~OutputStreamBufferBase() {
+    mAllocator.deallocate(mStorage, mStorageSize + 1);
 }
 
 /**
@@ -37,10 +37,10 @@ OutputStreamBufferBase<Derived, C>::~OutputStreamBufferBase() {
  * @param inMsg Null-terminated string to be output.
  * @param inLength Length of inMsg (for convenience).
  */
-template <class Derived, typename C>
+template <class Derived, typename C, class Allocator>
 void
-OutputStreamBufferBase<Derived, C>::output(C* inMsg, std::size_t inLength)
-    const {
+OutputStreamBufferBase<Derived, C, Allocator>::output(C* inMsg,
+    std::size_t inLength) const {
 
     static_cast<const Derived*>(this)->output(inMsg, inLength);
 }
@@ -53,17 +53,17 @@ OutputStreamBufferBase<Derived, C>::output(C* inMsg, std::size_t inLength)
  * the buffer has already the maximum size kMaxBufferSize, eof is returned
  * to indicate that the buffer cannot take any more input before a flush.
  */
-template <class Derived, typename C>
-typename OutputStreamBufferBase<Derived, C>::int_type
-OutputStreamBufferBase<Derived, C>::overflow(int_type c) {
+template <class Derived, typename C, class Allocator>
+typename OutputStreamBufferBase<Derived, C, Allocator>::int_type
+OutputStreamBufferBase<Derived, C, Allocator>::overflow(int_type c) {
     if (this->pptr() >= this->epptr()) {
         if (mStorageSize >= kMaxBufferSize)
             return traits_type::eof();
 
         uint32_t newStorageSize = mStorageSize * 2;
-        C* newStorage = new C[newStorageSize + 1];
-        std::memcpy(newStorage, mStorage, mStorageSize);
-        delete mStorage;
+        C* newStorage = mAllocator.allocate(newStorageSize + 1);
+        std::copy(mStorage, mStorage + mStorageSize, newStorage);
+        mAllocator.deallocate(mStorage, mStorageSize + 1);
         mStorage = newStorage;
 
         madlib_assert(
@@ -86,9 +86,9 @@ OutputStreamBufferBase<Derived, C>::overflow(int_type c) {
 /**
  * @brief Flush and reset buffer.
  */
-template <class Derived, typename C>
+template <class Derived, typename C, class Allocator>
 int
-OutputStreamBufferBase<Derived, C>::sync() {
+OutputStreamBufferBase<Derived, C, Allocator>::sync() {
     std::ptrdiff_t length = this->pptr() - this->pbase();
 
     mStorage[length] = '\0';

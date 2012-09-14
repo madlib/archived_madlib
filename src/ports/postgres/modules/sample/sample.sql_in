@@ -19,27 +19,27 @@ Random-sampling functions.
 @sa File sample.sql_in documenting the SQL functions.
 */
 
-CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_transition(
-    state DOUBLE PRECISION[],
-    identifier BIGINT,
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_transition_int64(
+    state MADLIB_SCHEMA.bytea8,
+    value BIGINT,
     weight DOUBLE PRECISION
-) RETURNS DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.bytea8
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 VOLATILE
 STRICT;
 
-CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_merge(
-    state_left DOUBLE PRECISION[],
-    state_right DOUBLE PRECISION[]
-) RETURNS DOUBLE PRECISION[]
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_merge_int64(
+    state_left MADLIB_SCHEMA.bytea8,
+    state_right MADLIB_SCHEMA.bytea8
+) RETURNS MADLIB_SCHEMA.bytea8
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 VOLATILE
 STRICT;
 
-CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_final(
-    state DOUBLE PRECISION[]
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_final_int64(
+    state MADLIB_SCHEMA.bytea8
 ) RETURNS BIGINT
 AS 'MODULE_PATHNAME'
 LANGUAGE C
@@ -49,22 +49,61 @@ STRICT;
 /**
  * @brief Sample a single row according to weights
  *
- * @param identifier Row identifier. Uniqueness is not enforced. If an
- *     identifier occurs multiple times, the probability of sampling this
- *     identifier is proportional to the sum of its weights.
+ * @param value Value of row. Uniqueness is not enforced. If a value occurs
+ *     multiple times, the probability of sampling this value is proportional to
+ *     the sum of its weights.
  * @param weight Weight for row. A negative value here is treated has zero
  *     weight.
  * @return \c identifier of the selected row. The probability of sampling any
- *     particular row <tt>(identifier, weight)</tt> is
+ *     particular row <tt>(value, weight)</tt> is
  *     <tt>weight/SUM(weight)</tt>.
  */
 CREATE AGGREGATE MADLIB_SCHEMA.weighted_sample(
-    /*+ "identifier" */ BIGINT,
-    /*+ "weight" */ DOUBLE PRECISION) (
+    /*+ value */ BIGINT,
+    /*+ weight */ DOUBLE PRECISION) (
 
-    SFUNC=MADLIB_SCHEMA.weighted_sample_transition,
-    STYPE=DOUBLE PRECISION[],
-    FINALFUNC=MADLIB_SCHEMA.weighted_sample_final,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.weighted_sample_merge,')
-    INITCOND='{0,0}'
+    SFUNC=MADLIB_SCHEMA.weighted_sample_transition_int64,
+    STYPE=MADLIB_SCHEMA.bytea8,
+    FINALFUNC=MADLIB_SCHEMA.weighted_sample_final_int64,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.weighted_sample_merge_int64,')
+    INITCOND=''
+);
+
+
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_transition_vector(
+    state MADLIB_SCHEMA.bytea8,
+    value DOUBLE PRECISION[],
+    weight DOUBLE PRECISION
+) RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+VOLATILE
+STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_merge_vector(
+    state_left MADLIB_SCHEMA.bytea8,
+    state_right MADLIB_SCHEMA.bytea8
+) RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+VOLATILE
+STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.weighted_sample_final_vector(
+    state MADLIB_SCHEMA.bytea8
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+CREATE AGGREGATE MADLIB_SCHEMA.weighted_sample(
+    /*+ value */ DOUBLE PRECISION[],
+    /*+ weight */ DOUBLE PRECISION) (
+
+    SFUNC=MADLIB_SCHEMA.weighted_sample_transition_vector,
+    STYPE=MADLIB_SCHEMA.bytea8,
+    FINALFUNC=MADLIB_SCHEMA.weighted_sample_final_vector,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.weighted_sample_merge_vector,')
+    INITCOND=''
 );

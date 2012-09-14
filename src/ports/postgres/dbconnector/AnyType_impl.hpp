@@ -15,7 +15,9 @@ namespace postgres {
 
 inline
 AnyType::AnyType(FunctionCallInfo inFnCallInfo)
-  : mContent(FunctionComposite),
+  : mContentType(FunctionComposite),
+    mContent(),
+    mToDatumFn(),
     mDatum(0),
     fcinfo(inFnCallInfo),
     mSysInfo(SystemInformation::get(inFnCallInfo)),
@@ -28,7 +30,9 @@ AnyType::AnyType(FunctionCallInfo inFnCallInfo)
 inline
 AnyType::AnyType(SystemInformation* inSysInfo,
     HeapTupleHeader inTuple, Datum inDatum, Oid inTypeID)
-  : mContent(NativeComposite),
+  : mContentType(NativeComposite),
+    mContent(),
+    mToDatumFn(),
     mDatum(inDatum),
     fcinfo(NULL),
     mSysInfo(inSysInfo),
@@ -41,7 +45,9 @@ AnyType::AnyType(SystemInformation* inSysInfo,
 inline
 AnyType::AnyType(SystemInformation* inSysInfo, Datum inDatum,
     Oid inTypeID, bool inIsMutable)
-  : mContent(Scalar),
+  : mContentType(Scalar),
+    mContent(),
+    mToDatumFn(),
     mDatum(inDatum),
     fcinfo(NULL),
     mSysInfo(inSysInfo),
@@ -54,6 +60,10 @@ AnyType::AnyType(SystemInformation* inSysInfo, Datum inDatum,
 /**
  * @brief Template constructor (will \b not be used as copy constructor)
  *
+ * @param inValue The value to initialize this AnyType object with
+ * @param inForceLazyConversionToDatum If true, initialize this AnyType object
+ *     as if <tt>lazyConversionToDatum() == true</tt>
+ *
  * This constructor will be invoked when initializing an AnyType object with
  * any scalar value (including arrays, but excluding composite types). This will
  * typically only happen for preparing the return value of a user-defined
@@ -64,16 +74,25 @@ AnyType::AnyType(SystemInformation* inSysInfo, Datum inDatum,
  */
 template <typename T>
 inline
-AnyType::AnyType(const T& inValue)
-  : mContent(Scalar),
-    mDatum(TypeTraits<T>::toDatum(inValue)),
+AnyType::AnyType(const T& inValue, bool inForceLazyConversionToDatum)
+  : mContentType(Scalar),
+    mContent(),
+    mToDatumFn(),
+    mDatum(0),
     fcinfo(NULL),
     mSysInfo(TypeTraits<T>::toSysInfo(inValue)),
     mTupleHeader(NULL),
     mTypeID(TypeTraits<T>::oid),
     mTypeName(TypeTraits<T>::typeName()),
-    mIsMutable(false)
-    { }
+    mIsMutable(TypeTraits<T>::isMutable) {
+
+    if (inForceLazyConversionToDatum || lazyConversionToDatum()) {
+        mContent = inValue;
+        mToDatumFn = std::bind(TypeTraits<T>::toDatum, inValue);
+    } else {
+        mDatum = TypeTraits<T>::toDatum(inValue);
+    }
+}
 
 /**
  * @brief Default constructor, initializes AnyType object as Null
@@ -84,7 +103,9 @@ AnyType::AnyType(const T& inValue)
  */
 inline
 AnyType::AnyType()
-  : mContent(Null),
+  : mContentType(Null),
+    mContent(),
+    mToDatumFn(),
     mDatum(0),
     fcinfo(NULL),
     mSysInfo(NULL),
@@ -103,20 +124,23 @@ AnyType::consistencyCheck() const {
     const char *kMsg("Inconsistency detected while converting between "
         "PostgreSQL and C++ types.");
 
-    madlib_assert(mContent != Null || (mDatum == 0 && fcinfo == NULL &&
-        mSysInfo == NULL && mTupleHeader == NULL && mTypeID == InvalidOid &&
-        mTypeName == NULL && mChildren.empty()),
+    madlib_assert(mContentType != Null || (mDatum == 0 && mContent.empty() &&
+        fcinfo == NULL && mSysInfo == NULL && mTupleHeader == NULL &&
+        mTypeID == InvalidOid && mTypeName == NULL && mChildren.empty()),
         std::logic_error(kMsg));
-    madlib_assert(mContent != FunctionComposite || fcinfo != NULL,
+    madlib_assert(mContentType == Scalar || mContent.empty(),
         std::logic_error(kMsg));
-    madlib_assert(mContent != NativeComposite || mTupleHeader != NULL,
+    madlib_assert(mContentType != FunctionComposite || fcinfo != NULL,
         std::logic_error(kMsg));
-    madlib_assert(mContent != ReturnComposite || (!mChildren.empty() &&
+    madlib_assert(mContentType != NativeComposite || mTupleHeader != NULL,
+        std::logic_error(kMsg));
+    madlib_assert(mContentType != ReturnComposite || (!mChildren.empty() &&
         mTypeID == InvalidOid),
         std::logic_error(kMsg));
-    madlib_assert(mContent == ReturnComposite || mChildren.empty(),
+    madlib_assert(mContentType == ReturnComposite || mChildren.empty(),
         std::logic_error(kMsg));
-    madlib_assert((mContent != FunctionComposite && mContent != NativeComposite)
+    madlib_assert(
+        (mContentType != FunctionComposite && mContentType != NativeComposite)
         || mSysInfo != NULL,
         std::logic_error(kMsg));
     madlib_assert(mChildren.size() <= std::numeric_limits<uint16_t>::max(),
@@ -170,8 +194,22 @@ AnyType::getAs() const {
         throw std::invalid_argument(errorMsg.str());
     }
 
-    bool needMutableClone = (TypeTraits<T>::isMutable && !mIsMutable);
-    return TypeTraits<T>::toCXXType(mDatum, needMutableClone, mSysInfo);
+    if (mContent.empty()) {
+        bool needMutableClone = (TypeTraits<T>::isMutable && !mIsMutable);
+        return TypeTraits<T>::toCXXType(mDatum, needMutableClone, mSysInfo);
+    } else {
+        // any_cast<T*> will not throw but return a NULL pointer if of
+        // incorrect type
+        const T* value = boost::any_cast<T>(&mContent);
+        if (value == NULL) {
+            std::stringstream errorMsg;
+            errorMsg << "Invalid type conversion. Expected type '"
+                << typeid(T).name() << "' but stored type is '"
+                << mContent.type().name() << "'.";
+            throw std::runtime_error(errorMsg.str());
+        }
+        return *value;
+    }
 }
 
 /**
@@ -180,7 +218,7 @@ AnyType::getAs() const {
 inline
 bool
 AnyType::isNull() const {
-    return mContent == Null;
+    return mContentType == Null;
 }
 
 /**
@@ -190,8 +228,8 @@ AnyType::isNull() const {
 inline
 bool
 AnyType::isComposite() const {
-    return mContent == FunctionComposite || mContent == NativeComposite ||
-        mContent == ReturnComposite;
+    return mContentType == FunctionComposite ||
+        mContentType == NativeComposite || mContentType == ReturnComposite;
 }
 
 /**
@@ -205,7 +243,7 @@ uint16_t
 AnyType::numFields() const {
     consistencyCheck();
 
-    switch (mContent) {
+    switch (mContentType) {
         case Null: return 0;
         case Scalar: return 1;
         case ReturnComposite: return static_cast<uint16_t>(mChildren.size());
@@ -231,26 +269,26 @@ AnyType::operator[](uint16_t inID) const {
     consistencyCheck();
 
     if (isNull()) {
-        // Handle case mContent == NULL
+        // Handle case mContentType == NULL
         throw std::invalid_argument("Invalid type conversion. "
             "Null where not expected.");
     }
     if (!isComposite()) {
-        // Handle case mContent == Scalar
+        // Handle case mContentType == Scalar
         throw std::invalid_argument("Invalid type conversion. "
             "Composite type where not expected.");
     }
 
-    if (mContent == ReturnComposite)
+    if (mContentType == ReturnComposite)
         return mChildren[inID];
 
-    // It holds now that mContent is either FunctionComposite or NativeComposite
-    // In this case, it is guaranteed that fcinfo != NULL
+    // It holds now that mContentType is either FunctionComposite or
+    // NativeComposite. In this case, it is guaranteed that fcinfo != NULL
     Oid typeID = 0;
     bool isMutable = false;
     Datum datum = 0;
 
-    if (mContent == FunctionComposite) {
+    if (mContentType == FunctionComposite) {
         // This AnyType object represents to composite value consisting of all
         // function arguments
 
@@ -277,7 +315,7 @@ AnyType::operator[](uint16_t inID) const {
             isMutable = AggCheckCallContext(fcinfo, NULL);
         }
         datum = PG_GETARG_DATUM(inID);
-    } else /* if (mContent == NativeComposite) */ {
+    } else /* if (mContentType == NativeComposite) */ {
         // This AnyType objects represents a tuple that was passed from the
         // backend
 
@@ -313,11 +351,11 @@ AnyType&
 AnyType::operator<<(const AnyType &inValue) {
     consistencyCheck();
 
-    madlib_assert(mContent == Null || mContent == ReturnComposite,
+    madlib_assert(mContentType == Null || mContentType == ReturnComposite,
         std::logic_error("Internal inconsistency while creating composite "
             "return value."));
 
-    mContent = ReturnComposite;
+    mContentType = ReturnComposite;
     mChildren.push_back(inValue);
     return *this;
 }
@@ -380,7 +418,7 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
     }
 
     bool targetIsComposite = targetTupleDesc != NULL;
-    Datum returnValue = mDatum;
+    Datum returnValue;
 
     if (targetIsComposite && !isComposite())
         throw std::runtime_error("Invalid type conversion. "
@@ -442,9 +480,44 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
                 << mTypeName << "'.";
             throw std::invalid_argument(errorMsg.str());
         }
+
+        returnValue = mContent.empty() ? mDatum : mToDatumFn();
     }
 
     return returnValue;
+}
+
+/**
+ * @brief Convert values to PostgreSQL Datum in AnyType constructor (or only
+ *     when needed)?
+ *
+ * Usually, AnyType objects are only used to retrieve or return data from/to the
+ * backend. However, there are exceptions. For instance, when calling a
+ * FunctionHandle, data might be passed directly from one C++ function to
+ * another. In this case, it would be wasteful to convert arguments to
+ * PostgreSQL Datum type, and it is better to only lazily convert to Datum
+ * (i.e., only when needed by getAsDatum()).
+ *
+ * Since PostgreSQL is single-threaded, it is sufficient to maintain a global
+ * variable that contains whether lazy conversion is requested.
+ */
+inline
+bool
+AnyType::lazyConversionToDatum() {
+    return sLazyConversionToDatum;
+}
+
+inline
+AnyType::LazyConversionToDatumOverride::LazyConversionToDatumOverride(
+    bool inLazyConversionToDatum) {
+
+    mOriginalValue = AnyType::sLazyConversionToDatum;
+    AnyType::sLazyConversionToDatum = inLazyConversionToDatum;
+}
+
+inline
+AnyType::LazyConversionToDatumOverride::~LazyConversionToDatumOverride() {
+    AnyType::sLazyConversionToDatum = mOriginalValue;
 }
 
 /**

@@ -37,7 +37,7 @@ function(define_m4_macros OUT_M4_CMD_LINE OUT_M4_CODE)
     )
     list_replace("^(.+)$" "-D\\\\1" ${OUT_M4_CMD_LINE} ${MACROS})
     list_replace("^([^=]+)$" "m4_define(`\\\\1')" ${OUT_M4_CODE} ${MACROS})
-    list_replace("^([^=]+)=(.+)$" "m4_define(`\\\\1', ``\\\\2'')" ${OUT_M4_CODE}
+    list_replace("^([^=]+)=(.+)$" "m4_define(`\\\\1', `\\\\2')" ${OUT_M4_CODE}
         ${${OUT_M4_CODE}})
     string(REGEX REPLACE ";" "\\n" ${OUT_M4_CODE} "${${OUT_M4_CODE}}")
 

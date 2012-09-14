@@ -32,7 +32,8 @@ struct SystemInformation;
 class AnyType {
 public:
     AnyType();
-    template <typename T> AnyType(const T& inValue);
+    template <typename T> AnyType(const T& inValue,
+        bool inForceLazyConversionToDatum = false);
     template <typename T> T getAs() const;
     AnyType operator[](uint16_t inID) const;
     uint16_t numFields() const;
@@ -41,6 +42,21 @@ public:
     AnyType &operator<<(const AnyType& inValue);
 
 protected:
+    /**
+     * @brief RAII class to temporarily change \c sLazyConversionToDatum
+     */
+    class LazyConversionToDatumOverride {
+    public:
+        LazyConversionToDatumOverride(bool inLazyConversionToDatum);
+        ~LazyConversionToDatumOverride();
+    protected:
+        bool mOriginalValue;
+    };
+
+    static bool sLazyConversionToDatum;
+    
+    static bool lazyConversionToDatum();
+
     // UDF and FunctionHandle access getAsDatum(), which is not part of the
     // public API
     friend class UDF;
@@ -49,7 +65,7 @@ protected:
     /**
      * @brief Type of the value of the current AnyType object
      */
-    enum Content {
+    enum ContentType {
         Null,
         Scalar,
         FunctionComposite,
@@ -66,7 +82,11 @@ protected:
     Datum getAsDatum(FunctionCallInfo inFCInfo,
         Oid inTargetTypeID = InvalidOid) const;
 
-    Content mContent;
+    class Placeholder;
+
+    ContentType mContentType;
+    boost::any mContent;
+    std::function<Datum()> mToDatumFn;
     Datum mDatum;
     FunctionCallInfo fcinfo;
     SystemInformation* mSysInfo;
@@ -75,9 +95,47 @@ protected:
     Oid mTypeID;
     const char* mTypeName;
     bool mIsMutable;
+
 };
 
 AnyType Null();
+
+/**
+ * @brief Cast that extract the proper type from AnyType but leaves other types
+ *     unaffected
+ *
+ * Sometimes it is desirable to write generic code that works on both an
+ * \c AnyType object as well as a value with a concrete type. For instance, a
+ * \c FunctionHandle always returns an \c AnyType object. In generatic code,
+ * however, a \c FunctionHandle might as well be replaced by just call a
+ * "normal" functor or a C++ function pointer, both of which typically return
+ * concrete types (e.g., double).
+ *
+ * In generic code, we could write <tt>AnyType_cast<double>(func())</tt> so that
+ * if the template parameter \c Function is \c AnyType, we have an explicit
+ * conversion to \c double, and if \c Function is just a function pointer, the
+ * return value of <tt>func()</tt> passes unchanged.
+ */
+template <class T>
+inline
+T
+AnyType_cast(const AnyType& inValue) {
+    return inValue.getAs<T>();
+}
+
+template <class T>
+inline
+const T&
+AnyType_cast(const T& inValue) {
+    return inValue;
+}
+
+template <class T>
+inline
+T&
+AnyType_cast(T& inValue) {
+    return inValue;
+}
 
 } // namespace postgres
 

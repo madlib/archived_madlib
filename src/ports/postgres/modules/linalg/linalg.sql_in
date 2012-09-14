@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------------- *//**
- * @internal
+ *
  * @file linalg.sql_in
  *
  * @brief SQL functions for linear algebra
@@ -8,6 +8,8 @@
  *     description \ref grp_linalg.
  *
  *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
 
 /**
 @internal
@@ -113,10 +115,54 @@ IMMUTABLE
 STRICT;
 
 /**
+ * @brief Squared angle between two vectors
+ *
+ * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
+ * @param y Vector \f$ \vec y = (y_1, \dots, y_n) \f$
+ * @return \f$ \arccos\left(\frac{\langle \vec x, \vec y \rangle}
+ *                               {\| \vec x \| \cdot \| \vec y \|}\right)^2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.squared_angle(
+    x DOUBLE PRECISION[],
+    y DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+/**
+ * @brief Squared angle between two vectors
+ *
+ * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
+ * @param y Vector \f$ \vec y = (y_1, \dots, y_n) \f$
+ * @return \f$ \left(1 - \frac{\langle \vec x, \vec y \rangle}
+ *                            {\| \vec x \|^2 \cdot \| \vec y \|^2
+ *                                - \langle \vec x, \vec y \rangle}\right)^2 \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.squared_tanimoto(
+    x DOUBLE PRECISION[],
+    y DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+/*
+ * @brief closest_column return type
+ */
+CREATE TYPE MADLIB_SCHEMA.closest_column_result AS (
+    column_id INT2,
+    distance DOUBLE PRECISION
+);
+
+/**
  * @brief Given matrix \f$ M \f$ and vector \f$ \vec x \f$ compute the column
  *     of \f$ M \f$ that is closest to \f$ \vec x \f$
  *
- * @param M Matrix \f$ M = (\vec{m_0} \dots \vec{m_{l-1}}) \in \mathbb{R}^{k \times l} \f$
+ * @param M Matrix \f$ M = (\vec{m_0} \dots \vec{m_{l-1}})
+ *     \in \mathbb{R}^{k \times l} \f$
  * @param x Vector \f$ \vec x \in \mathbb R^k \f$
  * @param dist The metric \f$ \operatorname{dist} \f$. This needs to be a
  *     function with signature
@@ -134,11 +180,129 @@ STRICT;
 CREATE FUNCTION MADLIB_SCHEMA.closest_column(
     M DOUBLE PRECISION[][],
     x DOUBLE PRECISION[],
-    dist REGPROC,
-    OUT column_id INT2,
-    OUT distance DOUBLE PRECISION
-)
+    dist REGPROC
+) RETURNS MADLIB_SCHEMA.closest_column_result
 AS 'MODULE_PATHNAME'
 LANGUAGE C
 IMMUTABLE
 STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.avg_vector_transition(
+    state DOUBLE PRECISION[],
+    x DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+LANGUAGE c
+IMMUTABLE
+CALLED ON NULL INPUT
+AS 'MODULE_PATHNAME';
+
+CREATE FUNCTION MADLIB_SCHEMA.avg_vector_merge(
+    state_left DOUBLE PRECISION[],
+    state_right DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+LANGUAGE c
+IMMUTABLE
+STRICT
+AS 'MODULE_PATHNAME';
+
+CREATE FUNCTION MADLIB_SCHEMA.avg_vector_final(
+    state DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+LANGUAGE c
+IMMUTABLE
+STRICT
+AS 'MODULE_PATHNAME';
+
+/**
+ * @brief Compute the average of vectors
+ *
+ * Given vectors \f$ x_1, \dots, x_n \f$, compute the average
+ * \f$ \frac 1n \sum_{i=1}^n x_i \f$.
+ *
+ * @param x Point \f$ x_i \f$
+ * @returns Average \f$ \frac 1n \sum_{i=1}^n x_i \f$
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.avg(
+    /*+ x */ DOUBLE PRECISION[]
+) (
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.avg_vector_transition,
+    m4_ifdef(`__GREENPLUM__', `PREFUNC=MADLIB_SCHEMA.avg_vector_merge,')
+    FINALFUNC=MADLIB_SCHEMA.avg_vector_final,
+    INITCOND='{0,0,0}'
+);
+
+CREATE FUNCTION MADLIB_SCHEMA.normalized_avg_vector_transition(
+    state DOUBLE PRECISION[],
+    x DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+LANGUAGE c
+IMMUTABLE
+CALLED ON NULL INPUT
+AS 'MODULE_PATHNAME';
+
+CREATE FUNCTION MADLIB_SCHEMA.normalized_avg_vector_final(
+    state DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+LANGUAGE c
+IMMUTABLE
+STRICT
+AS 'MODULE_PATHNAME';
+
+/**
+ * @brief Compute the normalized average of vectors
+ *
+ * Given vectors \f$ x_1, \dots, x_n \f$, define
+ * \f$ \widetilde{x} := \frac 1n \sum_{i=1}^n \frac{x_i}{\| x_i \|} \f$, and
+ * compute the normalized average
+ * \f$ \frac{\widetilde{x}}{\| \widetilde{x} \|} \f$.
+ *
+ * @param x Point \f$ x_i \f$
+ * @returns Normalized average \f$ \frac{\widetilde{x}}{\| \widetilde{x} \|} \f$
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.normalized_avg(
+    /*+ x */ DOUBLE PRECISION[]
+) (
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.normalized_avg_vector_transition,
+    m4_ifdef(`__GREENPLUM__', `PREFUNC=MADLIB_SCHEMA.avg_vector_merge,')
+    FINALFUNC=MADLIB_SCHEMA.normalized_avg_vector_final,
+    INITCOND='{0,0,0}'
+);
+
+CREATE FUNCTION MADLIB_SCHEMA.matrix_agg_transition(
+    state DOUBLE PRECISION[],
+    x DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+LANGUAGE c
+IMMUTABLE
+STRICT
+AS 'MODULE_PATHNAME';
+
+CREATE FUNCTION MADLIB_SCHEMA.matrix_agg_final(
+    state DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+LANGUAGE c
+IMMUTABLE
+STRICT
+AS 'MODULE_PATHNAME';
+
+/**
+ * @brief Combine vectors to a matrix
+ *
+ * Given vectors \f$ \vec x_1, \dots, \vec x_n \in \mathbb R^m \f$,
+ * return matrix \f$ ( \vec x_1 \dots \vec x_n ) \in \mathbb R^{m \times n}\f$.
+ *
+ * @param x Vector \f$ x_i \f$
+ * @returns Matrix with columns \f$ x_1, \dots, x_n \f$
+ */
+CREATE
+m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `ORDERED'))
+AGGREGATE MADLIB_SCHEMA.matrix_agg(
+    /*+ x */ DOUBLE PRECISION[]
+) (
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.matrix_agg_transition,
+    FINALFUNC=MADLIB_SCHEMA.matrix_agg_final,
+    INITCOND='{0,0,0}'
+);

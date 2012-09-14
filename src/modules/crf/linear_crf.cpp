@@ -934,7 +934,7 @@ AnyType stateToResult(
     double loglikelihood) {
     // FIXME: We currently need to copy the coefficient to a native array
     // This should be transparent to user code
-    MutableMappedColumnVector coef(
+    MutableNativeColumnVector coef(
         inAllocator.allocateArray<double>(incoef.size()));
     coef = incoef;
 

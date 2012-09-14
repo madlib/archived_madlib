@@ -44,6 +44,30 @@ public:
       : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
         mMemoryHandle(inHandle) { }
 
+    template <class Derived>
+    HandleMap(const Eigen::MapBase<Derived>& inMappedData,
+        typename boost::enable_if_c<Derived::IsVectorAtCompileTime>::type* = 0)
+      : Base(inMappedData.data(), inMappedData.size()),
+        mMemoryHandle(inMappedData.data()) {
+
+        madlib_assert(inMappedData.innerStride() == 1,
+            std::runtime_error("HandleMap does not support non-contiguous "
+                "memory blocks."));
+    }
+
+    template <class Derived>
+    HandleMap(const Eigen::MapBase<Derived>& inMappedData,
+        typename boost::enable_if_c<!Derived::IsVectorAtCompileTime>::type* = 0)
+      : Base(inMappedData.data(), inMappedData.rows(), inMappedData.cols()),
+        mMemoryHandle(inMappedData.data()) {
+
+        madlib_assert(inMappedData.innerStride() == 1 &&
+            ((Derived::IsRowMajor && inMappedData.outerStride() == inMappedData.cols())
+            || (!Derived::IsRowMajor && inMappedData.outerStride() == inMappedData.rows())),
+            std::runtime_error("HandleMap does not support non-contiguous "
+                "memory blocks."));
+    }
+
     /**
      * @brief Initialize HandleMap backed by the given handle
      *
@@ -52,12 +76,7 @@ public:
      */
     HandleMap(const Handle &inHandle, Index inNumElem)
       : Base(const_cast<Scalar*>(inHandle.ptr()), inNumElem),
-        mMemoryHandle(inHandle) {
-
-//        madlib_assert(inHandle.size() >= inNumElem * sizeof(Scalar),
-//            std::runtime_error("Expected HandleMap to be larger than it "
-//                "actually is."));
-    }
+        mMemoryHandle(inHandle) { }
 
     /**
      * @brief Initialize HandleMap backed by the given handle

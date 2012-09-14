@@ -6,4 +6,6 @@
  *
  *//* ----------------------------------------------------------------------- */
 
+#include "average.hpp"
+#include "matrix_agg.hpp"
 #include "metric.hpp"

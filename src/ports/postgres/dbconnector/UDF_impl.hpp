@@ -65,7 +65,6 @@ UDF::SRF_percall_setup(FunctionCallInfo fcinfo){
  * We need the FunctionCallInfo in case some arguments or return values are
  * of polymorphic types.
  *
- * @param fcinfo The PostgreSQL FunctionCallInfoData structure
  * @param args Arguments to the function. While for calls from the backend
  *     all arguments are specified by \c fcinfo, for calls "within" the C++ AL
  *     it is more efficient to pass arguments as "native" C++ object references.
@@ -74,8 +73,8 @@ UDF::SRF_percall_setup(FunctionCallInfo fcinfo){
 template <class Function>
 inline
 AnyType
-UDF::invoke(FunctionCallInfo fcinfo, AnyType& args) {
-    return Function(fcinfo).run(args);
+UDF::invoke(AnyType& args) {
+    return Function().run(args);
 }
 
 
@@ -107,7 +106,7 @@ UDF::SRF_invoke(FunctionCallInfo fcinfo) {
         // we must construct the argument here, since it needs SRF_FIRSTCALL_INIT
         // to init the pointer: fn_extra
         AnyType args(fcinfo);
-        args.mSysInfo->user_fctx = Function(fcinfo).SRF_init(args);
+        args.mSysInfo->user_fctx = Function().SRF_init(args);
         MemoryContextSwitchTo(oldcontext);
     }
 
@@ -115,7 +114,7 @@ UDF::SRF_invoke(FunctionCallInfo fcinfo) {
 
     // the invoker function will handle the exceptions from this function
     // TODO: Don't we need args for "next"?
-    AnyType result = Function(fcinfo).SRF_next(
+    AnyType result = Function().SRF_next(
         static_cast<SystemInformation*>(funcctx->user_fctx)->user_fctx,
         &is_last_call);
 
@@ -146,17 +145,20 @@ UDF::call(FunctionCallInfo fcinfo) {
         // We want to store in the cache that this function is implemented on
         // top of the C++ AL. Should the same function be invoked again via a
         // FunctionHandle, it can be invoked directly.
+        
+        // FIXME: Rethink/redesign support for set-returning functions
+        // See also UDF_proto.hpp
         if (fcinfo->flinfo->fn_retset) {
             return SRF_invoke<Function>(fcinfo);
-        }
-        else {
-            AnyType args(fcinfo);
+        } else {
             SystemInformation::get(fcinfo)
                 ->functionInformation(fcinfo->flinfo->fn_oid)->cxx_func
                 = invoke<Function>;
-            AnyType result = invoke<Function>(fcinfo, args);
 
-            if ( result.isNull() )
+            AnyType args(fcinfo);
+            AnyType result = invoke<Function>(args);
+
+            if (result.isNull())
                 PG_RETURN_NULL();
 
             return result.getAsDatum(fcinfo);

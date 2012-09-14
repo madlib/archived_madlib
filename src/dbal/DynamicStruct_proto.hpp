@@ -37,7 +37,6 @@ public:
     typedef typename Container_type::Storage_type Storage_type;
     typedef typename Container_type::ByteStream_type ByteStream_type;
     typedef Container_type Init_type;
-    enum { isMutable = Container_type::isMutable };
 
     DynamicStructBase(Init_type& inContainer);
     void initialize();
@@ -123,10 +122,12 @@ class DynamicStruct
 public:
     typedef DynamicStructBase<Derived, Container> Base;
     typedef typename Base::Storage_type Storage_type;
+    typedef typename Base::Container_type Container_type;
     typedef typename Base::RootContainer_type RootContainer_type;
     typedef typename Base::ByteStream_type ByteStream_type;
     typedef typename Base::Init_type Init_type;
     typedef typename ByteStream_type::char_type char_type;
+    enum { isMutable = Container_type::isMutable };
 
     DynamicStruct(Init_type& inInitialization);
 
@@ -201,28 +202,27 @@ class HandleMap;
 
 }
 
-// Because of its dependencies on Eigen, DynamicStructTypes is only declared in
+// Because of its dependencies on Eigen, DynamicStructType is only declared in
 // DynamicStruct_impl.hpp.
-template <bool IsMutable>
-struct DynamicStructTypes;
+template <class T, bool IsMutable>
+struct DynamicStructType;
 
-#define MADLIB_DYNAMIC_STRUCT_TYPEDEFS(_Class, _Container) \
-    typedef DynamicStruct<_Class, _Container> Base; \
+#define MADLIB_DYNAMIC_STRUCT_TYPEDEFS \
     typedef typename Base::Init_type Init_type; \
     typedef typename Base::ByteStream_type ByteStream_type; \
     typedef typename Base::Storage_type Storage_type; \
-    typedef typename DynamicStructTypes<isMutable>::double_type double_type; \
-    typedef typename DynamicStructTypes<isMutable>::float_type float_type; \
-    typedef typename DynamicStructTypes<isMutable>::uint64_type uint64_type; \
-    typedef typename DynamicStructTypes<isMutable>::int64_type int64_type; \
-    typedef typename DynamicStructTypes<isMutable>::uint32_type uint32_type; \
-    typedef typename DynamicStructTypes<isMutable>::int32_type int32_type; \
-    typedef typename DynamicStructTypes<isMutable>::uint16_type uint16_type; \
-    typedef typename DynamicStructTypes<isMutable>::int16_type int16_type; \
-    typedef typename DynamicStructTypes<isMutable>::MappedColumnVector_type \
-        MappedColumnVector_type; \
-    typedef typename DynamicStructTypes<isMutable>::MappedMatrix_type \
-        MappedMatrix_type;
+    typedef typename DynamicStructType<double, Base::isMutable>::type double_type; \
+    typedef typename DynamicStructType<float, Base::isMutable>::type float_type; \
+    typedef typename DynamicStructType<uint64_t, Base::isMutable>::type uint64_type; \
+    typedef typename DynamicStructType<int64_t, Base::isMutable>::type int64_type; \
+    typedef typename DynamicStructType<uint32_t, Base::isMutable>::type uint32_type; \
+    typedef typename DynamicStructType<int32_t, Base::isMutable>::type int32_type; \
+    typedef typename DynamicStructType<uint16_t, Base::isMutable>::type uint16_type; \
+    typedef typename DynamicStructType<int16_t, Base::isMutable>::type int16_type; \
+    typedef typename DynamicStructType<ColumnVector, Base::isMutable>::type \
+        ColumnVector_type; \
+    typedef typename DynamicStructType<Matrix, Base::isMutable>::type Matrix_type; \
+    enum { isMutable = Base::isMutable }
 
 
 } // namespace dbal

@@ -40,6 +40,16 @@ DECLARE_UDF(linalg, squared_dist_norm2)
  */
 DECLARE_UDF(linalg, squared_dist_norm1)
 
+/**
+ * @brief Compute the squared angle between two dense vectors
+ */
+DECLARE_UDF(linalg, squared_angle)
+
+/**
+ * @brief Compute the squared Tanimoto "distance" between two dense vectors
+ */
+DECLARE_UDF(linalg, squared_tanimoto)
+
 
 #ifndef MADLIB_MODULES_LINALG_LINALG_HPP
 #define MADLIB_MODULES_LINALG_LINALG_HPP
@@ -50,10 +60,13 @@ namespace modules {
 
 namespace linalg {
 
-template <typename Derived, typename OtherDerived>
+// Use Eigen
+using namespace dbal::eigen_integration;
+
+template <class DistanceFunction>
 std::tuple<dbal::eigen_integration::Index, double>
-closestColumnAndDistance(const Eigen::MatrixBase<Derived>& inMatrix,
-    const Eigen::MatrixBase<OtherDerived>& inVector, FunctionHandle& inMetric);
+closestColumnAndDistance(const MappedMatrix& inMatrix,
+    const MappedColumnVector& inVector, DistanceFunction& inMetric);
 
 } // namespace linalg
 
