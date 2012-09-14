@@ -407,17 +407,29 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                 "array_upper((_state._state).centroids, 1) < _args.k"):
                 it.update("""
                     SELECT
-                        CAST(((_state._state).centroids
-                            || {schema_madlib}.kmeanspp_seeding(
+                        CAST(((
+                                SELECT (_state).centroids FROM {rel_state}
+                                WHERE _iteration = {iteration}
+                            ) || {schema_madlib}.kmeanspp_seeding(
                                 '{rel_source}',
                                 '{expr_point}',
-                                CAST(_args.k AS INT2),
-                                textin(regprocout(_args.fn_squared_dist)),
-                                (_state._state).centroids
-                            ), NULL, (_state._state).frac_reassigned
+                                (SELECT CAST(k AS INT2) FROM {rel_args}),
+                                textin(regprocout(
+                                    (SELECT fn_squared_dist FROM {rel_args})
+                                )),
+                                (
+                                    SELECT (_state).centroids FROM {rel_state}
+                                    WHERE _iteration = {iteration}
+                                )
+                            ),
+                            (
+                                SELECT (_state).old_centroid_ids
+                                FROM {rel_state}
+                                WHERE _iteration = {iteration}
+                            ),
+                            'Inf',
+                            1.0
                         ) AS {schema_madlib}.kmeans_new_state)
-                    FROM {rel_state} AS _state, {rel_args} AS _args
-                    WHERE _state._iteration = {iteration}
                     """)
     return iterationCtrl.iteration
 
