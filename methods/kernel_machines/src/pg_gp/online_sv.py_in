@@ -66,9 +66,7 @@ def svm_regression( madlib_schema, input_table, model_table, parallel, kernel_fu
 
         # Store the models learned
         plpy.execute('insert into ' + model_table + '_param select id, (model).b, \'' + kernel_func + '\' from svm_temp_result');
-        numproc_t = plpy.execute('select count(distinct(m4_ifdef(`__GREENPLUM__', `gp_segment_id', `0'))) from ' + input_table);
-        numproc = numproc_t[0]['count'];
-        plpy.execute('select ' + madlib_schema + '.svm_store_model(\'svm_temp_result\', \'' + model_table + '\',\'' + model_table + '\', ' + str(numproc) + ')');     
+        __svm_store_model(madlib_schema, input_table, model_table, 'svm_temp_result', model_table)
 
     else :
         # Learning a single model
@@ -144,9 +142,7 @@ def svm_classification( madlib_schema, input_table, model_table, parallel, kerne
 
         # Store the models learned
         plpy.execute('insert into ' + model_table + '_param select id, (model).b, \'' + kernel_func + '\' from svm_temp_result');
-        numproc_t = plpy.execute('select count(distinct(m4_ifdef(`__GREENPLUM__', `gp_segment_id', `0'))) from ' + input_table);
-        numproc = numproc_t[0]['count'];
-        plpy.execute('select ' + madlib_schema + '.svm_store_model(\'svm_temp_result\', \'' + model_table + '\',\'' + model_table + '\', ' + str(numproc) + ')');
+        __svm_store_model(madlib_schema, input_table, model_table, 'svm_temp_result', model_table)
 
     else :
         # Learning a single model
@@ -219,9 +215,7 @@ def svm_novelty_detection( madlib_schema, input_table, model_table, parallel, ke
 
         # Store the models learned 
         plpy.execute('insert into ' + model_table + '_param select id, (model).rho * -1.0, \'' + kernel_func + '\' from svm_temp_result');
-        numproc_t = plpy.execute('select count(distinct(m4_ifdef(`__GREENPLUM__', `gp_segment_id', `0'))) from ' + input_table);
-        numproc = numproc_t[0]['count'];
-        plpy.execute('select ' + madlib_schema + '.svm_store_model(\'svm_temp_result\', \'' + model_table + '\',\'' + model_table + '\', ' + str(numproc) + ')');     
+        __svm_store_model(madlib_schema, input_table, model_table, 'svm_temp_result', model_table)
 
     else :
         # Learning a single model
@@ -540,5 +534,16 @@ def lsvm_predict_batch( madlib_schema, input_table, data_col, id_col, model_tabl
 
     return '''Finished processing data points in %s table; results are stored in %s table. 
            ''' % (input_table,output_table)
-           
 
+# ------------------------------------------------------------------------------
+# This function stores a collection of models learned in parallel into the model_table.
+# The different models are stored in model_temp_table and are assumed to be named model_table1, model_table2, ....
+# ------------------------------------------------------------------------------
+def __svm_store_model(madlib_schema, input_table, model_table, model_temp_table, model_name):
+    # Store the models learned
+    numproc_t = plpy.execute('select distinct(m4_ifdef(`__GREENPLUM__', `gp_segment_id', `0')) AS seg_id from ' + input_table);
+    res_len = len(numproc_t);
+    for i in range(0,res_len):
+        seg_id = numproc_t[i]['seg_id'];
+        plpy.execute("select "+madlib_schema + ".svm_store_model('" + model_temp_table + \
+                "', '" + model_name + str(seg_id) + "', '" + model_table + "')");
