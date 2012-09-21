@@ -1,4 +1,3 @@
-
 /* ----------------------------------------------------------------------- *//**
  *
  * @file multilogistic.cpp
@@ -237,10 +236,6 @@ mlogregr_irls_step_transition::run(AnyType &args) {
         if (numCategories < 1)
                 throw std::domain_error("Number of cateogires must be at least 2");
 
-        if (category > numCategories)
-                throw std::domain_error("You have entered a category > numCategories"
-                    "Categories must be of values {0,1... numCategories-1}");
-
         // Init the state (requires x.size() and category.size())
         state.initialize(*this, static_cast<uint16_t>(x.size())
                                                     , static_cast<uint16_t>(numCategories));
@@ -252,8 +247,13 @@ mlogregr_irls_step_transition::run(AnyType &args) {
         }
     }
 
-
-
+    /*
+     * This check should be done for each iteration. Only checking the first
+     * run is not enough.
+     */
+    if (category > numCategories || category < 0)
+        throw std::domain_error("Invalid category. Categories must be integer "
+            "values between 0 and (number of categories - 1).");
 
     // Now do the transition step
     state.numRows++;
