@@ -237,8 +237,8 @@ mlogregr_irls_step_transition::run(AnyType &args) {
         if (numCategories < 1)
                 throw std::domain_error("Number of cateogires must be at least 2");
 
-        if (category > numCategories)
-                throw std::domain_error("You have entered a category > numCategories"
+        if (category > numCategories || category<0)
+                throw std::domain_error("You have entered an invalid category. "
                     "Categories must be of values {0,1... numCategories-1}");
 
         // Init the state (requires x.size() and category.size())
