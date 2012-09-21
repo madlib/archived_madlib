@@ -33,15 +33,17 @@
 */
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
-#include "postgres.h"
-#include "utils/array.h"
-#include "utils/elog.h"
-#include "nodes/execnodes.h"
-#include "fmgr.h"
+#include <postgres.h>
+#include <utils/array.h>
+#include <utils/elog.h>
+#include <nodes/execnodes.h>
+#include <fmgr.h>
+#include <utils/builtins.h>
+#include <libpq/md5.h>
+#include <utils/lsyscache.h>
 #include "sketch_support.h"
-#include "utils/builtins.h"
-#include "libpq/md5.h"
-#include "utils/lsyscache.h"
+
+
 
 /*!
  * Simple linear function to find the rightmost bit that's set to one
@@ -290,28 +292,28 @@ bit_print(uint8 *c, int numbytes)
  */
 bytea *sketch_md5_bytea(Datum dat, Oid typOid)
 {
-    // according to postgres' libpq/md5.c, need 33 bytes to hold 
+    // according to postgres' libpq/md5.c, need 33 bytes to hold
     // null-terminated md5 string
     char outbuf[MD5_HASHLEN*2+1];
-    bytea *out = palloc0(MD5_HASHLEN+VARHDRSZ);    
+    bytea *out = palloc0(MD5_HASHLEN+VARHDRSZ);
     bool byval = get_typbyval(typOid);
-    int len = ExtractDatumLen(dat, get_typlen(typOid), byval);
+    int len = ExtractDatumLen(dat, get_typlen(typOid), byval, -1);
     void *datp = DatumExtractPointer(dat, byval);
-    /* 
-     * it's very common to be hashing 0 for countmin sketches.  Rather than 
+    /*
+     * it's very common to be hashing 0 for countmin sketches.  Rather than
      * hard-code it here, we cache on first lookup.  In future a bigger cache here
      * would be nice.
      */
     static bool zero_cached = false;
     static char md5_of_0_mem[MD5_HASHLEN+VARHDRSZ];
     static bytea *md5_of_0 = (bytea *) &md5_of_0_mem;
-        
+
     if (byval && len == sizeof(int64) && *(int64 *)datp == 0 && zero_cached) {
         return md5_of_0;
     }
     else
-        pg_md5_hash(datp, len, outbuf);        
-    
+        pg_md5_hash(datp, len, outbuf);
+
     hex_to_bytes(outbuf, (uint8 *)VARDATA(out), MD5_HASHLEN*2);
     SET_VARSIZE(out, MD5_HASHLEN+VARHDRSZ);
     if (byval && len == sizeof(int64) && *(int64 *)datp == 0 && !zero_cached) {
@@ -345,7 +347,7 @@ Datum sketch_rightmost_one(PG_FUNCTION_ARGS)
     size_t sketchsz = PG_GETARG_INT32(1);          /* size in bits */
     size_t sketchnum = PG_GETARG_INT32(2);          /* from the left! */
     char * bits = VARDATA(bitmap);
-    size_t len = VARSIZE_ANY_EXHDR(bitmap);
+    size_t len = (size_t)VARSIZE_ANY_EXHDR(bitmap);
 
     return rightmost_one((uint8 *)bits, len, sketchsz, sketchnum);
 }
@@ -356,7 +358,7 @@ Datum sketch_leftmost_zero(PG_FUNCTION_ARGS)
     size_t sketchsz = PG_GETARG_INT32(1);          /* size in bits */
     size_t sketchnum = PG_GETARG_INT32(2);          /* from the left! */
     char * bits = VARDATA(bitmap);
-    size_t len = VARSIZE_ANY_EXHDR(bitmap);
+    size_t len = (size_t)VARSIZE_ANY_EXHDR(bitmap);
 
     return leftmost_zero((uint8 *)bits, len, sketchsz, sketchnum);
 }
@@ -390,28 +392,71 @@ int4 safe_log2(int64 x)
     return out;
 }
 
-size_t ExtractDatumLen(Datum x, int len, bool byVal)
+/*
+ * We need process c string and var especially here, it is really ugly,
+ * but we have to.
+ * Because here the user can change the binary representations directly.
+ */
+size_t ExtractDatumLen(Datum x, int len, bool byVal, size_t capacity)
 {
     (void) byVal; /* avoid warning about unused parameter */
-    if (len > 0) 
-        return len;
-    else if (len == -1) 
-        return VARSIZE_ANY(DatumGetPointer(x));
-    else if (len == -2) 
-        return strlen((char *)DatumGetPointer(x));
+    size_t size = 0;
+    size_t idx = 0;
+    char   *data = NULL;
+    if (len > 0)
+    {
+        size = len;
+        if (capacity != (size_t)-1 && size > capacity) {
+            elog(ERROR, "invalid transition state");
+        }
+    }
+    else if (len == -1)
+    {
+        if (capacity == (size_t)-1) {
+            size = VARSIZE_ANY(DatumGetPointer(x));
+        }
+        else {
+            data = (char*)DatumGetPointer(x);
+            if ((capacity >= VARHDRSZ)
+                || (capacity >= 1 && VARATT_IS_1B(data))) {
+                size = VARSIZE_ANY(data);
+            }
+            else {
+                elog(ERROR, "invalid transition state");
+            }
+        }
+    }
+    else if (len == -2)
+    {
+        if (capacity == (size_t)-1) {
+            return strlen((char *)DatumGetPointer(x)) + 1;
+        }
+        else {
+            data = (char*)DatumGetPointer(x);
+            size = 0;
+            for (idx = 0; idx < capacity && data[idx] != 0; idx ++, size ++) {
+            }
+            if (idx >= capacity) {
+                elog(ERROR, "invalid transition state");
+            }
+            size ++;
+        }
+    }
     else {
         elog(ERROR, "Datum typelength error in ExtractDatumLen: len is %u", (unsigned)len);
         return 0;
     }
+
+    return size;
 }
 
-/* 
- * walk an array of int64s and convert word order of int64s to big-endian 
+/*
+ * walk an array of int64s and convert word order of int64s to big-endian
  * if force == true, convert even if this arch is big-endian
  */
 void int64_big_endianize(uint64 *bytes64,
                          uint32 numbytes,
-                         bool force)     
+                         bool force)
 {
     uint32 i;
     uint32 *bytes32 = (uint32 *)bytes64;
@@ -422,7 +467,7 @@ void int64_big_endianize(uint64 *bytes64,
 #else
     bool small_endian = true;
 #endif
-    
+
     if (numbytes % 8)
         elog(ERROR, "illegal numbytes argument to big_endianize: not a multiple of 8");
     if (small_endian || force) {

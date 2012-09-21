@@ -29,5 +29,5 @@ void   int64_big_endianize(uint64 *, uint32, bool);
 /*! macro to convert a Datum into a pointer suitable for memcpy */
 #define DatumExtractPointer(x, byVal)  (byVal ? (void *)&x : DatumGetPointer(x))
 
-size_t ExtractDatumLen(Datum x, int len, bool byVal);
+size_t ExtractDatumLen(Datum x, int len, bool byVal, size_t capacity);
 #endif /* SKETCH_SUPPORT_H */
