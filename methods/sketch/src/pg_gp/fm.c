@@ -71,13 +71,106 @@ typedef enum {SMALL, BIG} fmstatus;
  * \endinternal
  */
 typedef struct {
-    fmstatus status;
+    int32    status;        /* fmstatus, using int to make sure it is 4bytes aligned */
     Oid      typOid;
     Oid      funcOid;
     int16    typLen;
     bool     typByVal;   
+    char     reserved;      /* we'd better make sure that this struct is 4bytes aligned */
     char storage[];
 } fmtransval;
+
+/* check whter the contents in  fmtransval::storage is safe for sortasort */
+void check_sortasort(sortasort *st, size_t st_size) {
+    size_t left_len = st_size;
+    size_t cur_size = 0;
+    size_t cur_capacity = 0;
+
+    if (left_len < sizeof(sortasort)) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+    left_len -= sizeof(sortasort);
+
+    if (st->num_vals > st->capacity || st->storage_cur > st->storage_sz) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (left_len < st->capacity*sizeof(st->storage_cur) + st->storage_sz) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+    left_len = st->storage_sz;
+
+    /* 
+     * the following checking may be inefficiency, but by doing this centrally,
+     * we can avoid spreading the checking code everywhere. 
+     */ 
+    for (unsigned i = 0; i < st->num_vals; i ++) {
+        cur_capacity = left_len - st->dir[i];
+
+        if (st->dir[i] >= left_len) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+
+        cur_size = ExtractDatumLen(PointerGetDatum(SORTASORT_DATA(st) + st->dir[i]), 
+            st->typLen, st->typByVal, cur_capacity);
+
+        if (cur_size > cur_capacity) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+    } 
+}
+
+/* check whether the contents in the bytea is safe for a fmtransval */
+void check_fmtransval(bytea * storage) {
+    fmtransval * fmt = NULL;
+    sortasort *st = NULL;
+    int16 typLen = 0;
+    bool typByVal = false;
+    if (VARSIZE(storage) < VARHDRSZ + sizeof(fmtransval)) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    fmt = (fmtransval*)VARDATA(storage);
+    if (fmt->status != SMALL && fmt->status != BIG) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (fmt->reserved != 0) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (InvalidOid == fmt->typOid) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    get_typlenbyval(fmt->typOid, &typLen, &typByVal);
+    if (fmt->typByVal != typByVal || fmt->typLen != typLen) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (fmt->typLen < -2 || fmt->typLen == 0) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (SMALL == fmt->status) {
+        if (VARSIZE(storage) < VARHDRSZ + sizeof(fmtransval) + sizeof(sortasort)) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+        st = (sortasort *)fmt->storage;
+        if (fmt->typLen != st->typLen || fmt->typByVal != (bool)st->typByVal) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+        check_sortasort(st, VARSIZE(storage) - VARHDRSZ - sizeof(fmtransval));
+    }
+    else {
+        if (VARSIZE(storage) < 2*VARHDRSZ + sizeof(fmtransval)) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+        if (VARSIZE(storage) < VARHDRSZ + sizeof(fmtransval) + VARSIZE(&(fmt->storage))) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+    }
+}
 
 Datum __fmsketch_trans_c(bytea *, Datum);
 Datum __fmsketch_count_distinct_c(bytea *);
@@ -148,8 +241,12 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
                            transval->typByVal);
         }
         else {
+            check_fmtransval(transblob);
             /* extract the existing transval from the transblob */
             transval = (fmtransval *)VARDATA(transblob);
+            if (transval->typOid != element_type) {
+                elog(ERROR, "can't aggregate on elements with different types");
+            }
         }
 
         /*
@@ -159,7 +256,7 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
         if (transval->status == SMALL
             && ((sortasort *)(transval->storage))->num_vals <
             MINVALS) {
-            int len = ExtractDatumLen(inval, transval->typLen, transval->typByVal);
+            int len = ExtractDatumLen(inval, transval->typLen, transval->typByVal, -1);
             
             retval =
                 PointerGetDatum(fmsketch_sortasort_insert(
@@ -295,11 +392,14 @@ PG_FUNCTION_INFO_V1(__fmsketch_count_distinct);
 /*! UDA final function to get count(distinct) out of an FM sketch */
 Datum __fmsketch_count_distinct(PG_FUNCTION_ARGS)
 {
-    fmtransval *transval = (fmtransval *)VARDATA((PG_GETARG_BYTEA_P(0)));
+    fmtransval *transval = NULL;
 
     if (VARSIZE((PG_GETARG_BYTEA_P(0))) == VARHDRSZ)
         /* nothing was ever aggregated! */
         return (0);
+
+    check_fmtransval(PG_GETARG_BYTEA_P(0));
+    transval = (fmtransval *)VARDATA((PG_GETARG_BYTEA_P(0)));
 
     /* if status is not BIG then get count from sortasort */
     if (transval->status == SMALL)
@@ -370,8 +470,13 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
         PG_RETURN_DATUM(PointerGetDatum(transblob1));
     }
 
+    check_fmtransval(transblob1);
+    check_fmtransval(transblob2);
     transval1 = (fmtransval *)VARDATA(transblob1);
     transval2 = (fmtransval *)VARDATA(transblob2);
+    if (transval1->typOid != transval2->typOid) {
+        elog(ERROR, "can't merge two trans state with different element types");
+    }
 
     if (transval1->status == BIG && transval2->status == BIG) {
         /* easy case: merge two FM sketches via bitwise OR. */
@@ -406,7 +511,7 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
                 Datum the_val = PointerExtractDatum(SORTASORT_GETVAL(sortashort,i),
                                                     transval1->typByVal);
                 int the_len = ExtractDatumLen(the_val, transval1->typLen, 
-                                              transval1->typByVal);
+                                              transval1->typByVal, -1);
                 tblob_big = fmsketch_sortasort_insert(tblob_big, 
                                                       the_val, 
                                                       the_len);

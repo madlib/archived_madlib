@@ -44,6 +44,67 @@
 
 #include <ctype.h>
 
+/* check whether the content in the given bytea is safe for mfvtransval */
+void check_mfvtransval(bytea *storage) {
+    size_t left_len = VARSIZE(storage);
+    size_t cur_size = 0;
+    size_t cur_capacity = 0;
+    Oid     outFuncOid;
+    bool    typIsVarLen;
+
+    mfvtransval *mfv  = NULL;
+    
+    if (left_len < VARHDRSZ + sizeof(mfvtransval)) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+    mfv = (mfvtransval*)VARDATA(storage);
+    left_len -= VARHDRSZ + sizeof(mfvtransval);
+
+    if (mfv->next_mfv > mfv->max_mfvs) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (mfv->next_offset + VARHDRSZ > VARSIZE(storage)) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (InvalidOid == mfv->typOid) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    getTypeOutputInfo(mfv->typOid, &outFuncOid, &typIsVarLen); 
+    if (mfv->outFuncOid != outFuncOid
+        || mfv->typLen != get_typlen(mfv->typOid)
+        || mfv->typByVal != get_typbyval(mfv->typOid)) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+
+    if (left_len < sizeof(offsetcnt)*mfv->max_mfvs) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly");
+    }
+    /* offset is relative to mfvtransval */
+    left_len = VARSIZE(storage) - VARHDRSZ;
+
+    /* 
+     * the following checking may be inefficiency, but by doing this centrally,
+     * we can avoid spreading the checking code everywhere. 
+     */ 
+    for (unsigned i = 0; i < mfv->next_mfv; i ++) {
+        cur_capacity = left_len - mfv->mfvs[i].offset;
+
+        if (mfv->mfvs[i].offset > left_len) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+
+        cur_size = ExtractDatumLen(PointerGetDatum(MFV_DATA(mfv) + mfv->mfvs[i].offset), 
+            mfv->typLen, mfv->typByVal, cur_capacity);
+
+        if (cur_size > cur_capacity) {
+            elog(ERROR, "internal used trans state has been damaged unexpectly");
+        }
+    } 
+}
+
 PG_FUNCTION_INFO_V1(__mfvsketch_trans);
 
 /*!
@@ -78,12 +139,18 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
         Oid typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
         transblob = mfv_init_transval(max_mfvs, typOid);
     }
+    else {
+        check_mfvtransval(transblob);
+    }
 
     /* ignore NULL inputs */
     if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
         PG_RETURN_DATUM(PointerGetDatum(transblob));
 
     transval = (mfvtransval *)VARDATA(transblob);
+    if (transval->typOid != get_fn_expr_argtype(fcinfo->flinfo, 1)) {
+        elog(ERROR, "can't aggregate on elements with different types");
+    }
     /* insert into the countmin sketch */
     md5_datum = countmin_trans_c(transval->sketch,
                                 newdatum,
@@ -146,8 +213,8 @@ int mfv_find(bytea *blob, Datum val)
         datp = mfv_transval_getval(blob,i);
         iDat = PointerExtractDatum(datp, transval->typByVal);
 
-        if ((len = ExtractDatumLen(iDat, transval->typLen, transval->typByVal))
-            == ExtractDatumLen(val, transval->typLen, transval->typByVal)) {
+        if ((len = ExtractDatumLen(iDat, transval->typLen, transval->typByVal, -1))
+            == ExtractDatumLen(val, transval->typLen, transval->typByVal, -1)) {
             if (!memcmp(datp, valp, len))
                 /* arg is an mfv */
                 return(i);
@@ -216,7 +283,7 @@ void *mfv_transval_getval(bytea *blob, uint32 i)
     if (tvp->mfvs[i].offset > VARSIZE(blob) - VARHDRSZ
         || tvp->mfvs[i].offset < MFV_TRANSVAL_SZ(tvp->max_mfvs)-VARHDRSZ)
         elog(ERROR, "illegal offset %u in mfv sketch", tvp->mfvs[i].offset);
-    if (tvp->mfvs[i].offset  + ExtractDatumLen(dat, tvp->typLen, tvp->typByVal)
+    if (tvp->mfvs[i].offset  + ExtractDatumLen(dat, tvp->typLen, tvp->typByVal, -1)
         > VARSIZE(blob) - VARHDRSZ)
         elog(ERROR, "value overruns size of mfv sketch");
 
@@ -238,7 +305,7 @@ void *mfv_transval_getval(bytea *blob, uint32 i)
 void mfv_copy_datum(bytea *transblob, int index, Datum dat)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal);
+    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal, -1);
     void *       curval = mfv_transval_getval(transblob,index);
 
     memmove(curval, (void *)DatumExtractPointer(dat, transval->typByVal), datumLen);
@@ -262,7 +329,7 @@ bytea *mfv_transval_insert_at(bytea *transblob, Datum dat, uint32 i)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     bytea *      tmpblob;
-    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal);
+    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal, -1);
 
     if (i > transval->next_mfv)
         elog(
@@ -327,10 +394,10 @@ bytea *mfv_transval_replace(bytea *transblob, Datum dat, int i)
      * space allocation for the new value
      */
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
-    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal);
+    size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal, -1);
     void *       tmpp = mfv_transval_getval(transblob,i);
     Datum        oldDat = PointerExtractDatum(tmpp, transval->typByVal);
-    size_t       oldLen = ExtractDatumLen(oldDat, transval->typLen, transval->typByVal);
+    size_t       oldLen = ExtractDatumLen(oldDat, transval->typLen, transval->typByVal, -1);
 
     if (datumLen <= oldLen) {
         mfv_copy_datum(transblob, i, dat);
@@ -347,7 +414,7 @@ PG_FUNCTION_INFO_V1(__mfvsketch_final);
 Datum __mfvsketch_final(PG_FUNCTION_ARGS)
 {
     bytea *      transblob = PG_GETARG_BYTEA_P(0);
-    mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
+    mfvtransval *transval = NULL;
     ArrayType *  retval;
     uint32       i;
     int          dims[2], lbs[2];
@@ -365,15 +432,15 @@ Datum __mfvsketch_final(PG_FUNCTION_ARGS)
     if (PG_ARGISNULL(0)) PG_RETURN_NULL();
     if (VARSIZE(transblob) < MFV_TRANSVAL_SZ(0)) PG_RETURN_NULL();
 
+    check_mfvtransval(transblob);
+    transval = (mfvtransval *)VARDATA(transblob);
     /*
      * We only declare the variable-length array histo here after some sanity
      * checking. We risk a stack overflow otherwise. In particular, we need to
      * make sure that transval->max_mfvs is initialized. It might not be if the
      * (strict) transition function is never called. (MADLIB-254)
      */
-    Datum        histo[transval->max_mfvs][2];
-
-    transval = (mfvtransval *)VARDATA(transblob);
+    Datum        histo[transval->max_mfvs][2]; 
 
     qsort(transval->mfvs, transval->next_mfv, sizeof(offsetcnt), cnt_cmp_desc);
     getTypeOutputInfo(INT8OID,
@@ -474,6 +541,12 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     else if (VARSIZE(transblob2) <= sizeof(MFV_TRANSVAL_SZ(0))) {
         transblob2 = mfv_init_transval(transval1->max_mfvs, transval1->typOid);
         transval2 = (mfvtransval *)VARDATA(transblob2);
+    }
+    check_mfvtransval(transblob1);
+    check_mfvtransval(transblob2);
+
+    if ( transval1->typOid != transval2->typOid ) {
+        elog(ERROR, "can't merge two trans state with different element type");
     }
 
     /* initialize output */

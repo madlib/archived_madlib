@@ -110,7 +110,7 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
                     elog(ERROR,
                          "NULL parameter %d passed to __cmsketch_int8_trans",
                          i);
-                transval->args[i-2] = PG_GETARG_DATUM(i);
+                transval->args[i-2] = PG_GETARG_INT64(i);
             }
         }
         else transval->nargs = -1;
@@ -191,11 +191,19 @@ PG_FUNCTION_INFO_V1(__cmsketch_final);
 Datum __cmsketch_final(PG_FUNCTION_ARGS)
 {
     bytea *     blob = PG_GETARG_BYTEA_P(0);
-    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    cmtransval *sketch = NULL; 
     int         len = RANGES*sizeof(countmin) + VARHDRSZ;
-    bytea *out = palloc0(len);    
-    
-    memcpy((uint8 *)VARDATA(out), sketch->sketches, len - VARHDRSZ);
+    bytea *out = NULL;
+
+    if (VARSIZE(blob) > VARHDRSZ && !CM_TRANSVAL_INITIALIZED(blob)) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly.");
+    }
+
+    out = palloc0(len);    
+    if (VARSIZE(blob) > VARHDRSZ) {
+        sketch = (cmtransval *)VARDATA(blob);
+        memcpy((uint8 *)VARDATA(out), sketch->sketches, len - VARHDRSZ);
+    }
     SET_VARSIZE(out, len);
     
     PG_RETURN_BYTEA_P(out);
@@ -212,8 +220,7 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
     cmtransval *transval1 = (cmtransval *)VARDATA(counterblob1);
     cmtransval *transval2 = (cmtransval *)VARDATA(counterblob2);
     cmtransval *newtrans;
-    countmin *  sketches2 = (countmin *)
-                            ((cmtransval *)(VARDATA(counterblob2)))->sketches;
+    countmin *  sketches2 = NULL;
     bytea *     newblob;
     countmin *  newsketches;
     uint32      i, j, k;
@@ -232,6 +239,12 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
         counterblob2 = cmsketch_init_transval(transval1->typOid);
         transval2 = (cmtransval *)VARDATA(counterblob2);
     }
+
+    if (transval1->typOid != transval2->typOid) {
+        elog(ERROR, "can't merge two trans states with different element types");
+    }
+
+    sketches2 = transval2 ->sketches;
 
     sz = VARSIZE(counterblob1);
     /* allocate a new transval as a copy of counterblob1 */
@@ -298,8 +311,18 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
     countmin *sketches;
     char *    newblob = (char *)palloc(10240);
     uint32    i, j, k, c;
+    
+    if (VARSIZE(transblob) > VARHDRSZ && !CM_TRANSVAL_INITIALIZED(transblob)) {
+        elog(ERROR, "internal used trans state has been damaged unexpectly.");
+    }
 
-    sketches = ((cmtransval *)VARDATA(transblob))->sketches;
+    if (VARSIZE(transblob) > VARHDRSZ) {
+        sketches = ((cmtransval *)VARDATA(transblob))->sketches;
+    }
+    else {
+        sketches = palloc0(RANGES*sizeof(countmin) + VARHDRSZ);
+        SET_VARSIZE(sketches, RANGES*sizeof(countmin) + VARHDRSZ);
+    }
     for (i=0, c=0; i < RANGES; i++)
         for (j=0; j < DEPTH; j++)
             for(k=0; k < NUMCOUNTERS; k++) {
@@ -309,6 +332,9 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
                 if (c > 10000) break;
             }
     newblob[c] = '\0';
+    if (VARSIZE(transblob) <= VARHDRSZ) {
+        pfree(sketches);
+    }
     PG_RETURN_NULL();
 }
 
