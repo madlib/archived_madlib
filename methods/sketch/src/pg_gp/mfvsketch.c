@@ -55,32 +55,32 @@ void check_mfvtransval(bytea *storage) {
     mfvtransval *mfv  = NULL;
     
     if (left_len < VARHDRSZ + sizeof(mfvtransval)) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for mfvsketch");
     }
     mfv = (mfvtransval*)VARDATA(storage);
     left_len -= VARHDRSZ + sizeof(mfvtransval);
 
     if (mfv->next_mfv > mfv->max_mfvs) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for mfvsketch");
     }
 
     if (mfv->next_offset + VARHDRSZ > VARSIZE(storage)) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for mfvsketch");
     }
 
     if (InvalidOid == mfv->typOid) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for mfvsketch");
     }
 
     getTypeOutputInfo(mfv->typOid, &outFuncOid, &typIsVarLen); 
     if (mfv->outFuncOid != outFuncOid
         || mfv->typLen != get_typlen(mfv->typOid)
         || mfv->typByVal != get_typbyval(mfv->typOid)) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for mfvsketch");
     }
 
     if (left_len < sizeof(offsetcnt)*mfv->max_mfvs) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for mfvsketch");
     }
     /* offset is relative to mfvtransval */
     left_len = VARSIZE(storage) - VARHDRSZ;
@@ -93,14 +93,14 @@ void check_mfvtransval(bytea *storage) {
         cur_capacity = left_len - mfv->mfvs[i].offset;
 
         if (mfv->mfvs[i].offset > left_len) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for mfvsketch");
         }
 
         cur_size = ExtractDatumLen(PointerGetDatum(MFV_DATA(mfv) + mfv->mfvs[i].offset), 
             mfv->typLen, mfv->typByVal, cur_capacity);
 
         if (cur_size > cur_capacity) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for mfvsketch");
         }
     } 
 }
@@ -149,7 +149,7 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
 
     transval = (mfvtransval *)VARDATA(transblob);
     if (transval->typOid != get_fn_expr_argtype(fcinfo->flinfo, 1)) {
-        elog(ERROR, "can't aggregate on elements with different types");
+        elog(ERROR, "cannot aggregate on elements with different types");
     }
     /* insert into the countmin sketch */
     md5_datum = countmin_trans_c(transval->sketch,
@@ -546,7 +546,7 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
     check_mfvtransval(transblob2);
 
     if ( transval1->typOid != transval2->typOid ) {
-        elog(ERROR, "can't merge two trans state with different element type");
+        elog(ERROR, "cannot merge two transition state with different element type");
     }
 
     /* initialize output */

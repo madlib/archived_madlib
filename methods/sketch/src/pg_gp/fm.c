@@ -71,12 +71,29 @@ typedef enum {SMALL, BIG} fmstatus;
  * \endinternal
  */
 typedef struct {
-    int32    status;        /* fmstatus, using int to make sure it is 4bytes aligned */
+    fmstatus status;
     Oid      typOid;
     Oid      funcOid;
     int16    typLen;
     bool     typByVal;   
-    char     reserved;      /* we'd better make sure that this struct is 4bytes aligned */
+    /* 
+     * We'd better make sure that this struct is 8bytes aligned,  
+     * If the there is no the reserved field, (char*)&fmtransval.storage - (char*)&fmtransval
+     * is not equal to sizeof(fmtransval). This is not coincident with one's intuition
+     * and is also error prone when coding.
+     * 
+     * Another reason to make the address of storage 8bytes aligned is that when we 
+     * store a structure in storage, 8bytes aligned address leads high performance when 
+     * cpu access main memory.
+     *
+     * If there is any chance someone may change the compiler option -fpack-struct,
+     * for struct like this, we'd better make every field well aligned and packed.
+     * 
+     * The default option makes sure that the first byte address of 8bytes types like int64
+     * are 8bytes aligned. And 4bytes types like int32 are 4bytes aligned. So we only 
+     * need to make sure the first byte address of storage 8bytes aligned.
+     */
+    char     reserved;      
     char storage[];
 } fmtransval;
 
@@ -87,16 +104,16 @@ void check_sortasort(sortasort *st, size_t st_size) {
     size_t cur_capacity = 0;
 
     if (left_len < sizeof(sortasort)) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
     left_len -= sizeof(sortasort);
 
     if (st->num_vals > st->capacity || st->storage_cur > st->storage_sz) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
 
     if (left_len < st->capacity*sizeof(st->storage_cur) + st->storage_sz) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
     left_len = st->storage_sz;
 
@@ -108,14 +125,14 @@ void check_sortasort(sortasort *st, size_t st_size) {
         cur_capacity = left_len - st->dir[i];
 
         if (st->dir[i] >= left_len) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for fmsketch");
         }
 
         cur_size = ExtractDatumLen(PointerGetDatum(SORTASORT_DATA(st) + st->dir[i]), 
             st->typLen, st->typByVal, cur_capacity);
 
         if (cur_size > cur_capacity) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for fmsketch");
         }
     } 
 }
@@ -127,47 +144,47 @@ void check_fmtransval(bytea * storage) {
     int16 typLen = 0;
     bool typByVal = false;
     if (VARSIZE(storage) < VARHDRSZ + sizeof(fmtransval)) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
 
     fmt = (fmtransval*)VARDATA(storage);
     if (fmt->status != SMALL && fmt->status != BIG) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
 
     if (fmt->reserved != 0) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
 
     if (InvalidOid == fmt->typOid) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
 
     get_typlenbyval(fmt->typOid, &typLen, &typByVal);
     if (fmt->typByVal != typByVal || fmt->typLen != typLen) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
 
     if (fmt->typLen < -2 || fmt->typLen == 0) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly");
+        elog(ERROR, "invalid transition state for fmsketch");
     }
 
     if (SMALL == fmt->status) {
         if (VARSIZE(storage) < VARHDRSZ + sizeof(fmtransval) + sizeof(sortasort)) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for fmsketch");
         }
         st = (sortasort *)fmt->storage;
         if (fmt->typLen != st->typLen || fmt->typByVal != (bool)st->typByVal) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for fmsketch");
         }
         check_sortasort(st, VARSIZE(storage) - VARHDRSZ - sizeof(fmtransval));
     }
     else {
         if (VARSIZE(storage) < 2*VARHDRSZ + sizeof(fmtransval)) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for fmsketch");
         }
         if (VARSIZE(storage) < VARHDRSZ + sizeof(fmtransval) + VARSIZE(&(fmt->storage))) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state for fmsketch");
         }
     }
 }
@@ -245,7 +262,7 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
             /* extract the existing transval from the transblob */
             transval = (fmtransval *)VARDATA(transblob);
             if (transval->typOid != element_type) {
-                elog(ERROR, "can't aggregate on elements with different types");
+                elog(ERROR, "cannot aggregate on elements with different types");
             }
         }
 
@@ -475,7 +492,7 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
     transval1 = (fmtransval *)VARDATA(transblob1);
     transval2 = (fmtransval *)VARDATA(transblob2);
     if (transval1->typOid != transval2->typOid) {
-        elog(ERROR, "can't merge two trans state with different element types");
+        elog(ERROR, "cannot merge two transition state with different element types");
     }
 
     if (transval1->status == BIG && transval2->status == BIG) {

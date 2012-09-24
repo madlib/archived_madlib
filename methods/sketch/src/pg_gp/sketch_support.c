@@ -407,7 +407,7 @@ size_t ExtractDatumLen(Datum x, int len, bool byVal, size_t capacity)
     {
         size = len;
         if (capacity != (size_t)-1 && size > capacity) {
-            elog(ERROR, "internal used trans state has been damaged unexpectly");
+            elog(ERROR, "invalid transition state");
         }
     }
     else if (len == -1) 
@@ -422,7 +422,7 @@ size_t ExtractDatumLen(Datum x, int len, bool byVal, size_t capacity)
                 size = VARSIZE_ANY(data);
             } 
             else {
-                elog(ERROR, "internal used trans state has been damaged unexpectly");
+                elog(ERROR, "invalid transition state");
             }
         }
     }
@@ -437,7 +437,7 @@ size_t ExtractDatumLen(Datum x, int len, bool byVal, size_t capacity)
             for (idx = 0; idx < capacity && data[idx] != 0; idx ++, size ++) {
             }
             if (idx >= capacity) {
-                elog(ERROR, "internal used trans state has been damaged unexpectly");
+                elog(ERROR, "invalid transition state");
             }
             size ++;
         }

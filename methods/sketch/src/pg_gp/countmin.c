@@ -26,6 +26,7 @@
  */
 
 #include "postgres.h"
+#include "postgresql/server/utils/fmgroids.h"
 #include "utils/array.h"
 #include "utils/elog.h"
 #include "utils/builtins.h"
@@ -84,7 +85,6 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 {
     bytea *     transblob = PG_GETARG_BYTEA_P(0);
     cmtransval *transval;
-    Oid         element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
     /*
      * an uninitialized transval should be a datum smaller than sizeof(cmtransval).
@@ -92,7 +92,7 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
      */
     if (!CM_TRANSVAL_INITIALIZED(transblob)) {
         /* XXX would be nice to pfree the existing transblob, but pfree complains. */
-        transblob = cmsketch_init_transval(element_type);
+        transblob = cmsketch_init_transval();
         transval = (cmtransval *)VARDATA(transblob);
 
         if (initargs) {
@@ -118,9 +118,8 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
     return(transblob);
 }
 
-bytea *cmsketch_init_transval(Oid typOid)
+bytea *cmsketch_init_transval()
 {
-    bool        typIsVarlena;
     cmtransval *transval;
 
     /* allocate and zero out a transval via palloc0 */
@@ -128,10 +127,6 @@ bytea *cmsketch_init_transval(Oid typOid)
     SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
 
     transval = (cmtransval *)VARDATA(transblob);
-    transval->typOid = typOid;
-    getTypeOutputInfo(transval->typOid,
-                      &(transval->outFuncOid),
-                      &typIsVarlena);
     return(transblob);
 }
 
@@ -144,12 +139,9 @@ void countmin_dyadic_trans_c(cmtransval *transval, Datum input)
 {
     uint32 j;
     
-    if (transval->typOid != INT8OID)
-        elog(ERROR, "cmsketch can only compute ranges for int64");
-
     for (j = 0; j < RANGES; j++) {
         countmin_trans_c(transval->sketches[j], input, 
-                         transval->outFuncOid, transval->typOid);
+                         F_INT8OUT, INT8OID);
         /* now divide by 2 for the next dyadic range */
         input = Int64GetDatum(DatumGetInt64(input) >> 1);
     }
@@ -196,7 +188,7 @@ Datum __cmsketch_final(PG_FUNCTION_ARGS)
     bytea *out = NULL;
 
     if (VARSIZE(blob) > VARHDRSZ && !CM_TRANSVAL_INITIALIZED(blob)) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly.");
+        elog(ERROR, "invalid transition state for cmsketch");
     }
 
     out = palloc0(len);    
@@ -232,16 +224,12 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
         /* if both are empty can return one of them */
         PG_RETURN_DATUM(PointerGetDatum(counterblob1));
     else if (!CM_TRANSVAL_INITIALIZED(counterblob1)) {
-        counterblob1 = cmsketch_init_transval(transval2->typOid);
+        counterblob1 = cmsketch_init_transval();
         transval1 = (cmtransval *)VARDATA(counterblob1);
     }
     else if (!CM_TRANSVAL_INITIALIZED(counterblob2)) {
-        counterblob2 = cmsketch_init_transval(transval1->typOid);
+        counterblob2 = cmsketch_init_transval();
         transval2 = (cmtransval *)VARDATA(counterblob2);
-    }
-
-    if (transval1->typOid != transval2->typOid) {
-        elog(ERROR, "can't merge two trans states with different element types");
     }
 
     sketches2 = transval2 ->sketches;
@@ -299,6 +287,7 @@ int64 cmsketch_count_md5_datum(countmin sketch, bytea *md5_bytea, Oid funcOid)
 }
 
 
+#if 0
 /****** SUPPORT ROUTINES *******/
 PG_FUNCTION_INFO_V1(cmsketch_dump);
 
@@ -313,7 +302,7 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
     uint32    i, j, k, c;
     
     if (VARSIZE(transblob) > VARHDRSZ && !CM_TRANSVAL_INITIALIZED(transblob)) {
-        elog(ERROR, "internal used trans state has been damaged unexpectly.");
+        elog(ERROR, "invalid transition state for cmsketch");
     }
 
     if (VARSIZE(transblob) > VARHDRSZ) {
@@ -337,6 +326,7 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
     }
     PG_RETURN_NULL();
 }
+#endif
 
 
 /*!
