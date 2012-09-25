@@ -7,6 +7,7 @@
  * http://www.weibull.com/DOEWeb/estimating_regression_models_using_least_squares.htm#Example%205.1
  * http://www.weibull.com/DOEWeb/hypothesis_tests_in_multiple_linear_regression.htm#Example%205.3
  */
+DROP TABLE IF EXISTS weibull;
 CREATE TABLE weibull (
     id INTEGER NOT NULL,
     x1 DOUBLE PRECISION,
@@ -51,9 +52,54 @@ SELECT assert(
 
 
 /*
+		The numbers for the robust variance estimates have been verified using
+		R's sandwich package.
+		Refer to http://cran.r-project.org/web/packages/sandwich/sandwich.pdf 
+		for more details
+*/
+
+SELECT assert(
+    relative_error(robust_std_err, ARRAY[70.2748,0.2790,2.7000]) < 1e-4 AND
+    relative_error(robust_t_stats, ARRAY[-2.1844,4.4392,4.4749]) < 1e-4 AND
+    relative_error(robust_p_values, ARRAY[0.0464,0.00056,0.00052]) < 1e-2,
+    'Huber white sandwich estimator (weibull.com test): Wrong results'
+) FROM (
+	SELECT (robust_linregr(y, ARRAY[1, x1, x2], coef)).*
+	FROM
+	(		SELECT (linregr(y, ARRAY[1, x1, x2])).coef
+			FROM weibull
+	) as mle_coef,
+	weibull as src
+) q;
+
+
+/*
+		The numbers for the robust variance estimates have been verified using
+		R's lmtest package
+		Refer to http://cran.r-project.org/web/packages/lmtest/index.html
+		for more details
+*/
+
+SELECT assert(
+    relative_error(test_statistic, 0.8677) < 1e-4 AND
+    relative_error(p_value, 0.6479) < 1e-2,
+    'Heteroskedasticity test (weibull.com test): Wrong results'
+) FROM (
+	SELECT (heteroskedasticity_test_linregr(y, ARRAY[1, x1, x2], coef)).*
+	FROM
+	(		SELECT (linregr(y, ARRAY[1, x1, x2])).coef
+			FROM weibull
+	) as mle_coef,
+	weibull as src
+) q;
+
+
+
+/*
  * The following example is taken from:
  * http://biocomp.health.unm.edu/biomed505/Course/Cheminformatics/advanced/data_classification_qsar/linear_multilinear_regression.pdf
  */
+DROP TABLE IF EXISTS unm;
 CREATE TABLE unm (
     id INTEGER NOT NULL,
     x1 DOUBLE PRECISION,
@@ -78,11 +124,40 @@ SELECT assert(
     FROM unm
 ) q;
 
+SELECT assert(
+    relative_error(test_statistic, 3.254) < 1e-4 AND
+    relative_error(p_value, 0.1964) < 1e-2,
+    'Heteroskedasticity test (unm test): Wrong results'
+) FROM (
+	SELECT (heteroskedasticity_test_linregr(y, ARRAY[1, x1, x2], coef)).*
+	FROM
+	(		SELECT (linregr(y, ARRAY[1, x1, x2])).coef
+			FROM unm
+	) as mle_coef,
+	unm as src
+) q;
+
+
+SELECT assert(
+   	relative_error(robust_std_err, ARRAY[0.1173,0.3673,0.4426]) < 1e-2 AND
+    relative_error(robust_t_stats, ARRAY[82.5606,5.6673,3.3615]) < 1e-2 AND
+    relative_error(robust_p_values, ARRAY[0.000003916,0.01088,0.0436]) < 1e-2,
+    'Huber white sandwich estimator (unm test): Wrong results'
+) FROM (
+	SELECT (robust_linregr(y, ARRAY[1, x1, x2], coef)).*
+	FROM
+	(		SELECT (linregr(y, ARRAY[1, x1, x2])).coef
+			FROM unm
+	) as mle_coef,
+	unm as src
+) q;
+	
 
 /*
  * The following example is taken from:
  * http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf
  */
+DROP TABLE IF EXISTS houses;
 CREATE TABLE houses (
     id SERIAL NOT NULL,
     tax INTEGER,
@@ -124,3 +199,33 @@ SELECT assert(
     SELECT (linregr(price, array[1, bedroom, bath, size])).*
     FROM houses
 ) q;
+
+
+SELECT assert(
+    relative_error(robust_std_err, ARRAY[41855.7087373326,21052.4980,14969.5873,27.3843]) < 1e-4 AND
+    relative_error(robust_t_stats, ARRAY[0.6671,-1.6874,0.1515,4.7762]) < 1e-2 AND
+    relative_error(robust_p_values, ARRAY[0.5184,0.1196,0.8822,0.0005]) < 1e-2,
+    'Huber white sandwich estimator (houses): Wrong results'
+) FROM (
+	SELECT (robust_linregr(price, array[1, bedroom, bath, size], coef)).*
+	FROM
+	(		SELECT (linregr(price, array[1, bedroom, bath, size])).coef
+			FROM houses
+	) as mle_coef,
+	houses as src
+) q;
+
+
+SELECT assert(
+    relative_error(test_statistic, 0.1828) < 1e-4 AND
+    relative_error(p_value, 0.9803) < 1e-2,
+    'Heteroskedasticity test (houses): Wrong results'
+) FROM (
+	SELECT (heteroskedasticity_test_linregr(price, array[1, bedroom, bath, size], coef)).*
+	FROM
+	(		SELECT (linregr(price, array[1, bedroom, bath, size])).coef
+			FROM houses
+	) as mle_coef,
+	houses as src
+) q;
+
