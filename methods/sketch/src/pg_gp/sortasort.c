@@ -22,8 +22,8 @@
  * sorted.
  */
 //#include <ctype.h>
-#include "postgres.h"
-#include "fmgr.h"
+#include <postgres.h>
+#include <fmgr.h>
 #include "sortasort.h"
 #include "sketch_support.h"
 

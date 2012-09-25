@@ -25,20 +25,19 @@
  * "the answer is within \epsilon of the true answer with probability 1-\delta."
  */
 
-#include "postgres.h"
-#include "postgresql/server/utils/fmgroids.h"
-#include "utils/array.h"
-#include "utils/elog.h"
-#include "utils/builtins.h"
-#include "utils/lsyscache.h"
-#include "utils/numeric.h"
-#include "nodes/execnodes.h"
-#include "fmgr.h"
-#include "sketch_support.h"
-#include "catalog/pg_type.h"
-#include "countmin.h"
-
+#include <postgres.h>
+#include <utils/fmgroids.h>
+#include <utils/array.h>
+#include <utils/elog.h>
+#include <utils/builtins.h>
+#include <utils/lsyscache.h>
+#include <utils/numeric.h>
+#include <nodes/execnodes.h>
+#include <fmgr.h>
+#include <catalog/pg_type.h>
 #include <ctype.h>
+#include "sketch_support.h"
+#include "countmin.h" 
 
 PG_FUNCTION_INFO_V1(__cmsketch_int8_trans);
 
@@ -120,13 +119,10 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 
 bytea *cmsketch_init_transval()
 {
-    cmtransval *transval;
-
     /* allocate and zero out a transval via palloc0 */
     bytea *     transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
     SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
 
-    transval = (cmtransval *)VARDATA(transblob);
     return(transblob);
 }
 

@@ -25,17 +25,17 @@
 
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
-#include "postgres.h"
-#include "utils/array.h"
-#include "utils/elog.h"
-#include "utils/builtins.h"
-#include "utils/lsyscache.h"
-#include "libpq/md5.h"
-#include "nodes/execnodes.h"
-#include "fmgr.h"
+#include <postgres.h>
+#include <utils/array.h>
+#include <utils/elog.h>
+#include <utils/builtins.h>
+#include <utils/lsyscache.h>
+#include <libpq/md5.h>
+#include <nodes/execnodes.h>
+#include <fmgr.h>
+#include <ctype.h>
 #include "sketch_support.h"
 #include "sortasort.h"
-#include <ctype.h>
 
 #ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
