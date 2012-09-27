@@ -47,8 +47,6 @@
 /* check whether the content in the given bytea is safe for mfvtransval */
 void check_mfvtransval(bytea *storage) {
     size_t left_len = VARSIZE(storage);
-    size_t cur_size = 0;
-    size_t cur_capacity = 0;
     Oid     outFuncOid;
     bool    typIsVarLen;
 
@@ -82,27 +80,6 @@ void check_mfvtransval(bytea *storage) {
     if (left_len < sizeof(offsetcnt)*mfv->max_mfvs) {
         elog(ERROR, "invalid transition state for mfvsketch");
     }
-    /* offset is relative to mfvtransval */
-    left_len = VARSIZE(storage) - VARHDRSZ;
-
-    /* 
-     * the following checking may be inefficiency, but by doing this centrally,
-     * we can avoid spreading the checking code everywhere. 
-     */ 
-    for (unsigned i = 0; i < mfv->next_mfv; i ++) {
-        cur_capacity = left_len - mfv->mfvs[i].offset;
-
-        if (mfv->mfvs[i].offset > left_len) {
-            elog(ERROR, "invalid transition state for mfvsketch");
-        }
-
-        cur_size = ExtractDatumLen(PointerGetDatum(MFV_DATA(mfv) + mfv->mfvs[i].offset), 
-            mfv->typLen, mfv->typByVal, cur_capacity);
-
-        if (cur_size > cur_capacity) {
-            elog(ERROR, "invalid transition state for mfvsketch");
-        }
-    } 
 }
 
 PG_FUNCTION_INFO_V1(__mfvsketch_trans);
@@ -276,14 +253,19 @@ void *mfv_transval_getval(bytea *blob, uint32 i)
     void *       retval = (void *)(((char*)tvp) + tvp->mfvs[i].offset);
     Datum        dat = PointerExtractDatum(retval, tvp->typByVal);
 
-    if (i > tvp->next_mfv)
+    if (i >= tvp->next_mfv)
         elog(ERROR,
              "attempt to get frequent value at illegal index %d in mfv sketch",
              i);
     if (tvp->mfvs[i].offset > VARSIZE(blob) - VARHDRSZ
         || tvp->mfvs[i].offset < MFV_TRANSVAL_SZ(tvp->max_mfvs)-VARHDRSZ)
         elog(ERROR, "illegal offset %u in mfv sketch", tvp->mfvs[i].offset);
-    if (tvp->mfvs[i].offset  + ExtractDatumLen(dat, tvp->typLen, tvp->typByVal, -1)
+    /* 
+     * call ExtractDatumLen to make sure enough space, this checking is unnecessary, 
+     * it is used to prevent gcc from optimizing out the ExtractDatumLen function call.
+     */
+    if (tvp->mfvs[i].offset  
+        + ExtractDatumLen(dat, tvp->typLen, tvp->typByVal, VARSIZE(blob) - VARHDRSZ - tvp->mfvs[i].offset)
         > VARSIZE(blob) - VARHDRSZ)
         elog(ERROR, "value overruns size of mfv sketch");
 
@@ -306,7 +288,7 @@ void mfv_copy_datum(bytea *transblob, int index, Datum dat)
 {
     mfvtransval *transval = (mfvtransval *)VARDATA(transblob);
     size_t       datumLen = ExtractDatumLen(dat, transval->typLen, transval->typByVal, -1);
-    void *       curval = mfv_transval_getval(transblob,index);
+    void *       curval = (char*)transval +  transval->mfvs[index].offset;
 
     memmove(curval, (void *)DatumExtractPointer(dat, transval->typByVal), datumLen);
 }

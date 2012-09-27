@@ -27,6 +27,33 @@
 #include "sortasort.h"
 #include "sketch_support.h"
 
+#define SORTASORT_DATA(s)  (((char *)(s->dir)) + \
+    (s->capacity * (sizeof (s->dir[0]))))
+
+/*
+ * get the ith item stored in sortasort
+ */
+char *sortasort_getval(sortasort *s, unsigned i) {
+    char *data_ptr = SORTASORT_DATA(s);
+    char *res = NULL;
+    Datum dat;
+    if (i >= s->num_vals) {
+        elog(ERROR, "attempt to get item at illegal index %d in sortasort", i);
+    }
+    if (s->dir[i] >= s->storage_sz) {
+        elog(ERROR, "illegal offset %u in sortasort", s->dir[i]);
+    }
+    res = data_ptr + s->dir[i];
+    dat = PointerExtractDatum(res, s->typByVal);
+    if (s->dir[i] 
+        + ExtractDatumLen(dat, s->typLen, s->typByVal, s->storage_sz - s->dir[i])
+        > s->storage_sz) {
+        elog(ERROR, "value overruns size of sortasort");
+    }
+
+    return res;
+}
+
 /*!
  * given a pre-allocated sortasort, set up its metadata
  * first argument s is the
@@ -69,10 +96,8 @@ int sorta_cmp(const void *i, const void *j, void *thunk)
 {
     /* the "thunk" in this case is the sortasort being sorted */
     sortasort *s = (sortasort *)thunk;
-    int        first = *(int *)i;
-    int        second = *(int *)j;
-    char      *dat1 = SORTASORT_DATA(s) + first;
-    char      *dat2 = SORTASORT_DATA(s) + second;
+    char      *dat1 = sortasort_getval(s, ((unsigned *)i) - s->dir);
+    char      *dat2 = sortasort_getval(s, ((unsigned *)j) - s->dir);
     int        len = s->typLen;
     int        shorter;
     
@@ -181,7 +206,7 @@ int sortasort_find(sortasort *s, Datum dat)
     }
     theguess = hi / 2;
     while (themin < themax ) {
-        if (!(diff = memcmp(SORTASORT_GETVAL(s,theguess), 
+        if (!(diff = memcmp(sortasort_getval(s,theguess), 
                             DatumExtractPointer(dat, s->typByVal), 
                             len)))
             return theguess;
@@ -204,7 +229,7 @@ int sortasort_find(sortasort *s, Datum dat)
 
     /* if we got here, continue with a naive linear search on the tail */
     for (i = hi; i < s->num_vals; i++)
-        if (!memcmp(SORTASORT_GETVAL(s, i), 
+        if (!memcmp(sortasort_getval(s, i), 
                     DatumExtractPointer(dat, s->typByVal), 
                     len))
             return i;

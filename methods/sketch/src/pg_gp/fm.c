@@ -100,8 +100,6 @@ typedef struct {
 /* check whter the contents in  fmtransval::storage is safe for sortasort */
 void check_sortasort(sortasort *st, size_t st_size) {
     size_t left_len = st_size;
-    size_t cur_size = 0;
-    size_t cur_capacity = 0;
 
     if (left_len < sizeof(sortasort)) {
         elog(ERROR, "invalid transition state for fmsketch");
@@ -115,26 +113,6 @@ void check_sortasort(sortasort *st, size_t st_size) {
     if (left_len < st->capacity*sizeof(st->storage_cur) + st->storage_sz) {
         elog(ERROR, "invalid transition state for fmsketch");
     }
-    left_len = st->storage_sz;
-
-    /* 
-     * the following checking may be inefficiency, but by doing this centrally,
-     * we can avoid spreading the checking code everywhere. 
-     */ 
-    for (unsigned i = 0; i < st->num_vals; i ++) {
-        cur_capacity = left_len - st->dir[i];
-
-        if (st->dir[i] >= left_len) {
-            elog(ERROR, "invalid transition state for fmsketch");
-        }
-
-        cur_size = ExtractDatumLen(PointerGetDatum(SORTASORT_DATA(st) + st->dir[i]), 
-            st->typLen, st->typByVal, cur_capacity);
-
-        if (cur_size > cur_capacity) {
-            elog(ERROR, "invalid transition state for fmsketch");
-        }
-    } 
 }
 
 /* check whether the contents in the bytea is safe for a fmtransval */
@@ -301,7 +279,7 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
              */
             for (i = 0; i < MINVALS; i++)
                 __fmsketch_trans_c(newblob, 
-                                   PointerExtractDatum(SORTASORT_GETVAL(s,i), s->typByVal));
+                                   PointerExtractDatum(sortasort_getval(s,i), s->typByVal));
 
             /*
              * XXXX would like to pfree the old transblob, but the memory allocator doesn't like it
@@ -525,7 +503,7 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
              * the bigger one.
              */
             for (i = 0; i < sortashort->num_vals; i++) {
-                Datum the_val = PointerExtractDatum(SORTASORT_GETVAL(sortashort,i),
+                Datum the_val = PointerExtractDatum(sortasort_getval(sortashort,i),
                                                     transval1->typByVal);
                 int the_len = ExtractDatumLen(the_val, transval1->typLen, 
                                               transval1->typByVal, -1);
@@ -551,14 +529,14 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
     if (transval1->status == SMALL) {
         s1 = (sortasort *)(transval1->storage);
         for(i = 0; i < s1->num_vals; i++) {
-            __fmsketch_trans_c(tblob_big, PointerExtractDatum(SORTASORT_GETVAL(s1,i),
+            __fmsketch_trans_c(tblob_big, PointerExtractDatum(sortasort_getval(s1,i),
                                                               transval1->typByVal));
         }
     }
     if (transval2->status == SMALL) {
         s2 = (sortasort *)(transval2->storage);
         for(i = 0; i < s2->num_vals; i++) {
-            __fmsketch_trans_c(tblob_big, PointerExtractDatum(SORTASORT_GETVAL(s2,i),
+            __fmsketch_trans_c(tblob_big, PointerExtractDatum(sortasort_getval(s2,i),
                                                               transval1->typByVal));
         }
     }

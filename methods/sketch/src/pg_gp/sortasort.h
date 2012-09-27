@@ -31,9 +31,12 @@ typedef struct {
     unsigned dir[];        /*! storage of the strings */
 } sortasort;
 
-#define SORTASORT_DATA(s)  (((char *)(s->dir)) + \
-    (s->capacity * (sizeof (s->dir[0]))))
-#define SORTASORT_GETVAL(s, i) (SORTASORT_DATA(s) + s->dir[i])
+
+
+/*
+ * get the ith item stored in sortasort
+ */
+char *sortasort_getval(sortasort *s, unsigned i); 
 
 int sortasort_try_insert(sortasort *, Datum, int);
 sortasort *sortasort_init(sortasort *, size_t, size_t, int, bool);
