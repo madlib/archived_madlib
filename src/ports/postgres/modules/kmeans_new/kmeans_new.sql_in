@@ -314,7 +314,7 @@ CREATE TYPE MADLIB_SCHEMA.kmeans_new_state AS (
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
     sql VARCHAR, DOUBLE PRECISION[][], REGPROC, INTEGER, DOUBLE PRECISION
 ) RETURNS VOID
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -334,7 +334,7 @@ AS $$PythonFunction(kmeans_new, kmeans_new, compute_kmeans)$$;
  * @brief Perform Lloyd's k-means local-search heuristic
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_point Expression evaluting to point coordinates for each tuple
+ * @param expr_point Expression evaluating to point coordinates for each tuple
  * @param initial_centroids Matrix containing the initial centroids as columns
  * @param fn_squared_dist Name of a function with signature
  *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
@@ -487,7 +487,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args(
     sql VARCHAR, INT2, REGPROC, DOUBLE PRECISION[][]
 ) RETURNS VOID
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -505,7 +505,7 @@ LANGUAGE plpythonu VOLATILE;
  * @brief k-Means++ Seeding
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_point Name of the column containing the point coordinates
+ * @param expr_point Expression evaluating to point coordinates for each tuple
  * @param k Number of centroids
  * @param fn_squared_dist Name of a function with signature
  *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
@@ -697,7 +697,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_random_seeding_args(
     sql VARCHAR, INT2, DOUBLE PRECISION[][]
 ) RETURNS VOID
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -715,7 +715,7 @@ LANGUAGE plpythonu VOLATILE;
  * @brief k-Means Random Seeding
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_point Name of the column containing the point coordinates
+ * @param expr_point Expression evaluating to point coordinates for each tuple
  * @param k Number of centroids
  * @param initial_centroids A matrix containing up to \f$ k \f$ columns as
  *     columns. kmeanspp_seeding() proceeds exactly as if these centroids had
@@ -895,7 +895,7 @@ CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
     fn_squared_dist VARCHAR, agg_mean VARCHAR, max_num_iterations INTEGER,
     min_frac_reassigned DOUBLE PRECISION
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -948,8 +948,8 @@ BEGIN
             ),
             $3, $4, $5, $6)
             $sql$,
-            rel_source, expr_point,
-            fn_squared_dist, agg_mean, max_num_iterations, min_frac_reassigned)
+        rel_source, expr_point,
+        fn_squared_dist, agg_mean, max_num_iterations, min_frac_reassigned)
         INTO theResult;
     RETURN theResult;
 END;
@@ -1016,4 +1016,99 @@ LANGUAGE sql AS $$
         $1, $2,
         $3, $4,
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001)
+$$;
+
+
+/**
+ * @internal
+ * @brief Execute a SQL command where $1, ..., $3 are substituted with the
+ *     given arguments.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_silhouette_args(
+    sql VARCHAR, centroids DOUBLE PRECISION[][], fn_dist REGPROC
+) RETURNS DOUBLE PRECISION
+STABLE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+/**
+ * @brief Compute a simplified version of the silhouette coefficient
+ *
+ * @param rel_source Name of the relation containing input points
+ * @param expr_point Expression evaluating to point coordinates \f$ x_i \f$ for
+ *     each tuple
+ * @param centroids Matrix \f$ M = (\vec{m_0} \dots \vec{m_{k-1}})
+ *     \in \mathbb{R}^{d \times k} \f$ with \f$ k \f$ columns, where column
+ *     \f$ i \f$ contains the position of centroid \f$ i \f$.
+ * @param fn_dist Name of a function with signature
+ *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
+ *     returns the distance between two points
+ * @return For each point \f$ x_i \f$, let
+ *     \f$ d_1( x_i ) \f$ and \f$ d_2( x_i ) \f$ be the distance to the closest
+ *     and 2nd-closest centroid, respectively. If there is more than one
+ *     closest centroids then \f$ d_1( x_i ) = d_2( x_i )\f$.
+ *     The return value is the average, over all points \f$ x_i \f$, of
+ *     \f[
+ *         \frac{d_2( x_i ) - d_1(x_i)}{d_2(x_i)},
+ *     \f]
+ *     where 0/0 is interpreted as 0.
+ *     Clearly, the simplified silhouette coefficient assumes values in
+ *     \f$ [0,1] \f$.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.simple_silhouette(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    centroids DOUBLE PRECISION[][],
+    fn_dist VARCHAR /*+ DEFAULT 'dist_norm2' */
+) RETURNS DOUBLE PRECISION
+STABLE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    class_rel_source REGCLASS;
+    proc_fn_dist REGPROCEDURE;
+BEGIN
+    class_rel_source := rel_source;
+    proc_fn_dist := fn_dist
+        || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
+    IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
+        FROM pg_proc WHERE oid = proc_fn_dist) THEN
+        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+    END IF;
+
+    RETURN MADLIB_SCHEMA.internal_execute_using_silhouette_args($sql$
+        SELECT
+            avg(CASE
+                    WHEN distances[2] = 0 THEN 0
+                    ELSE (distances[2] - distances[1]) / distances[2]
+                END)
+        FROM (
+            SELECT
+                (MADLIB_SCHEMA.closest_columns(
+                    $1,
+                    $sql$ || expr_point || $sql$,
+                    2::INT2,
+                    $2
+                )).distances
+            FROM
+                $sql$ || textin(regclassout(class_rel_source)) || $sql$
+        ) AS two_shortest_distances
+        $sql$,
+        centroids, proc_fn_dist);
+END;
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.simple_silhouette(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    centroids DOUBLE PRECISION[][]
+) RETURNS DOUBLE PRECISION
+STABLE
+STRICT
+LANGUAGE sql
+AS $$
+    SELECT MADLIB_SCHEMA.simple_silhouette($1, $2, $3,
+        'MADLIB_SCHEMA.dist_norm2')
 $$;

@@ -95,6 +95,8 @@ namespace std {
     using tr1::bind;
     using tr1::function;
     using tr1::get;
+    using tr1::make_tuple;
+    using tr1::tie;
     using tr1::tuple;
 }
 
