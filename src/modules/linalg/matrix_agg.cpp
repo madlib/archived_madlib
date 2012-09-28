@@ -135,6 +135,14 @@ matrix_agg_final::run(AnyType& args) {
     return MappedMatrix(state.matrix.leftCols(state.numCols));
 }
 
+AnyType
+matrix_column::run(AnyType& args) {
+    MappedMatrix M = args[0].getAs<MappedMatrix>();
+    uint32_t column = args[1].getAs<uint32_t>();
+
+    return MappedColumnVector(M.col(column));
+}
+
 } // namespace linalg
 
 } // namespace modules
