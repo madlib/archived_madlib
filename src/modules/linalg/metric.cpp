@@ -262,7 +262,7 @@ dist_norm2::run(AnyType& args) {
 
 AnyType
 dist_norm1::run(AnyType& args) {
-    return squaredDistNorm1(
+    return distNorm1(
         args[0].getAs<MappedColumnVector>(),
         args[1].getAs<MappedColumnVector>()
     );
