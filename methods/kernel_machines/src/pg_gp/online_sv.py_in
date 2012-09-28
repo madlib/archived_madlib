@@ -331,14 +331,14 @@ def svm_predict_batch( input_table, data_col, id_col, model_table, output_table,
     plpy.execute('create table ' + output_table + ' ( id int, prediction float8 ) m4_ifdef(`__GREENPLUM__', `distributed by (id)')');
 
     if (parallel) :
-        num_models_t = plpy.execute('SELECT COUNT(DISTINCT(id)) n FROM ' + model_table + ' WHERE position(\'' + model_table + '\' in id) > 0 AND \'' + model_table + '\' <> id;');
-        num_models = num_models_t[0]['n'];
+        model_ids_t = plpy.execute('SELECT DISTINCT(id) model_id FROM ' + model_table + ' WHERE position(\'' + model_table + '\' in id) > 0 AND \'' + model_table + '\' <> id;');
+        num_models = len(model_ids_t) 
 
         for i in range(0,num_models):
-            param_t = plpy.execute('SELECT * FROM ' + model_table + '_param WHERE id = \'' + model_table + str(i) + '\'')
+            param_t = plpy.execute('SELECT * FROM ' + model_table + '_param WHERE id = \'' + model_ids_t[i]['model_id'] + '\'')
             intercept = param_t[0]['intercept']
             kernel_func = param_t[0]['kernel']
-            sql = 'insert into ' + output_table + '(select t.' + id_col + ', sum(weight * ' + kernel_func + '(m.sv, t.' + data_col + ')) + ' + str(intercept) + ' from ' + model_table + ' m, ' + input_table + ' t where m.id = \'' + model_table + str(i) + '\' group by 1)';
+            sql = 'insert into ' + output_table + '(select t.' + id_col + ', sum(weight * ' + kernel_func + '(m.sv, t.' + data_col + ')) + ' + str(intercept) + ' from ' + model_table + ' m, ' + input_table + ' t where m.id = \'' + model_ids_t[i]['model_id'] + '\' group by 1)';
             plpy.execute(sql);
 
     else :
