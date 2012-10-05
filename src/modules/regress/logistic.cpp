@@ -8,7 +8,7 @@
  * least-squares method.
  *
  *//* ----------------------------------------------------------------------- */
-
+#include <limits>
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/boost.hpp>
@@ -295,7 +295,7 @@ logregr_cg_step_final::run(AnyType &args) {
         // Note: This is testing whether state.beta < 0 if state.beta were
         // assigned according to Polak-Ribière
         if (dot(state.gradNew, gradNewMinusGrad)
-            / dot(state.grad, state.grad) < 0) state.beta = 0;
+            / dot(state.grad, state.grad) <= std::numeric_limits<double>::denorm_min()) state.beta = 0;
 
         // d_k = g_k - beta_k * d_{k-1}
         state.dir = state.gradNew - state.beta * state.dir;
