@@ -2334,12 +2334,11 @@ Datum table_exists(PG_FUNCTION_ARGS)
     input = PG_GETARG_TEXT_PP(0);
 
     names = textToQualifiedNameList(input);
-    relid = RangeVarGetRelid(
-        makeRangeVarFromNameList(names),
 #if PG_VERSION_NUM >= 90200
-        NoLock,
+    relid = RangeVarGetRelid(makeRangeVarFromNameList(names), NoLock, true);
+#else
+    relid = RangeVarGetRelid(makeRangeVarFromNameList(names), true);
 #endif
-        true);
     PG_RETURN_BOOL(OidIsValid(relid));
 }
 PG_FUNCTION_INFO_V1(table_exists);
