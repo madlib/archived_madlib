@@ -33,15 +33,17 @@
 */
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
-#include "postgres.h"
-#include "utils/array.h"
-#include "utils/elog.h"
-#include "nodes/execnodes.h"
-#include "fmgr.h"
+#include <postgres.h>
+#include <utils/array.h>
+#include <utils/elog.h>
+#include <nodes/execnodes.h>
+#include <fmgr.h>
+#include <utils/builtins.h>
+#include <libpq/md5.h>
+#include <utils/lsyscache.h>
 #include "sketch_support.h"
-#include "utils/builtins.h"
-#include "libpq/md5.h"
-#include "utils/lsyscache.h"
+
+
 
 /*!
  * Simple linear function to find the rightmost bit that's set to one
@@ -295,7 +297,7 @@ bytea *sketch_md5_bytea(Datum dat, Oid typOid)
     char outbuf[MD5_HASHLEN*2+1];
     bytea *out = palloc0(MD5_HASHLEN+VARHDRSZ);    
     bool byval = get_typbyval(typOid);
-    int len = ExtractDatumLen(dat, get_typlen(typOid), byval);
+    int len = ExtractDatumLen(dat, get_typlen(typOid), byval, -1);
     void *datp = DatumExtractPointer(dat, byval);
     /* 
      * it's very common to be hashing 0 for countmin sketches.  Rather than 
@@ -345,7 +347,7 @@ Datum sketch_rightmost_one(PG_FUNCTION_ARGS)
     size_t sketchsz = PG_GETARG_INT32(1);          /* size in bits */
     size_t sketchnum = PG_GETARG_INT32(2);          /* from the left! */
     char * bits = VARDATA(bitmap);
-    size_t len = VARSIZE_ANY_EXHDR(bitmap);
+    size_t len = (size_t)VARSIZE_ANY_EXHDR(bitmap);
 
     return rightmost_one((uint8 *)bits, len, sketchsz, sketchnum);
 }
@@ -356,7 +358,7 @@ Datum sketch_leftmost_zero(PG_FUNCTION_ARGS)
     size_t sketchsz = PG_GETARG_INT32(1);          /* size in bits */
     size_t sketchnum = PG_GETARG_INT32(2);          /* from the left! */
     char * bits = VARDATA(bitmap);
-    size_t len = VARSIZE_ANY_EXHDR(bitmap);
+    size_t len = (size_t)VARSIZE_ANY_EXHDR(bitmap);
 
     return leftmost_zero((uint8 *)bits, len, sketchsz, sketchnum);
 }
@@ -390,19 +392,62 @@ int4 safe_log2(int64 x)
     return out;
 }
 
-size_t ExtractDatumLen(Datum x, int len, bool byVal)
+/* 
+ * We need process c string and var especially here, it is really ugly, 
+ * but we have to.  
+ * Because here the user can change the binary representations directly.
+ */
+size_t ExtractDatumLen(Datum x, int len, bool byVal, size_t capacity)
 {
     (void) byVal; /* avoid warning about unused parameter */
+    size_t size = 0;
+    size_t idx = 0;
+    char   *data = NULL;
     if (len > 0) 
-        return len;
+    {
+        size = len;
+        if (capacity != (size_t)-1 && size > capacity) {
+            elog(ERROR, "invalid transition state");
+        }
+    }
     else if (len == -1) 
-        return VARSIZE_ANY(DatumGetPointer(x));
+    {
+        if (capacity == (size_t)-1) {
+            size = VARSIZE_ANY(DatumGetPointer(x));
+        }
+        else {
+            data = (char*)DatumGetPointer(x);
+            if ((capacity >= VARHDRSZ) 
+                || (capacity >= 1 && VARATT_IS_1B(data))) {
+                size = VARSIZE_ANY(data);
+            } 
+            else {
+                elog(ERROR, "invalid transition state");
+            }
+        }
+    }
     else if (len == -2) 
-        return strlen((char *)DatumGetPointer(x));
+    {
+        if (capacity == (size_t)-1) {
+            return strlen((char *)DatumGetPointer(x)) + 1;
+        }
+        else {
+            data = (char*)DatumGetPointer(x);
+            size = 0;
+            for (idx = 0; idx < capacity && data[idx] != 0; idx ++, size ++) {
+            }
+            if (idx >= capacity) {
+                elog(ERROR, "invalid transition state");
+            }
+            size ++;
+        }
+    }
     else {
         elog(ERROR, "Datum typelength error in ExtractDatumLen: len is %u", (unsigned)len);
         return 0;
     }
+
+    return size;
 }
 
 /* 

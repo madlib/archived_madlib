@@ -25,19 +25,19 @@
  * "the answer is within \epsilon of the true answer with probability 1-\delta."
  */
 
-#include "postgres.h"
-#include "utils/array.h"
-#include "utils/elog.h"
-#include "utils/builtins.h"
-#include "utils/lsyscache.h"
-#include "utils/numeric.h"
-#include "nodes/execnodes.h"
-#include "fmgr.h"
-#include "sketch_support.h"
-#include "catalog/pg_type.h"
-#include "countmin.h"
-
+#include <postgres.h>
+#include <utils/fmgroids.h>
+#include <utils/array.h>
+#include <utils/elog.h>
+#include <utils/builtins.h>
+#include <utils/lsyscache.h>
+#include <utils/numeric.h>
+#include <nodes/execnodes.h>
+#include <fmgr.h>
+#include <catalog/pg_type.h>
 #include <ctype.h>
+#include "sketch_support.h"
+#include "countmin.h" 
 
 PG_FUNCTION_INFO_V1(__cmsketch_int8_trans);
 
@@ -84,7 +84,6 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
 {
     bytea *     transblob = PG_GETARG_BYTEA_P(0);
     cmtransval *transval;
-    Oid         element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
     /*
      * an uninitialized transval should be a datum smaller than sizeof(cmtransval).
@@ -92,7 +91,7 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
      */
     if (!CM_TRANSVAL_INITIALIZED(transblob)) {
         /* XXX would be nice to pfree the existing transblob, but pfree complains. */
-        transblob = cmsketch_init_transval(element_type);
+        transblob = cmsketch_init_transval();
         transval = (cmtransval *)VARDATA(transblob);
 
         if (initargs) {
@@ -110,7 +109,7 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
                     elog(ERROR,
                          "NULL parameter %d passed to __cmsketch_int8_trans",
                          i);
-                transval->args[i-2] = PG_GETARG_DATUM(i);
+                transval->args[i-2] = PG_GETARG_INT64(i);
             }
         }
         else transval->nargs = -1;
@@ -118,20 +117,12 @@ bytea *cmsketch_check_transval(PG_FUNCTION_ARGS, bool initargs)
     return(transblob);
 }
 
-bytea *cmsketch_init_transval(Oid typOid)
+bytea *cmsketch_init_transval()
 {
-    bool        typIsVarlena;
-    cmtransval *transval;
-
     /* allocate and zero out a transval via palloc0 */
     bytea *     transblob = (bytea *)palloc0(CM_TRANSVAL_SZ);
     SET_VARSIZE(transblob, CM_TRANSVAL_SZ);
 
-    transval = (cmtransval *)VARDATA(transblob);
-    transval->typOid = typOid;
-    getTypeOutputInfo(transval->typOid,
-                      &(transval->outFuncOid),
-                      &typIsVarlena);
     return(transblob);
 }
 
@@ -144,12 +135,9 @@ void countmin_dyadic_trans_c(cmtransval *transval, Datum input)
 {
     uint32 j;
     
-    if (transval->typOid != INT8OID)
-        elog(ERROR, "cmsketch can only compute ranges for int64");
-
     for (j = 0; j < RANGES; j++) {
         countmin_trans_c(transval->sketches[j], input, 
-                         transval->outFuncOid, transval->typOid);
+                         F_INT8OUT, INT8OID);
         /* now divide by 2 for the next dyadic range */
         input = Int64GetDatum(DatumGetInt64(input) >> 1);
     }
@@ -191,11 +179,19 @@ PG_FUNCTION_INFO_V1(__cmsketch_final);
 Datum __cmsketch_final(PG_FUNCTION_ARGS)
 {
     bytea *     blob = PG_GETARG_BYTEA_P(0);
-    cmtransval *sketch = (cmtransval *)VARDATA(blob);
+    cmtransval *sketch = NULL; 
     int         len = RANGES*sizeof(countmin) + VARHDRSZ;
-    bytea *out = palloc0(len);    
-    
-    memcpy((uint8 *)VARDATA(out), sketch->sketches, len - VARHDRSZ);
+    bytea *out = NULL;
+
+    if (VARSIZE(blob) > VARHDRSZ && !CM_TRANSVAL_INITIALIZED(blob)) {
+        elog(ERROR, "invalid transition state for cmsketch");
+    }
+
+    out = palloc0(len);    
+    if (VARSIZE(blob) > VARHDRSZ) {
+        sketch = (cmtransval *)VARDATA(blob);
+        memcpy((uint8 *)VARDATA(out), sketch->sketches, len - VARHDRSZ);
+    }
     SET_VARSIZE(out, len);
     
     PG_RETURN_BYTEA_P(out);
@@ -212,8 +208,7 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
     cmtransval *transval1 = (cmtransval *)VARDATA(counterblob1);
     cmtransval *transval2 = (cmtransval *)VARDATA(counterblob2);
     cmtransval *newtrans;
-    countmin *  sketches2 = (countmin *)
-                            ((cmtransval *)(VARDATA(counterblob2)))->sketches;
+    countmin *  sketches2 = NULL;
     bytea *     newblob;
     countmin *  newsketches;
     uint32      i, j, k;
@@ -225,13 +220,15 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
         /* if both are empty can return one of them */
         PG_RETURN_DATUM(PointerGetDatum(counterblob1));
     else if (!CM_TRANSVAL_INITIALIZED(counterblob1)) {
-        counterblob1 = cmsketch_init_transval(transval2->typOid);
+        counterblob1 = cmsketch_init_transval();
         transval1 = (cmtransval *)VARDATA(counterblob1);
     }
     else if (!CM_TRANSVAL_INITIALIZED(counterblob2)) {
-        counterblob2 = cmsketch_init_transval(transval1->typOid);
+        counterblob2 = cmsketch_init_transval();
         transval2 = (cmtransval *)VARDATA(counterblob2);
     }
+
+    sketches2 = transval2 ->sketches;
 
     sz = VARSIZE(counterblob1);
     /* allocate a new transval as a copy of counterblob1 */
@@ -286,6 +283,7 @@ int64 cmsketch_count_md5_datum(countmin sketch, bytea *md5_bytea, Oid funcOid)
 }
 
 
+#if 0
 /****** SUPPORT ROUTINES *******/
 PG_FUNCTION_INFO_V1(cmsketch_dump);
 
@@ -298,8 +296,18 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
     countmin *sketches;
     char *    newblob = (char *)palloc(10240);
     uint32    i, j, k, c;
+    
+    if (VARSIZE(transblob) > VARHDRSZ && !CM_TRANSVAL_INITIALIZED(transblob)) {
+        elog(ERROR, "invalid transition state for cmsketch");
+    }
 
-    sketches = ((cmtransval *)VARDATA(transblob))->sketches;
+    if (VARSIZE(transblob) > VARHDRSZ) {
+        sketches = ((cmtransval *)VARDATA(transblob))->sketches;
+    }
+    else {
+        sketches = palloc0(RANGES*sizeof(countmin) + VARHDRSZ);
+        SET_VARSIZE(sketches, RANGES*sizeof(countmin) + VARHDRSZ);
+    }
     for (i=0, c=0; i < RANGES; i++)
         for (j=0; j < DEPTH; j++)
             for(k=0; k < NUMCOUNTERS; k++) {
@@ -309,8 +317,12 @@ Datum cmsketch_dump(PG_FUNCTION_ARGS)
                 if (c > 10000) break;
             }
     newblob[c] = '\0';
+    if (VARSIZE(transblob) <= VARHDRSZ) {
+        pfree(sketches);
+    }
     PG_RETURN_NULL();
 }
+#endif
 
 
 /*!
