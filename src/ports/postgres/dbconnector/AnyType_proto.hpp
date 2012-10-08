@@ -39,7 +39,7 @@ public:
     uint16_t numFields() const;
     bool isNull() const;
     bool isComposite() const;
-    AnyType &operator<<(const AnyType& inValue);
+    AnyType& operator<<(const AnyType& inValue);
 
 protected:
     /**

@@ -1,0 +1,136 @@
+% When using TeXShop on the Mac, let it know the root document. The following must be one of the first 20 lines.
+% !TEX root = ../design.tex
+
+\chapter{Abstraction Layers}
+
+\begin{moduleinfo}
+\item[Author] \href{mailto:Florian.Schoppmann@emc.com}{Florian Schoppmann}
+\item[History]
+	\begin{modulehistory}
+		\item[v0.5] Initial revision of design document
+		\item[v0.4] Support for function pointers and sparse-vectors
+		\item[v0.3] C++ abstraction layer rewritten as a template library, switched to Eigen \cite{eigen} as linear-algebra library
+		\item[v0.2] Initial revision of C++ abstraction layer, incorporated Armadillo \cite{armadillo} as linear-algebra library
+	\end{modulehistory}
+\end{moduleinfo}
+
+% Abstract. What is the problem we want to solve?
+
+\section{The C++ Abstraction Layer}
+
+There are a number of complexities involved in writing C or C++-based user-defined functions over a legacy DBMS like PostgreSQL, all of which can get in the way of maintainable, portable application logic. This complexity can be especially frustrating for routines whose pseudocode amounts to a short linear-algebra expression that \emph{should} result in a compact implementation.
+
+MADlib provides a C++ abstraction layer both to ease the burden of writing high-performance UDFs, and to encapsulate DBMS-specific logic inside the abstraction layer, rather than spreading the cost of porting across all the UDFs in the library. In brief, the MADlib C++ abstraction currently provides five classes of functionality: type bridging, elements of higher-order logic, resource-management shims, math-library integration, and templates for modular fold/reduce components.
+
+\subsection{Overview of Functionality} \label{sec:C++AL:Classes}
+
+\paragraph{Type Bridging}
+
+The basic responsibility for the C++ abstraction layer is to bridge database types to native C++ types. For a DBMS, a user-defined function implemented in a compiled language is typically nothing more but a symbol (i.e., an address) in a shared library. As such, DBMS APIs specify that UDFs must have a fixed signature, and arguments are passed as an array of pointers along with additional meta data. Hand-written C code would therefore often consist of long boilerplate code that is very specific to the underlying DBMS: Making sure that the passed data is of the correct type, copying immutable data before doing modifications, verifying array lengths, etc. The C++ abstraction layer encapsulates all this within the recursive \texttt{AnyType} class that can contain either a primitive type (like, e.g., \texttt{int} or \texttt{double}) or multiple other values of type \texttt{AnyType} (for representing a composite type). This encapsulation works both for passing data from the DBMS to the C++ function, as well as returning values back from C++. To give an example: A simple, portable, and completely type-safe (though arguably not very useful) function that adds two numbers could be implemented with essentially as little code as in a high-level scripting language:
+\begin{cpp}
+    AnyType
+    sum_two_doubles::run(AnyType& args) {
+        return args[0].getAs<double>()
+             + args[1].getAs<double>();
+    }
+\end{cpp}
+
+\paragraph{Elements of higher-order logic}
+
+A second responsibility of the abstraction layer is to help compensating for SQL's lack of higher-order logic: For instance, an \texttt{AnyType} object can contain a \texttt{FunctionHandle}, which points to a user-defined function. With the syntactic sugar possible in C++, this essentially makes in-database function first-class objects like they commonly are in modern programming languages. Internally, the abstraction layer maps UDFs to their object ID in the database, and it takes care of looking up the function in the database catalog, verifying argument lists, ensuring type-safety, etc.
+
+\paragraph{Resource-Management Shims}
+
+Another aspect of the C++ abstraction layer is to provide a safe and robust runtime environment with a standard interface. For instance, PostgreSQL maintains a hierarchy of memory contexts: When a query is started, a new memory context is created and all transient memory allocations are supposed to occur within this context. When the query ends, disposing of the query context provides a simple and effective way of garbage collection. Our C++ abstraction layer makes sure that such modi operandi are followed. On the other hand, the C++ abstraction layer also facilitates writing C++ code with a well-defined interface. This is particularly necessary if (as is typically the case) a DBMS only provides a C plugin interface: In that case it is important that exceptions, signals, etc.\ do not cross runtime boundaries.
+
+\paragraph{Math-Library Integration and Performance}
+
+SQL comes without any native support for vector and matrix operations. This presents challenges at two scales. At a macroscopic level, matrices must be intelligently partitioned into chunks that can fit in memory on a single node. At a microscopic scale, the database engine must invoke efficient linear-algebra routines on the pieces of data it gets in core. To this end, the C++ abstraction layer incorporates the very performant linear-algebra library Eigen~\cite{eigen}. Most importantly, it provides additional type bridges that do not involve copying and thus are very efficient: For instance, double-precision arrays in the DBMS are the canonic way to represent vectors in Euclidean space. Therefore, the C++ abstraction layer not just provides an array-to-array bridge but also maps DBMS arrays to Eigen vectors. The bridged types can be used with all of the very sophisticated vector and matrix operations provided by Eigen.
+
+Incorporating proven third-party libraries moreover makes it easy for MADlib developers to write correct and performant code: For instance, the Eigen linear-algebra library contains well-tested and well-tuned code that makes use of the SIMD instruction sets (like SSE) found in today's CPUs. Recent versions of Eigen even allow coupling with proprietary high-performance mathematical routines like the Intel Math Kernel Library.
+
+Likewise, the C++ abstraction layer itself has been tuned for efficient value-marshaling. Some examples include: All type bridges are aware of mutable and immutable objects and avoid making copies whenever possible. DBMS-catalogue lookups occur only once per query and are then minimized by caching. Moreover, the C++ abstraction layer is written as template library and with the goal of reducing the runtime and abstraction overhead to a minimum. In particular, it takes extra steps to avoid memory allocation whenever possible.
+
+\paragraph{Modular Fold/Reduce Components}
+
+The most basic building block in the macro-programming of MADlib is the use of user-defined aggregates (UDAs). In general, aggregates---and the related window functions---are the natural way in SQL to implement mathematical functions that take as input the values of an arbitrary number of rows. Unfortunately, concrete extension interfaces for user-defined aggregates vary widely across vendors and open-source systems. Nonetheless, the aggregation paradigm (or in functional programming terms, ``fold and reduce'') is natural and ubiquitous, and in most widely-used DBMSs (e.g., in PostgreSQL, MySQL, Greenplum, Oracle, SQL Server, Teradata) a user-defined aggregate consists of a well-known pattern of two or three user-defined functions:
+\begin{enumerate}
+	\item A \emph{transition function} that takes the current transition state and a new data point. It combines both into into a new transition state. The transition function is equivalent to the ``combining'' function passed to linear \emph{left-fold} functions in functional-programming languages.
+	\item An optional \emph{merge function} that takes two transition states and computes a new combined transition state. This function is only needed for parallel execution. In functional-programming terms, a merge operation is a tree-like fold.
+	\item A \emph{final function} that takes a transition state and transforms it into the output value.
+\end{enumerate}
+Clearly, a user-defined aggregate is inherently data-parallel if the transition function is associative and the merge function returns the same result as if the transition function was called repeatedly for every individual element in the second state.
+
+Since the fold/reduce computational model is so ubiquitous and we anticipate the need to share code with other projects, fold/reduce code should be interwoven with the DBMS interface. That is, fold/reduce-components should be implemented as independent C++ classes (possibly as generic template classes), without dependencies on MADlib-specific type-bridging classes like \texttt{AnyType}. However, fold/reduce components need to store their state as objects that the backend can understand---for maximum portability, all state information must reside in a single contiguous block of memory. The C++ abstraction layer therefore provides a recursive class \texttt{DynamicStruct} that can contain objects both of primitive data type as well as objects of variable length, including other objects of \texttt{DynamicStruct}. This solution is more performant to serialization and deserialization, because it allows fixed-length datums to be modified directly in the block of memory.
+
+\subsection{Type Bridging}
+
+\subsubsection[Class AnyType]{Class \symlabel{AnyType}{sym:AnyType}}
+
+\ref{sym:AnyType} is a container type for all values that are passed between the DBMS and C++ code. This also includes values passed to or returned from UDFs invoked as \ref{sym:FunctionHandle}. An \ref{sym:AnyType} object represents one of three kinds of values:
+\begin{enumerate}
+	\item NULL
+	\item A simple value. E.g., this may be a value of a primitive data type like \texttt{int} or \texttt{double}, or a value of some abstraction-layer type like \ref{sym:ArrayHandle} or \ref{sym:FunctionHandle}.
+	\item A composite value (i.e., a tuple). This means that \ref{sym:AnyType} object contains a list of other \ref{sym:AnyType} objects. Tuple elements are not named but instead accessed by index.
+\end{enumerate}
+
+\paragraph{Member functions}
+
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		AnyType()
+		\end{cppsnippet}
+
+		Default constructor. Initializes this object as NULL. This constructor must also be used for initializing and then building a composite object. After construction, \texttt{operator<\/<()} can be used to append values to the composite object.
+
+	\item
+		\begin{cppsnippet}
+		template <class T> AnyType(const T& inValue)
+		\end{cppsnippet}
+		
+		Template constructor (will not be used as copy constructor). This constructor will be invoked when initializing this object with an arbitrary value (excluding composite types). This constructor should only be used for creating \ref{sym:AnyType} objects that are returned to the backend or for invoking a \ref{sym:FunctionHandle}.
+	
+	\item
+		\begin{cppsnippet}
+		template <class T> T getAs()
+		\end{cppsnippet}
+		
+		Convert this object to the type specified as template argument.
+
+	\item
+		\begin{cppsnippet}
+		AnyType operator[](uint16_t inID) const
+		\end{cppsnippet}
+		
+		If this object is a composite value, return the element with index \texttt{inID}. To the user, \ref{sym:AnyType} is a fully recursive type: An \ref{sym:AnyType} object may contain a composite value, in which case it is composed of a number of other AnyType objects.
+		
+		This method will raise an error if the current object does not contain a composite value.
+
+	\item
+		\begin{cppsnippet}
+		uint16_t numFields() const
+		\end{cppsnippet}
+
+	\item
+		\begin{cppsnippet}
+		bool isNull() const
+		\end{cppsnippet}
+
+	\item
+		\begin{cppsnippet}
+		bool isComposite() const
+		\end{cppsnippet}
+
+	\item
+		\begin{cppsnippet}
+		AnyType& operator<<(const AnyType& inValue)
+		\end{cppsnippet}
+\end{itemize}
+
+\subsubsection[Class ArrayHandle]{Class \symlabel{ArrayHandle}{sym:ArrayHandle}}
+
+\subsubsection[Class FunctionHandle]{Class \symlabel{FunctionHandle}{sym:FunctionHandle}}
+
+Member functions:
+
