@@ -257,13 +257,29 @@ file(GLOB_RECURSE MAD_CPP_SOURCES
 list(APPEND MAD_SOURCES
     ${MAD_CPP_SOURCES}
 )
+if((NOT APPLE) AND LIBSTDCXX_COMPAT AND CMAKE_COMPILER_IS_GNUCXX)
+    if(GNUCXX_VERSION VERSION_GREATER 4.1.2)
+        math(EXPR LIBSTDCXX_COMPAT_MAJOR "${LIBSTDCXX_COMPAT} / 10000")
+        math(EXPR LIBSTDCXX_COMPAT_MINOR "(${LIBSTDCXX_COMPAT} / 100) % 100")
+        math(EXPR LIBSTDCXX_COMPAT_PATCH "${LIBSTDCXX_COMPAT} % 100")
+        set(LIBSTDCXX_COMPAT_VERSION "${LIBSTDCXX_COMPAT_MAJOR}.${LIBSTDCXX_COMPAT_MINOR}.${LIBSTDCXX_COMPAT_PATCH}")
+        message(STATUS "Compatibility with libstdc++ of g++ "
+            "${LIBSTDCXX_COMPAT_VERSION} requested (current g++ version is "
+            "${GNUCXX_VERSION}).")
+        message(STATUS "If this does not work, try option INCLUDE_LIBSTDCXX "
+            "instead, in order to redistribute the build-time libstdc++.")
+        list(APPEND MAD_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/utils/libstdcxx-compatibility.cpp")
+        add_definitions("-DLIBSTDCXX_COMPAT=${LIBSTDCXX_COMPAT}")
+    endif(GNUCXX_VERSION VERSION_GREATER 4.1.2)
+endif((NOT APPLE) AND LIBSTDCXX_COMPAT AND CMAKE_COMPILER_IS_GNUCXX)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 
 if(CMAKE_COMPILER_IS_GNUCXX)
     if(GNUCXX_VERSION VERSION_GREATER 4.4 OR GNUCXX_VERSION VERSION_EQUAL 4.4)
-        if(_AUTOINCLUDE_LIBSTDCXX)
+        if(INCLUDE_LIBSTDCXX)
             # FIXME: The following only takes care of the symbolic link
             # Need to implement copying of files containing version numbers in
             # file name
@@ -288,7 +304,7 @@ if(CMAKE_COMPILER_IS_GNUCXX)
                 )
             add_custom_target(copyLibStdCXX ALL DEPENDS
                 "${CMAKE_CURRENT_BINARY_DIR}/lib/${_LIBSTDCXX_FILENAME}")
-        endif(_AUTOINCLUDE_LIBSTDCXX)
+        endif(INCLUDE_LIBSTDCXX)
 
         # Also install it
         install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib
