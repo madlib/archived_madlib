@@ -55,11 +55,26 @@ returns int[] as 'MODULE_PATHNAME' language c strict;
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labeltbl text, resulttbl text)   RETURNS text AS
   $$
-  m_factors = "_m_factors"
-  r_factors = "_r_factors"
-  resulttbl_raw = resulttbl + "_raw"
+  origClientMinMessages =  plpy.execute("SELECT setting AS setting FROM pg_settings WHERE name = \'client_min_messages\';")
+  plpy.execute("SET client_min_messages TO warning;")
 
-  plpy.execute("DROP TABLE IF EXISTS " + m_factors +","+ r_factors + "," + resulttbl_raw +" CASCADE;")
+  plpy.execute("SELECT create_schema_pg_temp();"); 
+ 
+  m_factors = "pg_temp._madlib_m_factors"
+  r_factors = "pg_temp._madlib_r_factors"
+  segtbl_digits = "pg_temp._madlib_segtbl_digits"
+  resulttbl_raw = "pg_temp._madlib_" + resulttbl + "_raw"
+
+  plpy.execute("""DROP TABLE IF EXISTS """ + m_factors + """,""" + r_factors + """,""" + segtbl_digits  + """,""" + resulttbl_raw + """;""")
+  plpy.execute("""CREATE TABLE """ + resulttbl_raw + """(doc_id integer, label integer[]);""")
+
+  plpy.execute("""SET client_min_messages TO """ + str(origClientMinMessages[0]['setting']) + """;""")
+
+  # replace digits with "DIGIT" keyword
+  plpy.execute("""SELECT start_pos,doc_id,seg_text,max_pos INTO """ + segtbl_digits + """ FROM """ + segtbl + """ WHERE
+			NOT (seg_text ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR seg_text ~ E'^[-+]?[0-9]*[.][0-9]+$');""")
+  plpy.execute("""INSERT INTO """ + segtbl_digits + """ SELECT start_pos,doc_id,'DIGIT',max_pos FROM """ + segtbl + """ WHERE  
+		    seg_text ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR seg_text ~E'^[-+]?[0-9]*[.][0-9]+$';""")
 
   query = """
   -- for each sentence, store array representation of r_factors
@@ -69,7 +84,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
   select doc_id, array(
     select score
     from """ + factor_rtbl + """ factors,
-         """ + segtbl + """ seg
+         """ + segtbl_digits + """ seg
     where factors.seg_text = seg.seg_text
           and doc_id = ss.doc_id
     order by start_pos, label
@@ -78,7 +93,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
   into """ + r_factors + """
   from (select doc_id, start_pos, label, score
         from """ + factor_rtbl + """ factors,
-             """ + segtbl + """ seg
+             """ + segtbl_digits + """ seg
         where factors.seg_text=seg.seg_text) as ss
   group by doc_id
   order by doc_id;"""
@@ -92,9 +107,6 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
   from (select score
         from """ + factor_mtbl + """ factors) as ss; """
   plpy.execute(query)
-
-  query = "CREATE TABLE " + resulttbl_raw + " (doc_id integer, label integer[]);"
-  plpy.execute(query);
 
   rv = plpy.execute('SELECT COUNT(*) AS total FROM ' + labeltbl);
   nlabel = rv[0]['total']

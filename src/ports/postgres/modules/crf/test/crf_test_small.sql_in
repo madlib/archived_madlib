@@ -7,20 +7,6 @@
 --    all objects created in the default schema will be cleaned-up outside.
 ---------------------------------------------------------------------------
 
----------------------------------------------------------------------------
--- Setup:
----------------------------------------------------------------------------
-
-CREATE FUNCTION crf_test_install_test() RETURNS TEXT AS $$
-DECLARE
-	result_count  INT;
-	result  TEXT;
-        temp0 TEXT; 
-        temp1 TEXT; 
-        temp2 TEXT; 
-        temp3 TEXT; 
-        temp4 TEXT; 
-BEGIN
 	-- Documents table
 	CREATE TABLE crf_document (id integer,text text);
         INSERT INTO  crf_document VALUES
@@ -89,11 +75,11 @@ BEGIN
 	-- Regex table
 	CREATE TABLE crf_regex (pattern text,name text);
         INSERT INTO crf_regex VALUES
-        ('^[A-Z][a-z]+$','InitCapital%'), ('^[A-Z]+$','isAllCapital%'), ('^.*[0-9]+.*$','containsDigit%'),
-        ('^.+[.]$','endsWithDot%'),       ('^.+[,]$','endsWithComma%'), ('^.+er$','endsWithER%'),
-        ('^.+est$','endsWithEst%'),       ('^.+ed$','endsWithED%'),     ('^.+s$','endsWithS%'),
-        ('^.+ing$','endsWithIng%'),       ('^.+ly$','endsWithly%'),     ('^.+-.+$','isDashSeparatedWords%'),
-        ('^.*@.*$','isEmailId%');
+        ('^[A-Z][a-z]+$','InitCapital'), ('^[A-Z]+$','isAllCapital'), ('^.*[0-9]+.*$','containsDigit'),
+        ('^.+[.]$','endsWithDot'),       ('^.+[,]$','endsWithComma'), ('^.+er$','endsWithER'),
+        ('^.+est$','endsWithEst'),       ('^.+ed$','endsWithED'),     ('^.+s$','endsWithS'),
+        ('^.+ing$','endsWithIng'),       ('^.+ly$','endsWithly'),     ('^.+-.+$','isDashSeparatedWords'),
+        ('^.*@.*$','isEmailId');
 	analyze crf_regex;
 
 	-- Labels table
@@ -125,7 +111,7 @@ BEGIN
 	analyze test_segmenttbl;
 
 	-- extract features for tokens stored in segmenttbl 
-	PERFORM MADLIB_SCHEMA.crf_test_fgen('test_segmenttbl','crf_dictionary','crf_label','crf_regex','crf_feature_test','viterbi_mtbl','viterbi_rtbl');
+	SELECT crf_test_fgen('test_segmenttbl','crf_dictionary','crf_label','crf_regex','crf_feature_test','viterbi_mtbl','viterbi_rtbl');
 
         -- Expected viterbi labeling result
         -- The result is produced from Dr. Sunita's CRF java package with the same input 
@@ -145,7 +131,7 @@ BEGIN
 	(2,28,'.','.'),          (3,0,'his','NNP'),       (3,1,'actions','NNP'),   (3,2,'prevent','NNP'),   (3,3,'disaster','NNP'),
 	(3,4,'.','.');
 
-	PERFORM MADLIB_SCHEMA.vcrf_label(
+	SELECT vcrf_label(
 		'test_segmenttbl',
 		'viterbi_mtbl',
 		'viterbi_rtbl',
@@ -154,7 +140,7 @@ BEGIN
 
 	-- Compare the expected result and the viterbi extraction result.  It succeeds
 	-- only if the two tables are the same.
-	SELECT s1.count + s2.count INTO result_count
+	SELECT assert(s1.count+s2.count = 0,  'Labels predicted do not match expected labels.')
 	FROM (
 		SELECT count(*) FROM(
 			SELECT doc_id, start_pos, seg_text, label
@@ -173,18 +159,3 @@ BEGIN
 			FROM expected_extraction
 		) AS U
 	)s2;
-	SELECT INTO result CASE WHEN (result_count = 0) THEN 'PASS' ELSE 'FAIL' END;
-
-	IF result = 'FAIL' THEN
-	   RAISE EXCEPTION 'Failed install check %', result_count;
-	END IF;
-
-	RETURN result;
-
-END
-$$ language plpgsql;
-
----------------------------------------------------------------------------
--- Test: 
----------------------------------------------------------------------------
-SELECT crf_test_install_test();
