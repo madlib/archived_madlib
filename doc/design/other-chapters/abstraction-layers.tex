@@ -20,7 +20,7 @@
 
 There are a number of complexities involved in writing C or C++-based user-defined functions over a legacy DBMS like PostgreSQL, all of which can get in the way of maintainable, portable application logic. This complexity can be especially frustrating for routines whose pseudocode amounts to a short linear-algebra expression that \emph{should} result in a compact implementation.
 
-MADlib provides a C++ abstraction layer both to ease the burden of writing high-performance UDFs, and to encapsulate DBMS-specific logic inside the abstraction layer, rather than spreading the cost of maintenance and porting across all the UDFs in the library. In brief, the MADlib C++ abstraction currently provides five classes of functionality: type bridging, high-level types, resource-management shims, math-library integration, and templates for modular fold/reduce components.
+MADlib provides a C++ abstraction layer both to ease the burden of writing high-performance UDFs, and to encapsulate DBMS-specific logic inside the abstraction layer, rather than spreading the cost of maintenance and porting across all the UDFs in the library. In brief, the MADlib C++ abstraction currently provides five classes of functionality: type bridging, math-library integration, resource-management shims, high-level types, and templates for modular fold/reduce components.
 
 \subsection{Overview of Functionality} \label{sec:C++AL:Classes}
 
@@ -35,16 +35,6 @@ The basic responsibility for the C++ abstraction layer is to bridge database typ
     }
 \end{cpp}
 
-\paragraph{High-level types}
-
-A second responsibility of the abstraction layer is to help compensating for SQL's lack of higher-order logic: For instance, an \texttt{AnyType} object can contain a \texttt{FunctionHandle}, which points to a user-defined function. With the syntactic sugar possible in C++, this essentially makes in-database functions first-class objects like they commonly are in modern programming languages. Internally, the abstraction layer maps UDFs to their object ID in the database, and it takes care of looking up the function in the database catalog, verifying argument lists, ensuring type-safety, etc.
-
-Likewise, there is the need to pass internal data structures from one UDF to another (i.e., possibly through the DBMS) in a performant and portable way. While DBMSs like PostgreSQL support user-defined composite types, converting into them (or even using them in internal C++ code) is slow, creates dependencies on MADlib-specific type-bridging classes, and hinders code reuse in/from other projects than MADlib. The C++ abstraction layer therefore contains the recursive \ref{sym:DynamicStruct} class that provides a C++ struct/class interface around a stream of bytes. This class is very generic and can easily be used with any contiguous blocks of memory. Compared to the alternative of using existing serialization and deserialization classes, we expect \ref{sym:DynamicStruct} to be far better performing, as it modifies constant-length elements directly in the byte stream.
-
-\paragraph{Resource-Management Shims}
-
-Another aspect of the C++ abstraction layer is to provide a safe and robust runtime environment with a standard interface. For instance, PostgreSQL maintains a hierarchy of memory contexts: When a query is started, a new memory context is created and all transient memory allocations are supposed to occur within this context. When the query ends, disposing of the query context provides a simple and effective way of garbage collection. The C++ abstraction layer makes sure that such modi operandi are followed. On the other hand, the C++ abstraction layer also facilitates writing C++ code with a well-defined interface. This is particularly necessary if (as is typically the case) a DBMS only provides a C plugin interface: In that case it is important that exceptions, signals, etc.\ do not cross runtime boundaries.
-
 \paragraph{Math-Library Integration and Performance}
 
 SQL comes without any native support for vector and matrix operations. This presents challenges at two scales. At a macroscopic level, matrices must be intelligently partitioned into chunks that can fit in memory on a single node. At a microscopic scale, the database engine must invoke efficient linear-algebra routines on the pieces of data it gets in core. To this end, the C++ abstraction layer incorporates the very performant linear-algebra library Eigen~\cite{eigen}. Most importantly, it provides additional type bridges that do not involve memory copying and thus are very efficient: For instance, double-precision arrays in the DBMS are the canonic way to represent real-valued vectors. Therefore, the C++ abstraction layer not just provides an array-to-array bridge but also maps DBMS arrays to Eigen vectors. The bridged types can be used with all of the very sophisticated vector and matrix operations provided by Eigen.
@@ -52,6 +42,16 @@ SQL comes without any native support for vector and matrix operations. This pres
 Incorporating proven third-party libraries moreover makes it easy for MADlib developers to write correct and performant code: For instance, the Eigen linear-algebra library contains well-tested and well-tuned code that makes use of the SIMD instruction sets (like SSE) found in today's CPUs. Recent versions of Eigen even allow coupling with proprietary high-performance mathematical routines like the Intel Math Kernel Library.
 
 Likewise, the C++ abstraction layer itself has been tuned for efficient value-marshaling. Some examples include: All type bridges are aware of mutable and immutable objects and avoid making copies whenever possible. DBMS-catalogue lookups occur only once per query and are then minimized by caching. Moreover, the C++ abstraction layer is written as template library and with the goal of reducing the runtime and abstraction overhead to a minimum. In particular, it takes extra steps to avoid memory allocation whenever possible.
+
+\paragraph{Resource-Management Shims}
+
+Another aspect of the C++ abstraction layer is to provide a safe and robust runtime environment with a standard interface. For instance, PostgreSQL maintains a hierarchy of memory contexts: When a query is started, a new memory context is created and all transient memory allocations are supposed to occur within this context. When the query ends, disposing of the query context provides a simple and effective way of garbage collection. The C++ abstraction layer makes sure that such modi operandi are followed. On the other hand, the C++ abstraction layer also facilitates writing C++ code with a well-defined interface. This is particularly necessary if (as is typically the case) a DBMS only provides a C plugin interface: In that case it is important that exceptions, signals, etc.\ do not cross runtime boundaries.
+
+\paragraph{High-level types}
+
+A second responsibility of the abstraction layer is to help compensating for SQL's lack of higher-order logic: For instance, an \texttt{AnyType} object can contain a \texttt{FunctionHandle}, which points to a user-defined function. With the syntactic sugar possible in C++, this essentially makes in-database functions first-class objects like they commonly are in modern programming languages. Internally, the abstraction layer maps UDFs to their object ID in the database, and it takes care of looking up the function in the database catalog, verifying argument lists, ensuring type-safety, etc.
+
+Likewise, there is the need to pass internal data structures from one UDF to another (i.e., possibly through the DBMS) in a performant and portable way. While DBMSs like PostgreSQL support user-defined composite types, converting into them (or even using them in internal C++ code) is slow, creates dependencies on MADlib-specific type-bridging classes, and hinders code reuse in/from other projects than MADlib. The C++ abstraction layer therefore contains the recursive \ref{sym:DynamicStruct} class that provides a C++ struct/class interface around a stream of bytes. This class is very generic and can easily be used with any contiguous blocks of memory. Compared to the alternative of using existing serialization and deserialization classes, we expect \ref{sym:DynamicStruct} to be far better performing, as it modifies constant-length elements directly in the byte stream.
 
 \paragraph{Modular Fold/Reduce Components}
 
@@ -165,6 +165,79 @@ Since the fold/reduce computational model is so ubiquitous and we anticipate the
 		
 		In generic code, we could write \texttt{AnyType\_cast<double>(func())} so that if the template type of \texttt{func} is a \ref{sym:FunctionHandle}, we have an explicit conversion to \texttt{double}, whereas if \texttt{func} is just a function pointer, the return value of \texttt{func()} passes unchanged.
 \end{itemize}
+
+
+\subsection{Math-Library Integration}
+
+\subsubsection[Class HandleMap]{Class \symlabel{HandleMap}{sym:HandleMap}}
+
+\paragraph{Requirements}
+
+\begin{itemize}
+	\item \texttt{EigenType} The Eigen type that this \ref{sym:HandleMap} will wrap. Examples are \texttt{Eigen::VectorXd} or \texttt{Eigen::MatrixXd}.
+	\item \texttt{Handle} Type conforming to \ref{sym:ContiguousDataHandle} concept. The two types \texttt{EigenType::Scalar} and \texttt{Handle::element\_type} must coincide.
+	\item \texttt{MapOptions} Passed as template parameter \texttt{MapOptions} to \texttt{Eigen::Map}.
+\end{itemize}
+
+\paragraph{Types}
+
+\begin{itemize}
+	\item \texttt{Index}: \texttt{EigenType::Index}
+\end{itemize}
+
+\paragraph{Member functions}
+
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		// constructors
+		HandleMap(const Handle& inHandle) // (1)
+		HandleMap(const Eigen::MapBase<Derived>& inMappedData) // (2)
+		HandleMap(const Handle &inHandle, Index inNumElem) // (3)
+		HandleMap(const Handle &inHandle, Index inNumRows, Index inNumCols) // (4)
+		\end{cppsnippet}
+	
+		Constructor (1) constructs an empty \ref{sym:HandleMap} that points to NULL. Constructor (2) constructs a \ref{sym:HandleMap} that is backed by a contiguous memory block within an existing Eigen matrix (or vector). Note that not all of Eigen's block operations return contiguous memory blocks. E.g., while the \texttt{col()} method returns contiguous blocks if column-oriented storage is used, the \texttt{row()} method does not! Constructor (3) and (4) construct a \ref{sym:HandleMap} that is backed by a \texttt{Handle}.
+	
+	\item
+		\begin{cppsnippet}
+		HandleMap& operator=(const HandleMap& other)
+		\end{cppsnippet}
+		
+		Assign another \ref{sym:HandleMap} to this object. This does not change any references or pointers, but copies all elements, i.e., the behavior is identical to other Eigen objects.
+	
+	\item
+		\begin{cppsnippet}
+		HandleMap& rebind(const Handle& inHandle);
+		HandleMap& rebind(const Handle& inHandle, Index inSize);
+		HandleMap& rebind(const Handle& inHandle, Index inRows, Index inCols);
+		HandleMap& rebind(Index inSize);
+		HandleMap& rebind(Index inRows, Index inCols);
+		\end{cppsnippet}
+		
+		Change the handle that is backing this object. All except the first form may also be used to change the dimensions of the matrix (or vector) represented by this object.
+\end{itemize}
+
+\paragraph{Concrete Types}
+
+\begin{itemize}
+	\item \texttt{MappedMatrix}: \texttt{HandleMap<const Matrix, TransparentHandle<double> >}
+	\item \texttt{MutableMappedMatrix}: \texttt{HandleMap<Matrix, TransparentHandle<double, Mutable> >}
+	\item \texttt{NativeMatrix}: \texttt{HandleMap<const Matrix, ArrayHandle<double> >}
+	\item \texttt{MutableNativeMatrix}: \texttt{HandleMap<Matrix, MutableArrayHandle<double> >}
+	\item The corresponding four definitions for \texttt{ColumnVector} instead of \texttt{Matrix}.
+\end{itemize}
+
+
+\subsection{Resource-Management Shims}
+
+\subsubsection[Class Allocator]{Class \symlabel{Allocator}{sym:Allocator}}
+
+\paragraph{Member functions}
+
+\subsubsection[Class NativeRandomNumberGenerator]{Class \symlabel{NativeRandomNumberGenerator}{sym:NativeRandomNumberGenerator}}
+
+\paragraph{Member functions}
 
 
 \subsection{High-Level Types}
@@ -282,9 +355,19 @@ The concept \symlabel{SizedContiguousDataHandle}{sym:SizedContiguousDataHandle} 
 %
 The concept \symlabel{MutableSizedContiguousDataHandle}{sym:MutableSizedContiguousDataHandle} combines both \ref{sym:MutableContiguousDataHandle} and \ref{sym:SizedContiguousDataHandle}.
 
+\subsubsection[Class Ref]{Class \symlabel{Ref}{sym:Ref}}
+
+\ref{sym:Ref} objects are similar to normal C++ references. However, they allow \emph{rebinding} to a different target.
+
 \subsubsection[Class ByteStream]{Class \symlabel{ByteStream}{sym:ByteStream}}
 
+\ref{sym:ByteStream} objects are similar to \texttt{std::istream} objects in that they are used to \emph{bind} (as opposed to \emph{read} in the case of \texttt{std::istream}) references to positions in byte sequences. \texttt{operator>\/>()} functions are provided for users of \ref{sym:ByteStream} objects.
+
 \subsubsection[Class ByteStreamHandleBuf]{Class \symlabel{ByteStreamHandleBuf}{sym:ByteStreamHandleBuf}}
+
+\ref{sym:ByteStreamHandleBuf} objects are similar to \texttt{std::streambuf} objects in that they are in charge of providing reading functionality from certain types of byte sequences. Unlike \texttt{std::streambuf}, however, reading refers to \emph{binding} a reference to the current position in the byte sequence.
+
+\ref{sym:ByteStreamHandleBuf} objects are associated with a \emph{storage} objects, which is of a class conforming to the \ref{sym:ContiguousDataHandle} concept.
 
 
 \subsubsection[Concept DynamicStructContainer]{Concept \symlabel{DynamicStructContainer}{sym:DynamicStructContainer}}
@@ -417,80 +500,6 @@ The following member functions are only present if \texttt{isMutable == true}.
 		\end{cppsnippet}
 		
 		Bind \texttt{inStruct} to the byte stream at the current position.
-\end{itemize}
-
-
-
-\subsection{Resource-Management Shims}
-
-\subsubsection[Class Allocator]{Class \symlabel{Allocator}{sym:Allocator}}
-
-\paragraph{Member functions}
-
-\subsubsection[Class NativeRandomNumberGenerator]{Class \symlabel{NativeRandomNumberGenerator}{sym:NativeRandomNumberGenerator}}
-
-\paragraph{Member functions}
-
-
-\subsection{Math-Library Integration and Performance}
-
-\subsubsection[Class HandleMap]{Class \symlabel{HandleMap}{sym:HandleMap}}
-
-\paragraph{Requirements}
-
-\begin{itemize}
-	\item \texttt{EigenType} The Eigen type that this \ref{sym:HandleMap} will wrap. Examples are \texttt{Eigen::VectorXd} or \texttt{Eigen::MatrixXd}.
-	\item \texttt{Handle} Type conforming to \ref{sym:ContiguousDataHandle} concept. The two types \texttt{EigenType::Scalar} and \texttt{Handle::element\_type} must coincide.
-	\item \texttt{MapOptions} Passed as template parameter \texttt{MapOptions} to \texttt{Eigen::Map}.
-\end{itemize}
-
-\paragraph{Types}
-
-\begin{itemize}
-	\item \texttt{Index}: \texttt{EigenType::Index}
-\end{itemize}
-
-\paragraph{Member functions}
-
-\begin{itemize}
-	\item
-		\begin{cppsnippet}
-		// constructors
-		HandleMap(const Handle& inHandle) // (1)
-		HandleMap(const Eigen::MapBase<Derived>& inMappedData) // (2)
-		HandleMap(const Handle &inHandle, Index inNumElem) // (3)
-		HandleMap(const Handle &inHandle, Index inNumRows, Index inNumCols) // (4)
-		\end{cppsnippet}
-	
-		Constructor (1) constructs an empty \ref{sym:HandleMap} that points to NULL. Constructor (2) constructs a \ref{sym:HandleMap} that is backed by a contiguous memory block within an existing Eigen matrix (or vector). Note that not all of Eigen's block operations return contiguous memory blocks. E.g., while the \texttt{col()} method returns contiguous blocks if column-oriented storage is used, the \texttt{row()} method does not! Constructor (3) and (4) construct a \ref{sym:HandleMap} that is backed by a \texttt{Handle}.
-	
-	\item
-		\begin{cppsnippet}
-		HandleMap& operator=(const HandleMap& other)
-		\end{cppsnippet}
-		
-		Assign another \ref{sym:HandleMap} to this object. This does not change any references or pointers, but copies all elements, i.e., the behavior is identical to other Eigen objects.
-	
-	\item
-		\begin{cppsnippet}
-		HandleMap& rebind(const Handle& inHandle);
-		HandleMap& rebind(const Handle& inHandle, Index inSize);
-		HandleMap& rebind(const Handle& inHandle, Index inRows, Index inCols);
-		HandleMap& rebind(Index inSize);
-		HandleMap& rebind(Index inRows, Index inCols);
-		\end{cppsnippet}
-		
-		Change the handle that is backing this object. All except the first form may also be used to change the dimensions of the matrix (or vector) represented by this object.
-\end{itemize}
-
-\paragraph{Concrete Types}
-
-\begin{itemize}
-	\item \texttt{MappedMatrix}: \texttt{HandleMap<const Matrix, TransparentHandle<double> >}
-	\item \texttt{MutableMappedMatrix}: \texttt{HandleMap<Matrix, TransparentHandle<double, Mutable> >}
-	\item \texttt{NativeMatrix}: \texttt{HandleMap<const Matrix, ArrayHandle<double> >}
-	\item \texttt{MutableNativeMatrix}: \texttt{HandleMap<Matrix, MutableArrayHandle<double> >}
-	\item The corresponding four definitions for \texttt{ColumnVector} instead of \texttt{Matrix}.
 \end{itemize}
 
 
