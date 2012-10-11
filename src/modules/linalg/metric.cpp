@@ -94,15 +94,6 @@ distNorm1(
 }
 
 double
-squaredDistNorm1(
-    const MappedColumnVector& inX,
-    const MappedColumnVector& inY) {
-
-    double l1norm = (inX - inY).lpNorm<1>();
-    return l1norm * l1norm;
-}
-
-double
 distNorm2(
     const MappedColumnVector& inX,
     const MappedColumnVector& inY) {
@@ -119,7 +110,7 @@ squaredDistNorm2(
 }
 
 double
-squaredAngle(
+distAngle(
     const MappedColumnVector& inX,
     const MappedColumnVector& inY) {
 
@@ -128,20 +119,18 @@ squaredAngle(
         cosine = 1;
     else if (cosine < -1)
         cosine = -1;
-    double angle = std::acos(cosine);
-    return angle * angle;
+    return std::acos(cosine);
 }
 
 double
-squaredTanimoto(
+distTanimoto(
     const MappedColumnVector& inX,
     const MappedColumnVector& inY) {
 
     // Note that this is not a metric in general!
     double dotProduct = dot(inX, inY);
     double tanimoto = inX.squaredNorm() + inY.squaredNorm();
-    tanimoto = (tanimoto - 2 * dotProduct) / (tanimoto - dotProduct);
-    return tanimoto * tanimoto;
+    return (tanimoto - 2 * dotProduct) / (tanimoto - dotProduct);
 }
 
 /**
@@ -172,11 +161,11 @@ closestColumnsAndDistancesShortcut(
     else if (inDist.funcPtr() == funcPtr<dist_norm1>())
         closestColumnsAndDistances(inMatrix, inVector, distNorm1,
             ioFirst, ioLast);
-    else if (inDist.funcPtr() == funcPtr<squared_angle>())
-        closestColumnsAndDistances(inMatrix, inVector, squaredAngle,
+    else if (inDist.funcPtr() == funcPtr<dist_angle>())
+        closestColumnsAndDistances(inMatrix, inVector, distAngle,
             ioFirst, ioLast);
-    else if (inDist.funcPtr() == funcPtr<squared_tanimoto>())
-        closestColumnsAndDistances(inMatrix, inVector, squaredTanimoto,
+    else if (inDist.funcPtr() == funcPtr<dist_tanimoto>())
+        closestColumnsAndDistances(inMatrix, inVector, distTanimoto,
             ioFirst, ioLast);
     else
         closestColumnsAndDistances(inMatrix, inVector, inDist,
@@ -240,13 +229,21 @@ closest_columns::run(AnyType& args) {
 
 
 AnyType
+norm1::run(AnyType& args) {
+    return static_cast<double>(args[0].getAs<MappedColumnVector>().lpNorm<1>());
+}
+
+AnyType
 norm2::run(AnyType& args) {
     return static_cast<double>(args[0].getAs<MappedColumnVector>().norm());
 }
 
 AnyType
-norm1::run(AnyType& args) {
-    return static_cast<double>(args[0].getAs<MappedColumnVector>().lpNorm<1>());
+dist_norm1::run(AnyType& args) {
+    return distNorm1(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>()
+    );
 }
 
 AnyType
@@ -261,14 +258,6 @@ dist_norm2::run(AnyType& args) {
 }
 
 AnyType
-dist_norm1::run(AnyType& args) {
-    return squaredDistNorm1(
-        args[0].getAs<MappedColumnVector>(),
-        args[1].getAs<MappedColumnVector>()
-    );
-}
-
-AnyType
 squared_dist_norm2::run(AnyType& args) {
     return squaredDistNorm2(
         args[0].getAs<MappedColumnVector>(),
@@ -277,24 +266,16 @@ squared_dist_norm2::run(AnyType& args) {
 }
 
 AnyType
-squared_dist_norm1::run(AnyType& args) {
-    return squaredDistNorm1(
+dist_angle::run(AnyType& args) {
+    return distAngle(
         args[0].getAs<MappedColumnVector>(),
         args[1].getAs<MappedColumnVector>()
     );
 }
 
 AnyType
-squared_angle::run(AnyType& args) {
-    return squaredAngle(
-        args[0].getAs<MappedColumnVector>(),
-        args[1].getAs<MappedColumnVector>()
-    );
-}
-
-AnyType
-squared_tanimoto::run(AnyType& args) {
-    return squaredTanimoto(
+dist_tanimoto::run(AnyType& args) {
+    return distTanimoto(
         args[0].getAs<MappedColumnVector>(),
         args[1].getAs<MappedColumnVector>()
     );

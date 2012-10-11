@@ -23,6 +23,20 @@ Linear-algebra functions.
 */
 
 /**
+ * @brief 1-norm of a vector
+ *
+ * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
+ * @return \f$ \| x \|_1 = \sum_{i=1}^n |x_i| \f$
+ */
+CREATE FUNCTION MADLIB_SCHEMA.norm1(
+    x DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE
+STRICT;
+
+/**
  * @brief 2-norm of a vector
  *
  * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
@@ -37,13 +51,15 @@ IMMUTABLE
 STRICT;
 
 /**
- * @brief 1-norm of a vectors
+ * @brief 1-norm of the difference between two vectors
  *
  * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
- * @return \f$ \| x \|_1 = \sum_{i=1}^n |x_i| \f$
+ * @param y Vector \f$ \vec y = (y_1, \dots, y_n) \f$
+ * @return \f$ \| x - y \|_1 = \sum_{i=1}^n |x_i - y_i| \f$
  */
-CREATE FUNCTION MADLIB_SCHEMA.norm1(
-    x DOUBLE PRECISION[]
+CREATE FUNCTION MADLIB_SCHEMA.dist_norm1(
+    x DOUBLE PRECISION[],
+    y DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION
 AS 'MODULE_PATHNAME'
 LANGUAGE C
@@ -58,22 +74,6 @@ STRICT;
  * @return \f$ \| x - y \|_2 = \sqrt{\sum_{i=1}^n (x_i - y_i)^2} \f$
  */
 CREATE FUNCTION MADLIB_SCHEMA.dist_norm2(
-    x DOUBLE PRECISION[],
-    y DOUBLE PRECISION[]
-) RETURNS DOUBLE PRECISION
-AS 'MODULE_PATHNAME'
-LANGUAGE C
-IMMUTABLE
-STRICT;
-
-/**
- * @brief 1-norm of the difference between two vectors
- *
- * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
- * @param y Vector \f$ \vec y = (y_1, \dots, y_n) \f$
- * @return \f$ \| x - y \|_1 = \sum_{i=1}^n |x_i - y_i| \f$
- */
-CREATE FUNCTION MADLIB_SCHEMA.dist_norm1(
     x DOUBLE PRECISION[],
     y DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION
@@ -99,30 +99,14 @@ IMMUTABLE
 STRICT;
 
 /**
- * @brief Squared 1-norm of the difference between two vectors
- *
- * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
- * @param y Vector \f$ \vec y = (y_1, \dots, y_n) \f$
- * @return \f$ \| x - y \|_1^2 = \left( \sum_{i=1}^n |x_i - y_i| \right)^2 \f$
- */
-CREATE FUNCTION MADLIB_SCHEMA.squared_dist_norm1(
-    x DOUBLE PRECISION[],
-    y DOUBLE PRECISION[]
-) RETURNS DOUBLE PRECISION
-AS 'MODULE_PATHNAME'
-LANGUAGE C
-IMMUTABLE
-STRICT;
-
-/**
- * @brief Squared angle between two vectors
+ * @brief Angle between two vectors
  *
  * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
  * @param y Vector \f$ \vec y = (y_1, \dots, y_n) \f$
  * @return \f$ \arccos\left(\frac{\langle \vec x, \vec y \rangle}
- *                               {\| \vec x \| \cdot \| \vec y \|}\right)^2 \f$
+ *                               {\| \vec x \| \cdot \| \vec y \|}\right) \f$
  */
-CREATE FUNCTION MADLIB_SCHEMA.squared_angle(
+CREATE FUNCTION MADLIB_SCHEMA.dist_angle(
     x DOUBLE PRECISION[],
     y DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION
@@ -132,15 +116,15 @@ IMMUTABLE
 STRICT;
 
 /**
- * @brief Squared angle between two vectors
+ * @brief Tanimoto distance between two vectors
  *
  * @param x Vector \f$ \vec x = (x_1, \dots, x_n) \f$
  * @param y Vector \f$ \vec y = (y_1, \dots, y_n) \f$
- * @return \f$ \left(1 - \frac{\langle \vec x, \vec y \rangle}
+ * @return \f$ 1 - \frac{\langle \vec x, \vec y \rangle}
  *                            {\| \vec x \|^2 \cdot \| \vec y \|^2
- *                                - \langle \vec x, \vec y \rangle}\right)^2 \f$
+ *                                - \langle \vec x, \vec y \rangle} \f$
  */
-CREATE FUNCTION MADLIB_SCHEMA.squared_tanimoto(
+CREATE FUNCTION MADLIB_SCHEMA.dist_tanimoto(
     x DOUBLE PRECISION[],
     y DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION
@@ -180,12 +164,24 @@ CREATE TYPE MADLIB_SCHEMA.closest_column_result AS (
 CREATE FUNCTION MADLIB_SCHEMA.closest_column(
     M DOUBLE PRECISION[][],
     x DOUBLE PRECISION[],
-    dist REGPROC
+    dist REGPROC /*+ DEFAULT 'squared_dist_norm2' */
 ) RETURNS MADLIB_SCHEMA.closest_column_result
-AS 'MODULE_PATHNAME'
-LANGUAGE C
 IMMUTABLE
-STRICT;
+STRICT
+LANGUAGE C
+AS 'MODULE_PATHNAME';
+
+CREATE FUNCTION MADLIB_SCHEMA.closest_column(
+    M DOUBLE PRECISION[][],
+    x DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.closest_column_result
+IMMUTABLE
+STRICT
+LANGUAGE sql
+AS $$
+    SELECT MADLIB_SCHEMA.closest_column($1, $2,
+        'MADLIB_SCHEMA.squared_dist_norm2')
+$$;
 
 /*
  * @brief closest_columns return type
@@ -215,13 +211,25 @@ CREATE FUNCTION MADLIB_SCHEMA.closest_columns(
     M DOUBLE PRECISION[][],
     x DOUBLE PRECISION[],
     num INT2,
-    dist REGPROC
+    dist REGPROC /*+ DEFAULT 'squared_dist_norm2' */
 ) RETURNS MADLIB_SCHEMA.closest_columns_result
-AS 'MODULE_PATHNAME'
-LANGUAGE C
 IMMUTABLE
-STRICT;
+STRICT
+LANGUAGE C
+AS 'MODULE_PATHNAME';
 
+CREATE FUNCTION MADLIB_SCHEMA.closest_columns(
+    M DOUBLE PRECISION[][],
+    x DOUBLE PRECISION[],
+    num INT2
+) RETURNS MADLIB_SCHEMA.closest_columns_result
+IMMUTABLE
+STRICT
+LANGUAGE sql
+AS $$
+    SELECT MADLIB_SCHEMA.closest_columns($1, $2, $3,
+        'MADLIB_SCHEMA.squared_dist_norm2')
+$$;
 
 CREATE FUNCTION MADLIB_SCHEMA.avg_vector_transition(
     state DOUBLE PRECISION[],
