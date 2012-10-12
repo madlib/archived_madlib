@@ -134,6 +134,21 @@ root directory) for more options, after having run `cmake` the first time.
     Note: If no `GREENPLUM<...>_PG_CONFIG` is specified, the build script will
     look for `/usr/local/greenplum-db/bin/pg_config`.
 
+- `LIBSTDCXX_COMPAT` (default: *empty*)
+
+    If GNU gcc is used to build MADlib and link against the GNU libstdc++, this
+    option may be used to set the maximum version of libstdc++ acceptable as a
+    runtime dependency (not supported on Mac OS X). E.g., if MADlib should
+    require no more than the libstdc++ shipped with gcc 4.1.2, call
+    `./configure` with `-DLIBSTDCXX_COMPAT=40102`.
+    
+    The current minimum value supported for option `LIBSTDCXX_COMPAT` is
+    `40102`, and the latest version of gcc supported when setting this option is
+    gcc 4.6.x.
+    
+    Setting this option will enable workarounds in
+    `src/utils/libstdcxx-compatibility.cpp`.
+
 - `BOOST_TAR_SOURCE` (default: *empty*)
 
     If no recent version of Boost is found (>= 1.46), Boost is downloaded
