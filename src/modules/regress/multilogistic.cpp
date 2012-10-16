@@ -219,9 +219,9 @@ mlogregr_irls_step_transition::run(AnyType &args) {
     MappedColumnVector x = args[3].getAs<MappedColumnVector>();
 
     // Get the category & numCategories as integer
-    int16_t category = args[1].getAs<int>();
+    int32_t category = args[1].getAs<int>();
     // Number of categories after pivoting (We pivot around the first category)
-    int16_t numCategories = (args[2].getAs<int>() - 1);
+    int32_t numCategories = (args[2].getAs<int>() - 1);
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite())

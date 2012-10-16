@@ -101,7 +101,7 @@ public:
      * me. But I am not sure where I can move this to...
      */
     inline void computeRMSE() {
-        task.RMSE = sqrt(algo.loss / algo.numRows);
+        task.RMSE = sqrt(algo.loss / static_cast<double>(algo.numRows));
     }
 
     static inline uint32_t arraySize(const uint16_t inRowDim, 

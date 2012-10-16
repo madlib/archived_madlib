@@ -2529,7 +2529,6 @@ Datum dt_array_indexed_agg_sfunc(PG_FUNCTION_ARGS)
 	int32_t         elem_cnt;
 	int32_t         elem_idx;
 	int32_t         iterator_idx;
-	int 		    lbs[1];
 	
     dt_check_error_value
         (
@@ -2588,7 +2587,6 @@ Datum dt_array_indexed_agg_sfunc(PG_FUNCTION_ARGS)
 		build_state.dvalues[elem_idx << 1]       = elem;
 		build_state.dvalues[(elem_idx << 1) + 1] =  
 			Float8GetDatum(PG_ARGISNULL(1) ? 1 : 0);
-		lbs[0] = 1;
 
 		state = construct_array(build_state.dvalues, build_state.nelems,
 			build_state.element_type, build_state.typlen, 

@@ -370,7 +370,6 @@ Datum __fmsketch_trans_c(bytea *transblob, Datum indat)
     uint64       index;
     uint8 *      c;
     int          rmost;
-    Datum        result;
     // char        *hex;
     bytea       *hashed;
 
@@ -398,9 +397,8 @@ Datum __fmsketch_trans_c(bytea *transblob, Datum indat)
      * i.e. position 0 is the rightmost.
      * so to set the bit at rmost from the left, we subtract from the total number of bits.
      */
-    result =
-        array_set_bit_in_place(bitmaps, NMAP, MD5_HASHLEN_BITS, index,
-                               (MD5_HASHLEN_BITS - 1) - rmost);
+    array_set_bit_in_place(bitmaps, NMAP, MD5_HASHLEN_BITS, index,
+                           (MD5_HASHLEN_BITS - 1) - rmost);
     return PointerGetDatum(transblob);
 }
 

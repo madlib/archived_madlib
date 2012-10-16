@@ -847,7 +847,7 @@ Datum General_2Array_to_Element(ArrayType *v1, ArrayType *v2, Datum(*element_fun
 	
 	int ndims,nitems; 
 	int *dims1,*lbs1,ndims1,nitems1; 
-	int *dims2,*lbs2,ndims2,nitems2; 
+	int *dims2,*lbs2,ndims2; 
 	int i, type_size;
 	bool typbyval;
 	char *dat1,*dat2;
@@ -883,7 +883,6 @@ Datum General_2Array_to_Element(ArrayType *v1, ArrayType *v2, Datum(*element_fun
 	dat1 = ARR_DATA_PTR(v1);
 	dat2 = ARR_DATA_PTR(v2);
 	nitems1 = ArrayGetNItems(ndims1, dims1);
-	nitems2 = ArrayGetNItems(ndims2, dims2);
 	
 	ndims = ndims1;
 	for (i = 0; i < ndims; i++)
@@ -959,8 +958,8 @@ Datum General_2Array_to_Array(ArrayType *v1, ArrayType *v2, char*(*element_funct
 	char *result = NULL, *result_point;
 	
 	int *dims,*lbs,ndims,nitems; 
-	int *dims1,*lbs1,ndims1,nitems1; 
-	int *dims2,*lbs2,ndims2,nitems2; 
+	int *dims1,*lbs1,ndims1; 
+	int *dims2,*lbs2,ndims2; 
 	int i, type_size;
 	bool typbyval;
 	char *dat1,*dat2;
@@ -995,8 +994,6 @@ Datum General_2Array_to_Array(ArrayType *v1, ArrayType *v2, char*(*element_funct
 	
 	dat1 = ARR_DATA_PTR(v1);
 	dat2 = ARR_DATA_PTR(v2);
-	nitems1 = ArrayGetNItems(ndims1, dims1);
-	nitems2 = ArrayGetNItems(ndims2, dims2);
 	
 	ndims = ndims1;
 	dims = (int *) palloc(ndims * sizeof(int));
@@ -1100,7 +1097,7 @@ Datum General_Array_to_Array(ArrayType *v1, Datum elt2, char*(*element_function)
 	char *result = NULL, *result_point;
 	
 	int *dims,*lbs,ndims,nitems; 
-	int *dims1,*lbs1,ndims1,nitems1; 
+	int *dims1,*lbs1,ndims1; 
 	int i, type_size;
 	bool typbyval;
 	char *dat1;
@@ -1120,7 +1117,6 @@ Datum General_Array_to_Array(ArrayType *v1, Datum elt2, char*(*element_function)
 	dims1 = ARR_DIMS(v1);
 	
 	dat1 = ARR_DATA_PTR(v1);
-	nitems1 = ArrayGetNItems(ndims1, dims1);
 	
 	ndims = ndims1;
 	dims = (int *) palloc(ndims * sizeof(int));
