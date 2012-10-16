@@ -48,7 +48,7 @@ public:
 
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(
-                arraySize(inNumDimensions));
+                static_cast<uint32_t>(arraySize(inNumDimensions)));
         rebind(inNumDimensions);
         numDimensions = inNumDimensions;
     }
@@ -107,7 +107,7 @@ avg_vector_transition::run(AnyType& args) {
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
 
     if (state.numRows == 0)
-        state.initialize(*this, x.size());
+        state.initialize(*this, static_cast<uint16_t>(x.size()));
     else if (x.size() != state.sumOfVectors.size()
         || state.numDimensions !=
             static_cast<uint32_t>(state.sumOfVectors.size()))
@@ -141,7 +141,7 @@ avg_vector_final::run(AnyType& args) {
 
     MutableNativeColumnVector avgVector(allocateArray<double>(
         state.sumOfVectors.size()));
-    avgVector = state.sumOfVectors / state.numRows;
+    avgVector = state.sumOfVectors / static_cast<int32_t>(state.numRows);
     return avgVector;
 }
 
@@ -152,7 +152,7 @@ normalized_avg_vector_transition::run(AnyType& args) {
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
 
     if (state.numRows == 0)
-        state.initialize(*this, x.size());
+        state.initialize(*this, static_cast<uint16_t>(x.size()));
     else if (x.size() != state.sumOfVectors.size()
         || state.numDimensions !=
             static_cast<uint32_t>(state.sumOfVectors.size()))
@@ -170,7 +170,7 @@ normalized_avg_vector_final::run(AnyType& args) {
 
     MutableNativeColumnVector avgVector(allocateArray<double>(
         state.sumOfVectors.size()));
-    avgVector = (state.sumOfVectors / state.numRows).normalized();
+    avgVector = (state.sumOfVectors / static_cast<int32_t>(state.numRows)).normalized();
     return avgVector;
 }
 

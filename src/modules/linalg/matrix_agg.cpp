@@ -64,15 +64,16 @@ public:
             MatrixAggState oldSelf = *this;
             mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
                 dbal::DoZero, dbal::ThrowBadAlloc>(
-                    arraySize(numRows, numColsReserved));
+                    static_cast<uint32_t>(arraySize(numRows, numColsReserved)));
             rebind(numRows, numColsReserved);
             numRows = oldSelf.numRows;
             numCols = oldSelf.numCols;
-            matrix.leftCols(numCols) = oldSelf.matrix.leftCols(numCols);
+            matrix.leftCols(static_cast<int>(numCols)) = 
+                oldSelf.matrix.leftCols(static_cast<int>(numCols));
         }
 
         rebind(numRows, numCols + 1);
-        return matrix.col(numCols++);
+        return matrix.col(static_cast<int>(numCols++));
     }
 
 private:
@@ -95,7 +96,8 @@ private:
     void rebind(uint64_t inNumRows, uint64_t inNumCols) {
         numRows.rebind(&mStorage[0]);
         numCols.rebind(&mStorage[1]);
-        matrix.rebind(&mStorage[2], inNumRows, inNumCols);
+        matrix.rebind(&mStorage[2], static_cast<int>(inNumRows), 
+            static_cast<int>(inNumCols));
 
         madlib_assert(mStorage.size()
             >= arraySize(inNumRows, inNumCols),
@@ -132,7 +134,7 @@ AnyType
 matrix_agg_final::run(AnyType& args) {
     MatrixAggState<ArrayHandle<double> > state = args[0];
 
-    return MappedMatrix(state.matrix.leftCols(state.numCols));
+    return MappedMatrix(state.matrix.leftCols(static_cast<int>(state.numCols)));
 }
 
 AnyType

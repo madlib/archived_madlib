@@ -205,7 +205,6 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
 {
     bytea *     counterblob1 = PG_GETARG_BYTEA_P(0);
     bytea *     counterblob2 = PG_GETARG_BYTEA_P(1);
-    cmtransval *transval1 = (cmtransval *)VARDATA(counterblob1);
     cmtransval *transval2 = (cmtransval *)VARDATA(counterblob2);
     cmtransval *newtrans;
     countmin *  sketches2 = NULL;
@@ -221,7 +220,6 @@ Datum __cmsketch_merge(PG_FUNCTION_ARGS)
         PG_RETURN_DATUM(PointerGetDatum(counterblob1));
     else if (!CM_TRANSVAL_INITIALIZED(counterblob1)) {
         counterblob1 = cmsketch_init_transval();
-        transval1 = (cmtransval *)VARDATA(counterblob1);
     }
     else if (!CM_TRANSVAL_INITIALIZED(counterblob2)) {
         counterblob2 = cmsketch_init_transval();
