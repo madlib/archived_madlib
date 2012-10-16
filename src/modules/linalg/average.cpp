@@ -44,11 +44,10 @@ public:
     }
 
     inline void initialize(const Allocator &inAllocator,
-        uint16_t inNumDimensions) {
+        uint32_t inNumDimensions) {
 
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(
-                arraySize(inNumDimensions));
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inNumDimensions));
         rebind(inNumDimensions);
         numDimensions = inNumDimensions;
     }
@@ -68,8 +67,8 @@ public:
     }
 
 private:
-    static inline uint64_t arraySize(uint32_t inNumDimensions) {
-        return 2ULL + inNumDimensions;
+    static inline size_t arraySize(uint32_t inNumDimensions) {
+        return static_cast<size_t>(2 + inNumDimensions);
     }
 
     /**
@@ -107,7 +106,7 @@ avg_vector_transition::run(AnyType& args) {
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
 
     if (state.numRows == 0)
-        state.initialize(*this, x.size());
+        state.initialize(*this, static_cast<uint32_t>(x.size()));
     else if (x.size() != state.sumOfVectors.size()
         || state.numDimensions !=
             static_cast<uint32_t>(state.sumOfVectors.size()))
@@ -141,7 +140,7 @@ avg_vector_final::run(AnyType& args) {
 
     MutableNativeColumnVector avgVector(allocateArray<double>(
         state.sumOfVectors.size()));
-    avgVector = state.sumOfVectors / state.numRows;
+    avgVector = state.sumOfVectors / static_cast<double>(state.numRows);
     return avgVector;
 }
 
@@ -152,7 +151,7 @@ normalized_avg_vector_transition::run(AnyType& args) {
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
 
     if (state.numRows == 0)
-        state.initialize(*this, x.size());
+        state.initialize(*this, static_cast<uint32_t>(x.size()));
     else if (x.size() != state.sumOfVectors.size()
         || state.numDimensions !=
             static_cast<uint32_t>(state.sumOfVectors.size()))
@@ -170,7 +169,8 @@ normalized_avg_vector_final::run(AnyType& args) {
 
     MutableNativeColumnVector avgVector(allocateArray<double>(
         state.sumOfVectors.size()));
-    avgVector = (state.sumOfVectors / state.numRows).normalized();
+    avgVector = (state.sumOfVectors /
+        static_cast<double>(state.numRows)).normalized();
     return avgVector;
 }
 

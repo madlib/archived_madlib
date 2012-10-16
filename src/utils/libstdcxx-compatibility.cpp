@@ -178,7 +178,7 @@ void
 ctype<char>::_M_widen_init() const {
     char __tmp[sizeof(_M_widen)];
     for (unsigned __i = 0; __i < sizeof(_M_widen); ++__i)
-        __tmp[__i] = __i;
+        __tmp[__i] = static_cast<char>(__i);
     do_widen(__tmp, __tmp + sizeof(__tmp), _M_widen);
 
     _M_widen_ok = 1;

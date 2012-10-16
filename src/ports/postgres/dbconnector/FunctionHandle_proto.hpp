@@ -64,6 +64,7 @@ protected:
     template <typename T>
     friend struct TypeTraits;
 
+    Datum internalInvoke(FunctionCallInfo inFCInfo);
     SystemInformation* getSysInfo() const;
 
     SystemInformation* mSysInfo;

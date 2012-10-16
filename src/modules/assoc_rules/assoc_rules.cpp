@@ -52,7 +52,7 @@ gen_rules_from_cfp::SRF_init(AnyType &args) {
     // allocate memory for user context
     myfctx            = new perm_fctx();
     myfctx->positions = positions;
-    myfctx->pos_len   = strlen(positions);
+    myfctx->pos_len   = static_cast<int32_t>(strlen(positions));
     myfctx->num_elems = args[1].getAs<int32>();
     myfctx->num_calls = (1 << myfctx->num_elems) - 2;
     myfctx->flags     = new bool[myfctx->num_elems];
@@ -132,7 +132,7 @@ gen_rules_from_cfp::SRF_next(void *user_fctx, bool *is_last_call) {
             continue;
         } else {
             ++p_cur;
-            len           = p_cur - p_begin;
+            len           = static_cast<int>(p_cur - p_begin);
             p_sel_pos     = is_cont ? &p_pre : &p_post;
             memcpy(*p_sel_pos, p_begin, len * sizeof(char));
             *p_sel_pos    += len;

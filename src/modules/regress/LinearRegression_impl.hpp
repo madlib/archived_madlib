@@ -43,7 +43,7 @@ LinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
     inStream
         >> numRows >> widthOfX >> y_sum >> y_square_sum;
     uint16_t actualWidthOfX = widthOfX.isNull()
-        ? 0
+        ? static_cast<uint16_t>(0)
         : static_cast<uint16_t>(widthOfX);
     inStream
         >> X_transp_Y.rebind(actualWidthOfX)
