@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file igd.hpp
  *
@@ -71,10 +71,12 @@ IGD<State, ConstState, Task>::merge(state_type &state,
     // Order:         111111111  22222  3333333333333333
 
     // model averaging, weighted by rows seen
-    double totalNumRows = state.algo.numRows + otherState.algo.numRows;
-    state.algo.incrModel *= (1. * state.algo.numRows) / otherState.algo.numRows;
+    double totalNumRows = static_cast<double>(state.algo.numRows + otherState.algo.numRows);
+    state.algo.incrModel *= static_cast<double>(state.algo.numRows) /
+        static_cast<double>(otherState.algo.numRows);
     state.algo.incrModel += otherState.algo.incrModel;
-    state.algo.incrModel *= (1. * otherState.algo.numRows) / totalNumRows;
+    state.algo.incrModel *= static_cast<double>(otherState.algo.numRows) /
+        static_cast<double>(totalNumRows);
 }
 
 template <class State, class ConstState, class Task>
