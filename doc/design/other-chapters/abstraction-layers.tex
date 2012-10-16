@@ -41,7 +41,7 @@ SQL comes without any native support for vector and matrix operations. This pres
 
 Incorporating proven third-party libraries moreover makes it easy for MADlib developers to write correct and performant code: For instance, the Eigen linear-algebra library contains well-tested and well-tuned code that makes use of the SIMD instruction sets (like SSE) found in today's CPUs. Recent versions of Eigen even allow coupling with proprietary high-performance mathematical routines like the Intel Math Kernel Library.
 
-Likewise, the C++ abstraction layer itself has been tuned for efficient value-marshaling. Some examples include: All type bridges are aware of mutable and immutable objects and avoid making copies whenever possible. DBMS-catalogue lookups occur only once per query and are then minimized by caching. Moreover, the C++ abstraction layer is written as template library and with the goal of reducing the runtime and abstraction overhead to a minimum. In particular, it takes extra steps to avoid memory allocation whenever possible.
+Likewise, the C++ abstraction layer itself has been tuned for efficient value marshaling. Some examples include: All type bridges are aware of mutable and immutable objects and avoid making copies whenever possible. DBMS-catalogue lookups occur only once per query and are then minimized by caching. Moreover, the C++ abstraction layer is written as a template library and with the goal of reducing the runtime and abstraction overhead to a minimum. In particular, it takes extra steps to avoid memory allocation whenever possible.
 
 \paragraph{Resource-Management Shims}
 
@@ -357,17 +357,203 @@ The concept \symlabel{MutableSizedContiguousDataHandle}{sym:MutableSizedContiguo
 
 \subsubsection[Class Ref]{Class \symlabel{Ref}{sym:Ref}}
 
-\ref{sym:Ref} objects are similar to normal C++ references. However, they allow \emph{rebinding} to a different target.
+\ref{sym:Ref} objects are conceptually equivalent to normal C++ references. However, they allow \emph{rebinding} to a different target.
+
+\paragraph{Requirements}
+
+\begin{itemize}
+	\item \texttt{T} Target type
+	\item \texttt{IsMutable} Boolean parameter indicating if objects of this type can be used to modify the target
+\end{itemize}
+
+\paragraph{Types}
+
+\begin{itemize}
+	\item
+		\texttt{value\_type}: \texttt{T}
+\end{itemize}
+
+\paragraph{Member Functions}
+
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		Ref& rebind(val_type* inPtr)
+		\end{cppsnippet}
+
+		Rebind this reference to a different target.
+
+	\item
+		\begin{cppsnippet}
+		operator const val_type&() const
+		\end{cppsnippet}
+
+		Return a const-reference to the target.
+
+	\item
+		\begin{cppsnippet}
+		const val_type* ptr() const
+		\end{cppsnippet}
+
+		Return a const-pointer to the target.
+	
+	\item
+		\begin{cppsnippet}
+		bool isNull() const
+		\end{cppsnippet}
+
+		Return if this reference has been bound to a target.
+\end{itemize}
+
+If \texttt{IsMutable == true}, then \ref{sym:Ref} also contains the following non-const member functions:
+
+\begin{itemize}
+	\item \texttt{operator val\_type\&()}
+	\item \texttt{val\_type* ptr()}
+\end{itemize}
+
+Moreover it contains:
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		Ref& operator=(Ref& inRef)
+		Ref& operator=(const val_type& inValue)
+		\end{cppsnippet}
+		
+		Assign the target value of \texttt{inRef} or \texttt{inValue} to the target of this object.
+		
+		It is important to define the first assignment operator because C++ will otherwise perform an assignment as a bit-by-bit copy. Note that this default \texttt{operator=} would be used even though there is a conversion path through \texttt{dest.operator=(orig.operator const val\_type\&())}.
+\end{itemize}
+
 
 \subsubsection[Class ByteStream]{Class \symlabel{ByteStream}{sym:ByteStream}}
 
-\ref{sym:ByteStream} objects are similar to \texttt{std::istream} objects in that they are used to \emph{bind} (as opposed to \emph{read} in the case of \texttt{std::istream}) references to positions in byte sequences. \texttt{operator>\/>()} functions are provided for users of \ref{sym:ByteStream} objects.
+\ref{sym:ByteStream} objects are similar to \texttt{std::istream} objects in that they are used to \emph{bind} (as opposed to \emph{read} in the case of \texttt{std::istream}) references to positions in byte sequences. \texttt{operator>\/>()} functions are provided for users of \ref{sym:ByteStream} objects. Each \ref{sym:ByteStream} object controls a \ref{sym:ByteStreamHandleBuf}, which in turn controls a block of memory (the storage/buffer) and has a current position.
+
+A \ref{sym:ByteStream} object can be in \emph{dry-run} mode, in which case \texttt{operator>\/>} invocations move the current position, but no rebinding takes place. Dry-run mode is used, e.g., to determine the storage size needed to hold a \ref{sym:DynamicStruct}.
+
+\paragraph{Member Functions}
+
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		template <size_t Alignment>
+		size_t seek(std::ptrdiff_t inOffset, std::ios_base::seekdir inDir) // (1)
+		size_t seek(size_t inPos) // (2)
+		size_t seek(std::ptrdiff_t inOffset, std::ios_base::seekdir inDir) // (3)
+		\end{cppsnippet}
+		
+		Move the current position in the stream. Variant (1) rounds the new position up to the next multiple of \texttt{Alignment}.
+	
+	\item
+		\begin{cppsnippet}
+		size_t available() const
+		\end{cppsnippet}
+		
+		Return the number of characters between the current position and the end of the stream.
+		
+	\item
+		\begin{cppsnippet}
+		const char_type* ptr() const
+		\end{cppsnippet}
+		
+		Return a pointer to the beginning of the buffer.
+	
+	\item
+		\begin{cppsnippet}
+		size_t size() const
+		\end{cppsnippet}
+		
+		Return the size of the buffer.
+	
+	\item
+		\begin{cppsnippet}
+		size_t tell() const
+		\end{cppsnippet}
+	
+	\item
+		\begin{cppsnippet}
+		std::ios_base::iostate rdstate() const
+		bool eof() const
+		\end{cppsnippet}
+	
+		Return status information about the stream, in a fashion similar to \texttt{std::istream}.
+	\item
+		\begin{cppsnippet}
+		bool isInDryRun() const
+		\end{cppsnippet}
+	
+		Return if the stream is in dry-run mode.
+
+	\item
+		\begin{cppsnippet}
+		template <class T> const T* read(size_t inCount = 1)
+		\end{cppsnippet}
+		
+		Advance the current position in the buffer to the next address suitable to read a value of type \texttt{T} and return that address.
+\end{itemize}
+
+\paragraph{Non-Member Functions}
+
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		template <class Reference>
+		ByteStream& operator>>(ByteStream& inStream, Reference& inReference)
+		\end{cppsnippet}
+		
+		Bind a reference to the next suitable address in the buffer. Internally, this function calls \texttt{read<typename Reference::val\_type>(inReference.size())}.
+\end{itemize}
 
 \subsubsection[Class ByteStreamHandleBuf]{Class \symlabel{ByteStreamHandleBuf}{sym:ByteStreamHandleBuf}}
 
 \ref{sym:ByteStreamHandleBuf} objects are similar to \texttt{std::streambuf} objects in that they are in charge of providing reading functionality from certain types of byte sequences. Unlike \texttt{std::streambuf}, however, reading refers to \emph{binding} a reference to the current position in the byte sequence.
 
 \ref{sym:ByteStreamHandleBuf} objects are associated with a \emph{storage} objects, which is of a class conforming to the \ref{sym:ContiguousDataHandle} concept.
+
+\paragraph{Types}
+
+\begin{itemize}
+	\item \texttt{Storage\_type}: Type conforming to \ref{sym:ContiguousDataHandle} concept.
+\end{itemize}
+
+\paragraph{Constants}
+
+\begin{itemize}
+	\item \texttt{isMutable}: \texttt{Storage\_type::isMutable}, i.e., \texttt{true} if \texttt{Storage\_type} also conforms to the \ref{sym:MutableContiguousDataHandle} concept, and \texttt{false} if not.
+\end{itemize}
+
+\paragraph{Member Functions}
+
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		ByteStreamHandleBuf(size_t inSize) // (1)
+		ByteStreamHandleBuf(const Storage_type& inStorage) // (2)
+		\end{cppsnippet}
+		
+		Constructor~(1) constructs an empty buffer initialized with \texttt{inSize} zero characters. Constructor~(2) initializes a buffer using existing storage.
+	
+	\item
+		\begin{cppsnippet}
+		size_t seek(size_t inPos)
+		const char_type* ptr() const;
+		size_t size() const
+		size_t tell() const
+		\end{cppsnippet}
+
+		Change the current position in the buffer, return the start of the buffer, return the size of of the buffer, and return the current position in the buffer.
+\end{itemize}
+
+The following member functions are only present if \texttt{isMutable == true}.
+\begin{itemize}
+	\item
+		\begin{cppsnippet}
+		void resize(size_t inSize, size_t inPivot)
+		\end{cppsnippet}
+		
+		Change the size of the buffer, and preserve the old buffer in the following way: Denote by $s$ the old size of the buffer, by $n$ the new size \texttt{inSize}, and by $p$ the pivot \texttt{inPivot}. Then bytes $[0, p)$ will remain unchanged, bytes $[p, p + n - s)$ will be initialized with 0, and bytes $[p + (n - s), s + (n - s))$ will contain the old byte range $[p, s)$.
+\end{itemize}
 
 
 \subsubsection[Concept DynamicStructContainer]{Concept \symlabel{DynamicStructContainer}{sym:DynamicStructContainer}}
@@ -571,3 +757,93 @@ Inherited from \ref{sym:DynamicStruct}:
 
 		\texttt{OtherContainer} must conform to the \ref{sym:DynamicStructContainer} concept.
 \end{itemize}
+
+\begin{figure}
+\tikzumlset{font=\ttfamily\small}
+\begin{center}
+\begin{tikzpicture}
+	\umlclass[x=5,y=12,type=concept]{DynamicStructContainer}{%
+	}{%
+		+ rootContainer()\\
+		+ storage()\\
+		+ byteStream()
+	}
+
+	\umlclass[y=7,template=Container]{DynamicStruct}{%
+	}{%
+		+ DynamicStruct()\\
+		\# copy()\\
+		\# setSize()
+	}
+
+	\umlclass[y=2,template=Container,type=concept]{Accumulator}{%
+	}{%
+		+ Accumulator()\\
+		\# bind()\\
+		+ operator<\/<() \\
+		+ operator=()
+	}
+	
+	\umlclass[x=10,y=9, template=Storage]{DynamicStructRootContainer}{%
+	}{%
+	}
+	
+	\umlclass[x=10,y=4.5, template=StreamBuf]{ByteStream}{%
+	}{%
+		+ seek()\\
+		+ rdstate()\\
+		+ size()\\
+		+ tell()\\
+		+ eof()\\
+		+ read<T>()
+	}
+	
+	\umlclass[x=10, y=-1, template=Storage]{ByteStreamHandleBuf}{%
+		\# pos
+	}{%
+		+ seek()\\
+		+ tell()\\
+		+ size()\\
+		+ resize()
+	}
+
+	\umlclass[x=10,y=-5,type=concept]{ContiguousDataHandle}{%
+	}{%
+		+ ptr()
+	}
+	
+	\umlclass[x=5,y=2,type=concept]{Rebindable}{%
+	}{%
+		+ rebind()
+	}
+
+	\umlclass[x=5,y=-2,template=T]{Ref}{%
+	}{%
+		+ operator T\&()\\
+		+ ptr()
+	}
+	
+	\umlclass[y=-2,template={EigenType,Handle}]{HandleMap}{%
+	}{%
+	}
+	
+	\umlassoc[arg=byteStream, pos=0.6, mult=1]{DynamicStructRootContainer}{ByteStream}
+	\umlassoc[arg=streamBuf, pos=0.6, mult=1]{ByteStream}{ByteStreamHandleBuf}
+	\umlassoc[arg=storage, mult=1]{ByteStreamHandleBuf}{ContiguousDataHandle}
+	\umlassoc[geometry=-|, pos=1.9, arg=container, mult=1]{DynamicStruct}{DynamicStructContainer}
+	
+	\umlinherit{Accumulator}{DynamicStruct}
+	\umlinherit[geometry=|-]{DynamicStruct}{DynamicStructContainer}
+	\umlinherit[geometry=|-]{DynamicStructRootContainer}{DynamicStructContainer}
+	\umlinherit{Ref}{Rebindable}
+	\umlinherit{HandleMap}{Rebindable}
+
+	\umlunicompo[name=AccumulatorComposition]{Accumulator}{Rebindable}
+	
+	\umlnote[x=5,y=5,geometry=|-|,width=20ex]{AccumulatorComposition-1}{%
+		Member variables need to be Rebindable.
+	}
+\end{tikzpicture}
+\end{center}
+\caption{Class diagram for modular fold/reduce}
+\end{figure}
