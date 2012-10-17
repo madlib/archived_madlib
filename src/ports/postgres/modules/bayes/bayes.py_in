@@ -232,48 +232,52 @@ def __get_keys_and_prob_values_sql(**kwargs):
     # {classifySource} cannot be a subquery, because we use it more than once in
     # our generated SQL.
     return """
-    SELECT t2.key, t2.class, t1.log_prob FROM
-    (
-        SELECT
-            classify.key,
-            classPriors.class,
-            CASE WHEN count(*) < {numAttrs} THEN NULL
-                 ELSE
-                    log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
-                    + sum( log((featureProbs.cnt::DOUBLE PRECISION + {smoothingFactor})
-                        / (classPriors.class_cnt + {smoothingFactor} * featureProbs.attr_cnt)) )
-                 END
-            AS log_prob
-        FROM
-            {featureProbsSource} AS featureProbs,
-            {classPriorsSource} AS classPriors,
-            (
-                SELECT
-                    classifySource.{classifyKeyColumn} AS key,
-                    generate_series(1, {numAttrs}) AS attr,
-                    unnest(classifySource.{classifyAttrColumn}) AS value
-                FROM
-                    {classifySource} AS classifySource
-            ) AS classify
-        WHERE
-            featureProbs.class = classPriors.class AND
-            featureProbs.attr = classify.attr AND
-            featureProbs.value = classify.value AND
-            ({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
-        GROUP BY
-            classify.key, classPriors.class, classPriors.class_cnt, classPriors.all_cnt
-    ) t1
-    RIGHT OUTER JOIN
-    (
-        SELECT
-            classify.{classifyKeyColumn} AS key,
-            classes.class
-        FROM
-            {classifySource} AS classify,
-            {classPriorsSource} AS classes
-        GROUP BY classify.{classifyKeyColumn}, classes.class
-    ) t2 
-    ON t1.key = t2.key AND t1.class=t2.class
+   SELECT t3.key as key, t3.class as class, log(max(t3.class_cnt)::DOUBLE PRECISION / max(t3.all_cnt)::DOUBLE PRECISION) + sum(t3.log_prob) as log_prob
+   FROM (
+	SELECT 
+		t2.key, 
+		t2.class, 
+		t2.attr, 
+		t2.cvalue, 
+		max(t2.fpValue) as fpValue, max(t2.fp_cnt) as fp_cnt, 
+		max(t2.fp_attr_cnt) as fp_attr_cnt, t2.class_cnt, t2.all_cnt, 
+		log((COALESCE(max(t2.fp_cnt),0) + {smoothingFactor})::DOUBLE PRECISION/(t2.class_cnt + {smoothingFactor} * max(t2.fp_attr_cnt))::DOUBLE PRECISION) as log_prob
+	FROM (
+		SELECT t1.key, t1.class, t1.attr, t1.cvalue, unnest(t1.fpvalue) as fpValue, unnest(t1.fp_cnt) as fp_cnt, t1.fp_attr_cnt, t1.class_cnt, t1.all_cnt
+		FROM (
+			SELECT 
+				classify.key, 
+				featureprobs.class, 
+				classify.attr, max(classify.value) as cvalue, 
+				max(classify.value) || array_agg(featureprobs.value) as fpvalue, 
+				0::bigint || array_agg(featureprobs.cnt) as fp_cnt, 
+				max(featureprobs.attr_cnt) as fp_attr_cnt, 
+				classpriors.class_cnt, 
+				classpriors.all_cnt
+			FROM 
+					{classPriorsSource} AS classpriors,
+					{featureProbsSource} AS featureprobs,
+					(
+						SELECT
+								classifysource.{classifyKeyColumn} AS key, 
+								generate_series(1, {numAttrs}) AS attr, 
+								unnest(classifysource.{classifyAttrColumn}) AS value
+						FROM
+								{classifySource} AS classifysource	
+					) AS classify
+			WHERE
+					featureProbs.class = classPriors.class AND
+					featureProbs.attr = classify.attr
+			GROUP BY
+					classify.key, featureprobs.class, classify.attr, classpriors.class_cnt, classpriors.all_cnt 
+		) t1
+	) t2
+	WHERE
+		t2.cvalue = t2.fpValue AND
+		{smoothingFactor} > 0 -- prevent division by 0
+	GROUP BY t2.key, t2.class, t2.attr, t2.cvalue, t2.class_cnt, t2.all_cnt
+   ) t3
+   GROUP BY t3.key, t3.class
     """.format(**kwargs)
 
 
