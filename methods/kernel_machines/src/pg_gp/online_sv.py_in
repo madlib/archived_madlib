@@ -284,8 +284,8 @@ def svm_predict_combo( madlib_schema, model_table, ind):
     
     """
 
-    nmodels_rec = plpy.execute("select count(distinct id) from " + model_table);
-    nmodels = nmodels_rec[0]['count'];
+    model_ids_t = plpy.execute("SELECT DISTINCT(id) model_id from " + model_table);
+    nmodels = len(model_ids_t);
 
     if (nmodels <= 1):
         plpy.info("svm_predict_combo(): not an ensemble of models, will use a single prediction");
@@ -296,17 +296,17 @@ def svm_predict_combo( madlib_schema, model_table, ind):
     ret = [];
 
     for i in range(0,nmodels):
-        param_t = plpy.execute("select * from " + model_table + "_param where id = '" + model_table + str(i) + "'")
+        param_t = plpy.execute("select * from " + model_table + "_param where id = '" + model_ids_t[i]['model_id'] + "'")
         intercept = param_t[0]['intercept']
         kernel_func = param_t[0]['kernel']
 	
-        pred = plpy.execute("select sum(weight * " + kernel_func + "(sv, array[" + str(ind)[1:-1] + "])) + " + str(intercept) + " as sum from " + model_table + " where id = '" + model_table + str(i) + "'");
+        pred = plpy.execute("select sum(weight * " + kernel_func + "(sv, array[" + str(ind)[1:-1] + "])) + " + str(intercept) + " as sum from " + model_table + " where id = '" + model_ids_t[i]['model_id'] + "'");
         if (pred.nrows() == 0):
-            plpy.error("svm_predict_combo(): failed to compute prediction for model '" + model_table + str(i) + "'.");
+            plpy.error("svm_predict_combo(): failed to compute prediction for model '" + model_ids_t[i]['model_id'] + "'.");
 
         prediction = pred[0]['sum'];
         sumpr = sumpr + prediction;
-        ret = ret + [(model_table + str(i), prediction)];
+        ret = ret + [(model_ids_t[i]['model_id'], prediction)];
 
     ret = ret + [('avg', sumpr/nmodels)];	
     return ret;
@@ -460,8 +460,8 @@ def lsvm_predict_combo( madlib_schema, model_table, ind):
     
     """
 
-    nmodels_rec = plpy.execute("select count(distinct id) from " + model_table);
-    nmodels = nmodels_rec[0]['count'];
+    model_ids_t = plpy.execute("SELECT DISTINCT(id) model_id from " + model_table);
+    nmodels = len(model_ids_t);
 
     if (nmodels <= 1):
         plpy.info("lsvm_predict_combo(): not an ensemble of models, will use a single prediction");
@@ -472,19 +472,19 @@ def lsvm_predict_combo( madlib_schema, model_table, ind):
     ret = [];
 
     for i in range(0,nmodels):
-        param_t = plpy.execute("SELECT * FROM " + model_table + " WHERE id = '" + model_table + str(i) + "'")
+        param_t = plpy.execute("SELECT * FROM " + model_table + " WHERE id = '" + model_ids_t[i]['model_id'] + "'")
         weights = param_t[0]['weights']
         wdiv = param_t[0]['wdiv']
         wbias = param_t[0]['wbias']
 
-        sql = 'SELECT ' + madlib_schema + '.svm_dot(\'' +(str(weights).replace('[', '{')).replace(']','}') + '\', \'' + (str(ind).replace('[', '{')).replace(']','}') +'\') /' + str(wdiv) + ' + ' + str(wbias) + ' AS sum FROM ' + model_table + ' WHERE id = \'' +  model_table + str(i) + '\''
+        sql = 'SELECT ' + madlib_schema + '.svm_dot(\'' +(str(weights).replace('[', '{')).replace(']','}') + '\', \'' + (str(ind).replace('[', '{')).replace(']','}') +'\') /' + str(wdiv) + ' + ' + str(wbias) + ' AS sum FROM ' + model_table + ' WHERE id = \'' +  model_ids_t[i]['model_id'] + '\''
         pred = plpy.execute(sql);
         if (pred.nrows() == 0):
-            plpy.error("lsvm_predict_combo(): failed to compute prediction for model '" + model_table + str(i) + "'.");
+            plpy.error("lsvm_predict_combo(): failed to compute prediction for model '" + model_ids_t[i]['model_id'] + "'.");
 
         prediction = pred[0]['sum'];
         sumpr = sumpr + prediction;
-        ret = ret + [(model_table + str(i), prediction)];
+        ret = ret + [(model_ids_t[i]['model_id'], prediction)];
 
     ret = ret + [('avg', sumpr/nmodels)];	
     return ret;
@@ -510,13 +510,13 @@ def lsvm_predict_batch( madlib_schema, input_table, data_col, id_col, model_tabl
     plpy.execute('CREATE TABLE ' + output_table + ' ( id int, prediction float8 ) m4_ifdef(`__GREENPLUM__', `distributed by (id)')');
         
     if (parallel) :
-        num_models_t = plpy.execute('SELECT COUNT(DISTINCT(id)) n FROM ' + model_table + ' WHERE position(\'' + model_table + '\' in id) > 0 AND \'' + model_table + '\' <> id;'); 
-        num_models = num_models_t[0]['n'];
+        model_ids_t = plpy.execute('SELECT DISTINCT(id) model_id FROM ' + model_table + ' WHERE position(\'' + model_table + '\' in id) > 0 AND \'' + model_table + '\' <> id;');
+        num_models = len(model_ids_t)
+
         if (num_models == 0) :
             plpy.error("lsvm_predict_batch(): the specified model table does not contain parallelly learned models.");
-            
         for i in range(0,num_models):
-            param_t = plpy.execute('SELECT * FROM ' + model_table + ' WHERE id = \'' + model_table + str(i) + '\'')
+            param_t = plpy.execute('SELECT * FROM ' + model_table + ' WHERE id = \'' + model_ids_t[i]['model_id'] + '\'')
             weights = param_t[0]['weights']
             wdiv = param_t[0]['wdiv']
             wbias = param_t[0]['wbias']
