@@ -270,7 +270,7 @@ one_way_anova_final::run(AnyType &args) {
     double grand_mean = state.sum.sum() / state.num.sum();
     double sum_squares_between = 0;
 
-    for (uint64_t idx = 0; idx < state.numGroups; idx++)
+    for (Index idx = 0; idx < static_cast<Index>(state.numGroups); ++idx)
         sum_squares_between += state.num(idx)
                              * std::pow(state.sum(idx) / state.num(idx)
                                         - grand_mean, 2);

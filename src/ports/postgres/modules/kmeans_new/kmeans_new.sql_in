@@ -18,15 +18,17 @@ m4_include(`SQLCommon.m4')
 
 Clustering refers to the problem of partitioning a set of objects according to
 some problem-dependent measure of <em>similarity</em>. In the k-means variant,
-one is given \f$ n \f$ points \f$ x_1, \dots, x_n \in \mathbb R^d \f$, and the goal is
-to position \f$ k \f$ centroids \f$ c_1, \dots, c_k \in \mathbb R^d \f$ so that the sum of squared
-distances between each point and its closest centroid is minimized. (A cluster
-is identified by its centroid and consists of all points for which this
-centroid is closest.) Formally, we wish to minimize the following objective
-function:
+one is given \f$ n \f$ points \f$ x_1, \dots, x_n \in \mathbb R^d \f$, and the
+goal is to position \f$ k \f$ centroids \f$ c_1, \dots, c_k \in \mathbb R^d \f$
+so that the sum of \em distances between each point and its closest centroid is
+minimized. Each centroid represents a cluster that consists of all points to
+which this centroid is closest. Formally, we wish to minimize the following
+objective function:
 \f[
-    (c_1, \dots, c_k) \mapsto \sum_{i=1}^n \min_{j=1}^k \operatorname{dist}(x_i, c_j)^2
+    (c_1, \dots, c_k) \mapsto \sum_{i=1}^n \min_{j=1}^k \operatorname{dist}(x_i, c_j)
 \f]
+In the most common case, \f$ \operatorname{dist} \f$ is the square of the
+Euclidean distance.
 
 This problem is computationally difficult (NP-hard), yet the
 local-search heuristic proposed by Lloyd [4] performs reasonably well in
@@ -37,12 +39,13 @@ often referred to as the <em>standard algorithm</em> or even just the
 -# Seed the \f$ k \f$ centroids (see below)
 -# Repeat until convergence:
  -# Assign each point to its closest centroid
- -# Move each centroid to the barycenter (mean) of all points currently
-    assigned to it
--# Convergence is achieved when no points change their assignments during step 2a.
+ -# Move each centroid to a position that minimizes the sum of distances in this
+    cluster
+-# Convergence is achieved when no points change their assignments during step
+   2a.
 
-This algorithm is guaranteed to converge to a local optimum, as it can be
-shown that the objective function decreases in every step.
+Since the objective function decreases in every step, this algorithm is
+guaranteed to converge to a local optimum.
 
 @implementation
 
@@ -60,7 +63,7 @@ The following methods are available for the centroid seeding:
    iteratively choose new
    centroids from the input points until there is a total of \f$ k \f$
    centroids. The probability for picking a particular point is proportional to
-   its minimum squared distance to any existing centroid.
+   its minimum distance to any existing centroid.
    \n
    Intuitively, kmeans++ favors seedings where centroids are spread out over the
    whole range of the input points, while at the same time not being too
@@ -314,7 +317,7 @@ CREATE TYPE MADLIB_SCHEMA.kmeans_new_state AS (
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
     sql VARCHAR, DOUBLE PRECISION[][], REGPROC, INTEGER, DOUBLE PRECISION
 ) RETURNS VOID
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -324,7 +327,7 @@ CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeans(
     rel_state VARCHAR,
     rel_source VARCHAR,
     expr_point VARCHAR,
-    agg_mean VARCHAR)
+    agg_centroid VARCHAR)
 RETURNS INTEGER
 VOLATILE
 LANGUAGE plpythonu
@@ -334,16 +337,20 @@ AS $$PythonFunction(kmeans_new, kmeans_new, compute_kmeans)$$;
  * @brief Perform Lloyd's k-means local-search heuristic
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_point Expression evaluting to point coordinates for each tuple
+ * @param expr_point Expression evaluating to point coordinates for each tuple
  * @param initial_centroids Matrix containing the initial centroids as columns
- * @param fn_squared_dist Name of a function with signature
+ * @param fn_dist Name of a function with signature
  *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
- *     returns the square of the distance between two points. The default is
- *     the \ref squared_dist_norm2(float8[],float8[]) "squared Euclidean distance".
- * @param agg_mean Name of an aggregate function with signature
- *     <tt>DOUBLE PRECISION[] -> DOUBLE PRECISION[]</tt> that returns the mean
- *     of a (non-empty) set of points. The default is
- *     the \ref avg(float8[]) "average (barycenter in Euclidean space)".
+ *     returns the distance between two points. The default is the
+ *     \ref squared_dist_norm2(float8[],float8[]) "squared Euclidean distance".
+ * @param agg_centroid Name of an aggregate function with signature
+ *     <tt>DOUBLE PRECISION[] -> DOUBLE PRECISION[]</tt> that, for each group
+ *     of points, returns a centroid. In order for Lloyd's local-search
+ *     heuristic to provably converge and to return a local minimum, this
+ *     centroid should minimize the sum of distances between each point in the
+ *     group and the centroid. The default is the
+ *     \ref avg(float8[]) "average (mean/barycenter in Euclidean space)",
+ *     which satisfies this property if <tt>fn_dist = 'squared_dist_norm2'</tt>.
  * @param max_num_iterations Maximum number of iterations
  * @param min_frac_reassigned Fraction of reassigned points below which
  *     convergence is assumed and the algorithm terminates
@@ -358,8 +365,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
-    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
-    agg_mean VARCHAR /*+ DEFAULT 'avg' */,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
     min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result AS $$
@@ -368,20 +375,26 @@ DECLARE
     theResult MADLIB_SCHEMA.kmeans_new_result;
     oldClientMinMessages VARCHAR;
     class_rel_source REGCLASS;
-    proc_fn_squared_dist REGPROCEDURE;
-    proc_agg_mean REGPROCEDURE;
+    proc_fn_dist REGPROCEDURE;
+    proc_agg_centroid REGPROCEDURE;
 BEGIN
     class_rel_source := rel_source;
-    proc_fn_squared_dist := fn_squared_dist
+    proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
-        FROM pg_proc WHERE oid = proc_fn_squared_dist) THEN
-        RAISE EXCEPTION 'Squared-distance function has wrong signature or is not a simple function.';
+        FROM pg_proc WHERE oid = proc_fn_dist) THEN
+        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
     END IF;
-    proc_agg_mean := agg_mean || '(DOUBLE PRECISION[])';
+    proc_agg_centroid := agg_centroid || '(DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION[]'::regtype OR proisagg = FALSE
-        FROM pg_proc WHERE oid = proc_agg_mean) THEN
+        FROM pg_proc WHERE oid = proc_agg_centroid) THEN
         RAISE EXCEPTION 'Mean aggregate has wrong signature or is not an aggregate.';
+    END IF;
+    IF (min_frac_reassigned < 0) OR (min_frac_reassigned > 1) THEN
+        RAISE EXCEPTION 'Convergence threshold is not a valid value (must be a fraction between 0 and 1).';
+    END IF;
+    IF (max_num_iterations < 0) THEN
+        RAISE EXCEPTION 'Number of iterations must be a non-negative integer.';
     END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data
@@ -400,10 +413,10 @@ BEGIN
         CREATE TABLE pg_temp._madlib_kmeans_args AS
         SELECT
             $1 AS initial_centroids, array_upper($1, 1) AS k,
-            $2 AS fn_squared_dist, $3 AS max_num_iterations,
+            $2 AS fn_dist, $3 AS max_num_iterations,
             $4 AS min_frac_reassigned;
         $sql$,
-        initial_centroids, proc_fn_squared_dist, max_num_iterations,
+        initial_centroids, proc_fn_dist, max_num_iterations,
         min_frac_reassigned);
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
@@ -413,7 +426,7 @@ BEGIN
     theIteration := MADLIB_SCHEMA.internal_compute_kmeans('_madlib_kmeans_args',
             '_madlib_kmeans_state',
             textin(regclassout(class_rel_source)), expr_point,
-            textin(regprocout(proc_agg_mean)));
+            textin(regprocout(proc_agg_centroid)));
 
     -- Retrieve result from state table and return it
     EXECUTE
@@ -436,8 +449,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
     max_num_iterations INTEGER
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
@@ -450,8 +463,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -463,7 +476,7 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
     expr_point VARCHAR,
     initial_centroids DOUBLE PRECISION[][],
-    fn_squared_dist VARCHAR
+    fn_dist VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -487,7 +500,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args(
     sql VARCHAR, INT2, REGPROC, DOUBLE PRECISION[][]
 ) RETURNS VOID
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -505,11 +518,11 @@ LANGUAGE plpythonu VOLATILE;
  * @brief k-Means++ Seeding
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_point Name of the column containing the point coordinates
+ * @param expr_point Expression evaluating to point coordinates for each tuple
  * @param k Number of centroids
- * @param fn_squared_dist Name of a function with signature
+ * @param fn_dist Name of a function with signature
  *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
- *     returns the square of the distance between two points
+ *     returns the distance between two points
  * @param initial_centroids A matrix containing up to \f$ k \f$ columns as
  *     columns. kmeanspp_seeding() proceeds exactly as if these centroids had
  *     already been generated in previous iterations. This parameter may be
@@ -520,7 +533,7 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
     initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
 ) RETURNS DOUBLE PRECISION[][] AS $$
 DECLARE
@@ -528,14 +541,17 @@ DECLARE
     theResult DOUBLE PRECISION[][];
     oldClientMinMessages VARCHAR;
     class_rel_source REGCLASS;
-    proc_fn_squared_dist REGPROCEDURE;
+    proc_fn_dist REGPROCEDURE;
 BEGIN
     class_rel_source := rel_source;
-    proc_fn_squared_dist := fn_squared_dist
+    proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
-        FROM pg_proc WHERE oid = proc_fn_squared_dist) THEN
-        RAISE EXCEPTION 'Squared-distance function has wrong signature or is not a simple function.';
+        FROM pg_proc WHERE oid = proc_fn_dist) THEN
+        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+    END IF;
+    IF (k <= 0) THEN
+        RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
     END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data
@@ -552,9 +568,9 @@ BEGIN
     PERFORM MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args($sql$
         DROP TABLE IF EXISTS pg_temp._madlib_kmeanspp_args;
         CREATE TEMPORARY TABLE _madlib_kmeanspp_args AS
-        SELECT $1 AS k, $2 AS fn_squared_dist, $3 AS initial_centroids;
+        SELECT $1 AS k, $2 AS fn_dist, $3 AS initial_centroids;
         $sql$,
-        k, proc_fn_squared_dist, initial_centroids);
+        k, proc_fn_dist, initial_centroids);
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
     -- Perform acutal computation.
@@ -581,7 +597,7 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR
+    fn_dist VARCHAR
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, NULL)
@@ -608,10 +624,10 @@ $$;
         rel_source,
         expr_point,
         k,
-        fn_squared_dist
+        fn_dist
     ),
-    fn_squared_dist,
-    agg_mean,
+    fn_dist,
+    agg_centroid,
     max_num_iterations,
     min_frac_reassigned
 )</pre>
@@ -620,8 +636,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
-    agg_mean VARCHAR /*+ DEFAULT 'avg' */,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
     min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -637,8 +653,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
     max_num_iterations INTEGER
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
@@ -653,8 +669,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -668,7 +684,7 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR
+    fn_dist VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -697,7 +713,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_random_seeding_args(
     sql VARCHAR, INT2, DOUBLE PRECISION[][]
 ) RETURNS VOID
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -715,7 +731,7 @@ LANGUAGE plpythonu VOLATILE;
  * @brief k-Means Random Seeding
  *
  * @param rel_source Name of the relation containing input points
- * @param expr_point Name of the column containing the point coordinates
+ * @param expr_point Expression evaluating to point coordinates for each tuple
  * @param k Number of centroids
  * @param initial_centroids A matrix containing up to \f$ k \f$ columns as
  *     columns. kmeanspp_seeding() proceeds exactly as if these centroids had
@@ -734,9 +750,13 @@ DECLARE
     theResult DOUBLE PRECISION[][];
     oldClientMinMessages VARCHAR;
     class_rel_source REGCLASS;
-    proc_fn_squared_dist REGPROCEDURE;
+    proc_fn_dist REGPROCEDURE;
 BEGIN
     class_rel_source := rel_source;
+
+    IF (k <= 0) THEN
+        RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
+    END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
@@ -799,8 +819,8 @@ $$;
         expr_point,
         k
     ),
-    fn_squared_dist,
-    agg_mean,
+    fn_dist,
+    agg_centroid,
     max_num_iterations,
     min_frac_reassigned
 )</pre>
@@ -809,8 +829,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
-    agg_mean VARCHAR /*+ DEFAULT 'avg' */,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
     min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -826,8 +846,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
     max_num_iterations INTEGER
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
@@ -843,8 +863,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -859,7 +879,7 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INT2,
-    fn_squared_dist VARCHAR
+    fn_dist VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -892,10 +912,10 @@ $$;
  */
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
     sql VARCHAR, rel_source VARCHAR, expr_point VARCHAR,
-    fn_squared_dist VARCHAR, agg_mean VARCHAR, max_num_iterations INTEGER,
+    fn_dist VARCHAR, agg_centroid VARCHAR, max_num_iterations INTEGER,
     min_frac_reassigned DOUBLE PRECISION
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
-IMMUTABLE
+VOLATILE
 CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using';
@@ -911,21 +931,21 @@ AS 'MODULE_PATHNAME', 'exec_sql_using';
     rel_source,
     expr_point,
     (SELECT \ref matrix_agg($expr_centroid) FROM $rel_initial_centroids),
-    fn_squared_dist,
-    agg_mean,
+    fn_dist,
+    agg_centroid,
     max_num_iterations,
     min_frac_reassigned
 )</pre>
- * where <tt>$expr_centroid</tt> and <tt>$rel_source</tt> denote textual
- * substituions.
+ * where <tt>$expr_centroid</tt> and <tt>$rel_initial_centroids</tt> denote
+ * textual substituions.
  */
 CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     rel_source VARCHAR,
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
-    fn_squared_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
-    agg_mean VARCHAR /*+ DEFAULT 'avg' */,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
     min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -948,8 +968,8 @@ BEGIN
             ),
             $3, $4, $5, $6)
             $sql$,
-            rel_source, expr_point,
-            fn_squared_dist, agg_mean, max_num_iterations, min_frac_reassigned)
+        rel_source, expr_point,
+        fn_dist, agg_centroid, max_num_iterations, min_frac_reassigned)
         INTO theResult;
     RETURN theResult;
 END;
@@ -960,8 +980,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
     max_num_iterations INTEGER
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
@@ -977,8 +997,8 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
-    fn_squared_dist VARCHAR,
-    agg_mean VARCHAR
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -993,7 +1013,7 @@ CREATE FUNCTION MADLIB_SCHEMA.kmeans(
     expr_point VARCHAR,
     rel_initial_centroids VARCHAR,
     expr_centroid VARCHAR,
-    fn_squared_dist VARCHAR
+    fn_dist VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -1016,4 +1036,99 @@ LANGUAGE sql AS $$
         $1, $2,
         $3, $4,
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001)
+$$;
+
+
+/**
+ * @internal
+ * @brief Execute a SQL command where $1, ..., $3 are substituted with the
+ *     given arguments.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_silhouette_args(
+    sql VARCHAR, centroids DOUBLE PRECISION[][], fn_dist REGPROC
+) RETURNS DOUBLE PRECISION
+STABLE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+/**
+ * @brief Compute a simplified version of the silhouette coefficient
+ *
+ * @param rel_source Name of the relation containing input points
+ * @param expr_point Expression evaluating to point coordinates \f$ x_i \f$ for
+ *     each tuple
+ * @param centroids Matrix \f$ M = (\vec{m_0} \dots \vec{m_{k-1}})
+ *     \in \mathbb{R}^{d \times k} \f$ with \f$ k \f$ columns, where column
+ *     \f$ i \f$ contains the position of centroid \f$ i \f$.
+ * @param fn_dist Name of a function with signature
+ *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
+ *     returns the distance between two points
+ * @return For each point \f$ x_i \f$, let
+ *     \f$ d_1( x_i ) \f$ and \f$ d_2( x_i ) \f$ be the distance to the closest
+ *     and 2nd-closest centroid, respectively. If there is more than one
+ *     closest centroids then \f$ d_1( x_i ) = d_2( x_i )\f$.
+ *     The return value is the average, over all points \f$ x_i \f$, of
+ *     \f[
+ *         \frac{d_2( x_i ) - d_1(x_i)}{d_2(x_i)},
+ *     \f]
+ *     where 0/0 is interpreted as 0.
+ *     Clearly, the simplified silhouette coefficient assumes values in
+ *     \f$ [0,1] \f$.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.simple_silhouette(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    centroids DOUBLE PRECISION[][],
+    fn_dist VARCHAR /*+ DEFAULT 'dist_norm2' */
+) RETURNS DOUBLE PRECISION
+STABLE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    class_rel_source REGCLASS;
+    proc_fn_dist REGPROCEDURE;
+BEGIN
+    class_rel_source := rel_source;
+    proc_fn_dist := fn_dist
+        || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
+    IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
+        FROM pg_proc WHERE oid = proc_fn_dist) THEN
+        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+    END IF;
+
+    RETURN MADLIB_SCHEMA.internal_execute_using_silhouette_args($sql$
+        SELECT
+            avg(CASE
+                    WHEN distances[2] = 0 THEN 0
+                    ELSE (distances[2] - distances[1]) / distances[2]
+                END)
+        FROM (
+            SELECT
+                (MADLIB_SCHEMA.closest_columns(
+                    $1,
+                    $sql$ || expr_point || $sql$,
+                    2::INT2,
+                    $2
+                )).distances
+            FROM
+                $sql$ || textin(regclassout(class_rel_source)) || $sql$
+        ) AS two_shortest_distances
+        $sql$,
+        centroids, proc_fn_dist);
+END;
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.simple_silhouette(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    centroids DOUBLE PRECISION[][]
+) RETURNS DOUBLE PRECISION
+STABLE
+STRICT
+LANGUAGE sql
+AS $$
+    SELECT MADLIB_SCHEMA.simple_silhouette($1, $2, $3,
+        'MADLIB_SCHEMA.dist_norm2')
 $$;

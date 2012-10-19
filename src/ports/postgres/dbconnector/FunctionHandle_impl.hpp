@@ -63,6 +63,26 @@ FunctionHandle::getFunctionCallOptions() const {
     return mFuncCallOptions;
 }
 
+/**
+ * @brief Wrapper around FunctionCallInvoke
+ *
+ * We factor FunctionCallInvoke out in a separate function because local
+ * variables could potentially be clobbered during the 'longjmp' otherwise.
+ */
+inline
+Datum
+FunctionHandle::internalInvoke(FunctionCallInfo inFCInfo) {
+    Datum result = 0;
+    MADLIB_PG_TRY {
+        result = FunctionCallInvoke(inFCInfo);
+    } MADLIB_PG_CATCH {
+        throw std::runtime_error(std::string("Exception while invoking '")
+            + mSysInfo->functionInformation(mFuncInfo->oid)->getFullName()
+            + "'. Error was:\n" + MADLIB_PG_ERROR_DATA()->message);
+    } MADLIB_PG_END_TRY;
+    return result;
+}
+
 inline
 AnyType
 FunctionHandle::invoke(AnyType &args) {
@@ -78,7 +98,7 @@ FunctionHandle::invoke(AnyType &args) {
     bool hasNulls = false;
     for (uint16_t i = 0; i < args.numFields(); ++i)
         hasNulls |= args[i].isNull();
-    
+
     // If function is strict, we must not call the function at all
     if (mFuncInfo->isstrict && hasNulls)
         return AnyType();
@@ -104,7 +124,7 @@ FunctionHandle::invoke(AnyType &args) {
             ALLOCSET_DEFAULT_MAXSIZE);
         oldContext = MemoryContextSwitchTo(callContext);
     }
-    
+
     FunctionCallInfoData funcPtrCallInfo;
     // Initializes all the fields of a FunctionCallInfoData except for the arg[]
     // and argnull[] arrays
@@ -133,14 +153,7 @@ FunctionHandle::invoke(AnyType &args) {
         funcPtrCallInfo.argnull[i] = args[i].isNull();
     }
 
-    Datum result = 0;
-    MADLIB_PG_TRY {
-        result = FunctionCallInvoke(&funcPtrCallInfo);
-    } MADLIB_PG_CATCH {
-        throw std::runtime_error(std::string("Exception while invoking '")
-            + mSysInfo->functionInformation(mFuncInfo->oid)->getFullName()
-            + "'. Error was:\n" + MADLIB_PG_ERROR_DATA()->message);
-    } MADLIB_PG_END_TRY;
+    Datum result = internalInvoke(&funcPtrCallInfo);
 
     if (oldContext) {
         MemoryContextSwitchTo(oldContext);

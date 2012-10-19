@@ -140,10 +140,11 @@ exec_sql_using(PG_FUNCTION_ARGS) {
                     format_procedure(fcinfo->flinfo->fn_oid))
                 ));
 
-        returnValue = SPI_getbinval(SPI_tuptable->vals[0],
+        /* It is important to copy the value into the upper executor context,
+         * i.e., the memory context that was current when SPI_connect was
+         * called */
+        returnValue = SPI_getbinval(SPI_copytuple(SPI_tuptable->vals[0]),
             SPI_tuptable->tupdesc, 1, &returnNull);
-        returnValue = datumCopy(returnValue, returnTypeIsByValue,
-            returnTypeLen);
     }
 
     SPI_freeplan(plan);

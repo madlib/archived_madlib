@@ -22,8 +22,8 @@
  * sorted.
  */
 //#include <ctype.h>
-#include "postgres.h"
-#include "fmgr.h"
+#include <postgres.h>
+#include <fmgr.h>
 #include "sortasort.h"
 #include "sketch_support.h"
 
@@ -75,13 +75,13 @@ int sorta_cmp(const void *i, const void *j, void *thunk)
     char      *dat2 = SORTASORT_DATA(s) + second;
     int        len = s->typLen;
     int        shorter;
-    
+
     /*
      * we always use typByVal = true, since we've marshalled the data into place
      */
     if (len < 0) {
-        len = (int)ExtractDatumLen(PointerGetDatum(dat1), len, s->typByVal);
-        if ((shorter = (len - ExtractDatumLen(PointerGetDatum(dat2), len, s->typByVal))))
+        len = (int)ExtractDatumLen(PointerGetDatum(dat1), len, s->typByVal, -1);
+        if ((shorter = (len - ExtractDatumLen(PointerGetDatum(dat2), len, s->typByVal, -1))))
             /* order by length */
             return shorter;
         /* else drop through */
@@ -102,7 +102,7 @@ int sortasort_try_insert(sortasort *s_in, Datum dat, int len)
 {
     /* sanity check */
     void *datp = DatumExtractPointer(dat, s_in->typByVal);
-    
+
     /* first check to see if the element is already there */
     int found = sortasort_find(s_in, dat);
     if (found >= 0 && found < (int)s_in->num_vals) {
@@ -110,8 +110,8 @@ int sortasort_try_insert(sortasort *s_in, Datum dat, int len)
         return TRUE;
     }
 
-    len = ExtractDatumLen(dat, len, s_in->typByVal);    
-    
+    len = ExtractDatumLen(dat, len, s_in->typByVal, -1);
+
     /* sanity check */
     if (found < -1 || found >= (int) s_in->num_vals)
         elog(ERROR,
@@ -132,8 +132,8 @@ int sortasort_try_insert(sortasort *s_in, Datum dat, int len)
      * copy dat to the current storage offset, put a pointer into dir,
      * update num_vals and storage_cur
      */
-    memcpy(SORTASORT_DATA(s_in) + s_in->storage_cur, 
-           datp, 
+    memcpy(SORTASORT_DATA(s_in) + s_in->storage_cur,
+           datp,
            len);
     s_in->dir[s_in->num_vals++] = s_in->storage_cur;
     s_in->storage_cur += len;
@@ -170,7 +170,7 @@ int sortasort_find(sortasort *s, Datum dat)
     int    themin = 0, themax = hi - 1;
     size_t i;
     int    addend, subtrahend;
-    size_t len = ExtractDatumLen(dat, s->typLen, s->typByVal);
+    size_t len = ExtractDatumLen(dat, s->typLen, s->typByVal, -1);
 
     /* binary search on the front of the sortasort */
     if (themax >= (int)s->num_vals) {
@@ -181,8 +181,8 @@ int sortasort_find(sortasort *s, Datum dat)
     }
     theguess = hi / 2;
     while (themin < themax ) {
-        if (!(diff = memcmp(SORTASORT_GETVAL(s,theguess), 
-                            DatumExtractPointer(dat, s->typByVal), 
+        if (!(diff = memcmp(SORTASORT_GETVAL(s,theguess),
+                            DatumExtractPointer(dat, s->typByVal),
                             len)))
             return theguess;
         if (themin == themax - 1) break;
@@ -204,8 +204,8 @@ int sortasort_find(sortasort *s, Datum dat)
 
     /* if we got here, continue with a naive linear search on the tail */
     for (i = hi; i < s->num_vals; i++)
-        if (!memcmp(SORTASORT_GETVAL(s, i), 
-                    DatumExtractPointer(dat, s->typByVal), 
+        if (!memcmp(SORTASORT_GETVAL(s, i),
+                    DatumExtractPointer(dat, s->typByVal),
                     len))
             return i;
     return -1;

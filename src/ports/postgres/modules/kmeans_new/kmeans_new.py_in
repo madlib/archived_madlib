@@ -234,7 +234,7 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                                     WHERE _iteration = {iteration}
                                 ),
                                 _src.{expr_point},
-                                (SELECT fn_squared_dist FROM {rel_args})
+                                (SELECT fn_dist FROM {rel_args})
                             )).distance
                         )
                 FROM {rel_source} AS _src
@@ -281,14 +281,11 @@ def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
                         SELECT
                             {expr_point} AS _point
                         FROM
-                            {rel_source} AS _src, (
-                                SELECT
-                                    count(*) AS _n
-                                FROM {rel_source}
-                            ) AS _stats
+                            {rel_source} AS _src
                         WHERE
                             random() < CAST(
-                                ({m} + 14 + sqrt(196 + 28 * {m}))/_n
+                                ({m} + 14 + sqrt(196 + 28 * {m}))
+                                / (SELECT count(*) FROM {rel_source})
                                 AS DOUBLE PRECISION
                             )
                         ORDER BY random()
@@ -304,7 +301,7 @@ def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
     return iterationCtrl.iteration
 
 def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
-    expr_point, agg_mean, **kwargs):
+    expr_point, agg_centroid, **kwargs):
     """
     Driver function for Lloyd's k-means local-search heuristic
 
@@ -331,7 +328,7 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
         schema_madlib = schema_madlib,
         rel_source = rel_source,
         expr_point = expr_point,
-        agg_mean = agg_mean)
+        agg_centroid = agg_centroid)
     with iterationCtrl as it:
         # Create the initial inter-iteration state of type kmeans_new_state
         it.update("""
@@ -376,9 +373,12 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                                 AS INTEGER
                             )
                         ) AS _num_reassigned,
-                        {agg_mean}(_point) AS _centroid
+                        {agg_centroid}(_point) AS _centroid
                     FROM (
                         SELECT
+                            -- PostgreSQL/Greenplum tuning:
+                            -- VOLATILE function as optimization fence
+                            {schema_madlib}.noop(),
                             _src.{expr_point} AS _point,
                             {schema_madlib}.closest_column(
                                 (
@@ -386,7 +386,7 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                                     WHERE _iteration = {iteration}
                                 ),
                                 _src.{expr_point},
-                                (SELECT fn_squared_dist FROM {rel_args})
+                                (SELECT fn_dist FROM {rel_args})
                             ) AS _new_centroid,
                             ({schema_madlib}.closest_column(
                                 (
@@ -394,10 +394,9 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                                     WHERE _iteration = {iteration} - 1
                                 ),
                                 _src.{expr_point},
-                                (SELECT fn_squared_dist FROM {rel_args})
+                                (SELECT fn_dist FROM {rel_args})
                             )).column_id AS _old_centroid_id
                         FROM {rel_source} AS _src
-                        OFFSET 0  -- PostgreSQL/GP Tuning
                     ) AS _points_with_assignments
                     GROUP BY (_new_centroid).column_id
                 ) AS _new_centroids
@@ -415,7 +414,7 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                                 '{expr_point}',
                                 (SELECT CAST(k AS INT2) FROM {rel_args}),
                                 textin(regprocout(
-                                    (SELECT fn_squared_dist FROM {rel_args})
+                                    (SELECT fn_dist FROM {rel_args})
                                 )),
                                 (
                                     SELECT (_state).centroids FROM {rel_state}
