@@ -892,13 +892,13 @@ AnyType stateToResult(
     double logLikelihood,
     double conditionNo) {
 
-    MutableMappedColumnVector stdErr(
+    MutableNativeColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
-    MutableMappedColumnVector waldZStats(
+    MutableNativeColumnVector waldZStats(
         inAllocator.allocateArray<double>(inCoef.size()));
-    MutableMappedColumnVector waldPValues(
+    MutableNativeColumnVector waldPValues(
         inAllocator.allocateArray<double>(inCoef.size()));
-    MutableMappedColumnVector oddsRatios(
+    MutableNativeColumnVector oddsRatios(
         inAllocator.allocateArray<double>(inCoef.size()));
 
     for (Index i = 0; i < inCoef.size(); ++i) {

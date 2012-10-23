@@ -226,6 +226,83 @@ VectorToNativeArray(const Eigen::MatrixBase<Derived>& inVector) {
 }
 
 /**
+ * @brief Convert a native array to [Mutable]MappedMatrix
+ */
+template <class MatrixType>
+MatrixType
+NativeArrayToMappedMatrix(Datum inDatum, bool inNeedMutableClone) {
+    typedef typename MatrixType::Scalar Scalar;
+
+    ArrayType* array = reinterpret_cast<ArrayType*>(
+        madlib_DatumGetArrayTypeP(inDatum));
+    size_t arraySize = ARR_DIMS(array)[0] * ARR_DIMS(array)[1];
+
+    if (ARR_NDIM(array) != 2) {
+        std::stringstream errorMsg;
+        errorMsg << "Invalid type conversion to matrix. Expected two-"
+            "dimensional array but got " << ARR_NDIM(array)
+            << " dimensions.";
+        throw std::invalid_argument(errorMsg.str());
+    }
+        
+    Scalar* origData = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
+    Scalar* data;
+
+    if (inNeedMutableClone) {
+        data = reinterpret_cast<Scalar*>(
+            defaultAllocator().allocate<dbal::FunctionContext, dbal::DoNotZero,
+                dbal::ThrowBadAlloc>(sizeof(Scalar) * arraySize));
+        std::copy(origData, origData + arraySize, data);
+    } else {
+        data = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
+    }
+    
+    return MatrixType(data, ARR_DIMS(array)[1], ARR_DIMS(array)[0]);
+}
+
+/**
+ * @brief Convert a native array to [Mutable]MappedVector
+ */
+template <class VectorType>
+VectorType
+NativeArrayToMappedVector(Datum inDatum, bool inNeedMutableClone) {
+    typedef typename VectorType::Scalar Scalar;
+
+    ArrayType* array = reinterpret_cast<ArrayType*>(
+        madlib_DatumGetArrayTypeP(inDatum));
+    size_t arraySize = ARR_NDIM(array) == 1
+        ? ARR_DIMS(array)[0]
+        : ARR_DIMS(array)[0] * ARR_DIMS(array)[1];
+
+    if (!(ARR_NDIM(array) == 1
+        || (ARR_NDIM(array) == 2
+            && (ARR_DIMS(array)[0] == 1 || ARR_DIMS(array)[1] == 1)))) {
+
+        std::stringstream errorMsg;
+        errorMsg << "Invalid type conversion to matrix. Expected one-"
+            "dimensional array but got " << ARR_NDIM(array)
+            << " dimensions.";
+        throw std::invalid_argument(errorMsg.str());
+    }
+    
+    Scalar* origData = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
+    Scalar* data;
+
+    if (inNeedMutableClone) {
+        data = reinterpret_cast<Scalar*>(
+            defaultAllocator().allocate<dbal::FunctionContext, dbal::DoNotZero,
+                dbal::ThrowBadAlloc>(sizeof(Scalar) * arraySize));
+        std::copy(origData, origData + arraySize, data);
+    } else {
+        data = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
+    }
+    
+    return VectorType(data, arraySize);
+}
+
+
+
+/**
  * @brief Convert an Eigen matrix to a two-dimensional PostgreSQL array
  */
 template <typename Derived>
@@ -239,8 +316,9 @@ MatrixToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix) {
             inMatrix.cols(), inMatrix.rows());
 
     T* ptr = arrayHandle.ptr();
-    for (Index row = 0; row < inMatrix.rows(); ++row)
-        for (Index col = 0; col < inMatrix.cols(); ++col)
+    // We use columnar storage, i.e., each column is a contiguous block
+    for (Index col = 0; col < inMatrix.cols(); ++col)
+        for (Index row = 0; row < inMatrix.rows(); ++row)
             *(ptr++) = inMatrix(row, col);
 
     return arrayHandle.array();

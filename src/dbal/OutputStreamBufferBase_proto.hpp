@@ -21,11 +21,16 @@ namespace dbal {
  * Use this class by passing the pointer of an instance to the
  * ostream constructor. Example: ostream derr(new DerivedOutputStreamBuffer());
  */
-template <class Derived, typename C = char>
+template <
+    class Derived,
+    typename C = char,
+    class Allocator = std::allocator<C> >
 class OutputStreamBufferBase : public std::basic_streambuf<C> {
 public:
-    typedef typename std::basic_streambuf<C>::int_type int_type;
-    typedef typename std::basic_streambuf<C>::traits_type traits_type;
+    typedef std::basic_streambuf<C> Base;
+    typedef typename Base::int_type int_type;
+    typedef typename Base::traits_type traits_type;
+    typedef Allocator allocator_type;
 
     static const uint32_t kInitialBufferSize = 1024;
     static const uint32_t kMaxBufferSize = 16384;
@@ -39,6 +44,7 @@ protected:
     int sync();
         
 private:
+    allocator_type mAllocator;
     uint32_t mStorageSize;
     C* mStorage;
 };

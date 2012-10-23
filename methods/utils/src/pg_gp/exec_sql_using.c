@@ -4,6 +4,8 @@
 #include <catalog/pg_proc.h>
 #include <catalog/pg_type.h>
 #include <utils/builtins.h>
+#include <utils/datum.h>
+#include <utils/lsyscache.h>
 #include <utils/syscache.h>
 
 // On Greenplum 4.2.0, spi.h indirectly includes <emcconnect/api.h>. However,
@@ -36,12 +38,27 @@ exec_sql_using(PG_FUNCTION_ARGS) {
         ereport(ERROR,
             (errmsg("cache lookup failed for function %u",
             fcinfo->flinfo->fn_oid)));
-    
+
     Oid* types = NULL;
     char** names = NULL;
     char* modes = NULL;
     int nargs = get_func_arg_info(procedureTuple, &types, &names, &modes);
-    
+
+    Oid resultTypeOid;
+    TupleDesc tupleDesc;
+    TypeFuncClass resultType = get_call_result_type(fcinfo, &resultTypeOid,
+        &tupleDesc);
+    bool returnTypeIsByValue;
+    int16 returnTypeLen;
+    get_typlenbyval(resultTypeOid, &returnTypeLen, &returnTypeIsByValue);
+
+    if (resultType != TYPEFUNC_SCALAR && resultType != TYPEFUNC_COMPOSITE)
+        ereport(ERROR, (
+            errmsg("function \"%s\" has indeterminable result type",
+                format_procedure(fcinfo->flinfo->fn_oid))
+            ));
+    bool returnVoid = resultTypeOid == VOIDOID;
+
     ReleaseSysCache(procedureTuple);
 
     if (nargs < 2)
@@ -62,7 +79,7 @@ exec_sql_using(PG_FUNCTION_ARGS) {
             errmsg("function \"%s\" called with NULL as first argument",
                 format_procedure(fcinfo->flinfo->fn_oid))
             ));
-    
+
     char* stmt = NULL;
     if (types[0] == TEXTOID)
         stmt = DatumGetCString(
@@ -76,7 +93,7 @@ exec_sql_using(PG_FUNCTION_ARGS) {
                 "argument",
                 format_procedure(fcinfo->flinfo->fn_oid))
             ));
-    
+
     char* nulls = NULL;
     for (int i = 1; i < nargs; i++)
         if (PG_ARGISNULL(i)) {
@@ -86,7 +103,7 @@ exec_sql_using(PG_FUNCTION_ARGS) {
             }
             nulls[i - 1] = 'n';
         }
-    
+
     SPI_connect();
     SPIPlanPtr plan = SPI_prepare(stmt, nargs - 1, &types[1]);
     if (plan == NULL)
@@ -95,20 +112,57 @@ exec_sql_using(PG_FUNCTION_ARGS) {
                 "SQL statement",
                 format_procedure(fcinfo->flinfo->fn_oid))
             ));
-    
-    int result = SPI_execute_plan(plan, &fcinfo->arg[1], nulls, false, 0);
-    
+
+    int result = SPI_execute_plan(plan, &fcinfo->arg[1], nulls, false,
+        returnVoid ? 0 : 1);
+
+    Datum returnValue = 0;
+    bool returnNull = false;
+    if (!returnVoid) {
+        if (result != SPI_OK_SELECT
+            && result != SPI_OK_INSERT_RETURNING
+            && result != SPI_OK_DELETE_RETURNING
+            && result == SPI_OK_UPDATE_RETURNING)
+            ereport(ERROR, (
+                errmsg("function \"%s\" could not obtain result from query",
+                    format_procedure(fcinfo->flinfo->fn_oid))
+                ));
+        else if (SPI_tuptable->tupdesc->natts != 1)
+            ereport(ERROR, (
+                errmsg("function \"%s\" retrieved more than one column from "
+                    "query",
+                    format_procedure(fcinfo->flinfo->fn_oid))
+                ));
+        else if (resultTypeOid != SPI_gettypeid(SPI_tuptable->tupdesc, 1))
+            ereport(ERROR, (
+                errmsg("function \"%s\" has different return type OID than "
+                    "what query returned",
+                    format_procedure(fcinfo->flinfo->fn_oid))
+                ));
+
+        /* It is important to copy the value into the upper executor context,
+         * i.e., the memory context that was current when SPI_connect was
+         * called */
+        returnValue = SPI_getbinval(SPI_copytuple(SPI_tuptable->vals[0]),
+            SPI_tuptable->tupdesc, 1, &returnNull);
+    }
+
     SPI_freeplan(plan);
     if (nulls)
         pfree(nulls);
     SPI_finish();
-    
+
     if (result < 0)
         ereport(ERROR, (
             errmsg("function \"%s\" encountered error %d during SQL execution",
                 format_procedure(fcinfo->flinfo->fn_oid),
                 result)
             ));
-    
-    PG_RETURN_VOID();
+
+    if (returnVoid)
+        PG_RETURN_VOID();
+    else if (returnNull)
+        PG_RETURN_NULL();
+    else
+        return returnValue;
 }

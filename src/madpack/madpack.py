@@ -268,7 +268,7 @@ def __get_madlib_dbver(schema):
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __get_dbver():
     try:
-        versionStr = __run_sql_query("""SELECT version()""",
+        versionStr = __run_sql_query("""SELECT pg_catalog.version()""",
             True)[0]['version']
         if portid == 'postgres':
             match = re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)",

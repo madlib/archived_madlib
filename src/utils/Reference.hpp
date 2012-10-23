@@ -28,7 +28,7 @@ public:
     // and declare mPtr as const?
     Reference(const T *inPtr) : mPtr(const_cast<T*>(inPtr)) { }
 
-    Reference &rebind(const T *inPtr) {
+    Reference& rebind(const T *inPtr) {
         mPtr = const_cast<T*>(inPtr);
         return *this;
     }
@@ -52,7 +52,7 @@ protected:
     /**
      * Defined but protected.
      */
-    Reference &operator=(const Reference &inReference) {
+    Reference& operator=(const Reference&) {
         return *this;
     }
 
@@ -74,26 +74,26 @@ public:
      * operator= would be used even though there is a conversion path
      * through dest.operator=(orig.operator U())
      */
-    MutableReference &operator=(const MutableReference& inReference) {
+    MutableReference& operator=(const MutableReference& inReference) {
         return this->operator=(static_cast<const Base&>(inReference));
     }
 
-    MutableReference &operator=(const Base &inReference) {
+    MutableReference& operator=(const Base &inReference) {
         *mPtr = *inReference.ptr();
         return *this;
     }
 
-    MutableReference &operator=(const U &inValue) {
+    MutableReference& operator=(const U &inValue) {
         *mPtr = static_cast<T>(inValue);
         return *this;
     }
 
-    MutableReference &operator+=(const U &inValue) {
+    MutableReference& operator+=(const U &inValue) {
         *mPtr += static_cast<T>(inValue);
         return *this;
     }
 
-    MutableReference &operator-=(const U &inValue) {
+    MutableReference& operator-=(const U &inValue) {
         *mPtr -= static_cast<T>(inValue);
         return *this;
     }
@@ -104,7 +104,7 @@ public:
         return returnValue;
     }
 
-    MutableReference &operator++() {
+    MutableReference& operator++() {
         *mPtr += static_cast<T>(1);
         return *this;
     }

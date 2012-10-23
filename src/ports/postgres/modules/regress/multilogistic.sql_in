@@ -1,0 +1,411 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file multilogistic.sql_in
+ *
+ * @brief SQL functions for multinomial logistic regression
+ * @date July 2012
+ *
+ * @sa For a brief introduction to multinomial logistic regression, see the
+ *     module description \ref grp_mlogreg.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_mlogreg
+
+@about
+
+Multinomial logistic regression is a widely used regression analysis tool that models the outcomes of categorical dependent
+random variables (denoted \f$ Y \in \{ 0,1,2 \ldots k \} \f$). The models assumes that the conditional mean of the
+dependant categorical variables is the logistic function of an affine combination of independent
+variables (usually denoted \f$ \boldsymbol x \f$). That is,
+\f[
+    E[Y \mid \boldsymbol x] = \sigma(\boldsymbol c^T \boldsymbol x)
+\f]
+for some unknown vector of coefficients \f$ \boldsymbol c \f$ and where
+\f$ \sigma(x) = \frac{1}{1 + \exp(-x)} \f$ is the logistic function. Multinomial Logistic
+regression finds the vector of coefficients \f$ \boldsymbol c \f$ that maximizes
+the likelihood of the observations.
+
+Let
+- \f$ \boldsymbol y \in \{ 0,1 \}^{n \times k} \f$ denote the vector of observed dependent
+  variables, with \f$ n \f$ rows and \f$ k \f$ columns, containing the observed values of the
+  dependent variable,
+- \f$ X \in \mathbf R^{n \times k} \f$ denote the design matrix with \f$ k \f$
+  columns and \f$ n \f$ rows, containing all observed vectors of independent
+  variables \f$ \boldsymbol x_i \f$ as rows.
+
+By definition,
+\f[
+    P[Y = y_i | \boldsymbol x_i]
+    =   \sigma((-1)^{y_i} \cdot \boldsymbol c^T \boldsymbol x_i)
+    \,.
+\f]
+Maximizing the likelihood
+\f$ \prod_{i=1}^n \Pr(Y = y_i \mid \boldsymbol x_i) \f$
+is equivalent to maximizing the log-likelihood
+\f$ \sum_{i=1}^n \log \Pr(Y = y_i \mid \boldsymbol x_i) \f$, which simplifies to
+\f[
+    l(\boldsymbol c) =
+        -\sum_{i=1}^n \log(1 + \exp((-1)^{y_i}
+            \cdot \boldsymbol c^T \boldsymbol x_i))
+    \,.
+\f]
+The Hessian of this objective is \f$ H = -X^T A X \f$ where
+\f$ A = \text{diag}(a_1, \dots, a_n) \f$ is the diagonal matrix with
+\f$
+    a_i = \sigma(\boldsymbol c^T \boldsymbol x)
+          \cdot
+          \sigma(-\boldsymbol c^T \boldsymbol x)
+    \,.
+\f$
+Since \f$ H \f$ is non-positive definite, \f$ l(\boldsymbol c) \f$ is convex.
+There are many techniques for solving convex optimization problems. Currently,
+logistic regression in MADlib can use:
+- Iteratively Reweighted Least Squares
+
+We estimate the standard error for coefficient \f$ i \f$ as
+\f[
+    \mathit{se}(c_i) = \left( (X^T A X)^{-1} \right)_{ii}
+    \,.
+\f]
+The Wald z-statistic is
+\f[
+    z_i = \frac{c_i}{\mathit{se}(c_i)}
+    \,.
+\f]
+
+The Wald \f$ p \f$-value for coefficient \f$ i \f$ gives the probability (under
+the assumptions inherent in the Wald test) of seeing a value at least as extreme
+as the one observed, provided that the null hypothesis (\f$ c_i = 0 \f$) is
+true. Letting \f$ F \f$ denote the cumulative density function of a standard
+normal distribution, the Wald \f$ p \f$-value for coefficient \f$ i \f$ is
+therefore
+\f[
+    p_i = \Pr(|Z| \geq |z_i|) = 2 \cdot (1 - F( |z_i| ))
+\f]
+where \f$ Z \f$ is a standard normally distributed random variable.
+
+The odds ratio for coefficient \f$ i \f$ is estimated as \f$ \exp(c_i) \f$.
+
+The condition number is computed as \f$ \kappa(X^T A X) \f$ during the iteration
+immediately <em>preceding</em> convergence (i.e., \f$ A \f$ is computed using
+the coefficients of the previous iteration). A large condition number (say, more
+than 1000) indicates the presence of significant multicollinearity.
+
+
+@input
+
+The training data is expected to be of the following form:\n
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>dependentVariable</em> INTEGER,
+    <em>numCategories</em> INTEGER,
+    <em>independentVariables</em> FLOAT8[],
+    ...
+)</pre>
+
+@usage
+- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+  statistics:\n
+  <pre>SELECT * FROM \ref mlogregr(
+    '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>' , '<em>independentVariables</em>'
+    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
+);</pre>
+  Output:
+  <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
+-----+----------------+---------+---------+----------+-------------+--------------+---------------
+                                               ...
+</pre>
+- Get vector of coefficients \f$ \boldsymbol c \f$:\n
+  <pre>SELECT (\ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>')).coef;</pre>
+- Get a subset of the output columns, e.g., only the array of coefficients
+  \f$ \boldsymbol c \f$, the log-likelihood of determination
+  \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
+  <pre>SELECT coef, log_likelihood, p_values
+FROM \ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>',  '<em>independentVariables</em>');</pre>
+
+Note that the categories are encoded as integers with values from {0, 1, 2,...numCategories}
+@examp
+
+-# Create the sample data set:
+@verbatim
+sql> SELECT * FROM data;
+                  r1                      | val 
+---------------------------------------------+-----
+ {1,3.01789340097457,0.454183579888195}   | 1
+ {1,-2.59380532894284,0.602678326424211}  | 0
+ {1,-1.30643094424158,0.151587064377964}  | 1
+ {1,3.60722299199551,0.963550757616758}   | 1
+ {1,-1.52197745628655,0.0782248834148049} | 1
+ {1,-4.8746574902907,0.345104880165309}   | 0
+...
+@endverbatim
+-# Run the multi-logistic regression function:
+@verbatim
+sql> \x on
+Expanded display is off.
+sql> SELECT * FROM mlogregr('data', 'val', '2', 'r1', 100, 'irls', 0.001);
+-[ RECORD 1 ]--+--------------------------------------------------------------
+coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
+log_likelihood | -467.214718489873
+std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
+z_stats        | {17.5281667482197,20.7919819024719,-0.805666162169712}
+p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
+odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
+condition_no   | 179.186118573205
+num_iterations | 9
+
+@endverbatim
+
+@literature
+
+A collection of nice write-ups, with valuable pointers into
+further literature:
+
+[1] Annette J . Dobson: An Introduction to Generalized Linear Models, Second Edition.  Nov 2001
+
+[2] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
+    2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
+
+[3] Srikrishna Sridhar, Mark Wellons, Caleb Welton: Multilogistic Regression:
+		Notes and References, Jul 12 2012, http://www.cs.wisc.edu/~srikris/mlogit.pdf
+
+[4] Scott A. Czepiel: Maximum Likelihood Estimation
+		of Logistic Regression Models: Theory and Implementation,
+		Retrieved Jul 12 2012, http://czep.net/stat/mlelr.pdf
+
+
+
+@sa File multilogistic.sql_in (documenting the SQL functions)
+
+@internal
+@sa Namespace multilogistic (documenting the driver/outer loop implemented in
+    Python), Namespace
+    \ref madlib::modules::regress documenting the implementation in C++
+@endinternal
+
+*/
+
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.mlogregr_result;
+CREATE TYPE MADLIB_SCHEMA.mlogregr_result AS (
+    coef DOUBLE PRECISION[],
+    log_likelihood DOUBLE PRECISION,
+    std_err DOUBLE PRECISION[],
+    z_stats DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[],
+    odds_ratios DOUBLE PRECISION[],
+    condition_no DOUBLE PRECISION,
+    num_iterations INTEGER
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_irls_step_transition(
+    DOUBLE PRECISION[],
+    INTEGER,
+    INTEGER,
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_irls_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_irls_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+/**
+ * @internal
+ * @brief Perform one iteration of the iteratively-reweighted-least-squares
+ *        method for computing linear regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.mlogregr_irls_step(
+    /*+ y */ INTEGER,
+    /*+ numCategories */ INTEGER,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (
+
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.mlogregr_irls_step_transition,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.mlogregr_irls_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.mlogregr_irls_step_final,
+    INITCOND='{0,0,0,0}'
+);
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_mlogregr_irls_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_mlogregr_irls_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.mlogregr_result AS
+'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT;
+
+
+-- We only need to document the last one (unfortunately, in Greenplum we have to
+-- use function overloading instead of default arguments).
+CREATE FUNCTION MADLIB_SCHEMA.compute_mlogregr(
+    "source" VARCHAR,
+    "depvar" VARCHAR,
+    "numcategories" INTEGER,
+    "indepvar" VARCHAR,
+    "maxnumiterations" INTEGER,
+    "optimizer" VARCHAR,
+    "precision" DOUBLE PRECISION)
+RETURNS INTEGER
+AS $$PythonFunction(regress, multilogistic, compute_mlogregr)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief Compute logistic-regression coefficients and diagnostic statistics
+ *
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @param source Name of the source relation containing the training data
+ * @param depvar Name of the dependent column (of type INTEGER < numcategories - 1)
+ * @param numcategories Number of categories for the dependant variables (
+ 					of type INTEGER)
+ * @param indepvar Name of the independent column (of type DOUBLE
+ *        PRECISION[])
+ * @param maxnumiterations The maximum number of iterations
+ * @param optimizer The optimizer to use (either
+ *        <tt>'irls'</tt>/<tt>'newton'</tt> for iteratively reweighted least
+ *        squares or <tt>'cg'</tt> for conjugent gradient)
+ * @param precision The difference between log-likelihood values in successive
+ *        iterations that should indicate convergence. Note that a non-positive
+ *        value here disables the convergence criterion, and execution will only
+ *        stop after \ maxNumIterations iterations.
+ *
+ * @return A composite value:
+ *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
+ *  - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
+ *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *  - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
+ *    \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
+ *  - <tt>condition_no FLOAT8</tt> - The condition number of matrix
+ *    \f$ X^T A X \f$ during the iteration immediately <em>preceding</em>
+ *    convergence (i.e., \f$ A \f$ is computed using the coefficients of the
+ *    previous iteration)
+ *  - <tt>num_iterations INTEGER</tt> - The number of iterations before the
+ *    algorithm terminated
+ *
+ * @usage
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+ *    statistics:\n
+ *    <pre>SELECT * FROM mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>');</pre>
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
+ *    <pre>SELECT (mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>')).coef;</pre>
+ *  - Get a subset of the output columns, e.g., only the array of coefficients
+ *    \f$ \boldsymbol c \f$, the log-likelihood of determination
+ *    \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT coef, log_likelihood, p_values
+ *FROM mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>');</pre>
+ *
+ * @note This function starts an iterative algorithm. It is not an aggregate
+ *       function. Source and column names have to be passed as strings (due to
+ *       limitations of the SQL syntax).
+ *
+ * @internal
+ * @sa This function is a wrapper for multilogistic::compute_mlogregr(), which
+ *     sets the default values.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
+    "source" VARCHAR,
+    "depvar" VARCHAR,
+    "numcategories" INTEGER,
+    "indepvar" VARCHAR,
+    "maxnumiterations" INTEGER /*+ DEFAULT 20 */,
+    "optimizer" VARCHAR /*+ DEFAULT 'irls' */,
+    "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
+RETURNS MADLIB_SCHEMA.mlogregr_result AS $$
+DECLARE
+    theIteration INTEGER;
+    fnName VARCHAR;
+    theResult MADLIB_SCHEMA.mlogregr_result;
+BEGIN
+    theIteration := (
+        SELECT MADLIB_SCHEMA.compute_mlogregr($1, $2, $3, $4, $5, $6, $7)
+    );
+    -- Because of Greenplum bug MPP-10050, we have to use dynamic SQL (using
+    -- EXECUTE) in the following
+    -- Because of Greenplum bug MPP-6731, we have to hide the tuple-returning
+    -- function in a subquery
+    IF optimizer = 'irls' OR optimizer = 'newton' THEN
+        fnName := 'internal_mlogregr_irls_result';
+    ELSE
+        RAISE EXCEPTION 'Unknown optimizer (''%'')', optimizer;
+    END IF;
+    EXECUTE
+        $sql$
+        SELECT (result).*
+        FROM (
+            SELECT
+                MADLIB_SCHEMA.$sql$ || fnName || $sql$(_madlib_state) AS result
+                FROM _madlib_iterative_alg
+                WHERE _madlib_iteration = $sql$ || theIteration || $sql$
+            ) subq
+        $sql$
+        INTO theResult;
+    -- The number of iterations are not updated in the C++ code. We do it here.
+    IF NOT (theResult IS NULL) THEN
+        theResult.num_iterations = theIteration;
+    END IF;
+    RETURN theResult;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
+    "source" VARCHAR,
+    "depvar" VARCHAR,
+    "numcategories" INTEGER,
+    "indepvar" VARCHAR)
+RETURNS MADLIB_SCHEMA.mlogregr_result AS
+$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, 20, 'irls', 0.0001);$$
+LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
+    "source" VARCHAR,
+    "depvar" VARCHAR,
+    "numcategories" INTEGER,
+    "indepvar" VARCHAR,
+    "maxnumiterations" INTEGER)
+RETURNS MADLIB_SCHEMA.mlogregr_result AS
+$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, 'irls', 0.0001);$$
+LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
+    "source" VARCHAR,
+    "depvar" VARCHAR,
+    "numcategories" INTEGER,
+    "indepvar" VARCHAR,
+    "maxbumiterations" INTEGER,
+    "optimizer" VARCHAR)
+RETURNS MADLIB_SCHEMA.mlogregr_result AS
+$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, $6, 0.0001);$$
+LANGUAGE sql VOLATILE;
+

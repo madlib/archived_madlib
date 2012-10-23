@@ -1,0 +1,230 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file crf_data_loader.sql_in
+ *
+ * @brief Create database tables and import POS/NER training/testing data to the database
+ * @date Feb. 2012
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+
+@input
+
+-# Prepare an input train data segment table, e.g.:
+- CREATE TABLE train_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)
+\verbatim
+sql> select * from train_segmenttbl order by doc_id, start_pos;
+start_pos | doc_id | seg_text      | max_pos
+----------+---------+--------------+-------------
+     0    |    1   |       madlib  |    9  
+     1    |    1   |           is  |    9
+     2    |    1   |           an  |    9
+     3    |    1   |  open-source  |    9
+     4    |    1   |      library  |    9
+     5    |    1   |          for  |    9
+     6    |    1   |     scalable  |    9
+     7    |    1   |  in-database  |    9
+     8    |    1   |    analytics  |    9
+     9    |    1   |            .  |    9
+     0    |    2   |           it  |   16    
+     1    |    2   |     provides  |   16
+     2    |    2   |data-parallel  |   16
+     3    |    2   |implementations|   16
+     ... 
+     14   |    2   |  unstructured |   16
+     15   |    2   |          data |   16
+     16   |    2   |             . |   16
+\endverbatim
+
+-# Prepare an input dictionary table, e.g.,:
+- CREATE TABLE crf_dictionary (token text,token_id integer,label text,count integer,total integer)
+\verbatim
+sql> select * from crf_dictionary;
+token       | label  | count | total
+------------+--------+--------------
+   freefall |   11   |   1   |  1
+     policy |   11   |   2   |  2
+   measures |   12   |   1   |  1
+ commitment |   11   |   1   |  1
+        new |    6   |   1   |  1
+     speech |   11   |   1   |  1
+         's |   16   |   2   |  2
+     reckon |   30   |   1   |  1
+ underlying |   28   |   1   |  1
+ ...
+\endverbatim
+
+-# Prepare an input label table, e.g.,:
+- CREATE TABLE labeltbl (id integer,label character varying)
+\verbatim
+sql> select * from labeltbl order by id;
+id          | label
+------------+--------
+      0     |   CC   
+      1     |   CD   
+      2     |   DT
+      3     |   EX
+      4     |   FW
+      5     |   IN
+      6     |   JJ
+...
+     42     |    ,
+     43     |    .
+     44     |    :
+\endverbatim
+
+-# Prepare an input regex table, e.g.,:
+- CREATE TABLE crf_regex (pattern text,name text)
+\verbatim
+sql> select * from crf_regex;
+pattern       |   name
+------------- +---------------
+^[A-Z][a-z]+$ |  InitCapital%   
+     ^[A-Z]+$ |  isAllCapital%
+ ^.*[0-9]+.*$ |  containsDigit%
+      ^.+[.]$ |  endsWithDot%
+      ^.+[,]$ |  endsWithComma%
+       ^.+er$ |  endsWithER%
+      ^.+est$ |  endsWithEst%
+       ^.+ed$ |  endsWithED%
+...
+\endverbatim
+
+-# Prepare an input feature table, e.g.,:
+- CREATE TABLE featuretbl (id integer,name text,prev_label_id integer,label_id integer,weight float)
+\verbatim
+sql> select * from featuretbl order by id;
+id   |     name     | prev_label_id | label_id | weight
+-------------------------------------------------------
+1    | W_chancellor |       -1      |    13     | 2.2322
+2    |         E.13 |       13      |     5     | 2.3995
+3    |            U |       -1      |     5     | 1.2164
+4    |         W_of |       -1      |     5     | 2.8744
+5    |          E.5 |        5      |     2     | 3.7716
+6    |        W_the |       -1      |     2     | 4.1790
+7    |          E.2 |        2      |    13     | 0.8957
+...
+\endverbatim
+
+-# Prepare an crf feature set table, e.g.,:
+- CREATE TABLE MADLIB_SCHEMA.crf_feature_dic(f_index integer, f_name text, feature integer[])
+\verbatim
+sql> select * from crf_feature_dic order by id;
+f_index|     f_name   | feature
+--------------------------------
+0      | W_chancellor |       -1
+1      |         E.13 |       13
+2      |            U |       -1
+3      |         W_of |       -1
+4      |          E.5 |        5
+5      |        W_the |       -1
+...
+\endverbatim
+
+
+@usage
+- create tables and import data to the database
+  SELECT madlib.crf_train_data('/path/to/modeldata')
+
+*/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_train_data(datapath text) RETURNS void AS
+$$
+        # import label data to the database
+        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.crf_label CASCADE;" + \
+                "CREATE TABLE MADLIB_SCHEMA.crf_label(id integer,label text);" + \
+                "COPY MADLIB_SCHEMA.crf_label(id,label) FROM '" + datapath + "/crf_label.tab'";
+        plpy.execute(query);
+
+        # import regex to regex table
+        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.crf_regex CASCADE;" + \
+                "CREATE TABLE MADLIB_SCHEMA.crf_regex (pattern text,name text);" + \
+                "COPY MADLIB_SCHEMA.crf_regex(pattern,name) FROM '" + datapath + "/crf_regex.tab'";
+        plpy.execute(query);
+
+        # import training data to the database
+        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.train_segmenttbl CASCADE;" + \
+                "CREATE TABLE MADLIB_SCHEMA.train_segmenttbl(start_pos integer,doc_id integer,seg_text text,label integer,max_pos integer);" + \
+                "COPY MADLIB_SCHEMA.train_segmenttbl(start_pos,doc_id,seg_text,label,max_pos) FROM '" + datapath + "/crf_traindata.tab'";
+        plpy.execute(query);
+       
+        query ="DROP TABLE IF EXISTS MADLIB_SCHEMA.crf_feature;" + \
+               "CREATE TABLE MADLIB_SCHEMA.crf_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);"
+        plpy.execute(query);
+
+        # dictionary table
+        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.crf_dictionary;" + \
+                "CREATE TABLE MADLIB_SCHEMA.crf_dictionary(token text,total integer);"
+        plpy.execute(query);
+
+        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.featuretbl;" + \
+                "CREATE TABLE MADLIB_SCHEMA.featuretbl(doc_id integer,f_size FLOAT8,sparse_r FLOAT8[],dense_m FLOAT8[],sparse_m FLOAT8[]);"
+        plpy.execute(query);
+
+        query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.crf_feature_dic;" + \
+                "CREATE TABLE MADLIB_SCHEMA.crf_feature_dic(f_index integer, f_name text, feature integer[]);"
+        plpy.execute(query);
+
+$$ LANGUAGE plpythonu STRICT;
+
+
+/**
+
+@input
+
+-# Prepare an input test data segment table, e.g.:
+- CREATE TABLE test_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)
+\verbatim
+sql> select * from test_segmenttbl order by doc_id, start_pos;
+start_pos | doc_id |   seg_text    | max_pos
+----------+---------+--------------+-------------
+     0    |    1   |          the  |    26 
+     1    |    1   |       madlib  |    26
+     2    |    1   |      mission  |    26
+     3    |    1   |            :  |    26
+     4    |    1   |           to  |    26
+     5    |    1   |       foster  |    26
+     6    |    1   |   widespread  |    26
+     7    |    1   |  development  |    26
+     8    |    1   |           of  |    26
+     9    |    1   |     scalable  |    26
+     10   |    1   |     analytic  |    26    
+     11   |    1   |       skills  |    26
+     12   |    1   |            ,  |    26
+     13   |    1   |           by  |    26
+     ... 
+     24   |    1   |  open-source  |    26
+     25   |    1   |   development |    26
+     26   |    1   |             . |    26
+\endverbatim
+
+@usage
+- create tables and import data to the database
+  SELECT madlib.crf_test_data('/path/to/modeldata')
+
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_test_data(datapath text) RETURNS void AS 
+$$
+        # tokenized document
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.test_segmenttbl CASCADE;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.test_segmenttbl (start_pos integer,doc_id integer,seg_text text, max_pos integer)";
+	plpy.execute(query);
+
+	# R factor table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_rtbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.viterbi_rtbl (seg_text text, label integer, score integer)";
+	plpy.execute(query);
+
+	# M factor table
+	query = "DROP TABLE IF EXISTS MADLIB_SCHEMA.viterbi_mtbl;" + \
+	        "CREATE TABLE MADLIB_SCHEMA.viterbi_mtbl (score integer[])";
+	plpy.execute(query);
+
+        # import tokenized document to the segment table
+        query = "COPY MADLIB_SCHEMA.test_segmenttbl (start_pos,doc_id,seg_text,max_pos) FROM '" + datapath + "/crf_testdata.tab'";
+        plpy.execute(query);
+
+$$ language plpythonu STRICT;

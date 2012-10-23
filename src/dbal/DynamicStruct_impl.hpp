@@ -11,28 +11,33 @@ namespace madlib {
 
 namespace dbal {
 
+/**
+ * @brief Meta function for mapping types to the dynamic-struct mapped type
+ *
+ * @tparam T Desired type that is to be stored in the dynamic struct
+ * @tparam IsMutable Indicator if the dynamic struct is mutable
+ */
+template <class T, bool IsMutable>
+struct DynamicStructType {
+    typedef Ref<T, IsMutable> type;
+};
+
 template <bool IsMutable>
-struct DynamicStructTypes {
-    typedef Ref<double, IsMutable> double_type;
-    typedef Ref<float, IsMutable> float_type;
-
-    typedef Ref<uint64_t, IsMutable> uint64_type;
-    typedef Ref<int64_t, IsMutable> int64_type;
-    typedef Ref<uint32_t, IsMutable> uint32_type;
-    typedef Ref<int32_t, IsMutable> int32_type;
-    typedef Ref<uint16_t, IsMutable> uint16_type;
-    typedef Ref<int16_t, IsMutable> int16_type;
-
+struct DynamicStructType<eigen_integration::ColumnVector, IsMutable> {
     typedef eigen_integration::HandleMap<
         typename boost::mpl::if_c<IsMutable,
             eigen_integration::ColumnVector,
             const eigen_integration::ColumnVector>::type,
-        TransparentHandle<double, IsMutable> > MappedColumnVector_type;
+        TransparentHandle<double, IsMutable> > type;
+};
+
+template <bool IsMutable>
+struct DynamicStructType<eigen_integration::Matrix, IsMutable> {
     typedef eigen_integration::HandleMap<
         typename boost::mpl::if_c<IsMutable,
             eigen_integration::Matrix,
             const eigen_integration::Matrix>::type,
-        TransparentHandle<double, IsMutable> > MappedMatrix_type;
+        TransparentHandle<double, IsMutable> > type;
 };
 
 // DynamicStructRootContainer<Storage, TypeTraits>

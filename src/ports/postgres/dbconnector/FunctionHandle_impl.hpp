@@ -14,10 +14,25 @@ namespace dbconnector {
 namespace postgres {
 
 inline
+FunctionHandle::Argument::Argument(AnyType inValue)
+  : AnyType(inValue) { }
+
+template <typename T>
+inline
+FunctionHandle::Argument::Argument(const T& inValue)
+  : AnyType(inValue, true /* forceLazyConversionToDatum */) { }
+
+inline
 FunctionHandle::FunctionHandle(SystemInformation* inSysInfo, Oid inFuncID)
   : mSysInfo(inSysInfo),
     mFuncInfo(inSysInfo->functionInformation(inFuncID)),
     mFuncCallOptions(GarbageCollectionAfterCall) { }
+
+inline
+UDF::Pointer
+FunctionHandle::funcPtr() {
+    return mFuncInfo->cxx_func;
+}
 
 /**
  * @brief Return the OID of this function
@@ -29,9 +44,17 @@ FunctionHandle::funcID() const {
 }
 
 inline
-void
+FunctionHandle&
 FunctionHandle::setFunctionCallOptions(uint32_t inFlags) {
     mFuncCallOptions = inFlags;
+    return *this;
+}
+
+inline
+FunctionHandle&
+FunctionHandle::unsetFunctionCallOptions(uint32_t inFlags) {
+    mFuncCallOptions &= ~inFlags;
+    return *this;
 }
 
 inline
@@ -46,6 +69,42 @@ FunctionHandle::invoke(AnyType &args) {
     madlib_assert(args.isComposite(), std::logic_error(
         "FunctionHandle::invoke() called with simple type."));
 
+    if (args.numFields() > mFuncInfo->nargs)
+        throw std::invalid_argument(std::string("More arguments given than "
+            "expected by '")
+            + mSysInfo->functionInformation(mFuncInfo->oid)->getFullName()
+            + "'.");
+
+    bool hasNulls = false;
+    for (uint16_t i = 0; i < args.numFields(); ++i)
+        hasNulls |= args[i].isNull();
+    
+    // If function is strict, we must not call the function at all
+    if (mFuncInfo->isstrict && hasNulls)
+        return AnyType();
+
+    if (mFuncInfo->cxx_func &&
+        !(mFuncCallOptions & GarbageCollectionAfterCall)) {
+
+        // We have called this function before, so we can now do a shortcut:
+        // Directly call the C++ function without any detour through the backend
+        AnyType::LazyConversionToDatumOverride raii(true);
+        return mFuncInfo->cxx_func(args);
+    }
+
+    MemoryContext oldContext = NULL;
+    MemoryContext callContext = NULL;
+    if (mFuncCallOptions & GarbageCollectionAfterCall) {
+        // In order to do garbage collection, we need to create a new
+        // memory context
+        callContext = AllocSetContextCreate(CurrentMemoryContext,
+            "C++ AL / FunctionHandle::invoke memory context",
+            ALLOCSET_DEFAULT_MINSIZE,
+            ALLOCSET_DEFAULT_INITSIZE,
+            ALLOCSET_DEFAULT_MAXSIZE);
+        oldContext = MemoryContextSwitchTo(callContext);
+    }
+    
     FunctionCallInfoData funcPtrCallInfo;
     // Initializes all the fields of a FunctionCallInfoData except for the arg[]
     // and argnull[] arrays
@@ -68,35 +127,10 @@ FunctionHandle::invoke(AnyType &args) {
         NULL
     );
 
-    if (funcPtrCallInfo.nargs > mFuncInfo->nargs)
-        throw std::invalid_argument(std::string("More arguments given than "
-            "expected by '")
-            + mSysInfo->functionInformation(mFuncInfo->oid)->getFullName()
-            + "'.");
-
-    bool hasNulls = false;
     for (uint16_t i = 0; i < funcPtrCallInfo.nargs; ++i) {
         funcPtrCallInfo.arg[i] = args[i].getAsDatum(&funcPtrCallInfo,
             mFuncInfo->getArgumentType(i));
         funcPtrCallInfo.argnull[i] = args[i].isNull();
-        hasNulls |= funcPtrCallInfo.argnull[i];
-    }
-
-    // If function is strict, we must not call the function at all
-    if (mFuncInfo->isstrict && hasNulls)
-        return AnyType();
-
-    MemoryContext oldContext = NULL;
-    MemoryContext callContext = NULL;
-    if (mFuncCallOptions | GarbageCollectionAfterCall) {
-        // In order to do garbage collection, we need to create a new
-        // memory context
-        callContext = AllocSetContextCreate(CurrentMemoryContext,
-            "C++ AL / FunctionHandle::invoke memory context",
-            ALLOCSET_DEFAULT_MINSIZE,
-            ALLOCSET_DEFAULT_INITSIZE,
-            ALLOCSET_DEFAULT_MAXSIZE);
-        oldContext = MemoryContextSwitchTo(callContext);
     }
 
     Datum result = 0;
@@ -129,7 +163,8 @@ FunctionHandle::operator()() {
 }
 
 // In the following, we define
-// AnyType operator()(AnyType& inArgs1, ..., AnyType& inArgsN)
+// AnyType operator()(FunctionHandle::Argument& inArgs1, ...,
+//     FunctionHandle::Argument& inArgsN)
 // using Boost.Preprocessor.
 #define MADLIB_APPEND_ARG(z, n, data) \
     << data ## n
@@ -137,7 +172,8 @@ FunctionHandle::operator()() {
     inline \
     AnyType \
     FunctionHandle::operator()( \
-        BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), AnyType inArg) \
+        BOOST_PP_ENUM_PARAMS_Z(z, BOOST_PP_INC(n), \
+            FunctionHandle::Argument inArg) \
     ) { \
         AnyType args; \
         args BOOST_PP_REPEAT(BOOST_PP_INC(n), MADLIB_APPEND_ARG, inArg); \
