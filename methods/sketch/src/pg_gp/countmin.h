@@ -130,8 +130,6 @@ typedef struct {
 /*! base size of an MFV transval */
 #define MFV_TRANSVAL_SZ(i) (VARHDRSZ + sizeof(mfvtransval) + i*sizeof(offsetcnt))
 
-#define MFV_DATA(mfv) ((char*)mfv + VARHDRSZ + sizeof(mfvtransval) + mfv->max_mfvs*sizeof(offsetcnt))
-
 /*! free space remaining for text values */
 #define MFV_TRANSVAL_CAPACITY(transblob) (VARSIZE(transblob) - VARHDRSZ - \
                                           ((mfvtransval *)VARDATA(transblob))-> \
