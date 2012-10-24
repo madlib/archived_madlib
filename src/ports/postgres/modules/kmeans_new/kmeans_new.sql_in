@@ -1089,6 +1089,7 @@ AS $$
 DECLARE
     class_rel_source REGCLASS;
     proc_fn_dist REGPROCEDURE;
+    num_closest INT2;
 BEGIN
     class_rel_source := rel_source;
     proc_fn_dist := fn_dist
@@ -1097,11 +1098,16 @@ BEGIN
         FROM pg_proc WHERE oid = proc_fn_dist) THEN
         RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
     END IF;
+    num_closest := array_upper(centroids,1);
+    IF num_closest >= 2 THEN
+	num_closest := 2;
+    END IF;
 
     RETURN MADLIB_SCHEMA.internal_execute_using_silhouette_args($sql$
         SELECT
             avg(CASE
-                    WHEN distances[2] = 0 THEN 0
+                    WHEN array_upper(distances,1) < 2 THEN 1 
+		    WHEN distances[2] = 0 THEN 0
                     ELSE (distances[2] - distances[1]) / distances[2]
                 END)
         FROM (
@@ -1109,7 +1115,7 @@ BEGIN
                 (MADLIB_SCHEMA.closest_columns(
                     $1,
                     $sql$ || expr_point || $sql$,
-                    2::INT2,
+                    $sql$ || num_closest ||$sql$::int2 ,
                     $2
                 )).distances
             FROM
