@@ -396,7 +396,7 @@ BEGIN
     IF (max_num_iterations < 0) THEN
         RAISE EXCEPTION 'Number of iterations must be a non-negative integer.';
     END IF;
-
+    
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
     -- as a pure driver layer.
@@ -498,7 +498,7 @@ LANGUAGE sql AS $$
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args(
-    sql VARCHAR, INT2, REGPROC, DOUBLE PRECISION[][]
+    sql VARCHAR, INTEGER, REGPROC, DOUBLE PRECISION[][]
 ) RETURNS VOID
 VOLATILE
 CALLED ON NULL INPUT
@@ -532,7 +532,7 @@ LANGUAGE plpythonu VOLATILE;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
     initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
 ) RETURNS DOUBLE PRECISION[][] AS $$
@@ -542,7 +542,15 @@ DECLARE
     oldClientMinMessages VARCHAR;
     class_rel_source REGCLASS;
     proc_fn_dist REGPROCEDURE;
+    num_points INTEGER;
+    num_centroids INTEGER;
 BEGIN
+    IF (initial_centroids IS NOT NULL) THEN
+	num_centroids := array_upper(initial_centroids,1);
+    ELSE
+	num_centroids := k;
+    END IF;
+
     class_rel_source := rel_source;
     proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
@@ -553,7 +561,17 @@ BEGIN
     IF (k <= 0) THEN
         RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
     END IF;
-
+    IF (k > 32767) THEN
+	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
+    END IF;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(rel_source)) INTO num_points ;
+    IF (num_points < k OR num_points < num_centroids) THEN
+	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
+    END IF;
+    IF (k < num_centroids) THEN
+	RAISE WARNING 'Number of clusters k is less than number of supplied initial centroids. Number of final clusters will equal number of supplied initial centroids.';
+    END IF;
+    
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
     -- as a pure driver layer.
@@ -596,7 +614,7 @@ $$ LANGUAGE plpgsql VOLATILE;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
@@ -606,7 +624,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2
+    k INTEGER
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3,
@@ -635,7 +653,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
     agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
@@ -660,7 +678,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR,
     agg_centroid VARCHAR,
     max_num_iterations INTEGER
@@ -684,7 +702,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR,
     agg_centroid VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -707,7 +725,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
@@ -729,7 +747,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2
+    k INTEGER
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -750,7 +768,7 @@ END
 $$;
 
 CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_random_seeding_args(
-    sql VARCHAR, INT2, DOUBLE PRECISION[][]
+    sql VARCHAR, INTEGER, DOUBLE PRECISION[][]
 ) RETURNS VOID
 VOLATILE
 CALLED ON NULL INPUT
@@ -781,7 +799,7 @@ LANGUAGE plpythonu VOLATILE;
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
 ) RETURNS DOUBLE PRECISION[][] AS $$
 DECLARE
@@ -790,11 +808,29 @@ DECLARE
     oldClientMinMessages VARCHAR;
     class_rel_source REGCLASS;
     proc_fn_dist REGPROCEDURE;
+    num_points INTEGER;
+    num_centroids INTEGER;
 BEGIN
     class_rel_source := rel_source;
+    num_centroids := k;
+    IF (initial_centroids IS NOT NULL) THEN
+	num_centroids := array_upper(initial_centroids,1);
+    ELSE
+	num_centroids := k;
+    END IF;
 
     IF (k <= 0) THEN
         RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
+    END IF;
+    IF (k > 32767) THEN
+	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
+    END IF;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(rel_source)) INTO num_points;
+    IF (num_points < k  OR num_points < num_centroids) THEN
+	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
+    END IF;
+    IF (k < num_centroids) THEN
+	RAISE WARNING 'Number of clusters k is less than number of supplied initial centroids. Number of final clusters will equal number of supplied initial centroids.';
     END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data
@@ -839,7 +875,7 @@ $$ LANGUAGE plpgsql VOLATILE;
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2
+    k INTEGER
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3, NULL)
@@ -867,7 +903,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
     agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
@@ -892,7 +928,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR,
     agg_centroid VARCHAR,
     max_num_iterations INTEGER
@@ -916,7 +952,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR,
     agg_centroid VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
@@ -939,7 +975,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2,
+    k INTEGER,
     fn_dist VARCHAR
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
@@ -962,7 +998,7 @@ $$;
 CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
     rel_source VARCHAR,
     expr_point VARCHAR,
-    k INT2
+    k INTEGER
 ) RETURNS MADLIB_SCHEMA.kmeans_new_result
 VOLATILE
 STRICT
@@ -1213,7 +1249,7 @@ BEGIN
                 (MADLIB_SCHEMA.closest_columns(
                     $1,
                     $sql$ || expr_point || $sql$,
-                    2::INT2,
+                    2::INTEGER,
                     $2
                 )).distances
             FROM

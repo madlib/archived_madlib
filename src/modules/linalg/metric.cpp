@@ -208,7 +208,7 @@ AnyType
 closest_columns::run(AnyType& args) {
     MappedMatrix M = args[0].getAs<MappedMatrix>();
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    uint16_t num = args[2].getAs<uint16_t>();
+    uint32_t num = args[2].getAs<uint32_t>();
     FunctionHandle dist = args[3].getAs<FunctionHandle>()
         .unsetFunctionCallOptions(FunctionHandle::GarbageCollectionAfterCall);
 
