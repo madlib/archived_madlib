@@ -377,8 +377,16 @@ DECLARE
     class_rel_source REGCLASS;
     proc_fn_dist REGPROCEDURE;
     proc_agg_centroid REGPROCEDURE;
+    rel_filtered VARCHAR;
+    centroids FLOAT8[];
 BEGIN
-    class_rel_source := rel_source;
+    centroids := ARRAY(SELECT unnest(initial_centroids));
+    IF (SELECT MADLIB_SCHEMA.svec_elsum(centroids)) >= 'Infinity'::float THEN
+        RAISE EXCEPTION 'At least one initial centroid has non-finite values.';
+    END IF;
+ 
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
     proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
@@ -400,10 +408,11 @@ BEGIN
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
     -- as a pure driver layer.
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
     EXECUTE 'SET client_min_messages TO warning';
-    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+   
     -- Unfortunately, the EXECUTE USING syntax is only available starting
     -- PostgreSQL 8.4:
     -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
@@ -544,14 +553,17 @@ DECLARE
     proc_fn_dist REGPROCEDURE;
     num_points INTEGER;
     num_centroids INTEGER;
+    rel_filtered VARCHAR;
 BEGIN
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
+
     IF (initial_centroids IS NOT NULL) THEN
 	num_centroids := array_upper(initial_centroids,1);
     ELSE
 	num_centroids := k;
     END IF;
 
-    class_rel_source := rel_source;
     proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
@@ -665,11 +677,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, MADLIB_SCHEMA.kmeanspp_seeding(rel_filtered, $2, $3, $4),
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
         $4, $5, $6, $7);
     RETURN ret;
 END
@@ -689,11 +699,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, MADLIB_SCHEMA.kmeanspp_seeding(rel_filtered, $2, $3, $4),
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
         $4, $5, $6, 0.001);
     RETURN ret;
 END
@@ -712,11 +720,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, MADLIB_SCHEMA.kmeanspp_seeding(rel_filtered, $2, $3, $4),
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
         $4, $5, 20, 0.001);
     RETURN ret;
 END
@@ -734,11 +740,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, MADLIB_SCHEMA.kmeanspp_seeding(rel_filtered, $2, $3, $4),
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
         $4, 'MADLIB_SCHEMA.avg', 20, 0.001);
     RETURN ret;
 END
@@ -755,12 +759,10 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, 
-        MADLIB_SCHEMA.kmeanspp_seeding(rel_filtered, $2, $3, 
+        $1, $2, 
+        MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, 
             'MADLIB_SCHEMA.squared_dist_norm2'),
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001);
     RETURN ret;
@@ -810,8 +812,10 @@ DECLARE
     proc_fn_dist REGPROCEDURE;
     num_points INTEGER;
     num_centroids INTEGER;
+    rel_filtered VARCHAR;
 BEGIN
-    class_rel_source := rel_source;
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
     num_centroids := k;
     IF (initial_centroids IS NOT NULL) THEN
 	num_centroids := array_upper(initial_centroids,1);
@@ -915,11 +919,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, MADLIB_SCHEMA.kmeans_random_seeding(rel_filtered, $2, $3),
+        $1, $2, MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
         $4, $5, $6, $7);
     RETURN ret;
 END
@@ -939,11 +941,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, MADLIB_SCHEMA.kmeans_random_seeding(rel_filtered, $2, $3),
+        $1, $2, MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
         $4, $5, $6, 0.001);
     RETURN ret;
 END
@@ -962,11 +962,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, MADLIB_SCHEMA.kmeans_random_seeding(rel_filtered, $2, $3),
+        $1, $2, MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
         $4, $5, 20, 0.001);
     RETURN ret;
 END
@@ -984,12 +982,10 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, 
-        MADLIB_SCHEMA.kmeans_random_seeding(rel_filtered, $2, $3),
+        $1, $2, 
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
         $4, 'MADLIB_SCHEMA.avg', 20, 0.001);
     RETURN ret;
 END
@@ -1006,12 +1002,10 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_new_result;
-    rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point); 
     ret = MADLIB_SCHEMA.kmeans(
-        rel_filtered, $2, 
-        MADLIB_SCHEMA.kmeans_random_seeding(rel_filtered, $2, $3),
+        $1, $2, 
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001);
     RETURN ret;
 END
@@ -1041,10 +1035,19 @@ CREATE FUNCTION MADLIB_SCHEMA.__filter_input_relation(
 RETURNS VARCHAR
 AS $$
 DECLARE
+    oldClientMinMessages VARCHAR;
     rel_source_filtered VARCHAR;
 BEGIN
-    rel_source_filtered := rel_source||'_filtered';
+    IF (SELECT position('.' in rel_source)) > 0 THEN
+    	rel_source_filtered := '_madlib_' || split_part(rel_source, '.', 2) || '_filtered';
+    ELSE
+	rel_source_filtered := '_madlib_' || rel_source || '_filtered';
+    END IF;
 
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered||'_filtered';
     EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered;
     EXECUTE 'CREATE TEMP VIEW '||rel_source_filtered||'
              AS SELECT * FROM '||rel_source||' 
@@ -1054,6 +1057,7 @@ BEGIN
                                  ''Infinity''::FLOAT8
                               )
                              ) < ''Infinity''::FLOAT8'; 
+    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
     RETURN rel_source_filtered;
 END
 $$
@@ -1229,8 +1233,10 @@ AS $$
 DECLARE
     class_rel_source REGCLASS;
     proc_fn_dist REGPROCEDURE;
+    rel_filtered VARCHAR;
 BEGIN
-    class_rel_source := rel_source;
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
     proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
@@ -1248,7 +1254,7 @@ BEGIN
             SELECT
                 (MADLIB_SCHEMA.closest_columns(
                     $1,
-                    $sql$ || expr_point || $sql$,
+                    ($sql$ || expr_point || $sql$)::FLOAT8[],
                     2::INTEGER,
                     $2
                 )).distances
