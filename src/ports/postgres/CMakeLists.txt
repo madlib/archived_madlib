@@ -312,19 +312,19 @@ function(add_extension_support)
         COMMENT "Concatenating into ${EXTENSION_SQL}"
     )
     # default target for extension
-    add_custom_target(extension
+    add_custom_target(extension-${DBMS}
         DEPENDS ${EXTENSION_SQL}
     )
 
     # clean target for extension
-    add_custom_target(extension-clean
+    add_custom_target(extension-clean-${DBMS}
         COMMAND ${CMAKE_COMMAND} -E remove ${EXTENSION_SQL}
     )
 
     # install target for extension
     # Unfortunately, cmake install command cannot be used here, as
     # DIRECTORY install doesn't have custom target option.
-    add_custom_target(extension-install
+    add_custom_target(extension-install-${DBMS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${${DBMS_UC}_SHARE_DIR}/madlib
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_BINARY_DIR}/modules ${${DBMS_UC}_SHARE_DIR}/madlib/modules
@@ -337,7 +337,18 @@ function(add_extension_support)
             ${${DBMS_UC}_SHARE_DIR}/extension/
         DEPENDS ${EXTENSION_SQL}
     )
+
+    # add dependency to the root target.  This is necessary because
+    # we need unique target name, and have "make install" work correctly
+    # in the case of PGXN with META.json on top directory.
+    add_dependencies(extension extension-${DBMS})
+    add_dependencies(extension-clean extension-clean-${DBMS})
+    add_dependencies(extension-install extension-install-${DBMS})
 endfunction(add_extension_support)
+
+add_custom_target(extension)
+add_custom_target(extension-clean)
+add_custom_target(extension-install)
 
 # -- 6. Build shared library and copy version-specific file for all
 #       ${PORT_UC}_X_Y_PG_CONFIG macros defined by the user. If none has been
