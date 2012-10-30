@@ -378,6 +378,8 @@ DECLARE
     proc_fn_dist REGPROCEDURE;
     proc_agg_centroid REGPROCEDURE;
     rel_filtered VARCHAR;
+    num_points INTEGER;
+    k INTEGER;
     centroids FLOAT8[];
 BEGIN
     centroids := ARRAY(SELECT unnest(initial_centroids));
@@ -404,7 +406,20 @@ BEGIN
     IF (max_num_iterations < 0) THEN
         RAISE EXCEPTION 'Number of iterations must be a non-negative integer.';
     END IF;
-    
+  
+    -- Extra parameter check added so that ERROR output is more user-readable (doesn't include Python traceback) 
+    k := array_upper(initial_centroids,1);
+    IF (k <= 0) THEN
+        RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
+    END IF;
+    IF (k > 32767) THEN
+	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
+    END IF;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points ;
+    IF (num_points < k) THEN
+	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
+    END IF;
+ 
     -- We first setup the argument table. Rationale: We want to avoid all data
     -- conversion between native types and Python code. Instead, we use Python
     -- as a pure driver layer.
@@ -576,7 +591,7 @@ BEGIN
     IF (k > 32767) THEN
 	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
     END IF;
-    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(rel_source)) INTO num_points ;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points ;
     IF (num_points < k OR num_points < num_centroids) THEN
 	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
     END IF;
@@ -829,7 +844,7 @@ BEGIN
     IF (k > 32767) THEN
 	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
     END IF;
-    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(rel_source)) INTO num_points;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points;
     IF (num_points < k  OR num_points < num_centroids) THEN
 	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
     END IF;
@@ -1047,7 +1062,7 @@ BEGIN
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
     EXECUTE 'SET client_min_messages TO warning';
-    EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered||'_filtered';
+    EXECUTE 'DROP VIEW IF EXISTS _madlib_'||rel_source_filtered||'_filtered';
     EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered;
     EXECUTE 'CREATE TEMP VIEW '||rel_source_filtered||'
              AS SELECT * FROM '||rel_source||' 
