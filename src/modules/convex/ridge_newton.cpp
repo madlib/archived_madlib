@@ -53,7 +53,7 @@ ridge_newton_transition::run(AnyType &args) {
             state = previousState;
         } else {
             // configuration parameters
-            uint32_t dimension = args[4].getAs<uint16_t>();
+            uint16_t dimension = args[4].getAs<uint16_t>();
 
             state.allocate(*this, dimension); // with zeros
         }

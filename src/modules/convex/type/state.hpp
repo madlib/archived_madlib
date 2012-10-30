@@ -105,7 +105,7 @@ public:
      * me. But I am not sure where I can move this to...
      */
     inline void computeRMSE() {
-        task.RMSE = sqrt(algo.loss / algo.numRows);
+        task.RMSE = sqrt(algo.loss / static_cast<double>(algo.numRows));
     }
 
     static inline uint32_t arraySize(const uint16_t inRowDim, 
@@ -213,7 +213,7 @@ public:
     /**
      * @brief Allocating the incremental gradient state.
      */
-    inline void allocate(const Allocator &inAllocator, uint16_t inDimension) {
+    inline void allocate(const Allocator &inAllocator, uint32_t inDimension) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
                 dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inDimension));
 
@@ -244,7 +244,7 @@ public:
         algo.incrModel = task.model;
     }
 
-    static inline uint32_t arraySize(const uint16_t inDimension) {
+    static inline uint32_t arraySize(const uint32_t inDimension) {
         return 4 + 2 * inDimension;
     }
 
@@ -313,7 +313,7 @@ public:
     /**
      * @brief Allocating the incremental gradient state.
      */
-    inline void allocate(const Allocator &inAllocator, uint16_t inDimension) {
+    inline void allocate(const Allocator &inAllocator, uint32_t inDimension) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
                 dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inDimension));
 
@@ -344,7 +344,7 @@ public:
         algo.incrModel = task.model;
     }
 
-    static inline uint32_t arraySize(const uint16_t inDimension) {
+    static inline uint32_t arraySize(const uint32_t inDimension) {
         return 6 + 3 * inDimension;
     }
 
@@ -439,7 +439,7 @@ public:
     /**
      * @brief Allocating the incremental gradient state.
      */
-    inline void allocate(const Allocator &inAllocator, uint16_t inDimension) {
+    inline void allocate(const Allocator &inAllocator, uint32_t inDimension) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
                 dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inDimension));
 
@@ -470,7 +470,7 @@ public:
         algo.incrGradient = ColumnVector::Zero(task.dimension);
     }
 
-    static inline uint32_t arraySize(const uint16_t inDimension) {
+    static inline uint32_t arraySize(const uint32_t inDimension) {
         return 5 + 4 * inDimension;
     }
 
@@ -634,7 +634,7 @@ private:
 
 public:
     struct TaskState {
-        typename HandleTraits<Handle>::ReferenceToUInt32 dimension;
+        typename HandleTraits<Handle>::ReferenceToUInt16 dimension;
         typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap model;
     } task;
 

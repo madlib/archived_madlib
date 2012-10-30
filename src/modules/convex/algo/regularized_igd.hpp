@@ -50,7 +50,7 @@ RegularizedIGD<State, Task, Regularizer>::transition(state_type &state,
             state.algo.gradient);
     Regularizer::gradient(
             state.algo.incrModel,
-            state.task.lambda / state.task.totalRows, // amortizing lambda
+            state.task.lambda / static_cast<double>(state.task.totalRows), // amortizing lambda
             state.algo.gradient);
     
     // apply to the model directly
