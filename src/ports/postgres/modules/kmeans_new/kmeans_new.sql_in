@@ -311,6 +311,22 @@ CREATE TYPE MADLIB_SCHEMA.kmeans_new_state AS (
 
 /**
  * @internal
+ * @brief Check if expr_point is valid type and return useful error msg
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_is_valid_expr_point(
+    rel_source VARCHAR,
+    expr_point VARCHAR
+) RETURNS boolean AS $$ 
+BEGIN 
+  EXECUTE 'SELECT ' || expr_point || '::FLOAT8[] FROM ' || textin(regclassout(rel_source)); 
+  RETURN TRUE; 
+EXCEPTION WHEN OTHERS THEN 
+  RETURN FALSE; 
+END; 
+$$ LANGUAGE plpgsql VOLATILE; 
+
+/**
+ * @internal
  * @brief Execute a SQL command where $1, ..., $4 are substituted with the
  *     given arguments.
  */
@@ -385,6 +401,10 @@ BEGIN
     centroids := ARRAY(SELECT unnest(initial_centroids));
     IF (SELECT MADLIB_SCHEMA.svec_elsum(centroids)) >= 'Infinity'::float THEN
         RAISE EXCEPTION 'At least one initial centroid has non-finite values.';
+    END IF;
+
+    IF (SELECT MADLIB_SCHEMA.kmeans_is_valid_expr_point(rel_source, expr_point) = FALSE) THEN
+	RAISE EXCEPTION 'Point coordinates (%) are not a valid type (SVEC, FLOAT[], or INTEGER[]) or do not exist.', expr_point;
     END IF;
  
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
@@ -570,6 +590,9 @@ DECLARE
     num_centroids INTEGER;
     rel_filtered VARCHAR;
 BEGIN
+    IF (SELECT MADLIB_SCHEMA.kmeans_is_valid_expr_point(rel_source, expr_point) = FALSE) THEN
+	RAISE EXCEPTION 'Point coordinates (%) are not a valid type (SVEC, FLOAT[], or INTEGER[]) or do not exist.', expr_point;
+    END IF;
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
     class_rel_source := rel_filtered;
 
@@ -829,6 +852,9 @@ DECLARE
     num_centroids INTEGER;
     rel_filtered VARCHAR;
 BEGIN
+    IF (SELECT MADLIB_SCHEMA.kmeans_is_valid_expr_point(rel_source, expr_point) = FALSE) THEN
+	RAISE EXCEPTION 'Point coordinates (%) are not a valid type (SVEC, FLOAT[], or INTEGER[]) or do not exist.', expr_point;
+    END IF;
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
     class_rel_source := rel_filtered;
     num_centroids := k;
@@ -1250,6 +1276,9 @@ DECLARE
     proc_fn_dist REGPROCEDURE;
     rel_filtered VARCHAR;
 BEGIN
+    IF (SELECT MADLIB_SCHEMA.kmeans_is_valid_expr_point(rel_source, expr_point) = FALSE) THEN
+	RAISE EXCEPTION 'Point coordinates (%) are not a valid type (SVEC, FLOAT[], or INTEGER[]) or do not exist.', expr_point;
+    END IF;
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
     class_rel_source := rel_filtered;
     proc_fn_dist := fn_dist
