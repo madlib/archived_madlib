@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file kmeans.sql_in
  *
@@ -12,21 +12,23 @@
 m4_include(`SQLCommon.m4')
 
 /**
-@addtogroup grp_kmeans 
+@addtogroup grp_kmeans
 
 @about
 
 Clustering refers to the problem of partitioning a set of objects according to
 some problem-dependent measure of <em>similarity</em>. In the k-means variant,
-one is given \f$ n \f$ points \f$ x_1, \dots, x_n \in \mathbf R^d \f$, and the goal is
-to position \f$ k \f$ centroids \f$ c_1, \dots, c_k \in \mathbf R^d \f$ so that the sum of squared
-distances between each point and its closest centroid is minimized. (A cluster
-is identified by its centroid and consists of all points for which this
-centroid is closest.) Formally, we wish to minimize the following objective
-function:
+one is given \f$ n \f$ points \f$ x_1, \dots, x_n \in \mathbb R^d \f$, and the
+goal is to position \f$ k \f$ centroids \f$ c_1, \dots, c_k \in \mathbb R^d \f$
+so that the sum of \em distances between each point and its closest centroid is
+minimized. Each centroid represents a cluster that consists of all points to
+which this centroid is closest. Formally, we wish to minimize the following
+objective function:
 \f[
-    (c_1, \dots, c_k) \mapsto \sum_{i=1}^n \min_{j=1}^k \operatorname{dist}(x_i, c_j)^2
+    (c_1, \dots, c_k) \mapsto \sum_{i=1}^n \min_{j=1}^k \operatorname{dist}(x_i, c_j)
 \f]
+In the most common case, \f$ \operatorname{dist} \f$ is the square of the
+Euclidean distance.
 
 This problem is computationally difficult (NP-hard), yet the
 local-search heuristic proposed by Lloyd [4] performs reasonably well in
@@ -37,12 +39,13 @@ often referred to as the <em>standard algorithm</em> or even just the
 -# Seed the \f$ k \f$ centroids (see below)
 -# Repeat until convergence:
  -# Assign each point to its closest centroid
- -# Move each centroid to the barycenter (mean) of all points currently
-    assigned to it
--# Convergence is achieved when no points change their assignments during step 2a.
+ -# Move each centroid to a position that minimizes the sum of distances in this
+    cluster
+-# Convergence is achieved when no points change their assignments during step
+   2a.
 
-This algorithm is guaranteed to converge to a local optimum, as it can be 
-shown that the objective function decreases in every step.
+Since the objective function decreases in every step, this algorithm is
+guaranteed to converge to a local optimum.
 
 @implementation
 
@@ -53,29 +56,25 @@ Data points with with non-finite values (NULL, NaN, infinity) in any component
 will be skipped during analysis.
 
 The following methods are available for the centroid seeding:
- - <strong>random selection</strong>: 
+ - <strong>random selection</strong>:
    Select \f$ k \f$ centroids randomly among the input points.
  - <strong>kmeans++</strong> [2]:
    Start with a single centroid chosen randomly among the input points. Then
    iteratively choose new
    centroids from the input points until there is a total of \f$ k \f$
    centroids. The probability for picking a particular point is proportional to
-   its minimum squared distance to any existing centroid.
+   its minimum distance to any existing centroid.
    \n
    Intuitively, kmeans++ favors seedings where centroids are spread out over the
    whole range of the input points, while at the same time not being too
    susceptible to outliers [2].
-   For performance reasons, if the input size is large, the kmeans++
-   initialization should only be run on a random sample of the input points. The
-   sample size can be specified as a fraction of all input points 
-   (default: 0.01).
  - <strong>user-specified set of initial centroids</strong>:
    See below for a description of the expected format of the set of initial
    centroids.
 
 The following distance functions can be used (computation of barycenter/mean in parentheses):
- - <strong>l1norm/Manhattan</strong> (element-wise mean)
- - <strong>l2norm/Euclidean</strong> (element-wise mean)
+ - <strong>1-norm/Manhattan</strong> (element-wise mean)
+ - <strong>2-norm/Euclidean</strong> (element-wise mean)
  - <strong>cosine</strong> (element-wise mean of normalized points)
  - <strong>tanimoto</strong> (element-wise mean of normalized points)
 
@@ -89,31 +88,37 @@ optionally [3]. Since for large data sets this computation is expensive, it is
 turned off by default (evaluate = False).
 
 @input
-The <strong>source relation</strong> is expected to be of the following form:
+The <strong>source relation</strong> is expected to be of the following form (or
+to be implicitly convertible into the following form):
 <pre>{TABLE|VIEW} <em>data_points</em> (
     ...
-    [ <em>point_id</em> INTEGER, ]
-    <em>point_coordinates</em> {SVEC|FLOAT[]|INTEGER[]},
+    <em>point_id</em> BIGINT,
+    <em>point_coordinates</em> FLOAT8[],
     ...
 )</pre>
 where:
- - <em>point_id</em> is the name of an optional column with a unique ID of the data point
- - <em>point_coordinates</em> is the name of a column with point coordinates 
+ - <em>point_id</em> is the name of an optional column with a unique ID of the
+   data point.
+ - <em>point_coordinates</em> is the name of a column with point coordinates.
+   Types such as \c svec or <tt>INTEGER[]</tt> are implicitly convertible to
+   <tt>FLOAT8[]</tt>.
 
-If kmeans is called with a set of initial centroids, the 
-centroid relation is expected to be of the following form:
+If kmeans is called with a set of initial centroids, the centroid relation is
+expected to be of the following form:
 <pre>{TABLE|VIEW} <em>initial_centroids</em> (
     ...
-    <em>centroid_coordinates</em> {SVEC|FLOAT[]|INTEGER[]},
+    <em>centroid_coordinates</em> DOUBLE PRECISION[],
     ...
 )</pre>
 where:
- - <em>centroid_coordinates</em> is the name of a column with coordinates 
- 
+ - <em>centroid_coordinates</em> is the name of a column with coordinates
+
+@warning This documentation needs an update!
+
 @usage
 The k-means algorithm can be invoked in four possible ways:
 
-- using <em>random</em> centroid seeding method for a 
+- using <em>random</em> centroid seeding method for a
 provided \f$ k \f$:
 <pre>SELECT * FROM \ref kmeans_random(
   '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
@@ -124,7 +129,7 @@ provided \f$ k \f$:
   <em>k</em>
 );</pre>
 
-- using <em>kmeans++</em> centroid seeding method for a 
+- using <em>kmeans++</em> centroid seeding method for a
 provided \f$ k \f$:
 <pre>SELECT * FROM \ref kmeans_plusplus(
   '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
@@ -145,10 +150,10 @@ provided \f$ k \f$:
   '<em>init_cset_rel</em>', '<em>init_cset_col</em>'
 );</pre>
 
-The output centroid set will be stored in the <tt>out_centroids</tt> table 
+The output centroid set will be stored in the <tt>out_centroids</tt> table
 with the following structure:
 <pre>
- cid |  coords                   
+ cid |  coords
 -----+-------------
         ...
 </pre>
@@ -156,7 +161,7 @@ with the following structure:
 The cluster assignments for each data point will be stored in the
 <tt>out_points</tt> table with the following structure:
 <pre>
- pid |  coords  | cid 
+ pid |  coords  | cid
 -----+----------+-----
          ...
 </pre>
@@ -166,7 +171,7 @@ The cluster assignments for each data point will be stored in the
 -#  Prepare some input data.
 \code
 sql> SELECT * FROM public.km_sample LIMIT 5;
-          coords          
+          coords
 --------------------------
  {1,1}:{6.76976,39.89516}
  {1,1}:{6.92655,39.54273}
@@ -174,11 +179,11 @@ sql> SELECT * FROM public.km_sample LIMIT 5;
  {1,1}:{7.24073,39.61291}
  {1,1}:{6.72292,39.05652}
 (5 rows)
-\endcode    
+\endcode
 -#  Run k-means clustering using kmeans++ for centroid seeding
 (below example is executed in Verbose mode):
 \code
-sql> SELECT * FROM madlib.kmeans_plusplus( 
+sql> SELECT * FROM madlib.kmeans_plusplus(
     'km_sample', 'coords', null,
     'km_p', 'km_c',
     'l2norm',
@@ -228,7 +233,7 @@ iterations    | 10
 cost_func     | 36424.9019377
 silhouette    | 0.710664950775
 out_points    | km_p
-out_centorids | km_c              
+out_centorids | km_c
 \endcode
 
 @literature
@@ -245,7 +250,7 @@ out_centorids | km_c
     Gene-Expression Data: A Hybrid Approach that Iterates Between k-Means and
     Evolutionary Search. In: Studies in Computational Intelligence - Hybrid
     Evolutionary Algorithms. pp. 313-335. Springer. 2007.
-    
+
 [4] Lloyd, Stuart: Least squares quantization in PCM. Technical Note, Bell
     Laboratories. Published much later in: IEEE Transactions on Information
     Theory 28(2), pp. 128-137. 1982.
@@ -257,619 +262,1069 @@ out_centorids | km_c
 @endinternal
 */
 
-/**
- * @internal
- * @brief Given a point, find all canopies that are closer than threshold
- * @param point The point
- * @param allCanopies Array of canopies
- * @param threshold Threshold distance below which a point is included in the
- *     output array
- * @param distMetric ID of the metric to use
- * @return Array of positions in \c allCanopies that are close to the given
- *     point
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_get_array_of_close_canopies( 
-    "point"               MADLIB_SCHEMA.SVEC,
-    "allCanopies"         MADLIB_SCHEMA.SVEC[],
-    "threshold"           FLOAT8,
-    "dist_metric"         INTEGER
-)
-RETURNS INTEGER[] AS
-'MODULE_PATHNAME'
-LANGUAGE c
-IMMUTABLE
-STRICT;
-
-
-/**
- * @internal
- * @brief Given a point, find the closest centroid
- * @param point The point
- * @param centroidCoordinates Array of centroids
- * @param dimension Dimension of points
- * @param numOfCentroids Total count of centroids
- * @param distMetric ID of the metric to use
- * @param closeCentroids List of positions in the \c centroidCoordinates array
- *     that should be considered. The distance to all other centroids is
- *     conceptually infinity. If NULL, then all centroids in
- *     \c centroidCoordinates are considered.
- * @return The position in \c centroidCoordinates that is closest to \c point
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_closest_centroid( 
-    "point"               FLOAT8[],
-    "centroidCoordinates" FLOAT8[],
-    "dimension"           INTEGER,
-    "numOfCentroids"      INTEGER,
-    "dist_metric"         INTEGER,
-    "closeCentroids"      INTEGER[]
-)
-RETURNS INTEGER AS
-'MODULE_PATHNAME'
-LANGUAGE c
-IMMUTABLE; /* This function must *not* be declared STRICT! */
-
-/**
- * @internal
- * @brief Transition function for UDA:internal_kmeans_agg_centroid() 
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_agg_centroid_trans( 
-    "centroids_array"               FLOAT8[],
-    "centroidCoordinate"            FLOAT8[],
-    "dimension"                     INTEGER,
-    "numOfCentroids"                INTEGER,
-    "centroidIndex"                 INTEGER
-)
-RETURNS FLOAT8[] AS
-'MODULE_PATHNAME'
-LANGUAGE c
-IMMUTABLE; /* This function must *not* be declared STRICT! */
-
-/**
- * @internal
- * @brief Merge function for UDA:internal_kmeans_agg_centroid() 
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_agg_centroid_merge( 
-    "centroids_array"               FLOAT8[],
-    "centroids_array2"              FLOAT8[]    
-)
-RETURNS FLOAT8[] AS
-'MODULE_PATHNAME'
-LANGUAGE c
-IMMUTABLE STRICT;
-
-
-CREATE AGGREGATE MADLIB_SCHEMA.internal_kmeans_agg_centroid(
-    FLOAT8[],
-    INTEGER,
-    INTEGER,
-    INTEGER
-) (
-    sfunc = MADLIB_SCHEMA.internal_kmeans_agg_centroid_trans,
-    m4_ifdef(`__GREENPLUM__', `
-        prefunc = MADLIB_SCHEMA.internal_kmeans_agg_centroid_merge,
-    ')
-    stype = FLOAT8[]
-);
-
-
-/**
- * @internal
- * @brief Transition function for UDA:kmeans_canopy() 
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_kmeans_canopy_transition(
-    state           MADLIB_SCHEMA.svec[]
-    , pcoords       MADLIB_SCHEMA.svec
-    , dist_metric   INTEGER
-    , threshold     FLOAT8
-)
-RETURNS MADLIB_SCHEMA.svec[] AS 
-'MODULE_PATHNAME'
-LANGUAGE c
-IMMUTABLE
-STRICT;
-
-/**
- * @internal
- * @brief Generates canopies in a single table scan. UDA:kmeans_canopy() 
- */
-CREATE AGGREGATE MADLIB_SCHEMA.kmeans_canopy(
-    MADLIB_SCHEMA.svec  -- new point coordinates
-    , INTEGER           -- distance metric
-    , FLOAT8            -- threshold (T1)
-) (
-    stype = MADLIB_SCHEMA.svec[],
-    sfunc = MADLIB_SCHEMA.internal_kmeans_canopy_transition,
-m4_ifdef(`__GREENPLUM__', `
-    prefunc = array_cat,
-')
-    initcond = '{}'
-);
-
-/**
- * @internal
- * @brief After merging canopies, remove those that are close to each other.
- *    This is essentilly a pivoted version of kmeans_canopy
+/*
+ * @brief k-Means return type
  *
- * @param all_canopies The array of all canopies (their coordinates)
- * @param dist_metric ID of the metric to use
- * @param threshold The threshold distance below which we drop canopies
- * @returns The pruned array of canopies
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_remove_close_canopies(
-    "all_canopies"  MADLIB_SCHEMA.svec[],
-    "dist_metric"   INTEGER,
-    "threshold"     FLOAT8
-)
-RETURNS MADLIB_SCHEMA.svec[] AS 
-'MODULE_PATHNAME'
-LANGUAGE c
-IMMUTABLE
-STRICT;
-
-/**
- * @internal
- * @brief Kmeans result data type
+ * A composite value:
+ *  - <tt>centroids</tt> - Matrix containing the new \f$ l \leq k \f$
+ *    repositioned centroids as columns. If this matrix has \f$ l < k \f$
+ *    columns, one or more old centroids no longer were closest to any point.
+ *  - <tt>old_centroid_its</tt> - The order of the centroids in
+ *    <tt>centroid</tt> is not guaranteed to be consitent across iterations.
+ *    In particular, if a centroid is no longer closest to any point it can be
+ *    dropped and a new centroid is added afterwards. We therefore need to map
+ *    positions in <tt>centroids</tt> to the respective positions in the
+ *    previous iteration.
+ *  - <tt>objective_fn</tt> - Value of the objective function, i.e.,
+ *    \f$ \sum_{x \in P} \dist(x, C)^2 \f$ where
+ *    \f$ P \f$ is the set of points, \f$ C \f$ is the set of centroids, and
+ *    \f$ \dist(x, C) := \min_{c \in C} \operatorname{dist}(x, c) \f$.
+ *  - <tt>frac_reassigned</tt> - Fraction of points that was assigned a
+ *    different centroid in the current iteration.
+ *  - <tt>num_iterations</tt> - Number of iterations performed (so far).
  */
 CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
-    src_relation    TEXT,
-    point_count     BIGINT,
-    init_method     TEXT,
-    k               INT,
-    dist_metric     TEXT,
-    iterations      INT,
-    cost_func       FLOAT,
-    silhouette      FLOAT,
-    out_points      TEXT,
-    out_centorids   TEXT
+    centroids DOUBLE PRECISION[][],
+    objective_fn DOUBLE PRECISION,
+    frac_reassigned DOUBLE PRECISION,
+    num_iterations INTEGER
 );
- 
-/**
- * @brief Computes k-means clustering with user provided initial centroid set. 
- *
- * @param src_relation Name of the relation containing input data 
- * @param src_col_data Name of the column containing the point coordinates 
- *        (acceptable types: <tt>\ref grp_svec "SVEC"</tt>, <tt>INTEGER[]</tt>,
- *        <tt>FLOAT[]</tt>)
- * @param src_col_id Name of the column containing the unique point identifiers 
- *        (optional)
- * @param out_points Name of the output relation for point/centroids assignments
- * @param out_centroids Name of the output relation for the list of centroids 
- * @param dist_metric Name of the metric to use for distance calculation, 
- *        available options are: <tt>'euclidean'</tt>/<tt>'l2norm'</tt>,
- *        <tt>'manhattan'</tt>/<tt>'l1norm'</tt>, <tt>'cosine</tt>,
- *        <tt>'tanimoto'</tt>
- * @param max_iter Maximum number of iterations 
- * @param conv_threshold Convergence threshold expressed as fraction of points
- *        that changed centroid assignment
- * @param evaluate Calculate model evaluation coefficient
- * @param verbose Generate detailed information during execution
- * @param init_cset_rel Name of the relation containing the initial set of 
- *        centroids
- * @param init_cset_col Name of the column containing the coordinates
- *        (acceptable types: <tt>\ref grp_svec "SVEC"</tt>, <tt>INTEGER[]</tt>,
- *        <tt>FLOAT[]</tt>)
- * 
- * @return A composite value:
- *  - <tt>src_relation TEXT</tt> - name of the source relation,
- *  - <tt>point_count BIGINT</tt> - number of analyzed data points \f$ \boldsymbol n \f$
- *  - <tt>init_method TEXT</tt> - centroid seeding method used: one of
- *    <tt>'random'</tt>, <tt>'kmeans++'</tt>, 
- *    <tt>'provided set'</tt>
- *  - <tt>k INTEGER</tt> - initial number of centroids, \f$ k \f$
- *  - <tt>dist_metric TEXT</tt> - distance metric used: one of
- *    <tt>'l1norm'</tt>, <tt>'l2norm'</tt>, <tt>'cosine'</tt>, <tt>'tanimoto'</tt>
- *  - <tt>iterations INTEGER</tt> - number of iterations executed,
- *  - <tt>cost_func FLOAT</tt> - Cost function value for the model
- *  - <tt>silhouette FLOAT</tt> - Silhouette coefficient of the full model
- *  - <tt>out_points FLOAT</tt> - name of the output relation for data points
- *  - <tt>out_centroids FLOAT</tt> - name of the output relation for centroids
- * 
- * @usage
- *  - Run k-means clustering with a provided centroid set:
- *    <pre>SELECT * FROM kmeans_cset(
- *      '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
- *      '<em>out_points</em>', '<em>out_centroids</em>',
- *      '<em>dist_metric</em>',
- *      <em>max_iter</em>, <em>conv_threshold</em>,
- *      <em>evaluate</em>, <em>verbose</em>,
- *      '<em>init_cset_rel</em>', '<em>init_cset_col</em>'
- * );</pre>
- *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source relation and column names have to be passed as strings 
- *       (due to limitations of the SQL syntax).
- *
- */ 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans_cset( 
-  src_relation      TEXT        
-  , src_col_data    TEXT
-  , src_col_id      TEXT
-  , out_points      TEXT 
-  , out_centroids   TEXT
-  , dist_metric     TEXT        
-  , max_iter        INT         /*+ DEFAULT 20 */
-  , conv_threshold  FLOAT       /*+ DEFAULT 0.001 */
-  , evaluate        BOOLEAN     /*+ DEFAULT True */
-  , verbose         BOOLEAN     /*+ DEFAULT False */
-  , init_cset_rel   TEXT
-  , init_cset_col   TEXT
-) 
-RETURNS MADLIB_SCHEMA.kmeans_result
-AS $$
 
-    PythonFunctionBodyOnly(`kmeans', `kmeans')
-    
-    # schema_madlib comes from PythonFunctionBodyOnly
-    return kmeans.kmeans( 
-        schema_madlib
-        , src_relation, src_col_data, src_col_id
-        , init_cset_rel, init_cset_col
-        , None, None        # init_method, sample_frac
-        , None, None, None  # k, t1, t2
-        , dist_metric
-        , max_iter, conv_threshold, evaluate
-        , out_points, out_centroids
-        , verbose
-    );
-
-$$ LANGUAGE plpythonu;
-
-/**
- * @brief Computes k-means clustering using kmeans++ for centroid seeding.  
- * 
- * For k-means clustering with user provided centroid set and the other seeding
- * methods see the other k-means signature.
+/*
+ * @brief k-Means inter-iteration state type
  *
- * @param src_relation Name of the relation containing input data 
- * @param src_col_data Name of the column containing the point coordinates 
- *        (acceptable types: <tt>\ref grp_svec "SVEC"</tt>, <tt>INTEGER[]</tt>,
- *        <tt>FLOAT[]</tt>)
- * @param src_col_id Name of the column containing the unique point identifiers 
- *        (optional)
- * @param out_points Name of the output relation for point/centroids assignments
- * @param out_centroids Name of the output relation for the list of centroids 
- * @param dist_metric Name of the metric to use for distance calculation, 
- *        available options are: <tt>'euclidean'</tt>/<tt>'l2norm'</tt>,
- *        <tt>'manhattan'</tt>/<tt>'l1norm'</tt>, <tt>'cosine</tt>,
- *        <tt>'tanimoto'</tt>
- * @param max_iter Maximum number of iterations 
- * @param conv_threshold Convergence threshold expressed as fraction of points
- *        that changed centroid assignment
- * @param evaluate Calculate model evaluation coefficient
- * @param verbose Generate detailed information during execution
- * @param k Number of initial centroids to be generated
- * @param sample_frac Fraction of points (between 0 and 1) to use as sample for
- *        kmeans++ seeding.
- * 
- * @return A composite value:
- *  - <tt>src_relation TEXT</tt> - name of the source relation,
- *  - <tt>point_count BIGINT</tt> - number of analyzed data points \f$ \boldsymbol n \f$
- *  - <tt>init_method TEXT</tt> - centroid seeding method used: one of
- *    <tt>'random'</tt>, <tt>'kmeans++'</tt>, 
- *    <tt>'provided set'</tt>
- *  - <tt>k INTEGER</tt> - initial number of centroids, \f$ k \f$
- *  - <tt>dist_metric TEXT</tt> - distance metric used: one of
- *    <tt>'l1norm'</tt>, <tt>'l2norm'</tt>, <tt>'cosine'</tt>, <tt>'tanimoto'</tt>
- *  - <tt>iterations INTEGER</tt> - number of iterations executed,
- *  - <tt>cost_func FLOAT</tt> - Cost function value for the model
- *  - <tt>silhouette FLOAT</tt> - Silhouette coefficient of the full model
- *  - <tt>out_points FLOAT</tt> - name of the output relation for data points
- *  - <tt>out_centroids FLOAT</tt> - name of the output relation for centroids
- * 
- * @usage
- *  - Run k-means clustering with a provided centroid set:
- *    <pre>SELECT * FROM kmeans_plusplus(
- *      '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
- *      '<em>out_points</em>', '<em>out_centroids</em>',
- *      '<em>dist_metric</em>',
- *      <em>max_iter</em>, <em>conv_threshold</em>,
- *      <em>evaluate</em>, <em>verbose</em>,
- *      <em>k</em>, <em>sample_frac</em>
- * );</pre>
- *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source relation and column names have to be passed as strings 
- *       (due to limitations of the SQL syntax).
- *
- */ 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans_plusplus( 
-  src_relation      TEXT        
-  , src_col_data    TEXT
-  , src_col_id      TEXT
-  , out_points      TEXT 
-  , out_centroids   TEXT
-  , dist_metric     TEXT        
-  , max_iter        INT         /*+ DEFAULT 20 */
-  , conv_threshold  FLOAT       /*+ DEFAULT 0.001 */
-  , evaluate        BOOLEAN     /*+ DEFAULT True */
-  , verbose         BOOLEAN     /*+ DEFAULT False */
-  , k               INT 
-  , sample_frac     FLOAT       /*+ DEFAULT 0.01 */
-) 
-RETURNS MADLIB_SCHEMA.kmeans_result
-AS $$
-
-    PythonFunctionBodyOnly(`kmeans', `kmeans')
-    
-    # schema_madlib comes from PythonFunctionBodyOnly
-    return kmeans.kmeans( 
-        schema_madlib
-        , src_relation, src_col_data, src_col_id
-        , None, None    # init_cset_rel, init_cset_col
-        , 'kmeans++', sample_frac, k
-        , None, None    # t1, t2
-        , dist_metric
-        , max_iter, conv_threshold, evaluate
-        , out_points, out_centroids
-        , verbose
-    );
-
-$$ LANGUAGE plpythonu;
-
-/**
- * @brief Computes k-means clustering using random centroid seeding.  
- * 
- * For k-means clustering with user provided centroid set and the other seeding
- * methods see the other k-means signature.
- *
- * @param src_relation Name of the relation containing input data 
- * @param src_col_data Name of the column containing the point coordinates 
- *        (acceptable types: <tt>\ref grp_svec "SVEC"</tt>, <tt>INTEGER[]</tt>,
- *        <tt>FLOAT[]</tt>)
- * @param src_col_id Name of the column containing the unique point identifiers 
- *        (optional)
- * @param out_points Name of the output relation for point/centroids assignments
- * @param out_centroids Name of the output relation for the list of centroids 
- * @param dist_metric Name of the metric to use for distance calculation, 
- *        available options are: <tt>'euclidean'</tt>/<tt>'l2norm'</tt>,
- *        <tt>'manhattan'</tt>/<tt>'l1norm'</tt>, <tt>'cosine</tt>,
- *        <tt>'tanimoto'</tt>
- * @param max_iter Maximum number of iterations 
- * @param conv_threshold Convergence threshold expressed as fraction of points
- *        that changed centroid assignment
- * @param evaluate Calculate model evaluation coefficient
- * @param verbose Generate detailed information during execution
- * @param k Number of initial centroids to be generated
- * 
- * @return A composite value:
- *  - <tt>src_relation TEXT</tt> - name of the source relation,
- *  - <tt>point_count BIGINT</tt> - number of analyzed data points \f$ \boldsymbol n \f$
- *  - <tt>init_method TEXT</tt> - centroid seeding method used: one of
- *    <tt>'random'</tt>, <tt>'kmeans++'</tt>, 
- *    <tt>'provided set'</tt>
- *  - <tt>k INTEGER</tt> - initial number of centroids, \f$ k \f$
- *  - <tt>dist_metric TEXT</tt> - distance metric used: one of
- *    <tt>'l1norm'</tt>, <tt>'l2norm'</tt>, <tt>'cosine'</tt>, <tt>'tanimoto'</tt>
- *  - <tt>iterations INTEGER</tt> - number of iterations executed,
- *  - <tt>cost_func FLOAT</tt> - Cost function value for the model
- *  - <tt>silhouette FLOAT</tt> - Silhouette coefficient of the full model
- *  - <tt>out_points FLOAT</tt> - name of the output relation for data points
- *  - <tt>out_centroids FLOAT</tt> - name of the output relation for centroids
- * 
- * @usage
- *  - Run k-means clustering using random centroid initialization:
- *    <pre>SELECT * FROM kmeans_random(
- *      '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
- *      '<em>out_points</em>', '<em>out_centroids</em>',
- *      '<em>dist_metric</em>',
- *      <em>max_iter</em>, <em>conv_threshold</em>,
- *      <em>evaluate</em>, <em>verbose</em>,
- *      <em>k</em>
- * );</pre>
- *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source relation and column names have to be passed as strings 
- *       (due to limitations of the SQL syntax).
- *
- */ 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans_random( 
-  src_relation      TEXT        
-  , src_col_data    TEXT
-  , src_col_id      TEXT
-  , out_points      TEXT 
-  , out_centroids   TEXT
-  , dist_metric     TEXT        
-  , max_iter        INT         /*+ DEFAULT 20 */
-  , conv_threshold  FLOAT       /*+ DEFAULT 0.001 */
-  , evaluate        BOOLEAN     /*+ DEFAULT True */
-  , verbose         BOOLEAN     /*+ DEFAULT False */
-  , k               INT 
-) 
-RETURNS MADLIB_SCHEMA.kmeans_result
-AS $$
-
-    PythonFunctionBodyOnly(`kmeans', `kmeans')
-    
-    # schema_madlib comes from PythonFunctionBodyOnly
-    return kmeans.kmeans( 
-        schema_madlib
-        , src_relation, src_col_data, src_col_id
-        , None, None    # init_cset_rel, init_cset_col
-        , 'random'
-        , None          # sample_frac
-        , k
-        , None, None    # t1, t2
-        , dist_metric
-        , max_iter, conv_threshold, evaluate
-        , out_points, out_centroids
-        , verbose
-    );    
-
-$$ LANGUAGE plpythonu;
-
-/**
- * @internal
- * @brief Computes k-means clustering using canopy for centroid seeding.  
- * 
- * For k-means clustering with user provided initial centroid set and for other
- * seeding methods see the other k-means signature.
- *
- * @param src_relation Name of the relation containing input data 
- * @param src_col_data Name of the column containing the point coordinates 
- *        (acceptable types: <tt>\ref grp_svec "SVEC"</tt>, <tt>INTEGER[]</tt>,
- *        <tt>FLOAT[]</tt>)
- * @param src_col_id Name of the column containing the unique point identifiers 
- *        (optional)
- * @param out_points Name of the output relation for point/centroids assignments
- * @param out_centroids Name of the output relation for the list of centroids 
- * @param dist_metric Name of the metric to use for distance calculation, 
- *        available options are: <tt>'euclidean'</tt>/<tt>'l2norm'</tt>,
- *        <tt>'manhattan'</tt>/<tt>'l1norm'</tt>, <tt>'cosine</tt>,
- *        <tt>'tanimoto'</tt>
- * @param max_iter Maximum number of iterations 
- * @param conv_threshold Convergence threshold expressed as fraction of points
- *        that changed centroid assignment
- * @param evaluate Calculate model evaluation coefficient
- * @param verbose Generate detailed information during execution
- * @param t1 Larger threshold for the canopy seeding (optional).
- * @param t2 Smaller threshold for the canopy seeding (optional).
- * 
- * @return A composite value:
- *  - <tt>src_relation TEXT</tt> - name of the source relation,
- *  - <tt>point_count BIGINT</tt> - number of analyzed data points \f$ \boldsymbol n \f$
- *  - <tt>init_method TEXT</tt> - centroid seeding method used: one of
- *    <tt>'random'</tt>, <tt>'kmeans++'</tt>, <tt>'canopy'</tt>,
- *    <tt>'provided set'</tt>
- *  - <tt>k INTEGER</tt> - initial number of centroids, \f$ k \f$
- *  - <tt>dist_metric TEXT</tt> - distance metric used: one of
- *    <tt>'l1norm'</tt>, <tt>'l2norm'</tt>, <tt>'cosine'</tt>, <tt>'tanimoto'</tt>
- *  - <tt>iterations INTEGER</tt> - number of iterations executed,
- *  - <tt>cost_func FLOAT</tt> - Cost function value for the model
- *  - <tt>silhouette FLOAT</tt> - Silhouette coefficient of the full model
- *  - <tt>out_points FLOAT</tt> - name of the output relation for data points
- *  - <tt>out_centroids FLOAT</tt> - name of the output relation for centroids
- * 
- * @usage
- *  - Run k-means clustering using canopy clustering for the centroid seeding:
- *    <pre>SELECT * FROM kmeans_canopy(
- *      '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
- *      '<em>out_points</em>', '<em>out_centroids</em>',
- *      '<em>dist_metric</em>',
- *      <em>max_iter</em>, <em>conv_threshold</em>,
- *      <em>evaluate</em>, <em>verbose</em>,
- *      <em>t1</em>, <em>t2</em>
- * );</pre>
- *
- * @note This function starts an iterative algorithm. It is not an aggregate
- *       function. Source relation and column names have to be passed as strings 
- *       (due to limitations of the SQL syntax).
- *
- */ 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans_canopy( 
-  src_relation      TEXT        
-  , src_col_data    TEXT
-  , src_col_id      TEXT
-  , out_points      TEXT 
-  , out_centroids   TEXT
-  , dist_metric     TEXT        
-  , max_iter        INT         /*+ DEFAULT 20 */
-  , conv_threshold  FLOAT       /*+ DEFAULT 0.001 */
-  , evaluate        BOOLEAN     /*+ DEFAULT True */
-  , verbose         BOOLEAN     /*+ DEFAULT False */
-  , t1              FLOAT 
-  , t2              FLOAT 
-) 
-RETURNS MADLIB_SCHEMA.kmeans_result
-AS $$
-
-    PythonFunctionBodyOnly(`kmeans', `kmeans')
-    
-    # schema_madlib comes from PythonFunctionBodyOnly
-    return kmeans.kmeans( 
-        schema_madlib
-        , src_relation, src_col_data, src_col_id
-        , None, None    # init_cset_rel, init_cset_col
-        , 'canopy'
-        , None, None    # sample_frac, k
-        , t1, t2
-        , dist_metric
-        , max_iter, conv_threshold, evaluate
-        , out_points, out_centroids
-        , verbose
-    );
-
-$$ LANGUAGE plpythonu;
-
-/**
- * @internal
- * @brief Generates sample random data for k-means clustering.  
- * 
- * For k-means clustering with user provided initial centroid set see the other 
- * k-means signature.
- *
- * @param dim Number of dimensions
- * @param k Number of clusters 
- * @param ppk Numboer of data points per cluster
- * @param maxval Maximum value for the random cluster coordinates
- * @param width Average width of each cluster in every dimension
- * @param outrel Name of the output relation
- * 
- * @return The name of the table with sample data.
- *
- * @usage
- *  - To create some sample data points organized in clusters run:
- *    <pre>SELECT * FROM kmeans_sample_data(
- *      <em>dim</em>, <em>k</em>, <em>ppk</em>
- *      , <em>maxval</em>, <em>width</em>
- *      , '<em>outrel</em>'
- * );</pre>
- *
+ * A composite value like \ref{kmeans_result}. Additional fields:
+ *  - <tt>old_centroid_its</tt> - The order of the centroids in
+ *    <tt>centroid</tt> is not guaranteed to be consitent across iterations.
+ *    In particular, if a centroid is no longer closest to any point it can be
+ *    dropped and a new centroid is added afterwards. We therefore need to map
+ *    positions in <tt>centroids</tt> to the respective positions in the
+ *    previous iteration.
+ *  - <tt>num_iterations</tt> - Number of iterations performed (so far).
  */
--- FIXME: I (Florian) don't think this function should become part of the API as is
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeans_sample_data( 
-    dim     INTEGER,
-    k       INTEGER,
-    ppk     BIGINT,
-    maxval  FLOAT,
-    width   FLOAT,
-    outrel  TEXT
-)
-RETURNS TEXT
+CREATE TYPE MADLIB_SCHEMA.kmeans_state AS (
+    centroids DOUBLE PRECISION[][],
+    old_centroid_ids INTEGER[],
+    objective_fn DOUBLE PRECISION,
+    frac_reassigned DOUBLE PRECISION
+);
+
+/**
+ * @internal
+ * @brief Check if expr_point is valid type and return useful error msg
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_is_valid_input(
+    rel_source VARCHAR,
+    expr_point VARCHAR
+) RETURNS boolean AS $$ 
+BEGIN 
+    EXECUTE 'SELECT ' || expr_point || '::FLOAT8[] FROM ' || textin(regclassout(rel_source)); 
+    RETURN TRUE;
+EXCEPTION
+    WHEN invalid_schema_name THEN
+   	RAISE EXCEPTION 'Schema (%) does not exist.', split_part(rel_source, '.', 1);
+    WHEN undefined_table THEN
+ 	RAISE EXCEPTION 'Source table does not exist.';
+    WHEN OTHERS THEN
+	RAISE EXCEPTION 'Point coordinates (%) are not a valid type (SVEC, FLOAT[], or INTEGER[]) or do not exist.', expr_point; 
+END; 
+$$ LANGUAGE plpgsql VOLATILE; 
+
+/**
+ * @internal
+ * @brief Execute a SQL command where $1, ..., $4 are substituted with the
+  *     given arguments.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
+    sql VARCHAR, DOUBLE PRECISION[][], REGPROC, INTEGER, DOUBLE PRECISION
+) RETURNS VOID
+VOLATILE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeans(
+    rel_args VARCHAR,
+    rel_state VARCHAR,
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    agg_centroid VARCHAR)
+RETURNS INTEGER
+VOLATILE
+LANGUAGE plpythonu
+AS $$PythonFunction(kmeans, kmeans, compute_kmeans)$$;
+
+/**
+ * @brief Perform Lloyd's k-means local-search heuristic
+ *
+ * @param rel_source Name of the relation containing input points
+ * @param expr_point Expression evaluating to point coordinates for each tuple
+ * @param initial_centroids Matrix containing the initial centroids as columns
+ * @param fn_dist Name of a function with signature
+ *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
+ *     returns the distance between two points. The default is the
+ *     \ref squared_dist_norm2(float8[],float8[]) "squared Euclidean distance".
+ * @param agg_centroid Name of an aggregate function with signature
+ *     <tt>DOUBLE PRECISION[] -> DOUBLE PRECISION[]</tt> that, for each group
+ *     of points, returns a centroid. In order for Lloyd's local-search
+ *     heuristic to provably converge and to return a local minimum, this
+ *     centroid should minimize the sum of distances between each point in the
+ *     group and the centroid. The default is the
+ *     \ref avg(float8[]) "average (mean/barycenter in Euclidean space)",
+ *     which satisfies this property if <tt>fn_dist = 'squared_dist_norm2'</tt>.
+ * @param max_num_iterations Maximum number of iterations
+ * @param min_frac_reassigned Fraction of reassigned points below which
+ *     convergence is assumed and the algorithm terminates
+ * @returns A composite value:
+ *  - <tt>centroids</tt> - Matrix with \f$ k \f$ centroids as columns.
+ *  - <tt>frac_reassigned</tt> - Fraction of points that were assigned a
+ *    different centroid in the last iteration.
+ *  - <tt>num_iterations</tt> - The number of iterations before the
+ *    algorithm terminated
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    initial_centroids DOUBLE PRECISION[][],
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
+    max_num_iterations INTEGER /*+ DEFAULT 20 */,
+    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
+) RETURNS MADLIB_SCHEMA.kmeans_result AS $$
+DECLARE
+    theIteration INTEGER;
+    theResult MADLIB_SCHEMA.kmeans_result;
+    oldClientMinMessages VARCHAR;
+    class_rel_source REGCLASS;
+    proc_fn_dist REGPROCEDURE;
+    proc_agg_centroid REGPROCEDURE;
+    rel_filtered VARCHAR;
+    num_points INTEGER;
+    k INTEGER;
+    centroids FLOAT8[];
+BEGIN
+    IF (array_upper(initial_centroids,1) IS NULL) THEN
+	RAISE EXCEPTION 'No valid initial centroids given.';
+    END IF;
+
+    centroids := ARRAY(SELECT unnest(initial_centroids));
+    IF (SELECT MADLIB_SCHEMA.svec_elsum(centroids)) >= 'Infinity'::float THEN
+        RAISE EXCEPTION 'At least one initial centroid has non-finite values.';
+    END IF;
+
+    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
+ 
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
+    proc_fn_dist := fn_dist
+        || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
+    IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
+        FROM pg_proc WHERE oid = proc_fn_dist) THEN
+        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+    END IF;
+    proc_agg_centroid := agg_centroid || '(DOUBLE PRECISION[])';
+    IF (SELECT prorettype != 'DOUBLE PRECISION[]'::regtype OR proisagg = FALSE
+        FROM pg_proc WHERE oid = proc_agg_centroid) THEN
+        RAISE EXCEPTION 'Mean aggregate has wrong signature or is not an aggregate.';
+    END IF;
+    IF (min_frac_reassigned < 0) OR (min_frac_reassigned > 1) THEN
+        RAISE EXCEPTION 'Convergence threshold is not a valid value (must be a fraction between 0 and 1).';
+    END IF;
+    IF (max_num_iterations < 0) THEN
+        RAISE EXCEPTION 'Number of iterations must be a non-negative integer.';
+    END IF;
+  
+    -- Extra parameter check added so that ERROR output is more user-readable (doesn't include Python traceback) 
+    k := array_upper(initial_centroids,1);
+    IF (k <= 0) THEN
+        RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
+    END IF;
+    IF (k > 32767) THEN
+	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
+    END IF;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points ;
+    IF (num_points < k) THEN
+	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
+    END IF;
+ 
+    -- We first setup the argument table. Rationale: We want to avoid all data
+    -- conversion between native types and Python code. Instead, we use Python
+    -- as a pure driver layer.
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+   
+    -- Unfortunately, the EXECUTE USING syntax is only available starting
+    -- PostgreSQL 8.4:
+    -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
+    -- We therefore have to emulate.
+    PERFORM MADLIB_SCHEMA.internal_execute_using_kmeans_args($sql$
+        DROP TABLE IF EXISTS pg_temp._madlib_kmeans_args;
+        CREATE TABLE pg_temp._madlib_kmeans_args AS
+        SELECT
+            $1 AS initial_centroids, array_upper($1, 1) AS k,
+            $2 AS fn_dist, $3 AS max_num_iterations,
+            $4 AS min_frac_reassigned;
+        $sql$,
+        initial_centroids, proc_fn_dist, max_num_iterations,
+        min_frac_reassigned);
+    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+
+    -- Perform acutal computation.
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
+    -- operators from regclass to varchar/text.
+    theIteration := MADLIB_SCHEMA.internal_compute_kmeans('_madlib_kmeans_args',
+            '_madlib_kmeans_state',
+            textin(regclassout(class_rel_source)), expr_point,
+            textin(regprocout(proc_agg_centroid)));
+
+    -- Retrieve result from state table and return it
+    EXECUTE
+        $sql$
+        SELECT (_state).centroids, (_state).objective_fn,
+            (_state).frac_reassigned, NULL
+        FROM _madlib_kmeans_state
+        WHERE _iteration = $sql$ || theIteration || $sql$
+        $sql$
+        INTO theResult;
+    -- The number of iterations are not updated in the C++ code. We do it here.
+    IF NOT (theResult IS NULL) THEN
+        theResult.num_iterations = theIteration;
+    END IF;
+    RETURN theResult;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    initial_centroids DOUBLE PRECISION[][],
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
+    max_num_iterations INTEGER
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, $5, $6, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    initial_centroids DOUBLE PRECISION[][],
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, $5, 20, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    initial_centroids DOUBLE PRECISION[][],
+    fn_dist VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3, $4, 'MADLIB_SCHEMA.avg', 20,
+        0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    initial_centroids DOUBLE PRECISION[][]
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans($1, $2, $3,
+        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args(
+    sql VARCHAR, INTEGER, REGPROC, DOUBLE PRECISION[][]
+) RETURNS VOID
+VOLATILE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeanspp_seeding(
+    rel_args VARCHAR,
+    rel_state VARCHAR,
+    rel_source VARCHAR,
+    expr_point VARCHAR)
+RETURNS INTEGER
+AS $$PythonFunction(kmeans, kmeans, compute_kmeanspp_seeding)$$
+LANGUAGE plpythonu VOLATILE;
+
+/**
+ * @brief k-Means++ Seeding
+ *
+ * @param rel_source Name of the relation containing input points
+ * @param expr_point Expression evaluating to point coordinates for each tuple
+ * @param k Number of centroids
+ * @param fn_dist Name of a function with signature
+ *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
+ *     returns the distance between two points
+ * @param initial_centroids A matrix containing up to \f$ k \f$ columns as
+ *     columns. kmeanspp_seeding() proceeds exactly as if these centroids had
+ *     already been generated in previous iterations. This parameter may be
+ *     NULL in which all \f$ k \f$ centroids will be generated.
+ * @returns A matrix containing \f$ k \f$ centroids as columns
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
+) RETURNS DOUBLE PRECISION[][] AS $$
+DECLARE
+    theIteration INTEGER;
+    theResult DOUBLE PRECISION[][];
+    oldClientMinMessages VARCHAR;
+    class_rel_source REGCLASS;
+    proc_fn_dist REGPROCEDURE;
+    num_points INTEGER;
+    num_centroids INTEGER;
+    rel_filtered VARCHAR;
+BEGIN
+    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);    
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
+
+    IF (initial_centroids IS NOT NULL) THEN
+	num_centroids := array_upper(initial_centroids,1);
+    ELSE
+	num_centroids := k;
+    END IF;
+
+    proc_fn_dist := fn_dist
+        || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
+    IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
+        FROM pg_proc WHERE oid = proc_fn_dist) THEN
+        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+    END IF;
+    IF (k <= 0) THEN
+        RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
+    END IF;
+    IF (k > 32767) THEN
+	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
+    END IF;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points ;
+    IF (num_points < k OR num_points < num_centroids) THEN
+	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
+    END IF;
+    IF (k < num_centroids) THEN
+	RAISE WARNING 'Number of clusters k is less than number of supplied initial centroids. Number of final clusters will equal number of supplied initial centroids.';
+    END IF;
+    
+    -- We first setup the argument table. Rationale: We want to avoid all data
+    -- conversion between native types and Python code. Instead, we use Python
+    -- as a pure driver layer.
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+    -- Unfortunately, the EXECUTE USING syntax is only available starting
+    -- PostgreSQL 8.4:
+    -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
+    -- We therefore have to emulate.
+    PERFORM MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args($sql$
+        DROP TABLE IF EXISTS pg_temp._madlib_kmeanspp_args;
+        CREATE TEMPORARY TABLE _madlib_kmeanspp_args AS
+        SELECT $1 AS k, $2 AS fn_dist, $3 AS initial_centroids;
+        $sql$,
+        k, proc_fn_dist, initial_centroids);
+    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+
+    -- Perform acutal computation.
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
+    -- operators from regclass to varchar/text.
+    theIteration := (
+        SELECT MADLIB_SCHEMA.internal_compute_kmeanspp_seeding(
+            '_madlib_kmeanspp_args', '_madlib_kmeanspp_state',
+            textin(regclassout(class_rel_source)), expr_point)
+    );
+
+    -- Retrieve result from state table and return it
+    EXECUTE
+        $sql$
+        SELECT _state FROM _madlib_kmeanspp_state
+        WHERE _iteration = $sql$ || theIteration || $sql$
+        $sql$
+        INTO theResult;
+    RETURN theResult;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR
+) RETURNS DOUBLE PRECISION[][]
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, NULL)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER
+) RETURNS DOUBLE PRECISION[][]
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3,
+        'MADLIB_SCHEMA.squared_dist_norm2', NULL)
+$$;
+
+/**
+ * @brief Run k-Means++.
+ *
+ * This is a shortcut for running k-means++. It is equivalent to
+ * <pre>SELECT \ref kmeans(
+    rel_source,
+    expr_point,
+    \ref kmeanspp_seeding(
+        rel_source,
+        expr_point,
+        k,
+        fn_dist
+    ),
+    fn_dist,
+    agg_centroid,
+    max_num_iterations,
+    min_frac_reassigned
+)</pre>
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
+    max_num_iterations INTEGER /*+ DEFAULT 20 */,
+    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
 AS $$
 DECLARE
-    sql     TEXT;
-    i       INTEGER;
-BEGIN    
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, $5, $6, $7);
+    RETURN ret;
+END
+$$;
 
-    EXECUTE 'DROP TABLE IF EXISTS ' || outrel;
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
+    max_num_iterations INTEGER
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, $5, $6, 0.001);
+    RETURN ret;
+END
+$$;
 
-    -- Start SQL string
-    sql := 'CREATE TABLE ' || outrel || ' as 
-    SELECT
-        array[ ';
-    
-    -- For all dimensions
-    FOR i in 1..dim LOOP    
-        IF i > 1 THEN 
-            sql := sql || ', ';
-        END IF;
-        sql := sql || 'round( x' || i || ' + random()::numeric * ' || width || ', 5)';
-    END LOOP;
-    
-    sql := sql || ']::float[]::MADLIB_SCHEMA.svec as coords    
-    FROM
-        (
-        SELECT ';
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, $5, 20, 0.001);
+    RETURN ret;
+END
+$$;
 
-    -- For all dimension
-    FOR i in 1..dim LOOP    
-        IF i > 1 THEN 
-            sql := sql || ', ';
-        END IF;
-        sql := sql || 'round( random()::numeric * ' || maxval || ', 5) AS x' || i;
-    END LOOP;
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $4, 'MADLIB_SCHEMA.avg', 20, 0.001);
+    RETURN ret;
+END
+$$;
 
-    -- Finish SQL string
-    sql := sql || '    
-        FROM
-            (SELECT generate_series(1,' || k || ') c) c 
-        ) xyz
-        , (SELECT generate_series(1,' || ppk || ') p) as p
-        m4_ifdef(`__GREENPLUM__',`DISTRIBUTED RANDOMLY')';
+CREATE FUNCTION MADLIB_SCHEMA.kmeanspp(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, 
+        MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, 
+            'MADLIB_SCHEMA.squared_dist_norm2'),
+        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001);
+    RETURN ret;
+END
+$$;
 
-    EXECUTE sql;
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_random_seeding_args(
+    sql VARCHAR, INTEGER, DOUBLE PRECISION[][]
+) RETURNS VOID
+VOLATILE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
 
-    RETURN outrel;    
+CREATE FUNCTION MADLIB_SCHEMA.internal_compute_kmeans_random_seeding(
+    rel_args VARCHAR,
+    rel_state VARCHAR,
+    rel_source VARCHAR,
+    expr_point VARCHAR)
+RETURNS INTEGER
+AS $$PythonFunction(kmeans, kmeans, compute_kmeans_random_seeding)$$
+LANGUAGE plpythonu VOLATILE;
 
+/**
+ * @brief k-Means Random Seeding
+ *
+ * @param rel_source Name of the relation containing input points
+ * @param expr_point Expression evaluating to point coordinates for each tuple
+ * @param k Number of centroids
+ * @param initial_centroids A matrix containing up to \f$ k \f$ columns as
+ *     columns. kmeanspp_seeding() proceeds exactly as if these centroids had
+ *     already been generated in previous iterations. This parameter may be
+ *     NULL in which all \f$ k \f$ centroids will be generated.
+ * @returns A matrix containing \f$ k \f$ centroids as columns
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random_seeding(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
+) RETURNS DOUBLE PRECISION[][] AS $$
+DECLARE
+    theIteration INTEGER;
+    theResult DOUBLE PRECISION[][];
+    oldClientMinMessages VARCHAR;
+    class_rel_source REGCLASS;
+    proc_fn_dist REGPROCEDURE;
+    num_points INTEGER;
+    num_centroids INTEGER;
+    rel_filtered VARCHAR;
+BEGIN
+    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
+
+    IF (initial_centroids IS NOT NULL) THEN
+	num_centroids := array_upper(initial_centroids,1);
+    ELSE
+	num_centroids := k;
+    END IF;
+
+    IF (k <= 0) THEN
+        RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
+    END IF;
+    IF (k > 32767) THEN
+	RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
+    END IF;
+    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points;
+    IF (num_points < k  OR num_points < num_centroids) THEN
+	RAISE EXCEPTION 'Number of centroids is greater than number of points.';
+    END IF;
+    IF (k < num_centroids) THEN
+	RAISE WARNING 'Number of clusters k is less than number of supplied initial centroids. Number of final clusters will equal number of supplied initial centroids.';
+    END IF;
+
+    -- We first setup the argument table. Rationale: We want to avoid all data
+    -- conversion between native types and Python code. Instead, we use Python
+    -- as a pure driver layer.
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+    -- Unfortunately, the EXECUTE USING syntax is only available starting
+    -- PostgreSQL 8.4:
+    -- http://www.postgresql.org/docs/8.4/static/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN
+    -- We therefore have to emulate.
+    PERFORM MADLIB_SCHEMA.internal_execute_using_kmeans_random_seeding_args($sql$
+        DROP TABLE IF EXISTS pg_temp._madlib_kmeans_random_args;
+        CREATE TEMPORARY TABLE _madlib_kmeans_random_args AS
+        SELECT $1 AS k, $2 AS initial_centroids;
+        $sql$,
+        k, initial_centroids);
+    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+
+    -- Perform acutal computation.
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
+    -- operators from regclass to varchar/text.
+    theIteration := (
+        SELECT MADLIB_SCHEMA.internal_compute_kmeans_random_seeding(
+            '_madlib_kmeans_random_args', '_madlib_kmeans_random_state',
+            textin(regclassout(class_rel_source)), expr_point)
+    );
+
+    -- Retrieve result from state table and return it
+    EXECUTE
+        $sql$
+        SELECT _state FROM _madlib_kmeans_random_state
+        WHERE _iteration = $sql$ || theIteration || $sql$
+        $sql$
+        INTO theResult;
+    RETURN theResult;
 END;
-$$ LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random_seeding(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER
+) RETURNS DOUBLE PRECISION[][]
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3, NULL)
+$$;
+
+/**
+ * @brief Run k-Means with random seeding.
+ *
+ * This is a shortcut for running k-means with random seeding. It is equivalent
+ * to
+ * <pre>SELECT \ref kmeans(
+    rel_source,
+    expr_point,
+    \ref kmeans_random_seeding(
+        rel_source,
+        expr_point,
+        k
+    ),
+    fn_dist,
+    agg_centroid,
+    max_num_iterations,
+    min_frac_reassigned
+)</pre>
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
+    max_num_iterations INTEGER /*+ DEFAULT 20 */,
+    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, $5, $6, $7);
+    RETURN ret;
+END
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
+    max_num_iterations INTEGER
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, $5, $6, 0.001);
+    RETURN ret;
+END
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, $5, 20, 0.001);
+    RETURN ret;
+END
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, 
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        $4, 'MADLIB_SCHEMA.avg', 20, 0.001);
+    RETURN ret;
+END
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans_random(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeans(
+        $1, $2, 
+        MADLIB_SCHEMA.kmeans_random_seeding($1, $2, $3),
+        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001);
+    RETURN ret;
+END
+$$;
+
+/**
+ * @internal
+ * @brief Execute a SQL command where $1, ..., $6 are substituted with the
+ *     given arguments.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
+    sql VARCHAR, rel_source VARCHAR, expr_point VARCHAR,
+    fn_dist VARCHAR, agg_centroid VARCHAR, max_num_iterations INTEGER,
+    min_frac_reassigned DOUBLE PRECISION
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+/**
+ * @internal
+ * @brief Filter out the invalid data points in the original input relation
+ */
+CREATE FUNCTION MADLIB_SCHEMA.__filter_input_relation(
+    rel_source VARCHAR, expr_point VARCHAR) 
+RETURNS VARCHAR
+AS $$
+DECLARE
+    oldClientMinMessages VARCHAR;
+    rel_source_filtered VARCHAR;
+BEGIN
+    IF (SELECT position('.' in rel_source)) > 0 THEN
+    	rel_source_filtered := '_madlib_' || split_part(rel_source, '.', 2) || '_filtered';
+    ELSE
+	rel_source_filtered := '_madlib_' || rel_source || '_filtered';
+    END IF;
+
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    EXECUTE 'DROP VIEW IF EXISTS _madlib_'||rel_source_filtered||'_filtered';
+    EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered;
+    EXECUTE 'CREATE TEMP VIEW '||rel_source_filtered||'
+             AS SELECT * FROM '||rel_source||' 
+                    WHERE abs( 
+                              coalesce(
+                                 MADLIB_SCHEMA.svec_elsum('||expr_point||'), 
+                                 ''Infinity''::FLOAT8
+                              )
+                             ) < ''Infinity''::FLOAT8'; 
+    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+    RETURN rel_source_filtered;
+END
+$$
+VOLATILE STRICT
+LANGUAGE PLPGSQL;
+
+/**
+ * @brief Perform Lloyd's k-means local-search heuristic, but with initial
+ *     centroids stored in a table
+ *
+ * This is a shortcut for running k-means with initial centroids stored in a
+ * table (as opposed to an array of centroids). It is equivalent
+ * to
+ * <pre>SELECT \ref kmeans(
+    rel_source,
+    expr_point,
+    (SELECT \ref matrix_agg($expr_centroid) FROM $rel_initial_centroids),
+    fn_dist,
+    agg_centroid,
+    max_num_iterations,
+    min_frac_reassigned
+)</pre>
+ * where <tt>$expr_centroid</tt> and <tt>$rel_initial_centroids</tt> denote
+ * textual substituions.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    rel_initial_centroids VARCHAR,
+    expr_centroid VARCHAR,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
+    max_num_iterations INTEGER /*+ DEFAULT 20 */,
+    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    class_rel_initial_centroids REGCLASS;
+    theResult MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
+    class_rel_initial_centroids := rel_initial_centroids;
+    SELECT * FROM MADLIB_SCHEMA.internal_execute_using_kmeans_args($sql$
+        SELECT MADLIB_SCHEMA.kmeans(
+            $1, $2,
+            (
+                SELECT MADLIB_SCHEMA.matrix_agg(($sql$ || expr_centroid || $sql$)::FLOAT8[])
+                FROM $sql$ || textin(regclassout(class_rel_initial_centroids))
+                    || $sql$
+            ),
+            $3, $4, $5, $6)
+            $sql$,
+        rel_source, expr_point,
+        fn_dist, agg_centroid, max_num_iterations, min_frac_reassigned)
+        INTO theResult;
+    RETURN theResult;
+END;
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    rel_initial_centroids VARCHAR,
+    expr_centroid VARCHAR,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR,
+    max_num_iterations INTEGER
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2,
+        $3, $4, $5, $6, $7, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    rel_initial_centroids VARCHAR,
+    expr_centroid VARCHAR,
+    fn_dist VARCHAR,
+    agg_centroid VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2,
+        $3, $4, $5, $6, 20, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    rel_initial_centroids VARCHAR,
+    expr_centroid VARCHAR,
+    fn_dist VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2,
+        $3, $4, $5, 'MADLIB_SCHEMA.avg', 20, 0.001)
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.kmeans(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    rel_initial_centroids VARCHAR,
+    expr_centroid VARCHAR
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+STRICT
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeans(
+        $1, $2,
+        $3, $4,
+        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001)
+$$;
+
+
+/**
+ * @internal
+ * @brief Execute a SQL command where $1, ..., $3 are substituted with the
+ *     given arguments.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.internal_execute_using_silhouette_args(
+    sql VARCHAR, centroids DOUBLE PRECISION[][], fn_dist REGPROC
+) RETURNS DOUBLE PRECISION
+STABLE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+/**
+ * @brief Compute a simplified version of the silhouette coefficient
+ *
+ * @param rel_source Name of the relation containing input points
+ * @param expr_point Expression evaluating to point coordinates \f$ x_i \f$ for
+ *     each tuple
+ * @param centroids Matrix \f$ M = (\vec{m_0} \dots \vec{m_{k-1}})
+ *     \in \mathbb{R}^{d \times k} \f$ with \f$ k \f$ columns, where column
+ *     \f$ i \f$ contains the position of centroid \f$ i \f$.
+ * @param fn_dist Name of a function with signature
+ *     <tt>DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION</tt> that
+ *     returns the distance between two points
+ * @return For each point \f$ x_i \f$, let
+ *     \f$ d_1( x_i ) \f$ and \f$ d_2( x_i ) \f$ be the distance to the closest
+ *     and 2nd-closest centroid, respectively. If there is more than one
+ *     closest centroids then \f$ d_1( x_i ) = d_2( x_i )\f$.
+ *     The return value is the average, over all points \f$ x_i \f$, of
+ *     \f[
+ *         \frac{d_2( x_i ) - d_1(x_i)}{d_2(x_i)},
+ *     \f]
+ *     where 0/0 is interpreted as 0.
+ *     Clearly, the simplified silhouette coefficient assumes values in
+ *     \f$ [0,1] \f$.
+ */
+CREATE FUNCTION MADLIB_SCHEMA.simple_silhouette(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    centroids DOUBLE PRECISION[][],
+    fn_dist VARCHAR /*+ DEFAULT 'dist_norm2' */
+) RETURNS DOUBLE PRECISION
+STABLE
+STRICT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    class_rel_source REGCLASS;
+    proc_fn_dist REGPROCEDURE;
+    rel_filtered VARCHAR;
+BEGIN
+    IF (array_upper(centroids,1) IS NULL) THEN
+	RAISE EXCEPTION 'No valid centroids given.';
+    END IF;
+
+    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
+    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;
+    proc_fn_dist := fn_dist
+        || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
+    IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
+        FROM pg_proc WHERE oid = proc_fn_dist) THEN
+        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+    END IF;
+
+    RETURN MADLIB_SCHEMA.internal_execute_using_silhouette_args($sql$
+        SELECT
+            avg(CASE
+                    WHEN distances[2] = 0 THEN 0
+                    ELSE (distances[2] - distances[1]) / distances[2]
+                END)
+        FROM (
+            SELECT
+                (MADLIB_SCHEMA.closest_columns(
+                    $1,
+                    ($sql$ || expr_point || $sql$)::FLOAT8[],
+                    2::INTEGER,
+                    $2
+                )).distances
+            FROM
+                $sql$ || textin(regclassout(class_rel_source)) || $sql$
+        ) AS two_shortest_distances
+        $sql$,
+        centroids, proc_fn_dist);
+END;
+$$;
+
+CREATE FUNCTION MADLIB_SCHEMA.simple_silhouette(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    centroids DOUBLE PRECISION[][]
+) RETURNS DOUBLE PRECISION
+STABLE
+STRICT
+LANGUAGE sql
+AS $$
+    SELECT MADLIB_SCHEMA.simple_silhouette($1, $2, $3,
+        'MADLIB_SCHEMA.dist_norm2')
+$$;

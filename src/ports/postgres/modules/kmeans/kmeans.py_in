@@ -1,1140 +1,435 @@
 # coding=utf-8
+m4_changequote(<!,!>)
 
 """
 @file kmeans.py_in
 
-@brief K-Means Clustering module
+@brief k-Means: Driver functions
 
 @namespace kmeans
+
+@brief k-Means: Driver functions
 """
 
-import time
 import plpy
-from math import floor, log, pow, sqrt
-import os, sys
 
-# ----------------------------------------
-# K-means global variables
-# ----------------------------------------
-global verbose, output_points, output_centroids
+# FIXME: The following classes should be moved in the new driver abstraction layer
+class MinWarning:
+    def __init__(self, warningLevel = 'error'):
+        self.warningLevel = warningLevel
 
-# ----------------------------------------
-# Logging
-# ----------------------------------------
-def info( msg):
-    if verbose: 
-        plpy.info( msg)
-   
-# ----------------------------------------
-# Quotes a string to be used as an identifier 
-# ----------------------------------------
-def quote_ident(val):
-    return '"' + val.replace('"', '""') + '"'
+    def __enter__(self):
+        self.oldMsgLevel = plpy.execute("""
+            SELECT setting FROM pg_settings WHERE name='client_min_messages'
+        """)[0]['setting']
+        plpy.execute("""
+            SET client_min_messages = {warningLevel}
+            """.format(warningLevel = self.warningLevel))
+        return self
 
-# ----------------------------------------
-# Quotes a string to be used as a literal 
-# ----------------------------------------
-def quote_literal(val):
-    return "'" + val.replace("'", "''") + "'"
+    def __exit__(self, *args):
+        plpy.execute("""
+            SET client_min_messages = {oldMsgLevel};
+            """.format(oldMsgLevel = self.oldMsgLevel))
 
-# ----------------------------------------
-# Runs and times a SQL statement
-# ----------------------------------------
-def __timed_execute(sql):
-    start = time.time()
-    result = plpy.execute( sql);      
-    time_sec = round( time.time() - start, 3)         
-    return result, time_sec;
-
-# ----------------------------------------
-# Runs SQL in "ERROR only" message mode
-# ----------------------------------------
-def __run_quietly(sql):
-
-    # Remember current message level and set it to ERROR
-    prev_msg_level = plpy.execute("SELECT setting FROM pg_settings " \
-        + " WHERE name='client_min_messages'")[0]['setting']
-    plpy.execute("SET client_min_messages = ERROR;")
-    
-    # Run...
-    try:
-        rv = plpy.execute(sql)
-        # Restore previous message level
-        plpy.execute("SET client_min_messages = %s;" % prev_msg_level)
-    except:
-        # If there was a problem do this anyway
-        plpy.execute("SET client_min_messages = %s;" % prev_msg_level)
-        raise
-
-    return rv
-    
-# --------------------------------------------------------
-# Computes row level probability bound for random sampling
-# --------------------------------------------------------
-def __sample_bound( sample_size, population_size):
+class IterationController:
     """
-    Computes a probability bound for individual rows so that a probability of
-    sampling less than S rows from a set of P rows is less than 1/1,000,000.    
+    @brief Abstraction for implementing driver functions in PL/Python
 
-    Mathematical foundation by Florian Schoppmann:
-    
-    The same question in mathematical terms: Let n be arbitrary. What is a lower 
-    bound on the probability p so that for a random variable X ~ B(n,p) we have 
-    that Pr[X < s] <= epsilon? Here B(n,p) denotes the Binomial distribution 
-    with n trials and success probability p.
+    This class encapsulates handling of the inter-iteration state. The design
+    goal is to avoid any conversion between backend-native types and those of
+    procedureal languages like PL/Python. Therefore, the expectation is that
+    all only "template" parameters are passes as PL/Python arguments, whereas
+    non-template arguments are provided in an argument table. Here, "template"
+    arguments are those parameters that cannot be SQL parameters, such as table
+    and column names.
 
-    Answer: We can use the Chernoff bound for a fairly good estimate. It says
-
-    (1)  Pr[X < (1 - delta) * mu)] <= exp( -(delta^2 / 2) * mu ),
-
-    where mu = n * p is the expectation of X, and delta >= 0.
-
-    Hence, we set s = (1 - delta) * mu, or equivalently delta = (mu - s) / mu.
-
-    This gives
-
-    (2)  Pr[X < s] <= exp( -(mu - s)^2 / (2 * mu) ).
-    
-    We want the right-hand side of (2) to be bounded by epsilon from above. 
-    Rearranging gives
-    
-    (3)  mu >= s - ln(epsilon) + sqrt( ln^2(epsilon) - 2 s ln(espilon) ).
-    
-    Hence, we set p = mu / n.
-    
-    Example: Suppose we require epsilon = 10^(-6), i.e., we want the probability 
-    of our sample being too small to be less than one in a million. ln(10^(-6)) 
-    is roughly 13.8, so we could choose
-    
-    (4)  p >= ( s + 14 + sqrt(196 + 28s) ) / n.
-    
-    Note that mu is O(s) and thus constant in the number of rows in the table! 
-    So in expectation, the "WHERE random() < p" will select only constantly many 
-    rows. Still, with very high probability we always have at least s rows.
-    
-    @param sample_size Desired sample size (in rows)
-    @param population_size Population size (in rows)    
+    The inter-state iteration table contains two columns:
+    - <tt>_iteration INTEGER</tt> - The 0-based iteration number
+    - <tt>_state <em>self.kwargs.stateType</em></tt> - The state (after
+      iteration \c _interation)
     """
-        
-    return (sample_size + 14 + sqrt(196 + 28*sample_size)) / population_size;
 
+    def __init__(self, rel_args, rel_state, stateType,
+            temporaryTables = True,
+            truncAfterIteration = False,
+            schema_madlib = "MADLIB_SCHEMA_MISSING",
+            verbose = False,
+            **kwargs):
+        self.kwargs = kwargs
+        self.kwargs.update(
+            rel_args = ('pg_temp.' if temporaryTables else '') + rel_args,
+            rel_state = ('pg_temp.' if temporaryTables else '') + rel_state,
+            unualified_rel_state = rel_state,
+            stateType = stateType.format(schema_madlib = schema_madlib),
+            schema_madlib = schema_madlib)
+        self.temporaryTables = temporaryTables
+        self.truncAfterIteration = truncAfterIteration
+        self.verbose = verbose
+        self.inWith = False
+        self.iteration = -1
 
-def __metric_id(dist_metric):
-    return {
-        'l1norm'  : 1,
-        'l2norm'  : 2,
-        'cosine'  : 3,
-        'tanimoto': 4
-    }[dist_metric]
-    
+    def __enter__(self):
+        with MinWarning('warning'):
+            self.runSQL("""
+                DROP TABLE IF EXISTS {rel_state};
+                CREATE {temp} TABLE {unualified_rel_state} (
+                    _iteration INTEGER PRIMARY KEY,
+                    _state {stateType}
+                );
+                """.format(
+                    temp = 'TEMPORARY' if self.temporaryTables else '',
+                    **self.kwargs))
+        self.inWith = True
+        return self
 
-# ----------------------------------------
-# Centroid initialization using random()
-# ----------------------------------------
-def __init_random( madlib_schema, src_points, k, n):
-    """
-    Creates the initial set of centroids using random().
-    
-    @param madlib_schema Name of the schema hosting MADlib in-database functions
-    @param src_points Name of the relation with input data points
-    @param k Number of initial centroids
-    @param n Total number of input data points
-    """
-        
-    sql = '''
-        INSERT INTO {output_centroids} (cid, coords)
-        SELECT row_number() OVER () AS cid, coords FROM
-        ( SELECT coords
-          FROM {src_points}
-          WHERE random() < {bound}
-          ORDER BY random() LIMIT {limit}
-        ) q
-    '''.format(
-        output_centroids = output_centroids
-        , src_points = src_points
-        , bound = str( __sample_bound(k,n))
-        , limit = str(k)
-    );
-    plpy.execute( sql);
+    def __exit__(self, type, value, tb):
+        self.inWith = False
 
-    # Return # of created centroids
-    rv = plpy.execute( 'SELECT count(*) AS cnt FROM ' + output_centroids);
-    return rv[0]['cnt']
-    
-# ----------------------------------------
-# Centroid initialization using kmeans++
-# ----------------------------------------
-def __init_plusplus( madlib_schema, src_points, k, n, dist_func, sample_frac):
-    """
-    Creates the initial set of centroids using kmeans++ [1].
+    def runSQL(self, sql):
+        if self.verbose:
+            plpy.notice(sql)
+        return plpy.execute(sql)
 
-    1) Choose one center uniformly at random from among the data points.
-    2) For each data point x, compute D(x), the distance between x 
-       and the nearest center that has already been chosen.
-    3) Choose one new data point at random as a new center, 
-       using a weighted probability distribution where a point x is chosen 
-       with probability proportional to D(x)^2.
-    
-    [1] Wikipedia, K-means++, http://en.wikipedia.org/wiki/K-means%2B%2B
+    def evaluate(self, expression):
+        """
+        Evaluate the given expression. The expression may depend on
+        the current inter-iteration state and all arguments
 
-    @param madlib_schema Name of the schema hosting MADlib in-database functions
-    @param src_points Name of the relation with input data points
-    @param k Number of initial centroids
-    @param n Total number of input data points 
-    @param dist_func Name of the distance function (e.g. 'l2norm')
-    @param sample_frac Fraction of the input data points to use for centroid 
-           seeding, \f$[0,1]\f$
-    """
-    
-    # Temporary data point tables
-    temp_table_0 = 'kmeans_plusplus_0'
-    temp_table_1 = 'kmeans_plusplus_1'
-    sql = '''    
-        CREATE TEMP TABLE {temp_table} (
-            pid INT
-            , coords {madlib_schema}.SVEC  
-            , min_distance FLOAT
-        )''';
-    __run_quietly( 
-        sql.format(
-            temp_table = temp_table_0
-            , madlib_schema = madlib_schema
-        )
-    );
-    __run_quietly( 
-        sql.format(
-            temp_table = temp_table_1
-            , madlib_schema = madlib_schema
-        )
-    );
-    
-    # Allow user to specify sample size or set the default
-    if sample_frac:
-        sample_size = floor(n*sample_frac);
-    else:
-        sample_size = floor(n/100);    # default := 0.01
-    
-    # Sample size must be greater than k
-    if sample_frac and sample_size < k:
-        plpy.error( 'sample size (%s) is smaller than specified k (%s)' % (int(sample_size), k))        
-    
-    # If sampling on
-    if sample_frac and sample_size > 0 and sample_size < n:
-        plpy.execute('''    
-            INSERT INTO {initial_sample} (pid, coords, min_distance) 
-            SELECT pid, coords::{madlib_schema}.SVEC, NULL
-            FROM {src_points}
-            WHERE random() < {sample_bound} 
-            LIMIT {sample_size}
-            '''.format(
-                initial_sample = temp_table_0
-                , madlib_schema = madlib_schema
-                , src_points = src_points
-                , sample_bound = str( __sample_bound(sample_size,n))
-                , sample_size = str( sample_size)
-            )
-        );
-        # Because we are sampling these variables should be updated
-        src_points = temp_table_0;
-        n = sample_size;
-    
-    # 1) Choose 1st centroid uniformly at random from all points.
-    sql = '''    
-        INSERT INTO {centroids} (cid, coords) 
-        SELECT 1, coords::{madlib_schema}.SVEC 
-        FROM {src_points}
-        WHERE random() < {sample_bound} 
-        LIMIT 1
-        '''.format(
-            centroids = output_centroids
-            , madlib_schema = madlib_schema
-            , src_points = src_points
-            , sample_bound = str( __sample_bound(1,n))
-        );
-    plpy.execute( sql);
+        @param expression SQL expression. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+        @return None if \c expression evaluates to NULL, otherwise the value of
+            \c expression
+        """
 
-    # Find remaining centroids:
-    i = 1
-    while (i < k):
-
-        # Increase centroid counter
-        i = i+1;
-        
-        # Switch pointers to the temporary sample tables
-        if (i % 2) == 0:       
-            temp_source = temp_table_0
-            temp_target = temp_table_1
+        resultObject = self.runSQL("""
+            SELECT ({expression}) AS expression
+            FROM {{rel_args}} AS _args
+                LEFT OUTER JOIN (
+                    SELECT *
+                    FROM {{rel_state}} AS _state
+                    WHERE _state._iteration = {{iteration}}
+                ) AS _state ON True
+            """.format(expression = expression).format(
+                iteration = self.iteration,
+                **self.kwargs))
+        if resultObject.nrows() == 0:
+            return None
         else:
-            temp_source = temp_table_1
-            temp_target = temp_table_0
+            return resultObject[0]['expression']
 
-        # 2) For each data point x, compute D(x), the distance between x 
-        #     and the nearest center that has already been chosen.
-        plpy.execute( 'TRUNCATE TABLE ' + temp_target);
-        sql = '''    
-            INSERT INTO {temp_target} (pid, coords, min_distance) 
-            SELECT 
-                p.pid
-                , p.coords::{madlib_schema}.SVEC
-                , {min_distance}
-            FROM 
-                {temp_source} p
-                , (SELECT cid, coords FROM {centroids} WHERE cid = {prev_cid}) c
-            ''';
-        if (i == 2):
-            # First iteration only finds the distance to the 1st centroid
-            plpy.execute( 
-                sql.format(
-                    madlib_schema = madlib_schema
-                    , temp_source = src_points
-                    , temp_target = temp_target
-                    , min_distance = dist_func.replace( '&&&', 'p.coords, c.coords')
-                    , centroids = output_centroids
-                    , prev_cid = i-1
-                )
-            );
-        else:
-            # The other iterations find the minimum distance to current centroids
-            plpy.execute( 
-                sql.format(
-                    madlib_schema = madlib_schema
-                    , temp_source = temp_source
-                    , temp_target = temp_target
-                    , min_distance = 'float8smaller( p.min_distance, ' \
-                                     + dist_func.replace( '&&&', 'p.coords, c.coords') \
-                                     + ')'
-                    , centroids = output_centroids
-                    , prev_cid = i-1
-                )
-            );        
+    def test(self, condition):
+        """
+        Test if the given condition is satisfied. The condition may depend on
+        the current inter-iteration state and all arguments
 
-        # 3) Choose next point at random with probability proportional to D(x)^2
-        plpy.execute( '''
-            INSERT INTO {centroids} (cid, coords) 
-            SELECT {i}, coords FROM (
+        @param condition Boolean SQL expression. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+        @return None if \c condition evaluates to NULL, otherwise the Boolean
+            value of \c condition
+        """
+
+        return self.evaluate("""
+            CAST(({condition}) AS BOOLEAN)
+            """.format(condition = condition))
+
+    def update(self, newState, **updateKwargs):
+        """
+        Update the inter-iteration state
+
+        @param newState SQL expression of type
+            <tt>stateType.kwargs.stateType</tt>. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+            .
+            Note that <tt>{iteration}</tt> will still be the current iteration.
+            For instance, it could be used in the expression as a WHERE
+            condition: <tt>[...] WHERE _state._iteration = {iteration}</tt>
+        @param updateKwargs Additional keyword arguments that will be available
+            when \c newState is formatted
+
+        This updates the current inter-iteration state to the result of
+        evaluating \c newState. If <tt>self.truncAfterIteration</tt> is true,
+        this will replace the old state, otherwise the history of all old states
+        is kept.
+        """
+
+        updateKwargs.update(**self.kwargs)
+        newState = newState.format(
+            iteration = self.iteration,
+            **updateKwargs)
+        self.iteration = self.iteration + 1
+        self.runSQL("""
+            INSERT INTO {rel_state}
+            SELECT
+                {iteration},
+                ({newState})
+            """.format(
+                iteration = self.iteration,
+                newState = newState,
+                **self.kwargs))
+        if self.truncAfterIteration:
+            self.runSQL("""
+                DELETE FROM {rel_state} AS _state
+                WHERE _state._iteration < {iteration}
+                """.format(iteration = self.iteration, **self.kwargs))
+
+def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
+    expr_point, **kwargs):
+    """
+    Driver function for k-Means++ seeding
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @rel_args Name of the (temporary) table containing all non-template
+        arguments
+    @rel_state Name of the (temporary) table containing the inter-iteration
+        states
+    @param rel_source Name of the relation containing input points
+    @param expr_point Expression containing the point coordinates
+    @param kwargs We allow the caller to specify additional arguments (all of
+        which will be ignored though). The purpose of this is to allow the
+        caller to unpack a dictionary whose element set is a superset of
+        the required arguments by this function.
+    @return The iteration number (i.e., the key) with which to look up the
+        result in \c rel_state
+    """
+    iterationCtrl = IterationController(
+        rel_args = rel_args,
+        rel_state = rel_state,
+        stateType = "DOUBLE PRECISION[][]",
+        truncAfterIteration = True,
+        schema_madlib = schema_madlib, # Identifiers start here
+        rel_source = rel_source,
+        expr_point = expr_point)
+    with iterationCtrl as it:
+        if it.test("_args.initial_centroids IS NULL"):
+            it.update("""
                 SELECT
-                    pid, coords
-                    , sum(min_distance^2) OVER (ORDER BY pid) AS cum_weight
-                    , r
-                FROM
-                    {temp_target} p,
-                    (SELECT sum(min_distance^2) * random() AS r FROM {temp_target}) subquery
-            ) q
-            WHERE
-                  r <= cum_weight
-            ORDER BY pid
-            LIMIT 1
-            '''.format(
-                centroids = output_centroids
-                , i = i
-                , temp_target = temp_target
-            )
-        );
-
-    # Cleanup
-    plpy.execute( 'DROP TABLE IF EXISTS ' + temp_table_0);
-    plpy.execute( 'DROP TABLE IF EXISTS ' + temp_table_1);
-
-    # Return # of created centroids
-    rv = plpy.execute( 'SELECT count(*) AS cnt FROM ' + output_centroids);
-    return rv[0]['cnt']
-
-# ----------------------------------------
-# Centroid initialization using canopy
-# ----------------------------------------
-def __init_canopy(  madlib_schema, src_points, n, dist_metric, dist_func, 
-                    t1, t2):
-    """
-    Creates the initial set of centroids using canopy clustering.
-
-    @param madlib_schema Name of the schema hosting MADlib in-database functions
-    @param src_points Name of the relation with input data points
-    @param n Total number of input data points 
-    @param dist_metric Type of the distance/similarity metric 
-           (e.g. 'cosine')  
-    @param dist_func Name of the distance/similarity function 
-           (e.g. 'cosine_distance')
-    @param t1 Larger threshold for canopy clustering 
-    @param t2 Smaller threshold for canopy clustering 
-    """
-    
-    # Find thresholds T1 and T2 (T1 > T2)
-    if t1 is None or t2 is None:
-    
-        # Set the sample limit for T1/T2 value analysis
-        if n < 1000:
-            sample_size = n;
+                    ARRAY[{schema_madlib}.weighted_sample(_src.{expr_point}::FLOAT8[], 1)]
+                FROM {rel_source} AS _src
+                """)
         else:
-            sample_size = 1000;
-        
-        # Temp table for random points
-        random_points = 'kmeans_random_points'
-
-        # Prepare the table
-        sql = '''
-            CREATE TEMP TABLE {random_points} (
-            pid BIGINT, coords {madlib_schema}.svec)
-        '''.format(
-            random_points = random_points
-            , madlib_schema = madlib_schema
-        );
-        __run_quietly( sql);
-
-        # Load some random points
-        sql = '''
-            INSERT INTO {random_points}
-            SELECT pid, coords FROM {src_points}
-            WHERE random() < {bound} 
-            ORDER BY random() LIMIT {sample}
-        '''.format(
-            random_points = random_points
-            , src_points = src_points
-            , bound = str( __sample_bound(sample_size,n))
-            , sample = str(sample_size)
-        );
-        plpy.execute( sql);
-
-        # Calculate the cross distances >> and derive T1 and T2 
-        # T1 >> is the min value from 10th quantile (10 buckets)
-        # T2 >> is the max value from 1st quantile (10 buckets)
-        sql = '''
-            SELECT 
-                min( CASE WHEN ntile = 10 THEN dist ELSE null END) as t1 
-                , max( CASE WHEN ntile = 1 THEN dist ELSE null END) as t2 
-            FROM 
-            (
-                SELECT ntile(10) OVER( ORDER BY dist) as ntile, dist FROM 
-                (
-                    SELECT {dist_func} AS dist
-                    FROM {random_points} a, {random_points} b
-                    WHERE a.pid < b.pid
-                ) q1
-            ) q2 
-            WHERE ntile in (1,10)
-        '''.format(
-            dist_func = dist_func.replace( '&&&', 'a.coords, b.coords')
-            , random_points = random_points
-        );
-        rv = plpy.execute( sql);        
-
-        # Cleanup
-        plpy.execute( 'DROP TABLE IF EXISTS ' + random_points);        
-
-    # Check canopy thresholds        
-    if t1 is None: 
-        if rv[0]['t1'] is None:
-            plpy.error( 'not enough data to generate canopy T1 threshold (T1>T2)')
-        else:
-            t1 = rv[0]['t1'];
-    elif t1 <= 0:
-        plpy.error( 'canopy threshold T1 cannot be zero or negative')        
-        
-    if t2 is None: 
-        if rv[0]['t2'] is None:
-            plpy.error( 'not enough data to generate canopy T2 threshold (T1>T2)')
-        else:
-            t2 = rv[0]['t2'];
-    elif t2 <= 0:
-        plpy.error( 'canopy threshold T2 cannot be zero or negative')
-    
-    # Generate initial centroids using T2 (smaller)
-    __run_quietly( 'DROP TABLE IF EXISTS TempArrayOfCentroids');
-    sql = '''
-        CREATE TEMP TABLE TempArrayOfCentroids AS
-        SELECT 
-            {madlib_schema}.internal_remove_close_canopies(
-                {madlib_schema}.kmeans_canopy(coords, {metric}, {t2}),
-                {metric},
-                {t2}
-            ) AS ccoords
-        FROM {src_points}
-        '''.format(
-            madlib_schema = madlib_schema,
-            metric = __metric_id(dist_metric),
-            t2 = str(float(t2)),
-            src_points = src_points
-    )
-    __run_quietly( sql);
-    
-    # unpivot centroids
-    sql = '''
-        INSERT INTO {output_centroids} (cid, coords)
-        SELECT
-            generate_series(array_lower(ccoords, 1), array_upper(ccoords, 1)),
-            unnest(ccoords)
-        FROM
-            TempArrayOfCentroids
-    '''.format(
-            output_centroids = output_centroids
-    )
-    plpy.execute( sql);
-    
-    # Assign points to canopies using max(T1, 2 * T2) (this is a slight
-    # deviation from McCallum et al.)
-    # Note: After combining all canopies from the segments, we removed canopies
-    # that were closer than T2 to some other canopy. With the triangle
-    # inequality, all we can assure afterwards is that no point is farther away
-    # than 2 * T2 from its closest canopy: (In detail: Previously, the closest
-    # canopy was T2 away, and that canopy was -- if it was removed -- at most
-    # T2 away from another canopy.)
-    __run_quietly( 'CREATE TEMP TABLE TempPoints0_Canopies (LIKE TempPoints0)')
-    sql = '''
-        INSERT INTO TempPoints0_Canopies
-        SELECT p.pid, 0,
-            {madlib_schema}.internal_get_array_of_close_canopies(
-                p.coords,
-                c.ccoords,
-                {threshold},
-                {metric}
-            )
-        FROM {src_points} p, TempArrayOfCentroids c
-    '''.format(
-        madlib_schema = madlib_schema,
-        output_centroids = output_centroids,
-        metric = __metric_id(dist_metric),
-        threshold = str(max(t1, 2 * t2)),
-        src_points = src_points
-    )
-    
-    plpy.execute( sql);
-    plpy.execute( 'DROP TABLE IF EXISTS TempPoints0');
-    plpy.execute( 'ALTER TABLE TempPoints0_Canopies RENAME TO TempPoints0');
-    
-    # Return # of created centroids
-    rv = plpy.execute( 'SELECT count(*) AS cnt FROM ' + output_centroids);
-    return rv[0]['cnt'], t1, t2;
-    
-# ------------------------------------------------------------------------------
-# Main function to run the k-means algorithm
-# ------------------------------------------------------------------------------
-def kmeans( madlib_schema
-            , src_relation, src_col_data, src_col_id
-            , init_cset_rel, init_cset_col
-            , init_method, sample_frac
-            , k, t1, t2, dist_metric
-            , max_iter, conv_threshold, evaluate 
-            , out_points, out_centroids
-            , p_verbose):
-            
-    """
-    Executes k-means clustering algorithm.
-
-    @param madlib_schema Name of the schema hosting MADlib in-database functions
-    @param src_relation Name of the relation with input data points
-    @param src_col_data Name of the column with point coordinates
-    @param src_col_id Name of the column with point IDs (optional)
-    @param init_cset_rel Name of the relation with initial centroids 
-    @param init_cset_col Name of the column with initial centroid coordinates
-    @param init_method Name of the centroid initialization method 
-           (e.g. 'kmeans++', 'random')
-    @param sample_frac Fraction of the input data points to use for kmeans++ 
-           centroid seeding, \f$[0,1]\f$
-    @param k Number of initial centroids
-    @param t1 Larger threshold for canopy clustering 
-    @param t2 Smaller threshold for canopy clustering     
-    @param dist_metric Type of the distance/similarity metric (e.g. 'cosine')  
-    @param max_iter Maximum number of iterations to execute
-    @param conv_threshold Convergence threshold, expressed as a fraction of points 
-           that changed centroid assignment in the recent iteration
-    @param evaluate Boolean flag indicating whether to compute some model 
-           evaluation coefficients
-    @param out_points Name of the table with data points and assigned centroids
-    @param out_centroids Name of the table with discovered centroids
-    @param p_verbose Boolean flag indicating weather to display INFO messages 
-           during the execution           
-    """
-
-    # Global variables
-    global verbose, output_points, output_centroids
-    if p_verbose is None:
-        verbose = False;    # default
-    else:
-        verbose = p_verbose;
-    output_points = out_points
-    output_centroids = out_centroids
-
-    # Maximum number of iterations
-    if max_iter > 0:
-        max_iterations = max_iter;        
-    else:
-        max_iterations = 20;   # default
-
-    # Convergence threshold (% of points that changed assignments)
-    convergence_log = [1.0];
-    if conv_threshold > 0:
-        convergence_threshold = conv_threshold;
-    else:
-        convergence_threshold = 0.001;  # default
-        
-    #
-    # Non-Adjustable Variables     
-    #
-    point_count = 0;            # number of input points
-    centr_count = 0;            # initial number of centroids
-    done = False;               # loop control variable
-    gfit = 0;                   # goodness of fit measure
-
-    info( 'Started k-means clustering with parameters:')
-
-    #   
-    # Validate all parameters
-    #
-    
-    # Validate: src_relation
-    try:
-        plpy.execute( "SELECT * FROM " + src_relation + " LIMIT 1")
-    except:
-        plpy.error( 'source relation "%s" does not exist or cannot be accessed' % src_relation )
-    info( ' * src_relation = %s' % src_relation)
-
-    # Validate: src_col_data
-    try:
-        plpy.execute( "SELECT %s FROM %s LIMIT 1" % (src_col_data, src_relation))
-    except:
-        plpy.error( 'column "%s" not found in relation "%s"'
-                    % (src_col_data, src_relation) )
-    info( ' * src_col_data = %s' % src_col_data)
-
-    # Validate: src_col_id
-    if src_col_id is not None:
-        try:
-            plpy.execute( "SELECT %s FROM %s LIMIT 1" % (src_col_id, src_relation))
-            has_pid = True;
-            info( ' * src_col_id = %s' % (src_col_id) )
-        except:
-            plpy.error( 'column "%s" not found in relation "%s"' 
-                        % (src_col_id, src_relation) )
-    else:
-        has_pid = False;
-        info( ' * src_col_id = None (will be auto-generated)')
-    
-        
-    # Validate: init_cset_rel and init_cset_col (provided centroids)
-    if (init_cset_rel is not None) and (init_cset_col is not None):
-        try:
-            plpy.execute( "SELECT * FROM %s LIMIT 1" % init_cset_rel)
-        except:
-            plpy.error( 'relation "%s" does not exist' % init_cset_rel )
-        
-        info( ' * init_cset_rel = %s' % init_cset_rel)
-        try:
-            rv = plpy.execute( '''
-                SELECT count({init_cset_col}) 
-                FROM {init_cset_rel} 
-                WHERE {init_cset_col} IS NOT NULL
-                '''.format(
-                    init_cset_col = init_cset_col
-                    , init_cset_rel = init_cset_rel
-                ))
-        except:
-            plpy.error( 'column "%s" not found in relation "%s"' 
-                        % (init_cset_col, init_cset_rel) )
-        if rv[0]['count'] > 0:
-            cset_count = rv[0]['count']        
-            k = None;
-        else:
-            plpy.error( "initial centroid relation (%s) is empty" % init_cset_rel)
-        info( ' * init_cset_col = %s' % init_cset_col)  
-        
-    # Validate: init_method & no-k (canopy)
-    elif init_method == 'canopy':
-        k = None;
-        cset_count = None;
-        info( ' * init_method = %s (t1=%s, t2=%s)' % (init_method, t1, t2));
-
-    # Validate: init_method & k (other methods)
-    elif k > 0:
-        if init_method is None:
-            init_method = 'random';
-            info( ' * init_method = None (default: %s)' % init_method)
-        elif init_method.lower() == 'random':
-            init_method = 'random';
-            info( ' * init_method = %s' % init_method)
-        elif init_method.lower() == 'kmeans++':
-            init_method = 'kmeans++';
-            if sample_frac is None:
-                sample_frac = 0.01;
-            info( ' * init_method = %s (sample=%s)' % (init_method, sample_frac));
-        else:
-            init_method = 'random';
-            info( ' * init_method = Unknown (default: %s)' % init_method)
-        info( ' * initial k = %s' % k)
-        cset_count = None;
-
-    # Otherwise
-    elif k <= 0:
-        plpy.error( "k value must be positive")
-    else:
-        plpy.error( "could not identify requested initialization method")
-
-    # Validate: dist_metric
-    dist_metric = dist_metric.lower();
-    # Euclidean/L2norm
-    if dist_metric == 'euclidean' or dist_metric == 'l2norm':
-        dist_metric = 'l2norm';
-        dist_aggr = '%s.mean(&&&)' % madlib_schema;
-        dist_func = '%s.l2norm(&&&)' % madlib_schema;
-        info( ' * dist_metric = %s' % (dist_metric))
-    # Manhattan/L1norm
-    elif dist_metric == 'manhattan' or dist_metric == 'l1norm':
-        dist_metric = 'l1norm';
-        dist_aggr = '%s.mean(&&&)' % madlib_schema;
-        dist_func = '%s.l1norm(&&&)' % madlib_schema;
-        info( ' * dist_metric = %s' % (dist_metric))
-    # Cosine
-    elif dist_metric == 'cosine':
-        dist_aggr = '%s.mean(%s.normalize(&&&))' % (madlib_schema, madlib_schema);
-        dist_func = '%s.angle(&&&)' % madlib_schema;
-        info( ' * dist_metric = %s' % (dist_metric))
-    # Tanimoto
-    elif dist_metric == 'tanimoto':
-        dist_aggr = '%s.mean(%s.normalize(&&&))' % (madlib_schema, madlib_schema);
-        dist_func = '%s.tanimoto_distance(&&&)' % madlib_schema;
-        info( ' * dist_metric = %s' % (dist_metric))
-    # Other 
-    else: 
-        plpy.error( "unknown distance metric (%s)" % dist_metric);
-
-    # Validate: k/cset VS data_points
-    rv = plpy.execute( "SELECT count(*) as cnt FROM " + src_relation);
-    point_count = rv[0]['cnt'];
-    if (point_count == 0):
-        plpy.error( "source relation is empty (" + src_relation + ")");
-    elif (cset_count > 0 and point_count < cset_count):
-        plpy.error( "more initial centroids provided (%s) than data points (%s)" 
-                    % (cset_count, point_count));
-    elif (k > 0 and point_count < k):
-        plpy.error( "more initial centroids specified (%s) than data points (%s)" 
-                    % (k, point_count));
-        
-    # Validate: evaluate
-    if evaluate is None: evaluate == True; 
-    if (evaluate == True):
-        info( ' * evaluate = %s (model coefficient evaluation)' % str(evaluate));
-    elif (evaluate == False):
-        info( ' * evaluate = %s (model coefficient evaluation)' % str(evaluate));
-    else:
-        plpy.error( "invalid value for evaluate: %s, should be True or False" % evaluate )
-                
-    # Validate: output_points
-    try:
-        sql = 'CREATE TABLE ' + output_points + ''' (
-                pid BIGINT,
-                coords ''' + madlib_schema + '''.SVEC,
-                cid INT )''';
-        __run_quietly( sql)
-    except:
-        plpy.error( 'output table "%s" already exists\n' % output_points )
-    info( ' * output_points = %s' % output_points)
-
-    # Validate: output_centroids
-    try:
-        sql = 'CREATE TABLE ' + output_centroids + ''' (
-                cid INT,
-                coords ''' + madlib_schema + '.SVEC )'; 
-        __run_quietly( sql)
-    except:
-        plpy.error( 'output table "%s" already exists\n' % output_centroids )
-    info( ' * output_centroids = %s' % output_centroids)
-
-    # Validate: verbose 
-    if verbose:
-        info( ' * verbose = True')
-
-    # Create a view with PID and COORDS columns
-    src_view = 'kmeans_src_view';
-    temp_tbl = 'kmeans_temp_table_for_view';
-    src_type = madlib_schema + '.svec';
-    # Depending on the existence of source ID column
-    if (has_pid == False):
-        # Generate a new ID column
-        __run_quietly('DROP TABLE IF EXISTS '+temp_tbl+' CASCADE');
-        sql = '''CREATE TEMP TABLE {temp_tbl} (
-                    pid BIGSERIAL,
-                    coords  {src_type} )
-              '''.format(
-                temp_tbl = temp_tbl
-                , src_type = src_type
-            );
-        __run_quietly( sql)
-
-        sql = '''INSERT INTO {temp_tbl}(coords)
-                    SELECT {src_col_data}::{src_type} AS coords
-                    FROM {src_relation}
-              '''.format(
-                temp_tbl = temp_tbl
-                , src_col_data = src_col_data
-                , src_type = src_type
-                , src_relation = src_relation
-            );
-        __run_quietly( sql)
-
-        sql = '''CREATE TEMP VIEW {src_view} 
-                AS SELECT 
-                    pid AS pid
-                    , coords AS coords
-                FROM {temp_tbl}
-            '''.format(
-                src_view = src_view
-                , temp_tbl = temp_tbl
-            );
-        __run_quietly( sql)
-    else:
-        # Use the current ID column
-        sql = '''CREATE TEMP VIEW {src_view} 
-                AS SELECT 
-                    {src_col_id} AS pid
-                    , {src_col_data}::{src_type} AS coords
-                FROM {src_relation}
-            '''.format(
-                src_view = src_view
-                , src_col_id = src_col_id
-                , src_col_data = src_col_data
-                , src_type = src_type
-                , src_relation = src_relation
-            );    
-        __run_quietly( sql)
-
-        sql = '''SELECT count(*) AS cnt FROM
-                    (SELECT pid from {src_view} 
-                     GROUP BY pid HAVING count(*)>1 limit 1) l
-              '''.format(
-                src_view = src_view
-            );    
-        rv = __run_quietly( sql)
-
-        if (rv[0]['cnt'] > 0):
-            plpy.error('''
-                        '{src_relation}' has duplicate IDs 
-                        in column '{src_col_id}'
-                       '''.format(
-                        src_col_id = src_col_id
-                        , src_relation = src_relation
-                    ));
-                    
-    # Prepare the data set (skip all data points with any NULL values)
-    info( 'Input:');
-    info( '... analyzing data points')
-    __run_quietly( 'DROP TABLE IF EXISTS DataPointsSvec');        
-    sql = '''
-        CREATE TEMP TABLE DataPointsSvec(
-            pid BIGINT, 
-            coords ''' + madlib_schema + '''.SVEC 
-        )
-    ''';
-    __run_quietly( sql);
-    # Create the Temporary Point table
-    # Remove any NULL, NaN, and any non-finite values
-    sql = '''
-        INSERT INTO DataPointsSvec 
-        SELECT pid, coords
-        FROM ''' + src_view + '''
-        WHERE abs( 
-                  coalesce(''' + madlib_schema + '''.svec_elsum(coords), 'Infinity'::FLOAT8)
-                 ) < 'Infinity'::FLOAT8''';
-    __run_quietly( sql);        
-    # Find the number of points after cleanup
-    sql = 'SELECT count(*) as cnt FROM DataPointsSvec';
-    rv = __run_quietly( sql);    
-    orig_point_count = point_count;      
-    point_count = rv[0]['cnt'];  
-    # Find the number of dimensions
-    sql = '''
-        SELECT 
-            min(''' + madlib_schema + '''.svec_dimension(coords)) as min_dim 
-            , max(''' + madlib_schema + '''.svec_dimension(coords)) as max_dim 
-        FROM DataPointsSvec''';
-    rv = __run_quietly( sql);   
-    if rv[0]['min_dim'] != rv[0]['max_dim']:
-        plpy.error( "input points must have the same dimensions\n")            
-    info( ' * points: ' + str(orig_point_count) + ' (' \
-            + str(rv[0]['min_dim']) + ' dimensions), kept ' + str(point_count) + \
-            ' after removing non-finite values');   
-    dimension = rv[0]['min_dim'];
-
-    __run_quietly( 'DROP TABLE IF EXISTS DataPointsArray');        
-    sql = '''
-        CREATE TEMP TABLE DataPointsArray(
-            pid BIGINT, 
-            coords FLOAT8[]
-        )
-    ''';
-    __run_quietly( sql);
-    sql = '''
-        INSERT INTO DataPointsArray
-        SELECT pid, coords::FLOAT8[]
-        FROM DataPointsSvec
-        ''';
-    __run_quietly( sql);  
-
-    __run_quietly( 'DROP TABLE IF EXISTS TempPoints0');        
-    sql = '''
-        CREATE TEMP TABLE TempPoints0(
-            pid BIGINT, 
-            cid INTEGER,
-            canopies INTEGER[]
-        )
-    ''';
-    __run_quietly( sql);
-    sql = '''
-        INSERT INTO TempPoints0
-        SELECT pid, 0, null
-        FROM DataPointsSvec
-        ''';
-    __run_quietly( sql);  
-
-    # Initialize centroids
-    info( '... generating initial centroids')
-    if cset_count > 0:
-        info( ' * centroids: %s provided in %s' % (cset_count, init_cset_rel));
-        sql = '''
-            INSERT INTO {output_centroids} (cid, coords) 
-            SELECT row_number() OVER () AS cid,
-                {init_cset_col}::{madlib_schema}.SVEC 
-                AS coords 
-            FROM {init_cset_rel} WHERE {init_cset_col} IS NOT NULL   
-            '''.format(
-                output_centroids = output_centroids
-                , init_cset_col = init_cset_col
-                , madlib_schema = madlib_schema
-                , init_cset_rel = init_cset_rel
-            );
-        __run_quietly( sql); 
-        centr_count = cset_count;
-        
-    elif k > 0 and init_method == 'kmeans++':        
-        start = time.time()
-        centr_count = __init_plusplus( madlib_schema, 'DataPointsSvec', k, 
-                                       point_count, dist_func, 
-                                       sample_frac);
-        time_sec = round( time.time() - start, 3)
-        info( ' * centroids: %s seeded using kmeans++ (%s sec)' 
-               % (centr_count, str(time_sec)));
-        
-    elif k > 0 and init_method == 'random':
-        start = time.time();
-        centr_count = __init_random( madlib_schema, 'DataPointsSvec', k, 
-                                     point_count);
-        time_sec = round( time.time() - start, 3)
-        info( ' * centroids: %s seeded using random selection (%s sec)' 
-               % (centr_count, str(time_sec)));
-
-    # decide whether to disregard k or not when Canopy is chosen
-    elif init_method == 'canopy':
-        start = time.time();
-        centr_count, t1, t2 = __init_canopy( madlib_schema, 'DataPointsSvec', 
-                                             point_count, dist_metric, 
-                                             dist_func, t1, t2)
-        time_sec = round( time.time() - start, 3)
-        info( ' * centroids: %s seeded using canopy clustering with t1=%s and t2=%s (%s sec)' 
-               % (centr_count, t1, t2, str(time_sec)));
-
-    else:
-        plpy.error( 'Check cset_count=%s, k=%s, init_method=%s' 
-                % (cset_count, k, init_method));        
-
-    if (centr_count == 0):
-        plpy.error( 'No centroids initialized.');     
-    
-    # Main Loop - START
-    
-    info( 'Execution:')
-    i = 0;
-    while (done == False):    
-
-        start = time.time();
-
-        # Loop index
-        i = i + 1;                              
-        rv = plpy.execute("SELECT count(*) as cnt FROM " + output_centroids);
-        num_of_centroids = rv[0]['cnt']
-        # Create a temporary array of centroids
-        __run_quietly( 'DROP TABLE IF EXISTS TempArrayOfCentroids');    
-        sql = '''
-            CREATE TEMP TABLE TempArrayOfCentroids AS
-            SELECT
-                {madlib_schema}.internal_kmeans_agg_centroid(coords::FLOAT8[], {dimension}, {num_of_centroids}, cid) as ccoords
-            FROM {output_centroids}
-            '''.format(
-                output_centroids = output_centroids
-                , madlib_schema = madlib_schema
-                , num_of_centroids = num_of_centroids
-                , dimension = dimension
-            );
-        __run_quietly( sql);         
-
-        # Create new temp table (i)
-        __run_quietly( 'DROP TABLE IF EXISTS TempPoints' + str(i));
-        __run_quietly( 'CREATE TEMP TABLE TempPoints%s (like TempPoints%s)' 
-                        % (str(i), str(i-1)));
-
-        # For each point assign the closest centroid
-        if init_method == 'canopy':
-            # Use canopies for proximity
-            canopies = 'p.canopies';
-        else:
-            # Compare with all centroids
-            canopies = 'NULL';
-        
-        sql = '''
-            INSERT INTO TempPoints{i}    
-            SELECT
-                p.pid 
-                , {madlib_schema}.internal_kmeans_closest_centroid(p.coords,  
-                        arr.ccoords, {dimension}, {num_of_centroids}, {metric},
-                        {canopies})
-                , p.canopies
-            FROM 
-                (
-                SELECT d.pid, d.coords, t.canopies
-                FROM DataPointsArray d, TempPoints{previous_i} t
-                WHERE d.pid = t.pid
-                ) p
-                CROSS JOIN TempArrayOfCentroids arr
-        '''.format(
-            i = str(i)
-            , madlib_schema = madlib_schema
-            , num_of_centroids = num_of_centroids
-            , dimension = dimension
-            , canopies = canopies
-            , metric = __metric_id(dist_metric)
-            , previous_i = str(i-1)
-        );
-        __run_quietly( sql);        
-        time_sec = round( time.time() - start, 3)
-        info( '... Iteration %s: temp points generated (%s sec)' \
-                % (str(i),  str(time_sec)));
-        # Refresh the Centroids table based on current assignments
-        # Note the coalesce: If there is a centroid which is currently not
-        # the closest centroid to any point, just keep its old position
-        __run_quietly( 'DROP TABLE IF EXISTS ' + output_centroids + '_tmp');
-        
-        sql = '''
-            CREATE TABLE ''' + output_centroids + '''_tmp AS
-            SELECT c.cid AS cid, coalesce(t.coords, c.coords) AS coords
-            FROM ''' + output_centroids + ''' c LEFT OUTER JOIN
-            (
-                SELECT 
-                    ''' + dist_aggr.replace( '&&&', 'coords') + ''' AS coords
-                    , cid AS cid 
-                FROM 
-                (
-                SELECT d.pid, d.coords, t.cid
-                FROM DataPointsSvec d, TempPoints''' + str(i) + ''' t
-                WHERE d.pid = t.pid
-                ) p
-                GROUP BY cid
-            ) AS t ON c.cid = t.cid''';
-        __run_quietly( sql);        
-        
-        __run_quietly( 'TRUNCATE TABLE ' + output_centroids );
-        __run_quietly( 'INSERT INTO ' + output_centroids + ' SELECT * FROM ' \
-                        + output_centroids + '_tmp');
-        __run_quietly( 'DROP TABLE ' + output_centroids + '_tmp');
-                        
-        # Calculate the number of points that changed the assignment
-        sql = '''
-            SELECT count(*) as sum 
-            FROM
-                TempPoints''' + str(i) + ''' t1
-                LEFT JOIN TempPoints''' + str(i-1) + ''' t2
-                ON (t1.pid=t2.pid AND t1.cid=t2.cid)
-            WHERE
-                t2.pid IS NULL
-        ''';
-        rv = __run_quietly( sql);
-        time_sec = round( time.time() - start, 3)
-        info( '... Iteration %s: updated %s points (%s sec)' \
-                % (str(i), str(rv[0]['sum']), str(time_sec)));
-        
-        # Drop previous temp table (i-1)
-        __run_quietly( 'DROP TABLE TempPoints' + str(i-1));
-        
-        # Add it to the tracking variable
-        if (i>1): convergence_log.append( rv[0]['sum'] / (point_count * 1.0));
-
-        # Exit conditions:
-        if (convergence_log[i-1] < convergence_threshold):
-            done = True;
-            info( 'Exit condition: fraction of reassigned nodes is smaller than: ' + str(convergence_threshold));
-        elif (i == max_iterations):
-            done = True;
-            info( 'Exit condition: reached maximum number of iterations = ' + str(max_iterations));
-            
-    # Main Loop - END
-    
-    info( 'Writing final output table: ' + output_points + '...');
-    sql = '''
-        INSERT INTO ''' + output_points + '''    
-        SELECT pid, coords, cid 
-        FROM
-                (
-                SELECT d.pid, d.coords, t.cid
-                FROM DataPointsSvec d, TempPoints''' + str(i) + ''' t
-                WHERE d.pid = t.pid
-                ) p        
-        ''';
-    rv, time_sec = __timed_execute( sql);      
-    info( '... %s sec' % time_sec);
-
-    # Evaluate the model
-    # 1) Cost function value
-    # 2) Simplified Silhouette coefficient:
-    #    For details see: http://airccse.org/journal/ijdms/papers/3111ijdms03.pdf
-    if evaluate == True :    
-        info( 'Calculating model cost function and simplified Silhouette coefficient...');
-        sql = '''
-        SELECT
-            sum(a) AS cost,
-            coalesce(avg(
-                CASE WHEN float8larger(a,b) = 0 THEN 0
-                     ELSE (b-a) / float8larger(a,b)
-                END), 0) AS scoef
-        FROM (
-            SELECT
-                pid, min(a)::float AS a, min(b)::float AS b
-            FROM (
+            it.update("""
+                SELECT _args.initial_centroids FROM {rel_args} AS _args
+                """)
+        while it.test("array_upper(_state._state, 1) < _args.k"):
+            it.update("""
                 SELECT
-                    pid
-                    , CASE WHEN p.cid = c.cid THEN {dist_func}
-                      ELSE null END AS a
-                    , CASE WHEN p.cid != c.cid THEN {dist_func}
-                      ELSE null END AS b
-                FROM {output_points} p, {output_centroids} c
-            )   q1
-            GROUP BY pid
-        ) q2
-        '''.format(
-            dist_func = dist_func.replace( '&&&', 'p.coords, c.coords')
-            , output_points = output_points
-            , output_centroids = output_centroids
-        );
-        rv, time_sec = __timed_execute( sql);
-        info( '... %s sec' % time_sec);
-        cost = rv[0]['cost'];
-        scoef = rv[0]['scoef'];
-    else:
-        cost = None;
-        scoef = None;        
-        
-    # Cleanup
-    plpy.execute( "DROP VIEW IF EXISTS " + src_view );  
+                    (
+                        SELECT _state FROM {rel_state}
+                        WHERE _iteration = {iteration}
+                    ) || {schema_madlib}.weighted_sample(
+                            _src.{expr_point}::FLOAT8[],
+                            ({schema_madlib}.closest_column(
+                                (
+                                    SELECT _state FROM {rel_state}
+                                    WHERE _iteration = {iteration}
+                                ),
+                                _src.{expr_point}::FLOAT8[],
+                                (SELECT fn_dist FROM {rel_args})
+                            )).distance
+                        )
+                FROM {rel_source} AS _src
+                """)
+    return iterationCtrl.iteration
 
-    # Set some output values for provided centroid sets
-    if init_method is None:
-        k = cset_count;
-        init_method = 'provided set';
-    
-    # Return output result
-    return ( 
-        src_relation,   
-        point_count, 
-        init_method,
-        k,
-        dist_metric,
-        i,
-        cost,
-        scoef,
-        output_points, 
-        output_centroids
-    )
+def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
+    rel_source, expr_point, **kwargs):
+    """
+    Driver function for k-Means random seeding
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @rel_args Name of the (temporary) table containing all non-template
+        arguments
+    @rel_state Name of the (temporary) table containing the inter-iteration
+        states
+    @param rel_source Name of the relation containing input points
+    @param expr_point Expression containing the point coordinates
+    @param kwargs We allow the caller to specify additional arguments (all of
+        which will be ignored though). The purpose of this is to allow the
+        caller to unpack a dictionary whose element set is a superset of
+        the required arguments by this function.
+    @return The iteration number (i.e., the key) with which to look up the
+        result in \c rel_state
+    """
+    iterationCtrl = IterationController(
+        rel_args = rel_args,
+        rel_state = rel_state,
+        stateType = "DOUBLE PRECISION[][]",
+        truncAfterIteration = True,
+        schema_madlib = schema_madlib, # Identifiers start here
+        rel_source = rel_source,
+        expr_point = expr_point)
+    with iterationCtrl as it:
+        it.update("""
+            SELECT _args.initial_centroids FROM {rel_args} AS _args
+            """)
+        m = it.evaluate("_args.k - coalesce(array_upper(_state._state, 1), 0)")
+        while m > 0:
+            it.update("""
+                SELECT
+                    _state._state || {schema_madlib}.matrix_agg(_point::FLOAT8[])
+                FROM (
+                        SELECT
+                            {expr_point} AS _point
+                        FROM
+                            {rel_source} AS _src
+                        WHERE
+                            random() < CAST(
+                                ({m} + 14 + sqrt(196 + 28 * {m}))
+                                / (SELECT count(*) FROM {rel_source})
+                                AS DOUBLE PRECISION
+                            )
+                        ORDER BY random()
+                        LIMIT {m}
+                    ) AS _src,
+                    {rel_state} AS _state
+                WHERE
+                    _state._iteration = {iteration}
+                GROUP BY
+                    _state._state
+                """, m = m)
+            m = it.evaluate("_args.k - coalesce(array_upper(_state._state, 1), 0)")
+    return iterationCtrl.iteration
+
+def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
+    expr_point, agg_centroid, **kwargs):
+    """
+    Driver function for Lloyd's k-means local-search heuristic
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @rel_args Name of the (temporary) table containing all non-template
+        arguments
+    @rel_state Name of the (temporary) table containing the inter-iteration
+        states
+    @param rel_source Name of the relation containing input points
+    @param expr_point Expression containing the point coordinates
+    @param kwargs We allow the caller to specify additional arguments (all of
+        which will be ignored though). The purpose of this is to allow the
+        caller to unpack a dictionary whose element set is a superset of
+        the required arguments by this function.
+    @return The iteration number (i.e., the key) with which to look up the
+        result in \c rel_state
+    """
+
+    iterationCtrl = IterationController(
+        rel_args = rel_args,
+        rel_state = rel_state,
+        stateType = "{schema_madlib}.kmeans_state",
+        truncAfterIteration = False,
+        schema_madlib = schema_madlib,
+        rel_source = rel_source,
+        expr_point = expr_point,
+        agg_centroid = agg_centroid)
+    with iterationCtrl as it:
+        # Create the initial inter-iteration state of type kmeans_state
+        it.update("""
+            SELECT
+                CAST((_args.initial_centroids, NULL, 'Inf', 1.0) AS
+                    {schema_madlib}.kmeans_state)
+            FROM {rel_args} AS _args
+            """)
+        while it.test("""
+            {iteration} < _args.max_num_iterations AND
+            (_state._state).frac_reassigned > _args.min_frac_reassigned
+            """):
+            it.update("""
+                SELECT
+                    CAST((
+                        {schema_madlib}.matrix_agg(_centroid::FLOAT8[]),
+m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
+                        {schema_madlib}.
+!>)!>)
+                        array_agg(_new_centroid_id),
+                        sum(_objective_fn),
+                        CAST(sum(_num_reassigned) AS DOUBLE PRECISION)
+                            / sum(_num_points)
+                    ) AS {schema_madlib}.kmeans_state)
+                FROM (
+                    SELECT
+                        (_new_centroid).column_id AS _new_centroid_id,
+                        sum((_new_centroid).distance) AS _objective_fn,
+                        count(*) AS _num_points,
+                        sum(
+                            CAST(
+                                coalesce(
+                                    (CAST((
+                                        SELECT (_state).old_centroid_ids
+                                        FROM {rel_state}
+                                        WHERE _iteration = {iteration})
+                                    AS INTEGER[]))[
+                                        (_new_centroid).column_id + 1
+                                    ] != _old_centroid_id,
+                                    TRUE
+                                )
+                                AS INTEGER
+                            )
+                        ) AS _num_reassigned,
+                        {agg_centroid}(_point::FLOAT8[]) AS _centroid
+                    FROM (
+                        SELECT
+                            -- PostgreSQL/Greenplum tuning:
+                            -- VOLATILE function as optimization fence
+                            {schema_madlib}.noop(),
+                            _src.{expr_point} AS _point,
+                            {schema_madlib}.closest_column(
+                                (
+                                    SELECT (_state).centroids FROM {rel_state}
+                                    WHERE _iteration = {iteration}
+                                ),
+                                _src.{expr_point}::FLOAT8[],
+                                (SELECT fn_dist FROM {rel_args})
+                            ) AS _new_centroid,
+                            ({schema_madlib}.closest_column(
+                                (
+                                    SELECT (_state).centroids FROM {rel_state}
+                                    WHERE _iteration = {iteration} - 1
+                                ),
+                                _src.{expr_point}::FLOAT8[],
+                                (SELECT fn_dist FROM {rel_args})
+                            )).column_id AS _old_centroid_id
+                        FROM {rel_source} AS _src
+                    ) AS _points_with_assignments
+                    GROUP BY (_new_centroid).column_id
+                ) AS _new_centroids
+                """)
+
+            if it.test(
+                "array_upper((_state._state).centroids, 1) < _args.k"):
+                it.update("""
+                    SELECT
+                        CAST(((
+                                SELECT (_state).centroids FROM {rel_state}
+                                WHERE _iteration = {iteration}
+                            ) || {schema_madlib}.kmeanspp_seeding(
+                                '{rel_source}',
+                                '{expr_point}',
+                                (SELECT CAST(k AS INTEGER) FROM {rel_args}),
+                                textin(regprocout(
+                                    (SELECT fn_dist FROM {rel_args})
+                                )),
+                                (
+                                    SELECT (_state).centroids FROM {rel_state}
+                                    WHERE _iteration = {iteration}
+                                )
+                            ),
+                            (
+                                SELECT (_state).old_centroid_ids
+                                FROM {rel_state}
+                                WHERE _iteration = {iteration}
+                            ),
+                            'Inf',
+                            1.0
+                        ) AS {schema_madlib}.kmeans_state)
+                    """)
+    return iterationCtrl.iteration
+
+m4_changequote(<!`!>,<!'!>)

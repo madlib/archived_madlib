@@ -1,88 +1,52 @@
----------------------------------------------------------------------------
--- Rules: 
--- ------
--- Any DB objects should be created w/o schema prefix,
--- since this file is executed in a separate schema context.
----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
+ * Test k-means.
+ *
+ * FIXME: Verify results
+ * -------------------------------------------------------------------------- */
 
----------------------------------------------------------------------------
--- Setup: 
----------------------------------------------------------------------------
-SELECT setseed( extract( epoch from current_timestamp)-floor( extract( epoch from current_timestamp)));
-
-SELECT * FROM MADLIB_SCHEMA.kmeans_sample_data( 
-    2,      -- # of dimensions
-    10,     -- # of clusters
-    1000,    -- # of points per cluster
-    1000,   -- max value of a cluster coordinate
-    10,     -- average width of a cluster in every dimension
-    'km_testdata'
+CREATE TABLE kmeans_2d(
+	id SERIAL,
+	x DOUBLE PRECISION,
+	y DOUBLE PRECISION,
+	position DOUBLE PRECISION[],
+	PRIMARY KEY (id)
 );
 
-INSERT INTO km_testdata values ('{1,1}:{19.99,NULL}'::MADLIB_SCHEMA.svec);
-INSERT INTO km_testdata values ('{1,1}:{19.99,-Infinity}'::MADLIB_SCHEMA.svec);
-INSERT INTO km_testdata values ('{1,1}:{19.99,Infinity}'::MADLIB_SCHEMA.svec);
-INSERT INTO km_testdata values ('{1,1}:{19.99,NAN}'::MADLIB_SCHEMA.svec);
+INSERT INTO kmeans_2d(x, y, position)
+SELECT
+	x, y,
+	ARRAY[
+		x + random() * 15.0,
+		y + random() * 15.0
+	]::DOUBLE PRECISION[] AS position
+FROM (
+	SELECT
+		random() * 100.0 AS x,
+		random() * 100.0 AS y
+	FROM generate_series(1,10)
+) AS centroids, generate_series(1,100) i;
 
----------------------------------------------------------------
--- Test
----------------------------------------------------------------
--- Run k-means using kmeans++() seeding 
-DROP TABLE IF EXISTS km_points;
-DROP TABLE IF EXISTS km_cents;
-SELECT * FROM MADLIB_SCHEMA.kmeans_plusplus( 
-    'km_testdata'               -- relation 
-    , 'coords', null            -- data col, id col
-    , 'km_points', 'km_cents'   -- out points, out centroids
-    , 'l2norm'                  -- distance metric
-    , 5, 0.001                  -- max iter, convergence threshold
-    , True, True                -- evaluate, verbose
-    , 10, 0.01                  -- k, sample_fraq   			
-);
+CREATE TABLE centroids AS
+SELECT position
+FROM kmeans_2d
+ORDER BY random()
+LIMIT 10;
 
--- Run k-means using random() seeding 
-DROP TABLE IF EXISTS km_points;
-DROP TABLE IF EXISTS km_cents;
-SELECT * FROM MADLIB_SCHEMA.kmeans_random( 
-    'km_testdata'               -- relation 
-    , 'coords', null            -- data col, id col
-    , 'km_points', 'km_cents'   -- out points, out centroids
-    , 'l1norm'                  -- distance metric
-    , 5, 0.001                  -- max iter, convergence threshold
-    , True, True                -- evaluate, verbose
-    , 10                        -- k  			
-);
+SELECT * FROM kmeanspp('kmeans_2d', 'position', 10);
 
--- Run k-means using canopy() seeding 
-DROP TABLE IF EXISTS km_points;
-DROP TABLE IF EXISTS km_cents;
-SELECT * FROM MADLIB_SCHEMA.kmeans_canopy( 
-    'km_testdata'               -- relation 
-    , 'coords', null            -- data col, id col
-    , 'km_points', 'km_cents'   -- out points, out centroids
-    , 'l1norm'                  -- distance metric
-    , 5, 0.001                  -- max iter, convergence threshold
-    , True, True                -- evaluate, verbose
-    , null, null                -- t1, t2			
-);
+SELECT * FROM kmeans_random('kmeans_2d', 'position', 10);
 
--- Create a view with FLOAT[] data type
-CREATE VIEW km_testdata_float123 
-AS SELECT coords::float[] AS coords FROM km_testdata;
+SELECT * FROM kmeans('kmeans_2d', 'position', 'centroids', 'position');
 
--- Run k-means using prepared centroid set
-CREATE TABLE mycents AS SELECT * FROM km_cents;
-DROP TABLE IF EXISTS km_points;
-DROP TABLE IF EXISTS km_cents;
-SELECT * FROM MADLIB_SCHEMA.kmeans_cset( 
-    'km_testdata_float123'      -- relation 
-    , 'coords', null            -- data col, id col
-    , 'km_points', 'km_cents'   -- out points, out centroids
-    , 'tanimoto'                -- distance metric
-    , 5, 0.001                  -- max iter, convergence threshold
-    , True, True                -- evaluate, verbose
-    , 'mycents', 'coords'       -- init relation, init column
-);
-
--- Show results
-SELECT cid, count(*) FROM km_points GROUP BY 1;
+SELECT * FROM kmeans('kmeans_2d', 'position', ARRAY[
+    ARRAY[10,10],
+    ARRAY[20,20],
+    ARRAY[30,30],
+    ARRAY[40,40],
+    ARRAY[50,50],
+    ARRAY[60,60],
+    ARRAY[70,70],
+    ARRAY[80,80],
+    ARRAY[90,90],
+    ARRAY[10,10]
+]::DOUBLE PRECISION[][]);
