@@ -52,7 +52,7 @@ guaranteed to converge to a local optimum.
 Data points and predefined centroids (if used) are expected to be stored row-wise,
 in a column of type <tt>\ref grp_svec "SVEC"</tt> (or any type convertible to
 <tt>\ref grp_svec "SVEC"</tt>, like <tt>FLOAT[]</tt> or <tt>INTEGER[]</tt>).
-Data points with with non-finite values (NULL, NaN, infinity) in any component
+Data points with non-finite values (NULL, NaN, infinity) in any component
 will be skipped during analysis.
 
 The following methods are available for the centroid seeding:
@@ -73,47 +73,42 @@ The following methods are available for the centroid seeding:
    centroids.
 
 The following distance functions can be used (computation of barycenter/mean in parentheses):
- - <strong>1-norm/Manhattan</strong> (element-wise mean)
+ - <strong>1-norm/Manhattan</strong> (element-wise median [Note that MADlib does not provide a median 
+   aggregate function for support and performance reasons.])
  - <strong>2-norm/Euclidean</strong> (element-wise mean)
  - <strong>cosine</strong> (element-wise mean of normalized points)
  - <strong>tanimoto</strong> (element-wise mean of normalized points)
 
 The algorithm stops when one of the following conditions is met:
- - The fraction of updated points is smaller than convergence threshold (default: 0.001).
- - The algorithm reached the maximum number of allowed iterations (default: 20).
+ - The fraction of updated points is smaller than the convergence threshold (default: 0.001).
+ - The algorithm reaches the maximum number of allowed iterations (default: 20).
 
 A popular method to assess the quality of the clustering is the
-<em>silhouette coefficient</em>, a simplified version of which can be computed
-optionally [3]. Since for large data sets this computation is expensive, it is
-turned off by default (evaluate = False).
+<em>silhouette coefficient</em>, a simplified version of which is provided as part of the k-means module. 
+Note that for large data sets, this computation is expensive.
 
 @input
 The <strong>source relation</strong> is expected to be of the following form (or
 to be implicitly convertible into the following form):
-<pre>{TABLE|VIEW} <em>data_points</em> (
+<pre>{TABLE|VIEW} <em>rel_source</em> (
     ...
-    <em>point_id</em> BIGINT,
-    <em>point_coordinates</em> FLOAT8[],
+    <em>expr_points</em> FLOAT8[],
     ...
 )</pre>
 where:
- - <em>point_id</em> is the name of an optional column with a unique ID of the
-   data point.
- - <em>point_coordinates</em> is the name of a column with point coordinates.
-   Types such as \c svec or <tt>INTEGER[]</tt> are implicitly convertible to
+ - <em>expr_points</em> is the name of a column with point coordinates.
+   Types such as \c svec or <tt>INTEGER[]</tt> are implicitly converted to
    <tt>FLOAT8[]</tt>.
 
 If kmeans is called with a set of initial centroids, the centroid relation is
 expected to be of the following form:
-<pre>{TABLE|VIEW} <em>initial_centroids</em> (
+<pre>{TABLE|VIEW} <em>rel_initial_centroids</em> (
     ...
-    <em>centroid_coordinates</em> DOUBLE PRECISION[],
+    <em>expr_centroid</em> DOUBLE PRECISION[],
     ...
 )</pre>
 where:
- - <em>centroid_coordinates</em> is the name of a column with coordinates
-
-@warning This documentation needs an update!
+ - <em>expr_centroid</em> is the name of a column with coordinates.
 
 @usage
 The k-means algorithm can be invoked in four possible ways:
@@ -121,49 +116,44 @@ The k-means algorithm can be invoked in four possible ways:
 - using <em>random</em> centroid seeding method for a
 provided \f$ k \f$:
 <pre>SELECT * FROM \ref kmeans_random(
-  '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
-  '<em>out_points</em>', '<em>out_centroids</em>',
-  '<em>dist_metric</em>',
-  <em>max_iter</em>, <em>conv_threshold</em>,
-  <em>evaluate</em>, <em>verbose</em>,
-  <em>k</em>
+  '<em>rel_source</em>', '<em>expr_point</em>', k,
+  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
+  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
 );</pre>
 
 - using <em>kmeans++</em> centroid seeding method for a
 provided \f$ k \f$:
-<pre>SELECT * FROM \ref kmeans_plusplus(
-  '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
-  '<em>out_points</em>', '<em>out_centroids</em>',
-  '<em>dist_metric</em>',
-  <em>max_iter</em>, <em>conv_threshold</em>,
-  <em>evaluate</em>, <em>verbose</em>,
-  <em>k</em>, <em>sample_frac</em>
+<pre>SELECT * FROM \ref kmeanspp(
+  '<em>rel_source</em>', '<em>expr_point</em>', k,
+  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
+  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
 );</pre>
 
 - with a provided centroid set:
-<pre>SELECT * FROM \ref kmeans_cset(
-  '<em>src_relation</em>', '<em>src_col_data</em>', '<em>src_col_id</em>',
-  '<em>out_points</em>', '<em>out_centroids</em>',
-  '<em>dist_metric</em>',
-  <em>max_iter</em>, <em>conv_threshold</em>,
-  <em>evaluate</em>, <em>verbose</em>,
-  '<em>init_cset_rel</em>', '<em>init_cset_col</em>'
+<pre>SELECT * FROM \ref kmeans(
+  '<em>rel_source</em>', '<em>expr_point</em>', 
+  '<em>rel_initial_centroids</em>', '<em>expr_centroid</em>', 
+  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
+  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
 );</pre>
+------------ OR ---------------
+<pre>SELECT * FROM \ref kmeans(
+  '<em>rel_source</em>', '<em>expr_point</em>', 
+  initial_centroids, 
+  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
+  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
+);</pre>
+where:
+ - <em>initial_centroids</em> is of type <tt>DOUBLE PRECISION[][]</tt>.
 
-The output centroid set will be stored in the <tt>out_centroids</tt> table
-with the following structure:
+The output of the k-means module is a table that includes the final
+centroid positions (DOUBLE PRECISION[][]), the objective function, 
+the fraction of reassigned points in the last iteration, and 
+the number of total iterations:
 <pre>
- cid |  coords
------+-------------
-        ...
-</pre>
-
-The cluster assignments for each data point will be stored in the
-<tt>out_points</tt> table with the following structure:
-<pre>
- pid |  coords  | cid
------+----------+-----
-         ...
+            centroids             |   objective_fn   | frac_reassigned | num_iterations 
+----------------------------------+------------------+-----------------+----------------
+             ...
 </pre>
 
 @examp
@@ -171,69 +161,32 @@ The cluster assignments for each data point will be stored in the
 -#  Prepare some input data.
 \code
 sql> SELECT * FROM public.km_sample LIMIT 5;
-          coords
---------------------------
- {1,1}:{6.76976,39.89516}
- {1,1}:{6.92655,39.54273}
- {1,1}:{6.78933,39.71434}
- {1,1}:{7.24073,39.61291}
- {1,1}:{6.72292,39.05652}
+                  points                   
+-------------------------------------------
+ {1,1}:{15.8822241332382,105.945462542586}
+ {1,1}:{34.5065216883086,72.3126099305227}
+ {1,1}:{22.5074400822632,95.3209559689276}
+ {1,1}:{70.2589857042767,68.7395178806037}
+ {1,1}:{30.9844257542863,25.3213323024102}
 (5 rows)
 \endcode
--#  Run k-means clustering using kmeans++ for centroid seeding
-(below example is executed in Verbose mode):
+Note: the example <em>points</em> is type <tt>\ref grp_svec "SVEC"</tt>.
+-#  Run k-means clustering using kmeans++ for centroid seeding:
 \code
-sql> SELECT * FROM madlib.kmeans_plusplus(
-    'km_sample', 'coords', null,
-    'km_p', 'km_c',
-    'l2norm',
-    10, 0.001,
-    True, True,
-    10, null
+sql> SELECT * FROM madlib.kmeanspp('km_sample', 'points', 2, 'madlib.squared_dist_norm2', 'madlib.avg', 20, 0.001);
 );
-INFO:  ('Started k-means clustering with parameters:',)
-INFO:  (' * src_relation = public.km_sample',)
-INFO:  (' * src_col_data = coords',)
-INFO:  (' * src_col_id = None (will be auto-generated)',)
-INFO:  (' * init_method = kmeans++ (sample=0.01)',)
-INFO:  (' * initial k = 10',)
-INFO:  (' * dist_metric = l2norm',)
-INFO:  (' * evaluate = True (model coefficient evaluation)',)
-INFO:  (' * output_points = public.km_p',)
-INFO:  (' * output_centroids = public.km_c',)
-INFO:  (' * verbose = True',)
-INFO:  ('Input:',)
-INFO:  ('... analyzing data points',)
-INFO:  (' * points: 10000 (2 dimensions), kept 10000 after removing NULLs',)
-INFO:  ('... generating initial centroids',)
-INFO:  (' * centroids: 10 seeded using kmeans++ (0.351 sec)',)
-INFO:  ('Execution:',)
-INFO:  ('... Iteration 1: updated 10000 points (0.212 sec)',)
-INFO:  ('... Iteration 2: updated 136 points (0.399 sec)',)
-INFO:  ('... Iteration 3: updated 74 points (0.2 sec)',)
-INFO:  ('... Iteration 4: updated 58 points (0.28 sec)',)
-INFO:  ('... Iteration 5: updated 66 points (0.261 sec)',)
-INFO:  ('... Iteration 6: updated 51 points (0.248 sec)',)
-INFO:  ('... Iteration 7: updated 36 points (0.257 sec)',)
-INFO:  ('... Iteration 8: updated 23 points (0.255 sec)',)
-INFO:  ('... Iteration 9: updated 21 points (0.31 sec)',)
-INFO:  ('... Iteration 10: updated 13 points (0.25 sec)',)
-INFO:  ('Exit condition: reached maximum number of iterations = 10',)
-INFO:  ('Writing final output table: public.km_p...',)
-INFO:  ('... 0.033 sec',)
-INFO:  ('Calculating model cost function and simplified Silhouette coefficient...',)
-INFO:  ('... 0.121 sec',)
--[ RECORD 1 ]-+-----------------
-src_relation  | km_sample
-point_count   | 10000
-init_method   | kmeans++
-k             | 10
-dist_metric   | l2norm
-iterations    | 10
-cost_func     | 36424.9019377
-silhouette    | 0.710664950775
-out_points    | km_p
-out_centorids | km_c
+                                centroids                                |   objective_fn   | frac_reassigned | num_iterations 
+-------------------------------------------------------------------------+------------------+-----------------+----------------
+ {{68.01668579784,48.9667382972952},{28.1452167573446,84.5992507653263}} | 586729.010675982 |           0.001 |              5
+\endcode
+-# Calculate the simplified silhouette coefficient:
+\code
+sql> SELECT * from madlib.simple_silhouette('km_test_svec','points', 
+     (select centroids from madlib.kmeanspp('km_test_svec','points',2,'madlib.squared_dist_norm2','madlib.avg',20,0.001)),
+     'madlib.dist_norm2');
+ simple_silhouette 
+-------------------
+ 0.611022970398174
 \endcode
 
 @literature
