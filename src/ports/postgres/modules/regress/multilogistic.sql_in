@@ -134,7 +134,7 @@ Note that the categories are encoded as integers with values from {0, 1, 2,...nu
 -# Create the sample data set:
 @verbatim
 sql> SELECT * FROM data;
-                  r1                      | val 
+                  r1                      | val
 ---------------------------------------------+-----
  {1,3.01789340097457,0.454183579888195}   | 1
  {1,-2.59380532894284,0.602678326424211}  | 0
@@ -317,14 +317,17 @@ LANGUAGE plpythonu VOLATILE;
  * @usage
  *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
  *    statistics:\n
- *    <pre>SELECT * FROM mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>');</pre>
+ *    <pre>SELECT * FROM mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>',
+ *    '<em>numCategories</em>', '<em>independentVariables</em>');</pre>
  *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
- *    <pre>SELECT (mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>')).coef;</pre>
+ *    <pre>SELECT (mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>',
+ *    '<em>numCategories</em>', '<em>independentVariables</em>')).coef;</pre>
  *  - Get a subset of the output columns, e.g., only the array of coefficients
  *    \f$ \boldsymbol c \f$, the log-likelihood of determination
  *    \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
  *    <pre>SELECT coef, log_likelihood, p_values
- *FROM mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>');</pre>
+ *    FROM mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>',
+ *   '<em>numCategories</em>', '<em>independentVariables</em>');</pre>
  *
  * @note This function starts an iterative algorithm. It is not an aggregate
  *       function. Source and column names have to be passed as strings (due to
@@ -344,10 +347,32 @@ CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
     "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
 RETURNS MADLIB_SCHEMA.mlogregr_result AS $$
 DECLARE
+    observed_count INTEGER;
     theIteration INTEGER;
     fnName VARCHAR;
     theResult MADLIB_SCHEMA.mlogregr_result;
 BEGIN
+    IF (SELECT atttypid::regtype <> 'INTEGER'::regtype
+        FROM pg_attribute
+        WHERE attrelid = source::regclass AND attname = depvar) THEN
+        RAISE EXCEPTION 'The dependent variable column should be of type INTEGER';
+    END IF;
+
+    EXECUTE $sql$ SELECT count(DISTINCT $sql$ || depvar || $sql$ )
+                    FROM $sql$ || textin(regclassout(source))
+            INTO observed_count;
+    IF observed_count <> numcategories
+    THEN
+        RAISE WARNING 'Results will be undefined, if ''numcategories'' is not
+         same as the number of distinct categories observed in the training data.';
+    END IF;
+
+    IF optimizer = 'irls' OR optimizer = 'newton' THEN
+        fnName := 'internal_mlogregr_irls_result';
+    ELSE
+        RAISE EXCEPTION 'Unknown optimizer (''%'')', optimizer;
+    END IF;
+
     theIteration := (
         SELECT MADLIB_SCHEMA.compute_mlogregr($1, $2, $3, $4, $5, $6, $7)
     );
@@ -355,11 +380,6 @@ BEGIN
     -- EXECUTE) in the following
     -- Because of Greenplum bug MPP-6731, we have to hide the tuple-returning
     -- function in a subquery
-    IF optimizer = 'irls' OR optimizer = 'newton' THEN
-        fnName := 'internal_mlogregr_irls_result';
-    ELSE
-        RAISE EXCEPTION 'Unknown optimizer (''%'')', optimizer;
-    END IF;
     EXECUTE
         $sql$
         SELECT (result).*
