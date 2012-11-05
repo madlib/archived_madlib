@@ -73,11 +73,17 @@ The following methods are available for the centroid seeding:
    centroids.
 
 The following distance functions can be used (computation of barycenter/mean in parentheses):
- - <strong>1-norm/Manhattan</strong> (element-wise median [Note that MADlib does not provide a median 
+ - <strong>\ref dist_norm1</strong>:  1-norm/Manhattan (element-wise median [Note that MADlib does not provide a median 
    aggregate function for support and performance reasons.])
- - <strong>2-norm/Euclidean</strong> (element-wise mean)
- - <strong>cosine</strong> (element-wise mean of normalized points)
- - <strong>tanimoto</strong> (element-wise mean of normalized points)
+ - <strong>\ref dist_norm2</strong>: 2-norm/Euclidean (element-wise mean)
+ - <strong>\ref squared_dist_norm2</strong>: squared Euclidean distance (element-wise mean)
+ - <strong>\ref dist_angle</strong>: angle (element-wise mean of normalized points)
+ - <strong>\ref dist_tanimoto</strong>: tanimoto (element-wise mean of normalized points [5])
+ - <strong>user defined function</strong> with signature DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION
+
+The following aggregate functions for determining centroids can be used:
+ - <strong>\ref avg</strong>: average
+ - <strong>\ref normalized_avg</strong>: normalized average
 
 The algorithm stops when one of the following conditions is met:
  - The fraction of updated points is smaller than the convergence threshold (default: 0.001).
@@ -208,6 +214,9 @@ sql> SELECT * from madlib.simple_silhouette('km_test_svec','points',
     Laboratories. Published much later in: IEEE Transactions on Information
     Theory 28(2), pp. 128-137. 1982.
 
+[5] Leisch, Friedrich: A Toolbox for K-Centroids Cluster Analysis.  In: Computational 
+    Statistics and Data Analysis, 51(2). pp. 526-544. 2006.
+
 @sa File kmeans.sql_in documenting the SQL functions.
 
 @internal
@@ -261,27 +270,6 @@ CREATE TYPE MADLIB_SCHEMA.kmeans_state AS (
     objective_fn DOUBLE PRECISION,
     frac_reassigned DOUBLE PRECISION
 );
-
-/**
- * @internal
- * @brief Check if expr_point is valid type and return useful error msg
- */
-CREATE FUNCTION MADLIB_SCHEMA.kmeans_is_valid_input(
-    rel_source VARCHAR,
-    expr_point VARCHAR
-) RETURNS boolean AS $$ 
-BEGIN 
-    EXECUTE 'SELECT ' || expr_point || '::FLOAT8[] FROM ' || textin(regclassout(rel_source)); 
-    RETURN TRUE;
-EXCEPTION
-    WHEN invalid_schema_name THEN
-   	RAISE EXCEPTION 'Schema (%) does not exist.', split_part(rel_source, '.', 1);
-    WHEN undefined_table THEN
- 	RAISE EXCEPTION 'Source table does not exist.';
-    WHEN OTHERS THEN
-	RAISE EXCEPTION 'Point coordinates (%) are not a valid type (SVEC, FLOAT[], or INTEGER[]) or do not exist.', expr_point; 
-END; 
-$$ LANGUAGE plpgsql VOLATILE; 
 
 /**
  * @internal
@@ -365,8 +353,6 @@ BEGIN
         RAISE EXCEPTION 'At least one initial centroid has non-finite values.';
     END IF;
 
-    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
- 
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
     class_rel_source := rel_filtered;
     proc_fn_dist := fn_dist
@@ -550,7 +536,6 @@ DECLARE
     num_centroids INTEGER;
     rel_filtered VARCHAR;
 BEGIN
-    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);    
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
     class_rel_source := rel_filtered;
 
@@ -810,7 +795,6 @@ DECLARE
     num_centroids INTEGER;
     rel_filtered VARCHAR;
 BEGIN
-    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
     class_rel_source := rel_filtered;
 
@@ -1056,6 +1040,9 @@ BEGIN
                              ) < ''Infinity''::FLOAT8'; 
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
     RETURN rel_source_filtered;
+    EXCEPTION
+        WHEN undefined_function THEN
+	    RAISE EXCEPTION 'Point coordinates (%) are not a valid type (SVEC, FLOAT[], or INTEGER[]).', expr_point; 
 END
 $$
 VOLATILE STRICT
@@ -1098,7 +1085,6 @@ DECLARE
     class_rel_initial_centroids REGCLASS;
     theResult MADLIB_SCHEMA.kmeans_result;
 BEGIN
-    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
     class_rel_initial_centroids := rel_initial_centroids;
     SELECT * FROM MADLIB_SCHEMA.internal_execute_using_kmeans_args($sql$
         SELECT MADLIB_SCHEMA.kmeans(
@@ -1237,7 +1223,6 @@ BEGIN
 	RAISE EXCEPTION 'No valid centroids given.';
     END IF;
 
-    PERFORM MADLIB_SCHEMA.kmeans_is_valid_input(rel_source, expr_point);
     rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
     class_rel_source := rel_filtered;
     proc_fn_dist := fn_dist
