@@ -18,15 +18,17 @@ m4_include(`SQLCommon.m4')
  * @param vw Name of the human readable view of output.
 */
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.vcrf_top1_view (segtbl text, labeltbl text, result_tbl text, vw text) returns text AS 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.vcrf_top1_table (segtbl text, labeltbl text, result_tbl text, vw text) returns text AS 
 $$
 rv = plpy.execute('SELECT COUNT(*) AS total FROM ' + labeltbl);
 nlabel = rv[0]['total']
-query = """create view """ + vw + """ AS
+# need to create a table, not a view, since query references a temp table 
+#  (otherwise view is forced to be in temp schema and a schema name cannot be provided)
+query = ("""create table """ + vw + """ AS
            select segs.doc_id, start_pos, seg_text, L.label, (L.id+1) as id, (result.label[max_pos+2]::float/1000000) as prob
            from """ + segtbl + """ segs, """ + labeltbl + """ L, """ + result_tbl + """ result
            where result.label[segs.start_pos+1]=L.id and segs.doc_id=result.doc_id
-           order by doc_id, start_pos;"""
+           order by doc_id, start_pos;""")
 plpy.execute(query)
 return vw
 $$ language plpythonu strict;
@@ -63,7 +65,7 @@ MADLIB_SCHEMA.vcrf_label(segtbl text, factor_mtbl text, factor_rtbl text, labelt
   m_factors = "pg_temp._madlib_m_factors"
   r_factors = "pg_temp._madlib_r_factors"
   segtbl_digits = "pg_temp._madlib_segtbl_digits"
-  resulttbl_raw = "pg_temp._madlib_" + resulttbl + "_raw"
+  resulttbl_raw = "pg_temp._madlib_resulttbl_raw"
 
   plpy.execute("""DROP TABLE IF EXISTS """ + m_factors + """,""" + r_factors + """,""" + segtbl_digits  + """,""" + resulttbl_raw + """;""")
   plpy.execute("""CREATE TABLE """ + resulttbl_raw + """(doc_id integer, label integer[]);""")
@@ -117,7 +119,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
 
   plpy.execute(query);
 
-  query = "SELECT * FROM MADLIB_SCHEMA.vcrf_top1_view(\'" + segtbl + "\', \'" + labeltbl + "\', \'" + resulttbl_raw + "\', \'" + resulttbl + "\');"
+  query = "SELECT * FROM MADLIB_SCHEMA.vcrf_top1_table(\'" + segtbl + "\', \'" + labeltbl + "\', \'" + resulttbl_raw + "\', \'" + resulttbl + "\');"
   plpy.execute(query);
 
 $$ LANGUAGE plpythonu STRICT;
