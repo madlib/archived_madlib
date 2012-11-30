@@ -1,14 +1,11 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file lmf.hpp
- *
- * This file contains objective function related computation, which is called
- * by classes in algo/, e.g.,  loss, gradient functions
+ * @file logit.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
-#define MADLIB_MODULES_CONVEX_TASK_LMF_HPP_
+#ifndef MADLIB_MODULES_CONVEX_TASK_LOGIT_HPP_
+#define MADLIB_MODULES_CONVEX_TASK_LOGIT_HPP_
 
 #include <dbconnector/dbconnector.hpp>
 
@@ -21,11 +18,12 @@ namespace convex {
 // Use Eigen
 using namespace madlib::dbal::eigen_integration;
 
-template <class Model, class Tuple>
-class LMF {
+template <class Model, class Tuple, class Hessian = Matrix>
+class Logit {
 public:
     typedef Model model_type;
     typedef Tuple tuple_type;
+    typedef Hessian hessian_type;
     typedef typename Tuple::independent_variables_type 
         independent_variables_type;
     typedef typename Tuple::dependent_variable_type dependent_variable_type;
@@ -42,6 +40,12 @@ public:
             const dependent_variable_type       &y, 
             const double                        &stepsize);
     
+    static void hessian(
+            const model_type                    &model,
+            const independent_variables_type    &x,
+            const dependent_variable_type       & /* y */, 
+            hessian_type                        &hessian);
+
     static double loss(
             const model_type                    &model, 
             const independent_variables_type    &x, 
@@ -50,56 +54,69 @@ public:
     static dependent_variable_type predict(
             const model_type                    &model, 
             const independent_variables_type    &x);
+
+private:
+    static double sigma(double x) {
+        return 1. / (1. + std::exp(-x));
+    }
 };
 
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
 void
-LMF<Model, Tuple>::gradient(
+Logit<Model, Tuple, Hessian>::gradient(
         const model_type                    &model,
         const independent_variables_type    &x,
         const dependent_variable_type       &y,
         model_type                          &gradient) {
-    throw std::runtime_error("Not implemented: LMF is good for sparse only.");
+    double wx = dot(model, x);
+    double sig = sigma(-wx * y);
+    double c = -sig * y; // minus for "-loglik"
+    gradient += c * x;
 }
 
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
 void
-LMF<Model, Tuple>::gradientInPlace(
+Logit<Model, Tuple, Hessian>::gradientInPlace(
         model_type                          &model,
         const independent_variables_type    &x, 
         const dependent_variable_type       &y, 
         const double                        &stepsize) {
-    // Please refer to the design document for an explanation of the following
-    double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
-    RowVector temp = model.matrixU.row(x.i)
-        - stepsize * e * model.matrixV.row(x.j);
-    model.matrixV.row(x.j) -= stepsize * e * model.matrixU.row(x.i);
-    model.matrixU.row(x.i) = temp;
+    double wx = dot(model, x);
+    double sig = sigma(-wx * y);
+    double c = -sig * y; // minus for "-loglik"
+    model -= stepsize * c * x;
 }
 
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
+void
+Logit<Model, Tuple, Hessian>::hessian(
+        const model_type                    &model,
+        const independent_variables_type    &x,
+        const dependent_variable_type       & /* y */, 
+        hessian_type                        &hessian) {
+    double wx = dot(model, x);
+    double sig = sigma(wx);
+    double a = sig * (1 - sig);
+    hessian += a * x * trans(x);
+}
+
+template <class Model, class Tuple, class Hessian>
 double 
-LMF<Model, Tuple>::loss(
+Logit<Model, Tuple, Hessian>::loss(
         const model_type                    &model, 
         const independent_variables_type    &x, 
         const dependent_variable_type       &y) {
-    // HAYING: A chance for improvement by reusing the e computed in gradient.
-    // Perhaps we can add a book-keeping data structure in the model...
-    // Note: the value of e is different from the e in gradient if the
-    // model passed in is different, which IS the case for IGD
-    // Note 2: this can actually be a problem of having the computation 
-    // around model (algo/ & task/) detached from the model classes 
-    double e = model.matrixU.row(x.i) * trans(model.matrixV.row(x.j)) - y;
-    return e * e;
+    double wx = dot(model, x);
+    return log(1. + std::exp(-wx * y)); //  = -log(sigma(y * wx))
 }
 
-// Not currently used.
-template <class Model, class Tuple>
+template <class Model, class Tuple, class Hessian>
 typename Tuple::dependent_variable_type
-LMF<Model, Tuple>::predict(
+Logit<Model, Tuple, Hessian>::predict(
         const model_type                    &model, 
         const independent_variables_type    &x) {
-    return model.matrixU.row(x.i) * trasn(model.matrixV.row(x.j));
+    double wx = dot(model, x);
+    return sigma(wx);
 }
 
 } // namespace convex

@@ -1,0 +1,361 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file lasso.sql_in
+ *
+ * @brief SQL functions for LASSO
+ * @date July 2012
+ *
+ * @sa For a brief introduction to LASSO, see the module
+ *     description \ref grp_lasso.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4') --'
+
+/**
+@addtogroup grp_lasso
+
+
+@about
+
+This module implements LASSO (least absolute shrinkage and selection operator) [1].
+Mathematically, this model seeks to find a weight vector \f$w\f$ (also referred as hyperplane) that, for any given training example set, minimizes:
+\f[\min_{w \in R^N,w_{0}} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w^{t} x_m + w_{0} - y_m)^2 \right] + \lambda \|w\|_1,\f]
+where \f$x_m \in R^N\f$ are values of independent variables, and \f$y_m \in R\f$ are values of the dependent variable, \f$m = 1,...,M\f$. Note that \f[w_{0}\f] is not regularized.
+
+To get better convergence, one can rescale the value of each element of x
+\f[ x' \leftarrow \frac{x - \bar{x}}{\sigma_x} \f]
+and
+\f[y' \leftarrow y - \bar{y} \f]
+and then fit 
+\f[\min_{w' \in R^N} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w'^{t} x'_m - y'_m)^2 \right] + \lambda \|w'\|_1,\f]
+At the end of the calculation, the orginal scales will be restored and an intercept term will be obtained at the same time as a by-product.
+
+Note that fitting after scaling is not equivalent to directly fitting.
+
+@input
+
+The <b>training examples</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    ...
+    <em>independentVariables</em>    DOUBLE PRECISION[],
+    <em>dependentVariables</em>    DOUBLE PRECISION,
+    ...
+)</pre>
+
+Null values are not expected.
+
+
+@usage
+
+- Get the vector of coefficients \f$ \boldsymbol w \f$:
+
+<pre>SELECT madlib.lasso_igd_train(
+    '<em>tbl_source</em>', -- data table
+    '<em>col_ind_var</em>', -- independent variable column name
+    '<em>col_dep_var</em>', -- dependent variable column name
+    '<em>tbl_output</em>', -- table to store result
+    '<em>lambda</em>', -- regulation parameter
+    '<em>normalization</em>', -- whether to scale x
+    '<em>stepsize</em>', -- IGD step size, default 0.01
+    '<em>num_iterations</em>', -- IGD max number of iterations, default 100
+    '<em>tolerance</em>'  -- IGD tolerance, default 0.000001
+); 
+</pre>
+
+If  normalization = False, the output has the following format
+
+  Output:
+  <pre>  coefficients | intercept | log_likelihood | normalization
+  -------+--------------+---------+----------------
+        ...
+  </pre>
+
+  Otherwise, the mean values and standard deviations of both independent variables and dependent variable will be output.
+  <pre> coefficients | intercept | ind_ar_mean | ind_var_std | dep_var_mean | dep_var_std | log_likelihood | normalization
+  ------------------+------------+------------+------------+--------------+-------------+--------+--------
+  ...
+  </pre>
+
+where <em>log_likelihood</em> is the negative value of the first equation above (up to a constant depending on the data set).
+  
+- Get the \b prediction on a data set using the fitted model:
+<pre>
+SELECT madlib.lasso_linear_igd_predict(<em>coefficients</em>, <em>intercept</em>, <em>independentVariables</em>') 
+FROM sourceTableName, modelTableName;
+</pre>
+
+We offer IGD solver (optimizer) for LASSO. IGD is expected to be fastwhen the input data has a lot of examples. 
+But IGD suffers slow convergence rate if the input features is not well-conditioned or a bad stepsize is given. 
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE lasso_data (
+    ind_var DOUBLE PRECISION[],
+    dep_var DOUBLE PRECISION
+);
+\endcode     
+-# Populate the input table with some data, which should be well-conditioned, e.g.:
+\code
+mydb=# INSERT INTO lasso_data values ({1, 1}, 0.89);
+mydb=# INSERT INTO lasso_data values ({0.67, -0.06}, 0.3);
+...
+mydb=# INSERT INTO lasso_data values ({0.15, -1.3}, -1.3);
+\endcode   
+-# call lasso_igd_train() to learn coefficients, e.g.:  
+\code
+mydb=# SELECT madlib.lasso_igd_train('lasso_data', 'ind_var', 'dep_var', 'lasso_model', 0.1, True);
+\endcode
+\code
+mydb=# select madlib.lasso_linear_igd_predict(coefficients, intercept, ind_var)
+mydb-# from lasso_data, lasso_model;
+\endcode
+
+
+@literature
+
+[1] LASSO method. http://en.wikipedia.org/wiki/Lasso_(statistics)#LASSO_method
+
+[2] Regularization: Ridge Regression and the LASSO. http://www-stat.stanford.edu/~owen/courses/305/Rudyregularization.pdf
+
+*/
+
+CREATE TYPE MADLIB_SCHEMA.__lasso_result AS (
+        coefficients    DOUBLE PRECISION[],
+        loss            DOUBLE PRECISION
+);
+
+--------------------------------------------------------------------------
+-- create SQL functions for IGD optimizer
+--------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.__lasso_igd_transition(
+        state           DOUBLE PRECISION[],
+        ind_var         DOUBLE PRECISION[],
+        dep_var         DOUBLE PRECISION,
+        previous_state  DOUBLE PRECISION[],
+        dimension       INTEGER,
+        stepsize        DOUBLE PRECISION,
+        lambda          DOUBLE PRECISION,
+        total_rows      BIGINT)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'lasso_igd_transition'
+LANGUAGE C IMMUTABLE;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.__lasso_igd_merge(
+        state1 DOUBLE PRECISION[],
+        state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'lasso_igd_merge'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.__lasso_igd_final(
+        state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'lasso_igd_final'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing LASSO
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.__lasso_igd_step(
+        /*+ ind_var */          DOUBLE PRECISION[],
+        /*+ dep_var */          DOUBLE PRECISION,
+        /*+ previous_state */   DOUBLE PRECISION[],
+        /*+ dimension */        INTEGER,
+        /*+ stepsize */         DOUBLE PRECISION,
+        /*+ lambda */           DOUBLE PRECISION,
+       /*+  total_rows */       BIGINT) (
+    STYPE = DOUBLE PRECISION[],
+    SFUNC = MADLIB_SCHEMA.__lasso_igd_transition,
+    m4_ifdef(`GREENPLUM',`prefunc = MADLIB_SCHEMA.__lasso_igd_merge,')
+    FINALFUNC = MADLIB_SCHEMA.__lasso_igd_final,
+    INITCOND = '{0,0,0,0,0,0,0,0}'
+);
+
+------------------------------------------------------------------------
+
+CREATE FUNCTION MADLIB_SCHEMA.__lasso_igd_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', 'internal_lasso_igd_distance'
+LANGUAGE c IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.__lasso_igd_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.__lasso_result AS
+'MODULE_PATHNAME', 'internal_lasso_igd_result'
+LANGUAGE c IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.__lasso_execute_using_igd_args(
+    sql VARCHAR, INTEGER, DOUBLE PRECISION, DOUBLE PRECISION, INTEGER, 
+    INTEGER, DOUBLE PRECISION)
+RETURNS VOID
+IMMUTABLE
+CALLED ON NULL INPUT
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'exec_sql_using';
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.__compute_lasso_igd(
+    rel_args        VARCHAR,
+    rel_state       VARCHAR,
+    rel_source      VARCHAR,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    drop_table      BOOLEAN)
+RETURNS INTEGER
+AS $$PythonFunction(convex, lasso_igd, compute_lasso_igd)$$
+LANGUAGE plpythonu VOLATILE;
+
+------------------------------------------------------------------------
+/**
+ * @brief LASSO using incremental gradient
+ *
+ * This function takes as input the table representation of a set of examples
+ * in (FLOAT8[], FLOAT8) format and outputs the coefficients that minimizes
+ * the ordinary least squares with a L1 regularization term.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_ind_var  Name of the column containing feature vector (independent variables)
+ *   @param col_dep_var  Name of the column containing label (dependent variable)
+ *   @param dimension  Number of features (independent variables)
+ *   @param stepsize  Hyper-parameter that decides how aggressive that the gradient steps are
+ *   @param lambda  Hyper-parameter that decides how much the L1 regularization takes effect
+ *   @param total_rows  Number of rows of the input table
+ *   @param num_iterations  Maximum number if iterations to perform regardless of convergence
+ *   @param tolerance  Acceptable level of error in convergence.
+ *   @param normalization Whether to normalize the dependent variables, the result will be given in the original scale
+ * 
+ */
+CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_train(
+    tbl_source      VARCHAR,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    tbl_output      VARCHAR,
+    lambda_value    DOUBLE PRECISION, /*+ DEFAULT 0.1 */
+    normalization   BOOLEAN, /*+ DEFAULT f to save computation */
+    stepsize        DOUBLE PRECISION, /*+ DEFAULT 0.01 */
+    num_iterations  INTEGER, /*+ DEFAULT 100 */
+    tolerance       DOUBLE PRECISION /*+ DEFAULT 0.000001 */
+) RETURNS VOID AS $$
+PythonFunction(convex, lasso_igd, lasso_igd_train)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_train(
+    tbl_source          VARCHAR,
+    col_ind_var         VARCHAR,
+    col_dep_var         VARCHAR,
+    tbl_output          VARCHAR,
+    lambda              DOUBLE PRECISION,
+    normalization       BOOLEAN,
+    stepsize            DOUBLE PRECISION,
+    num_iterations      INTEGER
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.lasso_igd_train($1, $2, $3, $4, $5, $6, $7, $8, 0.000001);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_train(
+    tbl_source          VARCHAR,
+    col_ind_var         VARCHAR,
+    col_dep_var         VARCHAR,
+    tbl_output          VARCHAR,
+    lambda              DOUBLE PRECISION,
+    normalization       BOOLEAN,
+    stepsize            DOUBLE PRECISION
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.lasso_igd_train($1, $2, $3, $4, $5, $6, $7, 100);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_train(
+    tbl_source          VARCHAR,
+    col_ind_var         VARCHAR,
+    col_dep_var         VARCHAR,
+    tbl_output          VARCHAR,
+    lambda              DOUBLE PRECISION,
+    normalization       BOOLEAN
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.lasso_igd_train($1, $2, $3, $4, $5, $6, 0.01);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.lasso_igd_train(
+    tbl_source          VARCHAR,
+    col_ind_var         VARCHAR,
+    col_dep_var         VARCHAR,
+    tbl_output          VARCHAR,
+    lambda              DOUBLE PRECISION
+) RETURNS VOID AS $$
+BEGIN
+    -- set stepsize as default 0.01
+    PERFORM MADLIB_SCHEMA.lasso_igd_train($1, $2, $3, $4, $5, False);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+------------------------------------------------------------------------
+/**
+ * @brief Prediction (real value) using learned coefficients for a given example.
+ *
+ * @param coefficients  Weight vector (hyperplane, classifier)
+ * @param ind_var  Features (independent variables)
+ *
+ */
+CREATE FUNCTION MADLIB_SCHEMA.lasso_linear_igd_predict(
+        coefficients    DOUBLE PRECISION[],
+        intercept       DOUBLE PRECISION,
+        ind_var         DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME', 'lasso_igd_predict'
+LANGUAGE C IMMUTABLE STRICT;
+
+-- predict multiple data points given in a table
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lasso_linear_igd_predict(
+    tbl_model       VARCHAR,
+    tbl_new_data    VARCHAR,
+    ind_var         VARCHAR,
+    id_var          VARCHAR,    -- ID column
+    tbl_prediction  VARCHAR
+) RETURNS VOID AS $$
+DECLARE
+    old_messages    VARCHAR;
+    normalization   BOOLEAN;
+BEGIN
+    old_messages := (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+
+    EXECUTE '
+        CREATE TABLE '|| tbl_prediction ||' AS
+            SELECT
+                '|| tbl_new_data ||'.'|| id_var ||' AS id,
+                MADLIB_SCHEMA.lasso_linear_igd_predict(
+                    coefficients,
+                    intercept,
+                    '|| tbl_new_data ||'.'|| ind_var ||') AS prediction
+                FROM
+                    '|| tbl_new_data ||',
+                    '|| tbl_model;
+
+    EXECUTE 'SET client_min_messages TO ' || old_messages;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
