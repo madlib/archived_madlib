@@ -7,6 +7,7 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
+#include <limits>
 
 #include "metric.hpp"
 
@@ -114,7 +115,14 @@ distAngle(
     const MappedColumnVector& inX,
     const MappedColumnVector& inY) {
 
-    double cosine = dot(inX, inY) / (inX.norm() * inY.norm());
+	// Deal with the undefined case where one of the norm is zero
+	// Angle is not defined. Just return \pi.
+	double xnorm = inX.norm(), ynorm = inY.norm();
+	if (xnorm < std::numeric_limits<double>::denorm_min()
+		|| ynorm < std::numeric_limits<double>::denorm_min())
+		return std::acos(-1);
+	
+    double cosine = dot(inX, inY) / (xnorm * ynorm);
     if (cosine > 1)
         cosine = 1;
     else if (cosine < -1)
