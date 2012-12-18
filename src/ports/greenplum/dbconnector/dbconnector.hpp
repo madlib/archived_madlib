@@ -23,6 +23,7 @@ extern "C" {
     #include <utils/array.h>
     #include <utils/builtins.h>    // needed for format_procedure()
     #include <utils/datum.h>
+    #include <utils/varbit.h>
     #include <utils/lsyscache.h>   // for type lookup, e.g., type_is_rowtype
     #include <utils/memutils.h>
     #include <utils/syscache.h>    // for direct access to catalog, e.g., SearchSysCache()

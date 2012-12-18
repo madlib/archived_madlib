@@ -220,17 +220,45 @@ struct TypeTraits<bool> {
     WITH_TO_CXX_CONVERSION( DatumGetBool(value) );
 };
 
+
 template <>
-struct TypeTraits<char*> {
-    typedef char* value_type;
+struct TypeTraits<text*> {
+    typedef text* value_type;
 
     WITH_OID( TEXTOID );
     WITH_TYPE_CLASS( dbal::SimpleType );
     WITH_MUTABILITY( dbal::Immutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
-    WITH_TO_PG_CONVERSION(PointerGetDatum(cstring_to_text(value)));
-    WITH_TO_CXX_CONVERSION(text_to_cstring(DatumGetTextPP(value)));
+    WITH_TO_PG_CONVERSION(PointerGetDatum(value));
+    WITH_TO_CXX_CONVERSION(DatumGetTextPP(value));
 };
+
+
+template <>
+struct TypeTraits<char*> {
+    typedef char* value_type;
+
+    WITH_OID( CSTRINGOID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(CStringGetDatum(value));
+    WITH_TO_CXX_CONVERSION(DatumGetCString(value));
+};
+
+
+template <>
+struct TypeTraits<VarBit*> {
+    typedef VarBit* value_type;
+
+    WITH_OID( VARBITOID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(VarBitPGetDatum(value));
+    WITH_TO_CXX_CONVERSION(DatumGetVarBitP(value));
+};
+
 
 template <>
 struct TypeTraits<ByteString> : public TypeTraitsBase<ByteString> {
@@ -280,6 +308,30 @@ template <>
 struct TypeTraits<MutableArrayHandle<int32_t> >
   : public TypeTraitsBase<MutableArrayHandle<int32_t> > {
     enum { oid = INT4ARRAYOID };
+    enum { isMutable = dbal::Mutable };
+    enum { typeClass = dbal::ArrayType };
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );
+    WITH_TO_CXX_CONVERSION(
+        needMutableClone
+          ? madlib_DatumGetArrayTypePCopy(value)
+          : madlib_DatumGetArrayTypeP(value)
+    );
+};
+
+template <>
+struct TypeTraits<ArrayHandle<int64_t> >
+  : public TypeTraitsBase<ArrayHandle<int64_t> > {
+    enum { oid = INT8ARRAYOID };
+    enum { isMutable = dbal::Immutable };
+    enum { typeClass = dbal::ArrayType };
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );
+    WITH_TO_CXX_CONVERSION( madlib_DatumGetArrayTypeP(value) );
+};
+
+template <>
+struct TypeTraits<MutableArrayHandle<int64_t> >
+  : public TypeTraitsBase<MutableArrayHandle<int64_t> > {
+    enum { oid = INT8ARRAYOID };
     enum { isMutable = dbal::Mutable };
     enum { typeClass = dbal::ArrayType };
     WITH_TO_PG_CONVERSION( PointerGetDatum(value.array()) );

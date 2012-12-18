@@ -33,8 +33,15 @@ class AnyType {
 public:
     AnyType();
     template <typename T> AnyType(const T& inValue,
-        bool inForceLazyConversionToDatum = false);
-    template <typename T> T getAs() const;
+        bool inForceLazyConversionToDatum = false,
+        bool isCheckType = true);
+
+    // Set isCheckType to false, if you don't want to check the type of this instance.
+    // Set isCloneMutable to false, if you don't want to copy the mutable TypeTraits,
+    // for example, in the aggregate step/pre/final function, we always get the state by
+    // setting isCloneMutable to false.
+    template <typename T> T getAs(bool isCheckType = true, bool isCloneMutable = true) const;
+
     AnyType operator[](uint16_t inID) const;
     uint16_t numFields() const;
     bool isNull() const;

@@ -29,6 +29,7 @@ extern "C" {
     #include <utils/memutils.h>
     #include <utils/syscache.h>    // for direct access to catalog, e.g., SearchSysCache()
     #include <utils/typcache.h>    // type conversion, e.g., lookup_rowtype_tupdesc
+    #include <utils/varbit.h>
     #include "../../../../methods/svec/src/pg_gp/sparse_vector.h" // Legacy sparse vectors
 } // extern "C"
 

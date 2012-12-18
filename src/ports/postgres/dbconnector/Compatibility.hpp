@@ -20,6 +20,10 @@ namespace {
     #define FLOAT8ARRAYOID 1022
 #endif
 
+#ifndef INT8ARRAYOID
+    #define INT8ARRAYOID 1016
+#endif
+
 #ifndef PG_GET_COLLATION
 // See madlib_InitFunctionCallInfoData()
 #define PG_GET_COLLATION()	InvalidOid

@@ -74,7 +74,7 @@ AnyType::AnyType(SystemInformation* inSysInfo, Datum inDatum,
  */
 template <typename T>
 inline
-AnyType::AnyType(const T& inValue, bool inForceLazyConversionToDatum)
+AnyType::AnyType(const T& inValue, bool inForceLazyConversionToDatum, bool isCheckType)
   : mContentType(Scalar),
     mContent(),
     mToDatumFn(),
@@ -86,6 +86,11 @@ AnyType::AnyType(const T& inValue, bool inForceLazyConversionToDatum)
     mTypeName(TypeTraits<T>::typeName()),
     mIsMutable(TypeTraits<T>::isMutable) {
 
+    if (!isCheckType){
+        mTypeID = InvalidOid;
+        mTypeName = NULL;
+    }
+
     if (inForceLazyConversionToDatum || lazyConversionToDatum()) {
         mContent = inValue;
         mToDatumFn = std::bind(TypeTraits<T>::toDatum, inValue);
@@ -93,6 +98,7 @@ AnyType::AnyType(const T& inValue, bool inForceLazyConversionToDatum)
         mDatum = TypeTraits<T>::toDatum(inValue);
     }
 }
+
 
 /**
  * @brief Default constructor, initializes AnyType object as Null
@@ -150,12 +156,12 @@ AnyType::consistencyCheck() const {
 /**
  * @brief Convert object to the type specified as template argument
  *
- * @tparam T Type to convert object to
+ * @param T Type to convert object to
  */
 template <typename T>
 inline
 T
-AnyType::getAs() const {
+AnyType::getAs(bool isCheckType /*true*/, bool isCloneMutable /*true*/) const {
     consistencyCheck();
 
     if (isNull())
@@ -167,7 +173,7 @@ AnyType::getAs() const {
             "Composite type where not expected.");
 
     // Verify type OID
-    if (TypeTraits<T>::oid != InvalidOid && mTypeID != TypeTraits<T>::oid) {
+    if (isCheckType && TypeTraits<T>::oid != InvalidOid && mTypeID != TypeTraits<T>::oid) {
         std::stringstream errorMsg;
         errorMsg << "Invalid type conversion. Expected type ID "
             << TypeTraits<T>::oid;
@@ -184,7 +190,7 @@ AnyType::getAs() const {
     }
 
     // Verify type name
-    if (TypeTraits<T>::typeName() &&
+    if (isCheckType && TypeTraits<T>::typeName() &&
         std::strncmp(mTypeName, TypeTraits<T>::typeName(), NAMEDATALEN)) {
 
         std::stringstream errorMsg;
@@ -195,7 +201,7 @@ AnyType::getAs() const {
     }
 
     if (mContent.empty()) {
-        bool needMutableClone = (TypeTraits<T>::isMutable && !mIsMutable);
+        bool needMutableClone = TypeTraits<T>::isMutable && isCloneMutable && (!mIsMutable);
         return TypeTraits<T>::toCXXType(mDatum, needMutableClone, mSysInfo);
     } else {
         // any_cast<T*> will not throw but return a NULL pointer if of
@@ -211,6 +217,7 @@ AnyType::getAs() const {
         return *value;
     }
 }
+
 
 /**
  * @brief Return if object is Null

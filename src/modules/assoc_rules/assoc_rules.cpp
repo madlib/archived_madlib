@@ -47,7 +47,7 @@ typedef struct perm_fctx
 void *
 gen_rules_from_cfp::SRF_init(AnyType &args) {
     perm_fctx     *myfctx        = NULL;
-    char          *positions     = args[0].getAs<char*>();
+    char          *positions     = text_to_cstring(args[0].getAs<text*>());
 
     // allocate memory for user context
     myfctx            = new perm_fctx();
