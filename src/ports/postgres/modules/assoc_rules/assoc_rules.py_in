@@ -60,7 +60,10 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
     begin_func_exec = time.time();
     begin_step_exec = time.time();
     cal_itemsets_time = 0;
-
+    plpy.execute("""
+        SELECT set_config('search_path', 
+                current_setting('search_path') || ',{madlib_schema}', 
+                false)""".format(madlib_schema=madlib_schema));
     #check parameters
     __assert(
             support is not None and
@@ -148,79 +151,48 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
     # if the tid in the input table doesn't start with 1 and the IDs are not
     # continuous, then we will make the IDs start with 1 and continuous.
     # note: duplicated records will be removed.
-    plpy.execute("DROP TABLE IF EXISTS assoc_input_unique");
     rv = plpy.execute("""
-        SELECT max({0}) as x, min({1}) as i, count({2}) as c
-        FROM {3}""".format(tid_col, tid_col, tid_col, input_table));
-    if rv[0]["i"] != 1 or rv[0]["x"] - rv[0]["i"] != rv[0]["c"] :
-        plpy.execute("""
-             CREATE TEMP TABLE assoc_input_unique AS
-             SELECT
-                dense_rank() OVER (ORDER BY tid)::BIGINT as tid,
-                item
-             FROM (
-                SELECT {0} as tid,
-                       {1}::text as item
-                FROM {2}
-                WHERE {3} IS NOT NULL AND
-                      {4}  IS NOT NULL
-                GROUP BY 1,2
-             ) t
-             m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (tid)')
-             """.format(tid_col, item_col, input_table, tid_col, item_col)
-             );
-
-    if verbose :
-        plpy.info("finished removing duplicates");
-
-    rv = plpy.execute("""
-        SELECT count(DISTINCT tid) as c1, count(DISTINCT item) as c2
-        FROM assoc_input_unique
-        """);
+        SELECT min({tid_col}) as i, count(DISTINCT {tid_col}) as c1
+        FROM {input_table}
+        """.format(tid_col=tid_col, input_table=input_table));
+    
+    min_tid = int(rv[0]["i"]);
     num_tranx = rv[0]["c1"];
-    num_prod = rv[0]["c2"];
     min_supp_tranx = float(num_tranx) * support;
 
     # get the items whose counts are greater than the given
     # support counts. Each item will be given a continuous number.
+    begin_step_exec = time.time();
     plpy.execute("DROP TABLE IF EXISTS assoc_item_uniq");
     plpy.execute("""
-        CREATE TEMP TABLE assoc_item_uniq (item_id, item_text, cnt) AS
-        SELECT row_number() OVER (ORDER BY cnt DESC)::BIGINT,
-           item::TEXT,
-           cnt::FLOAT8
-        FROM (
-           SELECT item AS item, count(tid) as cnt
-           FROM assoc_input_unique
-           GROUP BY item
-        ) t
-        WHERE cnt::FLOAT8 >= {0}
+        CREATE TEMP TABLE assoc_item_uniq
+            (item_id BIGSERIAL, item_text TEXT, cnt BIGINT)
         m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (item_id)')
-        """.format(min_supp_tranx));
-
+        """);
+    plpy.execute("""
+        INSERT INTO assoc_item_uniq (item_text, cnt) 
+        SELECT item, count(tid) as cnt
+        FROM (
+            SELECT {item_col} as item, {tid_col} as tid FROM {input_table}
+            WHERE {item_col} IS NOT NULL AND {tid_col} IS NOT NULL
+            GROUP BY {item_col}, {tid_col}
+            ) t
+        GROUP BY item
+        HAVING count(tid)::FLOAT8 >= {min_supp}
+        """.format(min_supp=min_supp_tranx, item_col=item_col, 
+                   tid_col=tid_col, input_table=input_table));
     if verbose :
-        plpy.info("finished encoding items");
-
+        plpy.info("finished encoding items: time {0}".format(
+            time.time() - begin_step_exec));
     rv = plpy.execute("SELECT count(item_id) as c FROM assoc_item_uniq");
     num_supp_prod = rv[0]["c"];
-
-    plpy.execute("DROP TABLE IF EXISTS assoc_enc_input");
-    plpy.execute("""
-         CREATE TEMP TABLE assoc_enc_input (tid, item, cnt) AS
-         SELECT t1.tid, t2.item_id, t2.cnt
-         FROM assoc_input_unique t1, assoc_item_uniq t2
-         WHERE t1.item = t2.item_text
-         m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (tid)')
-         """);
-
-    if verbose :
-        plpy.info("finished encoding input table: {0}".format(
-                time.time() - begin_step_exec));
-
-    begin_step_exec = time.time();
+        
+    if min_tid < 1 :
+        min_tid = 1 - min_tid;
+    else :
+        min_tid = 0;
 
     plpy.info("Beginning iteration #1");
-
     begin_step_exec = time.time();
 
     # this table keeps the patterns in each iteration.
@@ -229,12 +201,11 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
         CREATE TEMP TABLE assoc_rule_sets
             (
             text_svec   TEXT,
-            set_list    {0}.svec,
             support     FLOAT8,
             iteration   INT
             )
         m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (text_svec)')
-        """.format(madlib_schema));
+        """.format(madlib_schema = madlib_schema));
 
     # this table keeps the patterns in the current iteration.
     plpy.execute("DROP TABLE IF EXISTS assoc_rule_sets_loop");
@@ -242,27 +213,25 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
         CREATE TEMP TABLE assoc_rule_sets_loop
             (
             id          BIGINT,
-            set_list    {0}.svec,
+            set_list    {madlib_schema}.bitmap,
             support     FLOAT8,
-            tids        {1}.svec
+            tids        {madlib_schema}.bitmap
             )
         m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (id)')
-        """.format(madlib_schema, madlib_schema));
-
+        """.format(madlib_schema = madlib_schema));
+        
     plpy.execute("""
          INSERT INTO assoc_rule_sets_loop (id, set_list, support, tids)
-         SELECT
-             t.item,
-            {0}.svec_cast_positions_float8arr
-              (ARRAY[t.item], ARRAY[1], {1}, 0),
-            t.cnt::FLOAT8 / {2},
-            {3}.svec_cast_positions_float8arr
-                (array_agg(t.tid), array_agg(1), {4}, 0)
-         FROM assoc_enc_input t
-         GROUP BY t.item, t.cnt
-         """.format(madlib_schema, num_supp_prod, num_tranx, madlib_schema,
-                    num_tranx)
-         );
+         SELECT t2.item_id,
+                {madlib_schema}.bitmap_agg(t2.item_id, 4),
+                t2.cnt::FLOAT8 / {num_tranx},
+                {madlib_schema}.bitmap_agg(t1.{tid_col} + {min_tid}, 256)
+         FROM {input_table} t1 RIGHT JOIN assoc_item_uniq t2
+         ON t1.{item_col} = t2.item_text AND t1.{tid_col} IS NOT NULL
+         GROUP BY t2.item_id, t2.cnt
+         """.format(madlib_schema = madlib_schema, item_col=item_col, 
+                tid_col=tid_col, input_table=input_table,
+                min_tid=min_tid, num_tranx = num_tranx));
 
     rv = plpy.execute("""
         SELECT count(id) as c1, max(id) as c2
@@ -276,7 +245,10 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
             (num_item_loop == 0 and max_item_loop is None),
             "internal error: num_item_loop must be equal to max_item_loop"
         );
-
+    if verbose :
+        plpy.info("finished generating first frequent itemsets: time {0}".format(
+            time.time() - begin_step_exec));
+            
     # to avoid the self cross join of the table assoc_rule_sets_loop,
     # we use the following table to generate the join relationship
     # so that we can use inner join (hash join)
@@ -297,12 +269,12 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
          CREATE TEMP TABLE assoc_loop_aux
             (
             id              BIGSERIAL,
-            set_list        {0}.svec,
+            set_list        {madlib_schema}.bitmap,
             support         FLOAT8,
-            tids            {1}.svec
+            tids            {madlib_schema}.bitmap
             )
          m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (id)')
-         """.format(madlib_schema, madlib_schema));
+         """.format(madlib_schema = madlib_schema));
 
     if verbose  :
         plpy.info("{0} Frequent itemsets found in this iteration".format(
@@ -328,12 +300,11 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
 
         plpy.execute("""
              INSERT INTO assoc_rule_sets
-                (text_svec, set_list, support, iteration)
+                (text_svec, support, iteration)
              SELECT array_to_string(
-                    {0}.svec_nonbase_positions(set_list, 0), ','),
-                    set_list,
-                    support, {1}
-             FROM assoc_rule_sets_loop""".format(madlib_schema, iter)
+                    {madlib_schema}.bitmap_nonzero_positions(set_list), ','),
+                    support, {iter}
+             FROM assoc_rule_sets_loop""".format(madlib_schema = madlib_schema, iter = iter)
              );
 
         if verbose  :
@@ -345,28 +316,28 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
         plpy.execute("TRUNCATE TABLE assoc_loop_aux");
         plpy.execute("""
            INSERT INTO assoc_loop_aux(set_list, support, tids)
-           SELECT DISTINCT ON({0}.svec_to_string(set_list)) set_list,
-                   {1}.svec_l1norm(tids)::FLOAT8 / {2},
+           SELECT DISTINCT ON(set_list::INT[]) set_list,
+                   {madlib_schema}.bitmap_nonzero_count(tids)::FLOAT8 / {num_tranx},
                    tids
            FROM (
              SELECT
-                {3}.svec_minus(
-                    {4}.svec_plus(t1.set_list, t3.set_list),
-                    {5}.svec_mult(t1.set_list, t3.set_list)
-                ) as set_list,
-                {6}.svec_mult(t1.tids, t3.tids) as tids
+                 t1.set_list | t3.set_list
+                 as set_list,
+               t1.tids & t3.tids as tids
              FROM assoc_rule_sets_loop t1,
                   rule_set_rel t2,
                   assoc_rule_sets_loop t3
              WHERE t1.id = t2.sid and t2.did = t3.id
            ) t
-           WHERE {7}.svec_l1norm(set_list)::INT = {8} AND
-                 {9}.svec_l1norm(tids)::FLOAT8 >= {10}
-           """.format(madlib_schema, madlib_schema, num_tranx, madlib_schema,
-                      madlib_schema, madlib_schema, madlib_schema, madlib_schema,
-                      iter + 1, madlib_schema, min_supp_tranx)
+           WHERE {madlib_schema}.bitmap_nonzero_count(set_list)::INT = {next_iter} AND
+                 {madlib_schema}.bitmap_nonzero_count(tids)::FLOAT8 >= {min_supp_tranx}
+           """.format(madlib_schema = madlib_schema, num_tranx = num_tranx,
+                      next_iter = iter + 1, min_supp_tranx = min_supp_tranx)
            );
-
+        
+        
+        
+        #if 3 == iter : return (None, None, None, None);
         plpy.execute("TRUNCATE TABLE assoc_rule_sets_loop");
         plpy.execute("""
             INSERT INTO assoc_rule_sets_loop(id, set_list, support, tids)
@@ -393,6 +364,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
                     iter + 1, time.time() - begin_step_exec));
 
         cal_itemsets_time = cal_itemsets_time + (time.time() - begin_step_exec);
+        
 
     if (num_item_loop == 0) and (iter < 2) and verbose :
         plpy.info("No association rules found that meet given criteria");
@@ -431,6 +403,14 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
                   (t.support_xy / x.support) >= {1}
             """.format(madlib_schema, confidence)
             );
+
+        if verbose :
+            rv = plpy.execute("""
+                SELECT count(*) as c FROM assoc_rules_aux_tmp
+                """);
+            num_item_loop = rv[0]["c"];
+            plpy.info("{0} Total association rules found. Time: {1}".format(
+                    num_item_loop, time.time() - begin_step_exec));
 
         # generate the readable rules
         plpy.execute("DROP TABLE IF EXISTS pre_tmp_table");
@@ -483,10 +463,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
                 DROP TABLE IF EXISTS post_tmp_table;
                 DROP TABLE IF EXISTS pre_tmp_table;
                 DROP TABLE IF EXISTS assoc_rules_aux_tmp;
-                DROP TABLE IF EXISTS assoc_input_unique;
                 DROP TABLE IF EXISTS assoc_item_uniq;
-                DROP TABLE IF EXISTS assoc_item_svec;
-                DROP TABLE IF EXISTS assoc_enc_input;
                 DROP TABLE IF EXISTS assoc_rule_sets;
                 DROP TABLE IF EXISTS assoc_rule_sets_loop;
                 DROP TABLE IF EXISTS rule_set_rel;
@@ -512,3 +489,4 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
             total_rules,
             time.time() - begin_func_exec
            );
+
