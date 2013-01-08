@@ -69,6 +69,38 @@ AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 
 } // namnespace
 
+inline ArrayType* madlib_construct_array
+(
+    Datum*  elems,
+    int     nelems,
+    Oid     elmtype,
+    int     elmlen,
+    bool    elmbyval,
+    char    elmalign
+){
+    return 
+        construct_array(
+            elems, nelems, elmtype, elmlen, elmbyval, elmalign);
+}
+
+inline ArrayType* madlib_construct_md_array
+(
+    Datum*  elems,
+    bool*   nulls,
+    int     ndims,
+    int*    dims,
+    int*    lbs,
+    Oid     elmtype,
+    int     elmlen,
+    bool    elmbyval,
+    char    elmalign
+){
+    return
+        construct_md_array(
+            elems, nulls, ndims, dims, lbs, elmtype, elmlen, elmbyval,
+            elmalign);
+}
+
 } // namespace postgres
 
 } // namespace dbconnector

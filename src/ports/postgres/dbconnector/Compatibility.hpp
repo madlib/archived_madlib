@@ -7,6 +7,10 @@
 #ifndef MADLIB_POSTGRES_COMPATIBILITY_HPP
 #define MADLIB_POSTGRES_COMPATIBILITY_HPP
 
+extern "C" {
+    #include <access/tupmacs.h>
+    #include <utils/memutils.h>
+}
 namespace madlib {
 
 namespace dbconnector {
@@ -18,6 +22,10 @@ namespace {
 
 #ifndef FLOAT8ARRAYOID
     #define FLOAT8ARRAYOID 1022
+#endif
+
+#ifndef INT8ARRAYOID
+    #define INT8ARRAYOID 1016
 #endif
 
 #ifndef PG_GET_COLLATION
@@ -54,7 +62,7 @@ namespace {
 
 /**
  * @brief Test whether we are currently in an aggregate calling context.
- * 
+ *
  * Knowing whether we are in an aggregate calling context is useful, because it
  * allows write access to the transition state of the aggregate function.
  * At all other time, modifying a pass-by-reference input is strictly forbidden:
@@ -79,16 +87,169 @@ AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
      * commit ec4be2ee6827b6bd85e0813c7a8993cfbb0e6fa7 from
      * Fri, 12 Feb 2010 17:33:21 +0000 (17:33 +0000)
      * by Tom Lane <tgl@sss.pgh.pa.us> */
-    
+
 	/* this is just to prevent "uninitialized variable" warnings */
 	if (aggcontext)
 		*aggcontext = NULL;
 	return 0;
 }
 
+
 #endif // PG_VERSION_NUM < 90000
 
 } // namnespace
+
+
+/**
+ * @brief construct an array of zero values.
+ * @note the supported types are: int2, int4, int8, float4 and float8
+ *
+ */
+static ArrayType* construct_md_array_zero
+(
+    int     ndims,
+    int*    dims,
+    int*    lbs,
+    Oid     elmtype,
+    int     elmlen,
+    bool    elmbyval,
+    char    elmalign
+){
+    ArrayType  *result;
+    int32       nbytes;
+    int32       dataoffset;
+    int         i;
+    int         nelems;
+    Datum       theDatum;
+    (void) elmbyval;
+    if (ndims < 0)              /* we do allow zero-dimension arrays */
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("invalid number of dimensions: %d", ndims)));
+    if (ndims > MAXDIM)
+        ereport(ERROR,
+                (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                 errmsg("number of array dimensions (%d) exceeds the maximum allowed (%d)",
+                        ndims, MAXDIM)));
+
+    /* fast track for empty array */
+    if (ndims == 0)
+        return construct_empty_array(elmtype);
+
+    nelems = ArrayGetNItems(ndims, dims);
+
+    /* compute required space */
+    nbytes = 0;
+
+    switch (elmtype)
+    {
+        case INT2OID:
+            theDatum = Int16GetDatum(1);
+            break;
+        case INT4OID:
+            theDatum = Int32GetDatum(1);
+            break;
+        case INT8OID:
+            theDatum = Int64GetDatum(1);
+            break;
+        case FLOAT4OID:
+            theDatum = Float4GetDatum(1.0);
+            break;
+        case FLOAT8OID:
+            theDatum = Float8GetDatum(1.0);
+            break;
+        default:
+            ereport(ERROR,
+                    (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                     errmsg("the support types are INT2, INT4, INT8, FLOAT4 and FLOAT8")));
+            break;
+    }
+    for (i = 0; i < nelems; i++)
+    {
+        /* make sure data is not toasted */
+        if (elmlen == -1)
+            theDatum = PointerGetDatum(PG_DETOAST_DATUM(theDatum));
+        nbytes = att_addlength_datum(nbytes, elmlen, theDatum);
+        nbytes = att_align_nominal(nbytes, elmalign);
+        /* check for overflow of total request */
+        if (!AllocSizeIsValid(nbytes))
+            ereport(ERROR,
+                    (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                     errmsg("array size exceeds the maximum allowed (%d)",
+                            (int) MaxAllocSize)));
+    }
+
+    dataoffset = 0;         /* marker for no null bitmap */
+    nbytes += ARR_OVERHEAD_NONULLS(ndims);
+    result = (ArrayType *) palloc0(nbytes);
+    SET_VARSIZE(result, nbytes);
+    result->ndim = ndims;
+    result->dataoffset = dataoffset;
+    result->elemtype = elmtype;
+    memcpy(ARR_DIMS(result), dims, ndims * sizeof(int));
+    memcpy(ARR_LBOUND(result), lbs, ndims * sizeof(int));
+
+    return result;
+}
+
+/**
+ * @brief construct an array of zero values.
+ * @note the supported types are: int2, int4, int8, float4 and float8
+ */
+static ArrayType* construct_array_zero
+(
+    int     nelems,
+    Oid     elmtype,
+    int     elmlen,
+    bool    elmbyval,
+    char    elmalign
+)
+{
+    int         dims[1];
+    int         lbs[1];
+
+    dims[0] = nelems;
+    lbs[0] = 1;
+
+    return
+        construct_md_array_zero(
+            1, dims, lbs, elmtype, elmlen, elmbyval, elmalign);
+}
+
+inline ArrayType* madlib_construct_md_array
+(
+    Datum*  elems,
+    bool*   nulls,
+    int     ndims,
+    int*    dims,
+    int*    lbs,
+    Oid     elmtype,
+    int     elmlen,
+    bool    elmbyval,
+    char    elmalign
+){
+    return
+        elems ?  
+        construct_md_array(
+            elems, nulls, ndims, dims, lbs, elmtype, elmlen, elmbyval,
+            elmalign) :
+        construct_md_array_zero(
+            ndims, dims, lbs, elmtype, elmlen, elmbyval, elmalign); 
+}
+
+inline ArrayType* madlib_construct_array
+(
+    Datum*  elems,
+    int     nelems,
+    Oid     elmtype,
+    int     elmlen,
+    bool    elmbyval,
+    char    elmalign
+){
+    return elems ?
+           construct_array(elems, nelems, elmtype, elmlen, elmbyval, elmalign) :
+           construct_array_zero(nelems, elmtype, elmlen, elmbyval, elmalign);
+}
 
 } // namespace postgres
 
