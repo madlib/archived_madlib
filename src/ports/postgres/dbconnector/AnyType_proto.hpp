@@ -44,9 +44,6 @@ public:
     inline SystemInformation * getSysInfo(){
         return this->mSysInfo;
     }
-    inline FunctionCallInfo getFCInfo(){
-        return this->fcinfo;
-    }
 protected:
     /**
      * @brief RAII class to temporarily change \c sLazyConversionToDatum
