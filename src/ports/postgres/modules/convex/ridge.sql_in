@@ -1,0 +1,341 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file ridge.sql_in
+ *
+ * @brief SQL functions for ridge regression
+ * @date July 2012
+ *
+ * @sa For a brief introduction to ridge regression, see the module
+ *     description \ref grp_ridge.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4') -- ' 
+
+/**
+@addtogroup grp_ridge
+
+
+@about
+
+This module implements ridge regression (linear regression with Tikhonov regularization [1]).
+Mathematically, this model seeks to find a weight vector \f$w\f$ (also referred as hyperplane) that, for any given training example set, minimizes:
+\f[\min_{w \in R^N,w_{0}} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w^{t} x_m + w_{0} - y_m)^2 \right] + \frac{\lambda}{2} \|w\|_2^2,\f]
+where \f$x_m \in R^N\f$ are values of independent variables, and \f$y_m \in R\f$ are values of the dependent variable, \f$m = 1,...,M\f$. Note that \f[w_{0}\f] is not regularized.
+
+To get better convergence, one can rescale the value of each element of x
+\f[ x' \leftarrow \frac{x - \bar{x}}{\sigma_x} \f]
+and
+\f[y' \leftarrow y - \bar{y} \f]
+and then fit 
+\f[\min_{w' \in R^N} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w'^{t} x'_m - y'_m)^2 \right] + \frac{\lambda}{2} \|w'\|_2^2,\f]
+At the end of the calculation, the orginal scales will be restored and an intercept term will be obtained at the same time as a by-product.
+
+Note that fitting after scaling is not equivalent to directly fitting.
+
+@input
+
+The <b>training examples</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    <em>independentVariables</em>    DOUBLE PRECISION[],
+    <em>dependentVariables</em>    DOUBLE PRECISION
+)</pre>
+
+Null values are not expected.
+
+
+@usage
+
+- Get the vector of coefficients \f$ \boldsymbol w \f$:
+
+<pre>SELECT madlib.ridge_newton_train(
+    '<em>tbl_source</em>', -- data source table
+    '<em>col_ind_var</em>', -- name of independent variable column
+    '<em>col_dep_var</em>', -- name of dependent variable column 
+    '<em>tbl_output</em>',  -- output table's name
+    <em>lambda</em>, -- regulation parameter value
+    [<em>normalization</em>] -- whether do the scaling of x
+); 
+</pre>
+
+  Output:
+  If normalization = False, the output has the following format
+  <pre> coefficients | intercept | log_likelihood | normalization 
+  ----------------+--------------+---------------+-------------
+        ...
+  </pre>
+  
+  Otherwise, the mean values and standard deviations of both independent variables and dependent variable will be output.
+  <pre> coefficients | intercept | ind_ar_mean | ind_var_std | dep_var_mean | dep_var_std | log_likelihood | normalization
+  ------------------+------------+------------+------------+--------------+-------------+------------------+-------------
+  ...
+  </pre>
+  where <em>log_likelihood</em> is the negative value of the first equation above (up to a constant depending on the data set).
+
+<b> Make predictions</b>
+where <em>intercept</em> presents if it exists:
+<pre>
+SELECT madlib.ridge_linear_newton_predict(<em>coefficients</em>, <em>intercept</em>, <em>col_ind_var</em>)
+FROM sourceTableName, modelTableName;
+</pre>
+
+<b> Measure the error of the prediction </b>
+<pre>
+
+
+Please find descriptions of SQL functions in ridge.sql_in
+
+we offer Newton's method solver (optimizer) for ridge regression. For ridge regression, this is a one-pass algorithm.
+
+Since Hessian is stored in memory, we expect the number of coefficients is less than 32767 (2^15 - 1).
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE ridge_data (
+    ind_var DOUBLE PRECISION[],
+    dep_var DOUBLE PRECISION
+);
+\endcode     
+-# Populate the input table with some data, which should be well-conditioned, e.g.:
+\code
+mydb=# INSERT INTO ridge_data values ({1, 1}, 0.89);
+mydb=# INSERT INTO ridge_data values ({0.67, -0.06}, 0.3);
+...
+mydb=# INSERT INTO ridge_data values ({0.15, -1.3}, -1.3);
+\endcode   
+-# call ridge_newton_train() to learn coefficients, e.g.:  
+\code
+mydb=# SELECT madlib.ridge_newton_train('ridge_data', 'ind_var', 'dep_var', 'ridge_model', 0.1, True);
+\endcode
+\code
+mydb=# select madlib.ridge_linear_newton_predict(coefficients, intercept, ind_var)
+mydb-# from ridge_data, ridge_model;
+\endcode
+
+
+@literature
+
+[1] Tikhonov regularization. http://en.wikipedia.org/wiki/Tikhonov_regularization
+
+[2] Regularization: Ridge Regression and the LASSO. http://www-stat.stanford.edu/~owen/courses/305/Rudyregularization.pdf
+
+*/
+
+
+--------------------------------------------------------------------------
+-- create SQL functions for Newton's method optimizer
+--------------------------------------------------------------------------
+CREATE FUNCTION MADLIB_SCHEMA.__ridge_newton_transition(
+    state           DOUBLE PRECISION[],
+    ind_var         DOUBLE PRECISION[],
+    dep_var         DOUBLE PRECISION,
+    previous_state  DOUBLE PRECISION[],
+    dimension       SMALLINT,
+    lambda          DOUBLE PRECISION)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'ridge_newton_transition'
+LANGUAGE C IMMUTABLE;
+
+CREATE FUNCTION MADLIB_SCHEMA.__ridge_newton_merge(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'ridge_newton_merge'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION MADLIB_SCHEMA.__ridge_newton_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'ridge_newton_final'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing ridge regression
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.__ridge_newton_step(
+    /*+ ind_var */          DOUBLE PRECISION[],
+    /*+ dep_var */          DOUBLE PRECISION,
+    /*+ previous_state */   DOUBLE PRECISION[], 
+    /*+ dimension */        SMALLINT,
+    /*+ lambda */           DOUBLE PRECISION) (
+    STYPE = DOUBLE PRECISION[],
+    SFUNC = MADLIB_SCHEMA.__ridge_newton_transition,
+    m4_ifdef(`GREENPLUM',`prefunc = MADLIB_SCHEMA.__ridge_newton_merge,')
+    FINALFUNC = MADLIB_SCHEMA.__ridge_newton_final,
+    INITCOND = '{0,0,0,0,0,0}'
+);
+
+CREATE FUNCTION MADLIB_SCHEMA.__ridge_newton_result(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'internal_ridge_newton_result'
+LANGUAGE c IMMUTABLE STRICT;
+
+/**
+ * @brief Ridge regression using Newton's method
+ *
+ * This function takes as input the table representation of a set of examples
+ * in (FLOAT8[], FLOAT8) format and outputs the coefficients that minimizes
+ * the ordinary least squares with a L2 regularization term.
+ *
+ *   @param rel_output  Name of the table that the factors will be appended to
+ *   @param rel_source  Name of the table/view with the source data
+ *   @param col_ind_var  Name of the column containing feature vector (independent variables)
+ *   @param col_dep_var  Name of the column containing label (dependent variable)
+ *   @param dimension  Number of features (independent variables)
+ *   @param lambda  Hyper-parameter that decides how much the L1 regularization takes effect
+ * 
+ */
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_train(
+    tbl_source      VARCHAR,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    tbl_output      VARCHAR,
+    lambda_value    DOUBLE PRECISION, /*+ DEFAULT 0.1 */
+    normalization   BOOLEAN -- default f to save computation amount
+) RETURNS VOID AS $$
+PythonFunction(convex, ridge, ridge_newton_train)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+
+CREATE FUNCTION MADLIB_SCHEMA.ridge_newton_train(
+    rel_source      VARCHAR,
+    col_ind_var     VARCHAR,
+    col_dep_var     VARCHAR,
+    rel_output      VARCHAR,
+    lambda          DOUBLE PRECISION /*+ DEFAULT 0.1 */
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.ridge_newton_train($1, $2, $3, $4, $5, f);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+ * @brief Prediction (real value) using learned coefficients for a given example.
+ *
+ * @param coefficients  Weight vector (hyperplane, classifier)
+ * @param ind_var  Features (independent variables)
+ *
+ */
+CREATE FUNCTION MADLIB_SCHEMA.ridge_linear_newton_predict(
+    coefficients    DOUBLE PRECISION[],
+    intercept       DOUBLE PRECISION,
+    ind_var         DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME', 'ridge_newton_predict'
+LANGUAGE C IMMUTABLE STRICT;
+
+-- predict multiple data points given in a table
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ridge_linear_newton_predict(
+    tbl_model       VARCHAR,
+    tbl_new_data    VARCHAR,
+    ind_var         VARCHAR,
+    id_var          VARCHAR,    -- ID column
+    tbl_prediction  VARCHAR
+) RETURNS VOID AS $$
+DECLARE
+    old_messages    VARCHAR;
+    normalization   BOOLEAN;
+BEGIN
+    old_messages := (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    
+    EXECUTE '
+        CREATE TABLE '|| tbl_prediction ||' AS
+            SELECT
+                '|| tbl_new_data ||'.'|| id_var ||' AS id,
+                MADLIB_SCHEMA.ridge_linear_newton_predict(
+                    coefficients,
+                    intercept,
+                    '|| tbl_new_data ||'.'|| ind_var ||') AS prediction
+            FROM
+                '|| tbl_new_data ||',
+                '|| tbl_model;
+
+    EXECUTE 'SET client_min_messages TO ' || old_messages;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- compare the prediction and actual values
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mse_error(
+    tbl_prediction  VARCHAR,    -- predicted values
+    tbl_actual      VARCHAR,
+    id_actual       VARCHAR,
+    values_actual   VARCHAR,
+    tbl_error       VARCHAR
+) RETURNS VOID AS $$
+DECLARE
+    error           DOUBLE PRECISION;
+    old_messages    VARCHAR; 
+BEGIN
+    old_messages := (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+
+    EXECUTE '
+        CREATE TABLE '|| tbl_error ||' AS
+        SELECT
+            avg(('|| tbl_prediction ||'.prediction - '|| tbl_actual ||'.'|| values_actual ||')^2) as mean_squared_error
+        FROM
+            '|| tbl_prediction ||',
+            '|| tbl_actual ||'
+        WHERE
+            '|| tbl_prediction ||'.id = '|| tbl_actual ||'.'|| id_actual;
+
+    EXECUTE 'SET client_min_messages TO ' || old_messages;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+-- compute the independent variables scales
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ridge_ind_var_scales(
+    tbl_data        VARCHAR,
+    col_ind_var     VARCHAR,
+    row_num         INTEGER,
+    dimension       INTEGER,
+    tbl_scales      VARCHAR
+) RETURNS VOID AS $$
+PythonFunction(convex, ridge, __ridge_ind_var_scales)
+$$ LANGUAGE plpythonu;
+
+-- compute the dependent variable scale
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ridge_dep_var_scale(
+    tbl_data        VARCHAR,
+    col_dep_var     VARCHAR,
+    row_num         INTEGER,
+    tbl_scale       VARCHAR     -- scale including mean and std
+) RETURNS VOID AS $$
+PythonFunction(convex, ridge, __ridge_dep_var_scale)
+$$ LANGUAGE plpythonu;
+
+-- normalize both the independent data and dependent data
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ridge_normalize_data(
+    tbl_data        VARCHAR,    -- original data
+    col_ind_var     VARCHAR,    -- independent variables column 
+    dimension       INTEGER,    -- length of independent variable array
+    col_dep_var     VARCHAR,    -- dependent variable column
+    tbl_ind_scales  VARCHAR,    -- independent variables scales array
+    tbl_dep_scale   VARCHAR,    -- dependent variable scale 
+    tbl_data_scaled VARCHAR     -- scaled data result
+) RETURNS VOID AS $$
+PythonFunction(convex, ridge, __ridge_normalize_data)
+$$ LANGUAGE plpythonu;
+
+-- restore the scales of coefficients for linear model
+-- for non-linear models, the coefficients may not be able to restore like this
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ridge_restore_linear_coef_scales(
+    tbl_coef        VARCHAR,    -- table contains the result of fitting
+    col_coef        VARCHAR,    -- column for coefficients
+    col_others      VARCHAR[],
+    dimension       INTEGER,
+    tbl_ind_scales  VARCHAR,
+    tbl_dep_scale   VARCHAR,
+    tbl_origin_coef VARCHAR     -- the resulting coefficients have been restored to the original scales
+) RETURNS VOID AS $$
+PythonFunction(convex, ridge, __ridge_restore_linear_coef_scales)
+$$ LANGUAGE plpythonu;

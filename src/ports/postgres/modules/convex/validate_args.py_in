@@ -1,0 +1,119 @@
+
+import plpy
+
+## ========================================================================
+
+def __is_tbl_exists(tbl):
+    """
+    Whether a table exists in the database
+    """
+    names = tbl.split(".")
+    if len(names) == 1:
+        return plpy.execute("select count(*) from information_schema.tables where table_name = '{0}'".format(tbl))[0]['count'] > 0
+    elif len(names) == 2:
+        schema = names[0]
+        table = names[1]
+        return plpy.execute("select count(*) from information_schema.tables where table_name = '{table}' and table_schema = '{schema}'".format(table = table, schema = schema))[0]['count'] == 1
+    else:
+        plpy.error("Format error: Table name strange!")
+
+    return False
+    
+## ========================================================================
+
+def __is_tbl_exists_in_schema(tbl):
+    """
+    Is the table exist in a schema?
+    """
+    names = tbl.split(".")
+    if len(names) == 1:
+        schema = plpy.execute("select current_schema()")[0]["current_schema"]
+        table = names[0]
+    elif len(names) == 2:
+        schema = names[0]
+        table = names[1]
+    else:
+        plpy.error("Format error: Table name strange!")
+
+    return plpy.execute("select count(*) from information_schema.tables where table_name = '{table}' and table_schema = '{schema}'".format(table = table, schema = schema))[0]['count'] == 1
+
+## ========================================================================
+
+def __is_tbl_has_rows(tbl):
+    """
+    Does the table have rows?
+    """
+    total_rows = plpy.execute("select count(*) from " + tbl)[0]["count"]
+    return total_rows > 0
+
+## ========================================================================
+
+def __is_col_exists(tbl, cols):
+    """
+    Is the column exist?
+    """
+    names = tbl.split(".")
+    if len(names) == 1:
+        existing_cols = plpy.execute("""
+                                     select array_agg(column_name::varchar) as cols
+                                     from information_schema.columns
+                                     where table_name = '{0}'
+                                     """.format(tbl))[0]["cols"]
+    elif len(names) == 2:
+        schema = names[0]
+        table = names[1]
+        existing_cols = plpy.execute("""
+                                     select array_agg(column_name::varchar) as cols
+                                     from information_schema.columns
+                                     where table_name = '{0}' and table_schema = '{1}'
+                                     """.format(table, schema))[0]["cols"]
+    else:
+        plpy.error("Format error: Table name strange!")
+        
+    for col in cols:
+        if col not in existing_cols:
+            return False
+    return True
+
+## ========================================================================
+
+def __is_scalar_col_no_null(tbl, col):
+    """
+    Does a scalar column have no Null values?
+    """
+    total_rows = plpy.execute("select count(*) from " + tbl)[0]["count"]
+    col_rows = plpy.execute("select count({col}) from {tbl}".format(col=col, tbl=tbl))[0]["count"]
+    return total_rows == col_rows
+
+## ========================================================================
+
+def __is_array_col_same_dimension(tbl, col):
+    """
+    Do all rows of array col have the same length?
+    """
+    max_dim = plpy.execute("""
+                           select max(array_upper({col}, 1)) as max_dim
+                           from {tbl}
+                           """.format(col=col, tbl=tbl))[0]["max_dim"]
+    min_dim = plpy.execute("""
+                           select min(array_upper({col}, 1)) as min_dim
+                           from {tbl}
+                           """.format(col=col, tbl=tbl))[0]["min_dim"]
+    return max_dim == min_dim
+    
+## ========================================================================
+
+def __is_array_col_no_null(tbl, col):
+    """
+    Does an array column have any Null values?
+    """
+    row_len = plpy.execute("select count(*) from {tbl}".format(tbl=tbl))[0]["count"]
+    dim = plpy.execute("""
+                       select max(array_upper({col}, 1)) as dim
+                       from {tbl}
+                       """.format(col=col, tbl=tbl))[0]["dim"]
+    for i in range(1,dim+1):
+        l = plpy.execute("select count({col}[{i}]) from {tbl}".format(col=col, tbl=tbl, i=i))[0]["count"]
+        if row_len != l:
+            return False
+    return True
