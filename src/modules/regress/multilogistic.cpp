@@ -196,6 +196,149 @@ public:
 };
 
 
+/**
+ * @brief Inter- and intra-iteration state for robust variance calculations
+ *
+ * TransitionState encapsualtes the transition state during the
+ * logistic-regression robust variance calculation. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars, a vector, and a matrix.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 4, and all elemenets are 0.
+ */
+template <class Handle>
+class MLogRegrRobustTransitionState {
+
+    // By §14.5.3/9: "Friend declarations shall not declare partial
+    // specializations." We do access protected members in operator+=().
+    template <class OtherHandle>
+    friend class MLogRegrRobustTransitionState;
+
+public:
+
+
+    MLogRegrRobustTransitionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
+
+        rebind(static_cast<uint16_t>(mStorage[0]),static_cast<uint16_t>(mStorage[1]));
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Initialize the iteratively-reweighted-least-squares state.
+     *
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX, uint16_t inNumCategories) {
+
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
+        rebind(inWidthOfX, inNumCategories);
+        widthOfX = inWidthOfX;
+        numCategories = inNumCategories;
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle> MLogRegrRobustTransitionState &operator=(
+        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
+
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
+        return *this;
+    }
+
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
+     */
+    template <class OtherHandle> MLogRegrRobustTransitionState &operator+=(
+        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
+
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX != inOtherState.widthOfX)
+            throw std::logic_error("Internal error: Incompatible transition "
+                "states");
+
+        numRows += inOtherState.numRows;
+        X_transp_AX += inOtherState.X_transp_AX;
+        meat += inOtherState.meat;
+        return *this;
+    }
+
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+        numRows = 0;
+        meat.fill(0);
+        X_transp_AX.fill(0);
+    }
+
+private:
+    static inline uint32_t arraySize(const uint16_t inWidthOfX,
+        const uint16_t inNumCategories) {
+        return 3 + 2*inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
+                                 + inWidthOfX * inNumCategories;
+    }
+
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX             The number of independent variables.
+     * @param inNumCategories The number of categories of the dependant var
+
+
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: widthOfX (number of independant variables)
+     * - 1: numCategories (number of categories)
+     * - 2: coef (vector of coefficients)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 2 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
+     * - 3 + widthOfX * inNumCategories: X_transp_AX (X^T A X).  
+     * - 3 + widthOfX^2*numCategories^2: meat  (The meat matrix)
+     */
+    void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
+
+        widthOfX.rebind(&mStorage[0]);
+        numCategories.rebind(&mStorage[1]);
+        coef.rebind(&mStorage[2], inWidthOfX*inNumCategories);
+
+        numRows.rebind(&mStorage[2 + inWidthOfX*inNumCategories]);
+
+        X_transp_AX.rebind(&mStorage[3 + inWidthOfX*inNumCategories],
+            inNumCategories*inWidthOfX, inWidthOfX*inNumCategories);
+        meat.rebind(&mStorage[3 +
+             inNumCategories*inNumCategories*inWidthOfX*inWidthOfX
+             + inWidthOfX*inNumCategories], inWidthOfX*inNumCategories, inWidthOfX*inNumCategories);
+    }
+
+    Handle mStorage;
+
+public:
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;
+
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap meat;
+};
+
+
 
 /**
  * @brief IRLS Transition
@@ -386,6 +529,8 @@ mlogregr_irls_step_final::run(AnyType &args) {
 
     // Precompute (X^T * A * X)^-1
     Matrix heissianInver = -1*decomposition.pseudoInverse();
+	dbout<<"Hessian Inverse"<<std::endl;
+	dbout<<heissianInver<<std::endl;
 
     state.coef.noalias() += heissianInver * state.gradient;
 
@@ -403,6 +548,226 @@ mlogregr_irls_step_final::run(AnyType &args) {
 
 
     return state;
+}
+
+AnyType
+mlogregr_robust_step_transition::run(AnyType &args) {
+
+	MLogRegrRobustTransitionState<MutableArrayHandle<double> > state = args[0];
+
+    // Get x as a vector of double
+    MappedColumnVector x = args[3].getAs<MappedColumnVector>();
+    // Get the category & numCategories as integer
+    int16_t category = args[1].getAs<int>();
+    // Number of categories after pivoting (We pivot around the first category)
+    int16_t numCategories = (args[2].getAs<int>() - 1);
+	MappedColumnVector coefVec = args[4].getAs<MappedColumnVector>();
+
+    // The following check was added with MADLIB-138.
+    if (!x.is_finite())
+            throw std::domain_error("Design matrix is not finite.");
+
+
+    if (state.numRows == 0) {
+    
+        if (x.size() > std::numeric_limits<uint16_t>::max())
+                throw std::domain_error("Number of independent variables cannot be "
+                        "larger than 65535.");
+
+        if (numCategories < 1)
+                throw std::domain_error("Number of cateogires must be at least 2");
+
+        if (category > numCategories)
+                throw std::domain_error("You have entered a category > numCategories"
+                    "Categories must be of values {0,1... numCategories-1}");
+
+        // Init the state (requires x.size() and category.size())
+        state.initialize(*this, static_cast<uint16_t>(x.size())
+            , static_cast<uint16_t>(numCategories));
+                                                    
+        state.coef = coefVec;
+    }
+
+
+
+
+    // Now do the transition step
+    state.numRows++;
+    /*     Get y: Convert to 1/0 boolean vector
+            Example: Category 4 : 0 0 0 1 0 0
+            Storing it in this forms helps us get a nice closed form expression
+    */
+
+    ColumnVector y(numCategories+1);
+    y.fill(0);
+    y(category) = 1;
+    //We are pivoting around the last column, so we drop that column from the 'y' vector
+    y.conservativeResize(numCategories);
+
+    /*
+    Compute the parameter vector (the 'pi' vector in the documentation)
+    for the data point being processed.
+    Casting the coefficients into a matrix makes the calculation simple.
+    */
+    
+    Matrix coef = state.coef;
+    coef.resize(numCategories, state.widthOfX);
+
+    //Store the intermediate calculations because we'll reuse them in the LLH
+    ColumnVector t1 = x; //t1 is vector of size state.widthOfX
+    t1 = -coef*x;
+    /* Note: The above 2 lines could have been written as:
+        ColumnVector t1 = -coef*x;
+
+        but this creates warnings. These warnings are somehow related to the factor
+        that x is of an immutable type. The following alternative could resolve
+        the warnings (although not necessary the best alternative):
+    */
+
+    ColumnVector t2 = t1.array().exp();
+    double t3 = 1 + t2.sum();
+    ColumnVector pi = t2/t3;
+	//The gradient matrix has numCatergories rows and widthOfX columns
+    Matrix grad = y*x.transpose() - pi*x.transpose();
+    Matrix GradGradTranspose;
+	
+    
+    //We cast the gradient into a vector to make the math easier.
+    grad.resize(numCategories*state.widthOfX,1);
+    GradGradTranspose = grad*grad.transpose();
+	state.meat += GradGradTranspose;
+
+    /*
+         a is a matrix of size JxJ where J is the number of categories
+         a_j1j2 = -pi(j1)*(1-pi(j2))if j1 == j2
+         a_j1j2 =  pi(j1)*pi(j2) if j1 != j2
+    */
+    Matrix a(numCategories,numCategories);
+    // Compute the 'a' matrix.
+    Matrix piDiag = pi.asDiagonal();
+    a = pi * pi.transpose() - piDiag;
+
+    //Start the Hessian calculations
+    Matrix X_transp_AX(numCategories * state.widthOfX, numCategories * state.widthOfX);
+
+    /*
+        Again: The following 3 lines could have been written as
+        Matrix XXTrans = x * x.transpose();
+        but it creates warnings related to the type of x. Here is an easy fix
+    */
+    Matrix cv_x = x;
+    Matrix XXTrans = trans(cv_x);
+    XXTrans = cv_x * XXTrans;
+
+    //Eigen doesn't supported outer-products for matrices, so we have to do our own.
+    //This operation is also known as a tensor-product.
+    for (int i1 = 0; i1 < state.widthOfX; i1++){
+         for (int i2 = 0; i2 <state.widthOfX; i2++){
+            int rowOffset = numCategories * i1;
+            int colOffset = numCategories * i2;
+
+            X_transp_AX.block(rowOffset, colOffset, numCategories,  numCategories) = XXTrans(i1,i2)*a;
+        }
+    }
+
+    triangularView<Lower>(state.X_transp_AX) += X_transp_AX;
+
+    return state;
+
+}
+
+/**
+ * @brief Perform the perliminary aggregation function: Merge transition states
+     This merge step is the same as that of logistic regression.
+ */
+AnyType
+mlogregr_robust_step_merge_states::run(AnyType &args) {
+    MLogRegrRobustTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
+    MLogRegrRobustTransitionState<ArrayHandle<double> > stateRight = args[1];
+
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
+
+    // Merge states together and return
+    stateLeft += stateRight;
+    return stateLeft;
+}
+
+
+AnyType MLrobuststateToResult(
+    const Allocator &inAllocator,
+	const ColumnVector &inCoef,
+    const ColumnVector &diagonal_of_varianceMat) {
+
+	MutableMappedColumnVector variance(
+        inAllocator.allocateArray<double>(inCoef.size()));
+
+    MutableMappedColumnVector stdErr(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableMappedColumnVector waldZStats(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableMappedColumnVector waldPValues(
+        inAllocator.allocateArray<double>(inCoef.size()));
+
+    for (Index i = 0; i < inCoef.size(); ++i) {
+        variance(i) = diagonal_of_varianceMat(i);
+        stdErr(i) = std::sqrt(diagonal_of_varianceMat(i));
+        waldZStats(i) = inCoef(i) / stdErr(i);
+        waldPValues(i) = 2. * prob::cdf( prob::normal(),
+            -std::abs(waldZStats(i)));
+    }
+
+    // Return all coefficients, standard errors, etc. in a tuple
+    AnyType tuple;
+    tuple <<  variance<<stdErr << waldZStats << waldPValues;
+    return tuple;
+}
+
+
+/**
+ * @brief Perform the logistic-regression final step
+ */
+AnyType
+mlogregr_robust_step_final::run(AnyType &args) {
+    // We request a mutable object. Depending on the backend, this might perform
+    // a deep copy.
+    MLogRegrRobustTransitionState<MutableArrayHandle<double> > state = args[0];
+	using std::endl;
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+
+    // See MADLIB-138. At least on certain platforms and with certain versions,
+    // LAPACK will run into an infinite loop if pinv() is called for non-finite
+    // matrices. We extend the check also to the dependent variables.
+    if (!state.X_transp_AX.is_finite())
+        throw NoSolutionFoundException("Over- or underflow in intermediate "
+            "calulation. Input data is likely of poor numerical condition.");
+
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        -1*state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
+
+
+    // Precompute (X^T * A * X)^-1
+    Matrix bread = decomposition.pseudoInverse();
+
+	Matrix varianceMat;
+	
+	varianceMat = bread*state.meat*bread;
+    dbout<<varianceMat<<endl;
+
+    if(!state.coef.is_finite())
+        throw NoSolutionFoundException("Over- or underflow in Newton step, "
+            "while updating coefficients. Input data is likely of poor "
+            "numerical condition.");
+
+
+    return MLrobuststateToResult(*this, state.coef,
+	varianceMat.diagonal());
 }
 
 /**

@@ -7,6 +7,9 @@
  * http://luna.cas.usf.edu/~mbrannic/files/regression/Logistic.html
  * Predicting heart attack
  */
+ 
+DROP TABLE IF EXISTS patients;
+ 
 CREATE TABLE patients (
     id INTEGER NOT NULL,
     second_attack INTEGER,
@@ -53,6 +56,28 @@ SELECT assert(
     20, 'irls'
 );
 
+
+/*
+ * The following example is uses the coefficients computed in the above
+ * example, and checks that the robust variance is correct.  
+ * The correct values were checked with R.  For completeness, the following
+ * R code segment can be used to reproduce the correct values. This code segment
+ * expects the data table 'patients' to be in a file called "testdata.txt" 
+ * BEGIN CODE:
+	 data <- read.table("testdata.txt")
+	 regress <- glm(V1 ~ V2 + V3, family=binomial("logit"), data = data)
+	 library(sandwich)
+	 vcovHC(regress, 'HC0')
+ * END CODE
+ */
+
+SELECT assert(
+	relative_error(robust_variance, ARRAY[11.96, 1.37, 0.0028]) < 1e-3,
+	'Robust Variance: Wrong Results'
+)FROM (
+	select (robustLogregr( CAST (second_attack as BOOLEAN), ARRAY[1,treatment, trait_anxiety], 
+	ARRAY[-6.36346994177327,-1.02410605238946,0.119044916668435])).* from patients
+) as sq;
 -- We are pretty generous here
 SELECT
     relative_error(coef, ARRAY[-6.36, -1.02, 0.119]) < 0.04 AND
