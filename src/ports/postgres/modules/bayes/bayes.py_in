@@ -129,12 +129,16 @@ def __get_attr_values_sql(**kwargs):
     """
 
     return """
-        SELECT
-            generate_series(1, {numAttrs}) AS attr,
-            unnest(trainingSource.{trainingAttrColumn}) AS value
-        FROM
-            {trainingSource} AS trainingSource
-        GROUP BY attr, value
+        SELECT attr, value
+        FROM(
+            SELECT
+                generate_series(1, {numAttrs}) AS attr,
+                unnest(trainingSource.{trainingAttrColumn}) AS value
+            FROM
+                {trainingSource} AS trainingSource
+            GROUP BY attr, value
+        ) l
+        WHERE value IS NOT NULL
         """.format(**kwargs)
 
 
@@ -237,11 +241,14 @@ def __get_keys_and_prob_values_sql(**kwargs):
         SELECT
             classify.key,
             classPriors.class,
-            CASE WHEN count(*) < {numAttrs} THEN NULL
+            CASE WHEN count(*) < 1 THEN 0 -- ignoring NULL attributes for now
+                                          -- {numAttrs} THEN NULL
                  ELSE
-                    log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
-                    + sum( log((featureProbs.cnt::DOUBLE PRECISION + {smoothingFactor})
-                        / (classPriors.class_cnt + {smoothingFactor} * featureProbs.attr_cnt)) )
+                    log(classPriors.class_cnt::DOUBLE PRECISION /
+                        classPriors.all_cnt) + 
+                        sum( log((featureProbs.cnt::DOUBLE PRECISION + 
+                            {smoothingFactor})/ (classPriors.class_cnt + 
+                            {smoothingFactor} * featureProbs.attr_cnt)) )
                  END
             AS log_prob
         FROM
@@ -258,7 +265,12 @@ def __get_keys_and_prob_values_sql(**kwargs):
         WHERE
             featureProbs.class = classPriors.class AND
             featureProbs.attr = classify.attr AND
-            featureProbs.value = classify.value AND
+            (   CASE WHEN classify.value is NULL
+                THEN false 
+                ELSE featureProbs.value = classify.value
+                END
+            )
+            AND
             ({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
         GROUP BY
             classify.key, classPriors.class, classPriors.class_cnt, classPriors.all_cnt
