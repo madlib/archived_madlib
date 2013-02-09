@@ -4,11 +4,15 @@
  *
  * This file contians classes of coefficients (or model), which usually has
  * fields that maps to transition states for user-defined aggregates.
+ * The necessity of these wrappers is to allow classes in algo/ and task/ to
+ * have a type that they can template over.
  *
  *//* ----------------------------------------------------------------------- */
 
 #ifndef MADLIB_MODULES_CONVEX_TYPE_MODEL_HPP_
 #define MADLIB_MODULES_CONVEX_TYPE_MODEL_HPP_
+
+#include <modules/shared/HandleTraits.hpp>
 
 namespace madlib {
 
@@ -16,8 +20,6 @@ namespace modules {
 
 namespace convex {
 
-// The necessity of this wrapper is to allow classes in algo/ and task/ to
-// have a type that they can template over
 template <class Handle>
 struct LMFModel {
     typename HandleTraits<Handle>::MatrixTransparentHandleMap matrixU;
@@ -90,6 +92,10 @@ struct LMFModel {
         return *this;
     }
 };
+
+// Generalized Linear Models (GLMs): Logistic regression, Linear SVM
+typedef HandleTraits<MutableArrayHandle<double> >::ColumnVectorTransparentHandleMap
+    GLMModel;
 
 } // namespace convex
 

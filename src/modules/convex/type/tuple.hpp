@@ -10,7 +10,9 @@
 #ifndef MADLIB_MODULES_CONVEX_TYPE_TUPLE_HPP_
 #define MADLIB_MODULES_CONVEX_TYPE_TUPLE_HPP_
 
+#include <dbconnector/dbconnector.hpp>
 #include "independent_variables.hpp"
+
 #include "dependent_variable.hpp"
 
 namespace madlib {
@@ -47,6 +49,11 @@ struct ExampleTuple {
     ~ExampleTuple() { }
 };
 
+using madlib::dbal::eigen_integration::MappedColumnVector;
+// Generalized Linear Models (GLMs): Logistic regression, Linear SVM
+typedef ExampleTuple<MappedColumnVector, double> GLMTuple;
+
+// madlib::modules::convex::MatrixIndex
 typedef ExampleTuple<MatrixIndex, double> LMFTuple;
 
 } // namespace convex

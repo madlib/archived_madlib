@@ -78,6 +78,7 @@ lmf_igd_transition::run(AnyType &args) {
 
             state.allocate(*this, rowDim, columnDim, maxRank);
             state.task.stepsize = stepsize;
+            state.task.scaleFactor = scaleFactor;
             state.task.model.initialize(scaleFactor);
         }
         // resetting in either case
