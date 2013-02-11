@@ -5,6 +5,71 @@ import plpy
 
 ## ========================================================================
 
+class __mad_version:
+    def __init__ (self):
+        self.version = plpy.execute("select version()")[0]["version"]
+
+    def select_vecfunc (self):
+        """
+        PG84 and GP40, GP41 do not have a good support for
+        vectors. They convert any vector into a string, surrounded
+        by { and }. Thus special care is needed for these older
+        versions of database management systems.
+        """
+        # GPDB 4.0 or 4.1
+        if re.search(r"Greenplum Database 4\.[01]\.", self.version):
+            return self.__extract
+
+        # PG 8.4
+        if re.search(r"PostgreSQL 8\.4\.", self.version):
+            return self.__extract
+
+        return self.__identity
+
+    def __extract (self, origin, text = True):
+        """
+        Extract vector elements from a string with {}
+        as the brackets
+        """
+        if origin is None:
+            return None
+        elm = []
+        for m in re.finditer(r"([^,\{\}\"]+)", origin):
+            elm.append(m.group(1).strip())
+        if text is False:
+            for i in range(len(elm)):
+                elm[i] = float(elm[i])
+        return elm
+
+    def __identity (self, origin, text = True):
+        return origin
+
+    def select_array_agg (self, schema_madlib):
+        """
+        GP40 does not have support for array_agg,
+        but madlib has its own array_agg
+        """
+        if re.search(r"Greenplum Database 4\.0\.", self.version):
+            return "{schema_madlib}.array_agg".format(schema_madlib = schema_madlib)
+
+        return "array_agg"
+
+    def is_gp40 (self):
+        """
+        GP40 is so ...
+        It needs special treatment of update from different segments
+        """
+        if re.search(r"Greenplum Database 4\.0\.", self.version):
+            return True
+        return False
+        
+## ========================================================================
+        
+version_wrapper = __mad_version()
+mad_vec = version_wrapper.select_vecfunc()
+        
+## ========================================================================
+
 def __cv_unique_string(**kwargs):
     """
     Generate random remporary names for temp table and other names.
@@ -62,7 +127,7 @@ def __cv_copy_data_with_id(rel_origin, col_data, rel_copied, random_id):
 ## ========================================================================
 
 def __cv_summarize_result(tbl_accum_error, tbl_result, param_explored,
-                          data_folding_only):
+                          data_folding_only, schema_madlib):
     """
     Summarize the result. For each column in the metric measured in cross validation,
     compute the average and standard deviation for the metrics. For ridge and lasso,
@@ -73,43 +138,34 @@ def __cv_summarize_result(tbl_accum_error, tbl_result, param_explored,
     @param tbl_result Name of the table that will store the summarized result
     @param param_explored Name of the parameter that CV runs through, a string
     """
-    cols = plpy.execute("select array_agg(column_name::varchar) as col from information_schema.columns where table_name = '" + tbl_accum_error + "'")[0]["col"]
+    agg = version_wrapper.select_array_agg(schema_madlib)
+    cols = plpy.execute("""
+                        select {agg}(column_name::varchar) as col
+                        from information_schema.columns where table_name = '{tbl_accum_error}'
+                        """.format(tbl_accum_error = tbl_accum_error,
+                                   agg = agg))[0]["col"]
+    cols = mad_vec(cols)
 
     kwargs = dict(tbl_accum_error = tbl_accum_error,
                   tbl_result = tbl_result,
                   param_explored = param_explored)
+
+    col_string = "{param_explored}, ".format(**kwargs)
+    for i in range(len(cols)):
+        if cols[i] != param_explored:
+            col_string += "avg({col}) as {col}_avg, stddev({col}) as {col}_stddev".format(col = cols[i])
+            if i != len(cols) - 1:
+                col_string += ", "
+   
     plpy.execute("""
         drop table if exists {tbl_result};
         create table {tbl_result} as
-            select {param_explored}
+            select {col_string}
             from {tbl_accum_error}
             group by {param_explored}
             order by {param_explored}
-    """.format(**kwargs))
-
-    for col in cols:
-      if col != param_explored:
-            plpy.execute("alter table " + tbl_result + " add column " + col + "_avg double precision default 0")
-            plpy.execute("""
-                update {tbl_result} set {col}_avg = avgs from
-                (
-                    select {param_explored}, avg({col}) as avgs
-                    from {tbl_accum_error}
-                    group by {param_explored}
-                ) t
-                where t.{param_explored} = {tbl_result}.{param_explored}
-            """.format(col = col, **kwargs))
-            plpy.execute("alter table " + tbl_result + " add column " + col + "_stddev double precision default 0")
-            plpy.execute("""
-                update {tbl_result} set {col}_stddev = stds from
-                (
-                    select {param_explored}, stddev({col}) as stds
-                    from {tbl_accum_error}
-                    group by {param_explored}
-                ) t
-                where t.{param_explored} = {tbl_result}.{param_explored}
-            """.format(col = col, **kwargs))
-
+    """.format(col_string = col_string, **kwargs))
+        
     if data_folding_only:
         plpy.execute("alter table " + tbl_result + " drop column " + param_explored)
     return None

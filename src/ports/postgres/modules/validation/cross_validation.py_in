@@ -1,5 +1,6 @@
 
 import math
+import re
 from validation.cv_utils import __cv_unique_string
 from validation.cv_utils import __cv_copy_data_with_id
 from validation.cv_utils import __cv_split_data_using_id_col
@@ -7,6 +8,7 @@ from validation.cv_utils import __cv_split_data_using_id_tbl
 from validation.cv_utils import __cv_summarize_result
 from validation.cv_utils import __cv_produce_col_name_string
 from validation.cv_utils import __cv_generate_random_id
+from validation.cv_utils import __mad_version
 from convex.validate_args import __is_tbl_exists
 from convex.validate_args import __is_tbl_has_rows
 from convex.validate_args import __is_col_exists
@@ -15,6 +17,9 @@ from convex.validate_args import __is_scalar_col_no_null
 from convex.validate_args import __is_array_col_same_dimension
 from convex.validate_args import __is_array_col_no_null
 import plpy
+
+version_wrapper = __mad_version()
+mad_vec = version_wrapper.select_vecfunc()
 
 ## ========================================================================
 
@@ -202,6 +207,17 @@ def cross_validation_general(
                        data_tbl, data_id, id_is_random,
                        validation_result,
                        fold_num, data_cols)
+
+    # Older versions of PG84, GP40, GP41 all need
+    # sepcial treatment of arrays
+    modelling_params = mad_vec(modelling_params)
+    modelling_params_type = mad_vec(modelling_params_type)
+    explore_values = mad_vec(explore_values)
+    predict_params = mad_vec(predict_params)
+    predict_params_type = mad_vec(predict_params_type)
+    metric_params = mad_vec(metric_params)
+    metric_params_type = mad_vec(metric_params_type)
+    data_cols = mad_vec(data_cols)
     
     row_num = plpy.execute("select count(*) as row_num from " + data_tbl)[0]["row_num"]
     if row_num <= fold_num:
@@ -314,8 +330,9 @@ def cross_validation_general(
                            **kwargs))
 
     # compute the averages and standard deviations for all measured metrics (not necessary one)
-    __cv_summarize_result(tbl_accum_error, validation_result, temp_param_explored, data_folding_only)
-
+    __cv_summarize_result(tbl_accum_error, validation_result, temp_param_explored,
+                          data_folding_only, schema_madlib)
+    
     # clean up the temporary tables
     plpy.execute("""
         drop table if exists {tbl_all_data};
@@ -358,6 +375,8 @@ def linregr_predict (schema_madlib, coef, col_ind, **kwargs):
     @param coef Coefficients of linear regression
     @param col_ind Independent variables
     """
+    coef = mad_vec(coef, text = False)
+    col_ind = mad_vec(col_ind, text = False)
     dot = sum(p * q for p, q in zip(coef, col_ind))
     return dot
 
@@ -392,24 +411,51 @@ def cv_logregr_train (schema_madlib, tbl_source, col_ind_var,
     """
     A wrapper for logistic regression to be used in general CV
     """
-    plpy.execute("""
-                 create table {tbl_result} as
-                     select coef from {schema_madlib}.logregr(
-                         '{tbl_source}',
-                         '{col_dep_var}',
-                         '{col_ind_var}',
-                         {num_iterations},
-                         '{optimizer}',
-                         {precision}
-                     )
-                 """.format(schema_madlib = schema_madlib,
-                            tbl_source = tbl_source,
-                            tbl_result = tbl_result,
-                            col_ind_var = col_ind_var,
-                            col_dep_var = col_dep_var,
-                            num_iterations = num_iterations,
-                            optimizer = optimizer,
-                            precision = precsn))
+    if version_wrapper.is_gp40():
+        # get the fitting coefs as a string
+        # early versions of GPDB return array as a string
+        # no need to use mad_vec to convert it to array, since
+        # we are going to use it as a string
+        coefs = plpy.execute("""
+                             select coef from {schema_madlib}.logregr(
+                                 '{tbl_source}',
+                                 '{col_dep_var}',
+                                 '{col_ind_var}',
+                                 {num_iterations},
+                                 '{optimizer}',
+                                 {precision}
+                             )
+                             """.format(schema_madlib = schema_madlib,
+                                        tbl_source = tbl_source,
+                                        col_ind_var = col_ind_var,
+                                        col_dep_var = col_dep_var,
+                                        num_iterations = num_iterations,
+                                        optimizer = optimizer,
+                                        precision = precsn))[0]["coef"]
+        plpy.execute("""
+                     create table {tbl_result} as
+                         select '{coefs}'::double precision[] as coef
+                     """.format(tbl_result = tbl_result,
+                                coefs = coefs))
+    else:
+        plpy.execute("""
+                     create table {tbl_result} as
+                         select coef from {schema_madlib}.logregr(
+                             '{tbl_source}',
+                             '{col_dep_var}',
+                             '{col_ind_var}',
+                             {num_iterations},
+                             '{optimizer}',
+                             {precision}
+                         )
+                     """.format(schema_madlib = schema_madlib,
+                                tbl_source = tbl_source,
+                                tbl_result = tbl_result,
+                                col_ind_var = col_ind_var,
+                                col_dep_var = col_dep_var,
+                                num_iterations = num_iterations,
+                                optimizer = optimizer,
+                                precision = precsn))
     return None
 
 ## ========================================================================
@@ -420,6 +466,8 @@ def logregr_predict (schema_madlib, coef, col_ind, **kwargs):
     @param coef Coefficients of logistic regression
     @param col_ind Independent variables
     """
+    coef = mad_vec(coef, text = False)
+    col_ind = mad_vec(col_ind, text = False)
     dot = sum(p * q for p, q in zip(coef, col_ind))
     if dot > 0:
         return True
@@ -454,6 +502,8 @@ def logregr_accuracy (schema_madlib, coef, col_ind, col_dep, **kwargs):
     """
     Compare the logistic prediction with actual values
     """
+    coef = mad_vec(coef, text = False)
+    col_ind = mad_vec(col_ind, text = False)
     pred = logregr_predict(schema_madlib, coef, col_ind)
     return int(pred == col_dep)
 
