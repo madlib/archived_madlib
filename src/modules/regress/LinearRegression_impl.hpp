@@ -9,6 +9,7 @@
 
 #include <boost/math/distributions.hpp>
 #include <modules/prob/student.hpp>
+#include <modules/prob/boost.hpp>
 
 namespace madlib {
 
@@ -248,6 +249,187 @@ LinearRegression::compute(
                     ),
                     std::fabs(tStats(i))
                 ));
+    return *this;
+}
+
+// ------------------------------------------------------------------------
+
+/*
+  Regression for the tests for heteroskedasticity
+*/
+
+template <class Container>
+inline
+HeteroLinearRegressionAccumulator<Container>::HeteroLinearRegressionAccumulator(
+    Init_type& inInitialization)
+  : Base(inInitialization) {
+
+    this->initialize();
+}
+
+/**
+ * @brief Bind all elements of the state to the data in the stream
+ *
+ * The bind() is special in that even after running operator>>() on an element,
+ * there is no guarantee yet that the element can indeed be accessed. It is
+ * cruicial to first check this.
+ *
+ * Provided that this methods correctly lists all member variables, all other
+ * methods can, however, rely on that fact that all variables are correctly
+ * initialized and accessible.
+ */
+template <class Container>
+inline
+void
+HeteroLinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
+    inStream
+        >> numRows >> widthOfX >> a_sum >> a_square_sum;
+    uint16_t actualWidthOfX = widthOfX.isNull()
+        ? 0
+        : static_cast<uint16_t>(widthOfX);
+    inStream
+        >> X_transp_A.rebind(actualWidthOfX)
+        >> X_transp_X.rebind(actualWidthOfX, actualWidthOfX);
+}
+
+/**
+ * @brief Update the accumulation state
+ *
+ * We update the number of rows \f$ n \f$, the partial
+ * sums \f$ \sum_{i=1}^n y_i \f$ and \f$ \sum_{i=1}^n y_i^2 \f$, the matrix
+ * \f$ X^T X \f$, and the vector \f$ X^T \boldsymbol y \f$.
+ */
+template <class Container>
+inline
+HeteroLinearRegressionAccumulator<Container>&
+HeteroLinearRegressionAccumulator<Container>::operator<<(const hetero_tuple_type& inTuple) {
+    const MappedColumnVector& x = std::get<0>(inTuple);
+    const double& y = std::get<1>(inTuple);
+    const MappedColumnVector& coef = std::get<2>(inTuple);
+
+    if (!std::isfinite(y))
+        throw std::domain_error("Dependent variables are not finite.");
+    else if (!isfinite(x))
+        throw std::domain_error("Design matrix is not finite.");
+    else if (x.size() > std::numeric_limits<uint16_t>::max())
+        throw std::domain_error("Number of independent variables cannot be "
+            "larger than 65535.");
+
+    // Initialize in first iteration
+    if (numRows == 0) {
+        widthOfX = static_cast<uint16_t>(x.size());
+        this->resize();
+    }
+
+    // dimension check
+    if (widthOfX != static_cast<uint16_t>(x.size())) {
+        throw std::runtime_error("Inconsistent numbers of independent "
+            "variables.");
+    }
+
+    double a = y - trans(coef)*x;
+    a = a*a;
+
+    numRows++;
+    a_sum += a;
+    a_square_sum += a*a;
+    X_transp_A.noalias() += x * a;
+
+    // X^T X is symmetric, so it is sufficient to only fill a triangular part
+    // of the matrix
+    triangularView<Lower>(X_transp_X) += x * trans(x);
+    return *this;
+}
+
+/**
+ * @brief Merge with another accumulation state
+ */
+template <class Container>
+template <class OtherContainer>
+inline
+HeteroLinearRegressionAccumulator<Container>&
+HeteroLinearRegressionAccumulator<Container>::operator<<(
+    const HeteroLinearRegressionAccumulator<OtherContainer>& inOther) {
+
+    numRows += inOther.numRows;
+    a_sum += inOther.a_sum;
+    a_square_sum += inOther.a_square_sum;
+    X_transp_A.noalias() += inOther.X_transp_A;
+    triangularView<Lower>(X_transp_X) += inOther.X_transp_X;
+    return *this;
+}
+
+template <class Container>
+template <class OtherContainer>
+inline
+HeteroLinearRegressionAccumulator<Container>&
+HeteroLinearRegressionAccumulator<Container>::operator=(
+    const HeteroLinearRegressionAccumulator<OtherContainer>& inOther) {
+
+    this->copy(inOther);
+    return *this;
+}
+
+
+template <class Container>
+HeteroLinearRegression::HeteroLinearRegression(
+    const HeteroLinearRegressionAccumulator<Container>& inState) {
+
+    compute(inState);
+}
+
+/**
+ * @brief Transform a linear-regression accumulation state into a result
+ *
+ * The result of the accumulation phase is \f$ X^T X \f$ and
+ * \f$ X^T \boldsymbol y \f$. We first compute the pseudo-inverse, then the
+ * regression coefficients, the model statistics, etc.
+ *
+ * @sa For the mathematical description, see \ref grp_linreg.
+ */
+template <class Container>
+inline
+HeteroLinearRegression&
+HeteroLinearRegression::compute(
+    const HeteroLinearRegressionAccumulator<Container>& inState) {
+
+    // The following checks were introduced with MADLIB-138. It still seems
+    // useful to have clear error messages in case of infinite input values.
+    if (!isfinite(inState.X_transp_X) || !isfinite(inState.X_transp_A))
+        throw std::domain_error("Design matrix is not finite.");
+
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        inState.X_transp_X, EigenvaluesOnly, ComputePseudoInverse);
+
+    // Precompute (X^T * X)^+
+    Matrix inverse_of_X_transp_X = decomposition.pseudoInverse();
+
+    ColumnVector coef;
+    coef = inverse_of_X_transp_X * inState.X_transp_A;
+
+    // explained sum of squares (regression sum of squares)
+    double ess = dot(inState.X_transp_A, coef)
+        - (inState.a_sum * inState.a_sum / static_cast<double>(inState.numRows));
+
+    // total sum of squares
+    double tss = inState.a_square_sum
+        - (inState.a_sum * inState.a_sum / static_cast<double>(inState.numRows));
+
+    // With infinite precision, the following checks are pointless. But due to
+    // floating-point arithmetic, this need not hold at this point.
+    // Without a formal proof convincing us of the contrary, we should
+    // anticipate that numerical peculiarities might occur.
+    if (tss < 0) tss = 0;
+    if (ess < 0) ess = 0;
+    // Since we know tss with greater accuracy than ess, we do the following
+    // sanity adjustment to ess:
+    if (ess > tss) ess = tss;
+
+    // Test statistic: numRows*Coefficient of determination
+    test_statistic = inState.numRows*(tss == 0 ? 1 : ess / tss);
+    pValue = prob::cdf(complement(prob::chi_squared(
+                                      static_cast<double>(inState.widthOfX-1)), test_statistic));
+    
     return *this;
 }
 

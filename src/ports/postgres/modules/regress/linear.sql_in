@@ -10,7 +10,7 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-m4_include(`SQLCommon.m4')
+m4_include(`SQLCommon.m4') --'
 
 /**
 @addtogroup grp_linreg
@@ -38,10 +38,12 @@ OLS linear regression finds the vector of coefficients \f$ \boldsymbol c \f$
 that maximizes the likelihood of the observations.
 
 Let
-- \f$ \boldsymbol y \in \mathbf R^n \f$ denote the vector of observed dependent variables, with
-  \f$ n \f$ rows, containing the observed values of the dependent variable,
-- \f$ X \in \mathbf R^{n \times k} \f$ denote the design matrix with \f$ k \f$ columns and \f$ n \f$ rows,
-  containing all observed vectors of independent variables
+- \f$ \boldsymbol y \in \mathbf R^n \f$ denote the vector of observed dependent
+    variables, with \f$ n \f$ rows, containing the observed values of the
+    dependent variable,
+- \f$ X \in \mathbf R^{n \times k} \f$ denote the design matrix with \f$ k \f$
+  columns and \f$ n \f$ rows, containing all observed vectors of independent
+  variables.
   \f$ \boldsymbol x_i \f$ as rows,
 - \f$ X^T \f$ denote the transpose of \f$ X \f$,
 - \f$ X^+ \f$ denote the pseudo-inverse of \f$ X \f$.
@@ -99,18 +101,17 @@ is therefore
 \f]
 where \f$ T \f$ is a student-t distributed random variable with mean 0.
 
-The condition number \f$ \kappa(X^T X) \f$ is computed as the ratio of the largest
-eigenvalue divided by the smallest eigenvalue. Note that \f$ X^T X \f$ is
-symmetric positive non-negative definite, so all eigenvalues are non-negative,
-and they are also singular values. It holds that
-\f$ \kappa(X^T X) = \kappa(X)^2 \f$
-where the condition number of the rectangular matrix
-\f$ X \in \mathbf R^{n \times k} \f$
-is defined as
+The condition number [2] \f$ \kappa(X) = \|X\|_2\cdot\|X^{-1}\|_2\f$ is computed
+as the product of two spectral norms [3]. The spectral norm of a matrix \f$X\f$
+is the largest singular value of \f$X\f$ i.e. the square root of the largest
+eigenvalue of the positive-semidefinite matrix \f$X^{*}X\f$:
+
 \f[
-    \frac{\max_{\| z \|_2 = 1} \| X z \|_2}{\min_{\| z \|_2 = 1} \| X z \|_2} .
+    \|X\|_2 = \sqrt{\lambda_{\max}\left(X^{*}X\right)}\ ,
 \f]
-The condition number of a problem is a worst-case measure of how sensitive the
+where \f$X^{*}\f$ is the conjugate transpose of \f$X\f$.
+The condition number of a linear regression problem
+is a worst-case measure of how sensitive the
 result is to small perturbations of the input. A large condition number (say,
 more than 1000) indicates the presence of significant multicollinearity.
 
@@ -126,8 +127,11 @@ The training data is expected to be of the following form:
 
 @usage
 
+<b>(1) The Simple Interface</b>
+
 - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic statistics:
-<pre>SELECT (\ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).*
+<pre>SELECT (madlib.\ref linregr(<em>dependentVariable</em>,
+    <em>independentVariables</em>)).*
 FROM <em>sourceName</em>;</pre>
   Output:
   <pre>
@@ -135,25 +139,77 @@ coef | r2 | std_err | t_stats | p_values | condition_no
 -----+----+---------+---------+----------+-------------
                           ...
 </pre>
+
 - Get vector of coefficients \f$ \boldsymbol c \f$:\n
-  <pre>SELECT (\ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).coef
+  <pre>SELECT (madlib.\ref linregr(<em>dependentVariable</em>,
+  <em>independentVariables</em>)).coef
 FROM <em>sourceName</em>;</pre>
+
 - Get a subset of the output columns, e.g., only the array of coefficients
   \f$ \boldsymbol c \f$, the coefficient of determination \f$ R^2 \f$, and
   the array of p-values \f$ \boldsymbol p \f$:
   <pre>SELECT (lr).coef, (lr).r2, (lr).p_values
 FROM (
-    SELECT \ref linregr(<em>dependentVariable</em>, <em>independentVariables</em>) AS lr
+    SELECT madlib.\ref linregr(<em>dependentVariable</em>,
+      <em>independentVariables</em>) AS lr
     FROM <em>sourceName</em>
 ) AS subq;</pre>
 
+<b>(2) The Full Interface</b>
+
+The full interface support the analysis of heteroskedasticity of the linear fit.
+
+<pre>
+SELECT madlib.\ref linregr_train (
+    <em>'source_table'</em>,        -- name of input table, VARCHAR
+    <em>'out_table'</em>,           -- name of output table, VARCHAR
+    <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
+    <em>'independent_varname'</em>, -- independent variable, VARCHAR
+    [<em>group_cols</em>,           -- names of columns to group by, VARCHAR[].
+                                    -- Default value: Null
+    [<em>heteroskedasticity_option</em>]] -- whether to analyze
+                                          --    heteroskedasticity,
+                                          -- BOOLEAN. Default value: False
+);
+</pre>
+
+Here the <em>'independent_varname'</em> can be the name of a column, which contains
+array of numeric values. It can also have a format of string 'array[1, x1, x2, x3]',
+where <em>x1</em>, <em>x2</em> and <em>x3</em> are all column names.
+
+Output is stored in the <em>out_table</em>:
+<pre>
+[ group_col_1 | group_col_2 | ... |] coef | r2 | std_err | t_stats | p_values | condition_no [|
+-----------+-------------+-----+------+----+---------+---------+----------+--------------+---
+
+bp_stats | bp_p_value ]
+-------------+---------
+</pre>
+
+Where the first part <pre>[ group_col_1 | group_col_2 | ... |]</pre> presents
+only when <em>group_cols</em> is not Null. The last part <pre>[ bp_stats | ... |
+corrected_p_values ]</pre> presents only when <em>heteroskedasticity_option</em>
+is <em>True</em>.
+
+When <em>group_cols</em> is given, the data is grouped by the given columns and
+a linear model is fit to each group of data. The output will have additional
+columns for all combinations of the values of all the <em>group_cols</em>. For
+each combination of <em>group_cols</em> values, linear regression result is
+shown.
+
+When <em>heteroskedasticity_option</em> is <em>True</em>, the output will have
+additional columns. The function computes the Breusch–Pagan test [4] statistics
+and the corresponding \f$p\f$-value.
+
 @examp
 
-The following example is taken from http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
+The following example is taken from
+http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
 
 -#  Create the sample data set:
 \verbatim
-sql> CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT, size INT, lot INT);
+sql> CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT,
+            size INT, lot INT);
 sql> COPY houses FROM STDIN WITH DELIMITER '|';
   1 |  590 |       2 |    1 |  50000 |  770 | 22100
   2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
@@ -208,14 +264,57 @@ sql> SELECT (linregr(price, array[1, bedroom, bath, size])).p_values FROM houses
 \verbatim
 sql> \x on
 Expanded display is on.
-sql> SELECT (r).* FROM (SELECT linregr(price, array[1, bedroom, bath, size]) AS r FROM houses) q;
--[ RECORD 1 ]+----------------------------------------------------------------------------
+sql> SELECT (r).* FROM (SELECT linregr(price, array[1, bedroom, bath, size])
+            AS r FROM houses) q;
+-[ RECORD 1 ]+-----------------------------------------------------------------
 coef         | {27923.4334170641,-35524.7753390234,2269.34393735323,130.793920208133}
 r2           | 0.745374010140315
 std_err      | {56306.4821787474,25036.6537279169,22208.6687270562,36.208642285651}
 t_stats      | {0.495918628487924,-1.41891067892239,0.10218279921428,3.6122293450358}
 p_values     | {0.629711069315512,0.183633155781461,0.920450514073051,0.00408159079312354}
-condition_no | 95707449.2236497
+condition_no | 9783.018
+
+\endverbatim
+
+-# You can call linregr_train() function for more functionality
+\verbatim
+sql> SELECT madlib.linregr_train('houses', 'result', 'price',
+                                 'array[1, tax, bath, size]',
+                                 '{bedroom}'::varchar[], True);
+
+sql> SELECT * from result;
+-[ RECORD 1]---------+-------------------------------------------------------
+bedroom             | 2
+coef                | {-84242.0345, 55.4430, -78966.9754, 225.6119}
+r2                  | 0.9688
+std_err             | {35019.00, 19.57, 23036.81, 49.04}
+t_stats             | {-2.406, 2.833, -3.428, 4.600}
+p_values            | {0.251, 0.216, 0.181, 0.136}
+condition_no        | 10086.1
+bp_stats            | 2.5451
+bp_p_value          | 0.4672
+
+-[ RECORD 2]---------+------------------------------------------------------
+bedroom             | 3
+coef                | {-88155.8292502747,27.1966436293179,41404.0293389239,62.6375210724027}
+r2                  | 0.841699901312963
+std_err             | {57867.9999699512,17.82723091538,43643.1321521931,70.8506824870639}
+t_stats             | {-1.52339512850022,1.52556747362568,0.948695185179172,0.884077878626493}
+p_values            | {0.18816143289241,0.187636685729725,0.38634003235866,0.417132778730133}
+condition_no        | 11722.62
+bp_stats            | 6.7538
+bp_p_value          | 0.08017
+
+-[ RECORD 3]---------+-------------------------------------------------------
+bedroom             | 4
+coef                | {0.0112536020318378,41.4132554771633,0.0225072040636757,31.3975496688276}
+r2                  | 1
+std_err             | {0,0,0,0}
+t_stats             | {Infinity,Infinity,Infinity,Infinity}
+p_values            | Null
+condition_no        | Null
+bp_stats            | Null
+bp_p_value          | Null
 
 \endverbatim
 
@@ -223,6 +322,17 @@ condition_no | 95707449.2236497
 
 [1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 21 October
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/17/lecture-17.pdf
+
+[2] Wikipedia: Condition Number, http://en.wikipedia.org/wiki/Condition_number.
+
+[3] Wikipedia: Spectral Norm,
+    http://en.wikipedia.org/wiki/Spectral_norm#Spectral_norm
+
+[4] Wikipedia: Breusch–Pagan test,
+    http://en.wikipedia.org/wiki/Breusch%E2%80%93Pagan_test
+
+[5] Wikipedia: Heteroscedasticity-consistent standard errors,
+http://en.wikipedia.org/wiki/Heteroscedasticity-consistent_standard_errors
 
 @sa File linear.sql_in documenting the SQL functions.
 
@@ -232,6 +342,7 @@ condition_no | 95707449.2236497
 @endinternal
 */
 
+---------------------------------------------------------------------------
 CREATE TYPE MADLIB_SCHEMA.linregr_result AS (
     coef DOUBLE PRECISION[],
     r2 DOUBLE PRECISION,
@@ -265,6 +376,74 @@ RETURNS MADLIB_SCHEMA.linregr_result
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
+--------------------------- HETEROSKEDASTICITY ----------------------------------
+CREATE TYPE MADLIB_SCHEMA.heteroskedasticity_test_result AS (
+    bp_stats DOUBLE PRECISION,
+    bp_p_value DOUBLE PRECISION
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hetero_linregr_transition(
+    state MADLIB_SCHEMA.bytea8,
+    y DOUBLE PRECISION,
+    x DOUBLE PRECISION[],
+    coef DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hetero_linregr_merge_states(
+    state1 MADLIB_SCHEMA.bytea8,
+    state2 MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+-- Final functions
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hetero_linregr_final(
+    state MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.heteroskedasticity_test_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Compute studentized Breuch-Pagan heteroskedasticity test for
+ * linear regression.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param olsCoefficients Column containing the array of the OLS coefficients (as obtained by linregr)
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>test_statistic FLOAT8[]</tt> - Prob > test_statistc
+ *  - <tt>p_value FLOAT8[]</tt> - Prob > test_statistc
+ *
+ * @usage
+ *  <pre> SELECT (heteoskedasticity_test_linregr(<em>dependentVariable</em>,
+ *  <em>independentVariables</em>, coef)).*
+ *  FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef
+ *  ) AS ols_coef, <em>sourceName</em> as src;
+ * </pre>
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.heteroskedasticity_test_linregr(
+    /*+ "dependentVariable" */ DOUBLE PRECISION,
+    /*+ "independentVariables" */ DOUBLE PRECISION[],
+    /*+ "olsCoefficients" */ DOUBLE PRECISION[]) (
+
+    SFUNC=MADLIB_SCHEMA.hetero_linregr_transition,
+    STYPE=MADLIB_SCHEMA.bytea8,
+    FINALFUNC=MADLIB_SCHEMA.hetero_linregr_final,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.hetero_linregr_merge_states,')
+    INITCOND=''
+);
+
+---------------------------------------------------------------------------
 /**
  * @brief Compute linear regression coefficients and diagnostic statistics.
  *
@@ -288,20 +467,24 @@ LANGUAGE C IMMUTABLE STRICT;
  * @usage
  *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
  *    statistics:\n
- *    <pre>SELECT (linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).*
+ *    <pre>SELECT (linregr(<em>dependentVariable</em>,
+ *        <em>independentVariables</em>)).*
  *FROM <em>sourceName</em>;</pre>
  *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
- *    <pre>SELECT (linregr(<em>dependentVariable</em>, <em>independentVariables</em>)).coef
+ *    <pre>SELECT (linregr(<em>dependentVariable</em>,
+ *        <em>independentVariables</em>)).coef
  *FROM <em>sourceName</em>;</pre>
  *  - Get a subset of the output columns, e.g., only the array of coefficients
  *    \f$ \boldsymbol c \f$, the coefficient of determination \f$ R^2 \f$, and
  *    the array of p-values \f$ \boldsymbol p \f$:
  *    <pre>SELECT (lr).coef, (lr).r2, (lr).p_values
  *FROM (
- *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>) AS lr
+ *    SELECT linregr( <em>dependentVariable</em>,
+ *                    <em>independentVariables</em>) AS lr
  *    FROM <em>sourceName</em>
  *) AS subq;</pre>
  */
+
 CREATE AGGREGATE MADLIB_SCHEMA.linregr(
     /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[]) (
@@ -312,3 +495,384 @@ CREATE AGGREGATE MADLIB_SCHEMA.linregr(
     m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.linregr_merge_states,')
     INITCOND=''
 );
+--------------------------- INTERNAL ---------------------------------------
+/**
+  * @brief Return heteroskedasticity values for specific linear regression
+  * coefficients
+**/
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_hsk_result(
+     source_table         VARCHAR       -- name of input  table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   , linregr_coeffs       DOUBLE PRECISION[]  -- coeffs from linear regression
+)
+RETURNS MADLIB_SCHEMA.heteroskedasticity_test_result AS $$
+DECLARE
+hsk_value MADLIB_SCHEMA.heteroskedasticity_test_result;
+BEGIN
+  EXECUTE '
+    SELECT (MADLIB_SCHEMA.heteroskedasticity_test_linregr('
+          || dependent_varname    || ' , '
+          || independent_varname  || ' , '
+          || 'ARRAY[' || array_to_string(linregr_coeffs, ',') || '])).*
+    FROM ' || source_table
+  INTO hsk_value;
+    
+  RETURN hsk_value;
+END
+$$ LANGUAGE plpgsql VOLATILE;
+/**
+  * @brief Return linear regression output for source data
+  *
+**/
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_linreg_result(
+     source_table         VARCHAR       -- name of input  table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+)
+RETURNS MADLIB_SCHEMA.linregr_result AS $$
+DECLARE
+lin_rst MADLIB_SCHEMA.linregr_result;
+BEGIN
+  EXECUTE '
+        SELECT (MADLIB_SCHEMA.linregr( '
+                || dependent_varname    || ' , '
+                || independent_varname  || ')
+              ).*
+        FROM ' || source_table
+  INTO lin_rst;
+  RETURN lin_rst;
+END
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_linregr_insert_string(
+    lin_rst MADLIB_SCHEMA.linregr_result,
+    out_table TEXT
+)
+RETURNS VARCHAR AS $$
+DECLARE 
+  insert_string VARCHAR;
+BEGIN
+  insert_string := 'INSERT INTO ' || out_table || ' VALUES ('; 
+  insert_string := insert_string  || 
+            CASE 
+              WHEN (lin_rst).coef is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((lin_rst).coef, ',')     || '], '
+            END             || 
+            CASE 
+              WHEN (lin_rst).r2 is NULL
+              THEN '0.0,'
+              ELSE (lin_rst).r2 || ',' 
+            END             ||
+            CASE 
+              WHEN (lin_rst).std_err is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((lin_rst).std_err, ',')  || '], '
+            END             ||
+            CASE 
+              WHEN (lin_rst).t_stats is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((lin_rst).t_stats, ',')  || '], '
+            END             ||
+            CASE 
+              WHEN (lin_rst).p_values is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((lin_rst).p_values, ',') || '], '
+            END             ||
+            CASE 
+              WHEN (lin_rst).condition_no is NULL
+              THEN '0.0'
+              ELSE (lin_rst).condition_no
+            END;
+  RETURN insert_string; 
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+ * @brief Compute linear regression coefficients and heterskedasticity values
+ *
+ **/
+ CREATE FUNCTION MADLIB_SCHEMA.__internal_linregr_train_hetero(
+     source_table         VARCHAR       -- name of input  table
+   , out_table            VARCHAR       -- name of output table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   , heteroskedasticity_option  BOOLEAN -- do you want heteroskedasticity output
+)
+RETURNS VOID AS $$
+DECLARE
+insert_string           VARCHAR;
+lin_rst                 MADLIB_SCHEMA.linregr_result;
+hsk_value               MADLIB_SCHEMA.heteroskedasticity_test_result;
+BEGIN
+    IF (source_table IS NULL OR source_table = '') THEN
+        RAISE EXCEPTION 'Invalid input table name given.';
+    END IF;
+    IF (out_table IS NULL OR out_table = '') THEN
+        RAISE EXCEPTION 'Invalid output table name given.';
+    END IF;
+    IF (dependent_varname IS NULL OR dependent_varname = '') THEN
+        RAISE EXCEPTION 'Invalid dependent variable name given.';
+    END IF;
+    IF (independent_varname IS NULL OR independent_varname = '') THEN
+        RAISE EXCEPTION 'Invalid independent variable name given.';
+    END IF;
+    -- create output table with appropriate column names
+    EXECUTE 'DROP TABLE IF EXISTS ' || out_table;
+    EXECUTE '
+            CREATE TABLE ' || out_table || ' (
+                coef DOUBLE PRECISION[],
+                r2 DOUBLE PRECISION,
+                std_err DOUBLE PRECISION[],
+                t_stats DOUBLE PRECISION[],
+                p_values DOUBLE PRECISION[],
+                condition_no DOUBLE PRECISION)';
+    IF heteroskedasticity_option THEN
+      -- Alter output table to add heteroskedasticity values
+      EXECUTE '
+            ALTER TABLE ' || out_table || '
+                ADD COLUMN bp_stats DOUBLE PRECISION,
+                ADD COLUMN bp_p_value DOUBLE PRECISION';
+    END IF;
+    -- compute linear regression and heteroskedasticity values (if required)
+    lin_rst := MADLIB_SCHEMA.__internal_get_linreg_result(
+                    source_table, dependent_varname, independent_varname);
+    insert_string := MADLIB_SCHEMA.__internal_get_linregr_insert_string(
+                    lin_rst, out_table);
+    -- Ensure Infinity and NaN are cast properly
+    insert_string := REGEXP_REPLACE(insert_string, 'Infinity', 
+                                    '''Infinity''::double precision', 'gi');
+    insert_string := REGEXP_REPLACE(insert_string, 'NaN', 
+                                    '''NaN''::double precision', 'gi');
+    IF heteroskedasticity_option THEN
+      -- add hsk values in the sql string and execute
+      hsk_value := MADLIB_SCHEMA.__internal_get_hsk_result(
+                    source_table, dependent_varname,
+                    independent_varname, (lin_rst).coef);
+      EXECUTE
+          insert_string             || ','
+          || (hsk_value).bp_stats   || ','
+          || (hsk_value).bp_p_value || ')';
+    ELSE
+      -- complete the sql string and execute
+      EXECUTE insert_string || ')';
+    END IF;
+END
+$$ LANGUAGE plpgsql VOLATILE;
+---------------------------------------------------------------------------
+/**
+  * @brief Compute linear regression coefficients and insert into an output
+  * table. The function drops the table if it already exists before creating
+  * the table.
+  *
+**/
+CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
+     source_table         VARCHAR       -- name of input  table
+   , out_table            VARCHAR       -- name of output table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.__internal_linregr_train_hetero(
+        source_table, out_table, dependent_varname, independent_varname, False);
+  -- RAISE NOTICE '
+  -- Finished linear regression
+  --   * table : % (%, %)
+  -- Output:
+  --   * view : SELECT * FROM % ;', source_table, dependent_varname,
+  --                                 independent_varname, out_table;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+/**
+  * @brief Compute linear regression coefficients and insert into an output
+  * table. The function drops the table if it already exists before creating
+  * the table. Heteroskedasticity values are also added if the option is True.
+**/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_train(
+     source_table         VARCHAR       -- name of input  table
+   , out_table            VARCHAR       -- name of output table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   , heteroskedasticity_option  BOOLEAN -- heteroskedasticity
+)
+RETURNS VOID AS $$
+DECLARE
+BEGIN
+  PERFORM MADLIB_SCHEMA.__internal_linregr_train_hetero(
+        source_table, out_table, dependent_varname, independent_varname,
+        heteroskedasticity_option);
+  -- RAISE NOTICE '
+  -- Finished linear regression
+  --   * table : % (%, %)
+  -- Output:
+  --   * view : SELECT * FROM % ;', source_table, dependent_varname,
+  --                                 independent_varname, out_table;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+--------------------- GROUPING ---------------------------------------------
+/**
+  * @brief Linear regression training function with grouping support and
+  * option for heteroskedasticity values.
+ **/
+CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , independent_varname        VARCHAR       -- name of independent variable
+   , group_cols                 VARCHAR[]     -- names of columns to group-by
+   , heteroskedasticity_option  BOOLEAN -- heteroskedasticity
+  )
+RETURNS VOID AS $$
+DECLARE
+  input_table_name              VARCHAR[];
+  actual_table_name             VARCHAR;
+  schema_name                   VARCHAR;
+  table_creation_string         VARCHAR;
+  group_string                  VARCHAR;
+  group_array_length            INTEGER;
+  col_data_type                 VARCHAR;
+  each_group                    INTEGER;
+  linregr_fitting_rst           VARCHAR;
+  old_msg_level                 TEXT;
+BEGIN
+ 
+  EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
+  EXECUTE 'SET client_min_messages TO warning';
+
+  -- initial validation
+  IF (group_cols IS NULL
+      OR array_upper(group_cols, 1) IS NULL
+      OR array_upper(group_cols, 1) = 0)
+  THEN
+      PERFORM MADLIB_SCHEMA.linregr_train(
+                    source_table, out_table,
+                    dependent_varname, independent_varname,
+                    heteroskedasticity_option);
+  ELSE
+      -- create output table
+      EXECUTE 'DROP TABLE IF EXISTS ' || out_table;
+      table_creation_string := 'CREATE TABLE ' || out_table || '(';
+      group_array_length = array_upper(group_cols, 1);
+
+      input_table_name = regexp_split_to_array(source_table, E'\\.');
+      IF array_upper(input_table_name, 1) = 1 THEN
+        actual_table_name = input_table_name[1];
+        schema_name  := current_schema();
+      ELSIF array_upper(input_table_name, 1) = 2 THEN
+        actual_table_name = input_table_name[2];
+        schema_name  = input_table_name[1];
+      ELSE
+        RAISE EXCEPTION 'Incorrect input source table name provided';
+      END IF;
+
+      -- TODO: Check if the column is actually a part of the dataset
+      FOR each_group in 1 .. group_array_length
+      LOOP
+          -- create a string that makes list of
+          EXECUTE 'SELECT data_type FROM information_schema.columns
+                   WHERE
+                        table_schema = ''' || schema_name || '''
+                        AND table_name = ''' || actual_table_name || '''
+                        AND column_name= ''' || group_cols[each_group] || ''''
+          INTO col_data_type;
+
+          table_creation_string := table_creation_string
+                                  || group_cols[each_group]
+                                  || ' ' || col_data_type || ',';
+      END LOOP;
+     
+      -- finish creating the output table
+      EXECUTE table_creation_string || '
+              coef DOUBLE PRECISION[],
+              r2 DOUBLE PRECISION,
+              std_err DOUBLE PRECISION[],
+              t_stats DOUBLE PRECISION[],
+              p_values DOUBLE PRECISION[],
+              condition_no DOUBLE PRECISION)';
+      IF heteroskedasticity_option THEN
+        EXECUTE 'ALTER TABLE ' || out_table || '
+                ADD COLUMN bp_stats DOUBLE PRECISION,
+                ADD COLUMN bp_p_value DOUBLE PRECISION';
+      END IF;
+
+      group_string := '';
+      FOR each_group in 1 .. (group_array_length-1)
+      LOOP
+          group_string := group_string || group_cols[each_group] || ',';
+      END LOOP;
+      group_string := group_string || group_cols[group_array_length];
+
+      IF heteroskedasticity_option THEN
+        linregr_fitting_rst := MADLIB_SCHEMA.__cv_unique_string();
+        EXECUTE '
+            DROP TABLE IF EXISTS '|| linregr_fitting_rst ||';
+            CREATE TEMP TABLE '|| linregr_fitting_rst ||' AS
+                SELECT
+                    '|| group_string ||',
+                    (MADLIB_SCHEMA.linregr('|| dependent_varname ||','|| independent_varname ||')).*
+                FROM '|| source_table ||'
+                GROUP BY '|| group_string;
+        
+        EXECUTE '
+          INSERT INTO ' || out_table || '
+            SELECT *
+            FROM
+                '|| linregr_fitting_rst ||'
+                JOIN (
+                    SELECT 
+                        '|| group_string ||',
+                        (MADLIB_SCHEMA.heteroskedasticity_test_linregr('
+                            || dependent_varname    || ','
+                            || independent_varname  || ', t.coef)).*
+                    FROM
+                        '|| source_table ||' AS s
+                        JOIN
+                        '|| linregr_fitting_rst ||' AS t
+                    USING ('  || group_string || ')
+                    GROUP BY '  || group_string ||') z
+                USING ('|| group_string ||')';
+
+        EXECUTE 'DROP TABLE IF EXISTS '|| linregr_fitting_rst;
+      ELSE
+        EXECUTE '
+          INSERT INTO ' || out_table || '
+            SELECT ' || group_string || ', (result).coef, (result).r2,
+                    (result).std_err, (result).t_stats,
+                    (result).p_values, (result).condition_no
+            FROM (
+              SELECT ' || group_string ||
+                    ', MADLIB_SCHEMA.linregr( '
+                        || dependent_varname || ' , '
+                        || independent_varname || ' )
+                      AS result
+              FROM ' || source_table || '
+              GROUP BY ' || group_string ||
+            ') subq';
+      END IF;
+  END IF;
+
+  EXECUTE 'SET client_min_messages TO '|| old_msg_level;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+---------------------------------------------------------------------------
+/**
+  * @brief Linear regression training function with grouping support.
+ **/
+CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , independent_varname        VARCHAR       -- name of independent variable
+   , group_cols                 VARCHAR[]     -- names of columns to group-by
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.linregr_train(  source_table, out_table,
+                                        dependent_varname,
+                                        independent_varname, group_cols, FALSE);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+---------------------------------------------------------------------------
