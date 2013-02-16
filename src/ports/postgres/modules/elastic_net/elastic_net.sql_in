@@ -1,0 +1,633 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file elastic_net.sql_in
+ *
+ * @brief SQL functions for elastic net regularization
+ * @date July 2012
+ *
+ * @sa For a brief introduction to elastic net, see the module
+ *     description \ref grp_lasso.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4') --'
+
+/**
+@addtogroup grp_elasticnet
+
+@about
+
+This module implements the elastic net regularization for regression problems.
+
+This method seeks to find a weight vector that, for any given training example set, minimizes:
+\f[\min_{w \in R^N} L(w) + \lambda \left(\frac{(1-\alpha)}{2} \|w\|_2^2 + \alpha \|w\|_1 \right)\f]
+where \f$L\f$ is the metric function that the user wants to minimize. Here \f$ \alpha \in [0,1] \f$
+and \f$ lambda \geq 0 \f$. If \f$alpha = 0\f$, we have the ridge regularization (known also as Tikhonov regularization), and if \f$\alpha = 1\f$, we have the LASSO regularization.
+
+For the Gaussian response family (or linear model), we have
+\f[\min_{w \in R^N, w_{0}} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w^{t} x_m + w_{0} - y_m)^2 \right]
++ \lambda \left(\frac{1-\alpha}{2} \|w\|_2^2 + \alpha \|w\|_1 \right)\f]
+
+To get better convergence, one can rescale the value of each element of x
+\f[ x' \leftarrow \frac{x - \bar{x}}{\sigma_x} \f]
+and
+\f[y' \leftarrow y - \bar{y} \f]
+and then fit 
+\f[\min_{w' \in R^N} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w'^{t} x'_m - y'_m)^2 \right]
++ \lambda \left(\frac{1-\alpha}{2} \|w\|_2^2 + \alpha \|w\|_1 \right)\f]
+At the end of the calculation, the orginal scales will be restored and an intercept term will be obtained at the same time as a by-product.
+
+Note that fitting after scaling is not equivalent to directly fitting.
+
+Right now, two optimizers are supported. The default one is FISTA, and the other is IGD. They have their own parameters, which can be specified in the <em>optimizer_params</em> as a text array. For example, '{max_stepsize = 0.1, warmup = t, "warmup_lambdas = [0.4, 0.3, 0.2]"}'::text[].
+
+<b>(1) FISTA</b>
+
+Fast Iterative Shrinkage Thresholding Algorithm (FISTA) [2] has the following optimizer-specific parameters:
+
+        max_stepsize     - default is 4.0
+        eta              - default is 2, if stepsize does not work
+                           stepsize/eta will be tried
+        warmup           - default is False
+        warmup_lambdas   - default is NULL, which means that lambda
+                           values will be automatically generated
+        warmup_lambda_no - default is 15. How many lambda's are used in
+                           warm-up, will be overridden if warmup_lambdas     
+                           is not NULL
+        use_active_set   - default is False. Whether to use active-set
+                           method to speed up the computation.
+
+Here, backtracking for step size is used. At each iteration, we first try the <em>stepsize = max_stepsize</em>, and if it does not work out, we then try a smaller step size <em>stepsize = stepsize / eta</em>, where <em>eta</em> must be larger than 1. At first sight, this seems to do repeated iterations for even one step, but it actually greatly increases the computation speed by using a larger step size and minimizes the total number of iterations. A careful choice of max_stepsize can decrease the computation time by more than 10 times.
+
+If <em>warmup</em> is <em>True</em>, a series of lambda values, which is strictly descent and ends at the lambda value that the user wants to calculate, will be used. The larger lambda gives very sparse solution, and the sparse solution again is used as the initial guess for the next lambda's solution, which will speed up the computation for the next lambda. For larger data sets, this can sometimes accelerate the whole computation and might be faster than computation on only one lambda value.
+
+If <em>use_active_set</em> is <em>True</em>, active-set method will be used to speed up the computation. Considerable speedup is obtained by organizing the iterations around the active set of features— those with nonzero coefficients. After a complete cycle through all the variables, we iterate on only the active set till convergence. If another complete cycle does not change the active set, we are done, otherwise the process is repeated.
+
+<b>(2) IGD</b>
+
+Incremental Gradient Descent (IGD) or Stochastic Gradient Descent (SGD) [3] has the following optimizer-specific parameters:
+
+        stepsize         - default is 0.01
+        threshold        - default is 1e-10. When a coefficient is really
+                           small, set it to be 0
+        warmup           - default is False
+        warmup_lambdas   - default is Null
+        warmup_lambda_no - default is 15. How many lambda's are used in
+                           warm-up, will be overridden if warmup_lambdas   
+                           is not NULL
+        parallel         - default is True. Run the computation on
+                           multiple segments or not.
+
+Due to the stochastic nature of SGD, we can only obtain very small values for the fitting coefficients. Therefore, <em>threshold</em> is needed at the end of the computation to screen out those tiny values and just hard set them to be zeros. This is done as the following: (1) multiply each coefficient with the standard deviation of the corresponding feature (2) compute the average of absolute values of re-scaled coefficients (3) divide each rescaled coefficients with the average, and if the resulting absolute value is smaller than <em>threshold</em>, set the original coefficient to be zero.
+
+SGD is in nature a sequential algorithm, and when running in a distributed way, each segment of the data runs its own SGD model, and the models are averaged to get a model for each iteration. This average might slow down the convergence speed, although we acquire the ability to process large data set on multiple machines. So this algorithm provides an option <em>parallel</em> to let the user choose whether to do parallel computation.
+
+<b>Stopping Criteria</b> Both optimizers compute the average difference between the coefficients of two consecutive iterations, and if the difference is smaller than <em>tolerance</em> or the iteration number is larger than <em>max_iter</em>, the computation stops.
+
+<b>Online Help</b> The user can read short help messages by using any one of the following
+\code
+SELECT madlib.elastic_net_train();
+SELECT madlib.elastic_net_train('usage');
+SELECT madlib.elastic_net_train('predict');
+SELECT madlib.elastic_net_train('gaussian');
+SELECT madlib.elastic_net_train('linear');
+SELECT madlib.elastic_net_train('fista');
+SELECT madlib.elastic_net_train('igd');
+\endcode
+
+@input
+
+The <b>training examples</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    ...
+    <em>independentVariables</em>   DOUBLE PRECISION[],
+    <em>dependentVariable</em>      DOUBLE PRECISION,
+    ...
+)</pre>
+
+Null values are not expected.
+
+@usage
+
+- Get the fitting coefficients for a linear model:
+
+<pre>
+       SELECT {schema_madlib}.elastic_net_train (
+            'tbl_source',     -- Data table
+            'tbl_result',     -- Result table
+            'col_dep_var',    -- Dependent variable, can be an expression or
+                                    '*'
+            'col_ind_var',    -- Independent variable, can be an expression
+            'regress_family', -- 'gaussian' (or 'linear'). 'binomial'
+                                    (or 'logistic') will be supported
+            alpha,            -- Elastic net control parameter, value in [0, 1]   
+            lambda_value,     -- Regularization parameter, positive
+            standardize,      -- Whether to normalize the data
+            'grouping_col',   -- Group by which columns. Default: NULL
+            'optimizer',      -- Name of optimizer. Default: 'fista'
+            'optimizer_params',-- Optimizer parameters, delimited by comma
+            'excluded',       -- Column names excluded from '*'
+            max_iter,         -- Maximum iteration number
+            tolerance         -- Stopping criteria
+        );
+</pre>
+
+If <em>col_ind_var</em> is '*', then all columns of <em>tbl_source</em> will be used as features except those listed in the <em>excluded</em> string. If the dependent variable is a column name, it is then automatically excluded from the features. However, if the dependent variable is a valid Postgres expression, then the column names inside this expression are not excluded unless explicitly put into the <em>excluded</em> list. So it is a good idea to put all column names involved in the dependent variable expression into the <em>excluded</em> string.
+
+The <em>excluded</em> string is a list of column names excluded from features delimited by comma. For example, 'col1, col2'. If it is NULL or an empty string '', no column is excluded.
+
+If <em>col_ind_var</em> is a single column name, which is the array type, one can still use <em>excluded</em>. For example, if <em>x</em> is a column name, which is an array of size 1000, and the user wants to exclude the 100-th, 200-th and 301-th elements of the array, he can set <em>excluded</em> to be '100, 200, 301'.
+
+Both <em>col_dep_var</em> and <em>col_ind_var</em> can be valid Postgres expression. For example, <em>col_dep_var = 'log(y+1)'</em>, and <em>col_ind_var = 'array[exp(x[1]), x[2], 1/(1+x[3])]'</em> etc.
+
+  Output:
+  <pre> family | features | features_selected | coef_nonzero | coef_all | intercept | log_likelihood | standardize | iteration_run
+  ------------------+------------+------------+------------+--------------+-------------+--------+--------+-----------
+  ...
+  </pre>
+
+where <em>log_likelihood</em> is just the negative value of the first equation above (up to a constant depending on the data set).
+
+- Get the \b prediction on a data set using a linear model:
+<pre>
+SELECT madlib.elastic_net_predict(
+    '<em>regress_family</em>',  -- Response type, 'gaussian' ('linear') or 'binomial' ('logistic')
+    <em>coefficients</em>,    -- fitting coefficients
+    <em>intercept</em>,  -- fitting intercept
+    <em>independent Variables</em> 
+) from tbl_data, tbl_train_result;
+</pre>
+
+The above function returns a double value for each data point.
+
+<b>Or</b> The user can use another prediction function which stores the prediction result in a table. This is usefule if the user wants to use elastic net together with general cross validation function.
+<pre>
+SELECT madlib.elastic_net_predict(
+    '<em>tbl_train_result</em>',
+    '<em>tbl_data</em>',
+    '<em>col_id</em>',  -- ID associated with each row
+    '<em>tbl_predict</em>'  -- Prediction result
+);
+</pre>
+
+@examp
+
+-# Prepare an input table/view:
+\code
+CREATE TABLE en_data (
+    ind_var DOUBLE PRECISION[],
+    dep_var DOUBLE PRECISION
+);
+\endcode     
+-# Populate the input table with some data, which should be well-conditioned, e.g.:
+\code
+mydb=# INSERT INTO lasso_data values ({1, 1}, 0.89);
+mydb=# INSERT INTO lasso_data values ({0.67, -0.06}, 0.3);
+...
+mydb=# INSERT INTO lasso_data values ({0.15, -1.3}, -1.3);
+\endcode   
+-# learn coefficients, e.g.:  
+\code
+mydb=# SELECT madlib.elastic_net_train('en_data', 'en_model', 'ind_var', 'dep_var', 0.5, 0.1,
+                                        True, 'linear', 'igd', 'stepsize = 0.1, warmup = t,
+                                        warmup_lambda_no=3, "warmup_lambdas = [0.4, 0.3, 0.2, 0.1]",
+                                        parallel=t', '1', 10000, 1e-6);
+\endcode
+\code
+mydb=# select madlib.elastic_net_predict(family, coef_all, intercept, ind_var)
+mydb-# from en_data, en_model;
+\endcode
+
+@literature
+
+[1] Elastic net regularization. http://en.wikipedia.org/wiki/Elastic_net_regularization
+[2] Beck, A. and M. Teboulle (2009), A fast iterative shrinkage-thresholding algorothm for linear inverse problems. SIAM J. on Imaging Sciences 2(1), 183-202.   
+[3] Shai Shalev-Shwartz and Ambuj Tewari, Stochastic Methods for l1 Regularized Loss Minimization. Proceedings of the 26th International Conference on Machine Learning, Montreal, Canada, 2009. 
+
+*/
+
+------------------------------------------------------------------------
+
+/**
+ * @brief Interface for elastic net
+ *
+ * @param tbl_source        Name of data source table
+ * @param tbl_result        Name of the table to store the results
+ * @param col_ind_var       Name of independent variable column, independent variable is an array
+ * @param col_dep_var       Name of dependent variable column
+ * @param regress_family    Response type (gaussian or binomial)
+ * @param alpha             The elastic net parameter, [0, 1]
+ * @param lambda            The regularization parameter
+ * @param standardization   Whether to normalize the variables
+ * @param grouping_col      List of columns on which to apply grouping 
+ *                               (currently only a placeholder)
+ * @param optimizer         The optimization algorithm, for example 'igd'
+ * @param optimizer_params  Parameters of the above optimizer, 
+ *                                the format is '{arg = value, ...}'::varchar[]
+ * @param exclude           Which columns to exclude?
+ *                                 (applicable only if col_ind_var is set as *)
+ * @param num_of_iteration  Maximum number of iterations to run the algorithm
+                                (default value of 100)
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_dep_var         TEXT,
+    col_ind_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION,
+    standardize         BOOLEAN,
+    grouping_col        TEXT,
+    optimizer           TEXT,
+    optimizer_params    TEXT,
+    excluded            TEXT,
+    max_iter            INTEGER,
+    tolerance           DOUBLE PRECISION
+) RETURNS VOID AS $$
+PythonFunction(elastic_net, elastic_net, elastic_net_train)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+-- Overloaded functions
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_ind_var         TEXT,
+    col_dep_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION,
+    standardization     BOOLEAN,
+    grouping_columns    TEXT,
+    optimizer           TEXT,
+    optimizer_params    TEXT,
+    excluded            TEXT,
+    max_iter            INTEGER
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.elastic_net_train($1, $2, $3, $4, $5, $6, $7, $8, 
+        $9, $10, $11, $12, $13, 1e-6);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_ind_var         TEXT,
+    col_dep_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION,
+    standardization     BOOLEAN,
+    grouping_columns    TEXT,
+    optimizer           TEXT,
+    optimizer_params    TEXT,
+    excluded            TEXT
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.elastic_net_train($1, $2, $3, $4, $5, $6, $7, $8, 
+        $9, $10, $11, $12, 10000);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_ind_var         TEXT,
+    col_dep_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION,
+    standardization     BOOLEAN,
+    grouping_columns    TEXT,
+    optimizer           TEXT,
+    optimizer_params    TEXT
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.elastic_net_train($1, $2, $3, $4, $5, $6, $7, $8, 
+        $9, $10, $11, NULL);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_ind_var         TEXT,
+    col_dep_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION,
+    standardization     BOOLEAN,
+    grouping_columns    TEXT,
+    optimizer           TEXT
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.elastic_net_train($1, $2, $3, $4, $5, $6, $7, $8, 
+        $9, $10, NULL::TEXT);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_ind_var         TEXT,
+    col_dep_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION,
+    standardization     BOOLEAN,
+    grouping_columns    TEXT
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.elastic_net_train($1, $2, $3, $4, $5, $6, $7, $8, 
+        $9, 'FISTA');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_ind_var         TEXT,
+    col_dep_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION,
+    standardization     BOOLEAN
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.elastic_net_train($1, $2, $3, $4, $5, $6, $7, $8, 
+        NULL);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+------------------------------------------------------------------------
+
+/**
+ * @brief Help function, to print out the supported families
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train ()
+RETURNS TEXT AS $$
+PythonFunction(elastic_net, elastic_net, elastic_net_help)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+
+/**
+ * @brief Help function, to print out the supported optimizer for a family
+ * or print out the parameter list for an optimizer
+ *
+ * @param family_or_optimizer   Response type, 'gaussian' or 'binomial', or
+ * optimizer type
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    family_or_optimizer  TEXT
+) RETURNS TEXT AS $$
+PythonFunction(elastic_net, elastic_net, elastic_net_help)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+/**
+ * @brief Prediction and put the result in a table
+ *        can be used together with General-CV
+ * @param tbl_model The result from elastic_net_train
+ * @param tbl_new_source Data table
+ * @param tbl_predict Prediction result
+ * @param id_col Unique ID associated with each row
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_predict (
+    tbl_model       TEXT,
+    tbl_new_source  TEXT,
+    col_id          TEXT,
+    tbl_predict     TEXT
+) RETURNS VOID AS $$
+PythonFunction(elastic_net, elastic_net, elastic_net_predict_all)
+$$ LANGUAGE plpythonu;
+
+/**
+ * @brief Prediction use learned coefficients for a given example
+ *
+ * @param regress_family    model family
+ * @param coefficients      Weight vector (hyperplane, classifier)
+ * @param intercept         Linear fitting intercept
+ * @param ind_var           Features (independent variables)
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_predict (
+    regress_family  TEXT,
+    coefficients    DOUBLE PRECISION[],
+    intercept       DOUBLE PRECISION,
+    ind_var         DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS $$
+DECLARE
+    family_name     TEXT;
+BEGIN
+    family_name := lower(regress_family);
+    IF family_name = 'gaussian' OR family_name = 'linear' THEN
+        RETURN MADLIB_SCHEMA.__elastic_net_gaussian_predict(coefficients, intercept, ind_var);
+    END IF;
+
+    RAISE EXCEPTION 'This regression family is not supported!';
+END;
+$$ LANGUAGE plpgsql IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__elastic_net_gaussian_predict (
+    coefficients    DOUBLE PRECISION[],
+    intercept       DOUBLE PRECISION,
+    ind_var         DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', '__elastic_net_gaussian_predict'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+-- Compute the solution for just one step ------------------------------
+------------------------------------------------------------------------
+
+CREATE TYPE MADLIB_SCHEMA.__elastic_net_result AS (
+    intercept       DOUBLE PRECISION,
+    coefficients    DOUBLE PRECISION[],
+    lambda_value    DOUBLE PRECISION
+);
+
+------------------------------------------------------------------------
+
+/* IGD */
+
+CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_transition (
+    state               DOUBLE PRECISION[],
+    ind_var             DOUBLE PRECISION[],
+    dep_var             DOUBLE PRECISION,
+    pre_state           DOUBLE PRECISION[],
+    lambda              DOUBLE PRECISION,
+    alpha               DOUBLE PRECISION,
+    dimension           INTEGER,
+    stepsize            DOUBLE PRECISION,
+    total_rows          INTEGER,
+    xmean               DOUBLE PRECISION[],
+    ymean               DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'gaussian_igd_transition'
+LANGUAGE C IMMUTABLE;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_merge (
+    state1              DOUBLE PRECISION[],
+    state2              DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'gaussian_igd_merge'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_final (
+    state               DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'gaussian_igd_final'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration step of IGD for linear models
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step(
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           DOUBLE PRECISION,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__gaussian_igd_transition,
+    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_igd_merge,')
+    FinalFunc = MADLIB_SCHEMA.__gaussian_igd_final,
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+);
+
+CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step_single_seg (
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           DOUBLE PRECISION,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__gaussian_igd_transition,
+    -- m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_igd_merge,')
+    FinalFunc = MADLIB_SCHEMA.__gaussian_igd_final,
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+);
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_igd_state_diff (
+    state1          DOUBLE PRECISION[],
+    state2          DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', '__gaussian_igd_state_diff'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_igd_result (
+    in_state        DOUBLE PRECISION[],
+    feature_sq      DOUBLE PRECISION[],
+    threshold       DOUBLE PRECISION
+) RETURNS MADLIB_SCHEMA.__elastic_net_result AS
+'MODULE_PATHNAME', '__gaussian_igd_result'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+
+/* FISTA */
+
+CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_transition (
+    state               DOUBLE PRECISION[],
+    ind_var             DOUBLE PRECISION[],
+    dep_var             DOUBLE PRECISION,
+    pre_state           DOUBLE PRECISION[],
+    lambda              DOUBLE PRECISION,
+    alpha               DOUBLE PRECISION,
+    dimension           INTEGER,
+    xmean               DOUBLE PRECISION[],
+    ymean               DOUBLE PRECISION,
+    tk                  DOUBLE PRECISION,
+    total_rows          INTEGER,
+    L0                  DOUBLE PRECISION,
+    eta                 DOUBLE PRECISION,
+    use_active_set      INTEGER,
+    is_active           INTEGER
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'gaussian_fista_transition'
+LANGUAGE C IMMUTABLE;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_merge (
+    state1              DOUBLE PRECISION[],
+    state2              DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'gaussian_fista_merge'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_final (
+    state               DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'gaussian_fista_final'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration step of FISTA for linear models
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_fista_step(
+    /* ind_var      */  DOUBLE PRECISION[],
+    /* dep_var      */  DOUBLE PRECISION,
+    /* pre_state    */  DOUBLE PRECISION[],
+    /* lambda       */  DOUBLE PRECISION,
+    /* alpha        */  DOUBLE PRECISION,
+    /* dimension    */  INTEGER,
+    /* mean x       */  DOUBLE PRECISION[],
+    /* mean y       */  DOUBLE PRECISION,
+    /* tk           */  DOUBLE PRECISION,
+    /* total_rows   */  INTEGER,
+    /* L0           */  DOUBLE PRECISION,
+    /* eta          */  DOUBLE PRECISION,
+    /* use_active_set */INTEGER,
+    /* is_active */     INTEGER
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__gaussian_fista_transition,
+    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_fista_merge,')
+    FinalFunc = MADLIB_SCHEMA.__gaussian_fista_final,
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+);
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_fista_state_diff (
+    state1          DOUBLE PRECISION[],
+    state2          DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', '__gaussian_fista_state_diff'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_fista_result (
+    in_state        DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__elastic_net_result AS
+'MODULE_PATHNAME', '__gaussian_fista_result'
+LANGUAGE C IMMUTABLE STRICT;
+
+

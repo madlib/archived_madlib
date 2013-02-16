@@ -1,0 +1,441 @@
+
+import plpy
+import math
+from utilities.utilities import __unique_string
+from utilities.control import IterationController
+from elastic_net_utils import IterationControllerNoTableDrop
+from elastic_net_utils import __compute_means
+from elastic_net_utils import __normalize_data
+from elastic_net_utils import __compute_data_scales
+from elastic_net_utils import __tbl_dimension_rownum
+from elastic_net_utils import __elastic_net_validate_args
+from elastic_net_utils import __compute_log_likelihood
+from utilities.utilities import _array_to_string
+from elastic_net_utils import __compute_average_sq
+from elastic_net_utils import __generate_warmup_lambda_sequence
+from elastic_net_utils import __process_warmup_lambdas
+from elastic_net_generate_result import __elastic_net_generate_result
+from utilities.utilities import __mad_version
+from elastic_net_utils import __preprocess_optimizer_params
+
+version_wrapper = __mad_version()
+mad_vec = version_wrapper.select_vecfunc()
+
+## ========================================================================
+
+def __igd_params_parser(optimizer_params, lambda_value, schema_madlib):
+    """
+    Parse IGD parameters.
+    """
+    allowed_params = set(["stepsize", "warmup", "warmup_lambdas",
+                          "warmup_lambda_no", "threshold", "parallel"])
+    name_value = dict()
+    # default values
+    name_value["parallel"] = True 
+    name_value["stepsize"] = 0.01
+    name_value["warmup"] = False
+    name_value["warmup_lambdas"] = None
+    name_value["warmup_lambda_no"] = 15
+    name_value["threshold"] = 1e-10
+
+    warmup_lambdas = None
+    warmup_lambda_no = None
+
+    if optimizer_params is None:
+        return name_value
+    
+    for s in __preprocess_optimizer_params(optimizer_params):
+        items = s.split("=")
+        if (len(items) != 2):
+            plpy.error("Elastic Net error: Optimizer parameter list has incorrect format!")
+        param_name = items[0].strip(" \"").lower()
+        param_value = items[1].strip(" \"").lower()
+
+        if param_name not in allowed_params:
+            plpy.error(
+                """
+                Elastic Net error: {param_name} is not a valid parameter name for the IGD optimizer.
+                Run:
+                
+                SELECT {schema_madlib}.elastic_net_train('igd');
+
+                to see the parameters for IGD algorithm.
+                """.format(param_name = param_name,
+                           schema_madlib = schema_madlib))
+
+        if param_name == "stepsize":
+            try:
+                name_value["stepsize"] = float(param_value)
+            except:
+                plpy.error("Elastic Net error: stepsize must be a float number!")
+
+        if param_name == "warmup":
+            if param_value in ["true", "t", "yes", "y"]:
+                name_value["warmup"] = True
+            elif param_value in ["false", "f", "no", "n"]:
+                name_value["warmup"] = False
+            else:
+                plpy.error("Elastic Net error: Do you need warmup (True/False or yes/no) ?")
+
+        if param_name == "warmup_lambdas" and param_value != "null":
+            warmup_lambdas = param_value
+
+        if param_name == "warmup_lambda_no":
+            warmup_lambda_no = param_value
+   
+        if param_name == "threshold":
+            try:
+                name_value["threshold"] = float(param_value)
+            except:
+                plpy.error("Elastic Net error: threshold must be a float number!")
+
+        if param_name == "parallel":
+            if param_value in ["true", "t", "yes", "y"]:
+                name_value["parallel"] = True
+            elif param_value in ["false", "f", "no", "n"]:
+                name_value["parallel"] = False
+            else:
+                plpy.error("Elastic Net error: Do you need parallel (True/False or yes/no) ? IGD in parallel might be slower !")
+
+    if name_value["warmup"]:
+        if warmup_lambdas is not None:
+            # errors are handled in __process_warmup_lambdas
+            name_value["warmup_lambdas"] = __process_warmup_lambdas(warmup_lambdas, lambda_value)
+        if warmup_lambda_no is not None:
+            try:
+                name_value["warmup_lambda_no"] = int(warmup_lambda_no)
+            except:
+                plpy.error("Elastic Net error: warmup_lambda_no must be an integer!")
+    
+                
+    # validate the parameters
+    if name_value["stepsize"] <= 0:
+        plpy.error("Elastic Net error: step size must be positive!")
+    
+    if (name_value["warmup"] and name_value["warmup_lambdas"] is None and
+        name_value["warmup_lambda_no"] < 1):
+        plpy.error("Elastic Net error: Number of warm-up lambdas must be a positive integer!")
+
+    if name_value["threshold"] < 0:
+        plpy.error("Elastic Net error: A positive threshold is needed to screen out tiny values around zero!")
+
+    return name_value
+
+## ========================================================================
+
+def __igd_create_tbl_args(**args):
+    """
+    create the temporary schema and argument table used in IGD iterations
+    """
+    (xmean_str0, ymean) = __compute_means(**args)
+        
+    plpy.execute("""
+                 drop table if exists {tbl_igd_args};
+                 create temp table {tbl_igd_args} (
+                    {dimension_name}       integer,
+                    {stepsize_name}        double precision,
+                    {lambda_name}          double precision[],
+                    {alpha_name}           double precision,
+                    {total_rows_name}      integer,
+                    {max_iter_name}        integer,
+                    {tolerance_name}       double precision,
+                    {xmean_name}           double precision[],
+                    {ymean_name}           double precision
+                 );
+                 """.format(**args))
+    plpy.execute("""
+                 insert into {tbl_igd_args} values
+                    ({dimension}, {stepsize}, '{warmup_lambdas}'::double precision[],
+                     {alpha},
+                     {row_num}, {max_iter}, {tolerance},
+                     '{xmean_str0}'::double precision[], {ymean})
+                 """.format(xmean_str0 = xmean_str0, ymean = ymean,
+                            **args))
+
+    return None
+    
+## ========================================================================
+
+def __igd_construct_dict(schema_madlib, tbl_source, col_ind_var, col_dep_var,
+                         tbl_result, dimension, row_num, lambda_value, alpha,
+                         normalization, max_iter, tolerance, outstr_array,
+                         optimizer_params_dict):
+    """
+    Construct the dict used by a series of SQL queries in IGD optimizer.
+    """
+    args = dict(schema_madlib = schema_madlib, tbl_source = tbl_source,
+                tbl_data = tbl_source, # argument name used in normalization
+                col_ind_var = col_ind_var, col_dep_var = col_dep_var,
+                col_ind_var_norm_new = __unique_string(), # for normalization usage
+                col_ind_var_tmp = __unique_string(),
+                col_dep_var_norm_new = __unique_string(), # for normalization usage
+                col_dep_var_tmp = __unique_string(),
+                tbl_result = tbl_result,
+                lambda_value = lambda_value, alpha = alpha,
+                dimension = dimension, row_num = row_num,
+                max_iter = max_iter, tolerance = tolerance,
+                outstr_array = outstr_array,
+                normalization = normalization)
+    
+    # Add the optimizer parameters
+    args.update(optimizer_params_dict)
+
+    # Table names useful when normalizing the original data
+    # Note: in order to be consistent with the calling convention
+    # of the normalization functions, multiple elements of the dict
+    # actually have the same value. This is a price that one has to pay
+    # if he wants to save typing argument names by using **args as the
+    # function argument.
+    tbl_ind_scales = __unique_string()
+    tbl_dep_scale = __unique_string()
+    tbl_data_scaled = __unique_string()
+    args.update(tbl_dep_scale = tbl_dep_scale,
+                tbl_ind_scales = tbl_ind_scales,
+                tbl_data_scaled = tbl_data_scaled)
+
+    # Table names used in IGD iterations
+    args.update(tbl_igd_state = __unique_string(),
+                tbl_igd_args = __unique_string())
+
+    # more, for args table
+    args["dimension_name"] = __unique_string()
+    args["stepsize_name"] = __unique_string()
+    args["lambda_name"] = __unique_string()
+    args["alpha_name"] = __unique_string()
+    args["total_rows_name"] = __unique_string()
+    args["max_iter_name"] = __unique_string()
+    args["tolerance_name"] = __unique_string()
+    args["xmean_name"] = __unique_string()
+    args["ymean_name"] = __unique_string()
+   
+    return args
+
+## ========================================================================
+
+def __igd_cleanup_temp_tbls(**args):
+    """
+    Drop all temporary tables used by IGD optimizer,
+    including tables used in the possible normalization
+    and IGD iterations.
+    """
+    plpy.execute("""
+                 drop table if exists {tbl_ind_scales};
+                 drop table if exists {tbl_dep_scale};
+                 drop table if exists {tbl_data_scaled};
+                 drop table if exists {tbl_igd_args};
+                 drop table if exists pg_temp.{tbl_igd_state};
+                 """.format(**args))
+    return None
+
+## ========================================================================
+
+def __elastic_net_gaussian_igd_train(schema_madlib, tbl_source, col_ind_var,
+                                     col_dep_var, tbl_result, lambda_value, alpha,
+                                     normalization, optimizer_params, max_iter,
+                                     tolerance, outstr_array, **kwargs):
+    __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var, tbl_result, 
+                                lambda_value, alpha, normalization, max_iter, tolerance)
+    
+    return __elastic_net_gaussian_igd_train_compute(schema_madlib, tbl_source, col_ind_var,
+                                                    col_dep_var, tbl_result, lambda_value, alpha,
+                                                    normalization, optimizer_params, max_iter,
+                                                    tolerance, outstr_array, **kwargs)
+    
+## ========================================================================
+    
+def __elastic_net_gaussian_igd_train_compute(schema_madlib, tbl_source, col_ind_var,
+                                             col_dep_var, tbl_result, lambda_value, alpha,
+                                             normalization, optimizer_params, max_iter,
+                                             tolerance, outstr_array, **kwargs):
+    """
+    Fit linear model with elastic net regularization using IGD optimization.
+
+    @param tbl_source        Name of data source table
+    @param col_ind_var       Name of independent variable column,
+                             independent variable is an array
+    @param col_dep_var       Name of dependent variable column
+    @param tbl_result        Name of the table to store the results,
+                             will return fitting coefficients and
+                             likelihood
+    @param lambda_value      The regularization parameter
+    @param alpha             The elastic net parameter, [0, 1]
+    @param normalization     Whether to normalize the variables
+    @param optimizer_params  Parameters of the above optimizer, the format
+                             is '{arg = value, ...}'::varchar[]
+    """
+    old_msg_level = plpy.execute("""
+                                 select setting from pg_settings
+                                 where name='client_min_messages'
+                                 """)[0]['setting']
+    plpy.execute("set client_min_messages to error")
+
+    (dimension, row_num) = __tbl_dimension_rownum(tbl_source, col_ind_var)
+
+    # generate a full dict to ease the following string format
+    # including several temporary table names
+    args = __igd_construct_dict(schema_madlib, tbl_source, col_ind_var, col_dep_var, tbl_result,
+                                dimension, row_num, lambda_value, alpha, normalization,
+                                max_iter, tolerance, outstr_array,
+                                __igd_params_parser(optimizer_params, lambda_value, schema_madlib))
+
+    # use normalized data or not
+    if normalization:
+        __normalize_data(args)
+        args["tbl_used"] = args["tbl_data_scaled"]
+        args["col_ind_var_new"] = args["col_ind_var_norm_new"]
+        args["col_dep_var_new"] = args["col_dep_var_norm_new"]
+    else:
+        __compute_data_scales(args)
+        args["tbl_used"] = tbl_source
+        args["col_ind_var_new"] = col_ind_var
+        args["col_dep_var_new"] = col_dep_var
+
+    # average squares of each feature
+    # used to estimate the largest lambda value
+    # also used to screen out tiny values, so order is needed
+    args["sq"] = __compute_average_sq(**args)
+    args["sq_str"] = _array_to_string(args["sq"])
+        
+    if args["warmup_lambdas"] is not None:
+        args["warm_no"] = len(args["warmup_lambdas"])
+        args["warmup_lambdas"] = _array_to_string(args["warmup_lambdas"])
+    
+    if args["warmup"] and args["warmup_lambdas"] is None:
+        args["warmup_lambdas"] = __generate_warmup_lambda_sequence(args["tbl_used"], args["col_ind_var_new"],
+                                                                   args["col_dep_var_new"],
+                                                                   dimension, row_num, lambda_value, alpha,
+                                                                   args["warmup_lambda_no"], args["sq"])
+        args["warm_no"] = len(args["warmup_lambdas"])
+        args["warmup_lambdas"] = _array_to_string(args["warmup_lambdas"])
+    elif args["warmup"] is False:
+        args["warm_no"] = 1
+        args["warmup_lambdas"] = _array_to_string([lambda_value]) # only one value
+
+    # create the temp table that passes parameter values to IGD optimizer
+    __igd_create_tbl_args(**args)
+
+    # perform the actual calculation
+    iteration_run = __compute_gaussian_igd(schema_madlib, args["tbl_igd_args"],
+                                           args["tbl_igd_state"], args["tbl_used"],
+                                           args["col_ind_var_new"], args["col_dep_var_new"],
+                                           True,
+                                           max_iter = args["max_iter"],
+                                           warm_no = args["warm_no"],
+                                           parallel = args["parallel"],
+                                           col_ind_var_new = args["col_ind_var_new"],
+                                           col_dep_var_new = args["col_dep_var_new"],
+                                           dimension_name = args["dimension_name"],
+                                           stepsize_name = args["stepsize_name"],
+                                           lambda_name = args["lambda_name"],
+                                           alpha_name = args["alpha_name"],
+                                           total_rows_name = args["total_rows_name"],
+                                           max_iter_name = args["max_iter_name"],
+                                           tolerance_name = args["tolerance_name"],
+                                           xmean_name = args["xmean_name"],
+                                           ymean_name = args["ymean_name"])
+
+    __elastic_net_generate_result("igd", iteration_run, **args)
+  
+    # cleanup    
+    __igd_cleanup_temp_tbls(**args)
+    plpy.execute("set client_min_messages to " + old_msg_level)
+    return None
+
+## ========================================================================
+
+def __compute_gaussian_igd(schema_madlib, tbl_args, tbl_state, tbl_source,
+                           col_ind_var, col_dep_var, drop_table, **kwargs):
+    """
+    Driver function for elastic net with Gaussian response using IGD
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @param tbl_args Name of the (temporary) table containing all non-template
+        arguments
+    @param tbl_state Name of the (temporary) table containing the inter-iteration
+        states
+    @param rel_source Name of the relation containing input points
+    @param col_ind_var Name of the independent variables column
+    @param col_dep_var Name of the dependent variable column
+    @param drop_table Boolean, whether to use IterationController (True) or
+                      IterationControllerNoTableDrop (False)
+    @param kwargs We allow the caller to specify additional arguments (all of
+        which will be ignored though). The purpose of this is to allow the
+        caller to unpack a dictionary whose element set is a superset of
+        the required arguments by this function.
+    
+    @return The iteration number (i.e., the key) with which to look up the
+        result in \c tbl_state
+    """
+    if drop_table:
+        iterationCtrl = IterationController(
+            rel_args = tbl_args,
+            rel_state = tbl_state,
+            stateType = "double precision[]",
+            truncAfterIteration = False,
+            schema_madlib = schema_madlib, # Identifiers start here
+            rel_source = tbl_source,
+            col_ind_var = col_ind_var,
+            col_dep_var = col_dep_var,
+            lambda_count = 1,
+            **kwargs)
+    else:
+        iterationCtrl = IterationControllerNoTableDrop(
+            rel_args = tbl_args,
+            rel_state = tbl_state,
+            stateType = "double precision[]",
+            truncAfterIteration = False,
+            schema_madlib = schema_madlib, # Identifiers start here
+            rel_source = tbl_source,
+            col_ind_var = col_ind_var,
+            col_dep_var = col_dep_var,
+            lambda_count = 1,
+            **kwargs)
+
+    with iterationCtrl as it:
+        it.iteration = 0
+
+        if it.kwargs["parallel"]:
+            it.kwargs["parallel_step_func"] = "__gaussian_igd_step"
+        else:
+            it.kwargs["parallel_step_func"] = "__gaussian_igd_step_single_seg"
+        
+        while True:
+            # manually add the intercept term
+            it.update("""
+                      select
+                        {schema_madlib}.{parallel_step_func}(
+                            {col_ind_var}::double precision[],
+                            {col_dep_var}::double precision,
+                            (select _state from {rel_state}
+                                where _iteration = {iteration}),
+                            (_args.{lambda_name}[{lambda_count}])::double precision,
+                            (_args.{alpha_name})::double precision,
+                            (_args.{dimension_name})::integer,
+                            (_args.{stepsize_name})::double precision,
+                            (_args.{total_rows_name})::integer,
+                            (_args.{xmean_name})::double precision[],
+                            (_args.{ymean_name})::double precision)
+                      from {rel_source} as _src, {rel_args} as _args
+                      """)
+
+            if it.test("""
+                       {iteration} > _args.{max_iter_name} or
+                       {schema_madlib}.__gaussian_igd_state_diff(
+                            (select _state from {rel_state}
+                                where _iteration = {iteration} - 1),
+                            (select _state from {rel_state}
+                                where _iteration = {iteration})) < _args.{tolerance_name}
+                       """):
+                if (it.iteration < it.kwargs["max_iter"] and
+                    it.kwargs["lambda_count"] < it.kwargs["warm_no"]):
+                    it.kwargs["lambda_count"] += 1
+                else:
+                    break
+        if it.kwargs["lambda_count"] < it.kwargs["warm_no"]:
+            plpy.error("""
+                       Elastic Net error: The final target lambda value is not
+                       reached in warm-up iterations. You need more iterations!
+                       """)
+    
+    return iterationCtrl.iteration
+    

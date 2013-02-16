@@ -1,0 +1,100 @@
+
+import plpy
+from elastic_net_utils import __process_results
+from elastic_net_utils import __compute_log_likelihood
+from utilities.utilities import __mad_version
+from utilities.utilities import _array_to_string
+from utilities.utilities import __mad_version
+
+version_wrapper = __mad_version()
+mad_vec = version_wrapper.select_vecfunc()
+
+def __elastic_net_generate_result (optimizer, iteration_run, **args):
+    """
+    Generate result table for all optimizers
+    """
+    plpy.execute("""
+                 drop table if exists {tbl_result};
+                 create table {tbl_result} (
+                     family            text,
+                     features          text[],
+                     features_selected text[],
+                     coef_nonzero      double precision[],
+                     coef_all          double precision[],
+                     intercept         double precision,
+                     log_likelihood    double precision,
+                     standardize       boolean,
+                     iteration_run     integer)
+                 """.format(**args))
+
+    standardize_flag = "True" if args["normalization"] else "False"
+
+    if optimizer == "fista":
+        result_func = "__gaussian_fista_result(_state)"
+        tbl_state = "{tbl_fista_state}"
+    elif optimizer == "igd":
+        result_func = "__gaussian_igd_result(_state, '{sq_str}'::double precision[], {threshold}::double precision)"
+        tbl_state = "{tbl_igd_state}"
+    
+    result = plpy.execute(
+        """
+        select
+            (result).coefficients as coef,
+            (result).intercept as intercept
+        from (
+            select {{schema_madlib}}.{result_func} as result
+            from {tbl_state}
+            where _iteration = {{iteration_run}}
+        ) t
+        """.format(result_func = result_func, tbl_state = tbl_state).format(
+            iteration_run = iteration_run,
+            **args))[0]
+
+    r_coef = mad_vec(result["coef"], text = False)
+
+    if args["normalization"]:
+        (coef, intercept) = __restore_scale(r_coef, args)
+    else:
+        coef = r_coef
+        intercept = result["intercept"]
+
+    (features, features_selected, dense_coef, sparse_coef) = __process_results(coef, intercept,
+                                                                               args["outstr_array"])
+
+    # compute the likelihood
+    if args["normalization"]:
+        coef_str = _array_to_string(r_coef) # use un-restored coef
+    else:
+        coef_str = sparse_coef
+
+    log_likelihood = __compute_log_likelihood(r_coef, coef_str,
+                                              result["intercept"], **args)
+
+    plpy.execute(
+        """
+        insert into {tbl_result} values
+            ('gaussian', '{features}'::text[], '{features_selected}'::text[],
+            '{dense_coef}'::double precision[], '{sparse_coef}'::double precision[],
+            {intercept}, {log_likelihood}, {standardize_flag}, {iteration})
+        """.format(
+            features = features, features_selected = features_selected,
+            dense_coef = dense_coef, sparse_coef = sparse_coef,
+            intercept = intercept, log_likelihood = log_likelihood,
+            standardize_flag = standardize_flag, iteration = iteration_run,
+            **args))
+
+    return None
+
+# ========================================================================
+
+def __restore_scale (coef, args):
+    """
+    Restore the original scales
+    """
+    rcoef = [0] * len(coef)
+    rintercept = args["y_scale"]["mean"]
+    for i in range(len(coef)):
+        if args["x_scales"]["std"][i] != 0:
+            rcoef[i] = coef[i] / args["x_scales"]["std"][i]
+            rintercept -= coef[i] * args["x_scales"]["mean"][i] / args["x_scales"]["std"][i]
+    return (rcoef, rintercept)

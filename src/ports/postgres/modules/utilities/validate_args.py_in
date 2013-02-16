@@ -2,6 +2,9 @@
 import plpy
 from utilities import __mad_version
 
+version_wrapper = __mad_version()
+mad_vec = version_wrapper.select_vecfunc()
+
 ## ========================================================================
 
 def __is_tbl_exists(tbl):
@@ -50,18 +53,16 @@ def __is_tbl_has_rows(tbl):
     """
     if tbl is None or tbl.upper() == 'NULL':
         return plpy.error('Input error: Table name is invalid')
-    total_rows = plpy.execute("select count(*) from " + tbl)[0]["count"]
-    return total_rows > 0
+    content = plpy.execute("select count(*) from (select * from " + tbl + " limit 1) s")[0]["count"]
+    return content == 1
 
 ## ========================================================================
 
-def __is_col_exists(tbl, cols, schema_madlib="madlib"):
+def __get_cols(tbl, schema_madlib="madlib"):
     """
-    Is the column exist?
+    Get the column names in a table
     """
-    version_wrapper = __mad_version()
     array_agg_string = version_wrapper.select_array_agg(schema_madlib)
-
     if tbl is None or tbl.upper() == 'NULL':
         return plpy.error('Input error: Table name is invalid')
     names = tbl.split(".")
@@ -82,10 +83,45 @@ def __is_col_exists(tbl, cols, schema_madlib="madlib"):
     else:
         plpy.error("Format error: Table name strange!")
 
+    return mad_vec(existing_cols)
+    
+## ========================================================================
+
+def __is_col_exists(tbl, cols, schema_madlib="madlib"):
+    """
+    Is the column exist?
+    """
+    existing_cols = __get_cols(tbl, schema_madlib)
+
     for col in cols:
         if col not in existing_cols:
             return False
     return True
+
+## ========================================================================
+
+def __is_col_array (tbl, col):
+    """
+    Is the column an array?
+    """
+    names = tbl.split(".")
+    if len(names) == 1:
+        table = names[0]
+        schema_str = ""
+    elif len(names) == 2:
+        schema = names[0]
+        table = names[1]
+        schema_str = " and table_schema = '" + schema + "'"
+    else:
+        plpy.error("Format error: Table name strange!")
+        
+    data_type = plpy.execute(
+        """
+        select data_type from information_schema.columns
+        where table_name = '{table}' and column_name = '{col}' {schema_str}
+        """.format(table = table, col = col, schema_str = schema_str))[0]["data_type"]
+
+    return data_type.lower() == "array"
 
 ## ========================================================================
 

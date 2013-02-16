@@ -1,0 +1,395 @@
+ 
+import plpy
+import math
+from utilities.utilities import __unique_string
+from validation.cv_utils import __cv_produce_col_name_string
+from validation.cv_utils import __cv_copy_data_with_id_compute
+from validation.cv_utils import __cv_split_data_using_id_col_compute
+from validation.cv_utils import __cv_split_data_using_id_tbl_compute
+from validation.cv_utils import __cv_generate_random_id
+from utilities.utilities import __mad_version
+
+version_wrapper = __mad_version()
+mad_vec = version_wrapper.select_vecfunc()
+
+## ========================================================================
+    
+def __utils_ind_var_scales(**kwargs):
+    """
+    The mean and standard deviation for each element of the independent variable,
+    which is an array in ridge and lasso.
+
+    The output will be stored in a temp table: a mean array and a std array.
+
+    This function is also used in lasso.
+    """
+    x_scales = plpy.execute(
+        """
+        select
+            (madlib.__utils_var_scales_result(madlib.utils_var_scales({col_ind_var}, {dimension}))).*
+        from
+            {tbl_data}
+        """.format(**kwargs))[0]
+    x_scales["mean"] = mad_vec(x_scales["mean"], text = False)
+    x_scales["std"] = mad_vec(x_scales["std"], text = False)
+    return x_scales
+
+## ========================================================================
+    
+def __utils_dep_var_scale(**kwargs):
+    """
+    The mean and standard deviation for each element of the dependent variable,
+    which is a scalar in ridge and lasso.
+
+    The output will be stored in a temp table: a mean array and a std array
+
+    This function is also used in lasso.
+    """
+    y_scale = plpy.execute(
+        """
+        select
+            avg({col_dep_var}) as mean,
+            1 as std
+        from {tbl_data}
+        """.format(**kwargs))[0]
+    return y_scale
+
+## ========================================================================
+    
+def __utils_normalize_data(**kwargs):
+    """
+    Normalize the independent and dependent variables using the calculated mean's and std's
+    in __utils_ind_var_scales and __utils_dep_var_scale.
+
+    Compute the scaled variables by: scaled_value = (origin_value - mean) / std, and special
+    care is needed if std is zero.
+    
+    The output is a table with scaled independent and dependent variables.
+
+    This function is also used in lasso.
+
+    Parameters:
+    tbl_data -- original data
+    col_ind_var -- independent variables column 
+    dimension -- length of independent variable array
+    col_dep_var -- dependent variable column
+    tbl_ind_scales -- independent variables scales array
+    tbl_dep_scale -- dependent variable scale 
+    tbl_data_scaled -- scaled data result
+    col_ind_var_norm_new -- create a new name for the scaled array
+                       to be compatible with array[...] expressions
+    """    
+    plpy.execute(
+        """
+        create temp table {tbl_data_scaled} as
+            select
+                (madlib.utils_normalize_data({col_ind_var},
+                                            '{x_mean_str}'::double precision[],
+                                            '{x_std_str}'::double precision[])).scaled
+                    as {col_ind_var_norm_new},
+                ({col_dep_var} - {y_mean})  as {col_dep_var_norm_new}
+            from {tbl_data}
+        """.format(**kwargs))
+    
+    return None
+
+## ========================================================================
+    
+def __utils_cv_preprocess(kwargs):
+    """
+    Some common processes used in both ridge and lasso cross validation functions:
+
+    copy data if needed,
+    update name space,
+    check the validity of fold_num,
+    create table to store all the fitting coefficients
+    """
+    # table containing the data, which will be
+    # split into training and validation parts
+    data_tbl = kwargs["data_tbl"]
+    # whether the user provides a unique ID for each row
+    # if not, then it is None
+    data_id = kwargs["data_id"]
+    # whether the ID provided by user is random
+    id_is_random = kwargs["id_is_random"]
+    col_ind_var = kwargs["col_ind_var"]
+    col_dep_var = kwargs["col_dep_var"]
+    # new name for dependent column due to data copy & split
+    col_dep_var_cv_new = __unique_string()
+    # new name for dependent column due to normalization
+    col_dep_var_norm_new = __unique_string()
+    # how many fold validation, default: 10
+    fold_num = kwargs["fold_num"]
+    # how many fold actually will be used, default: 10.
+    # If 1, it is just one validation.
+    upto_fold = kwargs["upto_fold"]
+    # if need to copy the data,
+    # this is the copied table name
+    tbl_all_data = __unique_string()
+    # table name before normalization
+    tbl_inter = __unique_string()
+    # table name for training
+    tbl_train = __unique_string()
+    # table name for validation
+    tbl_valid = __unique_string()
+    # column name for random id
+    col_random_id = __unique_string()
+    # table for random ID mapping, used when
+    # data_id is not None and id_is_random is False
+    tbl_random_id = __unique_string()
+    # accumulate the error information
+    tbl_accum_error = __unique_string()
+    # independent variable (array) scales
+    # inclduing mean's and std's
+    tbl_ind_scales = __unique_string()
+    # dependent variable scale including mean and std
+    tbl_dep_scale = __unique_string()
+    # table to store fitting coefficients from
+    # all validations for all parameter values
+    tbl_coef = __unique_string()
+    # new name for independent column due to data copy & split
+    col_ind_var_cv_new = __unique_string()
+    # new name for independent column due to normalization
+    col_ind_var_norm_new = __unique_string()
+    kwargs.update(dict(tbl_accum_error = tbl_accum_error,
+                       tbl_all_data = tbl_all_data,
+                       tbl_inter = tbl_inter,
+                       tbl_train = tbl_train,
+                       tbl_valid = tbl_valid,
+                       tbl_random_id = tbl_random_id,
+                       col_random_id = col_random_id,
+                       tbl_ind_scales = tbl_ind_scales,
+                       tbl_dep_scale = tbl_dep_scale,
+                       col_ind_var_cv_new = col_ind_var_cv_new,
+                       col_ind_var_norm_new = col_ind_var_norm_new,
+                       col_dep_var_cv_new = col_dep_var_cv_new,
+                       col_dep_var_norm_new = col_dep_var_norm_new,
+                       tbl_coef = tbl_coef))
+    
+    # data_cols = [col_ind_var, col_dep_var]
+    if data_id is None:
+        # unique ID column is not given, has to copy the data and create the ID
+        # CV function cannot be used here, because of possible array expressions
+        __utils_cv_copy_data_with_id(data_tbl, col_dep_var, col_ind_var,
+                                     col_dep_var_cv_new, col_ind_var_cv_new, tbl_all_data, col_random_id)
+        tbl_used = tbl_all_data
+        kwargs["col_ind_var_cp_new"] = col_ind_var_cv_new
+        kwargs["col_dep_var_cp_new"] = col_dep_var_cv_new
+    elif id_is_random:
+        # unique ID column is given and is random
+        tbl_used = data_tbl
+        col_random_id = data_id
+        kwags["col_random_id"] = data_id
+        kwargs["col_ind_var_cp_new"] = col_ind_var
+        kwargs["col_dep_var_cp_new"] = col_dep_var
+    else:
+        # the provided unique ID is not random, create
+        # a table mapping the given ID to a random ID
+        __cv_generate_random_id(data_tbl, data_id, tbl_random_id, col_random_id)
+        tbl_used = data_tbl
+        kwargs["col_ind_var_cp_new"] = col_ind_var
+        kwargs["col_dep_var_cp_new"] = col_dep_var
+
+    # original data row number
+    row_num = plpy.execute("select count(*) as row_num from {data_tbl}".format(**kwargs))[0]["row_num"]
+    # length of the independent variable array
+    dimension = plpy.execute("select max(array_upper({col_ind_var},1)) as dimension from {data_tbl}".format(**kwargs))[0]["dimension"]
+
+    kwargs.update(dict(tbl_used = tbl_used, row_num = row_num, dimension = dimension))
+
+    # table to append all fitting results
+    # which are distinguished by id
+    plpy.execute("""
+        drop table if exists {tbl_coef};
+        create temp table {tbl_coef} (id integer, coef double precision[], intercept double precision)
+    """.format(**kwargs))
+    return None
+
+## ========================================================================
+    
+def __utils_cv_split_and_normalization(k, kwargs):
+    """
+    Another set of common processes needed by both ridge and lasso cross validation functions:
+
+    split the original data into training and validation parts,
+    normalize training data
+    """
+    data_id = kwargs["data_id"]
+    id_is_random = kwargs["id_is_random"]
+    tbl_used = kwargs["tbl_used"]
+    col_random_id = kwargs["col_random_id"]
+    row_num = kwargs["row_num"]
+    tbl_train = kwargs["tbl_train"]
+    tbl_valid = kwargs["tbl_valid"]
+    fold_num = kwargs["fold_num"]
+    tbl_random_id = kwargs["tbl_random_id"]
+    tbl_inter = kwargs["tbl_inter"]
+    normalization = kwargs["normalization"]
+    dimension = kwargs["dimension"]
+    tbl_ind_scales = kwargs["tbl_ind_scales"]
+    tbl_dep_scale = kwargs["tbl_dep_scale"]
+    col_ind_var = kwargs["col_ind_var"]
+    col_dep_var = kwargs["col_dep_var"]
+    col_ind_var_cp_new = kwargs["col_ind_var_cp_new"]
+    col_ind_var_cv_new = kwargs["col_ind_var_cv_new"]
+    col_ind_var_norm_new = kwargs["col_ind_var_norm_new"]
+    col_dep_var_cp_new = kwargs["col_dep_var_cp_new"]
+    col_dep_var_cv_new = kwargs["col_dep_var_cv_new"]
+    col_dep_var_norm_new = kwargs["col_dep_var_norm_new"]
+
+    # col_data = [col_ind_var, col_dep_var]
+    if (data_id is None) or (data_id is not None and id_is_random):
+        __utils_cv_split_data_using_id_col(tbl_used, col_dep_var_cp_new, col_dep_var_cv_new,
+                                           col_ind_var_cp_new,
+                                           col_ind_var_cv_new, col_random_id,
+                                           row_num, tbl_inter, tbl_valid, fold_num, k+1)
+    else:
+        __utils_cv_split_data_using_id_tbl(tbl_used, col_dep_var_cp_new, col_dep_var_cv_new,
+                                           col_ind_var_cp_new,
+                                           col_ind_var_cv_new, tbl_random_id, col_random_id,
+                                           data_id, row_num, tbl_inter, tbl_valid, fold_num, k+1)
+
+    row_num_train = plpy.execute("select count(*) as n from " + tbl_inter)[0]["n"]
+    kwargs["row_num_train"] = row_num_train
+    
+    if normalization:
+        __utils_ind_var_scales(tbl_data = tbl_inter, col_ind_var = col_ind_var_cv_new,
+                               row_num = row_num_train, dimension = dimension,
+                               tbl_scales = tbl_ind_scales)
+        __utils_dep_var_scale(tbl_data = tbl_inter, col_dep_var = col_dep_var_cv_new,
+                              row_num = row_num_train, tbl_scale = tbl_dep_scale)
+        __utils_normalize_data(tbl_data = tbl_inter, col_ind_var = col_ind_var_cv_new,
+                               dimension = dimension, col_dep_var = col_dep_var_cv_new,
+                               tbl_ind_scales = tbl_ind_scales, tbl_dep_scale = tbl_dep_scale,
+                               tbl_data_scaled = tbl_train,
+                               col_ind_var_norm_new = col_ind_var_norm_new,
+                               col_dep_var_norm_new = col_dep_var_norm_new)
+        # dep_std = plpy.execute("select dep_std as std from " + tbl_dep_scale)[0]["std"]
+        kwargs["dep_std"] = 1
+        kwargs["col_ind_var_new"] = col_ind_var_norm_new
+        kwargs["col_dep_var_new"] = col_dep_var_norm_new
+    else:
+        kwargs["tbl_train"] = tbl_inter
+        kwargs["col_ind_var_new"] = col_ind_var_cv_new
+        kwargs["col_dep_var_new"] = col_dep_var_cv_new
+
+    return None
+
+## ========================================================================
+    
+def __utils_accumulate_error(accum_count, tbl_accum_error, param_value, error):
+    """
+    Function needed by both ridge and lasso cross validation functions:
+
+    accumulate measured errors from each validation for each lambda value.
+    """
+    if accum_count == 1:
+        plpy.execute("create temp table {tbl_accum_error} (lambda double precision, mean_squared_error double precision)".format(tbl_accum_error = tbl_accum_error))
+    plpy.execute("insert into {tbl_accum_error} values ({param_value}, {error})".format(
+        tbl_accum_error = tbl_accum_error,
+        param_value = param_value, error = error))
+
+## ========================================================================
+
+def __utils_cv_produce_col_name_string(col_dep_var, col_dep_var_cv_new,
+                                       col_ind_var, col_ind_var_cv_new):
+    """
+    Given an array of strings, pick out the column names and form a single
+    string, so that we could select only the necessary data when copying is
+    inevitable.
+
+    @param tbl Name of the table that contains the columns
+    @param col_dep_var Name of dependent variable
+    @param col_ind_var Name of independent variable, might be an
+    array expression
+    @param col_ind_var_cv_new A single string to rename the independent
+    variable, so that we can refer to the possible array expression
+    """
+    return col_dep_var + " as " + col_dep_var_cv_new + ", "
+    + col_ind_var + " as " + col_ind_var_cv_new
+
+# ========================================================================
+
+def __utils_cv_copy_data_with_id (rel_origin, col_dep_var, col_dep_var_cv_new,
+                                  col_ind_var, col_ind_var_cv_new, rel_copied,
+                                  random_id):
+    """
+    If the user does not provide a ID column, the data table has to be
+    copied and at the same time create a random ID column with it.
+
+    @param rel_origin Original table name, a string
+    @param col_dep_var Name of dependent variable
+    @param col_ind_var Name of independent variable, might be an
+    array expression
+    @param col_ind_var_cv_new A single string to rename the independent
+    variable, so that we can refer to the possible array expression
+    @param rel_copied Name of the table that copies the data from the original table
+    @param random_id Column name for random unqiue ID in the newly created copied table
+    """
+    # We want to select only the columns that will be used in the computation.
+    col_string = __utils_cv_produce_col_name_string(col_dep_var, col_dep_var_cv_new,
+                                                    col_ind_var, col_ind_var_cv_new)
+    __cv_copy_data_with_id_compute (rel_origin, col_string, rel_copied, random_id)
+    return None
+
+# ========================================================================
+
+def __utils_cv_split_data_using_id_col (rel_source, col_dep_var, col_dep_var_cv_new,
+                                        col_ind_var,
+                                        col_ind_var_cv_new, col_id, row_num,
+                                        rel_train, rel_valid, fold_num, which_fold):
+    """
+    A random ID column exists (originally exists or was created during copying),
+    split the data into training and validation.
+
+    @param rel_source Name of data source table
+    @param col_dep_var Name of dependent variable
+    @param col_ind_var Name of independent variable, might be an
+    array expression
+    @param col_ind_var_cv_new A single string to rename the independent
+    @param col_id Name of the unique ID column
+    @param row_num Total number of rows
+    @param rel_train Name of training data table
+    @param rel_valid Name of validation data table
+    @param fold_num How many fold cross validation
+    @param which_fold Which fold will be used as validation part?
+    """
+    col_string = __utils_cv_produce_col_name_string(col_dep_var, col_dep_var_cv_new, col_ind_var, col_ind_var_cv_new)
+    __cv_split_data_using_id_col_compute (rel_source, col_string, col_id, row_num,
+                                          rel_train, rel_valid, fold_num, which_fold)
+    return None
+
+# ========================================================================
+
+def __utils_cv_split_data_using_id_tbl (rel_origin, col_dep_var, col_dep_var_cv_new,
+                                        col_ind_var,
+                                        col_ind_var_cv_new, rel_random_id,
+                                        random_id, origin_id, row_num, rel_train,
+                                        rel_valid, fold_num, which_fold):
+    """
+    Split the data table using a random ID mapping table
+    
+    A unique ID column exists in the original table, but it is not randomly assigned.
+    Thus a table that maps this non-random ID to a real random ID has been created by
+    __cv_generate_random_id.
+
+    @param rel_origin Name of the original data table
+    @param col_dep_var Name of dependent variable
+    @param col_ind_var Name of independent variable, might be an
+    array expression
+    @param col_ind_var_cv_new A single string to rename the independent
+    @param rel_random_id Name of the random ID mapping table
+    @param random_id Name of random ID column in the table rel_random_id
+    @param origin_id Name of the original non-random ID column in rel_origin and rel_random_id
+    @param row_num Total number of rows
+    @param rel_train Name of training data table
+    @param rel_valid Name of validation data table
+    @param fold_num How many fold cross validation
+    @param which_fold Which fold will be used as validation part?
+    """
+    col_string = __utils_cv_produce_col_name_string(col_dep_var, col_dep_var_cv_new,
+                                                    col_ind_var, col_ind_var_cv_new)
+    __cv_split_data_using_id_tbl_compute (rel_origin, col_string, rel_random_id,
+                                          random_id, origin_id, row_num, rel_train,
+                                          rel_valid, fold_num, which_fold)
+    return None
