@@ -1,0 +1,110 @@
+
+import plpy
+import re
+import time
+import random
+import math
+
+## ========================================================================
+
+def __unique_string(**kwargs):
+    """
+    Generate random remporary names for temp table and other names.
+    It has a SQL interface so both SQL and Python functions can call it.
+    """
+    r1 = random.randint(1, 100000000)
+    r2 = int(time.time())
+    r3 = int(time.time()) % random.randint(1, 100000000)
+    u_string = "__madlib_temp_" + str(r1) + "_" + str(r2) + "_" + str(r3) + "__"
+    return u_string
+
+## ========================================================================
+
+# Deal with earlier versions of PG or GPDB
+    
+class __mad_version:
+    def __init__ (self):
+        import re
+        self.version = plpy.execute("select version()")[0]["version"]
+
+    def select_vecfunc (self):
+        """
+        PG84 and GP40, GP41 do not have a good support for
+        vectors. They convert any vector into a string, surrounded
+        by { and }. Thus special care is needed for these older
+        versions of database management systems.
+        """
+        # GPDB 4.0 or 4.1
+        if re.search(r"Greenplum Database 4\.[01]\.", self.version):
+            return self.__extract
+
+        # PG 8.4
+        if re.search(r"PostgreSQL 8\.4\.", self.version):
+            return self.__extract
+
+        return self.__identity
+
+    def __extract (self, origin, text = True):
+        """
+        Extract vector elements from a string with {}
+        as the brackets
+        """
+        if origin is None:
+            return None
+        elm = []
+        for m in re.finditer(r"([^,\{\}\"]+)", origin):
+            elm.append(m.group(1).strip())
+        if text is False:
+            for i in range(len(elm)):
+                elm[i] = float(elm[i])
+        return elm
+
+    def __identity (self, origin, text = True):
+        return origin
+
+    def select_vec_return (self):
+        """
+        Special care is needed if one needs to return
+        vector from Python to SQL
+        """
+        if re.search(r"Greenplum Database 4\.[01]\.", self.version):
+            return self.__condense
+
+        # PG 8.4
+        if re.search(r"PostgreSQL 8\.4\.", self.version):
+            return self.__condense
+
+        return self.__identity
+
+    def __condense (self, origin):
+        """
+        Convert the original vector into a string which some
+        old versions of SQL system can recognize
+        """
+        rst = "{"
+        for i in range(len(origin)):
+            rst += str(origin[i])
+            if i != len(origin) - 1:
+                rst += ", "
+            else:
+                rst += "}"
+        return rst
+
+    def select_array_agg (self, schema_madlib):
+        """
+        GP40 does not have support for array_agg,
+        but madlib has its own array_agg
+        """
+        if re.search(r"Greenplum Database 4\.0\.", self.version):
+            return "{schema_madlib}.array_agg".format(schema_madlib = schema_madlib)
+
+        return "array_agg"
+
+    def is_gp40 (self):
+        """
+        GP40 is so ...
+        It needs special treatment of update from different segments
+        """
+        if re.search(r"Greenplum Database 4\.0\.", self.version):
+            return True
+        return False
