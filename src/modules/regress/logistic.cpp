@@ -842,7 +842,7 @@ logregr_igd_step_final::run(AnyType &args) {
     LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
 
     if(!state.coef.is_finite())
-        throw NoSolutionFoundException("Over- or underflow in "
+        throw NoSolutionFoundException("Overflow or underflow in "
             "incremental-gradient iteration. Input data is likely of poor "
             "numerical condition.");
 

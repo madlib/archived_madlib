@@ -5,7 +5,7 @@
 
 @brief controller classes (e.g. iteration controller)
 
-@namespace utilities 
+@namespace utilities
 
 @brief driver functions shared by modules
 """
@@ -44,9 +44,9 @@ class IterationController:
 
     ***all only "template" parameters are passes as PL/Python arguments***,
 
-    whereas non-template arguments are provided in an argument table. Here, 
-    "template" arguments are those parameters that cannot be SQL parameters, 
-    
+    whereas non-template arguments are provided in an argument table. Here,
+    "template" arguments are those parameters that cannot be SQL parameters,
+
     ***such as table and column names***.
 
     The inter-state iteration table contains two columns:
@@ -96,12 +96,42 @@ class IterationController:
             plpy.notice(sql)
         return plpy.execute(sql)
 
+    def evaluate(self, expression):
+        """
+        Evaluate the given expression. The expression may depend on
+        the current inter-iteration state and all arguments
+
+        @param expression SQL expression. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+        @return None if \c expression evaluates to NULL, otherwise the value of
+            \c expression
+        """
+
+        resultObject = self.runSQL("""
+            SELECT ({expression}) AS expression
+            FROM {{rel_args}} AS _args
+                LEFT OUTER JOIN (
+                    SELECT *
+                    FROM {{rel_state}} AS _state
+                    WHERE _state._iteration = {{iteration}}
+                ) AS _state ON True
+            """.format(expression = expression).format(
+                iteration = self.iteration,
+                **self.kwargs))
+        if resultObject.nrows() == 0:
+            return None
+        else:
+            return resultObject[0]['expression']
+
     def test(self, condition):
         """
         Test if the given condition is satisfied. The condition may depend on
         the current inter-iteration state and all arguments
 
-        @param condition Boolean SQL expressions. The
+        @param condition Boolean SQL expression. The
             following names are defined and can be used in the condition:
             - \c _args - The (single-row) argument table
             - \c _state - The row of the state table containing the latest
@@ -110,23 +140,11 @@ class IterationController:
             value of \c condition
         """
 
-        resultObject = self.runSQL("""
-            SELECT CAST(({condition}) AS BOOLEAN) AS condition
-            FROM {{rel_args}} AS _args
-                LEFT OUTER JOIN (
-                    SELECT *
-                    FROM {{rel_state}} AS _state
-                    WHERE _state._iteration = {{iteration}}
-                ) AS _state ON True
-            """.format(condition = condition).format(
-                iteration = self.iteration,
-                **self.kwargs))
-        if resultObject.nrows() == 0:
-            return None
-        else:
-            return resultObject[0]['condition']
+        return self.evaluate("""
+            CAST(({condition}) AS BOOLEAN)
+            """.format(condition = condition))
 
-    def update(self, newState):
+    def update(self, newState, **updateKwargs):
         """
         Update the inter-iteration state
 
