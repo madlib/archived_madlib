@@ -37,6 +37,16 @@ INSERT INTO patients(ID, second_attack, treatment, trait_anxiety) VALUES
 (19, 0, 0, 50),
 (20, 0, 0, 60);
 
+drop table if exists temp_result;
+select logregr_train(
+    'patients',
+    'temp_result',
+    'second_attack',
+    'ARRAY[1, treatment, trait_anxiety]',
+    20,
+    'irls'
+);
+
 -- The coefficients are from the source above, the other values have been
 -- computed with the IRLS optimizer in MADlib
 SELECT assert(
@@ -48,9 +58,18 @@ SELECT assert(
     relative_error(odds_ratios, ARRAY[0.00172, 0.359, 1.13]) < 0.004 AND
     relative_error(condition_no, 106329) < 1e-2,
     'Logistic regression with IRLS optimizer (patients test): Wrong results'
-) FROM logregr(
-    'patients', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]',
-    20, 'irls'
+) FROM temp_result;
+
+drop table if exists temp_result;
+select logregr_train(
+    'patients',
+    'temp_result',
+    'second_attack',
+    'ARRAY[1, treatment, trait_anxiety]',
+    Null,
+    200,
+    'cg',
+    0
 );
 
 -- We are pretty generous here
@@ -63,10 +82,7 @@ SELECT
     relative_error(odds_ratios, ARRAY[0.00172, 0.359, 1.13]) < 0.01 AND
     relative_error(condition_no, 106329) < 0.02,
     'Logistic regression (patients test): Wrong results'
-FROM logregr(
-    'patients', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]',
-    200, 'cg', 0
-);
+FROM temp_result;
 
 -- IGD performs poorly on this instance, so we are not testing it
 
@@ -168,6 +184,15 @@ INSERT INTO crime(
 (50.8, 126, 0, 10.4, 106, 97, 599, 989, 40, 24, 78, 25, 593, 171),
 (84.9, 130, 0, 12.1, 90, 91, 623, 1049, 3, 22, 113, 40, 588, 160);
 
+drop table if exists temp_result;
+select logregr_train(
+    'crime',
+    'temp_result',
+    'crimerat >= 110',
+    'array[1, maleteen, south, educ, police59]'
+);
+
+
 SELECT assert(
     relative_error(coef, ARRAY[-17.70177, .0833837, -1.117091, .0229224, .0581834]) < 1e-5 AND
     relative_error(log_likelihood, -18.606959) < 1e-5 AND
@@ -177,11 +202,7 @@ SELECT assert(
     relative_error(odds_ratios, ARRAY[exp(-17.70177), 1.086959, .3272305, 1.023187, 1.059909]) < 1e-5 AND
     relative_error(condition_no, 14513863) < 1e-2,
     'Logistic regression with IRLS optimizer (crime): Wrong results'
-) FROM logregr(
-    'crime',
-    'crimerat >= 110',
-    'array[1, maleteen, south, educ, police59]'
-);
+) FROM temp_result;
 
 -- Neither the conjugate-gradient nor incremental-gradient-descent optimizers
 -- perform reasonably here, so we do not test them.
@@ -603,6 +624,14 @@ INSERT INTO grad_school (admit, gre, gpa, rank) VALUES
 (0, 700, 3.65, 2),
 (0, 600, 3.89, 3);
 
+drop table if exists temp_result;
+select logregr_train(
+    'grad_school',
+    'temp_result',
+    'admit',
+    'ARRAY[1, gre, gpa, (rank = 2)::INT::FLOAT8, (rank = 3)::INT::FLOAT8, (rank = 4)::INT::FLOAT8]'
+);
+
 SELECT assert(
     relative_error(coef, ARRAY[-3.989979, 0.002264, 0.804038, -0.675443, -1.340204, -1.551464]) < 1e-5 AND
     relative_error(log_likelihood, -229.2587) < 1e-5 AND
@@ -612,10 +641,18 @@ SELECT assert(
     relative_error(odds_ratios, ARRAY[0.0185001, 1.0022670, 2.2345448, 0.5089310, 0.2617923, 0.2119375]) < 1e-5 AND
     relative_error(condition_no, 40691994) < 1e-2,
     'Logistic regression with IRLS optimizer (grad_school): Wrong results'
-) FROM logregr(
+) FROM temp_result;
+
+drop table if exists temp_result;
+select logregr_train(
     'grad_school',
+    'temp_result',
     'admit',
-    'ARRAY[1, gre, gpa, (rank = 2)::INT::FLOAT8, (rank = 3)::INT::FLOAT8, (rank = 4)::INT::FLOAT8]'
+    'ARRAY[1, gre, gpa, (rank = 2)::INT::FLOAT8, (rank = 3)::INT::FLOAT8, (rank = 4)::INT::FLOAT8]',
+    Null,
+    500,
+    'cg',
+    0
 );
 
 -- We are far more generous for the conjugate-gradient optimizer
@@ -627,13 +664,6 @@ SELECT assert(
     relative_error(p_values, ARRAY[0.000465, 0.038465, 0.015388, 0.032829, 0.000104, 0.000205]) < 0.2 AND
     relative_error(odds_ratios, ARRAY[0.0185001, 1.0022670, 2.2345448, 0.5089310, 0.2617923, 0.2119375]) < 0.05,
     'Logistic regression with CG optimizer (grad_school): Wrong results'
-) FROM logregr(
-    'grad_school',
-    'admit',
-    'ARRAY[1, gre, gpa, (rank = 2)::INT::FLOAT8, (rank = 3)::INT::FLOAT8, (rank = 4)::INT::FLOAT8]',
-    500,
-    'cg',
-    0
-);
+) FROM temp_result;
 
 -- IGD essentially does not work for this case, so we are not testing it

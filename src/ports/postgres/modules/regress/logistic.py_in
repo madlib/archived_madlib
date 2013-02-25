@@ -14,13 +14,13 @@ from utilities.control import IterationController
 from utilities.utilities import __unique_string
 from utilities.validate_args import __is_tbl_exists
 from utilities.validate_args import __is_tbl_has_rows
-# from utilities.validate_args import __is_col_exists
 from utilities.validate_args import __is_scalar_col_no_null
 
 # ========================================================================
 
-def __compute_logregr (schema_madlib, rel_args, rel_state, rel_source,
-                     dep_col, ind_col, optimizer, **kwargs):
+
+def __compute_logregr(schema_madlib, rel_args, rel_state, rel_source,
+                        dep_col, ind_col, optimizer, **kwargs):
     """
     Compute logistic regression coefficients
 
@@ -37,25 +37,25 @@ def __compute_logregr (schema_madlib, rel_args, rel_state, rel_source,
     @param ind_col Name of independent column in training data (of type
                    DOUBLE PRECISION[])
     @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
-                     reweighted least squares, 'cg': conjugate gradient or 'igd': 
+                     reweighted least squares, 'cg': conjugate gradient or 'igd':
                      incremental gradient descent
     @param kwargs We allow the caller to specify additional arguments (all of
            which will be ignored though). The purpose of this is to allow the
-           caller to unpack a dictionary whose element set is a superset of 
+           caller to unpack a dictionary whose element set is a superset of
            the required arguments by this function.
-    
+
     @return Number of iterations that has been run
     """
-    iterationCtrl = IterationController (
-        rel_args = rel_args,
-        rel_state = rel_state,
-        stateType = "double precision[]",
-        truncAfterIteration = False,
-        schema_madlib = schema_madlib, # Identifiers start here
-        rel_source = rel_source,
-        ind_col = ind_col,
-        dep_col = dep_col,
-        optimizer = optimizer)
+    iterationCtrl = IterationController(
+        rel_args=rel_args,
+        rel_state=rel_state,
+        stateType="double precision[]",
+        truncAfterIteration=False,
+        schema_madlib=schema_madlib,  # Identifiers start here
+        rel_source=rel_source,
+        ind_col=ind_col,
+        dep_col=dep_col,
+        optimizer=optimizer)
 
     with iterationCtrl as it:
         it.iteration = 0
@@ -83,56 +83,81 @@ def __compute_logregr (schema_madlib, rel_args, rel_state, rel_source,
 
 # ========================================================================
 
-def logregr_train (schema_madlib, tbl_source, dep_col, ind_col, 
-                   max_iter, optimizer, tolerance, **kwargs):
+
+def logregr_train(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
+                   grouping_col, max_iter, optimizer, tolerance, **kwargs):
     """
     Train logistic model
 
     @param schema_madlib Name of the MADlib schema, properly escaped/quoted
     @param tbl_source Name of relation containing the training data
+    @param tbl_output Name of relation where model will be outputted
     @param dep_col Name of dependent column in training data (of type BOOLEAN)
     @param ind_col Name of independent column in training data (of type
                    DOUBLE PRECISION[])
+    @param grouping_col List of column names on which to group the data
     @param max_iter The maximum number of iterations that are allowed.
     @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
-                     reweighted least squares, 'cg': conjugate gradient or 'igd': 
+                     reweighted least squares, 'cg': conjugate gradient or 'igd':
                      incremental gradient descent
     @param tolerance The precision that the results should have
     @param kwargs We allow the caller to specify additional arguments (all of
            which will be ignored though). The purpose of this is to allow the
-           caller to unpack a dictionary whose element set is a superset of 
+           caller to unpack a dictionary whose element set is a superset of
            the required arguments by this function.
 
     @return A composite value which is __logregr_result defined in logistic.sql_in
     """
-    (tbl_source, dep_col, ind_col, max_iter,
-     optimizer, tolerance) = __logregr_validate_args(tbl_source, dep_col, ind_col, 
-                                                     max_iter, optimizer, tolerance)
-
-    return __logregr_train_compute(schema_madlib, tbl_source, dep_col, ind_col, 
-                                   max_iter, optimizer, tolerance, **kwargs)
+    (tbl_source, tbl_output, dep_col, ind_col, grouping_col, max_iter,
+     optimizer, tolerance) = __logregr_validate_args(tbl_source, tbl_output,
+                                                      dep_col, ind_col,
+                                                      grouping_col, max_iter,
+                                                      optimizer, tolerance)
+    return __logregr_train_compute(schema_madlib, tbl_source, tbl_output,
+                                    dep_col, ind_col, grouping_col, max_iter,
+                                    optimizer, tolerance, **kwargs)
 
 # ========================================================================
 
-def __logregr_validate_args (tbl_source, dep_col, ind_col, 
-                             max_iter, optimizer, tolerance):
+
+def __logregr_validate_args(tbl_source, tbl_output, dep_col, ind_col,
+                             grouping_col, max_iter, optimizer, tolerance):
     """
     Validate the arguments
     """
-    if not __is_tbl_exists(tbl_source):
+    if tbl_source is None or \
+            any(tbl_source.lower() == i for i in ['null', '']) or \
+            not __is_tbl_exists(tbl_source):
         plpy.error("Logregr error: Data table does not exist!")
 
     if not __is_tbl_has_rows(tbl_source):
         plpy.error("Logregr error: Data table is empty!")
 
+    if any(tbl_output.lower() == i for i in ['null', '']):
+        plpy.error("Logregr error: Invalid output table name!")
+
+    # output table will be dropped if already exists
+    # if __is_tbl_exists_in_schema(tbl_output):
+    #     plpy.error("Logregr error: Output table already exists!")
+
     # if not __is_col_exists(tbl_source, [dep_col]):
     #     plpy.error("Logregr error: Dependent column does not exist!")
 
+    if any(dep_col is None or dep_col.lower() == i for i in ['null', '']):
+        plpy.error("Logregr error: Invalid dependent column name!")
+
     if not __is_scalar_col_no_null(tbl_source, dep_col):
-        plpy.error("Logregr error: Dependent variable has Null values! Please filter out Null values before using this function!")
+        plpy.error("Logregr error: Dependent variable has Null values! \
+                    Please filter out Null values before using this function!")
+
+    if any(ind_col is None or ind_col.lower() == i for i in ['null', '']):
+        plpy.error("Logregr error: Invalid independent column name!")
+
+    if any(grouping_col is not None and grouping_col.lower() == i for i in ['null', '']):
+        plpy.error("Logregr error: Invalid grouping columns name!")
 
     if max_iter <= 0:
-        plpy.error("Logregr error: Maximum number of iterations must be a positive integer!")
+        plpy.error("Logregr error: Maximum number of iterations must be positive!")
 
     if tolerance < 0:
         plpy.error("Logregr error: The tolerance cannot be negative!")
@@ -140,24 +165,29 @@ def __logregr_validate_args (tbl_source, dep_col, ind_col,
     if optimizer == "newton":
         optimizer = "irls"
     elif optimizer not in ["irls", "cg", "igd"]:
-        plpy.error("""
-                   Logregr error: Unknown optimizer requested.
+        plpy.error(""" Logregr error: Unknown optimizer requested.
                    Must be 'newton'/'irls', 'cg', or 'igd'.
                    """)
 
-    return (tbl_source, dep_col, ind_col, max_iter, optimizer, tolerance)
+    return (tbl_source, tbl_output, dep_col, ind_col, grouping_col, max_iter,
+                  optimizer, tolerance)
 
 # ========================================================================
 
-def __logregr_train_compute (schema_madlib, tbl_source, dep_col, ind_col, 
-                             max_iter, optimizer, tolerance, **kwargs):
+
+def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
+                              ind_col, grouping_col, max_iter, optimizer,
+                              tolerance, **kwargs):
     """
-    Compute the logistic regression
+    Create an output table (drop if exists) that contains the logistic
+    regression model
     """
-    old_msg_level = plpy.execute("select setting from pg_settings where name='client_min_messages'")[0]['setting']
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                  name='client_min_messages'")[0]['setting']
     plpy.execute("set client_min_messages to error")
 
     args = dict(schema_madlib = schema_madlib, tbl_source = tbl_source,
+                tbl_output = tbl_output,
                 dep_col = dep_col, ind_col = ind_col, max_iter = max_iter,
                 optimizer = optimizer, tolerance = tolerance,
                 tbl_logregr_args = __unique_string(),
@@ -171,7 +201,7 @@ def __logregr_train_compute (schema_madlib, tbl_source, dep_col, ind_col,
     plpy.execute("""
                  drop table if exists pg_temp.{tbl_logregr_args};
                  create table pg_temp.{tbl_logregr_args} as
-                     select 
+                     select
                          {max_iter} as max_iter,
                          {tolerance} as tolerance
                  """.format(**args))
@@ -180,20 +210,28 @@ def __logregr_train_compute (schema_madlib, tbl_source, dep_col, ind_col,
                                       args["tbl_logregr_state"], tbl_source,
                                       dep_col, ind_col, optimizer)
 
-    result = plpy.execute("""
-                          select
-                              (result).*,
-                              {iteration_run} as num_iterations
-                          from (
-                              select
-                                  {schema_madlib}.{fnName}(_state) as result
-                              from {tbl_logregr_state}
-                              where _iteration = {iteration_run}
-                          ) t
-                          """.format(fnName = args[args["optimizer"]],
-                                     iteration_run = iteration_run,
-                                     **args))[0]
-    
+    plpy.execute("""
+                 drop table if exists {tbl_output};
+                 create table {tbl_output} as
+                     select
+                         (result).coef,
+                         (result).log_likelihood,
+                         (result).std_err,
+                         (result).z_stats,
+                         (result).p_values,
+                         (result).odds_ratios,
+                         (result).condition_no,
+                         {iteration_run} as num_iterations
+                     from (
+                         select
+                             {schema_madlib}.{fnName}(_state) as result
+                         from {tbl_logregr_state}
+                         where _iteration = {iteration_run}
+                     ) t
+                 """.format(fnName = args[args["optimizer"]],
+                            iteration_run = iteration_run,
+                            **args))
+
     plpy.execute("""
                  drop table if exists pg_temp.{tbl_logregr_args};
                  drop table if exists pg_temp.{tbl_logregr_state}
@@ -201,4 +239,4 @@ def __logregr_train_compute (schema_madlib, tbl_source, dep_col, ind_col,
 
     plpy.execute("set client_min_messages to " + old_msg_level)
 
-    return result
+    return None
