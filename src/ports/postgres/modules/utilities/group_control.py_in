@@ -1,0 +1,269 @@
+# coding=utf-8
+
+"""
+@file control.py_in
+
+@brief controller classes (e.g. iteration controller)
+
+@namespace utilities
+
+@brief driver functions shared by modules
+"""
+
+import plpy
+from control import MinWarning
+import re
+from utilities import __mad_version
+
+version_wrapper = __mad_version()
+mad_vec = version_wrapper.select_vecfunc()
+
+class GroupIterationController:
+    """
+    @brief Abstraction for implementing driver functions in PL/Python
+
+    This class encapsulates handling of the inter-iteration state. The design
+    goal is to avoid any conversion between backend-native types and those of
+    procedureal languages like PL/Python. Therefore, the expectation is that
+
+    *** all "template" parameters are passed as PL/Python arguments ***,
+
+    whereas non-template arguments are provided in an argument table. Here,
+    "template" arguments are those parameters that cannot be SQL parameters,
+
+    *** such as table and column names ***.
+
+    The inter-state iteration table contains three columns:
+    - <tt>_grouping_cols</tt> - List of columns that are provided as grouping 
+                                arguments 
+    - <tt>_iteration INTEGER</tt> - The 0-based iteration number
+    - <tt>_state <em>self.kwargs.stateType</em></tt> - The state (after
+      iteration \c _interation)
+    """
+
+    def __init__(self, rel_args, rel_state, stateType,
+            temporaryTables = True,
+            # truncAfterIteration = False,
+            schema_madlib = "MADLIB_SCHEMA_MISSING",
+            verbose = False,
+            grouping_str = "Null",
+            **kwargs):
+        self.temporaryTables = temporaryTables
+        # self.truncAfterIteration = truncAfterIteration
+        self.verbose = verbose
+        self.inWith = False
+        self.iteration = -1
+        self.dim = 0
+        self.grouping_str = grouping_str
+        self.kwargs = kwargs
+        self.kwargs.update(
+            rel_args = ('pg_temp.' if temporaryTables else '') + rel_args,
+            rel_state = ('pg_temp.' if temporaryTables else '') + rel_state,
+            unqualified_rel_state = rel_state,
+            stateType = stateType.format(schema_madlib = schema_madlib),
+            schema_madlib = schema_madlib,
+            grouping_str = self.grouping_str)
+        grouping_col = "Null" if kwargs["grouping_col"] is None \
+                                else kwargs["grouping_col"]
+        using_str = "on True" if kwargs["grouping_col"] is None \
+                                else "using ({grouping_col})".format(**kwargs)
+        self.is_group_null = True if kwargs["grouping_col"] is None else False
+        self.kwargs["grouping_col"] = grouping_col
+        self.kwargs["using_str"] = using_str
+
+    def __enter__(self):
+        with MinWarning('warning'):
+            # currently assuming that groups is passed as a valid
+            # array
+            distinct_group = "Null::integer" if self.is_group_null \
+                            else "distinct {grouping_col}".format(**self.kwargs)
+            primary_str = "" if self.is_group_null \
+                                else ", {grouping_col}".format(**self.kwargs)
+            limit_str = "limit 1" if self.is_group_null else ""
+            self.runSQL(
+                """
+                drop table if exists {rel_state};
+                create {temp} table {unqualified_rel_state} as (
+                    select
+                        {distinct_group},
+                        0::integer as _iteration,
+                        Null::{stateType} as _state 
+                    from {rel_source}
+                    {limit_str}
+                );
+				m4_ifdef(`__GREENPLUM__',`alter table {rel_state} 
+                                set distributed by (_iteration {primary_str});')
+                alter table {rel_state} 
+                                add primary key (_iteration {primary_str});
+                """.format(distinct_group = distinct_group,
+                           primary_str = primary_str,
+                           limit_str = limit_str,
+                           temp='TEMPORARY' if self.temporaryTables else '',
+                           **self.kwargs))
+        self.inWith = True
+        return self
+
+    def __exit__(self, type, value, tb):
+        self.inWith = False
+
+    def runSQL(self, sql):
+        if self.verbose:
+            plpy.notice(sql)
+        return plpy.execute(sql)
+
+    def evaluate(self, expression):
+        """
+        Evaluate the given expression. The expression may depend on
+        the current inter-iteration state and all arguments
+
+        @param expression SQL expression. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+        @return None if \c expression evaluates to NULL, otherwise the value of
+            \c expression
+        """
+        resultObject = self.runSQL(
+            """
+            SELECT
+                ({expression}) AS _expression,
+                ARRAY[{{grouping_str}}] AS _groups
+            FROM {{rel_args}} AS _args
+            left outer join (
+                (
+                    SELECT {{grouping_col}}, _state AS _state_previous
+                    FROM {{rel_state}}
+                    WHERE _iteration = {{iteration}} - 1
+                ) sub1
+                JOIN
+                (
+                    SELECT {{grouping_col}}, _state AS _state_current
+                    FROM {{rel_state}}
+                    WHERE _iteration = {{iteration}}
+                ) sub2
+                {using_str}
+            ) AS subq1 ON True
+            """.format(expression = expression,
+                       **self.kwargs).format(
+                           iteration=self.iteration,
+                           **self.kwargs))
+
+        if self.dim == 0:
+            self.dim = plpy.execute(
+                """
+                select array_upper(_state, 1) as dim
+                from {rel_state}
+                where _iteration = {iteration}
+                """.format(iteration = self.iteration,
+                           **self.kwargs))[0]["dim"]
+
+        if resultObject.nrows == 0 or resultObject[0]["_expression"] is None:
+            return None
+        else:
+            for each_elem in resultObject:
+                array_str = "array[" + ",".join(str(i)+"::text" for i in \
+                                                mad_vec(each_elem["_groups"])).replace("None", "Null") + "]"
+                # update status for each group
+                if each_elem['_expression']:
+                    self.runSQL(
+                        """
+                        UPDATE {rel_state} set _state[{dim}] = 1
+                        WHERE
+                            ARRAY[{grouping_str}] = {_group_val} and
+                            _state[{dim}] < 2 and
+                            _iteration = {iteration}
+                        """.format(
+                            _group_val = array_str,
+                            dim = self.dim,
+                            iteration = self.iteration,
+                            **self.kwargs))
+
+        return self.runSQL(
+            """
+            select bool_and(_state[{dim}]::integer::boolean) as rst
+            from {rel_state} as _state_table
+            where _state_table._iteration = {iteration}
+            """.format(
+                iteration=self.iteration,
+                dim = self.dim,
+                **self.kwargs))[0]["rst"] 
+
+    def test(self, condition):
+        """
+        Test if the given condition is satisfied. The condition may depend on
+        the current inter-iteration state and all arguments
+
+        @param condition Boolean SQL expression. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+        @return None if \c condition evaluates to NULL, otherwise the Boolean
+            value of \c condition
+        """
+        return self.evaluate(
+            """
+            CAST(({condition}) AS BOOLEAN)
+            """.format(condition = condition))
+
+    def update(self, newState, **updateKwargs):
+        """
+        Update the inter-iteration state
+
+        @param newState SQL expression of type
+            <tt>stateType.kwargs.stateType</tt>. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+            .
+            Note that <tt>{iteration}</tt> will still be the current iteration.
+            For instance, it could be used in the expression as a WHERE
+            condition: <tt>[...] WHERE _state._iteration = {iteration}</tt>
+
+        This updates the current inter-iteration state to the result of
+        evaluating \c newState. If <tt>self.truncAfterIteration</tt> is true,
+        this will replace the old state, otherwise the history of all old states
+        is kept.
+        """
+        newState = newState.format(
+            iteration = self.iteration,
+            **self.kwargs)
+        self.iteration = self.iteration + 1
+
+        groupby_str = "" if self.is_group_null \
+                      else "group by {grouping_col}".format(**self.kwargs)
+
+        self.runSQL(
+            """
+            insert into {rel_state}
+                (select
+                    {grouping_col},
+                    {iteration},
+                    ({newState})
+                from
+                    ({rel_source} AS _src
+                    join
+                    {rel_state}
+                    {using_str})
+                where
+                    {rel_state}._iteration = {iteration} - 1 and
+                    (case when {iteration} = 1 then
+                        True
+                    else
+                        {rel_state}._state[{dim}] = 0
+                    end)
+                {groupby_str})
+            """.format(
+                dim = self.dim,
+                groupby_str = groupby_str,
+                iteration = self.iteration,
+                newState = newState,
+                **self.kwargs))
+        
+        # if self.truncAfterIteration:
+        #     self.runSQL("""
+        #         DELETE FROM {rel_state} AS _state_table
+        #         WHERE _state._iteration < {iteration}
+        #         """.format(iteration = self.iteration, **self.kwargs))

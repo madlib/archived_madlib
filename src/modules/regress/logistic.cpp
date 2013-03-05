@@ -27,12 +27,15 @@ using dbal::NoSolutionFoundException;
 
 namespace regress {
 
+// valid status values
+enum { IN_PROCESS, COMPLETED, TERMINATED};
+
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
-    const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
-    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-    double logLikelihood,
-    double conditionNo);
+                      const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
+                      const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+                      double logLikelihood,
+                      double conditionNo, int status);
 
 /**
  * @brief Inter- and intra-iteration state for conjugate-gradient method for
@@ -110,6 +113,9 @@ public:
         gradNew += inOtherState.gradNew;
         X_transp_AX += inOtherState.X_transp_AX;
         logLikelihood += inOtherState.logLikelihood;
+        // merged state should have the higher status 
+        // (see top of file for more on 'status' )
+        status = (inOtherState.status > status) ? inOtherState.status : status;
         return *this;
     }
 
@@ -121,11 +127,12 @@ public:
         X_transp_AX.fill(0);
         gradNew.fill(0);
         logLikelihood = 0;
+        status = IN_PROCESS;
     }
 
 private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
-        return 5 + inWidthOfX * inWidthOfX + 4 * inWidthOfX;
+        return 6 + inWidthOfX * inWidthOfX + 4 * inWidthOfX;
     }
 
     /**
@@ -159,6 +166,7 @@ private:
         gradNew.rebind(&mStorage[4 + 3 * inWidthOfX], inWidthOfX);
         X_transp_AX.rebind(&mStorage[4 + 4 * inWidthOfX], inWidthOfX, inWidthOfX);
         logLikelihood.rebind(&mStorage[4 + inWidthOfX * inWidthOfX + 4 * inWidthOfX]);
+        status.rebind(&mStorage[5 + inWidthOfX * inWidthOfX + 4 * inWidthOfX]);
     }
 
     Handle mStorage;
@@ -175,6 +183,7 @@ public:
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradNew;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
     typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
+    typename HandleTraits<Handle>::ReferenceToUInt16 status;
 };
 
 /**
@@ -194,13 +203,24 @@ logregr_cg_step_transition::run(AnyType &args) {
     MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
-    if (!isfinite(x))
-        throw std::domain_error("Design matrix is not finite.");
+    if (!isfinite(x)){
+        // throw std::domain_error("Design matrix is not finite.");
+        dberr << "Design matrix is not finite." << std::endl;
+        state.status = TERMINATED;
+        return state;
+    }
+
 
     if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                "larger than 65535.");
+        if (x.size() > std::numeric_limits<uint16_t>::max()){
+            // throw std::domain_error("Number of independent variables cannot be "
+                // "larger than 65535.");
+            dberr << "Number of independent variables cannot be"
+                        "larger than 65535." << std::endl;
+            state.status = TERMINATED;
+            return state;
+        }
+
 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
         if (!args[3].isNull()) {
@@ -219,7 +239,8 @@ logregr_cg_step_transition::run(AnyType &args) {
     // Note: sigma(-x) = 1 - sigma(x).
     // a_i = sigma(x_i c) sigma(-x_i c)
     double a = sigma(xc) * sigma(-xc);
-    triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+    //triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+    state.X_transp_AX += x * trans(x) * a;
 
     //          n
     //         --
@@ -314,10 +335,18 @@ logregr_cg_step_final::run(AnyType &args) {
         as_scalar(trans(state.dir) * state.X_transp_AX * state.dir)
         * state.dir;
 
-    if(!state.coef.is_finite())
-        throw NoSolutionFoundException("Over- or underflow in "
-            "conjugate-gradient step, while updating coefficients. Input data "
-            "is likely of poor numerical condition.");
+    if(!state.coef.is_finite()){
+        // throw NoSolutionFoundException("Over- or underflow in "
+        //     "conjugate-gradient step, while updating coefficients. Input data "
+        //     "is likely of poor numerical condition.");
+        dberr << "Over- or underflow in"
+                    "conjugate-gradient step, while updating coefficients."
+                    "Input data is likely of poor numerical condition." 
+                << std::endl;
+        state.status = TERMINATED;
+        return state;
+    }
+
 
     state.iteration++;
     return state;
@@ -346,7 +375,7 @@ internal_logregr_cg_result::run(AnyType &args) {
 
     return stateToResult(*this, state.coef,
         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
-        decomposition.conditionNo());
+        decomposition.conditionNo(), state.status);
 }
 
 /**
@@ -424,6 +453,9 @@ public:
         X_transp_Az += inOtherState.X_transp_Az;
         X_transp_AX += inOtherState.X_transp_AX;
         logLikelihood += inOtherState.logLikelihood;
+        // merged state should have the higher status 
+        // (see top of file for more on 'status' )
+        status = (inOtherState.status > status) ? inOtherState.status : status;
         return *this;
     }
 
@@ -431,15 +463,16 @@ public:
      * @brief Reset the inter-iteration fields.
      */
     inline void reset() {
-        numRows = 0;
+        numRows         = 0;
         X_transp_Az.fill(0);
         X_transp_AX.fill(0);
-        logLikelihood = 0;
+        logLikelihood   = 0;
+        status          = IN_PROCESS;
     }
 
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
-        return 3 + inWidthOfX * inWidthOfX + 2 * inWidthOfX;
+        return 4 + inWidthOfX * inWidthOfX + 2 * inWidthOfX;
     }
 
     /**
@@ -465,6 +498,7 @@ private:
         X_transp_Az.rebind(&mStorage[2 + inWidthOfX], inWidthOfX);
         X_transp_AX.rebind(&mStorage[2 + 2 * inWidthOfX], inWidthOfX, inWidthOfX);
         logLikelihood.rebind(&mStorage[2 + inWidthOfX * inWidthOfX + 2 * inWidthOfX]);
+        status.rebind(&mStorage[3 + inWidthOfX * inWidthOfX + 2 * inWidthOfX]);
     }
 
     Handle mStorage;
@@ -477,6 +511,8 @@ public:
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap X_transp_Az;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
     typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
+    typename HandleTraits<Handle>::ReferenceToUInt16 status;
+
 };
 
 AnyType
@@ -486,13 +522,22 @@ logregr_irls_step_transition::run(AnyType &args) {
     MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
-    if (!x.is_finite())
-        throw std::domain_error("Design matrix is not finite.");
+    if (!x.is_finite()){
+        // throw std::domain_error("Design matrix is not finite.");
+        dberr << "Design matrix is not finite." << std::endl;
+        state.status = TERMINATED; 
+        return state;
+    }
 
     if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                "larger than 65535.");
+        if (x.size() > std::numeric_limits<uint16_t>::max()){
+            // throw std::domain_error("Number of independent variables cannot be "
+                // "larger than 65535.");
+            dberr << "Number of independent variables cannot be "
+                     "larger than 65535." << std::endl;
+            state.status = TERMINATED;
+            return state;
+        }
 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
         if (!args[3].isNull()) {
@@ -523,7 +568,8 @@ logregr_irls_step_transition::run(AnyType &args) {
     double az = xc * a + sigma(-y * xc) * y;
 
     state.X_transp_Az.noalias() += x * az;
-    triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+    //triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+    state.X_transp_AX += x * trans(x) * a;
 
     //          n
     //         --
@@ -570,9 +616,16 @@ logregr_irls_step_final::run(AnyType &args) {
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
     // matrices. We extend the check also to the dependent variables.
-    if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite())
-        throw NoSolutionFoundException("Over- or underflow in intermediate "
-            "calulation. Input data is likely of poor numerical condition.");
+    if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite()){
+        // throw NoSolutionFoundException("Over- or underflow in intermediate "
+            // "calulation. Input data is likely of poor numerical condition.");
+        dberr   << "Over- or underflow in intermediate"
+                    " calulation. Input data is likely of poor"
+                    " numerical condition."
+                << std::endl;
+        state.status = TERMINATED;
+        return state;
+    }
 
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
@@ -581,10 +634,17 @@ logregr_irls_step_final::run(AnyType &args) {
     Matrix inverse_of_X_transp_AX = decomposition.pseudoInverse();
 
     state.coef.noalias() = inverse_of_X_transp_AX * state.X_transp_Az;
-    if(!state.coef.is_finite())
-        throw NoSolutionFoundException("Over- or underflow in Newton step, "
-            "while updating coefficients. Input data is likely of poor "
-            "numerical condition.");
+    if(!state.coef.is_finite()){
+        // throw NoSolutionFoundException("Over- or underflow in Newton step, "
+        //     "while updating coefficients. Input data is likely of poor "
+        //     "numerical condition.");
+        dberr   << "Overflow or underflow in"
+                    " Newton step. while updating coefficients."
+                    " Input data is likely of poor numerical condition." 
+                << std::endl;
+        state.status = TERMINATED;
+        return state;
+    }
 
     // We use the intra-iteration field X_transp_Az for storing the diagonal
     // of X^T A X, so that we don't have to recompute it in the result function.
@@ -615,7 +675,8 @@ internal_logregr_irls_result::run(AnyType &args) {
     LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
 
     return stateToResult(*this, state.coef,
-        state.X_transp_Az, state.logLikelihood, state.X_transp_AX(0,0));
+                         state.X_transp_Az, state.logLikelihood, state.X_transp_AX(0,0),
+                         state.status);
 }
 
 /**
@@ -703,6 +764,9 @@ public:
         numRows += inOtherState.numRows;
         X_transp_AX += inOtherState.X_transp_AX;
         logLikelihood += inOtherState.logLikelihood;
+        // merged state should have the higher status 
+        // (see top of file for more on 'status' )
+        status = (inOtherState.status == TERMINATED) ? inOtherState.status : status;
         return *this;
     }
 
@@ -710,16 +774,17 @@ public:
      * @brief Reset the inter-iteration fields.
      */
     inline void reset() {
-		// FIXME: HAYING: stepsize if hard-coded here now
-        stepsize = .1;
+		// FIXME: HAYING: stepsize is hard-coded here now
+        stepsize = .01;
         numRows = 0;
         X_transp_AX.fill(0);
         logLikelihood = 0;
+        status = IN_PROCESS;
     }
 
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
-        return 4 + inWidthOfX * inWidthOfX + inWidthOfX;
+        return 5 + inWidthOfX * inWidthOfX + inWidthOfX;
     }
     /**
      * @brief Rebind to a new storage array
@@ -744,6 +809,7 @@ private:
         numRows.rebind(&mStorage[2 + inWidthOfX]);
         X_transp_AX.rebind(&mStorage[3 + inWidthOfX], inWidthOfX, inWidthOfX);
         logLikelihood.rebind(&mStorage[3 + inWidthOfX * inWidthOfX + inWidthOfX]);
+        status.rebind(&mStorage[4 + inWidthOfX * inWidthOfX + inWidthOfX]);
     }
 
     Handle mStorage;
@@ -756,6 +822,7 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
 	typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
     typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
+    typename HandleTraits<Handle>::ReferenceToUInt16 status;
 };
 
 AnyType
@@ -765,22 +832,30 @@ logregr_igd_step_transition::run(AnyType &args) {
     MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
-    if (!x.is_finite())
-        throw std::domain_error("Design matrix is not finite.");
+    if (!x.is_finite()){
+        // throw std::domain_error("Design matrix is not finite.");
+        dberr << "Design matrix is not finite." << std::endl;
+        state.status = TERMINATED; 
+        return state;
+    }
 
 	// We only know the number of independent variables after seeing the first
     // row.
     if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                "larger than 65535.");
-
+        if (x.size() > std::numeric_limits<uint16_t>::max()){
+            // throw std::domain_error("Number of independent variables cannot be "
+                // "larger than 65535.");
+            dberr << "Number of independent variables cannot be"
+                     " larger than 65535." << std::endl;
+            state.status = TERMINATED;
+            return state;
+        }
+ 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
-
+ 
 		// For the first iteration, the previous state is NULL
         if (!args[3].isNull()) {
-			LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
-
+ 			LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
             state = previousState;
             state.reset();
         }
@@ -802,7 +877,8 @@ logregr_igd_step_transition::run(AnyType &args) {
 
         // a_i = sigma(x_i c) sigma(-x_i c)
 		double a = sigma(previous_xc) * sigma(-previous_xc);
-		triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+		//triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+        state.X_transp_AX += x * trans(x) * a;
 
 		// l_i(c) = - ln(1 + exp(-y_i * c^T x_i))
 		state.logLikelihood -= std::log( 1. + std::exp(-y * previous_xc) );
@@ -839,12 +915,18 @@ logregr_igd_step_merge_states::run(AnyType &args) {
  */
 AnyType
 logregr_igd_step_final::run(AnyType &args) {
-    LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
+    LogRegrIGDTransitionState<MutableArrayHandle<double> > state = args[0];
 
-    if(!state.coef.is_finite())
-        throw NoSolutionFoundException("Overflow or underflow in "
-            "incremental-gradient iteration. Input data is likely of poor "
-            "numerical condition.");
+    if(!state.coef.is_finite()){
+        // throw NoSolutionFoundException("Overflow or underflow in "
+            // "incremental-gradient iteration. Input data is likely of poor "
+            // "numerical condition.");
+        dberr << "Overflow or underflow in"
+                 " incremental-gradient iteration. Input data is likely of poor"
+                 " numerical condition." << std::endl;
+        state.status = TERMINATED;
+        return state;
+    }
 
     // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
@@ -875,8 +957,8 @@ internal_logregr_igd_result::run(AnyType &args) {
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
     return stateToResult(*this, state.coef,
-        decomposition.pseudoInverse().diagonal(), state.logLikelihood,
-        decomposition.conditionNo());
+                         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
+                         decomposition.conditionNo(), state.status);
 }
 
 /**
@@ -890,7 +972,8 @@ AnyType stateToResult(
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
     const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
     double logLikelihood,
-    double conditionNo) {
+    double conditionNo,
+    int status) {
 
     MutableNativeColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -912,7 +995,7 @@ AnyType stateToResult(
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
     tuple << inCoef << logLikelihood << stdErr << waldZStats << waldPValues
-        << oddsRatios << conditionNo;
+          << oddsRatios << conditionNo << status;
     return tuple;
 }
 

@@ -23,7 +23,8 @@ typedef LinearRegressionAccumulator<MutableRootContainer> MutableLinRegrState;
 
 // Heteroskedasticitic regression
 typedef HeteroLinearRegressionAccumulator<RootContainer> HeteroLinRegrState;
-typedef HeteroLinearRegressionAccumulator<MutableRootContainer>	MutableHeteroLinRegrState;
+typedef HeteroLinearRegressionAccumulator<MutableRootContainer>	
+                                                    MutableHeteroLinRegrState;
 
 AnyType
 linregr_transition::run(AnyType& args) {

@@ -119,7 +119,7 @@ The training data is expected to be of the following form:\n
     '<em>sourceName</em>', '<em>outName</em>', '<em>dependentVariable</em>',
     '<em>independentVariables</em>'[, '<em>grouping_columns</em>',
     [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em>
-    ] ] ] ]
+    [, <em>verbose</em> ]] ] ] ]
 );</pre>
   Output table:
   <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
@@ -132,6 +132,8 @@ The training data is expected to be of the following form:\n
   \f$ \boldsymbol c \f$, the log-likelihood of determination
   \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
   <pre>SELECT coef, log_likelihood, p_values FROM outName; </pre>
+- By default, the option <em>verbose</em> is False. If it is set to be True, warning messages
+  will be output to the SQL client for groups that failed.
 
 @examp
 
@@ -209,6 +211,7 @@ CREATE TYPE MADLIB_SCHEMA.__logregr_result AS (
     p_values DOUBLE PRECISION[],
     odds_ratios DOUBLE PRECISION[],
     condition_no DOUBLE PRECISION,
+    status      INTEGER,
     num_iterations INTEGER
 );
 
@@ -331,7 +334,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__logregr_irls_step(
     SFUNC=MADLIB_SCHEMA.__logregr_irls_step_transition,
     m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.__logregr_irls_step_merge_states,')
     FINALFUNC=MADLIB_SCHEMA.__logregr_irls_step_final,
-    INITCOND='{0,0,0}'
+    INITCOND='{0,0,0,0}'
 );
 
 ------------------------------------------------------------------------
@@ -349,8 +352,8 @@ CREATE AGGREGATE MADLIB_SCHEMA.__logregr_igd_step(
     STYPE=DOUBLE PRECISION[],
     SFUNC=MADLIB_SCHEMA.__logregr_igd_step_transition,
     m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.__logregr_igd_step_merge_states,')
-    -- FINALFUNC=MADLIB_SCHEMA.__logregr_igd_step_final,
-    INITCOND='{0,0,0,0}'
+    FINALFUNC=MADLIB_SCHEMA.__logregr_igd_step_final,
+    INITCOND='{0,0,0,0,0}'
 );
 
 ------------------------------------------------------------------------
@@ -423,10 +426,11 @@ LANGUAGE c IMMUTABLE STRICT;
  *                    - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
  *                    - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
  *                      \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
- *                    - <tt>condition_no FLOAT8</tt> - The condition number of matrix
- *                      \f$ X^T A X \f$ during the iteration immediately <em>preceding</em>
- *                      convergence (i.e., \f$ A \f$ is computed using the coefficients of the
- *                      previous iteration)
+ *                    - <tt>condition_no FLOAT8</tt> - The condition number of
+ *                          matrix \f$ X^T A X \f$ during the iteration
+ *                          immediately <em>preceding</em> convergence
+ *                          (i.e., \f$ A \f$ is computed using the coefficients
+ *                          of the previous iteration)
  * @param dep_col Name of the dependent column (of type BOOLEAN)
  * @param ind_col Name of the independent column (of type DOUBLE
  *        PRECISION[])
@@ -436,13 +440,13 @@ LANGUAGE c IMMUTABLE STRICT;
  *        <tt>'irls'</tt>/<tt>'newton'</tt> for iteratively reweighted least
  *        squares or <tt>'cg'</tt> for conjugent gradient)
  * @param tolerance The difference between log-likelihood values in successive
- *        iterations that should indicate convergence. This value should be
+ *         iterations that should indicate convergence. This value should be
  *         non-negative and a zero value here disables the convergence criterion,
- *         and execution will only
- *        stop after \c maxNumIterations iterations.
+ *         and execution will only stop after \c maxNumIterations iterations.
+ * @param verbose If true, any error or warning message will be printed to the
+ *         console (irrespective of the 'client_min_messages' set by server).
+ *         If false, no error/warning message is printed to console.
  *
- * @return <tt>num_iterations INTEGER</tt> - The number of iterations before the
- *    algorithm terminated
  *
  * @usage
  *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
@@ -474,7 +478,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_train (
     grouping_col        VARCHAR,
     max_iter            INTEGER,
     optimizer           VARCHAR,
-    tolerance           DOUBLE PRECISION
+    tolerance           DOUBLE PRECISION,
+    verbose             BOOLEAN
 ) RETURNS VOID AS $$
 PythonFunction(regress, logistic, logregr_train)
 $$ LANGUAGE plpythonu;
@@ -487,7 +492,7 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr_train (
     dep_col             VARCHAR,
     ind_col             VARCHAR)
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, NULL::VARCHAR, 20, 'irls', 0.0001);
+    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, NULL::VARCHAR, 20, 'irls', 0.0001, False);
 $$ LANGUAGE sql VOLATILE;
 
 ------------------------------------------------------------------------
@@ -497,9 +502,9 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr_train (
     tbl_output          VARCHAR,
     dep_col             VARCHAR,
     ind_col             VARCHAR,
-    max_iter            INTEGER)
+    grouping_col        VARCHAR)
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, NULL::VARCHAR, $5, 'irls', 0.0001);
+    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, $5, 20, 'irls', 0.0001, False);
 $$LANGUAGE sql VOLATILE;
 
 ------------------------------------------------------------------------
@@ -509,10 +514,24 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr_train (
     tbl_output          VARCHAR,
     dep_col             VARCHAR,
     ind_col             VARCHAR,
+    grouping_col        VARCHAR,
+    max_iter            INTEGER)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, $5, $6, 'irls', 0.0001, False);
+$$LANGUAGE sql VOLATILE;
+
+------------------------------------------------------------------------
+
+CREATE FUNCTION MADLIB_SCHEMA.logregr_train (
+    tbl_source          VARCHAR,
+    tbl_output          VARCHAR,
+    dep_col             VARCHAR,
+    ind_col             VARCHAR,
+    grouping_col        VARCHAR,
     max_iter            INTEGER,
     optimizer           VARCHAR)
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, NULL::VARCHAR, $5, $6, 0.0001);
+    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, $5, $6, $7, 0.0001, False);
 $$ LANGUAGE sql VOLATILE;
 
 ------------------------------------------------------------------------
@@ -522,11 +541,12 @@ CREATE FUNCTION MADLIB_SCHEMA.logregr_train (
     tbl_output          VARCHAR,
     dep_col             VARCHAR,
     ind_col             VARCHAR,
+    grouping_col        VARCHAR,
     max_iter            INTEGER,
     optimizer           VARCHAR,
-    convergence         DOUBLE PRECISION)
+    tolerance           DOUBLE PRECISION)
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, NULL::VARCHAR, $5, $6, $7);
+    SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, $5, $6, $7, $8, False);
 $$ LANGUAGE sql VOLATILE;
 
 ------------------------------------------------------------------------
@@ -562,3 +582,4 @@ AS $$
                ELSE 1 / (1 + exp(-$1))
           END;
 $$;
+
