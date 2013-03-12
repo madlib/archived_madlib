@@ -26,7 +26,8 @@ namespace crf {
 
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
-                      const HandleMap<const ColumnVector, TransparentHandle<double> > &incoef,
+                      const HandleMap<const ColumnVector,
+                      TransparentHandle<double> > &incoef,
                       double loglikelihood);
 
 /**
@@ -68,7 +69,8 @@ public:
      *
      * This function is only called for the first row.
      */
-    inline void initialize(const Allocator &inAllocator, uint32_t inWidthOfX, uint32_t tagSize) {
+    inline void initialize(const Allocator &inAllocator, uint32_t inWidthOfX,
+                            uint32_t tagSize) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
         dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
@@ -129,11 +131,16 @@ private:
         coef.rebind(&mStorage[3], inWidthOfFeature);
         diag.rebind(&mStorage[3 + inWidthOfFeature], inWidthOfFeature);
         grad.rebind(&mStorage[3 + 2 * inWidthOfFeature], inWidthOfFeature);
-        ws.rebind(&mStorage[3 + 3 * inWidthOfFeature], inWidthOfFeature*(2*m+1)+2*m);
-        numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m]);
-        lbfgs_state.rebind(&mStorage[5 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m], 21);
-        mcsrch_state.rebind(&mStorage[26 + 3 * inWidthOfFeature + inWidthOfFeature*(2*m+1)+2*m], 25);
+        ws.rebind(&mStorage[3 + 3 * inWidthOfFeature],
+                                    inWidthOfFeature*(2*m+1)+2*m);
+        numRows.rebind(&mStorage[3 + 3 * inWidthOfFeature +
+                                    inWidthOfFeature*(2*m+1)+2*m]);
+        loglikelihood.rebind(&mStorage[4 + 3 * inWidthOfFeature +
+                                    inWidthOfFeature*(2*m+1)+2*m]);
+        lbfgs_state.rebind(&mStorage[5 + 3 * inWidthOfFeature +
+                                    inWidthOfFeature*(2*m+1)+2*m], 21);
+        mcsrch_state.rebind(&mStorage[26 + 3 * inWidthOfFeature +
+                                    inWidthOfFeature*(2*m+1)+2*m], 25);
     }
     Handle mStorage;
 
@@ -425,7 +432,10 @@ void LBFGS::mcstep(double& stx, double& fx, double& dx,
     return;
 }
 
-void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, const Eigen::VectorXd& s, double& stp, double ftol, double xtol, int maxfev, int& info, int& nfev, Eigen::VectorXd& wa)
+void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g,
+                    const Eigen::VectorXd& s, double& stp, double ftol,
+                    double xtol, int maxfev, int& info, int& nfev,
+                    Eigen::VectorXd& wa)
 {
     double stpmin = 1e-20;
     double stpmax = 1e20;
@@ -436,12 +446,14 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, cons
 
     if(info != -1) {
         infoc = 1;
-        if (n <= 0 || stp <= 0 || ftol < 0 || gtol < 0 || xtol < 0 || stpmin < 0 || stpmax < stpmin || maxfev <= 0 )
+        if (n <= 0 || stp <= 0 || ftol < 0 || gtol < 0 || xtol < 0 ||
+                    stpmin < 0 || stpmax < stpmin || maxfev <= 0 )
             return;
 
         dginit = g.dot(s);
         if (dginit >= 0.0) {
-            std::cout<<"The search direction is not a descent direction."<<std::endl;
+            std::cout << "The search direction is not a descent direction."
+                      << std::endl;
             return;
         }
 
@@ -486,7 +498,8 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, cons
             if (stp < stpmin) {
                 stp = stpmin;
             }
-            if ((brackt && ((stp <= stmin) || (stp >= stmax))) || (nfev == maxfev - 1) ||
+            if ((brackt && ((stp <= stmin) || (stp >= stmax))) ||
+                    (nfev == maxfev - 1) ||
                     (!infoc) || (brackt && ((stmax - stmin) <= xtol * stmax))) {
                 stp = stx;
             }
@@ -522,7 +535,8 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, cons
             return ;
 
 
-        if ( stage1 && f <= ftest1 && dg >= std::min(ftol , gtol) * dginit ) stage1 = false;
+        if ( stage1 && f <= ftest1 && dg >= std::min(ftol , gtol) * dginit )
+            stage1 = false;
 
         if (stage1 && f <= fx && f > ftest1) {
             fm = f - stp * dgtest;
@@ -531,13 +545,15 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, cons
             dgm = dg - dgtest;
             dgxm = dgx - dgtest;
             dgym = dgy - dgtest;
-            mcstep(stx, fxm, dgxm, sty, fym, dgym, stp, fm, dgm, brackt, stmin, stmax, infoc);
+            mcstep(stx, fxm, dgxm, sty, fym, dgym, stp, fm, dgm, brackt,
+                    stmin, stmax, infoc);
             fx = fxm + stx * dgtest;
             fy = fym + sty * dgtest;
             dgx = dgxm + dgtest;
             dgy = dgym + dgtest;
         } else {
-            mcstep(stx, fx, dgx, sty, fy, dgy, stp, f, dg, brackt, stmin, stmax, infoc);
+            mcstep(stx, fx, dgx, sty, fy, dgy, stp, f, dg, brackt, stmin,
+                    stmax, infoc);
         }
 
         if (brackt) {
@@ -552,7 +568,8 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g, cons
 
 
 
-void LBFGS::lbfgs(int n, int m, double f, Eigen::VectorXd g, double eps , double xtol)
+void LBFGS::lbfgs(int n, int m, double f, Eigen::VectorXd g, double eps,
+                    double xtol)
 {
     bool execute_entire_while_loop = false;
     if(iflag == 0) {
@@ -619,7 +636,8 @@ void LBFGS::lbfgs(int n, int m, double f, Eigen::VectorXd g, double eps , double
             stp = (iter == 1) ? stp1 : 1.0;
             w.head(n) = g;
         }
-        mcsrch(n, x, f, g, w.segment(ispt + point * n, n), stp, ftol, xtol, maxfev, info, nfev, diag);
+        mcsrch(n, x, f, g, w.segment(ispt + point * n, n), stp, ftol,
+                xtol, maxfev, info, nfev, diag);
         if(info == -1) {
             iflag = 1;
             return;
@@ -658,7 +676,8 @@ void compute_exp_Mi(int num_labels, Eigen::MatrixXd &Mi, Eigen::VectorXd &Vi) {
     }
 }
 
-Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans, int num_label)
+Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans,
+                     int num_label)
 {
     int i=0,j=0,r=0,c=0;
     Eigen::VectorXd z(num_label);
@@ -690,9 +709,10 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
     int sparse_m_size = static_cast<int>(sparse_m.size());
     int seq_len = static_cast<int>(sparse_r(r_size-2)) + 1;
 
-    Eigen::MatrixXd betas(state.num_labels, seq_len);
+    Eigen::MatrixXd betas(static_cast<uint32_t>(state.num_labels), seq_len);
     Eigen::VectorXd scale(seq_len);
-    Eigen::MatrixXd Mi(state.num_labels,state.num_labels);
+    Eigen::MatrixXd Mi(static_cast<uint32_t>(state.num_labels),
+                                    static_cast<uint32_t>(state.num_labels));
     Eigen::VectorXd Vi(state.num_labels);
     Eigen::VectorXd alpha(state.num_labels);
     Eigen::VectorXd next_alpha(state.num_labels);

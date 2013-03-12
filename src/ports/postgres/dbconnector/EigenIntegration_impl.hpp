@@ -155,8 +155,8 @@ SparseColumnVectorToLegacySparseVector(
     typedef Eigen::SparseVector<double>::Index Index;
     const size_t kValueLength = sizeof(double);
 
-    const double* values = inVec._valuePtr();
-    const Index* indices = inVec._innerIndexPtr();
+    const double* values = inVec.valuePtr();
+    const Index* indices = inVec.innerIndexPtr();
     Index nnz = inVec.nonZeros();
     Index size = inVec.size();
 

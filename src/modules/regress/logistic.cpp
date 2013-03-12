@@ -203,13 +203,11 @@ logregr_cg_step_transition::run(AnyType &args) {
     MappedColumnVector x = args[2].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
-    if (!isfinite(x)){
-        // throw std::domain_error("Design matrix is not finite.");
-        dberr << "Design matrix is not finite." << std::endl;
+    if (!dbal::eigen_integration::isfinite(x)) {
+        throw std::domain_error("Design matrix is not finite.");
         state.status = TERMINATED;
         return state;
     }
-
 
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){

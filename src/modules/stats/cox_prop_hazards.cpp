@@ -417,7 +417,7 @@ AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
     MutableNativeColumnVector coef(allocateArray<double>(x.size()));
 		
     // The following check was added with MADLIB-138.
-    if (!isfinite(x))
+    if (!dbal::eigen_integration::isfinite(x))
         throw std::domain_error("Design matrix is not finite.");
 
 		if (x.size() > std::numeric_limits<uint16_t>::max())

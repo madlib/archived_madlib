@@ -13,6 +13,9 @@
 
 namespace madlib {
 
+// Use Eigen
+using namespace dbal::eigen_integration;
+
 namespace modules {
 
 namespace regress {
@@ -69,7 +72,7 @@ LinearRegressionAccumulator<Container>::operator<<(const tuple_type& inTuple) {
     // useful to have clear error messages in case of infinite input values.
     if (!std::isfinite(y))
         throw std::domain_error("Dependent variables are not finite.");
-    else if (!isfinite(x))
+    else if (!dbal::eigen_integration::isfinite(x))
         throw std::domain_error("Design matrix is not finite.");
     else if (x.size() > std::numeric_limits<uint16_t>::max())
         throw std::domain_error("Number of independent variables cannot be "
@@ -161,7 +164,8 @@ LinearRegression::compute(
 
     // The following checks were introduced with MADLIB-138. It still seems
     // useful to have clear error messages in case of infinite input values.
-    if (!isfinite(inState.X_transp_X) || !isfinite(inState.X_transp_Y))
+    if (!dbal::eigen_integration::isfinite(inState.X_transp_X) ||
+            !dbal::eigen_integration::isfinite(inState.X_transp_Y))
         throw std::domain_error("Design matrix is not finite.");
 
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
@@ -309,7 +313,7 @@ HeteroLinearRegressionAccumulator<Container>::operator<<(const hetero_tuple_type
 
     if (!std::isfinite(y))
         throw std::domain_error("Dependent variables are not finite.");
-    else if (!isfinite(x))
+    else if (!dbal::eigen_integration::isfinite(x))
         throw std::domain_error("Design matrix is not finite.");
     else if (x.size() > std::numeric_limits<uint16_t>::max())
         throw std::domain_error("Number of independent variables cannot be "
@@ -395,7 +399,8 @@ HeteroLinearRegression::compute(
 
     // The following checks were introduced with MADLIB-138. It still seems
     // useful to have clear error messages in case of infinite input values.
-    if (!isfinite(inState.X_transp_X) || !isfinite(inState.X_transp_A))
+    if (!dbal::eigen_integration::isfinite(inState.X_transp_X) ||
+            !dbal::eigen_integration::isfinite(inState.X_transp_A))
         throw std::domain_error("Design matrix is not finite.");
 
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
@@ -429,7 +434,7 @@ HeteroLinearRegression::compute(
     test_statistic = inState.numRows*(tss == 0 ? 1 : ess / tss);
     pValue = prob::cdf(complement(prob::chi_squared(
                                       static_cast<double>(inState.widthOfX-1)), test_statistic));
-    
+
     return *this;
 }
 
