@@ -1,0 +1,821 @@
+/* ----------------------------------------------------------------------- *//** 
+ *
+ * @file lda.sql_in
+ *
+ * @brief SQL functions for Latent Dirichlet Allocation
+ * @date Dec 2012
+ *
+ * @sa For an introduction to Latent Dirichlet Allocation models, see the 
+       module description \ref grp_lda.
+ *
+ *//* ------------------------------------------------------------------------*/
+
+m4_include(`SQLCommon.m4')
+
+/**
+
+@addtogroup grp_lda
+
+@about
+
+Latent Dirichlet Allocation (LDA) is an interesting generative probabilistic
+model for natural texts and has received a lot of attention in recent years. 
+The model is quite versatile, having found uses in problems like automated 
+topic discovery, collaborative filtering, and document classification.
+
+The LDA model posits that each document is associated with a mixture of various
+topics (e.g. a document is related to Topic 1 with probability 0.7, and Topic 2
+with probability 0.3), and that each word in the document is attributable to
+one of the document's topics. There is a (symmetric) Dirichlet prior with
+parameter \f$ \alpha \f$ on each document's topic mixture. In addition, there
+is another (symmetric) Dirichlet prior with parameter \f$ \beta \f$ on the
+distribution of words for each topic.
+
+The following generative process then defines a distribution over a corpus of
+documents. 
+
+- Sample for each topic \f$ i \f$, a per-topic word
+distribution \f$ \phi_i \f$ from the Dirichlet(\f$\beta\f$) prior. 
+
+- For each document:
+    - Sample a document length N from a suitable distribution, say, Poisson.
+    - Sample a topic mixture \f$ \theta \f$ for the document from the
+Dirichlet(\f$\alpha\f$) distribution.  
+    - For each of the N words:
+        - Sample a topic \f$ z_n \f$ from the multinomial topic distribution \f$
+   \theta \f$.  
+        - Sample a word \f$ w_n \f$ from the multinomial word distribution \f$
+   \phi_{z_n} \f$ associated with topic \f$ z_n \f$.
+
+In practice, only the words in each document are observable. The topic mixture
+of each document and the topic for each word in each document are latent
+unobservable variables that need to be inferred from the observables, and this
+is the problem people refer to when they talk about the inference problem for
+LDA. Exact inference is intractable, but several approximate inference
+algorithms for LDA have been developed. The simple and effective Gibbs sampling
+algorithm described in Griffiths and Steyvers [2] appears to be the current
+algorithm of choice.
+
+This implementation provides a parallel and scalable in-database solution for
+LDA based on Gibbs sampling. Different with the implementations based on MPI or
+Hadoop Map/Reduce, this implementation builds upon the shared-nothing MPP
+databases and enables high-performance in-database analytics.
+
+@input
+The \b corpus/dataset to be analyzed is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>data_table</em> (
+    <em>docid</em> INTEGER,
+    <em>wordid</em> INTEGER,
+    <em>count</em> INTEGER
+)</pre>
+where \c docid refers to the document ID, \c wordid is the word ID (the index
+of a word in the vocabulary), and \c count is the number of occurence of the
+word in the document. 
+
+The \b vocabulary/dictionary that indexes all the words found in the corpus is
+of the following form:
+<pre>{TABLE|VIEW} <em>vocab_table</em> (
+    <em>wordid</em> INTEGER,
+    <em>word</em> TEXT,
+)</pre>
+where \c wordid refers the word ID (the index of a word in the vocabulary) and
+\c word is the actual word.
+
+@usage
+- The training (i.e. topic inference) can be done with the following function:
+    <pre>
+        SELECT \ref lda_train(<em>'data_table'</em>, <em>'model_table'</em>,
+        <em>'output_data_table'</em>, <em>voc_size</em>, <em>topic_num</em>,
+        <em>iter_num</em>, <em>alpha</em>, <em>beta</em>)
+    </pre>
+    
+    This function stores the resulting model in <tt><em>model_table</em></tt>.
+    The table has only 1 row and is in the following form:
+    <pre>{TABLE} <em>model_table</em> (
+        <em>voc_size</em> INTEGER,
+        <em>topic_num</em> INTEGER,
+        <em>alpha</em> FLOAT,
+        <em>beta</em> FLOAT,
+        <em>model</em> INTEGER[][])
+    </pre>
+
+    This function also stores the topic counts and the topic assignments in
+    each document in <tt><em>output_data_table</em></tt>. The table is in the
+    following form:
+    <pre>{TABLE} <em>output_data_table</em> (
+        <em>docid</em> INTEGER,
+        <em>wordcount</em> INTEGER,
+        <em>words</em> INTEGER[],
+        <em>counts</em> INTEGER[],
+        <em>topic_count</em> INTEGER[],
+        <em>topic_assignment</em> INTEGER[])
+    </pre>
+
+- The prediction (i.e. labelling of test documents using a learned LDA model)
+  can be done with the following function: 
+    <pre>
+        SELECT \ref lda_predict(<em>'data_table'</em>, <em>'model_table'</em>,
+        <em>'output_table'</em>);
+    </pre>
+    
+    This function stores the prediction results in
+    <tt><em>output_table</em></tt>. Each row in the table stores the topic
+    distribution and the topic assignments for a docuemnt in the dataset. And
+    the table is in the following form: 
+    <pre>{TABLE} <em>output_table</em> (
+        <em>docid</em> INTEGER,
+        <em>wordcount</em> INTEGER,
+        <em>words</em> INTEGER,
+        <em>counts</em> INTEGER,
+        <em>topic_count</em> INTEGER[],
+        <em>topic_assignment</em> INTEGER[])
+    </pre>
+
+@implementation
+The input format for this module is very common in many machine learning
+packages written in various lanugages, which allows users to generate
+datasets using any existing document preprocessing tools or import existing
+dataset very conveniently. Internally, the input data will be validated and then
+converted to the following format for efficiency: 
+    <pre>{TABLE} <em>__internal_data_table__</em> (
+        <em>docid</em> INTEGER,
+        <em>wordcount</em> INTEGER,
+        <em>words</em> INTEGER[],
+        <em>counts</em> INTEGER[])
+    </pre>
+where \c docid is the document ID, \c wordcount is the count of words in the
+document, \c words is the list of unique words in the document, and \c counts
+is the list of number of occurence of each unique word in the document. The
+convertion can be done with the help of aggregation functions very easily.
+
+@examp
+
+We now give a usage example.
+
+- As a first step, we need to prepare a dataset and vocabulary in the appropriate structure.
+    \code
+    CREATE TABLE my_vocab(wordid INT4, word TEXT)
+    m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (wordid)');
+    
+    INSERT INTO my_vocab VALUES
+    (0, 'code'), (1, 'data'), (2, 'graph'), (3, 'image'), (4, 'input'), (5,
+    'layer'), (6, 'learner'), (7, 'loss'), (8, 'model'), (9, 'network'), (10,
+    'neuron'), (11, 'object'), (12, 'output'), (13, 'rate'), (14, 'set'), (15,
+    'signal'), (16, 'sparse'), (17, 'spatial'), (18, 'system'), (19, 'training');
+    
+    CREATE TABLE my_training 
+    (
+        docid INT4, 
+        wordid INT4, 
+        count INT4
+    )
+    m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (docid)');
+    
+    INSERT INTO my_training VALUES
+    (0, 0, 2),(0, 3, 2),(0, 5, 1),(0, 7, 1),(0, 8, 1),(0, 9, 1),(0, 11, 1),(0, 13,
+    1), (1, 0, 1),(1, 3, 1),(1, 4, 1),(1, 5, 1),(1, 6, 1),(1, 7, 1),(1, 10, 1),(1,
+    14, 1),(1, 17, 1),(1, 18, 1), (2, 4, 2),(2, 5, 1),(2, 6, 2),(2, 12, 1),(2, 13,
+    1),(2, 15, 1),(2, 18, 2), (3, 0, 1),(3, 1, 2),(3, 12, 3),(3, 16, 1),(3, 17,
+    2),(3, 19, 1), (4, 1, 1),(4, 2, 1),(4, 3, 1),(4, 5, 1),(4, 6, 1),(4, 10, 1),(4,
+    11, 1),(4, 14, 1),(4, 18, 1),(4, 19, 1), (5, 0, 1),(5, 2, 1),(5, 5, 1),(5, 7,
+    1),(5, 10, 1),(5, 12, 1),(5, 16, 1),(5, 18, 1),(5, 19, 2), (6, 1, 1),(6, 3,
+    1),(6, 12, 2),(6, 13, 1),(6, 14, 2),(6, 15, 1),(6, 16, 1),(6, 17, 1), (7, 0,
+    1),(7, 2, 1),(7, 4, 1),(7, 5, 1),(7, 7, 2),(7, 8, 1),(7, 11, 1),(7, 14, 1),(7,
+    16, 1), (8, 2, 1),(8, 4, 4),(8, 6, 2),(8, 11, 1),(8, 15, 1),(8, 18, 1),
+    (9, 0, 1),(9, 1, 1),(9, 4, 1),(9, 9, 2),(9, 12, 2),(9, 15, 1),(9, 18, 1),(9,
+    19, 1);
+    
+    
+    CREATE TABLE my_testing 
+    (
+        docid INT4, 
+        wordid INT4, 
+        count INT4
+    )
+    m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (docid)');
+    
+    INSERT INTO my_testing VALUES
+    (0, 0, 2),(0, 8, 1),(0, 9, 1),(0, 10, 1),(0, 12, 1),(0, 15, 2),(0, 18, 1),(0,
+    19, 1), (1, 0, 1),(1, 2, 1),(1, 5, 1),(1, 7, 1),(1, 12, 2),(1, 13, 1),(1, 16,
+    1),(1, 17, 1),(1, 18, 1), (2, 0, 1),(2, 1, 1),(2, 2, 1),(2, 3, 1),(2, 4, 1),(2,
+    5, 1),(2, 6, 1),(2, 12, 1),(2, 14, 1),(2, 18, 1), (3, 2, 2),(3, 6, 2),(3, 7,
+    1),(3, 9, 1),(3, 11, 2),(3, 14, 1),(3, 15, 1), (4, 1, 1),(4, 2, 2),(4, 3,
+    1),(4, 5, 2),(4, 6, 1),(4, 11, 1),(4, 18, 2);
+    \endcode
+
+- To perform training, we call the lda_train() function with the
+appropriate parameters. Here is an example.
+    \code
+    SELECT MADLib.lda_train('my_training',  'my_model', 'my_outdata', 20, 5,
+    10, 5, 0.01);
+    \endcode
+
+    After a successful run of the lda_train() function, two tables will be
+    generated, one for storing the learned models, and another for storing the
+    output data table.
+
+    To get the detailed information about the learned model, we can run the
+    following commands:
+
+    - The topic description by top-k words
+    \code
+        SELECT * FROM MADLib.lda_get_topic_desc('my_model', 'my_vocab',
+        'my_topic_desc', 15);
+    \endcode
+
+    - The per-topic word counts
+    \code
+        SELECT MADLib.lda_get_topic_word_count('my_model',
+        'my_topic_word_count');
+    \endcode
+
+    - The per-word topic counts
+    \code
+        SELECT MADLib.lda_get_word_topic_count('my_model',
+        'my_word_topic_count');
+    \endcode
+
+    To get the topic counts and the topic assignments for each doucment, we
+    can run the following commands:
+
+    - The per-document topic counts:
+    \code
+        SELECT docid, topic_count FROM my_outdata;
+    \endcode
+
+    - The per-document topic assignments:
+    \code
+        SELECT docid, words, counts, topic_assignment FROM my_outdata;
+    \endcode
+    By scanning \c words, \c counts, and \c topic_assignment together, we can
+    get the topic assignment for each word in a document.
+
+- To use a learned LDA model for prediction (i.e. to label new documents), we can use the following commands: 
+    \code
+    SELECT MADLib.lda_predict('my_testing', 'my_model', 'my_pred');
+    \endcode
+
+    After a successful run of the lda_predict() function, the prediction
+    results will be generated and stored in <em>my_pred</em>. This table has
+    the same schema as the <em>my_outdata</em> generated by the lda_train()
+    function.
+    
+    To get te the topic counts and the topic assignments for each doucment, we
+    can run the following commands:
+
+    - The per-document topic counts:
+    \code
+        SELECT docid, topic_count FROM my_pred;
+    \endcode
+
+    - The per-document topic assignments:
+    \code
+        SELECT docid, words, counts, topic_assignment FROM my_pred;
+    \endcode
+    By scanning \c words, \c counts, and \c topic_assignment together, we can
+    get the topic assignment for each word in a document.
+         
+@literature
+
+[1] D.M. Blei, A.Y. Ng, M.I. Jordan, <em>Latent Dirichlet Allocation</em>,
+    Journal of Machine Learning Research, vol. 3, pp. 993-1022, 2003.
+
+[2] T. Griffiths and M. Steyvers, <em>Finding scientific topics</em>, PNAS,
+    vol. 101, pp. 5228-5235, 2004.
+
+[3] Y. Wang, H. Bai, M. Stanton, W-Y. Chen, and E.Y. Chang, <em>lda: Parallel
+    Dirichlet Allocation for Large-scale Applications</em>, AAIM, 2009.
+
+[4] http://en.wikipedia.org/wiki/Latent_Dirichlet_allocation
+
+[5] J. Chang, Collapsed Gibbs sampling methods for topic models, R manual,
+    2010.
+
+@sa File lda.sql_in documenting the SQL functions.
+*/
+
+-- UDT for summarizing a UDF call
+DROP TYPE IF EXISTS MADLIB_SCHEMA.lda_result;
+CREATE TYPE MADLIB_SCHEMA.lda_result AS
+(
+    output_table    TEXT,
+    description     TEXT
+);
+
+/**
+ * @brief This UDF provides an entry for the lda training process.
+ * @param data_table        Table storing the training dataset, each row is in
+ *                          the form of <docid, wordid, count> where docid,
+ *                          wordid, and count are all non-negative integers.
+ * @param voc_size          Size of the vocabulary (Note that the wordid should
+ *                          be continous integers starting from 0 to voc_size -
+ *                          1.  A data validation rountine will be called to
+ *                          validate the dataset.)
+ * @param topic_num         Number of topics (e.g. 100)
+ * @param iter_num          Number of iterations (e.g. 60)
+ * @param alpha             Dirichlet parameter for the per-doc topic multinomial
+ *                          (e.g. 50/topic_num)
+ * @param beta              Dirichlet parameter for the per-topic word multinomial
+ *                          (e.g. 0.01)
+ * @param model_table       Table storing the learned models (voc_size, topic_num, 
+ *                          alpha, beta, per-word topic counts, and
+ *                          corpus-level topic counts)
+ * @param output_data_table Table storing the output data table in the form of
+ *                          <docid, wordcount, words, counts, topic_count,
+ *                          topic_assignment>
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lda_train
+(
+    data_table          TEXT, 
+    model_table         TEXT,
+    output_data_table   TEXT,
+    voc_size            INT4, 
+    topic_num           INT4, 
+    iter_num            INT4, 
+    alpha               FLOAT8, 
+    beta                FLOAT8 
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.lda_train(
+        schema_madlib, data_table, model_table, output_data_table, voc_size,
+        topic_num, iter_num, alpha, beta
+    )
+    return [[model_table, 'model table'], 
+        [output_data_table, 'output data table']]
+$$ LANGUAGE PLPYTHONU STRICT;
+
+
+/**
+ * @brief This UDF provides an entry for the lda predicton process.
+ * @param data_table    Table storing the testing dataset, each row is in the 
+ *                      form of <docid, wordid, count>
+ *                      where docid, wordid, and count are all non-negative 
+ *                      integers.
+ * @param model_table   Table storing the learned models
+ * @param output_table  Table storing per-document topic counts and topic 
+ *                      assignments
+ * @note default iter_num = 20
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lda_predict
+(
+    data_table      TEXT,
+    model_table     TEXT,
+    output_table    TEXT
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.lda_predict(schema_madlib, data_table, model_table, output_table)
+    return [[
+        output_table, 
+        'per-doc topic distribution and per-word topic assignments']]
+$$ LANGUAGE PLPYTHONU STRICT;
+
+/**
+ * @brief A overloaded version which allows users to specify iter_num.
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lda_predict
+(
+    data_table      TEXT,
+    model_table     TEXT,
+    output_table    TEXT,
+    iter_num        INT4
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.lda_predict(
+        schema_madlib, data_table, model_table, output_table, iter_num)
+    return [[
+        output_table, 
+        'per-doc topic distribution and per-word topic assignments']]
+$$ LANGUAGE PLPYTHONU STRICT;
+/**
+ * @brief This UDF computes the per-topic word counts.
+ * @param model_table   The model table generated by the training process
+ * @param output_table  The output table storing the per-topic word counts
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lda_get_topic_word_count
+(
+    model_table     TEXT,
+    output_table    TEXT
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.get_topic_word_count(schema_madlib, model_table, output_table)
+    return [[output_table, 'per-topic word counts']]
+$$ LANGUAGE plpythonu STRICT;
+
+/**
+ * @brief This UDF computes the per-word topic counts.
+ * @param model_table   The model table generated by the training process
+ * @param dist_table    The output table storing the per-word topic counts
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lda_get_word_topic_count
+(
+    model_table     TEXT, 
+    output_table    TEXT
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.get_word_topic_count(schema_madlib, model_table, output_table)
+    return [[output_table, 'per-word topic counts']]
+$$ LANGUAGE plpythonu STRICT;
+
+/**
+ * @brief This UDF gets the description for each topic (top-k words) 
+ * @param model_table   The model table generated by the training process
+ * @param vocab_table   The vocabulary table (<wordid, word>)
+ * @param top_k         The number of top words for each topic description 
+ * @param desc_table    The output table for storing the per-topic description 
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lda_get_topic_desc
+(
+    model_table TEXT,
+    vocab_table TEXT,
+    desc_table  TEXT,
+    top_k       INT4
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.get_topic_desc(
+        schema_madlib, model_table, vocab_table, desc_table, top_k)
+    return [[
+        desc_table, 
+        """topic description, use "ORDER BY topicid, prob DESC" to check the
+        results"""]]
+$$ LANGUAGE plpythonu STRICT;
+
+/**
+ * @brief This UDF assigns topics to words in a document randomly.
+ * @param word_count    The number of words in the document
+ * @param topic_num     The number of topics (specified by the user)
+ * @return              The topic counts and topic assignments 
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__lda_random_assign
+(
+    word_count  INT4, 
+    topic_num   INT4
+)
+RETURNS INT4[]
+AS 'MODULE_PATHNAME', 'lda_random_assign'
+LANGUAGE C STRICT;
+
+/**
+ * @brief This UDF learns the topics of words in a document and is the main
+ * step of a Gibbs sampling iteration. The model parameter (including the
+ * per-word topic counts and corpus-level topic counts) is passed to this
+ * function in the first call and then transfered to the rest calls through
+ * fcinfo->flinfo->fn_extra to allow the immediate update.
+ * @param words             The set of unique words in the document
+ * @param counts            The counts of each unique words in the document
+ *                          (sum(counts) = word_count)
+ * @param doc_topic         The current per-doc topic counts and topic
+ *                          assignments
+ * @param model             The current model (including the per-word topic counts
+ *                          and the corpus-level topic counts)
+ * @param alpha             The Dirichlet parameter for per-document topic multinomial             
+ * @param beta              The Dirichlet parameter for per-topic word multinomial
+ * @param voc_size          The size of vocabulary
+ * @param topic_num         The number of topics
+ * @return                  The learned topic counts and topic assignments 
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__lda_gibbs_sample
+(
+    words       INT4[], 
+    counts      INT4[],
+    doc_topic   INT4[],
+    model       INT4[], 
+    alpha       FLOAT8, 
+    beta        FLOAT8, 
+    voc_size    INT4, 
+    topic_num   INT4, 
+    iter_num    INT4
+)
+RETURNS INT4[]
+AS 'MODULE_PATHNAME', 'lda_gibbs_sample'
+LANGUAGE C;
+
+/**
+ * @brief This UDF is the sfunc for the aggregator computing the topic counts
+ * for each word and the topic count in the whole corpus. It scans the topic
+ * assignments in a document and updates the topic counts.
+ * @param state             The topic counts
+ * @param words             The unique words in the document
+ * @param counts            The counts of each unique words in the document
+ *                          (sum(counts) = word_count)
+ * @param topic_assignment  The topic assignments in the document
+ * @param topic_num         The number of topics
+ * @return                  The updated state
+ **/
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__lda_count_topic_sfunc
+(
+    state               INT4[],
+    words               INT4[], 
+    counts              INT4[],
+    topic_assignment    INT4[], 
+    voc_size            INT4, 
+    topic_num           INT4
+)
+RETURNS INT4[]
+AS 'MODULE_PATHNAME', 'lda_count_topic_sfunc'
+LANGUAGE C;
+
+/**
+ * @brief This UDF is the prefunc for the aggregator computing the per-word
+ * topic counts.
+ * @param state1    The local word topic counts
+ * @param state2    The local word topic counts
+ * @return          The element-wise sum of two local states
+ **/
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__lda_count_topic_prefunc
+(
+    state1  INT4[],
+    state2  INT4[]
+)
+RETURNS INT4[]
+AS 'MODULE_PATHNAME', 'lda_count_topic_prefunc'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief This uda computes the word topic counts by scanning and summing
+ * up topic assignments in each document.
+ * @param words             The unique words in the document
+ * @param counts            The counts of each unique words in the document
+ * @param topic_assignment  The topic assignments in the document
+ * @param voc_size          The size of vocabulary
+ * @param topic_num         The number of topics
+ * @return                  The word topic counts (a 1-d array embeding a 2-d array)
+ **/
+DROP AGGREGATE IF EXISTS 
+MADLIB_SCHEMA.__lda_count_topic_agg
+(
+    INT4[], 
+    INT4[], 
+    INT4[], 
+    INT4, 
+    INT4
+);
+CREATE AGGREGATE 
+MADLIB_SCHEMA.__lda_count_topic_agg
+(
+    INT4[], 
+    INT4[], 
+    INT4[], 
+    INT4, 
+    INT4
+)
+(
+    stype = INT4[],
+    sfunc = MADLIB_SCHEMA.__lda_count_topic_sfunc
+    m4_ifdef(
+        `GREENPLUM', 
+        `, prefunc = MADLIB_SCHEMA.__lda_count_topic_prefunc'
+    )
+);
+
+/**
+ * @brief This UDF computes the perplexity given the output data table and the
+ * model table.
+ * @param model_table   The model table generated by lda_train
+ * @param output_table  The output data table generated by lda_predict
+ * @return              The perplexity
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.lda_get_perplexity
+(
+    model_table       TEXT,
+    output_data_table TEXT
+)
+RETURNS FLOAT8 AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    return lda.get_perplexity(
+        schema_madlib, model_table, output_data_table)
+$$ LANGUAGE plpythonu STRICT;
+
+/**
+ * @brief This UDF is the sfunc for the aggregator computing the perpleixty.
+ * @param state             The perplexity
+ * @param words             The unique words in the document
+ * @param counts            The counts of each unique words in the document
+ * @param doc_topic         The topic counts in the document
+ * @param model             The learned model
+ * @param alpha             The Dirichlet parameter for per-document topic multinomial             
+ * @param beta              The Dirichlet parameter for per-topic word multinomial
+ * @param voc_size          The size of vocabulary
+ * @param topic_num         The number of topics
+ * @return                  The updated perplexity
+ **/
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__lda_perplexity_sfunc
+(
+    state               FLOAT8,
+    words               INT4[], 
+    counts              INT4[],
+    doc_topic           INT4[], 
+    model               INT4[][], 
+    alpha               FLOAT8,
+    beta                FLOAT8,
+    voc_size            INT4, 
+    topic_num           INT4
+)
+RETURNS FLOAT8
+AS 'MODULE_PATHNAME', 'lda_perplexity_sfunc'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief This UDF is the prefunc for the aggregator computing the perplexity.
+ * @param state1    The local perplexity
+ * @param state2    The local perplexity
+ * @return          The global perplexity
+ **/
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__lda_perplexity_prefunc
+(
+    state1  FLOAT8,
+    state2  FLOAT8
+)
+RETURNS FLOAT8
+AS 'MODULE_PATHNAME', 'lda_perplexity_prefunc'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief This aggregator computes the perpleixty.
+ * @param words             The unique words in the document
+ * @param counts            The counts of each unique words in the document
+ * @param doc_topic         The topic counts in the document
+ * @param model             The learned model
+ * @param alpha             The Dirichlet parameter for per-document topic multinomial             
+ * @param beta              The Dirichlet parameter for per-topic word multinomial
+ * @param voc_size          The size of vocabulary
+ * @param topic_num         The number of topics
+ * @return                  The updated perplexity
+ **/
+DROP AGGREGATE IF EXISTS 
+MADLIB_SCHEMA.__lda_perplexity_agg
+(
+    INT4[], 
+    INT4[],
+    INT4[], 
+    INT4[][], 
+    FLOAT8,
+    FLOAT8,
+    INT4, 
+    INT4
+);
+CREATE AGGREGATE 
+MADLIB_SCHEMA.__lda_perplexity_agg
+(
+    INT4[], 
+    INT4[],
+    INT4[], 
+    INT4[][], 
+    FLOAT8,
+    FLOAT8,
+    INT4, 
+    INT4
+)
+(
+    stype = FLOAT8,
+    initcond = '0.0',
+    sfunc = MADLIB_SCHEMA.__lda_perplexity_sfunc
+    m4_ifdef(
+        `GREENPLUM', 
+        `, prefunc = MADLIB_SCHEMA.__lda_perplexity_prefunc'
+    )
+);
+
+/**
+ * @brief Unnest a 2-D array into a set of 1-D arrays 
+ * @param arr   The 2-D array to be unnested
+ * @return      The unnested 1-D arrays
+ **/
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__lda_util_unnest
+(
+    arr INT4[][]
+)
+RETURNS SETOF INT4[] 
+AS 'MODULE_PATHNAME', 'lda_unnest'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Transpose a 2-D array
+ * @param matrix    The input 2-D array
+ * @param           The transposed array
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__lda_util_transpose
+(
+    matrix  INT4[][]
+)
+RETURNS INT4[][]
+AS 'MODULE_PATHNAME', 'lda_transpose'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief L1 normalization with smoothing
+ * @param arr       The array to be normalized
+ * @param smooth    The smoothing parameter
+ * @return          The normalized vector
+ **/
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__lda_util_norm_with_smoothing
+(
+    arr     FLOAT8[],
+    smooth  FLOAT8
+)
+RETURNS FLOAT8[] AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    return lda.l1_norm_with_smoothing(arr, smooth)
+$$ LANGUAGE PLPYTHONU STRICT;
+
+/**
+ * @brief This UDF returns the index of elements in a sorted order
+ * @param arr   The array to be sorted
+ * @return      The index of elements
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__lda_util_index_sort
+(
+    arr FLOAT8[]
+)
+RETURNS INT4[] AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    return lda.index_sort(arr)
+$$ LANGUAGE plpythonu STRICT;
+
+/**
+ * @brief This UDF checks the vocabulary and converts non-continous wordids into
+ * continuous integers ranging from 0 to voc_size - 1.
+ * @param vocab_table   The vocabulary table in the form of 
+                        <wordid::int4, word::text>
+ * @param output_vocab_table     The regularized vocabulary table 
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__lda_util_norm_vocab
+(
+    vocab_table         TEXT,
+    output_vocab_table  TEXT
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.norm_vocab(vocab_table, output_vocab_table)
+    return [[output_vocab_table,'normalized vocbulary table']]
+$$ LANGUAGE plpythonu STRICT;
+
+/**
+ * @brief This UDF converts the data table according to the normalized
+ * vocabulary, and all rows with non-positive count values will be removed
+ * @param data_table    The data table to be normalized
+ * @param vocab_table   The normalized vocabulary table
+ * @param output_data_table  The normalized data table
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__lda_util_norm_dataset
+(
+    data_table          TEXT,
+    norm_vocab_table    TEXT,
+    output_data_table   TEXT
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.norm_dataset(data_table, norm_vocab_table, output_data_table)
+    return [[output_data_table,'normalized data table']]
+$$ LANGUAGE plpythonu STRICT;
+
+/**
+ * @brief This UDF extracts the list of wordids from the data table and joins
+ * it with the vocabulary table to get the list of common wordids, next it will
+ * normalize the vocabulary based on the common wordids and then normalize the
+ * data table based on the normalized vocabulary.
+ * @param data_table            The data table to be normalized
+ * @param vocab_table           The vocabulary table to be normalized
+ * @param output_data_table     The normalized data table
+ * @param output_vocab_table    The normalized vocabulary table
+ **/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__lda_util_conorm_data
+(
+    data_table          TEXT,
+    vocab_table         TEXT,
+    output_data_table   TEXT,
+    output_vocab_table  TEXT
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.conorm_data(
+        data_table, vocab_table, output_data_table, output_vocab_table)
+    return [[output_data_table,'normalized data table'],
+        [output_vocab_table,'normalized vocab table']]
+$$ LANGUAGE plpythonu STRICT;
+

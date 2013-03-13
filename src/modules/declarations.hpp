@@ -14,3 +14,4 @@
 #include "convex/convex.hpp"
 #include "crf/linear_crf.hpp"
 #include "assoc_rules/assoc_rules.hpp"
+#include "lda/lda.hpp"

@@ -41,6 +41,17 @@ public:
     bool isComposite() const;
     AnyType& operator<<(const AnyType& inValue);
 
+    // FIXME: A temporary workaround for UDF to get/set user_fctx, a better
+    // solution is desired which complies with the design principles of DB
+    // abstraction layer.
+    // For some analytic algorithms (e.g. LDA), a stateful function would be
+    // very useful which allows to carry some states accross invocations within
+    // a query. Alternatively, one can achieve similar functionaltiy using a
+    // windowed aggregator, but this may suffer from severe performance
+    // degradation.  
+    void * getUserFuncContext();
+    void setUserFuncContext(void * user_fctx);
+    MemoryContext getCacheMemoryContext();
 protected:
     /**
      * @brief RAII class to temporarily change \c sLazyConversionToDatum

@@ -13,6 +13,16 @@ namespace dbconnector {
 
 namespace postgres {
 
+inline void * AnyType::getUserFuncContext(){
+        return this->mSysInfo->user_fctx;
+}
+inline void AnyType::setUserFuncContext(void * user_fctx){
+        this->mSysInfo->user_fctx = user_fctx;
+}
+inline MemoryContext AnyType::getCacheMemoryContext(){
+    return this->mSysInfo->cacheContext;
+}
+
 inline
 AnyType::AnyType(FunctionCallInfo inFnCallInfo)
   : mContentType(FunctionComposite),
