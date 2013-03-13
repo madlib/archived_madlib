@@ -1,5 +1,6 @@
 
 import plpy
+from utilities import __mad_version
 
 ## ========================================================================
 
@@ -20,7 +21,7 @@ def __is_tbl_exists(tbl):
         plpy.error("Format error: Table name strange!")
 
     return False
-    
+
 ## ========================================================================
 
 def __is_tbl_exists_in_schema(tbl):
@@ -54,30 +55,33 @@ def __is_tbl_has_rows(tbl):
 
 ## ========================================================================
 
-def __is_col_exists(tbl, cols):
+def __is_col_exists(tbl, cols, schema_madlib="madlib"):
     """
     Is the column exist?
     """
+    version_wrapper = __mad_version()
+    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
+
     if tbl is None or tbl.upper() == 'NULL':
         return plpy.error('Input error: Table name is invalid')
     names = tbl.split(".")
+    sql_string = "select " + array_agg_string + \
+                        """(column_name::varchar) as cols
+                            from information_schema.columns
+                            where table_name = '{table_name}'"""
     if len(names) == 1:
-        existing_cols = plpy.execute("""
-                                     select array_agg(column_name::varchar) as cols
-                                     from information_schema.columns
-                                     where table_name = '{0}'
-                                     """.format(tbl))[0]["cols"]
+        existing_cols = plpy.execute(sql_string.format(table_name = tbl)\
+                                    )[0]["cols"]
     elif len(names) == 2:
         schema = names[0]
         table = names[1]
-        existing_cols = plpy.execute("""
-                                     select array_agg(column_name::varchar) as cols
-                                     from information_schema.columns
-                                     where table_name = '{0}' and table_schema = '{1}'
-                                     """.format(table, schema))[0]["cols"]
+        sql_string += " and table_schema = '{schema_name}'"
+        existing_cols = plpy.execute(sql_string.format(table_name=table,
+                                                        schema_name=schema) \
+                                    )[0]["cols"]
     else:
         plpy.error("Format error: Table name strange!")
-        
+
     for col in cols:
         if col not in existing_cols:
             return False
@@ -112,7 +116,7 @@ def __is_array_col_same_dimension(tbl, col):
                            from {tbl}
                            """.format(col=col, tbl=tbl))[0]["min_dim"]
     return max_dim == min_dim
-    
+
 ## ========================================================================
 
 def __is_array_col_no_null(tbl, col):
@@ -133,7 +137,7 @@ def __is_array_col_no_null(tbl, col):
     return True
 
 # ========================================================================
-    
+
 def __is_var_valid (tbl, var):
     """
     Test whether the variable(s) is valid by actually select it from
@@ -147,4 +151,4 @@ def __is_var_valid (tbl, var):
     except Exception:
         return False
     return True
-        
+
