@@ -41,7 +41,7 @@ class LDATrainer:
         plpy.execute('DROP TABLE IF EXISTS %s' % (self.work_table_0))
         plpy.execute("""
             CREATE TEMP TABLE %s(
-                distid      INT4,
+                magicno     INT4,
                 docid       INT4, 
                 wordcount   INT4, 
                 words       INT4[], 
@@ -50,13 +50,13 @@ class LDATrainer:
                 )
                 m4_ifdef(`__GREENPLUM__', 
                     `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) DISTRIBUTED BY
-                    (distid)') 
+                    (docid)') 
             """ % (self.work_table_0)) 
 
         plpy.execute('DROP TABLE IF EXISTS %s' % (self.work_table_1))
         plpy.execute("""
             CREATE TEMP TABLE %s(
-                distid      INT4,
+                magicno     INT4,
                 docid       INT4, 
                 wordcount   INT4, 
                 words       INT4[], 
@@ -65,7 +65,7 @@ class LDATrainer:
                 )
                 m4_ifdef(`__GREENPLUM__', 
                     `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) DISTRIBUTED BY
-                    (distid)') 
+                    (docid)') 
             """ % (self.work_table_1)) 
 
         plpy.execute('DROP TABLE IF EXISTS %s' % (self.model_table))
@@ -103,15 +103,30 @@ class LDATrainer:
 
         plpy.execute('TRUNCATE TABLE %s' % (self.work_table_0));
         plpy.execute("""
-            INSERT INTO %s
-            SELECT
-                m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1'),
-                docid, wordcount, words, counts, 
-                %s.__lda_random_assign(wordcount, %s) 
-            FROM %s data
-            """ % (
-                self.work_table_0, self.madlib_schema, self.topic_num,
-                self.data_table)
+            INSERT INTO {work_table}
+            SELECT magicno, data.docid, wordcount, words, counts, topics 
+            FROM
+            (
+                SELECT 
+                    MIN(docid) AS docid, 
+                    1 AS magicno
+                FROM {data_table}
+                GROUP BY 
+                    m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1')
+            ) magic
+            RIGHT JOIN
+            (
+                SELECT
+                    docid, wordcount, words, counts, 
+                    {madlib_schema}.__lda_random_assign(wordcount, {topic_num}) AS topics
+                FROM {data_table}
+            ) data
+            ON(magic.docid = data.docid)
+            """.format(
+                work_table = self.work_table_0, 
+                madlib_schema = self.madlib_schema, 
+                topic_num = self.topic_num,
+                data_table = self.data_table)
             )
 
         etime = time.time()
@@ -181,44 +196,40 @@ class LDATrainer:
         plpy.notice('\t\tjoining & sampling ...')
         plpy.execute('TRUNCATE TABLE %s' % (work_table_out))
         plpy.execute("""
-            INSERT INTO %s
+            INSERT INTO {work_table_out}
             SELECT  
-                distid, docid, wordcount, words, counts,  
-                %s.__lda_gibbs_sample(
-                    words, counts, doc_topic, model, %f, %f, %d, %d, 1)
+                magicno, docid, wordcount, words, counts,  
+                {madlib_schema}.__lda_gibbs_sample(
+                    words, counts, doc_topic, model, 
+                    {alpha}, {beta}, {voc_size}, {topic_num}, 1)
             FROM
             (
                 SELECT
-                    dcz.distid, dcz.docid, dcz.wordcount, dcz.words,
-                    dcz.counts, dcz.doc_topic, chunk.model 
+                    m4_ifdef(`__GREENPLUM__', `data.gp_segment_id', `1') AS segid,
+                    data.magicno, docid, wordcount, words, counts, doc_topic,
+                    model 
                 FROM
                 (
                     SELECT
-                        distid, docid, model
-                    FROM
-                    (
-                        SELECT
-                            %s.__lda_count_topic_agg(
-                                words, counts,
-                                doc_topic[%d:array_upper(doc_topic, 1)], %d, %d) model 
-                        FROM %s dcz 
-                    ) t1,
-                    (
-                       SELECT
-                           distid, min(docid) docid 
-                       FROM %s dcz
-                       GROUP BY distid
-                    ) t2
-                )chunk 
-                RIGHT JOIN %s dcz
-                ON (dcz.distid = chunk.distid AND dcz.docid = chunk.docid)
-                ORDER BY distid, docid
+                        1 AS magicno,
+                        {madlib_schema}.__lda_count_topic_agg(
+                            words, counts,
+                            doc_topic[{topic_num} + 1:array_upper(doc_topic, 1)], 
+                            {voc_size}, {topic_num}) model 
+                    FROM {work_table_in} 
+                ) chunk 
+                RIGHT JOIN {work_table_in} data
+                ON (data.magicno = chunk.magicno)
+                ORDER BY segid, magicno ASC
             ) jd
-            """ % (
-                work_table_out, self.madlib_schema, self.alpha, self.beta,
-                self.voc_size, self.topic_num, self.madlib_schema,
-                self.topic_num + 1, self.voc_size, self.topic_num,
-                work_table_in, work_table_in, work_table_in)
+            """.format(
+                work_table_out = work_table_out, 
+                madlib_schema = self.madlib_schema, 
+                alpha = self.alpha, 
+                beta = self.beta,
+                voc_size = self.voc_size, 
+                topic_num = self.topic_num,
+                work_table_in = work_table_in)
             )
 
         etime = time.time()
@@ -229,8 +240,12 @@ class LDATrainer:
         plpy.notice('start training process ...')
 
         self.init_random()
+        sstime = time.time()
         for it in range(1, self.iter_num + 1):
             self.iteration(it)
+        eetime = time.time()
+        plpy.notice('\t\titeration done, time elapsed: %.2f seconds' % (eetime - sstime))
+
         self.gen_model()
         self.gen_output_data_table()
 
@@ -265,7 +280,7 @@ class LDAPredictor:
         plpy.execute('DROP TABLE IF EXISTS %s' % (self.work_table_0)) 
         plpy.execute("""
             CREATE TEMP TABLE %s(
-                distid      INT4,
+                magicno     INT4,
                 docid       INT4, 
                 wordcount   INT4, 
                 words       INT4[], 
@@ -274,13 +289,13 @@ class LDAPredictor:
                 )
                 m4_ifdef(`__GREENPLUM__', 
                     `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) DISTRIBUTED BY
-                    (distid)') 
+                    (docid)') 
             """ % (self.work_table_0)) 
 
         plpy.execute('DROP TABLE IF EXISTS %s' % (self.work_table_1))
         plpy.execute("""
             CREATE TEMP TABLE %s(
-                distid      INT4,
+                magicno     INT4,
                 docid       INT4, 
                 wordcount   INT4, 
                 words       INT4[], 
@@ -289,7 +304,7 @@ class LDAPredictor:
                 )
                 m4_ifdef(`__GREENPLUM__', 
                     `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) DISTRIBUTED BY
-                    (distid)') 
+                    (docid)') 
             """ % (self.work_table_1)) 
 
         plpy.execute('DROP TABLE IF EXISTS %s' % self.doc_topic)
@@ -313,16 +328,31 @@ class LDAPredictor:
 
         plpy.execute('TRUNCATE TABLE %s' % (self.work_table_0));
         plpy.execute("""
-            INSERT INTO %s
-            SELECT 
-                m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1'),
-                docid, wordcount, words, counts,
-                %s.__lda_random_assign(wordcount, %s) doc_topic 
-            FROM %s data
-            """ % (
-                self.work_table_0, self.madlib_schema,
-                self.topic_num, self.test_table)
-            ) 
+            INSERT INTO {work_table}
+            SELECT magicno, data.docid, wordcount, words, counts, topics 
+            FROM
+            (
+                SELECT 
+                    MIN(docid) AS docid, 
+                    1 AS magicno
+                FROM {data_table}
+                GROUP BY 
+                    m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1')
+            ) magic
+            RIGHT JOIN
+            (
+                SELECT
+                    docid, wordcount, words, counts, 
+                    {madlib_schema}.__lda_random_assign(wordcount, {topic_num}) AS topics
+                FROM {data_table}
+            ) data
+            ON(magic.docid = data.docid)
+            """.format(
+                work_table = self.work_table_0, 
+                madlib_schema = self.madlib_schema, 
+                topic_num = self.topic_num,
+                data_table = self.test_table)
+            )
 
         etime = time.time()
         plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
@@ -344,35 +374,44 @@ class LDAPredictor:
         plpy.notice('infering ...')
 
         plpy.execute("""
-            INSERT INTO %s
+            INSERT INTO {work_table_out}
             SELECT  
-                distid, docid, wordcount, words, counts,
-                %s.__lda_gibbs_sample(
-                    words, counts, doc_topic, model, %f, %f, %d, %d, %d)
+                magicno, docid, wordcount, words, counts,
+                {schema_madlib}.__lda_gibbs_sample(
+                    words, counts, doc_topic, model, {alpha}, {beta},
+                    {voc_size}, {topic_num}, {iter_num}
+                ) 
             FROM
             (
                 SELECT 
-                    dcz.distid, dcz.docid, dcz.wordcount, dcz.words, dcz.counts,
-                    dcz.doc_topic, model
+                    m4_ifdef(`__GREENPLUM__', `data.gp_segment_id', `1') AS segid,
+                    data.magicno, docid, wordcount, words, counts, doc_topic,
+                    model
                 FROM
                 (
                     SELECT 
-                        distid, docid, model
-                    FROM
-                    (
-                       SELECT
-                           distid, min(docid) docid
-                       FROM %s dcz
-                       GROUP BY distid
-                    ) t1, %s model
-                ) chunk RIGHT JOIN %s dcz ON (dcz.distid = chunk.distid AND
-                dcz.docid = chunk.docid)
-                ORDER BY distid, docid
+                        1 AS magicno, 
+                        model
+                    FROM 
+                        {model_table}
+                ) chunk
+                RIGHT JOIN
+                {work_table_in} data
+                ON (chunk.magicno = data.magicno)
+                ORDER BY segid, magicno ASC
             ) jd
-            """ % (
-                self.work_table_1, self.madlib_schema, self.alpha, self.beta,
-                self.voc_size, self.topic_num, self.iter_num,
-                self.work_table_0, self.model_table, self.work_table_0))
+            """.format(
+                work_table_out = self.work_table_1, 
+                work_table_in = self.work_table_0, 
+                model_table = self.model_table, 
+                schema_madlib = self.madlib_schema, 
+                alpha = self.alpha, 
+                beta = self.beta,
+                voc_size = self.voc_size,
+                topic_num = self.topic_num,
+                iter_num = self.iter_num,
+            )
+        )
 
         etime = time.time()
         plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
@@ -681,7 +720,6 @@ def get_perplexity(madlib_schema, model_table, output_data_table):
         ) t2
         """ % (madlib_schema, output_data_table, model_table, output_data_table))
     return rv[0]['perp']
-
 
 """
 @brief Normalize the vector using L1 norm with smoothing
