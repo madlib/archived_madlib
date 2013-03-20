@@ -1,0 +1,256 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file slope_one.sql_in
+ *
+ * @brief SQL functions for Slope One
+ * @date   March 2013
+ *
+ * @sa Slope One is an algorithm for item-based collaborative filtering.
+ *     See the module description \ref grp_slope_one.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include('SQLCommon.m4')
+
+/**
+@addtogroup grp_slope_one
+
+@about
+
+Slope One is an algorithm for item-based collaborative filtering, introduced
+in 2005 by Daniel Lemire and Anna Maclachlan. It caters to a situation where
+\f$ n \f$ people have rated \f$ m \f$ items, but with many of the
+\f$ m \times n \f$ ratings missing. For example, a site may allow users to
+rate movies, but even though thousands of movies are in the site's database,
+most users do not rate more than a handful of them. The purpose of the
+algorithm is to predict the ratings of a new person, not of the original
+\f$ n \f$, given only a few of that person's ratings.
+
+The assumptions of the algorithm are highly simplistic. It assumes that, noise
+not withstanding, all ratings of all users are the same up to an additive
+constant. This
+\f[
+  f(x)=x+b
+\f]
+linear relationship with a slope of one is where Slope One derives its name
+from.
+
+The formula for Slope One is as follows. In order to predict the rating of
+person \f$ n+1 \f$ on item \f$ k \f$, the algorithm considers only the set of
+people who have rated item \f$ k \f$. For each one of these, the algorithm
+produces a best-fitting \f$ f(x)=x+b \f$ match to the ratings of person
+\f$ n+1 \f$. This match gives a prediction for person \f$ n+1  \f$'s rating.
+To get the final prediction, the algorithm takes a weighted average of the
+individual predictions, where weights are assigned by the number of data points
+the original model was trained by (that is, on the number of items that have
+ratings from both individuals).
+
+@input
+
+The <b>training data</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>trainingSource</em> (
+    ...
+    <em>User1RatingsColumn</em> NUMERIC,
+    <em>User2RatingsColumn</em> NUMERIC,
+    ...
+    <em>UserNplus1RatingsColumn</em> Numeric,
+    ...
+)</pre>
+
+The <b>data for prediction</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>predictionSource</em> (
+    ...
+    <em>User1RatingsColumn</em> NUMERIC,
+    <em>User2RatingsColumn</em> NUMERIC,
+    ...
+    <em>UserNRatingsColumn</em> Numeric,
+    ...
+)</pre>
+
+@usage
+
+- Train:
+  <pre> SELECT \ref slope_one_train(
+    '<em>dep</em>', '<em>indeps</em>', '<em>from_table</em>', '<em>model</em>'
+  );</pre>
+  where <em>dep</em> is the name of the <em>UserNplus1RatingsColumn</em> column,
+  <em>indeps</em> is a comma-separated list of names of the remaining user
+  ratings columns, <em>from_table</em> is the name of the
+  <em>trainingSource</em> table, and <em>model</em> is the name of a new table
+  within which to store the resulting Slope One model.
+  NULLs in the rating table indicate missing ratings.
+- Predict:
+  <pre> SELECT \ref slope_one_predict(
+    '<em>dep</em>', '<em>indeps</em>', '<em>from_table</em>', '<em>model</em>',
+    '<em>out_table</em>
+  );</pre>
+  The meanings of the variables are here as before. However,
+  <em>from_table</em> is now the <em>predictionSource</em> table, for which
+  the predicted ratings of the new person are to be added. The argument
+  <em>model</em> is now an input argument, rather than an output one, and the
+  new argument, <em>out_table</em>, is the name of a new table within which to
+  store the results. The result is a table replicating the \f$ n \f$ prediction
+  columns of <em>predictionSource</em>, but adding to them a new one, named
+  according to the value of <em>dep</em>, which includes the predicted
+  ratings.
+
+@examp
+
+The following is an example for running Slope One.
+
+-# The training and the classification data:
+\verbatim
+sql> SELECT * FROM train_table;
+ john | mark | lucy 
+------+------+------
+    3 |    4 |    2
+    2 |      |    5
+(2 rows)
+
+sql> SELECT * FROM test_table;
+ john | mark
+------+------
+    5 |    3 
+(1 row)
+\endverbatim
+-# Training
+\verbatim
+sql> SELECT madlib.slope_one_train('Lucy','John,Mark',
+                                   'train_table','model_table');
+\endverbatim
+-# Prediction
+\verbatim
+sql> SELECT madlib.slope_one_predict('Lucy,'John,Mark',
+                                     'test_table','model_table','out_table');
+\endverbatim
+-# Viewing the results
+\verbatim
+sql> SELECT * from out_table;
+ john | mark |       lucy       
+------+------+------------------
+    5 |    3 | 4.33333333333333
+(1 row)
+\endverbatim
+
+@literature
+
+[1] Daniel Lemire, Anna Maclachlan, <em>Slope One Predictors for Online
+    Rating-Based Collaborative Filtering</em>, in SIAM Data Mining (SDM'05),
+    Newport Beach, California, April 21-23, 2005. Available at:
+    http://arxiv.org/abs/cs/0702144
+
+[2] Wikipedia, Slope One, http://en.wikipedia.org/wiki/Slope_One
+
+@sa File slope_one.sql_in documenting the SQL functions.
+
+*/
+
+/**
+ * @brief Train Slope One model.
+ *
+ * User ratings are stored in a table where each column is a user, each row
+ * is an item, and each cell is a numeric rating. NULLs indicate missing
+ * ratings.
+ *
+ * @param dep Name of column to produce predictions for.
+ * @param indeps String comprised of a comma-separated list of columns to predict from.
+ * @param from_table Name of table with training data.
+ * @param model Name of new table to store the created model in.
+ *
+ * @usage
+ * Training:
+ * <pre> SELECT \ref slope_one_train(
+ *   '<em>dep</em>', '<em>indeps</em>', '<em>from_table</em>', '<em>model</em>'
+ * );</pre>
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.slope_one_train(
+    dep VARCHAR,
+    indeps VARCHAR,
+    from_table VARCHAR,
+    model VARCHAR
+)
+RETURNS VOID
+VOLATILE
+STRICT
+LANGUAGE plpythonu
+AS $$
+    for i in "({[]})":
+      if i in indeps:
+        plpy.error("Illegal parameters passed in indeps.")
+    indep=indeps.split(',')
+
+    query=",".join(["array[sum(("+dep+")-("+c+")),count(("+dep+ \
+                 ")-("+c+"))] AS "+c for c in indep])
+
+    plpy.execute("CREATE TABLE "+model+" AS SELECT "+query+" FROM "+ \
+                 from_table+" DISTRIBUTED BY ("+indeps+");")
+$$;
+
+/**
+ * @brief Predict, based on an existing Slope One model.
+ *
+ * User ratings are stored in a table where each column is a user, each row
+ * is an item, and each cell is a numeric rating. NULLs indicate missing
+ * ratings.
+ *
+ * The function creates a new rating table, based on the existing one, adding
+ * a new column for the ratings of the user to be predicted.
+ *
+ * @param dep Name of column in which to place predicted values.
+ * @param indeps String comprised of a comma-separated list of columns to predict from.
+ * @param from_table Name of table with data to predict on.
+ * @param model Name of table in which the Slope One model created by <tt>slope_one_train</tt> is stored.
+ * @param out_table Name of new table within which to write out the results.
+ *
+ * @usage
+ * Training:
+ * <pre> SELECT \ref slope_one_predict(
+ *   '<em>dep</em>', '<em>indeps</em>', '<em>from_table</em>', '<em>model</em>',
+ *   '<em>out_table</em>'
+ * );</pre>
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.slope_one_predict(
+    dep VARCHAR,
+    indeps VARCHAR,
+    from_table VARCHAR,
+    model VARCHAR,
+    out_table VARCHAR
+)
+RETURNS VOID
+VOLATILE
+STRICT
+LANGUAGE plpythonu
+AS $$
+    for i in "({[]})":
+      if i in indeps:
+        plpy.error("Illegal parameters passed in indeps. Use 'AS' in from_table")
+    indep=indeps.split(',')
+
+    sum_vals="+".join([ \
+      "(CASE WHEN FromTable."+c+" IS NULL THEN 0 ELSE (FromTable."+ \
+      c+"*Model."+c+"[2]+Model."+c+"[1]) END)" for c in indep])
+
+    sum_weights="+".join([ \
+      "(CASE WHEN FromTable."+c+" IS NULL THEN 0 ELSE (Model."+ \
+      c+"[2]) END)" for c in indep])
+
+    new_cols=",".join(["FromTable."+c+" AS "+c for c in indep])
+
+    parameters=dict(dep=dep,new_cols=new_cols,from_table=from_table,
+                    model=model,out_table=out_table,sum_vals=sum_vals,
+                    sum_weights=sum_weights)
+
+    plpy.execute("""
+      CREATE TABLE {out_table} AS SELECT {new_cols},
+        (CASE WHEN ({sum_weights})=0
+                  THEN NULL
+                 ELSE
+                   ({sum_vals})::FLOAT/({sum_weights})
+                 END)
+        AS {dep}
+        FROM {from_table} AS FromTable,
+             {model} AS Model
+        DISTRIBUTED BY ({dep});
+    """.format(**parameters))
+$$;
+
