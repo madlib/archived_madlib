@@ -604,7 +604,7 @@ $$ LANGUAGE plpythonu STRICT;
 
 /**
  * @brief This UDF is the sfunc for the aggregator computing the perpleixty.
- * @param state             The perplexity
+ * @param state             The cached model plus perplexity
  * @param words             The unique words in the document
  * @param counts            The counts of each unique words in the document
  * @param doc_topic         The topic counts in the document
@@ -613,12 +613,12 @@ $$ LANGUAGE plpythonu STRICT;
  * @param beta              The Dirichlet parameter for per-topic word multinomial
  * @param voc_size          The size of vocabulary
  * @param topic_num         The number of topics
- * @return                  The updated perplexity
+ * @return                  The updated state 
  **/
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_perplexity_sfunc
 (
-    state               FLOAT8,
+    state               INT4[],
     words               INT4[], 
     counts              INT4[],
     doc_topic           INT4[], 
@@ -628,24 +628,38 @@ MADLIB_SCHEMA.__lda_perplexity_sfunc
     voc_size            INT4, 
     topic_num           INT4
 )
-RETURNS FLOAT8
+RETURNS INT4[]
 AS 'MODULE_PATHNAME', 'lda_perplexity_sfunc'
-LANGUAGE C IMMUTABLE STRICT;
+LANGUAGE C IMMUTABLE;
 
 /**
  * @brief This UDF is the prefunc for the aggregator computing the perplexity.
- * @param state1    The local perplexity
- * @param state2    The local perplexity
- * @return          The global perplexity
+ * @param state1    The local state 
+ * @param state2    The local state 
+ * @return          The merged state 
  **/
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_perplexity_prefunc
 (
-    state1  FLOAT8,
-    state2  FLOAT8
+    state1  INT4[],
+    state2  INT4[] 
 )
-RETURNS FLOAT8
+RETURNS INT4[] 
 AS 'MODULE_PATHNAME', 'lda_perplexity_prefunc'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief This UDF is the finalfunc for the aggregator computing the perplexity.
+ * @param state    The merged state 
+ * @return         The perpleixty
+ **/
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.__lda_perplexity_ffunc
+(
+    state  INT4[]
+)
+RETURNS FLOAT8 
+AS 'MODULE_PATHNAME', 'lda_perplexity_ffunc'
 LANGUAGE C IMMUTABLE STRICT;
 
 /**
@@ -685,9 +699,9 @@ MADLIB_SCHEMA.__lda_perplexity_agg
     INT4
 )
 (
-    stype = FLOAT8,
-    initcond = '0.0',
-    sfunc = MADLIB_SCHEMA.__lda_perplexity_sfunc
+    stype = INT4[],
+    sfunc = MADLIB_SCHEMA.__lda_perplexity_sfunc,
+    finalfunc = MADLIB_SCHEMA.__lda_perplexity_ffunc
     m4_ifdef(
         `GREENPLUM', 
         `, prefunc = MADLIB_SCHEMA.__lda_perplexity_prefunc'

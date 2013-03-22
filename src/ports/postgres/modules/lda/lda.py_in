@@ -112,7 +112,7 @@ class LDATrainer:
                     1 AS magicno
                 FROM {data_table}
                 GROUP BY 
-                    m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1=1')
+                    m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1 = 1')
             ) magic
             RIGHT JOIN
             (
@@ -337,7 +337,7 @@ class LDAPredictor:
                     1 AS magicno
                 FROM {data_table}
                 GROUP BY 
-                    m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1=1')
+                    m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1 = 1')
             ) magic
             RIGHT JOIN
             (
@@ -700,25 +700,60 @@ def get_perplexity(madlib_schema, model_table, output_data_table):
         'invalid argument: at least one of the table names is not specified')
 
     __check_model_table(model_table) 
-    topic_num = plpy.execute("""
-        SELECT topic_num FROM %s
-        """ % (model_table))[0]['topic_num']
+    params = plpy.execute("""
+        SELECT topic_num, voc_size, alpha, beta FROM %s
+        """ % (model_table))[0]
+    topic_num = params['topic_num']
+    voc_size = params['voc_size']
+    alpha = params['alpha']
+    beta = params['beta']
     __check_output_data_table(output_data_table, topic_num)
 
     rv = plpy.execute("""
         SELECT exp(-part_perp/total_word) perp
         FROM
         (
-            SELECT %s.__lda_perplexity_agg(
+            SELECT {schema_madlib}.__lda_perplexity_agg(
                 words, counts, topic_count, model, 
-                alpha, beta, voc_size, topic_num) part_perp
+                {alpha}, {beta}, {voc_size}, {topic_num}) part_perp
             FROM
-                %s, %s
-        ) t1,
+            (
+                SELECT 
+                    m4_ifdef(`__GREENPLUM__', `data.gp_segment_id', `1') AS segid,
+                    data.docid, words, counts, topic_count, model
+                FROM
+                (
+                    SELECT
+                        docid, model
+                    FROM
+                    (
+                        SELECT
+                            MIN(docid) docid
+                        FROM
+                            {out_data_table}
+                        GROUP BY
+                            m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1 = 1')
+                    ) t1, {model_table}
+                ) chunk --for join efficiency
+                RIGHT JOIN
+                    {out_data_table} data 
+                ON (data.docid = chunk.docid)
+                ORDER BY segid, docid ASC --first model not null
+            ) jd
+        ) t2,
         (
-            SELECT sum(wordcount) total_word FROM %s
-        ) t2
-        """ % (madlib_schema, output_data_table, model_table, output_data_table))
+            SELECT sum(wordcount) total_word FROM {out_data_table}
+        ) t3
+        """.format(
+            schema_madlib = madlib_schema,
+            out_data_table = output_data_table, 
+            model_table = model_table,
+            alpha = alpha,
+            beta = beta,
+            topic_num = topic_num,
+            voc_size = voc_size
+        )
+    )
     return rv[0]['perp']
 
 """

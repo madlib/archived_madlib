@@ -215,7 +215,6 @@ AnyType lda_gibbs_sample::run(AnyType & args)
         __max(doc_topic, topic_num, word_count) >= topic_num)
         throw std::invalid_argument( "invalid values in topic_assignment");
 
-    int32_t __state_size = (voc_size + 1) * topic_num;
     if (!args.getUserFuncContext())
     {
         if(args[3].isNull())
@@ -232,8 +231,8 @@ AnyType lda_gibbs_sample::run(AnyType & args)
             static_cast<int32 *>(
                 MemoryContextAllocZero(
                     args.getCacheMemoryContext(), 
-                    __state_size * sizeof(int32_t)));
-        memcpy(state, model.ptr(),  __state_size * sizeof(int32_t));
+                    model.size() * sizeof(int32_t)));
+        memcpy(state, model.ptr(), model.size() * sizeof(int32_t));
         args.setUserFuncContext(state);
     }
 
@@ -487,7 +486,7 @@ AnyType lda_unnest::SRF_next(void *user_fctx, bool *is_last_call)
 /**
  * @brief This function is the sfunc of an aggregator computing the
  * perplexity.  
- * @param args[0]   The current perplexity
+ * @param args[0]   The current state 
  * @param args[1]   The unique words in the documents
  * @param args[2]   The counts of each unique words
  * @param args[3]   The topic counts in the document
@@ -499,14 +498,12 @@ AnyType lda_unnest::SRF_next(void *user_fctx, bool *is_last_call)
  *                  multinomial, i.e. beta
  * @param args[7]   The size of vocabulary
  * @param args[8]   The number of topics
- * @return          The updated perplexity
+ * @return          The updated state 
  **/
 AnyType lda_perplexity_sfunc::run(AnyType & args){
-    double perp = args[0].getAs<double>();
     ArrayHandle<int32_t> words = args[1].getAs<ArrayHandle<int32_t> >();
     ArrayHandle<int32_t> counts = args[2].getAs<ArrayHandle<int32_t> >();
-    MutableArrayHandle<int32_t> topic_counts = args[3].getAs<MutableArrayHandle<int32_t> >();
-    MutableArrayHandle<int32_t> model = args[4].getAs<MutableArrayHandle<int32_t> >();
+    ArrayHandle<int32_t> topic_counts = args[3].getAs<ArrayHandle<int32_t> >();
     double alpha = args[5].getAs<double>();
     double beta = args[6].getAs<double>();
     int32_t voc_size = args[7].getAs<int32_t>();
@@ -539,11 +536,30 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
     if(__min(topic_counts, 0, topic_num) < 0)
         throw std::invalid_argument("invalid values in topic_counts");
 
-    if(model.size() != (size_t)((voc_size + 1) * topic_num))
-        throw std::invalid_argument(
-            "invalid dimension - model.size() != (voc_size + 1) * topic_num");
-    if(__min(model) < 0)
-        throw std::invalid_argument("invalid topic counts in model");
+    MutableArrayHandle<int32_t> state(NULL);
+    if(args[0].isNull()){
+        if(args[4].isNull())
+            throw std::invalid_argument("invalid argument - the model \
+            parameter should not be null for the first call");
+        ArrayHandle<int32_t> model = args[4].getAs<ArrayHandle<int32_t> >();
+
+        if(model.size() != (size_t)((voc_size + 1) * topic_num))
+            throw std::invalid_argument(
+                "invalid dimension - model.size() != (voc_size + 1) * topic_num");
+        if(__min(model) < 0)
+            throw std::invalid_argument("invalid topic counts in model");
+
+        state =  madlib_construct_array(
+            NULL, model.size() + 2, INT4TI.oid, INT4TI.len, INT4TI.byval,
+            INT4TI.align);
+
+        memcpy(state.ptr(), model.ptr(),  model.size() * sizeof(int32_t));
+    }else{
+        state = args[0].getAs<MutableArrayHandle<int32_t> >();
+    }
+
+    int32 * model = state.ptr();
+    double * perp = reinterpret_cast<double *>(state.ptr() + state.size() - 2);
 
     int32_t n_d = 0;
     for(size_t i = 0; i < words.size(); i++){
@@ -564,23 +580,38 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
         }
         sum_p /= (n_d + topic_num * alpha);
 
-        perp += n_dw * log(sum_p);
+        *perp += n_dw * log(sum_p);
     }
     
-    return perp;
+    return state;
 }
 
 /**
  * @brief This function is the prefunc of an aggregator computing the
  * perplexity.  
- * @param args[0]   The local perplexity
- * @param args[1]   The local perplexity
- * @return          The accumulated perplexity
+ * @param args[0]   The local state 
+ * @param args[1]   The local state 
+ * @return          The merged state
  **/
 AnyType lda_perplexity_prefunc::run(AnyType & args){
-    double perp1 = args[0].getAs<double>();
-    double perp2 = args[1].getAs<double>();
-    return perp1 + perp2;
+    MutableArrayHandle<int32_t> state1 = args[0].getAs<MutableArrayHandle<int32_t> >();
+    ArrayHandle<int32_t> state2 = args[1].getAs<ArrayHandle<int32_t> >();
+    double * perp1 = reinterpret_cast<double *>(state1.ptr() + state1.size() - 2);
+    const double * perp2 = reinterpret_cast<const double *>(state2.ptr() + state2.size() - 2);
+    *perp1 += *perp2;
+    return state1;
+} 
+
+/**
+ * @brief This function is the finalfunc of an aggregator computing the
+ * perplexity.  
+ * @param args[0]   The global state
+ * @return          The perplexity
+ **/
+AnyType lda_perplexity_ffunc::run(AnyType & args){
+    ArrayHandle<int32_t> state = args[0].getAs<ArrayHandle<int32_t> >();
+    const double * perp = reinterpret_cast<const double *>(state.ptr() + state.size() - 2);
+    return *perp;
 } 
 
 }
