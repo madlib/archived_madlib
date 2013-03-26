@@ -71,7 +71,7 @@ class IgdState
      */
     static inline uint32_t arraySize (const uint32_t inDimension)
     {
-        return 13 + 4 * inDimension;
+        return 13 + 3 * inDimension;
     }
 
   protected:
@@ -88,28 +88,16 @@ class IgdState
         loss.rebind(&mStorage[8]);
         p.rebind(&mStorage[9]);
         q.rebind(&mStorage[10]);
-        incrIntercept.rebind(&mStorage[11]);
-        xmean.rebind(&mStorage[12], dimension);
-        coef.rebind(&mStorage[12 + dimension], dimension);
-        incrCoef.rebind(&mStorage[12 + 2 * dimension], dimension);
-        theta.rebind(&mStorage[12 + 3 * dimension], dimension);
-        threshold.rebind(&mStorage[12 + 4 * dimension]);
+        xmean.rebind(&mStorage[11], dimension);
+        coef.rebind(&mStorage[11 + dimension], dimension);
+        theta.rebind(&mStorage[11 + 2 * dimension], dimension);
+        threshold.rebind(&mStorage[11 + 3 * dimension]);
+        step_decay.rebind(&mStorage[12 + 3 * dimension]);
     }
 
     Handle mStorage;
 
   public:
-    /*
-      intercept and coef are updated after each scan of the data
-
-      During the scan of the data, incrIntercept and incrCoef are used for recording
-      changes.
-
-      With this setting, other quantities such as loss can be computed using
-      intercept and coef during the scan of the data.
-
-      xmean and ymean are used to compute the intercept
-     */
     typename HandleTraits<Handle>::ReferenceToUInt32 dimension;
     typename HandleTraits<Handle>::ReferenceToDouble stepsize;
     typename HandleTraits<Handle>::ReferenceToDouble lambda; // regularization control
@@ -123,10 +111,9 @@ class IgdState
     typename HandleTraits<Handle>::ReferenceToDouble loss;
     typename HandleTraits<Handle>::ReferenceToDouble p; // used for mirror truncation
     typename HandleTraits<Handle>::ReferenceToDouble q; // used for mirror truncation
-    typename HandleTraits<Handle>::ReferenceToDouble incrIntercept; 
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap incrCoef;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap theta; // used for mirror truncation
     typename HandleTraits<Handle>::ReferenceToDouble threshold; // used for remove tiny values
+    typename HandleTraits<Handle>::ReferenceToDouble step_decay; // decay of step size
 };
 
 }

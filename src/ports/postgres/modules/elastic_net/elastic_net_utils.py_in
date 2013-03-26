@@ -100,22 +100,23 @@ def __generate_warmup_lambda_sequence (tbl_used, col_ind_var, col_dep_var,
     if num_steps == 1:
         return [lambda_value]
     
-    mean_y = plpy.execute("select avg({col_dep_var}) from {tbl_used}".format(
-        col_dep_var = col_dep_var, tbl_used = tbl_used))[0]["avg"]
-    xy = [0] * dimension
-    for i in range(1,dimension+1):
-        xy[i-1] = plpy.execute("""
-                             select abs(sum({col_ind_var}[{i}] * ({col_dep_var} - {mean_y})))
-                             from {tbl_used}
-                             """.format(col_ind_var = col_ind_var,
-                                        col_dep_var = col_dep_var,
-                                        mean_y = mean_y,
-                                        tbl_used = tbl_used,
-                                        i = i))[0]["abs"]
-    max_sq = max(sq)
-    epsilon = 0.001
-    effective_alpha = alpha + (1 - alpha) * epsilon
-    largest = (max(xy)/ float(row_num) + epsilon * max_sq) / effective_alpha
+    # mean_y = plpy.execute("select avg({col_dep_var}) from {tbl_used}".format(
+    #     col_dep_var = col_dep_var, tbl_used = tbl_used))[0]["avg"]
+    # xy = [0] * dimension
+    # for i in range(1,dimension+1):
+    #     xy[i-1] = plpy.execute("""
+    #                          select abs(sum({col_ind_var}[{i}] * ({col_dep_var} - {mean_y})))
+    #                          from {tbl_used}
+    #                          """.format(col_ind_var = col_ind_var,
+    #                                     col_dep_var = col_dep_var,
+    #                                     mean_y = mean_y,
+    #                                     tbl_used = tbl_used,
+    #                                     i = i))[0]["abs"]
+    # max_sq = max(sq)
+    # epsilon = 0.001
+    # effective_alpha = alpha + (1 - alpha) * epsilon
+    # largest = (max(xy)/ float(row_num) + epsilon * max_sq) / effective_alpha
+    largest = 1e5
     if lambda_value == 0.:
         smallest = 0.001 * largest
     else:
@@ -150,25 +151,43 @@ def __compute_log_likelihood (coef, coef_str, intercept, **args):
     """
     Compute the log-likelihood at the end of calculation
     """
-    loss = plpy.execute(
-        """
-        select
-            avg(({col_dep_var_new} - {schema_madlib}.__elastic_net_gaussian_predict(
+    if args["family"] == "gaussian": # linear models
+        loss = plpy.execute(
+            """
+            select
+                avg(({col_dep_var_new} - {schema_madlib}.elastic_net_gaussian_predict(
                                                                     '{coefficients}'::double precision[],
-                                                                    {intercept},
+                                                                    {intercept}::double precision,
                                                                     {col_ind_var_new}))^2) / 2.
-                                                                    as loss
-        from
-            {tbl_used}
-        """.format(coefficients = coef_str,
-                   intercept = intercept,
-                   **args))[0]["loss"]
+                    as loss
+            from
+                {tbl_used}
+            """.format(coefficients = coef_str,
+                       intercept = intercept,
+                       **args))[0]["loss"]
+    
 
+    elif args["family"] == "binomial": # logistic models
+        loss = plpy.execute(
+            """
+            select
+                avg({schema_madlib}.__elastic_net_binomial_loglikelihood(
+                                    '{coefficients}'::double precision[],
+                                    {intercept},
+                                    {col_dep_var_new},
+                                    {col_ind_var_new}))
+                    as loss
+            from {tbl_used}
+            """.format(coefficients = coef_str,
+                       intercept = intercept,
+                       **args))[0]["loss"]
+        
     module_1 = sum(x*x for x in coef)
     module_2 = sum(map(abs, coef))
-
+    
     log_likelihood = -(loss + args["lambda_value"] * ((1 - args["alpha"]) \
-                    * module_1 / 2. + args["alpha"] * module_2))
+                        * module_1 / 2. + args["alpha"] * module_2))
+    
     return log_likelihood
 
 # ========================================================================
@@ -178,8 +197,9 @@ def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
                                 normalization, max_iter, tolerance):
     if (tbl_source is None or col_ind_var is None or col_dep_var is None
         or tbl_result is None or lambda_value is None or alpha is None
-        or normalization is None):
-        plpy.error("Elastic Net error: You have unsupported NULL value(s) in the arguments!")
+        or normalization is None or len(tbl_source) == 0 or len(col_ind_var) == 0
+        or len(col_dep_var) == 0 or len(tbl_result) == 0):
+        plpy.error("Elastic Net error: You have unsupported NULL/empty value(s) in the arguments!")
     
     # if not __is_tbl_exists(tbl_source):
     #     plpy.error("Elastic Net error: Data table " + tbl_source + " does not exist!")
@@ -221,11 +241,16 @@ def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
 def __compute_data_scales (args):
     args["x_scales"] = __utils_ind_var_scales(tbl_data = args["tbl_source"], col_ind_var = args["col_ind_var"],
                                               dimension = args["dimension"])
-    
-    args["y_scale"] = __utils_dep_var_scale (tbl_data = args["tbl_source"], col_dep_var = args["col_dep_var"])
+   
+    if args["family"] == "binomial":
+        args["y_scale"] = dict(mean = 0, std = 1)
+    else:
+        args["y_scale"] = __utils_dep_var_scale (tbl_data = args["tbl_source"], col_dep_var = args["col_dep_var"])
 
     args["xmean_str"] = _array_to_string(args["x_scales"]["mean"])
 
+## ========================================================================
+    
 def __normalize_data(args):
     """
     Compute the scaling factors for independent and dependent
@@ -235,7 +260,11 @@ def __normalize_data(args):
     """
     __compute_data_scales(args)
 
-    __utils_normalize_data(tbl_data = args["tbl_source"], col_ind_var = args["col_ind_var"],
+    y_decenter = True if args["family"] == "gaussian" else False;
+    
+    __utils_normalize_data(y_decenter = y_decenter,
+                           tbl_data = args["tbl_source"],
+                           col_ind_var = args["col_ind_var"],
                            col_dep_var = args["col_dep_var"],
                            tbl_data_scaled = args["tbl_data_scaled"],
                            col_ind_var_norm_new = args["col_ind_var_norm_new"],

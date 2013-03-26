@@ -33,7 +33,7 @@ def __elastic_net_generate_result (optimizer, iteration_run, **args):
         result_func = "__gaussian_fista_result(_state)"
         tbl_state = "{tbl_fista_state}"
     elif optimizer == "igd":
-        result_func = "__gaussian_igd_result(_state, '{sq_str}'::double precision[], {threshold}::double precision)"
+        result_func = "__gaussian_igd_result(_state, '{sq_str}'::double precision[], {threshold}::double precision, {tolerance}::double precision)"
         tbl_state = "{tbl_igd_state}"
     
     result = plpy.execute(
@@ -53,7 +53,7 @@ def __elastic_net_generate_result (optimizer, iteration_run, **args):
     r_coef = mad_vec(result["coef"], text = False)
 
     if args["normalization"]:
-        (coef, intercept) = __restore_scale(r_coef, args)
+        (coef, intercept) = __restore_scale(r_coef, result["intercept"], args)
     else:
         coef = r_coef
         intercept = result["intercept"]
@@ -73,7 +73,7 @@ def __elastic_net_generate_result (optimizer, iteration_run, **args):
     plpy.execute(
         """
         insert into {tbl_result} values
-            ('gaussian', '{features}'::text[], '{features_selected}'::text[],
+            ('{family}', '{features}'::text[], '{features_selected}'::text[],
             '{dense_coef}'::double precision[], '{sparse_coef}'::double precision[],
             {intercept}, {log_likelihood}, {standardize_flag}, {iteration})
         """.format(
@@ -87,12 +87,15 @@ def __elastic_net_generate_result (optimizer, iteration_run, **args):
 
 # ========================================================================
 
-def __restore_scale (coef, args):
+def __restore_scale (coef, intercept, args):
     """
     Restore the original scales
     """
     rcoef = [0] * len(coef)
-    rintercept = args["y_scale"]["mean"]
+    if args["family"] == "gaussian":
+        rintercept = args["y_scale"]["mean"]
+    elif args["family"] == "binomial":
+        rintercept = intercept
     for i in range(len(coef)):
         if args["x_scales"]["std"][i] != 0:
             rcoef[i] = coef[i] / args["x_scales"]["std"][i]

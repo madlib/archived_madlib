@@ -1,8 +1,10 @@
 
 import plpy
 import re
-from elastic_net_gaussian_igd import __elastic_net_gaussian_igd_train
-from elastic_net_gaussian_fista import __elastic_net_gaussian_fista_train
+from elastic_net_models import __elastic_net_gaussian_igd_train
+from elastic_net_models import __elastic_net_gaussian_fista_train
+from elastic_net_models import __elastic_net_binomial_fista_train
+from elastic_net_models import __elastic_net_binomial_igd_train
 from utilities.validate_args import __is_col_array
 from utilities.validate_args import __is_tbl_exists
 from utilities.validate_args import __is_tbl_has_rows
@@ -28,9 +30,13 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
     """
     if family_or_optimizer is None:
         return """
-        Right now, only gaussian (linear) family is supported!
+        Right now, gaussian (linear) and binomial (logistic) families  
+        are supported!
         --
-        Run:  SELECT {schema_madlib}.elastic_net_train('gaussian');   
+        Run:
+        SELECT {schema_madlib}.elastic_net_train('gaussian');
+        or
+        SELECT {schema_madlib}.elastic_net_train('binomial');   
         to see more help.
         --
         Run:  SELECT {schema_madlib}.elastic_net_train('usage');   
@@ -50,7 +56,7 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
                                     '*'
             'col_ind_var',     -- Independent variable, can be an expression
             'regress_family',  -- 'gaussian' (or 'linear'). 'binomial'
-                                    (or 'logistic') will be supported
+                                    (or 'logistic')
             alpha,             -- Elastic net control parameter, value in [0, 1]   
             lambda_value,      -- Regularization parameter, positive
             standardize,       -- Whether to normalize the data
@@ -61,7 +67,7 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
             max_iter,          -- Maximum iteration number
             tolerance          -- Stopping criteria
         );
-        --
+        -----------------------------------------------------------------
         Ouput:
         The output table (tbl_result in the above) has the following columns:
         family            TEXT,       -- 'gaussian' or 'binomial'
@@ -91,9 +97,31 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
             ind_var           -- independent variables
         ) FROM tbl_result, tbl_new_source
         LIMIT 10;
-        will calculate 10 fitting values
+        will calculate 10 fitting values.
 
-        or
+        When predicting with binomial models, the return value is 1
+        if the predicted result is True, and 0 if the prediction is
+        False.
+
+        OR ----------------------------------------------------
+
+        (1) SELECT {schema_madlib}.elastic_net_gaussian_predict (
+                coefficients, intercept, ind_var
+            ) FROM tbl_result, tbl_new_source LIMIT 10;
+
+        (2) SELECT {schema_madlib}.elastic_net_binomial_predict (
+                coefficients, intercept, ind_var
+            ) FROM tbl_result, tbl_new_source LIMIT 10;
+
+            This returns 10 BOOLEAN values.
+
+        (3) SELECT {schema_madlib}.elastic_net_binomial_prob (
+                coefficients, intercept, ind_var
+            ) FROM tbl_result, tbl_new_source LIMIT 10;
+
+            This returns 10 probability values for True class.
+
+        OR ----------------------------------------------------
 
         SELECT {schema_madlib}.elastic_net_predict(
             'tbl_model',      -- Result table of elastic_net_train
@@ -103,6 +131,9 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
         );
         will put all prediction results into a table. This can be
         used together with cross_validation_general() function.
+
+        When predicting with binomial models, the predicted values
+        are BOOLEAN.        
         """.format(schema_madlib = schema_madlib)
         
     if (family_or_optimizer.lower() == "gaussian" or
@@ -110,7 +141,25 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
         return """
         Supported optimizer:
         (1) Incremental gradient descent method ('igd')
-        (2) Fast iterative shrinkage thesholding algorithm ('fista')  
+        (2) Fast iterative shrinkage thesholding algorithm ('fista')
+
+        Default is 'fista'
+        --
+        Run:
+        SELECT {schema_madlib}.elastic_net_train('optimizer');
+        to see more help on each optimizer.
+        """.format(schema_madlib = schema_madlib)
+
+    if (family_or_optimizer.lower() == "binomial" or
+        family_or_optimizer == "logistic"):
+        return """
+        The dependent variable must be a BOOLEAN.
+        
+        Supported optimizer:
+        (1) Incremental gradient descent method ('igd')
+        (2) Fast iterative shrinkage thesholding algorithm ('fista')
+        
+        Default is 'fista'
         --
         Run:
         SELECT {schema_madlib}.elastic_net_train('optimizer');
@@ -135,6 +184,8 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
         warmup_lambda_no - default is 15. How many lambda's are used in
                            warm-up, will be overridden if warmup_lambdas   
                            is not NULL
+        warmup_tolerance - default is the same as tolerance. The value
+                           of tolerance used during warmup. 
         parallel         - default is True. Run the computation on
                            multiple segments or not.
 
@@ -156,7 +207,7 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
         --
         Parameters:
         max_stepsize     - default is 4.0
-        eta              - default is 2, if stepsize does not work
+        eta              - default is 1.2, if stepsize does not work
                            stepsize/eta will be tried
         warmup           - default is False
         warmup_lambdas   - default is NULL, which means that lambda
@@ -164,8 +215,16 @@ def elastic_net_help(schema_madlib, family_or_optimizer = None, **kwargs):
         warmup_lambda_no - default is 15. How many lambda's are used in
                            warm-up, will be overridden if warmup_lambdas     
                            is not NULL
+        warmup_tolerance - default is the same as tolerance. The value
+                           of tolerance used during warmup. 
         use_active_set   - default is False. Whether to use active-set
                            method to speed up the computation.
+        activeset_tolerance - default is the same as tolerance. The
+                              value oftolerance used during active set
+                              calculation
+        random_stepsize - default is False. Whether add some randomness
+                          to the step size. Sometimes, this can speed
+                          up the calculation.
 
         When warmup is True and warmup_lambdas is NULL, warmup_lambda_no
         of lambda values will be automatically generated and used.
@@ -259,6 +318,22 @@ def elastic_net_train(schema_madlib, tbl_source, tbl_result, col_dep_var,
     if ((regress_family.lower() == "gaussian" or regress_family.lower() == "linear") and
         optimizer.lower() == "fista"):
         __elastic_net_gaussian_fista_train(schema_madlib, tbl_source, col_ind_var,
+                                           col_dep_var, tbl_result, lambda_value, alpha,
+                                           standardize, optimizer_params, max_iter,
+                                           tolerance, outstr_array, **kwargs)
+        return None
+
+    if ((regress_family.lower() == "binomial" or regress_family.lower() == "logistic") and
+        optimizer.lower() == "igd"):
+        __elastic_net_binomial_igd_train(schema_madlib, tbl_source, col_ind_var,
+                                         col_dep_var, tbl_result, lambda_value, alpha,
+                                         standardize, optimizer_params, max_iter,
+                                         tolerance, outstr_array, **kwargs)
+        return None
+
+    if ((regress_family.lower() == "binomial" or regress_family.lower() == "logistic") and
+        optimizer.lower() == "fista"):
+        __elastic_net_binomial_fista_train(schema_madlib, tbl_source, col_ind_var,
                                            col_dep_var, tbl_result, lambda_value, alpha,
                                            standardize, optimizer_params, max_iter,
                                            tolerance, outstr_array, **kwargs)
@@ -387,6 +462,10 @@ def elastic_net_predict_all (schema_madlib, tbl_model, tbl_new_source,
         return __elastic_net_gaussian_predict_all(schema_madlib, tbl_model, tbl_new_source,
                                                   tbl_predict, col_id)
 
+    if regress_family.lower() == "binomial" or regress_family.lower() == "logistic":
+        return __elastic_net_binomial_predict_all(schema_madlib, tbl_model, tbl_new_source,
+                                                  tbl_predict, col_id)
+
     plpy.error("Not a supported response family!")
     return None
 
@@ -429,8 +508,67 @@ def __elastic_net_gaussian_predict_all(schema_madlib, tbl_model, tbl_new_source,
         create table {tbl_predict} as
             select
                 id,
-                {schema_madlib}.__elastic_net_gaussian_predict(coef_nonzero,
-                                                                intercept, ind_var)
+                {schema_madlib}.elastic_net_gaussian_predict(coef_nonzero,
+                                                            intercept, ind_var)
+                                 as prediction
+            from
+                {tbl_model} as tbl1,
+                (select
+                    {col_id} as id,
+                    {dense_vars_str} as ind_var
+                from
+                    {tbl_new_source}) tbl2
+        """.format(tbl_model = tbl_model,
+                   tbl_predict = tbl_predict,
+                   col_id = col_id_str,
+                   dense_vars_str = dense_vars_str,
+                   schema_madlib = schema_madlib,
+                   tbl_new_source = tbl_new_source))
+ 
+    plpy.execute("set client_min_messages to " + old_msg_level)
+    return None
+
+# ========================================================================
+
+def __elastic_net_binomial_predict_all(schema_madlib, tbl_model, tbl_new_source,
+                                       tbl_predict, col_id):
+    """
+    Prediction for Binomial model
+    """
+    old_msg_level = plpy.execute(
+        """
+        select setting from pg_settings
+        where name='client_min_messages'
+        """)[0]['setting']
+    plpy.execute("set client_min_messages to error")
+    
+    if col_id is None:
+        col_id_str = "NULL"
+    else:
+        col_id_str = col_id
+ 
+    dense_vars = mad_vec(plpy.execute(
+        """
+        select features_selected as fs
+        from {tbl_model}
+        """.format(tbl_model = tbl_model))[0]["fs"])
+
+    dense_vars_str = "array["
+    for i in range(len(dense_vars)):
+        dense_vars_str += str(dense_vars[i])
+        if i != len(dense_vars) - 1:
+            dense_vars_str += ", "
+    dense_vars_str += "]"
+  
+    # Must be careful to avoid possible name conflicts
+    plpy.execute(
+        """
+        drop table if exists {tbl_predict};
+        create table {tbl_predict} as
+            select
+                id,
+                {schema_madlib}.elastic_net_binomial_predict(coef_nonzero,
+                                                            intercept, ind_var)
                                  as prediction
             from
                 {tbl_model} as tbl1,

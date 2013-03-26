@@ -1,6 +1,6 @@
 
 #include "dbconnector/dbconnector.hpp"
-#include "elastic_net_gaussian_igd.hpp"
+#include "elastic_net_binomial_igd.hpp"
 #include "state/igd.hpp"
 #include "elastic_net_optimizer_igd.hpp"
 #include "share/shared_utils.hpp"
@@ -11,9 +11,9 @@ namespace modules {
 namespace elastic_net {
 
 /*
-  This class contains specific methods needed by Gaussian model using IGD
+  This class contains specific methods needed by Binomial model using IGD
  */
-class GaussianIgd
+class BinomialIgd
 {
   public:
     static void init_intercept (IgdState<MutableArrayHandle<double> >& state);
@@ -30,62 +30,74 @@ class GaussianIgd
 };
 
 // ------------------------------------------------------------------------
+
+inline void BinomialIgd::init_intercept (IgdState<MutableArrayHandle<double> >& state)
+{
+    state.intercept = 0;
+}
+
+// ------------------------------------------------------------------------
 // extract dependent variable from args
-inline void GaussianIgd::get_y (double& y, AnyType& args)
+inline void BinomialIgd::get_y (double& y, AnyType& args)
 {
-    y = args[2].getAs<double>();
+    y = args[2].getAs<bool>() ? 1. : -1.;
 }
 
 // ------------------------------------------------------------------------
 
-inline void GaussianIgd::init_intercept (IgdState<MutableArrayHandle<double> >& state)
-{
-    state.intercept = state.ymean - dot(state.coef, state.xmean);
-}
-
-// ------------------------------------------------------------------------
-
-inline void GaussianIgd::compute_gradient (ColumnVector& gradient,
+inline void BinomialIgd::compute_gradient (ColumnVector& gradient,
                                            IgdState<MutableArrayHandle<double> >& state,
                                            MappedColumnVector& x, double y)
 {
-    double wx = sparse_dot(state.coef, x) + state.intercept;
-    double r = wx - y;
-    
-    gradient = r * (x - state.xmean) + (1 - state.alpha) * state.lambda
-        * state.coef;         
+    double r = state.intercept + sparse_dot(state.coef, x);
+    double u;
+
+    if (y > 0)
+        u = - 1. / (1. + std::exp(r));
+    else
+        u = 1. / (1. + std::exp(-r));
+
+    for (uint32_t i = 0; i < state.dimension; i++)
+        gradient(i) = x(i) * u;
 }
 
 // ------------------------------------------------------------------------
 
-inline void GaussianIgd::update_intercept (IgdState<MutableArrayHandle<double> >& state,
+inline void BinomialIgd::update_intercept (IgdState<MutableArrayHandle<double> >& state,
                                            MappedColumnVector& x, double y)
 {
-    // avoid unused parameter warning,
-    // actually does absolutely nothing
-    (void)x;
-    (void)y;
+    double r = state.intercept + sparse_dot(state.coef, x);
+    double u;
+
+    if (y > 0)
+        u = - 1. / (1. + std::exp(r));
+    else
+        u = 1. / (1. + std::exp(-r));
     
-    state.intercept = state.ymean - sparse_dot(state.coef, state.xmean);
+    state.intercept -= state.stepsize * u;
 }
 
 // ------------------------------------------------------------------------
 
 // do nothing
-inline void GaussianIgd::merge_intercept  (IgdState<MutableArrayHandle<double> >& state1,
+inline void BinomialIgd::merge_intercept  (IgdState<MutableArrayHandle<double> >& state1,
                                            IgdState<ArrayHandle<double> >& state2)
 {
-    // avoid unused parameter warning,
-    // actually does absolutely nothing
-    (void)state1;
-    (void)state2;
+    double totalNumRows = static_cast<double>(state1.numRows + state2.numRows);
+    state1.intercept = state1.intercept * static_cast<double>(state1.numRows) /
+        static_cast<double>(state2.numRows);
+    state1.intercept += state2.intercept;
+    state1.intercept = state1.intercept * static_cast<double>(state2.numRows) /
+        static_cast<double>(totalNumRows);
 }
 
 // ------------------------------------------------------------------------
 
-inline void GaussianIgd::update_intercept_final (IgdState<MutableArrayHandle<double> >& state)
+inline void BinomialIgd::update_intercept_final (IgdState<MutableArrayHandle<double> >& state)
 {
-    state.intercept = state.ymean - sparse_dot(state.coef, state.xmean);
+    // absolutely do nothing
+    // because everything is already done in merge and transition
+    (void)state;
 }
 
 // ------------------------------------------------------------------------
@@ -105,9 +117,9 @@ inline void GaussianIgd::update_intercept_final (IgdState<MutableArrayHandle<dou
    pre_state, lambda, alpha, dimension, stepsize, totalrows
 */
 AnyType
-gaussian_igd_transition::run (AnyType& args)
+binomial_igd_transition::run (AnyType& args)
 {
-    return Igd<GaussianIgd>::igd_transition(args, *this);
+    return Igd<BinomialIgd>::igd_transition(args, *this);
 }
 
 // ------------------------------------------------------------------------
@@ -116,9 +128,9 @@ gaussian_igd_transition::run (AnyType& args)
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
 AnyType
-gaussian_igd_merge::run (AnyType& args)
+binomial_igd_merge::run (AnyType& args)
 {
-    return Igd<GaussianIgd>::igd_merge(args);
+    return Igd<BinomialIgd>::igd_merge(args);
 }
 
 // ------------------------------------------------------------------------
@@ -127,9 +139,9 @@ gaussian_igd_merge::run (AnyType& args)
  * @brief Perform the final step
  */
 AnyType
-gaussian_igd_final::run (AnyType& args)
+binomial_igd_final::run (AnyType& args)
 {
-    return Igd<GaussianIgd>::igd_final(args);
+    return Igd<BinomialIgd>::igd_final(args);
 }
 
 // ------------------------------------------------------------------------
@@ -138,9 +150,9 @@ gaussian_igd_final::run (AnyType& args)
  * @brief Return the difference in RMSE between two states
  */
 AnyType
-__gaussian_igd_state_diff::run (AnyType& args)
+__binomial_igd_state_diff::run (AnyType& args)
 {
-    return Igd<GaussianIgd>::igd_state_diff(args);
+    return Igd<BinomialIgd>::igd_state_diff(args);
 }
 
 // ------------------------------------------------------------------------
@@ -149,9 +161,9 @@ __gaussian_igd_state_diff::run (AnyType& args)
  * @brief Return the coefficients and diagnostic statistics of the state
  */
 AnyType
-__gaussian_igd_result::run (AnyType& args)
+__binomial_igd_result::run (AnyType& args)
 {
-    return Igd<GaussianIgd>::igd_result(args);
+    return Igd<BinomialIgd>::igd_result(args);
 }
  
 } // namespace elastic_net 

@@ -25,16 +25,22 @@ where \f$L\f$ is the metric function that the user wants to minimize. Here \f$ \
 and \f$ lambda \geq 0 \f$. If \f$alpha = 0\f$, we have the ridge regularization (known also as Tikhonov regularization), and if \f$\alpha = 1\f$, we have the LASSO regularization.
 
 For the Gaussian response family (or linear model), we have
-\f[\min_{w \in R^N, w_{0}} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w^{t} x_m + w_{0} - y_m)^2 \right]
-+ \lambda \left(\frac{1-\alpha}{2} \|w\|_2^2 + \alpha \|w\|_1 \right)\f]
+\f[L(\vec{w}) =  \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w^{t} x_m + w_{0} - y_m)^2 \right]
+\f]
+
+For the Binomial response family (or logistic model), we have
+\f[
+L(\vec{w}) = \sum_{m=1}^M\left[y_m \log\left(1 + e^{-(w_0 +
+      \vec{w}\cdot\vec{x}_m)}\right) + (1-y_m) \log\left(1 + e^{w_0 +
+      \vec{w}\cdot\vec{x}_m}\right)\right]\ ,
+\f]
+where \f$y_m \in {0,1}\f$.
 
 To get better convergence, one can rescale the value of each element of x
 \f[ x' \leftarrow \frac{x - \bar{x}}{\sigma_x} \f]
-and
+and for Gaussian case we also let
 \f[y' \leftarrow y - \bar{y} \f]
-and then fit 
-\f[\min_{w' \in R^N} \frac{1}{2}\left[\frac{1}{M} \sum_{m=1}^M (w'^{t} x'_m - y'_m)^2 \right]
-+ \lambda \left(\frac{1-\alpha}{2} \|w\|_2^2 + \alpha \|w\|_1 \right)\f]
+and then minimize with the regularization terms.
 At the end of the calculation, the orginal scales will be restored and an intercept term will be obtained at the same time as a by-product.
 
 Note that fitting after scaling is not equivalent to directly fitting.
@@ -54,8 +60,16 @@ Fast Iterative Shrinkage Thresholding Algorithm (FISTA) [2] has the following op
         warmup_lambda_no - default is 15. How many lambda's are used in
                            warm-up, will be overridden if warmup_lambdas     
                            is not NULL
+        warmup_tolerance - default is the same as tolerance. The value
+                           of tolerance used during warmup. 
         use_active_set   - default is False. Whether to use active-set
                            method to speed up the computation.
+        activeset_tolerance - default is the same as tolerance. The
+                              value oftolerance used during active set
+                              calculation
+        random_stepsize - default is False. Whether add some randomness
+                          to the step size. Sometimes, this can speed
+                          up the calculation.
 
 Here, backtracking for step size is used. At each iteration, we first try the <em>stepsize = max_stepsize</em>, and if it does not work out, we then try a smaller step size <em>stepsize = stepsize / eta</em>, where <em>eta</em> must be larger than 1. At first sight, this seems to do repeated iterations for even one step, but it actually greatly increases the computation speed by using a larger step size and minimizes the total number of iterations. A careful choice of max_stepsize can decrease the computation time by more than 10 times.
 
@@ -75,6 +89,8 @@ Incremental Gradient Descent (IGD) or Stochastic Gradient Descent (SGD) [3] has 
         warmup_lambda_no - default is 15. How many lambda's are used in
                            warm-up, will be overridden if warmup_lambdas   
                            is not NULL
+        warmup_tolerance - default is the same as tolerance. The value
+                           of tolerance used during warmup. 
         parallel         - default is True. Run the computation on
                            multiple segments or not.
 
@@ -90,6 +106,7 @@ SELECT madlib.elastic_net_train();
 SELECT madlib.elastic_net_train('usage');
 SELECT madlib.elastic_net_train('predict');
 SELECT madlib.elastic_net_train('gaussian');
+SELECT madlib.elastic_net_train('binomial');
 SELECT madlib.elastic_net_train('linear');
 SELECT madlib.elastic_net_train('fista');
 SELECT madlib.elastic_net_train('igd');
@@ -138,7 +155,7 @@ The <em>excluded</em> string is a list of column names excluded from features de
 
 If <em>col_ind_var</em> is a single column name, which is the array type, one can still use <em>excluded</em>. For example, if <em>x</em> is a column name, which is an array of size 1000, and the user wants to exclude the 100-th, 200-th and 301-th elements of the array, he can set <em>excluded</em> to be '100, 200, 301'.
 
-Both <em>col_dep_var</em> and <em>col_ind_var</em> can be valid Postgres expression. For example, <em>col_dep_var = 'log(y+1)'</em>, and <em>col_ind_var = 'array[exp(x[1]), x[2], 1/(1+x[3])]'</em> etc.
+Both <em>col_dep_var</em> and <em>col_ind_var</em> can be valid Postgres expression. For example, <em>col_dep_var = 'log(y+1)'</em>, and <em>col_ind_var = 'array[exp(x[1]), x[2], 1/(1+x[3])]'</em> etc. In the binomial case, one can set <em>col_dep_var = 'y < 0'</em> etc.
 
   Output:
   <pre> family | features | features_selected | coef_nonzero | coef_all | intercept | log_likelihood | standardize | iteration_run
@@ -190,7 +207,7 @@ mydb=# INSERT INTO lasso_data values ({0.15, -1.3}, -1.3);
 \code
 mydb=# SELECT madlib.elastic_net_train('en_data', 'en_model', 'ind_var', 'dep_var', 0.5, 0.1,
                                         True, 'linear', 'igd', 'stepsize = 0.1, warmup = t,
-                                        warmup_lambda_no=3, "warmup_lambdas = [0.4, 0.3, 0.2, 0.1]",
+                                        warmup_lambda_no=3, warmup_lambdas = [0.4, 0.3, 0.2, 0.1],
                                         parallel=t', '1', 10000, 1e-6);
 \endcode
 \code
@@ -360,6 +377,21 @@ BEGIN
         NULL);
 END;
 $$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
+    tbl_source          TEXT,
+    tbl_result          TEXT,
+    col_ind_var         TEXT,
+    col_dep_var         TEXT,
+    regress_family      TEXT,
+    alpha               DOUBLE PRECISION,
+    lambda_value        DOUBLE PRECISION
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.elastic_net_train($1, $2, $3, $4, $5, $6, $7, True);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
 ------------------------------------------------------------------------
 
 /**
@@ -386,6 +418,9 @@ PythonFunction(elastic_net, elastic_net, elastic_net_help)
 $$ LANGUAGE plpythonu;
 
 ------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
 /**
  * @brief Prediction and put the result in a table
  *        can be used together with General-CV
@@ -403,6 +438,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_predict (
 PythonFunction(elastic_net, elastic_net, elastic_net_predict_all)
 $$ LANGUAGE plpythonu;
 
+------------------------------------------------------------------------
+
 /**
  * @brief Prediction use learned coefficients for a given example
  *
@@ -419,22 +456,66 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_predict (
 ) RETURNS DOUBLE PRECISION AS $$
 DECLARE
     family_name     TEXT;
+    binomial_result BOOLEAN;
 BEGIN
     family_name := lower(regress_family);
+
     IF family_name = 'gaussian' OR family_name = 'linear' THEN
         RETURN MADLIB_SCHEMA.__elastic_net_gaussian_predict(coefficients, intercept, ind_var);
+    END IF;
+
+    IF family_name = 'binomial' OR family_name = 'logistic' THEN
+        binomial_result := MADLIB_SCHEMA.__elastic_net_binomial_predict(coefficients, intercept, ind_var);
+        IF binomial_result THEN
+            return 1;
+        ELSE
+            return 0;
+        END IF;
     END IF;
 
     RAISE EXCEPTION 'This regression family is not supported!';
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__elastic_net_gaussian_predict (
+------------------------------------------------------------------------
+/* Prediction for Gaussian models */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_gaussian_predict (
     coefficients    DOUBLE PRECISION[],
     intercept       DOUBLE PRECISION,
     ind_var         DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION AS
 'MODULE_PATHNAME', '__elastic_net_gaussian_predict'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+/* Prediction for Binomial models */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_binomial_predict (
+    coefficients    DOUBLE PRECISION[],
+    intercept       DOUBLE PRECISION,
+    ind_var         DOUBLE PRECISION[]
+) RETURNS BOOLEAN AS
+'MODULE_PATHNAME', '__elastic_net_binomial_predict'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+/* Compute the probability for True class  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_binomial_prob (
+    coefficients    DOUBLE PRECISION[],
+    intercept       DOUBLE PRECISION,
+    ind_var         DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', '__elastic_net_binomial_prob'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+/* Compute the log-likelihood for one data point */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__elastic_net_binomial_loglikelihood (
+    coefficients    DOUBLE PRECISION[],
+    intercept       DOUBLE PRECISION,
+    dep_var         BOOLEAN,
+    ind_var         DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', '__elastic_net_binomial_loglikelihood'
 LANGUAGE C IMMUTABLE STRICT;
 
 ------------------------------------------------------------------------
@@ -462,7 +543,8 @@ CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_transition (
     stepsize            DOUBLE PRECISION,
     total_rows          INTEGER,
     xmean               DOUBLE PRECISION[],
-    ymean               DOUBLE PRECISION
+    ymean               DOUBLE PRECISION,
+    step_decay          DOUBLE PRECISION
 ) RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME', 'gaussian_igd_transition'
 LANGUAGE C IMMUTABLE;
@@ -498,13 +580,14 @@ CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step(
     /* stepsize */          DOUBLE PRECISION,
     /* total_rows */        INTEGER,
     /* xmeans */            DOUBLE PRECISION[],
-    /* ymean */             DOUBLE PRECISION
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__gaussian_igd_transition,
     m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_igd_merge,')
     FinalFunc = MADLIB_SCHEMA.__gaussian_igd_final,
-    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
 
 CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step_single_seg (
@@ -517,13 +600,14 @@ CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step_single_seg (
     /* stepsize */          DOUBLE PRECISION,
     /* total_rows */        INTEGER,
     /* xmeans */            DOUBLE PRECISION[],
-    /* ymean */             DOUBLE PRECISION
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__gaussian_igd_transition,
     -- m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_igd_merge,')
     FinalFunc = MADLIB_SCHEMA.__gaussian_igd_final,
-    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
 
 --
@@ -540,7 +624,8 @@ LANGUAGE C IMMUTABLE STRICT;
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_igd_result (
     in_state        DOUBLE PRECISION[],
     feature_sq      DOUBLE PRECISION[],
-    threshold       DOUBLE PRECISION
+    threshold       DOUBLE PRECISION,
+    tolerance       DOUBLE PRECISION
 ) RETURNS MADLIB_SCHEMA.__elastic_net_result AS
 'MODULE_PATHNAME', '__gaussian_igd_result'
 LANGUAGE C IMMUTABLE STRICT;
@@ -557,14 +642,12 @@ CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_transition (
     lambda              DOUBLE PRECISION,
     alpha               DOUBLE PRECISION,
     dimension           INTEGER,
-    xmean               DOUBLE PRECISION[],
-    ymean               DOUBLE PRECISION,
-    tk                  DOUBLE PRECISION,
     total_rows          INTEGER,
-    L0                  DOUBLE PRECISION,
+    max_stepsize        DOUBLE PRECISION,
     eta                 DOUBLE PRECISION,
     use_active_set      INTEGER,
-    is_active           INTEGER
+    is_active           INTEGER,
+    random_stepsize     INTEGER
 ) RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME', 'gaussian_fista_transition'
 LANGUAGE C IMMUTABLE;
@@ -591,26 +674,24 @@ LANGUAGE C IMMUTABLE STRICT;
  * @brief Perform one iteration step of FISTA for linear models
  */
 CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_fista_step(
-    /* ind_var      */  DOUBLE PRECISION[],
-    /* dep_var      */  DOUBLE PRECISION,
-    /* pre_state    */  DOUBLE PRECISION[],
-    /* lambda       */  DOUBLE PRECISION,
-    /* alpha        */  DOUBLE PRECISION,
-    /* dimension    */  INTEGER,
-    /* mean x       */  DOUBLE PRECISION[],
-    /* mean y       */  DOUBLE PRECISION,
-    /* tk           */  DOUBLE PRECISION,
-    /* total_rows   */  INTEGER,
-    /* L0           */  DOUBLE PRECISION,
-    /* eta          */  DOUBLE PRECISION,
-    /* use_active_set */INTEGER,
-    /* is_active */     INTEGER
+    /* ind_var      */      DOUBLE PRECISION[],
+    /* dep_var      */      DOUBLE PRECISION,
+    /* pre_state    */      DOUBLE PRECISION[],
+    /* lambda       */      DOUBLE PRECISION,
+    /* alpha        */      DOUBLE PRECISION,
+    /* dimension    */      INTEGER,
+    /* total_rows   */      INTEGER,
+    /* max_stepsize */      DOUBLE PRECISION,
+    /* eta          */      DOUBLE PRECISION,
+    /* use_active_set */    INTEGER,
+    /* is_active */         INTEGER,
+    /* random_stepsize */   INTEGER
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__gaussian_fista_transition,
     m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_fista_merge,')
     FinalFunc = MADLIB_SCHEMA.__gaussian_fista_final,
-    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
 
 --
@@ -628,6 +709,191 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_fista_result (
     in_state        DOUBLE PRECISION[]
 ) RETURNS MADLIB_SCHEMA.__elastic_net_result AS
 'MODULE_PATHNAME', '__gaussian_fista_result'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+/* Binomial IGD */
+
+CREATE FUNCTION MADLIB_SCHEMA.__binomial_igd_transition (
+    state               DOUBLE PRECISION[],
+    ind_var             DOUBLE PRECISION[],
+    dep_var             BOOLEAN,
+    pre_state           DOUBLE PRECISION[],
+    lambda              DOUBLE PRECISION,
+    alpha               DOUBLE PRECISION,
+    dimension           INTEGER,
+    stepsize            DOUBLE PRECISION,
+    total_rows          INTEGER,
+    xmean               DOUBLE PRECISION[],
+    ymean               DOUBLE PRECISION,
+    step_decay          DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'binomial_igd_transition'
+LANGUAGE C IMMUTABLE;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__binomial_igd_merge (
+    state1              DOUBLE PRECISION[],
+    state2              DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'binomial_igd_merge'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__binomial_igd_final (
+    state               DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'binomial_igd_final'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration step of IGD for linear models
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.__binomial_igd_step(
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           BOOLEAN,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__binomial_igd_transition,
+    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__binomial_igd_merge,')
+    FinalFunc = MADLIB_SCHEMA.__binomial_igd_final,
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+);
+
+CREATE AGGREGATE MADLIB_SCHEMA.__binomial_igd_step_single_seg (
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           BOOLEAN,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__binomial_igd_transition,
+    -- m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__binomial_igd_merge,')
+    FinalFunc = MADLIB_SCHEMA.__binomial_igd_final,
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+);
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_igd_state_diff (
+    state1          DOUBLE PRECISION[],
+    state2          DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', '__binomial_igd_state_diff'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_igd_result (
+    in_state        DOUBLE PRECISION[],
+    feature_sq      DOUBLE PRECISION[],
+    threshold       DOUBLE PRECISION,
+    tolerance       DOUBLE PRECISION
+) RETURNS MADLIB_SCHEMA.__elastic_net_result AS
+'MODULE_PATHNAME', '__binomial_igd_result'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+
+/* Binomial FISTA */
+
+CREATE FUNCTION MADLIB_SCHEMA.__binomial_fista_transition (
+    state               DOUBLE PRECISION[],
+    ind_var             DOUBLE PRECISION[],
+    dep_var             BOOLEAN,
+    pre_state           DOUBLE PRECISION[],
+    lambda              DOUBLE PRECISION,
+    alpha               DOUBLE PRECISION,
+    dimension           INTEGER,
+    total_rows          INTEGER,
+    max_stepsize        DOUBLE PRECISION,
+    eta                 DOUBLE PRECISION,
+    use_active_set      INTEGER,
+    is_active           INTEGER,
+    random_stepsize     INTEGER
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'binomial_fista_transition'
+LANGUAGE C IMMUTABLE;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__binomial_fista_merge (
+    state1              DOUBLE PRECISION[],
+    state2              DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'binomial_fista_merge'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE FUNCTION MADLIB_SCHEMA.__binomial_fista_final (
+    state               DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+'MODULE_PATHNAME', 'binomial_fista_final'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @internal
+ * @brief Perform one iteration step of FISTA for linear models
+ */
+CREATE AGGREGATE MADLIB_SCHEMA.__binomial_fista_step(
+    /* ind_var      */      DOUBLE PRECISION[],
+    /* dep_var      */      BOOLEAN,
+    /* pre_state    */      DOUBLE PRECISION[],
+    /* lambda       */      DOUBLE PRECISION,
+    /* alpha        */      DOUBLE PRECISION,
+    /* dimension    */      INTEGER,
+    /* total_rows   */      INTEGER,
+    /* max_stepsize */      DOUBLE PRECISION,
+    /* eta          */      DOUBLE PRECISION,
+    /* use_active_set */    INTEGER,
+    /* is_active */         INTEGER,
+    /* random_stepsize */   INTEGER
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__binomial_fista_transition,
+    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__binomial_fista_merge,')
+    FinalFunc = MADLIB_SCHEMA.__binomial_fista_final,
+    InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+);
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_fista_state_diff (
+    state1          DOUBLE PRECISION[],
+    state2          DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', '__binomial_fista_state_diff'
+LANGUAGE C IMMUTABLE STRICT;
+
+--
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_fista_result (
+    in_state        DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__elastic_net_result AS
+'MODULE_PATHNAME', '__binomial_fista_result'
 LANGUAGE C IMMUTABLE STRICT;
 
 
