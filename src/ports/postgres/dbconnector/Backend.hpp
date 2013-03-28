@@ -149,7 +149,12 @@ madlib_DatumGetByteaP(Datum inDatum) {
 inline
 ArrayType*
 madlib_DatumGetArrayTypeP(Datum inDatum) {
-    return madlib_detoast_verlena_datum_if_necessary<ArrayType>(inDatum);
+    ArrayType* x = madlib_detoast_verlena_datum_if_necessary<ArrayType>(inDatum);
+    if (ARR_HASNULL(x)) {
+        // elog(ERROR, "The input array has NULL values!");
+        throw std::runtime_error(std::string("The input array has NULL values"));
+    }
+    return x;
 }
 
 } // namespace
