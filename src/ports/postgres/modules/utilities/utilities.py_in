@@ -3,7 +3,6 @@ import plpy
 import re
 import time
 import random
-import math
 
 ## ========================================================================
 
@@ -65,7 +64,7 @@ def _array_to_string (origin):
 ## ========================================================================
 
 # Deal with earlier versions of PG or GPDB
-    
+
 class __mad_version:
     def __init__ (self):
         self.version = plpy.execute("select version()")[0]["version"]
@@ -129,14 +128,13 @@ class __mad_version:
 
     def select_array_agg (self, schema_madlib):
         """
-        GPDB < 4.0 and PG < 9.0 do not have support for array_agg,
+        GPDB < 4.1 and PG < 9.0 do not have support for array_agg,
         so use the madlib array_agg for those versions
         """
-        if re.search(r"Greenplum Database 4\.0\.", self.version) or \
-                re.search(r"PostgreSQL 8\.4\.", self.version):
+        if self.is_less_than_gp41() or self.is_less_than_pg90():
             return "{schema_madlib}.array_agg".format(schema_madlib=schema_madlib)
-
-        return "array_agg"
+        else:
+            return "array_agg"
 
     def is_gp40 (self):
         """
@@ -144,6 +142,12 @@ class __mad_version:
         It needs special treatment of update from different segments
         """
         if re.search(r"Greenplum Database 4\.0\.", self.version):
+            return True
+        return False
+
+    def is_pg (self):
+        if re.search(r"PostgreSQL", self.version) and \
+                        not re.search(r"Greenplum Database", self.version):
             return True
         return False
 
@@ -155,3 +159,28 @@ class __mad_version:
         if re.search(r"Greenplum Database 4\.1\.", self.version):
             return True
         return False
+
+    def is_gp422_and_up (self):
+        p = re.compile('Greenplum\s+Database\s+([0-9.]+)\s+build', re.IGNORECASE)
+        version = p.findall(self.version)
+        if len(version) > 0 and int(version[0].replace('.', '')) >= 4220:
+            return True
+        else:
+            return False
+
+    def is_less_than_pg90(self):
+        regex = re.compile('PostgreSQL\s*([0-9])([0-9.]+)', re.IGNORECASE)
+        version = regex.findall(self.version)
+        if len(version) > 0 and int(version[0][0]) < 9:
+            return True
+        else:
+            return False
+
+    def is_less_than_gp41(self):
+        regex = re.compile('Greenplum\s+Database\s*([0-9].[0-9])[0-9.]+\s+build', re.IGNORECASE)
+        version = regex.findall(self.version)
+        if len(version) > 0 and float(version[0]) < 4.1:
+            return True
+        else:
+            return False
+

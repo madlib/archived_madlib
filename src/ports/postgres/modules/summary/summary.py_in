@@ -1,0 +1,195 @@
+"""
+@file summary.py_in
+
+@brief Summary function for descriptive statistics
+
+@namespace summary
+"""
+import plpy
+from time import time
+from utilities.utilities import __mad_version
+from Summarizer import Summarizer
+version_wrapper = __mad_version()
+
+def summary(schema_madlib, source_table, output_table, target_cols, grouping_cols,
+    get_distinct, get_quartiles, ntile_array, how_many_mfv, get_estimates):
+    """
+        Main summary function that is called by SQL to execute summary
+        statistics on a table.
+
+        @param schema_madlib        Madlib Schema namespace
+        @param source_table         Name of input table
+        @param output_table         Name of output table
+        @param target_cols          Names of specific columns for which to get summary
+        @param grouping_cols        Names of columns on which to group-by
+                                        (no summary is provided for these columns)
+        @param get_distinct         Should summary include distinct count
+        @param get_quartiles        Should summary include quartile information
+        @param ntile_array          Array for quantiles to include in summary
+                                        (each element should be in [0, 1])
+        @param how_many_mfv         How many frequent values to output?
+        @param get_estimates        Should the summmary information be estimated or exact?
+
+    """
+    #if version_wrapper.is_pg():
+    #    plpy.notice("This function is currently not supported by PostgreSQL.")
+    #    return None
+
+    # 'Estimated', 'Exact', None
+    distinctify = 'Estimated'
+    xtileify = 'Exact'          # 'Estimated' not supported at present      
+    get_mfv_quick = True
+
+    if not get_estimates:
+        distinctify = 'Exact'
+        #xtileify = 'Exact'
+        get_mfv_quick = False
+
+    if not get_distinct:
+        distinctify = 'Skip'
+
+    if not version_wrapper.is_gp422_and_up() or version_wrapper.is_pg():
+        # Currently not supporting percentiles in GPDB < 4.2 and PostgreSQL
+        xtileify = 'Skip'
+
+    # convert comma delimited string input to a list of column names
+    (target_cols, grouping_cols) = _analyze_str_inputs(target_cols, grouping_cols)
+
+    start = time()
+    summarizer = Summarizer(
+        schema_madlib, source_table, output_table, target_cols, grouping_cols,
+        distinctify, get_quartiles, xtileify, ntile_array, how_many_mfv,
+        get_mfv_quick)
+    summarizer.run()
+    end = time()
+
+    row_count = plpy.execute(
+        "SELECT count(*) FROM {output_table}".format(
+            output_table = output_table))[0]['count']
+    return (output_table, row_count, end - start)
+
+# -----------------------------------------------------------------------
+# Input parameter checks and edits
+# -----------------------------------------------------------------------
+def _analyze_str_inputs(target_cols, grouping_cols):
+    """
+    Analyze target_col and grouping_cols string input and convert them to a list
+    """
+    if not target_cols or target_cols.strip() in ('', '*'):
+        target_cols = None
+    else:
+        target_cols = target_cols.replace(' ', '').split(',')
+    if not grouping_cols or grouping_cols.strip() == '':
+        # We make grouping_cols a list with None as an element
+        # since we always want to return summary for complete table
+        grouping_cols = [None]
+    else:
+        grouping_cols = grouping_cols.replace(' ', '').split(',')
+        grouping_cols.append(None) # to return summary on complete table
+    return (target_cols, grouping_cols)
+
+# -----------------------------------------------------------------------
+# Help messages
+# -----------------------------------------------------------------------
+def summary_help_message(schema_madlib, message, **kwargs):
+    """
+    Given a help string, provide usage information
+    """
+    if message is not None and \
+            message.lower() in ("usage", "help", "?"):
+        return """
+        Usage:
+        -----------------------------------------------------------------------
+        SELECT {schema_madlib}.summary
+        (
+            source_table            TEXT,       -- Source table name (Required)
+            output_table            TEXT,       -- Output table name (Required)
+            target_cols             TEXT,       -- Comma separated columns for which summary is desired
+                                                --      (Default: NULL - produces result for all columns)
+            grouping_cols           TEXT,       -- Comma separated columns on which to group results
+                                                --      (Default: NULL - provides summary on complete table)
+            get_distinct            BOOLEAN,    -- Are distinct values required?
+                                                --      (Default: True)
+            get_quartiles           BOOLEAN,    -- Are quartiles required?
+                                                --      (Default: True)
+            ntile_array             FLOAT8[],   -- Array of quantile values to compute
+                                                --      (Default: NULL - Quantile array is not included in result)
+            how_many_mfv            INTEGER,    -- How many most-frequent-values (MFVs) to compute?
+                                                --      (Default: 10)
+            get_estimates           BOOLEAN     -- Should we produce an estimated 
+                                                -- (as opposed to an exact but slow) value for distincts and MFVs?
+        )                                       --      (Default: True)
+        -----------------------------------------------------------------------
+        Ouput table will be in following format 
+        (presence of some columns depends on the arguments):
+            - group_by_column       : Group-by column names (NULL if none provided)
+            - group_by_value        : Values of the Group-by column (NULL if no grouping)
+            - target_column         : Targeted column values for which summary is requested
+            - column_number         : Physical column number for the target column, as described in pg_attribute
+            - data_type             : Data type of target column. Standard GPDB descriptors will be displayed
+            - row_count             : Number of rows for the target column
+            - distinct_values       : Number of distinct values in the target column
+            - missing_values        : Number of missing values in the target column
+            - blank_values          : Number of blank values (blanks are defined by the regular expression '^\w*$')
+            - fraction_missing      : Percentage of total rows that are missing. Will be expressed as a decimal (e.g. 0.3)
+            - fraction_blank        : Percentage of total rows that are blank. Will be expressed as a decimal (e.g. 0.3)
+            - mean                  : Mean value of target column (if target is numeric, else NULL)
+            - variance              : Variance of target columns (if target is numeric, else NULL for strings)
+            - min                   : Min value of target column (for strings this is the length of the shortest string)
+            - max                   : Max value of target column (for strings this is the length of the longest string)
+            - first_quartile        : First quartile (25th percentile, valid only for numeric columns)
+            - median                : Median value of target column (valid only for numeric columns)
+            - third_quartile        : Third quartile (75th percentile, valid only for numeric columns)
+            - quantile_array        : Percentile values corresponding to ntile_array
+            - most_frequent_values  : Most frequent values
+            - mfv_frequencies       : Frequency of the most frequent values
+        """.format(schema_madlib = schema_madlib)
+    elif message is not None and message.lower() in ('example', 'examples'):
+        return """
+            DROP TABLE IF EXISTS example_data;
+            CREATE TABLE example_data(
+                id SERIAL,
+                outlook text,
+                temperature float8,
+                humidity float8,
+                windy text,
+                class text) ;
+
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 85, 85, 'false', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 80, 90, 'true', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 83, 78, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 70, 96, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 68, 80, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 65, 70, 'true', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 64, 65, 'true', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 72, 95, 'false', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 69, 70, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 75, 80, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 75, 70, 'true', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 72, 90, 'true', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 81, 75, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 71, 80, 'true', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES(' ', 100, 100, 'true', ' ');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('', 110, 100, 'true', '');
+
+            SELECT madlib.summary('example_data', 'example_data_output');
+            SELECT madlib.summary('example_data', 'example_data_output', 'windy');
+            SELECT madlib.summary('example_data', 'example_data_output', 'windy,humidity');
+            SELECT madlib.summary('example_data', 'example_data_output', 'id', 'windy');
+            SELECT madlib.summary('example_data', 'example_data_output', NULL, NULL, True, True, array[0.1, 0.2, 0.3]);
+            SELECT madlib.summary('example_data', 'example_data_output', NULL, NULL, True, True, array[0.1, 0.2, 0.3], 2);
+            SELECT madlib.summary('example_data', 'example_data_output', NULL, NULL, True, True, array[0.1, 0.2, 0.3], 2, False);
+         """
+    else:
+       return """
+            'summary' is a generic function used to produce summary statistics
+            of any data table.  The function invokes particular 'methods' from
+            the MADlib library to provide an overview of the data.
+            -------
+            For an overview on usage, run:
+            SELECT {schema_madlib}.summary('usage');
+            -------
+            For an example, run:
+            SELECT {schema_madlib}.summary('example')
+            """.format(schema_madlib = schema_madlib)
+

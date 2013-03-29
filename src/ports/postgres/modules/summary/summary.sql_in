@@ -1,0 +1,281 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file summary.sql_in
+ *
+ * @brief Summary function for descriptive statistics
+ * @date Mar 2013
+ *
+ *//* ------------------------------------------------------------------------*/
+
+m4_include(`SQLCommon.m4')
+
+/**
+
+@addtogroup grp_summary
+
+@about
+
+'summary' is a generic function used to produce summary statistics of any data 
+table.  The function invokes particular 'methods' from the MADlib library to 
+provide an overview of the data. 
+
+@usage
+The summary function can be invoked in the following way:
+@verbatim
+-----------------------------------------------------------------------
+SELECT MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,       -- Source table name (Required)
+    output_table            TEXT,       -- Output table name (Required)
+    target_cols             TEXT,       -- Comma separated columns for which summary is desired
+                                        --      (Default: NULL - produces result for all columns)
+    grouping_cols           TEXT,       -- Comma separated columns on which to group results
+                                        --      (Default: NULL - provides summary on complete table)
+    get_distinct            BOOLEAN,    -- Are distinct values required?
+                                        --      (Default: True)
+    get_quartiles           BOOLEAN,    -- Are quartiles required?
+                                        --      (Default: True)
+    ntile_array             FLOAT8[],   -- Array of quantile values to compute
+                                        --      (Default: NULL - Quantile array not included)
+    how_many_mfv            INTEGER,    -- How many most-frequent-values to compute?
+                                        --      (Default: 10)
+    get_estimates           BOOLEAN     -- Should we produce exact or estimated values?
+)                                       --      (Default: True)
+-----------------------------------------------------------------------
+@endverbatim
+
+Note:
+- Currently, estimated values are only implemented for the distinct values 
+computation. 
+- The '<em>get_estimates</em>' parameter controls computation for two statistics
+    - If '<em>get_estimates</em>' is True then the distinct value computation is
+        estimated. Further, the most frequent values computation is computed using 
+        a "quick and dirty" method that does parallel aggregation in GPDB
+        at the expense of missing some of the most frequent values.
+    - If '<em>get_estimates</em>' is False then the distinct values are computed
+     in a slow but exact method. The most frequent values are computed using a
+     faithful implementation that preserves the approximation guarantees of 
+     the Cormode/Muthukrishnan method (more information in \ref grp_mfvsketch) 
+
+
+The output of the function is a composite type containing: 
+    ouput_table             TEXT,       -- Name of the output table
+    row_count               INT4,       -- Number of rows in the output table
+    duration                FLOAT8      -- Time taken (in seconds) to compute the summary 
+
+The summary stastics are stored in the 'output_table' relation provided in the 
+arguments. The relation 'output_table' can contain the following table 
+(presence of some columns depends on the argument values)
+-----------------------------------------------------------------------
+    - group_by_column       : Group-by column names (NULL if none provided)
+    - group_by_value        : Values of the Group-by column (NULL if no grouping)
+    - target_column         : Targeted column values for which summary is requested
+    - column_number         : Physical column number for the target column, as described in pg_attribute
+    - data_type             : Data type of target column. Standard GPDB descriptors will be displayed
+    - row_count             : Number of rows for the target column
+    - distinct_values       : Number of distinct values in the target column
+    - missing_values        : Number of missing values in the target column
+    - blank_values          : Number of blank values (blanks are defined by the regular expression '^\w*$')
+    - fraction_missing      : Percentage of total rows that are missing. Will be expressed as a decimal (e.g. 0.3)
+    - fraction_blank        : Percentage of total rows that are blank. Will be expressed as a decimal (e.g. 0.3)
+    - mean                  : Mean value of target column (if target is numeric, else NULL)
+    - variance              : Variance of target columns (if target is numeric, else NULL for strings)
+    - min                   : Min value of target column (for strings this is the length of the shortest string)
+    - max                   : Max value of target column (for strings this is the length of the longest string)
+    - first_quartile        : First quartile (25th percentile, only for numeric columns)
+    - median                : Median value of target column (if target is numeric, else NULL)
+    - third_quartile        : Third quartile (25th percentile, only for numeric columns)
+    - quantile_array        : Percentile values corresponding to ntile_array
+    - most_frequent_values  : Most frequent values
+    - mfv_frequencies       : Frequency of the most frequent values 
+-----------------------------------------------------------------------
+
+The output can be obtained as
+@verbatim
+sql> SELECT * FROM 'output_table';
+@endverbatim
+
+The usage information can be obtained at any time directly from the
+function using
+@verbatim
+sql> SELECT summary('usage');
+@endverbatim
+
+*/
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.summary_result;
+CREATE TYPE MADLIB_SCHEMA.summary_result AS
+(
+    ouputtable      TEXT,
+    row_count       INT4,
+    duration        FLOAT8
+);
+
+
+-----------------------------------------------------------------------
+-- Main function for summary
+-----------------------------------------------------------------------
+/*
+ * @brief Compute a summary statistics on a table with optional grouping support
+ * 
+ * @param source_table      Name of source relation containing the data
+ * @param output_table      Name of output table name to store the summary
+ * @param target_cols       String with comma separated list of columns on which summary is desired
+ * @param grouping_cols     String with comma separated list of columns on which to group the data by
+ * @param get_distinct      Should distinct values count be included in result
+ * @param get_quartiles     Should first, second (median), and third quartiles be included in result
+ * @param ntile_array       Array of percentiles to compute
+ * @param how_many_mfv      How many most frequent values to compute?
+ * @param get_estimates     Should distinct counts be an estimated (faster) or exact count?
+ *
+ * @usage
+ * 
+ * <pre> SELECT MADLIB_SCHEMA.summary (
+ *       '<em>source_table</em>', '<em>output_table</em>', 
+ *       '<em>target_cols</em>', '<em>grouping_cols</em>',                            
+ *       '<em>get_distinct</em>', '<em>get_quartiles</em>',
+ *       '<em>ntile_array</em>', '<em>how_many_mfv</em>',
+ *       '<em>get_estimates</em>'          
+ *   );
+ *   SELECT * FROM '<em>output_table</em>'
+ *  </pre>                                       
+ */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,       -- source table name
+    output_table            TEXT,       -- output table name
+    target_cols             TEXT,       -- comma separated list of output cols
+    grouping_cols           TEXT,       -- comma separated names of grouping cols
+    get_distinct            BOOLEAN,    -- Are distinct values required
+    get_quartiles           BOOLEAN,    -- Are quartiles required
+    ntile_array             FLOAT8[],   -- Array of quantiles to compute
+    how_many_mfv            INTEGER,    -- How many most frequent values to compute?
+    get_estimates           BOOLEAN     -- Should we produce exact or estimated
+                                        --      values for distinct computation
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    PythonFunctionBodyOnly(`summary', `summary')
+    return summary.summary(
+        schema_madlib, source_table, output_table, target_cols, grouping_cols,
+        get_distinct, get_quartiles, ntile_array, how_many_mfv, get_estimates)
+$$ LANGUAGE plpythonu;
+
+-----------------------------------------------------------------------
+--- Overloaded functions to support optional parameters
+-----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT,
+    target_cols             TEXT,
+    grouping_cols           TEXT,
+    get_distinct            BOOLEAN,
+    get_quartiles           BOOLEAN,
+    ntile_array             FLOAT8[],
+    how_many_mfv            INTEGER
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, $3, $4, $5, $6, $7, $8, True)
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT,
+    target_cols             TEXT,
+    grouping_cols           TEXT,
+    get_distinct            BOOLEAN,
+    get_quartiles           BOOLEAN,
+    ntile_array             FLOAT8[]
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, $3, $4, $5, $6, $7, 10, True)
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT,
+    target_cols             TEXT,
+    grouping_cols           TEXT,
+    get_distinct            BOOLEAN,
+    get_quartiles           BOOLEAN
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, $3, $4, $5, $6, NULL, 10, True)
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT,
+    target_cols             TEXT,
+    grouping_cols           TEXT,
+    get_distinct            BOOLEAN
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, $3, $4, $5, True, NULL, 10, True)
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT,
+    target_cols             TEXT,
+    grouping_cols           TEXT
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, $3, $4, True, True, NULL, 10, True)
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT,
+    target_cols             TEXT
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, $3, NULL, True, True, NULL, 10, True)
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, NULL, NULL, True, True, NULL, 10, True)
+$$ LANGUAGE sql;
+
+-----------------------------------------------------------------------
+-- Help functions
+-----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.summary(
+    input_message            TEXT
+)
+RETURNS TEXT AS $$
+PythonFunctionBodyOnly(`summary', `summary')
+    return summary.summary_help_message(schema_madlib, input_message)
+$$ LANGUAGE plpythonu;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.summary()
+RETURNS TEXT AS $$
+PythonFunctionBodyOnly(`summary', `summary')
+    return summary.summary_help_message(schema_madlib, None)
+$$ LANGUAGE plpythonu;
