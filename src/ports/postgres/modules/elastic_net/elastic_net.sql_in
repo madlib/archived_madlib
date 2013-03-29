@@ -45,7 +45,7 @@ At the end of the calculation, the orginal scales will be restored and an interc
 
 Note that fitting after scaling is not equivalent to directly fitting.
 
-Right now, two optimizers are supported. The default one is FISTA, and the other is IGD. They have their own parameters, which can be specified in the <em>optimizer_params</em> as a text array. For example, '{max_stepsize = 0.1, warmup = t, "warmup_lambdas = [0.4, 0.3, 0.2]"}'::text[].
+Right now, two optimizers are supported. The default one is FISTA, and the other is IGD. They have their own parameters, which can be specified in the <em>optimizer_params</em> as a text array. For example, 'max_stepsize = 0.1, warmup = t, warmup_lambdas = [0.4, 0.3, 0.2]'.
 
 <b>(1) FISTA</b>
 
@@ -141,13 +141,13 @@ Null values are not expected.
                                     (or 'logistic') will be supported
             alpha,            -- Elastic net control parameter, value in [0, 1]   
             lambda_value,     -- Regularization parameter, positive
-            standardize,      -- Whether to normalize the data
+            standardize,      -- Whether to normalize the data. Default: True
             'grouping_col',   -- Group by which columns. Default: NULL
             'optimizer',      -- Name of optimizer. Default: 'fista'
-            'optimizer_params',-- Optimizer parameters, delimited by comma
-            'excluded',       -- Column names excluded from '*'
-            max_iter,         -- Maximum iteration number
-            tolerance         -- Stopping criteria
+            'optimizer_params',-- Optimizer parameters, delimited by comma. Default: NULL
+            'excluded',       -- Column names excluded from '*'. Default: NULL
+            max_iter,         -- Maximum iteration number. Default: 10000
+            tolerance         -- Stopping criteria. Default: 1e-6
         );
 </pre>
 
@@ -248,8 +248,12 @@ mydb-# from en_data, en_model;
 @literature
 
 [1] Elastic net regularization. http://en.wikipedia.org/wiki/Elastic_net_regularization
+
 [2] Beck, A. and M. Teboulle (2009), A fast iterative shrinkage-thresholding algorothm for linear inverse problems. SIAM J. on Imaging Sciences 2(1), 183-202.   
+
 [3] Shai Shalev-Shwartz and Ambuj Tewari, Stochastic Methods for l1 Regularized Loss Minimization. Proceedings of the 26th International Conference on Machine Learning, Montreal, Canada, 2009. 
+
+@sa File elastic_net.sql_in documenting the SQL functions.
 
 */
 
@@ -264,17 +268,20 @@ mydb-# from en_data, en_model;
  * @param col_dep_var       Name of dependent variable column
  * @param regress_family    Response type (gaussian or binomial)
  * @param alpha             The elastic net parameter, [0, 1]
- * @param lambda            The regularization parameter
- * @param standardization   Whether to normalize the variables
+ * @param lambda_value            The regularization parameter
+ * @param standardize   Whether to normalize the variables (default True)
  * @param grouping_col      List of columns on which to apply grouping 
  *                               (currently only a placeholder)
- * @param optimizer         The optimization algorithm, for example 'igd'
+ * @param optimizer         The optimization algorithm, 'fista' or 'igd'. Default is 'fista'
  * @param optimizer_params  Parameters of the above optimizer, 
- *                                the format is '{arg = value, ...}'::varchar[]
- * @param exclude           Which columns to exclude?
- *                                 (applicable only if col_ind_var is set as *)
- * @param num_of_iteration  Maximum number of iterations to run the algorithm
-                                (default value of 100)
+ *                                the format is 'arg = value, ...'. Default is NULL
+ * @param exclude           Which columns to exclude? Default is NULL
+ *                                 (applicable only if col_ind_var is set as * or a column of array,
+ *                                   column names as 'col1, col2, ...' if col_ind_var is '*';
+ *                                   element indices as '1,2,3, ...' if col_ind_var is a column of array)
+ * @param max_iter  Maximum number of iterations to run the algorithm
+ *                               (default value of 10000)
+ * @param tolerance Iteration stopping criteria. Default is 1e-6
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_train (
     tbl_source          TEXT,
@@ -456,8 +463,8 @@ $$ LANGUAGE plpythonu;
  *        can be used together with General-CV
  * @param tbl_model The result from elastic_net_train
  * @param tbl_new_source Data table
+ * @param col_id Unique ID associated with each row
  * @param tbl_predict Prediction result
- * @param id_col Unique ID associated with each row
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_predict (
     tbl_model       TEXT,
@@ -474,9 +481,12 @@ $$ LANGUAGE plpythonu;
  * @brief Prediction use learned coefficients for a given example
  *
  * @param regress_family    model family
- * @param coefficients      Weight vector (hyperplane, classifier)
- * @param intercept         Linear fitting intercept
+ * @param coefficients      The fitting coefficients
+ * @param intercept         The fitting intercept
  * @param ind_var           Features (independent variables)
+ *
+ * returns a double value. When regress_family is 'binomial' or 'logistic',
+ * this function returns 1 for True and 0 for False
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_predict (
     regress_family  TEXT,
@@ -508,7 +518,16 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
 ------------------------------------------------------------------------
-/* Prediction for Gaussian models */
+
+ /**
+ * @brief Prediction for linear models use learned coefficients for a given example
+ *
+ * @param coefficients      Linear fitting coefficients
+ * @param intercept         Linear fitting intercept
+ * @param ind_var           Features (independent variables)
+ *
+ * returns a double value
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_gaussian_predict (
     coefficients    DOUBLE PRECISION[],
     intercept       DOUBLE PRECISION,
@@ -518,7 +537,15 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_gaussian_predict (
 LANGUAGE C IMMUTABLE STRICT;
 
 ------------------------------------------------------------------------
-/* Prediction for Binomial models */
+/**
+ * @brief Prediction for logistic models use learned coefficients for a given example
+ *
+ * @param coefficients      Logistic fitting coefficients
+ * @param intercept         Logistic fitting intercept
+ * @param ind_var           Features (independent variables)
+ *
+ * returns a boolean value
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_binomial_predict (
     coefficients    DOUBLE PRECISION[],
     intercept       DOUBLE PRECISION,
@@ -528,7 +555,15 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_binomial_predict (
 LANGUAGE C IMMUTABLE STRICT;
 
 ------------------------------------------------------------------------
-/* Compute the probability for True class  */
+/**
+ * @brief Compute the probability of belonging to the True class for a given observation
+ *
+ * @param coefficients      Logistic fitting coefficients
+ * @param intercept         Logistic fitting intercept
+ * @param ind_var           Features (independent variables)
+ *
+ * returns a double value, which is the probability of this data point being True class
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.elastic_net_binomial_prob (
     coefficients    DOUBLE PRECISION[],
     intercept       DOUBLE PRECISION,
@@ -596,9 +631,8 @@ CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_final (
 'MODULE_PATHNAME', 'gaussian_igd_final'
 LANGUAGE C IMMUTABLE STRICT;
 
-/**
- * @internal
- * @brief Perform one iteration step of IGD for linear models
+/*
+ * Perform one iteration step of IGD for linear models
  */
 CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step(
     /* ind_var */           DOUBLE PRECISION[],
@@ -699,9 +733,8 @@ CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_final (
 'MODULE_PATHNAME', 'gaussian_fista_final'
 LANGUAGE C IMMUTABLE STRICT;
 
-/**
- * @internal
- * @brief Perform one iteration step of FISTA for linear models
+/*  
+  Perform one iteration step of FISTA for linear models
  */
 CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_fista_step(
     /* ind_var      */      DOUBLE PRECISION[],
@@ -781,9 +814,8 @@ CREATE FUNCTION MADLIB_SCHEMA.__binomial_igd_final (
 'MODULE_PATHNAME', 'binomial_igd_final'
 LANGUAGE C IMMUTABLE STRICT;
 
-/**
- * @internal
- * @brief Perform one iteration step of IGD for linear models
+/*
+ * Perform one iteration step of IGD for linear models
  */
 CREATE AGGREGATE MADLIB_SCHEMA.__binomial_igd_step(
     /* ind_var */           DOUBLE PRECISION[],
@@ -884,9 +916,8 @@ CREATE FUNCTION MADLIB_SCHEMA.__binomial_fista_final (
 'MODULE_PATHNAME', 'binomial_fista_final'
 LANGUAGE C IMMUTABLE STRICT;
 
-/**
- * @internal
- * @brief Perform one iteration step of FISTA for linear models
+/*
+    Perform one iteration step of FISTA for linear models
  */
 CREATE AGGREGATE MADLIB_SCHEMA.__binomial_fista_step(
     /* ind_var      */      DOUBLE PRECISION[],
