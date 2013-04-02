@@ -5,7 +5,7 @@
  */
 
 
-/*! @addtogroup desc-stats
+/*! @addtogroup grp_desc_stats
  *
  * @par About:
  * MADlib provides a number of descriptive statistics to complement
@@ -29,7 +29,7 @@
  */
 
 /*
-@addtogroup sketches
+@addtogroup grp_sketches
 */
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
