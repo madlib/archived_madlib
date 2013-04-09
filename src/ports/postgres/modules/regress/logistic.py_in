@@ -10,8 +10,6 @@
 @brief Logistic Regression: Driver functions
 """
 import plpy
-import re
-from utilities.control import IterationController
 from utilities.group_control import GroupIterationController
 from utilities.utilities import __unique_string
 from utilities.validate_args import __is_tbl_exists
@@ -111,8 +109,7 @@ def logregr_train(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
 
     @return A composite value which is __logregr_result defined in logistic.sql_in
     """
-    (tbl_source, tbl_output, dep_col, ind_col, grouping_col, max_iter,
-     optimizer, tolerance) = __logregr_validate_args(schema_madlib, 
+    optimizer = __logregr_validate_args(schema_madlib,
                                         tbl_source, tbl_output,
                                         dep_col, ind_col,
                                         grouping_col, max_iter,
@@ -125,47 +122,43 @@ def logregr_train(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
 # ========================================================================
 
 
-def __logregr_validate_args(schema_madlib, tbl_source, tbl_output, dep_col, 
-                            ind_col, grouping_col, max_iter, optimizer, 
+def __logregr_validate_args(schema_madlib, tbl_source, tbl_output, dep_col,
+                            ind_col, grouping_col, max_iter, optimizer,
                             tolerance):
     """
     Validate the arguments
     """
-    if tbl_source is None or \
-            any(tbl_source.lower() == i for i in ['null', '']) or \
-            not __is_tbl_exists(tbl_source):
+    if not tbl_source or tbl_source in ('null', '') or \
+            (not __is_tbl_exists(tbl_source)):
         plpy.error("Logregr error: Data table does not exist!")
 
     if not __is_tbl_has_rows(tbl_source):
         plpy.error("Logregr error: Data table is empty!")
 
-    if any(tbl_output.lower() == i for i in ['null', '']):
+    if tbl_output.lower() in ('null', ''):
         plpy.error("Logregr error: Invalid output table name!")
-
-    # output table will be dropped if already exists
-    # if __is_tbl_exists_in_schema(tbl_output):
-    #     plpy.error("Logregr error: Output table already exists!")
 
     # if not __is_col_exists(tbl_source, [dep_col]):
     #     plpy.error("Logregr error: Dependent column does not exist!")
 
-    if grouping_col is not None:
-        if not __is_col_exists(tbl_source, 
-                                _string_to_array(grouping_col), schema_madlib):
-            plpy.error("Logregr error: Grouping column does not exist!")
-
-    if any(dep_col is None or dep_col.lower() == i for i in ['null', '']):
+    if not dep_col or dep_col.lower() in ('null', ''):
         plpy.error("Logregr error: Invalid dependent column name!")
 
     if not __is_scalar_col_no_null(tbl_source, dep_col):
         plpy.error("Logregr error: Dependent variable has Null values! \
                     Please filter out Null values before using this function!")
 
-    if any(ind_col is None or ind_col.lower() == i for i in ['null', '']):
+    if not ind_col or ind_col.lower() in ('null', ''):
         plpy.error("Logregr error: Invalid independent column name!")
 
-    if any(grouping_col is not None and grouping_col.lower() == i for i in ['null', '']):
+    if grouping_col and grouping_col.lower() in ('null', ''):
+        # grouping_col is optional but if provided should be valid column name
         plpy.error("Logregr error: Invalid grouping columns name!")
+
+    if grouping_col:
+        if not __is_col_exists(tbl_source,
+                                _string_to_array(grouping_col), schema_madlib):
+            plpy.error("Logregr error: Grouping column does not exist!")
 
     if max_iter <= 0:
         plpy.error("Logregr error: Maximum number of iterations must be positive!")
@@ -175,13 +168,12 @@ def __logregr_validate_args(schema_madlib, tbl_source, tbl_output, dep_col,
 
     if optimizer == "newton":
         optimizer = "irls"
-    elif optimizer not in ["irls", "cg", "igd"]:
+    elif optimizer not in ("irls", "cg", "igd"):
         plpy.error(""" Logregr error: Unknown optimizer requested.
                    Must be 'newton'/'irls', 'cg', or 'igd'.
                    """)
 
-    return (tbl_source, tbl_output, dep_col, ind_col, grouping_col, max_iter,
-                  optimizer, tolerance)
+    return optimizer
 
 # ========================================================================
 
@@ -200,10 +192,14 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
     else:
         plpy.execute("set client_min_messages to error")
 
-    args = dict(schema_madlib = schema_madlib, tbl_source = tbl_source,
+    args = dict(schema_madlib = schema_madlib,
+                tbl_source = tbl_source,
                 tbl_output = tbl_output,
-                dep_col = dep_col, ind_col = ind_col, max_iter = max_iter,
-                optimizer = optimizer, tolerance = tolerance,
+                dep_col = dep_col,
+                ind_col = ind_col,
+                max_iter = max_iter,
+                optimizer = optimizer,
+                tolerance = tolerance,
                 tbl_logregr_args = __unique_string(),
                 tbl_logregr_state = __unique_string(),
                 irls = "__logregr_irls_result",
@@ -223,7 +219,7 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
 
     # return an array of dict
     # each dict has two elements: iteration number, and grouping value array
-    if grouping_col is not None:
+    if grouping_col:
         grouping_list = _string_to_array(grouping_col)
         for i in range(len(grouping_list)):
             grouping_list[i] += "::text"
@@ -295,9 +291,9 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                     from {tbl_output}
                     """.format(**args))[0]["count"]
 
-    if grouping_col is not None:
-        plpy.info(str(all_groups - failed_groups) + \
-                    " groups succesfully passed, and " + \
+    if grouping_col:
+        plpy.info(str(all_groups - failed_groups) +
+                    " groups succesfully passed, and " +
                     str(failed_groups) + " groups failed")
 
     plpy.execute("""
