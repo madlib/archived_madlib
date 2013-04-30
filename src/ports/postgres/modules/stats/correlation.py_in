@@ -1,0 +1,286 @@
+"""
+@file correlation.py_in
+
+@brief Cross-correlation function for multiple columns of a relation
+
+@namespace correlation
+"""
+import plpy
+from time import time
+from utilities.utilities import __mad_version
+
+version_wrapper = __mad_version()
+_get_vector = version_wrapper.select_vecfunc()
+
+
+def correlation(schema_madlib, source_table, output_table, target_cols):
+    """
+    Populates an output table with the coefficients of correlation between
+    the columns in a source table
+    Args:
+        @param schema_madlib        Madlib schema namespace
+        @param source_table         Name of input table
+        @param output_table         Name of output table
+        @param target_cols          Name of specific columns targetted for correlation
+
+    Returns:
+        None
+    """
+    _validate_corr_arg(source_table, output_table)
+    _numeric_column_names = _get_all_numeric_columns(source_table)
+    _target_cols = _analyze_target_cols(target_cols)
+
+    if _target_cols:
+        # prune all non-numeric column types from target columns
+        _target_cols = [column for column in _target_cols
+                        if column in _numeric_column_names]
+    else:
+        # if target_cols not provided then all numeric columns are to be targetted
+        _target_cols = _numeric_column_names[:]
+    if len(_target_cols) == 0:
+        plpy.error("Correlation error: No numerical column found.")
+    if len(_target_cols) == 1:
+        plpy.error("Correlation error: Only one numerical column present in source.")
+    plpy.notice('Producing correlation for columns {0}'.format(str(_target_cols)))
+    return _populate_output_table(source_table, output_table, _target_cols)
+
+
+# -----------------------------------------------------------------------
+# Argument validation function
+# -----------------------------------------------------------------------
+def _validate_corr_arg(source_table, output_table):
+    """
+    Validates all arguments and raises an error if there is an invalid argument
+
+    Args:
+        @param source_table         Name of input table (string)
+        @param output_table         Name of output table (string)
+        @param target_cols          Comma separated list of output columns (string)
+
+    Returns:
+        True if all arguments are valid
+    """
+    if not source_table or source_table.strip() == '':
+        plpy.error("""
+            Correlation error: Invalid source table name""")
+    try:
+        plpy.execute("SELECT '{0}'::regclass::oid\
+                                    ".format(source_table))[0]['oid']
+    except:
+        plpy.error("Correlation error:  Relation '{0}' does not exist\
+                        ".format(source_table))
+    rowcount = plpy.execute("""
+        SELECT count(*) FROM {0}""".format(source_table))[0]['count']
+    if rowcount == 0:
+        plpy.error("Relation '{0}' is empty".format(source_table))
+
+    if not output_table or output_table.strip() == '':
+        plpy.error("Correlation error: Invalid output table name")
+    return True
+
+
+# -----------------------------------------------------------------------
+# Get all column names in source table
+# -----------------------------------------------------------------------
+def _get_all_numeric_columns(source_table):
+    """
+    Returns all column names for numeric type columns in a relation
+
+    Args:
+        @param source_table
+
+    Returns:
+        List of column names in table
+    """
+    # determine the exact table_schema and table_name
+    # in case that source_table only contains table_name
+    row = plpy.execute("""
+                        SELECT
+                            nspname AS table_schema,
+                            relname AS table_name
+                        FROM
+                            pg_class AS c,
+                            pg_namespace AS nsp
+                        WHERE
+                            c.oid = '{source_table}'::regclass::oid AND
+                            c.relnamespace = nsp.oid
+                        """.format(source_table=source_table))
+    table_schema = row[0]['table_schema']
+    table_name = row[0]['table_name']
+
+    # retrieve the numrical columns
+    numeric_types = "ARRAY['smallint', 'integer', 'bigint',\
+            'real', 'numeric', 'double precision']"
+    all_numeric_columns = plpy.execute("""
+                                        SELECT
+                                            column_name
+                                        FROM
+                                            information_schema.columns
+                                        WHERE
+                                            table_schema = '{table_schema}' AND
+                                            table_name = '{table_name}' AND
+                                            data_type = ANY ({numeric_types})
+                                        ORDER BY ordinal_position
+                                        """.format(table_schema=table_schema,
+                                                   table_name=table_name,
+                                                   numeric_types=numeric_types))
+    return [column['column_name'] for column in all_numeric_columns]
+
+
+# -----------------------------------------------------------------------
+# Input parameter checks and edits
+# -----------------------------------------------------------------------
+def _analyze_target_cols(target_cols):
+    """
+    Analyzes target_cols string input and converts it to a list
+    """
+    if not target_cols or target_cols.strip() in ('', '*'):
+        target_cols = None
+    else:
+        target_cols = target_cols.replace(' ', '').split(',')
+    return target_cols
+
+
+# -----------------------------------------------------------------------
+# Create and populate output table
+# -----------------------------------------------------------------------
+def _populate_output_table(source_table, output_table, col_names):
+    """
+    Creates a relation with the appropriate number of columns given a list of
+    column names and populates with the correlation coefficients. If the table
+    already exists, then it is dropped before creating.
+
+    Args:
+        @param source_table     Name of source table
+        @param output_table     Name of output table
+        @param _target_cols     Name of all columns to place in output table
+
+    Returns:
+        Tuple (output table name, number of columns, time for computation)
+    """
+    start = time()
+
+    nCols = len(col_names)
+    all_corr = ['ARRAY[%s] AS column_position' % (str(range(1, nCols+1))[1:-1]),
+                'ARRAY[%s] AS variable' % (str(col_names)[1:-1])]
+    all_unnest = ['unnest(column_position) AS column_position',
+                  'unnest(variable) AS variable']
+
+    # Logic for the loop below:
+    #   if col_names=['col1', 'col2', 'col3'] build strings to produce a matrix:
+    #        ARRAY[1.0, NULL, NULL] as col1,
+    #        ARRAY[corr(col1, col2), 1.0, NULL] AS col2,
+    #        ARRAY[corr(col1, col3), corr(col2, col3), 1.0] AS col3
+    for col_index, col_name in enumerate(col_names):
+        corr_str_list = ['NULL'] * col_index + ['1.0']
+        corr_str_list.extend(['corr({0}, {1})'.format(col_names[col_index],
+                                                      col_names[row_index])
+                              for row_index in range(col_index+1, nCols)])
+
+        all_corr.append('ARRAY[%s] AS %s' % (', '.join(corr_str_list), col_name))
+        all_unnest.append('unnest(%s) AS %s' % (col_name, col_name))
+
+    all_corr_str = ',\n\t\t'.join(all_corr)
+    all_unnest_str = ',\n\t'.join(all_unnest)
+
+    plpy.execute('DROP TABLE IF EXISTS %s' % output_table)
+    plpy.execute("""
+        CREATE TABLE {output_table} AS
+        SELECT
+            {all_unnest_str}
+        FROM (
+            SELECT
+                {all_corr_str}
+            FROM
+                {source_table}
+        ) t
+        m4_ifdef(`__GREENPLUM__', `DISTRIBUTED RANDOMLY')
+        """.format(source_table=source_table,
+                   output_table=output_table,
+                   all_unnest_str=all_unnest_str,
+                   all_corr_str=all_corr_str))
+    end = time()
+    return (output_table, len(col_names), end - start)
+
+
+# -----------------------------------------------------------------------
+# Help messages
+# -----------------------------------------------------------------------
+def correlation_help_message(schema_madlib, message, **kwargs):
+    """
+    Given a help string, provide usage information
+    """
+    if message is not None and \
+            message.lower() in ("usage", "help", "?"):
+        return """
+        Usage:
+        -----------------------------------------------------------------------
+        SELECT {schema_madlib}.correlation
+        (
+            source_table            TEXT,       -- Source table name (Required)
+            output_table            TEXT,       -- Output table name (Required)
+            target_cols             TEXT,       -- Comma separated columns for which summary is desired
+                                                --   (Default: NULL - produces result for all columns)
+        )
+        -----------------------------------------------------------------------
+        Output will be a table with N+2 columns and N rows, where N is the number of target
+        columns. The first column of the table provides the row-header for each variable,
+        and the second column provides the position of the variable in the
+        `source_table'. The rest of the table is the NxN correlation matrix for all
+        numeric columns in `source_table'.
+
+        The output table is arranged as a lower-traingular matrix
+        with the upper triangle set to NULL and the diagonal elements set to 1.0.
+        To obtain the result from the output_table in this matrix format ensure to
+        order the elements select the elements
+        """.format(schema_madlib=schema_madlib)
+    elif message is not None and message.lower() in ('example', 'examples'):
+        return """
+            DROP TABLE IF EXISTS example_data;
+            CREATE TABLE example_data(
+                id SERIAL,
+                outlook text,
+                temperature float8,
+                humidity float8,
+                windy text,
+                class text) ;
+
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 85, 85, 'false', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 80, 90, 'true', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 83, 78, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 70, 96, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 68, 80, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 65, 70, 'true', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 64, 65, 'true', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 72, 95, 'false', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 69, 70, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 75, 80, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('sunny', 75, 70, 'true', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 72, 90, 'true', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('overcast', 81, 75, 'false', 'Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('rain', 71, 80, 'true', E'Don\\'t Play');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES(' ', 100, 100, 'true', ' ');
+            INSERT INTO example_data(outlook, temperature, humidity, windy, class) VALUES('', 110, 100, 'true', '');
+
+            SELECT madlib.correlation('example_data', 'example_data_output');
+            SELECT madlib.correlation('example_data', 'example_data_output', '*');
+            SELECT madlib.correlation('example_data', 'example_data_output', 'temperature, humidity');
+
+            To get the correlation matrix from output table:
+                SELECT * from example_data_output order by column_position;
+         """
+    else:
+        return """
+            A correlation function is the degree and direction of association of
+            two variables; how well can one random variable be predicted
+            from the other. The coefficient of correlation varies from -1 to 1:
+            1 implies perfect correlation, 0 means no correlation, and -1 means
+            perfectly anti-correlated.
+            -------
+            For an overview on usage, run:
+            SELECT {schema_madlib}.correlation('usage');
+            -------
+            For an example, run:
+            SELECT {schema_madlib}.correlation('example')
+            """.format(schema_madlib=schema_madlib)
+
