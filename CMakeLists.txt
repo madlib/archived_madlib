@@ -60,7 +60,8 @@ if(CMAKE_COMPILER_IS_GNUCC)
 
     # A useful summary of warning options can be found here:
     # http://developer.apple.com/tools/xcode/compilercodewarnings.html
-    # Note: gcc does not implicitly set _POSIX_C_SOURCE or _XOPEN_SOURCE when using -std=c99.
+    # Note: gcc does not implicitly set _POSIX_C_SOURCE or _XOPEN_SOURCE
+    # when using -std=c99.
     # http://pubs.opengroup.org/onlinepubs/9699919799/functions/V2_chap02.html#tag_15_02_01_01
     # We specify that we are POSIX.1-2001 compliant and XSI-conforming. We only
     # need to specify _XOPEN_SOURCE as _POSIX_C_SOURCE will be set implicitly.
@@ -144,7 +145,6 @@ else(CMAKE_COMPILER_IS_GNUCXX)
 endif(CMAKE_COMPILER_IS_GNUCXX)
 
 # -- Third-party dependencies: Find m4 -----------------------------------------
-
 # Unfortunately, we currently rely on GNU m4 due to option --prefix-builtins,
 # which is not POSIX-standardized.
 if(SOLARIS)
@@ -196,3 +196,62 @@ include(OSXUtils)
 add_subdirectory(src)
 add_subdirectory(doc)
 add_subdirectory(deploy)
+
+# -- Install path for specific madlib version ----------------------------------
+set(CMAKE_MADLIB_ROOT "${CMAKE_INSTALL_PREFIX}")
+set(CMAKE_INSTALL_PREFIX "${CMAKE_MADLIB_ROOT}/Versions/${MADLIB_VERSION_STRING}")
+
+# Move bin to old_bin if upgrading from V0.6 or earlier version
+# below script finds a directory named 'bin' and copies to 'old_bin' ignoring
+# any error messages (eg. if 'bin' does not exist)
+install(CODE "
+        EXECUTE_PROCESS(
+            COMMAND find ${CMAKE_MADLIB_ROOT}/bin -type d -exec cp -RPf {} ${CMAKE_MADLIB_ROOT}/old_bin \;
+            ERROR_FILE /dev/null
+        )"
+)
+# remove the 'bin' directory to replace with symbolic link
+install(CODE "
+        EXECUTE_PROCESS(
+            COMMAND find ${CMAKE_MADLIB_ROOT}/bin -depth -type d -exec rm -r {} \;
+            ERROR_FILE /dev/null
+        )"
+)
+
+# Move doc to old_doc if upgrading from V0.6 or earlier version
+install(CODE "
+        EXECUTE_PROCESS(
+            COMMAND find ${CMAKE_MADLIB_ROOT}/doc -type d -exec cp -RPf {} ${CMAKE_MADLIB_ROOT}/old_doc \;
+            ERROR_FILE /dev/null
+        )"
+)
+install(CODE "
+        EXECUTE_PROCESS(
+            COMMAND find ${CMAKE_MADLIB_ROOT}/doc -depth -type d -exec rm -r {} \;
+            ERROR_FILE /dev/null
+        )"
+)
+
+install(CODE "
+    EXECUTE_PROCESS(COMMAND ln -sfh
+           ${CMAKE_INSTALL_PREFIX}
+           ${CMAKE_MADLIB_ROOT}/Current
+           )"
+)
+
+# Create symlink bin
+install(CODE "
+    EXECUTE_PROCESS(COMMAND ln -sfh
+           ${CMAKE_MADLIB_ROOT}/Current/bin
+           ${CMAKE_MADLIB_ROOT}/bin
+           )"
+)
+
+# Create symlink doc
+install(CODE "
+    EXECUTE_PROCESS(COMMAND ln -sfh
+           ${CMAKE_MADLIB_ROOT}/Current/doc
+           ${CMAKE_MADLIB_ROOT}/doc
+           )
+")
+
