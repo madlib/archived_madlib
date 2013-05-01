@@ -13,7 +13,7 @@ version_wrapper = __mad_version()
 _get_vector = version_wrapper.select_vecfunc()
 
 
-def correlation(schema_madlib, source_table, output_table, target_cols):
+def correlation(schema_madlib, source_table, output_table, target_col_names):
     """
     Populates an output table with the coefficients of correlation between
     the columns in a source table
@@ -21,28 +21,50 @@ def correlation(schema_madlib, source_table, output_table, target_cols):
         @param schema_madlib        Madlib schema namespace
         @param source_table         Name of input table
         @param output_table         Name of output table
-        @param target_cols          Name of specific columns targetted for correlation
+        @param target_col_names     Name of specific columns targetted for correlation
 
     Returns:
         None
     """
     _validate_corr_arg(source_table, output_table)
-    _numeric_column_names = _get_all_numeric_columns(source_table)
-    _target_cols = _analyze_target_cols(target_cols)
-
-    if _target_cols:
+    _numeric_column_names, _nonnumeric_column_names = _get_numeric_columns(source_table)
+    _target_col_names = _analyze_target_cols(target_col_names)
+    _nonexisting_target_cols = None
+    if _target_col_names:
         # prune all non-numeric column types from target columns
-        _target_cols = [column for column in _target_cols
-                        if column in _numeric_column_names]
+        # ensure all column names are unique since we'll use them as output columns
+        _existing_target_cols = list(set(column for column in _target_col_names
+                                            if column in _numeric_column_names))
+        _nonexisting_target_cols = list(set(_target_col_names)
+                                        - set(_existing_target_cols)
+                                        - set(_nonnumeric_column_names))
+        _nonnumeric_target_cols = list(set(_target_col_names)
+                                       & set(_nonnumeric_column_names))
     else:
-        # if target_cols not provided then all numeric columns are to be targetted
-        _target_cols = _numeric_column_names[:]
-    if len(_target_cols) == 0:
+        # if target_col_names not provided then all numeric columns are to be targeted
+        _existing_target_cols = _numeric_column_names[:]
+        _nonnumeric_target_cols = _nonnumeric_column_names[:]
+
+    if len(_existing_target_cols) == 0:
         plpy.error("Correlation error: No numerical column found.")
-    if len(_target_cols) == 1:
-        plpy.error("Correlation error: Only one numerical column present in source.")
-    plpy.notice('Producing correlation for columns {0}'.format(str(_target_cols)))
-    return _populate_output_table(source_table, output_table, _target_cols)
+    if len(_existing_target_cols) == 1:
+        plpy.error("Correlation error: Only one numerical column found.")
+
+    # ---- Output message ----
+    output_text_mesasge = "Summary for 'correlation' function"
+    if _nonnumeric_target_cols:
+        output_text_mesasge += "\n Non-numeric columns ignored: {0}".\
+                                format(_nonnumeric_target_cols)
+    if _nonexisting_target_cols:
+        output_text_mesasge += "\n Columns that don't exist in '{0}' ignored: {1}".\
+                                format(source_table, str(_nonexisting_target_cols))
+
+    output_text_mesasge += "\n Producing correlation for columns: {0}".\
+                            format(str(_existing_target_cols))
+    plpy.info(output_text_mesasge)
+    # ---- Output message ----
+
+    return _populate_output_table(source_table, output_table, _existing_target_cols)
 
 
 # -----------------------------------------------------------------------
@@ -82,7 +104,7 @@ def _validate_corr_arg(source_table, output_table):
 # -----------------------------------------------------------------------
 # Get all column names in source table
 # -----------------------------------------------------------------------
-def _get_all_numeric_columns(source_table):
+def _get_numeric_columns(source_table):
     """
     Returns all column names for numeric type columns in a relation
 
@@ -108,23 +130,25 @@ def _get_all_numeric_columns(source_table):
     table_schema = row[0]['table_schema']
     table_name = row[0]['table_name']
 
-    # retrieve the numrical columns
-    numeric_types = "ARRAY['smallint', 'integer', 'bigint',\
-            'real', 'numeric', 'double precision']"
-    all_numeric_columns = plpy.execute("""
-                                        SELECT
-                                            column_name
-                                        FROM
-                                            information_schema.columns
-                                        WHERE
-                                            table_schema = '{table_schema}' AND
-                                            table_name = '{table_name}' AND
-                                            data_type = ANY ({numeric_types})
-                                        ORDER BY ordinal_position
-                                        """.format(table_schema=table_schema,
-                                                   table_name=table_name,
-                                                   numeric_types=numeric_types))
-    return [column['column_name'] for column in all_numeric_columns]
+    # retrieve the numerical columns
+    numeric_types = ('smallint', 'integer', 'bigint',\
+                        'real', 'numeric', 'double precision')
+    all_columns = plpy.execute("""
+                                SELECT column_name, data_type
+                                FROM
+                                    information_schema.columns
+                                WHERE
+                                    table_schema = '{table_schema}' AND
+                                    table_name = '{table_name}'
+                                ORDER BY ordinal_position
+                                """.format(table_schema=table_schema,
+                                           table_name=table_name))
+    all_col_names = set(column['column_name'] for column in all_columns)
+    num_col_names = [column['column_name'] for column in all_columns
+                        if column['data_type'] in numeric_types]
+    nonnum_col_names = list(all_col_names - set(num_col_names))
+
+    return (num_col_names, nonnum_col_names)
 
 
 # -----------------------------------------------------------------------
@@ -168,9 +192,9 @@ def _populate_output_table(source_table, output_table, col_names):
 
     # Logic for the loop below:
     #   if col_names=['col1', 'col2', 'col3'] build strings to produce a matrix:
-    #        ARRAY[1.0, NULL, NULL] as col1,
-    #        ARRAY[corr(col1, col2), 1.0, NULL] AS col2,
-    #        ARRAY[corr(col1, col3), corr(col2, col3), 1.0] AS col3
+    #        ARRAY[1.0, corr(col1, col2), corr(col1, col3)] AS col1
+    #        ARRAY[NULL, 1.0, corr(col2, col3)] AS col2,
+    #        ARRAY[NULL, NULL, 1.0] as col3,
     for col_index, col_name in enumerate(col_names):
         corr_str_list = ['NULL'] * col_index + ['1.0']
         corr_str_list.extend(['corr({0}, {1})'.format(col_names[col_index],
@@ -223,16 +247,18 @@ def correlation_help_message(schema_madlib, message, **kwargs):
                                                 --   (Default: NULL - produces result for all columns)
         )
         -----------------------------------------------------------------------
-        Output will be a table with N+2 columns and N rows, where N is the number of target
-        columns. The first column of the table provides the row-header for each variable,
-        and the second column provides the position of the variable in the
-        `source_table'. The rest of the table is the NxN correlation matrix for all
-        numeric columns in `source_table'.
+        Output will be a table with N+2 columns and N rows, where N is the number
+        of numeric columns in 'target_cols'.
+        The columns of the table are described as follows:
 
-        The output table is arranged as a lower-traingular matrix
-        with the upper triangle set to NULL and the diagonal elements set to 1.0.
-        To obtain the result from the output_table in this matrix format ensure to
-        order the elements select the elements
+            - column_position   : Position of the variable in the 'source_table'.
+            - variable          : Provides the row-header for each variable
+            Rest of the table is the NxN correlation matrix for all numeric columns in 'source_table'.
+
+        The output table is arranged as a lower-traingular matrix with the upper
+        triangle set to NULL and the diagonal elements set to 1.0. To obtain the
+        result from the output_table in this matrix format ensure to order the
+        elements using the 'column_position' column.
         """.format(schema_madlib=schema_madlib)
     elif message is not None and message.lower() in ('example', 'examples'):
         return """
