@@ -64,7 +64,7 @@ class Summarizer:
 
         rowcount = plpy.execute("""
             SELECT count(*) FROM {source_table}""".format(
-                source_table=self._source_table))[0]['count']
+                source_table="\"" + self._source_table + "\""))[0]['count']
         if rowcount == 0:
             plpy.error("""
                 Summary -- Relation '{source_table}' is empty""".format(
@@ -151,14 +151,14 @@ class Summarizer:
         args['column_types'] = ','.join(["'%s'" % c['typname'] for c in cols])
         args['column_number'] = ','.join([str(c['attnum']) for c in cols])
         if self._distinctify is 'Estimated':
-            args['distinct_columns'] = ','.join(["{schema_madlib}.fmsketch_dcount(%s)" % c['attname'] for c in cols])
+            args['distinct_columns'] = ','.join(["{schema_madlib}.fmsketch_dcount(\"%s\")" % c['attname'] for c in cols])
         elif self._distinctify is 'Exact':
             args['distinct_columns'] = ','.join(["count(distinct %s)" % c['attname'] for c in cols])
         else:
             args['distinct_columns'] = ','.join(["NULL" for c in cols])
-        args['missing_columns'] = ','.join(["sum(case when %s is null then 1 else 0 end)"%(
+        args['missing_columns'] = ','.join(["sum(case when \"%s\" is null then 1 else 0 end)"%(
                                                    c['attname']) for c in cols])
-        args['blank_columns'] = ','.join(["sum(case when {0} similar to E'\\\\W*' \
+        args['blank_columns'] = ','.join(["sum(case when \"{0}\" similar to E'\\\\W*' \
                                            then 1 else 0 end)".format(c['attname']) \
                                            if c['typname'] in ('varchar','bpchar','text','character varying')
                                               else 'NULL' for c in cols])
@@ -166,14 +166,14 @@ class Summarizer:
         numeric_types = ('int2','int4','int8','float4','float8','numeric')
         def numeric_type(operator, datatype):
             if datatype['typname'] in numeric_types:
-                return '%s(%s)' % (operator, datatype['attname'])
+                return '%s("%s")' % (operator, datatype['attname'])
             return "NULL"
 
         def minmax_type(minmax, c):
             if c['typname'] in numeric_types:
-                return '%s(%s)' % (minmax, c['attname'])
+                return '%s("%s")' % (minmax, c['attname'])
             if c['typname'] in ('varchar','bpchar','text'):
-                return "%s(length(%s))" % (minmax, c['attname'])
+                return "%s(length(\"%s\"))" % (minmax, c['attname'])
             return "NULL"
 
         def xtile_type(xtile, c):
@@ -190,7 +190,7 @@ class Summarizer:
                             'mfvsketch_quick_histogram')[self._get_mfv_quick]
             return  """
                     array_to_string(({schema_madlib}.{mfv_method}(
-                                {column},{topk}))[0:{topk}-1][{slice}], 
+                                \"{column}\",{topk}))[0:{topk}-1][{slice}], 
                                 '{delimiter}')""".format(
                                             schema_madlib=self._schema_madlib,
                                             mfv_method=mfv_method,
@@ -244,7 +244,7 @@ class Summarizer:
                     array[{max_columns}]::float8[] as max,
                     array[{mfv_value}]::text[] as mfv_value,
                     array[{mfv_count}]::text[] as mfv_count
-                FROM {source_table}{group_expr}
+                FROM \"{source_table}\"{group_expr}
          """.format(**args).format(schema_madlib=self._schema_madlib)
         return subquery
 
@@ -321,7 +321,7 @@ class Summarizer:
             ntiles = 'ntiles::float8[] as quantile_array,'
 
         final_query = """
-            CREATE TABLE {output_table} AS
+            CREATE TABLE \"{output_table}\" AS
             SELECT
                     group_by as group_by,
                     group_by_value as group_by_value,
@@ -362,6 +362,6 @@ class Summarizer:
 
     def run(self):
         self._validate_paras()
-        plpy.execute('DROP TABLE IF EXISTS {output_table}'.format(
+        plpy.execute('DROP TABLE IF EXISTS "{output_table}"'.format(
             output_table=self._output_table))
         plpy.execute(self._build_query())
