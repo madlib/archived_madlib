@@ -233,7 +233,7 @@ install(CODE "
 )
 
 install(CODE "
-    EXECUTE_PROCESS(COMMAND ln -sfh
+    EXECUTE_PROCESS(COMMAND ln -nsf
            ${CMAKE_INSTALL_PREFIX}
            ${CMAKE_MADLIB_ROOT}/Current
            )"
@@ -241,7 +241,7 @@ install(CODE "
 
 # Create symlink bin
 install(CODE "
-    EXECUTE_PROCESS(COMMAND ln -sfh
+    EXECUTE_PROCESS(COMMAND ln -nsf
            ${CMAKE_MADLIB_ROOT}/Current/bin
            ${CMAKE_MADLIB_ROOT}/bin
            )"
@@ -249,7 +249,7 @@ install(CODE "
 
 # Create symlink doc
 install(CODE "
-    EXECUTE_PROCESS(COMMAND ln -sfh
+    EXECUTE_PROCESS(COMMAND ln -nsf
            ${CMAKE_MADLIB_ROOT}/Current/doc
            ${CMAKE_MADLIB_ROOT}/doc
            )

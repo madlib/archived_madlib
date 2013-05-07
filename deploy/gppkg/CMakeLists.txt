@@ -39,3 +39,5 @@ file(GLOB GPPKG_VERSIONS "${CMAKE_CURRENT_BINARY_DIR}/Version_*.cmake")
 foreach(GPPKG_VERSION ${GPPKG_VERSIONS})
     include("${GPPKG_VERSION}")
 endforeach(GPPKG_VERSION)
+
+set(CPACK_RPM_SPEC_MORE_DEFINE "%undefine __os_install_post" PARENT_SCOPE)

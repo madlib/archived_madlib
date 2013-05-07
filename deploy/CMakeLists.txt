@@ -40,6 +40,8 @@ set(CPACK_PACKAGE_VERSION_PATCH ${MADLIB_VERSION_PATCH})
 # CPACK_PACKAGING_INSTALL_PREFIX has to be set in the generator-specific
 # section!
 
+set(CPACK_RPM_USER_BINARY_SPECFILE ${CMAKE_CURRENT_SOURCE_DIR}/madlib.spec.in)
+
 # -- Set settings for specific package generators ------------------------------
 
 add_subdirectory(PackageMaker)
@@ -51,6 +53,9 @@ add_subdirectory(gppkg)
 
 # -- Finally do the packaging! -------------------------------------------------
 
+set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/rpm_post.sh")
+set(CPACK_POSTFLIGHT_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/postflight.sh)
+set(CPACK_MONOLITHIC_INSTALL 1)
 include(CPack)
 
 
