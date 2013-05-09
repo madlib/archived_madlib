@@ -136,6 +136,7 @@ def ____run_sql_query(sql, show_error, portid = portid, con_args = con_args):
                     '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
+        runenv["PGOPTIONS"] = '-c search_path=public'
         std, err = subprocess.Popen(runcmd, env=runenv, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
         if err:
             if show_error:
