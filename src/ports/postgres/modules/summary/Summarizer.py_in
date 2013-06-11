@@ -1,4 +1,5 @@
 import plpy
+import math
 
 class Summarizer:
     def __init__(self, schema_madlib, source_table, output_table,
@@ -24,9 +25,9 @@ class Summarizer:
     def _populate_columns(self):
         self._columns = plpy.execute( """
                                         SELECT attname, typname, attnum
-                                        FROM    pg_attribute a 
-                                                    JOIN 
-                                                pg_type t 
+                                        FROM    pg_attribute a
+                                                    JOIN
+                                                pg_type t
                                                 ON (a.atttypid=t.oid)
                                         WHERE attrelid = {tableoid}::regclass
                                         AND attnum > 0
@@ -105,7 +106,7 @@ class Summarizer:
 
     def _adjust_cols(self):
         if self._target_cols:
-            self._columns = filter(lambda r: r['attname'] 
+            self._columns = filter(lambda r: r['attname']
                                         in self._target_cols, self._columns)
             self._column_names = [col['attname'] for col in self._columns]
         # if #cols == 1, then it should not appear in the grouping_cols
@@ -130,15 +131,15 @@ class Summarizer:
                 required should be positive""")
 # ----- End of argument validation functions -----------------------------
 
-    def _build_subquery(self, group_var):
+    def _build_subquery(self, group_var, cols):
         """
-            Returns a subquery of statistics for target columns for a single 
+            Returns a subquery of statistics for target columns for a single
             grouping variable
-        """ 
+        """
         args = {'source_table': self._source_table}
-        # Exclude the grouping_cols variable from the list of columns to 
+        # Exclude the grouping_cols variable from the list of columns to
         #   report statistics on
-        cols = filter(lambda x: x['attname'] != group_var, self._columns)
+        cols = filter(lambda x: x['attname'] != group_var, cols)
         if group_var:
             args['group_value']  = "{schema_madlib}.__to_char(%s)" % group_var
             args['group_var']  = "'%s'" % group_var
@@ -162,7 +163,7 @@ class Summarizer:
                                            then 1 else 0 end)".format(c['attname']) \
                                            if c['typname'] in ('varchar','bpchar','text','character varying')
                                               else 'NULL' for c in cols])
-        # ------ Helper sub-functions  ------      
+        # ------ Helper sub-functions  ------
         numeric_types = ('int2','int4','int8','float4','float8','numeric')
         def numeric_type(operator, datatype):
             if datatype['typname'] in numeric_types:
@@ -186,11 +187,11 @@ class Summarizer:
 
         def mfv_type(get_count, c):
             slicing = ('0:0', '1:1')[get_count]
-            mfv_method = ('mfvsketch_top_histogram', 
+            mfv_method = ('mfvsketch_top_histogram',
                             'mfvsketch_quick_histogram')[self._get_mfv_quick]
             return  """
                     array_to_string(({schema_madlib}.{mfv_method}(
-                                {column},{topk}))[0:{topk}-1][{slice}], 
+                                {column},{topk}))[0:{topk}-1][{slice}],
                                 '{delimiter}')""".format(
                                             schema_madlib=self._schema_madlib,
                                             mfv_method=mfv_method,
@@ -206,11 +207,11 @@ class Summarizer:
         args['q1_columns'] = ','.join([xtile_type(0.25, c)
                                         if self._get_quartiles
                                         else 'NULL' for c in cols])
-        args['q2_columns'] = ','.join([xtile_type(0.50, c) 
-                                        if self._get_quartiles 
+        args['q2_columns'] = ','.join([xtile_type(0.50, c)
+                                        if self._get_quartiles
                                         else 'NULL' for c in cols])
-        args['q3_columns'] = ','.join([xtile_type(0.75, c) 
-                                        if self._get_quartiles 
+        args['q3_columns'] = ','.join([xtile_type(0.75, c)
+                                        if self._get_quartiles
                                         else 'NULL' for c in cols])
 
         args['max_columns'] = ','.join([minmax_type('max',c) for c in cols])
@@ -248,9 +249,8 @@ class Summarizer:
          """.format(**args).format(schema_madlib=self._schema_madlib)
         return subquery
 
-    def _build_inner_query(self):
-        subquery = """  UNION ALL""".join(
-            [self._build_subquery(g) for g in self._grouping_cols])
+    def _build_inner_query(self, group_val, cols):
+        subquery = self._build_subquery(group_val, cols)
         query = """
                 SELECT
                     group_by,
@@ -273,8 +273,8 @@ class Summarizer:
                     third_quartile,
                     ntiles,
                     max,
-                    mfv_value,
-                    mfv_count
+                    string_to_array(mfv_value, '{delimiter}') as mfv_value,
+                    string_to_array(mfv_count, '{delimiter}') as mfv_count
                 FROM
                 (
                     SELECT
@@ -295,15 +295,15 @@ class Summarizer:
                         unnest(third_quartile) as third_quartile,
                         string_to_array(unnest(ntiles), ',') as ntiles,
                         unnest(max) as max,
-                        string_to_array(unnest(mfv_value), '{delimiter}') as mfv_value,
-                        string_to_array(unnest(mfv_count), '{delimiter}') as mfv_count
+                        unnest(mfv_value) as mfv_value,
+                        unnest(mfv_count) as mfv_count
                     FROM ({subquery}) q1
                 ) q2
         """.format(schema_madlib=self._schema_madlib, subquery=subquery, delimiter=self._delimiter)
         return query
 
-    def _build_query(self):
-        query = self._build_inner_query()
+    def _build_query(self, group_val, cols, create_table):
+        query = self._build_inner_query(group_val, cols)
         distinct_values = ''
         if self._distinctify != 'Skip':
             distinct_values = 'distinct_values,'
@@ -320,8 +320,11 @@ class Summarizer:
         if self._ntile_array and self._xtileify != 'Skip':
             ntiles = 'ntiles::float8[] as quantile_array,'
 
-        final_query = """
-            CREATE TABLE {output_table} AS
+        if create_table:
+            final_query = 'CREATE TABLE {output_table} AS '
+        else:
+            final_query = 'INSERT INTO {output_table} '
+        final_query += """
             SELECT
                     group_by as group_by,
                     group_by_value as group_by_value,
@@ -349,8 +352,11 @@ class Summarizer:
                     {query}
 
             ) q3
-            m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (group_by)')
         """
+        if create_table:
+            final_query += """
+                m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (group_by)')"""
+
         return final_query.format(
             output_table=self._output_table,
             query=query,
@@ -364,4 +370,22 @@ class Summarizer:
         self._validate_paras()
         plpy.execute('DROP TABLE IF EXISTS {output_table}'.format(
             output_table=self._output_table))
-        plpy.execute(self._build_query())
+        create_table = True
+        # set a maximum number of columns to avoid out-of-memory
+        #  issues when a lot of columns are computed concurrently
+        #  We repeat the query multiple times till computation is complete for
+        #  all columns.
+        actual_nCols = len(self._columns)
+        max_nCols = 15
+        # ensuring an even spread of columns in each repeated attempt. For eg.
+        #  if max_nCols = 15, to simulate 31 cols we break it down as [11, 11, 9]
+        #  instead of [15, 15, 1]. This ensures low memory usage in each subquery
+        nSplits = math.ceil(float(actual_nCols)/max_nCols)
+        subset_nCols = int(math.ceil(actual_nCols/nSplits))
+        subset_columns = [self._columns[pos:pos+subset_nCols]
+                          for pos in xrange(0, actual_nCols, subset_nCols)]
+        for cols in subset_columns:
+            # cols = self._columns[i * subset_nCols : (i + 1) * subset_nCols]
+            for group_val in self._grouping_cols:
+                plpy.execute(self._build_query(group_val, cols, create_table))
+                create_table = False
