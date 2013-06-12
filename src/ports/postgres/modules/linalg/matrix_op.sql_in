@@ -1,0 +1,395 @@
+m4_include(`SQLCommon.m4')
+
+CREATE TYPE MADLIB_SCHEMA.matrix_result AS(
+    output_table    TEXT
+);
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_mult
+(
+    matrix_a    TEXT,
+    a_row       TEXT,
+    a_col       TEXT,
+    a_val       TEXT,
+    a_trans     BOOLEAN,
+    matrix_b    TEXT,
+    b_row       TEXT,
+    b_col       TEXT,
+    b_val       TEXT,
+    b_trans     BOOLEAN,
+    matrix_r    TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_mult(schema_madlib,
+        matrix_a, a_row, a_col, a_val, a_trans,
+        matrix_b, b_row, b_col, b_val, b_trans,
+        matrix_r)
+    return [matrix_r]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_mult
+(
+    matrix_a    TEXT,
+    a_trans     BOOLEAN,
+    matrix_b    TEXT,
+    b_trans     BOOLEAN,
+    matrix_r    TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT
+        MADLIB_SCHEMA.matrix_mult(
+            $1, NULL, NULL, NULL, $2,
+            $3, NULL, NULL, NULL, $4,
+            $5);
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_block_mult
+(
+    matrix_a    TEXT,
+    matrix_b    TEXT,
+    matrix_r    TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_block_mult(schema_madlib,
+        matrix_a, matrix_b, matrix_r)
+    return [matrix_r]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_block_square
+(
+    matrix_in   TEXT,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_block_square(schema_madlib, matrix_in, matrix_out)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_block_trans
+(
+    matrix_in   TEXT,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_block_trans(schema_madlib, matrix_in, matrix_out)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_square
+(
+    matrix_in   TEXT,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_square(schema_madlib,
+        matrix_in, matrix_out)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_trans
+(
+    matrix_in       TEXT,
+    in_row          TEXT,
+    in_col          TEXT,
+    in_val          TEXT,
+    matrix_out      TEXT,
+    use_temp_table  BOOLEAN
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_trans(schema_madlib,
+        matrix_in, in_row, in_col, in_val, matrix_out, use_temp_table)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_trans
+(
+    matrix_in       TEXT,
+    matrix_out      TEXT,
+    use_temp_table  BOOLEAN
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT
+        MADLIB_SCHEMA.matrix_trans(
+            $1, NULL, NULL, NULL, $2, $3);
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_sparsify
+(
+    matrix_in       TEXT,
+    matrix_out      TEXT,
+    use_temp_table  BOOLEAN
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_sparsify(matrix_in, matrix_out, use_temp_table)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_densify
+(
+    matrix_in       TEXT,
+    in_row          TEXT,
+    in_col          TEXT,
+    in_val          TEXT,
+    matrix_out      TEXT,
+    use_temp_table  BOOLEAN
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_densify(schema_madlib,
+        matrix_in, in_row, in_col, in_val, matrix_out, use_temp_table)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__matrix_densify_sfunc
+(
+    state   FLOAT8[],
+    col_dim INT4,
+    col     INT4,
+    val     FLOAT8
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_densify_sfunc'
+LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__rand_vector
+(
+    dim INT4
+)
+RETURNS INT4[]
+AS 'MODULE_PATHNAME', 'rand_vector'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__rand_block
+(
+    row_dim INT4,
+    col_dim  INT4
+)
+RETURNS INT4[]
+AS 'MODULE_PATHNAME', 'rand_block'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__rand_block
+(
+    dim INT4
+)
+RETURNS INT4[] AS $$
+    SELECT MADLIB_SCHEMA.__rand_block($1, $1);
+$$ LANGUAGE sql STRICT;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__matrix_row_split
+(
+    row_in  FLOAT8[],
+    size    INT4
+)
+RETURNS SETOF FLOAT8[]
+AS 'MODULE_PATHNAME', 'row_split'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__matrix_blockize_sfunc
+(
+    state   FLOAT8[],
+    row_id  INT4,
+    row_vec FLOAT8[],
+    rsize   INT4
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_blockize_sfunc'
+LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__matrix_unblockize_sfunc
+(
+    state           FLOAT8[],
+    total_col_dim   INT4,
+    col_id          INT4,
+    row_vec         FLOAT8[]
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_unblockize_sfunc'
+LANGUAGE C;
+
+DROP AGGREGATE IF EXISTS
+MADLIB_SCHEMA.__matrix_densify_agg
+(
+    INT4,
+    INT4,
+    FLOAT8
+);
+
+CREATE AGGREGATE
+MADLIB_SCHEMA.__matrix_densify_agg
+(
+    INT4,
+    INT4,
+    FLOAT8
+)
+(
+    stype = FLOAT8[],
+    sfunc = MADLIB_SCHEMA.__matrix_densify_sfunc
+);
+
+DROP AGGREGATE IF EXISTS
+MADLIB_SCHEMA.__matrix_blockize_agg
+(
+    INT4,
+    FLOAT8[],
+    INT4
+);
+
+CREATE AGGREGATE
+MADLIB_SCHEMA.__matrix_blockize_agg
+(
+    INT4,
+    FLOAT8[],
+    INT4
+)
+(
+    stype = FLOAT8[],
+    sfunc = MADLIB_SCHEMA.__matrix_blockize_sfunc
+);
+
+DROP AGGREGATE IF EXISTS
+MADLIB_SCHEMA.__matrix_unblockize_agg
+(
+    INT4,
+    INT4,
+    FLOAT8[]
+);
+
+CREATE AGGREGATE
+MADLIB_SCHEMA.__matrix_unblockize_agg
+(
+    INT4,
+    INT4,
+    FLOAT8[]
+)
+(
+    stype = FLOAT8[],
+    sfunc = MADLIB_SCHEMA.__matrix_unblockize_sfunc
+);
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_mem_mult
+(
+    matrix_a    FLOAT[],
+    matrix_b    FLOAT[],
+    trans_b     BOOLEAN
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_mem_mult'
+LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_mem_mult
+(
+    matrix_a    FLOAT[],
+    matrix_b    FLOAT[]
+)
+RETURNS FLOAT8[] AS $$
+    SELECT MADLIB_SCHEMA.matrix_mem_mult($1, $2, false);
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_mem_trans
+(
+    matrix    FLOAT[]
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_mem_trans'
+LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__matrix_mem_sum_sfunc
+(
+    state   FLOAT[],
+    matrix  FLOAT[]
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_mem_sum_sfunc'
+LANGUAGE C;
+
+DROP AGGREGATE IF EXISTS
+MADLIB_SCHEMA.__matrix_mem_sum
+(
+    FLOAT[],
+    FLOAT[]
+);
+
+CREATE AGGREGATE
+MADLIB_SCHEMA.__matrix_mem_sum
+(
+    FLOAT[]
+)
+(
+    stype = FLOAT8[],
+    sfunc = MADLIB_SCHEMA.__matrix_mem_sum_sfunc
+);
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__matrix_column_to_array_format
+(
+    matrix_in   TEXT,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.__matrix_column_to_array_format(matrix_in, matrix_out)
+    return [matrix_out]
+$$ LANGUAGE plpythonu STRICT;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_blockize
+(
+    matrix_in   TEXT,
+    rsize       INT4,
+    csize       INT4,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_blockize(schema_madlib, matrix_in, rsize, csize, matrix_out)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_unblockize
+(
+    matrix_in   TEXT,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_op')
+    matrix_op.matrix_unblockize(schema_madlib, matrix_in, matrix_out)
+    return [matrix_out]
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__matrix_unnest_block
+(
+    block FLOAT8[]
+)
+RETURNS SETOF FLOAT8[]
+AS 'MODULE_PATHNAME', 'unnest_block'
+LANGUAGE C IMMUTABLE STRICT;

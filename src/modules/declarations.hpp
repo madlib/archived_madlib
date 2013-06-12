@@ -16,3 +16,4 @@
 #include "assoc_rules/assoc_rules.hpp"
 #include "lda/lda.hpp"
 #include "elastic_net/elastic_net.hpp"
+#include "linalg/matrix_op.hpp"
