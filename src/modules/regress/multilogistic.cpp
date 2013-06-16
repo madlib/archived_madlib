@@ -32,6 +32,7 @@ namespace regress {
 
 // Internal functions
 AnyType mLogstateToResult(const Allocator &inAllocator,
+    int ref_category, 
     const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
     const ColumnVector &diagonal_of_heissian,
     double logLikelihood,
@@ -90,13 +91,17 @@ public:
      *
      * This function is only called for the first iteration, for the first row.
      */
-    inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX, uint16_t inNumCategories) {
+    inline void initialize(
+        const Allocator &inAllocator, 
+        uint16_t inWidthOfX, 
+        uint16_t inNumCategories, uint16_t inRefCategory) {
 
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
         rebind(inWidthOfX, inNumCategories);
         widthOfX = inWidthOfX;
         numCategories = inNumCategories;
+        ref_category = inRefCategory;
     }
 
     /**
@@ -142,7 +147,7 @@ public:
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX,
         const uint16_t inNumCategories) {
-        return 4 + inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
+        return 5 + inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
                                  + 2 * inWidthOfX * inNumCategories;
     }
 
@@ -165,6 +170,8 @@ private:
      * - 3 + 2 * widthOfX * inNumCategories: X_transp_AX (X^T A X)
      * - 3 + widthOfX^2*numCategories^2
                          + 2 * widthOfX*numCategories: logLikelihood ( ln(l(c)) )
+     * - 4 + widthOfX^2*numCategories^2
+                         + 2 * widthOfX*numCategories: ref_category
      */
     void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
 
@@ -180,6 +187,9 @@ private:
         logLikelihood.rebind(&mStorage[3 +
              inNumCategories*inNumCategories*inWidthOfX*inWidthOfX
              + 2 * inWidthOfX*inNumCategories]);
+        ref_category.rebind(&mStorage[4 +
+             inNumCategories*inNumCategories*inWidthOfX*inWidthOfX
+             + 2 * inWidthOfX*inNumCategories]);
     }
 
     Handle mStorage;
@@ -193,6 +203,7 @@ public:
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradient;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
     typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
+    typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
 };
 
 
@@ -348,28 +359,28 @@ public:
  * - 0: Current State
  * - 1: y value (Integer)
  * - 2: numCategories (Integer)
- * - 3: X value (Column Vector)
- * - 4: Previous State
+ * - 3: ref_category (Integer)
+ * - 4: X value (Column Vector)
+ * - 5: Previous State
 
  */
 AnyType
-mlogregr_irls_step_transition::run(AnyType &args) {
-
-
+__mlogregr_irls_step_transition::run(AnyType &args) {
     MLogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
 
     // Get x as a vector of double
-    MappedColumnVector x = args[3].getAs<MappedColumnVector>();
+    MappedColumnVector x = args[4].getAs<MappedColumnVector>();
 
     // Get the category & numCategories as integer
     int32_t category = args[1].getAs<int32_t>();
     // Number of categories after pivoting (We pivot around the first category)
     int32_t numCategories = (args[2].getAs<int32_t>() - 1);
 
+    int32_t ref_category = args[3].getAs<int32_t>();
+
     // The following check was added with MADLIB-138.
     if (!x.is_finite())
             throw std::domain_error("Design matrix is not finite.");
-
 
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max())
@@ -380,11 +391,14 @@ mlogregr_irls_step_transition::run(AnyType &args) {
                 throw std::domain_error("Number of cateogires must be at least 2");
 
         // Init the state (requires x.size() and category.size())
-        state.initialize(*this, static_cast<uint16_t>(x.size())
-                                                    , static_cast<uint16_t>(numCategories));
+        state.initialize(*this, 
+            static_cast<uint16_t>(x.size()) ,
+            static_cast<uint16_t>(numCategories),
+            static_cast<uint16_t>(ref_category));
 
-        if (!args[4].isNull()) {
-                MLogRegrIRLSTransitionState<ArrayHandle<double> > previousState = args[4];
+        if (!args[5].isNull()) {
+                MLogRegrIRLSTransitionState<ArrayHandle<double> > 
+                    previousState = args[5];
                 state = previousState;
                 state.reset();
         }
@@ -398,6 +412,10 @@ mlogregr_irls_step_transition::run(AnyType &args) {
         throw std::domain_error("Invalid category. Categories must be integer "
             "values between 0 and (number of categories - 1).");
 
+    if (ref_category > numCategories || ref_category < 0)
+        throw std::domain_error("Invalid reference category. Reference category must be integer "
+            "value between 0 and (number of categories - 1).");
+
     // Now do the transition step
     state.numRows++;
     /*     Get y: Convert to 1/0 boolean vector
@@ -405,11 +423,14 @@ mlogregr_irls_step_transition::run(AnyType &args) {
             Storing it in this forms helps us get a nice closed form expression
     */
 
-    ColumnVector y(numCategories+1);
+    //To pivot around the first column
+    ColumnVector y(numCategories);
     y.fill(0);
-    y(category) = 1;
-    //We are pivoting around the last column, so we drop that column from the 'y' vector
-    y.conservativeResize(numCategories);
+    if (category > ref_category) {
+        y(category - 1) = 1;
+    } else if (category < ref_category) {
+        y(category) = 1;
+    }
 
     /*
     Compute the parameter vector (the 'pi' vector in the documentation)
@@ -421,7 +442,7 @@ mlogregr_irls_step_transition::run(AnyType &args) {
 
     //Store the intermediate calculations because we'll reuse them in the LLH
     ColumnVector t1 = x; //t1 is vector of size state.widthOfX
-    t1 = -coef*x;
+    t1 = coef*x;
     /* Note: The above 2 lines could have been written as:
         ColumnVector t1 = -coef*x;
 
@@ -435,7 +456,7 @@ mlogregr_irls_step_transition::run(AnyType &args) {
     ColumnVector pi = t2/t3;
 
     //The gradient matrix has numCatergories rows and widthOfX columns
-    Matrix grad = y*x.transpose() - pi*x.transpose();
+    Matrix grad = -y*x.transpose() + pi*x.transpose();
     //We cast the gradient into a vector to make the Newton step calculations much easier.
     grad.resize(numCategories*state.widthOfX,1);
 
@@ -476,7 +497,7 @@ mlogregr_irls_step_transition::run(AnyType &args) {
 
     triangularView<Lower>(state.X_transp_AX) += X_transp_AX;
 
-    state.logLikelihood +=  y.transpose()*t1 - log(t3);
+    state.logLikelihood += y.transpose()*t1 - log(t3);
 
     return state;
 
@@ -487,7 +508,7 @@ mlogregr_irls_step_transition::run(AnyType &args) {
      This merge step is the same as that of logistic regression.
  */
 AnyType
-mlogregr_irls_step_merge_states::run(AnyType &args) {
+__mlogregr_irls_step_merge_states::run(AnyType &args) {
     MLogRegrIRLSTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     MLogRegrIRLSTransitionState<ArrayHandle<double> > stateRight = args[1];
 
@@ -507,7 +528,7 @@ mlogregr_irls_step_merge_states::run(AnyType &args) {
  * @brief Perform the logistic-regression final step
  */
 AnyType
-mlogregr_irls_step_final::run(AnyType &args) {
+__mlogregr_irls_step_final::run(AnyType &args) {
     // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
     MLogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
@@ -774,7 +795,7 @@ mlogregr_robust_step_final::run(AnyType &args) {
  * @brief Return the difference in log-likelihood between two states
  */
 AnyType
-internal_mlogregr_irls_step_distance::run(AnyType &args) {
+__internal_mlogregr_irls_step_distance::run(AnyType &args) {
     MLogRegrIRLSTransitionState<ArrayHandle<double> > stateLeft = args[0];
     MLogRegrIRLSTransitionState<ArrayHandle<double> > stateRight = args[1];
 
@@ -785,10 +806,10 @@ internal_mlogregr_irls_step_distance::run(AnyType &args) {
  * @brief Return the coefficients and diagnostic statistics of the state
  */
 AnyType
-internal_mlogregr_irls_result::run(AnyType &args) {
+__internal_mlogregr_irls_result::run(AnyType &args) {
     MLogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
 
-    return mLogstateToResult(*this, state.coef,
+    return mLogstateToResult(*this, state.ref_category, state.coef,
         state.gradient, state.logLikelihood, state.X_transp_AX(0,0));
 }
 
@@ -800,6 +821,7 @@ internal_mlogregr_irls_result::run(AnyType &args) {
  */
 AnyType mLogstateToResult(
     const Allocator &inAllocator,
+    int ref_category,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
     const ColumnVector &diagonal_of_heissian,
     double logLikelihood,
@@ -824,7 +846,7 @@ AnyType mLogstateToResult(
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << inCoef << logLikelihood << stdErr << waldZStats << waldPValues
+    tuple << ref_category << inCoef << logLikelihood << stdErr << waldZStats << waldPValues
         << oddsRatios << conditionNo;
     return tuple;
 }

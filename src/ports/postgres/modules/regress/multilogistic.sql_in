@@ -138,12 +138,18 @@ The robust variance calculation is given data in the form:
 - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
   statistics:\n
   <pre>SELECT * FROM \ref mlogregr(
-    '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>' , '<em>independentVariables</em>'
-    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
+    '<em>sourceName</em>', 
+    '<em>dependentVariable</em>',
+    '<em>numCategories</em>', 
+    '<em>independentVariables</em>' [,
+    <em>numberOfIterations</em> [, 
+    '<em>optimizer</em>' [,
+    <em>precision</em>, [,
+    <em>ref_category</em>]]]]
 );</pre>
   Output:
-  <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
------+----------------+---------+---------+----------+-------------+--------------+---------------
+  <pre>ref_category | coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
+-----+--------+--------+---------+---------+----------+-------------+--------------+---------------
                                                ...
 </pre>
 - Get vector of coefficients \f$ \boldsymbol c \f$:\n
@@ -250,39 +256,48 @@ further literature:
 
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.mlogregr_result;
-CREATE TYPE MADLIB_SCHEMA.mlogregr_result AS (
-    coef DOUBLE PRECISION[],
-    log_likelihood DOUBLE PRECISION,
-    std_err DOUBLE PRECISION[],
-    z_stats DOUBLE PRECISION[],
-    p_values DOUBLE PRECISION[],
-    odds_ratios DOUBLE PRECISION[],
-    condition_no DOUBLE PRECISION,
-    num_iterations INTEGER
+CREATE TYPE MADLIB_SCHEMA.mlogregr_result AS 
+(
+    ref_category    INTEGER, 
+    coef            DOUBLE PRECISION[],
+    log_likelihood  DOUBLE PRECISION,
+    std_err         DOUBLE PRECISION[],
+    z_stats         DOUBLE PRECISION[],
+    p_values        DOUBLE PRECISION[],
+    odds_ratios     DOUBLE PRECISION[],
+    condition_no    DOUBLE PRECISION,
+    num_iterations  INTEGER
 );
 
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_irls_step_transition(
-    DOUBLE PRECISION[],
-    INTEGER,
-    INTEGER,
-    DOUBLE PRECISION[],
-    DOUBLE PRECISION[])
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mlogregr_irls_step_transition
+(
+    state           DOUBLE PRECISION[],
+    y               INTEGER,
+    num_categories  INTEGER,
+    ref_category    INTEGER,
+    x               DOUBLE PRECISION[],
+    prev_state      DOUBLE PRECISION[]
+)
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE;
 
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_irls_step_merge_states(
-    state1 DOUBLE PRECISION[],
-    state2 DOUBLE PRECISION[])
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mlogregr_irls_step_merge_states
+(
+    state1  DOUBLE PRECISION[],
+    state2  DOUBLE PRECISION[]
+)
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_irls_step_final(
-    state DOUBLE PRECISION[])
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mlogregr_irls_step_final
+(
+    state   DOUBLE PRECISION[]
+)
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
@@ -293,28 +308,29 @@ LANGUAGE C IMMUTABLE STRICT;
  * @brief Perform one iteration of the iteratively-reweighted-least-squares
  *        method for computing linear regression
  */
-CREATE AGGREGATE MADLIB_SCHEMA.mlogregr_irls_step(
+CREATE AGGREGATE MADLIB_SCHEMA.__mlogregr_irls_step(
     /*+ y */ INTEGER,
     /*+ numCategories */ INTEGER,
+    /*+ ref_category */ INTEGER,
     /*+ x */ DOUBLE PRECISION[],
     /*+ previous_state */ DOUBLE PRECISION[]) (
 
     STYPE=DOUBLE PRECISION[],
-    SFUNC=MADLIB_SCHEMA.mlogregr_irls_step_transition,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.mlogregr_irls_step_merge_states,')
-    FINALFUNC=MADLIB_SCHEMA.mlogregr_irls_step_final,
-    INITCOND='{0,0,0,0}'
+    SFUNC=MADLIB_SCHEMA.__mlogregr_irls_step_transition,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.__mlogregr_irls_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__mlogregr_irls_step_final,
+    INITCOND='{0,0,0,0,0}'
 );
 
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_mlogregr_irls_step_distance(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__internal_mlogregr_irls_step_distance(
     /*+ state1 */ DOUBLE PRECISION[],
     /*+ state2 */ DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION AS
 'MODULE_PATHNAME'
 LANGUAGE c IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_mlogregr_irls_result(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__internal_mlogregr_irls_result(
     /*+ state */ DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.mlogregr_result AS
 'MODULE_PATHNAME'
@@ -323,17 +339,21 @@ LANGUAGE c IMMUTABLE STRICT;
 
 -- We only need to document the last one (unfortunately, in Greenplum we have to
 -- use function overloading instead of default arguments).
-CREATE FUNCTION MADLIB_SCHEMA.compute_mlogregr(
-    "source" VARCHAR,
-    "depvar" VARCHAR,
-    "numcategories" INTEGER,
-    "indepvar" VARCHAR,
-    "maxnumiterations" INTEGER,
-    "optimizer" VARCHAR,
-    "precision" DOUBLE PRECISION)
+CREATE FUNCTION MADLIB_SCHEMA.__compute_mlogregr
+(
+    source            VARCHAR,
+    depvar            VARCHAR,
+    indepvar          VARCHAR,
+    numcategories     INTEGER,
+    maxnumiterations  INTEGER,
+    optimizer         VARCHAR,
+    "precision"       DOUBLE PRECISION,
+    ref_category      INTEGER
+)
 RETURNS INTEGER
-AS $$PythonFunction(regress, multilogistic, compute_mlogregr)$$
-LANGUAGE plpythonu VOLATILE;
+AS $$
+    PythonFunction(regress, multilogistic, compute_mlogregr)
+$$ LANGUAGE plpythonu VOLATILE STRICT;
 
  
 
@@ -345,8 +365,6 @@ LANGUAGE plpythonu VOLATILE;
  *
  * @param source Name of the source relation containing the training data
  * @param depvar Name of the dependent column (of type INTEGER < numcategories - 1)
- * @param numcategories Number of categories for the dependant variables (
- 					of type INTEGER)
  * @param indepvar Name of the independent column (of type DOUBLE
  *        PRECISION[])
  * @param maxnumiterations The maximum number of iterations
@@ -357,8 +375,10 @@ LANGUAGE plpythonu VOLATILE;
  *        iterations that should indicate convergence. Note that a non-positive
  *        value here disables the convergence criterion, and execution will only
  *        stop after \ maxNumIterations iterations.
+ * @param ref_category The reference category specified by the user
  *
  * @return A composite value:
+ *  - <tt>ref_category INTEGER</tt> - Reference category
  *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
  *  - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
  *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
@@ -394,24 +414,51 @@ LANGUAGE plpythonu VOLATILE;
  *       limitations of the SQL syntax).
  *
  * @internal
- * @sa This function is a wrapper for multilogistic::compute_mlogregr(), which
+ * @sa This function is a wrapper for multilogistic::__compute_mlogregr(), which
  *     sets the default values.
  */
-CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
-    "source" VARCHAR,
-    "depvar" VARCHAR,
-    "numcategories" INTEGER,
-    "indepvar" VARCHAR,
-    "maxnumiterations" INTEGER /*+ DEFAULT 20 */,
-    "optimizer" VARCHAR /*+ DEFAULT 'irls' */,
-    "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
+CREATE FUNCTION MADLIB_SCHEMA.mlogregr
+(
+    source            VARCHAR,
+    depvar            VARCHAR,
+    indepvar          VARCHAR,
+    maxnumiterations  INTEGER /*+ DEFAULT 20 */,
+    optimizer         VARCHAR /*+ DEFAULT 'irls' */,
+    "precision"       DOUBLE PRECISION /*+ DEFAULT 0.0001 */,
+    ref_category      INTEGER
+)
 RETURNS MADLIB_SCHEMA.mlogregr_result AS $$
 DECLARE
-    observed_count INTEGER;
-    theIteration INTEGER;
-    fnName VARCHAR;
-    theResult MADLIB_SCHEMA.mlogregr_result;
+    observed_count  INTEGER;
+    theIteration    INTEGER;
+    fnName          VARCHAR;
+    theResult       MADLIB_SCHEMA.mlogregr_result;
+    numcategories   INTEGER;
+    min_category    INTEGER;
+    max_category    INTEGER;
 BEGIN
+    IF (source IS NULL OR trim(source) = '') THEN
+        RAISE EXCEPTION 'Invalid source table given';
+    END IF;
+    IF (depvar IS NULL OR trim(depvar) = '') THEN
+        RAISE EXCEPTION 'Invalid depvar given';
+    END IF;
+    IF (indepvar IS NULL OR trim(indepvar) = '') THEN
+        RAISE EXCEPTION 'Invalid indepvar given';
+    END IF;
+    IF (maxnumiterations IS NULL OR maxnumiterations < 1) THEN
+        RAISE EXCEPTION 'Number of max iterations must be positive';
+    END IF;
+    IF (optimizer IS NULL OR trim(optimizer) = '') THEN
+        RAISE EXCEPTION 'Invalid optimizer given';
+    END IF;
+    IF (precision IS NULL) THEN
+        RAISE EXCEPTION 'Invalid precision given.';
+    END IF;
+    IF (ref_category IS NULL OR ref_category < 0) THEN
+        RAISE EXCEPTION 'Invalid ref_category given.';
+    END IF;
+
     IF (SELECT atttypid::regtype <> 'INTEGER'::regtype
         FROM pg_attribute
         WHERE attrelid = source::regclass AND attname = depvar) THEN
@@ -421,21 +468,36 @@ BEGIN
     EXECUTE $sql$ SELECT count(DISTINCT $sql$ || depvar || $sql$ )
                     FROM $sql$ || textin(regclassout(source))
             INTO observed_count;
-    IF observed_count <> numcategories
-    THEN
-        RAISE WARNING 'Results will be undefined, if ''numcategories'' is not
-         same as the number of distinct categories observed in the training data.';
+    numcategories := observed_count;
+
+    EXECUTE $sql$ SELECT max($sql$ || depvar || $sql$ )
+                    FROM $sql$ || textin(regclassout(source))
+            INTO max_category;
+    EXECUTE $sql$ SELECT min($sql$ || depvar || $sql$ )
+                    FROM $sql$ || textin(regclassout(source))
+            INTO min_category;
+
+    IF max_category != numcategories - 1 OR min_category != 0 THEN
+        RAISE EXCEPTION 'The value of the dependent variable should be in the
+        range of [0, %)', numcategories;
+    END IF;
+
+    IF ref_category > numcategories -1 OR ref_category < 0 THEN
+        RAISE EXCEPTION 'The value of the reference category should be in the
+        range of [0, "%")', numcategories;
     END IF;
 
     IF optimizer = 'irls' OR optimizer = 'newton' THEN
-        fnName := 'internal_mlogregr_irls_result';
+        fnName := '__internal_mlogregr_irls_result';
     ELSE
-        RAISE EXCEPTION 'Unknown optimizer (''%'')', optimizer;
+        RAISE EXCEPTION 'Unknown optimizer (''%''). Must be "newton" or "irls"', optimizer;
     END IF;
 
     theIteration := (
-        SELECT MADLIB_SCHEMA.compute_mlogregr($1, $2, $3, $4, $5, $6, $7)
+        SELECT MADLIB_SCHEMA.__compute_mlogregr(
+            $1, $2, $3, numcategories, $4, $5, $6, $7)
     );
+
     -- Because of Greenplum bug MPP-10050, we have to use dynamic SQL (using
     -- EXECUTE) in the following
     -- Because of Greenplum bug MPP-6731, we have to hide the tuple-returning
@@ -460,33 +522,34 @@ END;
 $$ LANGUAGE plpgsql VOLATILE;
 
 
-CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
-    "source" VARCHAR,
-    "depvar" VARCHAR,
-    "numcategories" INTEGER,
-    "indepvar" VARCHAR)
+CREATE FUNCTION MADLIB_SCHEMA.mlogregr
+(
+    source      VARCHAR,
+    depvar      VARCHAR,
+    indepvar    VARCHAR
+)
 RETURNS MADLIB_SCHEMA.mlogregr_result AS
-$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, 20, 'irls', 0.0001);$$
+$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, 20, 'irls', 0.0001, 0);$$
 LANGUAGE sql VOLATILE;
 
 CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
-    "source" VARCHAR,
-    "depvar" VARCHAR,
-    "numcategories" INTEGER,
-    "indepvar" VARCHAR,
-    "maxnumiterations" INTEGER)
+    source              VARCHAR,
+    depvar              VARCHAR,
+    indepvar            VARCHAR,
+    maxnumiterations    INTEGER
+)
 RETURNS MADLIB_SCHEMA.mlogregr_result AS
-$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, 'irls', 0.0001);$$
+$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, 'irls', 0.0001, 0);$$
 LANGUAGE sql VOLATILE;
 
 CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
-    "source" VARCHAR,
-    "depvar" VARCHAR,
-    "numcategories" INTEGER,
-    "indepvar" VARCHAR,
-    "maxbumiterations" INTEGER,
-    "optimizer" VARCHAR)
+    source              VARCHAR,
+    depvar              VARCHAR,
+    indepvar            VARCHAR,
+    maxbumiterations    INTEGER,
+    optimizer           VARCHAR
+)
 RETURNS MADLIB_SCHEMA.mlogregr_result AS
-$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, $6, 0.0001);$$
+$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, 0.0001, 0);$$
 LANGUAGE sql VOLATILE;
 
