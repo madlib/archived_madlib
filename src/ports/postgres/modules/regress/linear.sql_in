@@ -690,32 +690,6 @@ BEGIN
   --                                 independent_varname, out_table;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
-/**
-  * @brief Compute linear regression coefficients and insert into an output
-  * table. The function drops the table if it already exists before creating
-  * the table. Heteroskedasticity values are also added if the option is True.
-**/
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_train(
-     source_table         VARCHAR       -- name of input  table
-   , out_table            VARCHAR       -- name of output table
-   , dependent_varname    VARCHAR       -- name of dependent variable
-   , independent_varname  VARCHAR       -- name of independent variable
-   , heteroskedasticity_option  BOOLEAN -- heteroskedasticity
-)
-RETURNS VOID AS $$
-DECLARE
-BEGIN
-  PERFORM MADLIB_SCHEMA.__internal_linregr_train_hetero(
-        source_table, out_table, dependent_varname, independent_varname,
-        heteroskedasticity_option);
-  -- RAISE NOTICE '
-  -- Finished linear regression
-  --   * table : % (%, %)
-  -- Output:
-  --   * view : SELECT * FROM % ;', source_table, dependent_varname,
-  --                                 independent_varname, out_table;
-END;
-$$ LANGUAGE plpgsql VOLATILE;
 
 --------------------- GROUPING ---------------------------------------------
 /**
@@ -727,12 +701,13 @@ CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
    , out_table                  VARCHAR       -- name of output table
    , dependent_varname          VARCHAR       -- name of dependent variable
    , independent_varname        VARCHAR       -- name of independent variable
-   , group_cols                 VARCHAR[]     -- names of columns to group-by
+   , input_group_cols           VARCHAR       -- names of columns to group-by
    , heteroskedasticity_option  BOOLEAN -- heteroskedasticity
   )
 RETURNS VOID AS $$
 DECLARE
   input_table_name              VARCHAR[];
+  group_cols                    VARCHAR[];
   actual_table_name             VARCHAR;
   schema_name                   VARCHAR;
   table_creation_string         VARCHAR;
@@ -747,12 +722,34 @@ BEGIN
   EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
   EXECUTE 'SET client_min_messages TO warning';
 
+  IF (source_table IS NULL OR source_table = '') THEN
+      RAISE EXCEPTION 'Invalid input table name given.';
+  END IF;
+  IF (out_table IS NULL OR out_table = '') THEN
+      RAISE EXCEPTION 'Invalid output table name given.';
+  END IF;
+  IF (dependent_varname IS NULL OR dependent_varname = '') THEN
+      RAISE EXCEPTION 'Invalid dependent variable name given.';
+  END IF;
+  IF (independent_varname IS NULL OR independent_varname = '') THEN
+      RAISE EXCEPTION 'Invalid independent variable name given.';
+  END IF;
+  
+  IF (NOT MADLIB_SCHEMA.__table_exists(source_table)) THEN
+    RAISE EXCEPTION 'Source table name does not exist.';
+  END IF;
+  
+  IF (MADLIB_SCHEMA.__table_exists(out_table)) THEN
+    RAISE EXCEPTION 'Output table name already exists. Drop the table before calling the function.';
+  END IF;
+ 
+  group_cols = regexp_split_to_array(input_group_cols, E',');
   -- initial validation
   IF (group_cols IS NULL
       OR array_upper(group_cols, 1) IS NULL
       OR array_upper(group_cols, 1) = 0)
   THEN
-      PERFORM MADLIB_SCHEMA.linregr_train(
+      PERFORM MADLIB_SCHEMA.__internal_linregr_train_hetero(
                     source_table, out_table,
                     dependent_varname, independent_varname,
                     heteroskedasticity_option);
@@ -773,7 +770,18 @@ BEGIN
         RAISE EXCEPTION 'Incorrect input source table name provided';
       END IF;
 
-      -- TODO: Check if the column is actually a part of the dataset
+      -- Check that each grouping column exists
+      FOR each_group in 1 .. group_array_length
+      LOOP
+        if NOT MADLIB_SCHEMA.check_if_col_exists(source_table, 
+                                      group_cols[each_group]) THEN
+              RAISE EXCEPTION 'Grouping column % does not exist', 
+                                      group_cols[each_group];
+        END IF;
+
+
+      END LOOP;
+
       FOR each_group in 1 .. group_array_length
       LOOP
           -- create a string that makes list of
@@ -871,7 +879,7 @@ CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
    , out_table                  VARCHAR       -- name of output table
    , dependent_varname          VARCHAR       -- name of dependent variable
    , independent_varname        VARCHAR       -- name of independent variable
-   , group_cols                 VARCHAR[]     -- names of columns to group-by
+   , group_cols                 VARCHAR       -- names of columns to group-by
   )
 RETURNS VOID AS $$
 BEGIN

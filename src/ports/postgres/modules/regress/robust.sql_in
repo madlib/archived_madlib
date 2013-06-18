@@ -1,4 +1,3 @@
-
 /* ----------------------------------------------------------------------- *//**
  *
  * @file robust.sql_in
@@ -158,15 +157,15 @@ p_values       | {0.0657926909738772,0.382066744586027,0.0258849510756295}
 --------------------------- Robust Linear Regression ----------------------------------
 
 CREATE TYPE MADLIB_SCHEMA.robust_linregr_result AS (
-    std_err DOUBLE PRECISION[],
-    t_stats DOUBLE PRECISION[],
-    p_values DOUBLE PRECISION[]
+    coef      DOUBLE PRECISION[],
+    std_err   DOUBLE PRECISION[],
+    t_stats   DOUBLE PRECISION[],
+    p_values  DOUBLE PRECISION[]
 );
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_linregr_transition(
     state MADLIB_SCHEMA.bytea8,
     y DOUBLE PRECISION,
-    --y BOOLEAN,
     x DOUBLE PRECISION[],
     coef DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.bytea8
@@ -229,7 +228,7 @@ LANGUAGE C IMMUTABLE STRICT;
  */
 
 CREATE AGGREGATE MADLIB_SCHEMA.robust_linregr(
-    /*+ "dependentVariable" */  DOUBLE PRECISION,
+    /*+ "dependentVariable" */ DOUBLE PRECISION,
     /*+ "independentVariables" */ DOUBLE PRECISION[],
     /*+ "coef" */ DOUBLE PRECISION[]) (
     SFUNC=MADLIB_SCHEMA.robust_linregr_transition,
@@ -310,8 +309,8 @@ LANGUAGE C IMMUTABLE STRICT;
  */
 
 CREATE AGGREGATE MADLIB_SCHEMA.robust_logregr(
-	 /*+ "dependentVariable" */ BOOLEAN, --DOUBLE PRECISION,
-	/*+ "independentVariables" */  DOUBLE PRECISION[], 
+	  /*+ "dependentVariable" */ BOOLEAN, 
+	  /*+ "independentVariables" */  DOUBLE PRECISION[], 
     /*+ "coef" */ DOUBLE PRECISION[] ) (
     
     STYPE=DOUBLE PRECISION[],
@@ -320,7 +319,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.robust_logregr(
     FINALFUNC=MADLIB_SCHEMA.robust_logregr_step_final,
     INITCOND='{0,0,0,0,0.0}'
 );
-
 
 
 --------------------------- INTERNAL ---------------------------------------
@@ -338,12 +336,6 @@ RETURNS MADLIB_SCHEMA.robust_logregr_result AS $$
 DECLARE
 robust_value MADLIB_SCHEMA.robust_logregr_result;
 BEGIN
---	EXECUTE '
---     SELECT (MADLIB_SCHEMA.robust_logregr(('
---           || dependent_varname  || ')::integer::double precision , '
---           || independent_varname  || ' , '
---           || 'ARRAY[' || array_to_string(logregr_coeffs, ',') || '])
---      	).* FROM ' || source_table
 	EXECUTE 'SELECT (MADLIB_SCHEMA.robust_logregr(('|| dependent_varname  || ' )::BOOLEAN, '|| independent_varname  || ' , '|| 'ARRAY[' || array_to_string(logregr_coeffs, ',') || '])).* FROM ' || source_table
 	INTO robust_value;
   RETURN robust_value;
@@ -529,6 +521,7 @@ BEGIN
     E' ''dependent_variable'',   -- Name of column for dependent variables\n' || 
     E' ''independent_variable'', -- Name of column for independent variables\n' || 
     E'                               (can be any SQL expression like ''*'') \n' || 
+    E' ''group_cols'',           -- Comma separated string with columns to group by\n' || 
     E' );\n' || 
     E'\n' || 
     E'Output:\n' || 	
@@ -599,6 +592,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance(
    , regression_type			      VARCHAR       -- type of regression 
    , dependent_varname          VARCHAR       -- name of dependent variable
    , input_independent_varname  VARCHAR       -- name of independent variable
+   , group_cols                 VARCHAR       -- names of columns to group by
   )
 RETURNS VOID AS $$
 DECLARE
@@ -649,7 +643,8 @@ BEGIN
                                 source_table,
                                 out_table,
                                 dependent_varname,
-                                independent_varname);
+                                independent_varname,
+                                group_cols);
 
   --  Logistic Regression
   ElSIF (regression_type = 'logistic') THEN
@@ -658,13 +653,35 @@ BEGIN
                                 source_table,
                                 out_table,
                                 dependent_varname,
-                                independent_varname);
+                                independent_varname,
+                                group_cols);
 		
   END IF;
   EXECUTE 'SET client_min_messages TO '|| old_msg_level;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
+/**
+  * @brief Robust regression with default fit regression behaviour & no grouping
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , regression_type						VARCHAR       -- type of regression 
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.robust_variance(
+                              source_table,
+                              out_table,
+                              regression_type,
+                              dependent_variable,
+                              independent_variable,
+                              NULL);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
 
 --------------------------- Robust Linear Regression ----------------------------------
@@ -677,39 +694,179 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linear(
    , out_table                  VARCHAR       -- name of output table
    , dependent_varname          VARCHAR       -- name of dependent variable
    , independent_varname        VARCHAR       -- name of independent variable
+   , input_group_cols           VARCHAR       -- grouping columns
   )
 RETURNS VOID AS $$
 DECLARE
   insert_string         VARCHAR;
+  group_cols            VARCHAR[];
   regr_coef		      	  DOUBLE PRECISION[];
   robust_lin_rst        MADLIB_SCHEMA.robust_linregr_result;
+  table_creation_string       VARCHAR;
+  group_string                VARCHAR;
+  where_group_string            VARCHAR;
+  actual_table_name           VARCHAR;
+  input_table_name            VARCHAR[];
+  group_array_length          INTEGER;
+  each_group                  INTEGER;
+  robust_linregr_fitting_rst  VARCHAR;
+  temp_table                  VARCHAR;
+  col_data_type               VARCHAR;
+  schema_name                 VARCHAR;
+  sql                         VARCHAR;
 BEGIN
-    -- create output table with appropriate column names
+
+  IF (input_group_cols IS NULL)
+	THEN
+    -------------------------------------------------------------------------
+    -- No grouping columns: Run regular robust variance estimates
+    -------------------------------------------------------------------------
+	  -- Step 1: Create output table with appropriate column names
     EXECUTE '
     CREATE TABLE ' || out_table || ' (
         coef DOUBLE PRECISION[],
         std_err DOUBLE PRECISION[],
         t_stats DOUBLE PRECISION[],
         p_values DOUBLE PRECISION[])';
-    -- Run the regression if the coefficients are not provided 
+    -- Step 2: Run the regression if the coefficients are not provided 
     EXECUTE '
         SELECT (MADLIB_SCHEMA.linregr('
               || dependent_varname    || ' , '
               || independent_varname  || ')
           ).coef FROM ' || source_table
       INTO regr_coef;
-    -- compute linear regression and heteroskedasticity values (if required)
+    
+      -- Step 3: Perform the robust linear regression
     robust_lin_rst := MADLIB_SCHEMA.__internal_get_robust_linregr_result(
                     source_table, dependent_varname, independent_varname, regr_coef);
+    
+    -- Step 4: Insert into output table & cast infinity and nan
     insert_string := MADLIB_SCHEMA.__internal_get_robust_linregr_insert_string(
                     robust_lin_rst, regr_coef, out_table);
-    -- Ensure Infinity and NaN are cast properly
     insert_string := REGEXP_REPLACE(insert_string, 'Infinity', 
                                     '''Infinity''::double precision', 'gi');
     insert_string := REGEXP_REPLACE(insert_string, 'NaN', 
                                     '''NaN''::double precision', 'gi');
-		-- complete the sql string and execute
-		EXECUTE insert_string || ')';
+    EXECUTE insert_string || ')';
+
+  ELSE
+    -------------------------------------------------------------------------
+    -- Grouping columns: Run robust variance estimates for each group
+    -------------------------------------------------------------------------
+    
+    -- Step 1: Prepare the group columns 
+    -------------------------------------------------------------------------
+    group_cols = regexp_split_to_array(input_group_cols, E',');
+    group_array_length = array_upper(group_cols, 1);
+
+    input_table_name = regexp_split_to_array(source_table, E'\\.');
+    IF array_upper(input_table_name, 1) = 1 THEN
+      actual_table_name = input_table_name[1];
+      schema_name  := current_schema();
+    ELSIF array_upper(input_table_name, 1) = 2 THEN
+      actual_table_name = input_table_name[2];
+      schema_name  = input_table_name[1];
+    ELSE
+      RAISE EXCEPTION 'Incorrect input source table name provided';
+    END IF;
+
+    -- Check that each grouping column exists
+    FOR each_group in 1 .. group_array_length
+    LOOP
+      if NOT MADLIB_SCHEMA.check_if_col_exists(source_table, 
+                                    group_cols[each_group]) THEN
+            RAISE EXCEPTION 'Grouping column % does not exist', 
+                                    group_cols[each_group];
+      END IF;
+    END LOOP;
+
+    table_creation_string := 'CREATE TABLE ' || out_table || '(';
+    FOR each_group in 1 .. group_array_length
+    LOOP
+        -- create a string that makes list of
+        EXECUTE 'SELECT data_type FROM information_schema.columns
+                 WHERE
+                      table_schema = ''' || schema_name || '''
+                      AND table_name = ''' || actual_table_name || '''
+                      AND column_name= ''' || group_cols[each_group] || ''''
+        INTO col_data_type;
+
+        table_creation_string := table_creation_string
+                                || group_cols[each_group]
+                                || ' ' || col_data_type || ',';
+    END LOOP;
+   
+    -- finish creating the output table
+    EXECUTE table_creation_string || '
+            coef DOUBLE PRECISION[],
+            std_err DOUBLE PRECISION[],
+            t_stats DOUBLE PRECISION[],
+            p_values DOUBLE PRECISION[])';
+    
+    -- Step 2: Perform the linear regression on groups
+    -------------------------------------------------------------------------
+		temp_table := MADLIB_SCHEMA.__unique_string(); 
+    PERFORM MADLIB_SCHEMA.linregr_train(source_table, 
+                                        temp_table,
+                                        dependent_varname,
+                                        independent_varname,
+                                        input_group_cols);
+    
+    -- Note: We need to alter the names on the output tables for linregr_train
+    -- so that they don't clash with the robust_variance_linear output tables
+    -- This name changing is required to construct queries when the regressor
+    -- is also being grouped by. I don't know why anyone would do that but 
+    -- it should be a mathematically valid operation.
+    FOR each_group in 1 .. group_array_length
+    LOOP
+        EXECUTE 'ALTER TABLE ' || temp_table || ' RENAME COLUMN ' || 
+                 group_cols[each_group] || ' TO lin_regr_' 
+                || group_cols[each_group];
+    END LOOP;
+                                    
+    -- Step 3: Prepare the grouping strings 
+    group_string := '';
+    FOR each_group in 1 .. (group_array_length-1)
+    LOOP
+        group_string := group_string || 
+                        actual_table_name || '.' || 
+                        group_cols[each_group] || ',';
+    END LOOP;
+    group_string := group_string || 
+                    actual_table_name || '.' || 
+                    group_cols[group_array_length];
+
+    -- Where clause string
+    where_group_string := '';
+    FOR each_group in 1 .. (group_array_length-1)
+    LOOP
+        where_group_string := where_group_string || '(' || 
+                        temp_table || '.lin_regr_' || 
+                        group_cols[each_group] || ' = ' || 
+                        actual_table_name || '.' || 
+                        group_cols[each_group] || ') AND ';
+    END LOOP;
+    where_group_string := where_group_string || '(' || 
+                    temp_table || '.lin_regr_' || 
+                    group_cols[group_array_length] || ' = ' || 
+                    actual_table_name || '.' || 
+                    group_cols[group_array_length] || ')';
+
+    -- Step 4: Robust statistics into the out table 
+    EXECUTE 
+      'INSERT INTO ' || out_table || '
+        SELECT ' || group_string || ', (result).coef, (result).std_err,
+                                       (result).t_stats, (result).p_values
+        FROM (
+            SELECT
+                '|| group_string ||',
+                MADLIB_SCHEMA.robust_linregr('|| 
+                    dependent_varname ||','|| 
+                    independent_varname || ', coef) AS result' || 
+            ' FROM '|| source_table || ',' || temp_table || 
+            ' WHERE '|| where_group_string ||
+            ' GROUP BY '|| group_string || ')' || actual_table_name;
+  END IF;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -725,14 +882,30 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logistic(
    , out_table                  VARCHAR       -- name of output table
    , dependent_varname          VARCHAR       -- name of dependent variable
    , independent_varname        VARCHAR       -- name of independent variable
+   , input_group_cols           VARCHAR       -- grouping columns
   )
 RETURNS VOID AS $$
 DECLARE
-  insert_string         VARCHAR;
-  regr_coef		      	  DOUBLE PRECISION[];
-  tempTableName			    VARCHAR;
-  robust_log_rst		    MADLIB_SCHEMA.robust_logregr_result;
+  insert_string               VARCHAR;
+  group_cols                  VARCHAR[];
+  regr_coef		      	        DOUBLE PRECISION[];
+  table_creation_string       VARCHAR;
+  group_string                VARCHAR;
+  where_group_string          VARCHAR;
+  actual_table_name           VARCHAR;
+  input_table_name            VARCHAR[];
+  group_array_length          INTEGER;
+  each_group                  INTEGER;
+  robust_logregr_fitting_rst  VARCHAR;
+  temp_table                  VARCHAR;
+  col_data_type               VARCHAR;
+  schema_name                 VARCHAR;
+  sql                         VARCHAR;
+  tempTableName			          VARCHAR;
+  robust_log_rst		          MADLIB_SCHEMA.robust_logregr_result;
 BEGIN
+  IF (input_group_cols IS NULL)
+	THEN
     -- create output table with appropriate column names
     EXECUTE '
     CREATE TABLE ' || out_table || ' (
@@ -756,7 +929,6 @@ BEGIN
     -- compute robust variance calculation
     robust_log_rst := MADLIB_SCHEMA.__internal_get_robust_logregr_result(
                     source_table, dependent_varname, independent_varname, regr_coef);
-		--RAISE NOTICE 'Computing string';		
 		insert_string := MADLIB_SCHEMA.__internal_get_robust_logregr_insert_string(
                     robust_log_rst, out_table);
     -- Ensure Infinity and NaN are cast properly
@@ -766,6 +938,127 @@ BEGIN
                                     '''NaN''::double precision', 'gi');
 		-- complete the sql string and execute
 		EXECUTE insert_string || ')';
+
+  ELSE
+
+    -------------------------------------------------------------------------
+    -- Grouping columns: Run robust variance estimates for each group
+    -------------------------------------------------------------------------
+    
+    -- Step 1: Prepare the group columns 
+    -------------------------------------------------------------------------
+    group_cols = regexp_split_to_array(input_group_cols, E',');
+    group_array_length = array_upper(group_cols, 1);
+
+    input_table_name = regexp_split_to_array(source_table, E'\\.');
+    IF array_upper(input_table_name, 1) = 1 THEN
+      actual_table_name = input_table_name[1];
+      schema_name  := current_schema();
+    ELSIF array_upper(input_table_name, 1) = 2 THEN
+      actual_table_name = input_table_name[2];
+      schema_name  = input_table_name[1];
+    ELSE
+      RAISE EXCEPTION 'Incorrect input source table name provided';
+    END IF;
+
+    -- Check that each grouping column exists
+    FOR each_group in 1 .. group_array_length
+    LOOP
+      if NOT MADLIB_SCHEMA.check_if_col_exists(source_table, 
+                                    group_cols[each_group]) THEN
+            RAISE EXCEPTION 'Grouping column % does not exist', 
+                                    group_cols[each_group];
+      END IF;
+    END LOOP;
+
+    table_creation_string := 'CREATE TABLE ' || out_table || '(';
+    FOR each_group in 1 .. group_array_length
+    LOOP
+        -- create a string that makes list of
+        EXECUTE 'SELECT data_type FROM information_schema.columns
+                 WHERE
+                      table_schema = ''' || schema_name || '''
+                      AND table_name = ''' || actual_table_name || '''
+                      AND column_name= ''' || group_cols[each_group] || ''''
+        INTO col_data_type;
+
+        table_creation_string := table_creation_string
+                                || group_cols[each_group]
+                                || ' ' || col_data_type || ',';
+    END LOOP;
+   
+    -- finish creating the output table
+    EXECUTE table_creation_string || '
+            coef DOUBLE PRECISION[],
+            std_err DOUBLE PRECISION[],
+            t_stats DOUBLE PRECISION[],
+            p_values DOUBLE PRECISION[])';
+    
+    -- Step 2: Perform the regression on groups
+    -------------------------------------------------------------------------
+		temp_table := MADLIB_SCHEMA.__unique_string(); 
+    PERFORM MADLIB_SCHEMA.logregr_train(source_table, 
+                                        temp_table,
+                                        dependent_varname,
+                                        independent_varname,
+                                        input_group_cols);
+    
+    -- Note: We need to alter the names on the output tables for linregr_train
+    -- so that they don't clash with the robust_variance_linear output tables
+    -- This name changing is required to construct queries when the regressor
+    -- is also being grouped by. I don't know why anyone would do that but 
+    -- it should be a mathematically valid operation.
+    FOR each_group in 1 .. group_array_length
+    LOOP
+        EXECUTE 'ALTER TABLE ' || temp_table || ' RENAME COLUMN ' || 
+                 group_cols[each_group] || ' TO log_regr_' 
+                || group_cols[each_group];
+    END LOOP;
+                                    
+    -- Step 3: Prepare the grouping strings 
+    group_string := '';
+    FOR each_group in 1 .. (group_array_length-1)
+    LOOP
+        group_string := group_string || 
+                        actual_table_name || '.' || 
+                        group_cols[each_group] || ',';
+    END LOOP;
+    group_string := group_string || 
+                    actual_table_name || '.' || 
+                    group_cols[group_array_length];
+
+    -- Where clause string
+    where_group_string := '';
+    FOR each_group in 1 .. (group_array_length-1)
+    LOOP
+        where_group_string := where_group_string || '(' || 
+                        temp_table || '.log_regr_' || 
+                        group_cols[each_group] || ' = ' || 
+                        actual_table_name || '.' || 
+                        group_cols[each_group] || ') AND ';
+    END LOOP;
+    where_group_string := where_group_string || '(' || 
+                    temp_table || '.log_regr_' || 
+                    group_cols[group_array_length] || ' = ' || 
+                    actual_table_name || '.' || 
+                    group_cols[group_array_length] || ')';
+
+    -- Step 4: Robust statistics into the out table 
+    EXECUTE 
+      'INSERT INTO ' || out_table || '
+        SELECT ' || group_string || ', (result).coef, (result).std_err,
+                                       (result).z_stats, (result).p_values
+        FROM (
+            SELECT
+                '|| group_string ||',
+                MADLIB_SCHEMA.robust_logregr('|| 
+                    dependent_varname ||','|| 
+                    independent_varname || ', coef) AS result' || 
+            ' FROM '|| source_table || ',' || temp_table || 
+            ' WHERE '|| where_group_string ||
+            ' GROUP BY '|| group_string || ')' || actual_table_name;
+  END IF;
+
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 

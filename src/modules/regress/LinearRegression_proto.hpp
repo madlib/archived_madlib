@@ -88,6 +88,7 @@ public:
     template <class Container> RobustLinearRegression& compute(
         const RobustLinearRegressionAccumulator<Container>& inState);
 
+    MutableNativeColumnVector coef;
     MutableNativeColumnVector stdErr;
     MutableNativeColumnVector tStats;
     MutableNativeColumnVector pValues;

@@ -7,9 +7,11 @@
 #ifndef MADLIB_MODULES_REGRESS_LINEAR_REGRESSION_IMPL_HPP
 #define MADLIB_MODULES_REGRESS_LINEAR_REGRESSION_IMPL_HPP
 
+#include <dbconnector/dbconnector.hpp>
 #include <boost/math/distributions.hpp>
 #include <modules/prob/student.hpp>
 #include <modules/prob/boost.hpp>
+#include <limits>
 
 namespace madlib {
 
@@ -410,12 +412,14 @@ RobustLinearRegression::compute(
 
     // Vector of standard errors and t-statistics: For efficiency reasons, we
     // want to return these by reference, so we need to bind to db memory
+    coef.rebind(allocator.allocateArray<double>(inState.widthOfX));
     stdErr.rebind(allocator.allocateArray<double>(inState.widthOfX));
     tStats.rebind(allocator.allocateArray<double>(inState.widthOfX));
     for (int i = 0; i < inState.widthOfX; i++) {
         // In an abundance of caution, we see a tiny possibility that numerical
         // instabilities in the pinv operation can lead to negative values on
         // the main diagonal of even a SPD matrix
+        coef(i) = inState.ols_coef(i);
         if (inverse_of_X_transp_X(i,i) < 0) {
             stdErr(i) = 0;
         } else {
@@ -437,8 +441,8 @@ RobustLinearRegression::compute(
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
     pValues.rebind(allocator.allocateArray<double>(inState.widthOfX));
-    if (inState.numRows > inState.widthOfX)
-        for (int i = 0; i < inState.widthOfX; i++)
+    if (inState.numRows > inState.widthOfX){
+        for (int i = 0; i < inState.widthOfX; i++){
             pValues(i) = 2. * prob::cdf(
                 boost::math::complement(
                     prob::students_t(
@@ -446,6 +450,8 @@ RobustLinearRegression::compute(
                     ),
                     std::fabs(tStats(i))
                 ));
+        }
+    }
     return *this;
 }
 

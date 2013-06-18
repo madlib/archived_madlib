@@ -118,7 +118,8 @@ robust_linregr_final::run(AnyType& args) {
     AnyType tuple;
     RobustLinearRegression result(state);
 
-    tuple << result.stdErr 
+    tuple << result.coef
+          << result.stdErr 
 					<< result.tStats
         	<< (state.numRows > state.widthOfX
             ? result.pValues
