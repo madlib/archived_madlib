@@ -117,7 +117,7 @@ SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::computeExtras(
         mPinv.resize(inMatrix.rows(), inMatrix.cols());
 
         // FIXME: No hard-coded constant here
-        if (conditionNo() < 1000) {
+        if (conditionNo() < 1e20) {
             // We are doing a Cholesky decomposition of a matrix with
             // pivoting. This is faster than the PartialPivLU that
             // Eigen's inverse() method would use

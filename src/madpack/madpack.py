@@ -1190,7 +1190,7 @@ def main(argv):
 
             # Loop through all test SQL files for this module
             sql_files = maddir_mod_sql + '/' + module + '/test/*.sql_in'
-            for sqlfile in sorted(glob.glob(sql_files)):
+            for sqlfile in sorted(glob.glob(sql_files),reverse=True):
 
                 result = 'PASS'
 

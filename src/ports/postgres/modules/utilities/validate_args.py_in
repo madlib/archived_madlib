@@ -57,7 +57,24 @@ def __is_tbl_has_rows(tbl):
     return content == 1
 
 ## ========================================================================
+def __get_cols_in_schema(tbl):
+    """
+    Get the column names in a table
+    """
+    schema = plpy.execute("select current_schema()")[0]["current_schema"]
+    array_agg_string = version_wrapper.select_array_agg(schema)
+    names = tbl.split(".")
+    sql_string = "select " + array_agg_string + \
+                        """(column_name::varchar) as cols
+                            from information_schema.columns
+                            where table_name = '{table_name}'"""
+    sql_string += " and table_schema = '{schema_name}'"
+    existing_cols = plpy.execute(sql_string.format(table_name=tbl,
+                                                        schema_name=schema) \
+                                    )[0]["cols"]
+    return mad_vec(existing_cols)
 
+## ========================================================================
 def __get_cols(tbl, schema_madlib="madlib"):
     """
     Get the column names in a table
@@ -98,6 +115,19 @@ def __is_col_exists(tbl, cols, schema_madlib="madlib"):
             return False
     return True
 
+## ========================================================================
+
+def __is_col_exists_in_schema(tbl, cols):
+    """
+    Is the column exist in current schema?
+    """
+    schema = plpy.execute("select current_schema()")[0]["current_schema"]
+    existing_cols = __get_cols(tbl, schema)
+    existing_cols = map(str.lower, existing_cols)
+    for col in cols:
+        if col.lower() not in existing_cols:
+            return False
+    return True
 ## ========================================================================
 
 def __is_col_array (tbl, col):
@@ -172,8 +202,8 @@ def __is_array_col_no_null(tbl, col):
             return False
     return True
 
-# ========================================================================
 
+# ========================================================================
 def __is_var_valid (tbl, var):
     """
     Test whether the variable(s) is valid by actually select it from

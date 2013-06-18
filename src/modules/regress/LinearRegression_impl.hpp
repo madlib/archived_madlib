@@ -256,7 +256,199 @@ LinearRegression::compute(
     return *this;
 }
 
-// ------------------------------------------------------------------------
+/* 
+	Robust Linear Regression: Huber-White Sandwich estimator 
+*/
+
+template <class Container>
+inline
+RobustLinearRegressionAccumulator<Container>::RobustLinearRegressionAccumulator(
+    Init_type& inInitialization) : Base(inInitialization) {
+    this->initialize();
+}
+
+/**
+ * @brief Bind all elements of the state to the data in the stream
+ *
+ * The bind() is special in that even after running operator>>() on an element,
+ * there is no guarantee yet that the element can indeed be accessed. It is
+ * cruicial to first check this.
+ *
+ * Provided that this methods correctly lists all member variables, all other
+ * methods can, however, rely on that fact that all variables are correctly
+ * initialized and accessible.
+ */
+template <class Container>
+inline
+void
+RobustLinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
+    inStream >> numRows >> widthOfX;
+    uint16_t actualWidthOfX = widthOfX.isNull() ? 0 : static_cast<uint16_t>(widthOfX);
+    inStream	>> ols_coef.rebind(actualWidthOfX)
+							>> X_transp_X.rebind(actualWidthOfX, actualWidthOfX)
+							>> X_transp_r2_X.rebind(actualWidthOfX, actualWidthOfX);
+}
+
+/**
+ * @brief Update the accumulation state
+ *
+ * We update the number of rows \f$ n \f$, the matrix \f$ X^T X \f$, 
+ * and the matrix \f$ X^T diag(r_1^2, r_2^2 ... r_n^2 X \f$
+ */
+template <class Container>
+inline
+RobustLinearRegressionAccumulator<Container>&
+RobustLinearRegressionAccumulator<Container>::operator<<(const tuple_type& inTuple) {
+
+		// Inputs
+    const MappedColumnVector& x = std::get<0>(inTuple);
+    const double& y = std::get<1>(inTuple);
+    const MappedColumnVector& coef = std::get<2>(inTuple);
+
+    if (!std::isfinite(y))
+        throw std::domain_error("Dependent variables are not finite.");
+    else if (x.size() > std::numeric_limits<uint16_t>::max())
+        throw std::domain_error("Number of independent variables cannot be "
+            "larger than 65535.");
+
+    // Initialize in first iteration
+    if (numRows == 0) {
+        widthOfX = static_cast<uint16_t>(x.size());
+        this->resize();
+				ols_coef = coef;
+    }
+
+    // dimension check
+    if (widthOfX != static_cast<uint16_t>(x.size())) {
+        throw std::runtime_error("Inconsistent numbers of independent "
+            "variables.");
+    }
+
+    numRows++;
+    double r = y - trans(ols_coef)*x;
+
+    // The following matrices are symmetric, so it is sufficient to
+		// only fill a triangular part
+    triangularView<Lower>(X_transp_X) += x * trans(x);
+    triangularView<Lower>(X_transp_r2_X) += r * r * x * trans(x);
+
+    return *this;
+}
+
+/**
+ * @brief Merge with another accumulation state
+ */
+template <class Container>
+template <class OtherContainer>
+inline
+RobustLinearRegressionAccumulator<Container>&
+RobustLinearRegressionAccumulator<Container>::operator<<(
+    const RobustLinearRegressionAccumulator<OtherContainer>& inOther) {
+
+    numRows += inOther.numRows;
+    triangularView<Lower>(X_transp_X) += inOther.X_transp_X;
+    triangularView<Lower>(X_transp_r2_X) += inOther.X_transp_r2_X;
+    return *this;
+}
+
+template <class Container>
+template <class OtherContainer>
+inline
+RobustLinearRegressionAccumulator<Container>&
+RobustLinearRegressionAccumulator<Container>::operator=(
+    const RobustLinearRegressionAccumulator<OtherContainer>& inOther) {
+
+    this->copy(inOther);
+    return *this;
+}
+
+
+template <class Container>
+RobustLinearRegression::RobustLinearRegression(
+    const RobustLinearRegressionAccumulator<Container>& inState) {
+
+    compute(inState);
+}
+
+/**
+ * @brief Transform a robust linear-regression accumulation state into a result
+ *
+ * The result of the accumulation phase is \f$ X^T X \f$ and
+ * \f$ X^T U X \f$. We first compute the pseudo-inverse, then the
+ * the robust model statistics.
+ *
+ * @sa For the mathematical description, see \ref grp_linreg.
+ */
+template <class Container>
+inline
+RobustLinearRegression&
+RobustLinearRegression::compute(
+    const RobustLinearRegressionAccumulator<Container>& inState) {
+
+    Allocator& allocator = defaultAllocator();
+
+    // The following checks were introduced with MADLIB-138. It still seems
+    // useful to have clear error messages in case of infinite input values.
+    if (!dbal::eigen_integration::isfinite(inState.X_transp_X) ||
+            !dbal::eigen_integration::isfinite(inState.X_transp_r2_X))
+        throw std::domain_error("Design matrix is not finite.");
+
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        inState.X_transp_X, EigenvaluesOnly, ComputePseudoInverse);
+
+    // Precompute (X^T * X)^+
+    Matrix inverse_of_X_transp_X = decomposition.pseudoInverse();
+
+		// Calculate the robust variance covariance matrix as:
+		// (X^T X)^-1  X^T diag(r1^2,r2^2....rn^2)X  (X^T X)^-1
+		// Where r_1, r_2 ... r_n are the residuals
+		// Note: X_transp_r2_X calcualtes X^T diag(r1^2,r2^2....rn^2)X
+
+		Matrix robust_var_cov = inState.X_transp_r2_X.triangularView<Eigen::StrictlyLower>();
+		robust_var_cov = robust_var_cov + trans(inState.X_transp_r2_X);
+		robust_var_cov = inverse_of_X_transp_X * robust_var_cov * inverse_of_X_transp_X;
+
+    // Vector of standard errors and t-statistics: For efficiency reasons, we
+    // want to return these by reference, so we need to bind to db memory
+    stdErr.rebind(allocator.allocateArray<double>(inState.widthOfX));
+    tStats.rebind(allocator.allocateArray<double>(inState.widthOfX));
+    for (int i = 0; i < inState.widthOfX; i++) {
+        // In an abundance of caution, we see a tiny possibility that numerical
+        // instabilities in the pinv operation can lead to negative values on
+        // the main diagonal of even a SPD matrix
+        if (inverse_of_X_transp_X(i,i) < 0) {
+            stdErr(i) = 0;
+        } else {
+            stdErr(i) = std::sqrt(robust_var_cov(i,i));
+        }
+
+        if (inState.ols_coef(i) == 0 && stdErr(i) == 0) {
+            // In this special case, 0/0 should be interpreted as 0:
+            // We know that 0 is the exact value for the coefficient, so
+            // the t-value should be 0 (corresponding to a p-value of 1)
+            tStats(i) = 0;
+        } else {
+            // If stdErr(i) == 0 then abs(tStats(i)) will be infinity, which
+            // is what we need.
+            tStats(i) = inState.ols_coef(i) / stdErr(i);
+        }
+    }
+
+    // Vector of p-values: For efficiency reasons, we want to return this
+    // by reference, so we need to bind to db memory
+    pValues.rebind(allocator.allocateArray<double>(inState.widthOfX));
+    if (inState.numRows > inState.widthOfX)
+        for (int i = 0; i < inState.widthOfX; i++)
+            pValues(i) = 2. * prob::cdf(
+                boost::math::complement(
+                    prob::students_t(
+                        static_cast<double>(inState.numRows - inState.widthOfX)
+                    ),
+                    std::fabs(tStats(i))
+                ));
+    return *this;
+}
+
 
 /*
   Regression for the tests for heteroskedasticity

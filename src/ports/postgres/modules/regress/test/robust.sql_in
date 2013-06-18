@@ -1,0 +1,137 @@
+/* -----------------------------------------------------------------------------
+ * Test Linear Regression.
+ * -------------------------------------------------------------------------- */
+
+/*
+ * The following example is taken from:
+ * http://www.weibull.com/DOEWeb/estimating_regression_models_using_least_squares.htm#Example%205.1
+ * http://www.weibull.com/DOEWeb/hypothesis_tests_in_multiple_linear_regression.htm#Example%205.3
+ */
+DROP TABLE IF EXISTS weibull;
+CREATE TABLE weibull (
+    id INTEGER NOT NULL,
+    x1 DOUBLE PRECISION,
+    x2 DOUBLE PRECISION,
+    y DOUBLE PRECISION,
+    CONSTRAINT pk_weibull PRIMARY KEY (id)
+);
+
+/*
+ * We materialize the table here because on MPP systems we want to distribute
+ * the data to the segments (and not do the calculations in memory).
+ */
+INSERT INTO weibull(id, x1, x2, y) VALUES
+( 1, 41.9, 29.1, 251.3),
+( 2, 43.4, 29.3, 251.3),
+( 3, 43.9, 29.5, 248.3),
+( 4, 44.5, 29.7, 267.5),
+( 5, 47.3, 29.9, 273.0),
+( 6, 47.5, 30.3, 276.5),
+( 7, 47.9, 30.5, 270.3),
+( 8, 50.2, 30.7, 274.9),
+( 9, 52.8, 30.8, 285.0),
+(10, 53.2, 30.9, 290.0),
+(11, 56.7, 31.5, 297.0),
+(12, 57.0, 31.7, 302.5),
+(13, 63.5, 31.9, 304.5),
+(14, 65.3, 32.0, 309.3),
+(15, 71.1, 32.1, 321.7),
+(16, 77.0, 32.5, 330.7),
+(17, 77.8, 32.9, 349.0);
+
+
+--------------------- Robust linear regression install checks ----------- 
+
+SELECT * FROM (
+	SELECT (robust_linregr(y, ARRAY[1, x1, x2], coef)).*
+	FROM
+	(		SELECT (linregr(y, ARRAY[1, x1, x2])).coef
+			FROM weibull
+	) as mle_coef,
+	weibull as src
+) q;
+
+select robust_variance('weibull', 'result_weibull_3', 'linear',
+                    'y', 'ARRAY[1, x1, x2]');
+-- End of robust linear regression 
+
+
+/* Robust variance test
+ * The following example is uses the coefficients computed in the above
+ * example, and checks that the robust variance is correct.  
+ * The correct values were checked with R.  For completeness, the following
+ * R code segment can be used to reproduce the correct values. This code segment
+ * expects the data table 'patients' to be in a file called "patients.txt".
+ * the data file should look exactly like:
+second_attack, treatment, trait_anxiety
+1, 1, 70
+1, 1, 80
+1, 1, 50
+1, 0, 60
+1, 0, 40
+1, 0, 65
+1, 0, 75
+1, 0, 80
+1, 0, 70
+1, 0, 60
+0, 1, 65
+0, 1, 50
+0, 1, 45
+0, 1, 35
+0, 1, 40
+0, 1, 50
+0, 0, 55
+0, 0, 45
+0, 0, 50
+0, 0, 60
+ * BEGIN CODE:
+	 data <- read.csv("patients.txt")
+	 regress <- glm( second_attack ~ treatment + trait_anxiety, family=binomial("logit"), data = data)
+	 library(sandwich)
+	 vcovHC(regress, 'HC0')
+ * END CODE
+ */
+
+
+DROP TABLE IF EXISTS patients;
+ 
+CREATE TABLE patients (
+    id INTEGER NOT NULL,
+    second_attack INTEGER,
+    treatment INTEGER,
+    trait_anxiety INTEGER,
+    CONSTRAINT pk_patient PRIMARY key (id)
+);
+INSERT INTO patients(ID, second_attack, treatment, trait_anxiety) VALUES
+( 1, 1, 1, 70),
+( 2, 1, 1, 80),
+( 3, 1, 1, 50),
+( 4, 1, 0, 60),
+( 5, 1, 0, 40),
+( 6, 1, 0, 65),
+( 7, 1, 0, 75),
+( 8, 1, 0, 80),
+( 9, 1, 0, 70),
+(10, 1, 0, 60),
+(11, 0, 1, 65),
+(12, 0, 1, 50),
+(13, 0, 1, 45),
+(14, 0, 1, 35),
+(15, 0, 1, 40),
+(16, 0, 1, 50),
+(17, 0, 0, 55),
+(18, 0, 0, 45),
+(19, 0, 0, 50),
+(20, 0, 0, 60);
+
+
+drop table if exists temp_result;
+select robust_variance('patients', 'temp_result', 'logistic', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]');
+
+SELECT assert(
+	relative_error(coef, ARRAY[-6.36346, -1.024, 0.11904]) < 1e-3 AND
+	relative_error(std_err, ARRAY[3.4587,1.171,0.05343]) < 1e-3 AND
+	relative_error(t_stats, ARRAY[-1.8398,-0.87409,2.2279]) < 1e-3 AND
+	relative_error(p_values, ARRAY[0.06579,0.38206,0.025884]) < 1e-3,
+	'Robust Variance: Wrong Results'
+)FROM temp_result;

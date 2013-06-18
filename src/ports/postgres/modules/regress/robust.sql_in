@@ -1,0 +1,775 @@
+
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file robust.sql_in
+ *
+ * @brief SQL functions for linear regression
+ * @date January 2011
+ *
+ * @sa Calculates robust statistics for various regression models. 
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_robust
+
+@about
+
+
+When doing regression analysis, we are sometimes interested in the variance of the computed coefficients \f$ \boldsymbol  c \f$.  While the built-in regression functions provide variance estimates, we may prefer a <i> robust </i> variance estimate.  
+ 
+The robust variance calculation can be expressed in a sandwich formation, which is the form
+\f[
+    S( \boldsymbol c) = B( \boldsymbol c) M( \boldsymbol c) B( \boldsymbol c)
+\f]
+where \f$ B( \boldsymbol c)\f$ and \f$ M( \boldsymbol c)\f$ are matrices.  The \f$ B( \boldsymbol c)\f$ matrix, 
+also known as the bread, is relatively straight forward, and can be computed as
+\f[
+B( \boldsymbol c) = n\left(\sum_i^n -H(y_i, x_i, \boldsymbol  c) \right)^{-1}
+\f]
+where \f$H\f$ is the hessian matrix.  
+
+The \f$ M( \boldsymbol c)\f$ matrix has several variation, each with different robustness properties.  
+The form implemented here is the Huber-White sandwich operator, which takes the form
+\f[
+M_{H} =\frac{1}{n} \sum_i^n \psi(y_i,x_i,  \boldsymbol c)^T  \psi(y_i,x_i,  \boldsymbol c).
+\f]
+
+
+The above method for calculating robust variance (Huber white estimates) is implemented for linear regression, logistic regression, multinomial logistic regression, and cox proportional hazard models. It is useful in calculating variances in a dataset with potentially noisy outliers.
+
+
+@input
+
+The training data is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    <em>outputTable</em> VARCHAR,
+    <em>regressionType </em> VARCHAR,
+    <em>dependentVariable</em> VARCHAR,
+    <em>independentVariable</em> VARCHAR,
+)</pre>
+
+@usage
+
+
+<b> The Full Interface</b>
+
+<pre>
+SELECT madlib.\ref robust_variance(
+    <em>'source_table'</em>,        -- name of input table, VARCHAR
+    <em>'out_table'</em>,           -- name of output table, VARCHAR
+    <em>'regression_type'</em>,     -- type of regression (linear/logistic/multilogistic) 
+    <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
+    <em>'independent_varname'</em>, -- dependent variable, VARCHAR
+);
+</pre>
+
+OR 
+
+<pre>
+SELECT madlib.\ref robust_variance(
+    <em>'source_table'</em>,        -- name of input table, VARCHAR
+    <em>'out_table'</em>,           -- name of output table, VARCHAR
+    <em>'regression_type'</em>,     -- type of regression (linear/logistic/multilogisitc) 
+    <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
+    <em>'independent_varname'</em>, -- dependent variable, VARCHAR
+);
+</pre>
+Here the <em>'independent_varname'</em> can be the name of a column, which contains
+array of numeric values. It can also have a format of string 'array[1, x1, x2, x3]',
+where <em>x1</em>, <em>x2</em> and <em>x3</em> are all column names.
+
+Output is stored in the <em>out_table</em>:
+<pre>
+[ coef | std_err | stats | p_values |
++------+---------+-------+----------+
+</pre>
+
+
+@examp
+
+@endverbatim
+
+-#  For function summary information. Run 
+@verbatim
+sql> select robust_variance('help');
+OR
+sql> select robust_variance();
+OR
+sql> select robust_variance('?');
+@endverbatim
+
+-#  For function usage information. 
+@verbatim
+sql> select robust_variance('usage');
+@endverbatim
+-# Create the sample data set:
+@verbatim
+sql> SELECT * FROM data;
+ id | second_attack | treatment | trait_anxiety 
+----+---------------+-----------+---------------
+  1 |             1 |         1 |            70
+  3 |             1 |         1 |            50
+  5 |             1 |         0 |            40
+  7 |             1 |         0 |            75
+  9 |             1 |         0 |            70
+ 11 |             0 |         1 |            65
+ 13 |             0 |         1 |            45
+ 15 |             0 |         1 |            40
+ 17 |             0 |         0 |            55
+...
+@endverbatim
+-# Run the logistic regression function and then compute the robust variance of the regression:
+@verbatim
+sql> select robust_variance('patients', 'newTable', 'logistic', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]'); 
+sql> select * from newTable;
+coef           | {11.962748350258,1.37269168529894,0.00285507335100035}
+std_err        | {3.45872062333141,1.17161925782182,0.053432886418388}
+t_stats        | {-1.839833462942,-0.874094587942144,2.22793348156965}
+p_values       | {0.0657926909738772,0.382066744586027,0.0258849510756295}
+@endverbatim
+
+
+@literature
+
+
+[1] vce(cluster) function in STATA: http://www.stata.com/help.cgi?vce_option
+
+[2] clustered estimators in R: http://people.su.se/~ma/clustering.pdf
+
+[3] Achim Zeileis: Object-oriented Computation of Sandwich Estimators. 
+	Research Report Series / Department of Statistics and Mathematics, 37. 
+	Department of Statistics and Mathematics, WU Vienna University of Economics and Business, Vienna.
+	http://cran.r-project.org/web/packages/sandwich/vignettes/sandwich-OOP.pdf
+
+@sa File robust.sql_in documenting the SQL functions.
+
+@internal
+@sa Namespace \ref madlib::modules::regress
+    documenting the implementation in C++
+@endinternal
+*/
+
+
+
+--------------------------- Robust Linear Regression ----------------------------------
+
+CREATE TYPE MADLIB_SCHEMA.robust_linregr_result AS (
+    std_err DOUBLE PRECISION[],
+    t_stats DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[]
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_linregr_transition(
+    state MADLIB_SCHEMA.bytea8,
+    y DOUBLE PRECISION,
+    --y BOOLEAN,
+    x DOUBLE PRECISION[],
+    coef DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_linregr_merge_states(
+    state1 MADLIB_SCHEMA.bytea8,
+    state2 MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C
+IMMUTABLE STRICT;
+
+-- Final functions
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_linregr_final(
+    state MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.robust_linregr_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Compute robust regression diagnostic statistics for linear regression.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param coef Column containing the array of the OLS coefficients (as obtained by linregr)
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>std_err FLOAT8[]</tt> - Array of huber-white standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>t_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
+ *
+ * @usage
+ *  - Get all the diagnostic statistics:\n
+ * 
+ *  <pre> SELECT (robust_linregr(<em>dependentVariable</em>,
+ *	<em>independentVariables</em>, coef)).*
+ *	FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
+ *	) AS ols_coef, <em>sourceName</em> as src; 
+ * </pre>
+ *  - Get a subset of the output columns, e.g., only the condition number 
+ *  and the array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT (lr).robust_condition_no, (lr).robust_p_values
+ *FROM ( 
+ * </pre>
+ *  <pre> SELECT (robust_linregr(<em>dependentVariable</em>,
+ *	<em>independentVariables</em>, coef)).*
+ *	FROM (
+ *    SELECT linregr(<em>dependentVariable</em>, <em>independentVariables</em>).coef 
+ *	) AS ols_coef, <em>sourceName</em> as src
+ *) AS subq;</pre>
+ */
+
+CREATE AGGREGATE MADLIB_SCHEMA.robust_linregr(
+    /*+ "dependentVariable" */  DOUBLE PRECISION,
+    /*+ "independentVariables" */ DOUBLE PRECISION[],
+    /*+ "coef" */ DOUBLE PRECISION[]) (
+    SFUNC=MADLIB_SCHEMA.robust_linregr_transition,
+    STYPE=MADLIB_SCHEMA.bytea8,
+    FINALFUNC=MADLIB_SCHEMA.robust_linregr_final,
+    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.robust_linregr_merge_states,')
+    INITCOND=''
+);
+
+
+
+--------------------------- ROBUST LOGISTIC REGRESSION ---------------------------------------
+
+
+/**
+ * @internal
+ * @bCompute the results of the Huber-White sandwich estimator
+ *     
+ */
+ 
+--DROP TYPE IF EXISTS MADLIB_SCHEMA.robust_logregr_result;
+CREATE TYPE MADLIB_SCHEMA.robust_logregr_result AS (
+    coef DOUBLE PRECISION[],
+    std_err DOUBLE PRECISION[],
+    z_stats DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[]
+);
+ 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_logregr_step_transition(
+    state DOUBLE PRECISION[],
+    y BOOLEAN,
+    x DOUBLE PRECISION[],
+    coef DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_logregr_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_logregr_step_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.robust_logregr_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT; 
+
+
+/**
+ * @brief Compute robust regression diagnostic statistics for logistic regression.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param coef Column containing the array of the  coefficients (as obtained by logregr)
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>robust_est FLOAT8[] </tt> - The coefficients for the regression
+ *  - <tt>std_err FLOAT8[]</tt> - Array of huber-white standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>t_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
+ *
+ * @usage
+ *  - Get all the diagnostic statistics:\n
+ *
+ *  <pre> SELECT robust_logregr(<em>dependentVariable</em>,
+ *	<em>independentVariables</em>, coef)
+ *	FROM <em>dataTable</em>; 
+ * </pre>
+ */
+
+CREATE AGGREGATE MADLIB_SCHEMA.robust_logregr(
+	 /*+ "dependentVariable" */ BOOLEAN, --DOUBLE PRECISION,
+	/*+ "independentVariables" */  DOUBLE PRECISION[], 
+    /*+ "coef" */ DOUBLE PRECISION[] ) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.robust_logregr_step_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.robust_logregr_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.robust_logregr_step_final,
+    INITCOND='{0,0,0,0,0.0}'
+);
+
+
+
+--------------------------- INTERNAL ---------------------------------------
+
+/**
+  * @brief Return robust logistic regression estimates given a set of coefficients
+**/
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_robust_logregr_result(
+     source_table         VARCHAR       -- name of input  table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   , logregr_coeffs       DOUBLE PRECISION[]  -- coeffs from logear regression
+)
+RETURNS MADLIB_SCHEMA.robust_logregr_result AS $$
+DECLARE
+robust_value MADLIB_SCHEMA.robust_logregr_result;
+BEGIN
+--	EXECUTE '
+--     SELECT (MADLIB_SCHEMA.robust_logregr(('
+--           || dependent_varname  || ')::integer::double precision , '
+--           || independent_varname  || ' , '
+--           || 'ARRAY[' || array_to_string(logregr_coeffs, ',') || '])
+--      	).* FROM ' || source_table
+	EXECUTE 'SELECT (MADLIB_SCHEMA.robust_logregr(('|| dependent_varname  || ' )::BOOLEAN, '|| independent_varname  || ' , '|| 'ARRAY[' || array_to_string(logregr_coeffs, ',') || '])).* FROM ' || source_table
+	INTO robust_value;
+  RETURN robust_value;
+END
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+  * @brief Return insert string for robust logistic regression 
+**/
+
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_robust_logregr_insert_string(
+    robust_log_rst MADLIB_SCHEMA.robust_logregr_result,
+    out_table TEXT
+)
+RETURNS VARCHAR AS $$
+DECLARE 
+  insert_string VARCHAR;
+BEGIN
+  insert_string := 'INSERT INTO ' || out_table || ' VALUES ('; 
+  insert_string := insert_string  || 
+            CASE 
+              WHEN (robust_log_rst).coef is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((robust_log_rst).coef, ',')     || '], '
+            END             || 
+            CASE 
+              WHEN (robust_log_rst).std_err is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((robust_log_rst).std_err, ',')  || '], '
+            END             ||
+            CASE 
+              WHEN (robust_log_rst).z_stats is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((robust_log_rst).z_stats, ',')  || '], '
+            END             ||
+            CASE 
+              WHEN (robust_log_rst).p_values is NULL
+              THEN '''{}'','
+              ELSE 'ARRAY[' || array_to_string((robust_log_rst).p_values, ',') || '] '
+            END;
+  RETURN insert_string; 
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+--------------------------- INTERNAL ---------------------------------------
+/**
+  * @brief Return robust linear regression estimates given a set of coefficients
+**/
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_robust_linregr_result(
+     source_table         VARCHAR       -- name of input  table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   , linregr_coeffs       DOUBLE PRECISION[]  -- coeffs from linear regression
+)
+RETURNS MADLIB_SCHEMA.robust_linregr_result AS $$
+DECLARE
+robust_value MADLIB_SCHEMA.robust_linregr_result;
+BEGIN
+	EXECUTE '
+    SELECT (MADLIB_SCHEMA.robust_linregr('
+          || dependent_varname    || ' , '
+          || independent_varname  || ' , '
+          || 'ARRAY[' || array_to_string(linregr_coeffs, ',') || '])
+			).* FROM ' || source_table
+	INTO robust_value;
+  RETURN robust_value;
+END
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+  * @brief Return insert string for robust linear regression 
+**/
+
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_robust_linregr_insert_string(
+    robust_lin_rst		MADLIB_SCHEMA.robust_linregr_result
+  , linregr_coeffs    DOUBLE PRECISION[]  -- coeffs from linear regression
+  , out_table TEXT
+)
+RETURNS VARCHAR AS $$
+DECLARE 
+  insert_string VARCHAR;
+BEGIN
+  insert_string := 'INSERT INTO ' || out_table || ' VALUES ('; 
+  insert_string := insert_string  || 
+		CASE 
+			WHEN linregr_coeffs is NULL
+			THEN '''{}'','
+			ELSE 'ARRAY[' || array_to_string(linregr_coeffs, ',')  || '], '
+		END             ||
+		CASE 
+			WHEN (robust_lin_rst).std_err is NULL
+			THEN '''{}'','
+			ELSE 'ARRAY[' || array_to_string((robust_lin_rst).std_err, ',')  || '], '
+		END             ||
+		CASE 
+			WHEN (robust_lin_rst).t_stats is NULL
+			THEN '''{}'','
+			ELSE 'ARRAY[' || array_to_string((robust_lin_rst).t_stats, ',')  || '], '
+		END             ||
+		CASE 
+			WHEN (robust_lin_rst).p_values is NULL
+			THEN '''{}'','
+			ELSE 'ARRAY[' || array_to_string((robust_lin_rst).p_values, ',') || ']'
+		END;
+  RETURN insert_string; 
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_robust_step_transition(
+    state DOUBLE PRECISION[],
+    y INTEGER,
+    numcat INTEGER,
+    x DOUBLE PRECISION[],
+    coef DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_robust_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_robust_step_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.robust_logregr_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT; 
+
+CREATE AGGREGATE MADLIB_SCHEMA.robustMLogregr(
+	 /*+ "y" */ INTEGER,
+	/*+ "numcat" */ INTEGER, 
+	/*+ "x" */  DOUBLE PRECISION[], 
+    /*+ "coef" */  DOUBLE PRECISION[] ) (
+    
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.mlogregr_robust_step_transition,
+    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.mlogregr_robust_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.mlogregr_robust_step_final,
+    INITCOND='{0,0,0,0,0.0}'
+);
+
+--------------------------- Interface ----------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance(
+     usage_string VARCHAR                               -- usage string
+)
+RETURNS VARCHAR AS $$
+DECLARE
+insert_string       VARCHAR;
+BEGIN
+	IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
+    insert_string := '' || 
+    E'Summary \n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' Functionality: Calculate Huber-White robust statistics for linear/logistic regression\n' || 	
+    E' The funciton first runs the regression, calculates the \n' ||
+    E'     coefficients and uses them to calculate the robust statistics \n' || 	
+    E' SELECT {schema_madlib}.robust_variance(''source_table'' \n' || 
+    E'                                       ,''output_table'' \n' || 
+    E'                                       ,''regression_type'' \n' || 
+    E'                                       ,''dependent_variable'' \n' || 
+    E'                                       ,''independent_variable'' \n' ||
+    E'                                       );\n' || 
+    E'For more details on function usage:  \n' || 
+    E'SELECT {schema_madlib}.robust_variance(''usage'') \n' || 
+    E'';
+  ElSIF (usage_string  = 'usage') THEN
+    insert_string := '' || 
+    E'Usage\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' There are two ways to use this function  \n' || 	
+    E' SELECT {schema_madlib}.robust_variance( \n' ||
+    E' ''source_table'',         -- Name of data table          \n' || 
+    E' ''output_table'',         -- Name of result table (overwrites if exists) \n' || 
+    E' ''regression_type'',      -- Type of regression (linear/logistic)        \n' || 
+    E' ''dependent_variable'',   -- Name of column for dependent variables\n' || 
+    E' ''independent_variable'', -- Name of column for independent variables\n' || 
+    E'                               (can be any SQL expression like ''*'') \n' || 
+    E' );\n' || 
+    E'\n' || 
+    E'Output:\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The output table (''output_table'' above) has the following columns\n' || 	
+    E' ''coef''    DOUBLE PRECISION[],  -- Coefficients of regression \n' || 
+    E' ''std_err''  DOUBLE PRECISION[], -- Huber-White standard errors\n' || 
+    E' ''stats''    DOUBLE PRECISION[], -- Z-stats of the standard errors\n' || 
+    E' ''p_values'' DOUBLE PRECISION[], -- p-values of the standard errors\n' || 
+    E'\n' || 
+    E'';
+  ELSE
+    insert_string := 'No such option. Run SELECT {schema_madlib}.robust_variance()';
+  END IF;
+  RETURN insert_string;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.robust_variance('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+/**
+  @brief A wrapper function for the various robust regression analyzes.  
+ *
+ * @param source_table String identifying the input table
+ * @param out_table String identifying the output table to be created
+ * @param regression_type String identifying which regression should be used
+ * @param dependent_varname Column containing the dependent variable
+ * @param independent_varname Column containing the array of independent variables
+ * @param coef Column containing the array of the coefficients, or NULL.
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>std_err FLOAT8[]</tt> - Array of huber-white standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>t_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
+ *
+ * @usage
+ * For function summary information. Run 
+ * sql> select robust_variance('help');
+ * OR
+ * sql> select robust_variance();
+ * OR
+ * sql> select robust_variance('?');
+ * For function usage information. Run 
+ * sql> select robust_variance('usage');
+ *  - Compute the coefficients, and the get the robust diagnostic statistics:
+ * 	<pre> 
+ *  select robust_variance(source_table, out_table, regression_type, dependentVariable, independentVariables, NULL );
+ * </pre>
+ *
+ *  - If the coefficients are already known, they can be provided directly
+ *    <pre>select robust_variance(source_table, out_table, regression_type, dependentVariable, independentVariables, coef );</pre>
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , regression_type			      VARCHAR       -- type of regression 
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , input_independent_varname  VARCHAR       -- name of independent variable
+  )
+RETURNS VOID AS $$
+DECLARE
+  insert_string         VARCHAR;
+  independent_varname   VARCHAR;
+  robust_lin_rst        MADLIB_SCHEMA.robust_linregr_result;
+  tempTableName			    VARCHAR;
+  robust_log_rst		    MADLIB_SCHEMA.robust_logregr_result;
+  old_msg_level         TEXT;
+BEGIN
+  EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
+  EXECUTE 'SET client_min_messages TO warning';
+	IF (source_table IS NULL OR source_table = '') THEN
+	  RAISE EXCEPTION 'Invalid input table name given.';
+	END IF;
+	IF (NOT MADLIB_SCHEMA.__table_exists(source_table)) THEN
+	  RAISE EXCEPTION 'Input table name does not exist.';
+	END IF;
+	IF (MADLIB_SCHEMA.__table_exists(out_table)) THEN
+	  RAISE EXCEPTION 'Output table name already exists. Drop the table before calling the function.';
+	END IF;
+	IF (out_table IS NULL OR out_table = '') THEN
+	  RAISE EXCEPTION 'Invalid output table name given.';
+	END IF;
+	IF (input_independent_varname IS NULL OR input_independent_varname = '') THEN
+	  RAISE EXCEPTION 'Invalid dependent variable name given.';
+	END IF;
+	IF (dependent_varname IS NULL OR dependent_varname = '') THEN
+	  RAISE EXCEPTION 'Invalid independent variable name given.';
+	END IF;
+	IF NOT (regression_type = 'linear' OR regression_type = 'logistic') THEN
+    RAISE EXCEPTION 'No such regression type found. Must be (linear/logistic)';
+  END IF;
+
+	IF (input_independent_varname = '*') THEN
+	  independent_varname := MADLIB_SCHEMA.__internal_get_col_names_except_dep_variable(source_table, 
+	                            dependent_varname);
+	ELSE
+	  independent_varname := input_independent_varname; 
+	END IF;
+	
+
+  -- Separate wrapper for each function 
+  --  Linear regression
+	IF (regression_type = 'linear') THEN
+
+    PERFORM MADLIB_SCHEMA.robust_variance_linear(
+                                source_table,
+                                out_table,
+                                dependent_varname,
+                                independent_varname);
+
+  --  Logistic Regression
+  ElSIF (regression_type = 'logistic') THEN
+	
+    PERFORM MADLIB_SCHEMA.robust_variance_logistic(
+                                source_table,
+                                out_table,
+                                dependent_varname,
+                                independent_varname);
+		
+  END IF;
+  EXECUTE 'SET client_min_messages TO '|| old_msg_level;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+
+--------------------------- Robust Linear Regression ----------------------------------
+
+/**
+  * @brief Robust linear regression function subcall
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linear(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , independent_varname        VARCHAR       -- name of independent variable
+  )
+RETURNS VOID AS $$
+DECLARE
+  insert_string         VARCHAR;
+  regr_coef		      	  DOUBLE PRECISION[];
+  robust_lin_rst        MADLIB_SCHEMA.robust_linregr_result;
+BEGIN
+    -- create output table with appropriate column names
+    EXECUTE '
+    CREATE TABLE ' || out_table || ' (
+        coef DOUBLE PRECISION[],
+        std_err DOUBLE PRECISION[],
+        t_stats DOUBLE PRECISION[],
+        p_values DOUBLE PRECISION[])';
+    -- Run the regression if the coefficients are not provided 
+    EXECUTE '
+        SELECT (MADLIB_SCHEMA.linregr('
+              || dependent_varname    || ' , '
+              || independent_varname  || ')
+          ).coef FROM ' || source_table
+      INTO regr_coef;
+    -- compute linear regression and heteroskedasticity values (if required)
+    robust_lin_rst := MADLIB_SCHEMA.__internal_get_robust_linregr_result(
+                    source_table, dependent_varname, independent_varname, regr_coef);
+    insert_string := MADLIB_SCHEMA.__internal_get_robust_linregr_insert_string(
+                    robust_lin_rst, regr_coef, out_table);
+    -- Ensure Infinity and NaN are cast properly
+    insert_string := REGEXP_REPLACE(insert_string, 'Infinity', 
+                                    '''Infinity''::double precision', 'gi');
+    insert_string := REGEXP_REPLACE(insert_string, 'NaN', 
+                                    '''NaN''::double precision', 'gi');
+		-- complete the sql string and execute
+		EXECUTE insert_string || ')';
+
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+--------------------------- Robust Logistic Regression ----------------------------------
+
+/**
+  * @brief Robust logistic function subcall
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logistic(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , independent_varname        VARCHAR       -- name of independent variable
+  )
+RETURNS VOID AS $$
+DECLARE
+  insert_string         VARCHAR;
+  regr_coef		      	  DOUBLE PRECISION[];
+  tempTableName			    VARCHAR;
+  robust_log_rst		    MADLIB_SCHEMA.robust_logregr_result;
+BEGIN
+    -- create output table with appropriate column names
+    EXECUTE '
+    CREATE TABLE ' || out_table || ' (
+        coef DOUBLE PRECISION[],
+        std_err DOUBLE PRECISION[],
+        t_stats DOUBLE PRECISION[],
+        p_values DOUBLE PRECISION[])';
+			-- Run the regression if the coefficients are not provided 
+			tempTableName := MADLIB_SCHEMA.__unique_string(); 
+			EXECUTE '
+        SELECT MADLIB_SCHEMA.logregr_train('
+              || ' '''||source_table||''' ' || ','
+              || ' '''||tempTableName||''' ' || ','
+              || ' '''||dependent_varname ||''' ' || ' , '
+              || ' '''||independent_varname||''' '|| ')';
+        EXECUTE 'SELECT coef from ' || tempTableName INTO regr_coef;
+
+        EXECUTE 'DROP TABLE IF EXISTS ' || tempTableName;
+
+			
+    -- compute robust variance calculation
+    robust_log_rst := MADLIB_SCHEMA.__internal_get_robust_logregr_result(
+                    source_table, dependent_varname, independent_varname, regr_coef);
+		--RAISE NOTICE 'Computing string';		
+		insert_string := MADLIB_SCHEMA.__internal_get_robust_logregr_insert_string(
+                    robust_log_rst, out_table);
+    -- Ensure Infinity and NaN are cast properly
+    insert_string := REGEXP_REPLACE(insert_string, 'Infinity', 
+                                    '''Infinity''::double precision', 'gi');
+    insert_string := REGEXP_REPLACE(insert_string, 'NaN', 
+                                    '''NaN''::double precision', 'gi');
+		-- complete the sql string and execute
+		EXECUTE insert_string || ')';
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+
+
+

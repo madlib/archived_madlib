@@ -29,14 +29,14 @@ namespace stats {
 AnyType stateToResult(const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
     const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-    double logLikelihood,
-    double conditionNo);
+    double logLikelihood);
 
 // Internal functions
 AnyType intermediate_stateToResult(
 		const HandleMap<const ColumnVector, TransparentHandle<double> >
 												& x,
 		const double inTimeDeath,
+		const bool inStatus,
 		const double inExp_coef_x,
 		const HandleMap<const ColumnVector, TransparentHandle<double> >
 												& inCoef,
@@ -226,10 +226,12 @@ public:
  * Arguments (Matched with PSQL wrapped)
  * - 0: Current State
  * - 1: x
- * - 2: exp_coef_x
- * - 3: x_exp_coef_x value (Column Vector)
- * - 4: x_xTrans_exp_coef_x value (Matrix)
- * - 5: Previous State
+ * - 2: y
+ * - 3: status
+ * - 4: exp_coef_x
+ * - 5: x_exp_coef_x value (Column Vector)
+ * - 6: x_xTrans_exp_coef_x value (Matrix)
+ * - 7: Previous State
 */
 
 AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
@@ -238,20 +240,21 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 		CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
     double y = args[2].getAs<double>();
+    bool status = args[3].getAs<bool>();
 		
 		/** Note: These precomputations come from "intermediate_cox_prop_hazards".
 			They are precomputed and stored in a temporary table.
 		*/
-    double exp_coef_x = args[3].getAs<double>();
-    MappedColumnVector x_exp_coef_x = args[4].getAs<MappedColumnVector>();
-    MappedMatrix x_xTrans_exp_coef_x = args[5].getAs<MappedMatrix>();
+    double exp_coef_x = args[4].getAs<double>();
+    MappedColumnVector x_exp_coef_x = args[5].getAs<MappedColumnVector>();
+    MappedMatrix x_xTrans_exp_coef_x = args[6].getAs<MappedMatrix>();
 		
     if (state.numRows == 0) {
 			state.initialize(*this, static_cast<uint16_t>(x.size()));
 			
-			if (!args[6].isNull()) {
+			if (!args[7].isNull()) {
 					CoxPropHazardsTransitionState<ArrayHandle<double> > previousState
-																																		= args[6];
+																																		= args[7];
 					state = previousState;
 					state.reset();
 					
@@ -266,11 +269,15 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 				we add up all the precomputations once in for all. This is 
 				an implementation of Breslow's method.
 				The time of death for two records are considered "equal" if they 
-				differ by less than 1.0e-6
+				differ by less than 1.0e-6.
+				Also, in case status = 0, the observation must be censored so no
+				computations are required
 		*/
 		
 		if (std::abs(y-state.y_previous) < 1.0e-6 || state.numRows == 1) {
-			state.multiplier++;
+		  if (status == 1) {
+			  state.multiplier++;
+			}
 		}
 		else {
 		
@@ -278,12 +285,12 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 				Note: The hessian is the negative of the design document because we 
 				want it to stay PSD (makes it easier for inverse compuations)
 		*/
-			state.grad -= state.multiplier*state.H/state.S;
-			triangularView<Lower>(state.hessian) -=
-								((state.H*trans(state.H))/(state.S*state.S)
-												- state.V/state.S)*state.multiplier;
-			state.logLikelihood -=  state.multiplier*std::log(state.S);
-			state.multiplier = 1;
+      state.grad -= state.multiplier*state.H/state.S;
+      triangularView<Lower>(state.hessian) -=
+                ((state.H*trans(state.H))/(state.S*state.S)
+                        - state.V/state.S)*state.multiplier;
+      state.logLikelihood -=  state.multiplier*std::log(state.S);
+      state.multiplier = status;
 				
 		}
 
@@ -291,13 +298,14 @@ AnyType cox_prop_hazards_step_transition::run(AnyType &args) {
 				there are ties or not.
 				Note: See design documentation for details on the implementation.
 		*/
-		state.S += exp_coef_x;
-		state.H += x_exp_coef_x;
-		state.V += x_xTrans_exp_coef_x;
-		state.grad += x;
-		state.logLikelihood += std::log(exp_coef_x);
-		state.y_previous = y;
-				
+    state.S += exp_coef_x;
+    state.H += x_exp_coef_x;
+    state.V += x_xTrans_exp_coef_x;
+    state.y_previous = y;
+		if (status == 1) {
+      state.grad += x;
+      state.logLikelihood += std::log(exp_coef_x);
+    }
     return state;
 }
 
@@ -361,8 +369,7 @@ AnyType internal_cox_prop_hazards_result::run(AnyType &args) {
 
     return stateToResult(*this, state.coef,
 					 decomposition.pseudoInverse().diagonal(),
-					 state.logLikelihood,
-					 decomposition.conditionNo());
+					 state.logLikelihood);
 }
 
 /**
@@ -373,8 +380,7 @@ AnyType stateToResult(
 		const Allocator &inAllocator,
 		const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
 		const ColumnVector &diagonal_of_inverse_of_hessian,
-    double logLikelihood,
-    double conditionNo) {
+    double logLikelihood) {
 
     MutableNativeColumnVector std_err(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -392,8 +398,7 @@ AnyType stateToResult(
 		
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << inCoef << logLikelihood << std_err << waldZStats << waldPValues
-        << conditionNo;
+    tuple << inCoef << logLikelihood << std_err << waldZStats << waldPValues;
 		
     return tuple;
 }
@@ -407,13 +412,15 @@ AnyType stateToResult(
  * @param args
  *
  * Arguments (Matched with PSQL wrapped)
- * - 1: X value (Column Vector)
- * - 2: coef value (Column Vector)
+ * - 1: x           (Column Vector)
+ * - 1: status      (Double)
+ * - 2: coef value  (Column Vector)
 */
 
 AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
 
     MappedColumnVector x = args[0].getAs<MappedColumnVector>();
+    bool status = args[1].getAs<bool>();
     MutableNativeColumnVector coef(allocateArray<double>(x.size()));
 		
     // The following check was added with MADLIB-138.
@@ -424,12 +431,12 @@ AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
 				throw std::domain_error("Number of independent variables cannot be "
 						"larger than 65535.");
 
-		if (args[1].isNull()) {
+		if (args[2].isNull()) {
 			for (int i=0; i<x.size() ; i++)
 				coef(i) = 0;
 		}
 		else {
-			coef = args[1].getAs<MappedColumnVector>();
+			coef = args[2].getAs<MappedColumnVector>();
 		}
 		
 		double exp_coef_x;
@@ -444,6 +451,7 @@ AnyType intermediate_cox_prop_hazards::run(AnyType &args) {
 		
     AnyType tuple;
 		tuple << x
+					<< status
 					<< exp_coef_x
 					<< x_exp_coef_x
 					<< x_xTrans_exp_coef_x;

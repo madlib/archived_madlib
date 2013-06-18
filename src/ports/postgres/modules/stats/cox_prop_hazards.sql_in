@@ -107,59 +107,105 @@ than 1000) indicates the presence of significant multicollinearity.
 
 The training data is expected to be of the following form:\n
 <pre>{TABLE|VIEW} <em>sourceName</em> (
-    ...
-    <em>dependentVariable</em> FLOAT8,
-    <em>independentVariables</em> FLOAT8[],
-    ...
+    <em>inputTable</em> VARCHAR,
+    <em>outputTable</em> VARCHAR,
+    <em>dependentVariable</em> VARCHAR,
+    <em>independentVariable</em> VARCHAR,
+    [<em>rightCensoringStatus</em> VARCHAR]
 )</pre>
 Note: Dependent Variables refer to the time of death. There is no need to
 pre-sort the data. Additionally, all the data is assumed
 
-
+NOTE2:'right_censoring_status' is set to TRUE to if the observation is not censored
+and 'FALSE' if the observation is censored. The default value for 
+'right_censoring_status' is TRUE for all observatoions 
 @usage
+
+
+<b> The Full Interface</b>
+
+<pre>
+SELECT madlib.\ref cox_prop_hazards(
+    <em>'source_table'</em>,            -- name of input table, VARCHAR
+    <em>'out_table'</em>,               -- name of output table, VARCHAR
+    <em>'dependent_varname'</em>,       -- name of dependent variable, VARCHAR
+    <em>'independent_varname'</em>,     -- name of independent variable, VARCHAR
+    [<em>'right_censoring_status'</em>, -- name of column with right censoring status, VARCHAR (OPTIONAL, default=True) 
+                                            
+);
+</pre>
+
+Here the <em>'right_censoring_status'</em> can be the name of a column, which contains
+array of boolean values. It can also have a format of string 'dependent_variable < 10',
+where <em>x1</em>, <em>x2</em> and <em>x3</em> are all column names.
+
+Here the <em>'independent_varname'</em> can be the name of a column, which contains
+array of numeric values. It can also have a format of string 'array[1, x1, x2, x3]',
+where <em>x1</em>, <em>x2</em> and <em>x3</em> are all column names.
+
+
+Output is stored in the <em>out_table</em>:
+<pre>
+[ coef | std_err | stats | p_values |
++------+---------+-------+----------+
+</pre>
+
+
+-#  For function summary information. Run 
+@verbatim
+sql> select cox_prop_hazards('help');
+OR
+sql> select cox_prop_hazards();
+OR
+sql> select cox_prop_hazards('?');
+@endverbatim
+
+-#  For function usage information. 
+@verbatim
+sql> select robust_variance('usage');
+@endverbatim
+
+<b> Individual function calls</b>
+
 - Get vector of coefficients \f$ \boldsymbol \beta \f$ and all diagnostic
   statistics:\n
-  <pre>SELECT * FROM \ref cox_prop_hazards(
+  <pre>SELECT * FROM \ref cox_prop_hazards_regr(
     '<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>'
     [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
 );</pre>
-  Output:
   Output:
   <pre>coef | log_likelihood | std_err | z_stats | p_values  | condition_no | num_iterations
                                                ...
 </pre>
 - Get vector of coefficients \f$ \boldsymbol \beta \f$:\n
-  <pre>SELECT (\ref cox_prop_hazards('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
+  <pre>SELECT (\ref cox_prop_hazards_regr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
 - Get a subset of the output columns, e.g., only the array of coefficients
   \f$ \boldsymbol \beta \f$, the log-likelihood of determination:
   <pre>SELECT coef, log_likelihood
-FROM \ref cox_prop_hazards('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
+FROM \ref cox_prop_hazards_regr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
 
 @examp
 
 -# Create the sample data set:
 @verbatim 
 sql> SELECT * FROM data;
-      val   | time
+      val   | time | status
 ------------|--------------
- {0,1.95}   | 35
- {0,2.20}   | 28
- {1,1.45}   | 32
- {1,5.25}   | 31
- {1,0.38}   | 21
+ {0,1.95}   |  35  |  t
+ {0,2.20}   |  28  |  t
+ {1,1.45}   |  32  |  t
+ {1,5.25}   |  31  |  t
+ {1,0.38}   |  21  |  t
 ...
 @endverbatim
 -# Run the cox regression function:
 @verbatim
-sql> SELECT * FROM cox_prop_hazards('data', 'val', 'time', 100, 'newto', 0.001);
+sql> SELECT * FROM cox_prop_hazards('data', 'result_table', 'val', 'time', 'status');
 ---------------|--------------------------------------------------------------
 coef           | {0.881089349817059,-0.0756817768938055}
-log_likelihood | -4.46535157957394
 std_err        | {1.16954914708414,0.338426252282655}
 z_stats        | {0.753356711368689,-0.223628410729811}
 p_values       | {0.451235588326831,0.823046454908087}
-condition_no   | 12.1135391339082
-num_iterations | 4
 
 @endverbatim
 
@@ -193,6 +239,7 @@ of the SQL syntax).
 DROP TYPE IF EXISTS MADLIB_SCHEMA.intermediate_cox_prop_hazards_result;
 CREATE TYPE MADLIB_SCHEMA.intermediate_cox_prop_hazards_result AS (
     x DOUBLE PRECISION[],
+    status BOOLEAN,
     exp_coef_x DOUBLE PRECISION,
     x_exp_coef_x DOUBLE PRECISION[],
     x_xTrans_exp_coef_x DOUBLE PRECISION[]
@@ -201,6 +248,7 @@ CREATE TYPE MADLIB_SCHEMA.intermediate_cox_prop_hazards_result AS (
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.intermediate_cox_prop_hazards(
     /*+  x */ DOUBLE PRECISION[],
+    /*+  status */ BOOLEAN,
     /*+  coef */ DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.intermediate_cox_prop_hazards_result AS
 'MODULE_PATHNAME'
@@ -215,7 +263,6 @@ CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
     std_err DOUBLE PRECISION[],
     z_stats DOUBLE PRECISION[],
     p_values DOUBLE PRECISION[],
-    condition_no DOUBLE PRECISION,
     num_iterations INTEGER
 );
 
@@ -232,6 +279,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_step_transition(
     /*+  state */ DOUBLE PRECISION[],
     /*+  x */ DOUBLE PRECISION[],
     /*+  y */ DOUBLE PRECISION,		
+    /*+  status */ BOOLEAN,		
     /*+  exp_coef_x */ DOUBLE PRECISION,
     /*+  xexp_coef_x */ DOUBLE PRECISION[],
     /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
@@ -251,6 +299,7 @@ AGGREGATE MADLIB_SCHEMA.cox_prop_hazards_step(
 
     /*+  x */ DOUBLE PRECISION[],
     /*+  y */ DOUBLE PRECISION,
+    /*+  status */ BOOLEAN,
     /*+  exp_coef_x */ DOUBLE PRECISION,
     /*+  xexp_coef_x */ DOUBLE PRECISION[],
     /*+  x_xTrans_exp_coef_x */ DOUBLE PRECISION[],
@@ -279,10 +328,11 @@ LANGUAGE c IMMUTABLE STRICT;
 
 -- We only need to document the last one (unfortunately, in Greenplum we have to
 -- use function overloading instead of default arguments).
-CREATE FUNCTION MADLIB_SCHEMA.compute_cox_prop_hazards(
+CREATE FUNCTION MADLIB_SCHEMA.compute_cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,
+    "status" VARCHAR,
     "maxNumIterations" INTEGER,
     "optimizer" VARCHAR,
     "precision" DOUBLE PRECISION)
@@ -323,24 +373,25 @@ LANGUAGE plpythonu VOLATILE;
  *
  * - Get vector of coefficients \f$ \boldsymbol \beta \f$ and all diagnostic
  *  statistics:\n
- *  <pre>SELECT * FROM \ref cox_prop_hazards(
+ *  <pre>SELECT * FROM \ref cox_prop_hazards_regr(
  *    '<em>sourceName</em>', '<em>dependentVariable</em>', 
  * 		'<em>independentVariables</em>'
  *    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em> ] ] ]
  * );</pre>
  * - Get vector of coefficients \f$ \boldsymbol \beta \f$:\n
- *  <pre>SELECT (\ref cox_prop_hazards('<em>sourceName</em>', 
+ *  <pre>SELECT (\ref cox_prop_hazards_regr('<em>sourceName</em>', 
  * '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
  * - Get a subset of the output columns, e.g., only the array of coefficients
  *  \f$ \boldsymbol \beta \f$, the log-likelihood of determination:
  *  <pre>SELECT coef, log_likelihood
- * FROM \ref cox_prop_hazards('<em>sourceName</em>', '<em>dependentVariable</em>',
+ * FROM \ref cox_prop_hazards_regr('<em>sourceName</em>', '<em>dependentVariable</em>',
  * '<em>independentVariables</em>');</pre>
  */
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,
+    "status" VARCHAR,
     "maxNumIterations" INTEGER /*+ DEFAULT 20 */,
     "optimizer" VARCHAR /*+ DEFAULT 'newton' */,
     "precision" DOUBLE PRECISION /*+ DEFAULT 0.0001 */)
@@ -351,7 +402,7 @@ DECLARE
     theResult MADLIB_SCHEMA.cox_prop_hazards_result;
 BEGIN
     theIteration := (
-        SELECT MADLIB_SCHEMA.compute_cox_prop_hazards($1, $2, $3, $4, $5, $6)
+        SELECT MADLIB_SCHEMA.compute_cox_prop_hazards_regr($1, $2, $3, $4, $5, $6, $7)
     );
     IF optimizer = 'newton' THEN
         fnName := 'internal_cox_prop_hazards_result';
@@ -379,29 +430,244 @@ END;
 $$ LANGUAGE plpgsql VOLATILE;
 
 
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
-    "source" VARCHAR,
-    "indepColumn" VARCHAR,
-    "depColumn" VARCHAR)
-RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
-$$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, 20, 'newton', 0.0001);$$
-LANGUAGE sql VOLATILE;
-
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,
+    "status" VARCHAR)
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
+$$SELECT MADLIB_SCHEMA.cox_prop_hazards_regr($1, $2, $3, $4, 20, 'newton', 0.0001);$$
+LANGUAGE sql VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
+    "source" VARCHAR,
+    "indepColumn" VARCHAR,
+    "depColumn" VARCHAR,
+    "status" VARCHAR,
     "maxNumIterations" INTEGER)
 RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
-$$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, $4, 'newton', 0.0001);$$
+$$SELECT MADLIB_SCHEMA.cox_prop_hazards_regr($1, $2, $3, $4, $5, 'newton', 0.0001);$$
 LANGUAGE sql VOLATILE;
 
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,
+    "status" VARCHAR,
     "maxNumIterations" INTEGER,
     "optimizer" VARCHAR)
 RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS
-$$SELECT MADLIB_SCHEMA.cox_prop_hazards($1, $2, $3, $4, $5, 0.0001);$$
+$$SELECT MADLIB_SCHEMA.cox_prop_hazards_regr($1, $2, $3, $4, $5, $6, 0.0001);$$
 LANGUAGE sql VOLATILE;
+
+
+/**
+  * @brief Cox regresison training function 
+ **/
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , independent_varname        VARCHAR       -- name of independent variable
+   , status                     VARCHAR       -- censoring status
+  )
+RETURNS VOID AS $$
+DECLARE
+insert_string           VARCHAR;
+cox_rst                 MADLIB_SCHEMA.cox_prop_hazards_result;
+old_msg_level           TEXT;
+BEGIN
+  EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
+  EXECUTE 'SET client_min_messages TO warning';
+  IF (source_table IS NULL OR source_table = '') THEN
+      RAISE EXCEPTION 'Invalid input table name given.';
+  END IF;
+  IF (NOT MADLIB_SCHEMA.__table_exists(source_table)) THEN
+      RAISE EXCEPTION 'Input table name does not exist.';
+  END IF;
+  IF (MADLIB_SCHEMA.__table_exists(out_table)) THEN
+    RAISE EXCEPTION 'Output table name already exists. Drop the table before calling the function.';
+  END IF;
+  IF (out_table IS NULL OR out_table = '') THEN
+      RAISE EXCEPTION 'Invalid output table name given.';
+  END IF;
+  IF (dependent_varname IS NULL OR dependent_varname = '') THEN
+      RAISE EXCEPTION 'Invalid dependent variable name given.';
+  END IF;
+  IF (independent_varname IS NULL OR independent_varname = '') THEN
+      RAISE EXCEPTION 'Invalid independent variable name given.';
+  END IF;
+  IF (status IS NULL OR independent_varname = '') THEN
+      RAISE EXCEPTION 'Invalid status name given.';
+  END IF;
+  -- create output table with appropriate column names
+  EXECUTE 'DROP TABLE IF EXISTS ' || out_table;
+  EXECUTE '
+          CREATE TABLE ' || out_table || ' (
+              coef DOUBLE PRECISION[],
+              std_err DOUBLE PRECISION[],
+              z_stats DOUBLE PRECISION[],
+              p_values DOUBLE PRECISION[])';
+  -- compute cox regression results
+  cox_rst := MADLIB_SCHEMA.__internal_get_cox_prop_hazards_result(
+              source_table,  dependent_varname, independent_varname, status);
+  insert_string := MADLIB_SCHEMA.__internal_get_cox_prop_hazards_insert_string(
+                  cox_rst, out_table);
+  -- Ensure Infinity and NaN are cast properly
+  insert_string := REGEXP_REPLACE(insert_string, 'Infinity', 
+                                  '''Infinity''::double precision', 'gi');
+  insert_string := REGEXP_REPLACE(insert_string, 'NaN', 
+                                  '''NaN''::double precision', 'gi');
+  EXECUTE insert_string;
+  EXECUTE 'SET client_min_messages TO '|| old_msg_level;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+
+/**
+  * @brief Return cox regression output for source data
+  *
+**/
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_cox_prop_hazards_result(
+     source_table         VARCHAR       -- name of input  table
+   , dependent_varname    VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   , status               VARCHAR       -- name of status variable
+)
+RETURNS MADLIB_SCHEMA.cox_prop_hazards_result AS $$
+DECLARE
+cox_rst                 MADLIB_SCHEMA.cox_prop_hazards_result;
+BEGIN
+  EXECUTE '
+        SELECT (MADLIB_SCHEMA.cox_prop_hazards_regr('
+                || '''' || source_table || ''', '
+                || '''' || independent_varname    || ''', '
+                || '''' || dependent_varname    || ''', '
+                || '''' || status || ''')).* '
+  INTO cox_rst;
+  RETURN cox_rst;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+/**
+  * @brief Return cox regression output for insert string
+  *
+**/
+CREATE FUNCTION MADLIB_SCHEMA.__internal_get_cox_prop_hazards_insert_string(
+    cox_rst MADLIB_SCHEMA.cox_prop_hazards_result,
+    out_table TEXT
+)
+RETURNS VARCHAR AS $$
+DECLARE 
+  insert_string VARCHAR;
+BEGIN
+  insert_string := 'INSERT INTO ' || out_table || ' VALUES ('; 
+  insert_string := insert_string  || 
+  CASE 
+    WHEN (cox_rst).coef is NULL
+    THEN '''{}'','
+    ELSE 'ARRAY[' || array_to_string((cox_rst).coef, ',')     || '], '
+  END             || 
+  CASE 
+    WHEN (cox_rst).std_err is NULL
+    THEN '''{}'','
+    ELSE 'ARRAY[' || array_to_string((cox_rst).std_err, ',')  || '], '
+  END             ||
+  CASE 
+    WHEN (cox_rst).z_stats is NULL
+    THEN '''{}'','
+    ELSE 'ARRAY[' || array_to_string((cox_rst).z_stats, ',')  || '], '
+  END             ||
+  CASE 
+    WHEN (cox_rst).p_values is NULL
+    THEN '''{}'','
+    ELSE 'ARRAY[' || array_to_string((cox_rst).p_values, ',') || ']) '
+  END;
+  RETURN insert_string; 
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+/**
+  * @brief Cox regresison training function 
+ **/
+CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable          VARCHAR       -- name of dependent variable
+   , independent_variable        VARCHAR       -- name of independent variable
+  )
+RETURNS VOID AS $$
+BEGIN
+  EXECUTE 'SELECT MADLIB_SCHEMA.cox_prop_hazards(' ||
+          ' ''' || source_table || ''' ' ||
+          ' ,''' || out_table || ''' ' ||
+          ' ,''' || dependent_variable || ''' ' ||
+          ' ,''' || independent_variable || ''' ' ||
+          ' , ''TRUE'')';
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.cox_prop_hazards('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
+     usage_string VARCHAR                               -- usage string
+)
+RETURNS VARCHAR AS $$
+DECLARE
+insert_string       VARCHAR;
+BEGIN
+	IF (usage_string = '' OR usage_string = 'help' OR usage_string = '?') THEN
+    insert_string := '' || 
+    E'Summary \n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' Functionality: Cox proprtional hazards regression (Breslow method)\n' || 	
+    E' SELECT {schema_madlib}.cox_prop_hazards(''source_table''  \n' || 
+    E'                                        ,''output_table''  \n' || 
+    E'                                        ,''dependent_variable'' \n' || 
+    E'                                        ,''independent_variable'' \n' || 
+    E'                                        ,''right_censoring_status''  \n' || 
+    E'                                        );\n' || 
+    E'For more details on function usage:  \n' || 
+    E'SELECT {schema_madlib}.cox_prop_hazards(''usage'') \n' || 
+    E'';
+  ElSIF (usage_string  = 'usage') THEN
+    insert_string := '' || 
+    E'Usage\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' SELECT {schema_madlib}.cox_prop_hazards( \n' ||
+    E' ''source_table'',            -- Name of data table          \n' || 
+    E' ''output_table'',            -- Name of result table (overwrites if exists) \n' || 
+    E' ''dependent_variable'',      -- Name of column for dependent variables\n' || 
+    E' ''independent_variable'',    -- Name of column for independent variables\n' || 
+    E'                                  (can be any SQL expression Eg: ''*'') \n' || 
+    E' [''right_censoring_status'', -- Name of the column containing censoring status \n' || 
+    E'                                    0/false : If the observation is censored\n' || 
+    E'                                    1/true : otherwise\n' || 
+    E'                                Default is 1/true for all observations\n' || 
+    E'                                Can also be an SQL expression: ''dependent_variable < 10'') \n' || 
+    E' );\n' || 
+    E'\n'    || 
+    E'Output:\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The output table (''output_table'' above) has the following columns\n' || 	
+    E' ''coef''    DOUBLE PRECISION[],  -- Coefficients of regression \n' || 
+    E' ''std_err''  DOUBLE PRECISION[], -- Standard errors\n' || 
+    E' ''z_stats''    DOUBLE PRECISION[], -- z-stats of the standard errors\n' || 
+    E' ''p_values'' DOUBLE PRECISION[], -- p-values of the standard errors\n' || 
+    E'\n' || 
+    E'';
+  ELSE
+    insert_string := 'No such option. Run SELECT {schema_madlib}.cox_prop_hazards()';
+  END IF;
+  RETURN insert_string;
+END;
+$$ LANGUAGE plpgsql VOLATILE;

@@ -1,5 +1,4 @@
 # coding=utf-8
-
 """
 @file cox_prop_hazards.py_in
 
@@ -12,10 +11,59 @@ Cox prop Hazards: Driver functions
 //"""
 
 import plpy
+import re
+from utilities.validate_args import __is_col_array
+from utilities.validate_args import __is_tbl_exists
+from utilities.validate_args import __is_tbl_exists_in_schema
+from utilities.validate_args import __is_tbl_has_rows
+from utilities.validate_args import __is_tbl_has_rows
+from utilities.validate_args import __is_col_exists_in_schema
+from utilities.validate_args import __get_cols_in_schema
+from utilities.validate_args import __is_var_valid
+from utilities.utilities import _string_to_array
+from utilities.validate_args import __get_cols
+from utilities.utilities import __mad_version
 
+# ========================================================================
+def __check_args (schema_madlib, tbl_source, col_ind_var, col_dep_var, col_status):
+  
+  
+  # Some obvious error messages
+  if (tbl_source is None or col_ind_var is None or col_dep_var is None):
+    plpy.error("Elastic Net error: You have unsupported NULL value(s) in the arguments!")
+  
+  if not __is_tbl_exists_in_schema(tbl_source):
+    plpy.error("Cox Proportional Hazards Error: Data table " + tbl_source + " does not exist!")
+
+  if not __is_tbl_has_rows(tbl_source):
+    plpy.error("Cox Proportional Hazards Error: Data table " + tbl_source + " is empty!")
+
+  if not __is_col_exists_in_schema(tbl_source, [col_dep_var]):
+    plpy.error("Cox Proportional Hazards Error: The dependent variable does not exist!")
+  
+  if not __is_var_valid(tbl_source, col_ind_var):
+    plpy.error("Cox Proportional Hazards Error: The independent variable does not exist")
+  
+  if not __is_var_valid(tbl_source, col_status):
+    plpy.error("Cox Proportional Hazards Error: Not a valid boolean expression for status!")
+  
+  col_ind_var_new = col_ind_var
+  cols = __get_cols_in_schema(tbl_source)
+
+  # Select al columns except status and dependent variable
+  if col_ind_var == "*":
+    cols = __get_cols_in_schema(tbl_source)
+    outstr_array = []
+    for i in range(len(cols)):
+      if cols[i] != col_dep_var.lower() and cols[i] != col_status.lower():
+        outstr_array.append(cols[i])
+    col_ind_var_new = 'array[%s]' % (','.join(outstr_array))
+  return col_ind_var_new
+
+# ========================================================================
 def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
-				depColumn, updateExpr, intermediateExpr, terminateExpr, resultExpr,
-				maxNumIterations, cyclesPerIteration = 1):
+        depColumn, updateExpr, intermediateExpr, terminateExpr, resultExpr,
+        maxNumIterations, cyclesPerIteration = 1):
     """
     Driver for an iterative algorithm
     
@@ -42,22 +90,22 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
     @param cyclesPerIteration Number of aggregate function calls per iteration.
     """
     updateSQL = """
-				INSERT INTO _cox_intermediate_state (_cox_dependant_variable,_cox_iState)
-				SELECT 
-					({depColumn})::FLOAT8,
-					{intermediateExpr}
-				FROM
-					(
-						SELECT
-							{resultExpr} as result
-						FROM
-							_madlib_iterative_alg as st
-						WHERE 
-							_madlib_iteration = {{iteration}} - 1
-					) as result,
-					{{source}} as src;
+        INSERT INTO _cox_intermediate_state (_cox_dependant_variable, _cox_iState)
+        SELECT 
+          ({depColumn})::double precision,
+          {intermediateExpr}
+        FROM
+          (
+            SELECT
+              {resultExpr} as result
+            FROM
+              _madlib_iterative_alg as st
+            WHERE 
+              _madlib_iteration = {{iteration}} - 1
+          ) as result,
+          {{source}} as src;
 
-				INSERT INTO _madlib_iterative_alg
+        INSERT INTO _madlib_iterative_alg
         SELECT
             {{iteration}},
             {updateExpr}
@@ -66,12 +114,13 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
             _cox_intermediate_state AS src
         WHERE
             st._madlib_iteration = {{iteration}}-1
-				;
-				DELETE FROM _cox_intermediate_state;
+        ;
+        DELETE FROM _cox_intermediate_state;
         """.format(updateExpr = updateExpr,
                 intermediateExpr = intermediateExpr,
                 resultExpr = resultExpr,
-								depColumn=depColumn)
+                depColumn=depColumn)
+    print updateSQL
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
@@ -102,15 +151,15 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
             _madlib_iteration INTEGER PRIMARY KEY,
             _madlib_state {stateType}
         );
-				DROP TABLE IF EXISTS _cox_intermediate_state;
-				CREATE TEMPORARY TABLE _cox_intermediate_state (
-			    _cox_dependant_variable FLOAT8,
-			    _cox_iState {intermediateStateType}
-				) m4_ifdef( `__GREENPLUM__', `DISTRIBUTED BY (_cox_dependant_variable)' );
+        DROP TABLE IF EXISTS _cox_intermediate_state;
+        CREATE TEMPORARY TABLE _cox_intermediate_state (
+          _cox_dependant_variable double precision,
+          _cox_iState {intermediateStateType}
+        ) m4_ifdef( `__GREENPLUM__', `DISTRIBUTED BY (_cox_dependant_variable)' );
         SET client_min_messages = {oldMsgLevel};
         """.format(stateType = stateType,
-				       intermediateStateType = intermediateStateType,
-				       oldMsgLevel = oldMsgLevel))
+               intermediateStateType = intermediateStateType,
+               oldMsgLevel = oldMsgLevel))
     
     iteration = 0
     plpy.execute("""
@@ -120,11 +169,11 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
         iteration = iteration + 1
         plpy.execute(updateSQL.format(
             source = source,
-						depColumn = depColumn,
+            depColumn = depColumn,
             state = "(st._madlib_state)",
             intermediateState = "(_cox_iState)",
-						intermediateStateDepColumn = "_cox_dependant_variable",
-						oldCoef = "(result).coef",
+            intermediateStateDepColumn = "_cox_dependant_variable",
+            oldCoef = "(result).coef",
             iteration = iteration,
             sourceAlias = "src"))
         if plpy.execute(checkForNullStateSQL.format(
@@ -141,9 +190,9 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
     # Note: We do not drop the temporary table
     return iteration
 
-
+# ========================================================================
 def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
-		depColumn, optimizer, maxNumIterations, precision, **kwargs):
+    depColumn, status, optimizer, maxNumIterations, precision, **kwargs):
     """
     Compute cox survival regression coefficients
     
@@ -155,6 +204,7 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
     @param source Name of relation containing the training data
     @param indepColumn Name of independent column in training data
     @param depColumn Name of dependant column which captures time of death
+    @param status Right censoring support for cox
     @param optimizer Name of the optimizer. 'newton': newton method
     @param maxNumIterations Maximum number of iterations
     @param precision Terminate if two consecutive iterations have a difference 
@@ -168,16 +218,18 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
            the required arguments by this function.
     
     @return array with coefficients in case of convergence, otherwise None
+    \pc
     """
     
+    indepColumn = __check_args(schema_madlib, source, indepColumn, depColumn, status)
     if maxNumIterations < 1:
         plpy.error("Number of iterations must be positive")
     
     if optimizer not in ['newton']:
         plpy.error("Unknown optimizer requested. Must be 'newton'")
-						
+            
     return __runIterativeAlg(
-        stateType = "FLOAT8[]",
+        stateType = "double precision[]",
         intermediateStateType = "{schema_madlib}.intermediate_cox_prop_hazards_result".format(schema_madlib = schema_madlib),
         initialState = "NULL" ,
         source = source,
@@ -185,24 +237,27 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
         updateExpr = """
             {schema_madlib}.cox_prop_hazards_step(
                 ({{intermediateState}}).x,
-								{{intermediateStateDepColumn}},
+                {{intermediateStateDepColumn}},
+                ({{intermediateState}}).status,
                 ({{intermediateState}}).exp_coef_x,
                 ({{intermediateState}}).x_exp_coef_x,
                 ({{intermediateState}}).x_xTrans_exp_coef_x,
                 {{state}}
-								ORDER BY {{intermediateStateDepColumn}} DESC
+                ORDER BY {{intermediateStateDepColumn}} DESC
             )
             """.format(
                 schema_madlib = schema_madlib,
                 depColumn = depColumn),
         intermediateExpr = """
             {schema_madlib}.intermediate_cox_prop_hazards(
-                ({indepColumn})::FLOAT8[],
-                {{oldCoef}}::FLOAT8[]
+                ({indepColumn})::double precision[],
+                ({status})::boolean,
+                {{oldCoef}}::double precision[]
             )
             """.format(
                 schema_madlib = schema_madlib,
-                indepColumn = indepColumn),
+                indepColumn = indepColumn,
+                status = status),
 
         terminateExpr = """
             {schema_madlib}.internal_cox_prop_hazards_step_distance(
@@ -211,8 +266,10 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
             """.format(
                 schema_madlib = schema_madlib,
                 precision = precision),
-				resultExpr = """
-						{schema_madlib}.internal_cox_prop_hazards_result({{state}})
-						""".format(schema_madlib = schema_madlib),
+        resultExpr = """
+            {schema_madlib}.internal_cox_prop_hazards_result({{state}})
+            """.format(schema_madlib = schema_madlib),
         maxNumIterations = maxNumIterations)
+
+
 
