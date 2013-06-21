@@ -95,23 +95,6 @@ immediately <em>preceding</em> convergence (i.e., \f$ A \f$ is computed using
 the coefficients of the previous iteration). A large condition number (say, more
 than 1000) indicates the presence of significant multicollinearity.
 
-When doing regression analysis, we are sometimes interested in the variance of the computed coefficients \f$ \boldsymbol  c \f$. 
-This variance calculation can be expressed in a sandwich formation, which is the form
-\f[
-    S( \boldsymbol c) = B( \boldsymbol c) M( \boldsymbol c) B( \boldsymbol c)
-\f]
-where \f$ B( \boldsymbol c)\f$ and \f$ M( \boldsymbol c)\f$ are matrices.  The \f$ B( \boldsymbol c)\f$ matrix, 
-also known as the bread, is relatively straight forward, and can be computed as
-\f[
-B( \boldsymbol c) = n\left(\sum_i^n -H(y_i, x_i, \boldsymbol  c) \right)^{-1}
-\f]
-where $H$ is the hessian matrix.  
-
-The \f$ M( \boldsymbol c)\f$ matrix has several variation, each with different robustness properties.  
-The form implemented here is the White sandwich operator, which takes the form
-\f[
-M_{H} =\frac{1}{n} \sum_i^n \psi(y_i,x_i,  \boldsymbol c)^T  \psi(y_i,x_i,  \boldsymbol c).
-\f]
 
 @input
 
@@ -119,19 +102,9 @@ The training data is expected to be of the following form:\n
 <pre>{TABLE|VIEW} <em>sourceName</em> (
     ...
     <em>dependentVariable</em> INTEGER,
-    <em>numCategories</em> INTEGER,
     <em>independentVariables</em> FLOAT8[],
     ...
 )</pre>
-
-The robust variance calculation is given data in the form:
-<pre>(
-	<em>dependentVariable</em> BOOLEAN, 
-	<em>numCategories</em> INTEGER,
-	<em>independentVariables</em> FLOAT8[],  
-	<em>coefficients</em> FLOAT8[]
-).* from sourceName;</pre>
-
 
 @usage
 - The number of independent variables cannot exceed 65535.
@@ -140,7 +113,6 @@ The robust variance calculation is given data in the form:
   <pre>SELECT * FROM \ref mlogregr(
     '<em>sourceName</em>', 
     '<em>dependentVariable</em>',
-    '<em>numCategories</em>', 
     '<em>independentVariables</em>' [,
     <em>numberOfIterations</em> [, 
     '<em>optimizer</em>' [,
@@ -153,26 +125,12 @@ The robust variance calculation is given data in the form:
                                                ...
 </pre>
 - Get vector of coefficients \f$ \boldsymbol c \f$:\n
-  <pre>SELECT (\ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>', '<em>independentVariables</em>')).coef;</pre>
+  <pre>SELECT (\ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
 - Get a subset of the output columns, e.g., only the array of coefficients
   \f$ \boldsymbol c \f$, the log-likelihood of determination
   \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
   <pre>SELECT coef, log_likelihood, p_values
-FROM \ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>numCategories</em>',  '<em>independentVariables</em>');</pre>
-
-- Get the robust covariance
-  <pre>SELECT * FROM \ref robustMLogregr(
-	<em>dependentVariable</em>, 
-	<em>numCategories</em>,
-	<em>independentVariables</em>,  
-	<em>coefficients</em> 
-).* from sourceName;</pre>
-  Output:
-  <pre>
- robust_variance | std_err | z_stats | p_values
------------------+---------+---------+----------
-                     ...
-</pre>
+FROM \ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
 
 Note that the categories are encoded as integers with values from {0, 1, 2,...numCategories}
 @examp
@@ -207,20 +165,6 @@ num_iterations | 9
 
 @endverbatim
 
--# Run the robust variance using the coefficients from the previous example
-@verbatim
-
-sql> SELECT (robustMLogregr( val, 2, r1, ARRAY[5.59049410898112,2.11077546770772,-0.237276684606453]  )).* from data; 
-
--[ RECORD 1 ]--+--------------------------------------------------------------
-robust_variance| {3.20488524344419,0.221288089372885,4.53395366505342}
-std_err        | {1.79021932830706,0.470412679859806,2.12930825975325}
-z_stats        | {12.7056444456771,13.922048203096,-12.22013967087}
-p_values       | {5.50143504274353e-37,4.65374116161233e-44,2.42667428408846e-34}
-
-@endverbatim
-
-
 @literature
 
 A collection of nice write-ups, with valuable pointers into
@@ -237,11 +181,7 @@ further literature:
 [4] Scott A. Czepiel: Maximum Likelihood Estimation
 		of Logistic Regression Models: Theory and Implementation,
 		Retrieved Jul 12 2012, http://czep.net/stat/mlelr.pdf
-		
-[5] Achim Zeileis: Object-oriented Computation of Sandwich Estimators. 
-	Research Report Series / Department of Statistics and Mathematics, 37. 
-	Department of Statistics and Mathematics, WU Vienna University of Economics and Business, Vienna.
-	http://cran.r-project.org/web/packages/sandwich/vignettes/sandwich-OOP.pdf
+
 
 
 @sa File multilogistic.sql_in (documenting the SQL functions)
@@ -355,8 +295,6 @@ AS $$
     PythonFunction(regress, multilogistic, compute_mlogregr)
 $$ LANGUAGE plpythonu VOLATILE STRICT;
 
- 
-
 /**
  * @brief Compute logistic-regression coefficients and diagnostic statistics
  *
@@ -364,9 +302,8 @@ $$ LANGUAGE plpythonu VOLATILE STRICT;
  * <tt>independentVariables</tt> array to 1.
  *
  * @param source Name of the source relation containing the training data
- * @param depvar Name of the dependent column (of type INTEGER < numcategories - 1)
- * @param indepvar Name of the independent column (of type DOUBLE
- *        PRECISION[])
+ * @param depvar Name of the dependent column (of type INTEGER < numcategories)
+ * @param indepvar Name of the independent column (of type DOUBLE PRECISION[])
  * @param maxnumiterations The maximum number of iterations
  * @param optimizer The optimizer to use (
  *        <tt>'irls'</tt>/<tt>'newton'</tt> for iteratively reweighted least
@@ -529,8 +466,9 @@ CREATE FUNCTION MADLIB_SCHEMA.mlogregr
     indepvar    VARCHAR
 )
 RETURNS MADLIB_SCHEMA.mlogregr_result AS
-$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, 20, 'irls', 0.0001, 0);$$
-LANGUAGE sql VOLATILE;
+$$
+    SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, 20, 'irls', 0.0001, 0);
+$$ LANGUAGE sql VOLATILE;
 
 CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
     source              VARCHAR,
@@ -539,8 +477,9 @@ CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
     maxnumiterations    INTEGER
 )
 RETURNS MADLIB_SCHEMA.mlogregr_result AS
-$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, 'irls', 0.0001, 0);$$
-LANGUAGE sql VOLATILE;
+$$
+    SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, 'irls', 0.0001, 0);
+$$ LANGUAGE sql VOLATILE;
 
 CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
     source              VARCHAR,
@@ -550,6 +489,6 @@ CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
     optimizer           VARCHAR
 )
 RETURNS MADLIB_SCHEMA.mlogregr_result AS
-$$SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, 0.0001, 0);$$
-LANGUAGE sql VOLATILE;
-
+$$
+    SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, 0.0001, 0);
+$$ LANGUAGE sql VOLATILE;
