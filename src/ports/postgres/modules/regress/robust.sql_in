@@ -41,6 +41,8 @@ M_{H} =\frac{1}{n} \sum_i^n \psi(y_i,x_i,  \boldsymbol c)^T  \psi(y_i,x_i,  \bol
 The above method for calculating robust variance (Huber white estimates) is implemented for linear regression, logistic regression, multinomial logistic regression, and cox proportional hazard models. It is useful in calculating variances in a dataset with potentially noisy outliers.
 
 
+The interface for robust linear and logistic regression are identical, including the help and usage functions.  
+
 @input
 
 The training data is expected to be of the following form:
@@ -48,7 +50,7 @@ The training data is expected to be of the following form:
     <em>outputTable</em> VARCHAR,
     <em>regressionType </em> VARCHAR,
     <em>dependentVariable</em> VARCHAR,
-    <em>independentVariable</em> VARCHAR,
+    <em>independentVariable</em> VARCHAR
 )</pre>
 
 @usage
@@ -57,24 +59,26 @@ The training data is expected to be of the following form:
 <b> The Full Interface</b>
 
 <pre>
-SELECT madlib.\ref robust_variance(
+SELECT \ref madlib.robust_variance_linregr}(
     <em>'source_table'</em>,        -- name of input table, VARCHAR
     <em>'out_table'</em>,           -- name of output table, VARCHAR
-    <em>'regression_type'</em>,     -- type of regression (linear/logistic/multilogistic) 
     <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
-    <em>'independent_varname'</em>, -- dependent variable, VARCHAR
+    <em>'independent_varname'</em>, -- independent variables, VARCHAR
+    <em>'grouping_cols'</em> 		-- [OPTIONAL] grouping variables, VARCHAR
 );
 </pre>
-
-OR 
-
+OR
 <pre>
-SELECT madlib.\ref robust_variance(
+SELECT \ref madlib.robust_variance_logregr}(
     <em>'source_table'</em>,        -- name of input table, VARCHAR
     <em>'out_table'</em>,           -- name of output table, VARCHAR
-    <em>'regression_type'</em>,     -- type of regression (linear/logistic/multilogisitc) 
     <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
-    <em>'independent_varname'</em>, -- dependent variable, VARCHAR
+    <em>'independent_varname'</em>, -- independent variables, VARCHAR
+    <em>'grouping_cols'</em>, 		-- [OPTIONAL] grouping variables, VARCHAR
+    <em>'max_iter'</em>				-- [OPTIONAL] Integre identifying the maximum iterations used by the logistic regression solver.  Default is 20.
+    <em>'optimizer'</em>			-- [OPTIONAL] String identifying the optimizer used in the logistic regression.  See the documentation in the logistic regression for the available options.  Default is irls.
+	<em>'tolerance'</em>			--  [OPTIONAL] Float identifying the tolerance of the logistic regression optimizer. Default is 0.0001. 
+	<em>'verbose'</em>				--[OPTIONAL] Boolean specifying if the regression fit should print any warning messages.  Default is false. 
 );
 </pre>
 Here the <em>'independent_varname'</em> can be the name of a column, which contains
@@ -90,20 +94,19 @@ Output is stored in the <em>out_table</em>:
 
 @examp
 
-@endverbatim
 
 -#  For function summary information. Run 
 @verbatim
-sql> select robust_variance('help');
+sql> select robust_variance_{linregr OR logregr}('help');
 OR
-sql> select robust_variance();
+sql> select robust_variance_{linregr OR logregr}();
 OR
-sql> select robust_variance('?');
+sql> select robust_variance_{linregr OR logregr}('?');
 @endverbatim
 
 -#  For function usage information. 
 @verbatim
-sql> select robust_variance('usage');
+sql> select robust_variance_{linregr OR logregr}('usage');
 @endverbatim
 -# Create the sample data set:
 @verbatim
@@ -121,9 +124,9 @@ sql> SELECT * FROM data;
  17 |             0 |         0 |            55
 ...
 @endverbatim
--# Run the logistic regression function and then compute the robust variance of the regression:
+-# Run the logistic regression function and then compute the robust logistic variance of the regression:
 @verbatim
-sql> select robust_variance('patients', 'newTable', 'logistic', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]'); 
+sql> select robust_variance_logregr('patients', 'newTable',  'second_attack', 'ARRAY[1, treatment, trait_anxiety]'); 
 sql> select * from newTable;
 coef           | {11.962748350258,1.37269168529894,0.00285507335100035}
 std_err        | {3.45872062333141,1.17161925782182,0.053432886418388}
@@ -151,6 +154,45 @@ p_values       | {0.0657926909738772,0.382066744586027,0.0258849510756295}
     documenting the implementation in C++
 @endinternal
 */
+
+
+/**
+ * @internal
+ * @bDoes error checking on the input for the robust variance regressions.  
+ *     
+ */
+ 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_input_checking(
+  source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , independent_varname  VARCHAR       -- name of independent variable
+   , group_cols                 VARCHAR       -- names of columns to group by
+)
+RETURNS VOID AS $$
+BEGIN
+	EXECUTE 'SET client_min_messages TO warning';
+  	IF (source_table IS NULL OR source_table = '') THEN
+	  RAISE EXCEPTION 'Invalid input table name given.';
+	END IF;
+	IF (NOT MADLIB_SCHEMA.__table_exists(source_table)) THEN
+	  RAISE EXCEPTION 'Input table name does not exist.';
+	END IF;
+	IF (MADLIB_SCHEMA.__table_exists(out_table)) THEN
+	  RAISE EXCEPTION 'Output table name already exists. Drop the table before calling the function.';
+	END IF;
+	IF (out_table IS NULL OR out_table = '') THEN
+	  RAISE EXCEPTION 'Invalid output table name given.';
+	END IF;
+	IF (independent_varname IS NULL OR independent_varname = '') THEN
+	  RAISE EXCEPTION 'Invalid independent variable name given.';
+	END IF;
+	IF (dependent_varname IS NULL OR dependent_varname = '') THEN
+	  RAISE EXCEPTION 'Invalid dependent variable name given.';
+	END IF;
+	
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
 
 
@@ -320,7 +362,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.robust_logregr(
     INITCOND='{0,0,0,0,0.0}'
 );
 
-
 --------------------------- INTERNAL ---------------------------------------
 
 /**
@@ -486,7 +527,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.robustMLogregr(
 
 --------------------------- Interface ----------------------------------
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linregr_help(
      usage_string VARCHAR                               -- usage string
 )
 RETURNS VARCHAR AS $$
@@ -497,31 +538,30 @@ BEGIN
     insert_string := '' || 
     E'Summary \n' || 	
     E'-----------------------------------------------------------------------------------------\n' ||
-    E' Functionality: Calculate Huber-White robust statistics for linear/logistic regression\n' || 	
-    E' The funciton first runs the regression, calculates the \n' ||
+    E' Functionality: Calculate Huber-White robust statistics for linear regression\n' || 	
+    E' The funciton first runs the regression to calculate the \n' ||
     E'     coefficients and uses them to calculate the robust statistics \n' || 	
-    E' SELECT {schema_madlib}.robust_variance(''source_table'' \n' || 
+    E' The functions robust_variance_linregr() and robust_variance_logregr() have nearly identical interfaces\n' || 	
+    E' SELECT {schema_madlib}.robust_variance_linregr(''source_table'' \n' || 
     E'                                       ,''output_table'' \n' || 
-    E'                                       ,''regression_type'' \n' || 
     E'                                       ,''dependent_variable'' \n' || 
     E'                                       ,''independent_variable'' \n' ||
+    E'                                       ,''group_cols'' \n' ||
     E'                                       );\n' || 
     E'For more details on function usage:  \n' || 
-    E'SELECT {schema_madlib}.robust_variance(''usage'') \n' || 
-    E'';
+    E'SELECT {schema_madlib}.robust_variance_linregr(''usage'') \n';
   ElSIF (usage_string  = 'usage') THEN
     insert_string := '' || 
     E'Usage\n' || 	
     E'-----------------------------------------------------------------------------------------\n' ||
-    E' There are two ways to use this function  \n' || 	
-    E' SELECT {schema_madlib}.robust_variance( \n' ||
+    E' To use this function  \n' || 	
+    E' SELECT {schema_madlib}.robust_variance_linregr( \n' ||
     E' ''source_table'',         -- Name of data table          \n' || 
     E' ''output_table'',         -- Name of result table (overwrites if exists) \n' || 
-    E' ''regression_type'',      -- Type of regression (linear/logistic)        \n' || 
     E' ''dependent_variable'',   -- Name of column for dependent variables\n' || 
     E' ''independent_variable'', -- Name of column for independent variables\n' || 
     E'                               (can be any SQL expression like ''*'') \n' || 
-    E' ''group_cols'',           -- Comma separated string with columns to group by\n' || 
+    E' ''group_cols'',           -- [OPTIONAL] Comma separated string with columns to group by.  Default is NULL. \n' || 
     E' );\n' || 
     E'\n' || 
     E'Output:\n' || 	
@@ -534,30 +574,115 @@ BEGIN
     E'\n' || 
     E'';
   ELSE
-    insert_string := 'No such option. Run SELECT {schema_madlib}.robust_variance()';
+    insert_string := 'No such option. Run SELECT {schema_madlib}.robust_variance_linregr()';
   END IF;
   RETURN insert_string;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance()
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr_help(
+     usage_string VARCHAR                               -- usage string
+)
 RETURNS VARCHAR AS $$
+DECLARE
+insert_string       VARCHAR;
 BEGIN
-  RETURN MADLIB_SCHEMA.robust_variance('');
+	IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
+    insert_string := '' || 
+    E'Summary \n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' Functionality: Calculate Huber-White robust statistics for logistic regression\n' || 	
+    E' The funciton first runs the regression to calculate the \n' ||
+    E'     coefficients and uses them to calculate the robust statistics \n' || 	
+    E' The functions robust_variance_linregr() and robust_variance_logregr() have nearly identical interfaces\n' || 	
+    E' SELECT {schema_madlib}.robust_variance_logregr(''source_table'' \n' || 
+    E'                                       ,''output_table'' \n' || 
+    E'                                       ,''dependent_variable'' \n' || 
+    E'                                       ,''independent_variable'' \n' ||
+    E'                                       ,''group_cols'' \n' ||
+    E'                                       ,''max_iter'' \n' ||
+    E'                                       ,''optimizer'' \n' ||
+    E'                                       ,''tolerance'' \n' ||
+    E'                                       ,''verbose'' \n' ||
+    E'                                       );\n' || 
+    E'For more details on function usage:  \n' || 
+    E'SELECT {schema_madlib}.robust_variance_logregr(''usage'') \n';
+  ElSIF (usage_string  = 'usage') THEN
+    insert_string := '' || 
+    E'Usage\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' To use this function  \n' || 	
+    E' SELECT {schema_madlib}.robust_variance_logregr( \n' ||
+    E' ''source_table'',         -- Name of data table          \n' || 
+    E' ''output_table'',         -- Name of result table (overwrites if exists) \n' || 
+    E' ''dependent_variable'',   -- Name of column for dependent variables\n' || 
+    E' ''independent_variable'', -- Name of column for independent variables\n' || 
+    E'                               (can be any SQL expression like ''*'') \n' || 
+    E' ''group_cols'',           -- [OPTIONAL] Comma separated string with columns to group by.  Default is NULL. \n' || 
+    E' ''max_iter'',           -- [OPTIONAL] The number of iterations used by the logistic regression solver.  Default is 20. \n' || 
+    E' ''optimizer'',           -- [OPTIONAL] Name of the optimizer used in the logistic regression.  Default is irls. \n' || 
+    E' ''tolerance'',           -- [OPTIONAL] The tolerance of the logistic regression optimizer.  Default is 0.0001. \n' || 
+    E' ''verbose'',           -- [OPTIONAL] Should the optimizer print warning messages to the screen.  Default is FALSE. \n' || 
+
+    E' );\n' || 
+    E'\n' || 
+    E'Output:\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The output table (''output_table'' above) has the following columns\n' || 	
+    E' ''coef''    DOUBLE PRECISION[],  -- Coefficients of regression \n' || 
+    E' ''std_err''  DOUBLE PRECISION[], -- Huber-White standard errors\n' || 
+    E' ''stats''    DOUBLE PRECISION[], -- Z-stats of the standard errors\n' || 
+    E' ''p_values'' DOUBLE PRECISION[], -- p-values of the standard errors\n' || 
+    E'\n' || 
+    E'';
+  ELSE
+    insert_string := 'No such option. Run SELECT {schema_madlib}.robust_variance_logregr()';
+  END IF;
+  RETURN insert_string;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.robust_variance_help('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr(usage_string VARCHAR)
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.robust_variance_help(usage_string);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linregr()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.robust_variance_linregr_help('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linregr(usage_string VARCHAR)
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.robust_variance_linregr_help(usage_string);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
 /**
-  @brief A wrapper function for the various robust regression analyzes.  
+  @brief Functions for the various robust regression analyzes.  Both robust logistic and robust linear take identical arguments for the first five parameters. The logistic regression has an additional 4 optional parameters that specify the details of the regression fit.   
  *
  * @param source_table String identifying the input table
  * @param out_table String identifying the output table to be created
- * @param regression_type String identifying which regression should be used
  * @param dependent_varname Column containing the dependent variable
  * @param independent_varname Column containing the array of independent variables
- * @param coef Column containing the array of the coefficients, or NULL.
- *
+ * @param coef [OPTIONAL] Column containing the array of the coefficients, or NULL.
+ * For logistic regression, there are also 
+ * @param max_iter [OPTIONAL] Integre identifying the maximum iterations used by the logistic regression solver.  Default is 20.
+ * @param optimizer [OPTIONAL] String identifying the optimizer used in the logistic regression.  See the documentation in the logistic regression for the available options.  Default is irls.
+ * @param tolerance [OPTIONAL] Float identifying the tolerance of the logistic regression optimizer. Default is 0.0001. 
+ * @param verbose [OPTIONAL] Boolean specifying if the regression fit should print any warning messages.  Default is false.  
  * @par
  * To include an intercept in the model, set one coordinate in the
  * <tt>independentVariables</tt> array to 1.
@@ -570,113 +695,157 @@ $$ LANGUAGE plpgsql VOLATILE;
  *
  * @usage
  * For function summary information. Run 
- * sql> select robust_variance('help');
+ * sql> select robust_variance_logregr('help');
  * OR
- * sql> select robust_variance();
+ * sql> select robust_variance_logregr();
  * OR
- * sql> select robust_variance('?');
+ * sql> select robust_variance_logregr('?');
  * For function usage information. Run 
- * sql> select robust_variance('usage');
+ * sql> select robust_variance_logregr('usage');
  *  - Compute the coefficients, and the get the robust diagnostic statistics:
  * 	<pre> 
- *  select robust_variance(source_table, out_table, regression_type, dependentVariable, independentVariables, NULL );
+ *  select robust_variance_logregr(source_table, out_table, regression_type, dependentVariable, independentVariables, NULL );
  * </pre>
  *
  *  - If the coefficients are already known, they can be provided directly
- *    <pre>select robust_variance(source_table, out_table, regression_type, dependentVariable, independentVariables, coef );</pre>
+ *    <pre>select robust_variance_logregr(source_table, out_table, regression_type, dependentVariable, independentVariables, coef );
+ </pre>
  */
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance(
-     source_table               VARCHAR       -- name of input  table
-   , out_table                  VARCHAR       -- name of output table
-   , regression_type			      VARCHAR       -- type of regression 
-   , dependent_varname          VARCHAR       -- name of dependent variable
-   , input_independent_varname  VARCHAR       -- name of independent variable
-   , group_cols                 VARCHAR       -- names of columns to group by
-  )
-RETURNS VOID AS $$
-DECLARE
-  insert_string         VARCHAR;
-  independent_varname   VARCHAR;
-  robust_lin_rst        MADLIB_SCHEMA.robust_linregr_result;
-  tempTableName			    VARCHAR;
-  robust_log_rst		    MADLIB_SCHEMA.robust_logregr_result;
-  old_msg_level         TEXT;
-BEGIN
-  EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
-  EXECUTE 'SET client_min_messages TO warning';
-	IF (source_table IS NULL OR source_table = '') THEN
-	  RAISE EXCEPTION 'Invalid input table name given.';
-	END IF;
-	IF (NOT MADLIB_SCHEMA.__table_exists(source_table)) THEN
-	  RAISE EXCEPTION 'Input table name does not exist.';
-	END IF;
-	IF (MADLIB_SCHEMA.__table_exists(out_table)) THEN
-	  RAISE EXCEPTION 'Output table name already exists. Drop the table before calling the function.';
-	END IF;
-	IF (out_table IS NULL OR out_table = '') THEN
-	  RAISE EXCEPTION 'Invalid output table name given.';
-	END IF;
-	IF (input_independent_varname IS NULL OR input_independent_varname = '') THEN
-	  RAISE EXCEPTION 'Invalid dependent variable name given.';
-	END IF;
-	IF (dependent_varname IS NULL OR dependent_varname = '') THEN
-	  RAISE EXCEPTION 'Invalid independent variable name given.';
-	END IF;
-	IF NOT (regression_type = 'linear' OR regression_type = 'logistic') THEN
-    RAISE EXCEPTION 'No such regression type found. Must be (linear/logistic)';
-  END IF;
-
-	IF (input_independent_varname = '*') THEN
-	  independent_varname := MADLIB_SCHEMA.__internal_get_col_names_except_dep_variable(source_table, 
-	                            dependent_varname);
-	ELSE
-	  independent_varname := input_independent_varname; 
-	END IF;
-	
-
-  -- Separate wrapper for each function 
-  --  Linear regression
-	IF (regression_type = 'linear') THEN
-
-    PERFORM MADLIB_SCHEMA.robust_variance_linear(
-                                source_table,
-                                out_table,
-                                dependent_varname,
-                                independent_varname,
-                                group_cols);
-
-  --  Logistic Regression
-  ElSIF (regression_type = 'logistic') THEN
-	
-    PERFORM MADLIB_SCHEMA.robust_variance_logistic(
-                                source_table,
-                                out_table,
-                                dependent_varname,
-                                independent_varname,
-                                group_cols);
-		
-  END IF;
-  EXECUTE 'SET client_min_messages TO '|| old_msg_level;
-END;
-$$ LANGUAGE plpgsql VOLATILE;
 
 /**
-  * @brief Robust regression with default fit regression behaviour & no grouping
+  * @brief Robust logistic regression with default fit regression behavior, and no grouping,
  **/
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr(
      source_table               VARCHAR       -- name of input  table
    , out_table                  VARCHAR       -- name of output table
-   , regression_type						VARCHAR       -- type of regression 
    , dependent_variable         VARCHAR       -- name of dependent variable
    , independent_variable       VARCHAR       -- name of independent variable
   )
 RETURNS VOID AS $$
 BEGIN
-  PERFORM MADLIB_SCHEMA.robust_variance(
+  PERFORM MADLIB_SCHEMA.robust_variance_logregr(
+	source_table,
+	out_table,
+	dependent_variable,
+	independent_variable,
+	NULL, 
+	20, 
+	'irls',
+	0.0001,
+	False);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , input_group_cols			VARCHAR       -- grouping columns
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.robust_variance_logregr(
+	source_table,
+	out_table,
+	dependent_variable,
+	independent_variable,
+	input_group_cols, 
+	20, 
+	'irls',
+	0.0001,
+	False);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , input_group_cols			VARCHAR       -- grouping columns
+   , max_iter            		INTEGER		  -- max number of iterations
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.robust_variance_logregr(
+	source_table,
+	out_table,
+	dependent_variable,
+	independent_variable,
+	input_group_cols, 
+	max_iter, 
+	'irls',
+	0.0001,
+	False);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , input_group_cols			VARCHAR       -- grouping columns
+   , max_iter            		INTEGER		  -- max number of iterations
+   , optimizer           		VARCHAR		  -- The optimizer used in the robust regression
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.robust_variance_logregr(
+	source_table,
+	out_table,
+	dependent_variable,
+	independent_variable,
+	input_group_cols, 
+	max_iter, 
+	optimizer,
+	0.0001,
+	False);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , input_group_cols			VARCHAR       -- grouping columns
+   , max_iter            		INTEGER		  -- max number of iterations
+   , optimizer           		VARCHAR		  -- The optimizer used in the robust regression
+   , tolerance           		DOUBLE PRECISION -- The tolerance of the optimizer
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.robust_variance_logregr(
+	source_table,
+	out_table,
+	dependent_variable,
+	independent_variable,
+	input_group_cols, 
+	max_iter, 
+	optimizer,
+	tolerance,
+	False);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+  * @brief Robust linear regression with default fit regression behaviour & no grouping
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.robust_variance_linregr(
                               source_table,
                               out_table,
-                              regression_type,
                               dependent_variable,
                               independent_variable,
                               NULL);
@@ -689,11 +858,11 @@ $$ LANGUAGE plpgsql VOLATILE;
 /**
   * @brief Robust linear regression function subcall
  **/
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linear(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_linregr(
      source_table               VARCHAR       -- name of input  table
    , out_table                  VARCHAR       -- name of output table
    , dependent_varname          VARCHAR       -- name of dependent variable
-   , independent_varname        VARCHAR       -- name of independent variable
+   , input_independent_varname        VARCHAR       -- name of independent variable
    , input_group_cols           VARCHAR       -- grouping columns
   )
 RETURNS VOID AS $$
@@ -714,8 +883,18 @@ DECLARE
   col_data_type               VARCHAR;
   schema_name                 VARCHAR;
   sql                         VARCHAR;
+  old_msg_level         TEXT;
+  independent_varname   VARCHAR;
 BEGIN
-
+  EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
+  PERFORM MADLIB_SCHEMA.robust_input_checking(source_table, out_table, dependent_varname, input_independent_varname, input_group_cols);	
+  IF (input_independent_varname = '*') THEN
+	  independent_varname := MADLIB_SCHEMA.__internal_get_col_names_except_dep_variable(source_table, input_independent_varname);
+	ELSE
+	  independent_varname := input_independent_varname; 
+  	END IF;
+  
+  
   IF (input_group_cols IS NULL)
 	THEN
     -------------------------------------------------------------------------
@@ -756,7 +935,7 @@ BEGIN
     
     -- Step 1: Prepare the group columns 
     -------------------------------------------------------------------------
-    group_cols = regexp_split_to_array(input_group_cols, E',');
+    group_cols = MADLIB_SCHEMA._string_to_array(input_group_cols);
     group_array_length = array_upper(group_cols, 1);
 
     input_table_name = regexp_split_to_array(source_table, E'\\.');
@@ -813,7 +992,7 @@ BEGIN
                                         input_group_cols);
     
     -- Note: We need to alter the names on the output tables for linregr_train
-    -- so that they don't clash with the robust_variance_linear output tables
+    -- so that they don't clash with the robust_variance_linregr output tables
     -- This name changing is required to construct queries when the regressor
     -- is also being grouped by. I don't know why anyone would do that but 
     -- it should be a mathematically valid operation.
@@ -852,7 +1031,7 @@ BEGIN
                     actual_table_name || '.' || 
                     group_cols[group_array_length] || ')';
 
-    -- Step 4: Robust statistics into the out table 
+    -- Step 4: Put robust statistics into the out table 
     EXECUTE 
       'INSERT INTO ' || out_table || '
         SELECT ' || group_string || ', (result).coef, (result).std_err,
@@ -867,7 +1046,8 @@ BEGIN
             ' WHERE '|| where_group_string ||
             ' GROUP BY '|| group_string || ')' || actual_table_name;
   END IF;
-
+  --Restore message settings
+  EXECUTE 'SET client_min_messages TO '|| old_msg_level;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
@@ -877,12 +1057,16 @@ $$ LANGUAGE plpgsql VOLATILE;
 /**
   * @brief Robust logistic function subcall
  **/
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logistic(
-     source_table               VARCHAR       -- name of input  table
-   , out_table                  VARCHAR       -- name of output table
-   , dependent_varname          VARCHAR       -- name of dependent variable
-   , independent_varname        VARCHAR       -- name of independent variable
-   , input_group_cols           VARCHAR       -- grouping columns
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_logregr(
+	  source_table               VARCHAR       -- name of input  table
+	, out_table                  VARCHAR       -- name of output table
+	, dependent_varname          VARCHAR       -- name of dependent variable
+	, input_independent_varname        VARCHAR       -- name of independent variable
+	, input_group_cols           VARCHAR       -- grouping columns
+	, max_iter            INTEGER
+	, optimizer           VARCHAR
+	, tolerance           DOUBLE PRECISION
+	, verbose             BOOLEAN
   )
 RETURNS VOID AS $$
 DECLARE
@@ -903,7 +1087,17 @@ DECLARE
   sql                         VARCHAR;
   tempTableName			          VARCHAR;
   robust_log_rst		          MADLIB_SCHEMA.robust_logregr_result;
+  old_msg_level         TEXT;
+  independent_varname   VARCHAR;
 BEGIN
+	EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
+	PERFORM MADLIB_SCHEMA.robust_input_checking(source_table, out_table, dependent_varname, input_independent_varname, input_group_cols);
+
+	IF (input_independent_varname = '*') THEN
+	  independent_varname := MADLIB_SCHEMA.__internal_get_col_names_except_dep_variable(source_table, input_independent_varname);
+	ELSE
+	  independent_varname := input_independent_varname; 
+  	END IF;
   IF (input_group_cols IS NULL)
 	THEN
     -- create output table with appropriate column names
@@ -915,12 +1109,15 @@ BEGIN
         p_values DOUBLE PRECISION[])';
 			-- Run the regression if the coefficients are not provided 
 			tempTableName := MADLIB_SCHEMA.__unique_string(); 
-			EXECUTE '
-        SELECT MADLIB_SCHEMA.logregr_train('
-              || ' '''||source_table||''' ' || ','
-              || ' '''||tempTableName||''' ' || ','
-              || ' '''||dependent_varname ||''' ' || ' , '
-              || ' '''||independent_varname||''' '|| ')';
+			PERFORM MADLIB_SCHEMA.logregr_train(source_table, 
+                                        tempTableName,
+                                        dependent_varname,
+                                        independent_varname,
+                                        input_group_cols,
+                                        max_iter,
+                                        optimizer,
+                                        tolerance,
+                                        verbose);
         EXECUTE 'SELECT coef from ' || tempTableName INTO regr_coef;
 
         EXECUTE 'DROP TABLE IF EXISTS ' || tempTableName;
@@ -947,7 +1144,7 @@ BEGIN
     
     -- Step 1: Prepare the group columns 
     -------------------------------------------------------------------------
-    group_cols = regexp_split_to_array(input_group_cols, E',');
+    group_cols = MADLIB_SCHEMA._string_to_array(input_group_cols);
     group_array_length = array_upper(group_cols, 1);
 
     input_table_name = regexp_split_to_array(source_table, E'\\.');
@@ -1001,10 +1198,14 @@ BEGIN
                                         temp_table,
                                         dependent_varname,
                                         independent_varname,
-                                        input_group_cols);
+                                        input_group_cols,
+                                        max_iter,
+                                        optimizer,
+                                        tolerance,
+                                        verbose);
     
-    -- Note: We need to alter the names on the output tables for linregr_train
-    -- so that they don't clash with the robust_variance_linear output tables
+    -- Note: We need to alter the names on the output tables for logregr_train
+    -- so that they don't clash with the robust_variance_logregr output tables
     -- This name changing is required to construct queries when the regressor
     -- is also being grouped by. I don't know why anyone would do that but 
     -- it should be a mathematically valid operation.
@@ -1058,6 +1259,8 @@ BEGIN
             ' WHERE '|| where_group_string ||
             ' GROUP BY '|| group_string || ')' || actual_table_name;
   END IF;
+  --Restore message settings
+  EXECUTE 'SET client_min_messages TO '|| old_msg_level;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;
