@@ -75,7 +75,7 @@ SELECT \ref madlib.robust_variance_logregr}(
     <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
     <em>'independent_varname'</em>, -- independent variables, VARCHAR
     <em>'grouping_cols'</em>, 		-- [OPTIONAL] grouping variables, VARCHAR
-    <em>'max_iter'</em>				-- [OPTIONAL] Integre identifying the maximum iterations used by the logistic regression solver.  Default is 20.
+    <em>'max_iter'</em>				-- [OPTIONAL] Integer identifying the maximum iterations used by the logistic regression solver.  Default is 20.
     <em>'optimizer'</em>			-- [OPTIONAL] String identifying the optimizer used in the logistic regression.  See the documentation in the logistic regression for the available options.  Default is irls.
 	<em>'tolerance'</em>			--  [OPTIONAL] Float identifying the tolerance of the logistic regression optimizer. Default is 0.0001. 
 	<em>'verbose'</em>				--[OPTIONAL] Boolean specifying if the regression fit should print any warning messages.  Default is false. 
@@ -130,7 +130,7 @@ sql> select robust_variance_logregr('patients', 'newTable',  'second_attack', 'A
 sql> select * from newTable;
 coef           | {11.962748350258,1.37269168529894,0.00285507335100035}
 std_err        | {3.45872062333141,1.17161925782182,0.053432886418388}
-t_stats        | {-1.839833462942,-0.874094587942144,2.22793348156965}
+z_stats        | {-1.839833462942,-0.874094587942144,2.22793348156965}
 p_values       | {0.0657926909738772,0.382066744586027,0.0258849510756295}
 @endverbatim
 
@@ -338,7 +338,7 @@ LANGUAGE C IMMUTABLE STRICT;
  *  - <tt>robust_est FLOAT8[] </tt> - The coefficients for the regression
  *  - <tt>std_err FLOAT8[]</tt> - Array of huber-white standard errors,
  *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
- *  - <tt>t_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
  *  - <tt>p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
  *
  * @usage
@@ -560,7 +560,7 @@ BEGIN
     E' ''output_table'',         -- Name of result table (overwrites if exists) \n' || 
     E' ''dependent_variable'',   -- Name of column for dependent variables\n' || 
     E' ''independent_variable'', -- Name of column for independent variables\n' || 
-    E'                               (can be any SQL expression like ''*'') \n' || 
+    E'                               (can be any SQL expression) \n' || 
     E' ''group_cols'',           -- [OPTIONAL] Comma separated string with columns to group by.  Default is NULL. \n' || 
     E' );\n' || 
     E'\n' || 
@@ -617,7 +617,7 @@ BEGIN
     E' ''output_table'',         -- Name of result table (overwrites if exists) \n' || 
     E' ''dependent_variable'',   -- Name of column for dependent variables\n' || 
     E' ''independent_variable'', -- Name of column for independent variables\n' || 
-    E'                               (can be any SQL expression like ''*'') \n' || 
+    E'                               (can be any SQL expression) \n' || 
     E' ''group_cols'',           -- [OPTIONAL] Comma separated string with columns to group by.  Default is NULL. \n' || 
     E' ''max_iter'',           -- [OPTIONAL] The number of iterations used by the logistic regression solver.  Default is 20. \n' || 
     E' ''optimizer'',           -- [OPTIONAL] Name of the optimizer used in the logistic regression.  Default is irls. \n' || 
@@ -888,11 +888,14 @@ DECLARE
 BEGIN
   EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
   PERFORM MADLIB_SCHEMA.robust_input_checking(source_table, out_table, dependent_varname, input_independent_varname, input_group_cols);	
-  IF (input_independent_varname = '*') THEN
+  independent_varname := input_independent_varname; 
+  
+  --This code should be added back in should '*' support be implemented
+  /*IF (input_independent_varname = '*') THEN
 	  independent_varname := MADLIB_SCHEMA.__internal_get_col_names_except_dep_variable(source_table, input_independent_varname);
 	ELSE
 	  independent_varname := input_independent_varname; 
-  	END IF;
+  	END IF;*/
   
   
   IF (input_group_cols IS NULL)
@@ -1093,11 +1096,15 @@ BEGIN
 	EXECUTE 'SELECT setting FROM pg_settings WHERE name=''client_min_messages''' INTO old_msg_level;
 	PERFORM MADLIB_SCHEMA.robust_input_checking(source_table, out_table, dependent_varname, input_independent_varname, input_group_cols);
 
-	IF (input_independent_varname = '*') THEN
+	independent_varname := input_independent_varname; 
+	
+	--This code should be added back in should '*' support be implemented
+  /*IF (input_independent_varname = '*') THEN
 	  independent_varname := MADLIB_SCHEMA.__internal_get_col_names_except_dep_variable(source_table, input_independent_varname);
 	ELSE
 	  independent_varname := input_independent_varname; 
-  	END IF;
+  	END IF;*/
+	
   IF (input_group_cols IS NULL)
 	THEN
     -- create output table with appropriate column names
@@ -1105,7 +1112,7 @@ BEGIN
     CREATE TABLE ' || out_table || ' (
         coef DOUBLE PRECISION[],
         std_err DOUBLE PRECISION[],
-        t_stats DOUBLE PRECISION[],
+        z_stats DOUBLE PRECISION[],
         p_values DOUBLE PRECISION[])';
 			-- Run the regression if the coefficients are not provided 
 			tempTableName := MADLIB_SCHEMA.__unique_string(); 
@@ -1188,7 +1195,7 @@ BEGIN
     EXECUTE table_creation_string || '
             coef DOUBLE PRECISION[],
             std_err DOUBLE PRECISION[],
-            t_stats DOUBLE PRECISION[],
+            z_stats DOUBLE PRECISION[],
             p_values DOUBLE PRECISION[])';
     
     -- Step 2: Perform the regression on groups
