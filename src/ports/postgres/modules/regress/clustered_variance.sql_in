@@ -1,0 +1,284 @@
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_clustered_errors
+
+@about
+
+Adjusting standard errors for clustering can be important. For
+example, replicating a dataset 100 times should not increase the
+precision of parameter estimates. However, performing this procedure
+with the IID assumption will actually do this. Another example is in
+economics of education research, it is reasonable to expect that the
+error terms for children in the same class are not
+independent. Clustering standard errors can correct for this.
+
+Assume that the data can be separated into \f$m\f$ clusters. Usually this
+can be down by grouping the data table according to one or multiple
+columns.
+
+The estimator has a similar form to the usual sandwich estimator
+\f[
+  S(\vec{c}) = B(\vec{c}) M(\vec{c}) B(\vec{c})
+\f]
+
+The bread part is the same as sandwich estimator
+\f{eqnarray}{
+  B(\vec{c}) & = & \left(-\sum_{i=1}^{n} H(y_i, \vec{x}_i,
+    \vec{c})\right)^{-1}\\
+  & = & \left(-\sum_{i=1}^{n}\frac{\partial^2 l(y_i, \vec{x}_i,
+      \vec{c})}{\partial c_\alpha \partial c_\beta}\right)^{-1}
+\f}
+where \f$H\f$ is the hessian matrix, which is the second derivative of the
+target function 
+\f[
+  L(\vec{c}) = \sum_{i=1}^n l(y_i, \vec{x}_i, \vec{c})\ .
+\f]
+
+The meat part is different
+\f[
+  M(\vec{c}) = \bf{A}^T\bf{A}
+\f]
+where the \f$m\f$-th row of \f$\bf{A}\f$ is 
+\f[
+  A_m = \sum_{i\in G_m}\frac{\partial
+      l(y_i,\vec{x}_i,\vec{c})}{\partial \vec{c}}
+\f]
+where \f$G_m\f$ is the set of rows that belong to the same cluster.
+
+We can compute the quantities of \f$B\f$ and \f$A\f$ for each cluster during one scan through
+the data table in an aggregate function. Then sum over all clusters to
+the full \f$B\f$ and \f$A\f$ in the outside of the aggregate function. At last, the matrix mulplitications
+are
+done in a separate function on master.  
+
+@input
+<pre>{Table|View} <em>clustered_variance_linregr</em> (
+    <em>dataSourceTable</em> TEXT,
+    <em>outputTable</em> TEXT,
+    <em>dependentVariable</em> TEXT,
+    <em>independentVariable</em> TEXT,
+    <em>clusteredVariable</em> TEXT,
+    <em>groupingVariable</em> TEXT
+)</pre>
+
+@usage
+
+<b> The clustered standard errors for linear regression </b>
+
+For a quick help message, run the following commands
+<pre>
+select madlib.clustered_variance_linregr();
+select madlib.clustered_variance_linregr('help');
+select madlib.clustered_variance_linregr('?');
+select madlib.clustered_variance_linregr('usage');
+</pre>
+
+<pre>
+SELECT madlib.clustered_variance_linregr (
+    <em>'tbl_data'</em>,    -- Data table name
+    <em>'tbl_output'</em>,  -- The result table
+    <em>'depvar'</em>,      -- An expression used as dependent variable
+    <em>'indvar'</em>,      -- An expression used as independent variable
+    <em>'clustervar'</em>,  -- The columns used as the cluster variables, separated by comma
+    <em>'groupingvar'</em>  -- The columns used as the grouping variables, separated by comma
+);
+</pre>
+
+@examp
+
+Note that we need to manually include an intercept term in the independent variable expression. The NULL value of <em>groupingvar</em> means that there is no grouping in the calculation.
+
+@verbatim
+sql> drop table if exists tbl_output;
+sql> select madlib.clustered_variance_linregr ('abalone', 'tbl_output', 'rings', 'array[1, diameter, length, width]', 'sex', NULL);
+sql> select * from tbl_output;
+@endverbatim
+
+@literature
+
+[1] Standard, Robust, and Clustered Standard Errors Computed in R, http://diffuseprior.wordpress.com/2012/06/15/standard-robust-and-clustered-standard-errors-computed-in-r/
+
+@sa File clustered_variance.sql_in documenting the SQL function
+
+@internal
+@sa Namespace \ref madlib::modules::regress
+    documenting the implementation in C++
+@endinternal
+*/
+
+------------------------------------------------------------------------
+
+/**
+ * @brief Compute the clustered errors
+ *
+ * @param tbl_data Data table name
+ * @param tbl_output The result table
+ * @param depvar Dependent variable expression
+ * @param indvar Independent variable expression
+ * @param clustervar The expressions used to clustering
+ * @param grouping_col The names of grouping columns
+ * @param coef Optional, the fitting coefficients
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.clustered_variance_linregr (
+    tbl_data        TEXT,
+    tbl_output      TEXT,
+    depvar          TEXT,
+    indvar          TEXT,
+    clustervar      TEXT,
+    grouping_col    TEXT
+) RETURNS VOID AS $$
+    PythonFunction(regress, clustered_variance, clustered_variance_linregr)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.clustered_variance_linregr (
+    tbl_data        TEXT,
+    tbl_output      TEXT,
+    depvar          TEXT,
+    indvar          TEXT,
+    clustervar      TEXT
+) RETURNS VOID AS $$
+BEGIN
+    PERFORM MADLIB_SCHEMA.clustered_variance_linregr(tbl_data, tbl_output, depvar, indvar, clustervar, NULL);
+END;
+$$ LANGUAGE plpgsql;
+
+------------------------------------------------------------------------
+
+-- print quick help messages
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.clustered_variance_linregr (
+) RETURNS TEXT AS $$
+    PythonFunction(regress, clustered_variance, clustered_variance_linregr_help)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+
+-- print quick help messages
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.clustered_variance_linregr (
+    msg         TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(regress, clustered_variance, clustered_variance_linregr_help)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+-- Aggregate function --
+
+CREATE TYPE MADLIB_SCHEMA.__clustered_agg_result AS (
+    meatvec     DOUBLE PRECISION[],
+    breadvec    DOUBLE PRECISION[]
+);
+
+------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__clustered_err_lin_transition (
+    state MADLIB_SCHEMA.bytea8,
+    y DOUBLE PRECISION,
+    x DOUBLE PRECISION[],
+    coef DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__clustered_err_lin_merge (
+    state1 MADLIB_SCHEMA.bytea8,
+    state2 MADLIB_SCHEMA.bytea8
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+-- create or replace function MADLIB_SCHEMA.__clustered_err_lin_merge(
+--     state1 MADLIB_SCHEMA.bytea8,
+--     state2 MADLIB_SCHEMA.bytea8
+-- ) returns MADLIB_SCHEMA.bytea8 AS $$
+-- begin
+--     return state1;
+-- end;
+-- $$ language plpgsql;
+
+------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__clustered_err_lin_final (
+    state MADLIB_SCHEMA.bytea8
+) RETURNS MADLIB_SCHEMA.__clustered_agg_result AS
+    'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------
+
+CREATE AGGREGATE MADLIB_SCHEMA.__clustered_err_lin_step (
+    /* depvar   */      DOUBLE PRECISION,
+    /* indvar   */      DOUBLE PRECISION[],
+    /* coef     */      DOUBLE PRECISION[]) (
+    m4_ifdef(`__GREENPLUM__', `prefunc=MADLIB_SCHEMA.__clustered_err_lin_merge,')
+    SFUNC = MADLIB_SCHEMA.__clustered_err_lin_transition,
+    STYPE = MADLIB_SCHEMA.bytea8,
+    FINALFUNC = MADLIB_SCHEMA.__clustered_err_lin_final,
+    INITCOND = ''
+);
+
+------------------------------------------------------------------------
+
+CREATE TYPE MADLIB_SCHEMA.__clustered_lin_result AS (
+    coef      DOUBLE PRECISION[],
+    std_err   DOUBLE PRECISION[],
+    t_stats   DOUBLE PRECISION[],
+    p_values  DOUBLE PRECISION[]
+);
+
+-- Compute the t-stats and p-values
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__clustered_compute_lin_stats (
+    coef                DOUBLE PRECISION[],
+    meatvec             DOUBLE PRECISION[],
+    breadvec            DOUBLE PRECISION[],
+    mcluster            INTEGER,
+    numRows             INTEGER
+) RETURNS MADLIB_SCHEMA.__clustered_lin_result AS
+    'MODULE_PATHNAME', 'clustered_compute_lin_stats'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+-- Supporting PostgreSQL sum over array
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__array_add (
+    x                   DOUBLE PRECISION[],
+    y                   DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS $$
+DECLARE
+    a int;
+    b int;
+    i int;
+    res double precision[];
+BEGIN
+    res = x;
+
+    a := array_lower (y, 1);
+    b := array_upper (y, 1);
+
+    IF a IS NOT NULL THEN
+      FOR i IN a .. b LOOP
+        res[i] := coalesce(res[i],0) + y[i];
+      END LOOP;
+    END IF;
+
+    RETURN res;
+END;
+$$ LANGUAGE plpgsql STRICT IMMUTABLE;
+
+------------------------------------------------
+
+CREATE AGGREGATE MADLIB_SCHEMA.__array_sum (
+    /* x */             DOUBLE PRECISION[]
+) (
+    SFunc = MADLIB_SCHEMA.__array_add,
+    SType = DOUBLE PRECISION[],
+    m4_ifdef(`__GREENPLUM__', `prefunc = MADLIB_SCHEMA.__array_add,')
+    InitCond = '{}'
+);

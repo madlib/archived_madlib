@@ -317,7 +317,7 @@ RobustLinearRegressionAccumulator<Container>::operator<<(const tuple_type& inTup
     if (numRows == 0) {
         widthOfX = static_cast<uint16_t>(x.size());
         this->resize();
-				ols_coef = coef;
+        ols_coef = coef;
     }
 
     // dimension check

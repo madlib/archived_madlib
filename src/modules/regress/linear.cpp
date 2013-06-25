@@ -120,10 +120,10 @@ robust_linregr_final::run(AnyType& args) {
 
     tuple << result.coef
           << result.stdErr 
-					<< result.tStats
-        	<< (state.numRows > state.widthOfX
-            ? result.pValues
-            : Null());
+          << result.tStats
+          << (state.numRows > state.widthOfX
+              ? result.pValues
+              : Null());
     return tuple;
 }
 
