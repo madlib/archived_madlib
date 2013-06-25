@@ -1,0 +1,534 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file marginal.sql_in
+ *
+ * @brief SQL functions for linear regression
+ * @date January 2011
+ *
+ * @sa Calculates marginal effects for various regression models.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_marginal
+
+@about
+
+A marginal effect (ME) or partial effect measures the effect on the
+conditional mean of \f$ y \f$ of a change in one of the regressors, say
+\f$X_k\f$. In the linear regression model, the ME equals the
+relevant slope coefficient, greatly simplifying analysis. For nonlinear models,
+we require specialized algorithms for calculating ME.
+
+
+The standard approach to modeling dichotomous/binary variables
+(so \f$y \in {0, 1} \f$) is to estimate a generalized linear model under the
+assumption that y follows some form of Bernoulli distribution. Thus the expected
+value of \f$ y \f$ becomes,
+\f[
+  y = G(X' \beta),
+\f]
+
+where G is the specified binomial distribution. For
+logistic regression, the funciton \f$ G \f$ represents the inverse logit function.
+
+In logistic regression:
+\f[
+P = \frac{1}{1 + e^{-(\beta_0 + \beta_1 x_1 + \dots  \beta_j x_j)}}
+  = \frac{1}{1 + e^{-z}}
+  \implies \frac{\partial P}{\partial X_k} = \beta_k \cdot \frac{1}{1 + e^{-z}} \cdot
+              \frac{e^{-z}}{1 + e^{-z}} \\
+      = \beta_k \cdot P \cdot (1-P)
+\f]
+
+There are several methods for calculating the marginal effects for dichotomous
+dependent variables. This package uses the average of the marginal effects at
+every sample observation.
+
+This is calculated as follows:
+\f[
+  \frac{\partial y}{\partial x_k} = \beta_k \frac{\sum_{i=1}^n P(y_i = 1)(1-P(y_i = 1))}{n}, \\
+    \text{where}, P(y_i=1) = g(X^{(i)}\beta)
+\f]
+
+We use the delta method for calculating standard errors on the marginal effects.
+
+@input
+
+The input parameters are expected to be of the following form:
+<pre> <em>margins_logregr</em> (
+    <em>sourceTable</em> VARCHAR,
+    <em>outputTable</em> VARCHAR,
+    <em>dependentVariable</em> VARCHAR,
+    <em>independentVariable</em> VARCHAR,
+    [<em>groupingCol</em> VARCHAR,
+    <em>marginal_vars</em> INTEGER[],
+    <em>max_iter</em> INTEGER,
+    <em>optimizer</em> VARCHAR,
+    <em>tolerance</em> DOUBLE PRECISION
+    ]
+)</pre>
+
+@usage
+
+<b> The Interface</b>
+
+For logistic regression, one can call the following function
+<pre>
+SELECT madlib.\ref margins_logregr(
+    <em>'source_table'</em>,              -- name of input table, VARCHAR
+    <em>'out_table'</em>,                 -- name of output table, VARCHAR
+    <em>'dependent_varname'</em>,         -- dependent variable, VARCHAR
+    <em>'independent_varname'</em>,       -- independent variable, VARCHAR
+    [ <em>'grouping_cols'</em>,           -- comma separated list of grouping vars, VARCHAR (Default NULL)
+    <em>'marginal_effect_variables'</em>, -- Index list (base 1) with positions representing which marginal variable to calculate, INTEGER[] (Default NULL)
+    <em>'max_iter'</em>,                  -- Maximum number of iterations to run the logistic regression INTEGER (Default 20)
+    <em>'optimizer'</em>,                 -- Optimizer used for logistic regression VARCHAR (Default & recommended 'irls')
+    <em>'tolerance'</em>,                 -- Tolerance for the logistic regression DOUBLE PRECISION (default 1e-5)
+    ]
+);
+</pre>
+
+</pre>
+Here the <em>'independent_varname'</em> can be the name of a column, which contains
+array of numeric values. It can also have a format of string 'array[1, x1, x2, x3]',
+where <em>x1</em>, <em>x2</em> and <em>x3</em> are all column names.
+
+Here the <em>'vars'</em> is an index list (base 1) with the set of indices
+amongst the independent variables that must be selected.
+One can also chose <em>NULL<\em> to pick all indepependent variables.
+
+Output is stored in the <em>out_table</em>:
+<pre>
+[ margins | std_err | stats | p_values |
++------+---------+-------+----------+
+</pre>
+
+
+@examp
+-# Create the sample data set:
+@verbatim
+sql> SELECT * FROM data;
+ id | second_attack | treatment | trait_anxiety
+----+---------------+-----------+---------------
+  1 |             1 |         1 |            70
+  3 |             1 |         1 |            50
+  5 |             1 |         0 |            40
+  7 |             1 |         0 |            75
+  9 |             1 |         0 |            70
+ 11 |             0 |         1 |            65
+ 13 |             0 |         1 |            45
+ 15 |             0 |         1 |            40
+ 17 |             0 |         0 |            55
+...
+@endverbatim
+-#  For function summary information. Run
+@verbatim
+sql> select margins_logregr('help');
+OR
+sql> select margins_logregr();
+OR
+sql> select margins_logregr('');
+@endverbatim
+
+-# Run the logistic regression function and then compute the marginal effects of all variables in the regression:
+@verbatim
+sql> select margins_logregr('patients', 'result_table', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]');
+sql> select * from result_table;
+margins  | {-0.970665392796,-0.156214190168,0.0181587690137}
+coef     | {-6.36346994178179,-1.02410605239327,0.119044916668605}
+std_err  | {0.802871454422,0.292691682191,0.0137459874022}
+t_stats  | {-1.2089922832,-0.533715850748,1.32102325446}
+p_values | {0.243212810329,0.600447858606,0.204000202116}
+
+
+-# Alternate Syntax: Run the logistic regression function and then compute the marginal effects if all variables in the regression:
+sql> select margins_logregr('patients', 'result_table', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]', NULL, NULL);
+sql> select * from result_table;
+margins  | {-0.970665392796,-0.156214190168,0.0181587690137}
+coef     | {-6.36346994178179,-1.02410605239327,0.119044916668605}
+std_err  | {0.802871454422,0.292691682191,0.0137459874022}
+t_stats  | {-1.2089922832,-0.533715850748,1.32102325446}
+p_values | {0.243212810329,0.600447858606,0.204000202116}
+
+
+-# Run the logistic regression function and then compute the marginal effects of the first variable in the regression
+sql> select margins_logregr('patients', 'result_table', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]', NULL, ARRAY[1]);
+sql> select * from result_table;
+margins  | {-0.970665392796}
+coef     | {-6.36346994178179}
+std_err  | {0.802871454422}
+t_stats  | {-1.2089922832}
+p_values | {0.243212810329}
+@endverbatim
+
+
+-#  For function usage information.
+@verbatim
+sql> select margins_logregr('usage');
+@endverbatim
+
+@literature
+
+
+[1] mfx function in STATA: http://www.stata.com/help.cgi?mfx_option
+
+@sa File marginal.sql_in documenting the SQL functions.
+
+@internal
+@sa Namespace \ref madlib::modules::regress
+    documenting the implementation in C++
+@endinternal
+*/
+
+
+
+
+------------------ Marginal Logistic Regression  ------------------------------
+
+CREATE TYPE MADLIB_SCHEMA.marginal_logregr_result AS (
+    margins  DOUBLE PRECISION[],
+    coef     DOUBLE PRECISION[],
+    std_err  DOUBLE PRECISION[],
+    t_stats  DOUBLE PRECISION[],
+    p_values DOUBLE PRECISION[]
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.marginal_logregr_step_transition(
+    state DOUBLE PRECISION[],
+    y     BOOLEAN,
+    x     DOUBLE PRECISION[],
+    coef  DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.marginal_logregr_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.marginal_logregr_step_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.marginal_logregr_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+/**
+ * @brief Compute marginal effects for logistic regression.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param coef Column containing the array of the  coefficients (as obtained by logregr)
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>margins FLOAT8[] </tt>          - Array of marginal effects
+ *  - <tt>coefFLOAT8[] </tt>              - The coefficients for the regression
+ *  - <tt>std_err FLOAT8[]</tt>           - Array of standard-errors (calculated by the delta method),
+ *  - <tt>t_stats FLOAT8[]</tt>           - Array of t-statistics
+ *  - <tt>p_values FLOAT8[]</tt>          - Array of p-values
+ *
+ * @usage
+ *  - Get all the diagnostic statistics:\n
+ *
+ *  <pre> SELECT marginal_logregr(<em>dependentVariable</em>,
+ *	<em>independentVariables</em>, coef)
+ *	FROM <em>dataTable</em>;
+ * </pre>
+ */
+
+CREATE AGGREGATE MADLIB_SCHEMA.marginal_logregr(
+	  /*+ "dependentVariable" */     BOOLEAN,
+	  /*+ "independentVariables" */  DOUBLE PRECISION[],
+    /*+ "coef" */                  DOUBLE PRECISION[] )(
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.marginal_logregr_step_transition,
+    m4_ifdef(`__GREENPLUM__',`PREFUNC=MADLIB_SCHEMA.marginal_logregr_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.marginal_logregr_step_final,
+    INITCOND='{0,0,0,0,0,0}'
+);
+
+
+--------------------------- Interface ----------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr(
+     usage_string VARCHAR                               -- usage string
+)
+RETURNS VARCHAR AS $$
+DECLARE
+insert_string       VARCHAR;
+BEGIN
+	IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
+    insert_string := '' ||
+    E'Summary \n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' Functionality: Calculate marginal effects for logistic regression\n' ||
+    E' The funciton first runs the regression and then  calculates the \n' ||
+    E'     coefficients and uses them to calculate the marginal effects \n' ||
+    E' SELECT {schema_madlib}.margins_logregr(''source_table'' \n' ||
+    E'                                       ,''output_table'' \n' ||
+    E'                                       ,''dependent_variable'' \n' ||
+    E'                                       ,''independent_variable'' \n' ||
+    E'                                       [,''grouping_cols'' \n' ||
+    E'                                       ,''marginal_variables'' \n' ||
+    E'                                       ,''max_iter'' \n' ||
+    E'                                       ,''optimizer'' \n' ||
+    E'                                       ,''tolerance'' \n' ||
+    E'                                       ]' ||
+    E'                                       );\n' ||
+    E'For more details on function usage:  \n' ||
+    E'SELECT {schema_madlib}.margins_logregr(''usage'') \n' ||
+    E'';
+  ElSIF (usage_string  = 'usage') THEN
+    insert_string := '' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E'Usage\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' SELECT {schema_madlib}.margins_logregr( \n' ||
+    E' ''source_table'',         -- Name of data table          \n' ||
+    E' ''output_table'',         -- Name of result table (overwrites if exists) \n' ||
+    E' ''dependent_variable'',   -- Name of column for dependent variables\n' ||
+    E' ''independent_variable'', -- Name of column for independent variables\n' ||
+    E'                               (can be any SQL expression that evaluates to an array)\n' ||
+    E'[ ''group_cols'',          -- Comma separated string with columns to group by\n' ||
+    E'                              (Optional : Default NULL => no grouping) \n' ||
+    E' ''margins_vars'',         -- Index list (base 1) representing the independent variables to compute marginal effects on \n' ||
+    E'                              (Optional : Default NULL which computes marginal effects on all variables) \n' ||
+    E' ''max_iter'',             -- Maximum number of iterations for the logistic regression\n' ||
+    E'                              (Optional : Default 20) \n' ||
+    E' ''optimizer'',            -- Optimizer for logistic regression (newton/irls, cg or igd)\n' ||
+    E'                              (Optional : Default irls) \n' ||
+    E' ''tolerance'',            -- Termination criterion for logistic regression (relative)\n' ||
+    E'                              (Optional : Default 1e-5) \n' ||
+    E']' ||
+    E' );\n' ||
+    E'\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E'Output:\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The output table (''output_table'' above) has the following columns\n' ||
+    E' ''margins''          DOUBLE PRECISION[], -- Marginal effects \n' ||
+    E' ''std_err''          DOUBLE PRECISION[], -- Standard errors using the delta method\n' ||
+    E' ''stats''            DOUBLE PRECISION[], -- T-stats of the standard errors\n' ||
+    E' ''p_values''         DOUBLE PRECISION[], -- p-values of the standard errors\n' ||
+    E'\n' ||
+    E'';
+  ELSE
+    insert_string := 'No such option. Run SELECT {schema_madlib}.margins_logregr()';
+  END IF;
+  RETURN insert_string;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.margins_logregr('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+/**
+  @brief A wrapper function for the various marginal regression analyzes.
+ *
+ * @param source_table String identifying the input table
+ * @param out_table String identifying the output table to be created
+ * @param dependent_varname Column containing the dependent variable
+ * @param input_independent_varname Column containing the array of independent variables
+ * @param grouping_cols Set of columns to group by.
+ * @param marginal_vars Subset of independent variables to calculate marginal effects for.
+ * @param max_iter Maximum number of iterations
+ * @param optimzer Optimizer to be used (newton/irls, cg or idg)
+ * @param tolerance Resiual tolerance
+ *
+ * @par
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @return A composite value:
+ *  - <tt>margins FLOAT8[]</tt>          - Array of margins,
+ *  - <tt>coef FLOAT8[]</tt>             - Array of regression coefs,
+ *  - <tt>std_err FLOAT8[]</tt>          - Array of standard errors,
+ *  - <tt>t_stats FLOAT8[]</tt>          - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>p_values FLOAT8[]</tt>         - Array of p-values, \f$ \boldsymbol p \f$
+ *
+ * @usage
+ * For function summary information. Run
+ * sql> select margins_logregr('help');
+ * OR
+ * sql> select margins_logregr();
+ * OR
+ * sql> select margins_logregr('?');
+ * For function usage information. Run
+ * sql> select margins_logregr('usage');
+ *  - Compute the coefficients, and the get the marginal diagnostic statistics:
+ * <pre>
+ *  select margins_logregr(source_table, out_table, dependentVariable, independentVariables);
+ * </pre>
+ *
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_varname          VARCHAR       -- name of dependent variable
+   , input_independent_varname  VARCHAR       -- name of independent variable
+   , input_group_cols           VARCHAR       -- names of columns to group by
+   , marginal_vars              INTEGER[]     -- indices of variables to calculate marginal effects on
+   , max_iter                   INTEGER       -- Max iterations for the logstic regression inner call
+   , optimizer                  VARCHAR       -- Logistic regression optimizer
+   , tolerance                  DOUBLE PRECISION -- Tolerance
+  )
+RETURNS VOID AS $$
+PythonFunction(regress, marginal, margins_logregr)
+$$ LANGUAGE plpythonu;
+
+
+
+-- Default Variable calls for margins_logregr
+------------------------------------------------------------------------------
+
+/**
+  * @brief Marginal effects with default variables
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.margins_logregr(
+                              source_table,
+                              out_table,
+                              dependent_variable,
+                              independent_variable,
+                              NULL,
+                              NULL,
+                              20,
+                              'irls',
+                              0.0001);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+  * @brief Marginal effects with default variable_names
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , grouping_cols              VARCHAR       -- name of grouping cols
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.margins_logregr(
+                              source_table,
+                              out_table,
+                              dependent_variable,
+                              independent_variable,
+                              grouping_cols,
+                              NULL,
+                              20,
+                              'irls',
+                              0.0001);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+  * @brief Marginal effects with default variable_names
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , grouping_cols              VARCHAR       -- name of grouping cols
+   , marginal_vars              INTEGER[]     -- indices of variables to calculate marginal effects on
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.margins_logregr(
+                              source_table,
+                              out_table,
+                              dependent_variable,
+                              independent_variable,
+                              grouping_cols,
+                              marginal_vars,
+                              20,
+                              'irls',
+                              0.0001);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+  * @brief Marginal effects with default variable_names
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , grouping_cols              VARCHAR       -- name of grouping cols
+   , marginal_vars              INTEGER[]     -- indices of variables to calculate marginal effects on
+   , max_iter                   INTEGER       -- Max iterations for the logstic regression inner call
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.margins_logregr(
+                              source_table,
+                              out_table,
+                              dependent_variable,
+                              independent_variable,
+                              grouping_cols,
+                              marginal_vars,
+                              max_iter,
+                              'irls',
+                              0.0001);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+/**
+  * @brief Marginal effects with default variable_names
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.margins_logregr(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , dependent_variable         VARCHAR       -- name of dependent variable
+   , independent_variable       VARCHAR       -- name of independent variable
+   , grouping_cols              VARCHAR       -- name of grouping cols
+   , marginal_vars              INTEGER[]     -- indices of variables to calculate marginal effects on
+   , max_iter                   INTEGER       -- Max iterations for the logstic regression inner call
+   , optimizer                  VARCHAR       -- Logistic regression optimizer
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.margins_logregr(
+                              source_table,
+                              out_table,
+                              dependent_variable,
+                              independent_variable,
+                              grouping_cols,
+                              marginal_vars,
+                              max_iter,
+                              optimizer,
+                              0.0001);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- End of Default Variable calls for margins_logregr
+------------------------------------------------------------------------------

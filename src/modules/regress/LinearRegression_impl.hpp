@@ -420,6 +420,7 @@ RobustLinearRegression::compute(
         // instabilities in the pinv operation can lead to negative values on
         // the main diagonal of even a SPD matrix
         coef(i) = inState.ols_coef(i);
+
         if (inverse_of_X_transp_X(i,i) < 0) {
             stdErr(i) = 0;
         } else {

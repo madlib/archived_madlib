@@ -1,0 +1,282 @@
+# coding=utf-8
+
+"""
+@file marginal.py_in
+
+@brief Marginal Effects: Common functions
+
+@namespace marginal
+
+@brief Marginal effects: Common functions
+"""
+import plpy
+import re
+from utilities.utilities import __unique_string
+from utilities.validate_args import __is_tbl_exists
+from utilities.validate_args import __is_col_exists
+from utilities.validate_args import __is_tbl_has_rows
+from utilities.validate_args import __is_scalar_col_no_null
+from utilities.validate_args import __get_cols
+from utilities.utilities import _string_to_array
+
+# use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
+from utilities.utilities import __mad_version
+version_wrapper = __mad_version()
+string_to_array = version_wrapper.select_vecfunc()
+array_to_string = version_wrapper.select_vec_return()
+
+# ========================================================================
+
+
+def _margins_logregr_validate_args(
+    schema_madlib,
+    source_table,
+    out_table,
+    dependent_varname,
+    independent_varname,
+    input_group_cols,
+    marginal_vars,
+    max_iter,
+    optimizer,
+    tolerance):
+    """
+    Validate the arguments
+    """
+    if not source_table or source_table in ('null', '') or \
+            (not __is_tbl_exists(source_table)):
+        plpy.error("Margins error: Data table does not exist!")
+
+    if not __is_tbl_has_rows(source_table):
+        plpy.error("Margins error: Data table is empty!")
+
+    if out_table.lower() in ('null', ''):
+        plpy.error("Margins error: Invalid output table name!")
+
+    if __is_tbl_exists(out_table):
+        plpy.error("Margins error: Output table already exists!")
+
+    if not dependent_varname or dependent_varname.lower() in ('null', ''):
+        plpy.error("Margins error: Invalid dependent column name!")
+
+    if not __is_scalar_col_no_null(source_table, dependent_varname):
+        plpy.error("Margins error: Dependent variable has Null values! \
+                    Please filter out Null values before using this function!")
+
+    if not independent_varname or independent_varname.lower() in ('null', ''):
+        plpy.error("Margins error: Invalid independent column name!")
+
+    if input_group_cols and input_group_cols.lower() in ('null', ''):
+        plpy.error("Margins error: Invalid grouping columns name!")
+
+    if max_iter <= 0:
+        plpy.error("Logregr error: Maximum number of iterations must be positive!")
+
+    if tolerance < 0:
+        plpy.error("Logregr error: The tolerance cannot be negative!")
+
+    if optimizer == "newton":
+        optimizer = "irls"
+    elif optimizer not in ("irls", "cg", "igd"):
+        plpy.error(""" Logregr error: Optimizer %s does not exist.
+                   Must be 'newton'/'irls', 'cg', or 'igd'.
+                   """ % optimizer)
+    if input_group_cols:
+        if not __is_col_exists(source_table,
+                               _string_to_array(input_group_cols), schema_madlib):
+            plpy.error("Margins error: Grouping column does not exist!")
+
+
+# ========================================================================
+# Returns relevant ouputs
+# Note: The marginal_vars index list is 1 base
+def _internal_get_margins_from_array(marginal_coef, marginal_vars):
+    if not marginal_vars:
+        marginal_vars = range(1,len(marginal_coef)+1)
+
+    if min(marginal_vars) < 1:
+        plpy.error('''Margins error: All indices in the marginal coefficients array must be >= 1.''')
+    if max(marginal_vars) > len(marginal_coef):
+        plpy.error('''Margins error: All indices in the marginal coefficients array must be <= the number of independent variables.''')
+
+    return_marginal_coef = []
+    for i in marginal_vars:
+        return_marginal_coef.append(marginal_coef[i-1])
+
+    return array_to_string(return_marginal_coef)
+
+
+# ========================================================================
+# Convert numeric array to SQL string
+def _internal_py_array_to_sql_string(array):
+    return "ARRAY[%s]" % ','.join(map(str, array))
+
+
+# ========================================================================
+# Convert numeric array to SQL string
+def _internal_return_all_except_dep_vars(schema_madlib,
+                                          source_table,
+                                          dependent_varname):
+    cols = __get_cols(source_table, schema_madlib)
+    outstr_array = []
+    for i in range(len(cols)):
+        if cols[i] != dependent_varname:
+            outstr_array.append(cols[i])
+
+    return "ARRAY[%s]" % ','.join(outstr_array)
+
+# ========================================================================
+# Main function call for marginal logisitc regression
+def margins_logregr(schema_madlib, source_table, out_table
+                    , dependent_varname, input_independent_varname
+                    , input_group_cols, marginal_vars
+                    , max_iter, optimizer, tolerance , **kwargs):
+    """
+    @brief A wrapper function for the various marginal regression analyzes.
+
+    @param source_table String identifying the input table
+    @param out_table String identifying the output table to be created
+    @param dependent_varname Column containing the dependent variable
+    @param independent_varname Column containing the array of independent variables
+    @param grouping_cols Set of columns to group by.
+    @param marginal_vars Subset of independent variables to calculate marginal effects for.
+    @param max_iter Maximum number of iterations
+    @param optimzer Optimizer to be used (newton/irls, cg or idg)
+    @param tolerance Resiual tolerance
+
+    @par
+    To include an intercept in the model, set one coordinate in the
+    <tt>independentVariables</tt> array to 1.
+
+    @return A composite value:
+     - <tt>margins FLOAT8[]</tt> - Array of margins,
+     - <tt>coef FLOAT8[]</tt>             - Array of regression coefs,
+     - <tt>std_err FLOAT8[]</tt>          - Array of standard errors,
+     - <tt>t_stats FLOAT8[]</tt>          - Array of t-statistics, \f$ \boldsymbol t \f$
+     - <tt>p_values FLOAT8[]</tt>         - Array of p-values, \f$ \boldsymbol p \f$
+
+    @usage
+    For function summary information. Run
+    sql> select margins_logregr('help');
+    OR
+    sql> select margins_logregr();
+    OR
+    sql> select margins_logregr('?');
+    For function usage information. Run
+    sql> select margins_logregr('usage');
+     - Compute the coefficients, and the get the marginal diagnostic statistics:
+    <pre>
+     select margins_logregr(source_table, out_table, dependentVariable, independentVariables);
+    </pre>
+    """
+    # Reset the message level to avoid random messages
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    # Validate arguments
+    _margins_logregr_validate_args(schema_madlib,
+                                source_table,
+                                out_table,
+                                dependent_varname,
+                                input_independent_varname,
+                                input_group_cols,
+                                marginal_vars,
+                                max_iter,
+                                optimizer,
+                                tolerance);
+
+    # NOTICE: * support was removed because other modules did not have it.
+    # Uncomment the following code if you want to re-add '*' support
+
+    # Check for '*' in indepdendent variables
+    #if input_independent_varname == "*":
+    #  independent_varname = _internal_return_all_except_dep_vars(
+    #                      schema_madlib,
+    #                      source_table,
+    #                      dependent_varname
+    #                      )
+    #else:
+
+    independent_varname = input_independent_varname
+
+    # No grouping
+    if not input_group_cols:
+        # Step 1: Create output table with appropriate column names
+        plpy.execute("""
+          CREATE TABLE %s (
+          margins DOUBLE PRECISION[],
+          std_err          DOUBLE PRECISION[],
+          t_stats          DOUBLE PRECISION[],
+          p_values         DOUBLE PRECISION[])""" % out_table
+        )
+
+        # Step 2: Run the regression if the coefficients are not provided
+        temp_table = __unique_string();
+        plpy.execute("""
+        SELECT %s.logregr_train('%s',
+                               '%s',
+                               '%s',
+                               '%s',
+                               NULL,
+                               '%s',
+                               '%s',
+                               '%s')
+        """ % (schema_madlib,
+               source_table,
+               temp_table,
+               dependent_varname,
+               independent_varname,
+               max_iter,
+               optimizer,
+               tolerance))
+
+        regr_coef = plpy.execute('SELECT coef from %s' % temp_table)
+        regr_coef = string_to_array(regr_coef[0]['coef'])
+        plpy.execute('DROP TABLE IF EXISTS %s' % temp_table)
+
+
+        # Step 3: Compute the marginal effects
+        marginal_log_rst = plpy.execute("""
+                  SELECT (%s.marginal_logregr(
+                              (%s)::BOOLEAN,
+                               %s,
+                               %s)).* FROM %s
+                """ % (
+                      schema_madlib,
+                      dependent_varname,
+                      independent_varname,
+                      _internal_py_array_to_sql_string(regr_coef),
+                      source_table))
+
+        margins = string_to_array(marginal_log_rst[0]["margins"])
+        std_err = string_to_array(marginal_log_rst[0]["std_err"])
+        p_values = string_to_array(marginal_log_rst[0]["p_values"])
+        t_stats = string_to_array(marginal_log_rst[0]["t_stats"])
+
+        margins  = _internal_get_margins_from_array(margins, marginal_vars)
+        std_err = _internal_get_margins_from_array(std_err, marginal_vars)
+        t_stats = _internal_get_margins_from_array(t_stats, marginal_vars)
+        p_values = _internal_get_margins_from_array(p_values, marginal_vars)
+
+        # Step 4:
+        insert_string = """
+                    INSERT INTO %s VALUES (%s,  %s, %s, %s)
+                    """ % (out_table,
+                           _internal_py_array_to_sql_string(margins),
+                           _internal_py_array_to_sql_string(std_err),
+                           _internal_py_array_to_sql_string(t_stats),
+                           _internal_py_array_to_sql_string(p_values))
+
+
+        # Step 4: Clean up output to make sure infinity and nan are cast properly
+        insert_string = re.sub('Infinity', "'Infinity'::double precision", insert_string)
+        insert_string = re.sub('infinity', "'Infinity'::double precision", insert_string)
+        insert_string = re.sub('Nan', "'Nan'::double precision", insert_string)
+        insert_string = re.sub('nan', "'Nan'::double precision", insert_string)
+        insert_string = re.sub('NaN', "'Nan'::double precision", insert_string)
+        plpy.execute(insert_string)
+
+        plpy.execute("SET client_min_messages TO %s" % old_msg_level)
