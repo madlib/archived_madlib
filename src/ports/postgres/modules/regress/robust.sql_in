@@ -75,10 +75,10 @@ SELECT \ref madlib.robust_variance_logregr(
     <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
     <em>'independent_varname'</em>, -- independent variables, VARCHAR
     <em>'grouping_cols'</em>, 		-- [OPTIONAL] grouping variables, VARCHAR
-    <em>max_iter</em>,			-- [OPTIONAL] Integer identifying the maximum iterations used by the logistic regression solver.  Default is 20, Integer
+    <em>max_iter</em>,	    		-- [OPTIONAL] Integer identifying the maximum iterations used by the logistic regression solver.  Default is 20, Integer
     <em>'optimizer'</em>,			-- [OPTIONAL] String identifying the optimizer used in the logistic regression.  See the documentation in the logistic regression for the available options.  Default is irls.  VARCHAR
-	<em>tolerance</em>,			-- [OPTIONAL] Float identifying the tolerance of the logistic regression optimizer. Default is 0.0001.  DOUBLE PRECISION
-	<em>print_warnings</em>		-- [OPTIONAL] Boolean specifying if the regression fit should print any warning messages.  Default is false. BOOLEAN
+	<em>tolerance</em>,		    	-- [OPTIONAL] Float identifying the tolerance of the logistic regression optimizer. Default is 0.0001.  DOUBLE PRECISION
+	<em>print_warnings</em>	    	-- [OPTIONAL] Boolean specifying if the regression fit should print any warning messages.  Default is false. BOOLEAN
 );
 </pre>
 OR
@@ -88,8 +88,12 @@ SELECT \ref madlib.robust_variance_mlogregr(
     <em>'out_table'</em>,           -- name of output table, VARCHAR
     <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
     <em>'independent_varname'</em>, -- independent variables, VARCHAR
-    <em>'ref_category'</em>,        -- [OPTIONAL] Integer specifying the reference category. Default is 0. INTEGER
-    <em>'grouping_cols'</em>, 		-- [OPTIONAL] grouping variables, VARCHAR
+    <em>'ref_category'</em>,        -- [OPTIONAL] Integer specifying the reference category. Default is 0.
+    <em>'grouping_cols'</em>, 		-- [OPTIONAL] grouping variables, VARCHAR. Default is NULL.
+    <em>'max_iter'</em>,			-- [OPTIONAL] Integer identifying the maximum iterations used by the logistic regression solver.  Default is 20.
+    <em>'optimizer'</em>,			-- [OPTIONAL] String identifying the optimizer used in the multinomial logistic regression.  See the documentation in the multinomial logistic regression for the available options.  Default is irls.
+	<em>'tolerance'</em>,			-- [OPTIONAL] Float identifying the tolerance of the multinomial logistic regression optimizer. Default is 0.0001. 
+	<em>'verbose'</em>				-- [OPTIONAL] Boolean specifying if the regression fit should print any warning messages.  Default is false. 
 );
 </pre>
 Here the <em>'independent_varname'</em> can be the name of a column, which contains
@@ -694,7 +698,7 @@ LANGUAGE C IMMUTABLE STRICT;
  *  - <tt>coef FLOAT8[] </tt> - The coefficients for the regression
  *  - <tt>std_err FLOAT8[]</tt> - Array of huber-white standard errors,
  *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
- *  - <tt>z_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol t \f$
  *  - <tt>p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
  *
  * @usage
@@ -837,6 +841,83 @@ BEGIN
     insert_string := 'No such option. Run SELECT {schema_madlib}.robust_variance_logregr()';
   END IF;
   RETURN insert_string;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr_help(
+     usage_string VARCHAR                               -- usage string
+)
+RETURNS VARCHAR AS $$
+DECLARE
+insert_string       VARCHAR;
+BEGIN
+	IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
+    insert_string := '' || 
+    E'Summary \n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' Functionality: Calculate Huber-White robust statistics for multinomial logistic regression\n' || 	
+    E' The funciton first runs the regression to calculate the \n' ||
+    E'     coefficients and uses them to calculate the robust statistics \n' || 	
+    E' SELECT {schema_madlib}.robust_variance_mlogregr(''source_table'' \n' || 
+    E'                                       ,''output_table'' \n' || 
+    E'                                       ,''dependent_variable'' \n' || 
+    E'                                       ,''independent_variable'' \n' ||
+    E'                                       ,''reference_category'' \n' ||
+    E'                                       ,''group_cols'' \n' ||
+    E'                                       ,''max_iter'' \n' ||
+    E'                                       ,''optimizer'' \n' ||
+    E'                                       ,''tolerance'' \n' ||
+    E'                                       ,''verbose'' \n' ||
+    E'                                       );\n' || 
+    E'For more details on function usage:  \n' || 
+    E'SELECT {schema_madlib}.robust_variance_mlogregr(''usage'') \n';
+  ElSIF (usage_string  = 'usage') THEN
+    insert_string := '' || 
+    E'Usage\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' To use this function  \n' || 	
+    E' SELECT {schema_madlib}.robust_variance_mlogregr( \n' ||
+    E' ''source_table'',         -- Name of data table\n' || 
+    E' ''output_table'',         -- Name of result table (overwrites if exists) \n' || 
+    E' ''dependent_variable'',   -- Name of column for dependent variables\n' || 
+    E' ''independent_variable'', -- Name of column for independent variables\n' || 
+    E'                               (can be any SQL expression) \n' || 
+    E' ''reference_category'',   -- [OPTIONAL] Reference category. Default is 0. \n' || 
+    E' ''group_cols'',           -- [OPTIONAL] Comma separated string with columns to group by. Default is NULL. \n' || 
+    E' ''max_iter'',             -- [OPTIONAL] The number of iterations used by the logistic regression solver. Default is 20. \n' || 
+    E' ''optimizer'',            -- [OPTIONAL] Name of the optimizer used in the logistic regression. Default is irls. \n' || 
+    E' ''tolerance'',            -- [OPTIONAL] The tolerance of the logistic regression optimizer. Default is 0.0001. \n' || 
+    E' ''verbose''               -- [OPTIONAL] Should the optimizer print warning messages to the screen. Default is FALSE. \n' || 
+    E' );\n' || 
+    E'\n' || 
+    E'Output:\n' || 	
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The output table (''output_table'' above) has the following columns\n' || 	
+    E' ''ref_category"  INTEGER,            -- Reference category\n' || 
+    E' ''coef''         DOUBLE PRECISION[], -- Coefficients of regression \n' || 
+    E' ''std_err''      DOUBLE PRECISION[], -- Huber-White standard errors\n' || 
+    E' ''z_stats''      DOUBLE PRECISION[], -- Z-stats of the standard errors\n' || 
+    E' ''p_values''     DOUBLE PRECISION[], -- p-values of the standard errors\n' || 
+    E'\n' || 
+    E'';
+  ELSE
+    insert_string := 'No such option. Run SELECT {schema_madlib}.robust_variance_mlogregr()';
+  END IF;
+  RETURN insert_string;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.robust_variance_mlogregr_help('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(usage_string VARCHAR)
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.robust_variance_mlogregr_help(usage_string);
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
@@ -1287,8 +1368,10 @@ LANGUAGE C IMMUTABLE STRICT;
  * @brief Compute robust regression diagnostic statistics for multinomial logistic regression.
  *
  * @param dependentVariable Column containing the dependent variable
+ * @param numCategories Number of categories in the dependent variable
+ * @param ref_category Reference category for modeling
  * @param independentVariables Column containing the array of independent variables
- * @param coef Column containing the array of the  coefficients (as obtained by logregr)
+ * @param coef Column containing the array of the coefficients (as obtained by mlogregr)
  *
  * @par
  * To include an intercept in the model, set one coordinate in the
@@ -1299,15 +1382,20 @@ LANGUAGE C IMMUTABLE STRICT;
  *  - <tt>coef FLOAT8[] </tt> - The coefficients for the regression
  *  - <tt>std_err FLOAT8[]</tt> - Array of huber-white standard errors,
  *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
- *  - <tt>t_stats FLOAT8[]</tt> - Array of t-statistics, \f$ \boldsymbol t \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol t \f$
  *  - <tt>p_values FLOAT8[]</tt> - Array of p-values, \f$ \boldsymbol p \f$
  *
  * @usage
  *  - Get all the diagnostic statistics:\n
  *
- *  <pre> SELECT robust_mlogregr(<em>dependentVariable</em>,
- *	<em>independentVariables</em>, coef)
- *	FROM <em>dataTable</em>; 
+ *  <pre> 
+ *      SELECT robust_mlogregr(
+ *          <em>dependentVariable</em>,
+ *          <em>numCategories</em>,
+ *          <em>ref_category</em>,
+ *	        <em>independentVariables</em>, 
+ *          <em>coef</em>)
+ *	    FROM <em>dataTable</em>; 
  * </pre>
  */
 CREATE AGGREGATE MADLIB_SCHEMA.robust_mlogregr(
@@ -1442,7 +1530,7 @@ BEGIN
     E' The output table (''output_table'' above) has the following columns\n' || 	
     E' ''coef''    DOUBLE PRECISION[],  -- Coefficients of regression \n' || 
     E' ''std_err''  DOUBLE PRECISION[], -- Huber-White standard errors\n' || 
-    E' ''z-stats''    DOUBLE PRECISION[], -- Z-stats of the standard errors\n' || 
+    E' ''z_stats''    DOUBLE PRECISION[], -- Z-stats of the standard errors\n' || 
     E' ''p_values'' DOUBLE PRECISION[], -- p-values of the standard errors\n' || 
     E'\n' || 
     E'';
@@ -1460,28 +1548,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
-
-
-
-
-
-
-
-
-
-
-
 --------------------------- Robust Multinomial Logistic Regression ----------------------------------
 /**
   * @brief Robust multinomial logistic function subcall
  **/
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(
-    source_table        VARCHAR,       -- name of input table
-    out_table           VARCHAR,       -- name of output table
-    dependent_varname   VARCHAR,       -- name of dependent variable
-    independent_varname VARCHAR,       -- name of independent variable
-    ref_category        INTEGER,       -- reference category
-    input_group_cols    VARCHAR        -- grouping columns (PLACEHOLDER) 
+    source_table        VARCHAR,            -- name of input table
+    out_table           VARCHAR,            -- name of output table
+    dependent_varname   VARCHAR,            -- name of dependent variable
+    independent_varname VARCHAR,            -- name of independent variable
+    ref_category        INTEGER,            -- reference category (default 0)
+    input_group_cols    VARCHAR,            -- grouping columns (PLACEHOLDER) (default NULL)
+	max_iter            INTEGER,            -- max number of itertions (default 20)
+	optimizer           VARCHAR,            -- optimizer ['irls', 'newton'] (default 'irls')
+	tolerance           DOUBLE PRECISION,   -- tolerance (default 0.0001)
+	print_warnings      BOOLEAN             -- PLACEHOLDER (default False) 
 )
 RETURNS VOID AS $$
 DECLARE
@@ -1502,9 +1583,9 @@ BEGIN
                 || source_table || $sql$', '$sql$ 
                 || dependent_varname || $sql$', '$sql$ 
                 || independent_varname || $sql$', $sql$ 
-                || 20 || $sql$, $sql$
-                || $sql$'irls', $sql$  
-                || 0.0001 || ','
+                || max_iter || $sql$, '$sql$
+                || optimizer || $sql$', $sql$  
+                || tolerance || ','
                 || ref_category || ')' 
         INTO regr_coef; 
 
@@ -1554,22 +1635,82 @@ END;
 $$ LANGUAGE plpgsql VOLATILE;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(
-    source_table        VARCHAR,       -- name of input table
-    out_table           VARCHAR,       -- name of output table
-    dependent_varname   VARCHAR,       -- name of dependent variable
-    independent_varname VARCHAR,       -- name of independent variable
-    ref_category        INTEGER        -- reference category
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR,
+    ref_category        INTEGER,
+    input_group_cols    VARCHAR,  
+	max_iter            INTEGER,
+	optimizer           VARCHAR,
+	tolerance           DOUBLE PRECISION
 )
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, $5, NULL);
+    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, $5, $6, $7,
+    $8, $9, FALSE);
 $$ LANGUAGE sql;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(
-    source_table        VARCHAR,       -- name of input table
-    out_table           VARCHAR,       -- name of output table
-    dependent_varname   VARCHAR,       -- name of dependent variable
-    independent_varname VARCHAR        -- name of independent variable
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR,
+    ref_category        INTEGER,
+    input_group_cols    VARCHAR,  
+	max_iter            INTEGER,
+	optimizer           VARCHAR
 )
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, 0, NULL);
+    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, $5, $6, $7,
+    $8, 0.0001, FALSE);
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR,
+    ref_category        INTEGER,
+    input_group_cols    VARCHAR,  
+	max_iter            INTEGER
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, $5, $6, $7,
+    'irls', 0.0001, FALSE);
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR,
+    ref_category        INTEGER,
+    input_group_cols    VARCHAR 
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, $5, $6, 20,
+    'irls', 0.0001, FALSE);
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR,
+    ref_category        INTEGER
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, $5, NULL, 20,
+    'irls', 0.0001, FALSE);
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_mlogregr(
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.robust_variance_mlogregr($1, $2, $3, $4, 0, NULL, 20,
+    'irls', 0.0001, FALSE);
 $$ LANGUAGE sql;
