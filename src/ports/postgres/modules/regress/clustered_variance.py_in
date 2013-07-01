@@ -5,7 +5,6 @@
 
 import plpy
 from utilities.utilities import __unique_string
-from utilities.utilities import __mad_version
 from utilities.utilities import _array_to_string
 from utilities.utilities import _string_to_array
 from utilities.validate_args import __is_tbl_exists
@@ -13,10 +12,57 @@ from utilities.validate_args import __is_col_exists
 from utilities.validate_args import __is_tbl_has_rows
 from utilities.validate_args import __is_scalar_col_no_null
 from utilities.validate_args import __is_tbl_exists_in_schema
-import math
 
-version_wrapper = __mad_version()
-mad_vec = version_wrapper.select_vecfunc()
+# ========================================================================
+
+def __prepare_strings(clustervar, grouping_col):
+    """
+    Prepare the needed strings
+    """
+    fitres = __unique_string() # result table for linear regression
+    
+    if grouping_col is None:
+        grouping_col_str = "NULL"
+    else:
+        grouping_col_str = "'" + grouping_col + "'"
+
+    coef_str = __unique_string()
+    if clustervar is None:
+        cluster_grouping_str = "group by {coef_str}".format(coef_str = coef_str)
+    else:
+        cluster_grouping_str = "group by {coef_str}, ".format(coef_str = coef_str) + clustervar
+        
+    return (fitres, coef_str, cluster_grouping_str, grouping_col_str)
+
+# ------------------------------------------------------------------------
+
+def __generate_clustered_sql (**kwargs):
+    """
+    Create the SQL query to execute and create the result table
+    """
+    sql = """
+    create table {tbl_output} as
+        select (f).* from (
+            select {schema_madlib}.__clustered_{regr_type}_compute_stats(
+                max(coef),
+                m4_ifdef(`__POSTGRESQL__', `{schema_madlib}.__array_')sum(meatvec),
+                m4_ifdef(`__POSTGRESQL__', `{schema_madlib}.__array_')sum(breadvec),
+                count(numRows)::integer, (sum(numRows))::integer) as f
+            from (
+                select (g).*, coef, numRows from (
+                    select
+                        {schema_madlib}.__clustered_err_{regr_type}_step({depvar},
+                            {indvar}, {coef_str}) as g,
+                        {coef_str} as coef,
+                        count({depvar}) as numRows
+                    from (
+                        select u.coef as {coef_str}, v.*
+                        from
+                            {fitres} u, {tbl_data} v
+                    ) s
+                    {cluster_grouping_str}) t) p) q
+    """.format(**kwargs)
+    return sql
 
 # ========================================================================
 
@@ -34,68 +80,37 @@ def clustered_variance_linregr (schema_madlib, tbl_data, tbl_output,
                                              tbl_output, depvar, indvar,
                                              clustervar, grouping_col)
     
-    linres = __unique_string() # result table for linear regression
-    
-    if grouping_col is None:
-        grouping_col = "NULL"
-    else:
-        grouping_col = "'" + grouping_col + "'"
+    (fitres, coef_str, cluster_grouping_str,
+     grouping_col_str) = __prepare_strings(clustervar, grouping_col)
         
     plpy.execute(
         """
         select {schema_madlib}.linregr_train('{tbl_data}',
-            '{linres}', '{depvar}', '{indvar}', {grouping_col})
+            '{fitres}', '{depvar}', '{indvar}', {grouping_col})
         """.format(schema_madlib = schema_madlib, tbl_data = tbl_data,
-                   linres = linres, depvar = depvar, indvar = indvar,
-                   grouping_col = grouping_col))
+                   fitres = fitres, depvar = depvar, indvar = indvar,
+                   grouping_col = grouping_col_str))
 
-    coef_str = __unique_string()
-    if clustervar is None:
-        cluster_grouping_str = "group by {coef_str}".format(coef_str = coef_str)
-    else:
-        cluster_grouping_str = "group by {coef_str}, ".format(coef_str = coef_str) + clustervar
+    plpy.execute(
+        __generate_clustered_sql(schema_madlib = schema_madlib, depvar = depvar,
+                                 indvar = indvar, coef_str = coef_str,
+                                 tbl_data = tbl_data, fitres = fitres,
+                                 cluster_grouping_str = cluster_grouping_str,
+                                 tbl_output = tbl_output, regr_type = "lin"))
 
     plpy.execute(
         """
-        create table {tbl_output} as
-            select (f).* from (
-                select {schema_madlib}.__clustered_compute_lin_stats(
-                    max(coef),
-                    m4_ifdef(`__POSTGRESQL__', `{schema_madlib}.__array_')sum(meatvec),
-                    m4_ifdef(`__POSTGRESQL__', `{schema_madlib}.__array_')sum(breadvec),
-                    count(numRows)::integer, (sum(numRows))::integer) as f
-                from (
-                    select (g).*, coef, numRows from (
-                        select
-                            {schema_madlib}.__clustered_err_lin_step({depvar},
-                                {indvar}, {coef_str}) as g,
-                            {coef_str} as coef,
-                            count({depvar}) as numRows
-                        from (
-                            select u.coef as {coef_str}, v.*
-                            from
-                                {linres} u, {tbl_data} v
-                        ) s
-                        {cluster_grouping_str}) t) p) q
-        """.format(schema_madlib = schema_madlib, depvar = depvar,
-                   indvar = indvar, coef_str = coef_str,
-                   tbl_data = tbl_data, linres = linres,
-                   cluster_grouping_str = cluster_grouping_str,
-                   tbl_output = tbl_output))
-
-    plpy.execute(
-        """
-        drop table if exists {linres}
-        """.format(linres = linres))
+        drop table if exists {fitres}
+        """.format(fitres = fitres))
     
     plpy.execute("set client_min_messages to " + old_msg_level)
     return None
 
 # ========================================================================
 
-def validate_args_clustered_variance_linregr(schema_madlib, tbl_data,
-                                             tbl_output, depvar, indvar,
-                                             clustervar, grouping_col):
+def validate_args_clustered_variance (schema_madlib, tbl_data,
+                                      tbl_output, depvar, indvar,
+                                      clustervar, grouping_col):
     """
     Validate the parameters
     """
@@ -106,35 +121,64 @@ def validate_args_clustered_variance_linregr(schema_madlib, tbl_data,
     if not __is_tbl_has_rows(tbl_data):
         plpy.error("Clustered variance estimation error: Data table is empty!")
 
-    if tbl_output.lower() in ('null', ''):
+    if tbl_output is None or tbl_output.lower() in ('null', ''):
         plpy.error("Clustered variance estimation error: Invalid output table name!")
 
     if __is_tbl_exists_in_schema(tbl_output):
         plpy.error("Clustered variance estimation error: Output table exists!")
 
-    # if not __is_col_exists(tbl_data, [dep_col]):
-    #     plpy.error("Clustered variance estimation error: Dependent column does not exist!")
-
-    if not depvar or depvar.lower() in ('null', ''):
+    if depvar is None or (not isinstance(depvar, str)) or depvar.lower() in ('null', ''):
         plpy.error("Clustered variance estimation error: Invalid dependent column name!")
+
+    if indvar is None or (not isinstance(indvar, str)) or indvar.lower() in ('null', ''):
+        plpy.error("Clustered variance estimation error: Invalid independent column name!")
+
+    # try:
+    #     plpy.execute("select {indvar}".format(indvar = indvar))
+    #     isconst = True
+    # except:
+    #     isconst = False
+    # if isconst:
+    #     plpy.error("Clustered variance estimation error: independent variable is a constant!")
+
+    # try:
+    #     plpy.execute("select {depvar}".format(depvar = depvar))
+    #     notconst = False
+    # except:
+    #     notconst = True
+    # if notconst is False:
+    #     plpy.error("Clustered variance estimation error: dependent variable is a constant!")
+
+    # try:
+    #     plpy.execute("select {indvar} from {tbl} limit 1".format(indvar = indvar, tbl = tbl_data))
+    #     success = True
+    # except:
+    #     success = False
+    # if success is False:
+    #     plpy.error("Clustered variance estimation error: independent variable does not exist in the data table!")
+
+    # try:
+    #     plpy.execute("select {depvar} from {tbl} limit 1".format(depvar = depvar, tbl = tbl_data))
+    #     success = True
+    # except:
+    #     success = False
+    # if not success:
+    #     plpy.error("Clustered variance estimation error: dependent variable does not exist in the data table!")
 
     if not __is_scalar_col_no_null(tbl_data, depvar):
         plpy.error("Clustered variance estimation error: Dependent variable has Null values! \
                     Please filter out Null values before using this function!")
 
-    if not indvar or indvar.lower() in ('null', ''):
-        plpy.error("Clustered variance estimation error: Invalid independent column name!")
-
-    if clustervar and clustervar.lower() in ('null', ''):
+    if clustervar is None or clustervar.lower() in ('null', ''):
         # clustervar is optional but if provided should be valid column name
         plpy.error("Clustered variance estimation error: Invalid cluster columns name!")
 
-    if clustervar:
+    if clustervar is not None:
         if not __is_col_exists(tbl_data,
                                 _string_to_array(clustervar), schema_madlib):
             plpy.error("Clustered variance estimation error: Cluster column does not exist!")
 
-    if grouping_col and grouping_col.lower() in ('null', ''):
+    if grouping_col is not None and grouping_col.lower() in ('null', ''):
         # grouping_col is optional but if provided should be valid column name
         plpy.error("Clustered variance estimation error: Invalid grouping columns name!")
 
@@ -143,6 +187,19 @@ def validate_args_clustered_variance_linregr(schema_madlib, tbl_data,
                                 _string_to_array(grouping_col), schema_madlib):
             plpy.error("Clustered variance estimation error: Grouping column does not exist!")
 
+    
+# ========================================================================
+
+def validate_args_clustered_variance_linregr(schema_madlib, tbl_data,
+                                             tbl_output, depvar, indvar,
+                                             clustervar, grouping_col):
+    """
+    Validate the parameters
+    """
+    validate_args_clustered_variance(schema_madlib, tbl_data,
+                                     tbl_output, depvar, indvar,
+                                     clustervar, grouping_col)
+    
 # ========================================================================
 
 def clustered_variance_linregr_help (schema_madlib, msg = None, **kwargs):
@@ -186,7 +243,7 @@ def clustered_variance_linregr_help (schema_madlib, msg = None, **kwargs):
             'depvar',        -- Expression for dependent variable
             'indvar',        -- Expression for independent variables
             'clustervar',    -- Column names for cluster variables, separated by comma
-            'grouping_col'   -- Grouping regression column names, separated by comma
+            'grouping_col'   -- Grouping regression column names, separated by comma, default NULL
         );
 
         Output:
@@ -195,5 +252,149 @@ def clustered_variance_linregr_help (schema_madlib, msg = None, **kwargs):
             coef      DOUBLE PRECISION[],  -- Fitting coefficients
             std_err   DOUBLE PRECISION[],  -- Clustered standard errors for coef
             t_stats   DOUBLE PRECISION[],  -- t-stats of the errors
+            p_values  DOUBLE PRECISION[]   -- p-values of the errors
+        """.format(schema_madlib = schema_madlib)
+
+# ========================================================================
+# Clustered errors for logistic regression
+# ========================================================================
+
+def clustered_variance_logregr (schema_madlib, tbl_data, tbl_output,
+                                depvar, indvar, clustervar, grouping_col,
+                                max_iter, optimizer, tolerance, verbose,
+                                **kwargs):
+    """
+    Logistic regression clustered standard errors
+    """
+    validate_args_clustered_variance_logregr(schema_madlib, tbl_data,
+                                             tbl_output, depvar, indvar,
+                                             clustervar, grouping_col,
+                                             max_iter, optimizer, tolerance,
+                                             verbose)
+
+    (fitres, coef_str, cluster_grouping_str,
+     grouping_col_str) = __prepare_strings(clustervar, grouping_col)
+        
+    plpy.execute(
+        """
+        select {schema_madlib}.logregr_train('{tbl_data}',
+            '{fitres}', '{depvar}', '{indvar}', {grouping_col},
+            {max_iter}, '{optimizer}', {tolerance}, {verbose})
+        """.format(schema_madlib = schema_madlib, tbl_data = tbl_data,
+                   fitres = fitres, depvar = depvar, indvar = indvar,
+                   grouping_col = grouping_col_str, max_iter = max_iter,
+                   optimizer = optimizer, tolerance = tolerance,
+                   verbose = verbose))
+
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                 name='client_min_messages'")[0]['setting']
+    plpy.execute("set client_min_messages to error")
+
+    plpy.execute(
+        __generate_clustered_sql(schema_madlib = schema_madlib, depvar = depvar,
+                                 indvar = indvar, coef_str = coef_str,
+                                 tbl_data = tbl_data, fitres = fitres,
+                                 cluster_grouping_str = cluster_grouping_str,
+                                 tbl_output = tbl_output, regr_type = "log"))
+
+    plpy.execute(
+        """
+        drop table if exists {fitres}
+        """.format(fitres = fitres))
+    
+    plpy.execute("set client_min_messages to " + old_msg_level)
+    return None
+
+# ========================================================================
+
+def validate_args_clustered_variance_logregr(schema_madlib, tbl_data,
+                                             tbl_output, depvar, indvar,
+                                             clustervar, grouping_col,
+                                             max_iter, optimizer, tolerance,
+                                             verbose):
+    """
+    Validate the parameters
+    """
+    validate_args_clustered_variance(schema_madlib, tbl_data,
+                                     tbl_output, depvar, indvar,
+                                     clustervar, grouping_col)
+    if max_iter is None or max_iter <= 0:
+        plpy.error("Clustered variance estimation error: Maximum number of iterations must be a positive number!")
+
+    if tolerance is None or tolerance < 0:
+        plpy.error("Clustered variance estimation error: The tolerance must be a non-negative number!")
+
+    if verbose not in [True, False]:
+        plpy.error("Clustered variance estimation error: verbose option must be a boolean!")
+        
+    if optimizer == "newton":
+        optimizer = "irls"
+    elif optimizer not in ("irls", "cg", "igd"):
+        plpy.error(""" Clustered variance estimation error: Unknown optimizer requested.
+                   Must be 'newton'/'irls', 'cg', or 'igd'.
+                   """)
+
+# ========================================================================
+
+def clustered_variance_logregr_help (schema_madlib, msg = None, **kwargs):
+    """
+    Print help messages
+    """
+    if msg is None or msg.strip(' ') == 'help' or msg.strip(' ') == '?':
+        return """
+        ----------------------------------------------------------------
+                                Summary
+        ----------------------------------------------------------------
+        Computes the clustered standard errors for logistic regression.
+
+        The function first runs a logistic regression to get the fitting
+        coefficients. Then it computes the clustered standard errors for
+        the logistic regression.
+
+        SELECT {schema_madlib}.clustered_variance_logregr(
+            'tbl_data',
+            'tbl_output',
+            'depvar',
+            'indvar',
+            'clustervar',
+            'grouping_col',
+            max_iter,
+            'optimizer',
+            tolerance,
+            verbose
+        );
+        
+        --
+        Run:
+        SELECT {schema_madlib}.clustered_variance_logregr('usage');
+
+        to get more information.
+        """.format(schema_madlib = schema_madlib)
+
+    if msg.strip(' ') == 'usage':
+        return """
+        Usage:
+        ----------------------------------------------------------------
+        SELECT {schema_madlib}.clustered_variance_logregr(
+            'tbl_data',      -- Name of data table
+            'tbl_output',    -- Name of result table (raise an error if it already exists)
+            'depvar',        -- Expression for dependent variable
+            'indvar',        -- Expression for independent variables
+            'clustervar',    -- Column names for cluster variables, separated by comma
+            'grouping_col',  -- Grouping regression column names, separated by comma, default NULL
+            max_iter,        -- Maximum iteration number for logistic regression, default 20
+            'optimizer',     -- Optimization method for logistic regression, default 'irls'
+            tolerance,       -- When difference of likelihoods in two consecutive iterations smaller than
+                             -- this value, stops the computation. Default 0.0001
+            verbose          -- Whether print detailed information when computing logistic regression,
+                             -- default is False
+        );
+
+        Output:
+        ----------------------------------------------------------------
+        The output table has the following columns:
+            coef      DOUBLE PRECISION[],  -- Fitting coefficients
+            std_err   DOUBLE PRECISION[],  -- Clustered standard errors for coef
+            z_stats   DOUBLE PRECISION[],  -- z-stats of the errors
             p_values  DOUBLE PRECISION[]   -- p-values of the errors
         """.format(schema_madlib = schema_madlib)

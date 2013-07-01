@@ -19,10 +19,21 @@ namespace regress {
 typedef ClusteredState<RootContainer> IClusteredState;
 typedef ClusteredState<MutableRootContainer> MutableClusteredState;
 
-AnyType __clustered_err_lin_transition::run (AnyType& args)
+// ------------------------------------------------------------------------
+
+// function used by linear and logistic transitions
+AnyType __clustered_common_transition (AnyType& args, bool bool_y,
+                                       void (*func)(
+                                           MutableClusteredState&,
+                                           const MappedColumnVector&,
+                                           const double& y))
 {
     MutableClusteredState state = args[0].getAs<MutableByteString>();
-    const double& y = args[1].getAs<double>();
+    double y;
+    if (bool_y)
+        y = args[1].getAs<bool>() ? 1. : -1;
+    else
+        y = args[1].getAs<double>();
     const MappedColumnVector& x = args[2].getAs<MappedColumnVector>();
 
     if (!std::isfinite(y))
@@ -35,7 +46,7 @@ AnyType __clustered_err_lin_transition::run (AnyType& args)
         state.widthOfX = static_cast<uint16_t>(x.size());
         state.resize();
         const MappedColumnVector& coef = args[3].getAs<MappedColumnVector>();
-        state.ols_coef = coef;
+        state.coef = coef;
         state.meat_half.setZero();
     }
 
@@ -46,23 +57,15 @@ AnyType __clustered_err_lin_transition::run (AnyType& args)
 
     state.numRows++;
 
-    // On Redhat, I have to use the next a few lines instead of
-    // state.meat_half += (y - trans(state.ols_coef) * x) * x;
-    double sm = 0;
-    for (int i = 0; i < state.widthOfX; i++) sm += state.ols_coef(i) * x(i);
-    sm = y - sm;
-    for (int i = 0; i < state.widthOfX; i++) state.meat_half(0,i) += sm * x(i);
-
-    state.bread += x * trans(x);
-
+    (*func)(state, x, y);
     return state.storage();
 }
 
 // ------------------------------------------------------------------------
 
-AnyType __clustered_err_lin_merge::run (AnyType& args)
+// function used by linear and logistic merges
+AnyType __clustered_common_merge (AnyType& args)
 {
-    //elog(INFO, "+++++++++++++++++++++++++");
     MutableClusteredState state1 = args[0].getAs<MutableByteString>();
     IClusteredState state2 = args[1].getAs<ByteString>();
     
@@ -80,7 +83,8 @@ AnyType __clustered_err_lin_merge::run (AnyType& args)
 
 // ------------------------------------------------------------------------
 
-AnyType __clustered_err_lin_final::run (AnyType& args)
+// function used by linear and logistic finals
+AnyType __clustered_common_final (AnyType& args)
 {
     IClusteredState state = args[0].getAs<ByteString>();
 
@@ -118,7 +122,11 @@ AnyType __clustered_err_lin_final::run (AnyType& args)
 // ------------------------------------------------------------------------
 
 // Compute the stats from coef and errs
-AnyType clustered_compute_lin_stats::run (AnyType& args)
+AnyType clustered_compute_stats (AnyType& args,
+                                 void (*func)(
+                                     MutableNativeColumnVector&,
+                                     MutableNativeColumnVector&,
+                                     int, int))
 {
     const MappedColumnVector& coef = args[0].getAs<MappedColumnVector>();
     const MappedColumnVector& meatvec = args[1].getAs<MappedColumnVector>();
@@ -148,12 +156,12 @@ AnyType clustered_compute_lin_stats::run (AnyType& args)
     cov = inverse_of_bread * meat * inverse_of_bread;
 
     MutableNativeColumnVector errs;
-    MutableNativeColumnVector tStats;
+    MutableNativeColumnVector stats;
     MutableNativeColumnVector pValues;
     Allocator& allocator = defaultAllocator();
    
     errs.rebind(allocator.allocateArray<double>(k));
-    tStats.rebind(allocator.allocateArray<double>(k));
+    stats.rebind(allocator.allocateArray<double>(k));
     pValues.rebind(allocator.allocateArray<double>(k));
     for (int i = 0; i < k; i++)
     {
@@ -163,28 +171,146 @@ AnyType clustered_compute_lin_stats::run (AnyType& args)
             errs(i) = std::sqrt(cov(i,i) * dfc);
         
         if (coef(i) == 0 && errs(i) == 0)
-            tStats(i) = 0;
+            stats(i) = 0;
         else
-            tStats(i) = coef(i) / errs(i);
+            stats(i) = coef(i) / errs(i);
     }
 
     if (numRows > k)
-        for (int i = 0; i < k; i++)
-            pValues(i) = 2. * prob::cdf(
-                boost::math::complement(
-                    prob::students_t(
-                        static_cast<double>(numRows - k)
-                                     ),
-                    std::fabs(tStats(i))
-                                        ));
+        (*func)(pValues, stats, numRows, k);
 
     AnyType tuple;
 
-    tuple << coef << errs << tStats
+    tuple << coef << errs << stats
           << (numRows > k
               ? pValues
               : Null());
     return tuple;
+}
+
+// ------------------------------------------------------------------------
+
+// compute t-stats
+void __compute_t_stats (MutableNativeColumnVector& pValues,
+                        MutableNativeColumnVector& stats,
+                        int numRows, int k)
+{
+    for (int i = 0; i < k; i++)
+        pValues(i) = 2. * prob::cdf(
+            boost::math::complement(
+                prob::students_t(static_cast<double>(numRows - k)),
+                std::fabs(stats(i))));
+}
+
+// ------------------------------------------------------------------------
+
+// compute t-stats
+void __compute_z_stats (MutableNativeColumnVector& pValues,
+                        MutableNativeColumnVector& stats,
+                        int numRows, int k)
+{
+    (void)numRows;
+    for (int i = 0; i < k; i++)
+        pValues(i) = 2. * prob::cdf(
+            boost::math::complement(prob::normal(), std::fabs(stats(i))));
+}
+
+// ------------------------------------------------------------------------
+// linear clustered
+// ------------------------------------------------------------------------
+
+void __linear_trans_compute (MutableClusteredState& state,
+                             const MappedColumnVector& x, const double& y)
+{
+    // On Redhat, I have to use the next a few lines instead of
+    // state.meat_half += (y - trans(state.coef) * x) * x;
+    double sm = 0;
+    for (int i = 0; i < state.widthOfX; i++) sm += state.coef(i) * x(i);
+    sm = y - sm;
+    for (int i = 0; i < state.widthOfX; i++)
+        state.meat_half(0,i) += sm * x(i);
+
+    state.bread += x * trans(x);
+}
+
+// ------------------------------------------------------------------------
+
+AnyType __clustered_err_lin_transition::run (AnyType& args)
+{
+    return __clustered_common_transition(args, false, __linear_trans_compute);
+}
+
+// ------------------------------------------------------------------------
+
+AnyType __clustered_err_lin_merge::run (AnyType& args)
+{
+    return __clustered_common_merge(args);
+}
+
+// ------------------------------------------------------------------------
+
+AnyType __clustered_err_lin_final::run (AnyType& args)
+{
+    return __clustered_common_final(args);
+}
+
+// ------------------------------------------------------------------------
+
+AnyType clustered_lin_compute_stats::run (AnyType& args)
+{
+    return clustered_compute_stats(args, __compute_t_stats);
+}
+
+// ------------------------------------------------------------------------
+// Logistic clustered standard errors
+// ------------------------------------------------------------------------ 
+
+inline double sigma(double x) {
+	return 1. / (1. + std::exp(-x));
+}
+
+void __logistic_trans_compute (MutableClusteredState& state,
+                               const MappedColumnVector& x, const double& y)
+{
+    double sm = 0;
+    for (int i = 0; i < state.widthOfX; i++) sm += state.coef(i) * x(i);
+
+    double sgn = y > 0 ? -1 : 1;
+    double t1 = sigma(sgn * sm);
+    double t2 = sigma(-sgn * sm);
+    
+    for (int i = 0; i < state.widthOfX; i++)
+        state.meat_half(0,i) += t1 * sgn * x(i);
+
+    state.bread += (t1 * t2) * (x * trans(x));
+}
+
+// ------------------------------------------------------------------------
+
+AnyType __clustered_err_log_transition::run (AnyType& args)
+{
+    return __clustered_common_transition(args, true, __logistic_trans_compute);
+}
+
+// ------------------------------------------------------------------------
+
+AnyType __clustered_err_log_merge::run (AnyType& args)
+{
+    return __clustered_common_merge(args);
+}
+
+// ------------------------------------------------------------------------
+
+AnyType __clustered_err_log_final::run (AnyType& args)
+{
+    return __clustered_common_final(args);
+}
+
+// ------------------------------------------------------------------------
+
+AnyType clustered_log_compute_stats::run (AnyType& args)
+{
+    return clustered_compute_stats(args, __compute_z_stats);
 }
 
 }
