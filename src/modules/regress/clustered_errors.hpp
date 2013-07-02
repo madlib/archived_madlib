@@ -22,3 +22,13 @@ DECLARE_UDF(regress, __clustered_err_log_merge)
 DECLARE_UDF(regress, __clustered_err_log_final)
 
 DECLARE_UDF(regress, clustered_log_compute_stats)
+
+
+DECLARE_UDF(regress, __clustered_err_mlog_transition)
+
+DECLARE_UDF(regress, __clustered_err_mlog_merge)
+
+DECLARE_UDF(regress, __clustered_err_mlog_final)
+
+DECLARE_UDF(regress, clustered_mlog_compute_stats)
+

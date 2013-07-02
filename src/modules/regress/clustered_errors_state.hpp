@@ -23,6 +23,8 @@ class ClusteredState: public DynamicStruct<ClusteredState<Container>, Container>
 
     uint64_type numRows;
     uint16_type widthOfX;
+    uint16_type numCategories;
+    uint16_type refCategory;
     ColumnVector_type coef;
     Matrix_type bread;
     Matrix_type meat_half;
@@ -42,7 +44,7 @@ inline ClusteredState<Container>::ClusteredState (Init_type& inInitialization) :
 template <class Container>
 inline void ClusteredState<Container>::bind(ByteStream_type& inStream)
 {
-    inStream >> numRows >> widthOfX;
+    inStream >> numRows >> widthOfX >> numCategories >> refCategory;
     uint16_t actualWidthOfX = widthOfX.isNull() ? 0 : static_cast<uint16_t>(widthOfX);
     inStream >> coef.rebind(actualWidthOfX)
              >> meat_half.rebind(1, actualWidthOfX)

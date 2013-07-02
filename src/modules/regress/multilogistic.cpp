@@ -631,8 +631,7 @@ mlogregr_robust_step_transition::run(AnyType &args) {
         ColumnVector t1 = -coef*x;
 
         but this creates warnings. These warnings are somehow related to the factor
-        that x is of an immutable type. The following alternative could resolve
-        the warnings (although not necessary the best alternative):
+        that x is an immutable type. 
     */
 
     ColumnVector t2 = t1.array().exp();
@@ -757,8 +756,17 @@ mlogregr_robust_step_final::run(AnyType &args) {
         throw NoSolutionFoundException("Over- or underflow in intermediate "
             "calulation. Input data is likely of poor numerical condition.");
 
+
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         -1 * state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
+
+	for(int i = 0; i < state.X_transp_AX.rows(); i++)
+	{
+		for(int j = 0; j < state.X_transp_AX.cols(); j++)
+		{
+			elog(INFO, "Bread %i, %i, %f",  i,j, static_cast<float>(state.X_transp_AX(i,j)));
+		}
+	}
 
     // Precompute (X^T * A * X)^-1
     Matrix bread = decomposition.pseudoInverse();
