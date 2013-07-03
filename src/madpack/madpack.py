@@ -220,10 +220,15 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
         raise Exception
 
     # Only update function definition
+    sub_module = ''
     if upgrade:
+        # get filename from complete path without the extension
+        sub_module = os.path.splitext(os.path.basename(sqlfile))[0]
+        __info(sub_module, False)
+
         # Special treatment for new module and 'svec' module
-        if (module not in sc.get_change_handler().get_newmodule()) and \
-            not (module == 'svec' and 'svec' in sc.get_change_handler().get_udt()):
+        if (sub_module not in sc.get_change_handler().get_newmodule()) and \
+            not (sub_module == 'svec' and 'svec' in sc.get_change_handler().get_udt()):
             sql = open(tmpfile).read()
             sql = sc.cleanup(sql)
             open(tmpfile, 'w').write(sql)
@@ -541,43 +546,39 @@ def __db_upgrade(schema, dbrev):
             if udt in c_udt:
                 cd_udt.append(udt)
 
-    cd_udf = []
-    cd_uda = []
     if vd.has_dependency():
         __info("\tFollowing user views are dependent on updated MADlib objects:", True)
         __info(vd.get_dependency_graph_str(), True)
 
         c_udf = ch.get_udf_signature()
         d_udf = vd.get_depended_func_signature(False)
-        for udf in d_udf:
-            if udf in c_udf:
-                cd_udf.append(udf)
 
+        cd_udf = [udf for udf in d_udf if udf in c_udf]
         c_uda = ch.get_uda_signature()
         d_uda = vd.get_depended_func_signature(True)
-        for uda in d_uda:
-            if uda in c_uda:
-                cd_uda.append(uda)
+        cd_uda = [uda for uda in d_uda if uda in c_uda]
 
     abort = False
     if len(cd_udt)  > 0:
         __error("""
-            User has objects dependent on updated MADlib types (%s)! Aborting upgrade ...
-            """ % str(cd_udt), False)
+            User has objects dependent on updated MADlib types ({0})!
+            These objects need to be dropped before starting upgrade again. Aborting upgrade ...
+            """ .format('\n'.join(cd_udt)), False)
         abort = True
     if len(cd_udf)  > 0:
         __error("""
-            User has objects dependent on updated MADlib functions (%s)! Aborting upgrade ...
-            """ % str(cd_udf), False)
+            User has objects dependent on updated MADlib functions ({0})!
+            These objects need to be dropped before starting upgrade again. Aborting upgrade ...
+            """ .format('\n'.join(cd_udf)), False)
         abort = True
     if len(cd_uda)  > 0:
         __error("""
-            User has objects dependent on udpated MADlib aggregates (%s)! Aborting upgrade ...
-            """ % str(cd_uda), False)
+            User has objects dependent on udpated MADlib aggregates ({0})!
+            These objects need to be dropped before starting upgrade again. Aborting upgrade ...
+            """ .format('\n'.join(cd_uda)), False)
         abort = True
-
     if abort:
-        __error('Upgrade aborted.', True)
+        __error('------- Upgrade aborted. -------', True)
     else:
         __info("No explicit dependency problem found, continuing to upgrade ...", True)
         vd.save_and_drop()
@@ -709,15 +710,6 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None):
             retval = __run_sql_file(schema, maddir_mod_py, module, sqlfile,
                                         tmpfile, logfile, None, upgrade,
                                         sc)
-            # Run the SQL
-            #try:
-            #    retval = __run_sql_file(schema, maddir_mod_py, module, sqlfile,
-            #                            tmpfile, logfile, None, upgrade,
-            #                            change_handler)
-            #except:
-            #    __error("Failed executing %s file"%sqlfile, False)
-            #    raise Exception
-
             # Check the exit status
             if retval != 0:
                 __error("Failed executing %s" % tmpfile, False)
@@ -1099,7 +1091,8 @@ def main(argv):
             __info("Current MADlib version already up to date.", True)
             return
 
-        if float(rev) - float(dbrev) > 0.200001:
+        # FIXME: Change this to get the previous version from a config file
+        if float(dbrev) < 0.7:
             __info("""The version gap is too large, only release-by-release
                     incremental upgrade is supported.""", True)
             return
@@ -1110,10 +1103,10 @@ def main(argv):
             __db_upgrade(schema, dbrev)
         except Exception as e:
             __error("MADlib upgrade failed.", True)
-            # Uncomment the following lines when debugging
-            # print "Exception: " + str(e)
-            # print sys.exc_info()
-            # traceback.print_tb(sys.exc_info()[2])
+            #Uncomment the following lines when debugging
+            #print "Exception: " + str(e)
+            #print sys.exc_info()
+            #traceback.print_tb(sys.exc_info()[2])
 
     ###
     # COMMAND: install-check

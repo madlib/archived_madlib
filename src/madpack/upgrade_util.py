@@ -2,6 +2,7 @@ import re
 import sys
 import yaml
 from collections import defaultdict
+import os
 
 """
 @brief Wrapper function for ____run_sql_query
@@ -59,7 +60,7 @@ class UpgradeBase:
                 max(proname) AS proname,
                 max(rettype) AS rettype,
                 array_to_string(
-                    array_agg(argname || ' ' || argtype order by i), ',') AS argument
+                    array_agg(argname || ' ' || argtype order by i), ', ') AS argument
             FROM
             (
                 SELECT
@@ -134,55 +135,61 @@ class ChangeHandler(UpgradeBase):
         for row in rows:
             self._opr_ind_svec[row['oprname']] = row
 
+    def _load_config_param(self, config_iterable):
+        """
+        Replace schema_madlib with the appropriate schema name and
+        make all function names lower case to ensure ease of comparison.
+
+        Args:
+            @param config_dict is a dictionary with key as object name
+                        (eg. function name) and value as the details for
+                        the object. The details for the object are assumed to
+                        be in a dictionary with following keys:
+                            rettype: Return type
+                            argument: List of arguments
+
+        Returns:
+            A dictionary that lists all specific objects (functions, aggregates, etc)
+            with object name as key and another dictionary with objects details
+            as the value.
+        """
+        _return_obj = defaultdict(list)
+        if config_iterable is not None:
+            for each_config in config_iterable:
+                for obj_name, obj_details in each_config.iteritems():
+                    rettype = obj_details['rettype'].lower().replace(
+                                                'schema_madlib', self._schema)
+                    if obj_details['argument'] is not None:
+                        argument = obj_details['argument'].lower().replace(
+                                                'schema_madlib', self._schema)
+                    _return_obj[obj_name].append(
+                                    {'rettype': rettype, 'argument': argument})
+        return _return_obj
+
     """
     @brief Load the configuration file
     """
     def _load(self):
-        if float(self._mad_dbrev) < 0.6:
-            filename = self._maddir + '/madpack/changelist_v0.5.yaml'
-        else:
-            filename = self._maddir + '/madpack/changelist.yaml'
+        filename = os.path.join(self._maddir, 'madpack' , 'changelist.yaml')
         config = yaml.load(open(filename))
 
-        self._newmodule = config['new module']
-        if self._newmodule is None:
+        if config['new module'] is not None:
+            self._newmodule = config['new module']
+        else:
             self._newmodule = {}
 
-        self._udt = config['udt']
-        if self._udt is None:
+        if config['udt'] is not None:
+            self._udt = config['udt']
+        else:
             self._udt = {}
 
-        self._udc = config['udc']
-        if self._udc is None:
+        if config['udc'] is not None:
+            self._udc = config['udc']
+        else:
             self._udc = {}
 
-        self._udf = defaultdict(list)
-        items = config['udf']
-        if items is not None:
-            for item in items:
-                for udf in item:
-                    rettype = item[udf]['rettype'].lower().replace(
-                        'schema_madlib', self._schema)
-                    argument = ''
-                    if item[udf]['argument'] is not None:
-                        argument = item[udf]['argument'].lower().replace(
-                            'schema_madlib', self._schema)
-                    self._udf[udf].append(
-                        {'rettype': rettype, 'argument': argument})
-
-        self._uda = defaultdict(list)
-        items = config['uda']
-        if items is not None:
-            for item in items:
-                for uda in item:
-                    rettype = item[uda]['rettype'].lower().replace(
-                        'schema_madlib', self._schema)
-                    argument = ''
-                    if item[uda]['argument'] is not None:
-                        argument = item[uda]['argument'].lower().replace(
-                            'schema_madlib', self._schema)
-                    self._uda[uda].append(
-                        {'rettype': rettype, 'argument': argument})
+        self._udf = self._load_config_param(config['udf'])
+        self._uda = self._load_config_param(config['uda'])
 
     """
     @brief Get the list of new modules
@@ -242,9 +249,6 @@ class ChangeHandler(UpgradeBase):
         # Note that we use CASCADE option here. This might be dangerous because
         # it may drop some undetected dependent objects (eg. UDCast, UDOp, etc)
         for udt in self._udt:
-            # Newly added type
-            if self._udt[udt] == 'i':
-                continue
             self._run_sql("""
                 DROP TYPE IF EXISTS {schema}.{udt} CASCADE
                 """.format(schema=self._schema, udt=udt))
@@ -507,6 +511,7 @@ class ViewDependency(UpgradeBase):
         for procs in self._view2proc.values():
             for proc in procs:
                 if proc[2] == False:
+                    # proc is not an aggregate -> skip
                     continue
                 if (self._schema, proc) not in res:
                     res.append((self._schema, proc))
@@ -521,6 +526,7 @@ class ViewDependency(UpgradeBase):
         for procs in self._view2proc.values():
             for proc in procs:
                 if proc[2] == True:
+                    # proc is an aggregate -> skip
                     continue
                 if (self._schema, proc) not in res:
                     res.append((self._schema, proc))
@@ -536,14 +542,14 @@ class ViewDependency(UpgradeBase):
         # Save views
         for view in ordered_views:
             row = self._run_sql("""
-                SELECT
-                    schemaname, viewname, viewowner, definition
-                FROM
-                    pg_views
-                WHERE
-                    schemaname = '{schemaname}' AND
-                    viewname = '{viewname}'
-            """.format(schemaname=view[0], viewname=view[1]))
+                    SELECT
+                        schemaname, viewname, viewowner, definition
+                    FROM
+                        pg_views
+                    WHERE
+                        schemaname = '{schemaname}' AND
+                        viewname = '{viewname}'
+                    """.format(schemaname=view[0], viewname=view[1]))
             self._view2def[view] = row[0]
 
         # Drop views
@@ -757,7 +763,15 @@ class ScriptCleaner(UpgradeBase):
     """
     def _clean_comment(self):
         pattern = re.compile(r"""(/\*(.|[\r\n])*?\*/)|(--(.*|[\r\n]))""")
-        self._sql = re.sub(pattern, '', self._sql).strip()
+        res = ''
+        lines = re.split(r'[\r\n]+', self._sql)
+        for line in lines:
+            tmp = line
+            if not tmp.strip().startswith("E'"):
+                line = re.sub(pattern, '', line)
+            res += line + '\n'
+        self._sql = res.strip()
+        #self._sql = re.sub(pattern, '', self._sql).strip()
 
     """
     @breif Remove "drop/create type" statements in the sql script
