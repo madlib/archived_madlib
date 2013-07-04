@@ -54,6 +54,7 @@ add_subdirectory(gppkg)
 # -- Finally do the packaging! -------------------------------------------------
 
 set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/rpm_post.sh")
+set(CPACK_PREFLIGHT_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/preflight.sh)
 set(CPACK_POSTFLIGHT_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/postflight.sh)
 set(CPACK_MONOLITHIC_INSTALL 1)
 include(CPack)
