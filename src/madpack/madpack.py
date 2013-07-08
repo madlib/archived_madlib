@@ -522,29 +522,18 @@ def __db_upgrade(schema, dbrev):
     __info("\tDetecting view dependencies...", True)
     vd = ViewDependency(schema, portid, con_args)
 
-    # if no dependency found
-    if not td.has_dependency() and not vd.has_dependency():
-        __info("\tNo dependency issues found, continuing upgrade...", True)
-        __info("\tReading existing UDAs/UDTs...", False)
-        sc = ScriptCleaner(schema, portid, con_args, ch)
-
-        ch.drop_changed_uda()
-        ch.drop_changed_udt()
-        ch.drop_changed_udc()
-        ch.drop_changed_udf()
-        __db_create_objects(schema, None, True, sc)
-        __info("MADlib %s upgraded successfully in %s schema." % (rev, schema.upper()), True)
-        return
-
-    cd_udt = []
+    abort = False
     if td.has_dependency():
         __info("\tFollowing user tables are dependent on updated MADlib types:", True)
         __info(td.get_dependency_str(), True)
-        d_udt = td.get_depended_udt()
-        c_udt = ch.get_udt()
-        for udt in d_udt:
-            if udt in c_udt:
-                cd_udt.append(udt)
+        cd_udt = [udt for udt in td.get_depended_udt()
+                      if udt in ch.get_udt()]
+        if len(cd_udt) > 0:
+            __error("""
+                User has objects dependent on updated MADlib types ({0})!
+                These objects need to be dropped before starting upgrade again. Aborting upgrade ...
+                """.format('\n'.join(cd_udt)), False)
+            abort = True
 
     if vd.has_dependency():
         __info("\tFollowing user views are dependent on updated MADlib objects:", True)
@@ -552,36 +541,31 @@ def __db_upgrade(schema, dbrev):
 
         c_udf = ch.get_udf_signature()
         d_udf = vd.get_depended_func_signature(False)
-
         cd_udf = [udf for udf in d_udf if udf in c_udf]
+        if len(cd_udf) > 0:
+            __error("""
+                User has objects dependent on updated MADlib functions ({0})!
+                These objects will not fail to work with the new functions and
+                need to be dropped before starting upgrade again. Aborting upgrade ...
+                """.format('\n'.join(cd_udf)), False)
+            abort = True
         c_uda = ch.get_uda_signature()
         d_uda = vd.get_depended_func_signature(True)
         cd_uda = [uda for uda in d_uda if uda in c_uda]
+        if len(cd_uda) > 0:
+            __error("""
+                User has objects dependent on updated MADlib functions ({0})!
+                These objects will not fail to work with the new aggregates and
+                need to be dropped before starting upgrade again. Aborting upgrade ...
+                """.format('\n'.join(cd_uda)), False)
+            abort = True
 
-    abort = False
-    if len(cd_udt)  > 0:
-        __error("""
-            User has objects dependent on updated MADlib types ({0})!
-            These objects need to be dropped before starting upgrade again. Aborting upgrade ...
-            """ .format('\n'.join(cd_udt)), False)
-        abort = True
-    if len(cd_udf)  > 0:
-        __error("""
-            User has objects dependent on updated MADlib functions ({0})!
-            These objects need to be dropped before starting upgrade again. Aborting upgrade ...
-            """ .format('\n'.join(cd_udf)), False)
-        abort = True
-    if len(cd_uda)  > 0:
-        __error("""
-            User has objects dependent on udpated MADlib aggregates ({0})!
-            These objects need to be dropped before starting upgrade again. Aborting upgrade ...
-            """ .format('\n'.join(cd_uda)), False)
-        abort = True
     if abort:
         __error('------- Upgrade aborted. -------', True)
     else:
         __info("No explicit dependency problem found, continuing to upgrade ...", True)
-        vd.save_and_drop()
+        if vd.has_dependency():
+            vd.save_and_drop()
 
     __info("\tReading existing UDAs/UDTs...", False)
     sc = ScriptCleaner(schema, portid, con_args, ch)
