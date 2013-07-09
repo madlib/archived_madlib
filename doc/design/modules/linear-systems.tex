@@ -1,0 +1,213 @@
+\chapter[linear-systems]{Linear Systems}
+\begin{moduleinfo}
+\item[Authors] {Srikrishna Sridhar}
+\item[History]
+	\begin{modulehistory}
+		\item[v1.0] Initial version
+	\end{modulehistory}
+\end{moduleinfo}
+
+\section{Introduction}\label{sec:intro}
+In this document, we describe solution methods for systems of a consistent
+linear equations.
+\begin{equation}
+  \label{eq:linear_system}
+  Ax = b
+\end{equation}
+where $x \in \bR^{n}$, $A \in \bR^{m \times n}$ and $b \in \bR^{m}$. We assume
+that all rows of $A$ are non-zero. We denote the rows of $A$ and $b$ 
+by $a^T_i$ and $b_i$, respectively. This can be written
+as 
+\begin{alignat}{2}
+A &= \begin{bmatrix} a^T_1 \  a^T_2  \  \ldots \  a^T_m   \end{bmatrix} \ \ \ \ 
+b &&= \begin{bmatrix} b_1  \  b_2   \ \ldots \  b_m   \end{bmatrix}
+\end{alignat}
+
+\noindent
+The algorithms discussed in this document are suitable for large sparse
+linear systems which are expensive for ordinary elimination. Amongst the many methods for 
+iteratively solving linear systems, algorithms like the Jacobi and over-relaxation
+methods not as effective as methods like conjugate gradient. The preconditioned 
+conjugate gradient (CG) method is one of the most commonly used algorithms for 
+solving large sparse systems for symmetric $A$. The textbook CG algorithm has been modified
+to be applicable even when $A$ is not symmetric. The disadvantage of CG is that
+in each iteration, it must perform a matrix-vector product. To avoid this computation, 
+some applications implement a new algorithm called the randomized Kaczmarz (RK) 
+algorithm. It is a popular choice for extremely large scale applications. 
+The algorithm is known to have a linear convergence rate and each iteration 
+requires an $O(n)$ operation. In some applications, it outperforms CG. In
+general, it is be difficult to predict which one of CG or RK is preferable
+for a given linear system.
+
+We now discuss three different approaches to solve linear systems. Direct method, 
+Conjugate Gradient and Randomized Kaczmarz. Each method has its own advantages
+and disadvantages which will be highlighted.
+
+\section{Direct Methods}
+Direct methods are suitable for solving small linear systems that fit completely
+in memory. The workhorse of several commercial codes is the LU decomposition. 
+The LU decomposition factors a matrix as the product of a lower triangular matrix 
+($L$) and an upper triangular matrix ($U$) such that
+$$
+PA = LU
+$$
+where $P$ is a permutation matrix which re-orders the rows of $A$. Such an 
+LU-decomposition can be used to solve \eqref{eq:linear_system} using
+$$
+  Ax = b \Rightarrow LUx = Pb 
+$$
+Now, we can solve for $x$ using the following steps
+\begin{enumerate}
+  \item Solve for $y$ in the equation $Ly = Pb$
+  \item Solve for $x$ in the equation $Ux = b$
+\end{enumerate}
+Since both $L$ and $U$ are triangular matrices, we can efficiently solve both
+the equations directly using forward and backward substitutions.
+
+The main advantage of solving linear systems with direct methods is that direct
+methods are independent of the conditioning of the system. Solve time depends
+purely on the sparsity and size of the matrices. The major disadvantage is 
+that the LU-decomposition has large memory requirements. Even when the matrix
+$A$ is sparse, the $L$ and $U$ factors might be dense. The large memory
+requirements make it unsuitable for solving large or very sparse linear 
+systems.
+
+\section{Iterative Methods}
+In solving \eqref{eq:linear_system} a convergent iterative method starts
+with an initial estimate $x_0$ of the solution and generates a sequence of iterates
+$x_k$ that are successively closer to the solution $x^*$. Iterative methods 
+are often useful even for linear problems involving a large number of variables.
+Amongst the many iterative methods, we will review the two most popular methods;
+the conjugate gradient method (CG) and the randomized Kaczmarz (RK) method.
+
+\subsection{Conjugate Gradient (CG)}
+The linear conjugate gradient method (not to be confused with the non-linear
+conjugate gradient method) to solve large sparse linear systems with a 
+{\it symmetric positive definite} $A$ matrix. Such a system can be stated as: 
+\begin{equation}
+  \label{eq:sym_linear_system}
+  Ax = b
+\end{equation}
+where $x \in \bR^{n}$, $A \in \bR^{n \times n}$ is symmetric and positive 
+definite and $b \in \bR^{n}$. 
+
+Unlike direct methods, the time taken to solve a linear system using CG depends on the 
+distribution of the eigenvalues of the $A$ matrix. In some applications, 
+the $A$ matrix is appropriately scaled by a process called pre-conditioning to 
+generate an equivalent system with a more favorable distribution of eigenvalues.
+
+
+The system \eqref{eq:sym_linear_system} can be restated as the quadratic minimization
+$$
+  \min \phi(x) := \frac{1}{2} x^T A^T A x - b^T x
+$$
+which allows us to interpret CG as an algorithm to minimize convex quadratic
+functions. In the rest of this section, we will refer to the gradient $\nabla \phi(x)$
+as the residual of the linear system:
+$$
+  \nabla \phi(x) := r(x) := Ax - b
+$$
+The linear conjugate gradient method generates a sequence of directions ${p_0, p_1 \ldots p_l}$
+that satisfy an important property called conjugacy which implies that the method
+can minimize the function $\phi(x)$ in exactly $n$ steps. We refer the reader 
+to the textbook by Nocedal and Wright \cite{nocedal2006numerical} for details on the 
+theoretical and algorithmic aspects of CG.
+
+We now discuss an efficient implementation of the linear CG algorithm. In each, 
+iteration ($k$), we keep track of the direction vector $p_k$, the residual
+vector $r_k$ and the solution vector $x_k$. The computational bottleneck
+is in a matrix-vector multiplication between $A$ and $p$.
+
+\begin{algorithm}[CG]\label{alg:cg}
+\caption{Conjugate gradient for symmetric positive definite linear systems.}
+\alginput{Symmetric matrix $A \in \br{m \times n}$, $b \in \bR{m}$}
+\algoutput{Solution to $Ax=b$}
+\begin{algorithmic}
+\State Choose $x_0 \in \bR^n$, $r_0 \leftarrow Ax_0$, $p_0 \leftarrow -r_0$, $k \leftarrow 0$ 
+\While{$\norm{r_k} \leq \epsilon$} 
+  \State$z_k \leftarrow Ap_k$ 
+  \State$\alpha_k \leftarrow \frac{r_k^T r_k}{p_k^T z_k}$ 
+  \State$x_{k+1} \leftarrow x_k + \alpha_k p_k$ 
+  \State$r_{k+1} \leftarrow r_k + \alpha_k z_k$ 
+  \State$\beta_k \leftarrow \frac{r_{k+1}^T r_{k+1}}{r_k^T r_k}$ 
+  \State$p_{k+1} \leftarrow -r_{k+1} + \beta_{k+1} p_k$ 
+  \State$k = k + 1$ 
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+The conjugate gradient method is suitable for large sparse linear systems where
+direct methods can often run into memory bottlenecks. This is mainly because,
+the only memory requirements of the CG method is to store the latest copies
+of the vectors $p_k$, $r_k$ and $x_k$. The majority of the computational efforts
+are spent in the step $z_k \leftarrow A p_k$. Hence, CG tends to perform better
+in sparse linear systems.
+
+\subsubsection*{Conjugate gradient Least Squares (CGLS)}
+In this section, we will extend the CG algorithm to be numerically suited to any linear system of the form 
+\eqref{eq:linear_system}. The naive extension of CG to \eqref{eq:sym_linear_system}
+solves $A^TAx = A^Tb$. In addition to requiring an expensive matrix-matrix
+multiplication algorithm, it has it use of vectors of the form $A^TAp$. An 
+algorithm with better numerical properties was developed by Hestenes et. al \cite{hestenes1952methods}.
+
+
+\begin{algorithm}[CGLS]\label{alg:cgls}
+\caption{Conjugate Gradient (least squares) for general linear systems.}
+\alginput{Matrix $A \in \br{m \times n}$, $b \in \bR{m}$}
+\algoutput{Solution to $Ax=b$}
+\begin{algorithmic}
+\State Choose $x_0 \in \bR^n$, $r_0 \leftarrow b$,\ $s_0 \leftarrow A^Tb$, $p_0 \leftarrow s_0$, $\gamma_0=\norm{s_0}^2$, $k \leftarrow 0$ 
+\While{$\norm{r_k} \leq \epsilon$} 
+  \State$z_k \leftarrow Ap_k$ 
+  \State$\alpha_k \leftarrow \frac{\gamma_{k}}{z_k^Tz_k}$ 
+  \State$x_{k+1} \leftarrow x_k + \alpha_k p_k$ 
+  \State$r_{k+1} \leftarrow r_k - \alpha_k z_k$ 
+  \State$s_{k+1} \leftarrow A^T r_{k+1} $ 
+  \State$\gamma_{k+1} \leftarrow s_{k+1}^T s_{k+1}$ 
+  \State$\beta_{k+1} \leftarrow \frac{\gamma_{k+1}}{\gamma_k}$ 
+  \State$p_{k+1} \leftarrow s_{k+1} + \beta_{k+1} p_k$ 
+  \State$k = k + 1$ 
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+Paige et. al \cite{paige1982lsqr} developed an algorithm called LSQR which has similar performance
+to CGLS. We might consider implementing LSQR in case CG performs poorly on 
+linear systems.
+
+\subsection{Randomized Kaczmarz (RK)}
+As discussed earlier, the randomized Kaczmarz (RK) algorithm, is a popular
+algorithm for solving \eqref{eq:linear_system}. Each iteration requires an 
+$O(n)$ storage and computational effort. During each iteration, RK picks a
+row $a_i$ of the matrix $A$, and does an orthogonal projection of the current
+solution vector $x_k$ to the hyperplane $a_i^Tx = b$. The update step is given by
+$$
+x_{k+1} = x_k - \frac{(a_i^T x_k - b_i)}{\norm{a_i}} a_i
+$$
+An alternate interpretation of RK is that the algorithm is identical to the 
+stochastic gradient  descent algorithm on the problem
+$$
+  \min \phi(x) := \frac{1}{2} x^T A^T A x - b^T x
+$$
+The algorithm performs best when a row $i$ is chosen randomly but proportional
+to $\norm{a_i}$. Since sequential scans are preferred for in-database algorithms, 
+a common pre-processing procedure for RK is to rescale the system so that each
+equation $a_i^Tx = b$ has the same norm.  
+
+\begin{algorithm}[RK]\label{alg:rk}
+\caption{Randomized Kaczmarz for general linear systems.}
+\alginput{Matrix $A \in \br{m \times n}$, $b \in \bR{m}$}
+\algoutput{Solution to $Ax=b$}
+\begin{algorithmic}
+\State Choose $x_0 \in \bR^n$, $k \leftarrow 0$ 
+\While{$\norm{Ax - b} \leq \epsilon$} 
+\State$x_{k+1} \leftarrow x_k - \frac{(a_i^T x_k - b_i)}{\norm{a_i}}$ 
+  \State$k = k + 1$ 
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+The termination criterion of the algorithm is implemented by computing the 
+residual $\norm{Ax-b}$ extremely infrequently. Typically, this computation
+is performed every $K$ epochs where an epoch is defined as one whole pass of 
+the data which in the case of RK is $m$ iterations.
