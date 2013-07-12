@@ -15,5 +15,8 @@ ln -nsf /usr/local/madlib/Versions/$MADLIB_VERSION /usr/local/madlib/Current
 ln -nsf /usr/local/madlib/Current/bin /usr/local/madlib/bin
 ln -nsf /usr/local/madlib/Current/doc /usr/local/madlib/doc
 
-mv -f /usr/local/madlib/Versions.bak/* /usr/local/madlib/Versions/
-rm -rf /usr/local/madlib/Versions.bak
+if [ -d "/usr/local/madlib/Versions.bak" ]
+then
+    mv -f /usr/local/madlib/Versions.bak/* /usr/local/madlib/Versions/
+    rm -rf /usr/local/madlib/Versions.bak
+fi
