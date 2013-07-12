@@ -17,74 +17,103 @@ m4_include(`SQLCommon.m4')
 
 @about
 
-This module implements a sparse vector data type named "svec", which 
-gives compressed storage of sparse vectors with many duplicate elements.
+This module implements a sparse vector data type, named "svec", which
+provides compressed storage of vectors that have many duplicate elements.
 
-When we use arrays of floating point numbers for various calculations, 
-    we will sometimes have long runs of zeros (or some other default value). 
-    This is common in applications like scientific computing, 
-    retail optimization, and text processing. Each floating point number takes 
-    8 bytes of storage in memory and/or disk, so saving those zeros is often 
-    worthwhile. There are also many computations that can benefit from skipping
-    over the zeros.
+Arrays of floating point numbers for various calculations  sometimes have
+long runs of zeros (or some other default value).  This is common in
+applications like scientific computing,  retail optimization, and text
+processing. Each floating point number takes  8 bytes of storage in memory
+and/or disk, so saving those zeros is often  worthwhile. There are also
+many computations that can benefit from skipping over the zeros.
 
-    To focus the discussion, consider, for example, the following 
-    array of doubles stored as a Postgres/GP "float8[]" data type:
-
-\code
-'{0, 33,...40,000 zeros..., 12, 22 }'::float8[].
-\endcode
-
-    This array would occupy slightly more than 320KB of memory/disk, most of 
-    it zeros. Even if we were to exploit the null bitmap and store the zeros 
-    as nulls, we would still end up with a 5KB null bitmap, which is still 
-    not nearly as memory efficient as we'd like. Also, as we perform various 
-    operations on the array, we'll often be doing work on 40,000 fields that 
-    would turn out not to be important. 
-
-    To solve the problems associated with the processing of sparse vectors 
-    discussed above, we adopt a simple Run Length Encoding (RLE) scheme to 
-    represent sparse vectors as pairs of count-value arrays. So, for example, 
-    the array above would be represented as follows
+Consider, for example, the following 
+array of doubles stored as a Postgres/Greenplum "float8[]" data type:
 
 \code
-'{1,1,40000,1,1}:{0,33,0,12,22}'::MADLIB_SCHEMA.svec,
+'{0, 33,...40,000 zeros..., 12, 22 }'::float8[]
 \endcode
 
-    which says there is 1 occurrence of 0, followed by 1 occurrence of 33, 
-    followed by 40,000 occurrences of 0, etc. In contrast to the naive 
-    representations, we only need 5 integers and 5 floating point numbers
-    to store the array. Further, it is easy to implement vector operations 
-    that can take advantage of the RLE representation to make computations 
-    faster. The module provides a library of such functions.
+This array would occupy slightly more than 320KB of memory or disk, most of
+it zeros. Even if we were to exploit the null bitmap and store the zeros
+as nulls, we would still end up with a 5KB null bitmap, which is still not
+nearly as memory efficient as we'd like. Also, as we perform various
+operations on the array, we do work on 40,000 fields that turn out to be
+unimportant.
 
-    The current version only supports sparse vectors of float8
-    values. Future versions will support other base types.
+To solve the problems associated with the processing of vectors discussed
+above, the svec type employs a simple Run Length Encoding (RLE) scheme to
+represent sparse vectors as pairs of count-value arrays. For example, the
+array above would be represented as
+
+\code
+'{1,1,40000,1,1}:{0,33,0,12,22}'::MADLIB_SCHEMA.svec
+\endcode
+
+which says there is 1 occurrence of 0, followed by 1 occurrence of 33,
+followed by 40,000 occurrences of 0, etc. This uses just 5 integers and 5
+floating point numbers to store the array. Further, it is easy to
+implement vector operations that can take advantage of the RLE
+representation to make computations faster. The SVEC module provides a library
+of such functions.
+
+The current version only supports sparse vectors of float8 values. Future
+versions will support other base types.
 
 @usage
 
-    SVEC's can be constructed directly as follows:
-	<pre>
-	SELECT '{n1,n2,...,nk}:{v1,v2,...vk}'::MADLIB_SCHEMA.svec;
-	</pre>
-	WHERE <tt>n1,n2,...,nk</tt> specifies the counts for the values <tt>v1,v2,...,vk</tt>.
-	
-	Or, SVEC's can also be casted from a float array:
-	<pre>
-	SELECT ('{v1,v2,...vk}'::float[])::MADLIB_SCHEMA.svec;
-	</pre>	
+An SVEC can be constructed directly with a constant expression, as follows:
+\code
+SELECT '{n1,n2,...,nk}:{v1,v2,...vk}'::MADLIB_SCHEMA.svec;
+\endcode
+where <tt>n1,n2,...,nk</tt> specifies the counts for the values <tt>v1,v2,...,vk</tt>.
 
-    Syntax reference can be found in svec.sql_in.
+A float array can be cast to an SVEC:
+\code
+SELECT ('{v1,v2,...vk}'::float[])::MADLIB_SCHEMA.svec;
+\endcode
 
-    Users need to add MADLIB_SCHEMA to their search_path to use the svec operators
-    defined in the module.
+An SVEC can be created with an aggregation:
+\code
+SELECT MADLIB_SCHEMA.svec_agg(v1) FROM generate_series(1,k);
+\endcode
+
+An SVEC can be created using the
+<tt>madlib.svec_cast_positions_float8arr()</tt> function by supplying an
+array of positions and an array of values at those positions:
+\code
+SELECT MADLIB_SCHEMA.svec_cast_positions_float8arr(
+    array[n1,n2,...nk],    -- positions of values in vector
+    array[v1,v2,...vk],    -- values at each position
+    length,                -- length of vector 
+    base)                  -- value at unspecified positions
+\endcode
+For example, the following expression:
+\code
+SELECT MADLIB_SCHEMA.svec_cast_positions_float8arr(
+    array[1,3,5],
+    array[2,4,6],
+    10,
+    0.0)
+\endcode
+produces this SVEC:
+\code
+ svec_cast_positions_float8arr 
+ -------------------------------
+ {1,1,1,1,1,5}:{2,0,4,0,6,0}
+\endcode
+
+Add MADLIB_SCHEMA to the search_path to use the svec operators
+defined in the module.
+
+See the file svec.sql_in for complete syntax.
 
 @examp
 
-    We can use operations with svec type like <, >, *, **, /, =, +, SUM, etc, 
-    and they have meanings associated with typical vector operations. For 
-    example, the plus (+) operator adds each of the terms of two vectors having
-    the same dimension together. 
+We can use operations with svec type like <, >, *, **, /, =, +, SUM, etc, 
+and they have meanings associated with typical vector operations. For 
+example, the plus (+) operator adds each of the terms of two vectors having
+the same dimension together. 
 \code
 sql> SELECT ('{0,1,5}'::float8[]::MADLIB_SCHEMA.svec + '{4,3,2}'::float8[]::MADLIB_SCHEMA.svec)::float8[];
  float8  
@@ -92,7 +121,7 @@ sql> SELECT ('{0,1,5}'::float8[]::MADLIB_SCHEMA.svec + '{4,3,2}'::float8[]::MADL
  {4,4,7}
 \endcode
 
-    Without the casting into float8[] at the end, we get:
+Without the casting into float8[] at the end, we get:
 \code
 sql> SELECT '{0,1,5}'::float8[]::MADLIB_SCHEMA.svec + '{4,3,2}'::float8[]::MADLIB_SCHEMA.svec;
  ?column?  
@@ -100,9 +129,9 @@ sql> SELECT '{0,1,5}'::float8[]::MADLIB_SCHEMA.svec + '{4,3,2}'::float8[]::MADLI
 {2,1}:{4,7}    	    	
 \endcode
 
-    A dot product (%*%) between the two vectors will result in a scalar 
-    result of type float8. The dot product should be (0*4 + 1*3 + 5*2) = 13, 
-    like this:
+A dot product (%*%) between the two vectors will result in a scalar 
+result of type float8. The dot product should be (0*4 + 1*3 + 5*2) = 13, 
+like this:
 \code
 sql> SELECT '{0,1,5}'::float8[]::MADLIB_SCHEMA.svec %*% '{4,3,2}'::float8[]::MADLIB_SCHEMA.svec;
  ?column? 
@@ -110,12 +139,12 @@ sql> SELECT '{0,1,5}'::float8[]::MADLIB_SCHEMA.svec %*% '{4,3,2}'::float8[]::MAD
 	13
 \endcode
 
-    Special vector aggregate functions are also available. SUM is self 
-    explanatory. SVEC_COUNT_NONZERO evaluates the count of non-zero terms 
-    in each column found in a set of n-dimensional svecs and returns an 
-    svec with the counts. For instance, if we have the vectors {0,1,5},
-    {10,0,3},{0,0,3},{0,1,0}, then executing the SVEC_COUNT_NONZERO() aggregate
-    function would result in {1,2,3}:
+Special vector aggregate functions are also available. SUM is self 
+explanatory. SVEC_COUNT_NONZERO evaluates the count of non-zero terms 
+in each column found in a set of n-dimensional svecs and returns an 
+svec with the counts. For instance, if we have the vectors {0,1,5},
+{10,0,3},{0,0,3},{0,1,0}, then executing the SVEC_COUNT_NONZERO() aggregate
+function would result in {1,2,3}:
 
 \code
 sql> create table list (a MADLIB_SCHEMA.svec);
@@ -127,9 +156,9 @@ svec_count_nonzero
 	{1,2,3}
 \endcode
 
-    We do not use null bitmaps in the svec data type. A null value in an svec 
-    is represented explicitly as an NVP (No Value Present) value. For example, 
-    we have:
+We do not use null bitmaps in the svec data type. A null value in an svec 
+is represented explicitly as an NVP (No Value Present) value. For example, 
+we have:
 \code
 sql> SELECT '{1,2,3}:{4,null,5}'::MADLIB_SCHEMA.svec;
 	  svec        
@@ -142,8 +171,8 @@ sql> SELECT '{1,2,3}:{4,null,5}'::MADLIB_SCHEMA.svec + '{2,2,2}:{8,9,10}'::MADLI
   {1,2,1,2}:{12,NVP,14,15}
 \endcode
 
-    An element of an svec can be accessed using the svec_proj() function,
-    which takes an svec and the index of the element desired.
+An element of an svec can be accessed using the svec_proj() function,
+which takes an svec and the index of the element desired.
 \code
 sql> SELECT MADLIB_SCHEMA.svec_proj('{1,2,3}:{4,5,6}'::MADLIB_SCHEMA.svec, 1) + MADLIB_SCHEMA.svec_proj('{4,5,6}:{1,2,3}'::MADLIB_SCHEMA.svec, 15);     
  ?column? 
@@ -151,8 +180,8 @@ sql> SELECT MADLIB_SCHEMA.svec_proj('{1,2,3}:{4,5,6}'::MADLIB_SCHEMA.svec, 1) + 
 	7
 \endcode
 
-    A subvector of an svec can be accessed using the svec_subvec() function,
-    which takes an svec and the start and end index of the subvector desired.
+A subvector of an svec can be accessed using the svec_subvec() function,
+which takes an svec and the start and end index of the subvector desired.
 \code
 sql> SELECT MADLIB_SCHEMA.svec_subvec('{2,4,6}:{1,3,5}'::MADLIB_SCHEMA.svec, 2, 11);
    svec_subvec   
@@ -160,11 +189,11 @@ sql> SELECT MADLIB_SCHEMA.svec_subvec('{2,4,6}:{1,3,5}'::MADLIB_SCHEMA.svec, 2, 
  {1,4,5}:{1,3,5}
 \endcode
 
-    The elements/subvector of an svec can be changed using the function 
-    svec_change(). It takes three arguments: an m-dimensional svec sv1, a
-    start index j, and an n-dimensional svec sv2 such that j + n - 1 <= m,
-    and returns an svec like sv1 but with the subvector sv1[j:j+n-1] 
-    replaced by sv2. An example follows:
+The elements/subvector of an svec can be changed using the function 
+svec_change(). It takes three arguments: an m-dimensional svec sv1, a
+start index j, and an n-dimensional svec sv2 such that j + n - 1 <= m,
+and returns an svec like sv1 but with the subvector sv1[j:j+n-1] 
+replaced by sv2. An example follows:
 \code
 sql> SELECT MADLIB_SCHEMA.svec_change('{1,2,3}:{4,5,6}'::MADLIB_SCHEMA.svec,3,'{2}:{3}'::MADLIB_SCHEMA.svec);
 	 svec_change     
@@ -172,8 +201,8 @@ sql> SELECT MADLIB_SCHEMA.svec_change('{1,2,3}:{4,5,6}'::MADLIB_SCHEMA.svec,3,'{
  {1,1,2,2}:{4,5,3,6}
 \endcode
 
-    There are also higher-order functions for processing svecs. For example,
-    the following is the corresponding function for lapply() in R.
+There are also higher-order functions for processing svecs. For example,
+the following is the corresponding function for lapply() in R.
 \code
 sql> SELECT MADLIB_SCHEMA.svec_lapply('sqrt', '{1,2,3}:{4,5,6}'::MADLIB_SCHEMA.svec);
 				  svec_lapply                  
@@ -181,8 +210,8 @@ sql> SELECT MADLIB_SCHEMA.svec_lapply('sqrt', '{1,2,3}:{4,5,6}'::MADLIB_SCHEMA.s
  {1,2,3}:{2,2.23606797749979,2.44948974278318}
 \endcode
 
-    The full list of functions available for operating on svecs are available
-    in svec.sql.
+The full list of functions available for operating on svecs are available
+in svec.sql-in.
 
 <b> A More Extensive Example</b>
 
@@ -326,7 +355,7 @@ docnum | angular_distance
     machine learning algorithms that rely on a distance measure between
     data points.
     
-    SVEC also provides functionality for declaring array given and array of positions and array of values, intermediate values betweens those
+    SVEC also provides functionality for declaring array given an array of positions and array of values, intermediate values betweens those
     are declared to be base value that user provides in the same function call. In the example below the fist array of integers represents the
     positions for the array two (array of floats). Positions do not need to come in the sorted order. 
     Third value represents desired maximum size of the array. This assures that array is of that size
@@ -434,11 +463,11 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_mult(MADLIB_SCHEMA.svec,MADLIB_SCH
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_pow(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) RETURNS MADLIB_SCHEMA.svec AS 'MODULE_PATHNAME', 'svec_pow' STRICT LANGUAGE C IMMUTABLE; 
 
---! Returns true if two SVECs are equal. If the two SVEC's are of different size, then will return false.
+--! Returns true if two SVECs are equal. If the two SVECs are of different size, then will return false.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_eq(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) RETURNS boolean AS 'MODULE_PATHNAME', 'svec_eq' STRICT LANGUAGE C IMMUTABLE;
 
---! Returns true if two SVECs are equal, not counting zeros (zero equals anything). If the two SVEC's are of different size, then the function essentially zero-pads the shorter one and performs the comparison.
+--! Returns true if two SVECs are equal, not counting zeros (zero equals anything). If the two SVECs are of different size, then the function essentially zero-pads the shorter one and performs the comparison.
 --!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svec_eq_non_zero(MADLIB_SCHEMA.svec,MADLIB_SCHEMA.svec) RETURNS boolean AS 'MODULE_PATHNAME', 'svec_eq_non_zero' STRICT LANGUAGE C IMMUTABLE;
 
