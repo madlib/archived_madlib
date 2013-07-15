@@ -17,6 +17,222 @@ m4_include(`SQLCommon.m4')
 
 @about
 
+Linear regression refers to a stochastic model in which the conditional mean
+of the dependent variable, usually denoted \f$ Y \f$, is an affine function of
+the vector of independent variables, usually denoted \f$ \boldsymbol x \f$.
+MADlib provides two linear regression interfaces. The simple interface
+performs regression analysis on a set of dependent and independent variables.
+The full interface includes analysis of heteroskedasticity using the
+Breusch&ndash;Pagan test.
+
+See \ref Background for a discussion of MADlib regression analysis.
+
+@input
+
+The training data is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>dependentVariable</em> FLOAT8,
+    <em>independentVariables</em> FLOAT8[],
+    ...
+)</pre>
+
+@usage
+
+<b>(1) The Simple Interface</b>
+
+- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic statistics:
+<pre>SELECT (madlib.\ref linregr(<em>dependentVariable</em>,
+    <em>independentVariables</em>)).*
+FROM <em>sourceName</em>;</pre>
+  Output:
+  <pre>
+coef | r2 | std_err | t_stats | p_values | condition_no
+-----+----+---------+---------+----------+-------------
+                          ...
+</pre>
+
+- Get vector of coefficients \f$ \boldsymbol c \f$:\n
+  <pre>SELECT (madlib.\ref linregr(<em>dependentVariable</em>,
+  <em>independentVariables</em>)).coef
+FROM <em>sourceName</em>;</pre>
+
+- Get a subset of the output columns, e.g., only the array of coefficients
+  \f$ \boldsymbol c \f$, the coefficient of determination \f$ R^2 \f$, and
+  the array of p-values \f$ \boldsymbol p \f$:
+  <pre>SELECT (lr).coef, (lr).r2, (lr).p_values
+FROM (
+    SELECT madlib.\ref linregr(<em>dependentVariable</em>,
+      <em>independentVariables</em>) AS lr
+    FROM <em>sourceName</em>
+) AS subq;</pre>
+
+<b>(2) The Full Interface</b>
+
+The full interface supports the analysis of heteroskedasticity of the linear fit.
+
+<pre>
+SELECT madlib.\ref linregr_train (
+    <em>'source_table'</em>,        -- name of input table, VARCHAR
+    <em>'out_table'</em>,           -- name of output table, VARCHAR
+    <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
+    <em>'independent_varname'</em>, -- independent variable, VARCHAR
+    [<em>group_cols</em>,           -- names of columns to group by, VARCHAR[].
+                                    -- Default value: Null
+    [<em>heteroskedasticity_option</em>]] -- whether to analyze
+                                          --    heteroskedasticity,
+                                          -- BOOLEAN. Default value: False
+);
+</pre>
+
+Here the <em>'independent_varname'</em> can be the name of a column that contains
+an array of numeric values. It can also be a string with the format 'array[1, x1, x2, x3]',
+where <em>x1</em>, <em>x2</em> and <em>x3</em> are all column names.
+
+Output is stored in the <em>out_table</em>:
+<pre>
+[ group_col_1 | group_col_2 | ... |] coef | r2 | std_err | t_stats | p_values | condition_no [|
+-----------+-------------+-----+------+----+---------+---------+----------+--------------+---
+
+bp_stats | bp_p_value ]
+-------------+---------
+</pre>
+
+Where the first part <pre>[ group_col_1 | group_col_2 | ... |]</pre> presents
+only when <em>group_cols</em> is not Null. The last part <pre>[ bp_stats | ... |
+corrected_p_values ]</pre> presents only when <em>heteroskedasticity_option</em>
+is <em>True</em>.
+
+When <em>group_cols</em> is given, the data is grouped by the given columns and
+a linear model is fit to each group of data. The output will have additional
+columns for all combinations of the values of all the <em>group_cols</em>. For
+each combination of <em>group_cols</em> values, the linear regression result is
+shown.
+
+When <em>heteroskedasticity_option</em> is <em>True</em>, the output will have
+additional columns. The function computes the Breusch–Pagan test [4] statistics
+and the corresponding \f$p\f$-value.
+
+@examp
+
+The following example is taken from
+http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
+
+-#  Create the sample data set:
+\verbatim
+sql> CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT,
+            size INT, lot INT);
+sql> COPY houses FROM STDIN WITH DELIMITER '|';
+  1 |  590 |       2 |    1 |  50000 |  770 | 22100
+  2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
+  3 |   20 |       3 |    1 |  22500 | 1060 |  3500
+  4 |  870 |       2 |    2 |  90000 | 1300 | 17500
+  5 | 1320 |       3 |    2 | 133000 | 1500 | 30000
+  6 | 1350 |       2 |    1 |  90500 |  820 | 25700
+  7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000
+  8 |  680 |       2 |    1 | 142500 | 1170 | 22000
+  9 | 1840 |       3 |    2 | 160000 | 1500 | 19000
+ 10 | 3680 |       4 |    2 | 240000 | 2790 | 20000
+ 11 | 1660 |       3 |    1 |  87000 | 1030 | 17500
+ 12 | 1620 |       3 |    2 | 118600 | 1250 | 20000
+ 13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
+ 14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
+ 15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
+\.
+\endverbatim
+-#  You can call the linregr() function for an individual metric:
+\verbatim
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).coef FROM houses;
+                                  coef
+------------------------------------------------------------------------
+ {27923.4334170641,-35524.7753390234,2269.34393735323,130.793920208133}
+(1 row)
+
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).r2 FROM houses;
+        r2
+-------------------
+ 0.745374010140315
+(1 row)
+
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).std_err FROM houses;
+                               std_err
+----------------------------------------------------------------------
+ {56306.4821787474,25036.6537279169,22208.6687270562,36.208642285651}
+(1 row)
+
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).t_stats FROM houses;
+                                t_stats
+------------------------------------------------------------------------
+ {0.495918628487924,-1.41891067892239,0.10218279921428,3.6122293450358}
+(1 row)
+
+sql> SELECT (madlib.linregr(price, array[1, bedroom, bath, size])).p_values FROM houses;
+                                  p_values
+-----------------------------------------------------------------------------
+ {0.629711069315512,0.183633155781461,0.920450514073051,0.00408159079312354}
+(1 row)
+\endverbatim
+-#  Alternatively you can call the linreg() function for the full record:
+\verbatim
+sql> \x on
+Expanded display is on.
+sql> SELECT (r).* FROM (SELECT madlib.linregr(price, array[1, bedroom, bath, size])
+            AS r FROM houses) q;
+-[ RECORD 1 ]+-----------------------------------------------------------------
+coef         | {27923.4334170641,-35524.7753390234,2269.34393735323,130.793920208133}
+r2           | 0.745374010140315
+std_err      | {56306.4821787474,25036.6537279169,22208.6687270562,36.208642285651}
+t_stats      | {0.495918628487924,-1.41891067892239,0.10218279921428,3.6122293450358}
+p_values     | {0.629711069315512,0.183633155781461,0.920450514073051,0.00408159079312354}
+condition_no | 9783.018
+
+\endverbatim
+
+-# You can call linregr_train() function for more functionality.
+\verbatim
+sql> SELECT madlib.linregr_train('houses', 'result', 'price',
+                                 'array[1, tax, bath, size]',
+                                 '{bedroom}'::varchar[], True);
+
+sql> SELECT * from result;
+-[ RECORD 1]---------+-------------------------------------------------------
+bedroom             | 2
+coef                | {-84242.0345, 55.4430, -78966.9754, 225.6119}
+r2                  | 0.9688
+std_err             | {35019.00, 19.57, 23036.81, 49.04}
+t_stats             | {-2.406, 2.833, -3.428, 4.600}
+p_values            | {0.251, 0.216, 0.181, 0.136}
+condition_no        | 10086.1
+bp_stats            | 2.5451
+bp_p_value          | 0.4672
+
+-[ RECORD 2]---------+------------------------------------------------------
+bedroom             | 3
+coef                | {-88155.8292502747,27.1966436293179,41404.0293389239,62.6375210724027}
+r2                  | 0.841699901312963
+std_err             | {57867.9999699512,17.82723091538,43643.1321521931,70.8506824870639}
+t_stats             | {-1.52339512850022,1.52556747362568,0.948695185179172,0.884077878626493}
+p_values            | {0.18816143289241,0.187636685729725,0.38634003235866,0.417132778730133}
+condition_no        | 11722.62
+bp_stats            | 6.7538
+bp_p_value          | 0.08017
+
+-[ RECORD 3]---------+-------------------------------------------------------
+bedroom             | 4
+coef                | {0.0112536020318378,41.4132554771633,0.0225072040636757,31.3975496688276}
+r2                  | 1
+std_err             | {0,0,0,0}
+t_stats             | {Infinity,Infinity,Infinity,Infinity}
+p_values            | Null
+condition_no        | Null
+bp_stats            | Null
+bp_p_value          | Null
+
+\endverbatim
+
+\anchor Background
+@background
+
 Ordinary least-squares (OLS) linear regression refers to a stochastic model in
 which the conditional mean of the dependent variable (usually denoted \f$ Y \f$)
 is an affine function of the vector of independent variables (usually denoted
@@ -115,208 +331,6 @@ is a worst-case measure of how sensitive the
 result is to small perturbations of the input. A large condition number (say,
 more than 1000) indicates the presence of significant multicollinearity.
 
-@input
-
-The training data is expected to be of the following form:
-<pre>{TABLE|VIEW} <em>sourceName</em> (
-    ...
-    <em>dependentVariable</em> FLOAT8,
-    <em>independentVariables</em> FLOAT8[],
-    ...
-)</pre>
-
-@usage
-
-<b>(1) The Simple Interface</b>
-
-- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic statistics:
-<pre>SELECT (madlib.\ref linregr(<em>dependentVariable</em>,
-    <em>independentVariables</em>)).*
-FROM <em>sourceName</em>;</pre>
-  Output:
-  <pre>
-coef | r2 | std_err | t_stats | p_values | condition_no
------+----+---------+---------+----------+-------------
-                          ...
-</pre>
-
-- Get vector of coefficients \f$ \boldsymbol c \f$:\n
-  <pre>SELECT (madlib.\ref linregr(<em>dependentVariable</em>,
-  <em>independentVariables</em>)).coef
-FROM <em>sourceName</em>;</pre>
-
-- Get a subset of the output columns, e.g., only the array of coefficients
-  \f$ \boldsymbol c \f$, the coefficient of determination \f$ R^2 \f$, and
-  the array of p-values \f$ \boldsymbol p \f$:
-  <pre>SELECT (lr).coef, (lr).r2, (lr).p_values
-FROM (
-    SELECT madlib.\ref linregr(<em>dependentVariable</em>,
-      <em>independentVariables</em>) AS lr
-    FROM <em>sourceName</em>
-) AS subq;</pre>
-
-<b>(2) The Full Interface</b>
-
-The full interface support the analysis of heteroskedasticity of the linear fit.
-
-<pre>
-SELECT madlib.\ref linregr_train (
-    <em>'source_table'</em>,        -- name of input table, VARCHAR
-    <em>'out_table'</em>,           -- name of output table, VARCHAR
-    <em>'dependent_varname'</em>,   -- dependent variable, VARCHAR
-    <em>'independent_varname'</em>, -- independent variable, VARCHAR
-    [<em>group_cols</em>,           -- names of columns to group by, VARCHAR[].
-                                    -- Default value: Null
-    [<em>heteroskedasticity_option</em>]] -- whether to analyze
-                                          --    heteroskedasticity,
-                                          -- BOOLEAN. Default value: False
-);
-</pre>
-
-Here the <em>'independent_varname'</em> can be the name of a column, which contains
-array of numeric values. It can also have a format of string 'array[1, x1, x2, x3]',
-where <em>x1</em>, <em>x2</em> and <em>x3</em> are all column names.
-
-Output is stored in the <em>out_table</em>:
-<pre>
-[ group_col_1 | group_col_2 | ... |] coef | r2 | std_err | t_stats | p_values | condition_no [|
------------+-------------+-----+------+----+---------+---------+----------+--------------+---
-
-bp_stats | bp_p_value ]
--------------+---------
-</pre>
-
-Where the first part <pre>[ group_col_1 | group_col_2 | ... |]</pre> presents
-only when <em>group_cols</em> is not Null. The last part <pre>[ bp_stats | ... |
-corrected_p_values ]</pre> presents only when <em>heteroskedasticity_option</em>
-is <em>True</em>.
-
-When <em>group_cols</em> is given, the data is grouped by the given columns and
-a linear model is fit to each group of data. The output will have additional
-columns for all combinations of the values of all the <em>group_cols</em>. For
-each combination of <em>group_cols</em> values, linear regression result is
-shown.
-
-When <em>heteroskedasticity_option</em> is <em>True</em>, the output will have
-additional columns. The function computes the Breusch–Pagan test [4] statistics
-and the corresponding \f$p\f$-value.
-
-@examp
-
-The following example is taken from
-http://www.stat.columbia.edu/~martin/W2110/SAS_7.pdf.
-
--#  Create the sample data set:
-\verbatim
-sql> CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT,
-            size INT, lot INT);
-sql> COPY houses FROM STDIN WITH DELIMITER '|';
-  1 |  590 |       2 |    1 |  50000 |  770 | 22100
-  2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
-  3 |   20 |       3 |    1 |  22500 | 1060 |  3500
-  4 |  870 |       2 |    2 |  90000 | 1300 | 17500
-  5 | 1320 |       3 |    2 | 133000 | 1500 | 30000
-  6 | 1350 |       2 |    1 |  90500 |  820 | 25700
-  7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000
-  8 |  680 |       2 |    1 | 142500 | 1170 | 22000
-  9 | 1840 |       3 |    2 | 160000 | 1500 | 19000
- 10 | 3680 |       4 |    2 | 240000 | 2790 | 20000
- 11 | 1660 |       3 |    1 |  87000 | 1030 | 17500
- 12 | 1620 |       3 |    2 | 118600 | 1250 | 20000
- 13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
- 14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
- 15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
-\.
-\endverbatim
--#  You can call the linregr() function for an individual metric:
-\verbatim
-sql> SELECT (linregr(price, array[1, bedroom, bath, size])).coef FROM houses;
-                                  coef
-------------------------------------------------------------------------
- {27923.4334170641,-35524.7753390234,2269.34393735323,130.793920208133}
-(1 row)
-
-sql> SELECT (linregr(price, array[1, bedroom, bath, size])).r2 FROM houses;
-        r2
--------------------
- 0.745374010140315
-(1 row)
-
-sql> SELECT (linregr(price, array[1, bedroom, bath, size])).std_err FROM houses;
-                               std_err
-----------------------------------------------------------------------
- {56306.4821787474,25036.6537279169,22208.6687270562,36.208642285651}
-(1 row)
-
-sql> SELECT (linregr(price, array[1, bedroom, bath, size])).t_stats FROM houses;
-                                t_stats
-------------------------------------------------------------------------
- {0.495918628487924,-1.41891067892239,0.10218279921428,3.6122293450358}
-(1 row)
-
-sql> SELECT (linregr(price, array[1, bedroom, bath, size])).p_values FROM houses;
-                                  p_values
------------------------------------------------------------------------------
- {0.629711069315512,0.183633155781461,0.920450514073051,0.00408159079312354}
-(1 row)
-\endverbatim
--#  Alternatively you can call the linreg() function for the full record:
-\verbatim
-sql> \x on
-Expanded display is on.
-sql> SELECT (r).* FROM (SELECT linregr(price, array[1, bedroom, bath, size])
-            AS r FROM houses) q;
--[ RECORD 1 ]+-----------------------------------------------------------------
-coef         | {27923.4334170641,-35524.7753390234,2269.34393735323,130.793920208133}
-r2           | 0.745374010140315
-std_err      | {56306.4821787474,25036.6537279169,22208.6687270562,36.208642285651}
-t_stats      | {0.495918628487924,-1.41891067892239,0.10218279921428,3.6122293450358}
-p_values     | {0.629711069315512,0.183633155781461,0.920450514073051,0.00408159079312354}
-condition_no | 9783.018
-
-\endverbatim
-
--# You can call linregr_train() function for more functionality
-\verbatim
-sql> SELECT madlib.linregr_train('houses', 'result', 'price',
-                                 'array[1, tax, bath, size]',
-                                 '{bedroom}'::varchar[], True);
-
-sql> SELECT * from result;
--[ RECORD 1]---------+-------------------------------------------------------
-bedroom             | 2
-coef                | {-84242.0345, 55.4430, -78966.9754, 225.6119}
-r2                  | 0.9688
-std_err             | {35019.00, 19.57, 23036.81, 49.04}
-t_stats             | {-2.406, 2.833, -3.428, 4.600}
-p_values            | {0.251, 0.216, 0.181, 0.136}
-condition_no        | 10086.1
-bp_stats            | 2.5451
-bp_p_value          | 0.4672
-
--[ RECORD 2]---------+------------------------------------------------------
-bedroom             | 3
-coef                | {-88155.8292502747,27.1966436293179,41404.0293389239,62.6375210724027}
-r2                  | 0.841699901312963
-std_err             | {57867.9999699512,17.82723091538,43643.1321521931,70.8506824870639}
-t_stats             | {-1.52339512850022,1.52556747362568,0.948695185179172,0.884077878626493}
-p_values            | {0.18816143289241,0.187636685729725,0.38634003235866,0.417132778730133}
-condition_no        | 11722.62
-bp_stats            | 6.7538
-bp_p_value          | 0.08017
-
--[ RECORD 3]---------+-------------------------------------------------------
-bedroom             | 4
-coef                | {0.0112536020318378,41.4132554771633,0.0225072040636757,31.3975496688276}
-r2                  | 1
-std_err             | {0,0,0,0}
-t_stats             | {Infinity,Infinity,Infinity,Infinity}
-p_values            | Null
-condition_no        | Null
-bp_stats            | Null
-bp_p_value          | Null
-
-\endverbatim
 
 @literature
 
@@ -890,3 +904,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 ---------------------------------------------------------------------------
+

@@ -17,7 +17,111 @@ m4_include(`SQLCommon.m4') --'
 
 @about
 
-(Binomial) Logistic regression refers to a stochastic model in which the
+Binomial logistic regression models the relationship between a dichotomous dependent variable and one or more predictor variables.
+
+See \ref Background for a technical introduction to logistic regression.
+
+@input
+The training data for logistic regression is
+ expected to be of the following form:\n
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>dependentVariable</em> BOOLEAN,
+    <em>independentVariables</em> FLOAT8[],
+    ...
+)</pre>
+
+@usage
+- Get the vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+  statistics:\n
+  <pre>SELECT \ref madlib.logregr_train(
+    '<em>sourceName</em>', '<em>outName</em>', '<em>dependentVariable</em>',
+    '<em>independentVariables</em>'[, '<em>grouping_columns</em>',
+    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em>
+    [, <em>verbose</em> ]] ] ] ]
+);</pre>
+  See \ref madlib.logregr_train for descriptions of the parameters. 
+
+  Output table:
+  <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
+-----+----------------+---------+---------+----------+-------------+--------------+---------------
+                                               ...
+</pre>
+
+- Get vector of coefficients \f$ \boldsymbol c \f$:\n
+  <pre>SELECT coef from outName; </pre>
+- Get a subset of the output columns, e.g., only the array of coefficients
+  \f$ \boldsymbol c \f$, the log-likelihood of determination
+  \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
+  <pre>SELECT coef, log_likelihood, p_values FROM outName; </pre>
+- By default, the option <em>verbose</em> is False. If it is set to be True, warning messages
+  will be output to the SQL client for groups that failed.
+
+@examp
+
+The following example data is from http://luna.cas.usf.edu/~mbrannic/files/regression/Logistic.html
+-# Create the sample data.
+@verbatim
+sql> CREATE TABLE patients (
+    id INTEGER NOT NULL,
+    second_attack INTEGER,
+    treatment INTEGER,
+    trait_anxiety INTEGER,
+    CONSTRAINT pk_patient PRIMARY key (id)
+);
+sql> INSERT INTO patients(ID, second_attack, treatment, trait_anxiety) VALUES
+( 1, 1, 1, 70),
+( 2, 1, 1, 80),
+( 3, 1, 1, 50),
+( 4, 1, 0, 60),
+( 5, 1, 0, 40),
+( 6, 1, 0, 65),
+( 7, 1, 0, 75),
+( 8, 1, 0, 80),
+( 9, 1, 0, 70),
+(10, 1, 0, 60),
+(11, 0, 1, 65),
+(12, 0, 1, 50),
+(13, 0, 1, 45),
+(14, 0, 1, 35),
+(15, 0, 1, 40),
+(16, 0, 1, 50),
+(17, 0, 0, 55),
+(18, 0, 0, 45),
+(19, 0, 0, 50),
+(20, 0, 0, 60);
+@endverbatim
+-# Run the logistic regression function:
+@verbatim
+sql> \x on
+Expanded display is on.
+sql> select logregr_train(
+    'patients',                 -- name of the input table
+    'temp_result',              -- name of the output table
+    'second_attack',            -- name of dependent variable
+    'ARRAY[1, treatment, trait_anxiety]', -- array of variables
+    Null,                       -- grouping columns
+    20,                         -- number of iterations
+    'irls'                      -- optimizer
+);
+@endverbatim
+-# View the regression results:
+@verbatim
+sql> SELECT * from out_tbl;
+coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
+log_likelihood | -467.214718489873
+std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
+z_stats        | {17.5281667482197,20.7919819024719,-0.805666162169712}
+p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
+odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
+condition_no   | 179.186118573205
+num_iterations | 9
+@endverbatim
+
+
+\anchor Background 
+@background
+(Binomial) logistic regression refers to a stochastic model in which the
 conditional mean of the dependent dichotomous variable (usually denoted
 \f$ Y \in \{ 0,1 \} \f$) is the logistic function of an affine function of the
 vector of independent variables (usually denoted \f$ \boldsymbol x \f$). That
@@ -100,76 +204,6 @@ The condition number is computed as \f$ \kappa(X^T A X) \f$ during the iteration
 immediately <em>preceding</em> convergence (i.e., \f$ A \f$ is computed using
 the coefficients of the previous iteration). A large condition number (say, more
 than 1000) indicates the presence of significant multicollinearity.
-
-
-
-
-@input
-
-The training data for logistic regression is
- expected to be of the following form:\n
-<pre>{TABLE|VIEW} <em>sourceName</em> (
-    ...
-    <em>dependentVariable</em> BOOLEAN,
-    <em>independentVariables</em> FLOAT8[],
-    ...
-)</pre>
-
-
-@usage
-The logistic regression has several options in what it can return:  
-- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
-  statistics:\n
-  <pre>SELECT \ref logregr_train(
-    '<em>sourceName</em>', '<em>outName</em>', '<em>dependentVariable</em>',
-    '<em>independentVariables</em>'[, '<em>grouping_columns</em>',
-    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em>
-    [, <em>verbose</em> ]] ] ] ]
-);</pre>
-  Output table:
-  <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
------+----------------+---------+---------+----------+-------------+--------------+---------------
-                                               ...
-</pre>
-- Get vector of coefficients \f$ \boldsymbol c \f$:\n
-  <pre>SELECT coef from outName; </pre>
-- Get a subset of the output columns, e.g., only the array of coefficients
-  \f$ \boldsymbol c \f$, the log-likelihood of determination
-  \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
-  <pre>SELECT coef, log_likelihood, p_values FROM outName; </pre>
-- By default, the option <em>verbose</em> is False. If it is set to be True, warning messages
-  will be output to the SQL client for groups that failed.
-<pre>
-
-@examp
--# Create the sample data set:
-@verbatim
-sql> SELECT * FROM data;
-                  r1                      | val
----------------------------------------------+-----
- {1,3.01789340097457,0.454183579888195}   | t
- {1,-2.59380532894284,0.602678326424211}  | f
- {1,-1.30643094424158,0.151587064377964}  | t
- {1,3.60722299199551,0.963550757616758}   | t
- {1,-1.52197745628655,0.0782248834148049} | t
- {1,-4.8746574902907,0.345104880165309}   | f
-...
-@endverbatim
--# Run the logistic regression function:
-@verbatim
-sql> \x on
-Expanded display is off.
-sql> SELECT logregr_train('data', 'out_tbl', 'val', 'r1', Null, 100, 'irls', 0.001);
-sql> SELECT * from out_tbl;
-coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
-log_likelihood | -467.214718489873
-std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
-z_stats        | {17.5281667482197,20.7919819024719,-0.805666162169712}
-p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
-odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
-condition_no   | 179.186118573205
-num_iterations | 9
-@endverbatim
 
 
 @literature
@@ -421,6 +455,7 @@ LANGUAGE c IMMUTABLE STRICT;
  *
  * @param tbl_source Name of the source relation containing the training data
  * @param tbl_output Name of the output relation to store the model results
+ *
  *                   Columns of the output relation are as follows:
  *                    - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
  *                    - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
