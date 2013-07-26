@@ -16,98 +16,143 @@ m4_include(`SQLCommon.m4') --'
 @addtogroup grp_logreg
 
 @about
-
 Binomial logistic regression models the relationship between a dichotomous dependent variable and one or more predictor variables.
 
-See \ref Background for a technical introduction to logistic regression.
-
-@input
-The training data for logistic regression is
- expected to be of the following form:\n
-<pre>{TABLE|VIEW} <em>sourceName</em> (
-    ...
-    <em>dependentVariable</em> BOOLEAN,
-    <em>independentVariables</em> FLOAT8[],
-    ...
-)</pre>
-
 @usage
-- Get the vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
-  statistics:\n
-  <pre>SELECT \ref madlib.logregr_train(
-    '<em>sourceName</em>', '<em>outName</em>', '<em>dependentVariable</em>',
-    '<em>independentVariables</em>'[, '<em>grouping_columns</em>',
-    [, <em>numberOfIterations</em> [, '<em>optimizer</em>' [, <em>precision</em>
-    [, <em>verbose</em> ]] ] ] ]
-);</pre>
-  See \ref madlib.logregr_train for descriptions of the parameters. 
+@verbatim
+logregr_train()
 
-  Output table:
-  <pre>coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations
------+----------------+---------+---------+----------+-------------+--------------+---------------
-                                               ...
-</pre>
+logregr_train('usage')  -- (not yet implemented)
 
-- Get vector of coefficients \f$ \boldsymbol c \f$:\n
-  <pre>SELECT coef from outName; </pre>
-- Get a subset of the output columns, e.g., only the array of coefficients
-  \f$ \boldsymbol c \f$, the log-likelihood of determination
-  \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
-  <pre>SELECT coef, log_likelihood, p_values FROM outName; </pre>
-- By default, the option <em>verbose</em> is False. If it is set to be True, warning messages
-  will be output to the SQL client for groups that failed.
+log_regr_train(source_table, out_table,
+               dependent_variable, independent_variables,
+               grouping_col,
+               nIterations, optimizer, tolerance)
+@endverbatim
+
+@par Arguments
+<DL>
+<DT>source_table</DT>
+<DD>Text value. Name of the table containing the training data.</DD>
+
+<DT>out_table</DT>
+<DD>Text value. Name of the table where the model will be output. Function errors out if
+the table already exists. </DD>
+
+<DT>dependent_variable</DT>
+<DD>Text value. Name of the dependent variable column (of type BOOLEAN) in the
+training data or an expression evaluating to a BOOLEAN.</DD>
+
+<DT>independent variables</DT>
+<DD>Text value. Expression list to evaluate for the
+independent variables. An intercept variable is not assumed. It is common to
+provide an explicit intercept term by including a single constant \c 1 term in
+the idependent variable list.</DD>
+
+<DT>grouping_col</DT>
+<DD>Text value. An expression list used to group
+the input dataset into discrete groups, running one regression per group.
+Similar to the SQL "GROUP BY" clause. When this value is NULL, no
+grouping is used and a single result model is generated. Default value:
+NULL.</DD>
+
+<DT>nIterations</DT>
+<DD>Integer value. The maximum number of iterations that are allowed.</DD>
+
+<DT>optimizer</DT>
+<DD>Text value. The name of the optimizer
+to use:<ul>
+<li>'newton' or 'irls': Iteratively reweighted least squares</li>
+<li>'cg': conjugate gradient</li>
+<li>'igd': incremental gradient descent.</li></ul></DD>
+
+<DT>tolerance</DT>
+<DD>Float value. The difference between
+log-likelihood values in successive iterations that should indicate
+convergence. A zero disables the convergence criterion, so that execution
+stops after \c nIterations have completed.</DD>
+</DL>
+
+@par Output Table
+<DL>
+<DT><...></DT>
+<DD>Text. Grouping columns, if provided in input. This could be multiple columns
+depending on the \c grouping_col input.</DD>
+
+<DT>coef</DT>
+<DD>Float array. Vector of the coefficients of the regression.</DD>
+
+<DT>log_likelihood</DT>
+<DD>Float. The log-likelihood \f$ l(\boldsymbol c) \f$.</DD>
+
+<DT>std_err</DT>
+<DD>Float array. Vector of the standard error of the coefficients.</DD>
+
+<DT>z_stats</DT>
+<DD>Float array. Vector of the z-statistics of the coefficients.</DD>
+
+<DT>p_values</DT>
+<DD>Float array. Vector of the p-values of the coefficients.</DD>
+
+<DT>odds_ratios</DT>
+<DD>Float array. The odds ratio, \f$ \exp(c_i) \f$.</DD>
+
+<DT>condition_no</DT>
+<DD>Float array. The condition number of the \f$X^{*}X\f$
+matrix. A high condition number is usually an indication that there may be
+some numeric instability in the result yielding a less reliable model. A high
+condition number often results when there is a significant amount of
+colinearity in the underlying design matrix, in which case other regression
+techniques may be more appropriate.</DD>
+
+<DT>num_iterations</DT>
+<DD>Integer. The number of iterations actually completed. This would be different
+from the \c nIterations argument if a \c tolerance parameter is provided and the
+algorithm converges before all iterations are completed.</DD>
+</DL>
+
+@sa File logistic.sql_in (documenting the SQL functions)
 
 @examp
-
-The following example data is from http://luna.cas.usf.edu/~mbrannic/files/regression/Logistic.html
--# Create the sample data.
+-# Create the training data table.
 @verbatim
-sql> CREATE TABLE patients (
-    id INTEGER NOT NULL,
-    second_attack INTEGER,
-    treatment INTEGER,
-    trait_anxiety INTEGER,
-    CONSTRAINT pk_patient PRIMARY key (id)
-);
-sql> INSERT INTO patients(ID, second_attack, treatment, trait_anxiety) VALUES
-( 1, 1, 1, 70),
-( 2, 1, 1, 80),
-( 3, 1, 1, 50),
-( 4, 1, 0, 60),
-( 5, 1, 0, 40),
-( 6, 1, 0, 65),
-( 7, 1, 0, 75),
-( 8, 1, 0, 80),
-( 9, 1, 0, 70),
-(10, 1, 0, 60),
-(11, 0, 1, 65),
-(12, 0, 1, 50),
-(13, 0, 1, 45),
-(14, 0, 1, 35),
-(15, 0, 1, 40),
-(16, 0, 1, 50),
-(17, 0, 0, 55),
-(18, 0, 0, 45),
-(19, 0, 0, 50),
-(20, 0, 0, 60);
+CREATE TABLE patients (id INTEGER NOT NULL,  second_attack INTEGER,
+    treatment INTEGER, trait_anxiety INTEGER);
+COPY patients FROM STDIN WITH DELIMETER '|';
+  1 |             1 |         1 |            70
+  3 |             1 |         1 |            50
+  5 |             1 |         0 |            40
+  7 |             1 |         0 |            75
+  9 |             1 |         0 |            70
+ 11 |             0 |         1 |            65
+ 13 |             0 |         1 |            45
+ 15 |             0 |         1 |            40
+ 17 |             0 |         0 |            55
+ 19 |             0 |         0 |            50
+  2 |             1 |         1 |            80
+  4 |             1 |         0 |            60
+  6 |             1 |         0 |            65
+  8 |             1 |         0 |            80
+ 10 |             1 |         0 |            60
+ 12 |             0 |         1 |            50
+ 14 |             0 |         1 |            35
+ 16 |             0 |         1 |            50
+ 18 |             0 |         0 |            45
+ 20 |             0 |         0 |            60
+\.
 @endverbatim
--# Run the logistic regression function:
+-# Train a regression model.
 @verbatim
-sql> \x on
-Expanded display is on.
-sql> select logregr_train(
-    'patients',                 -- name of the input table
-    'temp_result',              -- name of the output table
-    'second_attack',            -- name of dependent variable
-    'ARRAY[1, treatment, trait_anxiety]', -- array of variables
-    Null,                       -- grouping columns
-    20,                         -- number of iterations
-    'irls'                      -- optimizer
+SELECT madlib.logregr_train(
+    'patients', 'patients_logregr', 'second_attack',
+    'ARRAY[1, treatment, trait_anxiety]', Null, 20, 'irls'
 );
 @endverbatim
 -# View the regression results:
 @verbatim
-sql> SELECT * from out_tbl;
+-- Set extended display on for easier reading of output
+\x on
+SELECT * from patients_logregr;
 coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
 log_likelihood | -467.214718489873
 std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
@@ -116,11 +161,20 @@ p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
 odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
 condition_no   | 179.186118573205
 num_iterations | 9
+
+-- Alternatively, unnest the arrays in the results for easier reading of output
+\x off
+SELECT unnest(array['intercept', 'treatment', 'trait_anxiety' ]) as attribute,
+       unnest(coef) as coefficient,
+       unnest(std_err) as standard_error,
+       unnest(z_stats) as z_stat,
+       unnest(p_values) as pvalue,
+       unnest(odds_ratios) as odds_ratio
+FROM patients_logregr;
 @endverbatim
 
+@par Technical Background
 
-\anchor Background 
-@background
 (Binomial) logistic regression refers to a stochastic model in which the
 conditional mean of the dependent dichotomous variable (usually denoted
 \f$ Y \in \{ 0,1 \} \f$) is the logistic function of an affine function of the
@@ -209,7 +263,7 @@ than 1000) indicates the presence of significant multicollinearity.
 @literature
 
 A somewhat random selection of nice write-ups, with valuable pointers into
-further literature. 
+further literature.
 
 [1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
@@ -231,9 +285,6 @@ further literature.
     approximation approach to stochastic programming, SIAM Journal on
     Optimization, 19(4), 2009, http://www2.isye.gatech.edu/~nemirovs/SIOPT_RSA_2009.pdf
 
-
-
-@sa File logistic.sql_in (documenting the SQL functions)
 
 @internal
 @sa Namespace logistic (documenting the driver/outer loop implemented in
