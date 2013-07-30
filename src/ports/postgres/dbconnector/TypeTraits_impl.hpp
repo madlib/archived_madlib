@@ -413,6 +413,19 @@ struct TypeTraits<
 };
 
 template <>
+struct TypeTraits<dbal::eigen_integration::ColumnVector>
+  : public TypeTraitsBase<dbal::eigen_integration::ColumnVector> {
+    typedef dbal::eigen_integration::ColumnVector value_type;
+
+    enum { oid = FLOAT8ARRAYOID };
+    enum { isMutable = dbal::Immutable };
+    enum { typeClass = dbal::ArrayType };
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // MappedMatrix instead.
+};
+
+template <>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
         const dbal::eigen_integration::Matrix,

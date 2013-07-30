@@ -22,7 +22,8 @@ file(GLOB_RECURSE DESIGN_DOC_MODULES
     RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/latex/*.sty"
     "${CMAKE_CURRENT_SOURCE_DIR}/modules/*.tex"
-    "${CMAKE_CURRENT_SOURCE_DIR}/other-chapters/*.tex")
+    "${CMAKE_CURRENT_SOURCE_DIR}/other-chapters/*.tex"
+    "${CMAKE_CURRENT_SOURCE_DIR}/figures/*")
 
 if(LATEX_BINARY AND BIBTEX_BINARY AND MAKEINDEX_BINARY)
     include(UseLATEX)

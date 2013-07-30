@@ -7,7 +7,7 @@
  * We implement limited-memory BFGS method.
  *
  *//* ----------------------------------------------------------------------- */
-
+#include <iostream>
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 #include "linear_crf.hpp"

@@ -13,6 +13,7 @@ def __is_tbl_exists(tbl):
     """
     if tbl is None or tbl.upper() == 'NULL':
         return plpy.error('Input error: Table name is invalid')
+    tbl = tbl.lower()
     names = tbl.split(".")
     if len(names) == 1:
         return plpy.execute("select count(*) from information_schema.tables where table_name = '{0}'".format(tbl))[0]['count'] > 0
@@ -57,22 +58,25 @@ def __is_tbl_has_rows(tbl):
     return content == 1
 
 ## ========================================================================
-def __get_cols_in_schema(tbl):
+def __get_cols_in_schema(tbl, schema_madlib = "madlib"):
     """
     Get the column names in a table
     """
-    schema = plpy.execute("select current_schema()")[0]["current_schema"]
-    array_agg_string = version_wrapper.select_array_agg(schema)
-    names = tbl.split(".")
+    schema = plpy.execute("select current_schemas(True) as cs")[0]["cs"]
+    schema = mad_vec(schema)
+    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
     sql_string = "select " + array_agg_string + \
-                        """(column_name::varchar) as cols
-                            from information_schema.columns
-                            where table_name = '{table_name}'"""
-    sql_string += " and table_schema = '{schema_name}'"
-    existing_cols = plpy.execute(sql_string.format(table_name=tbl,
-                                                        schema_name=schema) \
-                                    )[0]["cols"]
-    return mad_vec(existing_cols)
+                 """(column_name::varchar) as cols
+                 from information_schema.columns
+                 where table_name = '{table_name}'"""
+    sql_string += " and table_schema = '{s}'"
+    
+    for s in schema:
+        existing_cols = plpy.execute(sql_string.format(table_name=tbl,
+                                                       s=s))[0]["cols"]
+        if existing_cols is not None:
+            return mad_vec(existing_cols)
+    return None
 
 ## ========================================================================
 def __get_cols(tbl, schema_madlib="madlib"):
@@ -88,8 +92,9 @@ def __get_cols(tbl, schema_madlib="madlib"):
                             from information_schema.columns
                             where table_name = '{table_name}'"""
     if len(names) == 1:
-        existing_cols = plpy.execute(sql_string.format(table_name = tbl)\
-                                    )[0]["cols"]
+        return __get_cols_in_schema(tbl, schema_madlib)
+        # existing_cols = plpy.execute(sql_string.format(table_name = tbl)\
+        #                              + " limit 1")[0]["cols"]
     elif len(names) == 2:
         schema = names[0]
         table = names[1]
@@ -101,12 +106,20 @@ def __get_cols(tbl, schema_madlib="madlib"):
         plpy.error("Format error: Table name strange!")
 
     return mad_vec(existing_cols)
-    
+
 ## ========================================================================
 
 def __is_col_exists(tbl, cols, schema_madlib="madlib"):
     """
-    Is the column exist?
+    Does each column exist?
+
+    Args:
+        @param tbl Name of source table
+        @param cols Iteratable list of column names
+        @param schema Schema in which madlib is installed
+
+    Returns:
+        True if all columns in 'cols' exist in source table else False
     """
     existing_cols = __get_cols(tbl, schema_madlib)
 
@@ -144,7 +157,7 @@ def __is_col_array (tbl, col):
         schema_str = " and table_schema = '" + schema + "'"
     else:
         plpy.error("Format error: Table name strange!")
-        
+
     data_type = plpy.execute(
         """
         select data_type from information_schema.columns
