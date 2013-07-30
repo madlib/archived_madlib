@@ -1,0 +1,493 @@
+"""
+@file pca.py_in
+
+@namespace pca
+"""
+
+from utilities.utilities import __mad_version
+from utilities.utilities import __unique_string
+from utilities.utilities import _assert
+from utilities.validate_args import __is_col_exists
+from utilities.validate_args import __is_tbl_exists
+from utilities.validate_args import __is_tbl_exists_in_schema
+from utilities.validate_args import __get_cols
+from utilities.validate_args import __is_col_array
+from convex.utils_regularization import __utils_normalize_data
+from convex.utils_regularization import __utils_ind_var_scales
+from utilities.utilities import _array_to_string
+from linalg.matrix_op import __get_dims
+from linalg.matrix_op import create_temp_sparse_matrix_table_with_dims
+
+import time
+import plpy
+
+version_wrapper = __mad_version()
+string_to_array = version_wrapper.select_vecfunc()
+array_to_string = version_wrapper.select_vec_return()
+
+
+# Validate arguments: Same as pca
+# ------------------------------------------------------------------------
+def _validate_args( schema_madlib, 
+                    source_table,
+                    pc_table,
+                    k,
+                    row_id, 
+                    col_id=None, 
+                    val_id=None,
+                    row_dim=None,
+                    col_dim=None, 
+                    grouping_cols=None,
+                    lanczos_iter = 0,
+                    use_correlation=False,
+                    result_summary_table=None):
+    """
+    Validates all arguments passed to the PCA function
+    Args:
+        @param schema_madlib    Name of the schema where MADlib is installed
+        @param source_table     Name of the source table
+        @param output_table     Name of the output table
+        @param k                Number of singular vectors to return
+        @param row_id           Name of the row_id column
+        @param col_id           Name of the col_id column
+        @param val_id           Name of the val_id column
+        @param grouping_cols    The columns that the data should be grouped by
+        @param lanczos_iter     The number of lanczos iterations to use in the SVD calculation
+        @param use_correlation  If the correlation matrix should be used instead of the covariance matrix
+        @param result_summary_table  Name of summary table
+
+    Returns:
+        None
+
+    Throws:
+        plpy.error if any argument is invalid
+
+    """
+    _assert(source_table is not None and __is_tbl_exists(source_table),
+                    "PCA error: Source data table does not exist!")
+
+    if k <= 0:
+        plpy.error("PCA error: k must be a positive integer!")
+
+    # output tables are created from the prefix by appending _u, _s, and _v as suffixes
+    if pc_table:
+        _assert(not __is_tbl_exists_in_schema(pc_table),
+                "PCA error: Output table {0} \
+                    already exists!".format(str(pc_table)))
+    else:
+        plpy.error("PCA error: Invalid output table prefix!")
+
+    _assert(__is_col_exists(source_table, [row_id], schema_madlib),
+            "PCA error: {1} column does not exist in {0}!".format(source_table,
+                                        "NULL" if row_id is None else row_id))
+    
+    if(grouping_cols):
+        plpy.error("PCA error: Grouping columns are not currently supported!\
+        This value must be set to NULL")
+    
+    if (lanczos_iter < 0):
+        plpy.error("PCA error: lanczos_iter can't be negative! (Use zero for \
+        default value)  The provided value is {0}".format(str(lanczos_iter)))
+    
+    #If using sparse matrices, check that the parameters are reasonable
+    if col_id or val_id:
+        if not col_id:
+            plpy.error("PCA error: Column ID should be provided if \
+                            value ID is input!")
+        if not val_id:
+            plpy.error("PCA error: Value ID should be provided if \
+                            column ID is input!")
+        _assert(__is_col_exists(source_table, [col_id], schema_madlib),
+            "PCA error: {1} column does not exist in {0}!".format(source_table,
+                                                                  col_id))
+        _assert(__is_col_exists(source_table, [val_id], schema_madlib),
+            "PCA error: {1} column does not exist in {0}!".format(source_table, row_id))
+    
+        if not col_dim:
+            plpy.error("PCA error: Column dimensions should be provided if \
+                            using sparse matrices!")
+        if not row_dim:
+            plpy.error("PCA error: Row dimensions should be provided if \
+                            using sparse matrices!")
+        if row_dim <= 0:
+            plpy.error("PCA error: The row dimension must be larger than 0!")
+            
+        if col_dim <= 0:
+            plpy.error("PCA error: The column dimension must be larger than 0!")
+            
+    if use_correlation:
+        plpy.error("PCA error: Using the correlation matrix is not enabled! \
+        This value must be set to FALSE")
+    
+    if result_summary_table:
+        if not result_summary_table.strip():
+            plpy.error("PCA error: Invalid result summary table name!")
+        _assert(not __is_tbl_exists_in_schema(result_summary_table),
+                "PCA error: Result summary table {0} \
+                        already exists!".format(result_summary_table))
+## ========================================================================
+
+
+def __recenter_data( schema_madlib,
+                      source_table, 
+                      output_table,
+                      row_id,
+                      col_name, 
+                      dimension 
+                      ):
+    """
+    Rescales the data table by column means 
+
+    The output is stored in output_table
+
+    Args:
+        @param schema_madlib
+        @param source_table
+        @param output_table
+        @param col_name
+        @param dimension
+
+    Returns:
+        None
+    """
+    # Step 1: Compute column mean values    
+    x_scales = __utils_ind_var_scales(
+                                  tbl_data = source_table, 
+                                  col_ind_var = col_name,
+                                  dimension = dimension,
+                                  schema_madlib = schema_madlib)
+
+    x_mean_str = _array_to_string(x_scales["mean"])
+    x_std_str = _array_to_string([1]*dimension)
+    
+    # Step 2: Rescale the matrices
+    plpy.execute(
+        """
+        create temp table {output_table} as
+            select
+                {row_id} as row_id, 
+                ({schema_madlib}.utils_normalize_data(
+                                  {col_name},
+                                  '{x_mean_str}'::double precision[],
+                                  '{x_std_str}'::double precision[])).scaled
+                    as row_vec
+            from {source_table}
+        """.format(schema_madlib = schema_madlib,
+                   col_name = col_name,
+                   row_id = row_id,
+                   source_table = source_table,
+                   output_table = output_table,
+                   x_mean_str = x_mean_str,
+                   x_std_str = x_std_str))
+# ------------------------------------------------------------------------
+
+
+def pca_sparse( schema_madlib, 
+                source_table, 
+                pc_table,
+                row_id, 
+                col_id, 
+                val_id, 
+                row_dim, 
+                col_dim, 
+                k, 
+                grouping_cols, 
+                lanczos_iter,
+                use_correlation,
+                result_summary_table,
+                **kwargs):
+    """
+    Compute the PCA of a sparse matrix in source_table.
+
+    This function is the specific call for dense matrices and creates three
+    tables corresponding to the three decomposition matrices.
+
+    Args:
+        @param schema_madlib
+        @param source_table
+        @param pc_table
+        @param row_id
+        @param col_id
+        @param val_id
+        @param row_dim
+        @param col_dim
+        @param k
+        @param grouping_cols
+        @param lanczos_iter
+        @param use_correlation
+        @param result_summary_table
+
+    Returns:
+        None
+
+    """
+    startTime = time.time()
+     # Reset the message level to avoid random messages
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    # Step 1: Validate the input arguments
+    _validate_args( schema_madlib, 
+                    source_table, 
+                    pc_table,
+                    k, 
+                    row_id, 
+                    col_id, 
+                    val_id,
+                    row_dim,
+                    col_dim,
+                    grouping_cols,
+                    lanczos_iter,
+                    use_correlation,
+                    result_summary_table)
+
+    #Step 2: Densify the matrix
+    # We densify the matrix because the recentering process will generate a 
+    #dense matrix, so we just wrap around regular PCA.  
+    #First we must copy the sparse matrix and add in the dimension information
+    
+    sparse_temp = __unique_string() + "_sparse"
+    
+    #Add in the dimension information need by the densifying process
+    create_temp_sparse_matrix_table_with_dims(source_table, sparse_temp, row_id, col_id, val_id, row_dim, col_dim)
+
+    x_dense = __unique_string() + "_dense"
+    plpy.execute("""
+        SELECT {schema_madlib}.matrix_densify(
+            '{sparse_temp}', 'row_id', 'col_id', 'value',
+            '{x_dense}', True)
+        """.format(schema_madlib=schema_madlib, sparse_temp=sparse_temp,
+            x_dense=x_dense))
+
+    #Step 3: Pass the densified matrix to regular PCA
+    pca(schema_madlib, 
+        x_dense, 
+        pc_table,
+        row_id, 
+        k, 
+        grouping_cols, 
+        lanczos_iter,
+        use_correlation,
+        result_summary_table)
+    
+    #Step 4: Clean up
+    plpy.execute(
+        """
+        DROP TABLE IF EXISTS {x_dense};
+        DROP TABLE IF EXISTS {sparse_temp};
+        """.format( x_dense = x_dense, sparse_temp = sparse_temp))
+
+    if result_summary_table is not None:
+        stopTime = time.time()
+        dt = int((stopTime - startTime) * 100000) / 100.
+     
+        plpy.execute(
+          """
+          UPDATE {result_summary_table} SET "exec_time (ms)"  = {dt};
+          """.format( result_summary_table = result_summary_table, dt = dt))
+    
+    
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+# ------------------------------------------------------------------------
+        
+
+def pca( schema_madlib, 
+         source_table, 
+         pc_table,
+         row_id, 
+         k, 
+         grouping_cols, 
+         lanczos_iter,
+         use_correlation,
+         result_summary_table,
+         **kwargs):
+    """
+    Compute the PCA of the matrix in source_table.
+
+    This function is the specific call for dense matrices and creates three
+    tables corresponding to the three decomposition matrices.
+
+    Args:
+        @param schema_madlib
+        @param source_table
+        @param pc_table
+        @param row_id
+        @param k
+        @param grouping_cols
+        @param lanczos_iter
+        @param use_correlation
+        @param result_summary_table
+
+    Returns:
+        None
+
+    """
+    startTime = time.time()
+
+    # Reset the message level to avoid random messages
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    # Step 1: Validate the input arguments
+    _validate_args( schema_madlib, 
+                    source_table, 
+                    pc_table,
+                    k, 
+                    row_id, 
+                    None, 
+                    None,
+                    None,
+                    None,
+                    grouping_cols,
+                    lanczos_iter,
+                    use_correlation,
+                    result_summary_table)
+
+    #If using the default number of lanczos iterations, set to the default
+    if lanczos_iter == 0:
+        [row_dim, col_dim] = __get_dims(source_table)
+        lanczos_iter = min(k + 40, min(col_dim, row_dim))
+
+    # Make sure that the table has row_id and row_vec
+    cols = __get_cols(source_table, schema_madlib)
+    source_table_correct_names = __unique_string()
+    if len(cols) == 2:
+        cols.remove(row_id)
+        if not __is_col_array(source_table, cols[0]):
+            plpy.error("SVD error: Data column should be of type array!")
+        if cols[0] != "row_vec" or row_id != "row_id":
+            plpy.execute(
+                """
+                CREATE TEMP TABLE {source_table_correct_names} as
+                    SELECT {row_id} as row_id, {vec} as row_vec
+                    FROM {source_table}
+                """.format(source_table_correct_names = source_table_correct_names,
+                     row_id = row_id, vec = cols[0], source_table = source_table))
+            source_table = source_table_correct_names
+    else:
+        plpy.execute(
+            """
+            SELECT {schema_madlib}.__matrix_column_to_array_format (
+                '{source_table}', '{row_id}', '{source_table_correct_names}', True)
+            """.format(schema_madlib = schema_madlib, source_table = source_table,
+                       row_id = row_id, 
+                       source_table_correct_names = source_table_correct_names))
+        source_table = source_table_correct_names
+    
+    # Note: we currently don't support grouping columns or correlation matrices
+    if grouping_cols is None and not use_correlation:
+
+        # Step 2: Normalize the data (Column means)
+        dimension = plpy.execute("""
+            SELECT array_upper(row_vec,1) - array_lower(row_vec,1) + 1 as dimension
+            FROM (SELECT row_vec FROM {source_table} WHERE row_id = 0) q;
+        """.format(source_table = source_table))
+        dimension = dimension[0]["dimension"]
+
+        scaled_source_table = __unique_string()+"_scaled_table"
+        __recenter_data( schema_madlib,
+                          source_table, 
+                          scaled_source_table,
+                          'row_id',
+                          'row_vec', 
+                          dimension)
+                          
+        # Step 3: Create temporary output & result summary table
+        svd_output_temp_table = __unique_string() + "_svd_output_table"
+        plpy.execute("""
+            DROP TABLE IF EXISTS {svd_output_temp_table}
+            """.format(svd_output_temp_table = svd_output_temp_table));
+        if result_summary_table is None:
+          result_summary_table_string = ''
+        else:
+          result_summary_table_string = ", '%s'" % result_summary_table
+
+        # Step 4: Perform SVD
+        plpy.execute(
+            """
+            SELECT {schema_madlib}.svd('{scaled_source_table}', 
+                                       '{svd_output_temp_table}',
+                                       'row_id',
+                                       {k},
+                                       {lanczos_iter}
+                                       {result_summary_table_string})
+            """.format(schema_madlib = schema_madlib,
+                       scaled_source_table = scaled_source_table,
+                       svd_output_temp_table = svd_output_temp_table,
+                       k = k,
+                       lanczos_iter = lanczos_iter,
+                       result_summary_table_string = result_summary_table_string))
+        # Step 5: Transpose SVD output matrix
+        svd_v_transpose = __unique_string() + "transpose"
+
+        plpy.execute(
+         """
+            SELECT  {schema_madlib}.matrix_trans('{svd_output_temp_table}_v', 
+                    '{svd_v_transpose}', TRUE);
+            """.format(svd_output_temp_table = svd_output_temp_table,
+                       svd_v_transpose = svd_v_transpose,
+                       schema_madlib = schema_madlib)
+        )
+
+        # Step 6: Insert the output of SVD into the PCA table
+        plpy.execute(
+            """
+            CREATE TABLE {pc_table} as
+            SELECT  {svd_v_transpose}.row_id, 
+                    row_vec AS principal_components, 
+                    value AS eigen_values 
+            FROM {svd_v_transpose}, {svd_output_temp_table}_s
+            WHERE ({svd_v_transpose}.row_id = {svd_output_temp_table}_s.row_id)
+                  AND ({svd_v_transpose}.row_id < {k})
+            """.format(svd_output_temp_table = svd_output_temp_table,
+                       k = k, 
+                       svd_v_transpose = svd_v_transpose,
+                       pc_table = pc_table))
+
+        # Step 7: Append to the SVD summary table to get the PCA summary table
+        if result_summary_table is not None:
+            plpy.execute(
+              """
+              ALTER TABLE {result_summary_table} ADD column use_correlation BOOLEAN;
+              """.format(result_summary_table = result_summary_table))
+            plpy.execute(
+              """
+              UPDATE {result_summary_table} SET use_correlation = {use_correlation}
+              WHERE use_correlation is NULL;
+              """.format( result_summary_table = result_summary_table,
+                          use_correlation = bool(use_correlation)))
+            stopTime = time.time()
+            dt = int((stopTime - startTime) * 100000) / 100.
+             
+            plpy.execute(
+              """
+              UPDATE {result_summary_table} SET "exec_time (ms)" = {dt};
+              """.format( result_summary_table = result_summary_table,
+                          dt = str(dt)))
+             
+        # Step 8: Output handling & cleanup
+        plpy.execute(
+          """
+          DROP TABLE IF EXISTS {svd_v_transpose};
+          DROP TABLE IF EXISTS {source_table_correct_names};
+          DROP TABLE IF EXISTS {svd_output_temp_table};
+          DROP TABLE IF EXISTS {svd_output_temp_table}_s;
+          DROP TABLE IF EXISTS {svd_output_temp_table}_u;
+          DROP TABLE IF EXISTS {svd_output_temp_table}_v;
+          DROP TABLE IF EXISTS {scaled_source_table};
+          """.format( svd_output_temp_table = svd_output_temp_table,
+                      scaled_source_table = scaled_source_table,
+                      svd_v_transpose = svd_v_transpose,
+                      source_table_correct_names = source_table_correct_names))
+
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+   
+    

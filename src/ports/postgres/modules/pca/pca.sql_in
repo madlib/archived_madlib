@@ -12,70 +12,214 @@
 m4_include(`SQLCommon.m4')
 
 /**
-* @addtogroup grp_pca
-*
-* @brief Principal component analysis (PCA) is a mathematical procedure that uses an
-* orthogonal transformation to convert a set of observations of possibly
-* correlated variables into a set of values of linearly uncorrelated variables
-* called principal components. This transformation is defined in such a way that
-* the first principal component has the largest possible variance (i.e.,
-* accounts for as much of the variability in the data as possible), and each
-* succeeding component in turn has the highest variance possible under the
-* constraint that it be orthogonal to (i.e., uncorrelated with) the preceding
-* components.
-*
-* @details
-	(Details on Dense and sparse matrix formats)
 
-* @usage
-*
-* - Obtaining principal components for dense matrices
-* 	<pre>
-* 		SELECT {schema_madlib}.pca(
-* 			source_table, 			-- Source table name (dense matrix)
-* 			pc_table, 				-- Output table name for the principal components
-* 			row_id, 				-- Column name for the ID for each row
-* 			k, 						-- Number of principal components to compute
-* 			-------------- OPTIONAL PARAMETERS --------------
-* 			grouping_cols, 			-- Comma-separated list of grouping columns
-* 									--		(Default: NULL)
-* 			use_correlation, 		-- If True correlation matrix is used for principal components
-* 									-- 		instead of the covariance matrix (Default: False)
-* 			result_summary_table	-- Table name to store summary of results (Default: NULL)
-*
-* 		);
-* 	</pre>
-*
-* - Obtaining principal component for sparse matrices
-* 		<pre>
-* 			SELECT {schema_madlib}.pca_sparse(
-* 				source_table, 		-- Source table name (dense matrix)
-* 				pc_table, 		-- Output table name for the principal components
-* 				row_id, 		-- Name of ‘row_id’ column in sparse matrix representation
-* 				col_id, 		-- Name of 'col_id' column in sparse matrix representation
-* 				val_id, 		-- Name of 'val_id' column in sparse matrix representation
-* 				k, 				-- Number of eigenvectors with dominant eigenvalues, sorted decreasingly
-* 				-------------- OPTIONAL PARAMETERS --------------
-* 				grouping_cols, 		 -- Comma-separated list of grouping columns
-* 									 --		(Default: NULL)
-* 				use_correlation, 	 -- If True correlation matrix is used for principal components
-* 									 -- 	instead of the covariance matrix (Default: False)
-* 				result_summary_table -- Table name to store summary of results (Default: NULL)
-* 			);
-* 		</pre>
-*
-* 		<b>Note</b>: Currently <em>grouping_cols</em> is present as a placeholder for forward
-* 		compatibility. The parameter is planned to implemented as a comma-separated
-* 		list of column names, with the source data grouped using the combination
-* 		values of the column names. An independent PCA model will be computed
-* 		on each value of the combination of the columns.
-*
-* @input
-*
+@addtogroup grp_pca
+
+@about 
+
+Principal component analysis (PCA) is a mathematical procedure that uses an
+orthogonal transformation to convert a set of observations of possibly
+correlated variables into a set of values of linearly uncorrelated variables
+called principal components. This transformation is defined in such a way that
+the first principal component has the largest possible variance (i.e.,
+accounts for as much of the variability in the data as possible), and each
+succeeding component in turn has the highest variance possible under the
+constraint that it be orthogonal to (i.e., uncorrelated with) the preceding
+components.
+
+See \ref Background for a technical introduction to principal component analysis and implementation notes.
+
+
+@usage
+
+- Obtaining principal components for dense matrices
+
+<pre>
+   SELECT {schema_madlib}.pca_train(
+       source_table,           -- Source table name (dense matrix)
+       pc_table,               -- Output table name for the principal components
+       row_id,                 -- Column name containing the row IDs
+       k,                      -- Number of principal components to compute
+       -------------- OPTIONAL PARAMETERS --------------
+       grouping_cols,          -- Comma-separated list of grouping columns
+                               --      (Default: NULL)
+       lanczos_iter            -- The number of Lanczos iterations for the SVD calculation
+                               --  (Default: minimum of {k+40, smallest matrix dimension})
+       use_correlation,        -- If True correlation matrix is used for principal components
+                               --      instead of the covariance matrix (Default: False)
+       result_summary_table    -- Table name to store summary of results (Default: NULL)
+
+   );
+</pre>
+
+- Obtaining principal components for sparse matrices
+   <pre>
+       SELECT {schema_madlib}.pca_sparse_train(
+           source_table,        -- Source table name (sparse matrix)
+           pc_table,            -- Output table name for the principal components
+           row_id,              -- Name of ‘row_id’ column in sparse matrix representation
+           col_id,              -- Name of 'col_id' column in sparse matrix representation
+           val_id,              -- Name of 'val_id' column in sparse matrix representation
+           row_dim,             -- The number of rows in the sparse matrix
+           col_dim,             -- The number of columns in the sparse matrix
+           k,                   -- Number of eigenvectors with dominant eigenvalues, sorted decreasingly
+           -------------- OPTIONAL PARAMETERS --------------
+           grouping_cols,       -- Comma-separated list of grouping columns
+                                --  (Default: NULL)
+           lanczos_iter         -- The number of Lanczos iterations for the SVD calculation   
+                                --  (Default: minimum of {k+40, smallest matrix dimension})
+           use_correlation,     -- If True correlation matrix is used for principal components
+                                --     instead of the covariance matrix (Default: False)
+           result_summary_table -- Table name to store summary of results (Default: NULL)
+       );
+   </pre>
+
+   <b>Note</b>: Currently <em>grouping_cols</em> is present as a placeholder for forward
+   compatibility. The parameter is planned to be implemented as a comma-separated
+   list of column names, with the source data grouped using the combination of all the columns.
+   An independent PCA model will be computed for each combination of the grouping columns.
+   
+   <b>Note</b>: Currently <em>use_correlation</em> is also a placeholder for forward
+   compatibility. 
+   
+
+
+The Lanczos iteration number roughly corresponds to the accuracy of the SVD 
+calculation, and a higher iteration number corresponds to greater accuracy 
+but longer computation time.  The number of iterations must be at least as 
+large as the value of <em>k</em>,  but no larger than the smallest dimension
+ of the matrix.  If the iteration number is given as zero, then the default
+  number of iterations is used.  
+
+@input
+The input table for dense PCA is expected to be in the one of the two standard
+ madlib matrix formats.  Either as  
+
+<pre>{TABLE|VIEW} <em>source_table</em> (
+    <em>row_id</em> INTEGER,
+    row_vec FLOAT8[],
+)</pre>
+or
+<pre>{TABLE|VIEW} <em>source_table</em> (
+    <em>row_id</em> INTEGER,
+    col1 FLOAT8,
+    col2 FLOAT8,
+    ...
+)</pre>
+
+Note that the column name <em>row_id</em> is taken as an input parameter,
+ and should contain a list of row indices (starting at 0) for the input matrix.
+
+The input table for sparse PCA is expected to be in the form
+
+<pre>{TABLE|VIEW} <em>source_table</em> (
+    ...
+    <em>row_id</em> INTEGER,
+    <em>col_id</em> INTEGER,
+    <em>val_id</em> FLOAT8,
+    ...
+)</pre>
+
+The <em>row_id</em> and <em>col_id</em> columns specify the which entries
+ in the matrix are nonzero, and the <em>val_id</em> column defines the values
+  of the nonzero entries.  
+
 * @output
-*
-*
-* @examples
+The output table is of the form
+<pre> 
+ row_id |   principal_components | eigen_values     
+--------+------------------------+-------------
+                   ....
+</pre>
+where the columns are defined as
+\code
+    row_id                  INTEGER,   -- ID corresponding to each eigenvalue 
+    principal_components    FLOAT8[]   -- Principal component vector for this row_id
+    eigen_values            FLOAT8     -- The eigen value for this row
+\endcode 
+
+If a summary table is created, then it will be of the form
+<pre> 
+rows_used | exec_time (ms)| iter | recon_error | relative_recon_error | use_correlation 
+----------+---------------+------+------------ +----------------------+-----------------
+                        ....
+</pre>
+@examples
+where the columns are defined as
+\code
+    rows_used            INTEGER,  -- Number of data points in the input
+    exec_time (ms)       FLOAT,    -- Number of milliseconds for the PCA calculation to run
+    iter                 INTEGER,  -- Number of iterations used in the SVD calculation
+    recon_error          FLOAT,    -- The absolute error in the SVD approximation
+    relative_recon_error FLOAT,    -- The relative error in the SVD approximation
+    use_correlation      BOOL      -- Indicates if the correlation matrix was used
+\endcode 
+
+-# Create the sample data.
+@verbatim
+sql> DROP TABLE IF EXISTS mat;
+CREATE TABLE mat (
+    row_id integer,
+    row_vec double precision[]
+);
+
+sql> COPY mat (row_id, row_vec) FROM stdin;
+0	{1,2,3}
+1	{2,1,2}
+2	{3,2,1}
+\.
+
+@endverbatim
+-# Run the PCA function:
+@verbatim
+sql> drop table result_table; 
+sql> select pca_train(
+    'mat',              -- name of the input table
+    'result_table',     -- name of the output table
+    'row_id',           -- column containing the matrix indices
+    3                   -- Number of PCA components to compute
+);
+@endverbatim
+-# View the PCA results:
+@verbatim
+sql> SELECT * from result_table;
+ row_id |                     principal_components                     |     eigen_values     
+--------+--------------------------------------------------------------+----------------------
+      0 | {0.707106781186547,0.408248290459781,-0.577350269192513}     |                    2
+      2 | {-0.707106781186547,0.408248290459781,-0.577350269192512}    | 1.26294130828989e-08
+      1 | {2.08166817117217e-17,-0.816496580931809,-0.577350269183852} |    0.816496580927726
+
+@endverbatim
+
+\anchor Background 
+@background
+
+
+The PCA implemented here uses an SVD decomposition implementation to recover 
+the principle components (as opposed to the directly computing the eigenvectors
+ of the covariance matrix).  Let \f$ \boldsymbol X \f$ be the data matrix, and
+  let \f$ \hat{x} \f$ be a vector of the column averages of \f$ \boldsymbol{X}\f$.
+    PCA computes the matrix \f$ \hat{\boldsymbol X} \f$ as
+\f[
+\hat{\boldsymbol X} =  {\boldsymbol X} - \vec{e} \hat{x}^T
+\f]
+where \f$ \vec{e} \f$ is the vector of all ones.  
+
+PCA then computes the SVD matrix factorization
+ \f[
+\hat{\boldsymbol X} =  {\boldsymbol U}{\boldsymbol \Sigma}{\boldsymbol V}^T
+\f]
+where \f$ {\boldsymbol \Sigma} \f$ is a diagonal matrix.  The eigenvalues are 
+recovered as the entries of \f$ {\boldsymbol \Sigma} \f$, and the principle 
+components are the rows of  \f$ {\boldsymbol V} \f$.  
+
+It is important to note that the PCA implementation assumes that the user will
+ use only the principle components that have non-zero eigenvalues.  The SVD 
+ calculation is done with the Lanczos method, with does not guarantee 
+ correctness for singular vectors with zero-valued eigenvalues.  Consequently,
+  principle components with zero-valued eigenvalues are not guaranteed to be correct.
+ Generally, this will not be problem unless the user wants to use the
+ principle components for the entire eigenspectrum.  
 
 @literature
 
@@ -87,152 +231,343 @@ m4_include(`SQLCommon.m4')
 **/
 
 -- -----------------------------------------------------------------------
--- Main function for PCA (Dense format)
+--  PCA for Dense matrices
 -- -----------------------------------------------------------------------
 /*
-@brief Compute principal compoents for a dense matrix stored in a
-		database table
+@brief Compute principal components for a dense matrix stored in a
+        database table
 */
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Column name for the ID for each row
-	k						INTEGER, 	-- Number of principal components to compute
-	-------------- OPTIONAL PARAMETERS --------------
-	grouping_cols			TEXT, 		-- Comma-separated list of grouping columns
-										--		(Default: NULL)
-	use_correlation			BOOLEAN, 	-- If True correlation matrix is used for principal components
-										-- 	instead of the covariance matrix (Default: False)
-	result_summary_table	TEXT		-- Table name to store summary of results (Default: NULL)
+MADLIB_SCHEMA.pca_train(
+    source_table          TEXT,    -- Source table name (dense matrix)
+    pc_table              TEXT,    -- Output table name for the principal components
+    row_id                TEXT,    -- Column name for the ID for each row
+    k                     INTEGER, -- Number of principal components to compute
+    grouping_cols         TEXT,    -- Comma-separated list of grouping columns (Default: NULL)
+    lanczos_iter          INTEGER, -- The number of Lanczos iterations for the SVD calculation (Default: min(k+40, smallest Matrix dimension))
+    use_correlation       BOOLEAN, -- If True correlation matrix is used for principal components (Default: False)
+    result_summary_table  TEXT     -- Table name to store summary of results (Default: NULL)
 )
 RETURNS VOID AS $$
-    PythonFunctionBodyOnly(`pca', `pca')
-    return pca.pca(
-        schema_madlib, source_table, pc_table,
-        row_id, k, grouping_cols, use_correlation, result_summary_table)
+PythonFunction(pca, pca, pca)
 $$ LANGUAGE plpythonu;
 
+-- Overloaded functions for optional parameters
 -- -----------------------------------------------------------------------
--- Main Function for PCA (sparse format)
+
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.pca_train(
+    source_table    TEXT,   -- Source table name (dense matrix)
+    pc_table        TEXT,   -- Output table name for the principal components
+    row_id          TEXT,   -- Column name for the ID for each row
+    k               INTEGER,-- Number of principal components to compute
+    grouping_cols   TEXT,   -- Comma-separated list of grouping columns
+    lanczos_iter    INTEGER,-- The number of Lanczos iterations for the SVD calculation
+    use_correlation BOOLEAN -- If True correlation matrix is used for principal components
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pca_train($1, $2, $3, $4, $5, $6, $7, NULL)
+$$ LANGUAGE SQL;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.pca_train(
+    source_table   TEXT,   -- Source table name (dense matrix)
+    pc_table       TEXT,   -- Output table name for the principal components
+    row_id         TEXT,   -- Column name for the ID for each row
+    k              INTEGER,-- Number of principal components to compute
+    grouping_cols  TEXT,   -- Comma-separated list of grouping columns
+    lanczos_iter   INTEGER -- The number of Lanczos iterations for the SVD calculation
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pca_train($1, $2, $3, $4, $5, $6, False , NULL)
+$$ LANGUAGE SQL;
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.pca_train(
+    source_table   TEXT,   -- Source table name (dense matrix)
+    pc_table       TEXT,   -- Output table name for the principal components
+    row_id         TEXT,   -- Column name for the ID for each row
+    k              INTEGER,-- Number of principal components to compute
+    grouping_cols  TEXT    -- Comma-separated list of grouping columns
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pca_train($1, $2, $3, $4, $5, 0, False , NULL)
+$$ LANGUAGE SQL;
+
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.pca_train(
+    source_table   TEXT,   -- Source table name (dense matrix)
+    pc_table       TEXT,   -- Output table name for the principal components
+    row_id         TEXT,   -- Column name for the ID for each row
+    k              INTEGER -- Number of principal components to compute
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pca_train($1, $2, $3, $4, NULL, 0, False, NULL)
+$$ LANGUAGE SQL;
+
+
+-- Information Functions
+-- -----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_train(
+     usage_string VARCHAR                               -- usage string
+)
+RETURNS VARCHAR AS $$
+DECLARE
+insert_string       VARCHAR;
+BEGIN
+    IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
+    insert_string := '' ||
+    E'Summary \n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' Functionality: Performs principle component analysis\n' ||
+    E' SELECT {schema_madlib}.pca_train(''source_table'' \n' ||
+    E'                                       ,''pc_table'' \n' ||
+    E'                                       ,''row_id'' \n' ||
+    E'                                       ,''k'' \n' ||
+    E'                                       [,''grouping_cols'' \n' ||
+    E'                                       ,lanczos_iter \n' ||
+    E'                                       ,use_correlation \n' ||
+    E'                                       ,''result_summary_table'' \n' ||
+    E'                                       ]' ||
+    E');\n' ||
+    E'For more details on function usage:  \n' ||
+    E'SELECT {schema_madlib}.pca_train(''usage'') \n' ||
+    E'';
+  ElSIF (usage_string  = 'usage') THEN
+    insert_string := '' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E'Usage\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' SELECT {schema_madlib}.pca_train( '||
+    E' ''source_table'',        -- Name of data table \n' ||
+    E' ''pc_table''             -- Name of the table containing the principle components\n' ||
+    E' ''row_id''               -- Column name for the ID for each row.  \n' ||
+    E' k                        -- Number of principal components to compute\n' ||
+    E' [''grouping_cols''       -- Comma-separated list of grouping columns (Default: NULL)\n' ||
+    E' lanczos_iter             -- The number of Lanczos iterations to use in the SVD calculation\n' ||
+    E'                             Default: minimum of of the smallest input matrix dimension and k+40\n' ||
+    E' use_correlation          -- If ''True'' correlation matrix is used for principal components\n' ||
+    E'                             Default: False\n' ||
+    E' ''result_summary_table'' -- Table name to store summary of results (Default: NULL)\n' ||
+    E']' ||
+    E' );\n' ||
+    E'\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E'Output:\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The output table (''output_table'' above) has the following columns\n' ||
+    E' ''row_id''                           INTEGER, -- The ranking of the eigenvalues \n' ||
+    E' ''principal_components''             FLOAT[], -- The principle components\n' ||
+    E' ''eigen_values''                     FLOAT[], \n' ||
+    E'                                      -- The eigenvalues associated with each principle component\n' ||
+    E'\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The result summary table (''result_summary_table'' above) has the following columns\n' ||
+    E' ''rows_used''                        INTEGER, -- Number of rows used in the PCA calculation\n' ||
+    E' ''exec_time''                        FLOAT, -- Number of milliseconds the PCA calculation took\n' ||
+    E' ''use_correlation''                  BOOLEAN, -- Value of the input parameter ''use_correlation''\n' ||
+    E' ''iter''                             INTEGER, -- Number of iterations the SVD took to converge\n' ||
+    E' ''recon_error''                      FLOAT, -- Absolute error in the approximation\n' ||
+    E' ''relative_recon_error''             FLOAT -- Relative error in the approximation\n' ||
+    E'\n' ||
+    E'';
+  ELSE
+    insert_string := 'No such option. Run SELECT {schema_madlib}.pca_train()';
+  END IF;
+  RETURN insert_string;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_train()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.pca_train('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- -----------------------------------------------------------------------
+--  PCA for Sparse matrices
 -- -----------------------------------------------------------------------
 /*
 @brief Compute principal components for a sparse matrix stored in a
-		database table
+        database table
 */
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca_sparse(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Name of ‘row_id’ column in sparse matrix representation
-	col_id					TEXT, 		-- Name of 'col_id' column in sparse matrix representation
-	val_id					TEXT, 		-- Name of 'val_id' column in sparse matrix representation
-	k						INTEGER, 	-- Number of eigenvectors with dominant eigenvalues, sorted decreasingly
-	-------------- OPTIONAL PARAMETERS --------------
-	grouping_cols			TEXT, 		-- Comma-separated list of grouping columns
-										--		(Default: NULL)
-	use_correlation			BOOLEAN, 	-- If True correlation matrix is used for principal components
-										-- 	instead of the covariance matrix (Default: False)
-	result_summary_table	TEXT		-- Table name to store summary of results (Default: NULL)
+MADLIB_SCHEMA.pca_sparse_train(
+    source_table         TEXT,     -- Source table name (dense matrix)
+    pc_table             TEXT,     -- Output table name for the principal components
+    row_id               TEXT,     -- Name of 'row_id' column in sparse matrix representation
+    col_id               TEXT,     -- Name of 'col_id' column in sparse matrix representation
+    val_id               TEXT,     -- Name of 'val_id' column in sparse matrix representation
+    row_dim              INTEGER,  -- Number of rows in the sparse matrix
+    col_dim              INTEGER,  -- Number of columns in the sparse matrix
+    k                    INTEGER,  -- Number of eigenvectors with dominant eigenvalues, sorted decreasingly
+    grouping_cols        TEXT,     -- Comma-separated list of grouping columns (Default: NULL)
+    lanczos_iter         INTEGER,  -- The number of Lanczos iterations for the SVD calculation (Default: min(k+40, smallest Matrix dimension))
+    use_correlation      BOOLEAN,  -- If True correlation matrix is used for principal components (Default: False)
+    result_summary_table TEXT      -- Table name to store summary of results (Default: NULL)
 )
 RETURNS VOID AS $$
-    PythonFunctionBodyOnly(`pca', `pca')
-    return pca.pca_sparse(
-        schema_madlib, source_table, pc_table,
-        row_id, col_id, val_id, k, grouping_cols, use_correlation, result_summary_table)
+PythonFunction(pca, pca, pca_sparse)
 $$ LANGUAGE plpythonu;
 
--- -----------------------------------------------------------------------
+
 -- Overloaded functions for optional parameters
 -- -----------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Column name for the ID for each row
-	k						INTEGER, 	-- Number of principal components to compute
-	-------------- OPTIONAL PARAMETERS --------------
-	grouping_cols			TEXT, 		-- Comma-separated list of grouping columns
-										--		(Default: NULL)
-	use_correlation			BOOLEAN, 	-- If True correlation matrix is used for principal components
-										-- 	instead of the covariance matrix (Default: False)
+MADLIB_SCHEMA.pca_sparse_train(
+    source_table    TEXT,     -- Source table name (dense matrix)
+    pc_table        TEXT,     -- Output table name for the principal components
+    row_id          TEXT,     -- Column name for the ID for each row
+    col_id          TEXT,     -- Name of 'col_id' column in sparse matrix representation
+    val_id          TEXT,     -- Name of 'val_id' column in sparse matrix representation
+    row_dim         INTEGER,  -- Number of rows in the sparse matrix
+    col_dim         INTEGER,  -- Number of columns in the sparse matrix
+    k               INTEGER,  -- Number of principal components to compute
+    grouping_cols   TEXT,     -- Comma-separated list of grouping columns
+    lanczos_iter    INTEGER,  -- The number of Lanczos iterations for the SVD calculation
+    use_correlation BOOLEAN   -- If True correlation matrix is used for principal components
 )
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.pca($1, $2, $3, $4, $5, $6, NULL)
+    SELECT MADLIB_SCHEMA.pca_sparse_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL)
 $$ LANGUAGE SQL;
 
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Column name for the ID for each row
-	k						INTEGER, 	-- Number of principal components to compute
-	-------------- OPTIONAL PARAMETERS --------------
-	grouping_cols			TEXT, 		-- Comma-separated list of grouping columns
-										--		(Default: NULL)
+MADLIB_SCHEMA.pca_sparse_train(
+    source_table  TEXT,     -- Source table name (dense matrix)
+    pc_table      TEXT,     -- Output table name for the principal components
+    row_id        TEXT,     -- Column name for the ID for each row
+    col_id        TEXT,     -- Name of 'col_id' column in sparse matrix representation
+    val_id        TEXT,     -- Name of 'val_id' column in sparse matrix representation
+    row_dim       INTEGER,  -- Number of rows in the sparse matrix
+    col_dim       INTEGER,  -- Number of columns in the sparse matrix
+    k             INTEGER,  -- Number of principal components to compute
+    grouping_cols TEXT,     -- Comma-separated list of grouping columns
+    lanczos_iter  INTEGER   -- The number of Lanczos iterations for the SVD calculation
 )
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.pca($1, $2, $3, $4, $5, False, NULL)
+    SELECT MADLIB_SCHEMA.pca_sparse_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, False , NULL)
 $$ LANGUAGE SQL;
 
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Column name for the ID for each row
-	k						INTEGER, 	-- Number of principal components to compute
+MADLIB_SCHEMA.pca_sparse_train(
+    source_table  TEXT,     -- Source table name (dense matrix)
+    pc_table      TEXT,     -- Output table name for the principal components
+    row_id        TEXT,     -- Column name for the ID for each row
+    col_id        TEXT,     -- Name of 'col_id' column in sparse matrix representation
+    val_id        TEXT,     -- Name of 'val_id' column in sparse matrix representation
+    row_dim       INTEGER,  -- Number of rows in the sparse matrix
+    col_dim       INTEGER,  -- Number of columns in the sparse matrix
+    k             INTEGER,  -- Number of principal components to compute
+    grouping_cols TEXT      -- Comma-separated list of grouping columns
 )
 RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.pca($1, $2, $3, $4, NULL, False, NULL)
+    SELECT MADLIB_SCHEMA.pca_sparse_train($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, False , NULL)
 $$ LANGUAGE SQL;
--------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca_sparse(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Name of ‘row_id’ column in sparse matrix representation
-	col_id					TEXT, 		-- Name of 'col_id' column in sparse matrix representation
-	val_id					TEXT, 		-- Name of 'val_id' column in sparse matrix representation
-	k						INTEGER, 	-- Number of eigenvectors with dominant eigenvalues, sorted decreasingly
-	-------------- OPTIONAL PARAMETERS --------------
-	grouping_cols			TEXT, 		-- Comma-separated list of grouping columns
-										--		(Default: NULL)
-	use_correlation			BOOLEAN, 	-- If True correlation matrix is used for principal components
-										-- 	instead of the covariance matrix (Default: False)
+MADLIB_SCHEMA.pca_sparse_train(
+    source_table  TEXT,     -- Source table name (dense matrix)
+    pc_table      TEXT,     -- Output table name for the principal components
+    row_id        TEXT,     -- Column name for the ID for each row
+    col_id        TEXT,     -- Name of 'col_id' column in sparse matrix representation
+    val_id        TEXT,     -- Name of 'val_id' column in sparse matrix representation
+    row_dim       INTEGER,  -- Number of rows in the sparse matrix
+    col_dim       INTEGER,  -- Number of columns in the sparse matrix
+    k             INTEGER   -- Number of principal components to compute
 )
 RETURNS VOID AS $$
-	SELECT MADLIB_SCHEMA.pca_sparse($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+    SELECT MADLIB_SCHEMA.pca_sparse_train($1, $2, $3, $4, $5, $6, $7, $8, NULL, 0, False, NULL)
 $$ LANGUAGE SQL;
 
 
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca_sparse(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Name of ‘row_id’ column in sparse matrix representation
-	col_id					TEXT, 		-- Name of 'col_id' column in sparse matrix representation
-	val_id					TEXT, 		-- Name of 'val_id' column in sparse matrix representation
-	k						INTEGER, 	-- Number of eigenvectors with dominant eigenvalues, sorted decreasingly
-	-------------- OPTIONAL PARAMETERS --------------
-	grouping_cols			TEXT, 		-- Comma-separated list of grouping columns
-										--		(Default: NULL)
-)
-RETURNS VOID AS $$
-	SELECT MADLIB_SCHEMA.pca_sparse($1, $2, $3, $4, $5, $6, $7, False, NULL)
-$$ LANGUAGE SQL;
+-- Information Functions
+-- -----------------------------------------------------------------------
 
-
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.pca_sparse(
-	source_table			TEXT, 		-- Source table name (dense matrix)
-	pc_table			 	TEXT, 		-- Output table name for the principal components
-	row_id					TEXT, 		-- Name of ‘row_id’ column in sparse matrix representation
-	col_id					TEXT, 		-- Name of 'col_id' column in sparse matrix representation
-	val_id					TEXT, 		-- Name of 'val_id' column in sparse matrix representation
-	k						INTEGER, 	-- Number of eigenvectors with dominant eigenvalues, sorted decreasingly
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_sparse_train(
+     usage_string VARCHAR                               -- usage string
 )
-RETURNS VOID AS $$
-	SELECT MADLIB_SCHEMA.pca_sparse($1, $2, $3, $4, $5, $6, NULL, False, NULL)
-$$ LANGUAGE SQL;
--------------------------------------------------------------------------
+RETURNS VARCHAR AS $$
+DECLARE
+insert_string       VARCHAR;
+BEGIN
+    IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
+    insert_string := '' ||
+    E'Summary \n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' Functionality: Performs principle component analysis on sparse matrices\n' ||
+    E' SELECT {schema_madlib}.pca_sparse_train(''source_table'' \n' ||
+    E'                                       ,''pc_table'' \n' ||
+    E'                                       ,''row_id'' \n' ||
+    E'                                       ,''col_id'' \n' ||
+    E'                                       ,''val_id'' \n' ||
+    E'                                       ,row_dim \n' ||
+    E'                                       ,col_dim \n' ||
+    E'                                       ,k \n' ||
+    E'                                       [,''grouping_cols'' \n' ||
+    E'                                       ,lanczos_iter \n' ||
+    E'                                       ,use_correlation \n' ||
+    E'                                       ,''result_summary_table'' \n' ||
+    E'                                       ]' ||
+    E' );\n' ||
+    E'For more details on function usage:  \n' ||
+    E'SELECT {schema_madlib}.pca_sparse_train(''usage'') \n' ||
+    E'';
+  ElSIF (usage_string  = 'usage') THEN
+    insert_string := '' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E'Usage\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' SELECT {schema_madlib}.pca_sparse_train( '||
+    E' ''source_table'',        -- Name of data table \n' ||
+    E' ''pc_table''             -- Name of the table containing the principle components\n' ||
+    E' ''row_id''               -- Column name for the row coordinates.  \n' ||
+    E' ''col_id''               -- Column name for the column coordinates.  \n' ||
+    E' ''val_id''               -- Column name for the sparse values.  \n' ||
+    E' row_dim,                 -- The number of rows in the sparse matrix \n' ||
+    E' col_dim,                 -- The number of columns in the sparse matrix \n' ||
+    E' k                        -- Number of principal components to compute\n' ||
+    E' [''grouping_cols''       -- Comma-separated list of grouping columns (Default: NULL)\n' ||
+    E' lanczos_iter             -- The number of Lanczos iterations to use in the SVD calculation\n' ||
+    E'                             Default: minimum of of the smallest input matrix dimension and k+40\n' ||
+    E' use_correlation          -- If ''True'' correlation matrix is used for principal components \n' ||
+    E'                             Default: False\n' ||
+    E'  ''result_summary_table''-- Table name to store summary of results (Default: NULL) \n' ||
+    E']' ||
+    E' );\n' ||
+    E'\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E'Output:\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The output table (''output_table'' above) has the following columns\n' ||
+    E' ''row_id''                           INTEGER, -- The ranking of the eigenvalues \n' ||
+    E' ''principal_components''             FLOAT[], -- The principle components\n' ||
+    E' ''eigen_values''                     FLOAT[], \n' ||
+    E'                                      -- The eigenvalues associated with each principle component\n' ||
+    E'\n' ||
+    E'-----------------------------------------------------------------------------------------\n' ||
+    E' The result summary table(''result_summary_table'' above) has the following columns\n' ||
+    E' ''rows_used''                        INTEGER, -- Number of rows used in the PCA calculation\n' ||
+    E' ''exec_time''                        FLOAT, -- Number of milliseconds the PCA calculation took\n' ||
+    E' ''use_correlation''                  BOOLEAN, -- Value of the input parameter ''use_correlation''\n' ||
+    E' ''iter''                             INTEGER, -- Number of iterations the SVD took to converge\n' ||
+    E' ''recon_error''                      FLOAT, -- Absolute error in the approximation\n' ||
+    E' ''relative_recon_error''             FLOAT -- Relative error in the approximation\n' ||
+    E'\n' ||
+    E'';
+  ELSE
+    insert_string := 'No such option. Run SELECT {schema_madlib}.pca_sparse_train()';
+  END IF;
+  RETURN insert_string;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_sparse_train()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.pca_sparse_train('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
