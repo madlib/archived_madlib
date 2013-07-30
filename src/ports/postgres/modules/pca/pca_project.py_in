@@ -1,0 +1,571 @@
+"""
+@file pca_project.py_in
+
+@namespace pca
+"""
+
+import plpy
+from utilities.utilities import __mad_version
+from utilities.utilities import __unique_string
+from utilities.utilities import _assert
+from utilities.validate_args import __is_col_exists
+from utilities.validate_args import __is_tbl_exists
+from utilities.validate_args import __is_tbl_exists_in_schema
+import time
+
+version_wrapper = __mad_version()
+string_to_array = version_wrapper.select_vecfunc()
+array_to_string = version_wrapper.select_vec_return()
+
+
+# Dense PCA help function
+# ------------------------------------------------------------------------
+def create_temp_sparse_matrix_table_with_dims(source_table,
+                                              out_table,
+                                              row_id,
+                                              col_id,
+                                              value,
+                                              row_dim,
+                                              col_dim):
+
+    """
+    Make a copy of the sparse input table and add (row_dim, col_dim, NULL) to it
+
+    This function is the specific call for sparse matrices and creates a temp
+    table which is a copy of the source table. After creation, the tuple
+    (row_dim, col_dim, NULL) is added to (row_id, col_id, value)
+
+    Args:
+        @param source_table Name of the input table (sparse matrix)
+        @param out_table Name of the output table (sparse matrix)
+        @param row_id Name of the row_id column
+        @param col_id Name of the col_id column
+        @param value  Name of the value column
+        @param row_dim Row dimensions
+        @param col_dim Column dimensions
+    Returns:
+        None
+    """
+    plpy.execute("""
+                 CREATE TEMP TABLE {out_table} as
+                     SELECT
+                         {row_id} as row_id,
+                         {col_id} as col_id,
+                         {value} as value
+                     FROM {source_table}
+                     WHERE {value} is not NULL
+                 """.format(row_id=row_id,
+                            col_id=col_id,
+                            value=value,
+                            source_table=source_table,
+                            out_table=out_table))
+
+    plpy.execute("""INSERT INTO {out_table} VALUES
+                    ({row_dim}, {col_dim}, NULL)
+                 """.format(out_table=out_table, row_dim=row_dim,
+                            col_dim=col_dim))
+
+
+def pca_project_help(schema_madlib, usage_string=None, **kwargs):
+    """
+    Given a usage string, give out function usage information.
+
+    If an optimizer name is given, print out the necessary parameters.
+    """
+    if usage_string is None:
+        usage_string = ''
+
+    if (usage_string.lower() == "usage"):
+        return """
+        ----------------------------------------------------------------
+                                Usage
+        ----------------------------------------------------------------
+        SELECT {schema_madlib}.elastic_net_train (
+            'tbl_source',          -- Data table
+            'tbl_pc',              -- Table with principal componenents
+                                        (obtained as output from pca_train)
+            'tbl_result',          -- Result table
+            'row_id',              -- Name of the column containing the row_id
+            -- Optional Parameters
+            ----------------------------------------------------------------
+            'tbl_residual',        -- Residual table (Default: NULL)
+            'tbl_result_summary',  -- Result summary table (Default : NULL)
+        );
+
+                                Ouput Tables
+        ----------------------------------------------------------------
+        The output is divided into three tables (two of which are optional)
+
+        -----------------------------------------------------------------------------------------
+         The output table ('tbl_result' above) encodes a dense matrix
+         with the projection onto the principal components. The matrix contains
+         the following columns:
+
+         'row_id'        INTEGER,            -- Row id of the output matrix
+         'row_vec'       DOUBLE PRECISION[], -- A vector containing elements in the row of the matrix
+
+        -----------------------------------------------------------------------------------------
+         The residual table ('tbl_residual' above) encodes a dense residual
+         matrix which has the following columns
+
+         'row_id'        INTEGER,            -- Row id of the output matrix
+         'row_vec'       DOUBLE PRECISION[], -- A vector containing elements in the row of the matrix
+
+        -----------------------------------------------------------------------------------------
+         The result summary table ('tbl_result_summary' above) has the following columns
+
+         'exec_time'     INTEGER,            -- Wall clock time (ms) of the function.
+         'recon_error'   DOUBLE PRECISION,   -- Relative error of the residuals
+        ----------------------------------------------------------------
+        """.format(schema_madlib=schema_madlib)
+    else:
+        return """
+        ----------------------------------------------------------------
+                 Summary: PCA Projection
+        ----------------------------------------------------------------
+        PCA Projection: Projects a dataset to an already trained
+        space of principal components.
+        --
+        For function usage information, run
+        SELECT {schema_madlib}.pca_project('usage');
+        --
+        """.format(schema_madlib=schema_madlib)
+
+
+# Sparse PCA help function
+# ------------------------------------------------------------------------
+def pca_sparse_project_help(schema_madlib, usage_string=None, **kwargs):
+    """
+    Given a usage string, give out function usage information.
+
+    If an optimizer name is given, print out the necessary parameters.
+    """
+    if usage_string is None:
+        usage_string = ''
+
+    if (usage_string.lower() == "usage"):
+        return """
+        ----------------------------------------------------------------
+                                Usage
+        ----------------------------------------------------------------
+        SELECT {schema_madlib}.elastic_net_train (
+            'tbl_source',          -- Data table
+            'tbl_pc',              -- Table with principal componenents
+                                        (obtained as output from pca_train)
+            'tbl_result',          -- Result table
+            'row_id',              -- Name of the column containing the row_id
+            'col_id',              -- Name of the column containing the col_id
+            'val_id',              -- Name of the column containing the val_id
+            -- Optional Parameters
+            ----------------------------------------------------------------
+            'tbl_residual',        -- Residual table (Default: NULL)
+            'tbl_result_summary',  -- Result summary table (Default : NULL)
+        );
+
+                                Ouput Tables
+        ----------------------------------------------------------------
+        The output is divided into three tables (two of which are optional)
+
+        -----------------------------------------------------------------------------------------
+         The output table ('tbl_result' above) encodes a dense matrix
+         with the projection onto the principal components. The matrix contains
+         the following columns:
+
+         'row_id'        INTEGER,            -- Row id of the output matrix
+         'row_vec'       DOUBLE PRECISION[], -- A vector containing elements in the row of the matrix
+
+        -----------------------------------------------------------------------------------------
+         The residual table ('tbl_residual' above) encodes a dense residual
+         matrix which has the following columns
+
+         'row_id'        INTEGER,            -- Row id of the output matrix
+         'row_vec'       DOUBLE PRECISION[], -- A vector containing elements in the row of the matrix
+
+        -----------------------------------------------------------------------------------------
+         The result summary table ('tbl_result_summary' above) has the following columns
+
+         'exec_time'     INTEGER,            -- Wall clock time (ms) of the function.
+         'recon_error'   DOUBLE PRECISION,   -- Relative error of the residuals
+        ----------------------------------------------------------------
+        """.format(schema_madlib=schema_madlib)
+    else:
+        return """
+        ----------------------------------------------------------------
+                 Summary: PCA Projection
+        ----------------------------------------------------------------
+        PCA Projection: Projects a dataset to an already trained
+        space of principal components.
+        --
+        For function usage information, run
+        SELECT {schema_madlib}.pca_project('usage');
+        --
+        """.format(schema_madlib=schema_madlib)
+
+
+# Validate arguments: Same as pca
+# ------------------------------------------------------------------------
+def _validate_args(schema_madlib,
+                   source_table,
+                   pc_table,
+                   out_table,
+                   row_id,
+                   col_id=None,
+                   val_id=None,
+                   row_dim=None,
+                   col_dim=None,
+                   residual_table=None,
+                   result_summary_table=None):
+    """
+    Validates all arguments passed to the PCA function
+
+    Args:
+        @param schema_madlib  Name of MADlib schema
+        @param source_table  Name of the input table (containing data to project)
+        @param pc_table   Name of table with principal components (output by the training function)
+        @param out_table  Name of output table to store projection result
+        @param row_id  Name of the row_id column
+        @param col_id  Name of the col_id column (only for sparse matrices)
+        @param val_id  Name of the val_id column (only for sparse matrices)
+        @param row_dim  Number of rows in input matrix (only for sparse matrices)
+        @param col_dim  Number of columns in input matrix (only for sparse matrices)
+        @param residual_table  Name of the residual table (to store error in projection)
+        @param result_summary_table  Name of result summary table
+    Returns:
+        None
+    Throws:
+        plpy.error if any argument is invalid
+    """
+    _assert(source_table is not None and __is_tbl_exists(source_table),
+            "PCA error: Source data table does not exist!")
+
+    _assert(pc_table is not None and __is_tbl_exists(pc_table),
+            "PCA error: Principal comp. table does not exist!")
+
+    # Make sure that the output table does not exist
+    # Also check that the output table is not null
+    _assert(out_table and out_table.strip(),
+            "PCA error: Invalid output table name.")
+    _assert(not __is_tbl_exists_in_schema(out_table),
+            "PCA error: Output table {0} already exists!".format(str(out_table)))
+
+    # Check that the result summary table is not empty
+    if result_summary_table is not None:
+        _assert(result_summary_table.strip(),
+                "PCA error: Invalid result summary table name!")
+        _assert(not __is_tbl_exists_in_schema(result_summary_table),
+                "PCA error: Result summary table {0} already exists!".
+                format(result_summary_table))
+
+    # Check that the result summary table is not empty
+    if residual_table is not None:
+        _assert(residual_table.strip(),
+                "PCA error: Invalid residual table name!")
+        _assert(not __is_tbl_exists_in_schema(residual_table),
+                "PCA error: Residual table {0} already exists!".
+                format(residual_table))
+
+    # Check that the row_id exists
+    _assert(__is_col_exists(source_table, [row_id], schema_madlib),
+            "PCA error: {1} column does not exist in {0}!".
+            format(source_table, "NULL" if row_id is None else row_id))
+
+    # For sparse inputs: Check that the row_id exists
+    if col_id or val_id:
+        _assert(col_id,
+                "PCA error: Column ID should be provided if value ID is input!")
+        _assert(val_id,
+                "PCA error: Value ID should be provided if column ID is input!")
+        _assert(__is_col_exists(source_table, [col_id], schema_madlib),
+                "PCA error: {1} column does not exist in {0}!".
+                format(source_table, col_id))
+        _assert(__is_col_exists(source_table, [val_id], schema_madlib),
+                "PCA error: {1} column does not exist in {0}!".
+                format(source_table, val_id))
+        _assert(row_dim > 0 and col_dim > 0,
+                "PCA error: row_dim/col_dim should be positive integer")
+
+
+# ------------------------------------------------------------------------
+def pca_sparse_project(schema_madlib,
+                       source_table,
+                       pc_table,
+                       out_table,
+                       row_id,
+                       col_id,
+                       val_id,
+                       row_dim,
+                       col_dim,
+                       residual_table,
+                       result_summary_table,
+                       **kwargs):
+    """
+    PCA projection of the matrix in source_table.
+
+    This function is the specific call for pca projection. It projects
+    the input matrix into the principal components.
+
+    Args:
+        @param schema_madlib  Name of MADlib schema
+        @param source_table  Name of the input table (containing data to project)
+        @param pc_table   Name of table with principal components (output by the training function)
+        @param out_table  Name of output table to store projection result
+        @param row_id  Name of the row_id column
+        @param col_id  Name of the col_id column
+        @param val_id  Name of the val_id column
+        @param row_dim  Number of rows in input matrix
+        @param col_dim  Number of columns in input matrix
+        @param residual_table  Name of the residual table (to store error in projection)
+        @param result_summary_table  Name of result summary table
+    Returns:
+        None
+    Throws:
+        plpy.error if any argument is invalid
+    """
+
+     # Reset the message level to avoid random messages
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    # Step 1: Validate the input arguments
+    _validate_args(schema_madlib,
+                   source_table,
+                   pc_table,
+                   out_table,
+                   row_id,
+                   col_id,
+                   val_id,
+                   row_dim,
+                   col_dim,
+                   residual_table,
+                   result_summary_table)
+
+    # Step 2: Create a copy of the sparse matrix and add row_dims and col_dims
+    # Warning: This changes the column names of the table
+    sparse_table_copy = __unique_string() + "_sparse_table_copy"
+    create_temp_sparse_matrix_table_with_dims(source_table,
+                                              sparse_table_copy,
+                                              row_id,
+                                              col_id,
+                                              val_id,
+                                              row_dim,
+                                              col_dim)
+
+    # Step 3: Densify the input matrix
+    x_dense = __unique_string() + "_dense"
+    plpy.execute("""
+        SELECT {schema_madlib}.matrix_densify(
+            '{source_table}', 'row_id', 'col_id', 'value',
+            '{x_dense}', True)
+        """.format(schema_madlib=schema_madlib,
+                   source_table=sparse_table_copy,
+                   x_dense=x_dense))
+
+    # Step 4: Pass the densified matrix to regular PCA
+    pca_project(schema_madlib,
+                x_dense,
+                pc_table,
+                out_table,
+                'row_id',
+                residual_table,
+                result_summary_table)
+
+    # Step 4: Clean up
+    plpy.execute(
+        """
+        DROP TABLE IF EXISTS {x_dense};
+        DROP TABLE IF EXISTS {sparse_table_copy};
+        """.format(x_dense=x_dense,
+                   sparse_table_copy=sparse_table_copy))
+
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+
+
+# ------------------------------------------------------------------------
+def pca_project(schema_madlib,
+                source_table,
+                pc_table,
+                out_table,
+                row_id,
+                residual_table,
+                result_summary_table,
+                **kwargs):
+    """
+    PCA projection of the matrix in source_table.
+
+    This function is the specific call for pca projection. It projects
+    the input matrix into the principal components.
+
+    Args:
+        @param schema_madlib  Name of MADlib schema
+        @param source_table  Name of the input table (containing data to project)
+        @param pc_table   Name of table with principal components (output by the training function)
+        @param out_table  Name of output table to store projection result
+        @param row_id  Name of the row_id column
+        @param residual_table  Name of the residual table (to store error in projection)
+        @param result_summary_table  Name of result summary table
+    Returns:
+        None
+    Throws:
+        plpy.error if any argument is invalid
+    """
+    t0 = time.time()  # measure the starting time
+
+    # Reset the message level to avoid random messages
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    # Step 1: Validate the input arguments
+    _validate_args(schema_madlib,
+                   source_table,
+                   pc_table,
+                   out_table,
+                   row_id,
+                   None,
+                   None,
+                   None,
+                   None,
+                   residual_table,
+                   result_summary_table,
+                   )
+    dimension = plpy.execute("""
+        SELECT array_upper(row_vec,1) - array_lower(row_vec,1) + 1 as dimension
+        FROM (SELECT row_vec FROM {source_table} WHERE row_id = 0) q;
+    """.format(source_table=source_table))
+    dimension = dimension[0]["dimension"]
+
+    # Step 2: Copy the PC table (because the column with the array is called
+    # 'principal_components' while that in matrix_mult is called 'row_vec'
+    pc_table_copy = __unique_string()
+    plpy.execute("""
+                 CREATE TEMP TABLE {pc_table_copy} as
+                     SELECT
+                         row_id as row_id,
+                         principal_components as row_vec
+                     FROM {pc_table}
+                 """.format(schema_madlib=schema_madlib,
+                            pc_table=pc_table,
+                            pc_table_copy=pc_table_copy))
+
+    # Step 3: Compute the PCA Projection matrix
+    # The R code to perform this step is
+    #  p <- princomp(mat)
+    #  scores <- mat %*% p$loadings[,1:k]
+    #  proj <- scores[,1:k] %*% t(p$loadings[,1:k])
+    scores_table = __unique_string()
+    plpy.execute(
+        """
+        SELECT {schema_madlib}.matrix_mult('{source_table}',
+                                            FALSE,
+                                           '{pc_table_copy}',
+                                            TRUE,
+                                            '{scores_table}');
+        """.format(schema_madlib=schema_madlib,
+                   source_table=source_table,
+                   pc_table_copy=pc_table_copy,
+                   scores_table=scores_table))
+    plpy.execute(
+        """
+        SELECT {schema_madlib}.matrix_mult('{scores_table}',
+                                            FALSE,
+                                           '{pc_table_copy}',
+                                            FALSE,
+                                            '{out_table}');
+        """.format(schema_madlib=schema_madlib,
+                   scores_table=scores_table,
+                   pc_table_copy=pc_table_copy,
+                   out_table=out_table))
+
+    # Step 4: Compute the Residual table (if required)
+    #
+    # Residual table: res = mat - proj
+    if residual_table:
+        plpy.execute(
+            """
+            SELECT {schema_madlib}.matrix_scale_and_add(
+                                        '{source_table}',
+                                        '{out_table}',
+                                        -1,
+                                        '{residual_table}');
+            """.format(schema_madlib=schema_madlib,
+                       source_table=source_table,
+                       out_table=out_table,
+                       residual_table=residual_table))
+
+    # Step 5: Compute the results summary table (if required)
+    # If the residual table is not asked by the user, but he does ask for
+    # result summary table, then we need to compute the residuals
+    create_residual_temp_table = False
+    if result_summary_table:
+        source_table_norm = plpy.execute(
+            """
+            SELECT {schema_madlib}.matrix_norm('{source_table}') as r
+            """.format(schema_madlib=schema_madlib,
+                       source_table=source_table,
+                       row_id=row_id))[0]['r']
+
+        # If the residual table is not already computed
+        if not residual_table:
+            residual_table = __unique_string()
+            create_residual_temp_table = True
+            # Compute the residual table
+            plpy.execute(
+                """
+                SELECT {schema_madlib}.matrix_scale_and_add(
+                                        '{source_table}',
+                                        '{out_table}'
+                                        -1,
+                                        '{residual_table}');
+                """.format(schema_madlib=schema_madlib,
+                           source_table=source_table,
+                           row_id=row_id,
+                           out_table=out_table,
+                           residual_table=residual_table))
+
+        # Compute the norm of the residual table
+        residual_norm = plpy.execute(
+            """
+            SELECT {schema_madlib}.matrix_norm('{residual_table_name}') as r
+            """.format(schema_madlib=schema_madlib,
+                       residual_table_name=residual_table,
+                       row_id=row_id))[0]['r']
+        # Compute the relative error of the norm
+        relative_residual_norm = residual_norm / source_table_norm
+        plpy.execute(
+            """
+            CREATE TABLE {result_summary_table} ( exec_time FLOAT8,
+                                                  residual_norm FLOAT8,
+                                                  relative_residual_norm FLOAT8);
+            """.format(result_summary_table=result_summary_table))
+        # Compute the time in milli-seconds
+        t1 = time.time()
+        dt = t1 - t0
+        plpy.execute(
+            """
+            INSERT INTO {result_summary_table} VALUES
+                ({dt},
+                 {residual_norm}::double precision,
+                 {relative_residual_norm}::double precision);
+            """.format(dt=dt,
+                       residual_norm=residual_norm,
+                       result_summary_table=result_summary_table,
+                       relative_residual_norm=relative_residual_norm))
+
+    plpy.execute("""
+                 DROP TABLE if exists {scores_table};
+                 DROP TABLE if exists {pc_table_copy};
+                """.format(pc_table_copy=pc_table_copy,
+                           scores_table=scores_table))
+    if create_residual_temp_table:
+        plpy.execute("""
+                     DROP TABLE if exists {residual_temp_table};
+                    """.format(residual_table=residual_table))
+
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
