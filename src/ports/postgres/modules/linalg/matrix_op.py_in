@@ -764,13 +764,13 @@ def matrix_unblockize(schema_madlib, matrix_in, matrix_out):
             row_dim=row_dim, col_dim=col_dim, total_col_dim=total_col_dim))
 
 
-def create_temp_sparse_matrix_table_with_dims(source_table, 
+def create_temp_sparse_matrix_table_with_dims(source_table,
                                               out_table,
                                               row_id, col_id, value,
                                               row_dim, col_dim):
 
     """
-    Make a copy of the input sparse table and add (row_dim, col_dim, NULL) to it 
+    Make a copy of the input sparse table and add (row_dim, col_dim, NULL) to it
 
     This function is the specific call for sparse matrices and creates a temp
     table which is a copy of the source table. After creation, the tuples
@@ -793,8 +793,8 @@ def create_temp_sparse_matrix_table_with_dims(source_table,
                          {value} as value
                      FROM {source_table}
                      WHERE {value} is not NULL
-                 """.format(row_id=row_id, 
-                            col_id=col_id, 
+                 """.format(row_id=row_id,
+                            col_id=col_id,
                             value=value,
                             source_table=source_table,
                             out_table=out_table))
@@ -803,3 +803,102 @@ def create_temp_sparse_matrix_table_with_dims(source_table,
                     ({row_dim}, {col_dim}, NULL)
                  """.format(out_table=out_table, row_dim=row_dim,
                             col_dim=col_dim))
+
+
+def matrix_norm(schema_madlib,
+                matrix_a,
+                norm_type,
+                **kwargs):
+    """
+    Perform a matrix norm operation on a dense matrix
+    Args:
+        @param schema_madlib    Name of the schema where MADlib is installed
+        @param matrix_a         Name of the source table
+        @param norm_type        Name of the output table
+
+    Returns:
+        @param norm
+
+    Throws:
+        plpy.error if any argument is invalid
+
+    """
+
+    # Check for null values
+    if matrix_a is None:
+        plpy.error("Matrix Norm Error: NULL input table is not valid")
+    if norm_type is None:
+        norm_type = 'fro'
+
+    # Add any supported norm types here for easy error checking
+    SUPPORTED_NORM_TYPES = ['fro']
+    if norm_type not in SUPPORTED_NORM_TYPES:
+        plpy.error("Matrix Norm Error: Supported norm types are (%s)",
+                            ','.join(SUPPORTED_NORM_TYPES))
+
+    # WARNING: This function is in pure SQL. Do not use this function if
+    # you want performance guarentees. You would have to write a custom C++
+    # implementation.
+    norm = plpy.execute(
+        """
+        SELECT sqrt(sum(s)) as p
+        FROM (
+            SELECT
+                {schema_madlib}.array_dot(row_vec, row_vec) as s
+            FROM
+                {source_table}
+        ) Q1
+        """.format( source_table = matrix_a,
+                    schema_madlib = schema_madlib))
+
+    # Return the norm
+    return norm[0]['p']
+
+
+def matrix_scale_and_add(schema_madlib,
+                         matrix_a,
+                         matrix_b,
+                         scale,
+                         matrix_r,
+                        **kwargs):
+    """
+    Perform a matrix norm operation on a dense matrix
+    Args:
+        @param schema_madlib    Name of the schema where MADlib is installed
+        @param matrix_a         Matrix input A
+        @param matrix_b         Matrix input B
+        @param scale            Scale in the scale and add operation
+        @param matrix_r         Matrix R
+
+    Returns:
+        @param norm
+
+    Throws:
+        plpy.error if any argument is invalid
+
+    """
+
+    # Check for null values
+    if (matrix_a is None) or (matrix_b is None) or (matrix_r is None):
+        plpy.error("Matrix Scale and Add : NULL I/O table name is not valid")
+    if scale is None:
+        plpy.error("Matrix Scale and Add : Scale cannot be NULL")
+
+    # Create a dense matrix table
+    create_matrix_table(matrix_r)
+
+    # Insert into the matrix
+    plpy.execute(
+        """
+        INSERT INTO {matrix_r}
+            SELECT row_id,
+                   {schema_madlib}.array_add(a.row_vec,
+                        {schema_madlib}.array_scalar_mult(b.row_vec, ({scale})::DOUBLE PRECISION))
+                        as row_vec
+            FROM
+                {matrix_a} as a join {matrix_b} as b using (row_id)
+        """.format( schema_madlib = schema_madlib,
+                    matrix_a = matrix_a,
+                    matrix_b = matrix_b,
+                    matrix_r = matrix_r,
+                    scale = scale))
