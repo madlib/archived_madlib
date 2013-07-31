@@ -17,9 +17,354 @@ m4_include(`SQLCommon.m4') --'
 
 @about
 
-This module implements the elastic net regularization for regression problems.
+This module implements elastic net regularization for linear and logistic regression problems. 
 
-This method seeks to find a weight vector that, for any given training example set, minimizes:
+
+@par Online Help 
+
+View short help messages using the following statements:
+@verbatim 
+-- Summary of Elastic Net Regularization
+SELECT madlib.elastic_net_train();
+
+-- Training function syntax and output table format
+SELECT madlib.elastic_net_train('usage');
+
+-- Prediction function syntax
+SELECT madlib.elastic_net_train('predict');
+
+-- Syntax for gaussian/linear model
+SELECT madlib.elastic_net_train('gaussian');
+SELECT madlib.elastic_net_train('linear');
+
+-- Syntax for binomial/logistic model
+SELECT madlib.elastic_net_train('binomial');
+SELECT madlib.elastic_net_train('logistic');
+
+-- Parameter formats for optimizers
+SELECT madlib.elastic_net_train('fista');
+SELECT madlib.elastic_net_train('igd');
+@endverbatim
+
+@par Training Function Syntax
+The training function has the following format:
+@verbatim
+SELECT * from madlib.elastic_net_train(
+    tbl_source, tbl_result, col_dep_var, col_ind_var, regress_family, 
+    alpha, lambda_value, standardize, grouping_col, optimizer, 
+    optimizer_params, excluded, max_iter, tolerance)
+@endverbatim
+
+\note It is \b strongly \b recommended that you run
+\c elastic_net_train() on a subset of the data with a limited
+\e max_iter before applying it to the full data set with a large
+\e max_iter. In the pre-run, you can adjust the parameters to get the
+best performance and then apply the best set of parameters to the whole data
+set.
+\par
+<DL>
+<DT>tbl_source</DT>
+<DD>Text value. The name of the table containing the training data.</DD>
+
+<DT>tbl_result</DT>
+<DD>Text value. The name of the table where the output model is to be saved.</DD>
+
+<DT>col_dep_var</DT>
+<DD>Text value. An expression for the dependent variable.</DD>
+<DD>Both \e col_dep_var and \e col_ind_var can be valid Postgres
+expressions. For example, <tt>col_dep_var = 'log(y+1)'</tt>, and <tt>col_ind_var
+= 'array[exp(x[1]), x[2], 1/(1+x[3])]'</tt>. In the binomial case, you can
+use a Boolean expression, for example, <tt>col_dep_var = 'y < 0'</tt>.<DD>
+
+<DT>col_ind_var</DT>
+<DD>Text value. An expression for the independent variables. Use \c '*' to
+specify all columns of <em>tbl_source</em> except those listed in the
+<em>excluded</em> string. If \e col_dep_var is a column name, it is
+automatically excluded from the independent variables. However, if
+\e col_dep_var is a valid Postgres expression, any column names used
+within the expression are only excluded if they are explicitly included in the
+\e excluded argument. It is a good idea to add all column names involved in
+the dependent variable expression to the <em>excluded</em> string.</DD>
+
+<DT>regress_family</DT>
+<DD>Text value. The regression type, either 'gaussian' ('linear') or 'binomial' ('logistic').</DD>
+
+<DT>alpha</DT>
+<DD>Float8 value. Elastic net control parameter, value in [0, 1].</DD>
+
+<DT>lambda_value</DT>
+<DD>Float8 value. Regularization parameter, positive.</DD>
+
+<DT>standardize</DT>
+<DD>Boolean value. Whether to normalize the data. Setting this to True usually yields better results and faster convergence. Default: True.
+</DD>
+
+<DT>grouping_col</DT>
+<DD>Text value. Group by columns. Default: NULL. Right now, this functionality is not implemented, and it is just a place holder for future versions of MADlib.</DD>
+
+<DT>optimizer</DT>
+<DD>Text value. Name of optimizer, either 'fista' or 'igd'. Default: 'fista'.</DD>
+
+<DT>optimizer_params</DT>
+<DD>Text value. Optimizer parameters, delimited by comma. The parameters differ, depending on the value of \e optimizer. See the descriptions below for details. Default: NULL.</DD>
+
+<DT>excluded</DT>  
+<DD>Text value. A comma-delimited list of column names excluded from features. 
+For example, <tt>'col1, col2'</tt>. If the \e col_ind_var is an array, \e excluded is a list of the integer array positions to exclude, for example <tt>'1,2'</tt>. If this argument is NULL or an empty string <tt>''</tt>, no columns are excluded.</DD>
+
+<DT>max_iter</DT>
+<DD>Integer value. The maximum number of iterations. Default: 10000.</DD>
+
+<DT>tolerance</DT> 
+<DD>Float8 value. The criteria to end iterations. Both the
+'fista' and 'igd' optimizers compute the average difference between  the
+coefficients of two consecutive iterations, and when the difference is smaller
+than \e tolerance or the iteration number is larger than \e max_iter, the
+computation stops. The default is 1e-6.</DD> 
+</DL>
+
+
+@par Optimizer Parameters
+When the \ref elastic_net_train() \e optimizer arugment value is \b 'fista', the \e optimizer_params argument has the following format:
+@verbatim
+  'max_stepsize = ..., eta = ..., warmup = ..., warmup_lambdas = ..., warmup_lambda_no = ...,
+   warmup_tolerance = ..., use_active_set = ..., activeset_tolerance = ..., 
+   random_stepsize = ...'
+@endverbatim
+All of these named parameters are optional, and their order does not matter. One must use the format of "... = ..." to specify the value of a parameter, otherwise the parameter is ignored. 
+<DL>
+<DT>max_stepsize</dt>
+<DD>Initial backtracking step size. At each iteration, the algorithm first tries
+<em>stepsize = max_stepsize</em>, and if it does not work out, it then tries a
+smaller step size, <em>stepsize = stepsize/eta</em>, where \e eta must
+be larger than 1. At first glance, this seems to perform repeated iterations for even one step, but using a larger step size actually greatly increases the computation speed and minimizes the total number of iterations. A careful choice of \e max_stepsize can decrease the computation time by more than 10 times.
+The default is 4.0.</DD>
+<DT>eta</DT>
+<DD>If stepsize does not work \e stepsize / \e eta is tried. Must be greater than 1. The default is 2.</DD>
+
+<DT>warmup</DT>
+<DD>If \e warmup is True, a series of lambda values, which is
+strictly descent and ends at the lambda value that the user wants to calculate,
+is used. The larger lambda gives very sparse solution, and the sparse
+solution again is used as the initial guess for the next lambda's solution,
+which speeds up the computation for the next lambda. For larger data sets,
+this can sometimes accelerate the whole computation and may be faster than
+computation on only one lambda value. The default is False.</DD>
+
+<DT>warmup_lambdas</D>
+<DD>The lambda value series to use when \e warmup is True. The default is NULL, which means that lambda values will be automatically generated.</DD>
+
+<DT>warmup_lambda_no</DT>
+<DD>How many lambdas are used in warm-up. If \e warmup_lambdas is not NULL, this value is overridden by the number of provided lambda values. The default is 15. </DD>
+
+<DT>warmup_tolerance</DT>
+<DD>The value of tolerance used during warmup. The default is the same as the \e tolerance argument. </DD>
+
+<DT>use_active_set</DT>
+<DD>If \e use_active_set is True, an active-set method is used to
+speed up the computation. Considerable speedup is obtained by organizing the
+iterations around the active set of features&mdash;those with nonzero coefficients.
+After a complete cycle through all the variables, we iterate on only the active
+set until convergence. If another complete cycle does not change the active set,
+we are done, otherwise the process is repeated. The default is False. </DD>
+
+<DT>activeset_tolerance</DT>
+<DD>The value of tolerance used during active set
+calculation. The default is the same as \c tolerance.</DD> 
+
+<DT>random_stepsize</DT>
+<DD>Whether to add some randomness to the step size. Sometimes, this can speed
+up the calculation. The default is False.</DD>
+</DL>
+
+When the \ref elastic_net_train() \e optimizer arugment value is \b 'igd', the \e optimizer_params argument has the following format:
+@verbatim
+'stepsize = ..., step_decay = ..., threshold = ..., warmup = ..., warmup_lambdas = ..., warmup_lambda_no = ..., 
+warmup_tolerance = ..., parallel = ...' 
+@endverbatim
+\par
+<DL>
+<DT>stepsize</DT>
+<DD>The default is 0.01.</DD>
+<DT>step_decay</DT>
+<DD>The actual setpsize used for current step is (previous stepsize) / exp(setp_decay). The default value is 0, which means that a constant stepsize is used in IGD.</DD>
+<DT>threshold</DT>
+<DD>When a coefficient is really small, set this coefficient to be 0. The default is 1e-10.</DD>
+<DD>Due to the stochastic nature of SGD, we can only obtain very small values for
+the fitting coefficients. Therefore, \e threshold is needed at the end of
+the computation to screen out tiny values and hard-set them to 
+zeros. This is accomplished as follows: (1) multiply each coefficient with the
+standard deviation of the corresponding feature; (2) compute the average of
+absolute values of re-scaled coefficients; (3) divide each rescaled coefficient
+with the average, and if the resulting absolute value is smaller than
+\e threshold, set the original coefficient to zero.</DD>
+<DT>warmup</DT>
+<DD>If \e warmup is True, a series of lambda values, which is
+strictly descent and ends at the lambda value that the user wants to calculate,
+is used. The larger lambda gives very sparse solution, and the sparse
+solution again is used as the initial guess for the next lambda's solution,
+which speeds up the computation for the next lambda. For larger data sets,
+this can sometimes accelerate the whole computation and may be faster than
+computation on only one lambda value. The default is False.</DD>
+<DT>warmup_lambdas</DT>
+<DD>An array of lambda values to use for warmup. The default is Null.</DD>
+<DT>warmup_lambda_no</DT>
+<DD>The number of lambdas used in 
+warm-up. The default is 15. If \e warmup_lambdas is not NULL, this argument is overridden by the size of the \e warmup_lambdas array.</DD>
+<DT>warmup_tolerance</DT>
+<DD>The value of tolerance used during warmup.The default is the same as \c tolerance.</DD>
+<DT>parallel</DT>
+<DD>Whether to run the computation on multiple segments. The default is True.</DD>
+<DD>SGD is a sequential algorithm in nature. When running in a distributed
+manner, each segment  of the data runs its own SGD model and then the models
+are averaged to get a model for each iteration.  This averaging might slow
+down the convergence speed, although we also acquire the ability to process
+large datasets on multiple machines. This algorithm, therefore, provides the
+\e parallel optionto allow you to  choose whether to do parallel computation.
+</DD> 
+</DL>
+
+@par Output Table
+The elastic_net_train() function saves output in the table specified with the \e tbl_result argument. The table has the following columns:
+<DL>
+<DT>family</DT>
+<DD>The regression type: 'gaussian' or 'binomial'.</DD>
+<DT>features</DT>
+<DD>An array of the features (independent variables) passed into the analysis.</DD>
+<DT>features_selected</DT>
+<DD>An array of the features selected by the analysis.</DD>
+<DT>coef_nonzero</DT>
+<DD>Fitting coefficients for the selected features.</DD>
+<DT>coef_all</DT>
+<DD>Coefficients for all selected and unselected features</DD>
+<DT>intercept</DT>
+<DD>Fitting intercept for the model.</DD> 
+<DT>log_likelihood</DT>
+<DD>The negative value of the first equation above (up to a constant depending on the data set).</DD>
+<DT>standardize</DT>
+<DD>Boolean value. Whether the data was normalized (\e standardize argument was True). 
+<DT>iteration_run</DT>
+<DD>The number of iterations executed.
+</DL>
+
+@par Prediction Function Syntax
+The prediction function has this format:
+@verbatim
+SELECT madlib.elastic_net_predict(                               
+             'regress_family',
+             coefficients,
+             intercept,
+             ind_var
+         ) FROM tbl_result, tbl_new_source                            
+@endverbatim
+The above function returns a double value for each data point. When predicting with binomial models, the return value is 1 if the predicted result is True, and 0 if the prediction is False.
+<DL>
+<DT>regress_family</DT>
+<DD>The type of regression, either 'gaussian' ('linear') or 'binomal' ('logistic').</DD>
+<DT>coefficients</DT>
+<DD>Fitting coefficients, as a DOUBLE array.</DD>
+<DT>intercept</DT>
+<DD>The intercept for the model.</DD>
+<DT>ind_var</DT>
+<DD>Independent variables, as a DOUBLE array.</DD>
+<DT>tbl_result</DD>
+<DD>The name of the output table from the training function.</DD>
+<DT>tbl_new_source</DT>
+<DD>The name of the table containing new data to predict.</DD>
+</DL>
+
+There are several different formats of the prediction function:
+
+(1)
+\code
+SELECT madlib.elastic_net_gaussian_predict (
+    coefficients, intercept, ind_var
+) FROM tbl_result, tbl_new_source LIMIT 10;
+\endcode
+
+(2)
+\code
+SELECT madlib.elastic_net_binomial_predict (
+    coefficients, intercept, ind_var
+) FROM tbl_result, tbl_new_source LIMIT 10;
+\endcode
+
+This returns 10 \b BOOLEAN values.
+
+(3)
+\code
+SELECT madlib.elastic_net_binomial_prob (
+    coefficients, intercept, ind_var
+) FROM tbl_result, tbl_new_source LIMIT 10;
+\endcode
+
+This returns 10 probability values for True class.
+
+<b>Or</b> The user can use another prediction function which stores the prediction
+result in a table. This is usefule if the user wants to use elastic net together with general cross validation function.
+\code
+SELECT madlib.elastic_net_predict(
+    'tbl_train_result',
+    'tbl_data',
+    'col_id',  -- ID associated with each row
+    'tbl_predict'  -- Prediction result
+);
+\endcode
+Note that you do not need to specify whether the model is "linear" or "logistic" because this information is already included in the result table.
+
+
+@examp
+-# Create an input data set.
+@verbatim
+DROP TABLE IF EXISTS houses;
+CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT,
+            size INT, lot INT);
+COPY houses FROM STDIN WITH DELIMITER '|';
+  1 |  590 |       2 |    1 |  50000 |  770 | 22100
+  2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
+  3 |   20 |       3 |    1 |  22500 | 1060 |  3500
+  4 |  870 |       2 |    2 |  90000 | 1300 | 17500
+  5 | 1320 |       3 |    2 | 133000 | 1500 | 30000
+  6 | 1350 |       2 |    1 |  90500 |  820 | 25700
+  7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000
+  8 |  680 |       2 |    1 | 142500 | 1170 | 22000
+  9 | 1840 |       3 |    2 | 160000 | 1500 | 19000
+ 10 | 3680 |       4 |    2 | 240000 | 2790 | 20000
+ 11 | 1660 |       3 |    1 |  87000 | 1030 | 17500
+ 12 | 1620 |       3 |    2 | 118600 | 1250 | 20000
+ 13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
+ 14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
+ 15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
+\.
+@endverbatim
+-# Train the model.
+@verbatim
+DROP TABLE IF EXISTS houses_en;
+SELECT madlib.elastic_net_train(  
+       'houses', 'houses_en', 'price', 'array[tax, bath, size]', 
+       'gaussian', 0.5, 0.1, true, null, 'fista', 
+       '', 
+        null, 10000, 1e-6);
+@endverbatim
+-# View the resulting model.
+@verbatim
+-- Turn on expanded display to make it easier to read results.
+\x on
+SELECT * from houses_en;
+@endverbatim
+-# Use the prediction function to evaluate residuals. 
+@verbatim
+SELECT *, price - predict as residual FROM (
+    SELECT houses.*, 
+        madlib.elastic_net_predict(
+            'gaussian', m.coef_nonzero, m.intercept, array[tax,bath,size]
+        ) as predict
+    FROM houses, houses_en m) s;
+@endverbatim
+
+@par Technical Background
+
+Elastic net regularization seeks to find a weight vector that, for any given training example set, minimizes:
 \f[\min_{w \in R^N} L(w) + \lambda \left(\frac{(1-\alpha)}{2} \|w\|_2^2 + \alpha \|w\|_1 \right)\f]
 where \f$L\f$ is the metric function that the user wants to minimize. Here \f$ \alpha \in [0,1] \f$
 and \f$ lambda \geq 0 \f$. If \f$alpha = 0\f$, we have the ridge regularization (known also as Tikhonov regularization), and if \f$\alpha = 1\f$, we have the LASSO regularization.
@@ -46,274 +391,11 @@ intercept term will be obtained at the same time as a by-product.
 
 Note that fitting after scaling is not equivalent to directly fitting.
 
-Right now, two optimizers are supported. The default one is FISTA, and the other is IGD.
-They have their own parameters, which can be specified in the <em>optimizer_params</em>
-as a text array. For example, 'max_stepsize = 0.1, warmup = t, warmup_lambdas = [0.4, 0.3, 0.2]'.
-
-<b>(1) FISTA</b>
-
-Fast Iterative Shrinkage Thresholding Algorithm (FISTA) [2] has the following optimizer-specific parameters:
-
-        - max_stepsize     - default is 4.0
-        - eta              - default is 2, if stepsize does not work
-                            stepsize/eta will be tried
-        - warmup           - default is False
-        - warmup_lambdas   - default is NULL, which means that lambda
-                           values will be automatically generated
-        - warmup_lambda_no - default is 15. How many lambda's are used in
-                           warm-up, will be overridden if warmup_lambdas
-                           is not NULL
-        - warmup_tolerance - default is the same as tolerance. The value
-                           of tolerance used during warmup.
-        - use_active_set   - default is False. Whether to use active-set
-                           method to speed up the computation.
-        - activeset_tolerance - default is the same as tolerance. The
-                              value of tolerance used during active set
-                              calculation
-        - random_stepsize - default is False. Whether add some randomness
-                          to the step size. Sometimes, this can speed
-                          up the calculation.
-
-
-Here, backtracking for step size is used. At each iteration, we first try the
-<em>stepsize = max_stepsize</em>, and if it does not work out, we then try a
-smaller step size <em>stepsize = stepsize / eta</em>, where <em>eta</em> must be
-larger than 1. At first sight, this seems to do repeated iterations for even one
-step, but it actually greatly increases the computation speed by using a larger
-step size and minimizes the total number of iterations. A careful choice of
-max_stepsize can decrease the computation time by more than 10 times.
-
-
-If <em>warmup</em> is <em>True</em>, a series of lambda values, which is
-strictly descent and ends at the lambda value that the user wants to calculate,
-will be used. The larger lambda gives very sparse solution, and the sparse
-solution again is used as the initial guess for the next lambda's solution,
-which will speed up the computation for the next lambda. For larger data sets,
-this can sometimes accelerate the whole computation and might be faster than
-computation on only one lambda value.
-
-If <em>use_active_set</em> is <em>True</em>, active-set method will be used to
-speed up the computation. Considerable speedup is obtained by organizing the
-iterations around the active set of features— those with nonzero coefficients.
-After a complete cycle through all the variables, we iterate on only the active
-set till convergence. If another complete cycle does not change the active set,
-we are done, otherwise the process is repeated.
-
-<b>(2) IGD</b>
-
-Incremental Gradient Descent (IGD) or Stochastic Gradient Descent (SGD) [3] has the following optimizer-specific parameters:
-
-        - stepsize         - default is 0.01
-        - threshold        - default is 1e-10. When a coefficient is really
-                            small, set it to be 0
-        - warmup           - default is False
-        - warmup_lambdas   - default is Null
-        - warmup_lambda_no - default is 15. How many lambda's are used in
-                            warm-up, will be overridden if warmup_lambdas
-                            is not NULL
-        - warmup_tolerance - default is the same as tolerance. The value
-                            of tolerance used during warmup.
-        - parallel         - default is True. Run the computation on
-                           multiple segments or not.
-
-Due to the stochastic nature of SGD, we can only obtain very small values for
-the fitting coefficients. Therefore, <em>threshold</em> is needed at the end of
-the computation to screen out those tiny values and just hard set them to be
-zeros. This is done as the following: (1) multiply each coefficient with the
-standard deviation of the corresponding feature (2) compute the average of
-absolute values of re-scaled coefficients (3) divide each rescaled coefficients
-with the average, and if the resulting absolute value is smaller than
-<em>threshold</em>, set the original coefficient to be zero.
-
-SGD is in nature a sequential algorithm, and when running in a distributed way,
-each segment of the data runs its own SGD model, and the models are averaged to
-get a model for each iteration. This average might slow down the convergence
-speed, although we acquire the ability to process large datasets on multiple
-machines. So this algorithm provides an option <em>parallel</em> to let the user
-choose whether to do parallel computation.
-
-<b>Stopping Criteria</b> Both optimizers compute the average difference between
-the coefficients of two consecutive iterations, and if the difference is
-smaller than <em>tolerance</em> or the iteration number is larger than
-<em>max_iter</em>, the computation stops.
-
-<b>Online Help</b> The user can read short help messages by using any one of the following
-\code
-SELECT madlib.elastic_net_train();
-SELECT madlib.elastic_net_train('usage');
-SELECT madlib.elastic_net_train('predict');
-SELECT madlib.elastic_net_train('gaussian');
-SELECT madlib.elastic_net_train('binomial');
-SELECT madlib.elastic_net_train('linear');
-SELECT madlib.elastic_net_train('fista');
-SELECT madlib.elastic_net_train('igd');
-\endcode
-
-@input
-
-The <b>training examples</b> is expected to be of the following form:
-\code
-{TABLE|VIEW} input_table (
-    ...
-    independentVariables   DOUBLE PRECISION[],
-    dependentVariable      DOUBLE PRECISION,
-    ...
-)
-\endcode
-
-Null values are not expected.
-
-@usage
-
-<b>Pre-run </b> Usually one gets better results and faster convergence using
-<em>standardize = True</em>.
-<b>It is highly recommended to run
-<em>elastic_net_train</em> function on a subset of the data with limited
-<em>max_iter</em> before applying it onto the full data set with a large
-<em>max_iter</em>. In the pre-run, the user can tweak the parameters to get the
-best performance and then apply the best set of parameters onto the whole data
-set.</b>
-
-- Get the fitting coefficients for a linear model:
-
-\code
-       SELECT {schema_madlib}.elastic_net_train (
-            'tbl_source',     -- Data table
-            'tbl_result',     -- Result table
-            'col_dep_var',    -- Dependent variable, can be an expression
-            'col_ind_var',    -- Independent variable, can be an expression or '*'
-            'regress_family', -- 'gaussian' (or 'linear'). 'binomial'
-                                    (or 'logistic') will be supported
-            alpha,            -- Elastic net control parameter, value in [0, 1]
-            lambda_value,     -- Regularization parameter, positive
-            standardize,      -- Whether to normalize the data. Default: True
-            'grouping_col',   -- Group by which columns. Default: NULL
-            'optimizer',      -- Name of optimizer. Default: 'fista'
-            'optimizer_params',-- Optimizer parameters, delimited by comma. Default: NULL
-            'excluded',       -- Column names excluded from '*'. Default: NULL
-            max_iter,         -- Maximum iteration number. Default: 10000
-            tolerance         -- Stopping criteria. Default: 1e-6
-        );
-\endcode
-
-If <em>col_ind_var</em> is '*', then all columns of <em>tbl_source</em> will be
-used as features except those listed in the <em>excluded</em> string. If the
-dependent variable is a column name, it is then automatically excluded from the
-features. However, if the dependent variable is a valid Postgres expression,
-then the column names inside this expression are not excluded unless explicitly
-put into the <em>excluded</em> list. So it is a good idea to put all column
-names involved in the dependent variable expression into the <em>excluded</em>
-string.
-
-The <em>excluded</em> string is a list of column names excluded from features
-delimited by comma. For example, 'col1, col2'. If it is NULL or an empty string
-'', no column is excluded.
-
-If <em>col_ind_var</em> is a single column name, which is the array type, one
-can still use <em>excluded</em>. For example, if <em>x</em> is a column name,
-which is an array of size 1000, and the user wants to exclude the 100-th, 200-th
-and 301-th elements of the array, he can set <em>excluded</em> to be '100, 200,
-301'.
-
-Both <em>col_dep_var</em> and <em>col_ind_var</em> can be valid Postgres
-expression. For example, <em>col_dep_var = 'log(y+1)'</em>, and <em>col_ind_var
-= 'array[exp(x[1]), x[2], 1/(1+x[3])]'</em> etc. In the binomial case, one can
-set <em>col_dep_var = 'y < 0'</em> etc.
-
-  Output:
-  \code
-  family | features | features_selected | coef_nonzero | coef_all | intercept | log_likelihood | standardize | iteration_run
-  ------------------+------------+------------+------------+--------------+-------------+--------+--------+-----------
-  ...
-  \endcode
-
-where <em>log_likelihood</em> is just the negative value of the first equation above (up to a constant depending on the data set).
-
-- Get the <b>prediction</b> on a data set using a linear model:
-\code
-SELECT madlib.elastic_net_predict(
-    'regress_family',  -- Response type, 'gaussian' ('linear') or 'binomial' ('logistic')
-    coefficients,    -- fitting coefficients
-    intercept,  -- fitting intercept
-    independent Variables
-) from tbl_data, tbl_train_result;
-\endcode
-The above function returns a double value for each data point.
-When predicting with binomial models, the return value is 1
-if the predicted result is True, and 0 if the prediction is
-False.
-
-<b>Or</b>
-
-(1)
-\code
-SELECT madlib.elastic_net_gaussian_predict (
-    coefficients, intercept, ind_var
-) FROM tbl_result, tbl_new_source LIMIT 10;
-\endcode
-
-(2)
-\code
-SELECT madlib.elastic_net_binomial_predict (
-    coefficients, intercept, ind_var
-) FROM tbl_result, tbl_new_source LIMIT 10;
-\endcode
-
-This returns 10 BOOLEAN values.
-
-(3)
-\code
-SELECT madlib.elastic_net_binomial_prob (
-    coefficients, intercept, ind_var
-) FROM tbl_result, tbl_new_source LIMIT 10;
-\endcode
-
-This returns 10 probability values for True class.
-
-<b>Or</b> The user can use another prediction function which stores the prediction
-result in a table. This is usefule if the user wants to use elastic net together with general cross validation function.
-\code
-SELECT madlib.elastic_net_predict(
-    'tbl_train_result',
-    'tbl_data',
-    'col_id',  -- ID associated with each row
-    'tbl_predict'  -- Prediction result
-);
-\endcode
-
-@examp
-
--# Prepare an input table/view:
-\code
-CREATE TABLE en_data (
-    ind_var DOUBLE PRECISION[],
-    dep_var DOUBLE PRECISION
-);
-\endcode
--# Populate the input table with some data, which should be well-conditioned, e.g.:
-\code
-INSERT INTO lasso_data values ({1, 1}, 0.89);
-INSERT INTO lasso_data values ({0.67, -0.06}, 0.3);
-...
-INSERT INTO lasso_data values ({0.15, -1.3}, -1.3);
-\endcode
--# learn coefficients, e.g.:
-\code
-SELECT madlib.elastic_net_train('en_data', 'en_model', 'ind_var', 'dep_var', 0.5, 0.1,
-                                        True, 'linear', 'igd', 'stepsize = 0.1, warmup = t,
-                                        warmup_lambda_no=3, warmup_lambdas = [0.4, 0.3, 0.2, 0.1],
-                                        parallel=t', '1', 10000, 1e-6);
-\endcode
-\code
-SELECT madlib.elastic_net_predict(family, coef_all, intercept, ind_var)
-FROM en_data, en_model;
-\endcode
-
 @literature
 
 [1] Elastic net regularization. http://en.wikipedia.org/wiki/Elastic_net_regularization
 
-[2] Beck, A. and M. Teboulle (2009), A fast iterative shrinkage-thresholding algorothm for linear inverse problems. SIAM J. on Imaging Sciences 2(1), 183-202.
+[2] Beck, A. and M. Teboulle (2009), A fast iterative shrinkage-thresholding algorithm for linear inverse problems. SIAM J. on Imaging Sciences 2(1), 183-202.
 
 [3] Shai Shalev-Shwartz and Ambuj Tewari, Stochastic Methods for l1 Regularized Loss Minimization. Proceedings of the 26th International Conference on Machine Learning, Montreal, Canada, 2009.
 
