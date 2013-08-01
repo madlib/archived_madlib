@@ -1076,7 +1076,7 @@ def main(argv):
             return
 
         # FIXME: Change this to get the previous version from a config file
-        if float(dbrev) < 0.7:
+        if float(dbrev) < 1.0:
             __info("""The version gap is too large, only release-by-release
                     incremental upgrade is supported.""", True)
             return
