@@ -3,8 +3,8 @@
  * -------------------------------------------------------------------------- */
 
 
--- Test data (Identical to SVD). See the SVD module for details
--- on how the data was generated
+--Test data (Identical to SVD). See the SVD module for details
+--on how the data was generated
 DROP TABLE IF EXISTS mat;
 CREATE TABLE mat (
     row_id integer,
@@ -33,35 +33,39 @@ COPY mat (row_id, row_vec) FROM stdin;
 -- DENSE PCA: Make sure all possible default calls for dense PCA work
 -----------------------------------------------------------------------------
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_train('mat', 'result_table_214712398172490837', 'row_id', 10);
 select * from result_table_214712398172490837;
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_train('mat', 'result_table_214712398172490837', 'row_id', 10, NULL);
 select * from result_table_214712398172490837;
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_train('mat', 'result_table_214712398172490837', 'row_id', 10, NULL, 0);
 select * from result_table_214712398172490837;
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_train('mat', 'result_table_214712398172490837', 'row_id', 10, 
 NULL, 0, FALSE);
 select * from result_table_214712398172490837;
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_train('mat', 'result_table_214712398172490837', 'row_id', 10, 
 NULL, 0, FALSE, NULL);
 select * from result_table_214712398172490837;
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 drop table if exists result_table_214712398172490838;
 select pca_train('mat', 'result_table_214712398172490837', 'row_id', 10, 
 NULL, 0, FALSE, 'result_table_214712398172490838');
 select * from result_table_214712398172490837;
 select * from result_table_214712398172490838;
-
-drop table if exists mat;
 
 -- SPARSE PCA: Make sure all possible default calls for sparse PCA work
 -----------------------------------------------------------------------------
@@ -88,39 +92,99 @@ COPY sparse_mat (row_id, col_id, val_id) FROM stdin;
 -- information NOT be included in the sparse matrix encoding.  
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_sparse_train('sparse_mat', 'result_table_214712398172490837', 
 'row_id', 'col_id', 'val_id', 10, 10, 10);
 select * from result_table_214712398172490837;
 
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_sparse_train('sparse_mat', 'result_table_214712398172490837', 
 'row_id', 'col_id', 'val_id', 10, 10, 10, NULL);
 select * from result_table_214712398172490837;
 
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_sparse_train('sparse_mat', 'result_table_214712398172490837', 
 'row_id', 'col_id', 'val_id', 10, 10, 10, NULL, 0);
 select * from result_table_214712398172490837;
 
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_sparse_train('sparse_mat', 'result_table_214712398172490837', 
 'row_id', 'col_id', 'val_id', 10, 10, 10, NULL, 0, FALSE);
 select * from result_table_214712398172490837;
 
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 select pca_sparse_train('sparse_mat', 'result_table_214712398172490837', 
 'row_id', 'col_id', 'val_id', 10, 10, 10, NULL, 0, FALSE, NULL);
 select * from result_table_214712398172490837;
 
 
 drop table if exists result_table_214712398172490837;
+drop table if exists result_table_214712398172490837_mean;
 drop table if exists result_table_214712398172490838;
 select pca_sparse_train('sparse_mat', 'result_table_214712398172490837', 
 'row_id', 'col_id', 'val_id', 10, 10, 10, NULL, 0, FALSE, 'result_table_214712398172490838');
 select * from result_table_214712398172490837;
 select * from result_table_214712398172490838;
+
+-------------------------------------------------------------------------
+drop table if exists mat;
+-- Check the second input matrix format produces the same results as the first format
+CREATE TABLE mat (
+    row_id integer,
+    col1 integer,
+    col2 integer,
+    col3 integer
+);
+
+COPY mat (row_id, col1, col2, col3) FROM stdin;
+1	1	2	5
+0	4	7	5
+3	9	2	4
+2	7	4	4
+5	0	5	5
+4	8	5	7
+\.
+
+DROP TABLE IF EXISTS mat2;
+CREATE TABLE mat2 (
+    row_id integer,
+    row_vec double precision[]
+);
+
+COPY mat2 (row_id, row_vec) FROM stdin;
+1	{1,2,5}
+0	{4,7,5}
+3	{9,2,4}
+2	{7,4,4}
+5	{0,5,5}
+4	{8,5,7}
+\.
+
+drop table if exists table_a;
+drop table if exists table_a_mean;
+select pca_train('mat', 'table_a', 'row_id', 3);
+
+drop table if exists table_b;
+drop table if exists table_b_mean;
+select pca_train('mat2', 'table_b', 'row_id', 3);
+
+--Check that the two formats generate the same result
+--We take the square of each element to get around sign differences
+SELECT assert(
+    relative_error(table_a.eigen_values, table_b.eigen_values) < 1e-2
+    AND
+    relative_error( 
+        madlib.array_mult(table_a.principal_components, table_a.principal_components), 
+        madlib.array_mult(table_b.principal_components, table_b.principal_components)
+    ) < 1e-2,
+    'PCA: The two input formats didn''t generate identical results!')
+FROM table_a, table_b WHERE table_a.row_id = table_b.row_id;
 

@@ -11,14 +11,17 @@ from utilities.validate_args import __is_col_array
 from utilities.validate_args import __is_tbl_exists
 from utilities.validate_args import __is_tbl_has_rows
 from utilities.validate_args import __is_col_exists
+from utilities.validate_args import __get_cols
 
 version_wrapper = __mad_version()
 string_to_array = version_wrapper.select_vecfunc()
 array_to_string = version_wrapper.select_vec_return()
 
+
 def __assert(condition, msg):
     if not condition:
         plpy.error(msg)
+
 
 def __is_sparse(row, col, val):
     if row is None or col is None or val is None:
@@ -26,38 +29,78 @@ def __is_sparse(row, col, val):
     else:
         return True
 
+
 def __validate_output_table(outtable):
     __assert(outtable is not None and outtable.replace('"', '').strip() != '',
-        'invalid output table')
+             'invalid output table')
+
+
+#If the source table is already formatted as needed, do nothing,
+#Otherwise, create a new temp table containing the data in the needed format (if possible).
+#Returns true if a new table was generated.  Returns false otherwise.
+def __cast_dense_input_table_to_correct_columns(schema_madlib, matrix_in,
+                                                matrix_out, row_id):
+    __validate_output_table(matrix_out)
+    cols = __get_cols(matrix_in, schema_madlib)
+    createTable = False
+    if len(cols) == 2:
+        cols.remove(row_id)
+        if not __is_col_array(matrix_in, cols[0]):
+            plpy.error("SVD error: Data column should be of type array!")
+        if cols[0] != "row_vec" or row_id != "row_id":
+            plpy.execute(
+                """
+                CREATE TEMP TABLE {matrix_out} as
+                    SELECT {row_id} as row_id, {vec} as row_vec
+                    FROM {matrix_in}
+                """.format(matrix_out=matrix_out,
+                           row_id=row_id, vec=cols[0], matrix_in=matrix_in))
+            createTable = True
+    else:
+        plpy.execute(
+            """
+            SELECT {schema_madlib}.__matrix_column_to_array_format (
+                '{matrix_in}', '{row_id}', '{matrix_out}', True)
+            """.format(schema_madlib=schema_madlib, matrix_in=matrix_in,
+                       row_id=row_id,
+                       matrix_out=matrix_out))
+        createTable = True
+    return createTable
+
 
 def __validate_sparse(matrix, row, col, val):
     __assert(__is_tbl_exists(matrix), "the input table doesn't exist")
     __assert(__is_col_exists(matrix, [row, col, val]),
-        "one or more expected columns (e.g. row_id, col_id, value) don't exist in the table representing a sparse matrix")
+             "one or more expected columns (e.g. row_id, col_id, value)"
+             " don't exist in the table representing a sparse matrix")
     __assert(__is_tbl_has_rows(matrix), 'the input table is empty')
     rv = plpy.execute("""
         SELECT count(*) cnt FROM {matrix} WHERE {val} IS NULL
         """.format(matrix=matrix, val=val))
     __assert(len(rv) == 1, 'more than one NULL values found in the value column')
 
-def __validate_dense(matrix, checkCol = True):
+
+def __validate_dense(matrix, checkCol=True):
     __assert(__is_tbl_exists(matrix), "the input table doesn't exist")
     if checkCol:
         __assert(__is_col_exists(matrix, ['row_id', 'row_vec']),
-            "one or more expected columns(e.g. row_id, row_vec) don't exist in the table representing a dense matrix")
+                 "one or more expected columns(e.g. row_id, row_vec) "
+                 "don't exist in the table representing a dense matrix")
         __assert(__is_col_array(matrix, 'row_vec'),
-            'invalid row_vec column - array expected')
+                 "invalid row_vec column - array expected")
     __assert(__is_tbl_has_rows(matrix), 'the input table is empty')
 
 def __validate_block(matrix):
     __assert(__is_tbl_exists(matrix), "the input table doesn't exist")
     __assert(__is_col_exists(matrix, ['row_id', 'col_id', 'block']),
-        "one or more expected columns(e.g. row_id, col_id, block) don't exist in the table representing a block matrix")
+             "one or more expected columns(e.g. row_id, col_id, block)"
+             " don't exist in the table representing a block matrix")
     __assert(__is_col_array(matrix, 'block'),
-        'invalid block column - array expected')
+             'invalid block column - array expected')
     __assert(__is_tbl_has_rows(matrix), 'the input table is empty')
 
-def __get_dims(matrix, row = None, col = None, val = None, is_block = False):
+
+def __get_dims(matrix, row=None, col=None, val=None, is_block=False):
     row_dim = None
     col_dim = None
     if is_block:
@@ -87,8 +130,8 @@ def __get_dims(matrix, row = None, col = None, val = None, is_block = False):
             WHERE
                 row_id = {max_row_id} and col_id = {max_col_id}
             """.format(matrix=matrix,
-                    max_row_id=rv1['max_row_id'],
-                    max_col_id=rv1['max_col_id']))[0]
+                       max_row_id=rv1['max_row_id'],
+                       max_col_id=rv1['max_col_id']))[0]
 
         row_dim = rv1['max_row_id'] * rv2['block_row_dim'] + rv3['block_row_dim']
         col_dim = rv1['max_col_id'] * rv2['block_col_dim'] + rv3['block_col_dim']
@@ -106,7 +149,7 @@ def __get_dims(matrix, row = None, col = None, val = None, is_block = False):
                 {val} is NULL
             """.format(matrix=matrix, row=row, col=col, val=val))
         __assert(len(rv) == 1,
-            'no dimension information retrieved from the input sparse matrix')
+                 'no dimension information retrieved from the input sparse matrix')
         row_dim = rv[0]['row_dim']
         col_dim = rv[0]['col_dim']
     else:
@@ -118,7 +161,7 @@ def __get_dims(matrix, row = None, col = None, val = None, is_block = False):
                 {matrix}
             """.format(matrix=matrix))
         __assert(len(rv) == 1,
-            'no dimension information retrieved from the input dense matrix')
+                 'no dimension information retrieved from the input dense matrix')
         row_dim = rv[0]['row_dim']
 
         rv = plpy.execute("""
@@ -137,6 +180,7 @@ def __get_dims(matrix, row = None, col = None, val = None, is_block = False):
         row_dim > 0 and col_dim > 0,
         'invalid dimension')
     return (row_dim, col_dim)
+
 
 def matrix_sparsify(matrix_in, matrix_out, use_temp_table):
     __validate_dense(matrix_in)
@@ -169,15 +213,15 @@ def matrix_sparsify(matrix_in, matrix_out, use_temp_table):
             value <> 0
         m4_ifdef(`__GREENPLUM__',
             `DISTRIBUTED BY (row_id)')
-        """.format(
-            temp=temp, matrix_in=matrix_in, matrix_out=matrix_out,
-            col_dim=col_dim))
+        """.format(temp=temp, matrix_in=matrix_in, matrix_out=matrix_out,
+                   col_dim=col_dim))
     plpy.execute("""
         INSERT INTO {matrix_out} VALUES({row_dim}, {col_dim}, NULL)
         """.format(matrix_out=matrix_out, row_dim=row_dim, col_dim=col_dim))
 
+
 def matrix_densify(schema_madlib, matrix_in, in_row, in_col, in_val, matrix_out,
-    use_temp_table):
+                   use_temp_table):
     __validate_sparse(matrix_in, in_row, in_col, in_val)
     __validate_output_table(matrix_out)
 
@@ -205,9 +249,9 @@ def matrix_densify(schema_madlib, matrix_in, in_row, in_col, in_val, matrix_out,
             {in_row}
         m4_ifdef(`__GREENPLUM__',
             `DISTRIBUTED BY (row_id)')
-        """.format(schema_madlib=schema_madlib, temp = temp,
-            matrix_in=matrix_in, in_row=in_row, in_col=in_col, in_val=in_val,
-            col_dim=col_dim, matrix_out=matrix_out))
+        """.format(schema_madlib=schema_madlib, temp=temp,
+                   matrix_in=matrix_in, in_row=in_row, in_col=in_col, in_val=in_val,
+                   col_dim=col_dim, matrix_out=matrix_out))
 
     plpy.execute("""
         INSERT INTO {matrix_out}
@@ -215,26 +259,18 @@ def matrix_densify(schema_madlib, matrix_in, in_row, in_col, in_val, matrix_out,
             row_id, row_vec
         FROM
         (
-            SELECT
-                row_id
-            FROM
-                generate_series(0, {row_dim} - 1) AS row_id
-            WHERE
-                row_id NOT IN
-            (
-                SELECT
-                    {in_row}
-                FROM
-                    {matrix_in}
-                GROUP BY
-                    {in_row}
-            )
+            SELECT row_id
+            FROM generate_series(0, {row_dim} - 1) AS row_id
+            WHERE row_id NOT IN
+                    (
+                        SELECT {in_row}
+                        FROM {matrix_in}
+                        GROUP BY {in_row}
+                    )
         ) t1,
         (
-            SELECT
-                array_agg(val * 0) AS row_vec
-            FROM
-                generate_series(0, {col_dim} - 1) AS val
+            SELECT array_agg(val * 0) AS row_vec
+            FROM generate_series(0, {col_dim} - 1) AS val
         ) t2
         """.format(
             matrix_out=matrix_out, matrix_in=matrix_in,
@@ -631,18 +667,18 @@ def __matrix_column_to_array_format(source_table, row_id, target_table, istemp):
             table_schema = '{table_schema}' AND
             table_name = '{table_name}'
         ORDER BY ordinal_position
-        """.format(table_schema=table_schema, 
+        """.format(table_schema=table_schema,
                    table_name=table_name))
 
-    all_col_names = [column['column_name'] for column in all_columns]   
+    all_col_names = [column['column_name'] for column in all_columns]
     num_col_names = set(column['column_name'] for column in all_columns
                         if column['data_type'] in numeric_types)
 
     __assert(set(all_col_names) == num_col_names, 'Not all columns are numeric!')
     __assert(row_id in all_col_names, 'No row_id in the input table')
 
-    all_col_names.remove(row_id)  
-    
+    all_col_names.remove(row_id)
+
     plpy.execute('DROP TABLE IF EXISTS ' + target_table)
     plpy.execute("""
         CREATE {temp_str} TABLE {target_table}
@@ -655,7 +691,7 @@ def __matrix_column_to_array_format(source_table, row_id, target_table, istemp):
         m4_ifdef(`__GREENPLUM__',
             `DISTRIBUTED BY (row_id)')
         """.format(target_table=target_table, row_id = row_id,
-                   source_table=source_table, 
+                   source_table=source_table,
                    temp_str = ("", "TEMP")[istemp],
                    val_col_names=','.join(all_col_names)))
 
@@ -884,11 +920,9 @@ def matrix_scale_and_add(schema_madlib,
         plpy.error("Matrix Scale and Add : Scale cannot be NULL")
 
     # Create a dense matrix table
-
-    # Insert into the matrix
     plpy.execute(
         """
-        CREATE TABLE {matrix_r} AS 
+        CREATE TABLE {matrix_r} AS
             SELECT row_id,
                    {schema_madlib}.array_add(a.row_vec,
                         {schema_madlib}.array_scalar_mult(b.row_vec, ({scale})::DOUBLE PRECISION))

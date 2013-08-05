@@ -11,10 +11,9 @@ from utilities.utilities import _assert
 from utilities.validate_args import __is_col_exists
 from utilities.validate_args import __is_tbl_exists
 from utilities.validate_args import __is_tbl_exists_in_schema
-from utilities.validate_args import __get_cols
-from utilities.validate_args import __is_col_array
 from matrix_op import __get_dims
 from matrix_op import create_temp_sparse_matrix_table_with_dims
+from matrix_op import __cast_dense_input_table_to_correct_columns
 import time
 import math
 
@@ -273,7 +272,7 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
     # modules require the dimensionality of the sparse matrix in the table
     # as a row: (row_dim, col_dim, NULL)
     converted_tbl = __unique_string()
-    create_temp_sparse_matrix_table_with_dims(source_table, 
+    create_temp_sparse_matrix_table_with_dims(source_table,
                                               converted_tbl,
                                               row_id, col_id, value,
                                               row_dim, col_dim)
@@ -398,7 +397,7 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
                      't1': t1}
         create_summary_table(**arguments)
 
-    plpy.execute("DROP TABLE if exists {converted_tbl}".format(converted_tbl = converted_tbl))
+    plpy.execute("DROP TABLE if exists {0}".format(converted_tbl))
     plpy.execute("set client_min_messages to " + old_msg_level)
 # ------------------------------------------------------------------------
 
@@ -436,30 +435,14 @@ def svd(schema_madlib, source_table, output_table_prefix,
                    k, row_id, nIterations, col_id=None, val_id=None,
                    result_summary_table=result_summary_table)
 
-    # Make sure that the table has row_id and row_vec
-    cols = __get_cols(source_table, schema_madlib)
-    temp_matrix = __unique_string() + "_2"
-    if len(cols) == 2:
-        cols.remove(row_id)
-        if not __is_col_array(source_table, cols[0]):
-            plpy.error("SVD error: Data column should be of type array!")
-        if cols[0] != "row_vec" or row_id != "row_id":
-            plpy.execute(
-                """
-                CREATE TEMP TABLE {temp_matrix} as
-                    SELECT {row_id} as row_id, {vec} as row_vec
-                    FROM {source_table}
-                """.format(temp_matrix=temp_matrix, row_id=row_id,
-                           vec=cols[0], source_table=source_table))
-            source_table = temp_matrix
-    else:
-        plpy.execute(
-            """
-            SELECT {schema_madlib}.__matrix_column_to_array_format (
-                '{source_table}', '{row_id}', '{temp_matrix}', True)
-            """.format(schema_madlib=schema_madlib, source_table=source_table,
-                       row_id=row_id, temp_matrix=temp_matrix))
-        source_table = temp_matrix
+    # Make sure that the input table has row_id and row_vec
+    # if not then make a copy of the source table and change column names
+    source_table_copy = __unique_string() + "_2"
+    need_new_column_names = __cast_dense_input_table_to_correct_columns(
+        schema_madlib, source_table, source_table_copy, row_id)
+
+    if(need_new_column_names):
+        source_table = source_table_copy
 
     [row_dim, col_dim] = __get_dims(source_table)
     if k > min(row_dim, col_dim):
@@ -479,10 +462,10 @@ def svd(schema_madlib, source_table, output_table_prefix,
         # Switch U and V
         tmp = __unique_string()
         plpy.execute("""
-            ALTER TABLE {output_table_prefix}_u RENAME TO {tmp};
-            ALTER TABLE {output_table_prefix}_v RENAME TO {output_table_prefix}_u;
-            ALTER TABLE {tmp} RENAME TO {output_table_prefix}_v;
-            """.format(output_table_prefix=output_table_prefix, tmp=tmp))
+            ALTER TABLE {out_prefix}_u RENAME TO {tmp};
+            ALTER TABLE {out_prefix}_v RENAME TO {out_prefix}_u;
+            ALTER TABLE {tmp} RENAME TO {out_prefix}_v;
+            """.format(out_prefix=output_table_prefix, tmp=tmp))
     else:
         _svd(schema_madlib, source_table, output_table_prefix, k, nIterations, False)
 
@@ -501,7 +484,7 @@ def svd(schema_madlib, source_table, output_table_prefix,
                      't0': t0, 't1': t1}
         create_summary_table(**arguments)
 
-    plpy.execute("DROP TABLE if exists {temp_matrix}".format(temp_matrix=temp_matrix))
+    plpy.execute("DROP TABLE if exists {0}".format(source_table_copy))
     plpy.execute("set client_min_messages to " + old_msg_level)
 # ------------------------------------------------------------------------
 
@@ -992,8 +975,8 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
             WHERE
                 P.id = {i} - 1 AND Q.id = {i}) s
             """.format(lanczos_sql=lanczos_sql, schema_madlib=schema_madlib,
-                source_table=source_table, pq_table_prefix=pq_table_prefix,
-                row_dim=row_dim, i=i, val=val))
+                       source_table=source_table, row_dim=row_dim, i=i, val=val,
+                       pq_table_prefix=pq_table_prefix))
 
         # Orthogonalize the current set of Q vectors
         plpy.execute("""

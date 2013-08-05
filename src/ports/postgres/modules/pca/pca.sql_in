@@ -13,10 +13,10 @@ m4_include(`SQLCommon.m4')
 
 /**
 
-@addtogroup grp_pca
+@addtogroup grp_pca_train
 
 @about 
-
+\anchor pca_train
 Principal component analysis (PCA) is a mathematical procedure that uses an
 orthogonal transformation to convert a set of observations of possibly
 correlated variables into a set of values of linearly uncorrelated variables
@@ -38,7 +38,7 @@ See \ref Background for a technical introduction to principal component analysis
    SELECT {schema_madlib}.pca_train(
        source_table,           -- Source table name (dense matrix)
        pc_table,               -- Output table name for the principal components
-       row_id,                 -- Column name containing the row IDs
+       row_id,                 -- Column name containing the row IDs of the input matrix
        k,                      -- Number of principal components to compute
        -------------- OPTIONAL PARAMETERS --------------
        grouping_cols,          -- Comma-separated list of grouping columns
@@ -48,7 +48,6 @@ See \ref Background for a technical introduction to principal component analysis
        use_correlation,        -- If True correlation matrix is used for principal components
                                --      instead of the covariance matrix (Default: False)
        result_summary_table    -- Table name to store summary of results (Default: NULL)
-
    );
 </pre>
 
@@ -81,8 +80,6 @@ See \ref Background for a technical introduction to principal component analysis
    
    <b>Note</b>: Currently <em>use_correlation</em> is also a placeholder for forward
    compatibility. 
-   
-
 
 The Lanczos iteration number roughly corresponds to the accuracy of the SVD 
 calculation, and a higher iteration number corresponds to greater accuracy 
@@ -91,10 +88,52 @@ large as the value of <em>k</em>,  but no larger than the smallest dimension
  of the matrix.  If the iteration number is given as zero, then the default
   number of iterations is used.  
 
-@input
-The input table for dense PCA is expected to be in the one of the two standard
- madlib matrix formats.  Either as  
 
+The output table is of the form
+<pre> 
+ row_id |   principal_components | eigen_values     
+--------+------------------------+-------------
+                   ....
+</pre>
+where the columns are defined as
+<pre> 
+    row_id                  INTEGER,   -- ID corresponding to each eigenvalue 
+    principal_components    FLOAT8[]   -- Principal component vector for this row_id
+    eigen_values            FLOAT8     -- The eigen value for this row
+</pre> 
+
+In addition to the output table, a table containing the column means is also generated.  
+This table has the same name as the output table, with the string "_mean" appended to the end.  
+This table is of the form
+<pre> 
+ column_mean     
+------------
+    ....
+</pre>
+where column_mean is of type FLOAT[].  
+
+If a summary table is created, then it will be of the form
+<pre> 
+rows_used | exec_time (ms)| iter | recon_error | relative_recon_error | use_correlation 
+----------+---------------+------+-------------+----------------------+-----------------
+                        ....
+</pre>
+where the columns are defined as
+<pre>
+    rows_used            INTEGER,  -- Number of data points in the input
+    exec_time (ms)       FLOAT,    -- Number of milliseconds for the PCA calculation to run
+    iter                 INTEGER,  -- Number of iterations used in the SVD calculation
+    recon_error          FLOAT,    -- The absolute error in the SVD approximation
+    relative_recon_error FLOAT,    -- The relative error in the SVD approximation
+    use_correlation      BOOL      -- Indicates if the correlation matrix was used
+</pre>
+
+@input
+The input data matrix should have  \f$ N \f$ rows and \f$ M \f$ columns, where \f$ N \f$ is the number of data points, and \f$ M \f$ is the number of features for each data point.  
+
+
+The input table for dense PCA is expected to be in the one of the two standard
+ MADlib matrix formats.  Either as  
 <pre>{TABLE|VIEW} <em>source_table</em> (
     <em>row_id</em> INTEGER,
     row_vec FLOAT8[],
@@ -110,7 +149,7 @@ or
 Note that the column name <em>row_id</em> is taken as an input parameter,
  and should contain a list of row indices (starting at 0) for the input matrix.
 
-The input table for sparse PCA is expected to be in the form
+The input table for sparse PCA is expected to be in the form:
 
 <pre>{TABLE|VIEW} <em>source_table</em> (
     ...
@@ -124,37 +163,9 @@ The <em>row_id</em> and <em>col_id</em> columns specify the which entries
  in the matrix are nonzero, and the <em>val_id</em> column defines the values
   of the nonzero entries.  
 
-* @output
-The output table is of the form
-<pre> 
- row_id |   principal_components | eigen_values     
---------+------------------------+-------------
-                   ....
-</pre>
-where the columns are defined as
-\code
-    row_id                  INTEGER,   -- ID corresponding to each eigenvalue 
-    principal_components    FLOAT8[]   -- Principal component vector for this row_id
-    eigen_values            FLOAT8     -- The eigen value for this row
-\endcode 
 
-If a summary table is created, then it will be of the form
-<pre> 
-rows_used | exec_time (ms)| iter | recon_error | relative_recon_error | use_correlation 
-----------+---------------+------+------------ +----------------------+-----------------
-                        ....
-</pre>
-@examples
-where the columns are defined as
-\code
-    rows_used            INTEGER,  -- Number of data points in the input
-    exec_time (ms)       FLOAT,    -- Number of milliseconds for the PCA calculation to run
-    iter                 INTEGER,  -- Number of iterations used in the SVD calculation
-    recon_error          FLOAT,    -- The absolute error in the SVD approximation
-    relative_recon_error FLOAT,    -- The relative error in the SVD approximation
-    use_correlation      BOOL      -- Indicates if the correlation matrix was used
-\endcode 
 
+@examp
 -# Create the sample data.
 @verbatim
 sql> DROP TABLE IF EXISTS mat;
@@ -210,8 +221,9 @@ PCA then computes the SVD matrix factorization
 \hat{\boldsymbol X} =  {\boldsymbol U}{\boldsymbol \Sigma}{\boldsymbol V}^T
 \f]
 where \f$ {\boldsymbol \Sigma} \f$ is a diagonal matrix.  The eigenvalues are 
-recovered as the entries of \f$ {\boldsymbol \Sigma} \f$, and the principle 
-components are the rows of  \f$ {\boldsymbol V} \f$.  
+recovered as the entries of \f$ {\boldsymbol \Sigma}/(N-1) \f$, and the principle 
+components are the rows of  \f$ {\boldsymbol V} \f$.    
+
 
 It is important to note that the PCA implementation assumes that the user will
  use only the principle components that have non-zero eigenvalues.  The SVD 
@@ -312,74 +324,12 @@ $$ LANGUAGE SQL;
 -- -----------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_train(
-     usage_string VARCHAR                               -- usage string
+     usage_string VARCHAR   -- usage string
 )
-RETURNS VARCHAR AS $$
-DECLARE
-insert_string       VARCHAR;
-BEGIN
-    IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
-    insert_string := '' ||
-    E'Summary \n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' Functionality: Performs principle component analysis\n' ||
-    E' SELECT {schema_madlib}.pca_train(''source_table'' \n' ||
-    E'                                       ,''pc_table'' \n' ||
-    E'                                       ,''row_id'' \n' ||
-    E'                                       ,''k'' \n' ||
-    E'                                       [,''grouping_cols'' \n' ||
-    E'                                       ,lanczos_iter \n' ||
-    E'                                       ,use_correlation \n' ||
-    E'                                       ,''result_summary_table'' \n' ||
-    E'                                       ]' ||
-    E');\n' ||
-    E'For more details on function usage:  \n' ||
-    E'SELECT {schema_madlib}.pca_train(''usage'') \n' ||
-    E'';
-  ElSIF (usage_string  = 'usage') THEN
-    insert_string := '' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E'Usage\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' SELECT {schema_madlib}.pca_train( '||
-    E' ''source_table'',        -- Name of data table \n' ||
-    E' ''pc_table''             -- Name of the table containing the principle components\n' ||
-    E' ''row_id''               -- Column name for the ID for each row.  \n' ||
-    E' k                        -- Number of principal components to compute\n' ||
-    E' [''grouping_cols''       -- Comma-separated list of grouping columns (Default: NULL)\n' ||
-    E' lanczos_iter             -- The number of Lanczos iterations to use in the SVD calculation\n' ||
-    E'                             Default: minimum of of the smallest input matrix dimension and k+40\n' ||
-    E' use_correlation          -- If ''True'' correlation matrix is used for principal components\n' ||
-    E'                             Default: False\n' ||
-    E' ''result_summary_table'' -- Table name to store summary of results (Default: NULL)\n' ||
-    E']' ||
-    E' );\n' ||
-    E'\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E'Output:\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' The output table (''output_table'' above) has the following columns\n' ||
-    E' ''row_id''                           INTEGER, -- The ranking of the eigenvalues \n' ||
-    E' ''principal_components''             FLOAT[], -- The principle components\n' ||
-    E' ''eigen_values''                     FLOAT[], \n' ||
-    E'                                      -- The eigenvalues associated with each principle component\n' ||
-    E'\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' The result summary table (''result_summary_table'' above) has the following columns\n' ||
-    E' ''rows_used''                        INTEGER, -- Number of rows used in the PCA calculation\n' ||
-    E' ''exec_time''                        FLOAT, -- Number of milliseconds the PCA calculation took\n' ||
-    E' ''use_correlation''                  BOOLEAN, -- Value of the input parameter ''use_correlation''\n' ||
-    E' ''iter''                             INTEGER, -- Number of iterations the SVD took to converge\n' ||
-    E' ''recon_error''                      FLOAT, -- Absolute error in the approximation\n' ||
-    E' ''relative_recon_error''             FLOAT -- Relative error in the approximation\n' ||
-    E'\n' ||
-    E'';
-  ELSE
-    insert_string := 'No such option. Run SELECT {schema_madlib}.pca_train()';
-  END IF;
-  RETURN insert_string;
-END;
-$$ LANGUAGE plpgsql VOLATILE;
+RETURNS TEXT AS $$
+PythonFunction(pca, pca, pca_sparse_help_message)
+$$ LANGUAGE plpythonu;
+
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_train()
 RETURNS VARCHAR AS $$
@@ -484,89 +434,20 @@ RETURNS VOID AS $$
 $$ LANGUAGE SQL;
 
 
+-- -----------------------------------------------------------------------
 -- Information Functions
 -- -----------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_sparse_train(
-     usage_string VARCHAR                               -- usage string
+     usage_string VARCHAR   -- usage string
 )
-RETURNS VARCHAR AS $$
-DECLARE
-insert_string       VARCHAR;
-BEGIN
-    IF (usage_string = ''  OR usage_string = 'help' OR usage_string = '?') THEN
-    insert_string := '' ||
-    E'Summary \n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' Functionality: Performs principle component analysis on sparse matrices\n' ||
-    E' SELECT {schema_madlib}.pca_sparse_train(''source_table'' \n' ||
-    E'                                       ,''pc_table'' \n' ||
-    E'                                       ,''row_id'' \n' ||
-    E'                                       ,''col_id'' \n' ||
-    E'                                       ,''val_id'' \n' ||
-    E'                                       ,row_dim \n' ||
-    E'                                       ,col_dim \n' ||
-    E'                                       ,k \n' ||
-    E'                                       [,''grouping_cols'' \n' ||
-    E'                                       ,lanczos_iter \n' ||
-    E'                                       ,use_correlation \n' ||
-    E'                                       ,''result_summary_table'' \n' ||
-    E'                                       ]' ||
-    E' );\n' ||
-    E'For more details on function usage:  \n' ||
-    E'SELECT {schema_madlib}.pca_sparse_train(''usage'') \n' ||
-    E'';
-  ElSIF (usage_string  = 'usage') THEN
-    insert_string := '' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E'Usage\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' SELECT {schema_madlib}.pca_sparse_train( '||
-    E' ''source_table'',        -- Name of data table \n' ||
-    E' ''pc_table''             -- Name of the table containing the principle components\n' ||
-    E' ''row_id''               -- Column name for the row coordinates.  \n' ||
-    E' ''col_id''               -- Column name for the column coordinates.  \n' ||
-    E' ''val_id''               -- Column name for the sparse values.  \n' ||
-    E' row_dim,                 -- The number of rows in the sparse matrix \n' ||
-    E' col_dim,                 -- The number of columns in the sparse matrix \n' ||
-    E' k                        -- Number of principal components to compute\n' ||
-    E' [''grouping_cols''       -- Comma-separated list of grouping columns (Default: NULL)\n' ||
-    E' lanczos_iter             -- The number of Lanczos iterations to use in the SVD calculation\n' ||
-    E'                             Default: minimum of of the smallest input matrix dimension and k+40\n' ||
-    E' use_correlation          -- If ''True'' correlation matrix is used for principal components \n' ||
-    E'                             Default: False\n' ||
-    E'  ''result_summary_table''-- Table name to store summary of results (Default: NULL) \n' ||
-    E']' ||
-    E' );\n' ||
-    E'\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E'Output:\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' The output table (''output_table'' above) has the following columns\n' ||
-    E' ''row_id''                           INTEGER, -- The ranking of the eigenvalues \n' ||
-    E' ''principal_components''             FLOAT[], -- The principle components\n' ||
-    E' ''eigen_values''                     FLOAT[], \n' ||
-    E'                                      -- The eigenvalues associated with each principle component\n' ||
-    E'\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' The result summary table(''result_summary_table'' above) has the following columns\n' ||
-    E' ''rows_used''                        INTEGER, -- Number of rows used in the PCA calculation\n' ||
-    E' ''exec_time''                        FLOAT, -- Number of milliseconds the PCA calculation took\n' ||
-    E' ''use_correlation''                  BOOLEAN, -- Value of the input parameter ''use_correlation''\n' ||
-    E' ''iter''                             INTEGER, -- Number of iterations the SVD took to converge\n' ||
-    E' ''recon_error''                      FLOAT, -- Absolute error in the approximation\n' ||
-    E' ''relative_recon_error''             FLOAT -- Relative error in the approximation\n' ||
-    E'\n' ||
-    E'';
-  ELSE
-    insert_string := 'No such option. Run SELECT {schema_madlib}.pca_sparse_train()';
-  END IF;
-  RETURN insert_string;
-END;
-$$ LANGUAGE plpgsql VOLATILE;
+RETURNS TEXT AS $$
+PythonFunction(pca, pca, pca_sparse_help_message)
+$$ LANGUAGE plpythonu;
+
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pca_sparse_train()
-RETURNS VARCHAR AS $$
+RETURNS TEXT AS $$
 BEGIN
   RETURN MADLIB_SCHEMA.pca_sparse_train('');
 END;
