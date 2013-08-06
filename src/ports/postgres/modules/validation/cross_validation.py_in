@@ -1,6 +1,4 @@
 
-import math
-import re
 # from convex.ridge import __ridge_cv_args
 # from convex.ridge import __ridge_newton_cv
 # from convex.ridge import __ridge_newton_cv_help
@@ -9,16 +7,10 @@ from validation.cv_utils import __cv_copy_data_with_id
 from validation.cv_utils import __cv_split_data_using_id_col
 from validation.cv_utils import __cv_split_data_using_id_tbl
 from validation.cv_utils import __cv_summarize_result
-from validation.cv_utils import __cv_produce_col_name_string
 from validation.cv_utils import __cv_generate_random_id
 from utilities.utilities import __mad_version
-from utilities.validate_args import __is_tbl_exists
-from utilities.validate_args import __is_tbl_has_rows
-from utilities.validate_args import __is_col_exists
-from utilities.validate_args import __is_tbl_exists_in_schema
-from utilities.validate_args import __is_scalar_col_no_null
-from utilities.validate_args import __is_array_col_same_dimension
-from utilities.validate_args import __is_array_col_no_null
+from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import table_exists
 import plpy
 
 version_wrapper = __mad_version()
@@ -31,7 +23,7 @@ mad_vec = version_wrapper.select_vecfunc()
 #                      validation_result, fold_num, **kwargs):
 #     """
 #     Wrapper for cross validation.
-    
+
 #     Cross validation (CV) uses a universal interface for all the modules that it supports. Each module should
 #     provide its own adaptor to convert the inputs from the universal interface to the inputs that the
 #     module's CV function recognize.
@@ -75,9 +67,9 @@ mad_vec = version_wrapper.select_vecfunc()
 
 #     plpy.error("No module is named as {0}. Either it does not exist, or it is not supported by this function yet. You can try to use the function of cross_validation_general().\n".format(module_name));
 #     return None
-    
+
 ## ========================================================================
-    
+
 def __cv_combine_params_type_general(params, params_type, tbl_data,
                                      col_random_id, param_explored,
                                      explore_value, tbl_input,
@@ -98,7 +90,7 @@ def __cv_combine_params_type_general(params, params_type, tbl_data,
     """
     if len(params) != len(params_type):
         plpy.error('CV error: The number of parameters should be equal to the number of types!')
-        
+
     rst = ""
     # The special keywords
     opts = set(["%data%", "%id%", "%error%", "%model%", "%prediction%", param_explored])
@@ -131,7 +123,7 @@ def __cv_combine_params_type_general(params, params_type, tbl_data,
     return rst
 
 ## ========================================================================
-    
+
 def __cv_funcall_general(func, params, params_type, tbl_data, col_random_id,
                          param_explored, explore_value, tbl_input,
                          tbl_output):
@@ -150,7 +142,7 @@ def __cv_funcall_general(func, params, params_type, tbl_data, col_random_id,
     return None
 
 ## ========================================================================
-    
+
 def __cv_param_type_explored(params, params_type, param_explored):
     """
     Find the type of exploring parameter
@@ -173,30 +165,30 @@ def __validate_cv_args(schema_madlib, modelling_func, modelling_params, modellin
                        data_tbl, data_id, id_is_random,
                        validation_result,
                        fold_num, data_cols):
-    if (modelling_func is None or modelling_params is None or modelling_params_type is None
-        or predict_func is None or predict_params is None or predict_params_type is None
-        or metric_func is None or metric_params is None or metric_params_type is None
-        or data_tbl is None or validation_result is None or fold_num is None
-        or data_cols is None):
+    if any(arg is None for arg in
+                (modelling_func, modelling_params, modelling_params_type,
+                 predict_func, predict_params, predict_params_type,
+                 metric_func, metric_params, metric_params_type, data_tbl,
+                 validation_result, fold_num, data_cols)):
         plpy.error("CV error: You have unsupported Null value(s) in arguments!")
-    
-    if not __is_tbl_exists(data_tbl):
+
+    if not table_exists(data_tbl):
         plpy.error("CV error: No data table!")
 
-    if __is_tbl_exists_in_schema(validation_result):
+    if table_exists(validation_result):
         plpy.error("CV error: Output table already exists!")
 
-    if not __is_col_exists(data_tbl, data_cols, schema_madlib):
+    if not columns_exist_in_table(data_tbl, data_cols, schema_madlib):
         plpy.error("CV error: Data columns do not exist!")
 
     if data_id is not None and id_is_random is None:
         plpy.error("CV error: Is the data row ID random?")
-        
+
     if fold_num <= 1:
         plpy.error("CV error: Cross validation total fold number should be larger than 1!")
 
     return None
-    
+
 ## ========================================================================
 
 ## perform cross validation
@@ -208,7 +200,7 @@ def cross_validation_general(
         metric_func, metric_params, metric_params_type,
         data_tbl, data_id, id_is_random,
         validation_result,
-        data_cols, fold_num, 
+        data_cols, fold_num,
         **kwargs):
     """
     A general framework that runs cross-validation for modules that are
@@ -234,7 +226,7 @@ def cross_validation_general(
                        data_tbl, data_id, id_is_random,
                        validation_result,
                        fold_num, data_cols)
-    
+
     row_num = plpy.execute("select count(*) as row_num from " + data_tbl)[0]["row_num"]
     if row_num <= fold_num:
         plpy.error("CV error: Too few data! Fewer than fold_num.")
@@ -243,7 +235,7 @@ def cross_validation_general(
     plpy.execute("set client_min_messages to warning")
 
     explore_type = __cv_param_type_explored(modelling_params, modelling_params_type, param_explored)
-    
+
     # all temporary names
     tbl_all_data = __unique_string()
     tbl_train = __unique_string()
@@ -290,7 +282,7 @@ def cross_validation_general(
         temp_param_explored = param_explored
         temp_explore_values = explore_values
         data_folding_only = False
-        
+
     accum_count = 0
     for k in range(fold_num):
         # split data into train and validation parts
@@ -301,7 +293,7 @@ def cross_validation_general(
 
         for explore_value in temp_explore_values:
             # train
-            plpy.execute(""" 
+            plpy.execute("""
                         drop table if exists {tbl_output_model};
                         drop table if exists {tbl_output_pred};
                         drop table if exists {tbl_output_error}
@@ -320,7 +312,7 @@ def cross_validation_general(
                 metric_func, metric_params, metric_params_type,
                 tbl_valid, col_random_id, temp_param_explored, explore_value,
                 tbl_output_pred, tbl_output_error)
-        
+
             # accumulate the measured metric result
             accum_count += 1
             if accum_count == 1:
@@ -340,7 +332,7 @@ def cross_validation_general(
                         select
                             ({explore_value})::{explore_type} as {temp_param_explored},
                             {tbl_output_error}.*
-                        from {tbl_output_error}                             
+                        from {tbl_output_error}
                 """.format(explore_value = explore_value,
                            temp_param_explored = temp_param_explored,
                            **kwargs))
@@ -348,7 +340,7 @@ def cross_validation_general(
     # compute the averages and standard deviations for all measured metrics (not necessary one)
     __cv_summarize_result(tbl_accum_error, validation_result, temp_param_explored,
                           data_folding_only, schema_madlib)
-    
+
     # clean up the temporary tables
     plpy.execute("""
         drop table if exists {tbl_all_data};

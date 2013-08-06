@@ -11,48 +11,41 @@ Cox prop Hazards: Driver functions
 //"""
 
 import plpy
-import re
-from utilities.validate_args import __is_col_array
-from utilities.validate_args import __is_tbl_exists
-from utilities.validate_args import __is_tbl_exists_in_schema
-from utilities.validate_args import __is_tbl_has_rows
-from utilities.validate_args import __is_tbl_has_rows
-from utilities.validate_args import __is_col_exists_in_schema
-from utilities.validate_args import __get_cols_in_schema
-from utilities.validate_args import __is_var_valid
-from utilities.utilities import _string_to_array
-from utilities.validate_args import __get_cols
-from utilities.utilities import __mad_version
+from utilities.validate_args import table_exists
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import get_cols
+from utilities.validate_args import is_var_valid
 
 # ========================================================================
 def __check_args (schema_madlib, tbl_source, col_ind_var, col_dep_var, col_status):
-  
-  
+
+
   # Some obvious error messages
   if (tbl_source is None or col_ind_var is None or col_dep_var is None):
     plpy.error("Elastic Net error: You have unsupported NULL value(s) in the arguments!")
-  
-  if not __is_tbl_exists_in_schema(tbl_source):
+
+  if not table_exists(tbl_source):
     plpy.error("Cox Proportional Hazards Error: Data table " + tbl_source + " does not exist!")
 
-  if not __is_tbl_has_rows(tbl_source):
+  if table_is_empty(tbl_source):
     plpy.error("Cox Proportional Hazards Error: Data table " + tbl_source + " is empty!")
 
-  if not __is_col_exists_in_schema(tbl_source, [col_dep_var]):
+  if not columns_exist_in_table(tbl_source, [col_dep_var]):
     plpy.error("Cox Proportional Hazards Error: The dependent variable does not exist!")
-  
-  if not __is_var_valid(tbl_source, col_ind_var):
+
+  if not is_var_valid(tbl_source, col_ind_var):
     plpy.error("Cox Proportional Hazards Error: The independent variable does not exist")
-  
-  if not __is_var_valid(tbl_source, col_status):
+
+  if not is_var_valid(tbl_source, col_status):
     plpy.error("Cox Proportional Hazards Error: Not a valid boolean expression for status!")
-  
+
   col_ind_var_new = col_ind_var
-  cols = __get_cols_in_schema(tbl_source)
+  cols = get_cols(tbl_source)
 
   # Select al columns except status and dependent variable
   if col_ind_var == "*":
-    cols = __get_cols_in_schema(tbl_source)
+    cols = get_cols(tbl_source)
     outstr_array = []
     for i in range(len(cols)):
       if cols[i] != col_dep_var.lower() and cols[i] != col_status.lower():
@@ -66,13 +59,13 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
         maxNumIterations, cyclesPerIteration = 1):
     """
     Driver for an iterative algorithm
-    
+
     A general driver function for most iterative algorithms: The state between
     iterations is kept in a variable of type <tt>stateType</tt>, which is
     initialized with <tt><em>initialState</em></tt>. During each iteration, the
     SQL statement <tt>updateSQL</tt> is executed in the database. Afterwards,
     the SQL query <tt>updateSQL</tt> decides whether the algorithm terminates.
-    
+
     @param stateType SQL type of the state between iterations
     @param initialState The initial value of the SQL state variable
     @param source The source relation
@@ -91,7 +84,7 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
     """
     updateSQL = """
         INSERT INTO _cox_intermediate_state (_cox_dependant_variable, _cox_iState)
-        SELECT 
+        SELECT
           ({depColumn})::double precision,
           {intermediateExpr}
         FROM
@@ -100,7 +93,7 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
               {resultExpr} as result
             FROM
               _madlib_iterative_alg as st
-            WHERE 
+            WHERE
               _madlib_iteration = {{iteration}} - 1
           ) as result,
           {{source}} as src;
@@ -124,7 +117,7 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
-        FROM    
+        FROM
         (
             SELECT _madlib_state
             FROM _madlib_iterative_alg
@@ -160,7 +153,7 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
         """.format(stateType = stateType,
                intermediateStateType = intermediateStateType,
                oldMsgLevel = oldMsgLevel))
-    
+
     iteration = 0
     plpy.execute("""
         INSERT INTO _madlib_iterative_alg VALUES ({iteration}, {initialState})
@@ -186,7 +179,7 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
                 oldState = "(older._madlib_state)",
                 newState = "(newer._madlib_state)"))[0]['should_terminate'])):
             break
-    
+
     # Note: We do not drop the temporary table
     return iteration
 
@@ -195,11 +188,11 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
     depColumn, status, optimizer, maxNumIterations, precision, **kwargs):
     """
     Compute cox survival regression coefficients
-    
+
     This method serves as an interface to different optimization algorithms.
     By default, iteratively reweighted least squares is used, but for data with
     a lot of columns the conjugate-gradient method might perform better.
-    
+
     @param schema_madlib Name of the MADlib schema, properly escaped/quoted
     @param source Name of relation containing the training data
     @param indepColumn Name of independent column in training data
@@ -207,27 +200,27 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
     @param status Right censoring support for cox
     @param optimizer Name of the optimizer. 'newton': newton method
     @param maxNumIterations Maximum number of iterations
-    @param precision Terminate if two consecutive iterations have a difference 
+    @param precision Terminate if two consecutive iterations have a difference
            in the log-likelihood of less than <tt>precision</tt>. In other
            words, we terminate if the objective function value has converged.
            This convergence criterion can be disabled by specifying a negative
            value.
     @param kwargs We allow the caller to specify additional arguments (all of
            which will be ignored though). The purpose of this is to allow the
-           caller to unpack a dictionary whose element set is a superset of 
+           caller to unpack a dictionary whose element set is a superset of
            the required arguments by this function.
-    
+
     @return array with coefficients in case of convergence, otherwise None
     \pc
     """
-    
+
     indepColumn = __check_args(schema_madlib, source, indepColumn, depColumn, status)
     if maxNumIterations < 1:
         plpy.error("Number of iterations must be positive")
-    
+
     if optimizer not in ['newton']:
         plpy.error("Unknown optimizer requested. Must be 'newton'")
-            
+
     return __runIterativeAlg(
         stateType = "double precision[]",
         intermediateStateType = "{schema_madlib}.intermediate_cox_prop_hazards_result".format(schema_madlib = schema_madlib),

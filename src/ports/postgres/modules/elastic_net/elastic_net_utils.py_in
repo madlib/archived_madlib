@@ -7,13 +7,12 @@ from utilities.utilities import _array_to_string
 from convex.utils_regularization import __utils_ind_var_scales
 from convex.utils_regularization import __utils_dep_var_scale
 from convex.utils_regularization import __utils_normalize_data
-from utilities.validate_args import __is_tbl_exists
-from utilities.validate_args import __is_tbl_has_rows
-# from utilities.validate_args import __is_col_exists
-from utilities.validate_args import __is_tbl_exists_in_schema
-# from utilities.validate_args import __is_scalar_col_no_null
-# from utilities.validate_args import __is_array_col_same_dimension
-# from utilities.validate_args import __is_array_col_no_null
+from utilities.validate_args import table_is_empty
+# from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import table_exists
+# from utilities.validate_args import scalar_col_has_no_null
+# from utilities.validate_args import array_col_has_same_dimension
+# from utilities.validate_args import array_col_has_no_null
 from utilities.control import IterationController
 #from convex.lasso_igd import IterationControllerNoTableDrop
 from utilities.utilities import __mad_version
@@ -53,7 +52,7 @@ def __process_results (coef, intercept, outstr_array):
     features_selected = _array_to_string(selected_array)
     dense_coef = _array_to_string(dense_coef)
 
-    return (features, features_selected, dense_coef, _array_to_string(coef))    
+    return (features, features_selected, dense_coef, _array_to_string(coef))
 
 # ========================================================================
 
@@ -77,7 +76,7 @@ def __process_warmup_lambdas (lambdas, lambda_value):
                    Elastic Net error: The last element of warmup_lambdas must
                    be equal to the lambda value that you want to compute !
                    """)
-        
+
     if len(elm) > 1:
         for i in range(len(elm)-1):
             if elm[i] <= elm[i+1]:
@@ -85,7 +84,7 @@ def __process_warmup_lambdas (lambdas, lambda_value):
                            Elastic Net error: The given warm-up array must be
                            in a strict descent order.
                            """)
-    
+
     return elm
 
 # ========================================================================
@@ -99,7 +98,7 @@ def __generate_warmup_lambda_sequence (tbl_used, col_ind_var, col_dep_var,
     """
     if num_steps == 1:
         return [lambda_value]
-    
+
     # mean_y = plpy.execute("select avg({col_dep_var}) from {tbl_used}".format(
     #     col_dep_var = col_dep_var, tbl_used = tbl_used))[0]["avg"]
     # xy = [0] * dimension
@@ -144,7 +143,7 @@ def __compute_average_sq(**args):
             sq[i] = (args["x_scales"]["std"][i])**2 + (args["x_scales"]["mean"][i])**2
 
     return sq
-    
+
 # ========================================================================
 
 def __compute_log_likelihood (coef, coef_str, intercept, **args):
@@ -165,7 +164,7 @@ def __compute_log_likelihood (coef, coef_str, intercept, **args):
             """.format(coefficients = coef_str,
                        intercept = intercept,
                        **args))[0]["loss"]
-    
+
 
     elif args["family"] == "binomial": # logistic models
         loss = plpy.execute(
@@ -181,13 +180,13 @@ def __compute_log_likelihood (coef, coef_str, intercept, **args):
             """.format(coefficients = coef_str,
                        intercept = intercept,
                        **args))[0]["loss"]
-        
+
     module_1 = sum(x*x for x in coef)
     module_2 = sum(map(abs, coef))
-    
+
     log_likelihood = -(loss + args["lambda_value"] * ((1 - args["alpha"]) \
                         * module_1 / 2. + args["alpha"] * module_2))
-    
+
     return log_likelihood
 
 # ========================================================================
@@ -200,26 +199,25 @@ def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
         or normalization is None or len(tbl_source) == 0 or len(col_ind_var) == 0
         or len(col_dep_var) == 0 or len(tbl_result) == 0):
         plpy.error("Elastic Net error: You have unsupported NULL/empty value(s) in the arguments!")
-    
-    # if not __is_tbl_exists(tbl_source):
+
     #     plpy.error("Elastic Net error: Data table " + tbl_source + " does not exist!")
 
-    if __is_tbl_exists_in_schema(tbl_result):
+    if table_exists(tbl_result):
         plpy.error("Elastic Net error: Output table " + tbl_result + " already exists!")
 
-    # if not __is_tbl_has_rows(tbl_source):
+    # if table_is_empty(tbl_source):
     #     plpy.error("Elastic Net error: Data table " + tbl_source + " is empty!")
 
-    # if not __is_col_exists(tbl_source, [col_ind_var, col_dep_var]):
+    # if not columns_exist_in_table(tbl_source, [col_ind_var, col_dep_var]):
     #     plpy.error("Elastic Net error: Some column does not exist!")
 
-    # if not __is_scalar_col_no_null(tbl_source, col_dep_var):
+    # if not scalar_col_has_no_null(tbl_source, col_dep_var):
     #     plpy.error("Elastic Net error: Dependent variable has Null values! Please filter out Null values before using this function!")
 
-    # if not __is_array_col_same_dimension(tbl_source, col_ind_var):
+    # if not array_col_has_same_dimension(tbl_source, col_ind_var):
     #     plpy.error("Elastic Net error: Independent variable arrays have unequal lengths!")
 
-    # if not __is_array_col_no_null(tbl_source, col_ind_var):
+    # if not array_col_has_no_null(tbl_source, col_ind_var):
     #     plpy.error("Elastic Net error: Independent variable arrays have Null values! Please filter out Null values before using this function!")
 
     if lambda_value < 0:
@@ -241,7 +239,7 @@ def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
 def __compute_data_scales (args):
     args["x_scales"] = __utils_ind_var_scales(tbl_data = args["tbl_source"], col_ind_var = args["col_ind_var"],
                                               dimension = args["dimension"], schema_madlib = args["schema_madlib"])
-   
+
     if args["family"] == "binomial":
         args["y_scale"] = dict(mean = 0, std = 1)
     else:
@@ -250,7 +248,7 @@ def __compute_data_scales (args):
     args["xmean_str"] = _array_to_string(args["x_scales"]["mean"])
 
 ## ========================================================================
-    
+
 def __normalize_data(args):
     """
     Compute the scaling factors for independent and dependent
@@ -261,7 +259,7 @@ def __normalize_data(args):
     __compute_data_scales(args)
 
     y_decenter = True if args["family"] == "gaussian" else False;
-    
+
     __utils_normalize_data(y_decenter = y_decenter,
                            tbl_data = args["tbl_source"],
                            col_ind_var = args["col_ind_var"],
@@ -308,21 +306,21 @@ def __compute_means (**args):
         return (xmean_str, ymean)
     else:
         return (args["xmean_str"], args["y_scale"]["mean"])
-    
+
 # ========================================================================
 
 ## ========================================================================
-    
+
 class IterationControllerNoTableDrop (IterationController):
     """
     IterationController but without table dropping
-    
+
     Useful if one wants to use it in cross validation
     where dropping tables in a loop would use up all the locks
     and get "out of memory" error
     """
     ## ------------------------------------------------------------------------
-    
+
     def __init__(self, rel_args, rel_state, stateType,
                  temporaryTables = True,
                  truncAfterIteration = False,
@@ -334,7 +332,7 @@ class IterationControllerNoTableDrop (IterationController):
         IterationController.__init__(self, rel_args, rel_state, stateType,
                                      temporaryTables, truncAfterIteration,
                                      schema_madlib, verbose, **kwargs)
-        # self.kwargs["rel_state"] = "pg_temp" + rel_state, but for testing 
+        # self.kwargs["rel_state"] = "pg_temp" + rel_state, but for testing
         # the existence of a table, schema name should be used together
         self.state_exists = plpy.execute("select count(*) from information_schema.tables where table_name = '{0}' and table_schema = 'pg_temp'".format(rel_state))[0]['count'] == 1
         # The current total row number of rel_state table
@@ -342,10 +340,10 @@ class IterationControllerNoTableDrop (IterationController):
             self.state_row_num = plpy.execute("select count(*) from {rel_state}".format(**self.kwargs))[0]["count"]
 
     ## ------------------------------------------------------------------------
-            
+
     def update(self, newState):
         """
-        Update state of calculation. 
+        Update state of calculation.
         """
         newState = newState.format(iteration = self.iteration, **self.kwargs)
         self.iteration += 1
@@ -373,7 +371,7 @@ class IterationControllerNoTableDrop (IterationController):
                        **self.kwargs))
 
     ## ------------------------------------------------------------------------
-            
+
     def __enter__(self):
         """
         __enter__ and __exit__ methods are special. They are automatically called
@@ -405,7 +403,7 @@ class IterationControllerTableAppend (IterationControllerNoTableDrop):
         self.verbose = verbose
         self.inWith = False
         self.iteration = -1
-        
+
         self.state_exists = plpy.execute("""
                                          select count(*)
                                          from information_schema.tables
@@ -413,10 +411,10 @@ class IterationControllerTableAppend (IterationControllerNoTableDrop):
                                          """.format(**self.kwargs))[0]['count'] == 1
 
     ## ------------------------------------------------------------------------
-            
+
     def update(self, newState):
         """
-        Update state of calculation. 
+        Update state of calculation.
         """
         newState = newState.format(iteration = self.iteration, **self.kwargs)
         self.iteration += 1

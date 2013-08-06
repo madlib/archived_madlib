@@ -1,233 +1,352 @@
-
 import plpy
 from utilities import __mad_version
+import re
 
 version_wrapper = __mad_version()
 mad_vec = version_wrapper.select_vecfunc()
 
-## ========================================================================
+# Postgresql naming restrictions
+"""
+Both keywords and identifier names in PostgreSQL have a maximum length limit of
+31 characters. Parsed keywords or identifiers over that length limit are
+automatically truncated. Identifiers may begin with any letter (a through z), or
+with an underscore, and may then be followed by letters, numbers (0 through 9),
+or underscores. While keywords are not permitted to start or end with an
+underscore, identifier names are permitted to do so. Neither keywords nor
+identifiers should ever begin with a number.
 
-def __is_tbl_exists(tbl):
+The only instances quotes are required are either when a
+database object's identifier is identical to a keyword, or when the identifier
+has at least one capitalized letter in its name. In either of these
+circumstances, remember to quote the identifier both when creating the
+object, as well as in any subsequent references to that object (e.g., in SELECT,
+DELETE, or UPDATE statements).
+"""
+
+
+## -------------------------------------------------------------------------
+def _unquote_name(input_str):
     """
-    Whether a table exists in the database
+    Returns input_str with starting and trailing double quotes stripped
+
+    If the input_str is not quoted then a lower case version of the string is
+    returned.
+    Args:
+        @param input_str
+
+    Returns:
+        String
     """
-    if tbl is None or tbl.upper() == 'NULL':
-        return plpy.error('Input error: Table name is invalid')
-    tbl = tbl.lower()
-    names = tbl.split(".")
-    if len(names) == 1:
-        return plpy.execute("select count(*) from information_schema.tables where table_name = '{0}'".format(tbl))[0]['count'] > 0
-    elif len(names) == 2:
-        schema = names[0]
-        table = names[1]
-        return plpy.execute("select count(*) from information_schema.tables where table_name = '{table}' and table_schema = '{schema}'".format(table = table, schema = schema))[0]['count'] == 1
+    if input_str:
+        input_str = input_str.strip()
+        if input_str.startswith('"') and input_str.endswith('"'):
+            # if input_str has pair of double quotes within itself
+            #  (not the ones at the two ends) then each pair is same as single
+            #  double quote (the first double quote is used to escape the 2nd
+            #  double quote)
+            return re.sub(r'""', r'"', input_str[1:-1])
+        else:
+            return input_str.lower()
     else:
-        plpy.error("Format error: Table name strange!")
+        return input_str
 
-    return False
 
-## ========================================================================
-
-def __is_tbl_exists_in_schema(tbl):
+# -------------------------------------------------------------------------
+def _get_table_schema_names(tbl):
     """
-    Is the table exist in a schema?
+    Returns a pair containing a set of schema names and the table name from
+    input string.
+
+    The schema name is output as a string representation of the  tuple: (schema
+    names). If input table name is schema qualified then only the specific
+    schema name is included in the tuple string. If it is not schema qualified
+    then all the current schemas (including implicit schemas) are included.
+
+    Note: The table/schema names could be double-quoted. This function unquotes
+    the names by stripping the leading and trailing quotes and replaces every
+    pair of double quotes with a single double quote.
+
+    Args:
+        @param tbl  Input table name (could be schema qualified)
+    Returns:
+        Tuple pair, each element a string
     """
     if tbl is None or tbl.upper() == 'NULL':
-        return plpy.error('Input error: Table name is invalid')
+        plpy.error('Input error: Table name (NULL) is invalid')
     names = tbl.split(".")
-    if len(names) == 1:
-        schema = plpy.execute("select current_schema()")[0]["current_schema"]
-        table = names[0]
-    elif len(names) == 2:
-        schema = names[0]
-        table = names[1]
+    if 1 == len(names):
+        all_schemas = mad_vec(plpy.execute("SELECT current_schemas(True) ""AS cs"
+                                           )[0]["cs"])
+        schema_str = "('{0}')".format("','".join(_unquote_name(s)
+                                                 for s in all_schemas))
+        table = _unquote_name(names[0])
+    elif 2 == len(names):
+        schema_str = "('" + _unquote_name(names[0]) + "')"
+        table = _unquote_name(names[1])
     else:
-        plpy.error("Format error: Table name strange!")
+        plpy.error("Incorrect table name ({0}) provided! Table name should be of the"
+                   " form: <schema name>.<table name>".format(tbl))
+    return (schema_str, table)
+## -------------------------------------------------------------------------
 
-    return plpy.execute("select count(*) from information_schema.tables where table_name = '{table}' and table_schema = '{schema}'".format(table = table, schema = schema))[0]['count'] == 1
 
-## ========================================================================
-
-def __is_tbl_has_rows(tbl):
+def table_exists(tbl):
     """
-    Does the table have rows?
+    Returns True if the table exists in the database.
+
+    If the table name is not schema qualified then current_schemas() is used.
+    The table name is searched in information_schema.tables.
+
+    Args:
+        @param tbl Name of the table. Can be schema qualified. If it is not
+                    qualified then the current schema is used.
+    """
+    schema_str, table = _get_table_schema_names(tbl)
+    does_table_exist = plpy.execute("""
+                                    SELECT EXISTS(
+                                        SELECT 1 FROM information_schema.tables
+                                        WHERE table_name = '{table}'
+                                        AND table_schema IN {schema_str})
+                                    AS table_exists
+                                    """.format(table=table,
+                                               schema_str=schema_str)
+                                    )[0]['table_exists']
+    return bool(does_table_exist)
+#-------------------------------------------------------------------------
+
+
+def table_is_empty(tbl):
+    """
+    Returns True if the input table has no rows
     """
     if tbl is None or tbl.upper() == 'NULL':
-        return plpy.error('Input error: Table name is invalid')
-    content = plpy.execute("select count(*) from (select * from " + tbl + " limit 1) s")[0]["count"]
-    return content == 1
+        plpy.error('Input error: Table name (NULL) is invalid')
+    content = plpy.execute("""SELECT count(*) FROM
+                                (SELECT * FROM {0} LIMIT 1) q1""".
+                           format(tbl))[0]["count"]
+    return not bool(content)   # if content == 0 then True, else False
+#-------------------------------------------------------------------------
 
-## ========================================================================
-def __get_cols_in_schema(tbl, schema_madlib = "madlib"):
+
+def _get_cols_in_current_schema(tbl, schema_madlib="madlib"):
     """
-    Get the column names in a table
+    Get all column names in a table.
+
+    All schemas in current_schemas are searched for the table and the first one
+    found is returned.
+    Note: This function assumes that the table name is *not* qualified with
+    the schema name
     """
     schema = plpy.execute("select current_schemas(True) as cs")[0]["cs"]
+    # special handling for array in GPDB <= 4.1
     schema = mad_vec(schema)
     array_agg_string = version_wrapper.select_array_agg(schema_madlib)
-    sql_string = "select " + array_agg_string + \
-                 """(column_name::varchar) as cols
-                 from information_schema.columns
-                 where table_name = '{table_name}'"""
-    sql_string += " and table_schema = '{s}'"
-    
+    sql_string = "SELECT " + array_agg_string + \
+                 """(column_name::varchar) AS cols
+                    FROM information_schema.columns
+                    WHERE table_name = '{table_name}'
+                    AND table_schema = '{s}'
+                 """
+    tbl = _unquote_name(tbl)
     for s in schema:
+        s = _unquote_name(s)
         existing_cols = plpy.execute(sql_string.format(table_name=tbl,
                                                        s=s))[0]["cols"]
         if existing_cols is not None:
             return mad_vec(existing_cols)
     return None
+#-------------------------------------------------------------------------
 
-## ========================================================================
-def __get_cols(tbl, schema_madlib="madlib"):
+
+def get_cols(tbl, schema_madlib="madlib"):
     """
-    Get the column names in a table
+    Get all column names in a table.
+
+    If the table is schema qualified then the appropriate schema is searched.
+    If no schema qualification is provided then the current schema is used.
     """
     array_agg_string = version_wrapper.select_array_agg(schema_madlib)
+
     if tbl is None or tbl.upper() == 'NULL':
-        return plpy.error('Input error: Table name is invalid')
+        plpy.error('Input error: Table name (NULL) is invalid')
+    if not schema_madlib:
+        plpy.error('Input error: Invalid MADlib schema name')
+
     names = tbl.split(".")
-    sql_string = "select " + array_agg_string + \
-                        """(column_name::varchar) as cols
-                            from information_schema.columns
-                            where table_name = '{table_name}'"""
+
     if len(names) == 1:
-        return __get_cols_in_schema(tbl, schema_madlib)
-        # existing_cols = plpy.execute(sql_string.format(table_name = tbl)\
-        #                              + " limit 1")[0]["cols"]
+        return _get_cols_in_current_schema(tbl, schema_madlib)
     elif len(names) == 2:
-        schema = names[0]
-        table = names[1]
-        sql_string += " and table_schema = '{schema_name}'"
+        schema = _unquote_name(names[0])
+        table = _unquote_name(names[1])
+        sql_string = "SELECT " + array_agg_string + \
+                     """(column_name::varchar) AS cols
+                         FROM information_schema.columns
+                         WHERE table_name = '{table_name}'
+                         AND table_schema = '{schema_name}'"""
         existing_cols = plpy.execute(sql_string.format(table_name=table,
-                                                        schema_name=schema) \
-                                    )[0]["cols"]
+                                                       schema_name=schema)
+                                     )[0]["cols"]
     else:
-        plpy.error("Format error: Table name strange!")
+        plpy.error("Input error: Invalid table name - {0}!".format(tbl))
 
     return mad_vec(existing_cols)
+#-------------------------------------------------------------------------
 
-## ========================================================================
 
-def __is_col_exists(tbl, cols, schema_madlib="madlib"):
+def columns_exist_in_table(tbl, cols, schema_madlib="madlib"):
     """
-    Does each column exist?
+    Does each column exist in the table?
 
     Args:
         @param tbl Name of source table
-        @param cols Iteratable list of column names
+        @param cols Iterable list of column names
         @param schema Schema in which madlib is installed
 
     Returns:
         True if all columns in 'cols' exist in source table else False
     """
-    existing_cols = __get_cols(tbl, schema_madlib)
+    existing_cols = set(get_cols(tbl, schema_madlib))
 
     for col in cols:
-        if col not in existing_cols:
+        col = _unquote_name(col)
+        if not col or col not in existing_cols:
             return False
     return True
+#-------------------------------------------------------------------------
 
-## ========================================================================
 
-def __is_col_exists_in_schema(tbl, cols):
+def is_col_array(tbl, col):
     """
-    Is the column exist in current schema?
-    """
-    schema = plpy.execute("select current_schema()")[0]["current_schema"]
-    existing_cols = __get_cols(tbl, schema)
-    existing_cols = map(str.lower, existing_cols)
-    for col in cols:
-        if col.lower() not in existing_cols:
-            return False
-    return True
-## ========================================================================
+    Return True if the column is of an array datatype
 
-def __is_col_array (tbl, col):
+    Args:
+        @param tbl Name of the table to search. This can be schema qualified,
+                    if it is not qualified then the current_schema is used.
+        @param col Name of the column to check datatype of
+    Returns:
+        Boolean
+    Throws:
+        plpy.error if the column is not found in the table
     """
-    Is the column an array?
-    """
-    names = tbl.split(".")
-    if len(names) == 1:
-        table = names[0]
-        schema_str = ""
-    elif len(names) == 2:
-        schema = names[0]
-        table = names[1]
-        schema_str = " and table_schema = '" + schema + "'"
-    else:
-        plpy.error("Format error: Table name strange!")
+    if not tbl or not col:
+        plpy.error("Input error: Invalid table {0} or column {1} argument".
+                   format(tbl, col))
+    schema_str, table = _get_table_schema_names(tbl)
+    col = _unquote_name(col)
 
-    data_type = plpy.execute(
+    data_type_list = plpy.execute(
         """
-        select data_type from information_schema.columns
-        where table_name = '{table}' and column_name = '{col}' {schema_str}
-        """.format(table = table, col = col, schema_str = schema_str))[0]["data_type"]
+        SELECT data_type FROM information_schema.columns
+        WHERE table_schema IN {schema_str}
+        AND table_name = '{table}'
+        AND column_name = '{col}'
+        """.format(table=table, col=col, schema_str=schema_str))
 
-    return data_type.lower() == "array"
+    if data_type_list:
+        for data_type in data_type_list:
+            if data_type["data_type"].lower() == "array":
+                return True
+        return False
+    else:
+        plpy.error("Column {0} not found in table {1}".format(col, tbl))
+#-------------------------------------------------------------------------
 
-## ========================================================================
 
-def __is_scalar_col_no_null(tbl, col):
+def scalar_col_has_no_null(tbl, col):
     """
-    Does a scalar column have no Null values?
-    """
-    if tbl is None or tbl.upper() == 'NULL':
-        return plpy.error('Input error: Table name is invalid')
-    total_rows = plpy.execute("select count(*) from " + tbl)[0]["count"]
-    col_rows = plpy.execute("select count({col}) from {tbl}".format(col=col, tbl=tbl))[0]["count"]
-    return total_rows == col_rows
-
-## ========================================================================
-
-def __is_array_col_same_dimension(tbl, col):
-    """
-    Do all rows of array col have the same length?
+    Return True if a scalar column has no NULL values?
     """
     if tbl is None or tbl.upper() == 'NULL':
-        return plpy.error('Input error: Table name is invalid')
+        plpy.error('Input error: Table name (NULL) is invalid')
+    if col is None or col.upper() == 'NULL':
+        plpy.error('Input error: Column name is invalid')
+    col_null_rows = plpy.execute("""SELECT count(*)
+                                    FROM {tbl}
+                                    WHERE ({col}) IS NULL
+                                 """.format(col=col, tbl=tbl))[0]["count"]
+    return (col_null_rows == 0)
+#-------------------------------------------------------------------------
+
+
+def array_col_has_same_dimension(tbl, col):
+    """
+    Do all array elements of an array column have the same length?
+    """
+    if tbl is None or tbl.upper() == 'NULL':
+        plpy.error('Input error: Table name (NULL) is invalid')
+    if col is None or col.upper() == 'NULL':
+        plpy.error('Input error: Column name is invalid')
+
     max_dim = plpy.execute("""
-                           select max(array_upper({col}, 1)) as max_dim
-                           from {tbl}
+                           SELECT max(array_upper({col}, 1)) AS max_dim
+                           FROM {tbl}
                            """.format(col=col, tbl=tbl))[0]["max_dim"]
     min_dim = plpy.execute("""
-                           select min(array_upper({col}, 1)) as min_dim
-                           from {tbl}
+                           SELECT min(array_upper({col}, 1)) AS min_dim
+                           FROM {tbl}
                            """.format(col=col, tbl=tbl))[0]["min_dim"]
     return max_dim == min_dim
+#-------------------------------------------------------------------------
 
-## ========================================================================
 
-def __is_array_col_no_null(tbl, col):
+def array_col_has_no_null(tbl, col):
     """
-    Does an array column have any Null values?
+    Return True if an array column has no NULL values?
     """
     if tbl is None or tbl.upper() == 'NULL':
-        return plpy.error('Input error: Table name is invalid')
-    row_len = plpy.execute("select count(*) from {tbl}".format(tbl=tbl))[0]["count"]
+        plpy.error('Input error: Table name (NULL) is invalid')
+    if col is None or col.upper() == 'NULL':
+        plpy.error('Input error: Column name is invalid')
+
+    row_len = plpy.execute("SELECT count(*) from {tbl}".
+                           format(tbl=tbl))[0]["count"]
     dim = plpy.execute("""
-                       select max(array_upper({col}, 1)) as dim
-                       from {tbl}
+                       SELECT max(array_upper({col}, 1)) AS dim
+                       FROM {tbl}
                        """.format(col=col, tbl=tbl))[0]["dim"]
-    for i in range(1,dim+1):
-        l = plpy.execute("select count({col}[{i}]) from {tbl}".format(col=col, tbl=tbl, i=i))[0]["count"]
+    for i in range(1, dim + 1):
+        l = plpy.execute("SELECT count({col}[{i}]) FROM {tbl}".
+                         format(col=col, tbl=tbl, i=i))[0]["count"]
         if row_len != l:
             return False
     return True
+ # -------------------------------------------------------------------------
 
 
-# ========================================================================
-def __is_var_valid (tbl, var):
+def is_var_valid(tbl, var):
     """
     Test whether the variable(s) is valid by actually select it from
     the table
     """
     try:
-        rst = plpy.execute(
+        plpy.execute(
             """
-            select {var} from {tbl} limit 1
-            """.format(var = var, tbl = tbl))
+            SELECT {var} FROM {tbl} LIMIT 1
+            """.format(var=var,
+                       tbl=tbl))
     except Exception:
         return False
     return True
+# -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 
+
+import unittest
+
+
+class TestValidateFunctions(unittest.TestCase):
+
+    def test_table_names(self):
+        self.assertEqual(('test_schema', 'test_table'),
+                         _get_table_schema_names('test_schema.test_table'))
+        self.assertEqual(('"test_schema"', '"test_table"'),
+                         _get_table_schema_names('"test_schema"."test_table"'))
+        self.assertEqual('Test', _unquote_name('"Test"'))
+        self.assertEqual('test', _unquote_name('Test'))
+        self.assertEqual('Test123', _unquote_name('"Test123"'))
+        self.assertEqual('test', _unquote_name('"test"'))
+
+
+if __name__ == '__main__':
+    unittest.main()
