@@ -9,6 +9,7 @@
 #include "linalg/linalg.hpp"
 #include "prob/prob.hpp"
 #include "regress/regress.hpp"
+#include "linear_systems/linear_systems.hpp"
 #include "sample/sample.hpp"
 #include "stats/stats.hpp"
 #include "convex/convex.hpp"

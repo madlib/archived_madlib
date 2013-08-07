@@ -1,0 +1,687 @@
+# coding=utf-8
+
+"""
+@file sparse_linear_systems.py_in
+
+@brief sparse Linear Systems: 
+
+@namespace marginal
+
+@brief Solve sparse Linear Systems
+"""
+import plpy
+
+# use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
+import re
+from utilities.utilities import __mad_version
+from utilities.utilities import __unique_string
+from utilities.validate_args import __is_tbl_exists
+from utilities.validate_args import __is_tbl_exists_in_schema
+from utilities.validate_args import __is_col_exists
+from utilities.validate_args import __is_tbl_has_rows
+from utilities.validate_args import __is_scalar_col_no_null
+from utilities.validate_args import __get_cols
+from utilities.utilities import _string_to_array
+
+version_wrapper = __mad_version()
+string_to_array = version_wrapper.select_vecfunc()
+array_to_string = version_wrapper.select_vec_return()
+
+# Direct method: Algorithms dictionary
+# ========================================================================
+SUPPORTED_SOLVERS = ['direct', 'iterative']
+
+DIRECT_ALG_DICT = {
+'ldlt'          : 1,
+'llt'           : 2}
+
+ITERATIVE_IN_MEM_ALG_DICT = {
+'cg-mem'                   : 1,
+'bicgstab-mem'             : 2,
+'precond-cg-mem'           : 3,
+'precond-bicgstab-mem'     : 4}
+
+# In the future, when iterative disk algorithms are introduced, then these
+# dictionaries should be differnt
+ITERATIVE_ALG_DICT = ITERATIVE_IN_MEM_ALG_DICT
+
+# ========================================================================
+# Validate arguments
+def _validate_args(schema_madlib, 
+                lhs_table, 
+                rhs_table, 
+                out_table,
+                lhs_row_id, 
+                lhs_col_id, 
+                lhs_value, 
+                rhs_row_id,
+                rhs_value,
+                num_vars,
+                grouping_cols,
+                optimizer,
+                optimizer_options):
+    """
+    @brief Validate args for sparse linear systems
+
+    @param lhs_table String identifying the input A matrix
+    @param rhs_table String identifying the input b vector
+    @param out_table String identifying the output table to be created
+    @param lhs_row_id Column name containing the LHS of the equations
+    @param lhs_col_id Column name containing the LHS of the equations
+    @param lhs_value Column name containing the LHS of the equations
+    @param rhs_row_id Column name containing the RHS of the equations
+    @param rhs_value Column name containing the RHS of the equations
+    @param num_vars Number of variables in the system
+    @param grouping_sols Columns to group the linear systems by
+    @param optimzer Optimizer to be used 
+    @param optimzer_options Optimizer options used
+
+    @return void
+
+    """
+
+    # LHS and RHS Tables
+    if not lhs_table or lhs_table in ('null', '') or \
+            (not __is_tbl_exists(lhs_table)):
+        plpy.error("Sparse Linear Systems error: LHS matrix table '%s' does not exist!" % lhs_table)
+    if not rhs_table or lhs_table in ('null', '') or \
+            (not __is_tbl_exists(rhs_table)):
+        plpy.error("Sparse Linear Systems error: RHS table '%s' does not exist!" % rhs_table)
+    if not __is_tbl_has_rows(lhs_table):
+        plpy.error("Sparse Linear Systems error: LHS matrix table is empty!")
+    if not __is_tbl_has_rows(rhs_table):
+        plpy.error("Sparse Linear Systems error: RHS vector table is empty!")
+
+    # Output table checks
+    if out_table.lower() in ('null', ''):
+        plpy.error("Sparse Linear Systems error: Invalid output table name!")
+    if __is_tbl_exists(out_table):
+        plpy.error("Sparse Linear Systems error: Output table already exists!")
+
+    # Empty table checks
+    if not __is_tbl_has_rows(lhs_table):
+        plpy.error("Sparse Linear Systems error: Empty LHS table!")
+    if not __is_tbl_has_rows(rhs_table):
+        plpy.error("Sparse Linear Systems error: Empty RHS table!")
+
+    # Check the names for row_id, lhs and rhs
+    if not lhs_row_id or lhs_row_id.lower() in ('null', ''):
+        plpy.error("Sparse Linear Systems error: Invalid lhs_row_id column name!")
+    if not lhs_col_id or lhs_col_id.lower() in ('null', ''):
+        plpy.error("Sparse Linear Systems error: Invalid lhs_col_id column name!")
+    if not lhs_value or lhs_value.lower() in ('null', ''):
+        plpy.error("Sparse Linear Systems error: Invalid lhs_value column name!")
+    if not rhs_row_id or rhs_row_id.lower() in ('null', ''):
+        plpy.error("Sparse Linear Systems error: Invalid rhs_row_id column name!")
+    if not rhs_value or rhs_value.lower() in ('null', ''):
+        plpy.error("Sparse Linear Systems error: Invalid rhs_value column name!")
+
+    # Now check that the row_id, col_id etc are valid columns in teh table
+    if not __is_col_exists(lhs_table, [lhs_row_id]):
+        plpy.error("""
+                Sparse Linear Systems error: Column {lhs_row_id} does not exist in the table {lhs_table}
+                """.format(lhs_row_id = lhs_row_id,
+                           lhs_table = lhs_table))
+    if not __is_col_exists(lhs_table, [lhs_col_id]):
+        plpy.error("""
+                Sparse Linear Systems error: Column {lhs_col_id} does not exist in the table {lhs_table}
+                """.format(lhs_col_id = lhs_col_id,
+                           lhs_table = lhs_table))
+    if not __is_col_exists(lhs_table, [lhs_value]):
+        plpy.error("""
+                Sparse Linear Systems error: Column {lhs_value} does not exist in the table {lhs_table}
+            """.format(lhs_value= lhs_value,
+                       lhs_table = lhs_table))
+    if not __is_col_exists(rhs_table, [rhs_row_id]):
+        plpy.error("""
+                Sparse Linear Systems error: Column {rhs_row_id} does not exist in the table {rhs_table}
+            """.format(rhs_row_id = rhs_row_id,
+                       rhs_table = rhs_table))
+    if not __is_col_exists(rhs_table, [rhs_value]):
+        plpy.error("""
+                Sparse Linear Systems error: Column {rhs_value} does not exist in the table {rhs_table}
+            """.format(rhs_value= rhs_value,
+                       rhs_table = rhs_table))
+    
+    
+    # Numvars must be positive
+    if num_vars <= 0:
+        plpy.error("Sparse Linear Systems error: Negative or null input for number of variables!")
+        
+    # Check that the optimizer is supported
+    optimizer = optimizer.lower()
+    if optimizer not in SUPPORTED_SOLVERS:
+        plpy.error(""" Sparse Linear Systems error: Optimizer does not exist. Must be in ({supported_solvers}).
+                   """.format(supported_solvers = ", ".join(SUPPORTED_SOLVERS)))
+    if grouping_cols:
+        if not __is_col_exists(lhs_table,
+                               _string_to_array(grouping_cols), schema_madlib):
+            plpy.error("Sparse Linear Systems error: Grouping column does not exist!")
+
+
+# ========================================================================
+# Convert numeric array to SQL string
+def _internal_py_array_to_sql_string(array):
+    """
+    Convert a python list to an SQL ARRAY
+
+    @param array Input python list
+
+    @return output SQL array usable in a query
+    """
+    return "ARRAY[%s]" % ','.join(map(str, array))
+
+# Help function for sparse linear solvers
+# ========================================================================
+def linear_solver_sparse_help(schema_madlib, input_string = None, **kwargs):
+    """
+    Given input string (eg. optimizer name) print out the related
+    information.
+
+    If a family name is given, print out the supported optimizer together
+    with its default optimizer. If an optimizer name is given, print out the 
+    necessary parameters.
+
+    @param input_string Helper function notes depend on the inputs tring 
+    """
+    if input_string is None:
+      input_string = "help"
+    
+    if (input_string.lower() == "usage" ):
+        return """
+        ----------------------------------------------------------------
+                                Usage
+        ----------------------------------------------------------------
+        SELECT {schema_madlib}.linear_solver_sparse(
+            'lhs_tbl_source',  -- Data table (A matrix)
+            'rhs_tbl_source',  -- Data table (b vector)
+            'tbl_result',      -- Result table
+            'lhs_row_id',      -- Name of column containing row_id
+            'lhs_col_id',      -- Name of column containing col_id
+            'lhs_value' ,      -- Name of column containing value
+            'rhs_row_id',      -- Name of column containing row_id
+            'rhs_value' ,      -- Name of column containing value
+             num_vars  ,       -- Number of variables
+            'grouping_cols',   -- Grouping columns (Default: NULL)
+            'optimizer',       -- Name of optimizer. Default: 'direct'
+            'optimizer_params',-- Text array of optimizer parameters
+        );
+        ----------------------------------------------------------------
+                                Ouput
+        ----------------------------------------------------------------
+        The output table (tbl_result in the above) has the following columns:
+        solution          DOUBLE PRECISION[], -- Solution
+        residual_norm     DOUBLE PRECISION,   -- Norm of the residual
+        iters             INTEGER             -- Iterations of the algorithm
+
+
+        ----------------------------------------------------------------
+                                Examples
+        ----------------------------------------------------------------
+        SELECT {schema_madlib}.linear_solver_sparse(
+            'lhs_tbl_source',  -- Data table (A matrix)
+            'rhs_tbl_source',  -- Data table (b vector)
+            'tbl_result',      -- Result table
+            'lhs_row_id',      -- Name of column containing row_id
+            'lhs_col_id',      -- Name of column containing col_id
+            'lhs_value' ,      -- Name of column containing value
+            'rhs_row_id',      -- Name of column containing row_id
+            'rhs_value' ,      -- Name of column containing value
+            50 ,               -- Number of variables
+            'grouping_cols',   -- Grouping columns (default: NULL)
+            'direct',          -- Method used (direct vs iterative)
+            'algorithm = ldlt'  -- Optimizer optional parameters
+        );
+
+        ----------------------------------------------------------------
+                                Summary
+        ----------------------------------------------------------------
+        The following solvers are supported:
+        (1) Direct Methods
+        -------------------
+        SELECT {schema_madlib}.linear_solve_sparse('direct');
+        to see more help.
+
+        (2) Iterative Methods
+        -------------------
+        SELECT {schema_madlib}.linear_solve_sparse('iterative');
+        to see more help.
+        """.format(schema_madlib = schema_madlib)
+    elif input_string.lower() == "direct":
+        return """
+        ----------------------------------------------------------------
+        Direct methods for sparse linear systems (direct) 
+        ----------------------------------------------------------------
+        Direct methods are IN-MEMORY solutions for sparse linear systems.
+        The methods however will not work if the input matrices are larger
+        than 1GB. 
+        
+        There are several algorithms that can be classified as 'direct' methods
+        of solving linear systems. Madlib functions provide various algorithmic 
+        options available for users.
+        
+        Optional Parameters --------------------------------
+        algorithm - DEFAULT is ldlt
+
+               The following table provides a guideline on the choice
+               of algorithm based on conditions on the A matrix,
+               speed of the algorithms and memory usage.
+          
+               Algorithm          | Contitions on A  | Speed | Memory
+               ----------------------------------------------------------
+               llt                | Sym. Pos Def     |  ++   |  ---    
+               ldlt               | Sym. Pos Def     |  ++   |  ---    
+        
+        For memory, '-' uses less memory than '--'
+        For speed, '++' is faster than '+'
+        """
+    elif input_string.lower() == "iterative":
+        return """
+        ----------------------------------------------------------------
+        Iterative methods for sparse linear systems (iterative) 
+        ----------------------------------------------------------------
+        Iterative methods are iterative solutions for sparse linear systems.
+        The methods however will not work if the input matrices are larger
+        than 1GB. 
+        
+        There are several algorithms that can be classified as 'iterative' methods
+        of solving linear systems. Madlib functions provide various algorithmic 
+        options available for users.
+        
+        Optional Parameters --------------------------------
+        algorithm - DEFAULT is cg-mem
+
+               The following table provides a guideline on the choice
+               of algorithm based on conditions on the A matrix,
+               speed of the algorithms and memory usage.
+          
+               Algorithm            | Contitions on A  | Speed | Memory
+               ----------------------------------------------------------
+               cg-mem               | Sym. Pos Def     |  +++  |  -
+               bicgstab-mem         | Square           |  ++   |  -
+               precond-cg-mem       | Sym. Pos Def     |  ++   |  -
+               precond-bicgstab-mem | Square           |  +    |  -
+        
+        For memory, '-' uses less memory than '--'
+        For speed, '++' is faster than '+'
+        """
+    else:
+        return """
+        ----------------------------------------------------------------
+                                Summary
+        ----------------------------------------------------------------
+        The following solvers are supported:
+        (1) Direct Solve
+        --
+        Run:
+        SELECT {schema_madlib}.linear_solve_sparse('direct');
+        to see more help.
+        (2) Iterative Solve
+        --
+        Run:
+        SELECT {schema_madlib}.linear_solve_sparse('iterative');
+        to see more help.
+        --
+        Run:  SELECT {schema_madlib}.linear_solve_sparse('usage');   
+        to see how to use.
+        --
+        """.format(schema_madlib = schema_madlib)
+
+
+
+# Load default options
+# ========================================================================
+def _load_default_options(optimizer):
+    """
+    @brief Function to return a dictionary with default options for the solver
+
+    @param optimzer Optimizer to be used 
+
+    @return dictionary
+
+    """
+    OPTIONS_DICT = {}
+    # Load default options for all solvers here
+    if optimizer == 'direct':
+      OPTIONS_DICT['algorithm'] = 'ldlt'
+    elif optimizer == 'iterative':
+      OPTIONS_DICT['algorithm'] = 'cg-mem'
+      OPTIONS_DICT['toler'] = 1e-5
+      OPTIONS_DICT['maxit'] = 1e5
+
+
+    return OPTIONS_DICT
+
+# ========================================================================
+# Convert numeric array to SQL string
+def _internal_py_array_to_sql_string(array):
+    return "ARRAY[%s]" % ','.join(map(str, array))
+
+
+# Main function for sparse linear solvers
+# ========================================================================
+def linear_solver_sparse(schema_madlib, 
+                        lhs_table, 
+                        rhs_table, 
+                        out_table,
+                        lhs_row_id, 
+                        lhs_col_id, 
+                        lhs_value, 
+                        rhs_row_id,
+                        rhs_value,
+                        num_vars,
+                        grouping_cols,
+                        optimizer,
+                        optimizer_options,
+                        **kwargs):
+
+    """
+    @brief Main function for sparse linear systems
+
+    @param lhs_table String identifying the input A matrix
+    @param rhs_table String identifying the input b vector
+    @param out_table String identifying the output table to be created
+    @param lhs_row_id Column name containing the LHS of the equations
+    @param lhs_col_id Column name containing the LHS of the equations
+    @param lhs_value Column name containing the LHS of the equations
+    @param rhs_row_id Column name containing the RHS of the equations
+    @param rhs_value Column name containing the RHS of the equations
+    @param num_vars Number of variables in the system
+    @param grouping_sols Columns to group the linear systems by
+    @param optimzer Optimizer to be used 
+    @param optimzer_options Optimizer options used
+     
+    @return void
+
+    """
+    # Reset the message level to avoid random messages
+    # -------------------------------------------------------------------------
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    # Validate Inputs
+    # -------------------------------------------------------------------------
+    if optimizer is None:
+        optimizer = "direct"
+    if num_vars is None:
+        num_vars = -1
+    _validate_args(schema_madlib, 
+                        lhs_table, 
+                        rhs_table, 
+                        out_table,
+                        lhs_row_id, 
+                        lhs_col_id, 
+                        lhs_value, 
+                        rhs_row_id,
+                        rhs_value,
+                        num_vars,
+                        grouping_cols,
+                        optimizer,
+                        optimizer_options)
+
+    # Parse optional inputs
+    # -------------------------------------------------------------------------
+    optimizer = optimizer.lower()
+    OPTIONS_DICT = _load_default_options(optimizer)
+    if optimizer_options is not None:
+      optimizer_options = optimizer_options.split(',')
+      for opt in optimizer_options:
+        try:
+          [param, value] = opt.split("=")
+          OPTIONS_DICT[param.strip().lower()] = value.strip().lower()
+        except:
+          plpy.error("""Sparse linear systems error: Optimizer options must be of the form 'param1 = value1, param2 = value2'""")
+
+    # Sparse Linear System Solve
+    # -------------------------------------------------------------------------
+    # Step 1: Calculate the number of equations in the system
+    sql_output = plpy.execute("""
+                SELECT  max({lhs_row_id}) AS numequations,
+                        max({lhs_col_id}) AS max_col_id,
+                        count({lhs_row_id}) AS nnz
+                FROM {lhs_table}
+                """.format( lhs_row_id = lhs_row_id, 
+                            lhs_col_id = lhs_col_id, 
+                            lhs_table = lhs_table))
+    numEquations = int(sql_output[0]['numequations']) + 1
+    nnz = int(sql_output[0]['nnz'])
+    max_col_id  = int(sql_output[0]['max_col_id'])
+    
+    # Check that the columns are consistent with num_vars
+    if num_vars <= max_col_id:
+        plpy.error("""
+                Sparse linear systems error: The num_vars input is {num_vars} but the largest entry in column {lhs_col_id} of table {lhs_table} is {max_col_id}.
+                """.format( num_vars = num_vars,
+                            lhs_table = lhs_table,
+                            lhs_col_id = lhs_col_id,
+                            max_col_id = max_col_id))
+
+    # Step 2: Chose the right solver 
+    if optimizer == 'direct':
+
+      # Call the SQL function to evaluate the direct linear system
+      sparse_solution = _direct_sparse_linear_system_solve(
+                                        schema_madlib,
+                                        lhs_table,
+                                        rhs_table,
+                                        lhs_row_id, 
+                                        lhs_col_id, 
+                                        lhs_value, 
+                                        rhs_row_id,
+                                        rhs_value,
+                                        numEquations,
+                                        num_vars,
+                                        nnz,
+                                        OPTIONS_DICT)
+    elif optimizer == 'iterative':
+      
+      # Call the SQL function to evaluate the iterative linear system
+      # Warning: Some iterative solvers are in-memory while others are on disk
+      sparse_solution = _iterative_sparse_linear_system_solve(
+                                        schema_madlib,
+                                        lhs_table,
+                                        rhs_table,
+                                        lhs_row_id, 
+                                        lhs_col_id, 
+                                        lhs_value, 
+                                        rhs_row_id,
+                                        rhs_value,
+                                        numEquations,
+                                        num_vars,
+                                        nnz,
+                                        OPTIONS_DICT)
+
+    # Step 3: Insert the solution stats into table
+    plpy.execute("""
+      CREATE TABLE {out_table} (
+      solution      DOUBLE PRECISION[],
+      residual_norm DOUBLE PRECISION,
+      iters         INTEGER)
+      """.format(
+        out_table = out_table))
+    solution = sparse_solution["solution"]
+    residual_norm = sparse_solution["residual_norm"]
+    iters = sparse_solution["iters"]
+    
+    # Check for NULL (Convert to None)
+    if iters is None:
+      iters = "NULL"
+    if residual_norm is None:
+      residual_norm = "NULL"
+    
+    insert_string = """
+        INSERT INTO {out_table} VALUES ({solution}, {residual_norm}, {iters});
+        """.format(out_table = out_table,
+                  solution = _internal_py_array_to_sql_string(solution),
+                  residual_norm = residual_norm,
+                  iters = iters)
+    
+    # Step 4: Clean up output to make sure infinity and nan are cast properly
+    insert_string = re.sub('Infinity|inf', "'Infinity'::double precision", insert_string)
+    insert_string = re.sub('Nan|nan', "'Nan'::double precision", insert_string)
+    plpy.execute(insert_string)
+    
+    # Reset the message level
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+
+
+# ========================================================================
+# Iterative sparse linear systems
+def _iterative_sparse_linear_system_solve(schema_madlib,
+                                      lhs_table,
+                                      rhs_table,
+                                      lhs_row_id, 
+                                      lhs_col_id, 
+                                      lhs_value, 
+                                      rhs_row_id,
+                                      rhs_value,
+                                      numEquations,
+                                      numVars,
+                                      nnz,
+                                      OPTIONS_DICT):
+    """
+    @brief Run SQL for sparse direct linear systems
+
+    @param schema_madlib Schema for Madlib
+    @param lhs_table String identifying the input table
+    @param row_id Column name with row_id
+    @param left_hand_side Column name containing the LHS of the equations
+    @param right_hand_side Column name containing the RHS of the equations
+    @param numEquations Number of equations in the linear system
+    @param OPTIONS_DICT Dictionary with options
+
+    @return output_solution Dictionary pointing to SQL objects with the solution 
+    """
+
+    # Check that the options provided in the input are supported
+    if OPTIONS_DICT['algorithm'] not in ITERATIVE_ALG_DICT.keys():
+      plpy.error("""Iterative method supports only algorithms in ({alg_list}) 
+                  """.format(alg_list = ','.join(ITERATIVE_ALG_DICT.keys())))
+  
+    # Convert the algorithm string to the option (integer)
+    algorithm = ITERATIVE_ALG_DICT[OPTIONS_DICT['algorithm']]
+    termToler = float(OPTIONS_DICT['toler'])
+    maxIter = int(OPTIONS_DICT['maxit'])
+
+
+    # In memory iterative solvers
+    if OPTIONS_DICT['algorithm'] in ITERATIVE_IN_MEM_ALG_DICT:
+
+        # Run the SQL for sparse direct linear systems
+        sparse_solution = plpy.execute("""
+                  SELECT (output).* 
+                  FROM (
+                    SELECT {schema_madlib}.sparse_inmem_iterative_linear_system(
+                              ({lhs_table}.{lhs_row_id})::INTEGER,
+                              ({lhs_table}.{lhs_col_id})::INTEGER,
+                              {lhs_table}.{lhs_value},
+                              coalesce({rhs_table}.{rhs_value}, 0),
+                              {numEquations},
+                              {numVars},
+                              {nnz},
+                              {algorithm},
+                              {maxIter},
+                              {termToler}
+                            ) AS output
+                    FROM {lhs_table} LEFT JOIN {rhs_table} on 
+                        ({lhs_table}.{lhs_row_id} = {rhs_table}.{rhs_row_id}) )q
+                """.format(
+                      schema_madlib = schema_madlib,
+                      lhs_table = lhs_table,
+                      rhs_table = rhs_table,
+                      lhs_row_id = lhs_row_id,
+                      lhs_col_id = lhs_col_id,
+                      lhs_value = lhs_value,
+                      rhs_value = rhs_value,
+                      rhs_row_id = rhs_row_id,
+                      numEquations = numEquations,
+                      numVars = numVars,
+                      nnz = nnz,
+                      algorithm = algorithm,
+                      maxIter = maxIter,
+                      termToler = termToler
+                      ))
+
+        output_solution = {}
+        output_solution["solution"] = string_to_array(sparse_solution[0]["solution"])
+        output_solution["iters"] = sparse_solution[0]["iters"]
+        output_solution["residual_norm"] = sparse_solution[0]["residual_norm"]
+
+        return output_solution
+
+# ========================================================================
+# Direct sparse linear systems
+def _direct_sparse_linear_system_solve(schema_madlib,
+                                      lhs_table,
+                                      rhs_table,
+                                      lhs_row_id, 
+                                      lhs_col_id, 
+                                      lhs_value, 
+                                      rhs_row_id,
+                                      rhs_value,
+                                      numEquations,
+                                      numVars,
+                                      nnz,
+                                      OPTIONS_DICT):
+    """
+    @brief Run SQL for sparse direct linear systems
+
+    @param schema_madlib Schema for Madlib
+    @param lhs_table String identifying the input table
+    @param row_id Column name with row_id
+    @param left_hand_side Column name containing the LHS of the equations
+    @param right_hand_side Column name containing the RHS of the equations
+    @param numEquations Number of equations in the linear system
+    @param OPTIONS_DICT Dictionary with options
+
+    @return output_solution Dictionary pointing to SQL objects with the solution 
+    """
+
+    # Check that the options provided in the input are supported
+    if OPTIONS_DICT['algorithm'] not in DIRECT_ALG_DICT.keys():
+      plpy.error("""Direct method supports only algorithms in ({alg_list}) 
+                  """.format(alg_list = ','.join(DIRECT_ALG_DICT.keys())))
+  
+    # Convert the algorithm string to the option (integer)
+    algorithm = DIRECT_ALG_DICT[OPTIONS_DICT['algorithm']]
+
+    # Run the SQL for sparse direct linear systems
+    sparse_solution = plpy.execute("""
+              SELECT (output).* 
+              FROM (
+                SELECT {schema_madlib}.sparse_direct_linear_system(
+                          ({lhs_table}.{lhs_row_id})::INTEGER,
+                          ({lhs_table}.{lhs_col_id})::INTEGER,
+                          {lhs_table}.{lhs_value},
+                          coalesce({rhs_table}.{rhs_value}, 0),
+                          {numEquations},
+                          {numVars},
+                          {nnz},
+                          {algorithm}
+                        ) AS output
+                FROM {lhs_table} LEFT JOIN {rhs_table} on 
+                    ({lhs_table}.{lhs_row_id} = {rhs_table}.{rhs_row_id}) )q
+            """.format(
+                  schema_madlib = schema_madlib,
+                  lhs_table = lhs_table,
+                  rhs_table = rhs_table,
+                  lhs_row_id = lhs_row_id,
+                  lhs_col_id = lhs_col_id,
+                  lhs_value = lhs_value,
+                  rhs_value = rhs_value,
+                  rhs_row_id = rhs_row_id,
+                  numEquations = numEquations,
+                  numVars = numVars,
+                  nnz = nnz,
+                  algorithm = algorithm
+                  ))
+
+    output_solution = {}
+    output_solution["solution"] = string_to_array(sparse_solution[0]["solution"])
+    output_solution["iters"] = None
+    output_solution["residual_norm"] = sparse_solution[0]["residual_norm"] 
+    return output_solution

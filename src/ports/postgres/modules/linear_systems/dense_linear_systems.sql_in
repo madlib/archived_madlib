@@ -1,0 +1,525 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file dense_linear_sytems.sql_in
+ *
+ * @brief SQL functions for linear systems
+ * @date January 2011
+ *
+ * @sa Computes the solution of a consistent linear system
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_dense_linear_solver
+
+@about
+
+The linear systems module implements solution methods for systems of a consistent
+linear equations.
+\f[
+  Ax = b
+\f]
+
+where \f$x \in \mathbb{R}^{n}\f$, \f$A \in \mathbb{R}^{m \times n} \f$ and \f$b \in \mathbb{R}^{m}\f$. 
+We assume that there are no rows of \f$A\f$ where all elements are zero. 
+The algorithms implemented in this module can handle large dense
+linear systems. Currently, the algorithms implemented in this module
+solve the lienar system by a direct decomposition. Hence, these methods are 
+known as <em>direct method</em>. 
+
+@par Online Help
+
+View short help messages using the following statements:
+@verbatim 
+-- Summary of dense linear systems
+SELECT madlib.linear_solver_dense();
+
+-- Function syntax and output table format
+SELECT madlib.linear_solver_dense('usage');
+
+-- Syntax for direct methods
+SELECT madlib.linear_solver_dense('direct');
+@endverbatim
+
+@usage
+
+<pre>
+SELECT {schema_madlib}.linear_solve_dense (
+    'tbl_source',      -- Data table
+    'tbl_result',      -- Result table
+    'row_id',          -- Name of column containing row_id
+    'left_hand_side',  -- Left Hand Side of the equations
+    'right_hand_side', -- Right Hand side of the equations
+    'grouping_cols',   -- Grouping columns (Default: NULL)
+    'optimizer',       -- Name of optimizer. Default: 'direct'
+    'optimizer_params' -- Text array of optimizer parameters
+);
+</pre>
+
+The input data is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>sourceName</em> (
+    ...
+    <em>row_id</em> FLOAT8,
+    <em>left_hand_side</em> FLOAT8[],
+    <em>right_hand_side</em> FLOAT8,
+    ...
+)</pre>
+
+Here, each row represents a single equation using. The <em> rhs </em> refers
+to the right hand side of the equations while the <em> lhs_array </em>
+refers to the multipliers on the variables on the left hand side of the same
+equations. 
+
+Output is stored in the <em>tbl_result</em>
+@verbatim
+    tbl_result      |   Data Types
+--------------------|---------------------
+solution            | DOUBLE PRECISION[]
+residual_norm       | DOUBLE PRECISIOn
+iters               | INTEGER
+@endverbatim
+
+@par Syntax
+
+<pre>
+SELECT dense_linear_sytems('tbl_source', 'tbl_result', 'row_id', 'LHS', 
+                'RHS', NULL, 'direct', 'algorithm = householderqr');
+</pre>
+
+<DL>
+<DT>tbl_source</DT>
+<DD>Text value. The name of the table containing the training data.</DD>
+
+<DT>tbl_result</DT>
+<DD>Text value. The name of the table where the output is saved.</DD>
+
+<DT>row_id</DT>
+<DD>Text value. The name of the column storing the 'row id' of the equations.</DD>
+
+\note For a system with N equations, the row_id's must be a continuous
+range of integers from \f$ 0 \ldots n-1 \f$.
+
+<DT>left_hand_size</DT>
+<DD>Text value. The name of the column storing the 'left hand size' of the 
+equations stored as an array.</DD>
+
+<DT>right_hand_size</DT>
+<DD>Text value. The name of the column storing the 'right hand size' of the 
+equations.</DD>
+
+<DT>grouping_col (optional) </DT>
+<DD>Text value. Group by columns. Default: NULL.</DD>
+\note The grouing columns is a placeholder in MADlib V1.1
+
+<DT>optimizer (optional) </DT>
+<DD>Text value. Type of optimizer. Default: 'direct'.</DD>
+
+<DT>optimizer_params (optional) </DT>
+<DD>Text value. Optimizer specific parameters. Default: NULL.</DD>
+</DL>
+
+
+@par Optimizer Parameters
+
+For each optimizer, there are specific parameters that can be tuned
+for better performance.
+
+<DL>
+<DT>algorithm (default: householderqr)</dT>
+<DD>
+
+  There are several algorithms that can be classified as 'direct' methods
+  of solving linear systems. MADlib dense linear system solvers provide 
+  various algorithmic options for users.
+  
+  The following table provides a guideline on the choice of algorithm based 
+  on conditions on the A matrix, speed of the algorithms and numerical stability.
+    
+       Algorithm            | Contitions on A  | Speed | Accuracy
+       ----------------------------------------------------------
+       householderqr        | None             |  ++   |  +
+       partialpivlu         | Invertable       |  ++   |  +
+       fullpivlu            | None             |  -    |  +++    
+       colpivhouseholderqr  | None             |  +    |  ++
+       fullpivhouseholderqr | None             |  -    |  +++
+       llt                  | Pos. Definite    |  +++  |  +
+       ldlt                 | Pos. or Neg Def  |  +++  |  ++
+
+    More details about the individual algorithms can be found on the  <a href="http://eigen.tuxfamily.org/dox-devel/group__TutorialLinearAlgebra.html"> Eigen documentation</a>.  Eigen is an open source library for linear algebra.
+
+
+</DD>
+</DL>
+
+
+@par Output statistics 
+
+<DL>
+<DT>solution</dT>
+<DD>
+The solution is an array (of double precision) with the variables in the same
+order as that provided as input in the 'left_hand_side' column name of the
+'source_table'
+</DD>
+
+<DT>residual_norm</dT>
+<DD>
+Computes the scaled residual norm, defined as \f$ \frac{|Ax - b|}{|b|} \f$
+gives the user an indication of the accuracy of the solution.
+</DD>
+
+<DT>iters</dT>
+<DD>`
+The number of iterations required by the algorithm (only applicable for 
+ iterative algorithms). The output is NULL for
+'direct' methods. 
+</DD>
+
+</DL>
+
+
+
+
+
+
+@examp
+
+-#  Create the sample data set:
+\verbatim
+sql>  CREATE TABLE source_table (id INTEGER NOT NULL, 
+                                 lhs DOUBLE PRECISION[],
+                                 rhs DOUBLE PRECISION);
+sql> INSERT INTO linear_systems_test_data(id, a, b) VaLUES
+        (0, ARRAY[1,0,0], 20),
+        (1, ARRAY[0,1,0], 15),
+        (2, ARRAY[0,0,1], 20);
+\endverbatim
+
+-# Solve the linear systems with default parameters
+\verbatim
+sql> SELECT madlib.linregr_train('source_table', 
+                                 'output_table', 
+                                 'id',
+                                 'lhs',
+                                 'rhs');
+\endverbatim
+
+-# Obtain the output from the output table
+\verbatim
+sql> SELECT * FROM output_table;
+--------------------+-------------------------------------
+solution            | {20,15,20}
+residual_norm       | 0
+iters               | NULL
+\endverbatim
+
+
+-# Chose a different algorithm than the default algorithm
+\verbatim
+drop table if exists result_table;
+select madlib.linear_solver_dense(
+       'linear_systems_test_data',
+       'result_table',
+       'id',
+       'a',
+       'b',
+        NULL,
+       'direct',
+       'algorithm=llt'
+       );
+\endverbatim
+
+\anchor Background
+@background
+
+
+@sa File dense_linear_sytems.sql_in documenting the SQL functions.
+
+@internal
+@sa Namespace \ref madlib::modules::linear_systems documenting the implementation in C++
+@endinternal
+*/
+
+------------------ Linear Systems  ------------------------------
+
+CREATE TYPE MADLIB_SCHEMA.dense_linear_solver_result AS (
+    solution      DOUBLE PRECISION[],
+    residual_norm DOUBLE PRECISION,
+    iters         INTEGER
+);
+
+CREATE TYPE MADLIB_SCHEMA.residual_norm_result AS (
+    residual_norm DOUBLE PRECISION
+);
+
+
+------------------------ Compute the residuals ------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.dense_residual_norm_transition(
+    state   MADLIB_SCHEMA.bytea8,
+    a       DOUBLE PRECISION[],
+    b       DOUBLE PRECISION,
+    x       DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.dense_residual_norm_merge_states(
+    state1 MADLIB_SCHEMA.bytea8,
+    state2 MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.dense_residual_norm_final(
+    state MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.residual_norm_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+/**
+ * @brief Compute the residual after solving the dense linear systems
+ *
+ * @param left_hand_side Column containing the left hand side of the system
+ * @param right_hand_side Column containing the right hand side of the system
+ * @param solution Solution of the linear system
+ *
+ *
+ * @return residual_norm FLOAT8:
+ *
+ * @usage
+ *  - Get all the diagnostic statistics:\n
+ *
+ *  <pre> SELECT dense_residual_norm(<em>row_id</em>,
+ *	                                 <em>left_hand_side</em>, 
+ *	                                 <em> right_hand_side </em>, 
+ *	                                 <em> solution </em>)
+ *	FROM <em>dataTable</em>;
+ * </pre>
+ */
+
+CREATE AGGREGATE MADLIB_SCHEMA.dense_residual_norm(
+	  /*+ "left_hand_side" */   DOUBLE PRECISION[],
+    /*+ "right_hand_side" */  DOUBLE PRECISION,
+	  /*+ "solution" */         DOUBLE PRECISION[])(
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.dense_residual_norm_transition,
+    m4_ifdef(`__GREENPLUM__',`PREFUNC=MADLIB_SCHEMA.dense_residual_norm_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.dense_residual_norm_final,
+    INITCOND=''
+);
+
+------------------ Direct Method ------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.dense_direct_linear_system_transition(
+    state   DOUBLE PRECISION[],
+    row_id  INTEGER,
+    a       DOUBLE PRECISION[],
+    b       DOUBLE PRECISION,
+    num_rows  INTEGER,
+    algorithm INTEGER)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.dense_direct_linear_system_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.dense_direct_linear_system_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.dense_linear_solver_result
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+
+/**
+ * @brief Solve a system of linear equations using the direct method
+ *
+ * @param row_id Column containing the row_id
+ * @param left_hand_side Column containing the left hand side of the system
+ * @param right_hand_side Column containing the right hand side of the system
+ * @param numEquations Number of equations
+ * @param algorithm Algorithm used for the dense linear solver
+ *
+ *
+ * @return A composite value:
+ *  - <tt>solution FLOAT8[] </tt>          - Array of marginal effects
+ *  - <tt>residual_norm FLOAT8</tt>        - Norm of the residual 
+ *  - <tt>iters INTEGER</tt>               - Iterations taken
+ *
+ * @usage
+ *  - Get all the diagnostic statistics:\n
+ *
+ *  <pre> SELECT linear_system_dense(<em>row_id</em>,
+ *	                                 <em>left_hand_side</em>, 
+ *	                                 <em> right_hand_side </em>, 
+ *	                                 <em> numEquations </em>)
+ *	FROM <em>dataTable</em>;
+ * </pre>
+ */
+
+CREATE AGGREGATE MADLIB_SCHEMA.dense_direct_linear_system(
+	  /*+ "row_id" */           INTEGER,
+	  /*+ "left_hand_side" */   DOUBLE PRECISION[],
+    /*+ "right_hand_side" */  DOUBLE PRECISION,
+    /*+ "numEquations" */     INTEGER,
+    /*+ "algorithm" */        INTEGER)(
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.dense_direct_linear_system_transition,
+    m4_ifdef(`__GREENPLUM__',`PREFUNC=MADLIB_SCHEMA.dense_direct_linear_system_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.dense_direct_linear_system_final,
+    INITCOND='{0,0,0,0,0,0}'
+);
+
+
+--------------------------- Interface ----------------------------------
+
+/**
+ * @brief Help function, to print out the supported families
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_solver_dense(
+    input_string VARCHAR
+)
+RETURNS VARCHAR AS $$
+PythonFunction(linear_systems, dense_linear_systems, linear_solver_dense_help)
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_solver_dense()
+RETURNS VARCHAR AS $$
+BEGIN
+  RETURN MADLIB_SCHEMA.linear_solver_dense('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+/**
+  @brief A wrapper function for the various marginal linear_systemsion analyzes.
+ *
+ * @param source_table String identifying the input table
+ * @param out_table String identifying the output table to be created
+ * @param row_id Column containing the row_id
+ * @param left_hand_side Column containing the left hand side of the system
+ * @param right_hand_side Column containing the right hand side of the system
+ * @param grouping_cols Columns to group by
+ * @param optimzer Optimizer to be used 
+ * @param optimzer_options Optimal parameters for the algorithms
+ *
+ *
+ * @return void
+ *
+ * @usage
+ * For function summary information. Run
+ * sql> select linear_solver_dense('help');
+ * OR
+ * sql> select linear_solver_dense();
+ * OR
+ * sql> select linear_solver_dense('?');
+ * For function usage information. Run
+ * sql> select linear_solver_dense('usage');
+ *
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_solver_dense(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , row_id                     VARCHAR       -- name of the column containing row_id
+   , left_hand_side             VARCHAR       -- name of columns with lhs
+   , right_hand_side            VARCHAR       -- name of columns with rhs
+   , grouping_cols              VARCHAR       -- name of columns to group by
+   , optimizer                  VARCHAR       -- Name of the optimizer
+   , optimizer_options          VARCHAR       -- Optimal parameters of the optimizer
+  )
+RETURNS VOID AS $$
+PythonFunction(linear_systems, dense_linear_systems, linear_solver_dense)
+$$ LANGUAGE plpythonu;
+
+
+
+-- Default Variable calls for linear_solver_dense
+------------------------------------------------------------------------------
+
+/**
+  * @brief Marginal effects with default variables
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_solver_dense(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , row_id                     VARCHAR       -- name of the column containing row_id
+   , left_hand_side             VARCHAR       -- name of columns with lhs
+   , right_hand_side            VARCHAR       -- name of columns with rhs
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.linear_solver_dense(
+                              source_table,
+                              out_table,
+                              row_id,
+                              left_hand_side,
+                              right_hand_side,
+                              NULL,
+                              'direct',
+                              NULL);
+
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+
+/**
+  * @brief Marginal effects with default variables
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_solver_dense(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , row_id                     VARCHAR       -- name of the column containing row_id
+   , left_hand_side             VARCHAR       -- name of columns with lhs
+   , right_hand_side            VARCHAR       -- name of columns with rhs
+   , grouping_cols              VARCHAR       -- name of columns to group by
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.linear_solver_dense(
+                              source_table,
+                              out_table,
+                              row_id,
+                              left_hand_side,
+                              right_hand_side,
+                              grouping_cols,
+                              'direct',
+                              NULL);
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+/**
+  * @brief Marginal effects with default variables
+ **/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_solver_dense(
+     source_table               VARCHAR       -- name of input  table
+   , out_table                  VARCHAR       -- name of output table
+   , row_id                     VARCHAR       -- name of the column containing row_id
+   , left_hand_side             VARCHAR       -- name of columns with lhs
+   , right_hand_side            VARCHAR       -- name of columns with rhs
+   , grouping_cols              VARCHAR       -- name of columns to group by
+   , optimizer                  VARCHAR       -- Name of the optimizer
+  )
+RETURNS VOID AS $$
+BEGIN
+  PERFORM MADLIB_SCHEMA.linear_solver_dense(
+                              source_table,
+                              out_table,
+                              row_id,
+                              left_hand_side,
+                              right_hand_side,
+                              grouping_cols,
+                              optimizer,
+                              NULL);
+END;
+$$ LANGUAGE plpgsql VOLATILE;

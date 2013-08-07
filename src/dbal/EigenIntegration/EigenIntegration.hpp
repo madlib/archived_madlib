@@ -26,6 +26,7 @@ typedef Eigen::MatrixXd Matrix;
 typedef EIGEN_DEFAULT_DENSE_INDEX_TYPE Index;
 
 typedef Eigen::SparseVector<double> SparseColumnVector;
+typedef Eigen::SparseMatrix<double> SparseMatrix;
 
 enum ViewMode {
     Lower = Eigen::Lower,

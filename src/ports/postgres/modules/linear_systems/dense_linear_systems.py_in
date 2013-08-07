@@ -1,0 +1,479 @@
+# coding=utf-8
+
+"""
+@file dense_linear_systems.py_in
+
+@brief Dense Linear Systems: 
+
+@namespace marginal
+
+@brief Solve Dense Linear Systems
+"""
+import plpy
+
+# use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
+import re
+from utilities.utilities import __mad_version
+from utilities.utilities import __unique_string
+from utilities.validate_args import __is_tbl_exists
+from utilities.validate_args import __is_col_exists
+from utilities.validate_args import __is_tbl_has_rows
+from utilities.validate_args import __is_scalar_col_no_null
+from utilities.validate_args import __get_cols
+from utilities.utilities import _string_to_array
+
+version_wrapper = __mad_version()
+string_to_array = version_wrapper.select_vecfunc()
+array_to_string = version_wrapper.select_vec_return()
+
+# Direct method: Algorithms dictionary
+# ========================================================================
+DIRECT_ALG_DICT = {
+'partialpivlu'        : 1,
+'fullpivlu'           : 2,
+'householderqr'       : 3,
+'colpivhouseholderqr' : 4, 
+'fullpivhouseholderqr': 5,
+'llt'                 : 6,
+'ldlt'                : 7}  
+
+# ========================================================================
+# Validate arguments
+def _validate_args(schema_madlib, 
+                source_table, 
+                out_table,
+                row_id, 
+                left_hand_side,
+                right_hand_side,
+                grouping_cols,
+                optimizer,
+                optimizer_options):
+    """
+    @brief Validate args for dense linear systems
+
+    @param source_table String identifying the input table
+    @param out_table String identifying the output table to be created
+    @param left_hand_side Column name containing the LHS of the equations
+    @param right_hand_side Column name containing the RHS of the equations
+    @param grouping_sols Columns to group the linear systems by
+    @param optimzer Optimizer to be used 
+    @param optimzer_options Optimizer options used
+
+    @return void
+
+    """
+    if not source_table or source_table in ('null', '') or \
+            (not __is_tbl_exists(source_table)):
+        plpy.error("Dense Linear Systems error: Data table does not exist!")
+
+    if not __is_tbl_has_rows(source_table):
+        plpy.error("Dense Linear Systems error: Data table is empty!")
+
+    if out_table.lower() in ('null', ''):
+        plpy.error("Dense Linear Systems error: Invalid output table name!")
+
+    if __is_tbl_exists(out_table):
+        plpy.error("Dense Linear Systems error: Output table already exists!")
+
+    # Check the names for row_id, lhs and rhs
+    if not row_id or row_id.lower() in ('null', ''):
+        plpy.error("Dense Linear Systems error: Invalid row_id column name!")
+    if not left_hand_side or left_hand_side.lower() in ('null', ''):
+        plpy.error("Dense Linear Systems error: Invalid left_hand_side column name!")
+    if not right_hand_side or right_hand_side.lower() in ('null', ''):
+        plpy.error("Dense Linear Systems error: Invalid right_hand_side column name!")
+
+    # Now check that the column names exist in the table
+    if not __is_col_exists(source_table, [row_id]):
+       plpy.error("""
+           Dense Linear Systems error: Column name {row_id} does not exist in table {source_table}
+           """.format(row_id = row_id, 
+                       source_table = source_table))
+    if not __is_col_exists(source_table, [left_hand_side]):
+       plpy.error("""
+           Dense Linear Systems error: Column name {left_hand_side} does not exist in table {source_table}
+           """.format( left_hand_side = left_hand_side, 
+                       source_table = source_table))
+    if not __is_col_exists(source_table, [right_hand_side]):
+       plpy.error("""
+           Dense Linear Systems error: Column name {right_hand_side} does not exist in table {source_table}
+           """.format( right_hand_side = right_hand_side, 
+                       source_table = source_table))
+
+    
+    # Check that the optimizer is supported
+    optimizer = optimizer.lower()
+    if optimizer not in ["direct"]:
+        plpy.error(""" 
+            Dense Linear Systems error: Optimizer '{optimizer}' does not exist.
+            Madlib currently supports 'direct'.
+                   """.format(optimizer = optimizer))
+
+    if grouping_cols:
+        if not __is_col_exists(source_table,
+                               _string_to_array(grouping_cols), schema_madlib):
+            plpy.error("Dense Linear Systems error: Grouping column does not exist!")
+
+
+# ========================================================================
+# Convert numeric array to SQL string
+def _internal_py_array_to_sql_string(array):
+    """
+    Convert a python list to an SQL ARRAY
+
+    @param array Input python list
+
+    @return output SQL array usable in a query
+    """
+    return "ARRAY[%s]" % ','.join(map(str, array))
+
+# Help function for dense linear solvers
+# ========================================================================
+def linear_solver_dense_help(schema_madlib, input_string = None, **kwargs):
+    """
+    Given input string (eg. optimizer name) print out the related
+    information.
+
+    If a family name is given, print out the supported optimizer together
+    with its default optimizer. If an optimizer name is given, print out the 
+    necessary parameters.
+
+    @param input_string Helper function notes depend on the inputs tring 
+    """
+    if input_string is None:
+      input_string = "help"
+    
+    if (input_string.lower() == "usage" ):
+        return """
+        ----------------------------------------------------------------
+                                Usage
+        ----------------------------------------------------------------
+        SELECT {schema_madlib}.linear_solver_dense (
+            'tbl_source',      -- Data table
+            'tbl_result',      -- Result table
+            'row_id',          -- Name of column containing row_id (zero base)
+            'left_hand_side',  -- Left Hand Side of the equations
+            'right_hand_side', -- Right Hand side of the equations
+            'grouping_cols',   -- Grouping columns (Default: NULL)
+            'optimizer',       -- Name of optimizer. Default: 'direct'
+            'optimizer_params' -- Text array of optimizer parameters
+        );
+        ----------------------------------------------------------------
+                                Ouput
+        ----------------------------------------------------------------
+        The output table (tbl_result in the above) has the following columns:
+        solution          DOUBLE PRECISION[], -- Solution
+        residual_norm     DOUBLE PRECISION,   -- Norm of the residual
+        iters             INTEGER             -- Iterations of the algorithm
+
+
+        ----------------------------------------------------------------
+                                Examples
+        ----------------------------------------------------------------
+        SELECT {schema_madlib}.linear_solver_dense(
+            'tbl_input',      -- Input table which contains the matrix
+            'tbl_result',     -- Output table where the results are stored
+            'row_id',         -- Column name containing the row_id (zero base)
+            'LHS',            -- Column name containing the LHS
+            'RHS',            -- Column name containing the RHS
+             NULL,            -- Grouping columns
+             'direct',        -- Classification of method used (direct)
+             'algorithm = householderqr'  -- Optional parameters
+        );
+        
+        ----------------------------------------------------------------
+                                Summary
+        ----------------------------------------------------------------
+        The following solvers are supported:
+        (1) Direct Solve
+        --
+        Run:
+        SELECT {schema_madlib}.linear_solve_dense('direct');
+        to see more help.
+        --
+        Run:  SELECT {schema_madlib}.linear_solve_dense('usage');   
+        to see how to use.
+
+        """.format(schema_madlib = schema_madlib)
+    elif input_string.lower() == "direct":
+        return """
+        ----------------------------------------------------------------
+        Direct methods for dense linear systems (direct) 
+        ----------------------------------------------------------------
+        Direct methods are IN-MEMORY solutions for dense linear systems.
+        They are numerically stable and are not effected by ill-conditioning.
+        The methods however will not work if the input matrices are larger
+        than 1GB.
+        
+        There are several algorithms that can be classified as 'direct' methods
+        of solving linear systems. MADlib dense linear system solvers provide 
+        various algorithmic options for users.
+        
+        Optional Parameters --------------------------------
+        algorithm - DEFAULT is householderqr
+
+                    The following table provides a guideline on the choice
+                    of algorithm based on conditions on the A matrix,
+                    speed of the algorithms and numerical stability.
+          
+                    Algorithm            | Contitions on A  | Speed | Accuracy
+                    ----------------------------------------------------------
+                    partialpivlu         | Invertable       |  ++   |  +
+                    fullpivlu            | None             |  -    |  +++    
+                    householderqr        | None             |  ++   |  +
+                    colpivhouseholderqr  | None             |  +    |  ++
+                    fullpivhouseholderqr | None             |  -    |  +++
+                    llt                  | Pos. Definite    |  +++  |  +
+                    ldlt                 | Pos. or Neg Def  |  +++  |  ++
+
+        For speed '++' is faster than '+' and faster than '-'.
+        For accuracy '+++' is better than '++'.
+        
+        """
+    else:
+        return """
+        ----------------------------------------------------------------
+                                Summary
+        ----------------------------------------------------------------
+        The following solvers are supported:
+        (1) Direct Solve
+        --
+        Run:
+        SELECT {schema_madlib}.linear_solve_dense('direct');
+        to see more help.
+        --
+        Run:  SELECT {schema_madlib}.linear_solve_dense('usage');   
+        to see how to use.
+        --
+        """.format(schema_madlib = schema_madlib)
+
+
+
+# Load default options
+# ========================================================================
+def _load_default_options(optimizer):
+    """
+    @brief Function to return a dictionary with default options for the solver
+
+    @param optimzer Optimizer to be used 
+
+    @return dictionary
+
+    """
+    OPTIONS_DICT = {}
+    if optimizer == 'direct':
+      OPTIONS_DICT['algorithm'] = 'householderqr'
+
+
+    return OPTIONS_DICT
+
+# ========================================================================
+# Convert numeric array to SQL string
+def _internal_py_array_to_sql_string(array):
+    return "ARRAY[%s]" % ','.join(map(str, array))
+
+
+# Main function for dense linear solvers
+# ========================================================================
+def linear_solver_dense(schema_madlib, 
+                        source_table, 
+                        out_table,
+                        row_id, 
+                        left_hand_side,
+                        right_hand_side,
+                        grouping_cols,
+                        optimizer,
+                        optimizer_options,
+                        **kwargs):
+
+    """
+    @brief Main function for dense linear systems
+
+    @param source_table String identifying the input table
+    @param out_table String identifying the output table to be created
+    @param left_hand_side Column name containing the LHS of the equations
+    @param right_hand_side Column name containing the RHS of the equations
+    @param grouping_sols Columns to group the linear systems by
+    @param optimzer Optimizer to be used 
+    @param optimzer_options Optimizer options used
+
+    @return void
+
+    """
+    # Reset the message level to avoid random messages
+    # -------------------------------------------------------------------------
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    # Validate Inputs
+    # -------------------------------------------------------------------------
+    if optimizer is None:
+        optimizer = "direct"
+    _validate_args(schema_madlib, 
+                  source_table, 
+                  out_table,
+                  row_id, 
+                  left_hand_side,
+                  right_hand_side,
+                  grouping_cols,
+                  optimizer,
+                  optimizer_options)
+
+    # Parse optional inputs
+    # -------------------------------------------------------------------------
+    optimizer = optimizer.lower()
+    OPTIONS_DICT = _load_default_options(optimizer)
+    if optimizer_options is not None:
+      optimizer_options = optimizer_options.split(',')
+      for opt in optimizer_options:
+        try:
+          [param, value] = opt.split("=")
+          OPTIONS_DICT[param.strip().lower()] = value.strip().lower()
+        except:
+          plpy.error("""Dense linear systems error: Optimizer options must be of the form 'param1 = value1, param2 = value2'""")
+
+
+
+    # Dense Linear System Solve
+    # -------------------------------------------------------------------------
+    # Step 1: Calculate the number of equations in the system
+    numEquations = plpy.execute("""
+                SELECT max({row_id}) as numEquations from {source_table}
+                """.format(row_id = row_id, source_table = source_table))
+    # Note: SQL is not case sensitive
+    numEquations = int(numEquations[0]['numequations']) + 1
+
+
+    # Step 2: Chose the right solver 
+    if optimizer == 'direct':
+
+      # Call the SQL function to evaluate the direct linear system
+      dense_solution = _direct_dense_linear_system_solve(
+                                        schema_madlib,
+                                        source_table,
+                                        row_id,
+                                        left_hand_side,
+                                        right_hand_side,
+                                        numEquations,
+                                        OPTIONS_DICT)
+
+
+    # Step 3: Insert the solution stats into table
+    plpy.execute("""
+      CREATE TABLE {out_table} (
+      solution      DOUBLE PRECISION[],
+      residual_norm DOUBLE PRECISION,
+      iters         INTEGER)
+      """.format(
+        out_table = out_table))
+
+    solution = dense_solution["solution"]
+    residual_norm = dense_solution["residual_norm"]
+    iters = dense_solution["iters"]
+
+    # Check for NULL (Convert to None)
+    if iters is None:
+      iters = "NULL"
+    if residual_norm is None:
+      residual_norm = "NULL"
+
+    insert_string = """
+        INSERT INTO {out_table} VALUES ({solution}, {residual_norm}, {iters});
+        """.format(out_table = out_table,
+                  solution = _internal_py_array_to_sql_string(solution),
+                  residual_norm = residual_norm,
+                  iters = iters)
+    
+    # Step 4: Clean up output to make sure infinity and nan are cast properly
+    insert_string = re.sub('Infinity|inf', "'Infinity'::double precision", insert_string)
+    insert_string = re.sub('Nan|nan', "'Nan'::double precision", insert_string)
+    plpy.execute(insert_string)
+
+    # Reset the message level
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+
+
+
+# ========================================================================
+# Direct dense linear systems
+def _direct_dense_linear_system_solve(schema_madlib,
+                                      source_table,
+                                      row_id,
+                                      left_hand_side,
+                                      right_hand_side,
+                                      numEquations,
+                                      OPTIONS_DICT):
+    """
+    @brief Run SQL for dense direct linear systems
+
+    @param schema_madlib Schema for Madlib
+    @param source_table String identifying the input table
+    @param row_id Column name with row_id
+    @param left_hand_side Column name containing the LHS of the equations
+    @param right_hand_side Column name containing the RHS of the equations
+    @param numEquations Number of equations in the linear system
+    @param OPTIONS_DICT Dictionary with options
+
+    @return output_solution Dictionary pointing to SQL objects with the solution 
+    """
+
+    # Check that the options provided in the input are supported
+    if OPTIONS_DICT['algorithm'] not in DIRECT_ALG_DICT.keys():
+      plpy.error("""Direct method supports only algorithms in ({alg_list}) 
+                  """.format(alg_list = ','.join(DIRECT_ALG_DICT.keys())))
+  
+    # Convert the algorithm string to the option (integer)
+    algorithm = DIRECT_ALG_DICT[OPTIONS_DICT['algorithm']]
+
+    # Run the SQL for dense direct linear systems
+    dense_solution = plpy.execute("""
+              SELECT (output).* 
+              FROM (
+                SELECT {schema_madlib}.dense_direct_linear_system(
+                          ({row_id})::INTEGER,
+                           {left_hand_side},
+                           {right_hand_side},
+                           {numEquations},
+                           {algorithm}
+                           ) AS output
+                FROM {source_table} ) q
+            """.format(
+                  schema_madlib = schema_madlib,
+                  row_id = row_id,
+                  left_hand_side = left_hand_side,
+                  right_hand_side = right_hand_side,
+                  numEquations = numEquations,
+                  source_table = source_table,
+                  algorithm = algorithm
+                  ))
+
+    output_solution = {}
+    output_solution["solution"] = string_to_array(dense_solution[0]["solution"])
+    output_solution["iters"] = None
+
+    solution = output_solution["solution"]
+    
+    # Residual norm calculations
+    residual_norm = plpy.execute("""
+              SELECT (output).* 
+              FROM (
+                  SELECT {schema_madlib}.dense_residual_norm({left_hand_side},
+                                                             {right_hand_side},
+                                                             {solution}) 
+                  AS output
+                  FROM 
+                    {source_table} )q 
+            """.format(
+                  schema_madlib = schema_madlib,
+                  left_hand_side = left_hand_side,
+                  right_hand_side = right_hand_side,
+                  solution = _internal_py_array_to_sql_string(solution),
+                  source_table = source_table,
+                  ))
+
+    output_solution["residual_norm"] = residual_norm[0]["residual_norm"]
+    return output_solution
