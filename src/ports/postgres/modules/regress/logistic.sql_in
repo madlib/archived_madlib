@@ -15,39 +15,52 @@ m4_include(`SQLCommon.m4') --'
 /**
 @addtogroup grp_logreg
 
+<div class="toc"><b>Contents</b><ul>
+<li class="level1"><a href="#about">About</a></li>
+<li class="level1"><a href="#train">Usage</a></li>
+<li class="level2"><a href="#train">Training Function</a></li>
+<li class="level2"><a href="#output">Output Table</a></li>
+<li class="level2"><a href="#predict">Prediction Function</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#seealso">See Also</a></li>
+<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+</ul></div>
+
+@anchor about
 @about
 Binomial logistic regression models the relationship between a dichotomous dependent variable and one or more predictor variables.
 
-@usage
+The dependent variable may be a Boolean value or a categorial variable that can be represented with a Boolean expression.
+
+@anchor train
+@par Training Function
+The logistic regression training function has the following format:
 @verbatim
-logregr_train()
-
-logregr_train('usage')  -- (not yet implemented)
-
-log_regr_train(source_table, out_table,
-               dependent_variable, independent_variables,
-               grouping_col,
-               nIterations, optimizer, tolerance)
+logregr_train(tbl_source, tbl_output,
+               dep_col, ind_col,
+               grouping_col := NULL, max_iter := 20, 
+               optimizer := 'irls', tolerance := 0.0001, 
+               verbose := False)
 @endverbatim
 
-@par Arguments
-<DL>
-<DT>source_table</DT>
-<DD>Text value. Name of the table containing the training data.</DD>
+<DL class="arglist">
+<DT>tbl_source</DT>
+<DD>Text value. The name of the table containing the training data.</DD>
 
-<DT>out_table</DT>
-<DD>Text value. Name of the table where the model will be output. Function errors out if
-the table already exists. </DD>
+<DT>tbl_output</DT>
+<DD>Text value. Name of the generated table containing the output model.</DD>
 
-<DT>dependent_variable</DT>
+
+<DT>dep_col</DT>
 <DD>Text value. Name of the dependent variable column (of type BOOLEAN) in the
 training data or an expression evaluating to a BOOLEAN.</DD>
 
-<DT>independent variables</DT>
+<DT>ind_col</DT>
 <DD>Text value. Expression list to evaluate for the
 independent variables. An intercept variable is not assumed. It is common to
 provide an explicit intercept term by including a single constant \c 1 term in
-the idependent variable list.</DD>
+the independent variable list.</DD>
 
 <DT>grouping_col</DT>
 <DD>Text value. An expression list used to group
@@ -56,13 +69,13 @@ Similar to the SQL "GROUP BY" clause. When this value is NULL, no
 grouping is used and a single result model is generated. Default value:
 NULL.</DD>
 
-<DT>nIterations</DT>
-<DD>Integer value. The maximum number of iterations that are allowed.</DD>
+<DT>max_iter</DT>
+<DD>Integer value. The maximum number of iterations that are allowed. Default value: 20.</DD>
 
 <DT>optimizer</DT>
 <DD>Text value. The name of the optimizer
 to use:<ul>
-<li>'newton' or 'irls': Iteratively reweighted least squares</li>
+<li>'newton' or 'irls' (default): Iteratively reweighted least squares</li>
 <li>'cg': conjugate gradient</li>
 <li>'igd': incremental gradient descent.</li></ul></DD>
 
@@ -70,11 +83,16 @@ to use:<ul>
 <DD>Float value. The difference between
 log-likelihood values in successive iterations that should indicate
 convergence. A zero disables the convergence criterion, so that execution
-stops after \c nIterations have completed.</DD>
+stops after \c nIterations have completed. Default: 0.0001.</DD>
+
+<DT>verbose</DT>
+<DD>Provides verbose output of the results of training. Default: False.</DD>
 </DL>
 
+@anchor output
 @par Output Table
-<DL>
+The output table produced by the logistic regression training function contains the following columns:
+<DL class="arglist">
 <DT><...></DT>
 <DD>Text. Grouping columns, if provided in input. This could be multiple columns
 depending on the \c grouping_col input.</DD>
@@ -111,14 +129,13 @@ from the \c nIterations argument if a \c tolerance parameter is provided and the
 algorithm converges before all iterations are completed.</DD>
 </DL>
 
-@sa File logistic.sql_in (documenting the SQL functions)
-
+@anchor examples
 @examp
 -# Create the training data table.
 @verbatim
-CREATE TABLE patients (id INTEGER NOT NULL,  second_attack INTEGER,
+sql> CREATE TABLE patients (id INTEGER NOT NULL, second_attack INTEGER,
     treatment INTEGER, trait_anxiety INTEGER);
-COPY patients FROM STDIN WITH DELIMETER '|';
+sql> COPY patients FROM STDIN WITH DELIMETER '|';
   1 |             1 |         1 |            70
   3 |             1 |         1 |            50
   5 |             1 |         0 |            40
@@ -143,16 +160,16 @@ COPY patients FROM STDIN WITH DELIMETER '|';
 @endverbatim
 -# Train a regression model.
 @verbatim
-SELECT madlib.logregr_train(
-    'patients', 'patients_logregr', 'second_attack',
-    'ARRAY[1, treatment, trait_anxiety]', Null, 20, 'irls'
-);
+sql> SELECT madlib.logregr_train(
+        'patients', 'patients_logregr', 'second_attack',
+        'ARRAY[1, treatment, trait_anxiety]', Null, 20, 'irls'
+     );
 @endverbatim
 -# View the regression results:
 @verbatim
 -- Set extended display on for easier reading of output
-\x on
-SELECT * from patients_logregr;
+sql> \x on
+sql> SELECT * from patients_logregr;
 coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
 log_likelihood | -467.214718489873
 std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
@@ -163,16 +180,29 @@ condition_no   | 179.186118573205
 num_iterations | 9
 
 -- Alternatively, unnest the arrays in the results for easier reading of output
-\x off
-SELECT unnest(array['intercept', 'treatment', 'trait_anxiety' ]) as attribute,
-       unnest(coef) as coefficient,
-       unnest(std_err) as standard_error,
-       unnest(z_stats) as z_stat,
-       unnest(p_values) as pvalue,
-       unnest(odds_ratios) as odds_ratio
-FROM patients_logregr;
+sql> \x off
+sql> SELECT unnest(array['intercept', 'treatment', 'trait_anxiety' ]) as attribute,
+            unnest(coef) as coefficient,
+            unnest(std_err) as standard_error,
+            unnest(z_stats) as z_stat,
+            unnest(p_values) as pvalue,
+            unnest(odds_ratios) as odds_ratio
+     FROM patients_logregr;
 @endverbatim
 
+@anchor seealso
+@sa File logistic.sql_in documenting the training function
+@sa logregr_train()
+@sa elastic_net_train()
+@sa grp_linreg
+@sa grp_mlogreg
+@sa grp_robust
+@sa grp_clustered_errors
+@sa grp_validation
+@sa grp_marginal
+
+
+@anchor background
 @par Technical Background
 
 (Binomial) logistic regression refers to a stochastic model in which the
@@ -284,7 +314,6 @@ further literature.
 [5] A. Nemirovski, A. Juditsky, G. Lan, and A. Shapiro: Robust stochastic
     approximation approach to stochastic programming, SIAM Journal on
     Optimization, 19(4), 2009, http://www2.isye.gatech.edu/~nemirovs/SIOPT_RSA_2009.pdf
-
 
 @internal
 @sa Namespace logistic (documenting the driver/outer loop implemented in

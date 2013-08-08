@@ -67,4 +67,16 @@ dl.note, dl.warning, dl.attention, dl.pre, dl.post, dl.invariant, dl.deprecated,
     padding-left: 2px;
 }
 
+/* Style parameter lists formatted with definition lists. */
+dl.arglist {
+  margin-left: 20px;
+}
+
+dl.arglist dt {
+  font-size: 100%;
+  font-weight: bold;
+  color: #602020;
+  margin-bottom: 0px;
+}
+
 EOF
