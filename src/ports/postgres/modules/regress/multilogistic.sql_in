@@ -15,17 +15,167 @@ m4_include(`SQLCommon.m4')
 /**
 @addtogroup grp_mlogreg
 
+<div class="toc"><b>Contents</b>
+<ul>
+<li class="level1"><a href="#about">About</a></li>
+<li class="level1"><a href="#usage">Usage</a></li>
+<li class="level2"><a href="#train">Training Function</a></li>
+<li class="level2"><a href="#output">Output Format</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#seealso">See Also</a></li>
+<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+</ul>
+</div>
+
+@anchor about
 @about
 
-Multinomial logistic regression is a widely used regression analysis tool that models the outcomes of categorical dependent
-random variables (denoted \f$ Y \in \{ 0,1,2 \ldots k \} \f$). The models assumes that the conditional mean of the
-dependant categorical variables is the logistic function of an affine combination of independent
-variables (usually denoted \f$ \boldsymbol x \f$). That is,
+Multinomial logistic regression is a widely used regression analysis tool that
+models the outcomes of categorical dependent random variables. The model
+assumes that the conditional mean of the dependent categorical variables is
+the logistic function of an affine combination of independent variables.
+Multinomial logistic regression finds the vector of coefficients that
+maximizes the likelihood of the observations.
+
+@anchor usage
+@usage
+
+@anchor train
+@par Training Function
+The multinomial logistic regression training function has the following syntax:
+@verbatim
+mlogregr(
+    source,
+    depvar,
+    indepvar,
+    maxnumiterations := 20,
+    optimizer := 'irls',
+    precision := 0.0001,
+    ref_category := 0)
+@endverbatim
+
+<dl class="arglist">
+<dt>source</dt>
+<dd>Text value. The name of the table containing the input data.
+
+The training data is expected to be of the following form:\n
+@verbatim
+{TABLE|VIEW} source (
+    ...
+    dependentVariable INTEGER,
+    independentVariables FLOAT8[],
+    ...
+)
+@endverbatim
+</dd>
+<dt>depvar</dt>
+<dd>Text value. The name of the column containing the dependent variable.</dd>
+<dt>indepvar</dt>
+<dd>Text value. Expression list to evaluate for the independent variables. An intercept variable is not assumed. The number of independent variables cannot exceed 65535.</dd>
+<dt>maxnumiterations</dt>
+<dd>Integer value. The maximum number of iterations that are allowed. Default: 20.</dd>
+<dt>optimizer</dt>
+<dd>Text value. The name of the optimizer to use, 'newton', or 'irls' (iteratively reweighted least squares). Default: 'irls'.</dd>
+<dt>precision</dt>
+<dd>Float value. </dd>
+<dt>ref_category</dt>
+<dd>Integer value. The reference category ranges from [0, \e numCategories &ndash; 1]. The default reference category is zero.</dd>
+</dl>
+
+
+@anchor output
+@par Output Format
+The output of the \ref mlogregr() function is a composite type with the following fields:
+<dl class="arglist">
+<dt>ref_category</dt>
+<dd>INTEGER. The reference category. Categories are encoded as integers with values from {0, 1, 2,..., \e numCategories &ndash; 1}</dd>
+<dt>coef</dt>
+<dd>FLOAT8[]. An array of coefficients, \f$ \boldsymbol c \f$. </dd>
+<dt>log_likelihood</dt>
+<dd>FLOAT8. The log-likelihood, \f$ l(\boldsymbol c) \f$.
+<dt>std_err</dt>
+<dd>FLOAT8[]. An array of the standard errors. 
+<dt>z_stats</d5>
+<dd>FLOAT8[]. An array of the Wald z-statistics.</dd>
+<dt>p_values</dt>
+<dd>FLOAT8[]. An array of the Wald p-values.</dd>
+<dt>odds_ratios</dt> 
+<dd>FLOAT8[]. An array of the odds ratios.</dd>
+<dt>condition_no</dt>
+<dd>The condition number of the matrix, computed using the coefficients of the iteration immediately preceding convergence.</dd>
+<dt>num_iterations</dt>
+<dd>The number of iterations executed before the algorithm completed.</dd>
+</dl>
+
+
+@anchor examples
+@examp
+
+-# Create the training data table.
+@verbatim
+sql> DROP TABLE IF EXISTS patients;
+sql> CREATE TABLE patients (id INTEGER NOT NULL, second_attack INTEGER,
+    treatment INTEGER, trait_anxiety INTEGER);
+sql> COPY patients FROM STDIN WITH DELIMITER '|';
+  1 |             1 |         1 |            70
+  3 |             1 |         1 |            50
+  5 |             1 |         0 |            40
+  7 |             1 |         0 |            75
+  9 |             1 |         0 |            70
+ 11 |             0 |         1 |            65
+ 13 |             0 |         1 |            45
+ 15 |             0 |         1 |            40
+ 17 |             0 |         0 |            55
+ 19 |             0 |         0 |            50
+  2 |             1 |         1 |            80
+  4 |             1 |         0 |            60
+  6 |             1 |         0 |            65
+  8 |             1 |         0 |            80
+ 10 |             1 |         0 |            60
+ 12 |             0 |         1 |            50
+ 14 |             0 |         1 |            35
+ 16 |             0 |         1 |            50
+ 18 |             0 |         0 |            45
+ 20 |             0 |         0 |            60
+\.
+@endverbatim
+-# Run the multilogistic regression function.
+@verbatim
+sql> \x on
+Expanded display is on.
+sql> SELECT * FROM madlib.mlogregr('patients', 'second_attack', 
+                   'ARRAY[1, treatment, trait_anxiety]', 20,
+                   'irls', 0.0001, 1);
+-[ RECORD 1 ]--+----------------------------------------------------------
+ref_category   | 1
+coef           | {6.3634699417818,1.02410605239327,-0.119044916668605}
+log_likelihood | -9.41018298388876
+std_err        | {3.21389766375092,1.17107844860319,0.0549790458269306}
+z_stats        | {1.97998524145757,0.874498248699546,-2.16527796868917}
+p_values       | {0.0477051870698143,0.381846973530451,0.0303664045046178}
+odds_ratios    | {580.256322802414,2.78460505656035,0.887767924288744}
+condition_no   | 106329.420371447
+num_iterations | 5
+@endverbatim
+
+@anchor seealso
+@sa File multilogistic.sql_in documenting the multinomial logistic regression functions
+@sa grp_logregr
+
+@anchor background
+@par Technical Background
+Multinomial logistic regression 
+models the outcomes of categorical dependent random variables (denoted \f$ Y
+\in \{ 0,1,2 \ldots k \} \f$). The model assumes that the conditional mean of
+the dependent categorical variables is the logistic function of an affine
+combination of independent variables (usually denoted \f$ \boldsymbol x \f$).
+That is,
 \f[
     E[Y \mid \boldsymbol x] = \sigma(\boldsymbol c^T \boldsymbol x)
 \f]
 for some unknown vector of coefficients \f$ \boldsymbol c \f$ and where
-\f$ \sigma(x) = \frac{1}{1 + \exp(-x)} \f$ is the logistic function. Multinomial Logistic
+\f$ \sigma(x) = \frac{1}{1 + \exp(-x)} \f$ is the logistic function. Multinomial logistic
 regression finds the vector of coefficients \f$ \boldsymbol c \f$ that maximizes
 the likelihood of the observations.
 
@@ -107,84 +257,13 @@ calculation with function <em>marginal_mlogregr</em>.   This is deliberate
 because the interfaces of all multinomial regressions (robust, clustered, ...)
 will be moved to match that used in marginal.
 
-
-@input
-
-The training data is expected to be of the following form:\n
-<pre>{TABLE|VIEW} <em>sourceName</em> (
-    ...
-    <em>dependentVariable</em> INTEGER,
-    <em>independentVariables</em> FLOAT8[],
-    ...
-)</pre>
-
-@usage
-- The number of independent variables cannot exceed 65535.
-- The reference category ranges from [0, numCategories-1]. The default reference
-category is zero.
-- Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
-  statistics:\n
-  <pre>SELECT * FROM \ref mlogregr(
-    '<em>sourceName</em>',
-    '<em>dependentVariable</em>',
-    '<em>independentVariables</em>' [,
-    <em>numberOfIterations</em> [,
-    '<em>optimizer</em>' [,
-    <em>precision</em>, [,
-    <em>ref_category</em>]]]]
-);</pre>
-  Output:
-<pre>
-ref_category | coef | log_likelihood | std_err | z_stats | p_values | odds_ratios | condition_no | num_iterations\n  	    ----+------+----------------+---------+---------+----------+-------------+--------------+---------------
-                                               ...
-</pre>
-- Get vector of coefficients \f$ \boldsymbol c \f$:\n
-  <pre>SELECT (\ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>')).coef;</pre>
-- Get a subset of the output columns, e.g., only the array of coefficients
-  \f$ \boldsymbol c \f$, the log-likelihood of determination
-  \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
-  <pre>SELECT coef, log_likelihood, p_values
-FROM \ref mlogregr('<em>sourceName</em>', '<em>dependentVariable</em>', '<em>independentVariables</em>');</pre>
-
-Note that the categories are encoded as integers with values from {0, 1, 2,..., numCategories-1}
-@examp
-
--# Create the sample data set:
-@verbatim
-sql> SELECT * FROM data;
-                  r1                      | val
----------------------------------------------+-----
- {1,3.01789340097457,0.454183579888195}   | 1
- {1,-2.59380532894284,0.602678326424211}  | 0
- {1,-1.30643094424158,0.151587064377964}  | 1
- {1,3.60722299199551,0.963550757616758}   | 1
- {1,-1.52197745628655,0.0782248834148049} | 1
- {1,-4.8746574902907,0.345104880165309}   | 0
-...
-@endverbatim
--# Run the multi-logistic regression function:
-@verbatim
-sql> \x on
-Expanded display is off.
-sql> SELECT * FROM mlogregr('data', 'val', '2', 'r1', 100, 'irls', 0.001);
--[ RECORD 1 ]--+--------------------------------------------------------------
-coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
-log_likelihood | -467.214718489873
-std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
-z_stats        | {17.5281667482197,20.7919819024719,-0.805666162169712}
-p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
-odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
-condition_no   | 179.186118573205
-num_iterations | 9
-
-@endverbatim
-
+@anchor literature
 @literature
 
 A collection of nice write-ups, with valuable pointers into
 further literature:
 
-[1] Annette J . Dobson: An Introduction to Generalized Linear Models, Second Edition.  Nov 2001
+[1] Annette J. Dobson: An Introduction to Generalized Linear Models, Second Edition.  Nov 2001
 
 [2] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
@@ -197,8 +276,6 @@ further literature:
 		Retrieved Jul 12 2012, http://czep.net/stat/mlelr.pdf
 
 
-
-@sa File multilogistic.sql_in (documenting the SQL functions)
 
 @internal
 @sa Namespace multilogistic (documenting the driver/outer loop implemented in

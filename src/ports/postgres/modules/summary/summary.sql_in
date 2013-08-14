@@ -13,98 +13,228 @@ m4_include(`SQLCommon.m4')
 
 @addtogroup grp_summary
 
+<div class="toc">
+<ul>
+<li><a href="#about">About</a></li>
+<li><a href="#help">Online Help</a></li>
+<li><a href="#usage">Usage</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#output">Output</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#seealso">See Also</a></li>
+</ul>
+</div>
+
+
+@anchor about
 @about
 
-'summary' is a generic function used to produce summary statistics of any data 
-table.  The function invokes particular 'methods' from the MADlib library to 
-provide an overview of the data. 
+The MADlib \b summary() function is a generic function used to produce summary
+statistics from any data  table.  The function invokes various methods from
+the MADlib library to  provide an overview of the data.
 
+@anchor help
+@par Online Help
+Display a brief help message for the \b summary() function using the following syntax:
+@verbatim
+summary('usage')
+@endverbatim
+
+@anchor usage
 @usage
-The summary function can be invoked in the following way:
+The \b summary() function has the following syntax:
 @verbatim
-SELECT MADLIB_SCHEMA.summary
-(
-    source_table            TEXT,       -- Source table name (Required)
-    output_table            TEXT,       -- Output table name (Required)
-    target_cols             TEXT,       -- Comma separated columns for which summary is desired
-                                        --      (Default: NULL - produces result for all columns)
-    grouping_cols           TEXT,       -- Comma separated columns on which to group results
-                                        --      (Default: NULL - provides summary on complete table)
-    get_distinct            BOOLEAN,    -- Are distinct values required?
-                                        --      (Default: True)
-    get_quartiles           BOOLEAN,    -- Are quartiles required?
-                                        --      (Default: True)
-    ntile_array             FLOAT8[],   -- Array of quantile values to compute
-                                        --      (Default: NULL - Quantile array not included)
-    how_many_mfv            INTEGER,    -- How many most-frequent-values to compute?
-                                        --      (Default: 10)
-    get_estimates           BOOLEAN     -- Should we produce exact or estimated values?
-)                                       --      (Default: True)
+summary (source_table, output_table, 
+         target_cols := NULL,
+         grouping_cols := NULL, 
+         get_distinct := True, 
+         get_quartiles := True,
+         ntile_array := NULL, 
+         how_many_mfv := 10, 
+         get_estimates := True)                
+@endverbatim
+<dl class="arglist">
+<dt>source_table</dt>
+<dd>Text value. The name of the table containing the input data.</dd>
+<dt>output_table</dt>
+<dd>Text value. The name of the table to contain the output summary data.</dd>
+<dt>target_columns</dt>
+<dd>Text value. A comma-separated list of columns to summarize. If NULL, summaries are produced for all columns. Default NULL.</dd>
+<dt>grouping_cols</dt>
+<dd>Text value. A comma-separated list of columns on which to group results. If NULL, summaries are produced on the complete table. Default: NULL.</dd>
+<dt>get_distinct</dt>
+<dd>Boolean value. If true, distinct values are counted. Default: True.</dd>
+<dt>get_quartiles</dt>
+<dd>Boolean value. If true, qartiles are computed. Default: True.</dd>
+<dt>ntile_array</dt>
+<dd>Float8[] value. An array of quantile values to compute. If NULL, quantile values are not computed. Default: NULL.</dd>
+<dt>how_many_mfv</td>
+<dd>Integer value. The number of most-frequent-values to compute. Default: 10.</dd>
+<dt>get_estimates</dt>
+<dd>Boolean value. If true, estimated values are produced. If False, exact values are calculated. Default: True.</dd>
+</dl>
+
+@anchor notes
+@par Notes
+
+- Estimated values are only implemented for the distinct values computation. 
+- The <em>get_estimates</em> parameter controls computation for two statistics:
+
+    -  If <em>get_estimates</em> is True then the distinct value computation is
+    estimated. Further, the most frequent values computation is computed using  a
+    "quick and dirty" method that does parallel aggregation in GPDB at the expense
+    of missing some of the most frequent values.
+
+    -  If <em>get_estimates</em> is False then the distinct values are computed
+    in a slow but exact method. The most frequent values are computed using a
+    faithful implementation that preserves the approximation guarantees of 
+    the Cormode/Muthukrishnan method (more information in \ref grp_mfvsketch). 
+
+@anchor output
+@par Output
+
+The \b summary() function returns a composite type containing three fields:
+<dl class="arglist">
+<dt>output_table</dt>
+<dd>Text value. The name of the output table.</dd>
+<dt>row_count</dt>
+<dd>Integer value. The number of rows in the output table.</dd>
+<dt>duration</dt>
+<dd>The time taken (in seconds) to compute the summary.
+</dl> 
+
+Summary statistics are saved in a table with the name specifed in the
+<em>output_table</em> argument. The table can contain the
+following columns:
+<dl class="arglist">
+<dt>group_by</dt>
+<dd>Group-by column name. NULL if none provided.</dd>
+<dt>group_by_value</dt>
+<dd>Value of the Group-by column. NULL if there is no grouping.</dd>
+<dt>target_column</dt>
+<dd>Targeted column values for which summary is requested.</dd>
+<dt>column_number</dt>
+<dd>Physical column number for the target column, as described in \e pg_attribute.</dd>
+<dt>data_type</dt>
+<dd>Data type of the target column. Standard GPDB type descriptors are displayed.</dd>
+<dt>row_count</dt>
+<dd>Number of rows for the target column.</dd>
+<dt>distinct_values</dt>
+<dd>Number of distinct values in the target column.</dd>
+<dt>missing_values</dt>
+<dd>Number of missing values in the target column.</dd>
+<dt>blank_values</dt>
+<dd>Number of blank values. Blanks are defined by the regular expression '^\w*$'.</dd>
+ <dt>fraction_missing</dt>
+ <dd>Percentage of total rows that are missing, as a decimal value, e.g. 0.3.</dd>
+ <dt>fraction_blank</dt>
+ <dd>Percentage of total rows that are blank, as a decimal value, e.g. 0.3.</dd>
+ <dt>mean</dt>
+ <dd>Mean value of target column if target is numeric, otherwise NULL.</dd>
+ <dt>variance</dt>
+ <dd>Variance of target column if target is numeric, otherwise NULL.</dd>
+<dt>min</dt>
+<dd>Minimum value of target column. For strings this is the length of the shortest string.</dd>
+<dt>max</dt>
+<dd>Maximum value of target column. For strings this is the length of the longest string.</dd>
+<dt>first_quartile</dt>
+<dd>First quartile (25th percentile), only for numeric columns.</dd>
+<dt>median</dt>
+<dd>Median value of target column, if target is numeric, otherwise NULL.</dd>
+<dt>third_quartile</dt>
+<dd>Third quartile (25th percentile), only for numeric columns.</dd>
+<dt>quantile_array</dt>
+<dd>Percentile values corresponding to \e ntile_array.</dd>
+<dt>most_frequent_values</dt>
+<dd>An array containing the most frequently occurring values. The \e how_many_mfv argument determines the length of the array, 10 by default.</dd>
+<dt>mfv_frequencies</dt>
+<dd>Array containing the frequency count for each of the most frequent values. </dd>
+</dl>
+
+@anchor examples
+@examp
+
+-# View online help for the \b summary() function.
+@verbatim
+sql> SELECT * FROM madlib.summary('usage');
 @endverbatim
 
-Note:
-- Currently, estimated values are only implemented for the distinct values 
-computation. 
-- The '<em>get_estimates</em>' parameter controls computation for two statistics
-    - If '<em>get_estimates</em>' is True then the distinct value computation is
-        estimated. Further, the most frequent values computation is computed using 
-        a "quick and dirty" method that does parallel aggregation in GPDB
-        at the expense of missing some of the most frequent values.
-    - If '<em>get_estimates</em>' is False then the distinct values are computed
-     in a slow but exact method. The most frequent values are computed using a
-     faithful implementation that preserves the approximation guarantees of 
-     the Cormode/Muthukrishnan method (more information in \ref grp_mfvsketch) 
-
-
-The output of the function is a composite type containing: 
-    ouput_table             TEXT,       -- Name of the output table
-    row_count               INT4,       -- Number of rows in the output table
-    duration                FLOAT8      -- Time taken (in seconds) to compute the summary 
-
-The summary stastics are stored in the 'output_table' relation provided in the
-arguments. The relation 'output_table' can contain the following table
-(presence of some columns depends on the argument values)
+-# Create an input data set.
 @verbatim
-    - group_by_column       : Group-by column names (NULL if none provided)
-    - group_by_value        : Values of the Group-by column (NULL if no grouping)
-    - target_column         : Targeted column values for which summary is requested
-    - column_number         : Physical column number for the target column, as described in pg_attribute
-    - data_type             : Data type of target column. Standard GPDB descriptors will be displayed
-    - row_count             : Number of rows for the target column
-    - distinct_values       : Number of distinct values in the target column
-    - missing_values        : Number of missing values in the target column
-    - blank_values          : Number of blank values (blanks are defined by the regular expression '^\w*$')
-    - fraction_missing      : Percentage of total rows that are missing. Will be expressed as a decimal (e.g. 0.3)
-    - fraction_blank        : Percentage of total rows that are blank. Will be expressed as a decimal (e.g. 0.3)
-    - mean                  : Mean value of target column (if target is numeric, else NULL)
-    - variance              : Variance of target columns (if target is numeric, else NULL for strings)
-    - min                   : Min value of target column (for strings this is the length of the shortest string)
-    - max                   : Max value of target column (for strings this is the length of the longest string)
-    - first_quartile        : First quartile (25th percentile, only for numeric columns)
-    - median                : Median value of target column (if target is numeric, else NULL)
-    - third_quartile        : Third quartile (25th percentile, only for numeric columns)
-    - quantile_array        : Percentile values corresponding to ntile_array
-    - most_frequent_values  : Most frequent values
-    - mfv_frequencies       : Frequency of the most frequent values 
+sql> CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT,
+            size INT, lot INT);
+sql> COPY houses FROM STDIN WITH DELIMITER '|';
+  1 |  590 |       2 |    1 |  50000 |  770 | 22100
+  2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
+  3 |   20 |       3 |    1 |  22500 | 1060 |  3500
+  4 |  870 |       2 |    2 |  90000 | 1300 | 17500
+  5 | 1320 |       3 |    2 | 133000 | 1500 | 30000
+  6 | 1350 |       2 |    1 |  90500 |  820 | 25700
+  7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000
+  8 |  680 |       2 |    1 | 142500 | 1170 | 22000
+  9 | 1840 |       3 |    2 | 160000 | 1500 | 19000
+ 10 | 3680 |       4 |    2 | 240000 | 2790 | 20000
+ 11 | 1660 |       3 |    1 |  87000 | 1030 | 17500
+ 12 | 1620 |       3 |    2 | 118600 | 1250 | 20000
+ 13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
+ 14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
+ 15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
+\.
 @endverbatim
 
-The output can be obtained as
+-# Run the \b summary() function.
 @verbatim
-sql> SELECT * FROM 'output_table';
+sql> SELECT * FROM 
+     madlib.summary('houses', 'houses_summary',
+                    'tax,bedroom,lot,bath,price,size,lot', 
+                    'bedroom', True, True, NULL, 5, False);
+  output_table  | row_count |    duration    
+----------------+-----------+----------------
+ houses_summary |        21 | 0.207587003708
+(1 row)
 @endverbatim
 
-The usage information can be obtained at any time directly from the
-function using
+-# View the summary data.
 @verbatim
-sql> SELECT summary('usage');
+-- Turn on expanded display for readability.
+sql> \x on
+sql> SELECT * FROM houses_summary;
+-[ RECORD 1 ]--------+-----------------------------------
+group_by             | bedroom
+group_by_value       | 3
+target_column        | tax
+column_number        | 2
+data_type            | int4
+row_count            | 9
+distinct_values      | 9
+missing_values       | 0
+blank_values         | 
+fraction_missing     | 0
+fraction_blank       | 
+mean                 | 1561.11111111111
+variance             | 936736.111111111
+min                  | 20
+max                  | 3100
+most_frequent_values | {20,1320,2790,1840,1660}
+mfv_frequencies      | {1,1,1,1,1}
+-[ RECORD 2 ]--------+-----------------------------------
+group_by             | bedroom
+group_by_value       | 3
+target_column        | bath
+column_number        | 4
+...
 @endverbatim
+
+@anchor seealso
+@sa File summary.sql_in documenting the \b summary() function
+@sa grp_mfvsketch
 
 */
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.summary_result;
 CREATE TYPE MADLIB_SCHEMA.summary_result AS
 (
-    ouputtable      TEXT,
+    output_table    TEXT,
     row_count       INT4,
     duration        FLOAT8
 );
