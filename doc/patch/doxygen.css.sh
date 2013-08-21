@@ -15,11 +15,11 @@ cat - >> doxygen.css <<'EOF'
 /* -- MADlib patches -------------------------------------------------------- */
 
 /* Indent paragraphs in the main text, but not in framed boxes */
-div.contents > p, div.contents > pre, div.contents > ul, div.contents > div.fragment, dd {  
+div.contents > p, div.contents > pre, div.contents > ul, div.contents > div.fragment, dd {
     margin-left: 20px;
 }
 
-/* Increase spacing between titled paragraphs in the main text, but not in 
+/* Increase spacing between titled paragraphs in the main text, but not in
    framed boxes */
 div.contents > dl {
     margin-top: 2em;
@@ -40,6 +40,7 @@ pre.fragment {
    environments for that) */
 dl {
     padding-left: 0;
+    margin-top: 1em;
 }
 
 /* Increase the font size for paragraph headers */
@@ -70,6 +71,7 @@ dl.note, dl.warning, dl.attention, dl.pre, dl.post, dl.invariant, dl.deprecated,
 /* Style parameter lists formatted with definition lists. */
 dl.arglist {
   margin-left: 20px;
+  margin-top: 0px;
 }
 
 dl.arglist dt {
