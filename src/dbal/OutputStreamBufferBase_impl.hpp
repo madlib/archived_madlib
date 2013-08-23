@@ -21,7 +21,7 @@ OutputStreamBufferBase<Derived, C, Allocator>::OutputStreamBufferBase()
  :  mAllocator(), mStorageSize(kInitialBufferSize),
     mStorage(mAllocator.allocate(mStorageSize + 1)) {
 
-    setp(mStorage, mStorage + mStorageSize);
+    this->setp(mStorage, mStorage + mStorageSize);
 }
 
 template <class Derived, typename C, class Allocator>
@@ -72,7 +72,7 @@ OutputStreamBufferBase<Derived, C, Allocator>::overflow(int_type c) {
             std::logic_error("Internal error: Logging buffer has become "
                 "inconsistent"));
 
-        setp(mStorage, mStorage + newStorageSize);
+        this->setp(mStorage, mStorage + newStorageSize);
         this->pbump(mStorageSize);
         mStorageSize = newStorageSize;
     } else if (c == traits_type::eof())
@@ -94,7 +94,7 @@ OutputStreamBufferBase<Derived, C, Allocator>::sync() {
     mStorage[length] = '\0';
     output(mStorage, length);
 
-    setp(mStorage, mStorage + mStorageSize);
+    this->setp(mStorage, mStorage + mStorageSize);
     return 0;
 }
 
