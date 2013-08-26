@@ -25,6 +25,8 @@
 
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
+#include <math.h>
+
 #include <postgres.h>
 #include <utils/array.h>
 #include <utils/elog.h>

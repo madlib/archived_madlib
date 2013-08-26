@@ -115,7 +115,7 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     PGFunction      metric_fn;
     
     ArrayType      *close_canopies_arr;
-    int4           *close_canopies;
+    int32          *close_canopies;
     int             num_close_canopies;
     size_t          bytes;
     MemoryContext   mem_context_for_function_calls;
@@ -127,7 +127,7 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     metric_fn = get_metric_fn(PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 3)));
     
     mem_context_for_function_calls = setup_mem_context_for_functional_calls();
-    close_canopies = (int4 *) palloc(sizeof(int4) * num_all_canopies);
+    close_canopies = (int32 *) palloc(sizeof(int32) * num_all_canopies);
     num_close_canopies = 0;
     for (int i = 0; i < num_all_canopies; i++) {
         if (compute_metric(metric_fn, mem_context_for_function_calls,
@@ -143,7 +143,7 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     if (num_close_canopies == 0)
         PG_RETURN_NULL();
 
-    bytes = ARR_OVERHEAD_NONULLS(1) + sizeof(int4) * num_close_canopies;
+    bytes = ARR_OVERHEAD_NONULLS(1) + sizeof(int32) * num_close_canopies;
     close_canopies_arr = (ArrayType *) palloc0(bytes);
     SET_VARSIZE(close_canopies_arr, bytes);
     ARR_ELEMTYPE(close_canopies_arr) = INT4OID;
@@ -151,7 +151,7 @@ internal_get_array_of_close_canopies(PG_FUNCTION_ARGS)
     ARR_DIMS(close_canopies_arr)[0] = num_close_canopies;
     ARR_LBOUND(close_canopies_arr)[0] = 1;
     memcpy(ARR_DATA_PTR(close_canopies_arr), close_canopies,
-        sizeof(int4) * num_close_canopies);
+        sizeof(int32) * num_close_canopies);
 
     PG_RETURN_ARRAYTYPE_P(close_canopies_arr);
 }
@@ -305,7 +305,7 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
     int dist_metric = PG_GETARG_INT32(verify_arg_nonnull(fcinfo, 4)); 
 
     ArrayType      *canopy_ids_arr = NULL;
-    int4           *canopy_ids = NULL;
+    int32          *canopy_ids = NULL;
     bool            indirect;
     if (PG_ARGISNULL(5)) 
     {
@@ -320,7 +320,7 @@ internal_kmeans_closest_centroid(PG_FUNCTION_ARGS) {
             ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                  errmsg("internal error: array of close canopies cannot be empty")));
-        canopy_ids = (int4*) ARR_DATA_PTR(canopy_ids_arr);
+        canopy_ids = (int32*) ARR_DATA_PTR(canopy_ids_arr);
         num_of_centroids = ARR_DIMS(canopy_ids_arr)[0];
     }
 

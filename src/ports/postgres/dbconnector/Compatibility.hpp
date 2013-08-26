@@ -10,7 +10,13 @@
 extern "C" {
     #include <access/tupmacs.h>
     #include <utils/memutils.h>
+
+    #if PG_VERSION_NUM >= 90300
+        #include <access/htup_details.h>
+    #endif
 }
+
+
 namespace madlib {
 
 namespace dbconnector {
@@ -97,7 +103,7 @@ AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 
 #endif // PG_VERSION_NUM < 90000
 
-} // namnespace
+} // namespace
 
 
 /**
@@ -116,7 +122,7 @@ static ArrayType* construct_md_array_zero
     char    elmalign
 ){
     ArrayType  *result;
-    int32       nbytes;
+    size_t      nbytes;
     int32       dataoffset;
     int         i;
     int         nelems;

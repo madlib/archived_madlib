@@ -18,6 +18,10 @@
 #include <math.h>
 #include <float.h>
 
+#if PG_VERSION_NUM >= 90300
+#include "access/htup_details.h"
+#endif
+
 #ifndef NO_PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
