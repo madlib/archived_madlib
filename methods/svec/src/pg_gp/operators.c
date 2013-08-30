@@ -1,6 +1,6 @@
 /**
  * @file
- * This module defines a collection of operators for svecs. The functions 
+ * This module defines a collection of operators for svecs. The functions
  * are usually wrappers that call the corresponding operators defined for
  * SparseData.
  */
@@ -24,11 +24,11 @@
 PG_MODULE_MAGIC;
 #endif
 
-/** 
- * For many functions defined in this module, the operation has no meaning 
- * if the array dimensions aren't the same, unless one of the inputs is a 
+/**
+ * For many functions defined in this module, the operation has no meaning
+ * if the array dimensions aren't the same, unless one of the inputs is a
  * scalar. This routine checks that condition.
- */ 
+ */
 void check_dimension(SvecType *svec1, SvecType *svec2, char *msg) {
 	if ((!IS_SCALAR(svec1)) &&
 	    (!IS_SCALAR(svec2)) &&
@@ -40,13 +40,13 @@ void check_dimension(SvecType *svec1, SvecType *svec2, char *msg) {
 	}
 }
 
-/** 
+/**
  * Dot Product of two svec types
- */ 
+ */
 double svec_svec_dot_product(SvecType *svec1, SvecType *svec2) {
 	SparseData left  = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
-	
+
 	check_dimension(svec1,svec2,"svec_svec_dot_product");
 	return sum_sdata_values_double( op_sdata_by_sdata(multiply,left,right));
 }
@@ -70,7 +70,7 @@ Datum svec_dimension(PG_FUNCTION_ARGS)
 Datum svec_lapply(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(svec_lapply);
 
-Datum svec_lapply(PG_FUNCTION_ARGS) 
+Datum svec_lapply(PG_FUNCTION_ARGS)
 {
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -109,9 +109,9 @@ Datum svec_concat(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_concat );
 Datum svec_concat(PG_FUNCTION_ARGS)
 {
-	if (PG_ARGISNULL(0) && (!PG_ARGISNULL(1))) 
+	if (PG_ARGISNULL(0) && (!PG_ARGISNULL(1)))
                 PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P(1));
-        else if (PG_ARGISNULL(0) && PG_ARGISNULL(1)) 
+        else if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
                 PG_RETURN_NULL();
         else if (PG_ARGISNULL(1))
                 PG_RETURN_SVECTYPE_P(PG_GETARG_SVECTYPE_P(0));
@@ -130,13 +130,13 @@ Datum svec_concat(PG_FUNCTION_ARGS)
  */
 Datum svec_append(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(svec_append);
-Datum svec_append(PG_FUNCTION_ARGS) 
+Datum svec_append(PG_FUNCTION_ARGS)
 {
 	float8 newele;
 	int64 run_len;
 	SvecType *svec;
 	SparseData sdata;
-	
+
 	if (PG_ARGISNULL(2))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -165,7 +165,7 @@ Datum svec_append(PG_FUNCTION_ARGS)
  */
 Datum svec_proj(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_proj );
-Datum svec_proj(PG_FUNCTION_ARGS) 
+Datum svec_proj(PG_FUNCTION_ARGS)
 {
 	if (PG_ARGISNULL(0))
 		PG_RETURN_NULL();
@@ -186,7 +186,7 @@ Datum svec_proj(PG_FUNCTION_ARGS)
  */
 Datum svec_subvec(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_subvec );
-Datum svec_subvec(PG_FUNCTION_ARGS) 
+Datum svec_subvec(PG_FUNCTION_ARGS)
 {
 	if (PG_ARGISNULL(0))
 		PG_RETURN_NULL();
@@ -200,12 +200,12 @@ Datum svec_subvec(PG_FUNCTION_ARGS)
 }
 
 /**
- *  svec_reverse - makes a copy of the input svec, with the order of 
+ *  svec_reverse - makes a copy of the input svec, with the order of
  *                 the elements reversed
  */
 Datum svec_reverse(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_reverse );
-Datum svec_reverse(PG_FUNCTION_ARGS) 
+Datum svec_reverse(PG_FUNCTION_ARGS)
 {
 	if (PG_ARGISNULL(0))
 		PG_RETURN_NULL();
@@ -216,12 +216,12 @@ Datum svec_reverse(PG_FUNCTION_ARGS)
 }
 
 /**
- *  svec_change - makes a copy of the input svec, with the subvector 
+ *  svec_change - makes a copy of the input svec, with the subvector
  *                starting at a given location changed to another input svec.
  */
 Datum svec_change(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(svec_change);
-Datum svec_change(PG_FUNCTION_ARGS) 
+Datum svec_change(PG_FUNCTION_ARGS)
 {
 	SvecType * in = PG_GETARG_SVECTYPE_P(0);
 	int idx = PG_GETARG_INT32(1);
@@ -235,11 +235,11 @@ Datum svec_change(PG_FUNCTION_ARGS)
 	Assert((IS_SCALAR(changed) && midlen == 1) ||
 		   (midlen == changed->dimension));
 
-	if (idx < 1 || idx > inlen) 
+	if (idx < 1 || idx > inlen)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("Invalid start index")));
-	
+
 	if (idx+midlen-1 > inlen)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -278,7 +278,7 @@ Datum svec_eq(PG_FUNCTION_ARGS)
 /**
  *  svec_eq - returns the equality of two svecs if their
  *  non-zero elments are equal. Zero is viewed as a missing data
- *  and hence equals to any other value. 
+ *  and hence equals to any other value.
  */
 Datum svec_eq_non_zero(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_eq_non_zero );
@@ -294,7 +294,7 @@ Datum svec_eq_non_zero(PG_FUNCTION_ARGS)
 /**
  *  svec_eq - returns the equality of two svecs if their
  *  non-zero elments are equal. Zero is viewed as a missing data
- *  and hence equals to any other value. 
+ *  and hence equals to any other value.
  */
 Datum svec_contains(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1( svec_contains );
@@ -439,7 +439,7 @@ SvecType * svec_operate_on_sdata_pair(int scalar_args, enum operation_t op,
 		break;
 	case 3:			//both args are scalar
 		switch (op) {
-		case subtract: 
+		case subtract:
 			data_result = left_vals[0] - right_vals[0];
 			break;
 		case add:
@@ -579,14 +579,14 @@ Datum svec_count(PG_FUNCTION_ARGS)
 
 	if (IS_SCALAR(svec1)) {
 		/*
-		 * If the left argument is {1}:{0}, this is the first call to 
-		 * the routine, and we need a zero vector for the beginning 
+		 * If the left argument is {1}:{0}, this is the first call to
+		 * the routine, and we need a zero vector for the beginning
 		 * of the accumulation of the correct dimension.
 		 */
 		double * left_vals = (double *)(left->vals->data);
 		if (left_vals[0] == 0)
 			left = makeSparseDataFromDouble(0.,right->total_value_count);
-	} 
+	}
 	double *right_vals=(double *)(right->vals->data);
 	SvecType *result;
 	double *clamped_vals;
@@ -597,16 +597,16 @@ Datum svec_count(PG_FUNCTION_ARGS)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("Array dimension of inputs are not the same: dim1=%d, dim2=%d\n",
 				left->total_value_count, right->total_value_count)));
-	
+
 	/* Create an array of values either 1 or 0 depending on whether
 	 * the right vector has a non-zero value in it
 	 */
 	clamped_vals =
 		(double *)palloc0(sizeof(double)*(right->unique_value_count));
-		
+
 	for (int i=0;i<(right->unique_value_count);i++)
 	{
-		if (right_vals[i] != 0. && !IS_NVP(right_vals[i])) 
+		if (right_vals[i] != 0. && !IS_NVP(right_vals[i]))
 			clamped_vals[i] = 1.;
 	}
 	right_clamped = makeInplaceSparseData(
@@ -618,10 +618,10 @@ Datum svec_count(PG_FUNCTION_ARGS)
 	/* Create the output SVEC */
 	sdata_result = op_sdata_by_sdata(add,left,right_clamped);
 	result = svec_from_sparsedata(sdata_result,true);
-		
+
 	pfree(clamped_vals);
 	pfree(right_clamped);
-		
+
 	PG_RETURN_SVECTYPE_P(result);
 }
 
@@ -633,7 +633,7 @@ Datum svec_dot(PG_FUNCTION_ARGS)
 {
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
-	
+
 	double accum = svec_svec_dot_product( svec1, svec2);
 
 	if (IS_NVP(accum)) PG_RETURN_NULL();
@@ -662,19 +662,19 @@ PG_FUNCTION_INFO_V1( svec_svec_l2norm );
  *  svec_svec_l2norm - Computes the l2norm distance between two SVECs.
  */
 Datum svec_svec_l2norm(PG_FUNCTION_ARGS)
-{	
+{
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
-	
+
 	check_dimension(svec1,svec2,"l2norm");
 	SvecType *result = op_svec_by_svec_internal(subtract,svec1,svec2);
-	
+
 	SparseData sdata  = sdata_from_svec(result);
 	double accum;
 	accum = l2norm_sdata_values_double(sdata);
-	
+
 	if (IS_NVP(accum)) PG_RETURN_NULL();
-	
+
 	PG_RETURN_FLOAT8(accum);
 }
 
@@ -683,19 +683,19 @@ PG_FUNCTION_INFO_V1( svec_svec_l1norm );
  *  svec_svec_l1norm - Computes the l1norm distance between two SVECs.
  */
 Datum svec_svec_l1norm(PG_FUNCTION_ARGS)
-{	
+{
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
-	
+
 	check_dimension(svec1,svec2,"l1norm");
 	SvecType *result = op_svec_by_svec_internal(subtract,svec1,svec2);
-	
+
 	SparseData sdata = sdata_from_svec(result);
 	double accum;
 	accum = l1norm_sdata_values_double(sdata);
-	
+
 	if (IS_NVP(accum)) PG_RETURN_NULL();
-	
+
 	PG_RETURN_FLOAT8(accum);
 }
 
@@ -704,22 +704,22 @@ PG_FUNCTION_INFO_V1( svec_svec_angle );
  *  svec_svec_angle - Computes the angle between two SVECs.
  */
 Datum svec_svec_angle(PG_FUNCTION_ARGS)
-{	
+{
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	SparseData left  = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
 	double dot, m1, m2, result;
-	
+
 	dot = svec_svec_dot_product( svec1, svec2);
 
 	m1 = l2norm_sdata_values_double(left);
 	m2 = l2norm_sdata_values_double(right);
 
 	if (IS_NVP(dot) || IS_NVP(m1) || IS_NVP(m2)) PG_RETURN_NULL();
-	
+
 	result = dot/(m1*m2);
-	
+
 	if (result > 1.0) {
 		result = 1.0;
 	}
@@ -735,46 +735,46 @@ PG_FUNCTION_INFO_V1( svec_svec_tanimoto_distance );
  *  svec_svec_tanimoto_distance - Computes the Tanimoto similarity between two SVECs.
  */
 Datum svec_svec_tanimoto_distance(PG_FUNCTION_ARGS)
-{	
+{
 	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
 	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
 	SparseData left  = sdata_from_svec(svec1);
 	SparseData right = sdata_from_svec(svec2);
 	double dot, m1, m2, result;
-	
+
 	dot = svec_svec_dot_product( svec1, svec2);
-	
+
 	m1 = l2norm_sdata_values_double(left);
 	m2 = l2norm_sdata_values_double(right);
-	
+
 	if (IS_NVP(dot) || IS_NVP(m1) || IS_NVP(m2)) PG_RETURN_NULL();
-	
+
 	result = dot / (m1*m1 + m2*m2 - dot);
-	
+
 	if (result > 1.0) {
 		result = 1.0;
 	}
 	else if (result < 0.0) {
 		result = 0.0;
 	}
-	
+
 	PG_RETURN_FLOAT8(1. - result);
 }
 
 PG_FUNCTION_INFO_V1( svec_normalize );
 /**
- *  svec_normalize - Computes a normalized SVEC. 
+ *  svec_normalize - Computes a normalized SVEC.
  */
 Datum svec_normalize(PG_FUNCTION_ARGS)
-{	
+{
 	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
 	SparseData sdata = sdata_from_svec(svec);
 	double norm;
-		
+
 	norm = l2norm_sdata_values_double(sdata);
-	
+
 	op_sdata_by_scalar_inplace( 3, (char *)&norm, sdata, 2);
-	
+
 	PG_RETURN_SVECTYPE_P( svec_from_sparsedata( sdata, true));
 }
 
@@ -960,7 +960,7 @@ Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 	/* Create the output SVEC */
 	SparseData sdata = float8arr_to_sdata(array,dimension);
 	output_svec = svec_from_sparsedata(sdata,true);
-	
+
 	if (ARR_HASNULL(A_PG))
 		pfree(array);
 
@@ -970,7 +970,7 @@ Datum svec_cast_float8arr(PG_FUNCTION_ARGS) {
 PG_FUNCTION_INFO_V1( svec_cast_positions_float8arr );
 /**
  *  svec_cast_positions_float8arr - turns a pair of arrays, the first an int4[]
- *    denoting positions and the second a float8[] denoting values, into an 
+ *    denoting positions and the second a float8[] denoting values, into an
  *    svec of a given size with a given default value everywhere else.
  */
 Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
@@ -980,7 +980,7 @@ Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
 	float8 base_value = PG_GETARG_FLOAT8(3);
 	SvecType *output_svec;
 	int i = 0;
-	
+
 	if (ARR_ELEMTYPE(A_PG) != FLOAT8OID)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -989,12 +989,12 @@ Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("svec_cast_positions_float8arr only defined over 1 dimensional arrays")));
-	
+
 	if (ARR_NULLBITMAP(A_PG))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("svec_cast_positions_float8arr does not allow null bitmaps on arrays")));
-	
+
 	if (ARR_ELEMTYPE(B_PG) != INT8OID)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1003,29 +1003,29 @@ Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("svec_cast_positions_float8arr only defined over 1 dimensional arrays")));
-	
+
 	if (ARR_NULLBITMAP(B_PG))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("svec_cast_positions_float8arr does not allow null bitmaps on arrays")));
-	
+
 	/* Extract array */
 	int dimension = ARR_DIMS(A_PG)[0];
 	int dimension2 = ARR_DIMS(B_PG)[0];
-	
+
 	if (dimension != dimension2)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("svec_cast_positions_float8arr position and value vectors must be of the same size")));
-	
+
 	float8 *array = (float8 *)ARR_DATA_PTR(A_PG);
 	int64 *array_pos =  (int64 *)ARR_DATA_PTR(B_PG);
-	
-	if ((array_pos[dimension-1] > size)&&(size > 0))
+
+	if (array_pos[dimension-1] > size)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("svec_cast_positions_float8arr some of the position values are larger than maximum array size declared")));	
-	
+			 errmsg("svec_cast_positions_float8arr some of the position values are larger than maximum array size declared")));
+
 	for(i=0;i < dimension;++i){
 		if(array_pos[i] <= 0){
 			ereport(ERROR,
@@ -1033,11 +1033,11 @@ Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS) {
 				 errmsg("svec_cast_positions_float8arr only accepts position that are positive integers (x > 0)")));
 		}
 	}
-	
+
 	/* Create the output SVEC */
-	SparseData sdata = position_to_sdata(array,array_pos,FLOAT8OID,dimension,size,base_value); 
+	SparseData sdata = position_to_sdata(array,array_pos,FLOAT8OID,dimension,size,base_value);
 	output_svec = svec_from_sparsedata(sdata,true);
-	
+
 	PG_RETURN_SVECTYPE_P(output_svec);
 }
 
@@ -1098,7 +1098,7 @@ static bool float8arr_equals_internal(ArrayType *left, ArrayType *right)
         return true;
 }
 
-/** 
+/**
  *  float8arr_equals - checks whether two float8 arrays are identical
  */
 Datum float8arr_equals(PG_FUNCTION_ARGS);
@@ -1123,7 +1123,7 @@ static SparseData sdata_uncompressed_from_float8arr_internal(ArrayType *array)
         double *vals =(double *)ARR_DATA_PTR(array);
         bits8 *bitmap = ARR_NULLBITMAP(array);
         int   bitmask=1;
-	
+
 	/* Convert null items into NVPs */
 	if (bitmap)
 	{
@@ -1231,7 +1231,7 @@ Datum float8arr_dot(PG_FUNCTION_ARGS) {
 }
 
 /*
- * Permute the basic operators (minus,plus,mult,div) between SparseData 
+ * Permute the basic operators (minus,plus,mult,div) between SparseData
  * and float8[]
  *
  * For each function, make a version that takes the left and right args as
@@ -1484,9 +1484,9 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * Now let's check to see if we're adding a new value or appending to 
-	 * the last run.  If the incoming value is the same as the last value, 
-	 * just increment the last run.  Note that we need to use the index 
+	 * Now let's check to see if we're adding a new value or appending to
+	 * the last run.  If the incoming value is the same as the last value,
+	 * just increment the last run.  Note that we need to use the index
 	 * cursor to find where the last index counter is located.
 	 */
 	{
@@ -1521,8 +1521,8 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
 			run_count = compword_to_int8(index_location);
 			last_value = *((float8 *)(sdata->vals->data+(sdata->vals->len-sizeof(float8))));
 
-			if (last_value == value || 
-			    (IS_NVP(last_value) && IS_NVP(value))) 
+			if (last_value == value ||
+			    (IS_NVP(last_value) && IS_NVP(value)))
 				new_run = false;
 			else new_run = true;
 		}
@@ -1568,15 +1568,15 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
  * From: http://en.wikipedia.org/wiki/Selection_algorithm#Linear_general_selection_algorithm_-_.22Median_of_Medians_algorithm.22
  *
  * Arguments:
- * 	char **lists:	A list of lists, the first of which contains the 
- *                      values used for pivots, the 2nd and further lists 
+ * 	char **lists:	A list of lists, the first of which contains the
+ *                      values used for pivots, the 2nd and further lists
  *                      will be pivoted alongside the first.
- * 			A common usage would be to have the first list point 
- *                      to an array of values, then the second would point to 
- *                      another char ** list of strings. The second list would 
- *                      have its pointer values moved around as part of the 
- *                      pivots, and the index location where the partition 
- *                      value (say for the median) occurs would allow a 
+ * 			A common usage would be to have the first list point
+ *                      to an array of values, then the second would point to
+ *                      another char ** list of strings. The second list would
+ *                      have its pointer values moved around as part of the
+ *                      pivots, and the index location where the partition
+ *                      value (say for the median) occurs would allow a
  *                      reference to the associated strings in the second list.
  *
  * 	size_t nlists	the number of lists
@@ -1585,19 +1585,19 @@ Datum svec_pivot(PG_FUNCTION_ARGS)
  *
  * 	int left,right	The left and right boundary of the list to be pivoted
  *
- * 	int pivotIndex	The index around which to pivot the list.  A common 
- *                      use-case is to choose pivotIndex = listLength/2, then 
+ * 	int pivotIndex	The index around which to pivot the list.  A common
+ *                      use-case is to choose pivotIndex = listLength/2, then
  *                      the pivot will provide the median location.
  *
- * 	int (*compar)	A comparison function for the first list, which takes 
- *                      two pointers to values in the first list and returns 
- *                      0,-1 or 1 when the first value is equal, less than or 
+ * 	int (*compar)	A comparison function for the first list, which takes
+ *                      two pointers to values in the first list and returns
+ *                      0,-1 or 1 when the first value is equal, less than or
  *                      greater than the second.
  *
- * 	char **tmp 	A list of temporary variables, allocated with the size 
+ * 	char **tmp 	A list of temporary variables, allocated with the size
  *                      of the value in each list.
  *
- * 	void *pvalue	Pointers to temporary variable allocated with the 
+ * 	void *pvalue	Pointers to temporary variable allocated with the
  *                      width of the values of the first list.
  */
 static int
@@ -1625,10 +1625,10 @@ partition_pivot(char **lists, size_t nlists, size_t *widths,
 
 /*
  * The call interface to partition_select has one complicated looking feature:
- * you must pass in a "Real Index Calculation" function that will return an 
- * integer corresponding to the actual partition index. This is used to 
- * enable the same routine to work with dense and compressed structures. 
- * This function can just return the input integer unmodified if using a 
+ * you must pass in a "Real Index Calculation" function that will return an
+ * integer corresponding to the actual partition index. This is used to
+ * enable the same routine to work with dense and compressed structures.
+ * This function can just return the input integer unmodified if using a
  * dense array of values as input.
  * The arguments to realIndexCalc() should be:
  * 	int: 		the pivot index (returned from the pivot function)
@@ -1677,7 +1677,7 @@ partition_select (char **lists, size_t nlists, size_t *widths,
 		} else
 		{
 			left = pivotNewIndex+1;
-			if (left >= maxlen) 
+			if (left >= maxlen)
 			{
 				pivotNewIndex = maxlen;
 				break;
@@ -1755,9 +1755,9 @@ float8arr_median(PG_FUNCTION_ARGS) {
 	int index,median_index = (sdata->total_value_count-1)/2;
 	float8 ret;
 
-	double * vals = (double *)(sdata->vals->data); 
+	double * vals = (double *)(sdata->vals->data);
 	for (int i=0; i<sdata->unique_value_count; i++)
-		if (IS_NVP(vals[i])) 
+		if (IS_NVP(vals[i]))
 			PG_RETURN_NULL();
 
 	index = float8arr_partition_internal((double *)(sdata->vals->data),
@@ -1856,9 +1856,9 @@ svec_nonbase_positions(PG_FUNCTION_ARGS) {
 	int fill_count = 0;
 	int64 *rle_index;
 	ArrayType *pgarray;
-	
+
 	float8 * vals = (float8 *)sdata->vals->data;
-	
+
 	if (sdata->index->data != NULL) //Sparse vector
 	{
 		/*
@@ -1875,7 +1875,7 @@ svec_nonbase_positions(PG_FUNCTION_ARGS) {
 			}
 		}
 		/*
-			now we have array of values and array of runs (vals,rle_index and size sdata->unique_value_count), need to find positions that 
+			now we have array of values and array of runs (vals,rle_index and size sdata->unique_value_count), need to find positions that
 			are not base value
 		 */
 		result = (int64 *)palloc(sizeof(int64)*(result_size));
@@ -1891,7 +1891,7 @@ svec_nonbase_positions(PG_FUNCTION_ARGS) {
 				size_tracker += rle_index[i];
 			}
 		}
-		
+
 		pfree(rle_index);
 	}
 	pgarray = construct_array((Datum *)result,
@@ -1915,9 +1915,9 @@ svec_nonbase_values(PG_FUNCTION_ARGS) {
 	int fill_count = 0;
 	int64 *rle_index;
 	ArrayType *pgarray;
-	
+
 	float8 * vals = (float8 *)sdata->vals->data;
-	
+
 	if (sdata->index->data != NULL) //Sparse vector
 	{
 		/*
@@ -1934,7 +1934,7 @@ svec_nonbase_values(PG_FUNCTION_ARGS) {
 			}
 		}
 		/*
-		 now we have array of values and array of runs (vals,rle_index and size sdata->unique_value_count), need to find positions that 
+		 now we have array of values and array of runs (vals,rle_index and size sdata->unique_value_count), need to find positions that
 		 are not base value
 		 */
 		result = (float8 *)palloc(sizeof(int64)*(result_size));
@@ -1947,7 +1947,7 @@ svec_nonbase_values(PG_FUNCTION_ARGS) {
 				}
 			}
 		}
-		
+
 		pfree(rle_index);
 	}
 	pgarray = construct_array((Datum *)result,
@@ -1966,17 +1966,17 @@ Datum svec_hash( PG_FUNCTION_ARGS)
 	SparseData sdata  = sdata_from_svec(svec1);
 	char *ix = sdata->index->data;
 	double *vals = (double *)sdata->vals->data;
-	
+
 	unsigned long hash = 65599;
     unsigned short c;
-    
+
     for (int i=0;i<sdata->unique_value_count;i++)
 	{
 		c = compword_to_int8(ix);
 		hash = c + (hash << 7) + (hash << 16) - hash;
 		c = vals[i];
 		hash = c + (hash << 7) + (hash << 16) - hash;
-		
+
 		ix+=int8compstoragesize(ix);
 	}
 	PG_RETURN_INT32(hash);
@@ -1985,7 +1985,7 @@ Datum svec_hash( PG_FUNCTION_ARGS)
 /**
  *  svec_mean_transition (float8arr, svec):
  *
- *		Accumulates svec's by adding them elementwise and incrementing 
+ *		Accumulates svec's by adding them elementwise and incrementing
  *      the last element of the state array.
  *
  */
@@ -1993,20 +1993,20 @@ PG_FUNCTION_INFO_V1( svec_mean_transition );
 Datum svec_mean_transition(PG_FUNCTION_ARGS)
 {
 	/* Validate input*/
-	if (PG_ARGISNULL(0) && PG_ARGISNULL(1)) 
-		PG_RETURN_NULL();	
+	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
+		PG_RETURN_NULL();
 
-	if (PG_ARGISNULL(1)) 
-		PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(0));	
+	if (PG_ARGISNULL(1))
+		PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(0));
 
 	/* Get ARG(1) and convert it into float8 array */
 	SvecType *svec = PG_GETARG_SVECTYPE_P(1);
 	SparseData sdata = sdata_from_svec( svec);
 	int svec_dim = sdata->total_value_count;
-	float8 *svec_array = sdata_to_float8arr( sdata);	
-	
+	float8 *svec_array = sdata_to_float8arr( sdata);
+
 	if (PG_ARGISNULL(0)) {
-		/* 
+		/*
 		 * This is the first call, so create new state array
 		 */
 		float8 *state_array;
@@ -2022,32 +2022,32 @@ Datum svec_mean_transition(PG_FUNCTION_ARGS)
 		PG_RETURN_ARRAYTYPE_P(out_array);
 	}
 
-	/* Read the state */	
-	ArrayType *transarray; 	
+	/* Read the state */
+	ArrayType *transarray;
 	if (fcinfo->context && IsA(fcinfo->context, AggState))
 		transarray = PG_GETARG_ARRAYTYPE_P(0);
 	else
-		transarray = PG_GETARG_ARRAYTYPE_P_COPY(0);	
+		transarray = PG_GETARG_ARRAYTYPE_P_COPY(0);
 
 	/* Extract state array */
 	int state_dim = ARR_DIMS(transarray)[0];
 	float8 *state_array = (float8 *) ARR_DATA_PTR(transarray);
 
 	/* Check dimensions on both inputs */
-	if ( state_dim != (svec_dim+1)) 
+	if ( state_dim != (svec_dim+1))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("%s: input dimensions should be dim1=dim2+1, but are: dim1=%d, dim2=%d\n",
 						"svec_mean_transition", state_dim, svec_dim)));
-	
+
 	/* Transition */
 	for (int i=0; i<svec_dim; i++) {
 		state_array[i] = state_array[i] + svec_array[i];
 	}
 	state_array[svec_dim]++;
-	
+
 	PG_RETURN_ARRAYTYPE_P(transarray);
-	
+
 }
 
 /**
@@ -2058,19 +2058,19 @@ Datum svec_mean_transition(PG_FUNCTION_ARGS)
  */
 PG_FUNCTION_INFO_V1( svec_mean_prefunc );
 Datum svec_mean_prefunc( PG_FUNCTION_ARGS)
-{	
+{
 	/* Validate input*/
-	if (PG_ARGISNULL(0) && PG_ARGISNULL(1)) 
+	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
 		PG_RETURN_NULL();
 
-	if (PG_ARGISNULL(0)) 
+	if (PG_ARGISNULL(0))
 		PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(1));
 
-	if (PG_ARGISNULL(1)) 
+	if (PG_ARGISNULL(1))
 		PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(0));
 
 	/* Read the arguments */
-	ArrayType *transarray1, *transarray2; 	
+	ArrayType *transarray1, *transarray2;
 	if (fcinfo->context && IsA(fcinfo->context, AggState)) {
 		transarray1 = PG_GETARG_ARRAYTYPE_P(0);
 		transarray2 = PG_GETARG_ARRAYTYPE_P(1);
@@ -2084,28 +2084,28 @@ Datum svec_mean_prefunc( PG_FUNCTION_ARGS)
 	int dim1 = ARR_DIMS(transarray1)[0];
 	float8 *array2 = (float8 *)ARR_DATA_PTR(transarray2);
 	int dim2 = ARR_DIMS(transarray2)[0];
-	
+
 	/* Check dimensions */
-	if ( dim1 != dim2) 
+	if ( dim1 != dim2)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("%s: input dimensions should be the same, but are: dim1=%d, dim2=%d\n",
-						"svec_mean_prefunc", dim1, dim2)));	
-	
+						"svec_mean_prefunc", dim1, dim2)));
+
 	/* Add */
 	for (int i=0; i<dim1; i++) {
 		array1[i] = array1[i] + array2[i];
 	}
-	
+
 	PG_RETURN_ARRAYTYPE_P(transarray1);
-	
+
 }
 
 /**
  *  svec_mean_final (float8arr):
  *
  *		Divides all elements of the array by its last element
- *		and returns n-1 element SVEC 
+ *		and returns n-1 element SVEC
  *
  */
 PG_FUNCTION_INFO_V1( svec_mean_final );
@@ -2117,8 +2117,8 @@ Datum svec_mean_final( PG_FUNCTION_ARGS)
 	}
 
 	SvecType *svec;
-	ArrayType *transarray; 	
-	
+	ArrayType *transarray;
+
 	/* Read the argument */
 	if (fcinfo->context && IsA(fcinfo->context, AggState))
 		transarray = PG_GETARG_ARRAYTYPE_P(0);
@@ -2133,11 +2133,11 @@ Datum svec_mean_final( PG_FUNCTION_ARGS)
 	for (int i=0; i<dim-1; i++) {
 		array[i] = array[i] / array[dim-1];
 	}
-	
+
 	/* Create the output SVEC */
 	SparseData sdata = float8arr_to_sdata(array,dim-1);
 	svec = svec_from_sparsedata(sdata,true);
-	
+
 	PG_RETURN_SVECTYPE_P(svec);
 
 }
