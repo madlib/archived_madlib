@@ -11,6 +11,16 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/mainpage.dox"
     @ONLY
 )
+configure_file(
+    etc/header.html
+    "${CMAKE_CURRENT_BINARY_DIR}/etc/header.html"
+    @ONLY
+)
+configure_file(
+    etc/madlib_extra.css
+    "${CMAKE_CURRENT_BINARY_DIR}/etc/madlib_extra.css"
+    @ONLY
+)
 set(_DOXYGEN_INPUT_USER
     "\"${CMAKE_CURRENT_BINARY_DIR}/mainpage.dox\""
     "\"${CMAKE_SOURCE_DIR}/src/dbal\""
@@ -132,7 +142,7 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
     add_custom_target(doc
         COMMAND ${DOXYGEN_EXECUTABLE} user.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/etc"
-        DEPENDS doxysql doxyBinFiles doxygen_css ${_MATHJAX_DEPENDENCY_USER}
+        DEPENDS doxysql doxyBinFiles ${_MATHJAX_DEPENDENCY_USER}
             "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
         COMMENT "Generating user-level documentation..."
         VERBATIM
@@ -141,7 +151,7 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
     add_custom_target(devdoc
         COMMAND ${DOXYGEN_EXECUTABLE} developer.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/etc"
-        DEPENDS doxysql doxyBinFiles doxygen_css update_mathjax
+        DEPENDS doxysql doxyBinFiles update_mathjax
             "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
         COMMENT "Generating developer documentation..."
         VERBATIM

@@ -22,10 +22,10 @@ Building and Installing from Source
 Optional:
 
 - For generating user-level documentation (using `make doc`, see below):
-  + doxygen >= 1.7.3, flex >= 2.5.33, and bison >= 2.4 to generate the
+  + doxygen >= 1.8.4, flex >= 2.5.33, and bison >= 2.4 to generate the
     user-level API reference in HTML format
   + A recent LaTeX installation for generating the formulas in the user-level
-    documentation.
+    documentation
   + graphviz >= 2.28 to generate graphs for the doxygen documentation
 
 - For generating developer-level documentation (using `make devdoc`, see below):
@@ -59,8 +59,8 @@ Optionally, install MADlib with
 
     make install
 
-If your are missing a required library, the `./configure` or `make` step will
-notice. Refer to your operating system's manual for instructions how to install
+If you are missing a required library, the `./configure` or `make` step will
+notice. Refer to your operating system's manual for instructions to install
 the above prerequisites.
 
 
@@ -96,7 +96,7 @@ Configuration Options:
 ----------------------
 
 Depending on the environment, `./configure` might have to be called with
-additional configuration parameters. The way to specifiy a parameter `<PARAM>`
+additional configuration parameters. The way to specify a parameter `<PARAM>`
 is to add a command-line argument `-D<PARAM>=<value>`.
 
 The following provides an overview of the
