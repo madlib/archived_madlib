@@ -1,0 +1,720 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file arima.sql_in
+ *
+ * @brief Arima function for forecasting of timeseries data
+ * @date August 2013
+ *
+ *//* ------------------------------------------------------------------------*/
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_arima
+
+<div class ="toc"><b>Contents</b>
+<ul>
+<li class="level1"><a href="#pca_train">About</a></li>
+<li class="level1"><a href="#help">Online Help</a></li>
+<li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#train_output">Train output</a></li>
+<li class="level1"><a href="#forecast">Forecast Function</a></li>
+<li class="level1"><a href="#forecast_output">Forecast output</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+</ul>
+</div>
+
+@anchor arima
+@about
+Given a time series of data X, the ARIMA model is a tool for
+understanding and, perhaps, predicting future values in this series. The model
+consists of three parts, an autoregressive (AR) part, a moving average (MA)
+part, and integrated (I) part where an initial differencing step can be applied
+to remove any non-stationarity in the signal. The model is generally referred to
+as an ARIMA(p, d, q) model where parameters p, d, and q are non-negative integers
+that refer to the order of the autoregressive, integrated, and moving average
+parts of the model respectively.
+
+@anchor help
+@par Online help
+View short help messages using the following statements:
+@verbatim
+-- Summary of ARIMA
+madlib.arima()
+
+-- Parameter selection function syntax and output table format
+madlib.arima('usage')
+
+-- Summary of ARIMA Forecast function
+madlib.arima_forecast()
+
+-- ARIMA forecast function and output table format
+madlib.arima_forecast('usage')
+@endverbatim
+
+@anchor train
+@par Model Training
+
+ARIMA Model training function
+@verbatim
+SELECT arima(input_table, output_table,
+             timestamp_column, timeseries_column,
+             grouping_columns := NULL,
+             include_mean := False,
+             non_seasonal_orders := ARRAY[1,1,1],
+             optimizer_params := 'max_iter=100, tau=1e-3, e1=1e-15, e2=1e-15,
+                                  e3=1e-15, hessian_delta=1e-6)
+@endverbatim
+
+@par Arguments
+<DL class="arglist">
+    <DT>input_table</DT>
+    <DD>TEXT. Name of the table containing time series data</DD>
+
+    <DT>output_table</DT>
+    <DD>TEXT. Name of the table to store the ARIMA model</DD>
+
+    <DT>timestamp_column</DT>
+    <DD>TEXT. Name of the column containing the timestamp (index) data.
+    This could be a serial index (integer) or date/time value (timestamp)</DD>
+
+    <DT>timeseries_column</DT>
+    <DD>TEXT. Name of the column containing the time series data. This data is
+    currently restricted to DOUBLE PRECISION.</DD>
+
+    <DT>grouping_columns</DT>
+    <DD>TEXT. <em>Not currently implemented. Any non-NULL value is
+    ignored.</em>
+
+    A comma-separated list of column names used to group the input dataset
+    into discrete groups, training one ARIMA model per group. Similar to the SQL
+    <tt>GROUP BY</tt> clause. When this value is null, no grouping is used
+    and a single result model is generated. Default value: NULL.</DD>
+
+    <DT>include_mean</DT>
+    <DD>BOOLEAN. Mean value of the data series is added in the ARIMA model
+    if this variable
+    is True. Default value: False</DD>
+
+    <DT>non_seasonal_orders</DT>
+    <DD><em>INTEGER[]</em>. Orders of the ARIMA model. The order of the orders are
+    [p, d, q], where parameters p, d, and q are non-negative integers that refer to
+    the order of the autoregressive, integrated, and moving average parts of the model
+    respectively.</DD>
+
+    <DT>optimizer_params</DT>
+    <DD>TEXT. Optimizer-specific parameters of the form ‘name=value'.
+    Each pair is separated by commas where the order of the parameters does not
+    matter. The currently accepted parameter list is given below:
+        - max_iter: Maximum number of iterations to run learning algorithm
+            (Default = 100)
+        - tau: Computes the initial step size for gradient algorithm (Default = 0.001)
+        - e1: Algorithm-specific threshold for convergence (Default = 1e-15)
+        - e2: Algorithm-specific threshold for convergence (Default = 1e-15)
+        - e3: Algorithm-specific threshold for convergence (Default = 1e-15)
+        - hessian_delta: Delta parameter to compute a numerical approximation
+            of the Hessian matrix (Default = 1e-6)
+    </DD>
+</DL>
+
+
+@anchor train_output
+@par Training output tables
+The following tables are created:
+-# 'output_table': Table containing the ARIMA model.
+    Contains following columns:
+<DL class="arglist">
+    <DT>mean</DT>
+    <DD>Model mean(only if 'include_mean' is True)</DD>
+    <DT>mean_std_error</DT>
+    <DD>Standard errors for mean</DD>
+    <DT>ar_params</DT>
+    <DD>Auto-regressions parameters of the ARIMA model</DD>
+    <DT>ar_std_errors</DT>
+    <DD>Standard errors for AR parameters </DD>
+    <DT>ma_params</DT>
+    <DD>Moving average parameters of the ARIMA model</DD>
+    <DT>ma_std_errors</DT>
+    <DD>Standard errors for MA parameters</DD>
+</DL>
+-# 'output_table'_summary: Table containing descriptive statistics of the ARIMA model.
+Contains following columns:
+<DL class="arglist">
+    <DT>input_table</DT>
+    <DD>Table name with the source data</DD>
+    <DT>timestamp_col</DT>
+    <DD>Column name in source table that contains the timestamp index to data</DD>
+    <DT>timeseries_col</DT>
+    <DD>Column name in source table that contains the data values</DD>
+    <DT>non_seasonal_orders</DT>
+    <DD>Orders of the non-seasonal ARIMA model</DD>
+    <DT>include_mean</DT>
+    <DD>True if intercept was included in ARIMA model</DD>
+    <DT>residual_variance</DT>
+    <DD>Variance of the residuals</DD>
+    <DT>log_likelihood</DT>
+    <DD>Log likelihood value (when using MLE)</DD>
+    <DT>iter_num</DT>
+    <DD>How many iterations</DD>
+    <DT>exec_time</DT>
+    <DD>Total time taken to train the model</DD>
+</DL>
+
+-# 'output_table'_residual: Table containing the residuals for each data point in 'input_table'.
+Contains following columns:
+<DL class="arglist">
+    <DT>'timestamp_col'</DT>
+    <DD>Same as the 'timestamp_col' parameter
+        (all indices from source table included except the first
+         'd' elements, where 'd' is the differencing order value
+         from 'non_seasonal_orders')
+    </DD>
+    <DT>residual</DT>
+    <DD>Residual value for each data point</DD>
+</DL>
+
+@anchor forecast
+@par Forecasting
+
+ARIMA forecast function
+@verbatim
+SELECT arima_forecast(model_table, output_table, steps_ahead)
+@endverbatim
+
+@par Arguments
+<DL class="arglist">
+<DT>model_table</DT>
+<DD>TEXT. Name of the table containing the ARIMA model trained on the
+time series dataset</DD>
+
+<DT>output_table</DT>
+<DD>TEXT. Name of the table to store the forecasted values</DD>
+
+<DT>steps_ahead</DT>
+<DD>INTEGER. Number of steps to forecast at the end of the time
+series</DD>
+
+@anchor forecast_output
+@par Forecast output table
+The output table produced by the forecast function contains the following columns.
+<DL class="arglist">
+    <DT>group_by_cols</DT>
+    <DD>Grouping column values (if grouping parameters is provided)</DD>
+    <DT>step_ahead</DT>
+    <DD>Time step for the forecast</DD>
+    <DT>forecast_value</DT>
+    <DD>Forecast of the current time step</DD>
+</DL>
+
+@anchor examples
+@examp
+-#  Create an input data set.
+@verbatim
+DROP TABLE IF EXISTS arima_beer;
+CREATE TABLE arima_beer (time_id integer NOT NULL, value double precision NOT NULL );
+COPY arima_beer (time_id, value) FROM stdin WITH DELIMITER '|';
+1  | 93.2
+2  | 96.0
+3  | 95.2
+4  | 77.0
+5  | 70.9
+6  | 64.7
+7  | 70.0
+8  | 77.2
+9  | 79.5
+10 | 100.5
+11 | 100.7
+12 | 107.0
+13 | 95.9
+14 | 82.7
+15 | 83.2
+16 | 80.0
+17 | 80.4
+18 | 67.5
+19 | 75.7
+20 | 71.0
+21 | 89.2
+22 | 101.0
+23 | 105.2
+24 | 114.0
+25 | 96.2
+26 | 84.4
+27 | 91.2
+28 | 81.9
+29 | 80.5
+30 | 70.4
+31 | 74.7
+32 | 75.9
+33 | 86.2
+34 | 98.7
+35 | 100.9
+36 | 113.7
+37 | 89.7
+38 | 84.4
+39 | 87.2
+40 | 85.5
+\.
+@endverbatim
+
+-#  Train an ARIMA model.
+@verbatim
+-- ARIMA model for 'grouping_columns'=NULL, 'include_mean'=TRUE,
+--   and 'non_seasonal_orders'=[1,1,1]
+SELECT madlib.arima_train('arima_beer', 'arima_beer_output',
+                          'time_id', 'value', NULL, False,
+                          ARRAY[1, 1, 1]);
+@endverbatim
+
+-# Examine the resulting output tables.
+@verbatim
+\x on
+SELECT * FROM arima_beer_output;
+SELECT * FROM arima_beer_output_summary;
+SELECT * FROM arima_beer_output_residual;
+@endverbatim
+
+-# Use the forecast function to forecast 10 future values
+@verbatim
+SELECT madlib.arima_forecast('arima_beer_output',
+                             'arima_beer_forecast_output',
+                             10);
+@endverbatim
+
+@anchor background
+@par Technical Background
+An ARIMA model is an <em>a</em>uto-<em>r</em>egressive <em>i</em>ntegrated
+<em>m</em>oving <em>a</em>verage model.  An ARIMA model is typically expressed
+in the form
+\f[
+(1 - \phi(B)) Y_t  = (1 + \theta(B)) Z_t,
+\f]
+
+where \f$B\f$ is the backshift operator. The time \f$ t \f$ is from \f$ 1 \f$
+to \f$ N \f$.
+
+ARIMA models involve the following variables:
+- The values of the time series: \f$ X_t \f$.
+- Parameters of the model: \f$ p \f$, \f$ q \f$, and \f$ d \f$;
+      \f$ d \f$ is the differencing order, \f$ p \f$ is the order of the AR
+      operator, and \f$ q \f$ is the order of the MA operator.
+- The AR operator: \f$ \phi(B) \f$.
+- The MA operator: \f$ \theta(B) \f$.
+- The lag difference: \f$ Y_{t} \f$, where  \f$ Y_{t} = (1-B)^{d}(X_{t} - \mu) \f$.
+- The mean value: \f$ \mu \f$, which is set to be zero for
+      \f$ d>0 \f$ and estimated from the data when d=0.
+- The error terms: \f$ Z_t \f$.
+
+The auto regression operator models the prediction for the next observation as
+some linear combination of the previous observations. More formally, an AR
+operator of order \f$ p \f$ is defined as
+
+\f[
+\phi(B) Y_t= \phi_1 Y_{t-1}   + \dots +  \phi_{p} Y_{t-p}
+\f]
+
+The moving average operator is similar, and it models the prediction
+for the next observation as a linear combination of the errors in the
+previous prediction errors.  More formally, the MA operator of order
+\f$ q \f$ is defined as
+
+\f[
+\theta(B) Z_t =   \theta_{1} Z_{t-1} + \dots + \theta_{q} Z_{t-q}.
+\f]
+
+We estimate the parameters using the Levenberg-Marquardt Algorithm.
+In mathematics and computing, the Levenberg-Marquardt algorithm (LMA),
+also known as the damped least-squares (DLS) method, provides a
+numerical solution to the problem of minimizing a function, generally
+nonlinear, over a space of parameters of the function.
+
+Like other numeric minimization algorithms, LMA is an iterative
+procedure.  To start a minimization, the user has to provide an
+initial guess for the parameter vector, $p$, as well as some tuning
+parameters \f$\tau, \epsilon_1, \epsilon_2, \epsilon_3,\f$.
+
+More details of the
+@anchor literature
+@par Literature
+
+[1] Rob J Hyndman and George Athanasopoulos: Forecasting: principles and practice,
+http://otexts.com/fpp/
+
+[2] Robert H. Shumway, David S. Stoffer: Time Series Analysis and Its
+Applications With R Examples, Third edition Springer Texts in Statistics, 2010
+
+[3] Henri Gavin: The Levenberg-Marquardt method for nonlinear least squares
+curve-fitting problems, 2011
+
+**/
+
+
+-----------------------------------------------------------------------
+-- ARIMA TRAIN FUNCTIONS
+-----------------------------------------------------------------------
+
+/*
+@brief Estimate ARIMA parameters from a timeseries data
+
+*/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.arima_train(
+    input_table     TEXT,       -- Source table name
+    output_table    TEXT,       -- Output table prefix to
+                                --    diagnostic and residual table
+                                --    for the ARIMA model
+                                --    Tables created are:
+                                --    output_table
+                                --    <output_table>_summary
+                                --    <output_table>_residual
+    timestamp_column   TEXT,       -- Index column (e.g. timestamp) that
+                                -- orders the time series
+    timeseries_column  TEXT,       -- Column that contains the values
+                                -- of the time series
+    grouping_columns   TEXT,       -- Comma-separated list of grouping
+                                -- columns (Default: NULL)
+    include_mean    BOOLEAN,    -- Boolean to control if constant
+                                -- mean is
+                                --    to included in the model
+                                --    (Default: False)
+    non_seasonal_orders INTEGER[],  -- Array of non-seasonal AR, I, and
+                                    -- MA orders (Default: ARRAY[1,1,1])
+    optimizer_params    TEXT        -- Control parameters for optimizer
+)
+RETURNS VOID AS $$
+    PythonFunctionBodyOnly(`tsa', `arima')
+    arima.arima_train(schema_madlib, input_table, output_table,
+                      timestamp_column, timeseries_column, grouping_columns,
+                      include_mean, non_seasonal_orders, optimizer_params)
+$$ LANGUAGE plpythonu;
+
+-- other optional parameters that can be added in future
+--      estimation_method     TEXT,      -- Parameter estimation
+--                                       -- algorithm (must be one of
+--                                       -- 'mle', 'uls', 'cls')
+--      seasonal_pdq          INTEGER[], -- Array of seasonal AR, I,
+--                                       -- MA orders and
+--                                       -- seasonal cycle length
+--                                       -- (Default: ARRAY[0,0,0,0])
+
+-------------------------------------------------------------------------
+
+-- Overloaded functions--
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.arima_train(
+    input_table         TEXT,
+    output_table        TEXT,
+    timestamp_column       TEXT,
+    timeseries_column      TEXT,
+    grouping_columns       TEXT,
+    include_mean        BOOLEAN,
+    non_seasonal_orders INTEGER[]
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.arima_train($1, $2, $3, $4, $5, $6,
+                                     $7, NULL)
+$$ LANGUAGE sql;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.arima_train(
+    input_table      TEXT,
+    output_table     TEXT,
+    timestamp_column    TEXT,
+    timeseries_column   TEXT,
+    grouping_columns         TEXT,
+    include_mean     BOOLEAN
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.arima_train($1, $2, $3, $4, $5, $6,
+                                    ARRAY[1,1,1], NULL)
+$$ LANGUAGE sql;
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.arima_train(
+    input_table      TEXT,
+    output_table     TEXT,
+    timestamp_column    TEXT,
+    timeseries_column   TEXT,
+    grouping_columns         TEXT
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.arima_train($1, $2, $3, $4, $5, False,
+                                    ARRAY[1,1,1], NULL)
+$$ LANGUAGE sql;
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.arima_train(
+    input_table      TEXT,
+    output_table     TEXT,
+    timestamp_column    TEXT,
+    timeseries_column   TEXT
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.arima_train($1, $2, $3, $4, NULL, False,
+                                    ARRAY[1,1,1], NULL)
+$$ LANGUAGE sql;
+
+-------------------------------------------------------------------------
+/*
+@brief Forecast timeseries using an ARIMA model
+*/
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.arima_forecast(
+    model_table    TEXT,   -- Table name containing the ARIMA model
+    output_table   TEXT,   -- Output table name for forecasting by
+                                -- the ARIMA model
+    steps_ahead         INTEGER -- Number of steps to forecast ahead
+)
+RETURNS VOID AS $$
+PythonFunctionBodyOnly(`tsa', `arima_forecast')
+    arima_forecast.arima_forecast(schema_madlib, model_table, output_table,
+                                  steps_ahead)
+$$ LANGUAGE plpythonu;
+
+-------------------------------------------------------------------------
+-- Help functions  ------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.arima_train(
+    message            TEXT
+)
+RETURNS TEXT AS $$
+PythonFunctionBodyOnly(`tsa', `arima')
+    return arima.arima_train_help_message(schema_madlib, message)
+$$ LANGUAGE plpythonu;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.arima_train()
+RETURNS TEXT AS $$
+    PythonFunction(tsa, arima, arima_train_help_message)
+$$ LANGUAGE plpythonu;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.arima_forecast(
+    message            TEXT
+)
+RETURNS TEXT AS $$
+PythonFunctionBodyOnly(`tsa', `arima_forecast')
+    return arima_forecast.arima_forecast_help_message(schema_madlib, message)
+$$ LANGUAGE plpythonu;
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.arima_forecast()
+RETURNS TEXT AS $$
+PythonFunctionBodyOnly(`tsa', `arima_forecast')
+    return arima_forecast.arima_forecast_help_message(schema_madlib, None)
+$$ LANGUAGE plpythonu;
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_residual
+(
+    tid     INTEGER,
+    tvals   DOUBLE PRECISION[],
+    p       INTEGER,
+    d       INTEGER,
+    q       INTEGER,
+    phi     DOUBLE PRECISION[],
+    theta   DOUBLE PRECISION[],
+    mean    DOUBLE PRECISION,
+    prez    DOUBLE PRECISION[]
+)
+RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME', 'arima_residual'
+LANGUAGE C;
+
+-------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_diff
+(
+    tvals   DOUBLE PRECISION[],
+    d       INTEGER
+)
+RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME', 'arima_diff'
+LANGUAGE C STRICT;
+
+
+-------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_adjust
+(
+    distid        INTEGER,
+    curr_tvals    DOUBLE PRECISION[],
+    prev_tvals    DOUBLE PRECISION[],
+    p             INTEGER
+)
+RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME', 'arima_adjust'
+LANGUAGE C;
+
+-------------------------------------------------------------------------
+
+-- Compute the vector delta, the change of coefficients
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_lm_delta
+(
+    jj  DOUBLE PRECISION[],   -- J^T * J
+    jz   DOUBLE PRECISION[],   -- J^T * Z
+    u   DOUBLE PRECISION      -- Weight of gradient-descent step
+)
+RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME', 'arima_lm_delta'
+LANGUAGE C STRICT;
+
+----------------------------------------------------------------------
+-- One step of LM algorithm over a chunk
+----------------------------------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__arima_lm_result;
+CREATE TYPE MADLIB_SCHEMA.__arima_lm_result AS
+(
+    z2      DOUBLE PRECISION,
+    jj      DOUBLE PRECISION[],
+    jz      DOUBLE PRECISION[],
+    prez    DOUBLE PRECISION[],
+    prej    DOUBLE PRECISION[]
+);
+
+--------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_lm
+(
+    tid     INTEGER,    -- Time series ID
+    tvals   DOUBLE PRECISION[],   -- Time series values
+    p       INTEGER,    -- P
+    q       INTEGER,    -- Q
+    phi     DOUBLE PRECISION[],   -- Phi
+    theta   DOUBLE PRECISION[],   -- Theta
+    mean    DOUBLE PRECISION,     -- Mean
+    prez    DOUBLE PRECISION[],   -- Previous Z
+    prej    DOUBLE PRECISION[]   -- Previous J
+)
+RETURNS MADLIB_SCHEMA.__arima_lm_result
+AS 'MODULE_PATHNAME', 'arima_lm'
+LANGUAGE C;
+
+----------------------------------------------------------------------
+-- Accumulate results from all chunks
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_lm_result_sfunc (
+    state_data  DOUBLE PRECISION[],
+    jj          DOUBLE PRECISION[],
+    jz          DOUBLE PRECISION[],
+    z2          DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[] AS
+    'MODULE_PATHNAME', 'arima_lm_result_sfunc'
+LANGUAGE C IMMUTABLE;
+
+------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_lm_result_pfunc (
+    state1      DOUBLE PRECISION[],
+    state2      DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+    'MODULE_PATHNAME', 'arima_lm_result_pfunc'
+LANGUAGE C IMMUTABLE;
+
+------------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__arima_lm_sum_result;
+CREATE TYPE MADLIB_SCHEMA.__arima_lm_sum_result AS (
+    jj          DOUBLE PRECISION[],
+    jz          DOUBLE PRECISION[],
+    z2          DOUBLE PRECISION,
+    u           DOUBLE PRECISION
+);
+
+------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_lm_result_ffunc (
+    state_data  DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__arima_lm_sum_result AS
+    'MODULE_PATHNAME', 'arima_lm_result_ffunc'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__arima_lm_result_agg (
+    /* jj */        DOUBLE PRECISION[],
+    /* jz */        DOUBLE PRECISION[],
+    /* z2 */        DOUBLE PRECISION
+);
+
+CREATE AGGREGATE MADLIB_SCHEMA.__arima_lm_result_agg (
+    /* jj */        DOUBLE PRECISION[],
+    /* jz */        DOUBLE PRECISION[],
+    /* z2 */        DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__arima_lm_result_sfunc,
+    m4_ifdef(`__GREENPLUM__', `PreFunc = MADLIB_SCHEMA.__arima_lm_result_pfunc,')
+    FinalFunc = MADLIB_SCHEMA.__arima_lm_result_ffunc
+    -- use NULL as the initial value
+);
+
+----------------------------------------------------------------------
+
+-- Aggregate function to compute statistics
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_lm_stat_sfunc (
+    state_data      DOUBLE PRECISION[],
+    tid             INTEGER,
+    tvals           DOUBLE PRECISION[],
+    p               INTEGER,
+    q               INTEGER,
+    phi             DOUBLE PRECISION[],
+    theta           DOUBLE PRECISION[],
+    mean            DOUBLE PRECISION,
+    delta           DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[] AS
+    'MODULE_PATHNAME', 'arima_lm_stat_sfunc'
+LANGUAGE C IMMUTABLE;
+
+-------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__arima_lm_stat_result;
+CREATE TYPE MADLIB_SCHEMA.__arima_lm_stat_result AS (
+    std_errs        DOUBLE PRECISION[],
+    resid_var       DOUBLE PRECISION,
+    loglik          DOUBLE PRECISION
+);
+
+-------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__arima_lm_stat_ffunc (
+    state_data      DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__arima_lm_stat_result AS
+    'MODULE_PATHNAME', 'arima_lm_stat_ffunc'
+LANGUAGE C IMMUTABLE STRICT;
+
+------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__arima_lm_stat_agg (
+    /* tid */       INTEGER,
+    /* tvals */     DOUBLE PRECISION[],
+    /* p */         INTEGER,
+    /* q */         INTEGER,
+    /* phi */       DOUBLE PRECISION[],
+    /* theta */     DOUBLE PRECISION[],
+    /* mean */      DOUBLE PRECISION,
+    /* delta */     DOUBLE PRECISION
+);
+
+CREATE m4_ifdef(`__GREENPLUM__', `ORDERED') AGGREGATE
+MADLIB_SCHEMA.__arima_lm_stat_agg (
+    /* tid */       INTEGER,
+    /* tvals */     DOUBLE PRECISION[],
+    /* p */         INTEGER,
+    /* q */         INTEGER,
+    /* phi */       DOUBLE PRECISION[],
+    /* theta */     DOUBLE PRECISION[],
+    /* mean */      DOUBLE PRECISION,
+    /* delta */     DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.__arima_lm_stat_sfunc,
+    FinalFunc = MADLIB_SCHEMA.__arima_lm_stat_ffunc
+    -- use NULL as the initial value
+);
+

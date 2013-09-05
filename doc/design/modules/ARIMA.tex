@@ -1,0 +1,342 @@
+% When using TeXShop on the Mac, let it know the root document. The following must be one of the first 20 lines.
+% !TEX root = ../design.tex
+
+\chapter[ARIMA]{ARIMA}
+\begin{moduleinfo}
+\item[Authors] {Mark Wellons}
+\item[History]
+	\begin{modulehistory}
+    		\item[v0.1] Initial version
+	\end{modulehistory}
+\end{moduleinfo}
+
+% Abstract. What is the problem we want to solve?
+\section{Introduction}
+
+An ARIMA model is an {\it a}uto-{\it r}egressive {\it i}ntegrated {\it
+  m}oving {\it a}verage model.  An ARIMA model is typically expressed
+in the form  
+\begin{equation}
+(1 - \phi(B)) Y_t  = (1 + \theta(B)) Z_t,
+\end{equation}
+where $B$ is the backshift operator. The time $t$ is from $1$ to $N$.
+
+ARIMA models involve the following variables:
+\begin{enumerate}
+   \item The lag difference $Y_{t}$, where  $Y_{t} = (1-B)^{d}(X_{t} - \mu)$.  
+    \item The values of the time series $X_t$.
+    \item $p$, $q$, and $d$ are the parameters of the ARIMA model.
+      $d$ is the differencing order, $p$ is the order of the AR
+      operator, and $q$ is the order of the MA operator.   
+    \item The AR operator $\phi(B)$. 
+    \item The MA operator $\theta(B)$.
+    \item The mean value $\mu$, which is always set to be zero for
+      $d>0$ or need to be estimated. 
+    \item The error terms $Z_t$.  
+\end{enumerate}
+
+\subsection{AR \& MA Operators}
+The  auto regression operator models the prediction for the next
+observation  as some linear combination of the previous observations.
+More formally, an AR operator of order $p$ is defined as  
+\begin{align}
+\phi(B) Y_t= \phi_1 Y_{t-1}   + \dots +  \phi_{p} Y_{t-p}
+\end{align}
+
+The moving average operator is similar, and it models the prediction
+for the next observation as a linear combination of the errors in the
+previous prediction errors.  More formally, the MA operator of order
+$q$ is defined as  
+\begin{align}
+\theta(B) Z_t =   \theta_{1} Z_{t-1} + \dots + \theta_{q} Z_{t-q}.
+\end{align}
+
+\section{Solving for the model parameters}\label{sec:para_est}
+
+\subsection{Least Squares}\label{sec:CLS}
+We assume that 
+\begin{equation}
+\Pr(Z_t) = \frac{1}{\sqrt{2 \pi \sigma^2}} e^{-Z^2_t/2 \sigma^2}, \quad t > 0
+\end{equation}
+and that  $Z_{-q+1} = Z_{-q+2} = \dots = Z_0 = Z_1 = \dots = Z_p =
+0$. The initial values of $Y_t=X_t-\mu$ for $t=-p+1, -p+2, \dots,
+0$ can be solved from the following linear equations
+\begin{eqnarray}
+\phi_1 Y_0 + \phi_2 Y_{-1} + \cdots + \phi_p Y_{-p+1} &=& Y_1 \nonumber\\
+\phi_2 Y_0 + \cdots + \phi_p Y_{-p+2} &=& Y_2 - \phi_1 Y_1  \nonumber\\
+&\vdots& \nonumber\\
+\phi_{p-1} Y_0 + \phi_p Y_{-1} &=& Y_{p-1} - \phi_1 Y_{p-2} - \cdots -
+\phi_{p-2} Y_1 \nonumber \\
+\phi_p Y_0  &=& Y_p - \phi_1 Y_{p-1} - \cdots - \phi_{p-1} Y_{1} \label{eq:init_Y}
+\end{eqnarray}
+
+The likelihood function $L$ for $N$ values of $Z_t$  is then
+\begin{equation}
+L(\phi, \theta) = \prod_{t = 1}^N  \frac{1}{\sqrt{2 \pi \sigma^2}} e^{-Z^2_t/2 \sigma^2}
+\end{equation}
+so the log likelihood function $l$ is
+\begin{align}
+l(\phi, \theta) &= \sum_{t = 1}^N \ln \left(\frac{1}{\sqrt{2 \pi \sigma^2}} e^{-Z^2_t/2 \sigma^2}
+ \right) \nonumber\\
+ &=  \sum_{t = 1}^N  - \ln \left( \sqrt{2 \pi \sigma^2}\right)  -\frac{Z^2_t}{2 \sigma^2}\nonumber\\
+&=  -\frac{N}{2} \ln \left( 2 \pi \sigma^2\right)  - \frac{1}{2
+  \sigma^2} \sum_{t = 1}^N   Z^2_t\ . \label{eq:loglikelihood}
+\end{align}
+Thus, finding the maximum likelihood is equivalent to solving the
+optimization problem (known as the conditional least squares
+formation) 
+\begin{align}
+\min_{\theta, \phi} \sum_{t = 1}^N  Z^2_t.
+\end{align}
+The error term $Z_t$ can be computed iteratively as follows:
+\begin{align}\label{equ:error terms}
+Z_t = X_t - F_t(\phi, \theta, \mu)
+\end{align}
+where 
+\begin{align}
+F_t(\phi, \theta, \mu) = \mu + \sum_{i=1}^p \phi_i (X_{t-i}-\mu) + \sum_{i=1}^q \theta_i Z_{t-i}
+\end{align}
+
+\subsubsection{Levenberg-Marquardt Algorithm}
+In mathematics and computing, the Levenberg-Marquardt algorithm (LMA),
+also known as the damped least-squares (DLS) method, provides a
+numerical solution to the problem of minimizing a function, generally
+nonlinear, over a space of parameters of the function. These
+minimization problems arise especially in least squares curve fitting
+and nonlinear programming. 
+
+%Author's (Mark W) Note: This is taken from http://people.duke.edu/~hpgavin/ce281/lm.pdf
+To understand the Levenberg-Marquardt algorithm, it helps to know the
+gradient descent method and the Gauss-Newton method.  On many
+``reasonable'' functions, the gradient descent method takes large
+steps when the current iterate is distant from the true solution, but
+is slow to converge an the current iterate nears the true solution.
+The Gauss-Newton method is much faster for converging when the current
+iterate is in the neighborhood of the true solution.  The
+Levenberg-Marquardt algorithm tries to get the best of best worlds,
+and combine the gradient descent step with Gauss-Newton step in a
+weighted average.  For iterates far from the true solution, the step
+favors the gradient descent step, but as the iterate approaches the
+true solution, the Gauss-Newton step dominates.   
+
+%Author's (Mark W) Note: Sudo code taken from http://users.ics.forth.gr/~lourakis/levmar/levmar.pdf
+Like other numeric minimization algorithms, LMA is an iterative
+procedure.  To start a minimization, the user has to provide an
+initial guess for the parameter vector, $p$, as well as some tuning
+parameters $\tau, \epsilon_1, \epsilon_2, \epsilon_3,$ and $k_{max}$.
+Let $Z(p)$ be the vector of calculated errors ($Z_t$'s) for the
+parameter vector $p$, and let $J = (J_{1}, J_{2}, \dots, J_N)^T$
+be a Jacobian matrix.   
+
+A proposed implementation is as follows:
+\begin{algorithm}
+\alginput{An initial guess for parameters $\vec{\phi}_0, \vec{\theta}_0, \mu_0$}
+\algoutput{The parameters that maximize the likelihood $\vec{\phi}^*,
+  \vec{\theta}^*, \mu^*$}
+\begin{algorithmic}[1]
+	\State $k \leftarrow 0$  \Comment{Iteration counter}
+	\State $v \leftarrow 2$ \Comment{The change in the weighting factor.}
+	\State $(\vec{\phi},\vec{\theta},\mu) \leftarrow (\vec{\phi}_0,\vec{\theta}_0,\mu_0)$ \Comment{Initialize parameter vector}
+	\State Calculate $Z(\vec{\phi},\vec{\theta},\mu)$ with equation \ref{equ:error terms}.  \Comment{Vector of errors}
+	\State $A \leftarrow J^T J$   \Comment{The  Gauss-Newton Hessian approximation}
+	\State $u \leftarrow \tau * \max_i(A_{ii})$ \Comment{Weight of the gradient-descent step}
+	\State $g \leftarrow J^T Z(\vec{\phi},\vec{\theta},\mu)$ \Comment{The gradient descent step.}
+	\State $ \text{stop} \leftarrow (\|g\|_{\infty} \le \epsilon_1)$ \Comment{Termination Variable}
+	\While{(not stop) and ($k < k_{max}$)}
+		\State $k \leftarrow k + 1$
+		\Repeat
+			\State $\delta \leftarrow (A + u \times \text{diag}(A))^{-1} g$ \Comment{Calculate step direction}
+			\If{$\| \delta \| \le \epsilon_2 \|
+              (\vec{\phi},\vec{\theta},\mu) \|$} \Comment{Change in the parameters is too small to continue.}
+				\State  $\text{stop} \leftarrow \text{true}$
+			\Else
+				\State $(\vec{\phi}_{new},\vec{\theta}_{new},\mu_{new}) \leftarrow (\vec{\phi},\vec{\theta},\mu) + \delta$ \Comment{Take a trial step in the new direction}
+				\State $\rho \leftarrow (\| Z(\vec{\phi},\vec{\theta},\mu)\|^2 - \| Z(\vec{\phi}_{new},\vec{\theta}_{new},\mu_{new})\|^2 )/(\delta^T(u \delta + g))$ \Comment{Calculate improvement of trial step}
+				\If{$\rho > 0$} \Comment{Trial step was good, proceed to next iteration}
+					\State $(\vec{\phi},\vec{\theta},\mu) \leftarrow (\vec{\phi}_{new},\vec{\theta}_{new},\mu_{new})$ \Comment{Update variables}
+					\State Calculate $Z(\vec{\phi},\vec{\theta},\mu)$ with equation \ref{equ:error terms}.  
+					\State $A \leftarrow J^T J$
+					\State $g \leftarrow J^T Z(\vec{\phi},\vec{\theta},\mu)$
+					\State $ \text{stop} \leftarrow (\|g\|_{\infty} \le \epsilon_1)$ or $(\| Z(\vec{\phi},\vec{\theta},\mu)^2 \| \le \epsilon_3)$  \Comment{Terminate if we are close to the solution.}
+					\State $v \leftarrow 2$
+					\State $u \rightarrow u * \max(1/3, 1 - (2\rho - 1)^3 )$
+				\Else  \Comment{Trial step was bad, change weighting on the gradient decent step}
+					\State $v \leftarrow 2 v$
+					\State $u \leftarrow u v$
+				\EndIf
+			\EndIf
+		\Until{(stop) or ($\rho > 0$) }
+	\EndWhile
+	\State $(\vec{\phi}^*,\vec{\theta}^*,\mu^*) \leftarrow (\vec{\phi},\vec{\theta},\mu)$
+\end{algorithmic}
+\label{alg: Levenberg-Marquardt}
+\end{algorithm}
+
+Suggested values for the tuning parameters are $\epsilon_1 = \epsilon_2 = \epsilon_3 = 10^{-15}, \tau = 10^{-3}$ and $k_{max} = 100$.  
+\subsubsection{Partial Derivatives}\label{sec:partial der}
+The Jacobian matrix $J = (J_{1}, J_{2}, \dots, J_N)^T$ requires the partial derivatives, which are 
+\begin{align}
+J_t = (J_{t, \phi_1}, \dots, J_{t,\phi_p}, J_{t,\theta_1}, \dots,
+J_{t,\theta_q}, J_{t,\mu})^T\ .
+\end{align}
+Here the last term is present only when \texttt{include\_mean} is
+\texttt{True}. 
+The iteration relations for $J$ are
+\begin{align}
+J_{t, \phi_i} &= \frac{\partial F_t(\phi,\theta)}{\partial \phi_i} =
+-\frac{\partial Z_t}{\partial \phi_i} = X_{t-i}-\mu + \sum_{j=1}^q
+\theta_j \frac{\partial Z_{t - j}}{\partial \phi_i} = X_{t-i}-\mu - \sum_{j=1}^q
+\theta_j J_{t-j,\phi_i}, \\
+J_{t, \theta_i}&=\frac{\partial F_t(\phi,\theta)}{\partial \theta_i} =
+-\frac{\partial Z_t}{\partial \theta_i} = Z_{t-i} + \sum_{j =1}^q
+\theta_j \frac{\partial Z_{t - j}}{\partial \theta_i} = Z_{t-i} -
+\sum_{j=1}^q \theta_j J_{t-j,\theta_i}, \\
+J_{t, \mu} &=\frac{\partial F_t(\phi,\theta)}{\partial \mu} =
+-\frac{\partial Z_t}{\partial \mu} = 1 -
+\sum_{j=1}^p \phi_j - \sum_{j=1}^q \theta_j \frac{\partial
+  Z_{t-j}}{\partial \mu} = 1 - \sum_{j=1}^p \phi_j - \sum_{j=1}^q
+\theta_j J_{t-j,\mu}.
+\end{align}
+Note that the mean value $\mu$ is considered separately in the above
+formulations. When \texttt{include\_mean} is set to \texttt{False}, $\mu$ will be simply
+set to 0. Otherwise, $\mu$ will also be estimated together with
+$\vec{\phi}$ and $\vec{\theta}$. The initial conditions for the above
+equations are
+\begin{equation}
+J_{t,\phi_i} = J_{t,\theta_j} = J_{t,\mu} = 0 \quad \mbox{for }
+t \leq p, \mbox{ and } i=1,\dots,p; j = 1, \dots, q\ , 
+\end{equation}
+because we have fixed $Z_t$ for $t\leq p$ to be a constant $0$ in the initial
+condition. Note that $J$ is zero not only for $t\leq 
+0$ but also for $t\leq p$.
+
+\subsection{Estimates of  Other Quantities}
+Finally the variance of the residuals is
+\begin{equation}
+\sigma^2 = \frac{1}{N-p}\sum_{t=1}^N Z_t^2\ . \label{eq:s2}
+\end{equation}
+The estimate for the maximized log-likelihood is 
+\begin{equation}
+l = -\frac{N}{2}\left[1 + \log(2\pi\sigma^2)\right]\ , \label{eq:loglik-R}
+\end{equation}
+where $\sigma^2$ uses the value in Eq. (\ref{eq:s2}).
+Actually if you put Eq. (\ref{eq:s2}) into
+Eq. (\ref{eq:loglikelihood}), you will get a result slightly different
+from Eq. (\ref{eq:loglik-R}). However, Eq. (\ref{eq:loglik-R}) is what
+R uses for the method \texttt{``CSS''}.
+
+The standard error for coefficient $a$, where $a=\phi_1,\dots,\phi_p,\theta_1,\dots,\theta_q,\mu$, is 
+\begin{equation}
+\mbox{error}_a = \sqrt{(H^{-1})_{aa}}\ .
+\end{equation}
+The Hessian matrix is 
+\begin{equation}
+H_{ab} = \frac{\partial^2}{\partial a \partial b}
+\left(\frac{1}{2\sigma^2}\sum_{t=1}^N Z_t^2 \right) =
+\frac{1}{\sigma^2}\sum_{t=1}^N 
+\left(J_{t,a}J_{t,b} - 
+  Z_t K_{t,ab} \right) = \frac{1}{\sigma^2}\left(
+  A - \sum_{t=1}^N Z_t K_{t,ab}\right)\ ,
+\end{equation}
+where $a,b=\phi_1,\dots,\phi_p,\theta_1,\dots,\theta_q,\mu$,
+$\sigma^2$ is given by Eq. (\ref{eq:s2}), $A=J^TJ$ and 
+\begin{equation}
+K_{t,ab}=\frac{\partial J_{t,a}}{\partial b} = - \frac{\partial^2
+  Z_t}{\partial a \partial b} \ .
+\end{equation}
+And
+\begin{eqnarray}
+K_{t,\phi_i\phi_j} &=& -\sum_{k=1}^q \theta_k K_{t-k,\phi_i\phi_j} = 0
+\nonumber\\
+K_{t,\phi_i\theta_j} &=& -J_{t-j,\phi_i} - \sum_{k=1}^q\theta_k
+K_{t-k,\phi_i\theta_j} \nonumber\\
+K_{t,\phi_i\mu} &=& -1 -\sum_{k=1}^q\theta_k
+K_{t-k,\phi_i\mu}\nonumber \\
+K_{t,\theta_i\phi_j} &=& -J_{t-i,\phi_j}-\sum_{k=1}^q\theta_k
+K_{t-k,\theta_i\phi_j} \nonumber\\
+K_{t,\theta_i\theta_j} &=& -J_{t-i,\theta_j} - J_{t-j,\theta_i} -
+\sum_{k=1}^q \theta_k K_{t-k,\theta_i\theta_j} \nonumber \\
+K_{t,\theta_i\mu} &=& -J_{t-i,\mu} - \sum_{k=1}^q\theta_k
+K_{t-k,\theta_i\mu} \nonumber\\
+K_{t,\mu\phi_j} &=& -1-\sum_{k=1}^q \theta_k K_{t-k,\mu\phi_j}
+\nonumber \\
+K_{t,\mu\theta_j} &=& -J_{t-j,\mu} -\sum_{k=1}^q \theta_k
+K_{t-k,\mu\theta_j} \nonumber \\
+K_{t,\mu\mu} &=& - \sum_{k=1}^q \theta_k K_{t-k,\mu\mu} = 0\ , \label{eq:K}
+\end{eqnarray}
+where the initial conditions are
+\begin{equation}
+K_{t,ab} = 0\quad \mbox{for } t\leq p, \mbox{ and }
+a,b=\phi_1,\dots,\phi_p,\theta_1,\dots,\theta_q,\mu\ . \label{eq:K_init}
+\end{equation}
+According to Eqs. (\ref{eq:K},\ref{eq:K_init}), $K_{t,\phi_i\phi_j}$ and
+$K_{t,\mu\mu}$ are always $0$.
+
+The iteration equations Eq. (\ref{eq:K}) are quite complicated. Maybe
+an easier way to compute $K$ is to numerically differentiate the
+function
+\begin{equation}
+f(\vec{\phi},\vec{\theta},\mu) = \frac{1}{2\sigma^2}\sum_{t=1}^NZ_t^2\ ,
+\end{equation}
+where $Z_t$ values are computed using given coefficients of
+$\vec{\phi}$, $\vec{\theta}$ and $\mu$.
+For example,
+\begin{eqnarray}
+H_{ab} &=&
+\frac{1}{\Delta}\left[\frac{f(a+\Delta/2,b+\Delta/2)-f(a-\Delta/2,b+\Delta/2)}{\Delta}
+- \right. \nonumber\\
+& & \left. \frac{f(a+\Delta/2,b-\Delta/2) - f(a-\Delta/2,b-\Delta/2)}{\Delta}\right] \mbox{ for } a\neq b \
+, \\
+H_{aa} &=& \frac{f(a+\Delta) - 2f(a) + f(a-\Delta)}{\Delta^2}
+\end{eqnarray}
+where $\Delta$ is a small number and the coefficients other than $a$
+and $b$ are ignored from the arguments of $f(\cdot)$ for simplicity. 
+
+
+\subsubsection{Implementation}
+The key of LMA is to compute Jacobian matrix $J$ in each iteration. In order to compute $J$, we need to compute $Z_t$ for $t=1,\dots,N$ in a recursive manner. The difficulty here is how to leverage the parallel capability of MPP databases. By carefully distributing the dataset to the segment nodes - distribute time servies data by the time range,  the recursive computation can be done in parallel via approximation. It's also necessary here to utilize the window function for the recursive computation.
+
+\subsection{Exact Maximum Likelihood Calculation}
+
+
+%\subsection{Unconditional Least Squares}
+
+\section{Solving for the optimal model}\label{sec:model_opt}
+
+\subsection{Auto-Correlation Function}
+Note that there several common definitions of the auto-correlation function.  This implementation uses the normalized form.  
+
+The auto-correlation function  is a cross-correlation of a function (or time-series) with itself, and is typically used to find periodic behavior in a time-series.  For a real, discrete time series, the auto-correlation  $R(k)$ for lag $k$ of a time series $X$ with $N$ data points  is 
+\begin{align}\label{equ:auto corr}
+R_X(k) =\sum_{t=k+1}^N  \frac{(x_t -\mu) (x_{t-k} - \mu)}{N \sigma^2} .  
+\end{align}
+where $\sigma^2$ and $\mu$ are the variance and mean of the time series respectively.    
+For this implementation, the range of desired $k$ values will be small ($\approx 10\log(N)$ ), and the auto-correlation function for the range can be computed naively with equation \ref{equ:auto corr}.  
+
+\subsection{Partial Auto-Correlation Function}
+%Author's note: this material is taken from http://sfb649.wiwi.hu-berlin.de/fedc_homepage/xplore/tutorials/sfehtmlnode59.html 
+%Some definitions are also from http://sfb649.wiwi.hu-berlin.de/fedc_homepage/xplore/tutorials/sfehtmlnode48.html
+The partial auto-correlation function is a conceptually simple extension to the auto-correlation function, but greatly increases the complexity of the calculations.  The partial auto-correlation is the correlation for lag $k$ after all correlations from lags $<k$ have been accounted for. 
+
+Let 
+\begin{align}
+R_{(k)} \equiv  \left[ R_X(1), R_X(2), \dots, R_X(k)\right]^T
+\end{align}
+and let
+\begin{align}
+P_k = \left[ \begin{matrix}
+1 &  R_X(1) & \dots & R_X(k-1) \\
+R_X(1) & 1 & \dots & R_X(k-2) \\
+\vdots & \vdots & \ddots & \vdots \\
+R_X(k-1) &R_X(k-2) & \dots & 1 \end{matrix} \right]
+\end{align}
+
+Then the partial auto-correlation function $\Phi(k)$ for lag $k$ is 
+\begin{align}
+\Phi(k) = \frac{ \det P^*_k}{\det P_k}
+\end{align}
+where $P^*_k$ is equal to the matrix $P_k$, except the $k$th column is replaced with $R_{(k)}$.  
+
+\subsection{Automatic Model Selection}
+
+\section{Seasonal Models}
