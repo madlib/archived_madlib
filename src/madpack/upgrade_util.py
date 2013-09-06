@@ -170,7 +170,13 @@ class ChangeHandler(UpgradeBase):
     @brief Load the configuration file
     """
     def _load(self):
-        filename = os.path.join(self._maddir, 'madpack' , 'changelist.yaml')
+        # _mad_dbrev = 1.0
+        if float(self._mad_dbrev) < 1.1:
+            filename = os.path.join(self._maddir, 'madpack' , 'changelist_1.0_1.2.yaml')
+        # _mad_dbrev = 1.1
+        else:
+            filename = os.path.join(self._maddir, 'madpack' , 'changelist.yaml')
+            
         config = yaml.load(open(filename))
 
         if config['new module'] is not None:
