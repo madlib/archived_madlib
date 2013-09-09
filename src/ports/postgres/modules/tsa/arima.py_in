@@ -190,9 +190,9 @@ def arima_train (schema_madlib, input_table, output_table,
         # mean value is always 0 for ARIMA models with differencing
         include_mean = False
         # use the differenced time series
-        input_table = _diff(schema_madlib, input_table, timestamp_col,
-                            timeseries_col, non_seasonal_orders[1],
-                            chunk_size)
+        (input_table, dist_tbl) = _diff(schema_madlib, input_table, timestamp_col,
+                                        timeseries_col, non_seasonal_orders[1],
+                                        chunk_size)
 
     # set initial values
     p = non_seasonal_orders[0]
@@ -209,8 +209,8 @@ def arima_train (schema_madlib, input_table, output_table,
         # note that if p == 0 the input_table will be returned
         tbl_ts = _adjust_diff_data(schema_madlib, input_table, p)
     else:
-        tbl_ts = _redist_data(schema_madlib, input_table, timestamp_col,
-                          timeseries_col, p, chunk_size)
+        (tbl_ts, dist_tbl) = _redist_data(schema_madlib, input_table, timestamp_col,
+                                          timeseries_col, p, chunk_size)
 
     # inital values of phi and theta
     if param_init == 'random':
@@ -305,7 +305,7 @@ def arima_train (schema_madlib, input_table, output_table,
     # In the end, we need to compute and output the residuals to a table
     _create_resid_tbl(schema_madlib, tbl_ts, p, non_seasonal_orders[1],
                       q, phi, theta, mean, output_table + "_residual",
-                      timestamp_col, tbl_grp_init, iter_count)
+                      timestamp_col, tbl_grp_init, iter_count, dist_tbl)
 
     std_errs, resid_var, loglik = _compute_statistics(schema_madlib,
                                                       tbl_ts, p, q, phi,
@@ -596,7 +596,7 @@ def _extract_params (schema_madlib, optimizer_params):
 # -----------------------------------------------------------------------
 
 def _redist_data(schema_madlib, input_table, timestamp_col,
-                      timeseries_col, d, chunk_size=10000):
+                 timeseries_col, d, chunk_size=10000):
     """ Re-distribute data for parallel differencing
 
     @brief Redistribute the data by distributing the consecutive records
@@ -624,28 +624,33 @@ def _redist_data(schema_madlib, input_table, timestamp_col,
     # <tid, tval, distid>
     plpy.execute(
         """
-        drop table if exists {dist_table};
         create temp table {dist_table} as
             select
-                (({timestamp_col} - 1) / {chunk_size})::integer + 1 as distid,
-                {timestamp_col}::integer as tid,
-                {timeseries_col} as tval
-            from
-                {input_table}
-        m4_ifdef(`__GREENPLUM__', `distributed by (distid)')
-        """.format(dist_table=dist_table, timestamp_col=timestamp_col,
-                   timeseries_col=timeseries_col, chunk_size=chunk_size,
-                   input_table=input_table))
+                ((tid - 1) / {chunk_size})::integer + 1 as distid,
+                tid, origin_tid, tval
+            from (
+                select
+                    row_number() over (order by {timestamp_col}) as tid,
+                    {timestamp_col} as origin_tid,
+                    {timeseries_col} as tval
+                from
+                    {input_table}
+            ) s
+            m4_ifdef(`__GREENPLUM__', `distributed by (distid)')
+        """.format(dist_table=dist_table, chunk_size=chunk_size,
+                   timestamp_col=timestamp_col,
+                   timeseries_col=timeseries_col, input_table=input_table))
 
     #  Insert redundant rows
     #  For each chunk except for the first one,
     #  insert the last d rows from the previous chunk
+    #  These redundant rows have origin_tid value NULL
     if (d > 0):
         plpy.execute(
             """
             insert into {dist_table}
                 select
-                    o.distid + 1, tid, tval
+                    o.distid + 1, tid, NULL, tval
                 from (
                     select
                         distid, max(tid) maxid
@@ -683,8 +688,7 @@ def _redist_data(schema_madlib, input_table, timestamp_col,
         """.format(schema_madlib=schema_madlib, output_table=output_table, dist_table=dist_table,
                    chunk_size=chunk_size))
 
-    _drop_tbl(dist_table)
-    return output_table
+    return (output_table, dist_table)
 
 # -----------------------------------------------------------------------
 
@@ -707,7 +711,7 @@ def _diff (schema_madlib, input_table, timestamp_col, timeseries_col, d,
                          differenced data
     """
     # Redistribute the data for parallel preprocessing
-    redist_table = _redist_data(
+    (redist_table, dist_tbl) = _redist_data(
         schema_madlib, input_table, timestamp_col, timeseries_col, d,
         chunk_size)
     output_table = __unique_string() + 'diff_tbl__'
@@ -738,7 +742,7 @@ def _diff (schema_madlib, input_table, timestamp_col, timeseries_col, d,
     # clean up the intermediate table
     _drop_tbl(redist_table)
 
-    return output_table
+    return (output_table, dist_tbl)
 
 # -----------------------------------------------------------------------
 
@@ -774,7 +778,7 @@ def _adjust_diff_data(schema_madlib, diff_table, p):
 
 def _create_resid_tbl (schema_madlib, tbl_ts, p, d, q, phi,
                        theta, mean, tbl_resid, timestamp_col,
-                       tbl_grp_init, iter_count):
+                       tbl_grp_init, iter_count, dist_tbl):
     """ Compute the residuals (noise) for ARIMA model
 
     @brief Compute the residuals and store them in a table. The table
@@ -812,18 +816,21 @@ def _create_resid_tbl (schema_madlib, tbl_ts, p, d, q, phi,
     if q != 0:
         theta_str = "array[" + ",".join(str(i) for i in theta) + "]"
 
+    # Joining on tid is really slow on large data
+    # (more than 100 times slower).
+    # This is why we use join on distid, which gives almost the
+    # same performance as that of the original code.
     plpy.execute(
         """
         create table {tbl_resid} as
             select
-                generate_series(1, array_upper(residuals,1)) + tid - 1 as {id},
+                unnest(origin_tid) as {timestamp_col},
                 unnest(residuals) as residual
             from (
                 select
-                    case when s1.tid = 1 then s1.tid
-                         else s1.tid + {d} end as tid,
+                    s1.distid,
                     {schema_madlib}.__arima_residual(
-                        s1.tid, s1.tvals, {p}, {d}, {q},
+                        s1.distid, s1.tvals, {p}, {d}, {q},
                         {phi}::double precision[],
                         {theta}::double precision[], {mean},
                         s2.prez
@@ -834,13 +841,23 @@ def _create_resid_tbl (schema_madlib, tbl_ts, p, d, q, phi,
                     ((s1.distid = s2.distid + 1) or
                     (s1.distid = 1 and s2.distid = 1)) and
                     s2.iter = {iter_count}
-            ) s
-        """.format(tbl_resid=tbl_resid, id=timestamp_col,
+            ) s1, (
+                select
+                    distid,
+                    array_agg(origin_tid order by origin_tid) as origin_tid
+                from {dist_tbl}
+                where origin_tid is not NULL
+                group by distid
+            ) s2
+            where s1.distid = s2.distid
+        """.format(tbl_resid=tbl_resid, timestamp_col=timestamp_col,
                    schema_madlib=schema_madlib,
                    phi=phi_str, theta=theta_str,
                    mean=mean, p=p, d=d, q=q,
                    tbl_ts=tbl_ts, tbl_grp_init=tbl_grp_init,
-                   iter_count=iter_count))
+                   iter_count=iter_count, dist_tbl=dist_tbl))
+
+    _drop_tbl(dist_tbl)
     return None
 
 # ----------------------------------------------------------------------
@@ -1016,7 +1033,7 @@ def _compute_onestep (schema_madlib, tbl_ts, p, q, phi, theta, mean,
             from (
                 select
                     {schema_madlib}.__arima_lm(
-                        tid, tvals, {p}, {q},
+                        s1.distid, tvals, {p}, {q},
                         {phi}::double precision[],
                         {theta}::double precision[],
                         {mean}, prez, prej
@@ -1149,7 +1166,7 @@ def _compute_statistics (schema_madlib, tbl_ts, p, q, phi, theta,
         from (
             select
                 {schema_madlib}.__arima_lm_stat_agg(
-                    tid, tvals, {p}, {q},
+                    distid, tvals, {p}, {q},
                     '{phi}'::double precision[],
                     '{theta}'::double precision[],
                     {mean},

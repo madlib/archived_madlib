@@ -47,7 +47,7 @@ static type_info FLOAT8TI(FLOAT8OID);
 
 AnyType arima_residual::run (AnyType & args)
 {
-    int32_t tid = args[0].getAs<int32_t>(); 
+    int32_t distid = args[0].getAs<int32_t>(); 
     ArrayHandle<double> tvals = args[1].getAs<ArrayHandle<double> >();
     int p = args[2].getAs<int>();
     int d = args[3].getAs<int>();
@@ -65,7 +65,7 @@ AnyType arima_residual::run (AnyType & args)
     if(q > 0)
         prez = args[8].getAs<ArrayHandle<double> >();
 
-    int ret_size = (tid == 1) ? (tvals.size()+d) : (tvals.size()-p);    
+    int ret_size = (distid == 1) ? (tvals.size()+d) : (tvals.size()-p);    
     MutableArrayHandle<double> res(
         madlib_construct_array(
             NULL, ret_size, FLOAT8TI.oid,
@@ -77,9 +77,9 @@ AnyType arima_residual::run (AnyType & args)
             double err = tvals[i] - mean;
             for(int j = 0; j < p; j++)
                 err -= phi[j] * (tvals[i - j - 1] - mean);
-            // note that for tid = 1, the first p residuals 
+            // note that for distid = 1, the first p residuals 
             // will always be 0
-            res[(tid == 1) ? i+d : (i - p)] = err;
+            res[(distid == 1) ? i+d : (i - p)] = err;
         }
         return res;
     } else {
@@ -87,7 +87,7 @@ AnyType arima_residual::run (AnyType & args)
         double * errs = new double[ret_size + q];
         memset(errs, 0, sizeof(double) * (ret_size+q));
         // how to judge ArrayHandle is Null?
-        if(tid != 1)
+        if(distid != 1)
             for(int i = 0; i < q; i++) errs[i] = prez[i];
 
         // compute the errors
@@ -98,11 +98,11 @@ AnyType arima_residual::run (AnyType & args)
                 err -= phi[j] * (tvals[t - j - 1] - mean);
 
             for(int j = 0; j < q; j++)
-                if(tid == 1)
+                if(distid == 1)
                     err -= theta[j] * errs[t+q+d-j-1];
                 else
                     err -= theta[j] * errs[t-p+q-j-1];
-            errs[(tid == 1) ? (t+q+d) : (t - p + q)] = err;
+            errs[(distid == 1) ? (t+q+d) : (t - p + q)] = err;
         }
         memcpy(res.ptr(), errs + q, ret_size * sizeof(double)); 
         delete[] errs;
@@ -166,8 +166,7 @@ AnyType arima_adjust::run (AnyType & args)
     int distid = args[0].getAs<int>();
 
     if (distid == 1) return args[1];
-    
-    
+        
     ArrayHandle<double> cur_tvals = args[1].getAs<ArrayHandle<double> >();
     ArrayHandle<double> pre_tvals = args[2].getAs<ArrayHandle<double> >();
     int32_t p  = args[3].getAs<int32_t>();
@@ -211,7 +210,7 @@ AnyType arima_lm_delta::run (AnyType & args)
 
 AnyType arima_lm::run (AnyType & args)
 {
-    int tid = args[0].getAs<int>();
+    int distid = args[0].getAs<int>();
     MutableArrayHandle<double> tvals = args[1].getAs<MutableArrayHandle<double> >();
     int p = args[2].getAs<int>();
     int q = args[3].getAs<int>();
@@ -238,7 +237,7 @@ AnyType arima_lm::run (AnyType & args)
     if (q > 0) {
         prez = args[7].getAs<MutableArrayHandle<double> >();
         prej = args[8].getAs<MutableArrayHandle<double> >();
-        if (tid == 1) {
+        if (distid == 1) {
             for (size_t i = 0; i < prez.size(); i++) prez[i] = 0.;
             for (size_t i = 0; i < prej.size(); i++) prej[i] = 0.;
         }
@@ -511,7 +510,7 @@ static double * update_prez(double * prez, int q, double z)
 
 AnyType arima_lm_stat_sfunc::run (AnyType& args)
 {
-    int tid = args[1].getAs<int>();
+    int distid = args[1].getAs<int>();
     MutableArrayHandle<double> tvals = args[2].getAs<MutableArrayHandle<double> >();
     int p = args[3].getAs<int>();
     int q = args[4].getAs<int>();
@@ -570,7 +569,7 @@ AnyType arima_lm_stat_sfunc::run (AnyType& args)
     // The one without delta
     int prez_offset = 4 + 2 * l * l;
     for (size_t t = p; t < tvals.size(); t++) {
-        int dtid = (tid == 1) ? (tid+t) : (tid+t-p);
+        int dtid = (distid == 1) ? (1+t) : (p+1);
         int dtv = t - p;
         double * prez = state.ptr() + prez_offset;
 
@@ -604,7 +603,7 @@ AnyType arima_lm_stat_sfunc::run (AnyType& args)
         }
     }
 
-    if (tid == 1)
+    if (distid == 1)
         state[2] += tvals.size();
     else
         state[2] += tvals.size() - p;
