@@ -12,6 +12,11 @@ configure_file(
     @ONLY
 )
 configure_file(
+    etc/DoxygenLayout.xml
+    "${CMAKE_CURRENT_BINARY_DIR}/etc/DoxygenLayout.xml"
+    @ONLY
+)
+configure_file(
     etc/header.html
     "${CMAKE_CURRENT_BINARY_DIR}/etc/header.html"
     @ONLY

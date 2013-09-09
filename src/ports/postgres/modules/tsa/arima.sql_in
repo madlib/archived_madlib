@@ -43,19 +43,10 @@ respectively.
 
 @anchor help
 @help
-View short help messages using the following statements:
+To display a brief summary of the ARIMA module, call the arima() function with no argument: 
 @verbatim
 -- Summary of ARIMA
-arima()
-
--- Parameter selection function syntax and output table format
-arima('usage')
-
--- Summary of the ARIMA forecast function
-arima_forecast()
-
--- ARIMA forecast function and output table format
-arima_forecast('usage')
+SELECT madlib.arima();
 @endverbatim
 
 @anchor train
@@ -63,13 +54,15 @@ arima_forecast('usage')
 
 The ARIMA training function has the following syntax.
 @verbatim
-arima(input_table, output_table,
-      timestamp_column, timeseries_column,
-      grouping_columns := NULL,
-      include_mean := FALSE,
-      non_seasonal_orders := ARRAY[1,1,1],
-      optimizer_params := 'max_iter=100, tau=1e-3, e1=1e-15, e2=1e-15,
-                           e3=1e-15, hessian_delta=1e-6')
+arima(
+    input_table, 
+    output_table,
+    timestamp_column, 
+    timeseries_column,
+    grouping_columns,
+    include_mean,
+    non_seasonal_orders,
+    optimizer_params)
 @endverbatim
 
 @b Arguments
@@ -88,25 +81,25 @@ arima(input_table, output_table,
     <DD>TEXT. The name of the column containing the time series data. This data is
     currently restricted to DOUBLE PRECISION.</DD>
 
-    <DT>grouping_columns</DT>
-    <DD>TEXT. <em>Not currently implemented. Any non-NULL value is ignored.</em>
+    <DT>grouping_columns (optional)</DT>
+    <DD>TEXT, default: NULL. <em>Not currently implemented. Any non-NULL value is ignored.</em>
 
     A comma-separated list of column names used to group the input dataset
     into discrete groups, training one ARIMA model per group. It is similar to
     the SQL <tt>GROUP BY</tt> clause. When this value is null, no grouping is
-    used and a single result model is generated. Default value: NULL.</DD>
+    used and a single result model is generated.</DD>
 
-    <DT>include_mean</DT>
-    <DD>BOOLEAN. Mean value of the data series is added in the ARIMA model
-    if this variable is True. Default value: FALSE.</DD>
+    <DT>include_mean (optional)</DT>
+    <DD>BOOLEAN, default: FALSE. Mean value of the data series is added in the ARIMA model
+    if this variable is True. </DD>
 
-    <DT>non_seasonal_orders</DT>
-    <DD>INTEGER[]. Orders of the ARIMA model. The orders are [p, d, q],
+    <DT>non_seasonal_orders (optional)</DT>
+    <DD>INTEGER[], default: 'ARRAY[1,1,1]'. Orders of the ARIMA model. The orders are [p, d, q],
     where parameters p, d, and q are non-negative integers that refer to
     the order of the autoregressive, integrated, and moving average parts of the model
-    respectively. Default value: 'ARRAY[1,1,1]'.</DD>
+    respectively. </DD>
 
-    <DT>optimizer_params</DT>
+    <DT>optimizer_params (optional)</DT>
     <DD>TEXT. Comma-separated list of optimizer-specific parameters of the form ‘name=value'.
     The order of the parameters does not matter. The following parameters are recognized:
         - \b max_iter: Maximum number of iterations to run learning algorithm
@@ -183,7 +176,10 @@ data point in 'input_table'. Contains the following columns:
 
 The ARIMA forecast function has the following syntax.
 @verbatim
-arima_forecast(model_table, output_table, steps_ahead)
+arima_forecast(
+    model_table, 
+    output_table, 
+    steps_ahead)
 @endverbatim
 @b Arguments
 <DL class="arglist">
@@ -214,9 +210,9 @@ The output table produced by the forecast function contains the following column
 @examp
 -#  Create an input data set.
 @verbatim
-sql> DROP TABLE IF EXISTS arima_beer;
-sql> CREATE TABLE arima_beer (time_id integer NOT NULL, value double precision NOT NULL );
-sql> COPY arima_beer (time_id, value) FROM stdin WITH DELIMITER '|';
+DROP TABLE IF EXISTS arima_beer;
+CREATE TABLE arima_beer (time_id integer NOT NULL, value double precision NOT NULL );
+COPY arima_beer (time_id, value) FROM stdin WITH DELIMITER '|';
 1  | 93.2
 2  | 96.0
 3  | 95.2
@@ -262,26 +258,92 @@ sql> COPY arima_beer (time_id, value) FROM stdin WITH DELIMITER '|';
 
 -#  Train an ARIMA model.
 @verbatim
-sql> -- Train ARIMA model with 'grouping_columns'=NULL, 'include_mean'=TRUE,
-sql> --   and 'non_seasonal_orders'=[1,1,1]
-sql> SELECT madlib.arima_train('arima_beer', 'arima_beer_output',
-                               'time_id', 'value', NULL, False,
-                               ARRAY[1, 1, 1]);
+-- Train ARIMA model with 'grouping_columns'=NULL, 'include_mean'=TRUE,
+--   and 'non_seasonal_orders'=[1,1,1]
+SELECT madlib.arima_train(
+    'arima_beer', 
+    'arima_beer_output',
+    'time_id', 
+    'value', 
+    NULL, 
+    FALSE,
+    ARRAY[1, 1, 1]);
 @endverbatim
 
--# Examine the resulting output tables.
+-# Examine the ARIMA model.
 @verbatim
-sql> \x on
-sql> SELECT * FROM arima_beer_output;
-sql> SELECT * FROM arima_beer_output_summary;
-sql> SELECT * FROM arima_beer_output_residual;
+\x ON
+SELECT * FROM arima_beer_output;
+@endverbatim
+Result:
+@verbatim
+-[ RECORD 1 ]-+------------------
+ar_params     | {0.221954769696}
+ar_std_errors | {0.575367782602}
+ma_params     | {-0.140623564576}
+ma_std_errors | {0.533445214346}
 @endverbatim
 
--# Use the ARIMA forecast function to forecast 10 future values
+-#  View the summary statistics table.
 @verbatim
-sql> SELECT madlib.arima_forecast('arima_beer_output',
-                             'arima_beer_forecast_output',
-                             10);
+SELECT * FROM arima_beer_output_summary;
+@endverbatim
+Result:
+@verbatim
+-[ RECORD 1 ]-------+---------------
+input_table         | arima_beer
+timestamp_col       | time_id
+timeseries_col      | value
+non_seasonal_orders | {1,1,1}
+include_mean        | f
+residual_variance   | 100.989970539
+log_likelihood      | -145.331516396
+iter_num            | 28
+exec_time (s)       | 2.75
+@endverbatim
+
+-# View the residuals.
+@verbatim
+\x OFF
+SELECT * FROM arima_beer_output_residual;
+@endverbatim
+Result:
+@verbatim
+SELECT * FROM arima_beer_output_residual;
+ time_id |      residual      
+---------+--------------------
+       2 |                  0
+       4 |   -18.222328834394
+       6 |  -5.49616627282665
+...
+      35 |   1.06298837051437
+      37 |  -25.0886854003757
+      39 |   3.48401666299571
+(40 rows)
+@endverbatim
+-# Use the ARIMA forecast function to forecast 10 future values.
+@verbatim
+SELECT madlib.arima_forecast(
+    'arima_beer_output',
+    'arima_beer_forecast_output',
+    10);
+SELECT * FROM arima_beer_forecast_output;
+@endverbatim
+Result:
+@verbatim
+ steps_ahead | forecast_value 
+-------------+----------------
+           1 |  85.3802343659
+           3 |  85.3477516875
+           5 |  85.3461514635
+           7 |  85.3460726302
+           9 |  85.3460687465
+           2 |  85.3536518121
+           4 |  85.3464421267
+           6 |  85.3460869494
+           8 |  85.3460694519
+          10 |    85.34606859
+(10 rows)
 @endverbatim
 
 @anchor seealso
