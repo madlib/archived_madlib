@@ -13,32 +13,304 @@ Cox prop Hazards: Driver functions
 import plpy
 from utilities.validate_args import table_exists
 from utilities.validate_args import table_is_empty
-from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import get_cols
 from utilities.validate_args import is_var_valid
+from utilities.utilities import __unique_string
+from elastic_net.elastic_net_utils import __preprocess_optimizer_params
+from utilities.utilities import _assert
+from utilities.validate_args import columns_exist_in_table
 
-# ========================================================================
+# -- Help message -----------------------------------------------------------
+def coxph_help_message(schema_madlib, message, **kwargs):
+    """ Help message for Cox Proportional Hazards
+
+    @brief
+    Args:
+        @param schema_madlib string, Name of the schema madlib
+        @param message string, Help message indicator
+
+    Returns:
+        String. Contain the help message string
+    """
+    if not message:
+        help_string = """
+        Summary
+        -----------------------------------------------------------------------------------------
+         Functionality: Cox proprtional hazards regression (Breslow method)
+         SELECT {schema_madlib}.coxph('source_table',
+                                      'output_table',
+                                      'dependent_variable',
+                                      'independent_variable',
+                                      'right_censoring_status',
+                                      'strata',
+                                      'optimizer_params');
+        For more details on function usage:
+            SELECT {schema_madlib}.coxph('usage')
+        """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+        Usage
+        -----------------------------------------------------------------------------------------
+         SELECT {schema_madlib}.coxph(
+         'source_table',            -- Name of data table
+         'output_table',               -- Name of result table (overwrites if exists)
+         'dependent_variable',      -- Name of column for dependent variables
+         'independent_variable',    -- Name of column for independent variables
+                                          (can be any SQL expression Eg: '*')
+         'right_censoring_status',  -- Name of the column containing censoring status
+                                            0/false : If the observation is censored
+                                            1/true : otherwise
+                                        Can also be an SQL expression: 'dependent_variable < 10')
+                                       (Optional, DEFAULT = TRUE)
+         'strata',                  -- The stratification column names. (Optional, DEFAULT = NULL)
+         'optimizer_params'         -- The optimizer parameters as a comma-separated string
+         );
+
+        Output:
+        -----------------------------------------------------------------------------------------
+         The output table ('output_table' above) has the following columns
+             'coef'          DOUBLE PRECISION[], -- Coefficients of regression
+             'loglikelihood' DOUBLE PRECISION,   -- Log-likelihood value
+             'std_err'       DOUBLE PRECISION[], -- Standard errors
+             'z_stats'       DOUBLE PRECISION[], -- z-stats of the standard errors
+             'p_values'      DOUBLE PRECISION[], -- p-values of the standard errors
+             'iter_num'      INTEGER,            -- Number of iterations performed by the optimizer
+
+         The output summary table is named as <output_table>_summary has the following columns
+            'source_table'   VARCHAR,            -- source table name
+            'dep_var'        VARCHAR,            -- dependent variable name
+            'ind_var'        VARCHAR,            -- independent variable name
+            'right_censoring_status' VARCHAR,    -- right censoring status
+            'strata'         VARCHAR             -- stratification columns
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.coxph()"
+
+    return help_string.format(schema_madlib=schema_madlib)
+# ---------------------------------------------------------------------------
+
+
+def coxph (schema_madlib, source_table, output_table, dependent_varname,
+           independent_varname, right_censoring_status, strata,
+           optimizer_params):
+    """ Cox proportional hazards regression training function
+    @brief Cox proportional hazards regression, with stratification
+           support.
+
+    Args:
+        @param schema_madlib - MADlib schema name
+        @param source_table - A string, the data table name
+        @param output_table - A string, the result table name
+        @param dependent_varname - A string, the survival time column
+            name or a valid expression
+        @param independent_varname - A string, the covariates in array
+            formats. It is a valid expression.
+        @param right_censoring_status - A string, a column name or a
+            valid expression that has boolean values. Whether the row
+            of data is censored. Default is 'TRUE'.
+        @param strata - A string, column names seprated by commas. The
+            columns used for stratification. Default is None.
+        @param optimizer_params - A string, which contains key=value
+            pairs separated by commas. Default values: max_iter=20,
+            optimizer='newton', tolerance=1e-4.
+
+    Returns:
+        A table named by output_table, which contains the following
+        columns:
+        * coef - An array of double precision values, fitting coefs
+        * std_err - An array of double precision values, standard erros
+            of coef
+        * z - An array of double precision values, z statistics
+        * p - An array of double precision values, p value
+    """
+    old_msg_level = plpy.execute("""
+                                 select setting from pg_settings
+                                 where name='client_min_messages'
+                                 """)[0]['setting']
+    plpy.execute("set client_min_messages to error")
+
+    _validate_params(schema_madlib, source_table, output_table,
+                     dependent_varname, independent_varname,
+                     right_censoring_status, strata)
+
+    (max_iter, optimizer,
+     tolerance) = _extract_params(schema_madlib, optimizer_params)
+
+    if strata is None:
+        (theIteration,
+         madlib_iterative_alg) = compute_coxph(schema_madlib, source_table,
+                                               independent_varname,
+                                               dependent_varname,
+                                               right_censoring_status,
+                                               optimizer, max_iter, tolerance)
+    else:
+        (theIteration,
+         madlib_iterative_alg) = compute_coxph_strata(schema_madlib, source_table,
+                                                      independent_varname,
+                                                      dependent_varname,
+                                                      right_censoring_status, strata,
+                                                      optimizer, max_iter, tolerance)
+
+    plpy.execute(
+        """
+        create table {output_table} as
+            select (result).*, {theIteration} as iter_num
+            from (
+                select
+                    {schema_madlib}.internal_coxph_result(
+                        _madlib_state) as result
+                from {madlib_iterative_alg}
+                where _madlib_iteration = {theIteration}
+            ) subq
+        """.format(schema_madlib=schema_madlib, theIteration=theIteration,
+                   madlib_iterative_alg=madlib_iterative_alg,
+                   output_table=output_table))
+
+    right_censoring_status = 'NULL' if right_censoring_status is None \
+        else "'" + right_censoring_status + "'"
+    strata = 'NULL' if strata is None else "'" + strata + "'"
+    plpy.execute(
+        """
+        create table {output_table}_summary as select
+        '{source_table}'::varchar               as source_table,
+        '{dependent_varname}'::varchar          as dep_var,
+        '{independent_varname}'::varchar        as ind_var,
+        {right_censoring_status}::varchar     as right_censoring_status,
+        {strata}::varchar                     as strata
+        """.format(source_table=source_table,
+                   dependent_varname=dependent_varname,
+                   independent_varname=independent_varname,
+                   right_censoring_status=right_censoring_status,
+                   strata=strata, output_table=output_table))
+
+    plpy.execute("set client_min_messages to " + old_msg_level)
+    return None
+
+# ----------------------------------------------------------------------
+
+def _validate_params (schema_madlib, source_table, output_table,
+                      dependent_varname, independent_varname,
+                      right_censoring_status, strata):
+    """ Validate the input parameters for coxph
+
+    Args:
+        @param schema_madlib - MADlib schema name
+        @param source_table - A string, the data table name
+        @param output_table - A string, the result table name
+        @param dependent_varname - A string, the survival time column
+            name or a valid expression
+        @param independent_varname - A string, the covariates in array
+            formats. It is a valid expression.
+        @param right_censoring_status - A string, a column name or a
+            valid expression that has boolean values. Whether the row
+            of data is censored. Default is 'TRUE'.
+        @param strata - A string, column name seprated by commas. The
+            columns used for stratification. Default is None.
+
+    Throws:
+        "Cox error" if any argument is invalid
+    """
+    _assert(source_table is not None and table_exists(source_table),
+            "Cox error: Source data table does not exist!")
+
+    _assert(not table_exists(output_table),
+            "Cox error: Output table {0}"
+            " already exists!".format(str(output_table)))
+
+    _assert(not table_exists(output_table + "_summary"),
+            "Cox error: Output table {0}_summary"
+            " already exists!".format(str(output_table)))
+
+    if strata is not None:
+        strata_cols = [a.strip() for a in strata.split(",")]
+        _assert(columns_exist_in_table(source_table, strata_cols,
+                                       schema_madlib),
+                "ARIMA error: {1} columns do not exist in {0}!"
+                .format(source_table, strata_cols))
+    return None
+
+# ----------------------------------------------------------------------
+
+def _extract_params (schema_madlib, optimizer_params):
+    """ Extract optimizer control parameter or set the default values
+
+    @brief  optimizer_params is a string with the format of
+           'max_iter=..., optimizer=..., tolerance=...'. The order
+           does not matter. If a parameter is missing, then the default
+           value for it is used. If optimizer_params is None or '',
+           then all default values are used. If the parameter specified
+           is none of 'max_iter', 'optimizer', or 'tolerance' then an
+           error is raised. This function also validates the values of
+           these parameters.
+
+    Throws:
+        "Cox error" - If the parameter is unsupported or the value is
+        not valid.
+    """
+    allowed_params = set(["max_iter", "optimizer", "tolerance"])
+    name_value = dict(max_iter=100, optimizer="newton", tolerance=1e-8)
+
+    if optimizer_params is None or len(optimizer_params) == 0:
+        return (name_value['max_iter'], name_value['optimizer'],
+                name_value['tolerance'])
+
+    for s in __preprocess_optimizer_params(optimizer_params):
+        items = s.split("=")
+        if (len(items) != 2):
+            plpy.error("Cox error: Optimizer parameter list has incorrect format!")
+        param_name = items[0].strip(" \"").lower()
+        param_value = items[1].strip(" \"").lower()
+
+        if param_name not in allowed_params:
+            plpy.error(
+                """
+                Cox error: {param_name} is not a valid parameter name.
+                Run:
+                    SELECT {schema_madlib}.coxph('usage');
+                to see the allowed parameters.
+                """.format(param_name=param_name,
+                           schema_madlib=schema_madlib))
+
+        if param_name == "max_iter":
+            try:
+                name_value["max_iter"] = int(param_value)
+            except:
+                plpy.error("Cox error: max_iter must be an integer number!")
+
+        if param_name == "optimizer":
+            name_value["optimizer"] = param_value
+
+        if param_name == "tolerance":
+            try:
+                name_value["tolerance"] = float(param_value)
+            except:
+                plpy.error("Cox error: tolerance must be a double precision value!")
+
+    if name_value["max_iter"] <= 0:
+        plpy.error("Cox error: max_iter must be positive!")
+
+    if name_value["optimizer"] != "newton":
+        plpy.error("Cox error: this optimization method is not supported yet!")
+
+    if name_value["tolerance"] < 0:
+        plpy.error("Cox error: tolerance cannot be smaller than 0!")
+
+    return (name_value['max_iter'], name_value['optimizer'],
+            name_value['tolerance'])
+
+# ----------------------------------------------------------------------
+
 def __check_args (schema_madlib, tbl_source, col_ind_var, col_dep_var, col_status):
+  _assert(tbl_source is not None, "Cox Proportional Hazards Error: Source table should not be NULL!")
+  _assert(col_ind_var is not None, "Cox Proportional Hazards Error: Independent variable should not be NULL!")
+  _assert(col_dep_var is not None, "Cox Proportional Hazards Error: Dependent variable should not be NULL!")
 
+  _assert(table_exists(tbl_source), "Cox Proportional Hazards Error: Source table " + tbl_source + " does not exist!")
+  _assert(not table_is_empty(tbl_source), "Cox Proportional Hazards Error: Source table " + tbl_source + " is empty!")
+  _assert(columns_exist_in_table(tbl_source, [col_dep_var]), "Cox Proportional Hazards Error: Dependent variable does not exist!")
 
-  # Some obvious error messages
-  if (tbl_source is None or col_ind_var is None or col_dep_var is None):
-    plpy.error("Elastic Net error: You have unsupported NULL value(s) in the arguments!")
-
-  if not table_exists(tbl_source):
-    plpy.error("Cox Proportional Hazards Error: Data table " + tbl_source + " does not exist!")
-
-  if table_is_empty(tbl_source):
-    plpy.error("Cox Proportional Hazards Error: Data table " + tbl_source + " is empty!")
-
-  if not columns_exist_in_table(tbl_source, [col_dep_var]):
-    plpy.error("Cox Proportional Hazards Error: The dependent variable does not exist!")
-
-  if not is_var_valid(tbl_source, col_ind_var):
-    plpy.error("Cox Proportional Hazards Error: The independent variable does not exist")
-
-  if not is_var_valid(tbl_source, col_status):
-    plpy.error("Cox Proportional Hazards Error: Not a valid boolean expression for status!")
+  _assert(is_var_valid(tbl_source, col_ind_var), "Cox Proportional Hazards Error: The independent variable does not exist!")
+  _assert(is_var_valid(tbl_source, col_status), "Cox Proportional Hazards Error: Not a valid boolean expression for status!")
 
   col_ind_var_new = col_ind_var
   cols = get_cols(tbl_source)
@@ -53,10 +325,12 @@ def __check_args (schema_madlib, tbl_source, col_ind_var, col_dep_var, col_statu
     col_ind_var_new = 'array[%s]' % (','.join(outstr_array))
   return col_ind_var_new
 
-# ========================================================================
-def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
-        depColumn, updateExpr, intermediateExpr, terminateExpr, resultExpr,
-        maxNumIterations, cyclesPerIteration = 1):
+# ----------------------------------------------------------------------
+
+def __runIterativeAlg(stateType, initialState, source, updateExpr,
+                      terminateExpr, resultExpr, maxNumIterations,
+                      cyclesPerIteration=1, updateExprOuter='',
+                      updateExprInner='', strata=''):
     """
     Driver for an iterative algorithm
 
@@ -78,98 +352,111 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
         terminate. The expression may use the replacement fields
         <tt>"{oldState}"</tt>, <tt>"{newState}"</tt>, and
         <tt>"{iteration}"</tt>. It must return a BOOLEAN value.
+    @param resultExpr The SQL query to extract the result
     @param maxNumIterations Maximum number of iterations. Algorithm will then
         terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
     @param cyclesPerIteration Number of aggregate function calls per iteration.
     """
-    updateSQL = """
-        INSERT INTO _cox_intermediate_state (_cox_dependant_variable, _cox_iState)
-        SELECT
-          ({depColumn})::double precision,
-          {intermediateExpr}
-        FROM
-          (
-            SELECT
-              {resultExpr} as result
-            FROM
-              _madlib_iterative_alg as st
-            WHERE
-              _madlib_iteration = {{iteration}} - 1
-          ) as result,
-          {{source}} as src;
+    madlib_iterative_alg = __unique_string()
 
-        INSERT INTO _madlib_iterative_alg
-        SELECT
-            {{iteration}},
-            {updateExpr}
-        FROM
-            _madlib_iterative_alg AS st,
-            _cox_intermediate_state AS src
-        WHERE
-            st._madlib_iteration = {{iteration}}-1
-        ;
-        DELETE FROM _cox_intermediate_state;
-        """.format(updateExpr = updateExpr,
-                intermediateExpr = intermediateExpr,
-                resultExpr = resultExpr,
-                depColumn=depColumn)
+    # updateExpr is used to branch b/w stratified cox and normal cox
+    if updateExpr.strip() != '':
+        updateSQL = """
+            INSERT INTO {madlib_iterative_alg}
+            SELECT
+                {{iteration}},
+                {updateExpr}
+            FROM
+            (
+                SELECT
+                    {resultExpr} AS result
+                FROM
+                    {madlib_iterative_alg}
+                WHERE
+                    _madlib_iteration = {{iteration}} - 1
+            ) st,
+            {{source}} as src
+            """.format(updateExpr=updateExpr, resultExpr=resultExpr,
+                madlib_iterative_alg=madlib_iterative_alg)
+    else:
+        updateSQL = """
+            INSERT INTO {madlib_iterative_alg}
+            SELECT
+                {{iteration}},
+                {updateExprOuter}
+            FROM
+            (
+                SELECT
+                    {updateExprInner} AS inner_state
+                FROM
+                (
+                    SELECT
+                        {resultExpr} AS result
+                    FROM
+                        {madlib_iterative_alg}
+                    WHERE
+                        _madlib_iteration = {{iteration}} - 1
+                ) s1,
+                {{source}} as src
+                GROUP BY {strata}
+            ) s2
+            """.format(updateExprOuter=updateExprOuter, strata=strata,
+                       updateExprInner=updateExprInner, resultExpr=resultExpr,
+                       madlib_iterative_alg=madlib_iterative_alg)
+
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
         FROM
         (
             SELECT _madlib_state
-            FROM _madlib_iterative_alg
+            FROM {madlib_iterative_alg}
             WHERE _madlib_iteration = {{iteration}} - {{cyclesPerIteration}}
         ) AS older,
         (
             SELECT _madlib_state
-            FROM _madlib_iterative_alg
+            FROM {madlib_iterative_alg}
             WHERE _madlib_iteration = {{iteration}}
         ) AS newer
-        """.format(terminateExpr = terminateExpr)
+        """.format(terminateExpr = terminateExpr,
+                   madlib_iterative_alg=madlib_iterative_alg)
     checkForNullStateSQL = """
         SELECT _madlib_state IS NULL AS should_terminate
-        FROM _madlib_iterative_alg
+        FROM {madlib_iterative_alg}
         WHERE _madlib_iteration = {iteration}
         """
 
     oldMsgLevel = plpy.execute("SELECT setting FROM pg_settings WHERE name='client_min_messages'"
         )[0]['setting']
+
     plpy.execute("""
         SET client_min_messages = error;
-        DROP TABLE IF EXISTS _madlib_iterative_alg;
-        CREATE TEMPORARY TABLE _madlib_iterative_alg (
+        CREATE TEMPORARY TABLE {madlib_iterative_alg} (
             _madlib_iteration INTEGER PRIMARY KEY,
             _madlib_state {stateType}
         );
-        DROP TABLE IF EXISTS _cox_intermediate_state;
-        CREATE TEMPORARY TABLE _cox_intermediate_state (
-          _cox_dependant_variable double precision,
-          _cox_iState {intermediateStateType}
-        ) m4_ifdef( `__GREENPLUM__', `DISTRIBUTED BY (_cox_dependant_variable)' );
         SET client_min_messages = {oldMsgLevel};
         """.format(stateType = stateType,
-               intermediateStateType = intermediateStateType,
-               oldMsgLevel = oldMsgLevel))
+                   oldMsgLevel = oldMsgLevel,
+                   madlib_iterative_alg=madlib_iterative_alg))
 
     iteration = 0
     plpy.execute("""
-        INSERT INTO _madlib_iterative_alg VALUES ({iteration}, {initialState})
-        """.format(iteration = iteration, initialState = initialState))
+        INSERT INTO {madlib_iterative_alg} VALUES ({iteration}, {initialState})
+        """.format(iteration = iteration, initialState = initialState,
+                   madlib_iterative_alg=madlib_iterative_alg))
     while True:
         iteration = iteration + 1
         plpy.execute(updateSQL.format(
             source = source,
-            depColumn = depColumn,
-            state = "(st._madlib_state)",
-            intermediateState = "(_cox_iState)",
-            intermediateStateDepColumn = "_cox_dependant_variable",
+            state = "(_madlib_state)",
             oldCoef = "(result).coef",
             iteration = iteration,
-            sourceAlias = "src"))
+            sourceAlias = "src",
+            madlib_iterative_alg=madlib_iterative_alg))
         if plpy.execute(checkForNullStateSQL.format(
-                iteration = iteration))[0]['should_terminate'] or (
+                iteration = iteration,
+                madlib_iterative_alg=madlib_iterative_alg))[0]['should_terminate'] or (
             iteration > cyclesPerIteration and (
             iteration >= cyclesPerIteration * maxNumIterations or
             plpy.execute(terminateSQL.format(
@@ -180,11 +467,13 @@ def __runIterativeAlg(stateType, intermediateStateType, initialState, source,
             break
 
     # Note: We do not drop the temporary table
-    return iteration
+    return (iteration, madlib_iterative_alg)
 
-# ========================================================================
-def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
-    depColumn, status, optimizer, maxNumIterations, precision, **kwargs):
+# ----------------------------------------------------------------------
+
+def compute_coxph(schema_madlib, source, indepColumn,
+                   depColumn, status, optimizer,
+                   maxNumIterations, precision, **kwargs):
     """
     Compute cox survival regression coefficients
 
@@ -210,7 +499,6 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
            the required arguments by this function.
 
     @return array with coefficients in case of convergence, otherwise None
-    \pc
     """
 
     indepColumn = __check_args(schema_madlib, source, indepColumn, depColumn, status)
@@ -222,46 +510,100 @@ def compute_cox_prop_hazards(schema_madlib, source, indepColumn,
 
     return __runIterativeAlg(
         stateType = "double precision[]",
-        intermediateStateType = "{schema_madlib}.intermediate_cox_prop_hazards_result".format(schema_madlib = schema_madlib),
         initialState = "NULL" ,
         source = source,
-        depColumn = depColumn,
         updateExpr = """
-            {schema_madlib}.cox_prop_hazards_step(
-                ({{intermediateState}}).x,
-                {{intermediateStateDepColumn}},
-                ({{intermediateState}}).status,
-                ({{intermediateState}}).exp_coef_x,
-                ({{intermediateState}}).x_exp_coef_x,
-                ({{intermediateState}}).x_xTrans_exp_coef_x,
-                {{state}}
-                ORDER BY {{intermediateStateDepColumn}} DESC
-            )
-            """.format(
-                schema_madlib = schema_madlib,
-                depColumn = depColumn),
-        intermediateExpr = """
-            {schema_madlib}.intermediate_cox_prop_hazards(
+            {schema_madlib}.coxph_step(
                 ({indepColumn})::double precision[],
+                ({depColumn})::double precision,
                 ({status})::boolean,
                 {{oldCoef}}::double precision[]
+                ORDER BY {depColumn} DESC
             )
-            """.format(
-                schema_madlib = schema_madlib,
-                indepColumn = indepColumn,
-                status = status),
-
+            """.format(schema_madlib=schema_madlib,
+                indepColumn=indepColumn, depColumn=depColumn,
+                status=status),
         terminateExpr = """
-            {schema_madlib}.internal_cox_prop_hazards_step_distance(
+            {schema_madlib}.internal_coxph_step_distance(
                 {{newState}}, {{oldState}}
             ) < {precision}
-            """.format(
-                schema_madlib = schema_madlib,
-                precision = precision),
+            """.format(schema_madlib=schema_madlib, precision=precision),
         resultExpr = """
-            {schema_madlib}.internal_cox_prop_hazards_result({{state}})
+            {schema_madlib}.internal_coxph_result({{state}})
             """.format(schema_madlib = schema_madlib),
         maxNumIterations = maxNumIterations)
 
+# ----------------------------------------------------------------------
 
+def compute_coxph_strata(schema_madlib, source, indepColumn,
+                          depColumn, status, strata, optimizer,
+                          maxNumIterations, precision, **kwargs):
+    """
+    Compute cox survival regression coefficients
 
+    This method serves as an interface to different optimization algorithms.
+    By default, iteratively reweighted least squares is used, but for data with
+    a lot of columns the conjugate-gradient method might perform better.
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @param source Name of relation containing the training data
+    @param indepColumn Name of independent column in training data
+    @param depColumn Name of dependant column which captures time of death
+    @param status Right censoring support for cox
+    @param strata - A string, column name seprated by commas. The
+            columns used for stratification. Default is None.
+    @param optimizer Name of the optimizer. 'newton': newton method
+    @param maxNumIterations Maximum number of iterations
+    @param precision Terminate if two consecutive iterations have a difference
+           in the log-likelihood of less than <tt>precision</tt>. In other
+           words, we terminate if the objective function value has converged.
+           This convergence criterion can be disabled by specifying a negative
+           value.
+    @param kwargs We allow the caller to specify additional arguments (all of
+           which will be ignored though). The purpose of this is to allow the
+           caller to unpack a dictionary whose element set is a superset of
+           the required arguments by this function.
+
+    @return array with coefficients in case of convergence, otherwise None
+    """
+    if strata is None:
+        return compute_coxph (schema_madlib, source, indepColumn,
+                   depColumn, status, optimizer,
+                   maxNumIterations, precision)
+
+    indepColumn = __check_args(schema_madlib, source, indepColumn, depColumn, status)
+    if maxNumIterations < 1:
+        plpy.error("Number of iterations must be positive")
+
+    if optimizer not in ['newton']:
+        plpy.error("Unknown optimizer requested. Must be 'newton'")
+
+    return __runIterativeAlg(
+        stateType = "double precision[]",
+        initialState = "NULL" ,
+        source = source,
+        updateExpr = '',
+        terminateExpr = """
+            {schema_madlib}.internal_coxph_step_distance(
+                {{newState}}, {{oldState}}
+            ) < {precision}
+            """.format(schema_madlib=schema_madlib, precision=precision),
+        resultExpr = """
+            {schema_madlib}.internal_coxph_result({{state}})
+            """.format(schema_madlib = schema_madlib),
+        maxNumIterations = maxNumIterations,
+        updateExprOuter = """
+            {schema_madlib}.coxph_strata_step_outer(inner_state)
+            """.format(schema_madlib=schema_madlib),
+        updateExprInner = """
+            {schema_madlib}.coxph_strata_step_inner(
+                ({indepColumn})::double precision[],
+                ({depColumn})::double precision,
+                ({status})::boolean,
+                {{oldCoef}}::double precision[]
+                ORDER BY {depColumn} DESC
+            )
+            """.format(schema_madlib=schema_madlib,
+                indepColumn=indepColumn, depColumn=depColumn,
+                status=status),
+        strata=strata)
