@@ -6,6 +6,8 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
+#include <modules/shared/HandleTraits.hpp>
+
 #include <math.h>
 #include <iostream>
 #include <algorithm>
@@ -20,6 +22,10 @@ namespace linalg {
 using madlib::dbconnector::postgres::madlib_get_typlenbyvalalign;
 using madlib::dbconnector::postgres::madlib_construct_array;
 using madlib::dbconnector::postgres::madlib_construct_md_array;
+
+// Use Eigen
+using namespace dbal::eigen_integration;
+
 
 typedef struct __type_info{
     Oid oid;
@@ -169,6 +175,13 @@ AnyType matrix_mem_mult::run(AnyType & args)
     }
     return r;
 }
+
+// AnyType matrix_vec_mem_mult::run(AnyType &args){
+//     // MappedMatrix left_matrix = args[0].getAs<MappedMatrix>();
+//     MappedColumnVector right_vec = args[1].getAs<MappedColumnVector>();
+//     MappedColumnVector left_vec = args[0].getAs<MappedColumnVector>();
+//     return left_vec * right_vec;
+// }
 
 AnyType matrix_mem_trans::run(AnyType & args)
 {
