@@ -20,16 +20,6 @@
  *     you want to revert the decision to put the global operator new/delete
  *     in its own translation unit.
  *
- *
- * The default behavior of
- *
- * - <tt>void *operator new[](std::size_t inSize) throw (std::bad_alloc)</tt>
- * - <tt>void *operator new[](std::size_t, const std::nothrow_t&) throw()</tt>
- * - <tt>void operator delete[](void *inPtr) throw()</tt>
- * - <tt>void operator delete[](void *inPtr, const std::nothrow_t&) throw()</tt>
- *
- * is to call the non-array variants (18.4.1.2). Hence no need to override.
- *
  *//* ----------------------------------------------------------------------- */
 
 // We do not write #include "dbconnector.hpp" here because we want to rely on
@@ -51,6 +41,14 @@ operator new(std::size_t size) throw (std::bad_alloc) {
         madlib::dbal::ThrowBadAlloc>(size);
 }
 
+void*
+operator new[](std::size_t size) throw (std::bad_alloc) {
+    return madlib::defaultAllocator().allocate<
+        madlib::dbal::FunctionContext,
+        madlib::dbal::DoNotZero,
+        madlib::dbal::ThrowBadAlloc>(size);
+}
+
 /**
  * @brief operator delete for PostgreSQL. Never throws.
  *
@@ -61,6 +59,11 @@ operator new(std::size_t size) throw (std::bad_alloc) {
  */
 void
 operator delete(void *ptr) throw() {
+    madlib::defaultAllocator().free<madlib::dbal::FunctionContext>(ptr);
+}
+
+void
+operator delete[](void *ptr) throw() {
     madlib::defaultAllocator().free<madlib::dbal::FunctionContext>(ptr);
 }
 
@@ -79,6 +82,14 @@ operator new(std::size_t size, const std::nothrow_t&) throw() {
         madlib::dbal::ReturnNULL>(size);
 }
 
+void*
+operator new[](std::size_t size, const std::nothrow_t&) throw() {
+    return madlib::defaultAllocator().allocate<
+        madlib::dbal::FunctionContext,
+        madlib::dbal::DoNotZero,
+        madlib::dbal::ReturnNULL>(size);
+}
+
 /**
  * @brief operator delete for PostgreSQL. Never throws.
  *
@@ -87,5 +98,10 @@ operator new(std::size_t size, const std::nothrow_t&) throw() {
  */
 void
 operator delete(void *ptr, const std::nothrow_t&) throw() {
+    madlib::defaultAllocator().free<madlib::dbal::FunctionContext>(ptr);
+}
+
+void
+operator delete[](void *ptr, const std::nothrow_t&) throw() {
     madlib::defaultAllocator().free<madlib::dbal::FunctionContext>(ptr);
 }

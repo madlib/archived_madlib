@@ -160,6 +160,9 @@ gen_rules_from_cfp::SRF_next(void *user_fctx, bool *is_last_call) {
 
     ArrayHandle<text*> arr(construct_array(result, 2, TEXTOID,
             myfctx->typlen, myfctx->typbyval, myfctx->typalign));
+    
+    delete[] pre_text;
+    delete[] post_text;
 
     --myfctx->num_calls;
     *is_last_call = false;
