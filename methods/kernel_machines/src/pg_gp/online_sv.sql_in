@@ -17,7 +17,18 @@ m4_include(`SQLCommon.m4')
 issues that will be addressed in a future version. Interface and implementation
 is subject to change. </em>
 
-@about
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#learn">Regression Learning Function</a></li>
+<li><a href="#classify">Classification Learning Function</a></li>
+<li><a href="#novelty">Novelty Detection Functions</a></li>
+<li><a href="#predict">Prediction Functions</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#literature">Literature</a></li>
+<li><a href="#related">Related Topics</a></li>
+</ul>
+</div>
 
 Support vector machines (SVMs) and related kernel methods have been one of 
 the most popular and well-studied machine learning techniques of the 
@@ -82,211 +93,363 @@ like averaging or majority voting.
 Training data points are accessed via a table or a view. The support
 vector models can also be stored in tables for fast execution.
 
-@input
-For classification and regression, the training table/view is expected to be of the following form (the array size of <em>ind</em> must not be greater than 102,400.):\n
-<pre>{TABLE|VIEW} <em>input_table</em> (
+
+@anchor learn
+@par Regression Learning Function
+
+Regression learning is achieved through the following function:
+<pre class="syntax">
+svm_regression(
+    input_table, model_table, parallel, kernel_func, 
+    verbose DEFAULT false, eta DEFAULT 0.1, nu DEFAULT 0.005, slambda DEFAULT 0.05
+    );</pre> 
+
+    For classification and regression, the training table/view is expected to be of the following form (the array size of <em>ind</em> must not be greater than 102,400.):\n
+<pre>{TABLE|VIEW} input_table (
     ...
-    <em>id</em> INT,
-    <em>ind</em> FLOAT8[],
-    <em>label</em> FLOAT8,
+    id INT,
+    ind FLOAT8[],
+    label FLOAT8,
     ...
 )</pre>
-For novelty detection, the label field is not required.
 
-@usage
+For novelty detection, the label field is not required.  
 
-- Regression learning is achieved through the following function:
-  <pre>SELECT \ref svm_regression(
-    '<em>input_table</em>', '<em>model_table</em>', <em>parallel</em>, '<em>kernel_func</em>', 
-    <em>verbose DEFAULT false</em>, <em>eta DEFAULT 0.1</em>, <em>nu DEFAULT 0.005</em>, <em>slambda DEFAULT 0.05</em>
-    );</pre>   
+@anchor classify
+@par Classification Learning Function
 
--  Classification learning is achieved through the following two
-   functions:
-     -# Learn linear SVM(s) using SGD [3]:
-     <pre>SELECT \ref lsvm_classification(
-    '<em>input_table</em>', '<em>model_table</em>', <em>parallel</em>, 
-    <em>verbose DEFAULT false</em>, <em>eta DEFAULT 0.1</em>, <em>reg DEFAULT 0.001</em>
-    );</pre>   
-     -# Learn linear or non-linear SVM(s) using the method described in [1]:
-     <pre>SELECT \ref svm_classification(
-    '<em>input_table</em>', '<em>model_table</em>', <em>parallel</em>, '<em>kernel_func</em>', 
-    <em>verbose DEFAULT false</em>, <em>eta DEFAULT 0.1</em>, <em>nu DEFAULT 0.005</em>
-    );</pre>   
+Classification learning is achieved through the following two functions:
+ 
+- Learn linear SVM(s) using SGD [3].
+<pre class="syntax">
+lsvm_classification( input_table, 
+                     model_table, 
+                     parallel, 
+                     verbose DEFAULT false, 
+                     eta DEFAULT 0.1, 
+                     reg DEFAULT 0.001
+                   )
+</pre>   
 
--  Novelty detection is achieved through the following function:
-	<pre>SELECT \ref svm_novelty_detection(
-    '<em>input_table</em>', '<em>model_table</em>', <em>parallel</em>, '<em>kernel_func</em>', 
-    <em>verbose DEFAULT false</em>, <em>eta DEFAULT 0.1</em>, <em>nu DEFAULT 0.005</em>
-    );</pre>
-	Assuming the model_table parameter takes on value 'model', each learning function will produce two tables 
-	as output: 'model' and 'model_param'.
-	The first contains the support vectors of the model(s) learned.
-	The second contains the parameters of the model(s) learned, which includes information like the kernel function
-	used and the value of the intercept, if there is one.
+- Learn linear or non-linear SVM(s) using the method described in [1].
+<pre class="syntax">
+svm_classification( input_table, 
+                    model_table, 
+                    parallel, 
+                    kernel_func,
+                    verbose DEFAULT false, 
+                    eta DEFAULT 0.1, 
+                    nu DEFAULT 0.005
+                  )
+</pre>      
 
-- To make predictions on a single data point x using a single model
-  learned previously, we use the function
-  <pre>SELECT \ref
-  svm_predict('<em>model_table</em>',<em>x</em>);</pre>
-  If the model is produced by the lsvm_classification() function, use
-  the following prediction function instead
-  <pre>SELECT \ref
-  lsvm_predict('<em>model_table</em>',<em>x</em>);</pre>
+@anchor novelty
+@par Novelty Detection Function
+
+Novelty detection is achieved through the following function:
+<pre class="syntax">
+svm_novelty_detection( input_table, 
+                       model_table, 
+                       parallel, 
+                       kernel_func, 
+                       verbose DEFAULT false, 
+                       eta DEFAULT 0.1, 
+                       nu DEFAULT 0.005 
+                     )
+</pre>
+
+Assuming the model_table parameter takes on value 'model', each learning function will produce two tables 
+as output: 'model' and 'model_param'.
+The first contains the support vectors of the model(s) learned.
+The second contains the parameters of the model(s) learned, which include information like the kernel function
+used and the value of the intercept, if there is one.
+
+@anchor predict
+@par Prediction Functions
+
+- To make predictions on a single data point x using a single model learned previously, we use the function
+<pre class="syntax">
+svm_predict( model_table,
+             x
+           )
+</pre>
+
+- If the model is produced by the lsvm_classification() function, use
+the following prediction function instead.
+<pre class="syntax">
+lsvm_predict( model_table,
+              x
+            )
+</pre>
 
 - To make predictions on new data points using multiple models
-  learned in parallel, we use the function
-  <pre>SELECT \ref
-  svm_predict_combo('<em>model_table</em>',<em>x</em>);</pre>
-  If the models are produced by the lsvm_classification() function, use
-  the following prediction function instead
-  <pre>SELECT \ref
-  lsvm_predict_combo('<em>model_table</em>',<em>x</em>);</pre>
+  learned in parallel, use the following function:
+<pre class="syntax">
+svm_predict_combo( model_table,
+                   x
+                 )
+</pre>
 
+- If the models are produced by the lsvm_classification() function, use
+  the following prediction function instead:
+<pre class="syntax">  
+lsvm_predict_combo( model_table,
+                    x)
+</pre>
 
-- Note that, at the moment, we cannot use MADLIB_SCHEMA.svm_predict() and MADLIB_SCHEMA.svm_predict_combo()
+- Note that, at the moment, we cannot use madlib.svm_predict() and madlib.svm_predict_combo()
   on multiple data points. For example, something like the following will fail:
-  <pre>SELECT \ref svm_predict('<em>model_table</em>',<em>x</em>) FROM data_table;</pre>
-  Instead, to make predictions on new data points stored in a table using
-  previously learned models, we use the function:
-  <pre>SELECT \ref svm_predict_batch('<em>input_table</em>', '<em>data_col</em>', '<em>id_col</em>', '<em>model_table</em>', '<em>output_table</em>', <em>parallel</em>);</pre>
-  The output_table is created during the function call; an existing table with 
-  the same name will be dropped.
-  If the parallel parameter is true, then each data point in the input table will have multiple 
-  predicted values corresponding to the number of models learned in
-  parallel.\n\n
-  Similarly, use the following function for batch prediction if the
-  model(s) is produced by the lsvm_classification() function:
-  <pre>SELECT \ref lsvm_predict_batch('<em>input_table</em>', '<em>data_col</em>', '<em>id_col</em>', '<em>model_table</em>','<em>output_table</em>', <em>parallel</em>);</pre>
-  
-  
+<pre class="example">
+SELECT svm_predict( model_table,
+                    x
+                  ) 
+FROM data_table;
+</pre>
+Instead, to make predictions on new data points stored in a table using
+previously learned models, we use the function:
+<pre class="syntax">
+svm_predict_batch( input_table, 
+                   data_col, 
+                   id_col, 
+                   model_table, 
+                   output_table, 
+                   parallel
+                 );
+</pre>
+The output_table is created during the function call; an existing table with 
+the same name will be dropped.
+If the \c parallel parameter is true, then each data point in the input table will have multiple 
+predicted values corresponding to the number of models learned in
+parallel.
 
-@implementation
+- Similarly, use the following function for batch prediction if the
+model(s) is produced by the lsvm_classification() function:
+<pre class="syntax">
+lsvm_predict_batch( input_table, 
+                    data_col, 
+                    id_col, 
+                    model_table, 
+                    output_table, 
+                    parallel
+                  );
+</pre>
+
+@anchor notes
+@par Notes
 
 Currently, three kernel functions have been implemented: dot product (\ref svm_dot), polynomial (\ref svm_polynomial) and Gaussian (\ref svm_gaussian) kernels. To use the dot product kernel function,
-simply use '<tt><em>MADLIB_SCHEMA.svm_dot</em></tt>' as the <tt>kernel_func</tt> argument, which accepts any function that takes in two float[] and returns a float. To use the polynomial or Gaussian kernels,
+simply use '<tt><em>madlib.svm_dot</em></tt>' as the <tt>kernel_func</tt> argument, which accepts any function that takes in two float[] and returns a float. To use the polynomial or Gaussian kernels,
 a wrapper function is needed since these kernels require additional input parameters (see online_sv.sql_in for input parameters).
 
 For example, to use the polynomial kernel with degree 2, first create a wrapper function:
-<pre>CREATE OR REPLACE FUNCTION mykernel(FLOAT[],FLOAT[]) RETURNS FLOAT AS $$
-	SELECT \ref svm_polynomial($1,$2,2)
+
+<pre class="example">
+CREATE OR REPLACE FUNCTION mykernel(FLOAT[],FLOAT[]) 
+RETURNS FLOAT AS $$
+	SELECT svm_polynomial($1,$2,2)
 $$ language sql;</pre>
+</pre>
 Then call the SVM learning functions with <tt>mykernel</tt> as the argument to <tt>kernel_func</tt>.
-<pre>SELECT \ref svm_regression('my_schema.my_train_data', 'mymodel', false, 'mykernel');</pre>
+<pre class="example">
+SELECT svm_regression( 'my_schema.my_train_data', 
+                       'mymodel', 
+                       false, 
+                       'mykernel'
+                     );
+</pre>
 
-To drop all tables pertaining to the model, we can use
-<pre>SELECT \ref svm_drop_model('model_table');</pre>
 
+To drop all tables pertaining to the model, use:
+<pre class="example">
+SELECT svm_drop_model( 'model_table'
+                     );
+</pre>
+
+@anchor examples
 @examp
 
-As a general first step, we need to prepare and populate an input 
-table/view with the following structure:
-\code   
+As a general first step, prepare and populate an input table/view with the following structure:
+<pre class="example">
 TABLE/VIEW my_schema.my_input_table 
 (       
 		id    INT,       -- point ID
 		ind   FLOAT8[],  -- data point
 		label FLOAT8     -- label of data point
 );
-\endcode    
-     Note: The label field is not required for novelty detection.
+</pre>
+The label field is not required for novelty detection.
     
-
 <strong>Example usage for regression</strong>:
-     -# We can randomly generate 1000 5-dimensional data labelled by the simple target function 
-\code
+-# Randomly generate 1000 5-dimensional data labelled using the simple target function. 
+<pre class="example">
 t(x) = if x[5] = 10 then 50 else if x[5] = -10 then 50 else 0;
-\endcode
+</pre>
 and store that in the my_schema.my_train_data table as follows:
-\code
-sql> select MADLIB_SCHEMA.svm_generate_reg_data('my_schema.my_train_data', 1000, 5);
-\endcode
-     -# We can now learn a regression model and store the resultant model
-        under the name 'myexp'.
-\code
-sql> select MADLIB_SCHEMA.svm_regression('my_schema.my_train_data', 'myexp', false, 'MADLIB_SCHEMA.svm_dot');
-\endcode
-     -# We can now start using it to predict the labels of new data points 
-        like as follows:
-\code
-sql> select MADLIB_SCHEMA.svm_predict('myexp', '{1,2,4,20,10}');
-sql> select MADLIB_SCHEMA.svm_predict('myexp', '{1,2,4,20,-10}');
-\endcode
-     -# To learn multiple support vector models, we replace the learning step above by 
-\code
-sql> select MADLIB_SCHEMA.svm_regression('my_schema.my_train_data', 'myexp', true, 'MADLIB_SCHEMA.svm_dot');
-\endcode
+<pre class="example">
+SELECT madlib.svm_generate_reg_data( 'my_schema.my_train_data', 
+                                     1000, 
+                                     5
+                                   );
+</pre>
+  
+-# Learn a regression model and store the resultant model under the name 'myexp'.
+<pre class="example">
+SELECT madlib.svm_regression( 'my_schema.my_train_data', 
+                              'myexp', 
+                              false, 
+                              'madlib.svm_dot'
+                            );
+</pre>
+
+-# Use the regression model to predict the labels of new data points. 
+<pre class="example">
+SELECT madlib.svm_predict( 'myexp', 
+                           '{1,2,4,20,10}'
+                         );
+SELECT madlib.svm_predict( 'myexp', 
+                           '{1,2,4,20,-10}'
+                         );
+</pre>
+
+-# To learn multiple support vector models, we replace the learning step above by 
+<pre class="example">
+SELECT madlib.svm_regression( 'my_schema.my_train_data', 
+                              'myexp', 
+                              true, 
+                              'madlib.svm_dot'
+                            );
+</pre>
 The resultant models can be used for prediction as follows:
-\code
-sql> select * from MADLIB_SCHEMA.svm_predict_combo('myexp', '{1,2,4,20,10}');
-\endcode
-     -# We can also predict the labels of all the data points stored in a table.
-        For example, we can execute the following:
-\code
-sql> create table MADLIB_SCHEMA.svm_reg_test ( id int, ind float8[] );
-sql> insert into MADLIB_SCHEMA.svm_reg_test (select id, ind from my_schema.my_train_data limit 20);
-sql> select MADLIB_SCHEMA.svm_predict_batch('MADLIB_SCHEMA.svm_reg_test', 'ind', 'id', 'myexp', 'MADLIB_SCHEMA.svm_reg_output1', false); 
-sql> select * from MADLIB_SCHEMA.svm_reg_output1;
-sql> select MADLIB_SCHEMA.svm_predict_batch('MADLIB_SCHEMA.svm_reg_test', 'ind', 'id, 'myexp', 'MADLIB_SCHEMA.svm_reg_output2', true);
-sql> select * from MADLIB_SCHEMA.svm_reg_output2;
-\endcode 
+<pre class="example">
+SELECT * FROM madlib.svm_predict_combo( 'myexp', 
+                                        '{1,2,4,20,10}'
+                                      );
+</pre>
 
+-# We can also predict the labels of all the data points stored in a table. For example, we can execute the following:
+<pre class="example">
+CREATE TABLE madlib.svm_reg_test ( id int, ind float8[] );
+INSERT INTO madlib.svm_reg_test (
+            SELECT id, ind FROM my_schema.my_train_data LIMIT 20);
+SELECT madlib.svm_predict_batch( 'madlib.svm_reg_test', 
+                                 'ind', 
+                                 'id', 
+                                 'myexp', 
+                                 'madlib.svm_reg_output1', 
+                                 false
+                               ); 
+SELECT * FROM madlib.svm_reg_output1;
+SELECT madlib.svm_predict_batch( 'madlib.svm_reg_test', 
+                                 'ind', 
+                                 'id, 
+                                 'myexp', 
+                                 'madlib.svm_reg_output2', 
+                                 true
+                                );
+SELECT * FROM madlib.svm_reg_output2;
+</pre> 
+.
 <strong>Example usage for classification:</strong>
--# We can randomly generate 2000 5-dimensional data labelled by the simple
-target function 
-\code
+-# Randomly generate 2000 5-dimensional data labelled by the simple target function.
+<pre class="example">
 t(x) = if x[1] > 0 and  x[2] < 0 then 1 else -1;
-\endcode
+</pre>
 and store that in the my_schema.my_train_data table as follows:
-\code 
-sql> select MADLIB_SCHEMA.svm_generate_cls_data('my_schema.my_train_data', 2000, 5);
-\endcode
--# We can now learn a classification model and store the resultant model
-under the name  'myexpc'.
-\code
-sql> select MADLIB_SCHEMA.svm_classification('my_schema.my_train_data', 'myexpc', false, 'MADLIB_SCHEMA.svm_dot');
-\endcode
--# We can now start using it to predict the labels of new data points 
-like as follows:
-\code
-sql> select MADLIB_SCHEMA.svm_predict('myexpc', '{10,-2,4,20,10}');
-\endcode 
--# To learn multiple support vector models, replace the model-building and prediction steps above by 
-\code
-sql> select MADLIB_SCHEMA.svm_classification('my_schema.my_train_data', 'myexpc', true, 'MADLIB_SCHEMA.svm_dot');
-sql> select * from MADLIB_SCHEMA.svm_predict_combo('myexpc', '{10,-2,4,20,10}');
-\endcode
--# To learn a linear support vector model using SGD, replace the model-building and prediction steps above by 
-\code
-sql> select MADLIB_SCHEMA.lsvm_classification('my_schema.my_train_data', 'myexpc', false);
-sql> select MADLIB_SCHEMA.lsvm_predict('myexpc', '{10,-2,4,20,10}');
-\endcode
--# To learn multiple linear support vector models using SGD, replace the model-building and prediction steps above by 
-\code
-sql> select MADLIB_SCHEMA.lsvm_classification('my_schema.my_train_data', 'myexpc', true);
-sql> select MADLIB_SCHEMA.lsvm_predict_combo('myexpc', '{10,-2,4,20,10}');
-\endcode
+<pre class="example"> 
+SELECT madlib.svm_generate_cls_data( 'my_schema.my_train_data', 
+                                     2000, 
+                                     5
+                                    );
+</pre>
 
+-# Learn a classification model and store the resultant model the table 'myexpc'.
+<pre class="example">
+SELECT madlib.svm_classification( 'my_schema.my_train_data', 
+                                  'myexpc', 
+                                  false, 
+                                  'madlib.svm_dot'
+                                );
+</pre>
+
+-# Start using the model to predict the labels of new data points.
+<pre class="example">
+SELECT madlib.svm_predict( 'myexpc', 
+                           '{10,-2,4,20,10}'
+                         );
+</pre> 
+
+-# To learn multiple support vector models, replace the model-building and prediction steps above. 
+<pre class="example">
+SELECT madlib.svm_classification( 'my_schema.my_train_data', 
+                                  'myexpc', 
+                                  true, 
+                                  'madlib.svm_dot'
+                                );
+SELECT * FROM madlib.svm_predict_combo( 'myexpc', 
+                                        '{10,-2,4,20,10}'
+                                      );
+</pre>
+
+-# To learn a linear support vector model using SGD, replace the model-building and prediction steps. 
+<pre class="example">
+SELECT madlib.lsvm_classification( 'my_schema.my_train_data', 
+                                   'myexpc', 
+                                   false
+                                );
+SELECT madlib.lsvm_predict( 'myexpc', 
+                            '{10,-2,4,20,10}'
+                          );
+</pre>
+
+-# To learn multiple linear support vector models using SGD, replace the model-building and prediction steps above.
+<pre class="example">
+SELECT madlib.lsvm_classification( 'my_schema.my_train_data', 
+                                   'myexpc', 
+                                   true
+                                 );
+SELECT madlib.lsvm_predict_combo( 'myexpc', 
+                                  '{10,-2,4,20,10}'
+                                );
+</pre>
+.
 <strong>Example usage for novelty detection:</strong>
--# We can randomly generate 100 2-dimensional data (the normal cases)
-and store that in the my_schema.my_train_data table as follows:
-\code
-sql> select MADLIB_SCHEMA.svm_generate_nd_data('my_schema.my_train_data', 100, 2);
-\endcode
--# Learning and predicting using a single novelty detection model can be done as follows:
-\code
-sql> select MADLIB_SCHEMA.svm_novelty_detection('my_schema.my_train_data', 'myexpnd', false, 'MADLIB_SCHEMA.svm_dot');
-sql> select MADLIB_SCHEMA.svm_predict('myexpnd', '{10,-10}');  
-sql> select MADLIB_SCHEMA.svm_predict('myexpnd', '{-1,-1}');  
-\endcode
+
+-# Randomly generate 100 2-dimensional data (the normal cases) and store that in the my_schema.my_train_data table.
+<pre class="example">
+SELECT madlib.svm_generate_nd_data( 'my_schema.my_train_data', 
+                                    100, 
+                                    2
+                                  );
+</pre>
+
+-# Learning and predicting using a single novelty detection model:
+<pre class="example">
+SELECT madlib.svm_novelty_detection( 'my_schema.my_train_data', 
+                                     'myexpnd', 
+                                     false, 
+                                     'madlib.svm_dot'
+                                   );
+SELECT madlib.svm_predict( 'myexpnd', 
+                           '{10,-10}'
+                         );  
+SELECT madlib.svm_predict( 'myexpnd', 
+                           '{-1,-1}'
+                         );  
+</pre>
+
 -# Learning and predicting using multiple models can be done as follows:
-\code
-sql> select MADLIB_SCHEMA.svm_novelty_detection('my_schema.my_train_data', 'myexpnd', true, 'MADLIB_SCHEMA.svm_dot');
-sql> select * from MADLIB_SCHEMA.svm_predict_combo('myexpnd', '{10,-10}');  
-sql> select * from MADLIB_SCHEMA.svm_predict_combo('myexpnd', '{-1,-1}');  
-\endcode
+<pre class="example">
+SELECT madlib.svm_novelty_detection( 'my_schema.my_train_data', 
+                                     'myexpnd', 
+                                     true, 
+                                     'madlib.svm_dot'
+                                   );
+SELECT * FROM madlib.svm_predict_combo( 'myexpnd', 
+                                        '{-1,-1}'
+                                      );
+</pre>
 
-
+@anchor literature
 @literature
 
 [1] Jyrki Kivinen, Alexander J. Smola, and Robert C. Williamson: <em>Online
@@ -300,8 +463,11 @@ sql> select * from MADLIB_SCHEMA.svm_predict_combo('myexpnd', '{-1,-1}');
 [3] L&eacute;on Bottou: <em>Large-Scale Machine Learning with Stochastic
 Gradient Descent</em>, Proceedings of the 19th International
 Conference on Computational Statistics, Springer, 2010.
+
+@anchor related
+@par Related Topics
 	
-@sa File online_sv.sql_in documenting the SQL functions.
+File online_sv.sql_in documenting the SQL functions.
 
 @internal
 @sa namespace online_sv (documenting the implementation in Python)

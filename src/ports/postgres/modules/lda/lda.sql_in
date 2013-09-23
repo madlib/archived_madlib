@@ -16,7 +16,18 @@ m4_include(`SQLCommon.m4')
 
 @addtogroup grp_lda
 
-@about
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#vocabulary">Vocabulary Format</a></li>
+<li><a href="#train">Training Function</a></li>
+<li><a href="#predict">Prediction Function</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#literature">Literature</a></li>
+<li><a href="#related">Related Topics</a><li>
+</ul>
+</div>
+
 
 Latent Dirichlet Allocation (LDA) is an interesting generative probabilistic
 model for natural texts and has received a lot of attention in recent years. 
@@ -61,250 +72,297 @@ LDA based on Gibbs sampling. Different with the implementations based on MPI or
 Hadoop Map/Reduce, this implementation builds upon the shared-nothing MPP
 databases and enables high-performance in-database analytics.
 
-@input
-The \b corpus/dataset to be analyzed is expected to be of the following form:
-<pre>{TABLE|VIEW} <em>data_table</em> (
-    <em>docid</em> INTEGER,
-    <em>wordid</em> INTEGER,
-    <em>count</em> INTEGER
-)</pre>
-where \c docid refers to the document ID, \c wordid is the word ID (the index
-of a word in the vocabulary), and \c count is the number of occurence of the
-word in the document. 
+@anchor vocabulary
+@par Vocabulary Format
 
-The \b vocabulary/dictionary that indexes all the words found in the corpus is
-of the following form:
+The vocabulary, or dictionary, indexes all the words found in the corpus and has the following format:
 <pre>{TABLE|VIEW} <em>vocab_table</em> (
     <em>wordid</em> INTEGER,
-    <em>word</em> TEXT,
+    <em>word</em> TEXT
 )</pre>
-where \c wordid refers the word ID (the index of a word in the vocabulary) and
-\c word is the actual word.
+where \c wordid refers to the word ID (the index of a word in the vocabulary) and
+\c word is the actual word. 
 
-@usage
-- The training (i.e. topic inference) can be done with the following function:
-    <pre>
-        SELECT \ref lda_train(
-            <em>'data_table'</em>,
-            <em>'model_table'</em>,
-            <em>'output_data_table'</em>, 
-            <em>voc_size</em>, 
-            <em>topic_num</em>,
-            <em>iter_num</em>, 
-            <em>alpha</em>, 
-            <em>beta</em>)
-    </pre>
-    
-    This function stores the resulting model in <tt><em>model_table</em></tt>.
-    The table has only 1 row and is in the following form:
-    <pre>{TABLE} <em>model_table</em> (
-        <em>voc_size</em> INTEGER,
-        <em>topic_num</em> INTEGER,
-        <em>alpha</em> FLOAT,
-        <em>beta</em> FLOAT,
-        <em>model</em> INTEGER[][])
-    </pre>
-
-    This function also stores the topic counts and the topic assignments in
-    each document in <tt><em>output_data_table</em></tt>. The table is in the
-    following form:
-    <pre>{TABLE} <em>output_data_table</em> (
-        <em>docid</em> INTEGER,
-        <em>wordcount</em> INTEGER,
-        <em>words</em> INTEGER[],
-        <em>counts</em> INTEGER[],
-        <em>topic_count</em> INTEGER[],
-        <em>topic_assignment</em> INTEGER[])
-    </pre>
-
-- The prediction (i.e. labelling of test documents using a learned LDA model)
-  can be done with the following function: 
-    <pre>
-        SELECT \ref lda_predict(
-            <em>'data_table'</em>,
-            <em>'model_table'</em>,
-            <em>'output_table'</em>);
-    </pre>
-    
-    This function stores the prediction results in
-    <tt><em>output_table</em></tt>. Each row in the table stores the topic
-    distribution and the topic assignments for a docuemnt in the dataset. And
-    the table is in the following form: 
-    <pre>{TABLE} <em>output_table</em> (
-        <em>docid</em> INTEGER,
-        <em>wordcount</em> INTEGER,
-        <em>words</em> INTEGER,
-        <em>counts</em> INTEGER,
-        <em>topic_count</em> INTEGER[],
-        <em>topic_assignment</em> INTEGER[])
-    </pre>
-
-- This module also provides a function for computing the perplexity:
-    <pre>
-        SELECT \ref lda_get_perplexity(
-            <em>'model_table'</em>,
-            <em>'output_data_table'</em>);
-    </pre>
-
-@implementation
-The input format for this module is very common in many machine learning
-packages written in various lanugages, which allows users to generate
-datasets using any existing document preprocessing tools or import existing
-dataset very conveniently. Internally, the input data will be validated and then
+This input format is very common in machine learning
+packages written in various languages, which allows you to generate
+datasets using existing document preprocessing tools or to import existing
+datasets. Internally, the input data is validated and then
 converted to the following format for efficiency: 
-    <pre>{TABLE} <em>__internal_data_table__</em> (
-        <em>docid</em> INTEGER,
-        <em>wordcount</em> INTEGER,
-        <em>words</em> INTEGER[],
-        <em>counts</em> INTEGER[])
-    </pre>
+<pre>{TABLE} <em>__internal_data_table__</em> (
+    <em>docid</em> INTEGER,
+    <em>wordcount</em> INTEGER,
+    <em>words</em> INTEGER[],
+    <em>counts</em> INTEGER[])
+</pre>
 where \c docid is the document ID, \c wordcount is the count of words in the
 document, \c words is the list of unique words in the document, and \c counts
-is the list of number of occurence of each unique word in the document. The
-convertion can be done with the help of aggregation functions very easily.
+is a list of the number of occurrences of each unique word in the document. The
+conversion is done easily with the help of aggregation functions.
 
+@anchor train
+@par Training Function
+The LDA training function has the following syntax.
+<pre class="syntax">
+lda_train( data_table, 
+           model_table, 
+           output_data_table, 
+           voc_size, 
+           topic_num, 
+           iter_num, 
+           alpha, 
+           beta
+         )
+</pre>
+\b Arguments
+<dl class="arglist">
+    <dt>data_table</dt>
+    <dd>TEXT. The name of the table storing the training dataset. Each row is
+    in the form <tt>&lt;docid, wordid, count&gt;</tt> where \c docid, \c wordid, and \c count
+    are non-negative integers.
+
+    The \c docid column refers to the document ID, the \c wordid column is the
+    word ID (the index of a word in the vocabulary), and \c count is the
+    number of occurrences of the word in the document. </dd>
+    <dt>model_table</dt>
+    <dd>TEXT. The name of the table storing the learned models. This table has one row and the following columns.
+        <table class="output">
+            <tr>
+                <th>voc_size</th>
+                <td>INTEGER. Size of the vocabulary. Note that the \c wordid should be continous integers starting from 0 to \c voc_size &minus; \c 1.  A data validation routine is called to validate the dataset.</td>
+            </tr>
+            <tr>
+                <th>topic_num</th>
+                <td>INTEGER. Number of topics.</td>
+            </tr>
+            <tr>
+                <th>alpha</th>
+                <td>DOUBLE PRECISION. Dirichlet parameter for the per-doc topic multinomial (e.g. 50/topic_num).</td>
+            </tr>
+            <tr>
+                <th>beta</th>
+                <td>DOUBLE PRECISION. Dirichlet parameter for the per-topic word multinomial (e.g. 0.01).</td>
+            </tr>
+            <tr>
+                <th>model</th>
+                <td>INTEGER[][].</td>
+            </tr>
+        </table>
+    </dd>
+    <dt>output_data_table</dt>
+    <dd>TEXT. The name of the table to store the output data. It has the following columns:
+        <table class="output">
+            <tr>
+                <th>docid</th>
+                <td>INTEGER.</td>
+            </tr>
+            <tr>
+                <th>wordcount</th>
+                <td>INTEGER.</td>
+            </tr>
+            <tr>
+                <th>words</th>
+                <td>INTEGER[].</td>
+            </tr>
+            <tr>
+                <th>counts</th>
+                <td>INTEGER[].</td>
+            </tr>
+            <tr>
+                <th>topic_count</th>
+                <td>INTEGER[].</td>
+            </tr>
+            <tr>
+                <th>topic_assignment</th>
+                <td>INTEGER[].</td> 
+            </tr>
+        </table>
+    </dd>
+    <dt>iter_num</dt>
+    <dd>INTEGER. Number of iterations (e.g. 60).</dd>
+    <dt>alpha</dt>
+    <dd>DOUBLE PRECISION. Dirichlet parameter for the per-doc topic multinomial (e.g. 50/topic_num).</dd>
+    <dt>beta</dt>
+    <dd>DOUBLE PRECISION. Dirichlet parameter for the per-topic word multinomial (e.g. 0.01).</dd>
+</dl>
+
+@anchor predict
+@par Prediction Function
+
+Prediction&mdash;labelling test documents using a learned LDA model&mdash;is accomplished with the following function: 
+<pre class="syntax">
+lda_predict( data_table,
+             model_table,
+             output_table
+           );
+</pre>
+
+This function stores the prediction results in
+<tt><em>output_table</em></tt>. Each row in the table stores the topic
+distribution and the topic assignments for a document in the dataset. The
+table has the following columns: 
+<table class="output">
+    <tr>
+        <th>docid</th>
+        <td>INTEGER.</td>
+    </tr>
+    <tr>
+        <th>wordcount</th>
+        <td>INTEGER.</td>
+    </tr>
+    <tr>
+        <th>words</th>
+        <td>INTEGER.</td>
+    </tr>
+    <tr>
+        <th>counts</th>
+        <td>INTEGER.</td>
+    </tr>
+    <tr>
+        <th>topic_count</th>
+        <td>INTEGER[].</td>
+    </tr>
+    <tr>
+        <th>topic_assignment</th>
+        <td>INTEGER[].</td>
+    </tr>
+</table>
+
+@anchor perplexity
+@par Perplexity Function
+This module provides a function for computing the perplexity.
+<pre class="syntax">
+lda_get_perplexity( model_table,
+                    output_data_table
+                  );
+</pre>
+
+
+@anchor examples
 @examp
 
-We now give a usage example.
 
-- As a first step, we need to prepare a dataset and vocabulary in the appropriate structure.
-    \code
-    CREATE TABLE my_vocab(wordid INT4, word TEXT)
-    m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (wordid)');
-    
-    INSERT INTO my_vocab VALUES
-    (0, 'code'), (1, 'data'), (2, 'graph'), (3, 'image'), (4, 'input'), (5,
-    'layer'), (6, 'learner'), (7, 'loss'), (8, 'model'), (9, 'network'), (10,
-    'neuron'), (11, 'object'), (12, 'output'), (13, 'rate'), (14, 'set'), (15,
-    'signal'), (16, 'sparse'), (17, 'spatial'), (18, 'system'), (19, 'training');
-    
-    CREATE TABLE my_training 
-    (
-        docid INT4, 
-        wordid INT4, 
-        count INT4
-    )
-    m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (docid)');
-    
-    INSERT INTO my_training VALUES
-    (0, 0, 2),(0, 3, 2),(0, 5, 1),(0, 7, 1),(0, 8, 1),(0, 9, 1),(0, 11, 1),(0, 13,
-    1), (1, 0, 1),(1, 3, 1),(1, 4, 1),(1, 5, 1),(1, 6, 1),(1, 7, 1),(1, 10, 1),(1,
-    14, 1),(1, 17, 1),(1, 18, 1), (2, 4, 2),(2, 5, 1),(2, 6, 2),(2, 12, 1),(2, 13,
-    1),(2, 15, 1),(2, 18, 2), (3, 0, 1),(3, 1, 2),(3, 12, 3),(3, 16, 1),(3, 17,
-    2),(3, 19, 1), (4, 1, 1),(4, 2, 1),(4, 3, 1),(4, 5, 1),(4, 6, 1),(4, 10, 1),(4,
-    11, 1),(4, 14, 1),(4, 18, 1),(4, 19, 1), (5, 0, 1),(5, 2, 1),(5, 5, 1),(5, 7,
-    1),(5, 10, 1),(5, 12, 1),(5, 16, 1),(5, 18, 1),(5, 19, 2), (6, 1, 1),(6, 3,
-    1),(6, 12, 2),(6, 13, 1),(6, 14, 2),(6, 15, 1),(6, 16, 1),(6, 17, 1), (7, 0,
-    1),(7, 2, 1),(7, 4, 1),(7, 5, 1),(7, 7, 2),(7, 8, 1),(7, 11, 1),(7, 14, 1),(7,
-    16, 1), (8, 2, 1),(8, 4, 4),(8, 6, 2),(8, 11, 1),(8, 15, 1),(8, 18, 1),
-    (9, 0, 1),(9, 1, 1),(9, 4, 1),(9, 9, 2),(9, 12, 2),(9, 15, 1),(9, 18, 1),(9,
-    19, 1);
-    
-    
-    CREATE TABLE my_testing 
-    (
-        docid INT4, 
-        wordid INT4, 
-        count INT4
-    )
-    m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (docid)');
-    
-    INSERT INTO my_testing VALUES
-    (0, 0, 2),(0, 8, 1),(0, 9, 1),(0, 10, 1),(0, 12, 1),(0, 15, 2),(0, 18, 1),(0,
-    19, 1), (1, 0, 1),(1, 2, 1),(1, 5, 1),(1, 7, 1),(1, 12, 2),(1, 13, 1),(1, 16,
-    1),(1, 17, 1),(1, 18, 1), (2, 0, 1),(2, 1, 1),(2, 2, 1),(2, 3, 1),(2, 4, 1),(2,
-    5, 1),(2, 6, 1),(2, 12, 1),(2, 14, 1),(2, 18, 1), (3, 2, 2),(3, 6, 2),(3, 7,
-    1),(3, 9, 1),(3, 11, 2),(3, 14, 1),(3, 15, 1), (4, 1, 1),(4, 2, 2),(4, 3,
-    1),(4, 5, 2),(4, 6, 1),(4, 11, 1),(4, 18, 2);
-    \endcode
+-# Prepare a vocabulary and training dataset in the appropriate structures.
+<pre class="example">
+-- vocabulary table    
+CREATE TABLE my_vocab(wordid INT4, word TEXT)
+INSERT INTO my_vocab VALUES
+    (0, 'code'), (1, 'data'), (2, 'graph'), (3, 'image'),
+    (4, 'input'), (5, 'layer'), (6, 'learner'), (7, 'loss'),
+    (8, 'model'), (9, 'network'), (10, 'neuron'), (11, 'object'),
+    (12, 'output'), (13, 'rate'), (14, 'set'), (15, 'signal'),
+    (16, 'sparse'), (17, 'spatial'), (18, 'system'), (19, 'training');
+-- training data table
+CREATE TABLE my_training 
+(
+    docid INT4, 
+    wordid INT4, 
+    count INT4
+)
+INSERT INTO my_training VALUES
+    (0, 0, 2),(0, 3, 2),(0, 5, 1),(0, 7, 1),(0, 8, 1),(0, 9, 1),(0, 11, 1),
+    (0, 13, 1), (1, 0, 1),(1, 3, 1),(1, 4, 1),(1, 5, 1),(1, 6, 1),(1, 7, 1),
+    (1, 10, 1),(1, 14, 1),(1, 17, 1),(1, 18, 1), (2, 4, 2),(2, 5, 1),(2, 6, 2),
+    (2, 12, 1),(2, 13, 1),(2, 15, 1),(2, 18, 2), (3, 0, 1),(3, 1, 2),(3, 12, 3),
+    (3, 16, 1),(3, 17, 2),(3, 19, 1), (4, 1, 1),(4, 2, 1),(4, 3, 1),(4, 5, 1),
+    (4, 6, 1),(4, 10, 1),(4, 11, 1),(4, 14, 1),(4, 18, 1),(4, 19, 1), (5, 0, 1),
+    (5, 2, 1),(5, 5, 1),(5, 7, 1),(5, 10, 1),(5, 12, 1),(5, 16, 1),(5, 18, 1),
+    (5, 19, 2),(6, 1, 1),(6, 3, 1),(6, 12, 2),(6, 13, 1),(6, 14, 2),(6, 15, 1),
+    (6, 16, 1),(6, 17, 1), (7, 0, 1),(7, 2, 1),(7, 4, 1),(7, 5, 1),(7, 7, 2),
+    (7, 8, 1),(7, 11, 1),(7, 14, 1),(7, 16, 1), (8, 2, 1),(8, 4, 4),(8, 6, 2),
+    (8, 11, 1),(8, 15, 1),(8, 18, 1), (9, 0, 1),(9, 1, 1),(9, 4, 1),(9, 9, 2),
+    (9, 12, 2),(9, 15, 1),(9, 18, 1),(9, 19, 1);
+-- testing data
+CREATE TABLE my_testing 
+(
+    docid INT4, 
+    wordid INT4, 
+    count INT4
+)
+INSERT INTO my_testing VALUES
+    (0, 0, 2),(0, 8, 1),(0, 9, 1),(0, 10, 1),(0, 12, 1),(0, 15, 2),(0, 18, 1),
+    (0, 19, 1), (1, 0, 1),(1, 2, 1),(1, 5, 1),(1, 7, 1),(1, 12, 2),(1, 13, 1),
+    (1, 16, 1),(1, 17, 1),(1, 18, 1), (2, 0, 1),(2, 1, 1),(2, 2, 1),(2, 3, 1),
+    (2, 4, 1),(2, 5, 1),(2, 6, 1),(2, 12, 1),(2, 14, 1),(2, 18, 1), (3, 2, 2),
+    (3, 6, 2),(3, 7, 1),(3, 9, 1),(3, 11, 2),(3, 14, 1),(3, 15, 1), (4, 1, 1),
+    (4, 2, 2),(4, 3, 1),(4, 5, 2),(4, 6, 1),(4, 11, 1),(4, 18, 2);
+</pre>
 
-- To perform training, we call the lda_train() function with the
-appropriate parameters. Here is an example.
-    \code
-    SELECT MADLib.lda_train(
-        'my_training',  'my_model', 'my_outdata', 20, 5, 10, 5, 0.01);
-    \endcode
+-# Run the lda_train() function. 
+<pre class="example">
+SELECT madlib.lda_train( 'my_training',  
+                         'my_model', 
+                         'my_outdata', 
+                         20, 
+                         5, 
+                         10, 
+                         5, 
+                         0.01
+                       );
+</pre>
+A successful run of the lda_train() function generates two tables, one for storing 
+the learned models, the other for storing the output data table.
 
-    After a successful run of the lda_train() function, two tables will be
-    generated, one for storing the learned models, and another for storing the
-    output data table.
+-# To get the detailed information about the learned model, run these
+commands:
+<pre class="example">
+-- The topic description by top-k words
+SELECT * FROM madlib.lda_get_topic_desc( 'my_model', 
+                                         'my_vocab', 
+                                         'my_topic_desc', 
+                                         15
+                                       );
+-- The per-topic word counts
+SELECT madlib.lda_get_topic_word_count( 'my_model', 
+                                        'my_topic_word_count'
+                                      );
+-- The per-word topic counts
+SELECT madlib.lda_get_word_topic_count( 'my_model', 
+                                        'my_word_topic_count'
+                                      );
+</pre>
 
-    To get the detailed information about the learned model, we can run the
-    following commands:
+-# To get the topic counts and the topic assignments for each doucment, run the following commands:
+<pre class="example">
+-- The per-document topic counts:
+SELECT docid, topic_count
+FROM my_outdata;
+-- The per-document topic assignments:
+SELECT docid, words, counts, topic_assignment
+FROM my_outdata;
+</pre>
+Get the topic assignment for each word in a document by scanning \c words, \c
+counts, and \c topic_assignment together.
 
-    - The topic description by top-k words
-    \code
-        SELECT * FROM MADLib.lda_get_topic_desc(
-            'my_model', 'my_vocab', 'my_topic_desc', 15);
-    \endcode
+-# To use a learned LDA model for prediction (that is, to label new documents), use the following command: 
+<pre class="example">
+SELECT madlib.lda_predict( 'my_testing', 
+                           'my_model', 
+                           'my_pred'
+                         );
+</pre>
+After a successful run of the lda_predict() function, the prediction results
+are generated and stored in <em>my_pred</em>. This table has the same
+schema as the <em>my_outdata</em> table generated by the lda_train() function.
 
-    - The per-topic word counts
-    \code
-        SELECT MADLib.lda_get_topic_word_count(
-            'my_model', 'my_topic_word_count');
-    \endcode
+-#  To get the topic counts and topic assignments for each document, run the following commands:
+<pre class="example">
+-- The per-document topic counts:
+SELECT docid, topic_count 
+FROM my_pred;
+-- The per-document topic assignments:
+SELECT docid, words, counts, topic_assignment
+FROM my_pred;
+</pre>
+Get the topic assignment for each word in a document by scanning \c words, \c counts, and \c topic_assignment together.
 
-    - The per-word topic counts
-    \code
-        SELECT MADLib.lda_get_word_topic_count(
-            'my_model', 'my_word_topic_count');
-    \endcode
+-# Use the following command to compute the perplexity.
+<pre class="example">
+SELECT madlib.lda_get_perplexity( 'my_model', 
+                                  'my_pred'
+                                );
+</pre>
 
-    To get the topic counts and the topic assignments for each doucment, we
-    can run the following commands:
-
-    - The per-document topic counts:
-    \code
-        SELECT 
-            docid, topic_count 
-        FROM my_outdata;
-    \endcode
-
-    - The per-document topic assignments:
-    \code
-        SELECT 
-            docid, words, counts, topic_assignment 
-        FROM my_outdata;
-    \endcode
-    By scanning \c words, \c counts, and \c topic_assignment together, we can
-    get the topic assignment for each word in a document.
-
-- To use a learned LDA model for prediction (i.e. to label new documents), we can use the following command: 
-    \code
-    SELECT MADLib.lda_predict(
-        'my_testing', 'my_model', 'my_pred');
-    \endcode
-
-    After a successful run of the lda_predict() function, the prediction
-    results will be generated and stored in <em>my_pred</em>. This table has
-    the same schema as the <em>my_outdata</em> generated by the lda_train()
-    function.
-    
-    To get te the topic counts and the topic assignments for each doucment, we
-    can run the following commands:
-
-    - The per-document topic counts:
-    \code
-        SELECT 
-            docid, topic_count 
-        FROM my_pred;
-    \endcode
-
-    - The per-document topic assignments:
-    \code
-        SELECT 
-            docid, words, counts, topic_assignment 
-        FROM my_pred;
-    \endcode
-    By scanning \c words, \c counts, and \c topic_assignment together, we can
-    get the topic assignment for each word in a document.
-
-- To compute the perplexity, we can use the following command:
-    \code
-        SELECT MADLib.lda_get_perplexity(
-            'my_model', 'my_pred');
-    \endcode
-
+@anchor literature
 @literature
 
 [1] D.M. Blei, A.Y. Ng, M.I. Jordan, <em>Latent Dirichlet Allocation</em>,
@@ -321,7 +379,9 @@ appropriate parameters. Here is an example.
 [5] J. Chang, Collapsed Gibbs sampling methods for topic models, R manual,
     2010.
 
-@sa File lda.sql_in documenting the SQL functions.
+@anchor related
+@par Related Topics
+File lda.sql_in documenting the SQL functions.
 */
 
 -- UDT for summarizing a UDF call

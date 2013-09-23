@@ -14,16 +14,268 @@ m4_include(`SQLCommon.m4')
 /**
 @addtogroup grp_kmeans
 
-@about
+<div class="toc"><b>Contents</b>
+<ul>
+<li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#output">Output Format</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#notes">Notes</a></li>
+<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul>
+</div>
+
+
 
 Clustering refers to the problem of partitioning a set of objects according to
 some problem-dependent measure of <em>similarity</em>. In the k-means variant,
-one is given \f$ n \f$ points \f$ x_1, \dots, x_n \in \mathbb R^d \f$, and the
+given \f$ n \f$ points \f$ x_1, \dots, x_n \in \mathbb R^d \f$, the
 goal is to position \f$ k \f$ centroids \f$ c_1, \dots, c_k \in \mathbb R^d \f$
 so that the sum of \em distances between each point and its closest centroid is
 minimized. Each centroid represents a cluster that consists of all points to
-which this centroid is closest. Formally, we wish to minimize the following
-objective function:
+which this centroid is closest. 
+
+@anchor train
+@par Training Function
+
+The k-means algorithm can be invoked in four ways, depending on the source of the initial set of centroids:
+
+- Use the random centroid seeding method.
+<pre class="syntax">
+kmeans_random( rel_source, 
+               expr_point, 
+               k, 
+               fn_dist, 
+               agg_centroid, 
+               max_num_iterations, 
+               min_frac_reassigned
+             ) 
+</pre>
+
+- Use the kmeans++ centroid seeding method.
+<pre class="syntax">
+kmeanspp( rel_source, 
+          expr_point, 
+          k, 
+          fn_dist, 
+          agg_centroid, 
+          max_num_iterations, 
+          min_frac_reassigned
+        )
+</pre>
+
+- Supply an initial centroid set in a relation identified by the \e rel_initial_centroids argument.
+<pre class="syntax">
+kmeans( rel_source, 
+        expr_point, 
+        rel_initial_centroids, 
+        expr_centroid, 
+        fn_dist, 
+        agg_centroid, 
+        max_num_iterations, 
+        min_frac_reassigned
+      )
+</pre>
+
+- Provide an initial centroid set as an array expression in the \e initial_centroids argument.
+<pre class="syntax"> 
+kmeans( rel_source, 
+        expr_point, 
+        initial_centroids, 
+        fn_dist, 
+        agg_centroid, 
+        max_num_iterations, 
+        min_frac_reassigned
+      )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>rel_source</dt>
+<dd>TEXT. The name of the table containing the input data points. 
+
+Data points and predefined centroids (if used) are expected to be stored row-wise,
+in a column of type <tt>\ref grp_svec "SVEC"</tt> (or any type convertible to
+<tt>\ref grp_svec "SVEC"</tt>, like <tt>FLOAT[]</tt> or <tt>INTEGER[]</tt>).
+Data points with non-finite values (NULL, NaN, infinity) in any component
+are skipped during analysis.
+</dd>
+
+<dt>expr_point</dt>
+<dd>TEXT. The name of the column with point coordinates.</dd>
+
+<dt>k</dt>
+<dd>INTEGER. The number of centroids to calculate.</dd>
+
+<dt>fn_dist (optional)</dt>
+<dd>TEXT, default: squared_dist_norm2'. The name of the function to use to calculate the distance from a data point to a centroid.
+
+The following distance functions can be used (computation of barycenter/mean in parentheses):
+<ul>
+<li><b>\ref dist_norm1</b>:  1-norm/Manhattan (element-wise median
+[Note that MADlib does not provide a median aggregate function for support and
+performance reasons.])</li>
+<li><b>\ref dist_norm2</b>: 2-norm/Euclidean (element-wise mean)</li>
+<li><b>\ref squared_dist_norm2</b>: squared Euclidean distance (element-wise mean)</li>
+<li><b>\ref dist_angle</b>: angle (element-wise mean of normalized points)</li>
+<li><b>\ref dist_tanimoto</b>: tanimoto (element-wise mean of normalized points <a href="#kmeans-lit-5">[5]</a>)</li>
+<li><b>user defined function</b> with signature <tt>DOUBLE PRECISION[] x, DOUBLE PRECISION[] y -> DOUBLE PRECISION</tt></li></ul></dd>
+
+<dt>agg_centroid (optional)</dt>
+<dd>TEXT, default: 'avg'. The name of the aggregate function used to determine centroids.
+
+The following aggregate functions can be used:<ul>
+ <li><b>\ref avg</b>: average (Default)</li>
+ <li><b>\ref normalized_avg</b>: normalized average</li></ul></dd>
+
+<dt>max_num_iterations (optional)</dt>
+<dd>INTEGER, default: 20. The maximum  number of iterations to perform.</dd>
+
+<dt>min_frac_reassigned (optional)</dt>
+<dd>DOUBLE PRECISION, default: 0.001. The minimum fraction of centroids reassigned to continue iterating. When fewer than this fraction of centroids are reassigned in an iteration, the calculation completes. 
+
+<dt>rel_initial_centroids</dt>
+<dd>TEXT. The set of initial centroids. The centroid relation is
+expected to be of the following form:
+<pre>
+{TABLE|VIEW} rel_initial_centroids (
+    ...
+    expr_centroid DOUBLE PRECISION[],
+    ...
+)
+</pre>
+where <em>expr_centroid</em> is the name of a column with coordinates.
+</dd>
+
+<dt>expr_centroid</dt>
+<dd>TEXT. The name of the column in the <em>rel_initial_centroids</em> relation that contains the centroid coordinates.</dd>
+
+<dt>initial_centroids</dt>
+<dd>TEXT. A string containing a DOUBLE PRECISION array expression with the initial centroid coordinates.</dd>
+</dl>
+
+
+@anchor output
+@par Output Format
+
+The output of the k-means module is a composite type with the following columns:
+<table class="output">
+    <tr>
+        <th>centroids</th>
+        <td>DOUBLE PRECISION[][]. The final centroid positions.</td>
+    </tr>
+    <tr>
+        <th>objective_fn</th>
+        <td>DOUBLE PRECISON. The value of the objective function.</td>
+    </tr>
+    <tr>
+        <th>frac_reassigned</th>
+        <td>DOUBLE PRECISION. The fraction of points reassigned in the last iteration.</td>
+    </tr>
+    <tr>
+        <th>num_iterations</th>
+        <td>INTEGER. The total number of iterations executed.</td>
+    </tr>
+</table>
+
+
+
+@anchor examples
+@examp
+
+-#  Prepare some input data.
+<pre class="example">
+SELECT * FROM public.km_sample LIMIT 5;
+</pre>
+Result:
+<pre class="result">
+                  points
+&nbsp;------------------------------------------
+ {1,1}:{15.8822241332382,105.945462542586}
+ {1,1}:{34.5065216883086,72.3126099305227}
+ {1,1}:{22.5074400822632,95.3209559689276}
+ {1,1}:{70.2589857042767,68.7395178806037}
+ {1,1}:{30.9844257542863,25.3213323024102}
+(5 rows)
+</pre> 
+Note: the example <em>points</em> is type <tt>\ref grp_svec "SVEC"</tt>.
+-#  Run k-means clustering using kmeans++ for centroid seeding:
+<pre class="example">
+SELECT * FROM madlib.kmeanspp( 'km_sample', 
+                               'points', 
+                               2, 
+                               'madlib.squared_dist_norm2', 
+                               'madlib.avg', 
+                               20, 
+                               0.001
+                             );
+</pre>
+Result:
+<pre class="result">
+                                centroids                                |   objective_fn   | frac_reassigned | num_iterations
+&nbsp;------------------------------------------------------------------------+------------------+-----------------+----------------
+ {{68.01668579784,48.9667382972952},{28.1452167573446,84.5992507653263}} | 586729.010675982 |           0.001 |              5
+</pre>
+-# Calculate the simplified silhouette coefficient:
+<pre class="example">
+SELECT * FROM madlib.simple_silhouette( 'km_test_svec', 
+                                        'points', 
+                                        (SELECT centroids FROM 
+                                            madlib.kmeanspp( 'km_test_svec', 
+                                                            'points', 
+                                                            2, 
+                                                            'madlib.squared_dist_norm2', 
+                                                            'madlib.avg', 
+                                                            20, 
+                                                            0.001)), 
+                                        'madlib.dist_norm2'
+                                      );
+</pre>
+Result:
+<pre class="result">
+ simple_silhouette
+&nbsp;------------------
+ 0.611022970398174
+</pre>
+
+@anchor notes
+@par Notes
+
+The algorithm stops when one of the following conditions is met:  
+- The fraction of updated points is smaller than the convergence threshold
+(<em>min_frac_reassigned</em> argument). (Default: 0.001).
+- The algorithm reaches the maximum number of allowed iterations
+(<em>max_num_iterations</em> argument). (Default: 20).
+
+A popular method to assess the quality of the clustering is the <em>silhouette
+coefficient</em>, a simplified version of which is provided as part of the
+k-means module. Note that for large data sets, this computation is expensive.
+
+The silhouette function has the following syntax:
+<pre class="syntax">
+simple_silhouette( rel_source, 
+                   expr_point, 
+                   centroids, 
+                   fn_dist
+                 )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>rel_source</dt>
+<dd>TEXT. The name of the relation containing the input point.</dd>
+<dt>expr_point</dt>
+<dd>TEXT. An expression evaluating to point coordinates for each row in the relation.</dd>
+<dt>centroids</dt>
+<dd>TEXT. An expression evaluating to an array of centroids. </dd>
+<dt>fn_dist (optional)</dt>
+<dd>TEXT, default 'dist_norm2', The name of a function to calculate the distance of a point from a centroid. See the \e fn_dist argument of the k-means training function.</dd>
+</dl>
+
+
+@anchor background
+@par Technical Background
+
+Formally, we wish to minimize the following objective function:
 \f[
     (c_1, \dots, c_k) \mapsto \sum_{i=1}^n \min_{j=1}^k \operatorname{dist}(x_i, c_j)
 \f]
@@ -47,177 +299,44 @@ often referred to as the <em>standard algorithm</em> or even just the
 Since the objective function decreases in every step, this algorithm is
 guaranteed to converge to a local optimum.
 
-@implementation
-
-Data points and predefined centroids (if used) are expected to be stored row-wise,
-in a column of type <tt>\ref grp_svec "SVEC"</tt> (or any type convertible to
-<tt>\ref grp_svec "SVEC"</tt>, like <tt>FLOAT[]</tt> or <tt>INTEGER[]</tt>).
-Data points with non-finite values (NULL, NaN, infinity) in any component
-will be skipped during analysis.
-
-The following methods are available for the centroid seeding:
- - <strong>random selection</strong>:
-   Select \f$ k \f$ centroids randomly among the input points.
- - <strong>kmeans++</strong> [2]:
-   Start with a single centroid chosen randomly among the input points. Then
-   iteratively choose new
-   centroids from the input points until there is a total of \f$ k \f$
-   centroids. The probability for picking a particular point is proportional to
-   its minimum distance to any existing centroid.
-   \n
-   Intuitively, kmeans++ favors seedings where centroids are spread out over the
-   whole range of the input points, while at the same time not being too
-   susceptible to outliers [2].
- - <strong>user-specified set of initial centroids</strong>:
-   See below for a description of the expected format of the set of initial
-   centroids.
-
-The following distance functions can be used (computation of barycenter/mean in parentheses):
- - <strong>\ref dist_norm1</strong>:  1-norm/Manhattan (element-wise median [Note that MADlib does not provide a median
-   aggregate function for support and performance reasons.])
- - <strong>\ref dist_norm2</strong>: 2-norm/Euclidean (element-wise mean)
- - <strong>\ref squared_dist_norm2</strong>: squared Euclidean distance (element-wise mean)
- - <strong>\ref dist_angle</strong>: angle (element-wise mean of normalized points)
- - <strong>\ref dist_tanimoto</strong>: tanimoto (element-wise mean of normalized points [5])
- - <strong>user defined function</strong> with signature DOUBLE PRECISION[] x DOUBLE PRECISION[] -> DOUBLE PRECISION
-
-The following aggregate functions for determining centroids can be used:
- - <strong>\ref avg</strong>: average
- - <strong>\ref normalized_avg</strong>: normalized average
-
-The algorithm stops when one of the following conditions is met:
- - The fraction of updated points is smaller than the convergence threshold (default: 0.001).
- - The algorithm reaches the maximum number of allowed iterations (default: 20).
-
-A popular method to assess the quality of the clustering is the
-<em>silhouette coefficient</em>, a simplified version of which is provided as part of the k-means module.
-Note that for large data sets, this computation is expensive.
-
-@input
-The <strong>source relation</strong> is expected to be of the following form (or
-to be implicitly convertible into the following form):
-<pre>{TABLE|VIEW} <em>rel_source</em> (
-    ...
-    <em>expr_points</em> FLOAT8[],
-    ...
-)</pre>
-where:
- - <em>expr_points</em> is the name of a column with point coordinates.
-   Types such as \c svec or <tt>INTEGER[]</tt> are implicitly converted to
-   <tt>FLOAT8[]</tt>.
-
-If kmeans is called with a set of initial centroids, the centroid relation is
-expected to be of the following form:
-<pre>{TABLE|VIEW} <em>rel_initial_centroids</em> (
-    ...
-    <em>expr_centroid</em> DOUBLE PRECISION[],
-    ...
-)</pre>
-where:
- - <em>expr_centroid</em> is the name of a column with coordinates.
-
-@usage
-The k-means algorithm can be invoked in four possible ways:
-
-- using <em>random</em> centroid seeding method for a
-provided \f$ k \f$:
-<pre>SELECT * FROM \ref kmeans_random(
-  '<em>rel_source</em>', '<em>expr_point</em>', k,
-  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
-  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
-);</pre>
-
-- using <em>kmeans++</em> centroid seeding method for a
-provided \f$ k \f$:
-<pre>SELECT * FROM \ref kmeanspp(
-  '<em>rel_source</em>', '<em>expr_point</em>', k,
-  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
-  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
-);</pre>
-
-- with a provided centroid set:
-<pre>SELECT * FROM \ref kmeans(
-  '<em>rel_source</em>', '<em>expr_point</em>',
-  '<em>rel_initial_centroids</em>', '<em>expr_centroid</em>',
-  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
-  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
-);</pre>
------------- OR ---------------
-<pre>SELECT * FROM \ref kmeans(
-  '<em>rel_source</em>', '<em>expr_point</em>',
-  initial_centroids,
-  [ '<em>fn_dist</em>', '<em>agg_centroid</em>',
-  <em>max_num_iterations</em>, <em>min_frac_reassigned</em> ]
-);</pre>
-where:
- - <em>initial_centroids</em> is of type <tt>DOUBLE PRECISION[][]</tt>.
-
-The output of the k-means module is a table that includes the final
-centroid positions (DOUBLE PRECISION[][]), the objective function,
-the fraction of reassigned points in the last iteration, and
-the number of total iterations:
-<pre>
-            centroids             |   objective_fn   | frac_reassigned | num_iterations
-----------------------------------+------------------+-----------------+----------------
-             ...
-</pre>
-
-@examp
-
--#  Prepare some input data.
-\code
-sql> SELECT * FROM public.km_sample LIMIT 5;
-                  points
--------------------------------------------
- {1,1}:{15.8822241332382,105.945462542586}
- {1,1}:{34.5065216883086,72.3126099305227}
- {1,1}:{22.5074400822632,95.3209559689276}
- {1,1}:{70.2589857042767,68.7395178806037}
- {1,1}:{30.9844257542863,25.3213323024102}
-(5 rows)
-\endcode
-Note: the example <em>points</em> is type <tt>\ref grp_svec "SVEC"</tt>.
--#  Run k-means clustering using kmeans++ for centroid seeding:
-\code
-sql> SELECT * FROM madlib.kmeanspp('km_sample', 'points', 2, 'madlib.squared_dist_norm2', 'madlib.avg', 20, 0.001);
-);
-                                centroids                                |   objective_fn   | frac_reassigned | num_iterations
--------------------------------------------------------------------------+------------------+-----------------+----------------
- {{68.01668579784,48.9667382972952},{28.1452167573446,84.5992507653263}} | 586729.010675982 |           0.001 |              5
-\endcode
--# Calculate the simplified silhouette coefficient:
-\code
-sql> SELECT * from madlib.simple_silhouette('km_test_svec','points',
-     (select centroids from madlib.kmeanspp('km_test_svec','points',2,'madlib.squared_dist_norm2','madlib.avg',20,0.001)),
-     'madlib.dist_norm2');
- simple_silhouette
--------------------
- 0.611022970398174
-\endcode
-
+@anchor literature
 @literature
 
+@anchor kmeans-lit-1
 [1] Wikipedia, K-means Clustering,
     http://en.wikipedia.org/wiki/K-means_clustering
 
+@anchor kmeans-lit-2
 [2] David Arthur, Sergei Vassilvitskii: k-means++: the advantages of careful
     seeding, Proceedings of the 18th Annual ACM-SIAM Symposium on Discrete
     Algorithms (SODA'07), pp. 1027-1035,
     http://www.stanford.edu/~darthur/kMeansPlusPlus.pdf
 
+@anchor kmeans-lit-3
 [3] E. R. Hruschka, L. N. C. Silva, R. J. G. B. Campello: Clustering
     Gene-Expression Data: A Hybrid Approach that Iterates Between k-Means and
     Evolutionary Search. In: Studies in Computational Intelligence - Hybrid
     Evolutionary Algorithms. pp. 313-335. Springer. 2007.
 
+@anchor kmeans-lit-4
 [4] Lloyd, Stuart: Least squares quantization in PCM. Technical Note, Bell
     Laboratories. Published much later in: IEEE Transactions on Information
     Theory 28(2), pp. 128-137. 1982.
 
+@anchor kmeans-lit-5
 [5] Leisch, Friedrich: A Toolbox for K-Centroids Cluster Analysis.  In: Computational
     Statistics and Data Analysis, 51(2). pp. 526-544. 2006.
 
-@sa File kmeans.sql_in documenting the SQL functions.
+
+@anchor related
+@par Related Topics
+
+File kmeans.sql_in documenting the k-Means SQL functions
+
+\ref grp_svec
+
+\ref simple_silhouette()
+
 
 @internal
 @sa namespace kmeans (documenting the implementation in Python)

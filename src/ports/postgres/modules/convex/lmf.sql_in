@@ -15,37 +15,51 @@ m4_include(`SQLCommon.m4')
 /**
 @addtogroup grp_lmf
 
-
-@about
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#syntax">Function Syntax</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#literature">Literature</a></li>
+</ul>
+</div>
 
 This module implements "factor model" for representing an incomplete matrix using a low-rank approximation [1].
 Mathematically, this model seeks to find matrices U and V (also referred as factors) that, for any given incomplete matrix A, minimizes:
+
 \f[ \|\boldsymbol A - \boldsymbol UV^{T} \|_2 \f]
+
 subject to \f$rank(\boldsymbol UV^{T}) \leq r\f$, where \f$\|\cdot\|_2\f$ denotes the Frobenius norm.
 Let \f$A\f$ be a \f$m \times n\f$ matrix, then \f$U\f$ will be \f$m \times r\f$ and \f$V\f$ will be \f$n \times r\f$, in dimension, and \f$1 \leq r \ll \min(m, n)\f$.
 This model is not intended to do the full decomposition, or to be used as part of inverse procedure.
 This model has been widely used in recommendation systems (e.g., Netflix [2]) and feature selection (e.g., image processing [3]).
 
 
-@input
+@anchor syntax
+@par Function Syntax
 
-The <b>input matrix</b> is expected to be of the following form:
-<pre>{TABLE|VIEW} <em>input_table</em> (
-    <em>row</em>    INTEGER,
-    <em>col</em>    INTEGER,
-    <em>value</em>  DOUBLE PRECISION
-)</pre>
+Low-rank matrix factorization of an incomplete matrix into two factors.
 
-Input is contained in a table that describes an incomplete matrix, by having available entries specified as (row, column, value).
-The input matrix is expected to be based 1, which means row >= 1, and col >= 1.
-NULL values are not expected.
+<pre class="syntax">
+lmf_igd_run( rel_output, 
+             rel_source, 
+             col_row, 
+             col_column, 
+             col_value, 
+             row_dim, 
+             column_dim, 
+             max_rank, 
+             stepsize, 
+             scale_factor, 
+             num_iterations, 
+             tolerance
+           )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>rel_output</dt>
+<dd>TEXT. The name of the table to receive the output.
 
-
-@usage
-
-Please find descriptions of SQL functions in lmf.sql_in
-
-Output factors matrix U and V are in flatten format.
+Output factors matrix U and V are in a flattened  format.
 <pre>RESULT AS (
         matrix_u    DOUBLE PRECISION[],
         matrix_v    DOUBLE PRECISION[],
@@ -56,40 +70,80 @@ Features correspond to row i is
 <code>matrix_u[i:i][1:r]</code>.
 Features correspond to column j is
 <code>matrix_v[j:j][1:r]</code>.
+</dd>
+<dt>rel_source</dt>
+<dd>TEXT. The name of the table containing the input data. 
 
+The input matrix> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>input_table</em> (
+    <em>row</em>    INTEGER,
+    <em>col</em>    INTEGER,
+    <em>value</em>  DOUBLE PRECISION
+)</pre>
 
+Input is contained in a table that describes an incomplete matrix, with available entries specified as (row, column, value).
+The input matrix should be 1-based, which means row &gt;= 1, and col &gt;= 1.
+NULL values are not expected.
+</dd>
+<dt>col_row</dt>
+<dd>TEXT. The name of the column containing the row number.</dd>
+<dt>col_column</dt>
+<dd>TEXT. The name of the column containing the column number.</dd>
+<dt>col_value</dt>
+<dd>DOUBLE PRECISION. The value at (row, col).</dd>
+<dt>row_dim (optional)</dt>
+<dd>INTEGER, default: "SELECT max(col_row) FROM rel_source". The number of columns in the matrix.</dd>
+<dt>column_dim (optional)</dt>
+<dd>INTEGER, default: "SELECT max(col_col) FROM rel_source". The number of rows in the matrix.</dd>
+<dt>max_rank</dt>
+<dd>INTEGER, default: 20. The rank of desired approximation.</dd>
+<dt>stepsize (optional)</dt>
+<dd>DOUBLE PRECISION, default: 0.01. Hyper-parameter that decides how aggressive the gradient steps are. </dd>
+<dt>scale_factor (optional)</dt>
+<dd>DOUBLE PRECISION, default: 0.1. Hyper-parameter that decides scale of initial factors.</dd>
+<dt>num_iterations (optional)</dt>
+<dd> INTEGER, default: 10. Maximum number if iterations to perform regardless of convergence.</dd>
+<dt>tolerance (optional)</dt>
+<dd> DOUBLE PRECISION, default: 0.0001. Acceptable level of error in convergence.</dd>
+</dl>
+
+@anchor examples
 @examp
 
 -# Prepare an input table/view:
-\code
+<pre class="example">
 CREATE TABLE lmf_data (
  column INT,
  row    INT,
  value  FLOAT8
 );
-\endcode
--# Populate the input table with some data. e.g.:
-\code
+</pre>
+
+-# Populate the input table with some data.
+<pre class="example">
 INSERT INTO lmf_data VALUES (1, 1, 5.0);
 INSERT INTO lmf_data VALUES (3, 100, 1.0);
 INSERT INTO lmf_data VALUES (999, 10000, 2.0);
-\endcode
--# Call lmf_igd_run() stored procedure, e.g.:
-\code
-SELECT madlib.lmf_igd_run(
-'lmf_model',                 -- result table
-'lmf_data',                  -- input table
-'row', 'col', 'value',       -- table column names
-999,                         -- row dimension
-10000,                       -- column dimension
-3,                           -- rank (number of features)
-0.1,                         -- stepsize
-2,                           -- initial value scale factor
-10,                          -- maximal number of iterations
-1e-9);                       -- error tolerance
-\endcode
-Example output (the exact result may not be the same):
-\code
+</pre>
+
+-# Call the lmf_igd_run() stored procedure.
+<pre class="example">
+SELECT madlib.lmf_igd_run( 'lmf_model', 
+                           'lmf_data', 
+                           'row', 
+                           'col', 
+                           'value', 
+                           999, 
+                           10000, 
+                           3, 
+                           0.1, 
+                           2, 
+                           10, 
+                           1e-9
+                         );
+</pre>
+Example result (the exact result may not be the same).
+<pre class="result">
 NOTICE:
 Finished low-rank matrix factorization using incremental gradient
 DETAIL:
@@ -99,34 +153,36 @@ Results:
 Output:
  * view : SELECT * FROM lmf_model WHERE id = 1
  lmf_igd_run
--------------
+&nbsp;------------
            1
 (1 row)
-\endcode
--# Sanity check of the result. You may need a model id returned and also indicated by the function lmf_igd_run(), assuming 1 here, e.g.:
-\code
+</pre>
+
+-# Sanity check of the result. You may need a model id returned and also indicated by the function lmf_igd_run(), assuming 1 here:
+<pre class="example">
 SELECT array_dims(matrix_u), array_dims(matrix_v) FROM lmf_model WHERE id = 1;
-\endcode
-Example output:
-\code
+</pre>
+Result:
+<pre class="result">
   array_dims  |   array_dims
 --------------+----------------
  [1:999][1:3] | [1:10000][1:3]
 (1 row)
-\endcode
--# Query the result value, e.g.:
-\code
+</pre>
+
+-# Query the result value.
+<pre class="example">
 SELECT matrix_u[2:2][1:3] AS row_2_features FROM lmf_model WHERE id = 1;
-\endcode
+</pre>
 Example output (the exact result may not be the same):
-\code
+<pre class="result">
                       row_2_features
-----------------------------------------------------------
+&nbsp;---------------------------------------------------------
  {{0.51117920037359,0.169582297094166,0.837417622096837}}
 (1 row)
-\endcode
+</pre>
 
-
+@anchor literature
 @literature
 
 [1] N. Srebro and T. Jaakkola. “Weighted Low-Rank Approximations.” In: ICML. Ed. by T. Fawcett and N. Mishra. AAAI Press, 2003, pp. 720–727. isbn: 1-57735-189-4.

@@ -35,17 +35,26 @@ m4_ifelse(
 issues that will be addressed in a future version. Interface and implementation
 is subject to change. </em>
 
-@about
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#input">Input</a></li>
+<li><a href="#train">Training Function</a></li>
+<li><a href="#classify">Classification Function</a></li>
+<li><a href="#score">Scoring Function</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#related">Related Topics</a></li>
+</ul>
+</div>
 
 This module provides an implementation of the C4.5 implementation to 
 grow decision trees.
 
 The implementation supports:
-- Building decision tree
+- Building the decision tree
 - Multiple split critera, including:
-  . Information Gain
-  . Gini Coefficient
-  . Gain Ratio
+  -- Information Gain
+  -- Gini Coefficient
+  -- Gain Ratio
 - Decision tree Pruning
 - Decision tree classification/scoring
 - Decision tree display
@@ -53,10 +62,40 @@ The implementation supports:
 - Continuous and discrete features
 - Missing value handling
 
-@input
+@anchor train
+@par Training Function
 
-The <b>training data</b> is expected to be of 
-the following form:
+Run the training algorithm on the source data:
+<pre class="syntax">
+c45_train( split_criterion, 
+           training_table_name, 
+           result_tree_table_name, 
+           validation_table_name, 
+           continuous_feature_names, 
+           feature_col_names, 
+           id_col_name, 
+           class_col_name, 
+           confidence_level, 
+           how2handle_missing_value max_tree_depth, 
+           node_prune_threshold, 
+           node_split_threshold,
+           verbosity
+         )
+</pre>
+\b Arguments
+<dl class="arglist">
+  <dt>split_criterion</dt>
+  <dd>The name of the split criterion that should be used 
+    for tree construction. The valid values are
+    ‘infogain’, ‘gainratio’, and ‘gini’. It can't be NULL.
+    Information gain(infogain) and gini index(gini) are biased
+    toward multivalued attributes. Gain ratio(gainratio) adjusts
+    for this bias. However, it tends to prefer unbalanced splits
+    in which one partition is much smaller than the others.
+  </dd> 
+    <dt>training_table_name</dt>
+    <dd>The name of the table/view with the source data.
+The <b>training data</b> is expected to be of the following form:
 <pre>{TABLE|VIEW} <em>trainingSource</em> (
     ...
     <em>id</em> INT|BIGINT,
@@ -68,79 +107,162 @@ the following form:
     <em>class</em>    SUPPORTED_DATA_TYPE,
     ...
 )</pre>
-
 The detailed list of SUPPORTED_DATA_TYPE is: 
 SMALLINT, INT, BIGINT, FLOAT8, REAL, 
 DECIMAL, INET, CIDR, MACADDR, BOOLEAN,
 CHAR, VARCHAR, TEXT, "char", 
 DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ, and INTERVAL.
+    </dd>
+    <dt>result_tree_table_name</dt>
+    <dd>The name of the table to contain the decision tree output. The table stores an abstract object (representing the model) used for further classification. It has the following columns:
+      <table class="output">
+        <tr>
+         <th>id</th>
+       </tr>
+       <tr>
+         <th>tree_location</th>
+       </tr>
+       <tr>
+         <th>feature</th>
+       </tr>
+       <tr>
+         <th>probability</th>
+       </tr>
+       <tr>
+         <th>ebp_coeff</th>
+       </tr>
+       <tr>
+         <th>maxclass</th>
+       </tr>
+       <tr>
+         <th>scv</th>
+       </tr>
+       <tr>
+         <th>live</th>
+       </tr>
+       <tr>
+         <th>sample_size</th>
+       </tr>
+       <tr>
+         <th>parent_id</th>
+       </tr>
+       <tr>
+         <th>lmc_nid</th>
+       </tr>
+       <tr>
+         <th>lmc_fval</th>
+       </tr>
+       <tr>
+         <th>is_continuous</th>
+       </tr>
+       <tr>
+         <th>split_value</th>
+       </tr>
+       <tr>
+         <th>tid</th>
+       </tr>
+       <tr>
+         <th>dp_ids</th>
+         </tr>
+       </table>        
+     </dd>          
+     <dt>validation_table_name</dt>        
+     <dd>
+      The name of the table/view that contains the validation set used for
+      tree pruning. The default is NULL, in which case we will not do tree
+      pruning.
+    </dd>      
+    <dt>continuous_feature_names</dt>
+    <dd>
+      A comma-separated list of the names of features whose values are continuous. The default is null, which means there are no continuous features in the training table.
+    </dd> 
+    <dt>feature_col_names</dt>
+    <dd>A comma-separated list of the names of table columns, each of which defines a feature. The default value is null, which means all the columns in the training table, except columns named ‘id’ and ‘class’, will be used as features.      
+    </dd>        
+    <dt>id_col_name</dt>      
+    <dd>The name of the column containing an ID for each record.</dd>      
+    <dt>class_col_name</dt>
+    <dd>The name of the column containing the labeled class. </dd>
+    <dt>confidence_level</dt><dd>A statistical confidence interval of the  resubstitution error.</dd> 
+    <dt>how2handle_missing_value</dt> 
+    <dd>The way to handle missing value. The valid value is 'explicit' or 'ignore'.</dd>
+    <dt>max_tree_depth</dt>
+    <dd>Specifies the maximum number of levels in the result DT to avoid overgrown DTs. </dd> 
+    <dt>node_prune_threshold</dt>
+    <dd>The minimum percentage of the number of records required in a
+    child node. It can't be NULL. The range of it is in [0.0, 1.0].
+    This threshold only applies to the non-root nodes. Therefore,
+    if its value is 1, then the trained tree only has one node (the root node);
+    if its value is 0, then no nodes will be pruned by this parameter.</dd>
+    <dt>node_split_threshold</dt>
+    <dd>The minimum percentage of the number of records required in a node in order for a further split to be possible. It can't be NULL. The range of it is in [0.0, 1.0]. If it's value is 1, then the trained tree only has two levels, since only the root node can grow; if its value is 0, then trees can grow extensively.</dd>
+  <dt>verbosity</dt>
+  <dd>An integer greater than 0 means this function runs in verbose mode.</dd>
+</dl>
 
-The <b>data to classify</b> is expected to be 
-of the same form as <b>training data</b>, except
-that it does not need a class column.
+@anchor classify
+@par Classification Function
 
-@usage
+The classification function uses the learned model stored by the training function to create the classification results.
+<pre class="syntax">
+c45_classify( tree_table_name, 
+              classification_table_name, 
+              result_table_name
+            )
+</pre>
+\b Arguments
+<dl class="arglist">
+  <dt>tree_table_name</dt>
+  <dd>The name of the table containing the trained model.
 
-- Run the training algorithm on the source data:
-  <pre>SELECT * FROM \ref c45_train(
-    '<em>split_criterion</em>',
-    '<em>training_table_name</em>', 
-    '<em>result_tree_table_name</em>', 
-    '<em>validation_table_name</em>',
-    '<em>continuous_feature_names</em>',
-    '<em>feature_col_names</em>',
-    '<em>id_col_name</em>', 
-    '<em>class_col_name</em>',
-    '<em>confidence_level</em>',
-    '<em>how2handle_missing_value</em>'
-    '<em>max_tree_depth</em>',
-    '<em>node_prune_threshold</em>',
-    '<em>node_split_threshold</em>'
-    '<em>verbosity</em>');
-  </pre>
-  This will create the decision tree output table storing an abstract object
-  (representing the model) used for further classification. Column names:
-  <pre>    
- id | tree_location | feature |    probability    |    ebp_coeff     | maxclass |        scv        | live | sample_size | parent_id | lmc_nid | lmc_fval |  is_continuous  | split_value | tid | dp_ids 
-----+---------------+---------+-------------------+------------------+----------+-------------------+------+-----------+-----------+---------+----------+-----------------+-------------+-----+--------
-                                                     ...</pre>    
-    
-- Run the classification function using the learned model: 
-  <pre>SELECT * FROM \ref c45_classify(
-    '<em>tree_table_name</em>', 
-    '<em>classification_table_name</em>', 
-    '<em>result_table_name</em>');</pre>
-  This will create the result_table with the 
-  classification results. 
-  <pre> </pre> 
+    The data to classify is expected to be in the same form as the training data, except that it does not need a class column. </dd>
+  <dd>The name of the table containing the data to classify.</dd>
+  <dt>result_table_name</dt>
+  <dd>The name of the output table.</dd>
+</dl>
 
-- Run the scorinf function to score the learned model against a validation data set:
-  <pre>SELECT * FROM \ref c45_score(
-    '<em>tree_table_name</em>',
-    '<em>validation_table_name</em>',
-	'<em>verbosity</em>');</pre>
-  This will give a ratio of correctly classified items in the validation set.
-  <pre> </pre>
+@anchor score
+@par Scoring Function
+The scoring function scores the learned model against a validation data set.
+<pre class="syntax">
+c45_score( tree_table_name, 
+           validation_table_name, 
+           verbosity 
+         );
+</pre>
 
-- Run the display tree function using the learned model: 
-  <pre>SELECT * FROM \ref c45_display(
-    '<em>tree_table_name</em>');</pre>
-  This will display the trained tree in human readable format. 
-  <pre> </pre> 
+This gives a ratio of correctly classified items in the validation set.
 
-- Run the clean tree function as below: 
-  <pre>SELECT * FROM \ref c45_clean(
-    '<em>tree_table_name</em>');</pre>
-  This will clean up the learned model and all metadata.
-  <pre> </pre> 
+@anchor display
+@par Display Tree Function
 
+The display tree function displays the learned model in a human-readable format.
+
+<pre class="syntax">
+c45_display( tree_table_name
+           );
+</pre>
+
+@anchor clean
+@par Clean Tree Function
+
+The clean tree function cleans up the learned model and all metadata.
+<pre class="syntax">
+  c45_clean( tree_table_name
+           );
+</pre>
+
+@anchor examples
 @examp
 
--# Prepare an input table/view, e.g.:
-\verbatim
-sql> select * from golf_data order by id;
+-# Prepare an input table.
+<pre class="example">
+SELECT * FROM golf_data ORDER BY id;
+</pre>
+Result:
+<pre class="result">
  id | outlook  | temperature | humidity | windy  |    class     
-----+----------+-------------+----------+--------+--------------
+&nbsp;---+----------+-------------+----------+--------+--------------
   1 | sunny    |          85 |       85 |  false |  Do not Play
   2 | sunny    |          80 |       90 |  true  |  Do not Play
   3 | overcast |          83 |       78 |  false |  Play
@@ -156,36 +278,44 @@ sql> select * from golf_data order by id;
  13 | overcast |          81 |       75 |  false |  Play
  14 | rain     |          71 |       80 |  true  |  Do not Play
 (14 rows)
+</pre>
 
-\endverbatim
--# Train the decision tree model, e.g.:
-\verbatim
-sql> SELECT * FROM MADLIB_SCHEMA.c45_clean('trained_tree_infogain');
-sql> SELECT * FROM MADLIB_SCHEMA.c45_train(
-	   'infogain',                       		-- split criterion_name
-	   'golf_data',                      		-- input table name
-	   'trained_tree_infogain',          		-- result tree name
-	   null,                             		-- validation table name
-	   'temperature,humidity',           		-- continuous feature names
-	   'outlook,temperature,humidity,windy',	-- feature column names
-	   'id',                             		-- id column name
-	   'class',                          		-- class column name
-	   100,                              		-- confidence level
-	   'explicit',                       		-- missing value preparation
-	   5,                                		-- max tree depth
-	   0.001,                            		-- min percent mode
-	   0.001,                            		-- min percent split
-	   0);                               		-- verbosity
+-# Train the decision tree model. Run the c45_clean() function first to clean up any model and metadata from previous executions. 
+<pre class="example">
+SELECT * FROM madlib.c45_clean( 'trained_tree_infogain'
+                              );
+SELECT * FROM madlib.c45_train( 'infogain',
+                          	    'golf_data',                      		
+                          	    'trained_tree_infogain',          		
+                          	    null,                             		
+                          	    'temperature,humidity',           		
+                          	    'outlook,temperature,humidity,windy',
+                          	    'id',                             		
+                           	    'class',                          		
+                           	    100,                              		
+                          	    'explicit',                       		
+                          	    5,                                		
+                          	    0.001,                            		
+                          	    0.001,                            		
+                          	    0
+                              );
+</pre>
+Result:
+<pre class="result">                               		
  training_set_size | tree_nodes | tree_depth |  training_time  | split_criterion 
--------------------+------------+------------+-----------------+-----------------
+&nbsp;------------------+------------+------------+-----------------+-----------------
                 14 |          8 |          3 | 00:00:00.871805 | infogain
 (1 row)
-\endverbatim
--# Check few rows from the tree model table:
-\verbatim
-sql> select * from trained_tree_infogain order by id;
+</pre>
+
+-# View the the tree model table.
+<pre class="example">
+SELECT * FROM trained_tree_infogain ORDER BY id;
+</pre>
+Result:
+<pre class="result">
  id | tree_location | feature |    probability    | ebp_coeff | maxclass |       scv         | live |sample_size | parent_id | lmc_nid | lmc_fval | is_continuous   | split_value 
-----+---------------+---------+-------------------+-----------+----------+-------------------+------+----------+-----------+---------+----------+-----------------+-------------
+&nbsp;---+---------------+---------+-------------------+-----------+----------+-------------------+------+----------+-----------+---------+----------+-----------------+-------------
   1 | {0}           |       3 | 0.642857142857143 |         1 |        2 | 0.171033941880327 |    0 |       14 |         0 |       2 |        1 | f               |            
   2 | {0,1}         |       4 |                 1 |         1 |        2 |                 0 |    0 |        4 |         1 |         |          | f               |            
   3 | {0,2}         |       4 |               0.6 |         1 |        2 | 0.673011667009257 |    0 |        5 |         1 |       5 |        1 | f               |            
@@ -195,13 +325,16 @@ sql> select * from trained_tree_infogain order by id;
   7 | {0,3,1}       |       4 |                 1 |         1 |        2 |                 0 |    0 |        2 |         4 |         |          | f               |            
   8 | {0,3,2}       |       4 |                 1 |         1 |        1 |                 0 |    0 |        3 |         4 |         |          | f               |            
 (8 rows)
+</pre>
 
-\endverbatim
--# To display the tree with human readable format:
-\verbatim
-sql> select MADLIB_SCHEMA.c45_display('trained_tree_infogain');
+-# Display the tree with a human readable format:
+<pre class="example">
+SELECT madlib.c45_display('trained_tree_infogain');
+</pre>
+Result:
+<pre class="result">
                                       c45_display                                      
----------------------------------------------------------------------------------------
+&nbsp;--------------------------------------------------------------------------------------
 Tree 1
     Root Node  : class(  Play)   num_elements(14)  predict_prob(0.642857142857143)          
          outlook:  = overcast : class( Play)   num_elements(4)  predict_prob(1)        
@@ -212,25 +345,33 @@ Tree 1
              humidity:  <= 70 : class( Play)   num_elements(2)  predict_prob(1)      
              humidity:  > 70  : class(  Do not Play)   num_elements(3)  predict_prob(1)      
 (1 row)
+</pre>
 
-\endverbatim
--# To classify data with the learned model:
-\verbatim
-sql> select * from MADLIB_SCHEMA.c45_classify
-         'trained_tree_infogain',  -- name of the trained model
-         'golf_data',              -- name of the table containing data to classify
-         'classification_result'); -- name of the output table
+-# Classify some data with the learned model.
+<pre class="example">
+SELECT * FROM madlib.c45_classify ( 'trained_tree_infogain',
+                                    'golf_data', 
+                                    'classification_result'
+                                  );
+</pre>        
+Result:
+<pre class="result">
  input_set_size |    classification_time    
 ----------------+-----------------
              14 | 00:00:00.247713
 (1 row)
-\endverbatim
--# Check classification results: 
-\verbatim
-sql> select t.id,t.outlook,t.temperature,t.humidity,t.windy,c.class from
-    MADLIB_SCHEMA.classification_result c,golf_data t where t.id=c.id order by id;
+</pre>
+
+-# Check the classification results.
+<pre class="example">
+SELECT t.id, t.outlook, t.temperature, t.humidity, t.windy, c.class 
+FROM   madlib.classification_result c, golf_data t 
+WHERE  t.id=c.id ORDER BY id;
+</pre>
+Result:
+<pre class="result">
  id | outlook  | temperature | humidity | windy  |    class     
-----+----------+-------------+----------+--------+--------------
+&nbsp;---+----------+-------------+----------+--------+--------------
   1 | sunny    |          85 |       85 |  false |  Do not Play
   2 | sunny    |          80 |       90 |  true  |  Do not Play
   3 | overcast |          83 |       78 |  false |  Play
@@ -246,32 +387,44 @@ sql> select t.id,t.outlook,t.temperature,t.humidity,t.windy,c.class from
  13 | overcast |          81 |       75 |  false |  Play
  14 | rain     |          71 |       80 |  true  |  Do not Play
 (14 rows)
-\endverbatim
--# Score the data against a validation set:
-\verbatim
-sql> select * from MADLIB_SCHEMA.c45_score(
-        'trained_tree_infogain',
-        'golf_data_validation',
-        0);
+</pre>
+
+-# Score the data against a validation set.
+<pre class="example">
+SELECT * FROM madlib.c45_score( 'trained_tree_infogain', 
+                                'golf_data_validation', 
+                                0)
+                              );
+</pre>
+Result:
+<pre class="result">
  c45_score 
------------
+&nbsp;----------
       1
 (1 row)
-\endverbatim
--# clean up the tree and metadata: 
-\verbatim
-testdb=# select MADLIB_SCHEMA.c45_clean('trained_tree_infogain');
- c45_clean 
------------
- 
-(1 row)
-\endverbatim
+</pre>
 
+-# Clean up the tree and metadata.
+<pre class="example"> 
+SELECT madlib.c45_clean( 'trained_tree_infogain'
+                       );
+</pre>
+Result:
+<pre class="result">
+ c45_clean 
+&nbsp;----------
+&nbsp;
+(1 row)
+</pre>
+
+@anchor literature
 @literature
 
 [1] http://en.wikipedia.org/wiki/C4.5_algorithm
 
-@sa File c45.sql_in documenting the SQL functions.
+@anchor related
+@par Related Topics
+File c45.sql_in documenting the SQL functions.
 */
 
 /*
