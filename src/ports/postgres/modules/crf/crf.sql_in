@@ -15,84 +15,30 @@ m4_include(`SQLCommon.m4')
 /**
 @addtogroup grp_crf
 
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#train">Training Function</a></li>
+<li><a href="#usage">Using CRF</a></li>
+<li><a href="#input">Input</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#background">Technical Background</a></li>
+<li><a href="#literature">Literature</a></li>
+<li><a href="#related">Related Topics</a></li>
+</ul>
+</div>
+
 \warning <em> This MADlib method is still in early stage development. There may be some 
 issues that will be addressed in a future version. Interface and implementation
 is subject to change. </em>
 
-@about
-A conditional random field (CRF) is a type of discriminative, undirected probabilistic graphical model.  A linear-chain CRF is a special 
-type of CRF that assumes the current state depends only on the previous state.  
+A conditional random field (CRF) is a type of discriminative, undirected
+probabilistic graphical model. A linear-chain CRF is a special type of CRF
+that assumes the current state depends only on the previous state.
 
-Specifically, a linear-chain CRF is a distribution defined by
-\f[
-    p_\lambda(\boldsymbol y | \boldsymbol x) =
-        \frac{\exp{\sum_{m=1}^M \lambda_m F_m(\boldsymbol x, \boldsymbol y)}}{Z_\lambda(\boldsymbol x)}
-    \,.
-\f]
+Feature extraction modules are provided for text-analysis tasks such as part-of-speech 
+(POS) tagging and named-entity resolution (NER).  Currently, six
+feature types are implemented:
 
-where 
-- \f$ F_m(\boldsymbol x, \boldsymbol y) = \sum_{i=1}^n f_m(y_i,y_{i-1},x_i) \f$ is a global feature function that is a sum along a sequence 
-  \f$ \boldsymbol x \f$ of length \f$ n \f$
-- \f$ f_m(y_i,y_{i-1},x_i) \f$ is a local feature function dependent on the current token label \f$ y_i \f$, the previous token label \f$ y_{i-1} \f$, 
-  and the observation \f$ x_i \f$
-- \f$ \lambda_m \f$ is the corresponding feature weight 
-- \f$ Z_\lambda(\boldsymbol x) \f$ is an instance-specific normalizer
-\f[
-Z_\lambda(\boldsymbol x) = \sum_{\boldsymbol y'} \exp{\sum_{m=1}^M \lambda_m F_m(\boldsymbol x, \boldsymbol y')}
-\f]
-
-A linear-chain CRF estimates the weights \f$ \lambda_m \f$ by maximizing the log-likelihood 
-of a given training set \f$ T=\{(x_k,y_k)\}_{k=1}^N \f$.  
-
-The log-likelihood is defined as
-\f[
-    \ell_{\lambda}=\sum_k \log p_\lambda(y_k|x_k) =\sum_k[\sum_{m=1}^M \lambda_m F_m(x_k,y_k) - \log Z_\lambda(x_k)]
-\f]
-
-and the zero of its gradient
-\f[
-    \nabla \ell_{\lambda}=\sum_k[F(x_k,y_k)-E_{p_\lambda(Y|x_k)}[F(x_k,Y)]]
-\f]
-
-is found since the maximum likelihood is reached when the empirical average of the global feature vector equals its model expectation.  The MADlib implementation uses limited-memory BFGS (L-BFGS), a limited-memory variation of the Broyden–Fletcher–Goldfarb–Shanno (BFGS) update, a quasi-Newton method for unconstrained optimization. 
-
-\f$E_{p_\lambda(Y|x)}[F(x,Y)]\f$ is found by using a variant of the forward-backward algorithm:
-\f[
-    E_{p_\lambda(Y|x)}[F(x,Y)] = \sum_y p_\lambda(y|x)F(x,y)
-                            = \sum_i\frac{\alpha_{i-1}(f_i*M_i)\beta_i^T}{Z_\lambda(x)}
-\f]
-\f[
-    Z_\lambda(x) = \alpha_n.1^T
-\f]
-    where \f$\alpha_i\f$  and \f$ \beta_i\f$ are the forward and backward state cost vectors defined by
-\f[
-    \alpha_i = 
-    \begin{cases}
-    \alpha_{i-1}M_i, & 0<i<=n\\
-    1, & i=0
-    \end{cases}\\
-\f]
-\f[
-    \beta_i^T = 
-    \begin{cases}
-    M_{i+1}\beta_{i+1}^T, & 1<=i<n\\
-    1, & i=n
-    \end{cases}
-\f]
-
-To avoid overfitting, we penalize the likelihood with a spherical Gaussian weight prior:
-\f[
-    \ell_{\lambda}^\prime=\sum_k[\sum_{m=1}^M \lambda_m F_m(x_k,y_k) - \log Z_\lambda(x_k)] - \frac{\lVert \lambda \rVert^2}{2\sigma ^2}
-\f]
-
-\f[
-    \nabla \ell_{\lambda}^\prime=\sum_k[F(x_k,y_k) - E_{p_\lambda(Y|x_k)}[F(x_k,Y)]] - \frac{\lambda}{\sigma ^2}
-\f]
-
-    
-
-Feature extraction modules are provided for text-analysis
-tasks such as part-of-speech (POS) tagging and named-entity resolution (NER).  Currently, six feature types are implemented:
 - Edge Feature: transition feature that encodes the transition feature
 weight from current label to next label.
 - Start Feature: fired when the current token is the first token in a sequence.
@@ -108,8 +54,95 @@ A Viterbi implementation is also provided
 to get the best label sequence and the conditional probability
 \f$ \Pr( \text{best label sequence} \mid \text{sequence}) \f$.
 
-For a full example of how to use the MADlib CRF modules for a text analytics application, see the "Example" section below.
 
+@anchor train
+@par Training Function
+Get number of iterations and weights for features:\n
+
+<pre class="syntax">
+lincrf( source, 
+        sparse_R, 
+        dense_M, 
+        sparse_M, 
+        featureSize, 
+        tagSize, 
+        featureset, 
+        crf_feature,
+        maxNumIterations
+      )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>source</dt>  <dd>Name of the source relation containing the training data</dd>
+<dt>sparse_R</dt>  <dd>Name of the sparse single state feature column (of type DOUBLE PRECISION[])</dd>
+<dt>dense_M</dt> <dd>Name of the dense two state feature column (of type DOUBLE PRECISION[])</dd>
+<dt>sparse_M</dt>  <dd>Name of the sparse two state feature column (of type DOUBLE PRECISION[])</dd>
+<dt>featureSize</dt> <dd>Name of feature size column (of type DOUBLE PRECISION)</dd>
+<dt>tagSize</dt> <dd>The number of tags in the tag set</dd>
+<dt>featureset</dt>  <dd>The unique feature set</dd>
+<dt>crf_feature</dt> <dd>The Name of output feature table</dd>
+<dt>maxNumIterations</dt>  <dd>The maximum number of iterations</dd>
+</dl>
+The features and weights are stored in the table named by \e crf_feature.
+This function returns a composite value containing the following columns:
+<table class="output">
+  <tr><th>coef</th> <td>FLOAT8[]. Array of coefficients</td></tr>
+<tr><th>log_likelihood</th> <td>FLOAT8. Log-likelihood </td></tr>
+<tr><th>num_iterations</th> <td>INTEGER. The number of iterations before the algorithm terminated </td></tr>
+</table>
+
+@anchor usage
+@par Using CRF
+
+Generate text features, calculate their weights, and output the best label sequence for test data:\n
+
+ -# Create tables to store the input data, intermediate data, and output data.
+    Also import the training data to the database.
+    <pre>
+    SELECT madlib.crf_train_data( '<em>/path/to/data</em>');
+    </pre>
+ -# Generate text analytics features for the training data.
+    <pre>SELECT madlib.crf_train_fgen(
+         '<em>segmenttbl</em>',
+         '<em>regextbl</em>',
+         '<em>dictionary</em>',
+         '<em>featuretbl</em>',
+         '<em>featureset</em>');</pre>
+ -# Use linear-chain CRF for training.
+    <pre>SELECT madlib.lincrf(
+         '<em>source</em>',
+         '<em>sparse_r</em>',
+         '<em>dense_m</em>',
+         '<em>sparse_m</em>',
+         '<em>f_size</em>',
+         <em>tag_size</em>,
+         '<em>feature_set</em>',
+         '<em>featureWeights</em>',
+         '<em>maxNumIterations</em>');</pre>
+ -# Import CRF model to the database.
+    Also load the CRF testing data to the database.
+    <pre>SELECT madlib.crf_test_data(
+         '<em>/path/to/data</em>');</pre>
+ -# Generate text analytics features for the testing data.
+    <pre>SELECT madlib.crf_test_fgen(
+         '<em>segmenttbl</em>',
+         '<em>dictionary</em>',
+         '<em>labeltbl</em>',
+         '<em>regextbl</em>',
+         '<em>featuretbl</em>',
+         '<em>viterbi_mtbl</em>',
+         '<em>viterbi_rtbl</em>');</pre>
+    'viterbi_mtbl' and 'viterbi_rtbl' are simply text representing names for tables created in the feature generation module (i.e. they are NOT empty tables).
+ -# Run the Viterbi function to get the best label sequence and the conditional
+    probability \f$ \Pr( \text{best label sequence} \mid \text{sequence}) \f$.
+    <pre>SELECT madlib.vcrf_label(
+         '<em>segmenttbl</em>',
+         '<em>viterbi_mtbl</em>',
+         '<em>viterbi_rtbl</em>',
+         '<em>labeltbl</em>',
+         '<em>resulttbl</em>');</pre>
+
+@anchor Input
 @input
 - User-provided input:\n
 The user is expected to at least provide the label table, the regular expression table, and the segment table:
@@ -181,76 +214,19 @@ The empty feature weight table (which will be populated after training) is expec
     ...
 )</pre>
 
-@usage
-- Get number of iterations and weights for features:\n
-  <pre>SELECT * FROM \ref lincrf(
-    '<em>featureTableName</em>', '<em>sparse_r</em>', '<em>dense_m</em>','<em>sparse_m</em>', '<em>f_size</em>', <em>tag_size</em>, '<em>feature_set</em>', '<em>featureWeightsName</em>'
-    [, <em>maxNumberOfIterations</em> ] ]
-);</pre>
-  where tag_size is the total number of labels.
 
-  Output:
-<pre> lincrf
------------------
- [number of iterations]</pre>
-
-  <em>featureWeightsName</em>:
-<pre> id |      name      | prev_label_id | label_id |      weight       
-----+----------------+---------------+----------+-------------------
-</pre>
-
-- Generate text features, calculate their weights, and output the best label sequence for test data:\n
- -# Create tables to store the input data, intermediate data, and output data.
-    Also import the training data to the database.
-    <pre>SELECT madlib.crf_train_data(
-         '<em>/path/to/data</em>');</pre> 
- -# Generate text analytics features for the training data.
-    <pre>SELECT madlib.crf_train_fgen(
-         '<em>segmenttbl</em>',
-         '<em>regextbl</em>',
-         '<em>dictionary</em>',
-         '<em>featuretbl</em>',
-         '<em>featureset</em>');</pre>
- -# Use linear-chain CRF for training.
-    <pre>SELECT madlib.lincrf(
-         '<em>source</em>',
-         '<em>sparse_r</em>',
-         '<em>dense_m</em>',
-         '<em>sparse_m</em>',
-         '<em>f_size</em>',
-         <em>tag_size</em>,
-         '<em>feature_set</em>',
-         '<em>featureWeights</em>',
-         '<em>maxNumIterations</em>');</pre>
- -# Import CRF model to the database.
-    Also load the CRF testing data to the database.
-    <pre>SELECT madlib.crf_test_data(
-         '<em>/path/to/data</em>');</pre>
- -# Generate text analytics features for the testing data.
-    <pre>SELECT madlib.crf_test_fgen(
-         '<em>segmenttbl</em>',
-         '<em>dictionary</em>',
-         '<em>labeltbl</em>',
-         '<em>regextbl</em>',
-         '<em>featuretbl</em>',
-         '<em>viterbi_mtbl</em>',
-         '<em>viterbi_rtbl</em>');</pre>
-    'viterbi_mtbl' and 'viterbi_rtbl' are simply text representing names for tables created in the feature generation module (i.e. they are NOT empty tables).
- -# Run the Viterbi function to get the best label sequence and the conditional
-    probability \f$ \Pr( \text{best label sequence} \mid \text{sequence}) \f$.
-    <pre>SELECT madlib.vcrf_label(
-         '<em>segmenttbl</em>',
-         '<em>viterbi_mtbl</em>',
-         '<em>viterbi_rtbl</em>',
-         '<em>labeltbl</em>',
-         '<em>resulttbl</em>');</pre>
-
+@anchor examples
 @examp
+This example uses a trivial training and test data set.
+
 -# Load the label table, the regular expressions table, and the training segment table:
-@verbatim 
-sql> SELECT * FROM crf_label;
+<pre class="example"> 
+SELECT * FROM crf_label;
+</pre>
+Result:
+<pre class="result">
  id | label 
-----+-------
+&nbsp;---+-------
   1 | CD
  13 | NNP
  15 | PDT
@@ -260,19 +236,27 @@ sql> SELECT * FROM crf_label;
  33 | WP
  35 | WRB
 ...
-
-sql> SELECT * from crf_regex;
+</pre>
+The regular expressions table:
+<pre class="example">
+SELECT * from crf_regex;
+</pre>
+<pre class="result">
     pattern    |         name         
----------------+----------------------
+&nbsp;--------------+----------------------
  ^.+ing$       | endsWithIng
  ^[A-Z][a-z]+$ | InitCapital
  ^[A-Z]+$      | isAllCapital
  ^.*[0-9]+.*$  | containsDigit
 ...
-
-sql> SELECT * from train_segmenttbl;
+</pre>
+The training segment table:
+<pre class="example">
+SELECT * from train_segmenttbl;
+</pre>
+<pre class="result">
  start_pos | doc_id |  seg_text  | label | max_pos
------------+--------+------------+-------+---------
+&nbsp;----------+--------+------------+-------+---------
          8 |      1 | alliance   |    11 |      26
         10 |      1 | Ford       |    13 |      26
         12 |      1 | that       |     5 |      26
@@ -286,20 +270,29 @@ sql> SELECT * from train_segmenttbl;
         25 |      1 | return     |    11 |      26
          9 |      2 | later      |    19 |      10
 ...
-@endverbatim
--# Create the (empty) dictionary table, feature table, and feature set:
-@verbatim
-sql> CREATE TABLE crf_dictionary(token text,total integer);
-sql> CREATE TABLE train_featuretbl(doc_id integer,f_size FLOAT8,sparse_r FLOAT8[],dense_m FLOAT8[],sparse_m FLOAT8[]);
-sql> CREATE TABLE train_featureset(f_index integer, f_name text, feature integer[]);
-@endverbatim
--# Generate the training features:
-@verbatim
-sql> SELECT crf_train_fgen('train_segmenttbl', 'crf_regex', 'crf_dictionary', 'train_featuretbl','train_featureset');
+</pre>
 
-sql> SELECT * from crf_dictionary;
+-# Create the (empty) dictionary table, feature table, and feature set:
+<pre class="example">
+CREATE TABLE crf_dictionary(token text,total integer);
+CREATE TABLE train_featuretbl(doc_id integer,f_size FLOAT8,sparse_r FLOAT8[],dense_m FLOAT8[],sparse_m FLOAT8[]);
+CREATE TABLE train_featureset(f_index integer, f_name text, feature integer[]);
+</pre>
+
+-# Generate the training features:
+<pre class="example">
+SELECT crf_train_fgen( 'train_segmenttbl', 
+                       'crf_regex', 
+                       'crf_dictionary', 
+                       'train_featuretbl',
+                       'train_featureset'
+                     );
+SELECT * from crf_dictionary;
+</pre>
+Result:
+<pre class="result">
    token    | total 
-------------+-------
+&nbsp;-----------+-------
  talks      |     1
  that       |     1
  would      |     1
@@ -309,16 +302,23 @@ sql> SELECT * from crf_dictionary;
  after      |     1
  operations |     1
 ...
-
-sql> SELECT * from train_featuretbl;
+</pre>
+<pre class="example">
+SELECT * from train_featuretbl;
+</pre>
+Result:
+<pre class="result">
  doc_id | f_size |            sparse_r           |             dense_m             |       sparse_m
---------+--------+-------------------------------+---------------------------------+-----------------------
+&nbsp;-------+--------+-------------------------------+---------------------------------+-----------------------
       2 |     87 | {-1,13,12,0,1,-1,13,9,0,1,..} | {13,31,79,1,1,31,29,70,2,1,...} | {51,26,2,69,29,17,...}
       1 |     87 | {-1,13,0,0,1,-1,13,9,0,1,...} | {13,0,62,1,1,0,13,54,2,1,13,..} | {51,26,2,69,29,17,...}
-
-sql> SELECT * from train_featureset;
+</pre>
+<pre class="example">
+SELECT * from train_featureset;
+</pre>
+<pre class="result">
  f_index |    f_name     | feature 
----------+---------------+---------
+&nbsp;--------+---------------+---------
        1 | R_endsWithED  | {-1,29}
       13 | W_outweigh    | {-1,26}
       29 | U             | {-1,5}
@@ -337,22 +337,38 @@ sql> SELECT * from train_featureset;
       85 | E.            | {16,11}
        4 | W_return      | {-1,11}
 ...
+</pre>
 
-@endverbatim
 -# Create the (empty) feature weight table:
-@verbatim
-sql> CREATE TABLE train_crf_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);
-@endverbatim
--# Train using linear CRF:
-@verbatim
-sql> SELECT lincrf('train_featuretbl','sparse_r','dense_m','sparse_m','f_size',45, 'train_featureset','train_crf_feature', 20);
- lincrf 
---------
-     20
+<pre class="example">
+CREATE TABLE train_crf_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);
+</pre>
 
-sql> SELECT * from train_crf_feature;
+-# Train using linear CRF:
+<pre class="example">
+SELECT lincrf( 'train_featuretbl',
+               'sparse_r',
+               'dense_m',
+               'sparse_m',
+               'f_size',45, 
+               'train_featureset',
+               'train_crf_feature', 
+               20
+             );
+</pre>
+<pre class="result">
+ lincrf 
+&nbsp;-------
+     20
+</pre>
+View the feature weight table.
+<pre class="example">
+SELECT * from train_crf_feature;
+</pre>
+Result:
+<pre class="result">
  id |     name      | prev_label_id | label_id |      weight       
-----+---------------+---------------+----------+-------------------
+&nbsp;---+---------------+---------------+----------+-------------------
   1 | R_endsWithED  |            -1 |       29 |  1.54128249293937
  13 | W_outweigh    |            -1 |       26 |  1.70691232223653
  29 | U             |            -1 |        5 |  1.40708515869008
@@ -369,13 +385,16 @@ sql> SELECT * from train_crf_feature;
  71 | E.            |             2 |       11 |  3.00970493772732
  83 | W_the         |            -1 |        2 |  2.58742315259326
 ...
+</pre>
 
-@endverbatim
 -# To find the best labels for a test set using the trained linear CRF model, repeat steps #1-2 and generate the test features, except instead of creating a new dictionary, use the dictionary generated from the training set.
-@verbatim
-sql> SELECT * from test_segmenttbl;
+<pre class="example">
+SELECT * from test_segmenttbl;
+</pre>
+Result:
+<pre class="result">
  start_pos | doc_id |  seg_text   | max_pos 
------------+--------+-------------+---------
+&nbsp;----------+--------+-------------+---------
          1 |      1 | collapse    |      22
         13 |      1 | ,           |      22
         15 |      1 | is          |      22
@@ -385,16 +404,35 @@ sql> SELECT * from test_segmenttbl;
         18 |      1 | defensive   |      22
         20 |      1 | with        |      22
 ...
+</pre>
+<pre class="example">
+SELECT crf_test_fgen( 'test_segmenttbl',
+                      'crf_dictionary',
+                      'crf_label',
+                      'crf_regex',
+                      'train_crf_feature',
+                      'viterbi_mtbl',
+                      'viterbi_rtbl'
+                    );
+</pre>
 
-sql> SELECT crf_test_fgen('test_segmenttbl','crf_dictionary','crf_label','crf_regex','train_crf_feature','viterbi_mtbl','viterbi_rtbl');
-@endverbatim
--# Calculate the best label sequence:
-@verbatim
-sql> SELECT vcrf_label('test_segmenttbl','viterbi_mtbl','viterbi_rtbl','crf_label','extracted_best_labels');
-
-sql> SELECT * FROM extracted_best_labels;
+-# Calculate the best label sequence and save in the table \c extracted_best_labels. 
+<pre class="example">
+SELECT vcrf_label( 'test_segmenttbl',
+                   'viterbi_mtbl',
+                   'viterbi_rtbl',
+                   'crf_label',
+                   'extracted_best_labels'
+                 );
+</pre>
+View the best labels.
+<pre class="example">
+SELECT * FROM extracted_best_labels;
+</pre>
+Result:
+<pre class="result">
  doc_id | start_pos |  seg_text   | label | id | prob  
---------+-----------+-------------+-------+----+-------
+&nbsp;-------+-----------+-------------+-------+----+-------
       1 |         2 | Friday      | NNP   | 14 | 9e-06
       1 |         6 | Ford        | NNP   | 14 | 9e-06
       1 |        12 | Jaguar      | NNP   | 14 | 9e-06
@@ -407,8 +445,79 @@ sql> SELECT * FROM extracted_best_labels;
       1 |         1 | collapse    | CC    |  1 | 9e-06
       1 |         7 | would       | POS   | 17 | 9e-06
 ...
-@endverbatim
-(Note that this example was done on a trivial training and test data set.)
+</pre>
+
+
+@anchor background
+@par Technical Background
+
+Specifically, a linear-chain CRF is a distribution defined by
+\f[
+    p_\lambda(\boldsymbol y | \boldsymbol x) =
+        \frac{\exp{\sum_{m=1}^M \lambda_m F_m(\boldsymbol x, \boldsymbol y)}}{Z_\lambda(\boldsymbol x)}
+    \,.
+\f]
+
+where 
+- \f$ F_m(\boldsymbol x, \boldsymbol y) = \sum_{i=1}^n f_m(y_i,y_{i-1},x_i) \f$ is a global feature function that is a sum along a sequence 
+  \f$ \boldsymbol x \f$ of length \f$ n \f$
+- \f$ f_m(y_i,y_{i-1},x_i) \f$ is a local feature function dependent on the current token label \f$ y_i \f$, the previous token label \f$ y_{i-1} \f$, 
+  and the observation \f$ x_i \f$
+- \f$ \lambda_m \f$ is the corresponding feature weight 
+- \f$ Z_\lambda(\boldsymbol x) \f$ is an instance-specific normalizer
+\f[
+Z_\lambda(\boldsymbol x) = \sum_{\boldsymbol y'} \exp{\sum_{m=1}^M \lambda_m F_m(\boldsymbol x, \boldsymbol y')}
+\f]
+
+A linear-chain CRF estimates the weights \f$ \lambda_m \f$ by maximizing the log-likelihood 
+of a given training set \f$ T=\{(x_k,y_k)\}_{k=1}^N \f$.  
+
+The log-likelihood is defined as
+\f[
+    \ell_{\lambda}=\sum_k \log p_\lambda(y_k|x_k) =\sum_k[\sum_{m=1}^M \lambda_m F_m(x_k,y_k) - \log Z_\lambda(x_k)]
+\f]
+
+and the zero of its gradient
+\f[
+    \nabla \ell_{\lambda}=\sum_k[F(x_k,y_k)-E_{p_\lambda(Y|x_k)}[F(x_k,Y)]]
+\f]
+
+is found since the maximum likelihood is reached when the empirical average of the global feature vector equals its model expectation.  The MADlib implementation uses limited-memory BFGS (L-BFGS), a limited-memory variation of the Broyden–Fletcher–Goldfarb–Shanno (BFGS) update, a quasi-Newton method for unconstrained optimization. 
+
+\f$E_{p_\lambda(Y|x)}[F(x,Y)]\f$ is found by using a variant of the forward-backward algorithm:
+\f[
+    E_{p_\lambda(Y|x)}[F(x,Y)] = \sum_y p_\lambda(y|x)F(x,y)
+                            = \sum_i\frac{\alpha_{i-1}(f_i*M_i)\beta_i^T}{Z_\lambda(x)}
+\f]
+\f[
+    Z_\lambda(x) = \alpha_n.1^T
+\f]
+    where \f$\alpha_i\f$  and \f$ \beta_i\f$ are the forward and backward state cost vectors defined by
+\f[
+    \alpha_i = 
+    \begin{cases}
+    \alpha_{i-1}M_i, & 0<i<=n\\
+    1, & i=0
+    \end{cases}\\
+\f]
+\f[
+    \beta_i^T = 
+    \begin{cases}
+    M_{i+1}\beta_{i+1}^T, & 1<=i<n\\
+    1, & i=n
+    \end{cases}
+\f]
+
+To avoid overfitting, we penalize the likelihood with a spherical Gaussian weight prior:
+\f[
+    \ell_{\lambda}^\prime=\sum_k[\sum_{m=1}^M \lambda_m F_m(x_k,y_k) - \log Z_\lambda(x_k)] - \frac{\lVert \lambda \rVert^2}{2\sigma ^2}
+\f]
+
+\f[
+    \nabla \ell_{\lambda}^\prime=\sum_k[F(x_k,y_k) - E_{p_\lambda(Y|x_k)}[F(x_k,Y)]] - \frac{\lambda}{\sigma ^2}
+\f]
+
+
 
 @literature
 [1] F. Sha, F. Pereira. Shallow Parsing with Conditional Random Fields, http://www-bcf.usc.edu/~feisha/pubs/shallow03.pdf
@@ -425,7 +534,10 @@ sql> SELECT * FROM extracted_best_labels;
 
 [7] J. Nocedal, Software for Large-scale Unconstrained Optimization, http://users.eecs.northwestern.edu/~nocedal/lbfgs.html
 
-@sa File crf.sql_in crf_feature_gen.sql_in viterbi.sql_in (documenting the SQL functions)
+@anchor related
+@par Related Topics
+
+File crf.sql_in crf_feature_gen.sql_in viterbi.sql_in (documenting the SQL functions)
 
 */
 

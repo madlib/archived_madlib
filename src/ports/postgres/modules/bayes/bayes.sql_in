@@ -15,16 +15,287 @@ m4_include(`SQLCommon.m4')
 /**
 @addtogroup grp_bayes
 
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#train">Training Function</a></li>
+<li><a href="#classify">Classify Function</a></li>
+<li><a href="#probabilities">Probabilities Function</a></li>
+<li><a href="#adhoc">Ad Hoc Computation</a></li>
+<li><a href="#notes">Implementation Notes</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#background">Technical Background</a></li>
+<li><a href="#related">Related Topics</a></li>
+</ul>
+</div>
+
 \warning <em> This MADlib method is still in early stage development. There may be some 
 issues that will be addressed in a future version. Interface and implementation
 is subject to change. </em>
 
-@about
-
 Naive Bayes refers to a stochastic model where all independent variables
 \f$ a_1, \dots, a_n \f$ (often referred to as attributes in this context)
 independently contribute to the probability that a data point belongs to a
-certain class \f$ c \f$. In detail, \b Bayes' theorem states that
+certain class \f$ c \f$. 
+
+Naives Bayes classification estimates feature probabilities and class priors
+using maximum likelihood or Laplacian smoothing. These parameters are then used
+to classifying new data.
+
+
+@anchor train
+@par Training Function
+
+
+Precompute feature probabilities and class priors:
+
+<pre class="syntax">
+create_nb_prepared_data_tables ( trainingSource, 
+                                 trainingClassColumn, 
+                                 trainingAttrColumn, 
+                                 numAttrs, 
+                                 featureProbsName, 
+                                 classPriorsName
+                               )
+</pre> 
+
+The \e trainingSource is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>trainingSource</em> (
+    ...
+    <em>trainingClassColumn</em> INTEGER,
+    <em>trainingAttrColumn</em> INTEGER[],
+    ...
+)</pre>
+
+
+The two output tables are: 
+- \e featureProbsName &ndash; stores feature probabilities
+- \e classPriorsName< &ndash; stores the class priors
+
+@anchor classify
+@par Classify Function
+
+Perform Naive Bayes classification:
+<pre class="syntax">
+create_nb_classify_view ( featureProbsName, 
+                          classPriorsName, 
+                          classifySource, 
+                          classifyKeyColumn, 
+                          classifyAttrColumn, 
+                          numAttrs, 
+                          destName
+                        )
+</pre>
+
+The <b>data to classify</b> is expected to be of the following form:
+<pre>{TABLE|VIEW} <em>classifySource</em> (
+    ...
+    <em>classifyKeyColumn</em> ANYTYPE,
+    <em>classifyAttrColumn</em> INTEGER[],
+    ...
+)</pre>
+
+
+This function creates the view <tt><em>destName</em></tt> mapping
+<em>classifyKeyColumn</em> to the Naive Bayes classification.
+<pre class="result">
+key | nb_classification
+&nbsp;---+------------------
+...
+</pre>
+
+@anchor probabilities
+@par Probabilities Function
+
+Compute Naive Bayes probabilities.
+<pre class="syntax">
+create_nb_probs_view( featureProbsName, 
+                      classPriorsName, 
+                      classifySource, 
+                      classifyKeyColumn, 
+                      classifyAttrColumn, 
+                      numAttrs, 
+                      destName 
+                    )
+</pre>
+
+This creates the view <tt><em>destName</em></tt> mapping
+<em>classifyKeyColumn</em> and every single class to the Naive Bayes
+probability:
+<pre class="result">
+key | class | nb_prob
+&nbsp;---+-------+--------
+...
+</pre>
+
+@anchor adhoc
+@par Ad Hoc Computation Function
+
+With ad hoc execution (no precomputation), the
+functions create_nb_classify_view() and create_nb_probs_view() can 
+be used in an ad-hoc fashion without the 
+precomputation step. In this case, replace the function arguments
+  
+<pre>'<em>featureProbsName</em>', '<em>classPriorsName</em>'</pre>
+with
+<pre>'<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>'</pre>
+
+@anchor notes
+@par Implementation Notes
+- The probabilities computed on the platforms of PostgreSQL and Greenplum
+database have a small difference due to the nature of floating point
+computation. Usually this is not important. However, if a data point has
+\f[
+P(C=c_i \mid A) \approx P(C=c_j \mid A)
+\f]
+for two classes, this data point might be classified into diferent classes on
+PostgreSQL and Greenplum. This leads to the differences in classifications
+on PostgreSQL and Greenplum for some data sets, but this should not
+affect the quality of the results.
+
+- When two classes have equal and highest probability among all classes,
+the classification result is an array of these two classes, but the order
+of the two classes is random.
+
+- The current implementation of Naive Bayes classification is only suitable
+for discontinuous (categorial) attributes.\n
+For continuous data, a typical assumption, usually used for small datasets,
+is that the continuous values associated with each class are distributed
+according to a Gaussian distribution,
+and then the probabilities \f$ P(A_i = a \mid C=c) \f$ can be estimated.
+Another common technique for handling continuous values, which is better for
+large data sets, is to use binning to discretize the values, and convert the
+continuous data into categorical bins. These approaches are currently not
+implemented and planned for future releases.
+
+- One can still provide floating point data to the naive Bayes
+classification function. Floating point numbers can be used as symbolic
+substitutions for categorial data. The classification would work best if
+there are sufficient data points for each floating point attribute. However,
+if floating point numbers are used as continuous data, no warning is raised and
+the result may not be as expected.
+
+@anchor examples
+@examp
+
+The following is an extremely simplified example of the above option #1 which
+can by verified by hand.
+
+-#  The training and the classification data.
+<pre class="example">
+SELECT * FROM training;
+</pre>
+Result:
+<pre class="result">
+ id | class | attributes
+&nbsp;---+-------+------------
+  1 |     1 | {1,2,3}
+  2 |     1 | {1,2,1}
+  3 |     1 | {1,4,3}
+  4 |     2 | {1,2,2}
+  5 |     2 | {0,2,2}
+  6 |     2 | {0,1,3}
+(6 rows)
+</pre>
+<pre class="example">
+SELECT * FROM toclassify;
+</pre>
+Result:
+<pre class="result">
+ id | attributes
+&nbsp;---+------------
+  1 | {0,2,1}
+  2 | {1,2,3}
+(2 rows)
+</pre>
+
+-#  Precompute feature probabilities and class priors.
+<pre class="example">
+SELECT madlib.create_nb_prepared_data_tables( 'training', 
+                                              'class', 
+                                              'attributes', 
+                                              3, 
+                                              'nb_feature_probs', 
+                                              'nb_class_priors'
+                                            );
+</pre>
+
+-#  Optionally check the contents of the precomputed tables.
+<pre class="example">
+SELECT * FROM nb_class_priors;
+</pre>
+Result:
+<pre class="result">
+ class | class_cnt | all_cnt
+&nbsp;------+-----------+---------
+     1 |         3 |       6
+     2 |         3 |       6
+(2 rows)
+</pre>
+<pre class="example">
+SELECT * FROM nb_feature_probs;
+</pre>
+Result:
+<pre class="result">
+ class | attr | value | cnt | attr_cnt
+&nbsp;------+------+-------+-----+----------
+     1 |    1 |     0 |   0 |        2
+     1 |    1 |     1 |   3 |        2
+     1 |    2 |     1 |   0 |        3
+     1 |    2 |     2 |   2 |        3
+...
+</pre>
+
+-#  Create the view with Naive Bayes classification and check the results.
+<pre class="example">
+SELECT madlib.create_nb_classify_view( 'nb_feature_probs', 
+                                       'nb_class_priors', 
+                                       'toclassify', 
+                                       'id', 
+                                       'attributes', 
+                                       3, 
+                                       'nb_classify_view_fast'
+                                     );
+&nbsp;                                     
+SELECT * FROM nb_classify_view_fast;
+</pre>
+Result:
+<pre class="result">
+ key | nb_classification
+&nbsp;----+-------------------
+   1 | {2}
+   2 | {1}
+(2 rows)
+</pre>
+
+-#  Look at the probabilities for each class (note that we use "Laplacian smoothing"),
+<pre class="example">
+SELECT madlib.create_nb_probs_view( 'nb_feature_probs', 
+                                    'nb_class_priors', 
+                                    'toclassify', 
+                                    'id', 
+                                    'attributes', 
+                                    3, 
+                                    'nb_probs_view_fast'
+                                  );
+&nbsp;
+SELECT * FROM nb_probs_view_fast;
+</pre>
+Result:
+<pre class="result">
+ key | class | nb_prob
+&nbsp;----+-------+---------
+   1 |     1 |     0.4
+   1 |     2 |     0.6
+   2 |     1 |    0.75
+   2 |     2 |    0.25
+(4 rows)
+</pre>
+
+
+@anchor background
+@par Technical Background
+
+In detail, \b Bayes' theorem states that
 \f[
     \Pr(C = c \mid A_1 = a_1, \dots, A_n = a_n)
     =   \frac{\Pr(C = c) \cdot \Pr(A_1 = a_1, \dots, A_n = a_n \mid C = c)}
@@ -78,174 +349,8 @@ where
 The case \f$ s = 1 \f$ is known as "Laplace smoothing". The case \f$ s = 0 \f$
 trivially reduces to maximum-likelihood estimates.
 
-\b Note:
-(1) The probabilities computed on the platforms of PostgreSQL and Greenplum
-database have a small difference due to the nature of floating point
-computation. Usually this is not important. However, if a data point has
-\f[
-P(C=c_i \mid A) \approx P(C=c_j \mid A)
-\f]
-for two classes, this data point might be classified into diferent classes on
-PostgreSQL and Greenplum. This leads to the differences in classifications
-on PostgreSQL and Greenplum for some data sets, but this should not
-affect the quality of the results.
 
-(2) When two classes have equal and highest probability among all classes,
-the classification result is an array of these two classes, but the order
-of the two classes is random.
-
-(3) The current implementation of Naive Bayes classification is only suitable
-for discontinuous (categorial) attributes.
-
-For continuous data, a typical assumption, usually used for small datasets,
-is that the continuous values associated with each class are distributed
-according to a Gaussian distribution,
-and then the probabilities \f$ P(A_i = a \mid C=c) \f$ can be estimated.
-Another common technique for handling continuous values, which is better for
-large data sets, is to use binning to discretize the values, and convert the
-continuous data into categorical bins. These approaches are currently not
-implemented and planned for future releases.
-
-(4) One can still provide floating point data to the naive Bayes
-classification function. Floating point numbers can be used as symbolic
-substitutions for categorial data. The classification would work best if
-there are sufficient data points for each floating point attribute. However,
-if floating point numbers are used as continuous data, no warning is raised and
-the result may not be as expected.
-
-@input
-
-The <b>training data</b> is expected to be of the following form:
-<pre>{TABLE|VIEW} <em>trainingSource</em> (
-    ...
-    <em>trainingClassColumn</em> INTEGER,
-    <em>trainingAttrColumn</em> INTEGER[],
-    ...
-)</pre>
-
-The <b>data to classify</b> is expected to be of the following form:
-<pre>{TABLE|VIEW} <em>classifySource</em> (
-    ...
-    <em>classifyKeyColumn</em> ANYTYPE,
-    <em>classifyAttrColumn</em> INTEGER[],
-    ...
-)</pre>
-
-@usage
-
-- Precompute feature probabilities and class priors:
-  <pre>SELECT \ref create_nb_prepared_data_tables(
-    '<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>',
-    <em>numAttrs</em>, '<em>featureProbsName</em>', '<em>classPriorsName</em>'
-    );</pre>
-  This creates table <em>featureProbsName</em> for storing feature
-  probabilities and table <em>classPriorsName</em> for storing the class priors.
-- Perform Naive Bayes classification:
-  <pre>SELECT \ref create_nb_classify_view(
-    '<em>featureProbsName</em>', '<em>classPriorsName</em>',
-    '<em>classifySource</em>', '<em>classifyKeyColumn</em>', '<em>classifyAttrColumn</em>',
-    <em>numAttrs</em>, '<em>destName</em>'
-    );</pre>
-  This creates the view <tt><em>destName</em></tt> mapping
-  <em>classifyKeyColumn</em> to the Naive Bayes classification:
-  <pre>key | nb_classification
-----+------------------
-...</pre>
-- Compute Naive Bayes probabilities:
-  <pre>SELECT \ref create_nb_probs_view(
-    '<em>featureProbsName</em>', '<em>classPriorsName</em>',
-    '<em>classifySource</em>', '<em>classifyKeyColumn</em>', '<em>classifyAttrColumn</em>',
-    <em>numAttrs</em>, '<em>destName</em>'
-);</pre>
-  This creates the view <tt><em>destName</em></tt> mapping
-  <em>classifyKeyColumn</em> and every single class to the Naive Bayes
-  probability:
-  <pre>key | class | nb_prob
-----+-------+--------
-...</pre>
-- Ad-hoc execution (no precomputation):
-  Functions \ref create_nb_classify_view and
-  \ref create_nb_probs_view can be used in an ad-hoc fashion without the above
-  precomputation step. In this case, replace the function arguments
-  <pre>'<em>featureProbsName</em>', '<em>classPriorsName</em>'</pre>
-  with
-  <pre>'<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>'</pre>
-
-@examp
-
-The following is an extremely simplified example of the above option #1 which
-can by verified by hand.
-
--#  The training and the classification data:
-\verbatim
-sql> SELECT * FROM training;
- id | class | attributes
-----+-------+------------
-  1 |     1 | {1,2,3}
-  2 |     1 | {1,2,1}
-  3 |     1 | {1,4,3}
-  4 |     2 | {1,2,2}
-  5 |     2 | {0,2,2}
-  6 |     2 | {0,1,3}
-(6 rows)
-
-sql> select * from toclassify;
- id | attributes
-----+------------
-  1 | {0,2,1}
-  2 | {1,2,3}
-(2 rows)
-\endverbatim
--#  Precompute feature probabilities and class priors
-\verbatim
-sql> SELECT madlib.create_nb_prepared_data_tables(
-'training', 'class', 'attributes', 3, 'nb_feature_probs', 'nb_class_priors');
-\endverbatim
--#  Optionally check the contents of the precomputed tables:
-\verbatim
-sql> SELECT * FROM nb_class_priors;
- class | class_cnt | all_cnt
--------+-----------+---------
-     1 |         3 |       6
-     2 |         3 |       6
-(2 rows)
-
-sql> SELECT * FROM nb_feature_probs;
- class | attr | value | cnt | attr_cnt
--------+------+-------+-----+----------
-     1 |    1 |     0 |   0 |        2
-     1 |    1 |     1 |   3 |        2
-     1 |    2 |     1 |   0 |        3
-     1 |    2 |     2 |   2 |        3
-...
-\endverbatim
--#  Create the view with Naive Bayes classification and check the results:
-\verbatim
-sql> SELECT madlib.create_nb_classify_view (
-'nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_classify_view_fast');
-
-sql> SELECT * FROM nb_classify_view_fast;
- key | nb_classification
------+-------------------
-   1 | {2}
-   2 | {1}
-(2 rows)
-\endverbatim
--#  Look at the probabilities for each class (note that we use "Laplacian smoothing"):
-\verbatim
-sql> SELECT madlib.create_nb_probs_view (
-'nb_feature_probs', 'nb_class_priors', 'toclassify', 'id', 'attributes', 3, 'nb_probs_view_fast');
-
-sql> SELECT * FROM nb_probs_view_fast;
- key | class | nb_prob
------+-------+---------
-   1 |     1 |     0.4
-   1 |     2 |     0.6
-   2 |     1 |    0.75
-   2 |     2 |    0.25
-(4 rows)
-\endverbatim
-
+@anchor literature
 @literature
 
 [1] Tom Mitchell: Machine Learning, McGraw Hill, 1997. Book chapter
@@ -255,7 +360,9 @@ sql> SELECT * FROM nb_probs_view_fast;
 [2] Wikipedia, Naive Bayes classifier,
     http://en.wikipedia.org/wiki/Naive_Bayes_classifier
 
-@sa File bayes.sql_in documenting the SQL functions.
+@anchor related
+@par Related Topics
+File bayes.sql_in documenting the SQL functions.
 
 @internal
 @sa namespace bayes (documenting the implementation in Python)
