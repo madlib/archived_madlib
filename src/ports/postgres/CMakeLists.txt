@@ -28,6 +28,7 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/AnyType_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayHandle_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ArrayWithNullException_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ByteString_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbconnector/ByteString_proto.hpp"

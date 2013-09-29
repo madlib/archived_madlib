@@ -28,15 +28,16 @@ using dbal::NoSolutionFoundException;
 
 namespace regress {
 
+// FIXME this enum should be accessed by all modules that may need grouping
 // valid status values
-enum { IN_PROCESS, COMPLETED, TERMINATED};
+enum { IN_PROCESS, COMPLETED, TERMINATED, NULL_EMPTY };
 
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
     const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-    double logLikelihood,
-    double conditionNo, int status);
+    const double &logLikelihood, const double &conditionNo, int status,
+    const uint64_t &numRows);
 
 
 // ---------------------------------------------------------------------------
@@ -208,8 +209,17 @@ inline double sigma(double x) {
 AnyType
 logregr_cg_step_transition::run(AnyType &args) {
     LogRegrCGTransitionState<MutableArrayHandle<double> > state = args[0];
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<bool>() ? 1. : -1.;
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
     // The following check was added with MADLIB-138.
     if (!dbal::eigen_integration::isfinite(x)) {
@@ -237,7 +247,7 @@ logregr_cg_step_transition::run(AnyType &args) {
             state.reset();
         }
     }
-	// Now do the transition step
+    // Now do the transition step
     state.numRows++;
     double xc = dot(x, state.coef);
     state.gradNew.noalias() += sigma(-y * xc) * y * trans(x);
@@ -291,8 +301,10 @@ logregr_cg_step_final::run(AnyType &args) {
     LogRegrCGTransitionState<MutableArrayHandle<double> > state = args[0];
 
     // Aggregates that haven't seen any data just return Null.
-    if (state.numRows == 0)
-        return Null();
+    if (state.numRows == 0){
+        state.status = NULL_EMPTY;
+        return state;
+    }
 
     // Note: k = state.iteration
     if (state.iteration == 0) {
@@ -373,6 +385,10 @@ internal_logregr_cg_step_distance::run(AnyType &args) {
     LogRegrCGTransitionState<ArrayHandle<double> > stateLeft = args[0];
     LogRegrCGTransitionState<ArrayHandle<double> > stateRight = args[1];
 
+    if(stateLeft.status == NULL_EMPTY || stateRight.status == NULL_EMPTY){
+        return 0.0;
+    }
+
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
 
@@ -382,13 +398,15 @@ internal_logregr_cg_step_distance::run(AnyType &args) {
 AnyType
 internal_logregr_cg_result::run(AnyType &args) {
     LogRegrCGTransitionState<ArrayHandle<double> > state = args[0];
+    if (state.status == NULL_EMPTY)
+        return Null();
 
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
     return stateToResult(*this, state.coef,
         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
-        decomposition.conditionNo(), state.status);
+        decomposition.conditionNo(), state.status, state.numRows);
 }
 
 
@@ -533,8 +551,17 @@ public:
 
 AnyType logregr_irls_step_transition::run(AnyType &args) {
     LogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<bool>() ? 1. : -1.;
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite()){
@@ -624,8 +651,10 @@ AnyType logregr_irls_step_final::run(AnyType &args) {
     LogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
 
     // Aggregates that haven't seen any data just return Null.
-    if (state.numRows == 0)
-        return Null();
+    if (state.numRows == 0){
+        state.status = NULL_EMPTY;
+        return state;
+    }
 
     // See MADLIB-138. At least on certain platforms and with certain versions,
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
@@ -678,6 +707,10 @@ AnyType internal_logregr_irls_step_distance::run(AnyType &args) {
     LogRegrIRLSTransitionState<ArrayHandle<double> > stateLeft = args[0];
     LogRegrIRLSTransitionState<ArrayHandle<double> > stateRight = args[1];
 
+    if(stateLeft.status == NULL_EMPTY || stateRight.status == NULL_EMPTY){
+        return 0.0;
+    }
+
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
 
@@ -688,9 +721,12 @@ AnyType internal_logregr_irls_step_distance::run(AnyType &args) {
 AnyType internal_logregr_irls_result::run(AnyType &args) {
     LogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
 
-    return stateToResult(*this, state.coef,
-                         state.X_transp_Az, state.logLikelihood, state.X_transp_AX(0,0),
-                         state.status);
+    if (state.status == NULL_EMPTY)
+        return Null();
+
+    return stateToResult(*this, state.coef, state.X_transp_Az,
+                         state.logLikelihood, state.X_transp_AX(0,0),
+                         state.status, state.numRows);
 }
 
 /**
@@ -842,8 +878,17 @@ public:
 AnyType
 logregr_igd_step_transition::run(AnyType &args) {
     LogRegrIGDTransitionState<MutableArrayHandle<double> > state = args[0];
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<bool>() ? 1. : -1.;
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite()){
@@ -853,7 +898,7 @@ logregr_igd_step_transition::run(AnyType &args) {
         return state;
     }
 
-	// We only know the number of independent variables after seeing the first
+    // We only know the number of independent variables after seeing the first
     // row.
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
@@ -867,9 +912,9 @@ logregr_igd_step_transition::run(AnyType &args) {
 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
 
-		// For the first iteration, the previous state is NULL
+        // For the first iteration, the previous state is NULL
         if (!args[3].isNull()) {
- 			LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
+            LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
             state = previousState;
             state.reset();
         }
@@ -881,22 +926,22 @@ logregr_igd_step_transition::run(AnyType &args) {
     // xc = x^T_i c
     double xc = dot(x, state.coef);
     double scale = state.stepsize * sigma(-xc * y) * y;
-	state.coef += scale * x;
+    state.coef += scale * x;
 
     // Note: previous coefficients are used for Hessian and log likelihood
-	if (!args[3].isNull()) {
-		LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
+    if (!args[3].isNull()) {
+        LogRegrIGDTransitionState<ArrayHandle<double> > previousState = args[3];
 
-		double previous_xc = dot(x, previousState.coef);
+        double previous_xc = dot(x, previousState.coef);
 
         // a_i = sigma(x_i c) sigma(-x_i c)
-		double a = sigma(previous_xc) * sigma(-previous_xc);
-		//triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
+        double a = sigma(previous_xc) * sigma(-previous_xc);
+        //triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
         state.X_transp_AX += x * trans(x) * a;
 
-		// l_i(c) = - ln(1 + exp(-y_i * c^T x_i))
-		state.logLikelihood -= std::log( 1. + std::exp(-y * previous_xc) );
-	}
+        // l_i(c) = - ln(1 + exp(-y_i * c^T x_i))
+        state.logLikelihood -= std::log( 1. + std::exp(-y * previous_xc) );
+    }
 
     return state;
 }
@@ -943,8 +988,10 @@ logregr_igd_step_final::run(AnyType &args) {
     }
 
     // Aggregates that haven't seen any data just return Null.
-    if (state.numRows == 0)
-        return Null();
+    if (state.numRows == 0){
+        state.status = NULL_EMPTY;
+        return state;
+    }
 
     return state;
 }
@@ -957,6 +1004,10 @@ internal_logregr_igd_step_distance::run(AnyType &args) {
     LogRegrIGDTransitionState<ArrayHandle<double> > stateLeft = args[0];
     LogRegrIGDTransitionState<ArrayHandle<double> > stateRight = args[1];
 
+    if(stateLeft.status == NULL_EMPTY || stateRight.status == NULL_EMPTY){
+        return 0.0;
+    }
+
     return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
 }
 
@@ -967,12 +1018,16 @@ AnyType
 internal_logregr_igd_result::run(AnyType &args) {
     LogRegrIGDTransitionState<ArrayHandle<double> > state = args[0];
 
+    if (state.status == NULL_EMPTY)
+        return Null();
+
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
     return stateToResult(*this, state.coef,
-                         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
-                         decomposition.conditionNo(), state.status);
+                         decomposition.pseudoInverse().diagonal(),
+                         state.logLikelihood, decomposition.conditionNo(),
+                         state.status, state.numRows);
 }
 
 /**
@@ -985,9 +1040,10 @@ AnyType stateToResult(
     const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
     const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-    double logLikelihood,
-    double conditionNo,
-    int status) {
+    const double &logLikelihood,
+    const double &conditionNo,
+    int status,
+    const uint64_t &numRows) {
 
     MutableNativeColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -1009,7 +1065,7 @@ AnyType stateToResult(
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
     tuple << inCoef << logLikelihood << stdErr << waldZStats << waldPValues
-          << oddsRatios << conditionNo << status;
+          << oddsRatios << sqrt(conditionNo) << status << numRows;
     return tuple;
 }
 
@@ -1202,8 +1258,18 @@ AnyType robuststateToResult(
 AnyType
 robust_logregr_step_transition::run(AnyType &args) {
     RobustLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<bool>() ? 1. : -1.;
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
     MappedColumnVector coef = args[3].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
@@ -1217,24 +1283,24 @@ robust_logregr_step_transition::run(AnyType &args) {
                 "larger than 65535.");
 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
-		state.coef = coef; //Copy this into the state for later
+        state.coef = coef; //Copy this into the state for later
     }
 
-	// Now do the transition step
+    // Now do the transition step
     state.numRows++;
-	double xc = dot(x, coef);
-   	ColumnVector Grad;
-   	Grad = sigma(-y * xc) * y * trans(x);
+    double xc = dot(x, coef);
+    ColumnVector Grad;
+    Grad = sigma(-y * xc) * y * trans(x);
 
-	Matrix GradGradTranspose;
-	GradGradTranspose = Grad*Grad.transpose();
-	state.meat += GradGradTranspose;
+    Matrix GradGradTranspose;
+    GradGradTranspose = Grad*Grad.transpose();
+    state.meat += GradGradTranspose;
 
-	// Note: sigma(-x) = 1 - sigma(x).
+    // Note: sigma(-x) = 1 - sigma(x).
     // a_i = sigma(x_i c) sigma(-x_i c)
     double a = sigma(xc) * sigma(-xc);
     triangularView<Lower>(state.X_transp_AX) += x * trans(x) * a;
-	return state;
+    return state;
 }
 
 
@@ -1490,10 +1556,18 @@ AnyType marginalstateToResult(
  */
 AnyType
 marginal_logregr_step_transition::run(AnyType &args) {
-
     MarginalLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
-    // double y = args[1].getAs<bool>() ? 1. : -1.;
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    if (args[2].isNull()) { return args[0]; }
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
     MappedColumnVector coef = args[3].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
@@ -1505,22 +1579,21 @@ marginal_logregr_step_transition::run(AnyType &args) {
             throw std::domain_error("Number of independent variables cannot be "
                 "larger than 65535.");
         state.initialize(*this, static_cast<uint16_t>(x.size()));
-		    state.coef = coef; //Copy this into the state for later
+            state.coef = coef; //Copy this into the state for later
     }
 
-	// Now do the transition step
-  state.numRows++;
-	double xc = dot(x, coef);
-	double G_xc = std::exp(xc)/ (1 + std::exp(xc));
-  double a = sigma(xc) * sigma(-xc);
+    // Now do the transition step
+    state.numRows++;
+    double xc = dot(x, coef);
+    double G_xc = std::exp(xc)/ (1 + std::exp(xc));
+    double a = sigma(xc) * sigma(-xc);
 
-  // TODO: Change the average code so it won't overflow
-  state.marginal_effects_per_observation += G_xc * (1 - G_xc);
-  state.X_bar += x;
-  state.X_transp_AX += x * trans(x) * a;
+    // TODO: Change the average code so it won't overflow
+    state.marginal_effects_per_observation += G_xc * (1 - G_xc);
+    state.X_bar += x;
+    state.X_transp_AX += x * trans(x) * a;
 
-	return state;
-
+    return state;
 }
 
 

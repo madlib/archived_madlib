@@ -1,11 +1,11 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file BackendAbstraction.hpp
+ * @file Backend.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_POSTGRES_BACKEND_ABSTRACTION_HPP
-#define MADLIB_POSTGRES_BACKEND_ABSTRACTION_HPP
+#ifndef MADLIB_POSTGRES_BACKEND_HPP
+#define MADLIB_POSTGRES_BACKEND_HPP
 
 namespace madlib {
 
@@ -15,6 +15,9 @@ namespace postgres {
 
 namespace {
 // No need to make these function accessible outside of the postgres namespace.
+
+MADLIB_WRAP_PG_FUNC(
+    bool, type_is_array, (Oid typid), (typid))
 
 MADLIB_WRAP_PG_FUNC(
     AclResult, pg_proc_aclcheck, (Oid proc_oid, Oid roleid, AclMode mode),
@@ -152,7 +155,7 @@ madlib_DatumGetArrayTypeP(Datum inDatum) {
     ArrayType* x = madlib_detoast_verlena_datum_if_necessary<ArrayType>(inDatum);
     if (ARR_HASNULL(x)) {
         // elog(ERROR, "The input array has NULL values!");
-        throw std::runtime_error(std::string("The input array has NULL values"));
+        throw ArrayWithNullException();
     }
     return x;
 }

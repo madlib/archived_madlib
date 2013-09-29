@@ -186,6 +186,7 @@ madlib ## _ ## _pgfunc _arglist { \
 
 #include "Allocator_proto.hpp"
 #include "ArrayHandle_proto.hpp"
+#include "ArrayWithNullException_proto.hpp"
 #include "AnyType_proto.hpp"
 #include "ByteString_proto.hpp"
 #include "NativeRandomNumberGenerator_proto.hpp"
@@ -220,6 +221,9 @@ using dbconnector::postgres::AnyType_cast;
 using dbconnector::postgres::defaultAllocator;
 using dbconnector::postgres::funcPtr;
 using dbconnector::postgres::Null;
+
+// Import MADlib exceptions into madlib namespace
+using dbconnector::postgres::ArrayWithNullException;
 
 namespace dbconnector {
 

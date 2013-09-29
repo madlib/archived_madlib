@@ -32,6 +32,10 @@ class GroupIterationController:
 
     *** such as table and column names ***.
 
+    This class assumes a transition state always has its status indicator
+    in the last element. 0 means in progress, 1 means completed, > 1 means
+    abnormal. Perhaps a C++ UDF should be added for extracting the status.
+
     The inter-state iteration table contains three columns:
     - <tt>_grouping_cols</tt> - List of columns that are provided as grouping
                                 arguments
@@ -52,7 +56,6 @@ class GroupIterationController:
         self.verbose = verbose
         self.inWith = False
         self.iteration = -1
-        self.dim = 0
         self.grouping_str = grouping_str
         self.kwargs = kwargs
         self.kwargs.update(
@@ -148,16 +151,7 @@ class GroupIterationController:
                            iteration=self.iteration,
                            **self.kwargs))
 
-        if self.dim == 0:
-            self.dim = plpy.execute(
-                """
-                select array_upper(_state, 1) as dim
-                from {rel_state}
-                where _iteration = {iteration}
-                """.format(iteration = self.iteration,
-                           **self.kwargs))[0]["dim"]
-
-        if resultObject.nrows == 0 or resultObject[0]["_expression"] is None:
+        if resultObject.nrows() == 0 or resultObject[0]["_expression"] is None:
             return None
         else:
             for each_elem in resultObject:
@@ -177,27 +171,26 @@ class GroupIterationController:
                 if each_elem['_expression']:
                     self.runSQL(
                         """
-                        UPDATE {rel_state} set _state[{dim}] = 1
+                        UPDATE {rel_state} set _state[array_upper(_state, 1)] = 1
                         WHERE
                             ARRAY[{grouping_str}] = {_group_val} and
-                            _state[{dim}] < 2 and
+                            _state[array_upper(_state, 1)] < 2 and
                             _iteration = {iteration}
                         """.format(
                             _group_val=array_str,
-                            dim=self.dim,
                             iteration=self.iteration,
                             **self.kwargs))
 
         # return True only if all group combinations have finished iterating
-        return self.runSQL(
+        rv = self.runSQL(
             """
-            select bool_and(_state[{dim}]::integer::boolean) as rst
+            select bool_and(_state[array_upper(_state, 1)]::integer::boolean) as rst
             from {rel_state} as _state_table
             where _state_table._iteration = {iteration}
             """.format(
                 iteration=self.iteration,
-                dim = self.dim,
                 **self.kwargs))[0]["rst"]
+        return rv
 
     def test(self, condition):
         """
@@ -262,11 +255,10 @@ class GroupIterationController:
                     (case when {iteration} = 1 then
                         True
                     else
-                        {rel_state}._state[{dim}] = 0
+                        {rel_state}._state[array_upper({rel_state}._state, 1)] = 0
                     end)
                 {groupby_str})
             """.format(
-                dim = self.dim,
                 groupby_str = groupby_str,
                 iteration = self.iteration,
                 newState = newState,

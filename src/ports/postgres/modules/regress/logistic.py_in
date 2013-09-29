@@ -15,7 +15,6 @@ from utilities.utilities import __unique_string
 from utilities.validate_args import table_exists
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
-from utilities.validate_args import scalar_col_has_no_null
 from utilities.utilities import _string_to_array
 
 # ========================================================================
@@ -41,6 +40,8 @@ def __compute_logregr(schema_madlib, rel_args, rel_state, rel_source,
     @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
                      reweighted least squares, 'cg': conjugate gradient or
                      'igd': incremental gradient descent
+    @param grouping_col String of comma delimited group-by columns
+    @param grouping_str string of comma delimited group-by columns (casted)
     @param kwargs We allow the caller to specify additional arguments (all of
            which will be ignored though). The purpose of this is to allow the
            caller to unpack a dictionary whose element set is a superset of
@@ -76,6 +77,8 @@ def __compute_logregr(schema_madlib, rel_args, rel_state, rel_source,
                     """
                     {iteration} >= _args.max_iter
                     or
+                    _state_current[array_upper(_state_current, 1)] = 3
+                    or
                     {schema_madlib}.__logregr_{optimizer}_step_distance(
                         _state_previous, _state_current) < _args.tolerance
                     """):
@@ -96,7 +99,7 @@ def logregr_train(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
     @param dep_col Name of dependent column in training data (of type BOOLEAN)
     @param ind_col Name of independent column in training data (of type
                    DOUBLE PRECISION[])
-    @param grouping_col List of column names on which to group the data
+    @param grouping_col String of comma delimited group-by columns
     @param max_iter The maximum number of iterations that are allowed.
     @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
                      reweighted least squares, 'cg': conjugate gradient or 'igd':
@@ -128,39 +131,33 @@ def __logregr_validate_args(schema_madlib, tbl_source, tbl_output, dep_col,
     """
     Validate the arguments
     """
-    if not tbl_source or tbl_source in ('null', '') or \
-            (not table_exists(tbl_source)):
+    if tbl_source is None or tbl_source.strip().lower() in ('null', ''):
+        plpy.error("Logregr error: Invalid data table name!")
+    if not table_exists(tbl_source):
         plpy.error("Logregr error: Data table does not exist!")
+    if table_is_empty(tbl_source):
+        plpy.error("Logregr error: Data table is empty!")
+
+    if tbl_output is None or tbl_output.strip().lower() in ('null', ''):
+        plpy.error("Logregr error: Invalid output table name!")
 
     if (table_exists(tbl_output)):
         plpy.error("Output table name already exists. Drop the table before calling the function.")
 
-    if table_is_empty(tbl_source):
-        plpy.error("Logregr error: Data table is empty!")
-
-    if tbl_output.lower() in ('null', ''):
-        plpy.error("Logregr error: Invalid output table name!")
+    if not dep_col or dep_col.strip().lower() in ('null', ''):
+        plpy.error("Logregr error: Invalid dependent column name!")
 
     # if not columns_exist_in_table(tbl_source, [dep_col]):
     #     plpy.error("Logregr error: Dependent column does not exist!")
 
-    if not dep_col or dep_col.lower() in ('null', ''):
-        plpy.error("Logregr error: Invalid dependent column name!")
-
-    if not scalar_col_has_no_null(tbl_source, dep_col):
-        plpy.error("Logregr error: Dependent variable has Null values! \
-                    Please filter out Null values before using this function!")
-
     if not ind_col or ind_col.lower() in ('null', ''):
         plpy.error("Logregr error: Invalid independent column name!")
 
-    if grouping_col and grouping_col.lower() in ('null', ''):
-        # grouping_col is optional but if provided should be valid column name
-        plpy.error("Logregr error: Invalid grouping columns name!")
-
-    if grouping_col:
+    if grouping_col is not None:
+        if grouping_col.strip().lower() == '':
+            plpy.error("Logregr error: Invalid grouping columns name!")
         if not columns_exist_in_table(tbl_source,
-                                _string_to_array(grouping_col), schema_madlib):
+            _string_to_array(grouping_col), schema_madlib):
             plpy.error("Logregr error: Grouping column does not exist!")
 
     if max_iter <= 0:
@@ -238,6 +235,8 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
 
     grouping_str1 = "" if grouping_col is None else grouping_col + ","
     grouping_str2 = "1 = 1" if grouping_col is None else grouping_col
+    using_str = "" if grouping_str1 == "" else "using (" + grouping_col + ")"
+    join_str = "," if grouping_str1 == "" else "join "
 
     plpy.execute(
         """
@@ -245,28 +244,40 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
         create table {tbl_output} as
             select
                 {grouping_str1}
-                (case when (result).status = 2 then NULL::double precision[]
-                        else (result).coef end) as coef,
-                (case when (result).status = 2 then NULL::double precision
-                        else (result).log_likelihood end) as log_likelihood,
-                (case when (result).status = 2 then NULL::double precision[]
-                        else (result).std_err end) as std_err,
-                (case when (result).status = 2 then NULL::double precision[]
-                        else (result).z_stats end) as z_stats,
-                (case when (result).status = 2 then NULL::double precision[]
-                        else (result).p_values end) as p_values,
-                (case when (result).status = 2 then NULL::double precision[]
-                        else (result).odds_ratios end) as odds_ratios,
-                (case when (result).status = 2 then NULL::double precision
-                        else (result).condition_no end) as condition_no,
+                (case when (result).status = 1 then (result).coef
+                    else NULL::double precision[] end) as coef,
+                (case when (result).status = 1 then (result).log_likelihood
+                    else NULL::double precision end) as log_likelihood,
+                (case when (result).status = 1 then (result).std_err
+                    else NULL::double precision[] end) as std_err,
+                (case when (result).status = 1 then (result).z_stats
+                    else NULL::double precision[] end) as z_stats,
+                (case when (result).status = 1 then (result).p_values
+                    else NULL::double precision[] end) as p_values,
+                (case when (result).status = 1 then (result).odds_ratios
+                    else NULL::double precision[] end) as odds_ratios,
+                (case when (result).status = 1 then (result).condition_no
+                    else NULL::double precision end) as condition_no,
+                (case when (result).status = 1 then (result).num_processed
+                    when result is NULL then 0
+                    else NULL::bigint end) as num_rows_processed,
+                (case when (result).status = 1 then num_rows - (result).num_processed
+                    when result is null then num_rows
+                    else NULL::bigint end) as num_missing_rows_skipped,
                 _iteration as num_iterations
             from
-                (select
-                    {grouping_str1}
-                    {schema_madlib}.{fnName}(_state) as result,
-                    _iteration
+            (
+                select
+                    _iteration, {grouping_str1} result, num_rows
                 from
-                    {tbl_logregr_state}) t
+                (
+                    (select
+                        {grouping_str1}
+                        {schema_madlib}.{fnName}(_state) as result,
+                        _iteration
+                    from
+                        {tbl_logregr_state}
+                    ) t
                     join
                     (
                     select
@@ -275,11 +286,24 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                     from {tbl_logregr_state}
                     group by {grouping_str2}
                     ) s
-                using ({grouping_str1} _iteration)
+                    using ({grouping_str1} _iteration)
+                ) q1
+                {join_str}
+                (
+                    select
+                        {grouping_str1}
+                        count(*) num_rows
+                    from {tbl_source}
+                    group by {grouping_str2}
+                ) q2
+                {using_str}
+            ) q3
         """.format(grouping_str1 = grouping_str1,
                    grouping_str2 = grouping_str2,
                    fnName = args[args["optimizer"]],
                    iteration_run = iteration_run,
+                   using_str=using_str,
+                   join_str=join_str,
                    **args))
 
     failed_groups = plpy.execute(

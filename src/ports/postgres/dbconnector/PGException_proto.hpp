@@ -33,4 +33,4 @@ public:
 
 } // namespace madlib
 
-#endif // defined(MADLIB_POSTGRES_FUNCTIONHANDLE_PROTO_HPP)
+#endif // defined(MADLIB_POSTGRES_PGEXCEPTION_PROTO_HPP)

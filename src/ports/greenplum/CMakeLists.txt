@@ -38,6 +38,7 @@ list(APPEND MAD_DBAL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/AnyType_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayHandle_proto.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ArrayWithNullException_proto.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/Backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ByteString_impl.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../postgres/dbconnector/ByteString_proto.hpp"
