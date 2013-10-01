@@ -509,7 +509,7 @@ AnyType zph_transition::run(AnyType &args){
 }
 // -------------------------------------------------------------------------
 
-AnyType zph_merge::run(AnyType &args){
+AnyType zph_merge::run(AnyType &/* args */){
     // TODO: Find how to resolve if there are two events with same time of death
     throw std::logic_error("All elements in the data should have a "
                            "unique sort index.");

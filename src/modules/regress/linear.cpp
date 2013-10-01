@@ -30,12 +30,21 @@ typedef RobustLinearRegressionAccumulator<MutableRootContainer> MutableRobustLin
 typedef HeteroLinearRegressionAccumulator<RootContainer> HeteroLinRegrState;
 typedef HeteroLinearRegressionAccumulator<MutableRootContainer>	
                                                     MutableHeteroLinRegrState;
-
+// -----------------------------------------------------------------------
+// Linear regression
+// -----------------------------------------------------------------------
 AnyType
 linregr_transition::run(AnyType& args) {
     MutableLinRegrState state = args[0].getAs<MutableByteString>();
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<double>();
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
     state << MutableLinRegrState::tuple_type(x, y);
     return state.storage();
@@ -69,19 +78,28 @@ linregr_final::run(AnyType& args) {
           << (state.numRows > state.widthOfX
               ? result.pValues
               : Null())
-          << sqrt(result.conditionNo);
+          << sqrt(result.conditionNo)
+          << (int64_t)state.numRows;
     return tuple;
 }
+// -----------------------------------------------------------------------
 
 
-/*
-	 Robust linear regression variance estimate using the Huber-White estimator
-*/
+// -----------------------------------------------------------------------
+// Robust linear regression variance estimate using the Huber-White estimator
+// -----------------------------------------------------------------------
 AnyType
 robust_linregr_transition::run(AnyType& args) {
     MutableRobustLinRegrState state = args[0].getAs<MutableByteString>();
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<double>();
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
     MappedColumnVector coef = args[3].getAs<MappedColumnVector>();
 
     state << RobustLinRegrState::tuple_type(x, y, coef);
@@ -126,22 +144,29 @@ robust_linregr_final::run(AnyType& args) {
               : Null());
     return tuple;
 }
+// -----------------------------------------------------------------------
 
 
-/*
-  Breusch–Pagan test for heteroskedasticity.
-  This is the first step of the test and does not include correction for the
-  standard errors if the data is heteroskedastic.
-*/
-
+// -----------------------------------------------------------------------
+// Breusch–Pagan test for heteroskedasticity.
+// This is the first step of the test and does not include correction for the
+// standard errors if the data is heteroskedastic.
+// -----------------------------------------------------------------------
 AnyType
 hetero_linregr_transition::run(AnyType& args) {
     MutableHeteroLinRegrState state = args[0].getAs<MutableByteString>();
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<double>();
-    MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
     MappedColumnVector coef = args[3].getAs<MappedColumnVector>();
 
-   state << MutableHeteroLinRegrState::hetero_tuple_type(x, y, coef);
+    state << MutableHeteroLinRegrState::hetero_tuple_type(x, y, coef);
     return state.storage();
 }
 
@@ -179,6 +204,7 @@ hetero_linregr_final::run(AnyType& args) {
 
     return tuple;
 }
+// -----------------------------------------------------------------------
 
 } // namespace regress
 
