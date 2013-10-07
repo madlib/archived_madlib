@@ -1,30 +1,31 @@
 import re
-import sys
 import yaml
 from collections import defaultdict
 import os
 
-"""
-@brief Wrapper function for ____run_sql_query
-"""
+
 def run_sql(sql, portid, con_args):
+    """
+    @brief Wrapper function for ____run_sql_query
+    """
     from madpack import ____run_sql_query
     return ____run_sql_query(sql, True, portid, con_args)
 
-"""
-@brief Get the signature of a UDF/UDA for comparison
-"""
+
 def get_signature_for_compare(schema, proname, rettype, argument):
-    signature = '%s %s.%s(%s)' % (
-        rettype.strip(), schema.strip(), proname.strip(), argument.strip())
-    signature = re.sub('\s+', ' ', signature)
+    """
+    @brief Get the signature of a UDF/UDA for comparison
+    """
+    signature = '{0} {1}.{2}({3})'.format(rettype.strip(), schema.strip(),
+                                          proname.strip(), argument.strip())
     signature = re.sub('"', '', signature)
     return signature.lower()
 
-"""
-@brief Base class for handling the upgrade
-"""
+
 class UpgradeBase:
+    """
+    @brief Base class for handling the upgrade
+    """
     def __init__(self, schema, portid, con_args):
         self._schema = schema.lower()
         self._portid = portid
@@ -46,21 +47,20 @@ class UpgradeBase:
             SELECT oid FROM pg_namespace WHERE nspname = '{schema}'
             """.format(schema=self._schema))[0]['oid']
 
-
-    """
-    @brief Get the function name, return type, and arguments given an oid
-    @note The function can only handle the case that proallargtypes is null,
-    refer to pg_catalog.pg_get_function_identity_argument and
-    pg_catalog.pg_get_function_result in PG for a complete implementation, which are
-    not supported by GP
-    """
     def _get_function_info(self, oid):
+        """
+        @brief Get the function name, return type, and arguments given an oid
+        @note The function can only handle the case that proallargtypes is null,
+        refer to pg_catalog.pg_get_function_identity_argument and
+        pg_catalog.pg_get_function_result in PG for a complete implementation, which are
+        not supported by GP
+        """
         row = self._run_sql("""
             SELECT
                 max(proname) AS proname,
                 max(rettype) AS rettype,
                 array_to_string(
-                    array_agg(argname || ' ' || argtype order by i), ', ') AS argument
+                    array_agg(argname || ' ' || argtype order by i), ',') AS argument
             FROM
             (
                 SELECT
@@ -81,14 +81,16 @@ class UpgradeBase:
                     oid = {oid}
             ) AS f
             """.format(oid=oid))
-        return {"proname": row[0]['proname'], 'rettype': row[0]['rettype'],
-            'argument': row[0]['argument']}
+        return {"proname": row[0]['proname'],
+                "rettype": row[0]['rettype'],
+                "argument": row[0]['argument']}
 
-"""
-@brief This class reads changes from the configuration file and handles
-the dropping of objects
-"""
+
 class ChangeHandler(UpgradeBase):
+    """
+    @brief This class reads changes from the configuration file and handles
+    the dropping of objects
+    """
     def __init__(self, schema, portid, con_args, maddir, mad_dbrev):
         UpgradeBase.__init__(self, schema, portid, con_args)
         self._opr_ind_svec = None
@@ -102,11 +104,10 @@ class ChangeHandler(UpgradeBase):
         self._udc = None
         self._load()
 
-
-    """
-    @brief Get the UDOps which are independent of svec in the current version
-    """
     def _get_opr_indepent_svec(self):
+        """
+        @brief Get the User Defined Operators independent of svec in the current version
+        """
         rows = self._run_sql("""
             SELECT
                 oprname,
@@ -141,16 +142,19 @@ class ChangeHandler(UpgradeBase):
         make all function names lower case to ensure ease of comparison.
 
         Args:
-            @param config_dict is a dictionary with key as object name
-                        (eg. function name) and value as the details for
-                        the object. The details for the object are assumed to
+            @param config_iterable is an iterable of dictionaries, each with
+                        key = object name (eg. function name) and value = details
+                        for the object. The details for the object are assumed to
                         be in a dictionary with following keys:
                             rettype: Return type
                             argument: List of arguments
 
         Returns:
             A dictionary that lists all specific objects (functions, aggregates, etc)
-            with object name as key and another dictionary with objects details
+            with object name as key and a list as value, where the list
+            contains all the items present in
+
+            another dictionary with objects details
             as the value.
         """
         _return_obj = defaultdict(list)
@@ -162,70 +166,61 @@ class ChangeHandler(UpgradeBase):
                     if obj_details['argument'] is not None:
                         argument = obj_details['argument'].lower().replace(
                                                 'schema_madlib', self._schema)
+                        all_arguments = [each_arg.strip()
+                                         for each_arg in argument.split(',')]
                     _return_obj[obj_name].append(
-                                    {'rettype': rettype, 'argument': argument})
+                                    {'rettype': rettype,
+                                     'argument': ','.join(all_arguments)})
         return _return_obj
 
-    """
-    @brief Load the configuration file
-    """
     def _load(self):
+        """
+        @brief Load the configuration file
+        """
         # _mad_dbrev = 1.0
         if float(self._mad_dbrev) < 1.1:
-            filename = os.path.join(self._maddir, 'madpack' , 'changelist_1.0_1.2.yaml')
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.0_1.3.yaml')
         # _mad_dbrev = 1.1
+        elif float(self._mad_dbrev) < 1.2:
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.1_1.3.yaml')
         else:
-            filename = os.path.join(self._maddir, 'madpack' , 'changelist.yaml')
-            
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist.yaml')
+
         config = yaml.load(open(filename))
 
-        if config['new module'] is not None:
-            self._newmodule = config['new module']
-        else:
-            self._newmodule = {}
-
-        if config['udt'] is not None:
-            self._udt = config['udt']
-        else:
-            self._udt = {}
-
-        if config['udc'] is not None:
-            self._udc = config['udc']
-        else:
-            self._udc = {}
-
+        self._newmodule = config['new module'] if config['new module'] else {}
+        self._udt = config['udt'] if config['udt'] else {}
+        self._udc = config['udc'] if config['udc'] else {}
         self._udf = self._load_config_param(config['udf'])
         self._uda = self._load_config_param(config['uda'])
 
-    """
-    @brief Get the list of new modules
-    """
-    def get_newmodule(self):
+    @property
+    def newmodule(self):
         return self._newmodule
 
-    """
-    @brief Get the list of changed UDTs
-    """
-    def get_udt(self):
+    @property
+    def udt(self):
         return self._udt
 
-    """
-    @brief Get the list of changed UDAs
-    """
-    def get_uda(self):
+    @property
+    def uda(self):
         return self._uda
 
-    """
-    @brief Get the list of changed UDCs
-    @note This is a UDC in utilities module
-    """
-    def get_udc(self):
+    @property
+    def udf(self):
+        return self._udf
+
+    @property
+    def udc(self):
         return self._udc
 
-    """
-    @brief Get the list of UDF signatures for comparison
-    """
     def get_udf_signature(self):
+        """
+        @brief Get the list of UDF signatures for comparison
+        """
         res = defaultdict(bool)
         for udf in self._udf:
             for item in self._udf[udf]:
@@ -234,10 +229,10 @@ class ChangeHandler(UpgradeBase):
                 res[signature] = True
         return res
 
-    """
-    @brief Get the list of UDA signatures for comparison
-    """
     def get_uda_signature(self):
+        """
+        @brief Get the list of UDA signatures for comparison
+        """
         res = defaultdict(bool)
         for uda in self._uda:
             for item in self._uda[uda]:
@@ -246,18 +241,17 @@ class ChangeHandler(UpgradeBase):
                 res[signature] = True
         return res
 
-    """
-    @brief Drop all types that were updated/removed in the new version
-    @note It is dangerous to drop a UDT becuase there might be many
-    dependencies
-    """
     def drop_changed_udt(self):
+        """
+        @brief Drop all types that were updated/removed in the new version
+        @note It is dangerous to drop a UDT becuase there might be many
+        dependencies
+        """
         # Note that we use CASCADE option here. This might be dangerous because
         # it may drop some undetected dependent objects (eg. UDCast, UDOp, etc)
         for udt in self._udt:
-            self._run_sql("""
-                DROP TYPE IF EXISTS {schema}.{udt} CASCADE
-                """.format(schema=self._schema, udt=udt))
+            self._run_sql("DROP TYPE IF EXISTS {0}.{1} CASCADE".
+                          format(self._schema, udt))
             if udt == 'svec':
                 # Drop operators defined in the svec module which do not
                 # depend on svec. We will run the whole svec.sql without
@@ -273,47 +267,45 @@ class ChangeHandler(UpgradeBase):
                             nsp_right=self._opr_ind_svec[opr]['nsp_right'],
                             typ_right=self._opr_ind_svec[opr]['typ_right']
                         ))
-    """
-    @brief Drop all functions (UDF) that were removed in new version
-    """
+
     def drop_changed_udf(self):
+        """
+        @brief Drop all functions (UDF) that were removed in new version
+        """
         for udf in self._udf:
             for item in self._udf[udf]:
-                self._run_sql("""
-                    DROP FUNCTION IF EXISTS {schema}.{udf}({arg})
-                    """.format(schema=self._schema,
-                        udf=udf,
-                        arg=item['argument']))
+                self._run_sql("DROP FUNCTION IF EXISTS {schema}.{udf}({arg})".
+                              format(schema=self._schema,
+                                     udf=udf,
+                                     arg=item['argument']))
 
-    """
-    @brief Drop all aggregates (UDA) that were removed in new version
-    """
     def drop_changed_uda(self):
+        """
+        @brief Drop all aggregates (UDA) that were removed in new version
+        """
         for uda in self._uda:
             for item in self._uda[uda]:
-                self._run_sql("""
-                    DROP AGGREGATE IF EXISTS {schema}.{uda}({arg})
-                    """.format(schema=self._schema,
-                        uda=uda,
-                        arg=item['argument']))
+                self._run_sql("DROP AGGREGATE IF EXISTS {schema}.{uda}({arg})".
+                              format(schema=self._schema,
+                                     uda=uda,
+                                     arg=item['argument']))
 
-    """
-    @brief Drop all casts (UDC) that were updated/removed in new version
-    @note We have special treatment for UDCs defined in the svec module
-    """
     def drop_changed_udc(self):
+        """
+        @brief Drop all casts (UDC) that were updated/removed in new version
+        @note We have special treatment for UDCs defined in the svec module
+        """
         for udc in self._udc:
-            self._run_sql("""
-                DROP CAST IF EXISTS ({sourcetype} AS {targettype})
-                """.format(
-                    sourcetype=self._udc[udc]['sourcetype'],
-                    targettype=self._udc[udc]['targettype']))
+            self._run_sql("DROP CAST IF EXISTS ({sourcetype} AS {targettype})".
+                          format(sourcetype=self._udc[udc]['sourcetype'],
+                                 targettype=self._udc[udc]['targettype']))
 
-"""
-@brief This class detects the direct/recursive view dependencies on MADLib
-UDFs/UDAs defined in the current version
-"""
+
 class ViewDependency(UpgradeBase):
+    """
+    @brief This class detects the direct/recursive view dependencies on MADLib
+    UDFs/UDAs defined in the current version
+    """
     def __init__(self, schema, portid, con_args):
         UpgradeBase.__init__(self, schema, portid, con_args)
         self._view2proc = None
@@ -358,7 +350,7 @@ class ViewDependency(UpgradeBase):
 
         self._view2proc = defaultdict(list)
         for row in rows:
-            key= (row['schema'], row['view'])
+            key = (row['schema'], row['view'])
             self._view2proc[key].append(
                 (row['procname'], row['procoid'],
                     True if row['proisagg'] == 't' else False))
@@ -443,7 +435,7 @@ class ViewDependency(UpgradeBase):
     """
     @brief  Build the dependency graph (depender-to-dependee adjacency list)
     """
-    def _build_dependency_graph(self, hasProcDependency = False):
+    def _build_dependency_graph(self, hasProcDependency=False):
         der2dee = self._view2view.copy()
         for view in self._view2proc:
             if view not in self._view2view:
@@ -480,7 +472,7 @@ class ViewDependency(UpgradeBase):
                 del graph[view]
             for depender in graph:
                 graph[depender] = [r for r in graph[depender]
-                    if r not in remove_list]
+                                   if r not in remove_list]
             if len(remove_list) == 0:
                 break
         return ordered_views
@@ -496,53 +488,43 @@ class ViewDependency(UpgradeBase):
     """
     @brief Get the depended UDF/UDA signatures for comparison
     """
-    def get_depended_func_signature(self, isagg = True):
+    def get_depended_func_signature(self, aggregate=True):
         res = {}
         for procs in self._view2proc.values():
             for proc in procs:
-                if proc[2] != isagg:
-                    continue
-                if (self._schema, proc) not in res:
+                if proc[2] is aggregate and (self._schema, proc) not in res:
                     funcinfo = self._get_function_info(proc[1])
-                    signature = get_signature_for_compare(
-                        self._schema, proc[0], funcinfo['rettype'], funcinfo['argument'])
+                    signature = get_signature_for_compare(self._schema, proc[0],
+                                                          funcinfo['rettype'],
+                                                          funcinfo['argument'])
                     res[signature] = True
         return res
 
-    """
-    @brief Get dependent UDAs
-    """
+    def get_proc_w_dependency(self, aggregate=True):
+        res = []
+        for procs in self._view2proc.values():
+            for proc in procs:
+                if proc[2] is aggregate and (self._schema, proc) not in res:
+                    res.append((self._schema, proc))
+        res.sort()
+        return res
+
     def get_depended_uda(self):
-        res = []
-        for procs in self._view2proc.values():
-            for proc in procs:
-                if proc[2] == False:
-                    # proc is not an aggregate -> skip
-                    continue
-                if (self._schema, proc) not in res:
-                    res.append((self._schema, proc))
-        res.sort()
-        return res
+        """
+        @brief Get dependent UDAs
+        """
+        self.get_proc_w_dependency(aggregate=True)
 
-    """
-    @brief Get dependent UDFs
-    """
     def get_depended_udf(self):
-        res = []
-        for procs in self._view2proc.values():
-            for proc in procs:
-                if proc[2] == True:
-                    # proc is an aggregate -> skip
-                    continue
-                if (self._schema, proc) not in res:
-                    res.append((self._schema, proc))
-        res.sort()
-        return res
+        """
+        @brief Get dependent UDFs
+        """
+        self.get_proc_w_dependency(aggregate=False)
 
-    """
-    @brief Save and drop the dependent views
-    """
     def save_and_drop(self):
+        """
+        @brief Save and drop the dependent views
+        """
         self._view2def = {}
         ordered_views = self.get_drop_order_views()
         # Save views
@@ -564,10 +546,10 @@ class ViewDependency(UpgradeBase):
                 DROP VIEW IF EXISTS {schema}.{view}
                 """.format(schema=view[0], view=view[1]))
 
-    """
-    @brief Restore the dependent views
-    """
     def restore(self):
+        """
+        @brief Restore the dependent views
+        """
         ordered_views = self.get_create_order_views()
         for view in ordered_views:
             row = self._view2def[view]
@@ -584,10 +566,10 @@ class ViewDependency(UpgradeBase):
                 RESET ROLE
                 """.format(
                     schema=schema, view=view,
-                    definition=definition, owner=owner))
+                    definition=definition,
+                    owner=owner))
 
     def _node_to_str(self, node):
-        res = ''
         if len(node) == 2:
             res = '%s.%s' % (node[0], node[1])
         else:
@@ -596,38 +578,36 @@ class ViewDependency(UpgradeBase):
         return res
 
     def _nodes_to_str(self, nodes):
-        res = []
-        for node in nodes:
-            res.append(self._node_to_str(node))
-        return res
+        return [self._node_to_str(i) for i in nodes]
 
-    """
-    @brief Get the dependency graph string for print
-    """
     def get_dependency_graph_str(self):
+        """
+        @brief Get the dependency graph string for print
+        """
         graph = self._build_dependency_graph(True)
-        nodes = graph.keys()
+        nodes = list(graph.keys())
         nodes.sort()
-        res = '\t\tDependency Graph (Depender-Dependee Adjacency List):\n'
+        res = ["\tDependency Graph (Depender-Dependee Adjacency List):"]
         for node in nodes:
-            res += "\t\t%s -> %s\n" % (
-                self._node_to_str(node), self._nodes_to_str(graph[node]))
-        return res[:-1]
+            res.append("{0} -> {1}".format(self._node_to_str(node),
+                                           self._nodes_to_str(graph[node])))
+        return "\n\t\t\t\t".join(res)
 
-"""
-@brief This class detects the table dependencies on MADLib UDTs defined in the
-current version
-"""
+
 class TableDependency(UpgradeBase):
+    """
+    @brief This class detects the table dependencies on MADLib UDTs defined in the
+    current version
+    """
     def __init__(self, schema, portid, con_args):
         UpgradeBase.__init__(self, schema, portid, con_args)
         self._table2type = None
         self._detect_table_dependency()
 
-    """
-    @brief Detect the table dependencies on MADLib UDTs
-    """
     def _detect_table_dependency(self):
+        """
+        @brief Detect the table dependencies on MADLib UDTs
+        """
         rows = self._run_sql("""
             SELECT
                 nsp.nspname AS schema,
@@ -651,20 +631,20 @@ class TableDependency(UpgradeBase):
 
         self._table2type = defaultdict(list)
         for row in rows:
-            key= (row['schema'], row['relation'])
+            key = (row['schema'], row['relation'])
             self._table2type[key].append(
                 (row['column'], row['type']))
 
-    """
-    @brief Check dependencies
-    """
     def has_dependency(self):
+        """
+        @brief Check dependencies
+        """
         return len(self._table2type) > 0
 
-    """
-    @brief Get the list of depended UDTs
-    """
     def get_depended_udt(self):
+        """
+        @brief Get the list of depended UDTs
+        """
         res = defaultdict(bool)
         for table in self._table2type:
             for (col, typ) in self._table2type[table]:
@@ -672,34 +652,38 @@ class TableDependency(UpgradeBase):
                     res[typ] = True
         return res
 
-    """
-    @brief Get the dependencies in string for print
-    """
     def get_dependency_str(self):
-        res = '\t\tTable Dependency (schema.table.column -> type):\n'
+        """
+        @brief Get the dependencies in string for print
+        """
+        res = ['\tTable Dependency (schema.table.column -> MADlib type):']
         for table in self._table2type:
             for (col, udt) in self._table2type[table]:
-                res += "\t\t%s.%s.%s -> %s\n" % (table[0], table[1], col, udt)
-        return res[:-1]
+                res.append("{0}.{1}.{2} -> {3}".format(table[0], table[1], col,
+                                                       udt))
+        return "\n\t\t\t\t".join(res)
 
-"""
-@brief This class removes sql statements from a sql script which should not be
-executed during the upgrade
-"""
+
 class ScriptCleaner(UpgradeBase):
+    """
+    @brief This class removes sql statements from a sql script which should not be
+    executed during the upgrade
+    """
     def __init__(self, schema, portid, con_args, change_handler):
         UpgradeBase.__init__(self, schema, portid, con_args)
+        self._ch = change_handler
         self._sql = None
         self._existing_uda = None
         self._existing_udt = None
-        self._get_existing_uda()
+        self._aggregate_patterns = self._get_all_aggregate_patterns()
+        # print("Number of existing UDAs = " + str(len(self._existing_uda)))
+        # print("Number of UDAs to not create = " + str(len(self._aggregate_patterns)))
         self._get_existing_udt()
-        self._ch = change_handler
 
-    """
-    @breif Get the existing UDAs in the current version
-    """
     def _get_existing_uda(self):
+        """
+        @brief Get the existing UDAs in the current version
+        """
         rows = self._run_sql("""
             SELECT
                 max(proname) AS proname,
@@ -730,19 +714,47 @@ class ScriptCleaner(UpgradeBase):
             GROUP BY
                 procoid
             """.format(schema=self._schema))
-        self._existing_uda = {}
+        self._existing_uda = defaultdict(list)
         for row in rows:
             # Consider about the overloaded aggregates
-            if row['proname'] not in self._existing_uda:
-                self._existing_uda[row['proname']] = []
-            self._existing_uda[row['proname']].append({
-                'rettype': ['rettype'],
-                'argument': row['argument']})
+            self._existing_uda[row['proname']].append(
+                                    {'rettype': row['rettype'],
+                                     'argument': row['argument']})
 
-    """
-    @brief Get the existing UDTs in the current version
-    """
+    def _get_all_aggregate_patterns(self):
+        """
+        Creates a list of string patterns that represent all possible
+        'CREATE AGGREGATE' statements except ones that are being
+        replaced/introduced as part of this upgrade.
+
+        """
+        self._get_existing_uda()
+        aggregate_patterns = []
+        for each_uda, uda_details in self._existing_uda.iteritems():
+            for each_item in uda_details:
+                if each_uda in self._ch.uda:
+                    if each_item in self._ch.uda[each_uda]:
+                        continue
+                p_arg_str = ''
+                argument = each_item['argument']
+                args = argument.split(',')
+                for arg in args:
+                    arg = self._rewrite_type_in(arg.strip())
+                    if p_arg_str == '':
+                        p_arg_str += '%s\s*' % arg
+                    else:
+                        p_arg_str += ',\s*%s\s*' % arg
+                p_str = "CREATE\s+(ORDERED\s)*\s*AGGREGATE" \
+                        "\s+%s\.(%s)\s*\(\s*%s\)(.*?);" % (self._schema.upper(),
+                                                           each_uda,
+                                                           p_arg_str)
+                aggregate_patterns.append(p_str)
+        return aggregate_patterns
+
     def _get_existing_udt(self):
+        """
+        @brief Get the existing UDTs in the current version
+        """
         rows = self._run_sql("""
             SELECT
                 typname
@@ -753,21 +765,19 @@ class ScriptCleaner(UpgradeBase):
                 t.typnamespace = nsp.oid AND
                 nsp.nspname = '{schema}'
             """.format(schema=self._schema))
-        self._existing_udt = []
-        for row in rows:
-            self._existing_udt.append(row['typname'])
+        self._existing_udt = [row['typname'] for row in rows]
 
-    """
-    @note The changer_handler is needed for deciding which sql statements to
-    remove
-    """
     def get_change_handler(self):
+        """
+        @note The changer_handler is needed for deciding which sql statements to
+        remove
+        """
         return self._ch
 
-    """
-    @brief Remove comments in the sql script
-    """
     def _clean_comment(self):
+        """
+        @brief Remove comments in the sql script
+        """
         pattern = re.compile(r"""(/\*(.|[\r\n])*?\*/)|(--(.*|[\r\n]))""")
         res = ''
         lines = re.split(r'[\r\n]+', self._sql)
@@ -784,20 +794,20 @@ class ScriptCleaner(UpgradeBase):
     """
     def _clean_type(self):
         # remove 'drop type'
-        pattern = re.compile('DROP(\s+)TYPE(.*?);', re.DOTALL | re.IGNORECASE);
+        pattern = re.compile('DROP(\s+)TYPE(.*?);', re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
 
         # remove 'create type'
         udt_str = ''
         for udt in self._existing_udt:
-            if udt in self._ch.get_udt():
+            if udt in self._ch.udt:
                 continue
             if udt_str == '':
                 udt_str += udt
             else:
                 udt_str += '|' + udt
         p_str = 'CREATE(\s+)TYPE(\s+)%s\.(%s)(.*?);' % (self._schema.upper(), udt_str)
-        pattern = re.compile(p_str, re.DOTALL | re.IGNORECASE);
+        pattern = re.compile(p_str, re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
 
     """
@@ -805,22 +815,25 @@ class ScriptCleaner(UpgradeBase):
     """
     def _clean_cast(self):
         # remove 'drop cast'
-        pattern = re.compile('DROP(\s+)CAST(.*?);', re.DOTALL | re.IGNORECASE);
+        pattern = re.compile('DROP(\s+)CAST(.*?);', re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
 
         # remove 'create cast'
         udc_str = ''
-        for udc in self._ch.get_udc():
+        for udc in self._ch.udc:
             if udc_str == '':
                 udc_str += '%s\s+AS\s+%s' % (
-                    self._ch.get_udc()[udc]['sourcetype'], self._ch.get_udc()[udc]['targettype'])
+                    self._ch.udc[udc]['sourcetype'],
+                    self._ch.udc[udc]['targettype'])
             else:
                 udc_str += '|' + '%s\s+AS\s+%s' % (
-                    self._ch.get_udc()[udc]['sourcetype'], self._ch.get_udc()[udc]['targettype'])
+                    self._ch.udc[udc]['sourcetype'],
+                    self._ch.udc[udc]['targettype'])
 
         pattern = re.compile('CREATE\s+CAST(.*?);', re.DOTALL | re.IGNORECASE)
         if udc_str != '':
-            pattern = re.compile('CREATE\s+CAST\s*\(\s*(?!%s)(.*?);' % udc_str , re.DOTALL | re.IGNORECASE)
+            pattern = re.compile('CREATE\s+CAST\s*\(\s*(?!%s)(.*?);' %
+                                 udc_str, re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
 
     """
@@ -828,11 +841,11 @@ class ScriptCleaner(UpgradeBase):
     """
     def _clean_operator(self):
         # remove 'drop operator'
-        pattern = re.compile('DROP(\s+)OPERATOR(.*?);', re.DOTALL | re.IGNORECASE);
+        pattern = re.compile('DROP(\s+)OPERATOR(.*?);', re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
 
         # remove 'create operator'
-        pattern = re.compile(r"""CREATE(\s+)OPERATOR(.*?);""", re.DOTALL | re.IGNORECASE);
+        pattern = re.compile(r"""CREATE(\s+)OPERATOR(.*?);""", re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
 
     """
@@ -840,64 +853,45 @@ class ScriptCleaner(UpgradeBase):
     """
     def _rewrite_type_in(self, arg):
         type_mapper = {
-            'smallint':'(int2|smallint)',
-            'integer':'(int|int4|integer)',
-            'bigint':'(int8|bigint)',
-            'double precision':'(float8|double precision)',
-            'real':'(float4|real)',
-            'character varying':'(varchar|character varying)'
+            'smallint': '(int2|smallint)',
+            'integer': '(int|int4|integer)',
+            'bigint': '(int8|bigint)',
+            'double precision': '(float8|double precision)',
+            'real': '(float4|real)',
+            'character varying': '(varchar|character varying)'
         }
         for typ in type_mapper:
             arg = arg.replace(typ, type_mapper[typ])
         return arg.replace('[', '\[').replace(']', '\]')
 
-    """
-    @brief Remove "drop/create aggregate" statements in the sql script
-    """
     def _clean_aggregate(self):
-        # remove 'drop aggregate'
-        pattern = re.compile('DROP(\s+)AGGREGATE(.*?);', re.DOTALL | re.IGNORECASE);
-        self._sql = re.sub(pattern, '', self._sql)
+        # remove all drop aggregate statements
+        self._sql = re.sub(re.compile('DROP(\s+)AGGREGATE(.*?);',
+                                      re.DOTALL | re.IGNORECASE),
+                           '', self._sql)
+        # remove all create aggregate statements except ones that should
+        #  be created as part of upgrade
+        for each_pattern in self._aggregate_patterns:
+            regex_pat = re.compile(each_pattern, re.DOTALL | re.IGNORECASE)
+            self._sql = re.sub(regex_pat, '', self._sql)
 
-        # remove 'create aggregate'
-        uda_str = ''
-        for uda in self._existing_uda:
-            for item in self._existing_uda[uda]:
-                if uda in self._ch.get_uda():
-                    items = self._ch.get_uda()[uda]
-                    if item in items:
-                        continue
-                p_arg_str = ''
-                argument = item['argument']
-                args = argument.split(',')
-                for arg in args:
-                    arg = self._rewrite_type_in(arg.strip())
-                    if p_arg_str == '':
-                        p_arg_str += '%s\s*' % arg
-                    else:
-                        p_arg_str += ',\s*%s\s*' % arg
-                p_str = 'CREATE\s+(ORDERED\s)*\s*AGGREGATE\s+%s\.(%s)\s*\(\s*%s\)(.*?);' % (
-                    self._schema.upper(), uda, p_arg_str)
-                pattern = re.compile(p_str, re.DOTALL | re.IGNORECASE);
-                self._sql = re.sub(pattern, '', self._sql)
-
-    """
-    @brief Remove "drop function" statements and rewrite "create function"
-    statements in the sql script
-    @note We don't drop any function
-    """
     def _clean_function(self):
+        """
+        @brief Remove "drop function" statements and rewrite "create function"
+        statements in the sql script
+        @note We don't drop any function
+        """
         # remove 'drop function'
-        pattern = re.compile(r"""DROP(\s+)FUNCTION(.*?);""", re.DOTALL | re.IGNORECASE);
+        pattern = re.compile(r"""DROP(\s+)FUNCTION(.*?);""", re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
         # replace 'create function' with 'create or replace function'
-        pattern = re.compile(r"""CREATE(\s+)FUNCTION""", re.DOTALL | re.IGNORECASE);
+        pattern = re.compile(r"""CREATE(\s+)FUNCTION""", re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, 'CREATE OR REPLACE FUNCTION', self._sql)
 
-    """
-    @brief Entry function for cleaning the sql script
-    """
     def cleanup(self, sql):
+        """
+        @brief Entry function for cleaning the sql script
+        """
         self._sql = sql
         self._clean_comment()
         self._clean_type()

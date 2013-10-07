@@ -94,7 +94,7 @@ def __error(msg, stop):
 # @param msg info message
 # @param verbose prints only if True
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __info(msg, verbose):
+def __info(msg, verbose=True):
     # Print to stdout
     if verbose:
         print this + ' : INFO : ' + msg
@@ -227,8 +227,8 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
         __info(sub_module, False)
 
         # Special treatment for new module and 'svec' module
-        if (sub_module not in sc.get_change_handler().get_newmodule()) and \
-            not (sub_module == 'svec' and 'svec' in sc.get_change_handler().get_udt()):
+        if (sub_module not in sc.get_change_handler().newmodule) and \
+            not (sub_module == 'svec' and 'svec' in sc.get_change_handler().udt):
             sql = open(tmpfile).read()
             sql = sc.cleanup(sql)
             open(tmpfile, 'w').write(sql)
@@ -373,7 +373,8 @@ def __plpy_check(py_min_ver):
     __info("Testing PL/Python environment...", True)
 
     # Check PL/Python existence
-    rv = __run_sql_query("SELECT count(*) AS CNT FROM pg_language WHERE lanname = 'plpythonu'", True)
+    rv = __run_sql_query("SELECT count(*) AS CNT FROM pg_language "
+                         "WHERE lanname = 'plpythonu'", True)
     if int(rv[0]['cnt']) > 0:
         __info("> PL/Python already installed", verbose)
     else:
@@ -524,51 +525,80 @@ def __db_upgrade(schema, dbrev):
 
     abort = False
     if td.has_dependency():
+        __info("*"*50, True)
         __info("\tFollowing user tables are dependent on updated MADlib types:", True)
         __info(td.get_dependency_str(), True)
+        __info("*"*50, True)
         cd_udt = [udt for udt in td.get_depended_udt()
-                      if udt in ch.get_udt()]
+                      if udt in ch.udt]
         if len(cd_udt) > 0:
             __error("""
-                User has objects dependent on updated MADlib types ({0})!
-                These objects need to be dropped before starting upgrade again. Aborting upgrade ...
-                """.format('\n'.join(cd_udt)), False)
+                User has objects dependent on following updated MADlib types!
+                        {0}
+                These objects need to be dropped before upgrading.
+                """.format('\n\t\t\t'.join(cd_udt)), False)
+
+            # TODO: Remove this after v1.3
+            # we add special handling for 'linregr_result'
+            if 'linregr_result' in cd_udt:
+                __info("""Dependency on 'linregr_result' could be due to objects
+                        created from the output of the aggregate 'linregr'.
+                        Please refer to the Linear Regression documentation
+                        <http://doc.madlib.net/latest/group__grp__linreg.html#warning>
+                        for the recommended solution.
+                        """, False)
             abort = True
 
     if vd.has_dependency():
+        __info("*"*50, True)
         __info("\tFollowing user views are dependent on updated MADlib objects:", True)
         __info(vd.get_dependency_graph_str(), True)
+        __info("*"*50, True)
 
         c_udf = ch.get_udf_signature()
         d_udf = vd.get_depended_func_signature(False)
         cd_udf = [udf for udf in d_udf if udf in c_udf]
         if len(cd_udf) > 0:
             __error("""
-                User has objects dependent on updated MADlib functions ({0})!
-                These objects will not fail to work with the new functions and
-                need to be dropped before starting upgrade again. Aborting upgrade ...
-                """.format('\n'.join(cd_udf)), False)
+                User has objects dependent on following updated MADlib functions!
+                    {0}
+                These objects will fail to work with the updated functions and
+                need to be dropped before starting upgrade again.
+                """.format('\n\t\t\t\t\t'.join(cd_udf)), False)
             abort = True
+
         c_uda = ch.get_uda_signature()
         d_uda = vd.get_depended_func_signature(True)
         cd_uda = [uda for uda in d_uda if uda in c_uda]
         if len(cd_uda) > 0:
             __error("""
-                User has objects dependent on updated MADlib functions ({0})!
-                These objects will not fail to work with the new aggregates and
-                need to be dropped before starting upgrade again. Aborting upgrade ...
-                """.format('\n'.join(cd_uda)), False)
+                User has objects dependent on following updated MADlib aggregates!
+                    {0}
+                These objects will fail to work with the new aggregates and
+                need to be dropped before starting upgrade again.
+                """.format('\n\t\t\t\t\t'.join(cd_uda)), False)
             abort = True
 
     if abort:
         __error('------- Upgrade aborted. -------', True)
     else:
-        __info("No explicit dependency problem found, continuing to upgrade ...", True)
+        __info("No dependency problem found, continuing to upgrade ...", True)
         if vd.has_dependency():
             vd.save_and_drop()
 
     __info("\tReading existing UDAs/UDTs...", False)
-    sc = ScriptCleaner(schema, portid, con_args, ch)
+    try:
+        sc = ScriptCleaner(schema, portid, con_args, ch)
+    except Exception as e:
+        __info(str(e), True)
+        raise e
+    __info("Script Cleaner initialized ...", False)
+
+
+    # __info("\tChanged functions: " + str(ch.udf), True)
+    # __info("\tChanged aggregates: " + str(ch.uda), True)
+    # __info("\tChanged types: " + str(ch.udt), True)
+    # __info("\tChanged casts: " + str(ch.udc), True)
 
     ch.drop_changed_uda()
     ch.drop_changed_udt()
@@ -1077,8 +1107,8 @@ def main(argv):
 
         # FIXME: Change this to get the previous version from a config file
         if float(dbrev) < 1.0:
-            __info("""The version gap is too large, only release-by-release
-                    incremental upgrade is supported.""", True)
+            __info("""The version gap is too large, upgrade is supported only for
+                   packages greater than or equal to v1.0.""", True)
             return
 
         # 3) Run upgrade
@@ -1086,11 +1116,11 @@ def main(argv):
             __plpy_check(py_min_ver)
             __db_upgrade(schema, dbrev)
         except Exception as e:
-            __error("MADlib upgrade failed.", True)
             #Uncomment the following lines when debugging
-            #print "Exception: " + str(e)
-            #print sys.exc_info()
-            #traceback.print_tb(sys.exc_info()[2])
+            print "Exception: " + str(e)
+            print sys.exc_info()
+            traceback.print_tb(sys.exc_info()[2])
+            __error("MADlib upgrade failed.", True)
 
     ###
     # COMMAND: install-check

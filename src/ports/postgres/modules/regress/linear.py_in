@@ -9,7 +9,7 @@ from utilities.utilities import __unique_string
 from utilities.validate_args import table_exists
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
-from utilities.utilities import _assert 
+from utilities.utilities import _assert
 
 # ----------------------------------------------------------------------
 def linregr_train(schema_madlib, source_table, out_table,
@@ -20,17 +20,17 @@ def linregr_train(schema_madlib, source_table, out_table,
         """select setting from pg_settings where
         name='client_min_messages'""")[0]['setting']
     plpy.execute("set client_min_messages to error")
-    
+
     _validate_args(schema_madlib, source_table, out_table,
         dependent_varname, independent_varname, grouping_cols,
         heteroskedasticity_option)
 
     group_str = '' if grouping_cols is None else 'GROUP BY %s' % grouping_cols
     group_str_sel = '' if grouping_cols is None else grouping_cols + ','
-    join_str = ',' if grouping_cols is None else 'JOIN' 
+    join_str = ',' if grouping_cols is None else 'JOIN'
     using_str = '' if grouping_cols is None else 'USING (%s)' % grouping_cols
 
-    # Run linear regression 
+    # Run linear regression
     temp_lin_rst = __unique_string()
     plpy.execute(
         """
@@ -46,12 +46,12 @@ def linregr_train(schema_madlib, source_table, out_table,
             {source_table}
         {group_str}
         """.format(schema_madlib=schema_madlib,
-            temp_lin_rst=temp_lin_rst,
-            group_str=group_str,
-            group_str_sel=group_str_sel,
-            dependent_varname=dependent_varname,
-            independent_varname=independent_varname,
-            source_table=source_table))
+                   temp_lin_rst=temp_lin_rst,
+                   group_str=group_str,
+                   group_str_sel=group_str_sel,
+                   dependent_varname=dependent_varname,
+                   independent_varname=independent_varname,
+                   source_table=source_table))
 
     # Run heteroskedasticity test
     if heteroskedasticity_option:
@@ -65,18 +65,18 @@ def linregr_train(schema_madlib, source_table, out_table,
                 {schema_madlib}.heteroskedasticity_test_linregr(
                     {dependent_varname},
                     {independent_varname},
-                    (lin_rst).coef) AS hsk_rst 
+                    (lin_rst).coef) AS hsk_rst
             FROM
                 {source_table} {join_str} {temp_lin_rst} {using_str}
             {group_str}
             """.format(schema_madlib=schema_madlib,
-                temp_hsk_rst=temp_hsk_rst,
-                dependent_varname=dependent_varname,
-                independent_varname=independent_varname,
-                group_str_sel=group_str_sel, group_str=group_str,
-                join_str=join_str, using_str=using_str,
-                source_table=source_table, temp_lin_rst=temp_lin_rst))
-    
+                       temp_hsk_rst=temp_hsk_rst,
+                       dependent_varname=dependent_varname,
+                       independent_varname=independent_varname,
+                       group_str_sel=group_str_sel, group_str=group_str,
+                       join_str=join_str, using_str=using_str,
+                       source_table=source_table, temp_lin_rst=temp_lin_rst))
+
     # Output the results
     join_str = ''
     using_str = ''
@@ -105,7 +105,7 @@ def linregr_train(schema_madlib, source_table, out_table,
             CASE WHEN (lin.lin_rst).num_processed IS NULL
                 THEN 0
                 ELSE (lin.lin_rst).num_processed
-            END AS num_rows_processed, 
+            END AS num_rows_processed,
             CASE WHEN (lin.lin_rst).num_processed IS NULL
                 THEN lin.num_rows
                 ELSE lin.num_rows - (lin.lin_rst).num_processed
@@ -127,14 +127,14 @@ def _validate_args(schema_madlib, source_table, out_table, dependent_varname,
     @brief validate the arguments
     """
     _assert(source_table is not None and
-         source_table.strip().lower() not in ('null', ''), 
+         source_table.strip().lower() not in ('null', ''),
             "Linregr error: Invalid data table name!")
     _assert(table_exists(source_table),
         "Linregr error: Data table does not exist!")
     _assert(not table_is_empty(source_table),
         "Linregr error: Data table is empty!")
 
-    _assert(out_table is not None and 
+    _assert(out_table is not None and
         out_table.strip().lower() not in ('null', ''),
             "Linregr error: Invalid output table name!")
     _assert(not table_exists(out_table),
@@ -159,3 +159,110 @@ def _validate_args(schema_madlib, source_table, out_table, dependent_varname,
         heteroskedasticity_option in (True, False),
         "Linregr error: Invalid heteroskedasticity_option")
 
+# ------------------------------------------------------------------------------
+# -- Online help function ------------------------------------------------------
+# ------------------------------------------------------------------------------
+
+def linregr_help_message(schema_madlib, message, **kwargs):
+    """ Help message for Linear Regression
+
+    @brief
+    Args:
+        @param schema_madlib string, Name of the schema madlib
+        @param message string, Help message indicator
+
+    Returns:
+        String. Contain the help message string
+    """
+    if not message:
+        help_string = """
+        -----------------------------------------------------------------------
+                                    SUMMARY
+        -----------------------------------------------------------------------
+        Ordinary Least Squares Regression, also called Linear Regression, is a
+        statistical model used to fit linear models.
+
+        It models a linear relationship of a scalar dependent variable \f$ y \f$ to one
+        or more explanatory independent variables \f$ x \f$ to build a
+        model of coefficients.
+
+        For more details on function usage:
+            SELECT {schema_madlib}.linregr_train('usage')
+
+        For an example on using the function:
+            SELECT {schema_madlib}.linregr_train('example')
+        """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+        -----------------------------------------------------------------------
+                                        USAGE
+        -----------------------------------------------------------------------
+         SELECT {schema_madlib}.linregr_train(
+            source_table,                -- name of input  table
+            out_table,                   -- name of output table
+            dependent_varname,           -- name of dependent variable
+            independent_varname,         -- name of independent variable
+            grouping_cols,               -- names of columns to group-by
+            heteroskedasticity_option,   -- perform heteroskedasticity test?
+         );
+
+        -----------------------------------------------------------------------
+                                        OUTUPT
+        -----------------------------------------------------------------------
+        The output table ('out_table' above) has the following columns
+             <...>,                               -- Grouping columns used during training
+             'coef'          DOUBLE PRECISION[],  -- Vector of coefficients
+             'r2'            DOUBLE PRECISION,    -- R-squared coefficient
+             'std_err'       DOUBLE PRECISION[],  -- Standard errors of coefficients
+             't_stats'       DOUBLE PRECISION[],  -- t-stats of the coefficients
+             'p_values'      DOUBLE PRECISION[],  -- p-values of the coefficients
+             'condition_no'  INTEGER,             -- The condition number of the covariance matrix.
+             'bp_stats'      DOUBLE PRECISION,    -- The Breush-Pagan statistic of heteroskedacity.
+                                                      (if heteroskedasticity_option=TRUE)
+             'bp_p_value'    DOUBLE PRECISION     -- The Breush-Pagan calculated p-value.
+                                                      (if heteroskedasticity_option=TRUE)
+        """
+    elif message in ['example', 'examples']:
+        help_string = """
+        CREATE TABLE houses (id INT, tax INT,
+                             bedroom INT, bath FLOAT,
+                             price INT, size INT, lot INT);
+        COPY houses FROM STDIN WITH DELIMITER '|';
+          1 |  590 |       2 |    1 |  50000 |  770 | 22100
+          2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
+          3 |   20 |       3 |    1 |  22500 | 1060 |  3500
+          4 |  870 |       2 |    2 |  90000 | 1300 | 17500
+          5 | 1320 |       3 |    2 | 133000 | 1500 | 30000
+          6 | 1350 |       2 |    1 |  90500 |  820 | 25700
+          7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000
+          8 |  680 |       2 |    1 | 142500 | 1170 | 22000
+          9 | 1840 |       3 |    2 | 160000 | 1500 | 19000
+         10 | 3680 |       4 |    2 | 240000 | 2790 | 20000
+         11 | 1660 |       3 |    1 |  87000 | 1030 | 17500
+         12 | 1620 |       3 |    2 | 118600 | 1250 | 20000
+         13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
+         14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
+         15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
+        \.
+
+        --  Train a regression model. First, single regression for all data.
+        SELECT {schema_madlib}.linregr_train( 'houses',
+                         'houses_linregr',
+                         'price',
+                         'ARRAY[1, tax, bath, size]'
+                       );
+        -- Generate three output models, one for each value of "bedroom".
+        SELECT {schema_madlib}.linregr_train('houses',
+                                    'houses_linregr_bedroom',
+                                    'price',
+                                    'ARRAY[1, tax, bath, size]',
+                                    'bedroom'
+                                    );
+        -- Examine the resulting models.
+        SELECT * FROM houses_linregr;
+        SELECT * FROM houses_linregr_bedroom;
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.linregr_train()"
+
+    return help_string.format(schema_madlib=schema_madlib)

@@ -35,9 +35,10 @@ model of coefficients.
 
 @anchor train
 @par Training Function
+
 The linear regression training function has the following syntax.
 <pre class="syntax">
-linregr_train( source_table, 
+linregr_train( source_table,
                out_table,
                dependent_varname,
                independent_varname,
@@ -45,13 +46,14 @@ linregr_train( source_table,
                heteroskedasticity_option
              )
 </pre>
+
 \b Arguments
 <DL class="arglist">
 <DT>source_table</DT>
 <DD>TEXT. The name of the table containing the training data.</DD>
 
 <DT>out_table</DT>
-<DD>TEXT. Name of the generated table containing the output model. 
+<DD>TEXT. Name of the generated table containing the output model.
 
   The output table contains the following columns.
   <table class="output">
@@ -116,6 +118,19 @@ linregr_train( source_table,
 <DD>BOOLEAN, default: FALSE. When TRUE, the heteroskedasticity of the model is also calculated and returned with the results.</DD>
 </DL>
 
+@anchor warning
+@warning The aggregate 'linregr' has been deprecated in favor of the function
+'linregr_train'. If the aggregate 'linregr' is used to output the results of
+linear regression to a table, it is recommended to follow the general pattern
+shown below (replace text within '<...>' with the appropriate variable names).
+<pre class="syntax">
+CREATE TABLE \<output table\> AS
+SELECT (r).*
+FROM (
+    SELECT linregr(\<dependent variable\>, \<independent variable\>) as r
+    FROM \<source table\>
+    ) q;
+</pre>
 
 
 @anchor predict
@@ -157,24 +172,24 @@ COPY houses FROM STDIN WITH DELIMITER '|';
  15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
 \\.
 </pre>
--#  Train a regression model. First, a single regression for all the data. 
-<pre class="example"> 
+-#  Train a regression model. First, a single regression for all the data.
+<pre class="example">
 SELECT madlib.linregr_train( 'houses',
-                             'houses_linregr', 
-                             'price', 
+                             'houses_linregr',
+                             'price',
                              'ARRAY[1, tax, bath, size]'
                            );
-</pre> 
+</pre>
 -# Generate three output models, one for each value of "bedroom".
 <pre class="example">
 SELECT madlib.linregr_train( 'houses',
-                             'houses_linregr_bedroom', 
-                             'price', 
+                             'houses_linregr_bedroom',
+                             'price',
                              'ARRAY[1, tax, bath, size]',
                              'bedroom'
                            );
 </pre>
--# Examine the resulting models. 
+-# Examine the resulting models.
 <pre class="example">
 -- Set extended display on for easier reading of output
 \\x ON
@@ -210,7 +225,7 @@ coef         | {0.0112536020318378,41.4132554771633,0.0225072040636757,31.397549
 r2           | 1
 std_err      | {0,0,0,0}
 t_stats      | {Infinity,Infinity,Infinity,Infinity}
-p_values     | 
+p_values     |
 condition_no | Infinity
 -[ RECORD 3 ]+--------------------------------------------------------------------------
 bedroom      | 3
@@ -237,7 +252,7 @@ SELECT houses.*,
        madlib.linregr_predict( ARRAY[1,tax,bath,size],
                                m.coef
                              ) as predict,
-        price - 
+        price -
           madlib.linregr_predict( ARRAY[1,tax,bath,size],
                                   m.coef
                                 ) as residual
@@ -374,7 +389,7 @@ http://en.wikipedia.org/wiki/Heteroscedasticity-consistent_standard_errors
 
 
 @anchor related
-@par Related Topics 
+@par Related Topics
 
 @ref grp_robust
 
@@ -390,6 +405,70 @@ File linear.sql_in, source file for the SQL functions
     documenting the implementation in C++
 @endinternal
 */
+
+---------------------------------------------------------------------------
+-- User facing functions
+---------------------------------------------------------------------------
+/**
+  * @brief Linear regression training function with grouping support.
+ **/
+CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
+    source_table                VARCHAR,    -- name of input  table
+    out_table                   VARCHAR,    -- name of output table
+    dependent_varname           VARCHAR,    -- name of dependent variable
+    independent_varname         VARCHAR,    -- name of independent variable
+    grouping_cols               VARCHAR,    -- names of columns to group-by
+    heteroskedasticity_option   BOOLEAN     -- do heteroskedasticity test or not
+) RETURNS VOID AS $$
+PythonFunction(regress, linear, linregr_train)
+$$ LANGUAGE plpythonu;
+
+CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
+    source_table                VARCHAR,    -- name of input  table
+    out_table                   VARCHAR,    -- name of output table
+    dependent_varname           VARCHAR,    -- name of dependent variable
+    independent_varname         VARCHAR,    -- name of independent variable
+    grouping_cols               VARCHAR     -- names of columns to group-by
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.linregr_train($1, $2, $3, $4, $5, FALSE);
+$$ LANGUAGE sql;
+
+CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
+    source_table                VARCHAR,    -- name of input  table
+    out_table                   VARCHAR,    -- name of output table
+    dependent_varname           VARCHAR,    -- name of dependent variable
+    independent_varname         VARCHAR     -- name of independent variable
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.linregr_train($1, $2, $3, $4, NULL, FALSE);
+$$ LANGUAGE sql;
+---------------------------------------------------------------------------
+
+-----------------------------------------------------------------------
+-- Online help function
+-----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_train()
+RETURNS VARCHAR AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.linregr_train('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linregr_train(
+     message VARCHAR     -- usage string
+)
+RETURNS VARCHAR AS $$
+PythonFunction(regress, linear, linregr_help_message)
+$$ LANGUAGE plpythonu VOLATILE;
+
+----------------------------------------------------------------------
+
+
+-- Deprecated functions --------------------------------------------------------
 
 ---------------------------------------------------------------------------
 -- Result Types
@@ -556,42 +635,3 @@ CREATE AGGREGATE MADLIB_SCHEMA.heteroskedasticity_test_linregr(
     INITCOND=''
 );
 ---------------------------------------------------------------------------
-
-
----------------------------------------------------------------------------
--- User facing functions
----------------------------------------------------------------------------
-/**
-  * @brief Linear regression training function with grouping support.
- **/
-CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
-    source_table                VARCHAR,    -- name of input  table
-    out_table                   VARCHAR,    -- name of output table
-    dependent_varname           VARCHAR,    -- name of dependent variable
-    independent_varname         VARCHAR,    -- name of independent variable
-    grouping_cols               VARCHAR,    -- names of columns to group-by
-    heteroskedasticity_option   BOOLEAN     -- do heteroskedasticity test or not
-) RETURNS VOID AS $$
-PythonFunction(regress, linear, linregr_train)
-$$ LANGUAGE plpythonu;
-
-CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
-    source_table                VARCHAR,    -- name of input  table
-    out_table                   VARCHAR,    -- name of output table
-    dependent_varname           VARCHAR,    -- name of dependent variable
-    independent_varname         VARCHAR,    -- name of independent variable
-    grouping_cols               VARCHAR     -- names of columns to group-by
-) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.linregr_train($1, $2, $3, $4, $5, FALSE);
-$$ LANGUAGE sql;
-
-CREATE FUNCTION MADLIB_SCHEMA.linregr_train(
-    source_table                VARCHAR,    -- name of input  table
-    out_table                   VARCHAR,    -- name of output table
-    dependent_varname           VARCHAR,    -- name of dependent variable
-    independent_varname         VARCHAR     -- name of independent variable
-) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.linregr_train($1, $2, $3, $4, NULL, FALSE);
-$$ LANGUAGE sql;
----------------------------------------------------------------------------
-
