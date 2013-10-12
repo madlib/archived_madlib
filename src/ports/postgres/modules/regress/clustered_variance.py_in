@@ -51,24 +51,37 @@ def __generate_clustered_sql (**kwargs):
                 count(numRows)::integer, (sum(numRows))::integer) as f
             from (
                 select (g).*, coef, numRows from (
-                    select""".format(**kwargs)
+                    select """.format(**kwargs)
 
-    if(kwargs['regr_type'] == 'mlog'):   #We need to know the reference category and number of categories if doing the mlog regression
-       sqlPart2="""                {schema_madlib}.__clustered_err_{regr_type}_step({depvar},
-            {indvar}, {coef_str}, (select count(distinct {depvar}) from {tbl_data})::INTEGER, ({ref_category})::INTEGER ) as g,""".format(**kwargs)
+    if kwargs['regr_type'] == 'mlog':
+    #We need to know the reference category and number of categories if doing the mlog regression
+       sqlPart2="""{schema_madlib}.__clustered_err_{regr_type}_step(
+                                ({depvar})::INTEGER,
+                                ({indvar})::DOUBLE PRECISION[],
+                                ({coef_str})::DOUBLE PRECISION[],
+                                (select count(distinct {depvar})
+                                 from {tbl_data})::INTEGER,
+                                ({ref_category})::INTEGER) as g,""".format(**kwargs)
+    elif kwargs['regr_type'] == 'log':
+       sqlPart2="""{schema_madlib}.__clustered_err_{regr_type}_step(
+                        ({depvar})::BOOLEAN,
+                        ({indvar})::DOUBLE PRECISION[],
+                        ({coef_str})::DOUBLE PRECISION[]) as g,""".format(**kwargs)
     else:
-       sqlPart2="""                {schema_madlib}.__clustered_err_{regr_type}_step({depvar},
-            {indvar}, {coef_str}) as g,""".format(**kwargs)
+        sqlPart2="""{schema_madlib}.__clustered_err_{regr_type}_step(
+                {depvar},
+                ({indvar})::DOUBLE PRECISION[],
+                ({coef_str})::DOUBLE PRECISION[]) as g,""".format(**kwargs)
 
-    sqlPart3="""          {coef_str} as coef,
-                        count({depvar}) as numRows
-                    from (
-                        select u.coef as {coef_str}, v.*
-                        from
-                            {fitres} u, {tbl_data} v
+    sqlPart3="""{coef_str} as coef,
+                count({depvar}) as numRows
+                FROM (
+                      SELECT u.coef as {coef_str}, v.*
+                      FROM
+                        {fitres} u, {tbl_data} v
                     ) s
                     {cluster_grouping_str}) t) p) q
-    """.format(**kwargs)
+            """.format(**kwargs)
     return sqlPart1 + sqlPart2 + sqlPart3
 
 
@@ -122,7 +135,7 @@ def validate_args_clustered_variance (schema_madlib, tbl_data,
     """
     Validate the parameters
     """
-    if not tbl_data or tbl_data in ('null', '') or not table_exists(tbl_data): 
+    if not tbl_data or tbl_data in ('null', '') or not table_exists(tbl_data):
         plpy.error("Clustered variance estimation error: Data table does not exist!")
 
     if table_is_empty(tbl_data):
