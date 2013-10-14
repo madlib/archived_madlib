@@ -26,7 +26,6 @@ from utilities.utilities import __mad_version
 version_wrapper = __mad_version()
 madvec = version_wrapper.select_vecfunc()
 
-# -- Help message -----------------------------------------------------------
 
 def coxph_help_message(schema_madlib, message, **kwargs):
     """ Help message for Cox Proportional Hazards
@@ -147,12 +146,12 @@ def coxph_help_message(schema_madlib, message, **kwargs):
         help_string = "No such option. Use {schema_madlib}.coxph_train()"
 
     return help_string.format(schema_madlib=schema_madlib)
-
 # ---------------------------------------------------------------------------
+
 
 def coxph(schema_madlib, source_table, output_table, dependent_varname,
           independent_varname, right_censoring_status, strata,
-          optimizer_params):
+          optimizer_params, *args, **kwargs):
     """ Cox proportional hazards regression training function
     @brief Cox proportional hazards regression, with stratification
            support.
@@ -189,12 +188,18 @@ def coxph(schema_madlib, source_table, output_table, dependent_varname,
                                  """)[0]['setting']
     plpy.execute("set client_min_messages to error")
 
-    _validate_params(schema_madlib, source_table, output_table,
-                     dependent_varname, independent_varname,
-                     right_censoring_status, strata)
+    kwargs = {'schema_madlib': schema_madlib,
+              'source_table': source_table,
+              'output_table': output_table,
+              'dependent_varname': dependent_varname,
+              'independent_varname': independent_varname,
+              'right_censoring_status': right_censoring_status,
+              'strata': strata
+              }
+    _validate_params(**kwargs)
 
-    (max_iter, optimizer,
-     tolerance) = _extract_params(schema_madlib, optimizer_params)
+    max_iter, optimizer, tolerance = _extract_params(schema_madlib,
+                                                     optimizer_params)
 
     if strata is None:
         theIteration, madlib_iterative_alg = compute_coxph(
@@ -207,46 +212,81 @@ def coxph(schema_madlib, source_table, output_table, dependent_varname,
                 dependent_varname, right_censoring_status, strata,
                 optimizer, max_iter, tolerance)
 
-    plpy.execute(
-        """
-        CREATE TABLE {output_table} as
-            select (result).*, {theIteration} as num_iterations
-            FROM (
-                SELECT
-                    {schema_madlib}.internal_coxph_result(
-                        _madlib_state) as result
-                FROM {madlib_iterative_alg}
-                WHERE _madlib_iteration = {theIteration}
-            ) subq
-        """.format(schema_madlib=schema_madlib, theIteration=theIteration,
-                   madlib_iterative_alg=madlib_iterative_alg,
-                   output_table=output_table))
+    total_rows = plpy.execute(""" SELECT count(*) as cnt FROM {0}""".format(
+                              source_table))[0]["cnt"]
 
-    right_censoring_status = 'NULL' if right_censoring_status is None \
-        else "'" + right_censoring_status + "'"
-    strata = 'NULL' if strata is None else "'" + strata + "'"
+    # plpy.info("Creating output table")
+    # we have to put num_processed in output_table first since result can only
+    # be extracted via SQL. Fetching it in Python fails since fetching two-dim
+    # array (in this case 'hessian') is not supported.
+    plpy.execute(
+                """ CREATE TABLE {output_table} AS
+                    SELECT (result).*,
+                           ({total_rows} - (result).num_processed)
+                                    as num_missing_rows_skipped,
+                           {theIteration} AS num_iterations
+                    FROM (
+                        SELECT
+                            {schema_madlib}.internal_coxph_result(_madlib_state)
+                                AS result
+                        FROM {madlib_iterative_alg}
+                        WHERE _madlib_iteration = {theIteration}
+                    ) subq
+                """.format(schema_madlib=schema_madlib,
+                           output_table=output_table,
+                           theIteration=theIteration,
+                           madlib_iterative_alg=madlib_iterative_alg,
+                           total_rows=total_rows))
+
+    # plpy.info("Fetching result")
+    result = plpy.execute("""SELECT num_processed, num_missing_rows_skipped
+                             FROM {output_table}
+                          """.format(output_table=output_table))[0]
+
+    if not result["num_processed"]:
+        ## when no rows have been processed by the aggregate, then a NULL
+        ## result is returned. We need to capture that to ensure correct value
+        ## for num_processed
+        result["num_processed"] = 0
+        result["num_missing_rows_skipped"] = total_rows
+
+    # plpy.info("Removing rows processed column out of output table since we "
+    #           "place it in summary table")
+    plpy.execute("""ALTER TABLE {output_table}
+                        DROP num_processed,
+                        DROP num_missing_rows_skipped
+                 """.format(output_table=output_table))
+
+    if not kwargs['right_censoring_status']:
+        kwargs['right_censoring_status'] = 'NULL'
+    else:
+        kwargs['right_censoring_status'] = "'" + kwargs['right_censoring_status'] + "'"
+    kwargs['strata'] = "'" + kwargs['strata'] + "'" if kwargs['strata'] else 'NULL'
+
+    # plpy.info("Creating summary table")
     plpy.execute(
         """
-        create table {output_table}_summary as select
-        '{source_table}'::varchar               as source_table,
-        '{dependent_varname}'::varchar          as dependent_variable,
-        '{independent_varname}'::varchar        as independent_variable,
-        {right_censoring_status}::varchar       as right_censoring_status,
-        {strata}::varchar                       as strata
-        """.format(output_table=output_table, source_table=source_table,
-                   dependent_varname=dependent_varname,
-                   independent_varname=independent_varname,
-                   right_censoring_status=right_censoring_status,
-                   strata=strata))
+        CREATE TABLE {output_table}_summary AS
+            SELECT
+              '{source_table}'::VARCHAR            as source_table,
+              '{dependent_varname}'::VARCHAR       as dependent_variable,
+              '{independent_varname}'::VARCHAR     as independent_variable,
+              {right_censoring_status}::VARCHAR    as right_censoring_status,
+              {strata}::VARCHAR                    as strata,
+              {num_processed}::INTEGER             as num_processed,
+              {num_missing_rows_skipped}::INTEGER  as num_missing_rows_skipped
+        """.format(num_processed=result["num_processed"],
+                   num_missing_rows_skipped=result["num_missing_rows_skipped"],
+                   **kwargs))
 
     plpy.execute("set client_min_messages to " + old_msg_level)
     return None
-
 # ----------------------------------------------------------------------
+
 
 def _validate_params(schema_madlib, source_table, output_table,
                      dependent_varname, independent_varname,
-                     right_censoring_status, strata):
+                     right_censoring_status, strata, *args, **kwargs):
     """ Validate the input parameters for coxph
 
     Args:
@@ -284,8 +324,8 @@ def _validate_params(schema_madlib, source_table, output_table,
                 "ARIMA error: {1} columns do not exist in {0}!"
                 .format(source_table, strata_cols))
     return None
-
 # ----------------------------------------------------------------------
+
 
 def _extract_params(schema_madlib, optimizer_params):
     """ Extract optimizer control parameter or set the default values
@@ -353,8 +393,8 @@ def _extract_params(schema_madlib, optimizer_params):
 
     return (name_value['max_iter'], name_value['optimizer'],
             name_value['tolerance'])
-
 # ----------------------------------------------------------------------
+
 
 def __check_args(schema_madlib, tbl_source, col_ind_var, col_dep_var, col_status):
     _assert(tbl_source is not None,
@@ -388,13 +428,13 @@ def __check_args(schema_madlib, tbl_source, col_ind_var, col_dep_var, col_status
                 outstr_array.append(each_col)
         col_ind_var_new = 'array[%s]' % (','.join(outstr_array))
     return col_ind_var_new
-
 # ----------------------------------------------------------------------
+
 
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
                       terminateExpr, resultExpr, maxNumIterations,
                       cyclesPerIteration=1, updateExprOuter='',
-                      updateExprInner='', strata=''):
+                      updateExprInner='', strata='', *args, **kwargs):
     """
     Driver for an iterative algorithm
 
@@ -511,23 +551,25 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
                                 iteration=iteration,
                                 madlib_iterative_alg=madlib_iterative_alg)
                          )[0]['should_terminate'] or
-            (iteration > cyclesPerIteration and
-            (iteration >= cyclesPerIteration * maxNumIterations or
-            plpy.execute(terminateSQL.format(
-                iteration=iteration,
-                cyclesPerIteration=cyclesPerIteration,
-                oldState="(older._madlib_state)",
-                newState="(newer._madlib_state)"))[0]['should_terminate']))):
+                (iteration > cyclesPerIteration and
+                    (iteration >= cyclesPerIteration * maxNumIterations or
+                        plpy.execute(terminateSQL.format(
+                                iteration=iteration,
+                                cyclesPerIteration=cyclesPerIteration,
+                                oldState="(older._madlib_state)",
+                                newState="(newer._madlib_state)")
+                                )[0]['should_terminate']))):
             break
 
     # Note: We do not drop the temporary table
     return (iteration, madlib_iterative_alg)
-
 # ----------------------------------------------------------------------
+
 
 def compute_coxph(schema_madlib, source, indepColumn,
                   depColumn, status, optimizer,
-                  maxNumIterations, precision, **kwargs):
+                  maxNumIterations, precision,
+                  *args, **kwargs):
     """
     Compute cox survival regression coefficients
 
@@ -587,12 +629,13 @@ def compute_coxph(schema_madlib, source, indepColumn,
             {schema_madlib}.internal_coxph_result({{state}})
             """.format(schema_madlib=schema_madlib),
         maxNumIterations=maxNumIterations)
-
 # ----------------------------------------------------------------------
+
 
 def compute_coxph_strata(schema_madlib, source, indepColumn,
                          depColumn, status, strata, optimizer,
-                         maxNumIterations, precision, **kwargs):
+                         maxNumIterations, precision,
+                         *args, **kwargs):
     """
     Compute cox survival regression coefficients
 
@@ -622,9 +665,9 @@ def compute_coxph_strata(schema_madlib, source, indepColumn,
     @return array with coefficients in case of convergence, otherwise None
     """
     if strata is None:
-        return compute_coxph (schema_madlib, source, indepColumn,
-                   depColumn, status, optimizer,
-                   maxNumIterations, precision)
+        return compute_coxph(schema_madlib, source, indepColumn,
+                             depColumn, status, optimizer,
+                             maxNumIterations, precision)
 
     indepColumn = __check_args(schema_madlib, source, indepColumn, depColumn, status)
     if maxNumIterations < 1:
@@ -639,13 +682,11 @@ def compute_coxph_strata(schema_madlib, source, indepColumn,
             ) < {precision}
             """.format(schema_madlib=schema_madlib, precision=precision)
 
-    resultExpr = """
-            {schema_madlib}.internal_coxph_result({{state}})
-            """.format(schema_madlib = schema_madlib)
+    resultExpr = "{schema_madlib}.internal_coxph_result({{state}})".format(
+                    schema_madlib=schema_madlib)
 
-    updateExprOuter = """
-            {schema_madlib}.coxph_strata_step_outer(inner_state)
-            """.format(schema_madlib=schema_madlib)
+    updateExprOuter = """{schema_madlib}.coxph_strata_step_outer(inner_state)
+                      """.format(schema_madlib=schema_madlib)
 
     updateExprInner = """
             {schema_madlib}.coxph_strata_step_inner(
@@ -656,19 +697,14 @@ def compute_coxph_strata(schema_madlib, source, indepColumn,
                 ORDER BY {depColumn} DESC
             )
             """.format(schema_madlib=schema_madlib,
-                indepColumn=indepColumn, depColumn=depColumn,
-                status=status)
+                       indepColumn=indepColumn, depColumn=depColumn,
+                       status=status)
 
     return __runIterativeAlg(
-        stateType="double precision[]",
-        initialState="NULL" ,
-        source=source,
-        updateExpr='',
-        terminateExpr=terminateExpr,
-        resultExpr=resultExpr,
-        maxNumIterations=maxNumIterations,
-        updateExprOuter=updateExprOuter,
-        updateExprInner=updateExprInner,
+        stateType="double precision[]", initialState="NULL",
+        source=source, updateExpr='', terminateExpr=terminateExpr,
+        resultExpr=resultExpr, maxNumIterations=maxNumIterations,
+        updateExprOuter=updateExprOuter, updateExprInner=updateExprInner,
         strata=strata)
 
 
@@ -820,7 +856,7 @@ def zph(schema_madlib, cox_output_table, output_table):
         FROM {cox_output_table}_summary
         """.format(cox_output_table=cox_output_table))
     source_table = rv[0]['source_table']
-    dependent_variable= rv[0]['dependent_variable']
+    dependent_variable = rv[0]['dependent_variable']
     independent_variable = rv[0]['independent_variable']
     right_censoring_status = rv[0]['right_censoring_status']
     strata = rv[0]['strata']
@@ -828,8 +864,8 @@ def zph(schema_madlib, cox_output_table, output_table):
                       dependent_variable, independent_variable,
                       cox_output_table, right_censoring_status,
                       strata)
-
 # ----------------------------------------------------------------------
+
 
 def _validate_zph_params(schema_madlib, cox_model_table, output_table):
     """
@@ -844,27 +880,29 @@ def _validate_zph_params(schema_madlib, cox_model_table, output_table):
     """
     _assert(cox_model_table is not None and table_exists(cox_model_table)
             and table_exists(cox_model_table + "_summary"),
-           "Cox error: Model table {0} or summary table {0}_summary does not exist!".format(cox_model_table))
+            "Cox error: Model table {0} or summary table {0}_summary "
+            "does not exist!".format(cox_model_table))
 
     _assert((not table_exists(output_table)) and
             (not table_exists(output_table + "_residual")),
-           "Cox error: Output table {0} or residual table {0}_residual already exists!".format(output_table))
+            "Cox error: Output table {0} or residual table {0}_residual "
+            "already exists!".format(output_table))
 
     summary_columns = ["source_table", "dependent_variable",
                        "independent_variable", "right_censoring_status",
                        "strata"]
     _assert(columns_exist_in_table(cox_model_table + "_summary", summary_columns),
-            "Cox error: At least one column from {0} missing in model table {1}".
-            format(str(summary_columns), cox_model_table))
+            "Cox error: At least one column from {0} missing in "
+            "model table {1}". format(str(summary_columns), cox_model_table))
     return None
-
 # ----------------------------------------------------------------------
 
+
 def _compute_residual(schema_madlib, source_table, output_table,
-                           dependent_variable, independent_variable,
-                           cox_output_table,
-                           right_censoring_status=None,
-                           strata=None, **kwargs):
+                      dependent_variable, independent_variable,
+                      cox_output_table,
+                      right_censoring_status=None,
+                      strata=None, **kwargs):
     """ Compute the Schoenfeld residuals for a Hazards model
 
     @brief Computes the Schoenfeld residuals for a Hazards data table
@@ -889,31 +927,25 @@ def _compute_residual(schema_madlib, source_table, output_table,
     else:
         partition_str = ''
 
-    n_uncensored = plpy.execute("""
-                                SELECT count(*)::INTEGER as m
-                                FROM {table} WHERE ({status})::BOOLEAN = TRUE
-                                """.format(table=source_table,
-                                           status=right_censoring_status)
-                                )[0]["m"]
-    coef = madvec(plpy.execute("""SELECT coef FROM {table}
-                               """.format(table=cox_output_table))[0]["coef"], text=False)
+    coef = madvec(plpy.execute("SELECT coef FROM {table} ".format(
+                                    table=cox_output_table))[0]["coef"],
+                  text=False)
     coef_str = "ARRAY" + str(coef)
     # We don't extract a copy of the Hessian 2D array, since Postgres/GPDB still
     # don't support getting a 2d array into plpython
     residual_table = __unique_string()
-    format_args = {'schema_madlib':schema_madlib,
-                    'output':output_table,
-                   'indep_column':independent_variable,
-                   'dep_column':dependent_variable,
-                   'status':right_censoring_status,
-                   'cox_output_table':cox_output_table,
-                   'source_table':source_table,
-                   'residual_table':residual_table,
-                   'm':n_uncensored,
-                   'coef_str':coef_str,
-                   'partition_str':partition_str}
+    format_args = {'schema_madlib': schema_madlib,
+                   'output': output_table,
+                   'indep_column': independent_variable,
+                   'dep_column': dependent_variable,
+                   'status': right_censoring_status,
+                   'cox_output_table': cox_output_table,
+                   'source_table': source_table,
+                   'residual_table': residual_table,
+                   'coef_str': coef_str,
+                   'partition_str': partition_str}
 
-    # Compute the residuals
+    # plpy.info("--------- Computing residuals --------- ")
     plpy.execute("""
         CREATE TEMP TABLE {residual_table} AS
         SELECT
@@ -933,13 +965,21 @@ def _compute_residual(schema_madlib, source_table, output_table,
                     {coef_str}
                 ) OVER ({partition_str} ORDER BY {dep_column} DESC) AS expectation_x
             FROM {source_table}
+            WHERE {dep_column} IS NOT NULL AND
+                  NOT {schema_madlib}.array_contains_null(
+                                            {indep_column}::DOUBLE PRECISION[])
         ) AS q1
         WHERE status is TRUE
         ORDER BY {dep_column} ASC
         m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY ({dep_column})')
         """.format(**format_args))
 
-    # Compute the scaled residuals
+    n_uncensored = plpy.execute("""SELECT count(*)::INTEGER as m
+                                   FROM {table}
+                                """.format(table=residual_table))[0]["m"]
+    format_args['m'] = n_uncensored
+
+    # plpy.info("--------- Computing scaled residuals ---------")
     plpy.execute("""
         CREATE TABLE {output}_residual AS
         SELECT
@@ -955,7 +995,7 @@ def _compute_residual(schema_madlib, source_table, output_table,
         m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY ({dep_column})')
         """.format(**format_args))
 
-    # Compute the metrics
+    # plpy.info("--------- Computing metrics ---------")
     mean = plpy.execute("""
         SELECT avg({dep_column}) AS w FROM {residual_table}
         """.format(**format_args))[0]['w']
@@ -967,12 +1007,15 @@ def _compute_residual(schema_madlib, source_table, output_table,
         FROM (
             SELECT
                 {schema_madlib}.array_elem_corr_agg(
-                                    scaled_residual,
-                                    ({dep_column} - {mean})::DOUBLE PRECISION) AS rho,
+                                scaled_residual,
+                                ({dep_column} - {mean})::DOUBLE PRECISION)
+                    AS rho,
                 {schema_madlib}.__coxph_resid_stat_agg(
-                    ({dep_column} - {mean})::DOUBLE PRECISION, residual,
-                    (SELECT hessian FROM {cox_output_table}),
-                    {m}::INTEGER) AS f
+                                ({dep_column} - {mean})::DOUBLE PRECISION,
+                                residual,
+                                (SELECT hessian FROM {cox_output_table}),
+                                {m}::INTEGER)
+                    AS f
             FROM
                 {output}_residual
         ) AS q1

@@ -1,4 +1,5 @@
-/** ----------------------------------------------------------------------
+/* ----------------------------------------------------------------------- */
+/**
  *
  * @file cox_proportional_hazards.cpp
  *
@@ -12,7 +13,6 @@
 
 #include "cox_prop_hazards.hpp"
 
-
 namespace madlib {
 namespace modules {
 namespace stats {
@@ -22,6 +22,7 @@ using namespace dbal::eigen_integration;
 // Import names from other MADlib modules
 using dbal::NoSolutionFoundException;
 
+using namespace std;
 // -------------------------------------------------------------------------
 
 
@@ -29,7 +30,8 @@ using dbal::NoSolutionFoundException;
 AnyType stateToResult(const Allocator &inAllocator,
                       const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
                       const ColumnVector &diagonal_of_inverse_of_hessian,
-                      double logLikelihood, const MappedMatrix &inHessian);
+                      double logLikelihood, const MappedMatrix &inHessian,
+                      int num_rows_processed);
 
 /**
  * @brief Transition state for the Cox Proportional Hazards
@@ -214,10 +216,27 @@ class CoxPropHazardsTransitionState {
 AnyType coxph_step_transition::run(AnyType &args) {
     // Current state, independant variables & dependant variables
     CoxPropHazardsTransitionState<MutableArrayHandle<double> > state = args[0];
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
+
     double y = args[2].getAs<double>();
-    bool status = args[3].getAs<bool>();
-    MutableNativeColumnVector coef(allocateArray<double>(x.size()));
+    bool status;
+    if (args[3].isNull()) {
+        // by default we assume that the data is uncensored -> status = TRUE
+        status = true;
+    } else {
+        status = args[3].getAs<bool>();
+    }
+
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if input data contains nulls
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        // independent variable array contains NULL. We skip this row
+        return args[0];
+    }
 
     // The following check was added with MADLIB-138.
     if (!dbal::eigen_integration::isfinite(x))
@@ -227,15 +246,15 @@ AnyType coxph_step_transition::run(AnyType &args) {
         throw std::domain_error(
             "Number of independent variables cannot be larger than 65535.");
 
+    MutableNativeColumnVector coef(allocateArray<double>(x.size()));
     if (args[4].isNull())
         for (int i=0; i<x.size(); i++) coef(i) = 0;
     else
         coef = args[4].getAs<MappedColumnVector>();
 
-    MutableNativeColumnVector x_exp_coef_x(
-        allocateArray<double>(x.size()));
+    MutableNativeColumnVector x_exp_coef_x(allocateArray<double>(x.size()));
     MutableNativeMatrix x_xTrans_exp_coef_x(
-        allocateArray<double>(x.size(), x.size()));
+            allocateArray<double>(x.size(), x.size()));
     double exp_coef_x = std::exp(trans(coef)*x);
 
     x_exp_coef_x = exp_coef_x * x;
@@ -354,7 +373,7 @@ AnyType internal_coxph_result::run(AnyType &args) {
 
     return stateToResult(*this, state.coef,
                          decomposition.pseudoInverse().diagonal(),
-                         state.logLikelihood, state.hessian);
+                         state.logLikelihood, state.hessian, state.numRows);
 }
 
 // ----------------------------------------------------------------------
@@ -367,7 +386,8 @@ AnyType stateToResult(
     const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
     const ColumnVector &diagonal_of_inverse_of_hessian,
-    double logLikelihood, const MappedMatrix &inHessian) {
+    double logLikelihood, const MappedMatrix &inHessian,
+    int num_rows_processed) {
 
     MutableNativeColumnVector std_err(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -391,7 +411,7 @@ AnyType stateToResult(
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
     tuple << inCoef << logLikelihood << std_err << waldZStats << waldPValues
-          << full_hessian;
+          << full_hessian << num_rows_processed;
     return tuple;
 }
 
@@ -471,34 +491,54 @@ AnyType coxph_step_inner_final::run(AnyType &args) {
 // Schoenfeld Residual Aggregate
 // -----------------------------------------------------------------------
 AnyType zph_transition::run(AnyType &args){
+    if (args[1].isNull()) { return args[0]; }
 
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    int data_dim = x.size();
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+     } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
-    MutableNativeColumnVector coef(allocateArray<double>(data_dim));
     if (!dbal::eigen_integration::isfinite(x))
         throw std::domain_error("Design matrix is not finite.");
 
-    if (args[2].isNull())
-        for (int i=0; i < data_dim ; i++) coef(i) = 0;
-    else
-        coef = args[2].getAs<MappedColumnVector>();
-
-    MutableArrayHandle<double> state(NULL);
+    int data_dim = x.size();
     if (data_dim > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error(
+        throw std::domain_error(
                 "Number of independent variables cannot be larger than 65535.");
 
-    if (args[0].isNull())
+    // std::ostringstream s;
+    // s << "(";
+    // for (int i=0; i < x.size(); i++)
+    //     s << x[i] << ", ";
+    // s << ")";
+    // elog(INFO, s.str().c_str());
+
+
+    MutableArrayHandle<double> state(NULL);
+    if (args[0].isNull()){
         // state[0:data_dim-1]  - x * exp(coeff . x)
         // state[data_dim]      - exp(coeff . x)
         state = allocateArray<double>(data_dim + 1);
-    else
+    } else {
         state = args[0].getAs<MutableArrayHandle<double> >();
+    }
+
+
+    MutableNativeColumnVector coef(allocateArray<double>(data_dim));
+    if (args[2].isNull()){
+        for (int i=0; i < data_dim ; i++)
+            coef(i) = 0;
+    } else {
+        coef = args[2].getAs<MappedColumnVector>();
+    }
 
     double exp_coef_x = std::exp(trans(coef) * x);
-    MutableNativeColumnVector
-        x_exp_coef_x(allocateArray<double>(data_dim));
+    MutableNativeColumnVector x_exp_coef_x(allocateArray<double>(data_dim));
     x_exp_coef_x = exp_coef_x * x;
 
     for (int i =0; i < data_dim; i++)
@@ -683,7 +723,19 @@ class ArrayElemCorrState {
 AnyType array_elem_corr_transition::run(AnyType &args){
 
     ArrayElemCorrState<MutableArrayHandle<double> > state = args[0];
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
+
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if input data contains nulls
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
     double y = args[2].getAs<double>();
 
     if (!dbal::eigen_integration::isfinite(x))
@@ -752,8 +804,8 @@ AnyType coxph_resid_stat_transition::run(AnyType &args) {
         // state[0]: m
         // state[1]: n
         // state[2]: w_t * w
-        // state[3:2 + n]: w_t * residual
-        // state[n + 3:n + n * n  + 2]: hessian
+        // state[3:2 + n]: w_t * residual  (size = n)
+        // state[n + 3:n + n * n  + 2]: hessian (size = n*n)
         state = allocateArray<double>(n * n + n + 3);
         state[0] = m;
         state[1] = n;
@@ -796,6 +848,10 @@ AnyType coxph_resid_stat_final::run(AnyType &args) {
     int n = static_cast<int>(state[1]);
     double w_trans_w = state[2];
 
+    // std::ostringstream out_str;
+    // out_str << "m = " << m << " n = " << n;
+    // elog(INFO, out_str.str().c_str());
+
     Eigen::Map<Matrix> w_trans_residual(state.ptr() + 3, 1, n);
     Eigen::Map<Matrix> hessian(state.ptr() + 3 + n, n, n);
 
@@ -803,11 +859,11 @@ AnyType coxph_resid_stat_final::run(AnyType &args) {
         hessian, EigenvaluesOnly, ComputePseudoInverse);
     Matrix inverse_of_hessian = decomposition.pseudoInverse();
 
-    ColumnVector v = (w_trans_residual * inverse_of_hessian * m).transpose();
+    ColumnVector v =  m * (w_trans_residual * inverse_of_hessian).transpose();
     ColumnVector v_v = v.cwiseProduct(v);
 
     ColumnVector covar_diagonal = inverse_of_hessian.diagonal();
-    ColumnVector z = 1 / (m * w_trans_w) * v_v.cwiseQuotient(covar_diagonal);
+    ColumnVector z = v_v.cwiseQuotient(covar_diagonal * m * w_trans_w);
     ColumnVector p(n);
     for(int i = 0; i < n; i++)
         p(i) = prob::cdf(complement(prob::chi_squared(static_cast<double>(1)), z(i)));
