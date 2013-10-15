@@ -1020,7 +1020,6 @@ Datum General_2Array_to_Array(ArrayType *v1, ArrayType *v2, char*(*element_funct
 	type_size = typentry->typlen;
 	typbyval = typentry->typbyval;
 
-	char* result_val = (char *)palloc(type_size);
 	switch(element_type){
 		case INT2OID:
 			result = (char *)palloc(type_size*nitems);break;
@@ -1038,10 +1037,10 @@ Datum General_2Array_to_Array(ArrayType *v1, ArrayType *v2, char*(*element_funct
 							errdetail("Arrays with element type %d are not supported.", (int)element_type)));
 			break;
 	}
-
 	memset(result, 0, type_size*nitems);
     result_point = result;
 
+	char* result_val = (char *)palloc(type_size);
 	for (i = 0; i < nitems; ++i){
 		elt1 = fetch_att(dat1, typbyval, type_size);
 		dat1 = att_addlength_pointer(dat1, type_size, dat1);
@@ -1138,7 +1137,6 @@ Datum General_Array_to_Array(ArrayType *v1, Datum elt2, char*(*element_function)
 	type_size = typentry->typlen;
 	typbyval = typentry->typbyval;
 
-	char* result_val = (char *)palloc(type_size);
 	switch(element_type){
 		case INT2OID:
 			result = (char *)palloc(type_size*nitems);break;
@@ -1156,10 +1154,10 @@ Datum General_Array_to_Array(ArrayType *v1, Datum elt2, char*(*element_function)
 							errdetail("Arrays with element type %d are not supported.", (int)element_type)));
 			break;
 	}
-
 	memset(result, 0, type_size*nitems);
     result_point = result;
 
+	char* result_val = (char *)palloc(type_size);
 	for (i = 0; i < nitems; ++i){
 		elt1 = fetch_att(dat1, typbyval, type_size);
 		dat1 = att_addlength_pointer(dat1, type_size, dat1);
