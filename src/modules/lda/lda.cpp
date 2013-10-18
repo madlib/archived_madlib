@@ -36,6 +36,7 @@ typedef struct __type_info{
     }
 } type_info;
 static type_info INT4TI(INT4OID);
+static type_info INT8TI(INT8OID);
 
 /**
  * @brief This function samples a new topic for a word in a document based on
@@ -60,8 +61,8 @@ static type_info INT4TI(INT4OID);
  * called by intruders.
  **/
 static int32_t __lda_gibbs_sample(
-    int32_t topic_num, int32_t topic, const int32_t * count_d_z, const int32_t * count_w_z,
-    const int32_t * count_z, double alpha, double beta) 
+    int32_t topic_num, int32_t topic, const int32_t * count_d_z, const int64_t * count_w_z,
+    const int64_t * count_z, double alpha, double beta) 
 {
     /* The cumulative probability distribution of the topics */
     double * topic_prs = new double[topic_num]; 
@@ -71,9 +72,9 @@ static int32_t __lda_gibbs_sample(
     /* Calculate topic (unnormalised) probabilities */
     double total_unpr = 0;
     for (int32_t i = 0; i < topic_num; i++) {
-        int32_t nwz = count_w_z[i];
+        int64_t nwz = count_w_z[i];
         int32_t ndz = count_d_z[i];
-        int32_t nz = count_z[i];
+        int64_t nz = count_z[i];
 
         /* Adjust the counts to exclude current word's contribution */
         if (i == topic) {
@@ -85,7 +86,9 @@ static int32_t __lda_gibbs_sample(
         /* Compute the probability */
         // Note that ndz, nwz, nz are non-negative, and topic_num, alpha, and
         // beta are positive, so the division by zero will not occure here.
-        double unpr = (ndz + alpha) * (nwz + beta) / (nz + topic_num * beta);
+        double unpr = 
+            (ndz + alpha) * (static_cast<double>(nwz) + beta) 
+                / (static_cast<double>(nz) + topic_num * beta);
         total_unpr += unpr;
         topic_prs[i] = total_unpr;
     }
@@ -114,12 +117,12 @@ static int32_t __lda_gibbs_sample(
  * @return      The min value
  * @note The caller will ensure that ah is always non-null.
  **/
-static int32_t __min(
-    ArrayHandle<int32_t> ah, size_t start, size_t len){
-    const int32_t * array = ah.ptr() + start;
+template<class T> static T __min(
+    ArrayHandle<T> ah, size_t start, size_t len){
+    const T * array = ah.ptr() + start;
     return *std::min_element(array, array + len);
 }
-static int32_t __min(ArrayHandle<int32_t> ah){
+template<class T> static T __min(ArrayHandle<T> ah){
     return __min(ah, 0, ah.size());
 }
 
@@ -128,12 +131,12 @@ static int32_t __min(ArrayHandle<int32_t> ah){
  * @return      The max value
  * @note The caller will ensure that ah is always non-null.
  **/
-static int32_t __max(
-    ArrayHandle<int32_t> ah, size_t start, size_t len){
-    const int32_t * array = ah.ptr() + start;
+template<class T> static T __max(
+    ArrayHandle<T> ah, size_t start, size_t len){
+    const T * array = ah.ptr() + start;
     return *std::max_element(array, array + len);
 }
-static int32_t __max(ArrayHandle<int32_t> ah){
+template<class T> static T __max(ArrayHandle<T> ah){
     return __max(ah, 0, ah.size());
 }
 
@@ -145,7 +148,7 @@ static int32_t __max(ArrayHandle<int32_t> ah){
 static int32_t __sum(ArrayHandle<int32_t> ah){
     const int32_t * array = ah.ptr();
     int32_t size = ah.size();
-    return std::accumulate(array, array + size, 0);
+    return std::accumulate(array, array + size, static_cast<int32_t>(0));
 }
 
 /**
@@ -220,23 +223,23 @@ AnyType lda_gibbs_sample::run(AnyType & args)
         if(args[3].isNull())
             throw std::invalid_argument("invalid argument - the model \
             parameter should not be null for the first call");
-        ArrayHandle<int32_t> model = args[3].getAs<ArrayHandle<int32_t> >();
+        ArrayHandle<int64_t> model = args[3].getAs<ArrayHandle<int64_t> >();
         if(model.size() != (size_t)((voc_size + 1) * topic_num))
             throw std::invalid_argument(
                 "invalid dimension - model.size() != (voc_size + 1) * topic_num");
         if(__min(model) < 0)
             throw std::invalid_argument("invalid topic counts in model");
 
-        int32 * state = 
-            static_cast<int32 *>(
+        int64_t * state = 
+            static_cast<int64_t *>(
                 MemoryContextAllocZero(
                     args.getCacheMemoryContext(), 
-                    model.size() * sizeof(int32_t)));
-        memcpy(state, model.ptr(), model.size() * sizeof(int32_t));
+                    model.size() * sizeof(int64_t)));
+        memcpy(state, model.ptr(), model.size() * sizeof(int64_t));
         args.setUserFuncContext(state);
     }
 
-    int32_t * state = static_cast<int32_t *>(args.getUserFuncContext());
+    int64_t * state = static_cast<int64_t *>(args.getUserFuncContext());
     if(NULL == state){
         throw std::runtime_error("args.mSysInfo->user_fctx is null");
     }
@@ -349,15 +352,15 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
         throw std::invalid_argument(
             "dimension mismatch - sum(counts) != topic_assignment.size()");
 
-    MutableArrayHandle<int32_t> state(NULL);
+    MutableArrayHandle<int64_t> state(NULL);
     if(args[0].isNull()){
         int dims[2] = {voc_size + 1, topic_num};
         int lbs[2] = {1, 1};
         state = madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align);
+            NULL, NULL, 2, dims, lbs, INT8TI.oid, INT8TI.len, INT8TI.byval,
+            INT8TI.align);
     } else {
-        state = args[0].getAs<MutableArrayHandle<int32_t> >();
+        state = args[0].getAs<MutableArrayHandle<int64_t> >();
     }
 
     int32_t unique_word_count = words.size();
@@ -384,8 +387,8 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
  **/
 AnyType lda_count_topic_prefunc::run(AnyType & args)
 {
-    MutableArrayHandle<int32_t> state1 = args[0].getAs<MutableArrayHandle<int32_t> >();
-    ArrayHandle<int32_t> state2 = args[1].getAs<ArrayHandle<int32_t> >();
+    MutableArrayHandle<int64_t> state1 = args[0].getAs<MutableArrayHandle<int64_t> >();
+    ArrayHandle<int64_t> state2 = args[1].getAs<ArrayHandle<int64_t> >();
 
     if(state1.size() != state2.size())
         throw std::invalid_argument("invalid dimension");
@@ -403,7 +406,7 @@ AnyType lda_count_topic_prefunc::run(AnyType & args)
  **/
 AnyType lda_transpose::run(AnyType & args)
 {
-    ArrayHandle<int32_t> matrix = args[0].getAs<ArrayHandle<int32_t> >();
+    ArrayHandle<int64_t> matrix = args[0].getAs<ArrayHandle<int64_t> >();
     if(matrix.dims() != 2)
         throw std::domain_error("invalid dimension");
 
@@ -412,10 +415,10 @@ AnyType lda_transpose::run(AnyType & args)
         
     int dims[2] = {col_num, row_num};
     int lbs[2] = {1, 1};
-    MutableArrayHandle<int32_t> transposed(
+    MutableArrayHandle<int64_t> transposed(
         madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align));
+            NULL, NULL, 2, dims, lbs, INT8TI.oid, INT8TI.len, INT8TI.byval,
+            INT8TI.align));
 
     for(int32_t i = 0; i < row_num; i++){
         int32_t index = i * col_num;
@@ -432,7 +435,7 @@ AnyType lda_transpose::run(AnyType & args)
  * @brief This structure defines the states used by the following SRF.
  **/
 typedef struct __sr_ctx{
-    const int32_t * inarray;
+    const int64_t * inarray;
     int32_t maxcall;
     int32_t dim;
     int32_t curcall;
@@ -444,7 +447,7 @@ typedef struct __sr_ctx{
  **/
 void * lda_unnest::SRF_init(AnyType &args) 
 {
-    ArrayHandle<int32_t> inarray = args[0].getAs<ArrayHandle<int32_t> >();
+    ArrayHandle<int64_t> inarray = args[0].getAs<ArrayHandle<int64_t> >();
     if(inarray.dims() != 2)
         throw std::invalid_argument("invalid dimension");
 
@@ -468,13 +471,13 @@ AnyType lda_unnest::SRF_next(void *user_fctx, bool *is_last_call)
         return Null();
     }
 
-    MutableArrayHandle<int32_t> outarray(
+    MutableArrayHandle<int64_t> outarray(
         madlib_construct_array(
-            NULL, ctx->dim, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align));
+            NULL, ctx->dim, INT8TI.oid, INT8TI.len, INT8TI.byval,
+            INT8TI.align));
     memcpy(
         outarray.ptr(), ctx->inarray + ctx->curcall * ctx->dim, ctx->dim *
-        sizeof(int32_t));
+        sizeof(int64_t));
 
     ctx->curcall++;
     ctx->maxcall--;
@@ -536,12 +539,12 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
     if(__min(topic_counts, 0, topic_num) < 0)
         throw std::invalid_argument("invalid values in topic_counts");
 
-    MutableArrayHandle<int32_t> state(NULL);
+    MutableArrayHandle<int64_t> state(NULL);
     if(args[0].isNull()){
         if(args[4].isNull())
             throw std::invalid_argument("invalid argument - the model \
             parameter should not be null for the first call");
-        ArrayHandle<int32_t> model = args[4].getAs<ArrayHandle<int32_t> >();
+        ArrayHandle<int64_t> model = args[4].getAs<ArrayHandle<int64_t> >();
 
         if(model.size() != (size_t)((voc_size + 1) * topic_num))
             throw std::invalid_argument(
@@ -550,16 +553,16 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
             throw std::invalid_argument("invalid topic counts in model");
 
         state =  madlib_construct_array(
-            NULL, model.size() + 2, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align);
+            NULL, model.size() + 1, INT8TI.oid, INT8TI.len, INT8TI.byval,
+            INT8TI.align);
 
-        memcpy(state.ptr(), model.ptr(),  model.size() * sizeof(int32_t));
+        memcpy(state.ptr(), model.ptr(),  model.size() * sizeof(int64_t));
     }else{
-        state = args[0].getAs<MutableArrayHandle<int32_t> >();
+        state = args[0].getAs<MutableArrayHandle<int64_t> >();
     }
 
-    int32 * model = state.ptr();
-    double * perp = reinterpret_cast<double *>(state.ptr() + state.size() - 2);
+    int64_t * model = state.ptr();
+    double * perp = reinterpret_cast<double *>(state.ptr() + state.size() - 1);
 
     int32_t n_d = 0;
     for(size_t i = 0; i < words.size(); i++){
@@ -573,10 +576,10 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
         double sum_p = 0.0;
         for(int32_t z = 0; z < topic_num; z++){
                 int32_t n_dz = topic_counts[z];
-                int32_t n_wz = model[w * topic_num + z];
-                int32_t n_z = model[voc_size * topic_num + z];
-                sum_p += (n_wz + beta) * (n_dz + alpha)
-                            / (n_z + voc_size * beta); 
+                int64_t n_wz = model[w * topic_num + z];
+                int64_t n_z = model[voc_size * topic_num + z];
+                sum_p += (static_cast<double>(n_wz) + beta) * (n_dz + alpha)
+                            / (static_cast<double>(n_z) + voc_size * beta); 
         }
         sum_p /= (n_d + topic_num * alpha);
 
@@ -594,10 +597,10 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
  * @return          The merged state
  **/
 AnyType lda_perplexity_prefunc::run(AnyType & args){
-    MutableArrayHandle<int32_t> state1 = args[0].getAs<MutableArrayHandle<int32_t> >();
-    ArrayHandle<int32_t> state2 = args[1].getAs<ArrayHandle<int32_t> >();
-    double * perp1 = reinterpret_cast<double *>(state1.ptr() + state1.size() - 2);
-    const double * perp2 = reinterpret_cast<const double *>(state2.ptr() + state2.size() - 2);
+    MutableArrayHandle<int64_t> state1 = args[0].getAs<MutableArrayHandle<int64_t> >();
+    ArrayHandle<int64_t> state2 = args[1].getAs<ArrayHandle<int64_t> >();
+    double * perp1 = reinterpret_cast<double *>(state1.ptr() + state1.size() - 1);
+    const double * perp2 = reinterpret_cast<const double *>(state2.ptr() + state2.size() - 1);
     *perp1 += *perp2;
     return state1;
 } 
@@ -609,8 +612,8 @@ AnyType lda_perplexity_prefunc::run(AnyType & args){
  * @return          The perplexity
  **/
 AnyType lda_perplexity_ffunc::run(AnyType & args){
-    ArrayHandle<int32_t> state = args[0].getAs<ArrayHandle<int32_t> >();
-    const double * perp = reinterpret_cast<const double *>(state.ptr() + state.size() - 2);
+    ArrayHandle<int64_t> state = args[0].getAs<ArrayHandle<int64_t> >();
+    const double * perp = reinterpret_cast<const double *>(state.ptr() + state.size() - 1);
     return *perp;
 } 
 

@@ -80,13 +80,79 @@ The vocabulary, or dictionary, indexes all the words found in the corpus and has
     <em>wordid</em> INTEGER,
     <em>word</em> TEXT
 )</pre>
-where \c wordid refers to the word ID (the index of a word in the vocabulary) and
-\c word is the actual word. 
+where \c wordid refers the word ID (the index of a word in the vocabulary) and
+\c word is the actual word.
 
-This input format is very common in machine learning
-packages written in various languages, which allows you to generate
-datasets using existing document preprocessing tools or to import existing
-datasets. Internally, the input data is validated and then
+@usage
+- The training (i.e. topic inference) can be done with the following function:
+    <pre>
+        SELECT \ref lda_train(
+            <em>'data_table'</em>,
+            <em>'model_table'</em>,
+            <em>'output_data_table'</em>, 
+            <em>voc_size</em>, 
+            <em>topic_num</em>,
+            <em>iter_num</em>, 
+            <em>alpha</em>, 
+            <em>beta</em>)
+    </pre>
+    
+    This function stores the resulting model in <tt><em>model_table</em></tt>.
+    The table has only 1 row and is in the following form:
+    <pre>{TABLE} <em>model_table</em> (
+        <em>voc_size</em> INTEGER,
+        <em>topic_num</em> INTEGER,
+        <em>alpha</em> FLOAT,
+        <em>beta</em> FLOAT,
+        <em>model</em> BIGINT[][])
+    </pre>
+
+    This function also stores the topic counts and the topic assignments in
+    each document in <tt><em>output_data_table</em></tt>. The table is in the
+    following form:
+    <pre>{TABLE} <em>output_data_table</em> (
+        <em>docid</em> INTEGER,
+        <em>wordcount</em> INTEGER,
+        <em>words</em> INTEGER[],
+        <em>counts</em> INTEGER[],
+        <em>topic_count</em> INTEGER[],
+        <em>topic_assignment</em> INTEGER[])
+    </pre>
+
+- The prediction (i.e. labelling of test documents using a learned LDA model)
+  can be done with the following function: 
+    <pre>
+        SELECT \ref lda_predict(
+            <em>'data_table'</em>,
+            <em>'model_table'</em>,
+            <em>'output_table'</em>);
+    </pre>
+    
+    This function stores the prediction results in
+    <tt><em>output_table</em></tt>. Each row in the table stores the topic
+    distribution and the topic assignments for a docuemnt in the dataset. And
+    the table is in the following form: 
+    <pre>{TABLE} <em>output_table</em> (
+        <em>docid</em> INTEGER,
+        <em>wordcount</em> INTEGER,
+        <em>words</em> INTEGER,
+        <em>counts</em> INTEGER,
+        <em>topic_count</em> INTEGER[],
+        <em>topic_assignment</em> INTEGER[])
+    </pre>
+
+- This module also provides a function for computing the perplexity:
+    <pre>
+        SELECT \ref lda_get_perplexity(
+            <em>'model_table'</em>,
+            <em>'output_data_table'</em>);
+    </pre>
+
+@implementation
+The input format for this module is very common in many machine learning
+packages written in various lanugages, which allows users to generate
+datasets using any existing document preprocessing tools or import existing
+dataset very conveniently. Internally, the input data will be validated and then
 converted to the following format for efficiency: 
 <pre>{TABLE} <em>__internal_data_table__</em> (
     <em>docid</em> INTEGER,
@@ -582,7 +648,7 @@ MADLIB_SCHEMA.__lda_gibbs_sample
     words       INT4[], 
     counts      INT4[],
     doc_topic   INT4[],
-    model       INT4[], 
+    model       INT8[], 
     alpha       FLOAT8, 
     beta        FLOAT8, 
     voc_size    INT4, 
@@ -608,14 +674,14 @@ LANGUAGE C;
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_count_topic_sfunc
 (
-    state               INT4[],
+    state               INT8[],
     words               INT4[], 
     counts              INT4[],
     topic_assignment    INT4[], 
     voc_size            INT4, 
     topic_num           INT4
 )
-RETURNS INT4[]
+RETURNS INT8[]
 AS 'MODULE_PATHNAME', 'lda_count_topic_sfunc'
 LANGUAGE C;
 
@@ -629,10 +695,10 @@ LANGUAGE C;
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_count_topic_prefunc
 (
-    state1  INT4[],
-    state2  INT4[]
+    state1  INT8[],
+    state2  INT8[]
 )
-RETURNS INT4[]
+RETURNS INT8[]
 AS 'MODULE_PATHNAME', 'lda_count_topic_prefunc'
 LANGUAGE C IMMUTABLE STRICT;
 
@@ -665,7 +731,7 @@ MADLIB_SCHEMA.__lda_count_topic_agg
     INT4
 )
 (
-    stype = INT4[],
+    stype = INT8[],
     sfunc = MADLIB_SCHEMA.__lda_count_topic_sfunc
     m4_ifdef(
         `GREENPLUM', 
@@ -708,17 +774,17 @@ $$ LANGUAGE plpythonu STRICT;
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_perplexity_sfunc
 (
-    state               INT4[],
+    state               INT8[],
     words               INT4[], 
     counts              INT4[],
     doc_topic           INT4[], 
-    model               INT4[][], 
+    model               INT8[][], 
     alpha               FLOAT8,
     beta                FLOAT8,
     voc_size            INT4, 
     topic_num           INT4
 )
-RETURNS INT4[]
+RETURNS INT8[]
 AS 'MODULE_PATHNAME', 'lda_perplexity_sfunc'
 LANGUAGE C IMMUTABLE;
 
@@ -731,10 +797,10 @@ LANGUAGE C IMMUTABLE;
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_perplexity_prefunc
 (
-    state1  INT4[],
-    state2  INT4[] 
+    state1  INT8[],
+    state2  INT8[] 
 )
-RETURNS INT4[] 
+RETURNS INT8[] 
 AS 'MODULE_PATHNAME', 'lda_perplexity_prefunc'
 LANGUAGE C IMMUTABLE STRICT;
 
@@ -746,7 +812,7 @@ LANGUAGE C IMMUTABLE STRICT;
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_perplexity_ffunc
 (
-    state  INT4[]
+    state  INT8[]
 )
 RETURNS FLOAT8 
 AS 'MODULE_PATHNAME', 'lda_perplexity_ffunc'
@@ -770,7 +836,7 @@ MADLIB_SCHEMA.__lda_perplexity_agg
     INT4[], 
     INT4[],
     INT4[], 
-    INT4[], 
+    INT8[], 
     FLOAT8,
     FLOAT8,
     INT4, 
@@ -782,14 +848,14 @@ MADLIB_SCHEMA.__lda_perplexity_agg
     INT4[], 
     INT4[],
     INT4[], 
-    INT4[], 
+    INT8[], 
     FLOAT8,
     FLOAT8,
     INT4, 
     INT4
 )
 (
-    stype = INT4[],
+    stype = INT8[],
     sfunc = MADLIB_SCHEMA.__lda_perplexity_sfunc,
     finalfunc = MADLIB_SCHEMA.__lda_perplexity_ffunc
     m4_ifdef(
@@ -806,9 +872,9 @@ MADLIB_SCHEMA.__lda_perplexity_agg
 CREATE OR REPLACE FUNCTION 
 MADLIB_SCHEMA.__lda_util_unnest
 (
-    arr INT4[][]
+    arr INT8[][]
 )
-RETURNS SETOF INT4[] 
+RETURNS SETOF INT8[] 
 AS 'MODULE_PATHNAME', 'lda_unnest'
 LANGUAGE C IMMUTABLE STRICT;
 
@@ -820,9 +886,9 @@ LANGUAGE C IMMUTABLE STRICT;
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.__lda_util_transpose
 (
-    matrix  INT4[][]
+    matrix  INT8[][]
 )
-RETURNS INT4[][]
+RETURNS INT8[][]
 AS 'MODULE_PATHNAME', 'lda_transpose'
 LANGUAGE C IMMUTABLE STRICT;
 
