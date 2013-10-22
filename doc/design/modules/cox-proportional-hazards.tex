@@ -85,9 +85,8 @@ to $t_i$, the probability that the death happened to observation $k$  is
 \Pr(T_k = t_i | R(t_i)) =  \frac{e^{\bold{\beta^T x_k} }}{ \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j}}}.
 \end{equation}
 
-The \textit{partial likelihood function} can now be generated as the product of
-conditional probabilities described in \ref{cox:equ:prod of death}.  More
-formally,
+The \textit{partial likelihood function} can now be generated as the product of conditional probabilities.
+More formally,
 \begin{equation}\label{cox:equ:likelihood}
 \mathcal{L} = \prod_{i = 1}^n \left(  \frac{e^{\bold{\beta^T x_i} }}{ \sum_{j \in R(t_i)} e^{\bold{\beta^T x_j}}} \right).
 \end{equation}
@@ -383,3 +382,56 @@ independent computation of the log-likelihood function in each distributed segme
 corresponding to each strata (`transition' function). These values can then be added
 across the segments (`merge' function), with the gradient for the parameter computed
 on the final sum (`final' function).
+
+\subsection{Resolving Ties}
+In ``coxph\_train'', Breslow method is used to resolve ties, which uses
+as the partial likelihood~\cite{hosmer2011applied}
+\begin{eqnarray}
+  L &=& \sum_{i=1}^{m}\left[ \vec{\beta}^{T} \vec{x}_{i+} - 
+    d_i \log\left( \sum_{j \in R(t_i)} e^{\vec{\beta}^T
+        \vec{x}_j}\right) \right]\\
+  &=& \sum_{i=1}^{m}\left[ \vec{\beta}^{T} \vec{x}_i - \log\left( \sum_{j \in R(t_i)} e^{\vec{\beta}^T
+        \vec{x}_j}\right)\right]_{+}
+\end{eqnarray}
+where $d_i$ is the number of observations that have the same $t_i$,
+and $x_{i+}$ is the sum of the covariants over all observations that
+have the same $t_i$. $m$ is the number of distinct survival
+times. Here $[\cdot]_{+}$ means sum over all observations with the
+same survival time.
+
+\subsection{Robust Variance Estimators}
+In MADlib, we implement robust variance estimator devised by Lin and Wei~\cite{lin1989robust}.
+With our notations above, let
+\begin{eqnarray*}
+    \vec{W}_{i}
+    &=& \delta_i \cdot \left[ \vec{x_i} - \frac{\left( \sum_{l: t_l \ge t_i} e^{\vec{\beta}^T \vec{x_l}} \vec{x_l} \right)}{\sum_{l: t_l \ge t_i} e^{\vec{\beta}^T \vec{x_l}}} \right]
+    - \sum_{j: t_j \le t_i} \left\{ \delta_j \cdot \frac{e^{\vec{\beta}^T \vec{x_i}}}{\sum_{k: t_k \ge t_j} e^{\vec{\beta}^T \vec{x_k}}}
+    \cdot \left[ \vec{x_i} - \frac{\left( \sum_{k: t_k \ge t_j} e^{\vec{\beta}^T \vec{x_k}} \vec{x_k} \right)}{\sum_{k: t_k \ge t_j} e^{\vec{\beta}^T \vec{x_k}}} \right] \right\}.\\
+    &=& \delta_i \cdot \left[ \vec{x_i} - \frac{\vec{H}_i}{S_i} \right]
+    - \sum_{j: t_j \le t_i} \left\{ \delta_j \cdot \frac{e^{\vec{\beta}^T \vec{x_i}}}{S_j}
+    \cdot \left[ \vec{x_i} - \frac{\vec{H}_j}{S_j} \right] \right\}.\\
+    &=& \delta_i \cdot \left[ \vec{x_i} - \frac{\vec{H}_i}{S_i} \right]
+    - \sum_{j: t_j \le t_i} \delta_j \cdot \frac{e^{\vec{\beta}^T \vec{x_i}}}{S_j} \vec{x_i}
+    + \sum_{j: t_j \le t_i} \delta_j \cdot \frac{e^{\vec{\beta}^T \vec{x_i}}}{S_j} \frac{\vec{H}_j}{S_j}.\\
+\end{eqnarray*}
+
+Where
+\begin{eqnarray*}
+H_i &=&  \sum_{l: t_l \ge t_i} e^{\vec{\beta}^T \vec{x_l}} \vec{x_l}\\
+S_i &=& \sum_{l: t_l \ge t_i} e^{\vec{\beta}^T \vec{x_l}}
+\end{eqnarray*}
+
+Let
+\begin{eqnarray*}
+    A_i &=& \sum_{j: t_j \le t_i} \frac{\delta_j}{S_j},\\
+    \vec{B}_i &=& \sum_{j: t_j \le t_i} \frac{\delta_j \vec{H}_j}{S_j^2},\\
+\end{eqnarray*}
+we have
+\[
+\vec{W}_i = \delta_i \cdot \left[ \vec{x_i} - \frac{\vec{H}_i}{S_i} \right] - e^{\vec{\beta}^T \vec{x_i}} A_i \vec{x_i} + e^{\vec{\beta}^T \vec{x_i}} \vec{B}_i.
+\]
+And the recursions of $A_i$ and $\vec{B}_i$ are given if we assume time $t_i$ is sorted ascending order
+\begin{eqnarray*}
+    A_i &=& A_{i-1} + \frac{\delta_i}{S_i}\\
+    \vec{B}_i &=& \vec{B}_{i-1} + \frac{\delta_i \vec{H}_i}{S_i^2}
+\end{eqnarray*}

@@ -154,9 +154,15 @@ ArrayType*
 madlib_DatumGetArrayTypeP(Datum inDatum) {
     ArrayType* x = madlib_detoast_verlena_datum_if_necessary<ArrayType>(inDatum);
     if (ARR_HASNULL(x)) {
-        // elog(ERROR, "The input array has NULL values!");
-        throw ArrayWithNullException();
+        // an empty array has dimensionality 0
+        size_t array_size = ARR_NDIM(x) ? 1 : 0;
+        for (int i = 0; i < ARR_NDIM(x); i ++) {
+            array_size *= ARR_DIMS(x)[i];
+        }
+
+        throw ArrayWithNullException(array_size);
     }
+
     return x;
 }
 

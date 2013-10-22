@@ -2,10 +2,10 @@
  *
  * @file robust.sql_in
  *
- * @brief SQL functions for linear regression
- * @date January 2011
+ * @brief SQL functions for robust variance linear and logistic regression
+ * @date 2012
  *
- * @sa Calculates robust statistics for various regression models.
+ * @sa For a brief introduction to robust variance, see \ref grp_robust
  *
  *//* ----------------------------------------------------------------------- */
 
@@ -20,6 +20,7 @@ m4_include(`SQLCommon.m4')
 <li class="level1"><a href="#train_linregr">Robust Linear Regression Training Function</a></li>
 <li class="level1"><a href="#train_logregr">Robust Logistic Regression Training Function</a></li>
 <li class="level1"><a href="#train_mlogregr">Robust Multinomial Logistic Regression Training Function</a></li>
+<li class="level1"><a href="#robust_variance_coxph">Robust Variance Function For Cox Proportional Hazards</a></li>
 <li class="level1"><a href="#examples">Examples</a></li>
 <li class="level1"><a href="#background">Technical Background</a></li>
 <li class="level1"><a href="#literature">Literature</a></li>
@@ -28,7 +29,8 @@ m4_include(`SQLCommon.m4')
 </div>
 
 The functions in this module calculate robust variance (Huber-White estimates)
-for linear regression, logistic regression, and multinomial logistic regression.
+for linear regression, logistic regression, multinomial logistic regression, 
+and Cox proportional hazards.
 They are useful in calculating variances in a dataset with potentially noisy
 outliers. The Huber-White implemented here is identical to the "HC0" sandwich
 operator in the R module "sandwich".
@@ -37,6 +39,10 @@ The interfaces for robust linear, logistic, and multinomial logistic
 regression are similar. Each regression type has its own training function.
 The regression results are saved in an output table with small differences,
 depending on the regression type.
+
+(\b WARNING)
+However, the interface for Cox proportional hazards accepts an output 
+model table from a separate training function.
 
 @anchor train_linregr
 @par Robust Linear Regression Training Function
@@ -238,14 +244,62 @@ optimizer.</dd>
 <dd>BOOLEAN, default FALSE. <em>Not currently implemented.</em> TRUE if the regression fit should print warning messages.</dd>
 </dl>
 
+@anchor robust_variance_coxph
+@par Robust Variance Function For Cox Proportional Hazards
+
+The \ref robust_variance_coxph() function has the following syntax:
+<pre class="syntax">
+robust_variance_coxph(model_table, output_table)
+</pre>
+
+\b Arguments
+<dl class="arglist">
+    <dt>model_table</dt>
+    <dd>TEXT. The name of the model table, which is exactaly the same as the 'output_table' parameter of coxph_train() function.</dd>
+    <dt>output_table</dt>
+    <dd>TEXT. The name of the table where the output is saved.
+        The output is saved in the table named by the <em>output_table</em> argument. It has the following columns:
+        <table class="output">
+            <tr>
+                <th>coef</th>
+                <td>FLOAT8[]. Vector of the coefficients.</td>
+            </tr>
+            <tr>
+                <th>loglikelihood</th>
+                <td>FLOAT8. Log-likelihood value of the MLE estimate.</td>
+            </tr>
+            <tr>
+                <th>std_err</th>
+                <td>FLOAT8[]. Vector of the standard error of the coefficients.</td>
+            </tr>
+            <tr>
+                <th>robust_se</th>
+                <td>FLOAT8[]. Vector of the robust standard errors of the coefficients.</td>
+            </tr>
+            <tr>
+                <th>robust_z</th>
+                <td>FLOAT8[]. Vector of the robust z-stats of the coefficients.</td>
+            </tr>
+            <tr>
+                <th>robust_p</th>
+                <td>FLOAT8[]. Vector of the robust p-values of the coefficients.</td>
+            </tr>
+            <tr>
+                <th>hessian</th>
+                <td>FLOAT8[]. The Hessian matrix.</td>
+            </tr>
+        </table>
+    </dd>
+</dl>
+
 @anchor examples
 @examp
+
+<b> Logistic Regression Example </b>
 -# View online help for the logistic regression training function.
 <pre class="example">
 SELECT madlib.robust_variance_logregr();
 </pre>
-
-
 -#  Create the training data table.
 <pre class="example">
 DROP TABLE IF EXISTS patients;
@@ -283,7 +337,6 @@ SELECT madlib.robust_variance_logregr( 'patients',
                                        'ARRAY[1, treatment, trait_anxiety]'
                                      ); 
 </pre>
-
 -# View the regression results.
 <pre class="example">
 \\x on
@@ -309,6 +362,79 @@ SELECT unnest(array['intercept', 'treatment', 'trait_anxiety' ]) as attribute,
 FROM patients_logregr;
 </pre>
 
+<b> Cox Proportional Hazards Example </b>
+-# View online help for the robust Cox Proportional hazards training method.
+<pre class="example">
+SELECT madlib.robust_variance_coxph();
+</pre>
+-# Create an input data set.
+<pre class="example">
+DROP TABLE IF EXISTS sample_data;
+CREATE TABLE sample_data (
+    id INTEGER NOT NULL,
+    grp DOUBLE PRECISION,
+    wbc DOUBLE PRECISION,
+    timedeath INTEGER,
+    status BOOLEAN
+);
+COPY sample_data FROM STDIN DELIMITER '|';
+  0 |   0 | 1.45 |        35 | t
+  1 |   0 | 1.47 |        34 | t
+  3 |   0 |  2.2 |        32 | t
+  4 |   0 | 1.78 |        25 | t
+  5 |   0 | 2.57 |        23 | t
+  6 |   0 | 2.32 |        22 | t
+  7 |   0 | 2.01 |        20 | t
+  8 |   0 | 2.05 |        19 | t
+  9 |   0 | 2.16 |        17 | t
+ 10 |   0 |  3.6 |        16 | t
+ 11 |   1 |  2.3 |        15 | t
+ 12 |   0 | 2.88 |        13 | t
+ 13 |   1 |  1.5 |        12 | t
+ 14 |   0 |  2.6 |        11 | t
+ 15 |   0 |  2.7 |        10 | t
+ 16 |   0 |  2.8 |         9 | t
+ 17 |   1 | 2.32 |         8 | t
+ 18 |   0 | 4.43 |         7 | t
+ 19 |   0 | 2.31 |         6 | t
+ 20 |   1 | 3.49 |         5 | t
+ 21 |   1 | 2.42 |         4 | t
+ 22 |   1 | 4.01 |         3 | t
+ 23 |   1 | 4.91 |         2 | t
+ 24 |   1 |    5 |         1 | t
+\.
+</pre>
+-# Run the Cox regression function.
+<pre class="example">
+SELECT madlib.coxph_train( 'sample_data',
+                           'sample_cox',
+                           'timedeath',
+                           'ARRAY[grp,wbc]',
+                           'status'
+                         );
+</pre>
+-# Run the Robust Cox regression function.
+<pre class="example">
+SELECT madlib.robust_variance_coxph( 'sample_cox',
+                           'sample_robust_cox'
+                         );
+</pre>
+-# View the results of the robust Cox regression.
+<pre class="example">
+\\x on
+SELECT * FROM sample_robust_cox;
+</pre>
+Results:
+<pre class="result">
+-[ RECORD 1 ]-+----------------------------------------------------------------------------
+coef          | {2.54407073265105,1.67172094780081}
+loglikelihood | -37.8532498733452
+std_err       | {0.677180599295459,0.387195514577754}
+robust_se     | {0.621095581073685,0.274773521439328}
+robust_z      | {4.09610180811965,6.08399579058399}
+robust_p      | {4.2016521208424e-05,1.17223683104729e-09}
+hessian       | {{2.78043065745405,-2.25848560642669},{-2.25848560642669,8.50472838284265}}
+</pre>
 
 
 @anchor background
@@ -356,6 +482,13 @@ calculation with function <em>marginal_mlogregr</em>.  This is deliberate
 because the interfaces of all multinomial regressions (robust, clustered, ...)
 will be moved to match that used in marginal.
 
+The robust variance of Cox proportional hazards is more complex because 
+coeeficients are trained by maximizing a partial log-likelihood.
+Therefore, one cannot directly use the formula for \f$ M( \boldsymbol c) \f$
+as in Huber-White robust estimator. Extra terms are needed. See [4] for
+details.
+
+
 @anchor literature
 @literature
 
@@ -369,13 +502,19 @@ will be moved to match that used in marginal.
   and Business, Vienna.
 	http://cran.r-project.org/web/packages/sandwich/vignettes/sandwich-OOP.pdf
 
+[4] D. Y. Lin and L . J. Wei, _The Robust Inference for the Cox Proportional Hazards Model_, Journal of
+the American Statistical Association, Vol. 84, No. 408, p.1074 (1989).
+
 @anchor related
 @par Related Topics
 File robust.sql_in documenting the SQL functions
+File robust_variance_coxph.sql_in documenting more the SQL functions
 
 @internal
 @sa Namespace \ref madlib::modules::regress
     documenting the implementation in C++
+@sa Namespace robust_coxph
+    \ref madlib::modules::stats documenting the implementation in C++
 @endinternal
 */
 

@@ -10,6 +10,7 @@
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 #include <modules/prob/boost.hpp>
+#include <math.h>
 
 #include "cox_prop_hazards.hpp"
 
@@ -142,26 +143,6 @@ class CoxPropHazardsTransitionState {
         return 6 + 3 * inWidthOfX + 2 * inWidthOfX * inWidthOfX;
     }
 
-    /**
-     * @brief Rebind to a new storage array
-     *
-     * @param inWidthOfX The number of independent variables.
-     *
-     * Array layout:
-     * Inter iteration components (updated in the final step)
-     * - 0: numRows (number of rows seen so far)
-     * - 1: widthOfX (number of features)
-     * - 2: coef (multipliers for each of the features)
-
-     * Intra interation components (updated in the current interation)
-     * - 2 + widthofX: S (see design document for details)
-     * - 3 + widthofX: Hi[j] (see design document for details)
-     * - 3 + 2*widthofX: gradCoef (coefficients of the gradient)
-     * - 3 + 3*widthofX: logLikelihood
-     * - 4 + 3*widthofX: V (Precomputations for the hessian)
-     * - 4 + 3*widthofX + widthofX^2: hessian
-     *
-     */
     void rebind(uint16_t inWidthOfX) {
         // Inter iteration components
         numRows.rebind(&mStorage[0]);
@@ -221,7 +202,7 @@ AnyType coxph_step_transition::run(AnyType &args) {
     double y = args[2].getAs<double>();
     bool status;
     if (args[3].isNull()) {
-        // by default we assume that the data is uncensored -> status = TRUE
+        // by default we assume that the data is uncensored => status = TRUE
         status = true;
     } else {
         status = args[3].getAs<bool>();
@@ -335,6 +316,10 @@ AnyType coxph_step_final::run(AnyType &args) {
          - state.V/state.S)*state.multiplier;
     state.logLikelihood -=  state.multiplier*std::log(state.S);
 
+
+    if (isinf(static_cast<double>(state.logLikelihood)) || isnan(static_cast<double>(state.logLikelihood))) 
+        throw NoSolutionFoundException("Over- or underflow in intermediate "
+                                       "calulation. Input data is likely of poor numerical condition.");
 
     // Computing pseudo inverse of a PSD matrix
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
@@ -550,9 +535,8 @@ AnyType zph_transition::run(AnyType &args){
 // -------------------------------------------------------------------------
 
 AnyType zph_merge::run(AnyType &/* args */){
-    // TODO: Find how to resolve if there are two events with same time of death
-    throw std::logic_error("All elements in the data should have a "
-                           "unique sort index.");
+    throw std::logic_error("The aggregate is used as an aggregate over window. "
+                           "The merge function should not be used in this scenario.");
 }
 // -------------------------------------------------------------------------
 AnyType zph_final::run(AnyType &args){

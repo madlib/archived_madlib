@@ -1,0 +1,184 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file robust_variance_coxph.sql_in
+ *
+ * @brief SQL functions for robust cox proportional hazards regression
+ * @date Oct 2013
+ *
+ * @sa For a brief introduction to robust cox regression, see the
+ *     module description \ref grp_robust_cox_prop_hazards
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_coxph()
+RETURNS VARCHAR AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.robust_variance_coxph('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_coxph(
+    message  VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(stats, robust_variance_coxph, rb_help_message)
+$$ LANGUAGE plpythonu VOLATILE;
+
+ ----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_coxph(
+    model_table                 VARCHAR,    -- name of model table
+    output_table                VARCHAR     -- name of output table
+) RETURNS VOID AS $$
+    PythonFunction(stats, robust_variance_coxph, rb_coxph)
+$$ LANGUAGE plpythonu;
+
+----------------------------------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__rb_coxph_result;
+CREATE TYPE MADLIB_SCHEMA.__rb_coxph_result AS (
+    std_err         DOUBLE PRECISION[],
+    stats           DOUBLE PRECISION[],
+    p_values        DOUBLE PRECISION[]
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rb_coxph_step_transition(
+    /* state */     DOUBLE PRECISION[],
+    /* x */         DOUBLE PRECISION[],
+    /* y */         DOUBLE PRECISION,
+    /* status */    BOOLEAN,
+    /* coef */      DOUBLE PRECISION[],
+    /* Hessian */   DOUBLE PRECISION[],
+    /* H values */  DOUBLE PRECISION[],
+    /* S */         DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rb_coxph_step_final(
+    /* state */     DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__rb_coxph_result AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+
+CREATE
+m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `ORDERED'))
+AGGREGATE MADLIB_SCHEMA.rb_coxph_step(
+    /* x */         DOUBLE PRECISION[],
+    /* y */         DOUBLE PRECISION,
+    /* status */    BOOLEAN,
+    /* coef */      DOUBLE PRECISION[],
+    /* Hessian */   DOUBLE PRECISION[],
+    /* H values */  DOUBLE PRECISION[],
+    /* S */         DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.rb_coxph_step_transition,
+    FinalFunc = MADLIB_SCHEMA.rb_coxph_step_final,
+    InitCond = '{0,0,0,0,0,0,0,0}'
+);
+
+----------------------------------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__rb_coxph_hs_result;
+CREATE TYPE MADLIB_SCHEMA.__rb_coxph_hs_result AS (
+    H               DOUBLE PRECISION[],
+    S               DOUBLE PRECISION
+);
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_h_s_transition(
+    /* state */     DOUBLE PRECISION[],
+    /* x */         DOUBLE PRECISION[],
+    /* coef */      DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_h_s_merge(
+    /*+  left_state */      DOUBLE PRECISION[],
+    /*+  right_state */     DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE;
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_h_s_final(
+    /* state */     DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__rb_coxph_hs_result AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+
+CREATE AGGREGATE MADLIB_SCHEMA.coxph_h_s(
+    /* x */         DOUBLE PRECISION[],
+    /* coef */      DOUBLE PRECISION[]
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.coxph_h_s_transition,
+    FinalFunc = MADLIB_SCHEMA.coxph_h_s_final,
+    m4_ifdef(`__GREENPLUM__', `PREFUNC = MADLIB_SCHEMA.coxph_h_s_merge,')
+    InitCond = '{0,0,0,0,0,0,0,0}'
+);
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rb_coxph_strata_step_final(
+    /* state */     DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+
+CREATE
+m4_ifdef(`__GREENPLUM__', m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `ORDERED'))
+AGGREGATE MADLIB_SCHEMA.rb_coxph_strata_step(
+    /* x */         DOUBLE PRECISION[],
+    /* y */         DOUBLE PRECISION,
+    /* status */    BOOLEAN,
+    /* coef */      DOUBLE PRECISION[],
+    /* Hessian */   DOUBLE PRECISION[],
+    /* H values */  DOUBLE PRECISION[],
+    /* S */         DOUBLE PRECISION
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.rb_coxph_step_transition,
+    FinalFunc = MADLIB_SCHEMA.rb_coxph_strata_step_final,
+    InitCond = '{0,0,0,0,0,0,0,0}'
+);
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rb_sum_strata_transition(
+    in_state1       DOUBLE PRECISION[],
+    in_state2       DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.rb_sum_strata_final(
+    in_state        DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__rb_coxph_result AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+
+CREATE AGGREGATE MADLIB_SCHEMA.rb_sum_strata(
+    /* in_state */   DOUBLE PRECISION[]
+) (
+    SType = DOUBLE PRECISION[],
+    SFunc = MADLIB_SCHEMA.rb_sum_strata_transition,
+    FinalFunc = MADLIB_SCHEMA.rb_sum_strata_final
+    m4_ifdef(`__GREENPLUM__',
+             `, PreFunc = MADLIB_SCHEMA.rb_sum_strata_transition')
+);
