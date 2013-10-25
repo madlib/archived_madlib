@@ -1,0 +1,130 @@
+
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file clustered_variance_coxph.sql_in
+ *
+ * @brief SQL functions for clustered robust cox proportional hazards regression
+ * @date Oct 2013
+ *
+ * @sa For a brief introduction to clustered robust cox regression, see the
+ *     module description \ref grp_clustered_cox_prop_hazards
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.clustered_variance_coxph()
+RETURNS VARCHAR AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.clustered_variance_coxph('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.clustered_variance_coxph(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(stats, clustered_variance_coxph, cl_coxph_help_message)
+$$ LANGUAGE plpythonu VOLATILE;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.clustered_variance_coxph(
+    model_table         TEXT,
+    output_table        TEXT,
+    clustervar          TEXT
+) RETURNS VOID AS $$
+    PythonFunction(stats, clustered_variance_coxph, clustered_coxph)
+$$ LANGUAGE plpythonu;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_a_b_transition(
+    /* state */     DOUBLE PRECISION[],
+    /* size */      INTEGER,
+    /* status */    BOOLEAN,
+    /* H values */  DOUBLE PRECISION[],
+    /* S */         DOUBLE PRECISION
+) RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_a_b_merge(
+    /* left state */    DOUBLE PRECISION[],
+    /* right state */   DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__coxph_a_b_result;
+CREATE TYPE MADLIB_SCHEMA.__coxph_a_b_result AS(
+    a   DOUBLE PRECISION,
+    b   DOUBLE PRECISION[]
+); 
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_a_b_final(
+    /* right state */   DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__coxph_a_b_result AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------
+
+CREATE AGGREGATE MADLIB_SCHEMA.coxph_a_b(
+    /* size */      INTEGER,
+    /* status */    BOOLEAN,
+    /* H values */  DOUBLE PRECISION[],
+    /* S */         DOUBLE PRECISION
+) (
+    stype = DOUBLE PRECISION[],
+    sfunc = MADLIB_SCHEMA.coxph_a_b_transition,
+    m4_ifdef(`__GREENPLUM__', `PREFUNC = MADLIB_SCHEMA.coxph_a_b_merge,')
+    finalfunc = MADLIB_SCHEMA.coxph_a_b_final,
+    initcond = '{0,0,0,0}'
+);
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_compute_w(
+    x       DOUBLE PRECISION[],
+    status  BOOLEAN,
+    coef    DOUBLE PRECISION[],
+    H       DOUBLE PRECISION[],
+    S       DOUBLE PRECISION,
+    A       DOUBLE PRECISION,
+    B       DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE; 
+
+----------------------------------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__coxph_cl_var_result;
+CREATE TYPE MADLIB_SCHEMA.__coxph_cl_var_result AS(
+    std_err     DOUBLE PRECISION[],
+    z_stats     DOUBLE PRECISION[],
+    p_values    DOUBLE PRECISION[]
+); 
+
+--------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_compute_clustered_stats(
+    coef    DOUBLE PRECISION[],
+    hessian DOUBLE PRECISION[],
+    A       DOUBLE PRECISION[]
+) RETURNS MADLIB_SCHEMA.__coxph_cl_var_result AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT; 
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.robust_variance_coxph(
+    model_table     VARCHAR, 
+    output_table    VARCHAR,
+    clustervar      VARCHAR
+) RETURNS VOID AS $$
+    PythonFunction(stats, clustered_variance_coxph, clustered_coxph)
+$$ LANGUAGE plpythonu VOLATILE;
