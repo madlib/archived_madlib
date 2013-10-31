@@ -6,6 +6,10 @@
 
 #ifndef _COUNTMIN_H_
 #define _COUNTMIN_H_
+
+#include <limits.h>  /* CHAR_BIT */
+
+
 #define INT64BITS (sizeof(int64)*CHAR_BIT)
 #define RANGES INT64BITS
 #define DEPTH 8 /* magic tuning value: number of hash functions */

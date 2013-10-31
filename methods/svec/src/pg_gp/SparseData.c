@@ -24,6 +24,10 @@
 #include "access/htup.h"
 #include "catalog/pg_proc.h"
 
+#if PG_VERSION_NUM >= 90300
+#include "access/htup_details.h"
+#endif
+
 void* array_pos_ref = NULL;
 
 
@@ -141,14 +145,14 @@ int64 compword_to_int8(const char *entry)
 	char *numptr2 = (char *)(&num_2);
 	int32_t num_4;
 	char *numptr4 = (char *)(&num_4);
-	int64 num;
+	int64 num = 0;
 	char *numptr8 = (char *)(&num);
 
 	switch(size) {
 	        case 0: /* entry == NULL represents an array of ones; see
 			 * comment after definition of SparseDataStruct above
 			 */
-			return 1; break;
+			return 1;
 		case 1:
 			num = -(entry[0]);
 			break;

@@ -21,6 +21,7 @@
 #include "utils/typcache.h"
 #include "catalog/pg_type.h"
 #include "catalog/namespace.h"
+#include "lib/stringinfo.h"
 #include "nodes/execnodes.h"
 #include "nodes/nodes.h"
 #include "funcapi.h"
