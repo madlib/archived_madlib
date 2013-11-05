@@ -32,6 +32,22 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
                                            const double& y))
 {
     MutableClusteredState state = args[0].getAs<MutableByteString>();
+
+   if (args[1].isNull() || args[2].isNull()) {
+        return args[0];
+    }
+
+    // Get x as a vector of double
+    MappedColumnVector x;
+    try{
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
     double y;
     if (regressionType == "log") //Logistic regression
         y = args[1].getAs<bool>() ? 1. : -1;
@@ -39,27 +55,28 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
         y = args[1].getAs<double>();
     else if(regressionType == "mlog")//Multi-logistic regression
     	y = args[1].getAs<int>();
-    
-    const MappedColumnVector& x = args[2].getAs<MappedColumnVector>();
+
+    // const MappedColumnVector& x = args[2].getAs<MappedColumnVector>();
 
     if (!std::isfinite(y))
         throw std::domain_error("Dependent variables are not finite.");
     else if (x.size() > std::numeric_limits<uint16_t>::max())
         throw std::domain_error("Number of independent variables cannot be "
                                 "larger than 65535.");
-    
+
     if (state.numRows == 0) {
         if(regressionType == "mlog")
         {
+            if (args[4].isNull() || args[5].isNull()) {
+                return args[0];
+            }
         	state.numCategories = static_cast<uint16_t>(args[4].getAs<int>());
         	state.refCategory = static_cast<uint16_t>(args[5].getAs<int>());
-        }
-        else
-        {
+        } else {
         	state.numCategories = 2;
         	state.refCategory = 0;
         }
-        
+
         state.widthOfX = static_cast<uint16_t>(x.size() * (state.numCategories-1));
         state.resize();
         const MappedColumnVector& coef = args[3].getAs<MappedColumnVector>();
@@ -67,16 +84,14 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
         state.meat_half.setZero();
         //elog(INFO, "widthOfX:%i", static_cast<int>(state.widthOfX));
         //elog(INFO, "size of x:%i", static_cast<int>(x.size()));
-        
+
     }
 
     // dimension check
     if (state.widthOfX != static_cast<uint16_t>(x.size() * (state.numCategories-1)))
         throw std::runtime_error("Inconsistent numbers of independent "
                                  "variables.");
-
     state.numRows++;
-
     (*func)(state, x, y);
     return state.storage();
 }
@@ -88,12 +103,12 @@ AnyType __clustered_common_merge (AnyType& args)
 {
     MutableClusteredState state1 = args[0].getAs<MutableByteString>();
     IClusteredState state2 = args[1].getAs<ByteString>();
-    
+
     if (state1.numRows == 0)
         return state2.storage();
     else if (state2.numRows == 0)
         return state1.storage();
-  
+
     state1.numRows += state2.numRows;
     state1.bread += state2.bread;
     state1.meat_half += state2.meat_half;
@@ -111,12 +126,12 @@ AnyType __clustered_common_final (AnyType& args)
     if (state.numRows == 0) return Null();
 
     Allocator& allocator = defaultAllocator();
-    
+
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.bread, EigenvaluesOnly, ComputePseudoInverse);
 
     int k = static_cast<int>(state.widthOfX);
-    
+
     Matrix meat(k, k);
     meat = trans(state.meat_half) * state.meat_half;
 
@@ -161,7 +176,7 @@ AnyType clustered_compute_stats (AnyType& args,
     int count = 0;
 
     for (int i = 0; i < k; i++)
-        for (int j = 0; j < k; j++) 
+        for (int j = 0; j < k; j++)
         {
             meat(i,j) = meatvec(count);
             bread(i,j) = breadvec(count);
@@ -169,11 +184,10 @@ AnyType clustered_compute_stats (AnyType& args,
             //elog(INFO, "meat, bread: %i, %i, %f, %f", static_cast<int>(i),  static_cast<int>(j),  static_cast<float>(meat(i,j)),  static_cast<float>(bread(i,j)));
         }
 
-
     if (mcluster == 1)
         throw std::domain_error ("Clustered variance error: Number of clusters cannot be smaller than 2!");
     double dfc = (mcluster / (mcluster - 1.)) * ((numRows - 1.) / (numRows - k));
-        
+
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         bread, EigenvaluesOnly, ComputePseudoInverse);
     Matrix inverse_of_bread = decomposition.pseudoInverse();
@@ -184,7 +198,7 @@ AnyType clustered_compute_stats (AnyType& args,
     MutableNativeColumnVector stats;
     MutableNativeColumnVector pValues;
     Allocator& allocator = defaultAllocator();
-   
+
     errs.rebind(allocator.allocateArray<double>(k));
     stats.rebind(allocator.allocateArray<double>(k));
     pValues.rebind(allocator.allocateArray<double>(k));
@@ -194,7 +208,7 @@ AnyType clustered_compute_stats (AnyType& args,
             errs(i) = 0;
         else
             errs(i) = std::sqrt(cov(i,i) * dfc);
-        
+
         if (coef(i) == 0 && errs(i) == 0)
             stats(i) = 0;
         else
@@ -205,7 +219,7 @@ AnyType clustered_compute_stats (AnyType& args,
         (*func)(pValues, stats, numRows, k);
 
     AnyType tuple;
-	
+
 	tuple << coef << errs << stats
 		  << (numRows > k
 			  ? pValues
@@ -226,7 +240,6 @@ void __compute_t_stats (MutableNativeColumnVector& pValues,
                 prob::students_t(static_cast<double>(numRows - k)),
                 std::fabs(stats(i))));
 }
-
 // ------------------------------------------------------------------------
 
 // compute t-stats
@@ -288,7 +301,7 @@ AnyType clustered_lin_compute_stats::run (AnyType& args)
 
 // ------------------------------------------------------------------------
 // Logistic clustered standard errors
-// ------------------------------------------------------------------------ 
+// ------------------------------------------------------------------------
 
 inline double sigma(double x) {
 	return 1. / (1. + std::exp(-x));
@@ -303,7 +316,7 @@ void __logistic_trans_compute (MutableClusteredState& state,
     double sgn = y > 0 ? -1 : 1;
     double t1 = sigma(sgn * sm);
     double t2 = sigma(-sgn * sm);
-    
+
     for (int i = 0; i < state.widthOfX; i++)
         state.meat_half(0,i) += t1 * sgn * x(i);
 
@@ -341,7 +354,7 @@ AnyType clustered_log_compute_stats::run (AnyType& args)
 
 // ------------------------------------------------------------------------
 // Multi-Logistic clustered standard errors
-// ------------------------------------------------------------------------ 
+// ------------------------------------------------------------------------
 
 
 void __mlogistic_trans_compute (MutableClusteredState& state,
@@ -351,14 +364,14 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
 	int numCategories = state.numCategories -1;
 	ColumnVector yVec(numCategories);
     yVec.fill(0);
-    
+
     //Pivot around the reference category
     if (y > state.refCategory) {
         yVec((int)y - 1) = 1;
     } else if (y < state.refCategory) {
         yVec((int)y) = 1;
     }
-    
+
 //    if ((int)y != 0) {
  //       yVec(((int)y) - 1) = 1;
  //   }
@@ -376,12 +389,12 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
     //Store the intermediate calculations because we'll reuse them in the LLH
     ColumnVector t1 = x; //t1 is vector of size state.widthOfX
     t1 = coef*x;
-    /* 
+    /*
         Note: The above 2 lines could have been written as:
         ColumnVector t1 = -coef*x;
 
         but this creates warnings. These warnings are somehow related to the factor
-        that x is an immutable type. 
+        that x is an immutable type.
     */
 
     ColumnVector t2 = t1.array().exp();
@@ -433,7 +446,7 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
 			 for (int i2 = 0; i2 < (state.widthOfX); i2++){
 				elog(INFO, "%i, %i, %f: ", i1,i2,X_transp_AX(i1,i2));
 			}
-		}   
+		}
 		elog(INFO, "adding Hessian to state");
 	}
     state.bread += -1*X_transp_AX;

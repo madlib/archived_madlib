@@ -11,9 +11,15 @@ Multinomial Logistic Regression: Driver functions
 """
 
 import plpy
+from utilities.validate_args import table_exists
+from utilities.validate_args import table_is_empty
+from utilities.utilities import preprocess_optimizer_params
+from utilities.utilities import _assert
+
 
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
-    terminateExpr, max_num_iterations, cyclesPerIteration = 1):
+                      terminateExpr, max_num_iterations,
+                      cyclesPerIteration=1):
     """
     Driver for an iterative algorithm
 
@@ -50,7 +56,7 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             {{source}} AS src
         WHERE
             st._madlib_iteration = {{iteration}} - 1
-        """.format(updateExpr = updateExpr)
+        """.format(updateExpr=updateExpr)
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
@@ -65,15 +71,17 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             FROM _madlib_iterative_alg
             WHERE _madlib_iteration = {{iteration}}
         ) AS newer
-        """.format(terminateExpr = terminateExpr)
+        """.format(terminateExpr=terminateExpr)
     checkForNullStateSQL = """
         SELECT _madlib_state IS NULL AS should_terminate
         FROM _madlib_iterative_alg
         WHERE _madlib_iteration = {iteration}
         """
 
-    oldMsgLevel = plpy.execute("SELECT setting FROM pg_settings WHERE name='client_min_messages'"
-        )[0]['setting']
+    oldMsgLevel = plpy.execute("""SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'"""
+                               )[0]['setting']
     plpy.execute("""
         SET client_min_messages = error;
         DROP TABLE IF EXISTS _madlib_iterative_alg;
@@ -82,36 +90,39 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             _madlib_state {stateType}
         );
         SET client_min_messages = {oldMsgLevel};
-        """.format(stateType = stateType, oldMsgLevel = oldMsgLevel))
+        """.format(stateType=stateType, oldMsgLevel=oldMsgLevel))
 
     iteration = 0
     plpy.execute("""
         INSERT INTO _madlib_iterative_alg VALUES ({iteration}, {initialState})
-        """.format(iteration = iteration, initialState = initialState))
+        """.format(iteration=iteration, initialState=initialState))
     while True:
         iteration = iteration + 1
         plpy.execute(updateSQL.format(
-            source = source,
-            state = "(st._madlib_state)",
-            iteration = iteration,
-            sourceAlias = "src"))
-        if plpy.execute(checkForNullStateSQL.format(
-                iteration = iteration))[0]['should_terminate'] or (
-            iteration > cyclesPerIteration and (
-            iteration >= cyclesPerIteration * max_num_iterations or
-            plpy.execute(terminateSQL.format(
-                iteration = iteration,
-                cyclesPerIteration = cyclesPerIteration,
-                oldState = "(older._madlib_state)",
-                newState = "(newer._madlib_state)"))[0]['should_terminate'])):
+            source=source,
+            state="(st._madlib_state)",
+            iteration=iteration,
+            sourceAlias="src"))
+        if (
+            plpy.execute(checkForNullStateSQL.
+                         format(iteration=iteration))[0]['should_terminate'] or
+            (iteration > cyclesPerIteration and
+             (iteration >= cyclesPerIteration * max_num_iterations or
+                plpy.execute(terminateSQL.format(
+                    iteration=iteration,
+                    cyclesPerIteration=cyclesPerIteration,
+                    oldState="(older._madlib_state)",
+                    newState="(newer._madlib_state)")
+                )[0]['should_terminate']))):
             break
 
     # Note: We do not drop the temporary table
     return iteration
 
 
-def compute_mlogregr(schema_madlib, source, depvar, indepvar, num_categories,
-                     max_num_iterations, optimizer,
+def compute_mlogregr(schema_madlib, source_table, dependent_varname,
+                     independent_varname, num_categories,
+                     max_iter, optimizer,
                      precision, ref_category, **kwargs):
     """
     Compute logistic regression coefficients
@@ -121,14 +132,13 @@ def compute_mlogregr(schema_madlib, source, depvar, indepvar, num_categories,
     a lot of columns the conjugate-gradient method might perform better.
 
     @param schema_madlib Name of the MADlib schema, properly escaped/quoted
-    @param source Name of relation containing the training data
-    @param depvar Name of dependent column in training data (of type INTEGER)
+    @param source_table Name of relation containing the training data
+    @param dependent_varname Name of dependent column in training data (of type INTEGER)
     @param num_categories Number of categories in the multilogistic regression
-    @param indepvar Name of independent column in training data (of type
+    @param independent_varname Name of independent column in training data (of type
            DOUBLE PRECISION[])
-    @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
-        reweighted least squares
-    @param max_num_iterations Maximum number of iterations
+    @param optimizer Name of the optimizer. 'newton' or 'irls'
+    @param max_iter Maximum number of iterations
     @param precision Terminate if two consecutive iterations have a difference
            in the log-likelihood of less than <tt>precision</tt>. In other
            words, we terminate if the objective function value has converged.
@@ -143,19 +153,20 @@ def compute_mlogregr(schema_madlib, source, depvar, indepvar, num_categories,
     @return array with coefficients in case of convergence, otherwise None
     """
 
-    if max_num_iterations < 1:
-        plpy.error("Number of iterations must be positive")
+    if max_iter < 1:
+        plpy.error("Mlogit error: Number of iterations must be positive")
 
     if optimizer == 'newton':
         optimizer = 'irls'
     elif optimizer not in ['irls']:
-        plpy.error("Unknown optimizer requested. Must be 'newton' or 'irls'")
+        plpy.error("Mlogit error: Unknown optimizer requested."
+                   " Must be 'newton' or 'irls'")
 
     return __runIterativeAlg(
-        stateType = "FLOAT8[]",
-        initialState = "NULL",
-        source = source,
-        updateExpr = """
+        stateType="FLOAT8[]",
+        initialState="NULL",
+        source=source_table,
+        updateExpr="""
             {schema_madlib}.__mlogregr_{optimizer}_step(
                 ({depvar}),
                 ({num_categories}),
@@ -163,19 +174,460 @@ def compute_mlogregr(schema_madlib, source, depvar, indepvar, num_categories,
                 ({indepvar})::FLOAT8[],
                 {{state}}
             )
-            """.format(
-                schema_madlib = schema_madlib,
-                depvar = depvar,
-                indepvar = indepvar,
-                num_categories = num_categories,
-                ref_category=ref_category,
-                optimizer = optimizer),
-        terminateExpr = """
+            """.format(schema_madlib=schema_madlib,
+                       depvar=dependent_varname,
+                       indepvar=independent_varname,
+                       num_categories=num_categories,
+                       ref_category=ref_category,
+                       optimizer=optimizer),
+        terminateExpr="""
             {schema_madlib}.__internal_mlogregr_{optimizer}_step_distance(
                 {{newState}}, {{oldState}}
             ) < {precision}
-            """.format(
-                schema_madlib = schema_madlib,
-                optimizer = optimizer,
-                precision = precision),
-        max_num_iterations = max_num_iterations)
+            """.format(schema_madlib=schema_madlib,
+                       optimizer=optimizer,
+                       precision=precision),
+        max_num_iterations=max_iter)
+# -------------------------------------------------------------------------
+
+
+def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
+                   independent_varname, ref_category, optimizer_params,
+                   *args, **kwargs):
+    """
+    Args:
+        @param schema_madlib: string, Name of the MADlib schema, properly escaped/quoted
+        @param source_table: string, Name of relation containing the training data
+        @param output_table: string, Name of output relation containing the trained model
+        @param dependent_varname: string, Name of dependent column in training data (of type INTEGER)
+        @param independent_varname: string, Name of independent column in training data (of type
+               DOUBLE PRECISION[])
+        @param ref_category: integer, The user-specified reference category
+                                (value in [0, num_categories-1])
+        @param optimizer_params: string, Optimization algorithm parameters
+                Contains key=value pairs where key can be one of:
+                    optimizer: Name of the optimizer. 'newton' or 'irls'
+                    max_iter: Maximum number of iterations
+                    precision: Terminate if two consecutive iterations have a difference
+                        in the log-likelihood of less than <tt>precision</tt>. In other
+                        words, we terminate if the objective function value has converged.
+                        This convergence criterion can be disabled by specifying a negative
+                        value.
+        @param args, kwargs: We allow the caller to specify additional arguments
+               (all of which will be ignored though). The purpose of this is to allow the
+               caller to unpack a dictionary whose element set is a superset of
+               the required arguments by this function.
+
+    Returns:
+        None
+
+    Side effect:
+        Creates two tables:
+    The output table ('output_table' above) has the following columns
+     'coef'          DOUBLE PRECISION[], -- Coefficients of regression
+     'loglikelihood' DOUBLE PRECISION,   -- Log-likelihood value
+     'std_err'       DOUBLE PRECISION[], -- Standard errors
+     'z_stats'       DOUBLE PRECISION[], -- z-stats of the standard errors
+     'p_values'      DOUBLE PRECISION[], -- p-values of the standard errors
+     'num_iterations' INTEGER             -- Number of iterations performed by the optimizer
+
+    The output summary table is named as <output_table>_summary has the following columns
+    'source_table'   VARCHAR,            -- source table name
+    'dep_var'        VARCHAR,            -- dependent variable name
+    'ind_var'        VARCHAR,            -- independent variable name
+    'num_rows_processed' INTEGER         -- Number of rows processed during training
+    'num_missing_rows_skipped' INTEGER   -- Number of rows skipped during training due
+                                         --    to missing values
+    """
+    # reduce the number of messages to user
+    old_msg_level = plpy.execute("""
+                                 SELECT setting FROM pg_settings
+                                 WHERE name='client_min_messages'
+                                 """)[0]['setting']
+    plpy.execute("set client_min_messages to error")
+
+    all_arguments = {'schema_madlib': schema_madlib,
+                     'source_table': source_table,
+                     'output_table': output_table,
+                     'dependent_varname': dependent_varname,
+                     'independent_varname': independent_varname,
+                     'ref_category': ref_category,
+                     'optimizer_params': optimizer_params
+                     }
+
+    _validate_params(**all_arguments)
+
+    # validate parameters
+    num_categories = int(plpy.execute(""" SELECT count(DISTINCT {depvar}) as cnt
+                                          FROM {source}
+                                      """.format(depvar=dependent_varname,
+                                                 source=source_table))[0]["cnt"])
+    max_category = int(plpy.execute(""" SELECT max({depvar}) as max_cat
+                                          FROM {source}
+                                      """.format(depvar=dependent_varname,
+                                                 source=source_table))[0]["max_cat"])
+    min_category = int(plpy.execute(""" SELECT min({depvar}) as min_cat
+                                          FROM {source}
+                                      """.format(depvar=dependent_varname,
+                                                 source=source_table))[0]["min_cat"])
+
+    all_arguments['total_rows'] = int(plpy.execute("""SELECT count(*) as cnt
+                                                      FROM {0}""".
+                                                   format(source_table))[0]["cnt"])
+
+    _assert(max_category == num_categories-1 and min_category == 0,
+            "Mlogit error: Value of the dependent variable should include "
+            "integers in the range [0, {0}]".format(num_categories-1))
+
+    _assert(ref_category >= 0 and ref_category < num_categories,
+            "Mlogregr error: Invalid reference category value {0}. "
+            "It should be between 0 and {1}".format(ref_category,
+                                                    num_categories-1))
+
+    all_arguments['num_categories'] = num_categories
+
+    optimizer_param_dict = _extract_params(schema_madlib, optimizer_params)
+    all_arguments.update(optimizer_param_dict)
+
+    # Perform the mlogistic computation
+    n_iterations = compute_mlogregr(**all_arguments)
+
+    # plpy.info("Creating output table")
+    plpy.execute("""CREATE TABLE {output_table} AS
+                        SELECT (result).ref_category as ref_category,
+                               (result).coef as coef,
+                               (result).log_likelihood as loglikelihood,
+                               (result).std_err as std_err,
+                               (result).z_stats as z_stats,
+                               (result).p_values as p_values,
+                               (result).odds_ratios as odds_ratio,
+                               (result).condition_no as condition_no,
+                               {n_iterations} as num_iterations,
+                               (result).num_processed as num_processed,
+                               ({total_rows} - (result).num_processed)
+                                    as num_missing_rows_skipped
+                        FROM (
+                            SELECT
+                             {schema_madlib}.__internal_mlogregr_irls_result(
+                                                                _madlib_state)
+                                    AS result
+                            FROM _madlib_iterative_alg
+                            WHERE _madlib_iteration = {n_iterations}
+                        ) subq
+                """.format(n_iterations=n_iterations,
+                           **all_arguments))
+
+    # plpy.info("Fetching result")
+    result = plpy.execute("""SELECT num_processed, num_missing_rows_skipped
+                             FROM {output_table}
+                          """.format(output_table=output_table))[0]
+    if not result["num_processed"]:
+        # when no rows have been processed, a NULL result is returned.
+        # We need to capture that to ensure correct value for num_processed
+        result["num_processed"] = 0
+        result["num_missing_rows_skipped"] = all_arguments['total_rows']
+
+    # plpy.info("Removing rows processed column out of output table since we "
+    #           "should place it in summary table")
+    plpy.execute("""ALTER TABLE {output_table}
+                        DROP num_processed,
+                        DROP num_missing_rows_skipped
+                 """.format(output_table=output_table))
+
+    # plpy.info("Creating summary table")
+    plpy.execute(
+        """
+        CREATE TABLE {output_table}_summary AS
+            SELECT
+              '{source_table}'::VARCHAR            as source_table,
+              '{output_table}'::VARCHAR            as output_table,
+              '{dependent_varname}'::VARCHAR       as dependent_varname,
+              '{independent_varname}'::VARCHAR     as independent_varname,
+              '{optimizer_params}'::VARCHAR        as optimizer_params,
+              {ref_category}::INTEGER              as ref_category,
+              {num_processed}::INTEGER             as num_processed,
+              {num_missing_rows_skipped}::INTEGER  as num_missing_rows_skipped
+        """.format(num_processed=result["num_processed"],
+                   num_missing_rows_skipped=result["num_missing_rows_skipped"],
+                   **all_arguments))
+
+    plpy.execute("set client_min_messages to " + old_msg_level)
+    return None
+# -------------------------------------------------------------------------
+
+
+def _validate_params(source_table, output_table, dependent_varname,
+                     independent_varname, *args, **kwargs):
+    """
+    Args:
+        @param source_table: string, Name of input source table
+        @param output_table: string, Name of output table
+        @param dependent_varname: string, Name of the dependent column
+        @param independent_varname: string, Name of the independent column
+        @param num_categories: int, Number of categories for mlogit regression
+        @param ref_category: integer, Value of the reference category
+
+    Returns:
+        None
+    """
+    _assert(source_table is not None and
+            source_table.strip().lower() not in ('none', 'null', ''),
+            "Mlogregr error: Invalid source table name")
+
+    _assert(table_exists(source_table),
+            "Mlogregr error: Source table {0} does not exist".
+            format(source_table))
+
+    _assert(output_table is not None and
+            output_table.strip().lower() not in ('none', 'null', ''),
+            "Mlogregr error: Invalid output table name")
+
+    _assert(not table_exists(output_table),
+            "Mlogregr error: Output table {0}"
+            " already exists".format(str(output_table)))
+
+    _assert(not table_exists(output_table + "_summary"),
+            "Mlogregr error: Output table {0}_summary"
+            " already exists".format(str(output_table)))
+
+    _assert(not table_is_empty(source_table),
+            "Mlogregr error: Source table {0} is empty".format(source_table))
+
+    _assert(dependent_varname is not None and dependent_varname.strip().lower() not in ('null', ''),
+            "Mlogregr error: Invalid dependent column name")
+
+    _assert(independent_varname is not None and independent_varname.lower() not in ('null', ''),
+            "Mlogregr error: Invalid independent column name")
+
+# -------------------------------------------------------------------------
+
+
+def _extract_params(schema_madlib, optimizer_params):
+    """ Extract optimizer control parameter or set the default values
+
+    @brief  optimizer_params is a string with the format of
+           'max_iter=..., optimizer=..., precision=...'. The order
+           does not matter. If a parameter is missing, then the default
+           value for it is used. If optimizer_params is None or '',
+           then all default values are used. If the parameter specified
+           is not supported then an error is raised.
+           This function also validates the values of these parameters.
+           Supported parameters:
+                max_iter: integer (also aliased to 'max_num_iterations'. Default=20)
+                optimizer: string (can be one of ['irls', 'newton']. Default='irls')
+                precision: float (Default=0.0001)
+    Returns:
+        Dict. Dictionary of optimizer parameter values with key as parameter name
+        and value as the parameter value
+
+    Throws:
+        "Mlogregr error" - If the parameter is unsupported or the value is
+        not valid.
+    """
+    allowed_params = set(["max_iter", "max_num_iterations",
+                          "optimizer", "precision", "tolerance"])
+    parameter_dict = {'max_iter': 20, 'optimizer': "irls", 'precision': 0.0001}
+
+    if not optimizer_params:
+        return parameter_dict
+
+    for s in preprocess_optimizer_params(optimizer_params):
+        items = s.split("=")
+        if (len(items) != 2):
+            plpy.error("Mlogit error: Optimizer parameter list has incorrect format")
+        param_name = items[0].strip(" \"").lower()
+        param_value = items[1].strip(" \"").lower()
+
+        if param_name not in allowed_params:
+            plpy.error(
+                """
+                Mlogit error: {param_name} is not a valid parameter name.
+                Run:
+                    SELECT {schema_madlib}.mlogregr_train('usage');
+                to see the allowed parameters.
+                """.format(param_name=param_name,
+                           schema_madlib=schema_madlib))
+
+        if param_name in ("max_iter", "max_num_iterations"):
+            try:
+                parameter_dict["max_iter"] = int(param_value)
+            except ValueError:
+                plpy.error("Mlogit error: max_iter must be an integer")
+
+        if param_name == "optimizer":
+            parameter_dict["optimizer"] = param_value
+
+        if param_name in ("precision", "tolerance"):
+            try:
+                parameter_dict["precision"] = float(param_value)
+            except ValueError:
+                plpy.error("Mlogit error: precision must be a float value")
+
+    if parameter_dict["max_iter"] <= 0:
+        plpy.error("Mlogit error: max_iter must be positive")
+
+    return parameter_dict
+
+
+# -- Help Messages -----------------------------------------------------------
+
+
+def mlogregr_help_message(schema_madlib, message, **kwargs):
+    """ Help message for Multinomial Logistic Regression
+
+    @brief
+    Args:
+        @param schema_madlib string, Name of the schema madlib
+        @param message string, Help message indicator
+
+    Returns:
+        String. Contain the help message string
+    """
+    if not message:
+        help_string = """
+-----------------------------------------------------------------------
+                            SUMMARY
+-----------------------------------------------------------------------
+Functionality: Multinomial logistic regression is a widely used
+regression analysis tool that models the outcomes of categorical dependent
+random variables. The model assumes that the conditional mean of the dependent
+categorical variables is the logistic function of an affine combination of
+independent variables. Multinomial logistic regression finds the vector of
+coefficients that maximizes the likelihood of the observations.
+
+For more details on function usage:
+    SELECT {schema_madlib}.mlogregr_train('usage')
+
+For an example on using the function:
+    SELECT {schema_madlib}.mlogregr_train('example')
+        """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+-----------------------------------------------------------------------
+                                USAGE
+-----------------------------------------------------------------------
+ SELECT {schema_madlib}.mlogregr_train(
+    'source_table',        -- VARCHAR: Name of the source table containing training data
+    'output_table',        -- VARCHAR, Name of the output table to hold the trained model
+    'dependent_varname',   -- VARCHAR, Name of the column containing the category values
+                           --           (the values must be integers from 0 to num_categories-1)
+    'independent_varname', -- VARCHAR, Name of the column containing the independent variables.
+                           --           (Can also be an ARRAY expression)
+    ref_category,          -- INTEGER, The value of reference category
+                           --           (the value must be between 0 and num_categories-1)
+    'optimizer_params'     -- VARCHAR, a comma-separated string with optimizer parameters
+                           --   Valid optimizer parameters are:
+                           --     max_iter: INTEGER, Maximum number of iterations to run algorithm
+                           --     optimizer: VARCHAR, Optimizer algorithm to use
+                           --                 (can be either 'newton' or 'irls')
+                           --     precision: FLOAT8, Maximum number of iterations to run algorithm
+
+ )
+
+-----------------------------------------------------------------------
+                                OUTUPT
+-----------------------------------------------------------------------
+The output table ('output_table' above) has the following columns
+     coef           -- DOUBLE PRECISION[], Coefficients of regression
+     loglikelihood  -- DOUBLE PRECISION, Log-likelihood value
+     std_err        -- DOUBLE PRECISION[], Standard errors
+     z_stats        -- DOUBLE PRECISION[], z-stats of the standard errors
+     p_values       -- DOUBLE PRECISION[], p-values of the standard errors
+     num_iterations -- INTEGER, Number of iterations performed by the optimizer
+
+The output summary table is named as <'output_table'>_summary has the following columns
+    source_table             -- VARCHAR, Source table name
+    dep_var                  -- VARCHAR, Dependent variable name
+    ind_var                  -- VARCHAR, Independent variable name
+    num_rows_processed       -- INTEGER, Number of rows processed during training
+    num_missing_rows_skipped -- INTEGER, Number of rows skipped during training due
+                                         to missing values
+        """
+    elif message in ['example', 'examples']:
+        help_string = """
+-- Create sample data set
+DROP TABLE IF EXISTS test3;
+CREATE TABLE test3 (
+    feat1 INTEGER,
+    feat2 INTEGER,
+    cat INTEGER
+);
+INSERT INTO test3(feat1, feat2, cat) VALUES
+(1,35,1),
+(2,33,0),
+(3,39,1),
+(1,37,1),
+(2,31,1),
+(3,36,0),
+(2,36,1),
+(2,31,1),
+(2,41,1),
+(2,37,1),
+(1,44,1),
+(3,33,2),
+(1,31,1),
+(2,44,1),
+(1,35,1),
+(1,44,0),
+(1,46,0),
+(2,46,1),
+(2,46,2),
+(3,49,1),
+(2,39,0),
+(2,44,1),
+(1,47,1),
+(1,44,1),
+(1,37,2),
+(3,38,2),
+(1,49,0),
+(2,44,0),
+(3,61,2),
+(1,65,2),
+(3,67,1),
+(3,65,2),
+(1,65,2),
+(2,67,2),
+(1,65,2),
+(1,62,2),
+(3,52,2),
+(3,63,2),
+(2,59,2),
+(3,65,2),
+(2,59,0),
+(3,67,2),
+(3,67,2),
+(3,60,2),
+(3,67,2),
+(3,62,2),
+(2,54,2),
+(3,65,2),
+(3,62,2),
+(2,59,2),
+(3,60,2),
+(3,63,2),
+(3,65,2),
+(2,63,1),
+(2,67,2),
+(2,65,2),
+(2,62,2),
+(NULL,67,2),
+(2,NULL,2),
+(NULL,NULL,2),
+(2,62,NULL);
+
+-- Run the multilogistic regression function.
+DROP TABLE IF EXISTS test3_output;
+DROP TABLE IF EXISTS test3_output_summary;
+SELECT madlib.mlogregr_train('test3',
+                             'test3_output',
+                             'cat',
+                             'ARRAY[1, feat1, feat2]',
+                             0,
+                             'max_iter=20, optimizer=irls, precision=0.0001'
+                             );
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.mlogregr_train()"
+
+    return help_string.format(schema_madlib=schema_madlib)
+# ---------------------------------------------------------------------------

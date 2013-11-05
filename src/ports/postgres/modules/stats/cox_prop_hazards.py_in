@@ -16,7 +16,7 @@ from utilities.validate_args import table_is_empty
 from utilities.validate_args import get_cols
 from utilities.validate_args import is_var_valid
 from utilities.utilities import __unique_string
-from elastic_net.elastic_net_utils import __preprocess_optimizer_params
+from utilities.utilities import preprocess_optimizer_params
 from utilities.utilities import _assert
 from utilities.validate_args import columns_exist_in_table
 from utilities.utilities import __mad_version
@@ -188,29 +188,29 @@ def coxph(schema_madlib, source_table, output_table, dependent_varname,
                                  """)[0]['setting']
     plpy.execute("set client_min_messages to error")
 
-    kwargs = {'schema_madlib': schema_madlib,
-              'source_table': source_table,
-              'output_table': output_table,
-              'dependent_varname': dependent_varname,
-              'independent_varname': independent_varname,
-              'right_censoring_status': right_censoring_status,
-              'strata': strata
-              }
-    _validate_params(**kwargs)
+    all_arguments = {'schema_madlib': schema_madlib,
+                     'source_table': source_table,
+                     'output_table': output_table,
+                     'dependent_varname': dependent_varname,
+                     'independent_varname': independent_varname,
+                     'right_censoring_status': right_censoring_status,
+                     'strata': strata
+                     }
+    _validate_params(**all_arguments)
 
     max_iter, optimizer, tolerance = _extract_params(schema_madlib,
                                                      optimizer_params)
 
     if strata is None:
         theIteration, madlib_iterative_alg = compute_coxph(
-                schema_madlib, source_table, independent_varname,
-                dependent_varname, right_censoring_status, optimizer,
-                max_iter, tolerance)
+            schema_madlib, source_table, independent_varname,
+            dependent_varname, right_censoring_status, optimizer,
+            max_iter, tolerance)
     else:
         theIteration, madlib_iterative_alg = compute_coxph_strata(
-                schema_madlib, source_table, independent_varname,
-                dependent_varname, right_censoring_status, strata,
-                optimizer, max_iter, tolerance)
+            schema_madlib, source_table, independent_varname,
+            dependent_varname, right_censoring_status, strata,
+            optimizer, max_iter, tolerance)
 
     total_rows = plpy.execute(""" SELECT count(*) as cnt FROM {0}""".format(
                               source_table))[0]["cnt"]
@@ -219,8 +219,7 @@ def coxph(schema_madlib, source_table, output_table, dependent_varname,
     # we have to put num_processed in output_table first since result can only
     # be extracted via SQL. Fetching it in Python fails since fetching two-dim
     # array (in this case 'hessian') is not supported.
-    plpy.execute(
-                """ CREATE TABLE {output_table} AS
+    plpy.execute(""" CREATE TABLE {output_table} AS
                     SELECT (result).*,
                            ({total_rows} - (result).num_processed)
                                     as num_missing_rows_skipped,
@@ -257,11 +256,11 @@ def coxph(schema_madlib, source_table, output_table, dependent_varname,
                         DROP num_missing_rows_skipped
                  """.format(output_table=output_table))
 
-    if not kwargs['right_censoring_status']:
-        kwargs['right_censoring_status'] = 'NULL'
+    if not all_arguments['right_censoring_status']:
+        all_arguments['right_censoring_status'] = 'NULL'
     else:
-        kwargs['right_censoring_status'] = "'" + kwargs['right_censoring_status'] + "'"
-    kwargs['strata'] = "'" + kwargs['strata'] + "'" if kwargs['strata'] else 'NULL'
+        all_arguments['right_censoring_status'] = "'" + all_arguments['right_censoring_status'] + "'"
+    all_arguments['strata'] = "'" + all_arguments['strata'] + "'" if all_arguments['strata'] else 'NULL'
 
     # plpy.info("Creating summary table")
     plpy.execute(
@@ -277,7 +276,7 @@ def coxph(schema_madlib, source_table, output_table, dependent_varname,
               {num_missing_rows_skipped}::INTEGER  as num_missing_rows_skipped
         """.format(num_processed=result["num_processed"],
                    num_missing_rows_skipped=result["num_missing_rows_skipped"],
-                   **kwargs))
+                   **all_arguments))
 
     plpy.execute("set client_min_messages to " + old_msg_level)
     return None
@@ -350,7 +349,7 @@ def _extract_params(schema_madlib, optimizer_params):
         return (name_value['max_iter'], name_value['optimizer'],
                 name_value['tolerance'])
 
-    for s in __preprocess_optimizer_params(optimizer_params):
+    for s in preprocess_optimizer_params(optimizer_params):
         items = s.split("=")
         if (len(items) != 2):
             plpy.error("Cox error: Optimizer parameter list has incorrect format!")

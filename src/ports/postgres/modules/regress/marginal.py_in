@@ -6,17 +6,17 @@
 @brief Marginal Effects: Common functions
 
 @namespace marginal
-
-@brief Marginal effects: Common functions
 """
 import plpy
 import re
 from utilities.utilities import __unique_string
 from utilities.utilities import _string_to_array
+from utilities.utilities import extract_optimizer_param
+from utilities.utilities import _assert
+
 from utilities.validate_args import table_exists
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
-from utilities.validate_args import scalar_col_has_no_null
 from utilities.validate_args import get_cols
 
 # use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
@@ -27,17 +27,11 @@ array_to_string = version_wrapper.select_vec_return()
 
 # ========================================================================
 
-def _margins_logregr_validate_args(
-    schema_madlib,
-    source_table,
-    out_table,
-    dependent_varname,
-    independent_varname,
-    input_group_cols,
-    marginal_vars,
-    max_iter,
-    optimizer,
-    tolerance):
+
+def _margins_logregr_validate_args(schema_madlib, source_table, out_table,
+                                   dependent_varname, independent_varname,
+                                   grouping_cols, marginal_vars, max_iter,
+                                   optimizer, tolerance):
     """
     Validate the arguments
     """
@@ -57,14 +51,14 @@ def _margins_logregr_validate_args(
     if not dependent_varname or dependent_varname.lower() in ('null', ''):
         plpy.error("Margins error: Invalid dependent column name!")
 
-    if not scalar_col_has_no_null(source_table, dependent_varname):
-        plpy.error("Margins error: Dependent variable has Null values! \
-                    Please filter out Null values before using this function!")
+    #if not scalar_col_has_no_null(source_table, dependent_varname):
+    #    plpy.error("Margins error: Dependent variable has Null values! \
+    #                Please filter out Null values before using this function!")
 
     if not independent_varname or independent_varname.lower() in ('null', ''):
         plpy.error("Margins error: Invalid independent column name!")
 
-    if input_group_cols and input_group_cols.lower() in ('null', ''):
+    if grouping_cols and grouping_cols.lower() in ('null', ''):
         plpy.error("Margins error: Invalid grouping columns name!")
 
     if max_iter <= 0:
@@ -76,9 +70,8 @@ def _margins_logregr_validate_args(
     if optimizer is None:
         optimizer = "irls"
     elif optimizer not in ("irls", "cg", "igd"):
-        plpy.error(""" Margins error: Optimizer does not exist.
-                   Must be 'newton'/'irls', 'cg', or 'igd'.
-                   """)
+        plpy.error("Margins error: Optimizer does not exist. Must be "
+                   "newton'/'irls', 'cg', or 'igd'.")
 
     if optimizer == "newton":
         optimizer = "irls"
@@ -86,50 +79,52 @@ def _margins_logregr_validate_args(
         plpy.error(""" Margins error: Optimizer %s does not exist.
                    Must be 'newton'/'irls', 'cg', or 'igd'.
                    """ % optimizer)
-    if input_group_cols:
+
+    if grouping_cols:
         if not columns_exist_in_table(source_table,
-                               _string_to_array(input_group_cols), schema_madlib):
+                                      _string_to_array(grouping_cols),
+                                      schema_madlib):
             plpy.error("Margins error: Grouping column does not exist!")
-
-
 # ========================================================================
-# Returns relevant ouputs
-# Note: The marginal_vars index list is 1 base
+
+
 def _internal_get_margins_from_array(marginal_coef, marginal_vars):
+    """Returns relevant ouputs
 
+       Note: The marginal_vars list is 1-based indexing
+    """
     if min(marginal_vars) < 1:
-        plpy.error('''Margins error: All indices in the marginal coefficients array must be >= 1.''')
+        plpy.error("Margins error: All indices in the marginal coefficients "
+                   "array must be >= 1.")
     if max(marginal_vars) > len(marginal_coef):
-        plpy.error('''Margins error: All indices in the marginal coefficients array must be <= the number of independent variables.''')
-
+        plpy.error("Margins error: All indices in the marginal coefficients "
+                   "array must be <= the number of independent variables.")
     return [marginal_coef[i-1] for i in marginal_vars]
-
-
 # ========================================================================
-# Convert numeric array to SQL string
+
+
 def _internal_py_array_to_sql_string(array):
-    return "ARRAY[%s]" % ','.join(map(str, array))
-
-
+    """Convert numeric array to SQL string """
+    return "ARRAY[{0}]".format(','.join(map(str, array)))
 # ========================================================================
-# Convert numeric array to SQL string
-def _internal_return_all_except_dep_vars(schema_madlib,
-                                          source_table,
-                                          dependent_varname):
-    cols = get_cols(source_table, schema_madlib)
-    outstr_array = []
-    for i in range(len(cols)):
-        if cols[i] != dependent_varname:
-            outstr_array.append(cols[i])
 
+
+def _internal_return_all_except_dep_vars(schema_madlib,
+                                         source_table,
+                                         dependent_varname):
+    """Convert numeric array to SQL string """
+    cols = get_cols(source_table, schema_madlib)
+    outstr_array = [i for i in cols if i != dependent_varname]
     return "ARRAY[%s]" % ','.join(outstr_array)
 
 # ========================================================================
 # Main function call for marginal logisitc regression
-def margins_logregr(schema_madlib, source_table, out_table
-                    , dependent_varname, input_independent_varname
-                    , input_group_cols, marginal_vars
-                    , max_iter, optimizer, tolerance , **kwargs):
+
+
+def margins_logregr(schema_madlib, source_table, out_table,
+                    dependent_varname, input_independent_varname,
+                    input_group_cols, marginal_vars, max_iter,
+                    optimizer, tolerance, **kwargs):
     """
     @brief A wrapper function for the various marginal regression analyzes.
 
@@ -169,15 +164,15 @@ def margins_logregr(schema_madlib, source_table, out_table
 
     # Validate arguments
     _margins_logregr_validate_args(schema_madlib,
-                                source_table,
-                                out_table,
-                                dependent_varname,
-                                input_independent_varname,
-                                input_group_cols,
-                                marginal_vars,
-                                max_iter,
-                                optimizer,
-                                tolerance);
+                                   source_table,
+                                   out_table,
+                                   dependent_varname,
+                                   input_independent_varname,
+                                   input_group_cols,
+                                   marginal_vars,
+                                   max_iter,
+                                   optimizer,
+                                   tolerance)
 
     # NOTICE: * support was removed because other modules did not have it.
     # Uncomment the following code if you want to re-add '*' support
@@ -197,41 +192,34 @@ def margins_logregr(schema_madlib, source_table, out_table
     if not input_group_cols:
         # Step 1: Create output table with appropriate column names
         plpy.execute("""
-          CREATE TABLE %s (
+          CREATE TABLE {0} (
           margins DOUBLE PRECISION[],
           std_err          DOUBLE PRECISION[],
           t_stats          DOUBLE PRECISION[],
-          p_values         DOUBLE PRECISION[])""" % out_table
-        )
+          p_values         DOUBLE PRECISION[])""".format(out_table))
 
         # Step 2: Run the regression if the coefficients are not provided
-        temp_table = __unique_string();
+        temp_table = __unique_string()
         plpy.execute("""
-        SELECT %s.logregr_train('%s',
-                               '%s',
-                               '%s',
-                               '%s',
+        SELECT {0}.logregr_train('{1}',
+                               '{2}',
+                               '{3}',
+                               '{4}',
                                NULL,
-                               %s,
-                               '%s',
-                               %s)
-        """ % (schema_madlib,
-               source_table,
-               temp_table,
-               dependent_varname,
-               independent_varname,
-               max_iter,
-               optimizer,
-               tolerance))
+                               {5},
+                               '{6}',
+                               {7})
+        """.format(schema_madlib, source_table, temp_table, dependent_varname,
+                   independent_varname, max_iter, optimizer, tolerance))
 
         regr_coef = plpy.execute('SELECT coef from %s' % temp_table)
         regr_coef = string_to_array(regr_coef[0]['coef'])
 
         # If marginal variables are none. Then chose all variables
         if not marginal_vars:
-          marginal_vars = range(1,len(regr_coef)+1)
+            marginal_vars = range(1, len(regr_coef) + 1)
         else:
-          marginal_vars = map(int, string_to_array(marginal_vars))
+            marginal_vars = map(int, string_to_array(marginal_vars))
 
         plpy.execute('DROP TABLE IF EXISTS %s' % temp_table)
 
@@ -241,12 +229,11 @@ def margins_logregr(schema_madlib, source_table, out_table
                               (%s)::BOOLEAN,
                                %s,
                                %s)).* FROM %s
-                """ % (
-                      schema_madlib,
-                      dependent_varname,
-                      independent_varname,
-                      _internal_py_array_to_sql_string(regr_coef),
-                      source_table))
+                """ % (schema_madlib,
+                       dependent_varname,
+                       independent_varname,
+                       _internal_py_array_to_sql_string(regr_coef),
+                       source_table))
 
         # convert SQL array to a python list
         #  (taking into account GP4.1 exception behavior)
@@ -256,7 +243,7 @@ def margins_logregr(schema_madlib, source_table, out_table
         t_stats = string_to_array(marginal_log_rst[0]["t_stats"])
 
         # get subset of indices that need to be returned as solution
-        margins  = _internal_get_margins_from_array(margins, marginal_vars)
+        margins = _internal_get_margins_from_array(margins, marginal_vars)
         std_err = _internal_get_margins_from_array(std_err, marginal_vars)
         t_stats = _internal_get_margins_from_array(t_stats, marginal_vars)
         p_values = _internal_get_margins_from_array(p_values, marginal_vars)
@@ -270,7 +257,6 @@ def margins_logregr(schema_madlib, source_table, out_table
                            _internal_py_array_to_sql_string(t_stats),
                            _internal_py_array_to_sql_string(p_values))
 
-
         # Step 4: Clean up output to make sure infinity and nan are cast properly
         insert_string = re.sub('Infinity', "'Infinity'::double precision", insert_string)
         insert_string = re.sub('infinity', "'Infinity'::double precision", insert_string)
@@ -281,20 +267,20 @@ def margins_logregr(schema_madlib, source_table, out_table
 
         plpy.execute("SET client_min_messages TO %s" % old_msg_level)
 
+
+# -----------------------------------------------------------------------
+# Marginal Effects for multinomial logistic regression
+# -----------------------------------------------------------------------
+
 # ========================================================================
 # Input handling for multinomial logistic regression
-def _margins_mlogregr_validate_args(
-    schema_madlib,
-    source_table,
-    out_table,
-    dependent_varname,
-    independent_varname,
-    ref_category,
-    input_group_cols,
-    marginal_vars,
-    max_iter,
-    optimizer,
-    tolerance):
+
+
+def _margins_mlogregr_validate_args(schema_madlib, source_table, out_table,
+                                    dependent_varname, independent_varname,
+                                    ref_category, input_group_cols,
+                                    marginal_vars, max_iter, optimizer,
+                                    tolerance):
     """
     Validate the arguments
     """
@@ -314,9 +300,9 @@ def _margins_mlogregr_validate_args(
     if not dependent_varname or dependent_varname.lower() in ('null', ''):
         plpy.error("Margins error: Invalid dependent column name!")
 
-    if not scalar_col_has_no_null(source_table, dependent_varname):
-        plpy.error("Margins error: Dependent variable has Null values! \
-                    Please filter out Null values before using this function!")
+    #if not scalar_col_has_no_null(source_table, dependent_varname):
+    #    plpy.error("Margins error: Dependent variable has Null values! \
+    #                Please filter out Null values before using this function!")
 
     if not independent_varname or independent_varname.lower() in ('null', ''):
         plpy.error("Margins error: Invalid independent column name!")
@@ -337,9 +323,8 @@ def _margins_mlogregr_validate_args(
         plpy.error("Margins error: The tolerance cannot be negative!")
 
     if optimizer is None:
-        plpy.error(""" Margins error: Optimizer does not exist.
-                   Must be 'newton'/'irls'.
-                   """)
+        plpy.error("Margins error: Optimizer does not exist. Must be "
+                   "'newton'/'irls'.")
 
     if optimizer == "newton":
         optimizer = "irls"
@@ -349,17 +334,121 @@ def _margins_mlogregr_validate_args(
                    """)
     if input_group_cols:
         if not columns_exist_in_table(source_table,
-                               _string_to_array(input_group_cols), schema_madlib):
+                                      _string_to_array(input_group_cols),
+                                      schema_madlib):
             plpy.error("Margins error: Grouping column does not exist!")
-
-
-
 # ========================================================================
-# Main function call for marginal logisitc regression
-def margins_mlogregr(schema_madlib, source_table, out_table
-                    , dependent_varname, input_independent_varname
-                    , ref_category, input_group_cols, marginal_vars
-                    , max_iter, optimizer, tolerance , **kwargs):
+
+
+# Main function call for marginal multinomial logistic regression
+def margins_mlogregr_main(schema_madlib, source_table,
+                          out_table, dependent_varname,
+                          independent_varname, ref_category,
+                          marginal_vars, grouping_cols,
+                          optimizer_params, regr_coef=None, **kwargs):
+    """
+    @brief A wrapper function for the marginal_logregr.
+
+    @param source_table string, name of the input table
+    @param out_table string, name of the output table to be created
+    @param dependent_varname: string, Column containing the dependent variable
+    @param independent_varname string, Column containing the array of independent variables
+    @param ref_category int, Reference category for multinomial logistic regression
+    @param grouping_cols string, Set of columns to group by.
+    @param marginal_vars string, Subset of independent variables to calculate marginal effects for.
+    @param optimizer_params: string, Comma-separated string of optimizer parameters
+                                Supported parameters:
+                                    max_iter Maximum number of iterations
+                                    optimzer Optimizer to be used (newton/irls, cg or idg)
+                                    tolerance Resiual tolerance
+
+    To include an intercept in the model, set one coordinate in the
+    <tt>independentVariables</tt> array to 1.
+
+    Returns:
+        None
+    """
+
+    allowed_param_types = {'max_iter': int, 'max_num_iterations': int,
+                           'optimizer': str,
+                           'tolerance': float}
+    default_optimizer_values = {'max_iter': 20,
+                                'optimizer': 'irls',
+                                'tolerance': 0.0001}
+    # plpy.info("optimizer params: " + str(optimizer_params))
+    optimizer_param_dict = extract_optimizer_param(optimizer_params,
+                                                   allowed_param_types,
+                                                   default_optimizer_values)
+    optimizer_param_dict.update(kwargs)
+    margins_mlogregr(schema_madlib, source_table, out_table,
+                     dependent_varname, independent_varname,
+                     ref_category, marginal_vars,
+                     grouping_cols=grouping_cols,
+                     regr_coef=regr_coef,
+                     **optimizer_param_dict)
+# ========================================================================
+
+
+def margins_mlogregr_new(schema_madlib,
+                         model_table,
+                         output_table,
+                         marginal_vars=None,
+                         **kwargs):
+    """
+    Updated function interface to Margins for multinomial logistic regression.
+
+    Input to this function is the model table obtained from mlogregr_train. All
+    necessary parameters are obtained from the model table.
+
+    Args:
+        @param model_table: string, Name of the table returned by mlogregr_train
+        @param output_table: string, name of the output table to be created
+        @param marginal_vars: list, Integer array of indices of
+    """
+    _assert(model_table is not None and
+            model_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid model table name")
+    _assert(table_exists(model_table),
+            "Margins error: Model table {0} does not exist".
+            format(model_table))
+    _assert(table_exists(model_table + "_summary"),
+            "Margins error: Model Summary table {0} does not exist".
+            format(model_table + "_summary"))
+
+    _assert(output_table is not None and
+            output_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid output table name")
+
+    _assert(not table_exists(output_table),
+            "Margins error: Output table {0}"
+            " already exists".format(str(output_table)))
+
+    _assert(columns_exist_in_table(model_table,
+                                   ['coef']),
+            "Margins error: Invalid model data table"
+            " - column coef missing")
+
+    _assert(columns_exist_in_table(model_table + '_summary',
+            ['source_table', 'dependent_varname', 'independent_varname',
+             'optimizer_params', 'ref_category']),
+            "Margins error: Invalid model summary table"
+            " - some required columns missing")
+
+    # info is a dict that contains source_table, ind_var, dep_var,
+    info = plpy.execute("SELECT * FROM {0}_summary".format(model_table))[0]
+    coef = string_to_array(plpy.execute("SELECT coef from {0}".
+                                        format(model_table))[0]['coef'])
+    margins_mlogregr_main(schema_madlib=schema_madlib, regr_coef=coef,
+                          marginal_vars=marginal_vars, **info)
+# ========================================================================
+
+
+def margins_mlogregr(schema_madlib, source_table, out_table,
+                     dependent_varname, input_independent_varname,
+                     ref_category, marginal_vars,
+                     max_iter, optimizer, tolerance,
+                     grouping_cols=None, regr_coef=None,
+                     **kwargs):
     """
     @brief A wrapper function for the various marginal regression analyzes.
 
@@ -369,7 +458,7 @@ def margins_mlogregr(schema_madlib, source_table, out_table
     @param independent_varname Column containing the array of independent variables
     @param ref_category Reference category for multinomial logistic regression
     @param grouping_cols Set of columns to group by.
-    @param marginal_vars Subset of independent variables to calculate marginal effects for.
+    @param marginal_vars Subset of indices of independent variables to calculate marginal effects for.
     @param max_iter Maximum number of iterations
     @param optimzer Optimizer to be used (newton/irls, cg or idg)
     @param tolerance Resiual tolerance
@@ -394,125 +483,119 @@ def margins_mlogregr(schema_madlib, source_table, out_table
                                   FROM pg_settings
                                   WHERE name='client_min_messages'
                                   """)[0]['setting']
-    plpy.execute('SET client_min_messages TO warning')
+    if 'verbose' in kwargs and kwargs['verbose']:
+        plpy.execute('SET client_min_messages TO warning')
+    else:
+        plpy.execute('SET client_min_messages TO error')
 
     # Validate arguments
-    _margins_mlogregr_validate_args(schema_madlib,
-                                source_table,
-                                out_table,
-                                dependent_varname,
-                                input_independent_varname,
-                                ref_category,
-                                input_group_cols,
-                                marginal_vars,
-                                max_iter,
-                                optimizer,
-                                tolerance);
+    _margins_mlogregr_validate_args(schema_madlib, source_table, out_table,
+                                    dependent_varname, input_independent_varname,
+                                    ref_category, grouping_cols, marginal_vars,
+                                    max_iter, optimizer, tolerance)
 
+    all_arguments = {'schema_madlib': schema_madlib,
+                     'source_table': source_table,
+                     'out_table': out_table,
+                     'dependent_varname': dependent_varname,
+                     'independent_varname': input_independent_varname,
+                     'ref_category': ref_category,
+                     'grouping_cols': grouping_cols,
+                     'marginal_vars': marginal_vars,
+                     'max_iter': max_iter,
+                     'optimizer': optimizer,
+                     'tolerance': tolerance}
     # NOTICE: * support was removed because other modules did not have it.
     # Uncomment the following code if you want to re-add '*' support
 
     # Check for '*' in indepdendent variables
     #if input_independent_varname == "*":
-    #  independent_varname = _internal_return_all_except_dep_vars(
-    #                      schema_madlib,
-    #                      source_table,
-    #                      dependent_varname
-    #                      )
-    #else:
-
-    independent_varname = input_independent_varname
+    #     all_arguments['independent_varname'] = \
+    #           _internal_return_all_except_dep_vars(schema_madlib,
+    #                                                source_table,
+    #                                                dependent_varname
+    #                                                )
 
     # No grouping
-    if not input_group_cols:
+    if not grouping_cols:
         # Step 1: Create output table with appropriate column names
         plpy.execute("""
-          CREATE TABLE %s (
-          margins DOUBLE PRECISION[],
-          std_err          DOUBLE PRECISION[],
-          t_stats          DOUBLE PRECISION[],
-          p_values         DOUBLE PRECISION[])""" % out_table
-        )
+            CREATE TABLE {0} (
+            margins DOUBLE PRECISION[],
+            std_err          DOUBLE PRECISION[],
+            t_stats          DOUBLE PRECISION[],
+            p_values         DOUBLE PRECISION[])""".format(out_table))
 
         # Step 2: Run the regression if the coefficients are not provided
-        regr_coef = plpy.execute("""
-        SELECT coef from %s.mlogregr('%s',
-                           '%s',
-                           '%s',
-                           %s,
-                           '%s',
-                           %s,
-                           %s)
-        """ % (schema_madlib,
-               source_table,
-               dependent_varname,
-               independent_varname,
-               max_iter,
-               optimizer,
-               tolerance,
-               ref_category))
+        if not regr_coef:
+            mlog_out_table = __unique_string()
+            plpy.execute("""
+                SELECT {schema_madlib}.mlogregr_train(
+                    '{source_table}',
+                    '{mlog_out_table}',
+                    '{dependent_varname}',
+                    '{independent_varname}',
+                    {ref_category},
+                    'max_iter={max_iter},
+                    optimizer={optimizer},
+                    tolerance={tolerance}')
+                """.format(mlog_out_table=mlog_out_table, **all_arguments))
 
-        regr_coef = string_to_array(regr_coef[0]['coef'])
-        num_categories = plpy.execute(\
-                    'SELECT count(DISTINCT %s) as num_cats FROM %s' %
-                                      (dependent_varname, source_table))
-        num_categories = int(num_categories[0]['num_cats'])
+            regr_coef = string_to_array(plpy.execute("SELECT coef from {0}".
+                                                     format(mlog_out_table)
+                                                     )[0]['coef'])
+        num_categories = int(plpy.execute("SELECT count(DISTINCT {0}) as n_cat "
+                                          "FROM {1}".format(
+                                              dependent_varname,
+                                              source_table)
+                                          )[0]['n_cat'])
 
         # If marginal variables are none. Then chose all variables
         if not marginal_vars:
-          size = len(regr_coef)
-          marginal_vars = range(1,size+1)
+            size = len(regr_coef)
+            marginal_vars = range(1, size + 1)
         else:
-          # For each independent var, get out all the indices
-          marginal_vars_only = map(int, string_to_array(marginal_vars))
-          marginal_vars = []
+            # Calculate the number of indep_vars
+            # Note: We assume that the reference variables are not being
+            # output from the multinomial regression
+            num_indep_vars = len(regr_coef) / (num_categories-1)
 
-          # Calculate the number of idep_vars
-          # Note: We assume that the reference variables are not being
-          # output from the multinomial regression
-          num_indep_vars = len(regr_coef) / (num_categories-1)
-
-          for j in range(num_categories-1):
-            for m in marginal_vars_only:
-              # Note: The marginal_vars is a base 1 array
-              marginal_vars.append(j * num_indep_vars + m)
+            # For each independent var, get all the indices
+            marginal_vars_only = map(int, string_to_array(marginal_vars))
+            marginal_vars = []
+            for j in range(num_categories - 1):
+                for m in marginal_vars_only:
+                    # Note: The marginal_vars is a base 1 array
+                    marginal_vars.append(j * num_indep_vars + m)
 
         # Step 3: Compute the marginal effects
-        marginal_log_rst = plpy.execute("""
-                  SELECT (%s.marginal_mlogregr(
-                              (%s)::INTEGER,
-                               %s,
-                               %s,
-                               %s,
-                               %s)).* FROM %s
-                """ % (
-                      schema_madlib,
-                      dependent_varname,
-                      num_categories,
-                      ref_category,
-                      independent_varname,
-                      _internal_py_array_to_sql_string(regr_coef),
-                      source_table))
+        all_arguments['num_categories'] = num_categories
+        marginal_rst = plpy.execute("""
+            SELECT ({schema_madlib}.marginal_mlogregr(
+                        ({dependent_varname})::INTEGER, {num_categories},
+                        {ref_category}, {independent_varname}, {coef})).*
+            FROM {source_table}
+            """.format(coef=_internal_py_array_to_sql_string(regr_coef),
+                       **all_arguments))
 
-        margins = string_to_array(marginal_log_rst[0]["margins"])
-        std_err = string_to_array(marginal_log_rst[0]["std_err"])
-        p_values = string_to_array(marginal_log_rst[0]["p_values"])
-        t_stats = string_to_array(marginal_log_rst[0]["t_stats"])
+        margins = string_to_array(marginal_rst[0]["margins"])
+        std_err = string_to_array(marginal_rst[0]["std_err"])
+        p_values = string_to_array(marginal_rst[0]["p_values"])
+        t_stats = string_to_array(marginal_rst[0]["t_stats"])
 
-        margins  = _internal_get_margins_from_array(margins, marginal_vars)
+        margins = _internal_get_margins_from_array(margins, marginal_vars)
         std_err = _internal_get_margins_from_array(std_err, marginal_vars)
         t_stats = _internal_get_margins_from_array(t_stats, marginal_vars)
         p_values = _internal_get_margins_from_array(p_values, marginal_vars)
 
         # Step 4: Insert into table
         insert_string = """
-                    INSERT INTO %s VALUES (%s,  %s, %s, %s)
-                    """ % (out_table,
-                           _internal_py_array_to_sql_string(margins),
-                           _internal_py_array_to_sql_string(std_err),
-                           _internal_py_array_to_sql_string(t_stats),
-                           _internal_py_array_to_sql_string(p_values))
-
+                    INSERT INTO {0} VALUES ({1}, {2}, {3}, {4})
+                    """.format(out_table,
+                               _internal_py_array_to_sql_string(margins),
+                               _internal_py_array_to_sql_string(std_err),
+                               _internal_py_array_to_sql_string(t_stats),
+                               _internal_py_array_to_sql_string(p_values))
 
         # Step 5: Clean up output to make sure infinity and nan are cast properly
         insert_string = re.sub('Infinity', "'Infinity'::double precision", insert_string)
@@ -520,5 +603,68 @@ def margins_mlogregr(schema_madlib, source_table, out_table
         insert_string = re.sub('Nan', "'Nan'::double precision", insert_string)
         plpy.execute(insert_string)
 
-        plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+        # remove the mlogregr table created in process
+        plpy.execute("DROP TABLE IF EXISTS {table}".format(table=mlog_out_table))
 
+        plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+# -------------------------------------------------------------------------
+
+
+def margins_mlogregr_help(schema_madlib, message, **kwargs):
+    """
+    Help function for marginal_mlogregr
+
+    Args:
+        @param schema_madlib
+        @param message: string, Help message string
+        @param kwargs
+
+    Returns:
+        String. Help/usage information
+    """
+    if not message:
+        help_string = """
+-----------------------------------------------------------------------
+                            SUMMARY
+-----------------------------------------------------------------------
+Functionality: Calculate marginal effects for multinomial logistic regression
+
+For more details on function usage:
+    SELECT {schema_madlib}.margins_mlogregr('usage')
+            """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+ SELECT {schema_madlib}.margins_mlogregr(
+    'source_table',          -- Name of data table
+    'output_table',          -- Name of result table
+    'dependent_variable',    -- Name of column for dependent variables
+    'independent_variable',  -- Name of column for independent variables
+    ref_category,            -- Reference category for the multinomial logistic regression
+                             --  (Optional, DEFAULT=0)
+    'grouping_cols',         -- An expression list used to group the input dataset into discrete groups.
+                             --  (Optional, DEFAUT=NULL.
+                             --   Not currently implemented. Any non-NULL value is ignored.)
+    marginal_vars,           -- Indices of variables to calculate marginal effects on
+                             --  (Optional, DEFAULT: All independent variables)
+    'optimizer_params',      -- The optimizer parameters as a comma-separated string
+                             --  (Optional, DEFAULT: max_iter=20, optimizer=irls, tolerance=0.0001)
+    verbose_mode             -- When TRUE, provides verbose output of the results of training.
+                                   (Optional, DEFAUT=FALSE)
+    );
+
+-----------------------------------------------------------------------
+                            OUTUPT
+-----------------------------------------------------------------------
+The output table ('output_table' above) has the following columns
+    margins       DOUBLE PRECISION[], -- Marginal effects
+    std_err       DOUBLE PRECISION[], -- Standard errors using delta method
+    t_stats       DOUBLE PRECISION[], -- T-stats of the standard errors
+    p_values      DOUBLE PRECISION[], -- p-values of the standard errors
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.margins_mlogregr()"
+
+    return help_string.format(schema_madlib=schema_madlib)

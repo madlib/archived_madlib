@@ -31,16 +31,6 @@ using dbal::NoSolutionFoundException;
 
 namespace regress {
 
-// Internal functions
-AnyType mLogstateToResult(
-    const Allocator &inAllocator,
-    int ref_category, 
-    const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
-    const ColumnVector &diagonal_of_heissian,
-    double logLikelihood,
-    double conditionNo);
-
-
 /**
  * @brief Logistic function
  */
@@ -93,8 +83,8 @@ public:
      * This function is only called for the first iteration, for the first row.
      */
     inline void initialize(
-        const Allocator &inAllocator, 
-        uint16_t inWidthOfX, 
+        const Allocator &inAllocator,
+        uint16_t inWidthOfX,
         uint16_t inNumCategories, uint16_t inRefCategory) {
 
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
@@ -205,145 +195,14 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
 };
 
-
-/**
- * @brief Inter- and intra-iteration state for robust variance calculations
- *
- * TransitionState encapsualtes the transition state during the
- * logistic-regression robust variance calculation. To the database, the state is
- * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
- * object containing scalars, a vector, and a matrix.
- *
- * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length at least 4, and all elemenets are 0.
- */
-template <class Handle>
-class MLogRegrRobustTransitionState {
-
-    // By §14.5.3/9: "Friend declarations shall not declare partial
-    // specializations." We do access protected members in operator+=().
-    template <class OtherHandle>
-    friend class MLogRegrRobustTransitionState;
-
-public:
-    MLogRegrRobustTransitionState(const AnyType &inArray)
-        : mStorage(inArray.getAs<Handle>()) {
-        rebind(static_cast<uint16_t>(mStorage[0]),static_cast<uint16_t>(mStorage[1]));
-    }
-
-    /**
-     * @brief Convert to backend representation
-     *
-     * We define this function so that we can use State in the
-     * argument list and as a return type.
-     */
-    inline operator AnyType() const {
-        return mStorage;
-    }
-
-    /**
-     * @brief Initialize the iteratively-reweighted-least-squares state.
-     *
-     * This function is only called for the first iteration, for the first row.
-     */
-    inline void initialize(const Allocator &inAllocator, 
-        uint16_t inWidthOfX, uint16_t inNumCategories, uint16_t inRefCategory) {
-        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
-        rebind(inWidthOfX, inNumCategories);
-        widthOfX = inWidthOfX;
-        numCategories = inNumCategories;
-        ref_category = inRefCategory;
-    }
-
-    /**
-     * @brief We need to support assigning the previous state
-     */
-    template <class OtherHandle> MLogRegrRobustTransitionState &operator=(
-        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
-        for (size_t i = 0; i < mStorage.size(); i++)
-            mStorage[i] = inOtherState.mStorage[i];
-        return *this;
-    }
-
-    /**
-     * @brief Merge with another State object by copying the intra-iteration
-     *     fields
-     */
-    template <class OtherHandle> MLogRegrRobustTransitionState &operator+=(
-        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
-        if (mStorage.size() != inOtherState.mStorage.size() ||
-            widthOfX != inOtherState.widthOfX)
-            throw std::logic_error("Internal error: Incompatible transition "
-                "states");
-
-        numRows += inOtherState.numRows;
-        X_transp_AX += inOtherState.X_transp_AX;
-        meat += inOtherState.meat;
-        return *this;
-    }
-
-    /**
-     * @brief Reset the inter-iteration fields.
-     */
-    inline void reset() {
-        numRows = 0;
-        meat.fill(0);
-        X_transp_AX.fill(0);
-    }
-
-private:
-    static inline uint32_t arraySize(const uint16_t inWidthOfX,
-        const uint16_t inNumCategories) {
-        return 4 + 2*inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
-                                 + inWidthOfX * inNumCategories;
-    }
-
-    /**
-     * @brief Rebind to a new storage array
-     *
-     * @param inWidthOfX             The number of independent variables.
-     * @param inNumCategories The number of categories of the dependant var
-
-
-     * Array layout (iteration refers to one aggregate-function call):
-     * Inter-iteration components (updated in final function):
-     * - 0: widthOfX (number of independant variables)
-     * - 1: numCategories (number of categories)
-     * - 2: ref_category
-     * - 3: coef (vector of coefficients)
-     *
-     * Intra-iteration components (updated in transition step):
-     * - 3 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
-     * - 4 + widthOfX * inNumCategories: X_transp_AX (X^T A X).  
-     * - 4 + widthOfX^2*numCategories^2: meat  (The meat matrix)
-     */
-    void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
-        widthOfX.rebind(&mStorage[0]);
-        numCategories.rebind(&mStorage[1]);
-        ref_category.rebind(&mStorage[2]);
-        coef.rebind(&mStorage[3], inWidthOfX * inNumCategories);
-        numRows.rebind(&mStorage[3 + inWidthOfX * inNumCategories]);
-        X_transp_AX.rebind(&mStorage[4 + inWidthOfX * inNumCategories],
-            inNumCategories * inWidthOfX, inWidthOfX * inNumCategories);
-        meat.rebind(&mStorage[4 +
-             inNumCategories * inNumCategories * inWidthOfX * inWidthOfX
-             + inWidthOfX * inNumCategories], inWidthOfX * inNumCategories, inWidthOfX * inNumCategories);
-    }
-
-    Handle mStorage;
-
-public:
-    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;
-
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
-    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap meat;
-    typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
-};
-
+// Internal functions
+// AnyType mLogstateToResult(
+//     const Allocator &inAllocator,
+    // int ref_category,
+    // const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
+    // const ColumnVector &diagonal_of_hessian,
+    // double logLikelihood,
+    // double conditionNo);
 
 
 /**
@@ -363,12 +222,25 @@ AnyType
 __mlogregr_irls_step_transition::run(AnyType &args) {
     MLogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
 
+    if (args[1].isNull() || args[2].isNull() || args[3].isNull() ||
+            args[4].isNull()) {
+        return args[0];
+    }
+
     // Get x as a vector of double
-    MappedColumnVector x = args[4].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try{
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[4].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
     // Get the category & numCategories as integer
     int32_t category = args[1].getAs<int32_t>();
-    // Number of categories after pivoting (We pivot around the first category)
+    // Number of categories after pivoting (we pivot around the first category)
     int32_t numCategories = (args[2].getAs<int32_t>() - 1);
     int32_t ref_category = args[3].getAs<int32_t>();
 
@@ -385,14 +257,14 @@ __mlogregr_irls_step_transition::run(AnyType &args) {
                 throw std::domain_error("Number of cateogires must be at least 2");
 
         // Init the state (requires x.size() and category.size())
-        state.initialize(*this, 
+        state.initialize(*this,
             static_cast<uint16_t>(x.size()) ,
             static_cast<uint16_t>(numCategories),
             static_cast<uint16_t>(ref_category));
 
         if (!args[5].isNull()) {
-                MLogRegrIRLSTransitionState<ArrayHandle<double> > 
-                    previousState = args[5];
+                MLogRegrIRLSTransitionState<ArrayHandle<double> >
+                        previousState = args[5];
                 state = previousState;
                 state.reset();
         }
@@ -522,7 +394,7 @@ __mlogregr_irls_step_merge_states::run(AnyType &args) {
  */
 AnyType
 __mlogregr_irls_step_final::run(AnyType &args) {
-    // We request a mutable object. 
+    // We request a mutable object.
     // Depending on the backend, this might perform a deep copy.
     MLogRegrIRLSTransitionState<MutableArrayHandle<double> > state = args[0];
 
@@ -541,9 +413,9 @@ __mlogregr_irls_step_final::run(AnyType &args) {
         -1 * state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
     // Precompute (X^T * A * X)^-1
-    Matrix heissianInver = -1 * decomposition.pseudoInverse();
+    Matrix hessianInv = -1 * decomposition.pseudoInverse();
 
-    state.coef.noalias() += heissianInver * state.gradient;
+    state.coef.noalias() += hessianInv * state.gradient;
 
     if(!state.coef.is_finite())
         throw NoSolutionFoundException("Over- or underflow in Newton step, "
@@ -554,19 +426,245 @@ __mlogregr_irls_step_final::run(AnyType &args) {
     // of X^T A X, so that we don't have to recompute it in the result function.
     // Likewise, we store the condition number.
     // FIXME: This feels a bit like a hack.
-    state.gradient = -1 * heissianInver.diagonal();
+    state.gradient = -1 * hessianInv.diagonal();
     state.X_transp_AX(0,0) = decomposition.conditionNo();
 
     return state;
 }
+
+/**
+ * @brief Compute the diagnostic statistics
+ *
+ * This function wraps the common parts of mlogregr state into the result.
+ * (the result data type is defined in multilogistic.sql_in)
+ */
+AnyType mLogstateToResult(
+    const Allocator &inAllocator,
+    MLogRegrIRLSTransitionState<ArrayHandle<double> > state) {
+
+    int ref_category = state.ref_category;
+    const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef = state.coef;
+    const ColumnVector &diagonal_of_hessian = state.gradient;
+    double logLikelihood = state.logLikelihood;
+    double conditionNo = state.X_transp_AX(0,0);
+    int num_processed = state.numRows;
+
+    MutableNativeColumnVector stdErr(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableNativeColumnVector waldZStats(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableNativeColumnVector waldPValues(
+        inAllocator.allocateArray<double>(inCoef.size()));
+    MutableNativeColumnVector oddsRatios(
+        inAllocator.allocateArray<double>(inCoef.size()));
+
+    for (Index i = 0; i < inCoef.size(); ++i) {
+        stdErr(i) = std::sqrt(diagonal_of_hessian(i));
+        waldZStats(i) = inCoef(i) / stdErr(i);
+        waldPValues(i) = 2. * prob::cdf( prob::normal(),
+            -std::abs(waldZStats(i)));
+        oddsRatios(i) = std::exp( inCoef(i) );
+    }
+    int num_iterations = 0;
+    // Return all coefficients, standard errors, etc. in a tuple
+    AnyType tuple;
+    tuple << ref_category << inCoef << logLikelihood << stdErr
+          << waldZStats << waldPValues << oddsRatios
+          << conditionNo << num_iterations << num_processed;
+    return tuple;
+}
+
+
+/**
+ * @brief Return the difference in log-likelihood between two states
+ */
+AnyType
+__internal_mlogregr_irls_step_distance::run(AnyType &args) {
+    MLogRegrIRLSTransitionState<ArrayHandle<double> > stateLeft = args[0];
+    MLogRegrIRLSTransitionState<ArrayHandle<double> > stateRight = args[1];
+
+    return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
+}
+
+/**
+ * @brief Return the coefficients and diagnostic statistics of the state
+ */
+AnyType
+__internal_mlogregr_irls_result::run(AnyType &args) {
+    MLogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
+
+    return mLogstateToResult(*this, state);
+    // state.ref_category, state.coef,
+    // state.gradient, state.logLikelihood, state.X_transp_AX(0,0));
+}
+
+// ----------------- End of Multinomial Logistic Regression --------------------
+
+// ---------------------------------------------------------------------------
+//             Robust Variance Multi-Logistic
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Inter- and intra-iteration state for robust variance calculations
+ *
+ * TransitionState encapsualtes the transition state during the
+ * logistic-regression robust variance calculation. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars, a vector, and a matrix.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 4, and all elemenets are 0.
+ */
+template <class Handle>
+class MLogRegrRobustTransitionState {
+
+    // By §14.5.3/9: "Friend declarations shall not declare partial
+    // specializations." We do access protected members in operator+=().
+    template <class OtherHandle>
+    friend class MLogRegrRobustTransitionState;
+
+public:
+    MLogRegrRobustTransitionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
+        rebind(static_cast<uint16_t>(mStorage[0]),static_cast<uint16_t>(mStorage[1]));
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Initialize the iteratively-reweighted-least-squares state.
+     *
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(const Allocator &inAllocator,
+        uint16_t inWidthOfX, uint16_t inNumCategories, uint16_t inRefCategory) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
+        rebind(inWidthOfX, inNumCategories);
+        widthOfX = inWidthOfX;
+        numCategories = inNumCategories;
+        ref_category = inRefCategory;
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle> MLogRegrRobustTransitionState &operator=(
+        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
+        return *this;
+    }
+
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
+     */
+    template <class OtherHandle> MLogRegrRobustTransitionState &operator+=(
+        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX != inOtherState.widthOfX)
+            throw std::logic_error("Internal error: Incompatible transition "
+                "states");
+
+        numRows += inOtherState.numRows;
+        X_transp_AX += inOtherState.X_transp_AX;
+        meat += inOtherState.meat;
+        return *this;
+    }
+
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+        numRows = 0;
+        meat.fill(0);
+        X_transp_AX.fill(0);
+    }
+
+private:
+    static inline uint32_t arraySize(const uint16_t inWidthOfX,
+        const uint16_t inNumCategories) {
+        return 4 + 2*inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
+                                 + inWidthOfX * inNumCategories;
+    }
+
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX             The number of independent variables.
+     * @param inNumCategories The number of categories of the dependant var
+
+
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: widthOfX (number of independant variables)
+     * - 1: numCategories (number of categories)
+     * - 2: ref_category
+     * - 3: coef (vector of coefficients)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 3 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
+     * - 4 + widthOfX * inNumCategories: X_transp_AX (X^T A X).
+     * - 4 + widthOfX^2*numCategories^2: meat  (The meat matrix)
+     */
+    void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
+        widthOfX.rebind(&mStorage[0]);
+        numCategories.rebind(&mStorage[1]);
+        ref_category.rebind(&mStorage[2]);
+        coef.rebind(&mStorage[3], inWidthOfX * inNumCategories);
+        numRows.rebind(&mStorage[3 + inWidthOfX * inNumCategories]);
+        X_transp_AX.rebind(&mStorage[4 + inWidthOfX * inNumCategories],
+            inNumCategories * inWidthOfX, inWidthOfX * inNumCategories);
+        meat.rebind(&mStorage[4 +
+             inNumCategories * inNumCategories * inWidthOfX * inWidthOfX
+             + inWidthOfX * inNumCategories], inWidthOfX * inNumCategories, inWidthOfX * inNumCategories);
+    }
+
+    Handle mStorage;
+
+public:
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;
+
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap meat;
+    typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
+};
+
 
 AnyType
 mlogregr_robust_step_transition::run(AnyType &args) {
     using std::endl;
 
 	MLogRegrRobustTransitionState<MutableArrayHandle<double> > state = args[0];
+
+   if (args[1].isNull() || args[2].isNull() || args[3].isNull() ||
+            args[4].isNull() || args[5].isNull()) {
+        return args[0];
+    }
+
     // Get x as a vector of double
-    MappedColumnVector x = args[4].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try{
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[4].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
     // Get the category & numCategories as integer
     int16_t category = args[1].getAs<int>();
     // Number of categories after pivoting (We pivot around the first category)
@@ -589,17 +687,17 @@ mlogregr_robust_step_transition::run(AnyType &args) {
                     "Categories must be of values {0,1... numCategories-1}");
 
         // Init the state (requires x.size() and category.size())
-        state.initialize(*this, 
+        state.initialize(*this,
             static_cast<uint16_t>(x.size()) ,
             static_cast<uint16_t>(numCategories),
             static_cast<uint16_t>(ref_category));
-                                                    
+
         state.coef = coefVec;
     }
 
     // Now do the transition step
     state.numRows++;
-    /*     
+    /*
         Get y: Convert to 1/0 boolean vector
         Example: Category 4 : 0 0 0 1 0 0
         Storing it in this forms helps us get a nice closed form expression
@@ -619,19 +717,19 @@ mlogregr_robust_step_transition::run(AnyType &args) {
     for the data point being processed.
     Casting the coefficients into a matrix makes the calculation simple.
     */
-    
+
     Matrix coef = state.coef;
     coef.resize(numCategories, state.widthOfX);
 
     //Store the intermediate calculations because we'll reuse them in the LLH
     ColumnVector t1 = x; //t1 is vector of size state.widthOfX
     t1 = coef*x;
-    /* 
+    /*
         Note: The above 2 lines could have been written as:
         ColumnVector t1 = -coef*x;
 
         but this creates warnings. These warnings are somehow related to the factor
-        that x is an immutable type. 
+        that x is an immutable type.
     */
 
     ColumnVector t2 = t1.array().exp();
@@ -709,7 +807,7 @@ mlogregr_robust_step_merge_states::run(AnyType &args) {
 
 AnyType MLrobuststateToResult(
     const Allocator &inAllocator,
-    int ref_category, 
+    int ref_category,
     const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
     const ColumnVector &diagonal_of_varianceMat) {
 
@@ -760,14 +858,6 @@ mlogregr_robust_step_final::run(AnyType &args) {
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         -1 * state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
-	for(int i = 0; i < state.X_transp_AX.rows(); i++)
-	{
-		for(int j = 0; j < state.X_transp_AX.cols(); j++)
-		{
-			elog(INFO, "Bread %i, %i, %f",  i,j, static_cast<float>(state.X_transp_AX(i,j)));
-		}
-	}
-
     // Precompute (X^T * A * X)^-1
     Matrix bread = decomposition.pseudoInverse();
 	Matrix varianceMat;
@@ -780,71 +870,11 @@ mlogregr_robust_step_final::run(AnyType &args) {
 
     return MLrobuststateToResult(*this, state.ref_category, state.coef, varianceMat.diagonal());
 }
-
-/**
- * @brief Return the difference in log-likelihood between two states
- */
-AnyType
-__internal_mlogregr_irls_step_distance::run(AnyType &args) {
-    MLogRegrIRLSTransitionState<ArrayHandle<double> > stateLeft = args[0];
-    MLogRegrIRLSTransitionState<ArrayHandle<double> > stateRight = args[1];
-
-    return std::abs(stateLeft.logLikelihood - stateRight.logLikelihood);
-}
-
-/**
- * @brief Return the coefficients and diagnostic statistics of the state
- */
-AnyType
-__internal_mlogregr_irls_result::run(AnyType &args) {
-    MLogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
-
-    return mLogstateToResult(*this, state.ref_category, state.coef,
-        state.gradient, state.logLikelihood, state.X_transp_AX(0,0));
-}
-
-
-/**
- * @brief Compute the diagnostic statistics
- *
- * This function wraps the common parts of computing the results for IRLS.
- */
-AnyType mLogstateToResult(
-    const Allocator &inAllocator,
-    int ref_category,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
-    const ColumnVector &diagonal_of_heissian,
-    double logLikelihood,
-    double conditionNo) {
-
-    MutableNativeColumnVector stdErr(
-        inAllocator.allocateArray<double>(inCoef.size()));
-    MutableNativeColumnVector waldZStats(
-        inAllocator.allocateArray<double>(inCoef.size()));
-    MutableNativeColumnVector waldPValues(
-        inAllocator.allocateArray<double>(inCoef.size()));
-    MutableNativeColumnVector oddsRatios(
-        inAllocator.allocateArray<double>(inCoef.size()));
-
-    for (Index i = 0; i < inCoef.size(); ++i) {
-        stdErr(i) = std::sqrt(diagonal_of_heissian(i));
-        waldZStats(i) = inCoef(i) / stdErr(i);
-        waldPValues(i) = 2. * prob::cdf( prob::normal(),
-            -std::abs(waldZStats(i)));
-        oddsRatios(i) = std::exp( inCoef(i) );
-    }
-
-    // Return all coefficients, standard errors, etc. in a tuple
-    AnyType tuple;
-    tuple << ref_category << inCoef << logLikelihood << stdErr << waldZStats << waldPValues
-        << oddsRatios << conditionNo;
-    return tuple;
-}
-
+// ------------------------ End of Robust Variance -----------------------------
 
 
 // ---------------------------------------------------------------------------
-//             Marginal Effects Multi-Logistic Regression States
+//             Marginal Effects Multi-Logistic
 // ---------------------------------------------------------------------------
 /**
  * @brief State for marginal effects calculation for logistic regression
@@ -888,7 +918,7 @@ public:
      *
      * This function is only called for the first iteration, for the first row.
      */
-    inline void initialize(const Allocator &inAllocator, 
+    inline void initialize(const Allocator &inAllocator,
         uint16_t inWidthOfX, uint16_t inNumCategories, uint16_t inRefCategory) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
@@ -941,8 +971,8 @@ public:
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX,
         const uint16_t inNumCategories) {
-        return 4 + 3*inWidthOfX * inNumCategories + 1*inWidthOfX + 
-           inNumCategories * inWidthOfX * inWidthOfX * inNumCategories; 
+        return 4 + 3*inWidthOfX * inNumCategories + 1*inWidthOfX +
+           inNumCategories * inWidthOfX * inWidthOfX * inNumCategories;
     }
 
     /**
@@ -961,7 +991,7 @@ private:
      *
      * Intra-iteration components (updated in transition step):
      * - 3 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
-     * - 4 + widthOfX * inNumCategories: margins_matrix 
+     * - 4 + widthOfX * inNumCategories: margins_matrix
      */
     void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
         widthOfX.rebind(&mStorage[0]);
@@ -996,18 +1026,30 @@ public:
 
 AnyType
 mlogregr_marginal_step_transition::run(AnyType &args) {
-    using std::endl;
+	mlogregrMarginalTransitionState<MutableArrayHandle<double> > state = args[0];
 
-	  mlogregrMarginalTransitionState<MutableArrayHandle<double> > state = args[0];
+   if (args[1].isNull() || args[2].isNull() || args[3].isNull() ||
+            args[4].isNull() || args[5].isNull()) {
+        return args[0];
+    }
+
     // Get x as a vector of double
-    MappedColumnVector x = args[4].getAs<MappedColumnVector>();
+    MappedColumnVector x;
+    try{
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[4].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
     // Get the category & numCategories as integer
     int16_t category = args[1].getAs<int>();
-    // Number of categories after pivoting (We pivot around the first category)
+    // Number of categories after pivoting (We pivot around ref_category)
     int16_t numCategories = (args[2].getAs<int>() - 1);
     int32_t ref_category = args[3].getAs<int32_t>();
-	  MappedColumnVector coefVec = args[5].getAs<MappedColumnVector>();
-
+	MappedColumnVector coefVec = args[5].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite())
@@ -1024,11 +1066,11 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
                     "Categories must be of values {0,1... numCategories-1}");
 
         // Init the state (requires x.size() and category.size())
-        state.initialize(*this, 
+        state.initialize(*this,
             static_cast<uint16_t>(x.size()) ,
             static_cast<uint16_t>(numCategories),
             static_cast<uint16_t>(ref_category));
-                                                    
+
         state.coef = coefVec;
         state.numCategories = numCategories;
         state.ref_category = ref_category;
@@ -1036,7 +1078,7 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
 
     // Now do the transition step
     state.numRows++;
-    /*     
+    /*
         Get y: Convert to 1/0 boolean vector
         Example: Category 4 : 0 0 0 1 0 0
         Storing it in this forms helps us get a nice closed form expression
@@ -1051,19 +1093,19 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
         y(category) = 1;
     }
 
-    
+
     //    Marginal Effect calculations
     // ----------------------------------------------------------------------
     Matrix coef = state.coef;
     coef.resize(numCategories, state.widthOfX);
 
     // prob is vector of size # categories
-    /* 
+    /*
         Note: The above 2 lines could have been written as:
-        ColumnVector prob = -coef*x; but this creates warnings. 
-        See multilog for details. 
+        ColumnVector prob = -coef*x; but this creates warnings.
+        See multilog for details.
     */
-    ColumnVector prob(numCategories); 
+    ColumnVector prob(numCategories);
     prob = coef*x;
 
     // Calculate the odds ratio
@@ -1071,11 +1113,11 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
     double prob_sum = prob.sum();
 
     prob = prob / (1 + prob_sum);
-    
-    // Reference category computations. They have been taken out of 
+
+    // Reference category computations. They have been taken out of
     // the output but left in the infrastructure
     double ref_prob = 1 / (1 + prob_sum);
-    
+
     Matrix probDiag = prob.asDiagonal();
 
 
@@ -1122,11 +1164,10 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
 
     triangularView<Lower>(state.X_transp_AX) += X_transp_AX;
     state.margins_matrix += margins_matrix;
-    state.reference_margins += -coef_trans_prob * ref_prob; 
+    state.reference_margins += -coef_trans_prob * ref_prob;
     state.X_bar += x; // It is called X_bar but it really is the sum
-    
-    return state;
 
+    return state;
 }
 
 /**
@@ -1158,7 +1199,7 @@ AnyType mlogregr_marginalstateToResult(
     const ColumnVector &inVariance
     ) {
 
-    
+
     MutableNativeColumnVector margins(
         inAllocator.allocateArray<double>(inMargins.size()));
     MutableNativeColumnVector coef(
@@ -1223,11 +1264,11 @@ mlogregr_marginal_step_final::run(AnyType &args) {
         throw NoSolutionFoundException("Over- or underflow in intermediate "
             "calulation. Input data is likely of poor numerical condition.");
 
-    // Include marginal effects of reference variable: 
+    // Include marginal effects of reference variable:
     // FIXME: They have been taken out of the output for now
     //const int size = state.coef.size() + numIndepVars;
     const int size = state.coef.size();
-    
+
     // Variance-covariance calculation
     // ----------------------------------------------------------
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
@@ -1235,8 +1276,6 @@ mlogregr_marginal_step_final::run(AnyType &args) {
 
     // Precompute -(X^T * A * X)^-1
     Matrix V = decomposition.pseudoInverse();
-
-
 
     // Marginal Effect calculation
     // ---------------------------------------------------------
@@ -1249,20 +1288,20 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     ColumnVector x_bar = state.X_bar / state.numRows;
     int numIndepVars = state.coef.size() / state.numCategories;
     int numCategories = state.numCategories;
-    
+
     Matrix coef = state.coef;
     coef.resize(state.numCategories, state.widthOfX);
-    
+
     // Variance & Marginal gradient
     ColumnVector marginal_gradient(size);
     ColumnVector variance(size);
     variance.setOnes();
 
     // Probibility vector at the mean
-    ColumnVector p_bar(state.numCategories); 
+    ColumnVector p_bar(state.numCategories);
     ColumnVector coef_x_bar(state.numCategories);
     ColumnVector coef_trans_p_bar(state.widthOfX);
-    
+
     coef_x_bar = coef*x_bar;
     coef_trans_p_bar = coef.transpose() * p_bar;
 
@@ -1282,30 +1321,26 @@ mlogregr_marginal_step_final::run(AnyType &args) {
 
         for (int k=0; k < numIndepVars; k++){
           for (int j=0; j < numCategories; j++){
-            
+
             e_j_J = (j==J) ? 1: 0;
             e_k_K = (k==K) ? 1: 0;
             e_k_K_j_J = (j==J && k==K) ? 1: 0;
 
             index = k*numCategories + j;
-
-            marginal_gradient(index) = 
+            marginal_gradient(index) =
                 x_bar(k) * (e_j_J  - p_bar(j)) * margins_mean_matrix(J,K);
-
-            marginal_gradient(index) += p_bar(J) * 
+            marginal_gradient(index) += p_bar(J) *
                 ( e_k_K_j_J - p_bar(j) * e_k_K - x_bar(k) * margins_mean_matrix(j,K));
           }
         }
 
         // NOTE: Since the earlier Variance calculations are being done by
         // stacking up the indepdent variables for each category separtely
-        variance(K + numIndepVars * J) = 
+        variance(K + numIndepVars * J) =
                           marginal_gradient.transpose() * V * marginal_gradient;
 
       }
     }
-
-    
 
     // Add in reference variables to all the calculations
     // ----------------------------------------------------------
@@ -1315,7 +1350,7 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     // Vectorize the margins_matrix and add the reference variable
     for (int j=0; j < numCategories; j++){
       for (int k=0; k < numIndepVars; k++){
-        
+
         index = k + numIndepVars *j;
         coef_with_ref(index) = coef(j,k);
 
@@ -1324,14 +1359,12 @@ mlogregr_marginal_step_final::run(AnyType &args) {
       }
     }
 
-    return mlogregr_marginalstateToResult(*this, 
+    return mlogregr_marginalstateToResult(*this,
                                           state.numRows,
-                                          coef_with_ref, 
+                                          coef_with_ref,
                                           margins_with_ref,
                                           variance);
 }
-
-
 // ------------------------ End of Marginal ------------------------------------
 
 

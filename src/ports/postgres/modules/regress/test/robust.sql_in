@@ -40,7 +40,7 @@ INSERT INTO weibull(id, x1, x2, y) VALUES
 (17, 77.8, 32.9, 349.0);
 
 
---------------------- Robust linear regression install checks ----------- 
+--------------------- Robust linear regression install checks -----------
 
 SELECT * FROM (
 	SELECT (robust_linregr(y, ARRAY[1, x1, x2], coef)).*
@@ -52,12 +52,12 @@ SELECT * FROM (
 ) q;
 DROP TABLE IF EXISTS result_weibull_3;
 select robust_variance_linregr('weibull', 'result_weibull_3', 'y', 'ARRAY[1, x1, x2]');
--- End of robust linear regression 
+-- End of robust linear regression
 
 
 /* Robust variance test
  * The following example is uses the coefficients computed in the above
- * example, and checks that the robust variance is correct.  
+ * example, and checks that the robust variance is correct.
  * The correct values were checked with R.  For completeness, the following
  * R code segment can be used to reproduce the correct values. This code segment
  * expects the data table 'patients' to be in a file called "patients.txt".
@@ -93,7 +93,7 @@ second_attack, treatment, trait_anxiety
 
 
 DROP TABLE IF EXISTS patients;
- 
+
 CREATE TABLE patients (
     id INTEGER NOT NULL,
     second_attack INTEGER,
@@ -152,9 +152,9 @@ select robust_variance_logregr('patients', 'temp_result', 'second_attack', 'ARRA
 
 drop table if exists temp_result;
 
+-------------------------------------------------------------------------
 
 DROP TABLE IF EXISTS test_hw_mlogr;
-
 CREATE TABLE test_hw_mlogr(
     feat1 INTEGER,
     feat2 DOUBLE PRECISION,
@@ -363,11 +363,76 @@ INSERT INTO test_hw_mlogr(feat1, feat2, cat) VALUES
 (2,0.65,2),
 (2,0.62,2);
 
-select robust_variance_mlogregr(
-    'test_hw_mlogr', 'test_hw_mlogr_result', 
+
+-- Checks for the function usage
+select robust_variance_mlogregr('help');
+select robust_variance_mlogregr('');
+select robust_variance_mlogregr('random_test');
+select robust_variance_mlogregr('usage');
+
+
+DROP TABLE IF EXISTS test_hw_mlogr_result;
+SELECT robust_variance_mlogregr(
+    'test_hw_mlogr', 'test_hw_mlogr_result',
     'cat', 'ARRAY[1, feat1, feat2]', 0, NULL, 20, 'irls', 0.0001, False);
 
-select assert(relative_error(
-    std_err, ARRAY[1.20, 1.28, 0.29, 0.28, 2.36, 2.18]) < 1e-1, 
+SELECT assert(relative_error(
+    std_err, ARRAY[1.20, 1.28, 0.29, 0.28, 2.36, 2.18]) < 1e-1,
         'Robust Variance: Wrong Results')
 from test_hw_mlogr_result;
+
+DROP TABLE IF EXISTS test_hw_mlogr_result;
+SELECT robust_variance_mlogregr(
+    'test_hw_mlogr', 'test_hw_mlogr_result',
+    'cat', 'ARRAY[1, feat1, feat2]', 0, NULL,
+    'max_iter=20, optimizer="irls", tolerance=0.0001',
+    False);
+
+
+DROP TABLE IF EXISTS test_hw_mlogr_result;
+SELECT robust_variance_mlogregr(
+    'test_hw_mlogr', 'test_hw_mlogr_result',
+    'cat', 'ARRAY[1, feat1, feat2]', 0, NULL,
+    'max_num_iterations=20, optimizer="irls", precision=0.0001',
+    False);
+
+-- NULL handling test
+DROP TABLE IF EXISTS weibull_with_null;
+CREATE TABLE weibull_with_null AS SELECT * FROM weibull;
+INSERT INTO weibull_with_null(id, x1, x2, y) VALUES
+(18, NULL, 29.1, 251.3),
+(19, 43.4, NULL, 251.3),
+(20, 43.9, 29.5, NULL);
+
+DROP TABLE IF EXISTS temp_result;
+SELECT robust_variance_linregr('weibull_with_null', 'temp_result', 'y',
+                               'ARRAY[1, x1, x2]');
+
+DROP TABLE IF EXISTS patients_with_null;
+CREATE TABLE patients_with_null AS SELECT * FROM patients;
+INSERT INTO patients_with_null(ID, second_attack, treatment, trait_anxiety) VALUES
+(21, NULL, 1, 70),
+(22, 1, NULL, 80),
+(23, 1, 1, NULL);
+
+DROP TABLE IF EXISTS temp_result;
+SELECT robust_variance_logregr('patients_with_null', 'temp_result', 'second_attack', 'ARRAY[1, treatment, trait_anxiety]');
+
+
+DROP TABLE IF EXISTS test_hw_mlogr_null_value;
+CREATE TABLE test_hw_mlogr_null_value AS SELECT * FROM test_hw_mlogr;
+INSERT INTO test_hw_mlogr(feat1, feat2, cat) VALUES
+(NULL,0.67,2),
+(2,NULL,2),
+(2,0.62,NULL);
+
+DROP TABLE IF EXISTS temp_result;
+SELECT robust_variance_mlogregr(
+    'test_hw_mlogr_null_value', 'temp_result',
+    'cat', 'ARRAY[1, feat1, feat2]', 0, NULL,
+    'max_iter=20, optimizer="irls", tolerance=0.0001', False);
+
+SELECT assert(relative_error(
+    std_err, ARRAY[1.20, 1.28, 0.29, 0.28, 2.36, 2.18]) < 0.1,
+        'Robust Variance: Wrong Results')
+from temp_result;

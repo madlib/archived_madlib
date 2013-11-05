@@ -599,7 +599,9 @@ select assert(
 ) from temp_out;
 
 drop table if exists temp_out;
-select clustered_variance_mlogregr('abalone2', 'temp_out', 'y', 'array[1, length, diameter, height, whole]', 'sex', 0, NULL, 100, 'irls', 1e-6, False);
+select clustered_variance_mlogregr(
+    'abalone2', 'temp_out', 'y', 'array[1, length, diameter, height, whole]',
+    'sex', 0, NULL, 'max_iter=100, optimizer=irls, tolerance=1e-6', False);
 
 select assert(
     relative_error(coef, array[7.019211e+00, -9.452704e+00, 1.213867e+00, -1.625120e+01, -2.357464e+00]) < 1e-4 and
@@ -608,3 +610,33 @@ select assert(
     relative_error(p_values, array[1.730550e-04, 7.959840e-09, 8.707555e-01, 8.727696e-02, 2.547033e-01]) < 1e-4,
     'Clustered standard errors: Wrong results for multinomial logistic'
 ) from temp_out;
+
+-- NULL handling test
+DROP TABLE IF EXISTS abalone1_with_null;
+CREATE TABLE abalone1_with_null AS SELECT * FROM abalone1;
+INSERT INTO abalone1_with_null VALUES
+(552, 'M', NULL, 0.36499999999999999, 0.095000000000000001, 0.51400000000000001, 0.22450000000000001, 0.10100000000000001, 0.14999999999999999, 15),
+(553, 'M', 0.44, NULL, 0.125, 0.51600000000000001, 0.2155, 0.114, 0.155, 10),
+(554, 'F', 0.53000000000000003, 0.41999999999999998, NULL, 0.67700000000000005, 0.25650000000000001, 0.14149999999999999, 0.20999999999999999, 9),
+(555, 'M', 0.34999999999999998, 0.26500000000000001, 0.089999999999999997, NULL, 0.099500000000000005, 0.048500000000000001, 0.070000000000000007, 7);
+
+DROP TABLE IF EXISTS abalone2_with_null;
+create table abalone2_with_null as
+select 
+    length, diameter, height, whole, sex, 
+    (case when rings < 10 then 1 else 0 end)::integer as y
+from abalone1_with_null;
+
+drop table if exists temp_out;
+select clustered_variance_linregr('abalone1_with_null', 'temp_out', 'rings', 'array[1, length, diameter, height, whole]', 'sex');
+SELECT * FROM temp_out;
+
+drop table if exists temp_out;
+select clustered_variance_logregr('abalone1_with_null', 'temp_out', 'rings < 10', 'array[1, length, diameter, height, whole]', 'sex', NULL, 100, 'irls', 1e-6, False);
+SELECT * FROM temp_out;
+
+drop table if exists temp_out;
+select clustered_variance_mlogregr(
+    'abalone2_with_null', 'temp_out', 'y', 'array[1, length, diameter, height, whole]',
+    'sex', 0, NULL, 'max_iter=100, optimizer=irls, tolerance=1e-6', False);
+SELECT * FROM temp_out;

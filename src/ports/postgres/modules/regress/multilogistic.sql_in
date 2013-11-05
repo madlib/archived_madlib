@@ -18,7 +18,6 @@ m4_include(`SQLCommon.m4')
 <div class="toc"><b>Contents</b>
 <ul>
 <li class="level1"><a href="#train">Training Function</a></li>
-<li class="level1"><a href="#output">Output Format</a></li>
 <li class="level1"><a href="#examples">Examples</a></li>
 <li class="level1"><a href="#background">Technical Background</a></li>
 <li class="level1"><a href="#literature">Literature</a></li>
@@ -37,148 +36,217 @@ maximizes the likelihood of the observations.
 @par Training Function
 The multinomial logistic regression training function has the following syntax:
 <pre class="syntax">
-mlogregr( source, 
-          depvar, 
-          indepvar, 
-          max_num_iterations, 
-          optimizer, 
-          precision, 
-          ref_category
-        )
+mlogregr_train(source_table,
+               output_table,
+               dependent_varname,
+               independent_varname,
+               ref_category,
+               optimizer_params
+              )
 </pre>
 \b Arguments
 <dl class="arglist">
-<dt>source</dt>
+<dt>source_table</dt>
 <dd>TEXT. The name of the table containing the input data.
 
-The training data is expected to be of the following form:\n
-@verbatim
-{TABLE|VIEW} source (
-    ...
-    dependentVariable INTEGER,
-    independentVariables FLOAT8[],
-    ...
-)
-@endverbatim
-
-Table names can be optionally schema qualified and table and column names
-should follow the same case-sensitivity and quoting rules as in the database.
 </dd>
-<dt>depvar</dt>
+
+<dt>output_table</dt>
+<dd>TEXT. The name of the generated table containing the output model.
+    The output table produced by the multinomial logistic regression training
+    function contains the following columns:
+    <table class="output">
+        <tr>
+            <th>ref_category</th>
+            <td>INTEGER. The reference category. Categories are encoded as integers
+            with values from {0, 1, 2,..., \e numCategories &ndash; 1}</td>
+        </tr>
+        <tr>
+            <th>coef</th>
+            <td>FLOAT8[]. An array of coefficients, \f$ \boldsymbol c \f$. </td>
+        </tr>
+        <tr>
+            <th>log_likelihood</th>
+            <td>FLOAT8. The log-likelihood, \f$ l(\boldsymbol c) \f$.</td>
+        </tr>
+        <tr>
+            <th>std_err</th>
+            <td>FLOAT8[]. An array of the standard errors.</td>
+        </tr>
+        <tr>
+            <th>z_stats</th>
+            <td>FLOAT8[]. An array of the Wald z-statistics.</td>
+        </tr>
+        <tr>
+            <th>p_values</th>
+            <td>FLOAT8[]. An array of the Wald p-values.</td>
+        </tr>
+        <tr>
+            <th>odds_ratios</th>
+            <td>FLOAT8[]. An array of the odds ratios.</td>
+        </tr>
+        <tr>
+            <th>condition_no</th>
+            <td>FLOAT8. The condition number of the matrix, computed using the
+            coefficients of the iteration immediately preceding convergence.</td>
+        </tr>
+        <tr>
+            <th>num_iterations</th>
+            <td>INTEGER. The number of iterations executed before the
+            algorithm completed.</td>
+        </tr>
+        <tr>
+            <th>num_rows_processed</th>
+            <td>INTEGER. The number of rows actually processed, which is equal to the
+            total number of rows in the source table minus the number of skipped
+            rows.</td>
+        </tr>
+        <tr>
+            <th>num_missing_rows_skipped</th>
+            <td>INTEGER. The number of rows skipped during the training. A row
+            will be skipped if the ind_col is NULL or contains NULL values.</td>
+        </tr>
+    </table>
+</dd>
+
+<dt>dependent_varname</dt>
 <dd>TEXT. The name of the column containing the dependent variable.</dd>
-<dt>indepvar</dt>
-<dd>TEXT. Expression list to evaluate for the independent variables. An intercept variable is not assumed. The number of independent variables cannot exceed 65535.</dd>
-<dt>max_num_iterations (optional)</dt>
-<dd>INTEGER, default: 20. The maximum number of iterations that are allowed.</dd>
-<dt>optimizer (optional)</dt>
-<dd>TEXT, default: 'irls'. The name of the optimizer to use, 'newton', or 'irls' (iteratively reweighted least squares). </dd>
-<dt>precision (optional)</dt>
-<dd>FLOAT8, default: 0.0001. The difference between log-likelihood values in successive
-iterations that should indicate convergence. Note that a non-positive
-value here disables the convergence criterion, and execution will only
-stop after \c max_num_iterations iterations.</dd>
+
+<dt>independent_varname</dt>
+<dd>TEXT. Expression list to evaluate for the independent variables.
+An intercept variable is not assumed. The number of independent variables
+cannot exceed 65535.</dd>
+
 <dt>ref_category (optional)</dt>
-<dd>INTEGER, default: 0. The reference category ranges from [0, \e numCategories &ndash; 1].</dd>
+<dd>INTEGER, default: 0. The reference category ranges from
+[0, \e numCategories &ndash; 1].</dd>
+
+<dt>optimizer_params (optional)</dt>
+<dd>VARCHAR, default: NULL, which uses the default values of optimizer parameters.
+It should be a string that contains pairs of 'key=value' separated by commas.
+Supported parameters with their default values: max_iter=20, optimizer='irls', precision=1e-4.
+</dd>
 </dl>
 
-@anchor output
-@par Output Format
-The output of the \ref mlogregr() function is a composite type with the following fields:
-<table class="output">
-    <tr>
-        <th>ref_category</th>
-        <td>INTEGER. The reference category. Categories are encoded as integers with values from {0, 1, 2,..., \e numCategories &ndash; 1}</td>
-    </tr>
-    <tr>
-        <th>coef</th>
-        <td>FLOAT8[]. An array of coefficients, \f$ \boldsymbol c \f$. </td>
-    </tr>
-    <tr>
-        <th>log_likelihood</th>
-        <td>FLOAT8. The log-likelihood, \f$ l(\boldsymbol c) \f$.</td>
-    </tr>
-    <tr>
-        <th>std_err</th>
-        <td>FLOAT8[]. An array of the standard errors.</td>
-    </tr>
-    <tr>
-        <th>z_stats</th>
-        <td>FLOAT8[]. An array of the Wald z-statistics.</td>
-    </tr>
-    <tr>
-        <th>p_values</th>
-        <td>FLOAT8[]. An array of the Wald p-values.</td>
-    </tr>
-    <tr>
-        <th>odds_ratios</th>
-        <td>FLOAT8[]. An array of the odds ratios.</td>
-    </tr>
-    <tr>
-        <th>condition_no</th>
-        <td>FLOAT8. The condition number of the matrix, computed using the coefficients of the iteration immediately preceding convergence.</td>
-    </tr>
-    <tr>
-        <th>num_iterations</th>
-        <td>INTEGER. The number of iterations executed before the algorithm completed.</td>
-    </tr>
-</table>
+@note Table names can be optionally schema qualified and table and column names
+should follow the same case-sensitivity and quoting rules as in the database.
 
 @anchor examples
 @examp
 
 -# Create the training data table.
 <pre class="example">
-DROP TABLE IF EXISTS patients;
-CREATE TABLE patients (id INTEGER NOT NULL, second_attack INTEGER,
-             treatment INTEGER, trait_anxiety INTEGER);  
-COPY patients FROM STDIN WITH DELIMITER '|';
-  1 |             1 |         1 |            70
-  3 |             1 |         1 |            50
-  5 |             1 |         0 |            40
-  7 |             1 |         0 |            75
-  9 |             1 |         0 |            70
- 11 |             0 |         1 |            65
- 13 |             0 |         1 |            45
- 15 |             0 |         1 |            40
- 17 |             0 |         0 |            55
- 19 |             0 |         0 |            50
-  2 |             1 |         1 |            80
-  4 |             1 |         0 |            60
-  6 |             1 |         0 |            65
-  8 |             1 |         0 |            80
- 10 |             1 |         0 |            60
- 12 |             0 |         1 |            50
- 14 |             0 |         1 |            35
- 16 |             0 |         1 |            50
- 18 |             0 |         0 |            45
- 20 |             0 |         0 |            60
-\\.
+DROP TABLE IF EXISTS test3;
+CREATE TABLE test3 (
+    feat1 INTEGER,
+    feat2 INTEGER,
+    cat INTEGER
+);
+INSERT INTO test3(feat1, feat2, cat) VALUES
+(1,35,1),
+(2,33,0),
+(3,39,1),
+(1,37,1),
+(2,31,1),
+(3,36,0),
+(2,36,1),
+(2,31,1),
+(2,41,1),
+(2,37,1),
+(1,44,1),
+(3,33,2),
+(1,31,1),
+(2,44,1),
+(1,35,1),
+(1,44,0),
+(1,46,0),
+(2,46,1),
+(2,46,2),
+(3,49,1),
+(2,39,0),
+(2,44,1),
+(1,47,1),
+(1,44,1),
+(1,37,2),
+(3,38,2),
+(1,49,0),
+(2,44,0),
+(3,61,2),
+(1,65,2),
+(3,67,1),
+(3,65,2),
+(1,65,2),
+(2,67,2),
+(1,65,2),
+(1,62,2),
+(3,52,2),
+(3,63,2),
+(2,59,2),
+(3,65,2),
+(2,59,0),
+(3,67,2),
+(3,67,2),
+(3,60,2),
+(3,67,2),
+(3,62,2),
+(2,54,2),
+(3,65,2),
+(3,62,2),
+(2,59,2),
+(3,60,2),
+(3,63,2),
+(3,65,2),
+(2,63,1),
+(2,67,2),
+(2,65,2),
+(2,62,2);
 </pre>
 -# Run the multilogistic regression function.
 <pre class="example">
-\\x on
-Expanded display is on.
-SELECT * FROM madlib.mlogregr( 'patients', 
-                               'second_attack',
-                               'ARRAY[1, treatment, trait_anxiety]', 
-                               20, 
-                               'irls', 
-                               0.0001, 
-                               1
+DROP TABLE IF EXISTS test3_output;
+DROP TABLE IF EXISTS test3_output_summary;
+SELECT madlib.mlogregr_train('test3',
+                             'test3_output',
+                             'cat',
+                             'ARRAY[1, feat1, feat2]',
+                             0,
+                             'max_iter=20, optimizer=irls, precision=0.0001'
                              );
 </pre>
-Result:
-<pre class="result"> 
+-# View the result:
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x on
+SELECT * FROM test3_output;
+</pre>
+Results:
+<pre class="result">
 &nbsp;-[ RECORD 1 ]--+----------------------------------------------------------
- ref_category   | 1
- coef           | {6.3634699417818,1.02410605239327,-0.119044916668605}
- log_likelihood | -9.41018298388876
- std_err        | {3.21389766375092,1.17107844860319,0.0549790458269306}
- z_stats        | {1.97998524145757,0.874498248699546,-2.16527796868917}
- p_values       | {0.0477051870698143,0.381846973530451,0.0303664045046178}
- odds_ratios    | {580.256322802414,2.78460505656035,0.887767924288744}
- condition_no   | 106329.420371447
- num_iterations | 5
+ref_category   | 0
+coef           | {1.45474045211601,-7.12908167688326,0.0849956182104024,0.87648787696783,-0.0172383499601956,0.127886153027713}
+loglikelihood  | -39.14759930999
+std_err        | {2.13085072854143,2.52104008297868,0.585021661344715,0.639575886323863,0.0431487356292145,0.0445757462972304}
+z_stats        | {0.682704063982831,-2.82783352990566,0.145286275409074,1.37042045472615,-0.399509967298419,2.86896269049475}
+p_values       | {0.494793861210936,0.00468641692252248,0.884484850387893,0.170555690550421,0.68951748096413,0.00411820373218958}
+odds_ratio     | {4.28337158128448,0.000801455044349484,1.08871229617973,2.40244718187161,0.982909380301134,1.13642361694409}
+condition_no   | 280069.034213892
+num_iterations | 5
+</pre>
+-# View all parameters used during the training
+<pre class="example">
+SELECT * FROM test3_output_summary;
+</pre>
+Results:
+<pre class="result">
+-[ RECORD 1 ]------------+----------------------------------------------
+source_table             | test3
+output_table             | test3_output
+dependent_varname        | cat
+independent_varname      | ARRAY[1, feat1, feat2]
+optimizer_params         | max_iter=20, optimizer=irls, precision=0.0001
+ref_category             | 0
+num_processed            | 57
+num_missing_rows_skipped | 0
 </pre>
 
 @anchor background
@@ -192,15 +260,16 @@ That is,
 \f[
     E[Y \mid \boldsymbol x] = \sigma(\boldsymbol c^T \boldsymbol x)
 \f]
-for some unknown vector of coefficients \f$ \boldsymbol c \f$ and where
-\f$ \sigma(x) = \frac{1}{1 + \exp(-x)} \f$ is the logistic function. Multinomial logistic
-regression finds the vector of coefficients \f$ \boldsymbol c \f$ that maximizes
-the likelihood of the observations.
+for some unknown vector of coefficients \f$ \boldsymbol c \f$ and where \f$
+\sigma(x) = \frac{1}{1 + \exp(-x)} \f$ is the logistic function. Multinomial
+logistic regression finds the vector of coefficients \f$ \boldsymbol c \f$ that
+maximizes the likelihood of the observations.
 
 Let
-- \f$ \boldsymbol y \in \{ 0,1 \}^{n \times k} \f$ denote the vector of observed dependent
-  variables, with \f$ n \f$ rows and \f$ k \f$ columns, containing the observed values of the
-  dependent variable,
+- \f$ \boldsymbol y \in \{ 0,1 \}^{n \times k} \f$ denote the vector of observed
+dependent variables, with \f$ n \f$ rows and \f$ k \f$ columns, containing the
+observed values of the   dependent variable,
+
 - \f$ X \in \mathbf R^{n \times k} \f$ denote the design matrix with \f$ k \f$
   columns and \f$ n \f$ rows, containing all observed vectors of independent
   variables \f$ \boldsymbol x_i \f$ as rows.
@@ -317,7 +386,8 @@ CREATE TYPE MADLIB_SCHEMA.mlogregr_result AS
     p_values        DOUBLE PRECISION[],
     odds_ratios     DOUBLE PRECISION[],
     condition_no    DOUBLE PRECISION,
-    num_iterations  INTEGER
+    num_iterations  INTEGER,
+    num_processed   INTEGER
 );
 
 
@@ -387,16 +457,127 @@ RETURNS MADLIB_SCHEMA.mlogregr_result AS
 'MODULE_PATHNAME'
 LANGUAGE c IMMUTABLE STRICT;
 
+/**
+ * @brief Compute multinomial logistic regression coefficients
+ *
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @param source_table Name of the source relation containing the training data
+ * @param output_table Name of the output relation to contain the resulting model
+ * @param dependent_varname Name of the dependent column (of type INTEGER)
+ * @param independent_varname Name of the independent column (or an array expression)
+ * @param ref_category The reference category specified by the user
+ * @param optimizer_params Comma-separated list of parameters for the optimizer function
+ *
+ * @return
+ *  An output table (named 'output_table' above) containing following columns:
+ *  - <tt>ref_category INTEGER</tt> - Reference category
+ *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
+ *  - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
+ *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *  - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
+ *    \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
+ *  - <tt>condition_no FLOAT8</tt> - The condition number of matrix
+ *    \f$ X^T A X \f$ during the iteration immediately <em>preceding</em>
+ *    convergence (i.e., \f$ A \f$ is computed using the coefficients of the
+ *    previous iteration)
+ * An output table (named 'output_table'_summary) containing following columns:
+ *  - <tt>regression_type VARCHAR</tt> - The regression type run (in this case it will be 'mlogit')
+ *  - <tt>source_table VARCHAR</tt> - Source table containing the training data
+ *  - <tt>output_table VARCHAR</tt> - Output table containing the trained model
+ *  - <tt>dependent_varname VARCHAR</tt> - Name of the dependent column used for training
+ *  - <tt>independent_varname VARCHAR</tt> - Name of the independent column used for training (or the ARRAY expression used for training)
+ *  - <tt>ref_category INTEGER</tt> - The reference category specified by the user
+ *  - <tt>num_iterations INTEGER</tt> - The number of iterations before the algorithm terminated
+ *  - <tt>num_rows_processed INTEGER</tt> - The number of rows from training data used for training
+ *  - <tt>num_missing_rows_skipped INTEGER</tt> - The number of rows skipped during training
+ *
+ * @usage
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+ *    statistics:\n
+ *    <pre>SELECT mlogregr_train('<em>sourceName</em>', '<em>outputName</em>',
+            '<em>dependentVariable</em>', '<em>independentVariables</em>');
+            SELECT * from <em>outputName</em>;
+      </pre>
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
+ *    <pre>SELECT coef from <em>outputName</em>;</pre>
+ *  - Get a subset of the output columns, e.g., only the array of coefficients
+ *    \f$ \boldsymbol c \f$, the log-likelihood of determination
+ *    \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT coef, log_likelihood, p_values
+ *    FROM <em>outputName</em>;</pre>
+ *
+ *
+ * @internal
+ * @sa This function is a wrapper for multilogistic::__compute_mlogregr(), which
+ *     sets the default values.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train(
+      source_table        VARCHAR  -- Name of the source table containing training data
+    , output_table        VARCHAR  -- Name of the output table to hold the trained model
+    , dependent_varname   VARCHAR  -- Name of the column containing the category values (the values must be integers from 0 to num_categories-1)
+    , independent_varname VARCHAR  -- Name of the column containing the independent variables. Can also be an ARRAY expression.
+    , ref_category        INTEGER  -- The value of reference category (the value must be between 0 and num_categories-1)
+    , optimizer_params    VARCHAR  -- a comma-separated string with optimizer parameters
+) RETURNS VOID AS $$
+    PythonFunction(regress, multilogistic, mlogregr_train)
+$$ LANGUAGE plpythonu;
 
--- We only need to document the last one (unfortunately, in Greenplum we have to
--- use function overloading instead of default arguments).
+-- Overloaded functions --------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train(
+      source_table        VARCHAR  -- Name of the source table containing training data
+    , output_table        VARCHAR  -- Name of the output table to hold the trained model
+    , dependent_varname   VARCHAR  -- Name of the column containing the category values (the values must be integers from 0 to num_categories-1)
+    , independent_varname VARCHAR  -- Name of the column containing the independent variables. Can also be an ARRAY expression.
+    , ref_category        INTEGER  -- The value of reference category (the value must be between 0 and num_categories-1)
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlogregr_train($1, $2, $3, $4, $5, NULL::VARCHAR);
+$$ LANGUAGE sql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train(
+      source_table        VARCHAR  -- Name of the source table containing training data
+    , output_table        VARCHAR  -- Name of the output table to hold the trained model
+    , dependent_varname   VARCHAR  -- Name of the column containing the category values (the values must be integers from 0 to num_categories-1)
+    , independent_varname VARCHAR  -- Name of the column containing the independent variables. Can also be an ARRAY expression.
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlogregr_train($1, $2, $3, $4, 0, NULL::VARCHAR);
+$$ LANGUAGE sql VOLATILE;
+
+-- Help messages -----------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train(
+     message VARCHAR     -- usage string
+)
+RETURNS VARCHAR AS $$
+# PythonFunctionBodyOnly(`regress', `multilogistic')
+    # return multilogistic.mlogregr_help_message(message)
+    PythonFunction(regress, multilogistic, mlogregr_help_message)
+$$ LANGUAGE plpythonu VOLATILE;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.mlogregr_train('')
+$$ LANGUAGE SQL VOLATILE;
+
+-- End of overloaded functions --------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- DEPRECATION NOTICE ----------------------------------------------------------
+-- The function 'mlogregr' has been deprecated and replaced by 'mlogregr_train'
+
 CREATE FUNCTION MADLIB_SCHEMA.__compute_mlogregr
 (
-    source              VARCHAR,
-    depvar              VARCHAR,
-    indepvar            VARCHAR,
+    source_table        VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR,
     num_categories      INTEGER,
-    max_num_iterations  INTEGER,
+    max_iter            INTEGER,
     optimizer           VARCHAR,
     "precision"         DOUBLE PRECISION,
     ref_category        INTEGER
@@ -405,6 +586,7 @@ RETURNS INTEGER
 AS $$
     PythonFunction(regress, multilogistic, compute_mlogregr)
 $$ LANGUAGE plpythonu VOLATILE STRICT;
+
 
 /**
  * @brief Compute logistic-regression coefficients and diagnostic statistics
@@ -604,3 +786,8 @@ RETURNS MADLIB_SCHEMA.mlogregr_result AS
 $$
     SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, $5, 0.0001, 0);
 $$ LANGUAGE sql VOLATILE;
+
+
+--------------------------------------------------------------------------------
+-- END OF DEPRECATION NOTICE ---------------------------------------------------
+--------------------------------------------------------------------------------

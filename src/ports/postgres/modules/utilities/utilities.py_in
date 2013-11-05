@@ -5,17 +5,16 @@ import time
 import random
 
 
-
 def _assert(condition, msg):
     """
     Display error message if condition is not satisfied
     """
     if not condition:
         plpy.error(msg)
-
 ## ========================================================================
 
-def __unique_string (**kwargs):
+
+def __unique_string(**kwargs):
     """
     Generate random remporary names for temp table and other names.
     It has a SQL interface so both SQL and Python functions can call it.
@@ -25,11 +24,10 @@ def __unique_string (**kwargs):
     r3 = int(time.time()) % random.randint(1, 100000000)
     u_string = "__madlib_temp_" + str(r1) + "_" + str(r2) + "_" + str(r3) + "__"
     return u_string
-
-
 ## ========================================================================
 
-def _string_to_array (s):
+
+def _string_to_array(s):
     """
     Split a string into an array of strings
     Any space around the substrings are removed
@@ -55,10 +53,15 @@ def _string_to_array (s):
     for i in range(len(elm)):
         elm[i] = elm[i].strip("\"")
     return elm
-
 ## ========================================================================
 
-def _array_to_string (origin):
+
+def py_list_to_sql_string(array):
+    """Convert numeric array to SQL string """
+    return "ARRAY[{0}]".format(','.join(map(str, array)))
+
+
+def _array_to_string(origin):
     """
     Convert an array to string
     """
@@ -71,16 +74,16 @@ def _array_to_string (origin):
     # rst += "}"
     # return rst
     return "{" + ",".join(map(str, origin)) + "}"
-
 ## ========================================================================
 
 # Deal with earlier versions of PG or GPDB
 
+
 class __mad_version:
-    def __init__ (self):
+    def __init__(self):
         self.version = plpy.execute("select version()")[0]["version"]
 
-    def select_vecfunc (self):
+    def select_vecfunc(self):
         """
         PG84 and GP40, GP41 do not have a good support for
         vectors. They convert any vector into a string, surrounded
@@ -93,7 +96,7 @@ class __mad_version:
         else:
             return self.__identity
 
-    def __extract (self, origin, text = True):
+    def __extract(self, origin, text=True):
         """
         Extract vector elements from a string with {}
         as the brackets
@@ -109,10 +112,10 @@ class __mad_version:
                 elm[i] = float(elm[i])
         return elm
 
-    def __identity (self, origin, text = True):
+    def __identity(self, origin, text=True):
         return origin
 
-    def select_vec_return (self):
+    def select_vec_return(self):
         """
         Special care is needed if one needs to return
         vector from Python to SQL
@@ -122,14 +125,14 @@ class __mad_version:
         else:
             return self.__identity
 
-    def __condense (self, origin):
+    def __condense(self, origin):
         """
         Convert the original vector into a string which some
         old versions of SQL system can recognize
         """
         return _array_to_string(origin)
 
-    def select_array_agg (self, schema_madlib):
+    def select_array_agg(self, schema_madlib):
         """
         GPDB < 4.1 and PG < 9.0 do not have support for array_agg,
         so use the madlib array_agg for those versions
@@ -139,7 +142,7 @@ class __mad_version:
         else:
             return "array_agg"
 
-    def is_gp40 (self):
+    def is_gp40(self):
         """
         GP40 is so ...
         It needs special treatment of update from different segments
@@ -148,13 +151,13 @@ class __mad_version:
             return True
         return False
 
-    def is_pg (self):
+    def is_pg(self):
         if re.search(r"PostgreSQL", self.version) and \
-                        not re.search(r"Greenplum Database", self.version):
+           not re.search(r"Greenplum Database", self.version):
             return True
         return False
 
-    def is_gp41 (self):
+    def is_gp41(self):
         """
         GP40 is so ...
         It needs special treatment of update from different segments
@@ -163,7 +166,7 @@ class __mad_version:
             return True
         return False
 
-    def is_gp422_and_up (self):
+    def is_gp422_and_up(self):
         p = re.compile('Greenplum\s+Database\s+([0-9.]+)\s+build', re.IGNORECASE)
         version = p.findall(self.version)
         if len(version) > 0 and int(version[0].replace('.', '')) >= 4220:
@@ -175,7 +178,6 @@ class __mad_version:
         if re.search(r"Greenplum\s+Database\s+4\.3", self.version):
             return True
         return False
-
 
     def is_less_than_pg90(self):
         regex = re.compile('PostgreSQL\s*([0-9])([0-9.]+)', re.IGNORECASE)
@@ -202,12 +204,7 @@ class __mad_version:
             return False
 
 
-# use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
-version_wrapper = __mad_version()
-array_to_string = version_wrapper.select_vec_return()
-
-## ========================================================================
-def _string_to_sql_array (schema_madlib, s, **kwargs):
+def _string_to_sql_array(schema_madlib, s, **kwargs):
     """
     Split a string into an array of strings
     Any space around the substrings are removed
@@ -227,9 +224,172 @@ def _string_to_sql_array (schema_madlib, s, **kwargs):
     So use this function, if you are sure that all elements
     are valid Postgres names.
     """
+    # use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
+    version_wrapper = __mad_version()
+    array_to_string = version_wrapper.select_vec_return()
+
     elm = []
     for m in re.finditer(r"(\"(\\\"|[^\"])*\"|[^\",\s]+)", s):
         elm.append(m.group(1))
     for i in range(len(elm)):
         elm[i] = elm[i].strip("\"")
     return array_to_string(elm)
+# ========================================================================
+
+
+def preprocess_optimizer_params(optimizer_params):
+    """
+    Parse the optimizer_params string and split it
+
+    @param optimizer_params: string, Comma-separated list of parameters
+        The parameter can be any key = value, where
+            key is a string of alphanumeric character
+            value is either and
+
+
+    """
+    pattern = re.compile(r"""
+                (\w+\s*                # key is any alphanumeric character string
+                 =                     # key and value are separated by =
+                 \s*([\(\{\[]          # value can be string or array
+                     [^\[\]\(\)\{\}]*  #  if value is array then accept anything inside array
+                     [\)\}\]]          #  and then match closing braces of array
+
+                    |                  # either array (above) or string (below)
+
+                    (?P<quote>\"?)[\w\s-]+\.?[\w\s-]*(?P=quote)
+                                       #  if value is string, it can be alphanumeric
+                                       #    character string with a decimal dot,
+                                       #    optionally quoted by double quotes
+                    )
+                )""", re.VERBOSE)
+    return [m.group(1) for m in pattern.finditer(optimizer_params)]
+# ========================================================================
+
+
+def extract_optimizer_param(optimizer_params,
+                            optimizer_param_types,
+                            default_values=None):
+    """ Extract optimizer control parameter or set the default values
+
+    Args:
+        @param optimizer_params: string, Format of
+                    'max_iter=..., optimizer=..., precision=...'. The order
+                    does not matter. If a parameter is missing, then the default
+                    value is used. If optimizer_params is None or '',
+                    then all default values are returned.
+                    This function also validates the values of these parameters.
+        @param optimizer_param_types: dict, The type of each allowed parameter
+                                            name. Currently supports one of
+                                            (int, float, str, list)
+        @param default_values: dict, Default values for each allowed parameter.
+
+    Returns:
+        Dict. Dictionary of optimizer parameter values with key as parameter name
+        and value as the parameter value
+
+    Throws:
+        plpy.error - If the parameter is unsupported or the value is
+        not valid.
+    """
+    # allowed_params = set(["max_iter", "max_num_iterations", "optimizer", "precision"])
+    # parameter_dict = {'max_iter': 20, 'optimizer': "irls", 'precision': 0.0001}
+
+    debug = False   # Set debug = True if using unittest
+
+    if not optimizer_params:
+        return default_values if default_values is not None else {}
+
+    if default_values:
+        parameter_dict = default_values
+    else:
+        parameter_dict = {}
+
+    for s in preprocess_optimizer_params(optimizer_params):
+        items = s.split("=")
+        if (len(items) != 2):
+            # plpy.error("Mlogit error: Optimizer parameter list has incorrect format")
+            raise KeyError("Optimizer parameter list has incorrect format")
+
+        param_name = items[0].strip(" \"").lower()
+        param_value = items[1].strip(" \"").lower()
+        if not param_name or param_name in ('none', 'null'):
+            plpy.error("Invalid optimizer param name: {0} ".format(str(param_name)))
+        if not param_value or param_value in ('none', 'null'):
+            plpy.error("Invalid optimizer param value: {0} ".format(str(param_value)))
+
+        try:
+            param_type = optimizer_param_types[param_name]
+        except KeyError:
+            if not debug:
+                plpy.error("Invalid input: {0} is not a valid parameter ".
+                           format(param_name=param_name))
+            else:
+                raise KeyError("Invalid input: {0} is not a valid parameter ".
+                               format(param_name))
+        try:
+            if param_type in (int, str, float):
+                parameter_dict[param_name] = param_type(param_value)
+            elif param_type == list:
+                parameter_dict[param_name] = param_value.strip('[](){} ').split(',')
+            else:
+                if not debug:
+                    plpy.error("Invalid input: {0} has unsupported type".
+                               format(param_name))
+                else:
+                    raise TypeError("Invalid input: {0} has unsupported type".
+                                    format(param_name))
+        except ValueError:
+            if not debug:
+                plpy.error("Invalid input: {0} must be {1}".
+                           format(param_name, str(param_type)))
+            else:
+                raise ValueError("Invalid input: {0} must be {1}".
+                                 format(param_name, str(param_type)))
+    return parameter_dict
+# -------------------------------------------------------------------------
+
+import unittest
+
+
+class UtilitiesTestCase(unittest.TestCase):
+    """
+        Comment "import plpy" and replace plpy.error calls with appropriate
+        Python Exceptions to successfully run the test cases
+    """
+    def setUp(self):
+        self.optimizer_params1 = 'max_iter=10, optimizer="irls", precision=1e-4'
+        self.optimizer_params2 = 'max_iter=2.01, optimizer=newton-irls, precision=1e-5'
+        self.optimizer_params3 = 'max_iter=10, 10, optimizer=, lambda={1,2,3,4}'
+        self.optimizer_params4 = 'max_iter=10, optimizer="irls", \
+                                    precision=0.02.01, lambda={1,2,3,4}'
+        self.optimizer_types = {'max_iter': int, 'optimizer': str,
+                                'lambda': list, 'precision': float}
+
+    def tearDown(self):
+        pass
+
+    def test_preprocess_optimizer(self):
+        self.assertEqual(preprocess_optimizer_params(self.optimizer_params1),
+                         ['max_iter=10', 'optimizer="irls"', 'precision=1e-4'])
+        self.assertEqual(preprocess_optimizer_params(self.optimizer_params2),
+                         ['max_iter=2.01', 'optimizer=newton-irls', 'precision=1e-5'])
+        self.assertEqual(preprocess_optimizer_params(self.optimizer_params3),
+                         ['max_iter=10', 'lambda={1,2,3,4}'])
+        self.assertEqual(preprocess_optimizer_params(self.optimizer_params4),
+                         ['max_iter=10', 'optimizer="irls"', 'precision=0.02', 'lambda={1,2,3,4}'])
+
+    def test_extract_optimizers(self):
+        self.assertEqual({'max_iter': 10, 'optimizer': "irls", 'precision': 0.0001},
+                         extract_optimizer_param(self.optimizer_params1, self.optimizer_types))
+        self.assertEqual({'max_iter': 10, 'lambda': ['1', '2', '3', '4']},
+                         extract_optimizer_param(self.optimizer_params3, self.optimizer_types))
+        self.assertEqual({'max_iter': 10, 'optimizer': "irls", 'precision': 0.02,
+                          'lambda': ['1', '2', '3', '4']},
+                         extract_optimizer_param(self.optimizer_params4, self.optimizer_types))
+        self.assertRaises(ValueError,
+                          extract_optimizer_param, self.optimizer_params2, self.optimizer_types)
+
+
+if __name__ == '__main__':
+    unittest.main()
