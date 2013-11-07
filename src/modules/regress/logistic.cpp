@@ -1557,7 +1557,7 @@ AnyType marginalstateToResult(
 AnyType
 marginal_logregr_step_transition::run(AnyType &args) {
     MarginalLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
-    if (args[2].isNull()) { return args[0]; }
+    if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     MappedColumnVector x;
     try {
         // an exception is raised in the backend if args[2] contains nulls

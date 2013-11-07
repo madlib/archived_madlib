@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------------- *//**
- *
+*
  * @file multilogistic.sql_in
  *
  * @brief SQL functions for multinomial logistic regression
@@ -788,6 +788,115 @@ $$
 $$ LANGUAGE sql VOLATILE;
 
 
---------------------------------------------------------------------------------
--- END OF DEPRECATION NOTICE ---------------------------------------------------
---------------------------------------------------------------------------------
+-- -----------------------------------------------------------------------
+-- New interface: The 'mlogregr' call is to be deprecated
+-- -----------------------------------------------------------------------
+
+/**
+ * @brief Compute multinomial logistic regression coefficients
+ *
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @param source_table Name of the source relation containing the training data
+ * @param output_table Name of the output relation to contain the resulting model
+ * @param dependent_varname Name of the dependent column (of type INTEGER)
+ * @param independent_varname Name of the independent column (or an array expression)
+ * @param ref_category The reference category specified by the user
+ * @param optimizer_params Comma-separated list of parameters for the optimizer function
+ *
+ * @return
+ *  An output table (named 'output_table' above) containing following columns:
+ *  - <tt>ref_category INTEGER</tt> - Reference category
+ *  - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
+ *  - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
+ *  - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *    \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *  - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *  - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *  - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
+ *    \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
+ *  - <tt>condition_no FLOAT8</tt> - The condition number of matrix
+ *    \f$ X^T A X \f$ during the iteration immediately <em>preceding</em>
+ *    convergence (i.e., \f$ A \f$ is computed using the coefficients of the
+ *    previous iteration)
+ * An output table (named 'output_table'_summary) containing following columns:
+ *  - <tt>regression_type VARCHAR</tt> - The regression type run (in this case it will be 'mlogit')
+ *  - <tt>source_table VARCHAR</tt> - Source table containing the training data
+ *  - <tt>output_table VARCHAR</tt> - Output table containing the trained model
+ *  - <tt>dependent_varname VARCHAR</tt> - Name of the dependent column used for training
+ *  - <tt>independent_varname VARCHAR</tt> - Name of the independent column used for training (or the ARRAY expression used for training)
+ *  - <tt>ref_category INTEGER</tt> - The reference category specified by the user
+ *  - <tt>num_iterations INTEGER</tt> - The number of iterations before the algorithm terminated
+ *  - <tt>num_rows_processed INTEGER</tt> - The number of rows from training data used for training
+ *  - <tt>num_missing_rows_skipped INTEGER</tt> - The number of rows skipped during training
+ *
+ * @usage
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+ *    statistics:\n
+ *    <pre>SELECT mlogregr_train('<em>sourceName</em>', '<em>outputName</em>',
+            '<em>dependentVariable</em>', '<em>independentVariables</em>');
+            SELECT * from <em>outputName</em>;
+      </pre>
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
+ *    <pre>SELECT coef from <em>outputName</em>;</pre>
+ *  - Get a subset of the output columns, e.g., only the array of coefficients
+ *    \f$ \boldsymbol c \f$, the log-likelihood of determination
+ *    \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT coef, log_likelihood, p_values
+ *    FROM <em>outputName</em>;</pre>
+ *
+ *
+ * @internal
+ * @sa This function is a wrapper for multilogistic::__compute_mlogregr(), which
+ *     sets the default values.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train (
+      source_table        VARCHAR  -- Name of the source table containing training data
+    , output_table        VARCHAR  -- Name of the output table to hold the trained model
+    , dependent_varname   VARCHAR  -- Name of the column containing the category values (the values must be integers from 0 to num_categories-1)
+    , independent_varname VARCHAR  -- Name of the column containing the independent variables. Can also be an ARRAY expression.
+    , ref_category        INTEGER  -- The value of reference category (the value must be between 0 and num_categories-1)
+    , optimizer_params    VARCHAR  -- a comma-separated string with optimizer parameters
+) RETURNS VOID AS $$
+PythonFunction(regress, multilogistic, mlogregr_train)
+$$ LANGUAGE plpythonu;
+
+-- Overloaded functions --------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train (
+      source_table        VARCHAR  -- Name of the source table containing training data
+    , output_table        VARCHAR  -- Name of the output table to hold the trained model
+    , dependent_varname   VARCHAR  -- Name of the column containing the category values (the values must be integers from 0 to num_categories-1)
+    , independent_varname VARCHAR  -- Name of the column containing the independent variables. Can also be an ARRAY expression.
+    , ref_category        INTEGER  -- The value of reference category (the value must be between 0 and num_categories-1)
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlogregr_train($1, $2, $3, $4, $5, NULL::VARCHAR);
+$$ LANGUAGE sql VOLATILE;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train (
+      source_table        VARCHAR  -- Name of the source table containing training data
+    , output_table        VARCHAR  -- Name of the output table to hold the trained model
+    , dependent_varname   VARCHAR  -- Name of the column containing the category values (the values must be integers from 0 to num_categories-1)
+    , independent_varname VARCHAR  -- Name of the column containing the independent variables. Can also be an ARRAY expression.
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlogregr_train($1, $2, $3, $4, 0, NULL::VARCHAR);
+$$ LANGUAGE sql VOLATILE;
+
+-- Help messages -----------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train()
+RETURNS VARCHAR AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.mlogregr_train('');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_train(
+     message VARCHAR     -- usage string
+)
+RETURNS VARCHAR AS $$
+PythonFunction(regress, multilogistic, mlogregr_help_message)
+$$ LANGUAGE plpythonu VOLATILE;
+

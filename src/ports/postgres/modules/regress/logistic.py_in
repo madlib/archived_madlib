@@ -308,6 +308,8 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                    join_str=join_str,
                    **args))
 
+
+
     failed_groups = plpy.execute(
                     """
                     select count(*) as count
@@ -320,10 +322,40 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                     from {tbl_output}
                     """.format(**args))[0]["count"]
 
-    if grouping_col:
-        plpy.info(str(all_groups - failed_groups) +
-                    " groups succesfully passed, and " +
-                    str(failed_groups) + " groups failed")
+    num_rows = plpy.execute(
+        """
+        select
+            sum(num_rows_processed) as num_rows_processed,
+            sum(num_missing_rows_skipped) as num_missing_rows_skipped
+        from {tbl_output}
+        """.format(tbl_output=tbl_output))[0]
+
+    if num_rows['num_rows_processed'] is None:
+        num_rows['num_rows_processed'] = "NULL"
+        num_rows['num_missing_rows_skipped'] = "NULL"
+    
+    args.update(num_rows)
+
+    plpy.execute(
+        """
+        create table {tbl_output}_summary as
+            select
+                '{tbl_source}'::varchar as source_table,
+                '{tbl_output}'::varchar as out_table,
+                '{dep_col}'::varchar as dependent_varname,
+                '{ind_col}'::varchar as independent_varname,
+                'optimizer={optimizer}, max_iter={max_iter}, tolerance={tolerance}'::varchar as optimizer_params,
+                {all_groups}::integer as num_all_groups,
+                {failed_groups}::integer as num_failed_groups,
+                {num_rows_processed}::integer as num_rows_processed,
+                {num_missing_rows_skipped}::integer as num_missing_rows_skipped
+        """.format(all_groups=all_groups, failed_groups=failed_groups,
+                   **args))
+
+    # if grouping_col:
+    #     plpy.info(str(all_groups - failed_groups) +
+    #                 " groups succesfully passed, and " +
+    #                 str(failed_groups) + " groups failed")
 
     plpy.execute("""
                  drop table if exists pg_temp.{tbl_logregr_args};

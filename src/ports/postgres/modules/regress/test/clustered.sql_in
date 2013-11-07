@@ -577,6 +577,7 @@ select
 from abalone1;
 
 drop table if exists temp_out;
+drop table if exists temp_out_summary;
 select clustered_variance_linregr('abalone1', 'temp_out', 'rings', 'array[1, length, diameter, height, whole]', 'sex');
 
 select assert(
@@ -588,6 +589,7 @@ select assert(
 ) from temp_out;
 
 drop table if exists temp_out;
+drop table if exists temp_out_summary;
 select clustered_variance_logregr('abalone1', 'temp_out', 'rings < 10', 'array[1, length, diameter, height, whole]', 'sex', NULL, 100, 'irls', 1e-6, False);
 
 select assert(
@@ -599,6 +601,7 @@ select assert(
 ) from temp_out;
 
 drop table if exists temp_out;
+drop table if exists temp_out_summary;
 select clustered_variance_mlogregr(
     'abalone2', 'temp_out', 'y', 'array[1, length, diameter, height, whole]',
     'sex', 0, NULL, 'max_iter=100, optimizer=irls, tolerance=1e-6', False);
@@ -612,31 +615,80 @@ select assert(
 ) from temp_out;
 
 -- NULL handling test
-DROP TABLE IF EXISTS abalone1_with_null;
-CREATE TABLE abalone1_with_null AS SELECT * FROM abalone1;
-INSERT INTO abalone1_with_null VALUES
+
+DROP TABLE IF EXISTS abalone1_all_null;
+CREATE TABLE abalone1_all_null (
+    id integer,
+    sex text,
+    length double precision,
+    diameter double precision,
+    height double precision,
+    whole double precision,
+    shucked double precision,
+    viscera double precision,
+    shell double precision,
+    rings integer
+);
+INSERT INTO abalone1_all_null VALUES
 (552, 'M', NULL, 0.36499999999999999, 0.095000000000000001, 0.51400000000000001, 0.22450000000000001, 0.10100000000000001, 0.14999999999999999, 15),
 (553, 'M', 0.44, NULL, 0.125, 0.51600000000000001, 0.2155, 0.114, 0.155, 10),
 (554, 'F', 0.53000000000000003, 0.41999999999999998, NULL, 0.67700000000000005, 0.25650000000000001, 0.14149999999999999, 0.20999999999999999, 9),
-(555, 'M', 0.34999999999999998, 0.26500000000000001, 0.089999999999999997, NULL, 0.099500000000000005, 0.048500000000000001, 0.070000000000000007, 7);
+(555, 'M', 0.34999999999999998, 0.26500000000000001, 0.089999999999999997, 1, 0.099500000000000005, 0.048500000000000001, 0.070000000000000007, NULL),
+(556, 'M', 0.34999999999999998, 0.26500000000000001, 0.089999999999999997, NULL, 0.099500000000000005, 0.048500000000000001, 0.070000000000000007, 7);
+
+drop table if exists temp_out;
+drop table if exists temp_out_summary;
+select clustered_variance_linregr('abalone1_all_null', 'temp_out', 'rings', 'array[1, length, diameter, height, whole]', 'sex');
+SELECT * FROM temp_out;
+
+DROP TABLE IF EXISTS abalone1_with_null;
+CREATE TABLE abalone1_with_null AS SELECT * FROM abalone1;
+INSERT INTO abalone1_with_null SELECT * FROM abalone1_all_null;
 
 DROP TABLE IF EXISTS abalone2_with_null;
 create table abalone2_with_null as
 select 
     length, diameter, height, whole, sex, 
-    (case when rings < 10 then 1 else 0 end)::integer as y
+    (rings < 10)::integer as y
 from abalone1_with_null;
 
 drop table if exists temp_out;
+drop table if exists temp_out_summary;
 select clustered_variance_linregr('abalone1_with_null', 'temp_out', 'rings', 'array[1, length, diameter, height, whole]', 'sex');
 SELECT * FROM temp_out;
 
+select assert(
+    relative_error(coef, array[1.550894e+00, -1.617533e+00, 1.489248e+01, 2.230165e+01, 2.291137e+00]) < 1e-6 and
+    relative_error(std_err, array[5.230808e-01, 9.126018e-01, 4.160678e+00, 1.656641e+00, 6.037868e-01]) < 1e-6 and
+    relative_error(t_stats, array[2.964922e+00, -1.772441e+00, 3.579340e+00, 1.346197e+01, 3.794612e+00]) < 1e-6 and
+    relative_error(p_values, array[3.160120e-03, 7.687992e-02, 3.752007e-04, 7.224856e-36, 1.644453e-04]) < 1e-6,
+    'Clustered standard errors: Wrong results for linear'
+) from temp_out;
+
 drop table if exists temp_out;
+drop table if exists temp_out_summary;
 select clustered_variance_logregr('abalone1_with_null', 'temp_out', 'rings < 10', 'array[1, length, diameter, height, whole]', 'sex', NULL, 100, 'irls', 1e-6, False);
 SELECT * FROM temp_out;
 
+select assert(
+    relative_error(coef, array[7.019211e+00, -9.452704e+00, 1.213867e+00, -1.625120e+01, -2.357464e+00]) < 1e-4 and
+    relative_error(std_err, array[1.869091e+00, 1.638447e+00, 7.460817e+00, 9.503961e+00, 2.069767e+00]) < 1e-4 and
+    relative_error(z_stats, array[3.755414e+00, -5.769307e+00, 1.626990e-01, -1.709940e+00, -1.139000e+00]) < 1e-4 and
+    relative_error(p_values, array[1.730550e-04, 7.959840e-09, 8.707555e-01, 8.727696e-02, 2.547033e-01]) < 1e-4,
+    'Clustered standard errors: Wrong results for logistic'
+) from temp_out;
+
 drop table if exists temp_out;
+drop table if exists temp_out_summary;
 select clustered_variance_mlogregr(
     'abalone2_with_null', 'temp_out', 'y', 'array[1, length, diameter, height, whole]',
     'sex', 0, NULL, 'max_iter=100, optimizer=irls, tolerance=1e-6', False);
 SELECT * FROM temp_out;
+
+select assert(
+    relative_error(coef, array[7.019211e+00, -9.452704e+00, 1.213867e+00, -1.625120e+01, -2.357464e+00]) < 1e-4 and
+    relative_error(std_err, array[1.869091e+00, 1.638447e+00, 7.460817e+00, 9.503961e+00, 2.069767e+00]) < 1e-4 and
+    relative_error(z_stats, array[3.755414e+00, -5.769307e+00, 1.626990e-01, -1.709940e+00, -1.139000e+00]) < 1e-4 and
+    relative_error(p_values, array[1.730550e-04, 7.959840e-09, 8.707555e-01, 8.727696e-02, 2.547033e-01]) < 1e-4,
+    'Clustered standard errors: Wrong results for multinomial logistic'
+) from temp_out;

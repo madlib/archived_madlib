@@ -95,13 +95,24 @@ class GroupIterationController:
                 );
 				m4_ifdef(`__GREENPLUM__',`alter table {rel_state}
                                 set distributed by (_iteration {primary_str});')
-                alter table {rel_state}
-                                add primary key (_iteration {primary_str});
                 """.format(distinct_group = distinct_group,
                            primary_str = primary_str,
                            limit_str = limit_str,
                            temp='TEMPORARY' if self.temporaryTables else '',
                            **self.kwargs))
+            null_test = " or ".join([g.strip() + " is NULL" for g in 
+                        self.kwargs['grouping_col'].split(",")])
+            null_count = plpy.execute(
+                """
+                select count(*) from {rel_state} where {null_test}
+                """.format(null_test=null_test, **self.kwargs))[0]['count']
+            if null_count != 0 and primary_str != "":
+                plpy.error("Grouping error: at least one of the grouping columns contains NULL values!"
+                           " Please filter out those NULL values.")
+            self.runSQL("""
+                        alter table {rel_state}
+                        add primary key (_iteration {primary_str})
+                        """.format(primary_str=primary_str, **self.kwargs))
         self.inWith = True
         return self
 

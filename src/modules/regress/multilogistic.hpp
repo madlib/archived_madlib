@@ -66,4 +66,5 @@ DECLARE_UDF(regress, mlogregr_marginal_step_merge_states)
  */
 DECLARE_UDF(regress, mlogregr_marginal_step_final)
 
+DECLARE_UDF(regress, __sub_array)
 

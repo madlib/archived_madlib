@@ -1,0 +1,183 @@
+# coding=utf-8
+
+
+"""
+@file robust_linear.py_in
+
+@namespace robust
+
+@brief Robust variance: Common functions
+"""
+import plpy
+from utilities.utilities import _assert
+from utilities.utilities import __unique_string
+from utilities.utilities import _string_to_array
+from utilities.utilities import _array_to_string
+
+from utilities.validate_args import table_exists
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import columns_exist_in_table
+
+# use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
+from utilities.utilities import __mad_version
+version_wrapper = __mad_version()
+string_to_array = version_wrapper.select_vecfunc()
+array_to_string = version_wrapper.select_vec_return()
+
+from regress.robust_linear import _robust_linregr_validate
+
+def _robust_logregr_validate(max_iter, optimizer, tolerance, **kwargs):
+    _assert(max_iter is not None,
+        "Robust Variance error: The max_iter should not be NULL!")
+    _assert(max_iter > 0,
+        "Robust Variance error: Maximum number of iterations must be positive!")
+
+    _assert(tolerance is not None,
+        "Robust Variance error: The tolerance should not be NULL!")
+    _assert(tolerance >= 0,
+         "Robust Variance error: The tolerance cannot be negative!")
+
+    _assert(optimizer is not None,
+        "Robust Variance error: The optimizer should not be NULL!")
+    _assert(optimizer.lower() in ("irls", "newton"),
+        "Robust Variance error: Optimizer does not exist.  Must be 'newton'/'irls'.")
+
+def robust_logregr_help(schema_madlib, message,  **kwargs):
+    if not message:
+        help_string = """
+-----------------------------------------------------------------------
+                            SUMMARY
+-----------------------------------------------------------------------
+Functionality: Calculate Huber-White robust statistics for logistic regression
+
+For more details on function usage:
+    SELECT {schema_madlib}.robust_variance_logregr('usage');
+        """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+    SELECT {schema_madlib}.robust_variance_logregr(
+        'source_table',         -- Name of data table
+        'output_table',         -- Name of result table
+        'dependent_varname',    -- Name of column for dependent variables
+        'independent_varname',  -- Name of column for independent variables
+                                   (can be any SQL expression that evaluates to an array)
+        'grouping_cols',        -- [OPTIONAL] Comma separated string with columns to group by.  Default is NULL.
+        'max_iter',             -- [OPTIONAL] The number of iterations used by the logistic regression solver.  Default is 20.
+        'optimizer',            -- [OPTIONAL] Name of the optimizer used in the logistic regression.  Default is irls.
+        'tolerance',            -- [OPTIONAL] The tolerance of the logistic regression optimizer.  Default is 0.0001.
+        'verbose'               -- [OPTIONAL] Should the optimizer print warning messages to the screen.  Default is FALSE.
+        );
+-----------------------------------------------------------------------
+                            OUTUPT
+-----------------------------------------------------------------------
+The output table ('output_table' above) has the following columns:
+    'coef'      DOUBLE PRECISION[],  -- Coefficients of regression
+    'std_err'   DOUBLE PRECISION[],  -- Huber-White standard errors
+    'stats'     DOUBLE PRECISION[],  -- Z-stats of the standard errors
+    'p_values'  DOUBLE PRECISION[]   -- p-values of the standard errors
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.robust_variance_linregr()"
+
+    return help_string.format(schema_madlib=schema_madlib)
+
+# -------------------------------------------------------------------------
+
+def robust_variance_logregr(
+        schema_madlib, source_table, out_table, dependent_varname,
+        independent_varname, grouping_cols=None, max_iter=20, optimizer='irls',
+        tolerance=0.0001, verbose=False, **kwargs):
+    """
+    @brief A wrapper function for the robust_variance_mlogregr.
+
+    @param source_table string, name of the input table
+    @param out_table string, name of the output table to be created
+    @param dependent_varname: string, Column containing the dependent variable
+    @param independent_varname string, Column containing the array of independent variables
+    @param grouping_cols string, Set of columns to group by.
+
+    To include an intercept in the model, set one coordinate in the
+    <tt>independentVariables</tt> array to 1.
+
+    Returns:
+        None
+    """
+    # Reset the message level to avoid random messages
+    old_msg_level = plpy.execute("""
+                                  SELECT setting
+                                  FROM pg_settings
+                                  WHERE name='client_min_messages'
+                                  """)[0]['setting']
+    if verbose:
+        plpy.execute('SET client_min_messages TO warning')
+    else:
+        plpy.execute('SET client_min_messages TO error')
+
+    if optimizer is not None and optimizer.lower() == 'newton':
+        optimizer = 'irls'
+    _robust_linregr_validate(schema_madlib, source_table, out_table,
+            dependent_varname, independent_varname, grouping_cols, verbose)
+    _robust_logregr_validate(max_iter, optimizer, tolerance)
+
+    group_str = '' if grouping_cols is None else 'GROUP BY %s' % grouping_cols
+    group_str_sel = '' if grouping_cols is None else grouping_cols + ','
+    join_str = ',' if grouping_cols is None else 'JOIN'
+    using_str = '' if grouping_cols is None else 'USING (%s)' % grouping_cols
+    group_col_str = 'NULL' if grouping_cols is None else "'" + grouping_cols + "'"
+    optimizer_str = 'NULL' if optimizer is None else "'" + optimizer + "'"
+    maxiter_str = 'NULL' if max_iter is None else max_iter
+    tolerance_str = 'NULL' if tolerance is None else tolerance
+
+    logr_out_table = __unique_string()
+    rb_model = __unique_string()
+
+    # Run logistic regression
+    plpy.execute("""
+        SELECT {schema_madlib}.logregr_train(
+            '{source_table}', '{logr_out_table}',
+            '{dependent_varname}', '{independent_varname}', {group_col_str},
+            {maxiter_str}, {optimizer_str}, {tolerance_str}, {verbose})
+        """.format(schema_madlib=schema_madlib, source_table=source_table,
+                logr_out_table=logr_out_table, dependent_varname=dependent_varname,
+                independent_varname=independent_varname, group_col_str=group_col_str,
+                maxiter_str=maxiter_str, optimizer_str=optimizer_str,
+                tolerance_str=tolerance_str, verbose=verbose))
+
+    # Rename the output summary table
+    plpy.execute("""
+        ALTER TABLE {logr_out_table}_summary RENAME TO {out_table}_summary
+        """.format(logr_out_table=logr_out_table, out_table=out_table))
+
+    # Run robust logistic regression
+    plpy.execute("""
+        CREATE TABLE {out_table} AS
+        SELECT
+            {group_str_sel}
+            ({rb_model}).coef, ({rb_model}).std_err,
+            ({rb_model}).z_stats, ({rb_model}).p_values
+        FROM
+        (
+            SELECT
+                {group_str_sel}
+                {schema_madlib}.robust_logregr(
+                    ({dependent_varname})::BOOLEAN,
+                    {independent_varname},
+                    {logr_out_table}.coef) AS {rb_model}
+            FROM
+                {source_table} {join_str} {logr_out_table}  {using_str}
+            {group_str}
+        ) t1
+        """.format(schema_madlib=schema_madlib,
+                source_table=source_table, out_table=out_table,
+                dependent_varname=dependent_varname,
+                independent_varname=independent_varname,
+                group_str_sel=group_str_sel, group_str=group_str,
+                join_str=join_str, using_str=using_str,
+                logr_out_table=logr_out_table, rb_model=rb_model))
+
+    # Drop the output table of logregr_train()
+    plpy.execute('DROP TABLE IF EXISTS ' + logr_out_table)
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)

@@ -195,15 +195,144 @@ public:
     typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
 };
 
-// Internal functions
-// AnyType mLogstateToResult(
-//     const Allocator &inAllocator,
-    // int ref_category,
-    // const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
-    // const ColumnVector &diagonal_of_hessian,
-    // double logLikelihood,
-    // double conditionNo);
 
+/**
+ * @brief Inter- and intra-iteration state for robust variance calculations
+ *
+ * TransitionState encapsualtes the transition state during the
+ * logistic-regression robust variance calculation. To the database, the state is
+ * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
+ * object containing scalars, a vector, and a matrix.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 4, and all elemenets are 0.
+ */
+template <class Handle>
+class MLogRegrRobustTransitionState {
+
+    // By §14.5.3/9: "Friend declarations shall not declare partial
+    // specializations." We do access protected members in operator+=().
+    template <class OtherHandle>
+    friend class MLogRegrRobustTransitionState;
+
+public:
+    MLogRegrRobustTransitionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
+        rebind(static_cast<uint16_t>(mStorage[0]),static_cast<uint16_t>(mStorage[1]));
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Initialize the iteratively-reweighted-least-squares state.
+     *
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(const Allocator &inAllocator,
+        uint16_t inWidthOfX, uint16_t inNumCategories, uint16_t inRefCategory) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
+        rebind(inWidthOfX, inNumCategories);
+        widthOfX = inWidthOfX;
+        numCategories = inNumCategories;
+        ref_category = inRefCategory;
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle> MLogRegrRobustTransitionState &operator=(
+        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
+        return *this;
+    }
+
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
+     */
+    template <class OtherHandle> MLogRegrRobustTransitionState &operator+=(
+        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX != inOtherState.widthOfX)
+            throw std::logic_error("Internal error: Incompatible transition "
+                "states");
+
+        numRows += inOtherState.numRows;
+        X_transp_AX += inOtherState.X_transp_AX;
+        meat += inOtherState.meat;
+        return *this;
+    }
+
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+        numRows = 0;
+        meat.fill(0);
+        X_transp_AX.fill(0);
+    }
+
+private:
+    static inline uint32_t arraySize(const uint16_t inWidthOfX,
+        const uint16_t inNumCategories) {
+        return 4 + 2*inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
+                                 + inWidthOfX * inNumCategories;
+    }
+
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX             The number of independent variables.
+     * @param inNumCategories The number of categories of the dependant var
+
+
+     * Array layout (iteration refers to one aggregate-function call):
+     * Inter-iteration components (updated in final function):
+     * - 0: widthOfX (number of independant variables)
+     * - 1: numCategories (number of categories)
+     * - 2: ref_category
+     * - 3: coef (vector of coefficients)
+     *
+     * Intra-iteration components (updated in transition step):
+     * - 3 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
+     * - 4 + widthOfX * inNumCategories: X_transp_AX (X^T A X).
+     * - 4 + widthOfX^2*numCategories^2: meat  (The meat matrix)
+     */
+    void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
+        widthOfX.rebind(&mStorage[0]);
+        numCategories.rebind(&mStorage[1]);
+        ref_category.rebind(&mStorage[2]);
+        coef.rebind(&mStorage[3], inWidthOfX * inNumCategories);
+        numRows.rebind(&mStorage[3 + inWidthOfX * inNumCategories]);
+        X_transp_AX.rebind(&mStorage[4 + inWidthOfX * inNumCategories],
+            inNumCategories * inWidthOfX, inWidthOfX * inNumCategories);
+        meat.rebind(&mStorage[4 +
+             inNumCategories * inNumCategories * inWidthOfX * inWidthOfX
+             + inWidthOfX * inNumCategories], inWidthOfX * inNumCategories, inWidthOfX * inNumCategories);
+    }
+
+    Handle mStorage;
+
+public:
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;
+
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap meat;
+    typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
+};
 
 /**
  * @brief IRLS Transition
@@ -503,145 +632,6 @@ __internal_mlogregr_irls_result::run(AnyType &args) {
 // ---------------------------------------------------------------------------
 //             Robust Variance Multi-Logistic
 // ---------------------------------------------------------------------------
-
-/**
- * @brief Inter- and intra-iteration state for robust variance calculations
- *
- * TransitionState encapsualtes the transition state during the
- * logistic-regression robust variance calculation. To the database, the state is
- * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
- * object containing scalars, a vector, and a matrix.
- *
- * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length at least 4, and all elemenets are 0.
- */
-template <class Handle>
-class MLogRegrRobustTransitionState {
-
-    // By §14.5.3/9: "Friend declarations shall not declare partial
-    // specializations." We do access protected members in operator+=().
-    template <class OtherHandle>
-    friend class MLogRegrRobustTransitionState;
-
-public:
-    MLogRegrRobustTransitionState(const AnyType &inArray)
-        : mStorage(inArray.getAs<Handle>()) {
-        rebind(static_cast<uint16_t>(mStorage[0]),static_cast<uint16_t>(mStorage[1]));
-    }
-
-    /**
-     * @brief Convert to backend representation
-     *
-     * We define this function so that we can use State in the
-     * argument list and as a return type.
-     */
-    inline operator AnyType() const {
-        return mStorage;
-    }
-
-    /**
-     * @brief Initialize the iteratively-reweighted-least-squares state.
-     *
-     * This function is only called for the first iteration, for the first row.
-     */
-    inline void initialize(const Allocator &inAllocator,
-        uint16_t inWidthOfX, uint16_t inNumCategories, uint16_t inRefCategory) {
-        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
-        rebind(inWidthOfX, inNumCategories);
-        widthOfX = inWidthOfX;
-        numCategories = inNumCategories;
-        ref_category = inRefCategory;
-    }
-
-    /**
-     * @brief We need to support assigning the previous state
-     */
-    template <class OtherHandle> MLogRegrRobustTransitionState &operator=(
-        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
-        for (size_t i = 0; i < mStorage.size(); i++)
-            mStorage[i] = inOtherState.mStorage[i];
-        return *this;
-    }
-
-    /**
-     * @brief Merge with another State object by copying the intra-iteration
-     *     fields
-     */
-    template <class OtherHandle> MLogRegrRobustTransitionState &operator+=(
-        const MLogRegrRobustTransitionState<OtherHandle> &inOtherState) {
-        if (mStorage.size() != inOtherState.mStorage.size() ||
-            widthOfX != inOtherState.widthOfX)
-            throw std::logic_error("Internal error: Incompatible transition "
-                "states");
-
-        numRows += inOtherState.numRows;
-        X_transp_AX += inOtherState.X_transp_AX;
-        meat += inOtherState.meat;
-        return *this;
-    }
-
-    /**
-     * @brief Reset the inter-iteration fields.
-     */
-    inline void reset() {
-        numRows = 0;
-        meat.fill(0);
-        X_transp_AX.fill(0);
-    }
-
-private:
-    static inline uint32_t arraySize(const uint16_t inWidthOfX,
-        const uint16_t inNumCategories) {
-        return 4 + 2*inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
-                                 + inWidthOfX * inNumCategories;
-    }
-
-    /**
-     * @brief Rebind to a new storage array
-     *
-     * @param inWidthOfX             The number of independent variables.
-     * @param inNumCategories The number of categories of the dependant var
-
-
-     * Array layout (iteration refers to one aggregate-function call):
-     * Inter-iteration components (updated in final function):
-     * - 0: widthOfX (number of independant variables)
-     * - 1: numCategories (number of categories)
-     * - 2: ref_category
-     * - 3: coef (vector of coefficients)
-     *
-     * Intra-iteration components (updated in transition step):
-     * - 3 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
-     * - 4 + widthOfX * inNumCategories: X_transp_AX (X^T A X).
-     * - 4 + widthOfX^2*numCategories^2: meat  (The meat matrix)
-     */
-    void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
-        widthOfX.rebind(&mStorage[0]);
-        numCategories.rebind(&mStorage[1]);
-        ref_category.rebind(&mStorage[2]);
-        coef.rebind(&mStorage[3], inWidthOfX * inNumCategories);
-        numRows.rebind(&mStorage[3 + inWidthOfX * inNumCategories]);
-        X_transp_AX.rebind(&mStorage[4 + inWidthOfX * inNumCategories],
-            inNumCategories * inWidthOfX, inWidthOfX * inNumCategories);
-        meat.rebind(&mStorage[4 +
-             inNumCategories * inNumCategories * inWidthOfX * inWidthOfX
-             + inWidthOfX * inNumCategories], inWidthOfX * inNumCategories, inWidthOfX * inNumCategories);
-    }
-
-    Handle mStorage;
-
-public:
-    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;
-
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
-    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap meat;
-    typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
-};
-
 
 AnyType
 mlogregr_robust_step_transition::run(AnyType &args) {
@@ -1367,6 +1357,27 @@ mlogregr_marginal_step_final::run(AnyType &args) {
 }
 // ------------------------ End of Marginal ------------------------------------
 
+AnyType __sub_array::run(AnyType &args) {
+    if (args[0].isNull() || args[1].isNull())
+        return Null();
+
+    ArrayHandle<double> value = args[0].getAs<ArrayHandle<double> >();
+    ArrayHandle<int32> index = args[1].getAs<ArrayHandle<int32> >();
+
+    for (size_t i = 0; i < index.size(); i++) {
+        if (index[i] < 1 || index[i] > static_cast<int>(value.size()))
+            throw std::domain_error("Invalid indices - out of bound");
+    }
+
+    MutableArrayHandle<double> res =
+        allocateArray<double, dbal::AggregateContext, dbal::DoZero,
+            dbal::ThrowBadAlloc>(index.size());
+
+    for (size_t i = 0; i < index.size(); i++)
+        res[i] = value[index[i] - 1];
+
+    return res;
+}
 
 } // namespace regress
 

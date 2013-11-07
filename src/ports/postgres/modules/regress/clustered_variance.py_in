@@ -77,9 +77,14 @@ def __generate_clustered_sql(**kwargs):
                       SELECT u.coef as {coef_str}, v.*
                       FROM
                         {fitres} u, {tbl_data} v
+                      where
+                         ({indvar}) is not NULL and
+                         {schema_madlib}.array_contains_null({indvar}) is False and
+                         ({depvar}) is not NULL
                     ) s
                     {cluster_grouping_str}) t) p) q
             """.format(**kwargs)
+    
     return sqlPart1 + sqlPart2 + sqlPart3
 # ========================================================================
 
@@ -108,6 +113,16 @@ def clustered_variance_linregr(schema_madlib, tbl_data, tbl_output,
         """.format(schema_madlib=schema_madlib, tbl_data=tbl_data,
                    fitres=fitres, depvar=depvar, indvar=indvar,
                    grouping_col=grouping_col_str))
+
+    plpy.execute(
+        """
+        alter table {fitres}_summary rename to {tbl_output}_summary;
+        """.format(fitres=fitres, tbl_output=tbl_output))
+
+    plpy.execute(
+        """
+        update {tbl_output}_summary set out_table = '{tbl_output}'
+        """.format(tbl_output=tbl_output))
 
     plpy.execute(
         __generate_clustered_sql(schema_madlib=schema_madlib, depvar=depvar,
@@ -140,6 +155,9 @@ def validate_args_clustered_variance(schema_madlib, tbl_data,
 
     if table_exists(tbl_output):
         plpy.error("Clustered variance estimation error: Output table exists!")
+
+    if table_exists(tbl_output + "_summary"):
+        plpy.error("Clustered variance estimation error: Output summary table exists!")
 
     if depvar is None or (not isinstance(depvar, str)) or depvar.lower() in ('null', ''):
         plpy.error("Clustered variance estimation error: Invalid dependent column name!")
@@ -179,9 +197,9 @@ def validate_args_clustered_variance(schema_madlib, tbl_data,
     # if not success:
     #     plpy.error("Clustered variance estimation error: dependent variable does not exist in the data table!")
 
-    if not scalar_col_has_no_null(tbl_data, depvar):
-        plpy.error("Clustered variance estimation error: Dependent variable has Null values! \
-                    Please filter out Null values before using this function!")
+    # if not scalar_col_has_no_null(tbl_data, depvar):
+    #     plpy.error("Clustered variance estimation error: Dependent variable has Null values! \
+    #                 Please filter out Null values before using this function!")
 
     if clustervar is None or clustervar.lower() in ('null', ''):
         # clustervar is optional but if provided should be valid column name
@@ -283,6 +301,9 @@ def clustered_variance_logregr(schema_madlib, tbl_data, tbl_output,
     """
     Logistic regression clustered standard errors
     """
+    if optimizer is not None and optimizer.lower() == 'newton':
+        optimizer = 'irls'
+
     validate_args_clustered_variance_logregr(schema_madlib, tbl_data,
                                              tbl_output, depvar, indvar,
                                              clustervar, grouping_col,
@@ -310,6 +331,16 @@ def clustered_variance_logregr(schema_madlib, tbl_data, tbl_output,
         plpy.execute("set client_min_messages to warning")
     else:
         plpy.execute("set client_min_messages to error")
+
+    plpy.execute(
+        """
+        alter table {fitres}_summary rename to {tbl_output}_summary;
+        """.format(fitres=fitres, tbl_output=tbl_output))
+
+    plpy.execute(
+        """
+        update {tbl_output}_summary set out_table = '{tbl_output}'
+        """.format(tbl_output=tbl_output))
 
     plpy.execute(
         __generate_clustered_sql(schema_madlib=schema_madlib, depvar=depvar,
@@ -351,9 +382,7 @@ def validate_args_clustered_variance_logregr(schema_madlib, tbl_data,
         plpy.error("Clustered variance estimation error: verbose_mode option must "
                    "be a boolean!")
 
-    if optimizer == "newton":
-        optimizer = "irls"
-    elif optimizer not in ("irls", "cg", "igd"):
+    if optimizer not in ("irls", "cg", "igd"):
         plpy.error(""" Clustered variance estimation error: Unknown optimizer requested.
                    Must be 'newton'/'irls', 'cg', or 'igd'.
                    """)
@@ -428,7 +457,6 @@ def clustered_variance_logregr_help(schema_madlib, msg=None, **kwargs):
 # Clustered errors for multi-logistic regression
 # ========================================================================
 
-
 def clustered_variance_mlogregr(
         schema_madlib, source_table, out_table, dependent_varname,
         independent_varname, cluster_varname, ref_category,
@@ -466,6 +494,8 @@ def clustered_variance_mlogregr(
             'max_iter' not in optimizer_param_dict:
         optimizer_param_dict['max_iter'] = optimizer_param_dict['max_num_iterations']
 
+    if optimizer_param_dict['optimizer'].lower() == 'newton':
+        optimizer_param_dict['optimizer'] = 'irls'
     validate_args_clustered_variance_mlogregr(
         schema_madlib, source_table, out_table, dependent_varname,
         independent_varname, cluster_varname, grouping_cols, ref_category,
