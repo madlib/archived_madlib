@@ -12,7 +12,6 @@ import plpy
 from utilities.utilities import _assert
 from utilities.utilities import __unique_string
 from utilities.utilities import _string_to_array
-from utilities.utilities import _array_to_string
 
 from utilities.validate_args import table_exists
 from utilities.validate_args import table_is_empty
@@ -26,36 +25,38 @@ array_to_string = version_wrapper.select_vec_return()
 
 
 def _robust_linregr_validate(schema_madlib, source_table, output_table,
-                              dependent_varname, independent_varname,
-                              grouping_cols, verbose, **kwargs):
+                             dependent_varname, independent_varname,
+                             grouping_cols, verbose_mode, **kwargs):
     _assert(source_table and
             source_table.strip().lower() not in ('null', ''),
-        "Robust Variance error: Invalid data table name!")
+            "Robust Variance error: Invalid data table name!")
     _assert(table_exists(source_table),
-        "Robust Variance error: Data table does not exist!")
+            "Robust Variance error: Data table does not exist!")
     _assert(not table_is_empty(source_table),
-        "Robust Variance error: Data table is empty!")
+            "Robust Variance error: Data table is empty!")
     _assert(output_table and
             output_table.strip().lower() not in ('null', ''),
-        "Robust Variance error: Invalid output table name!")
+            "Robust Variance error: Invalid output table name!")
     _assert(not table_exists(output_table),
-        "Robust Variance error: Output table already exists!")
+            "Robust Variance error: Output table already exists!")
     _assert(not table_exists(output_table + '_summary'),
-        "Robust Variance error: Output summary table already exists!")
+            "Robust Variance error: Output summary table already exists!")
     _assert(dependent_varname and
             dependent_varname.strip().lower() not in ('null', ''),
-        "Robust Variance error: Invalid dependent column name!")
+            "Robust Variance error: Invalid dependent column name!")
     _assert(independent_varname and
             independent_varname.strip().lower() not in ('null', ''),
-        "Robust Variance error: Invalid independent column name!")
+            "Robust Variance error: Invalid independent column name!")
     if grouping_cols:
         _assert(grouping_cols.strip().lower() not in ('null', ''),
-            "Robust Variance error: Invalid grouping columns name!")
+                "Robust Variance error: Invalid grouping columns name!")
         _assert(columns_exist_in_table(
-            source_table, _string_to_array(grouping_cols), schema_madlib),
-            "Robust Variance error: Grouping column does not exist!")
-    _assert(verbose is not None and isinstance(verbose, bool),
-        "Robust Variance error: The verbose should be of boolean type!")
+                source_table, _string_to_array(grouping_cols), schema_madlib),
+                "Robust Variance error: Grouping column does not exist!")
+    _assert(verbose_mode is not None and isinstance(verbose_mode, bool),
+            "Robust Variance error: The verbose_mode should be of boolean type!")
+# -------------------------------------------------------------------------
+
 
 def robust_linregr_help(schema_madlib, message,  **kwargs):
     if not message:
@@ -79,8 +80,10 @@ For more details on function usage:
         'dependent_varname',    -- Name of column for dependent variables
         'independent_varname',  -- Name of column for independent variables
                                    (can be any SQL expression that evaluates to an array)
-        'group_cols',           -- [OPTIONAL] Comma separated string with columns to group by.  Default is NULL.
-        'verbose'               -- [OPTIONAL] Should the optimizer print warning messages to the screen.  Default is FALSE.
+        'group_cols',           -- [OPTIONAL] Comma separated string with columns to group by.
+                                --     Default is NULL.
+        'verbose_mode'          -- [OPTIONAL] Should warning messages be printed on screen.
+                                --     Default is FALSE.
         );
 -----------------------------------------------------------------------
                             OUTUPT
@@ -95,12 +98,12 @@ The output table (''output_table'' above) has the following columns:
         help_string = "No such option. Use {schema_madlib}.robust_variance_linregr()"
 
     return help_string.format(schema_madlib=schema_madlib)
-
 # -------------------------------------------------------------------------
+
 
 def robust_variance_linregr(
         schema_madlib, source_table, out_table, dependent_varname,
-        independent_varname, grouping_cols=None, verbose=None, **kwargs):
+        independent_varname, grouping_cols=None, verbose_mode=None, **kwargs):
     """
     @brief A wrapper function for the robust_variance_mlogregr.
 
@@ -122,13 +125,14 @@ def robust_variance_linregr(
                                   FROM pg_settings
                                   WHERE name='client_min_messages'
                                   """)[0]['setting']
-    if verbose:
+    if verbose_mode:
         plpy.execute('SET client_min_messages TO warning')
     else:
         plpy.execute('SET client_min_messages TO error')
 
     _robust_linregr_validate(schema_madlib, source_table, out_table,
-            dependent_varname, independent_varname, grouping_cols, verbose)
+                             dependent_varname, independent_varname,
+                             grouping_cols, verbose_mode)
 
     group_str = '' if grouping_cols is None else 'GROUP BY %s' % grouping_cols
     group_str_sel = '' if grouping_cols is None else grouping_cols + ','
@@ -145,8 +149,10 @@ def robust_variance_linregr(
             '{source_table}', '{lr_out_table}',
             '{dependent_varname}', '{independent_varname}', {group_col_str})
         """.format(schema_madlib=schema_madlib, source_table=source_table,
-                lr_out_table=lr_out_table, dependent_varname=dependent_varname,
-                independent_varname=independent_varname, group_col_str=group_col_str))
+                   lr_out_table=lr_out_table,
+                   dependent_varname=dependent_varname,
+                   independent_varname=independent_varname,
+                   group_col_str=group_col_str))
 
     # Create output summary table
     plpy.execute("""
@@ -160,9 +166,9 @@ def robust_variance_linregr(
         FROM
             {lr_out_table}_summary
         """.format(source_table=source_table, out_table=out_table,
-            dependent_varname=dependent_varname,
-            independent_varname=independent_varname,
-            lr_out_table=lr_out_table))
+                   dependent_varname=dependent_varname,
+                   independent_varname=independent_varname,
+                   lr_out_table=lr_out_table))
 
     # Run robust linear regression
     plpy.execute("""
@@ -184,12 +190,12 @@ def robust_variance_linregr(
             {group_str}
         ) t1
         """.format(schema_madlib=schema_madlib,
-                source_table=source_table, out_table=out_table,
-                dependent_varname=dependent_varname,
-                independent_varname=independent_varname,
-                group_str_sel=group_str_sel, group_str=group_str,
-                join_str=join_str, using_str=using_str,
-                lr_out_table=lr_out_table, rb_model=rb_model))
+                   source_table=source_table, out_table=out_table,
+                   dependent_varname=dependent_varname,
+                   independent_varname=independent_varname,
+                   group_str_sel=group_str_sel, group_str=group_str,
+                   join_str=join_str, using_str=using_str,
+                   lr_out_table=lr_out_table, rb_model=rb_model))
 
     plpy.execute('DROP TABLE IF EXISTS ' + lr_out_table)
     plpy.execute('DROP TABLE IF EXISTS ' + lr_out_table + '_summary')
