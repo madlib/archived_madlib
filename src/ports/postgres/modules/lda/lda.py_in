@@ -416,9 +416,8 @@ def lda_train(
                     iter_num, alpha, beta)
 
     ## For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
-    ## planner since the LDA module does not follow SQL standard leading to
-    ## error when using the ORCA optimizer. This would have to be fixed when
-    ## ORCA is the only available query planner.
+    ## planner since currently ORCA doesn't support InitPlan. This would have
+    ## to be fixed when ORCA is the only available query planner.
     if not version_wrapper.is_pg() and version_wrapper.is_gp43():
         optimizer = plpy.execute("SHOW optimizer")[0]['optimizer']
         plpy.execute("SET optimizer = off")
@@ -465,6 +464,9 @@ def lda_predict(
     lp = LDAPredictor(
         schema_madlib, convt_table, model_table, output_data_table, iter_num)
 
+    ## For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
+    ## planner since currently ORCA doesn't support InitPlan. This would have
+    ## to be fixed when ORCA is the only available query planner.
     if not version_wrapper.is_pg() and version_wrapper.is_gp43():
         optimizer = plpy.execute("SHOW optimizer")[0]['optimizer']
         plpy.execute("SET optimizer = off")
@@ -669,40 +671,26 @@ def get_perplexity(schema_madlib, model_table, output_data_table):
     beta = params['beta']
     __check_output_data_table(output_data_table, topic_num)
 
+    ## For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
+    ## planner since currently ORCA doesn't support InitPlan. This would have
+    ## to be fixed when ORCA is the only available query planner.
+    if not version_wrapper.is_pg() and version_wrapper.is_gp43():
+        optimizer = plpy.execute("SHOW optimizer")[0]['optimizer']
+        plpy.execute("SET optimizer = off")
+
     query = """
-        SELECT exp(-part_perp/total_word) perp
+        SELECT exp(-part_perp/total_word) AS perp
         FROM
         (
             SELECT {schema_madlib}.__lda_perplexity_agg(
-                words, counts, topic_count, model,
-                {alpha}, {beta}, {voc_size}, {topic_num}) part_perp
+                words, counts, topic_count, (SELECT model FROM {model_table}),
+                {alpha}, {beta}, {voc_size}, {topic_num}) AS part_perp
             FROM
-            (
-                SELECT
-                    data.docid, words, counts, topic_count, model
-                FROM
-                (
-                    SELECT
-                        docid, model
-                    FROM
-                    (
-                        SELECT
-                            MIN(docid) docid
-                        FROM
-                            {out_data_table}
-                        GROUP BY
-                            m4_ifdef(`__GREENPLUM__', `gp_segment_id', `1 = 1')
-                    ) t1, {model_table}
-                ) chunk --for join efficiency
-                RIGHT JOIN
-                    {out_data_table} data
-                ON (data.docid = chunk.docid)
-                ORDER BY docid ASC --first model not null
-            ) jd
-        ) t2,
+                {out_data_table}
+        ) t1,
         (
             SELECT sum(wordcount) total_word FROM {out_data_table}
-        ) t3
+        ) t2
         """.format(
             schema_madlib = schema_madlib,
             out_data_table = output_data_table, 
@@ -713,6 +701,10 @@ def get_perplexity(schema_madlib, model_table, output_data_table):
             voc_size = voc_size
         )
     rv = plpy.execute(query)
+
+    if not version_wrapper.is_pg() and version_wrapper.is_gp43():
+        plpy.execute("SET optimizer = " + optimizer)
+
     return rv[0]['perp']
 
 """
