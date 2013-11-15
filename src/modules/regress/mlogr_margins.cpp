@@ -261,12 +261,7 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
     // Calculate the odds ratio
     prob = prob.array().exp();
     double prob_sum = prob.sum();
-
     prob = prob / (1 + prob_sum);
-
-    // Reference category computations. They have been taken out of
-    // the output but left in the infrastructure
-    double ref_prob = 1 / (1 + prob_sum);
 
     Matrix probDiag = prob.asDiagonal();
 
