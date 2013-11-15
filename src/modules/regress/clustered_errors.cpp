@@ -79,12 +79,20 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
 
         state.widthOfX = static_cast<uint16_t>(x.size() * (state.numCategories-1));
         state.resize();
-        const MappedColumnVector& coef = args[3].getAs<MappedColumnVector>();
-        state.coef = coef;
-        state.meat_half.setZero();
-        //elog(INFO, "widthOfX:%i", static_cast<int>(state.widthOfX));
-        //elog(INFO, "size of x:%i", static_cast<int>(x.size()));
 
+        if(regressionType == "mlog") {
+	            MappedMatrix coefMat = args[3].getAs<MappedMatrix>();
+                Matrix mat = coefMat;
+                mat.transposeInPlace();
+                mat.resize(coefMat.size(), 1);
+                state.coef = mat;
+        } else {
+            const MappedColumnVector& coef = args[3].getAs<MappedColumnVector>();
+            state.coef = coef;
+            //elog(INFO, "widthOfX:%i", static_cast<int>(state.widthOfX));
+            //elog(INFO, "size of x:%i", static_cast<int>(x.size()));
+        }
+        state.meat_half.setZero();
     }
 
     // dimension check
@@ -161,9 +169,19 @@ AnyType clustered_compute_stats (AnyType& args,
                                  void (*func)(
                                      MutableNativeColumnVector&,
                                      MutableNativeColumnVector&,
-                                     int, int))
+                                     int, int), bool ismlogr)
 {
-    const MappedColumnVector& coef = args[0].getAs<MappedColumnVector>();
+    //const MappedColumnVector& coef = args[0].getAs<MappedColumnVector>();
+    ColumnVector coef;
+    if (ismlogr){
+	    MappedMatrix coefMat = args[0].getAs<MappedMatrix>();
+        Matrix mat = coefMat;
+        mat.transposeInPlace();
+        mat.resize(coefMat.size(), 1);
+        coef = mat;
+    }else{
+        coef = args[0].getAs<MappedColumnVector>();
+    }
     const MappedColumnVector& meatvec = args[1].getAs<MappedColumnVector>();
     const MappedColumnVector& breadvec = args[2].getAs<MappedColumnVector>();
     int mcluster = args[3].getAs<int>();
@@ -296,7 +314,7 @@ AnyType __clustered_err_lin_final::run (AnyType& args)
 
 AnyType clustered_lin_compute_stats::run (AnyType& args)
 {
-    return clustered_compute_stats(args, __compute_t_stats);
+    return clustered_compute_stats(args, __compute_t_stats, false);
 }
 
 // ------------------------------------------------------------------------
@@ -348,7 +366,7 @@ AnyType __clustered_err_log_final::run (AnyType& args)
 
 AnyType clustered_log_compute_stats::run (AnyType& args)
 {
-    return clustered_compute_stats(args, __compute_z_stats);
+    return clustered_compute_stats(args, __compute_z_stats, false);
 }
 
 
@@ -483,7 +501,7 @@ AnyType __clustered_err_mlog_final::run (AnyType& args)
 AnyType clustered_mlog_compute_stats::run (AnyType& args)
 {
 	//elog(INFO, "mlog compute stats is running");
-    return clustered_compute_stats(args,  __compute_z_stats);
+    return clustered_compute_stats(args,  __compute_z_stats, true);
 }
 
 }

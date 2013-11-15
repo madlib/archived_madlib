@@ -123,40 +123,66 @@ def robust_variance_mlogregr(
         # Run regression 
         plpy.execute("""
             SELECT {schema_madlib}.mlogregr_train(
-                '{source_table}',
-                '{mlog_out_table}',
-                '{dependent_varname}',
-                '{independent_varname}',
-                {ref_category},
-                'max_iter={max_iter},
-                optimizer={optimizer},
-                tolerance={tolerance}')
+                '{source_table}', '{mlog_out_table}',
+                '{dependent_varname}', '{independent_varname}', {ref_category},
+                'max_iter={max_iter}, optimizer={optimizer}, tolerance={tolerance}')
             """.format(**all_arguments))
 
         # Rename the output summary table
         plpy.execute("""
             ALTER TABLE {mlog_out_table}_summary RENAME TO {out_table}_summary
             """.format(mlog_out_table=mlog_out_table, out_table=out_table))
+        plpy.execute(
+            """
+            UPDATE {out_table}_summary SET out_table = '{out_table}'
+            """.format(out_table=out_table))
 
         all_arguments['num_categories'] = plpy.execute(
             "SELECT count(DISTINCT {0}) as n_cat FROM {1}".
             format(dependent_varname, source_table))[0]['n_cat']
+        all_arguments['num_features'] = plpy.execute("""
+            SELECT
+                array_upper({independent_varname}, 1) fnum
+            FROM {source_table} LIMIT 1
+            """.format(**all_arguments))[0]['fnum']
 
         # Run Robust Variance
         plpy.execute("""
             CREATE TABLE {output_table} AS
             SELECT
-                (res).coef, (res).std_err, (res).z_stats, (res).p_values
+                ({schema_madlib}.__mlogregr_format(
+                    (result).coef, {num_features},
+                    {num_categories}, {ref_category})
+                ).category AS category,
+                {ref_category} as ref_category,
+                ({schema_madlib}.__mlogregr_format(
+                    (result).coef, {num_features},
+                    {num_categories}, {ref_category})
+                ).coef AS coef,
+                ({schema_madlib}.__mlogregr_format( 
+                    (result).std_err, {num_features},
+                    {num_categories}, {ref_category})
+                ).coef AS std_err,
+                ({schema_madlib}.__mlogregr_format(
+                    (result).z_stats, {num_features},
+                    {num_categories}, {ref_category})
+                ).coef AS z_stats,
+                ({schema_madlib}.__mlogregr_format(
+                    (result).p_values, {num_features},
+                    {num_categories}, {ref_category})
+                ).coef AS p_values
             FROM
             (
                 SELECT
                     {schema_madlib}.robust_mlogregr(
-                            ({dependent_varname})::INTEGER,
-                            {num_categories},
-                            {ref_category},
-                            {independent_varname},
-                            (SELECT coef FROM {mlog_out_table})
-                    ) AS res
+                        ({dependent_varname})::INTEGER,
+                        {num_categories},
+                        {ref_category},
+                        {independent_varname},
+                        (SELECT
+                            {schema_madlib}.matrix_agg(coef ORDER BY category) 
+                         FROM {mlog_out_table})
+                    ) AS result
                 FROM {source_table}
             ) t1
             """.format(**all_arguments))

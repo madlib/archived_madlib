@@ -10,3 +10,4 @@
 #include "clustered_errors.hpp"
 #include "logistic.hpp"
 #include "multilogistic.hpp"
+#include "mlogr_margins.hpp"

@@ -503,44 +503,89 @@ def clustered_variance_mlogregr(
 
     (fitres, coef_str, cluster_grouping_str, grouping_col_str) = __prepare_strings(cluster_varname, grouping_cols)
 
-    #The multi-logistic has a different interface than the rest of the
-    #regressions, so we have to create a table to hold the result
-    plpy.execute("""
-    create table {fitres}(coef float8[]);
-    """.format(fitres=fitres))
-
     plpy.execute(
         """
-        insert into {fitres} (select (select coef from
-            {schema_madlib}.mlogregr('{source_table}',
-            '{dependent_varname}', '{independent_varname}',
-            {max_iter}, '{optimizer}', {tolerance}, {ref_category})))
+        SELECT 
+            {schema_madlib}.mlogregr_train(
+                '{source_table}', '{fitres}',
+                '{dependent_varname}', '{independent_varname}', {ref_category},
+                'max_iter={max_iter}, optimizer={optimizer}, tolerance={tolerance}')
         """.format(schema_madlib=schema_madlib, source_table=source_table,
                    fitres=fitres, dependent_varname=dependent_varname,
                    independent_varname=independent_varname,
                    ref_category=ref_category, **optimizer_param_dict))
 
+    # Rename the output summary table
+    plpy.execute("""
+        ALTER TABLE {fitres}_summary RENAME TO {out_table}_summary
+        """.format(fitres=fitres, out_table=out_table))
     plpy.execute(
-        __generate_clustered_sql(
-            schema_madlib=schema_madlib,
-            depvar=dependent_varname, indvar=independent_varname,
-            coef_str=coef_str, tbl_data=source_table, fitres=fitres,
-            cluster_grouping_str=cluster_grouping_str, tbl_output=out_table,
-            ref_category=ref_category, regr_type="mlog"))
+        """
+        UPDATE {out_table}_summary SET out_table = '{out_table}'
+        """.format(out_table=out_table))
+
+    coef_table = __unique_string()
+    plpy.execute("""
+        CREATE TEMP TABLE {coef_table} AS
+        SELECT
+            {schema_madlib}.matrix_agg(coef ORDER BY category) AS coef 
+        FROM {fitres}
+        """.format(schema_madlib=schema_madlib, fitres=fitres, coef_table=coef_table)) 
 
     plpy.execute(
         """
         drop table if exists {fitres}
         """.format(fitres=fitres))
 
-    ##Add in the reference category to the output column.
-    plpy.execute("""ALTER table {tbl_output} add column ref_category INTEGER;
-                 """.format(tbl_output=out_table)
-                 )
+    plpy.execute(
+        __generate_clustered_sql(
+            schema_madlib=schema_madlib,
+            depvar=dependent_varname, indvar=independent_varname,
+            coef_str=coef_str, tbl_data=source_table, fitres=coef_table,
+            cluster_grouping_str=cluster_grouping_str, tbl_output=out_table,
+            ref_category=ref_category, regr_type="mlog"))
 
-    plpy.execute(""" UPDATE {tbl_output} SET ref_category={ref_category};
-                 """.format(tbl_output=out_table, ref_category=ref_category)
-                 )
+    num_categories = plpy.execute(
+        "SELECT count(DISTINCT {0}) as n_cat FROM {1}".
+        format(dependent_varname, source_table))[0]['n_cat']
+    num_features = plpy.execute("""
+        SELECT
+            array_upper({independent_varname}, 1) fnum
+        FROM {source_table} LIMIT 1
+        """.format(independent_varname=independent_varname, source_table=source_table))[0]['fnum']
+
+    tmp_table = __unique_string() 
+    plpy.execute("""
+        CREATE TABLE {tmp_table} AS
+        SELECT
+            ({schema_madlib}.__mlogregr_format(
+                coef, {num_features},
+                {num_categories}, {ref_category})
+            ).category AS category,
+            {ref_category} as ref_category,
+            ({schema_madlib}.__mlogregr_format(
+                coef, {num_features},
+                {num_categories}, {ref_category})
+            ).coef AS coef,
+            ({schema_madlib}.__mlogregr_format( 
+                std_err, {num_features},
+                {num_categories}, {ref_category})
+            ).coef AS std_err,
+            ({schema_madlib}.__mlogregr_format(
+                z_stats, {num_features},
+                {num_categories}, {ref_category})
+            ).coef AS z_stats,
+            ({schema_madlib}.__mlogregr_format(
+                p_values, {num_features},
+                {num_categories}, {ref_category})
+            ).coef AS p_values
+        FROM
+            {out_table};
+        DROP TABLE IF EXISTS {out_table};
+        ALTER TABLE {tmp_table} RENAME TO {out_table}
+        """.format(schema_madlib=schema_madlib, tmp_table=tmp_table,
+            num_features=num_features, num_categories=num_categories,
+            ref_category=ref_category, out_table=out_table))
 
     plpy.execute("set client_min_messages to " + old_msg_level)
     return None
