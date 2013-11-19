@@ -77,11 +77,11 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         FROM _madlib_iterative_alg
         WHERE _madlib_iteration = {iteration}
         """
-
     oldMsgLevel = plpy.execute("""SELECT setting
                                   FROM pg_settings
                                   WHERE name='client_min_messages'"""
                                )[0]['setting']
+
     plpy.execute("""
         SET client_min_messages = error;
         DROP TABLE IF EXISTS _madlib_iterative_alg;
@@ -90,7 +90,8 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             _madlib_state {stateType}
         );
         SET client_min_messages = {oldMsgLevel};
-        """.format(stateType=stateType, oldMsgLevel=oldMsgLevel))
+        """.format(stateType=stateType,
+                   oldMsgLevel=oldMsgLevel))
 
     iteration = 0
     plpy.execute("""
@@ -154,12 +155,12 @@ def compute_mlogregr(schema_madlib, source_table, dependent_varname,
     """
 
     if max_iter < 1:
-        plpy.error("Mlogit error: Number of iterations must be positive")
+        plpy.error("Mlogregr error: Number of iterations must be positive")
 
     if optimizer == 'newton':
         optimizer = 'irls'
     elif optimizer not in ['irls']:
-        plpy.error("Mlogit error: Unknown optimizer requested."
+        plpy.error("Mlogregr error: Unknown optimizer requested."
                    " Must be 'newton' or 'irls'")
 
     return __runIterativeAlg(
@@ -255,41 +256,40 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
                      'optimizer_params': optimizer_params
                      }
 
+    # validate parameters
     _validate_params(**all_arguments)
 
-    # validate parameters
-    num_categories = plpy.execute("""
-        SELECT count(DISTINCT {dependent_varname}) cnum FROM {source_table}
-        """.format(**all_arguments))[0]["cnum"]
+    non_null_results = plpy.execute(""" SELECT count(DISTINCT {dependent_varname}) AS cnt,
+                                                 max({dependent_varname}) as max_cat,
+                                                 min({dependent_varname}) as min_cat
+                                          FROM {source_table}
+                                          WHERE
+                                            {dependent_varname} IS NOT NULL
+                                            AND {independent_varname} IS NOT NULL
+                                            AND NOT {schema_madlib}.array_contains_null({independent_varname})
 
-    num_features = plpy.execute("""
-        SELECT
-            array_upper({independent_varname}, 1) fnum
-        FROM {source_table} LIMIT 1
-        """.format(**all_arguments))[0]['fnum']
+                                    """.format(**all_arguments))[0]
+    num_categories, max_category, min_category = map(
+        int, [non_null_results[i] for i in ('cnt', 'max_cat', 'min_cat')])
 
-    max_category = plpy.execute("""
-        SELECT max({dependent_varname}) mcat FROM {source_table}
-        """.format(**all_arguments))[0]["mcat"]
-
-    min_category = plpy.execute("""
-        SELECT min({dependent_varname}) mcat FROM {source_table}
-        """.format(**all_arguments))[0]["mcat"]
-
-    total_rows = plpy.execute("""
-        SELECT count(*) as cnt FROM {0}""".format(source_table))[0]["cnt"]
 
     _assert(max_category == num_categories-1 and min_category == 0,
-            "Mlogit error: Value of the dependent variable should include "
+            "Mlogregr error: Value of the dependent variable should be "
             "integers in the range [0, {0}]".format(num_categories-1))
     _assert(ref_category >= 0 and ref_category < num_categories,
             "Mlogregr error: Invalid reference category value {0}. "
             "It should be between 0 and {1}".format(ref_category,
                                                     num_categories-1))
-
     all_arguments['num_categories'] = num_categories
-    all_arguments['num_features'] = num_features 
-    all_arguments['total_rows'] = total_rows 
+
+    all_arguments['total_rows'] = int(plpy.execute("""SELECT count(*) as cnt
+                                                      FROM {0}""".
+                                                   format(source_table))[0]["cnt"])
+    all_arguments['num_features'] = plpy.execute("""
+        SELECT
+            array_upper({independent_varname}, 1) fnum
+        FROM {source_table} LIMIT 1
+        """.format(**all_arguments))[0]['fnum']
 
     optimizer_param_dict = _extract_params(schema_madlib, optimizer_params)
     all_arguments.update(optimizer_param_dict)
@@ -300,7 +300,7 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
     # plpy.info("Creating output table")
     plpy.execute("""
         CREATE TABLE {output_table} AS
-            SELECT 
+            SELECT
                 ({schema_madlib}.__mlogregr_format(
                     (result).coef, {num_features},
                     {num_categories}, {ref_category})
@@ -311,7 +311,7 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
                     {num_categories}, {ref_category})
                 ).coef AS coef,
                 (result).log_likelihood as loglikelihood,
-                ({schema_madlib}.__mlogregr_format( 
+                ({schema_madlib}.__mlogregr_format(
                     (result).std_err, {num_features},
                     {num_categories}, {ref_category})
                 ).coef AS std_err,
@@ -379,7 +379,8 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
 # -------------------------------------------------------------------------
 
 
-def _validate_params(source_table, output_table, dependent_varname,
+def _validate_params(schema_madlib,
+                     source_table, output_table, dependent_varname,
                      independent_varname, *args, **kwargs):
     """
     Args:
@@ -422,6 +423,30 @@ def _validate_params(source_table, output_table, dependent_varname,
     _assert(independent_varname is not None and independent_varname.lower() not in ('null', ''),
             "Mlogregr error: Invalid independent column name")
 
+    result_w_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+        """.format(source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+    result_wo_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+            AND NOT {madlib}.array_contains_null({indep})
+        """.format(madlib=schema_madlib, source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+
+    categories_wo_null = set(i["cat"] for i in result_wo_null)
+    categories_w_null = set(i["cat"] for i in result_w_null)
+
+    _assert(categories_wo_null == categories_w_null,
+            "Mlogregr error: All observations of category set {0} contain "
+            "NULL values. These rows should be removed from the dataset "
+            "before proceeding.".
+            format(list(categories_w_null - categories_wo_null)))
 # -------------------------------------------------------------------------
 
 
@@ -457,14 +482,14 @@ def _extract_params(schema_madlib, optimizer_params):
     for s in preprocess_optimizer_params(optimizer_params):
         items = s.split("=")
         if (len(items) != 2):
-            plpy.error("Mlogit error: Optimizer parameter list has incorrect format")
+            plpy.error("Mlogregr error: Optimizer parameter list has incorrect format")
         param_name = items[0].strip(" \"").lower()
         param_value = items[1].strip(" \"").lower()
 
         if param_name not in allowed_params:
             plpy.error(
                 """
-                Mlogit error: {param_name} is not a valid parameter name.
+                Mlogregr error: {param_name} is not a valid parameter name.
                 Run:
                     SELECT {schema_madlib}.mlogregr_train('usage');
                 to see the allowed parameters.
@@ -475,7 +500,7 @@ def _extract_params(schema_madlib, optimizer_params):
             try:
                 parameter_dict["max_iter"] = int(param_value)
             except ValueError:
-                plpy.error("Mlogit error: max_iter must be an integer")
+                plpy.error("Mlogregr error: max_iter must be an integer")
 
         if param_name == "optimizer":
             parameter_dict["optimizer"] = param_value
@@ -484,10 +509,10 @@ def _extract_params(schema_madlib, optimizer_params):
             try:
                 parameter_dict["precision"] = float(param_value)
             except ValueError:
-                plpy.error("Mlogit error: precision must be a float value")
+                plpy.error("Mlogregr error: precision must be a float value")
 
     if parameter_dict["max_iter"] <= 0:
-        plpy.error("Mlogit error: max_iter must be positive")
+        plpy.error("Mlogregr error: max_iter must be positive")
 
     return parameter_dict
 

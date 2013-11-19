@@ -57,6 +57,7 @@ def _margins_common_validate_args(schema_madlib, source_table, out_table,
         _assert(columns_exist_in_table(
                 source_table, _string_to_array(grouping_cols), schema_madlib),
                 "Margins error: Grouping column does not exist!")
+
     if marginal_vars:
         vec = string_to_array(marginal_vars, text=False)
         _assert(min(vec) is not None,
@@ -287,7 +288,9 @@ The output table ('output_table' above) has the following columns
 # Input handling for multinomial logistic regression
 
 
-def _margins_mlogregr_validate_args(ref_category, optimizer):
+def _margins_mlogregr_validate_args(schema_madlib, source_table,
+                                    dependent_varname, independent_varname,
+                                    ref_category, optimizer, **kwargs):
     """
     Validate the arguments
     """
@@ -300,6 +303,32 @@ def _margins_mlogregr_validate_args(ref_category, optimizer):
             "Margins error: Optimizer cannot be NULL!")
     _assert(optimizer.lower() in ("irls"),
             "Margins error: Optimizer does not exist. Must be 'newton'/'irls'.")
+
+    result_w_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+        """.format(source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+    result_wo_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+            AND NOT {madlib}.array_contains_null({indep})
+        """.format(madlib=schema_madlib, source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+
+    categories_wo_null = set(i["cat"] for i in result_wo_null)
+    categories_w_null = set(i["cat"] for i in result_w_null)
+
+    _assert(categories_wo_null == categories_w_null,
+            "Margins error: All observations of category set {0} contain "
+            "NULL values. These rows should be removed from the dataset "
+            "before proceeding.".
+            format(list(categories_w_null - categories_wo_null)))
+
 # ========================================================================
 
 
@@ -462,7 +491,6 @@ def margins_mlogregr(schema_madlib, source_table, out_table,
                                   dependent_varname, independent_varname,
                                   grouping_cols, marginal_vars,
                                   max_iter, tolerance)
-    _margins_mlogregr_validate_args(ref_category, optimizer)
 
     all_arguments = {'schema_madlib': schema_madlib,
                      'source_table': source_table,
@@ -475,6 +503,7 @@ def margins_mlogregr(schema_madlib, source_table, out_table,
                      'max_iter': max_iter,
                      'optimizer': optimizer,
                      'tolerance': tolerance}
+    _margins_mlogregr_validate_args(**all_arguments)
     # NOTICE: * support was removed because other modules did not have it.
     # Uncomment the following code if you want to re-add '*' support
 

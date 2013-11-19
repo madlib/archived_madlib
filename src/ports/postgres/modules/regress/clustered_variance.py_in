@@ -9,8 +9,9 @@ from utilities.utilities import _string_to_array
 from utilities.utilities import extract_optimizer_param
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
-from utilities.validate_args import scalar_col_has_no_null
 from utilities.validate_args import table_exists
+from utilities.utilities import _assert
+
 # ========================================================================
 
 
@@ -84,7 +85,7 @@ def __generate_clustered_sql(**kwargs):
                     ) s
                     {cluster_grouping_str}) t) p) q
             """.format(**kwargs)
-    
+
     return sqlPart1 + sqlPart2 + sqlPart3
 # ========================================================================
 
@@ -144,7 +145,7 @@ def validate_args_clustered_variance(schema_madlib, tbl_data,
     """
     Validate the parameters
     """
-    if not tbl_data or tbl_data in ('null', '') or not table_exists(tbl_data):
+    if not tbl_data or tbl_data.lower() in ('null', '') or not table_exists(tbl_data):
         plpy.error("Clustered variance estimation error: Data table does not exist!")
 
     if table_is_empty(tbl_data):
@@ -604,27 +605,54 @@ def validate_args_clustered_variance_mlogregr(
         independent_varname, cluster_varname, grouping_col)
 
     if ref_category is None:
-        plpy.error("Clustered variance estimation error: Reference category cannot be null!")
+        plpy.error("Clustered variance error: Reference category "
+                   "cannot be null!")
 
     if ref_category < 0:
-        plpy.error("Clustered variance estimation error: Reference category cannot be negative!")
+        plpy.error("Clustered variance error: Reference category "
+                   "cannot be negative!")
 
     if not isinstance(verbose_mode, bool):
-        plpy.error("Clustered variance estimation error: verbose_mode option must "
-                   "be a boolean!")
+        plpy.error("Clustered variance error: verbose_mode option "
+                   "must be a boolean!")
 
     if max_iter <= 0:
-        plpy.error("Clustered variance estimation error: Maximum number of "
+        plpy.error("Clustered variance error: Maximum number of "
                    "iterations must be positive!")
 
     if tolerance < 0:
-        plpy.error("Clustered variance estimation error: The tolerance cannot "
+        plpy.error("Clustered variance error: The tolerance cannot "
                    "be negative!")
 
     if optimizer not in ("newton", "irls"):
-        plpy.error(""" Clustered variance estimation error: Unknown optimizer
+        plpy.error(""" Clustered variance error: Unknown optimizer
                        requested. Must be 'newton'/'irls'.
                    """)
+
+    result_w_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+        """.format(source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+    result_wo_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+            AND NOT {madlib}.array_contains_null({indep})
+        """.format(madlib=schema_madlib, source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+
+    categories_wo_null = set(i["cat"] for i in result_wo_null)
+    categories_w_null = set(i["cat"] for i in result_w_null)
+
+    _assert(categories_wo_null == categories_w_null,
+            "Clustered variance error: All observations of category set {0} contain "
+            "NULL values. These rows should be removed from the dataset "
+            "before proceeding.".
+            format(list(categories_w_null - categories_wo_null)))
 # ========================================================================
 
 

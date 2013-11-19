@@ -26,7 +26,11 @@ array_to_string = version_wrapper.select_vec_return()
 from regress.robust_linear import _robust_linregr_validate
 
 
-def _robust_mlogregr_validate(ref_category, max_iter, optimizer, tolerance, **kwargs):
+def _robust_mlogregr_validate(schema_madlib, source_table,
+                              dependent_varname, independent_varname,
+                              ref_category, max_iter, optimizer,
+                              tolerance, **kwargs):
+
     _assert(ref_category is not None,
             "Robust Variance: Reference category cannot be null!")
     _assert(ref_category >= 0,
@@ -37,6 +41,31 @@ def _robust_mlogregr_validate(ref_category, max_iter, optimizer, tolerance, **kw
             "Robust Variance error: The tolerance cannot be negative!")
     _assert(optimizer.lower() in ("irls", "newton"),
             "Robust Variance error: Optimizer does not exist. Must be 'newton'/'irls'.")
+
+    result_w_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+        """.format(source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+    result_wo_null = plpy.execute("""
+        SELECT DISTINCT {dep} AS cat
+        FROM {source}
+        WHERE {dep} is not NULL
+            AND NOT {madlib}.array_contains_null({indep})
+        """.format(madlib=schema_madlib, source=source_table,
+                   indep=independent_varname,
+                   dep=dependent_varname))
+
+    categories_wo_null = set(i["cat"] for i in result_wo_null)
+    categories_w_null = set(i["cat"] for i in result_w_null)
+
+    _assert(categories_wo_null == categories_w_null,
+            "Robust Variance error: All observations of category set {0} contain "
+            "NULL values. These rows should be removed from the dataset "
+            "before proceeding.".
+            format(list(categories_w_null - categories_wo_null)))
 # -------------------------------------------------------------------------
 
 
@@ -99,14 +128,12 @@ def robust_variance_mlogregr(
         optimizer_param_dict['max_iter'] = optimizer_param_dict['max_num_iterations']
 
     if optimizer_param_dict['optimizer'].lower() == 'newton':
-        optimizer_param_dict['optimizer'] = 'irls'    
+        optimizer_param_dict['optimizer'] = 'irls'
 
     # Validate arguments
     _robust_linregr_validate(schema_madlib, source_table, out_table,
                              dependent_varname, independent_varname,
                              grouping_cols, verbose_mode)
-    _robust_mlogregr_validate(ref_category, **optimizer_param_dict)
-
     all_arguments = {'schema_madlib': schema_madlib,
                      'source_table': source_table,
                      'output_table': out_table,
@@ -116,11 +143,13 @@ def robust_variance_mlogregr(
                      'grouping_cols': grouping_cols}
     all_arguments.update(optimizer_param_dict)
 
+    _robust_mlogregr_validate(**all_arguments)
+
     if not grouping_cols:
         mlog_out_table = __unique_string()
         all_arguments['mlog_out_table'] = mlog_out_table
-        
-        # Run regression 
+
+        # Run regression
         plpy.execute("""
             SELECT {schema_madlib}.mlogregr_train(
                 '{source_table}', '{mlog_out_table}',
