@@ -44,11 +44,10 @@ Changes between MADlib versions are described in the [`ReleaseNotes.txt`](/Relea
 
 Papers and Talks
 =================
-
-1. [`MAD Skills : New Analysis Practices for Big Data (VLDB 2009)`](http://db.cs.berkeley.edu/papers/vldb09-madskills.pdf)
+* [`MAD Skills : New Analysis Practices for Big Data (VLDB 2009)`](http://db.cs.berkeley.edu/papers/vldb09-madskills.pdf)
 
 
 Related Software
 =================
-1. [`PivotalR`](https://github.com/madlib-internal/PivotalR) - PivotalR also lets the user to run the functions of the open-source big-data machine learning package `MADlib` directly from R.
-2. [`PyMADlib`](https://github.com/gopivotal/pymadlib) - PyMADlib is a python wrapper for MADlib, which brings you the power and flexibility of python with the number crunching power of `MADlib`.
+* [`PivotalR`](https://github.com/madlib-internal/PivotalR) - PivotalR also lets the user to run the functions of the open-source big-data machine learning package `MADlib` directly from R.
+* [`PyMADlib`](https://github.com/gopivotal/pymadlib) - PyMADlib is a python wrapper for MADlib, which brings you the power and flexibility of python with the number crunching power of `MADlib`.
