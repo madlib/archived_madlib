@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//**
+/* ------------------------------------------------------
  *
  * @file logistic.cpp
  *
@@ -34,10 +34,10 @@ enum { IN_PROCESS, COMPLETED, TERMINATED, NULL_EMPTY };
 
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
-    const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
-    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
-    const double &logLikelihood, const double &conditionNo, int status,
-    const uint64_t &numRows);
+                      const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
+                      const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+                      const double &logLikelihood, const double &conditionNo, int status,
+                      const uint64_t &numRows);
 
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ class LogRegrCGTransitionState {
     template <class OtherHandle>
     friend class LogRegrCGTransitionState;
 
-public:
+  public:
     LogRegrCGTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
@@ -86,7 +86,7 @@ public:
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
+                                             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
@@ -114,7 +114,7 @@ public:
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition "
-                "states");
+                                   "states");
 
         numRows += inOtherState.numRows;
         gradNew += inOtherState.gradNew;
@@ -137,7 +137,7 @@ public:
         status = IN_PROCESS;
     }
 
-private:
+  private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
         return 6 + inWidthOfX * inWidthOfX + 4 * inWidthOfX;
     }
@@ -178,7 +178,7 @@ private:
 
     Handle mStorage;
 
-public:
+  public:
     typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
@@ -231,9 +231,9 @@ logregr_cg_step_transition::run(AnyType &args) {
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
             // throw std::domain_error("Number of independent variables cannot be "
-                // "larger than 65535.");
+            // "larger than 65535.");
             dberr << "Number of independent variables cannot be"
-                        "larger than 65535." << std::endl;
+                "larger than 65535." << std::endl;
             state.status = TERMINATED;
             return state;
         }
@@ -361,9 +361,9 @@ logregr_cg_step_final::run(AnyType &args) {
         //     "conjugate-gradient step, while updating coefficients. Input data "
         //     "is likely of poor numerical condition.");
         dberr << "Over- or underflow in"
-                    "conjugate-gradient step, while updating coefficients."
-                    "Input data is likely of poor numerical condition."
-                << std::endl;
+            "conjugate-gradient step, while updating coefficients."
+            "Input data is likely of poor numerical condition."
+              << std::endl;
         state.status = TERMINATED;
         return state;
     }
@@ -405,8 +405,8 @@ internal_logregr_cg_result::run(AnyType &args) {
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
     return stateToResult(*this, state.coef,
-        decomposition.pseudoInverse().diagonal(), state.logLikelihood,
-        decomposition.conditionNo(), state.status, state.numRows);
+                         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
+                         decomposition.conditionNo(), state.status, state.numRows);
 }
 
 
@@ -428,7 +428,7 @@ class LogRegrIRLSTransitionState {
     template <class OtherHandle>
     friend class LogRegrIRLSTransitionState;
 
-public:
+  public:
     LogRegrIRLSTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
@@ -452,7 +452,7 @@ public:
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
+                                             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
@@ -480,7 +480,7 @@ public:
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition "
-                "states");
+                                   "states");
 
         numRows += inOtherState.numRows;
         X_transp_Az += inOtherState.X_transp_Az;
@@ -503,7 +503,7 @@ public:
         status          = IN_PROCESS;
     }
 
-private:
+  private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
         return 4 + inWidthOfX * inWidthOfX + 2 * inWidthOfX;
     }
@@ -536,7 +536,7 @@ private:
 
     Handle mStorage;
 
-public:
+  public:
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
 
@@ -574,9 +574,9 @@ AnyType logregr_irls_step_transition::run(AnyType &args) {
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
             // throw std::domain_error("Number of independent variables cannot be "
-                // "larger than 65535.");
+            // "larger than 65535.");
             dberr << "Number of independent variables cannot be "
-                     "larger than 65535." << std::endl;
+                "larger than 65535." << std::endl;
             state.status = TERMINATED;
             return state;
         }
@@ -661,10 +661,10 @@ AnyType logregr_irls_step_final::run(AnyType &args) {
     // matrices. We extend the check also to the dependent variables.
     if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite()){
         // throw NoSolutionFoundException("Over- or underflow in intermediate "
-            // "calulation. Input data is likely of poor numerical condition.");
+        // "calulation. Input data is likely of poor numerical condition.");
         dberr   << "Over- or underflow in intermediate"
-                    " calulation. Input data is likely of poor"
-                    " numerical condition."
+            " calulation. Input data is likely of poor"
+            " numerical condition."
                 << std::endl;
         state.status = TERMINATED;
         return state;
@@ -682,8 +682,8 @@ AnyType logregr_irls_step_final::run(AnyType &args) {
         //     "while updating coefficients. Input data is likely of poor "
         //     "numerical condition.");
         dberr   << "Overflow or underflow in"
-                    " Newton step. while updating coefficients."
-                    " Input data is likely of poor numerical condition."
+            " Newton step. while updating coefficients."
+            " Input data is likely of poor numerical condition."
                 << std::endl;
         state.status = TERMINATED;
         return state;
@@ -746,7 +746,7 @@ class LogRegrIGDTransitionState {
     template <class OtherHandle>
     friend class LogRegrIGDTransitionState;
 
-public:
+  public:
     LogRegrIGDTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
@@ -770,7 +770,7 @@ public:
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
+                                             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
@@ -798,7 +798,7 @@ public:
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition "
-                "states");
+                                   "states");
 
 		// Compute the average of the models. Note: The following remains an
         // invariant, also after more than one merge:
@@ -807,7 +807,7 @@ public:
         // ratio "# rows in segment / total # rows of all segments merged so
         // far".
 		double totalNumRows = static_cast<double>(numRows)
-                            + static_cast<double>(inOtherState.numRows);
+            + static_cast<double>(inOtherState.numRows);
 		coef = double(numRows) / totalNumRows * coef
 			+ double(inOtherState.numRows) / totalNumRows * inOtherState.coef;
 
@@ -832,7 +832,7 @@ public:
         status = IN_PROCESS;
     }
 
-private:
+  private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX) {
         return 5 + inWidthOfX * inWidthOfX + inWidthOfX;
     }
@@ -864,7 +864,7 @@ private:
 
     Handle mStorage;
 
-public:
+  public:
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ReferenceToDouble stepsize;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
@@ -903,9 +903,9 @@ logregr_igd_step_transition::run(AnyType &args) {
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
             // throw std::domain_error("Number of independent variables cannot be "
-                // "larger than 65535.");
+            // "larger than 65535.");
             dberr << "Number of independent variables cannot be"
-                     " larger than 65535." << std::endl;
+                " larger than 65535." << std::endl;
             state.status = TERMINATED;
             return state;
         }
@@ -978,11 +978,11 @@ logregr_igd_step_final::run(AnyType &args) {
 
     if(!state.coef.is_finite()){
         // throw NoSolutionFoundException("Overflow or underflow in "
-            // "incremental-gradient iteration. Input data is likely of poor "
-            // "numerical condition.");
+        // "incremental-gradient iteration. Input data is likely of poor "
+        // "numerical condition.");
         dberr << "Overflow or underflow in"
-                 " incremental-gradient iteration. Input data is likely of poor"
-                 " numerical condition." << std::endl;
+            " incremental-gradient iteration. Input data is likely of poor"
+            " numerical condition." << std::endl;
         state.status = TERMINATED;
         return state;
     }
@@ -1058,7 +1058,7 @@ AnyType stateToResult(
         stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
         waldZStats(i) = inCoef(i) / stdErr(i);
         waldPValues(i) = 2. * prob::cdf( prob::normal(),
-            -std::abs(waldZStats(i)));
+                                         -std::abs(waldZStats(i)));
         oddsRatios(i) = std::exp( inCoef(i) );
     }
 
@@ -1093,7 +1093,7 @@ class RobustLogRegrTransitionState {
     template <class OtherHandle>
     friend class RobustLogRegrTransitionState;
 
-public:
+  public:
     RobustLogRegrTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
@@ -1117,7 +1117,7 @@ public:
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
+                                             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
@@ -1145,7 +1145,7 @@ public:
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition "
-                "states");
+                                   "states");
 
         numRows += inOtherState.numRows;
         X_transp_AX += inOtherState.X_transp_AX;
@@ -1163,7 +1163,7 @@ public:
 
     }
 
-private:
+  private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
         return 4 + 2 * inWidthOfX * inWidthOfX + inWidthOfX;
     }
@@ -1198,7 +1198,7 @@ private:
 
     Handle mStorage;
 
-public:
+  public:
 
 
 
@@ -1228,7 +1228,7 @@ AnyType robuststateToResult(
 	MutableNativeColumnVector coef(
         inAllocator.allocateArray<double>(inCoef.size()));
 
-   MutableNativeColumnVector stdErr(
+    MutableNativeColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
     MutableNativeColumnVector waldZStats(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -1242,7 +1242,7 @@ AnyType robuststateToResult(
         stdErr(i) = std::sqrt(diagonal_of_varianceMat(i));
         waldZStats(i) = inCoef(i) / stdErr(i);
         waldPValues(i) = 2. * prob::cdf( prob::normal(),
-            -std::abs(waldZStats(i)));
+                                         -std::abs(waldZStats(i)));
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
@@ -1280,7 +1280,7 @@ robust_logregr_step_transition::run(AnyType &args) {
 
         if (x.size() > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
-                "larger than 65535.");
+                                    "larger than 65535.");
 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
         state.coef = coef; //Copy this into the state for later
@@ -1312,7 +1312,7 @@ robust_logregr_step_merge_states::run(AnyType &args) {
 
     RobustLogRegrTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     RobustLogRegrTransitionState<ArrayHandle<double> > stateRight = args[1];
-	 // We first handle the trivial case where this function is called with one
+    // We first handle the trivial case where this function is called with one
     // of the states being the initial state
     if (stateLeft.numRows == 0)
         return stateRight;
@@ -1343,20 +1343,20 @@ robust_logregr_step_final::run(AnyType &args) {
 	Matrix bread = decomposition.pseudoInverse();
 
 	/*
-		This is written a little strangely because it prevents Eigen warnings.
-		The following two lines are equivalent to:
-		Matrix variance = bread*state.meat*bread;
-		but eigen throws a warning on that.
+      This is written a little strangely because it prevents Eigen warnings.
+      The following two lines are equivalent to:
+      Matrix variance = bread*state.meat*bread;
+      but eigen throws a warning on that.
 	*/
 	Matrix varianceMat;// = meat;
     varianceMat = bread*state.meat*bread;
 
     /*
-	* Computing the results for robust variance
-	*/
+     * Computing the results for robust variance
+     */
 
     return robuststateToResult(*this, state.coef,
-	varianceMat.diagonal());
+                               varianceMat.diagonal());
 }
 
 // ------------------------ End of Robust ------------------------------------
@@ -1384,7 +1384,7 @@ class MarginalLogRegrTransitionState {
     template <class OtherHandle>
     friend class MarginalLogRegrTransitionState;
 
-public:
+  public:
     MarginalLogRegrTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
@@ -1408,7 +1408,7 @@ public:
      */
     inline void initialize(const Allocator &inAllocator, uint16_t inWidthOfX) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
+                                             dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX));
         rebind(inWidthOfX);
         widthOfX = inWidthOfX;
     }
@@ -1436,12 +1436,13 @@ public:
         if (mStorage.size() != inOtherState.mStorage.size() ||
             widthOfX != inOtherState.widthOfX)
             throw std::logic_error("Internal error: Incompatible transition "
-                "states");
+                                   "states");
 
         numRows += inOtherState.numRows;
         marginal_effects_per_observation += inOtherState.marginal_effects_per_observation;
         X_bar += inOtherState.X_bar;
         X_transp_AX += inOtherState.X_transp_AX;
+        delta += inOtherState.delta;
         return *this;
     }
 
@@ -1453,11 +1454,12 @@ public:
         marginal_effects_per_observation = 0;
         X_bar.fill(0);
         X_transp_AX.fill(0);
+        delta.fill(0);
     }
 
-private:
+  private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
-        return 4 + 1 * inWidthOfX * inWidthOfX + 2 * inWidthOfX;
+        return 4 + 2 * inWidthOfX * inWidthOfX + 2 * inWidthOfX;
     }
 
     /**
@@ -1477,44 +1479,46 @@ private:
      */
     void rebind(uint16_t inWidthOfX) {
     	iteration.rebind(&mStorage[0]);
-      widthOfX.rebind(&mStorage[1]);
-      coef.rebind(&mStorage[2], inWidthOfX);
-      numRows.rebind(&mStorage[2 + inWidthOfX]);
-      marginal_effects_per_observation.rebind(&mStorage[3 + inWidthOfX]);
-      X_bar.rebind(&mStorage[4 + inWidthOfX], inWidthOfX);
-      X_transp_AX.rebind(&mStorage[4 + 2*inWidthOfX], inWidthOfX, inWidthOfX);
+        widthOfX.rebind(&mStorage[1]);
+        coef.rebind(&mStorage[2], inWidthOfX);
+        numRows.rebind(&mStorage[2 + inWidthOfX]);
+        marginal_effects_per_observation.rebind(&mStorage[3 + inWidthOfX]);
+        X_bar.rebind(&mStorage[4 + inWidthOfX], inWidthOfX);
+        X_transp_AX.rebind(&mStorage[4 + 2*inWidthOfX], inWidthOfX, inWidthOfX);
+        delta.rebind(&mStorage[4+inWidthOfX*inWidthOfX+2*inWidthOfX], inWidthOfX, inWidthOfX);
     }
     Handle mStorage;
 
-public:
+  public:
 
 	typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
-  typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
-  typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
-  typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-  typename HandleTraits<Handle>::ReferenceToDouble marginal_effects_per_observation;
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::ReferenceToDouble marginal_effects_per_observation;
 
-  typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap X_bar;
-  typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap X_bar;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap delta;
 };
 
-
+// ----------------------------------------------------------------------
 
 /**
  * @brief Helper function that computes the final statistics for the marginal variance
  */
 
 AnyType marginalstateToResult(
-  const Allocator &inAllocator,
-  const ColumnVector &inCoef,
-  const ColumnVector &diagonal_of_variance_matrix,
-  const double inmarginal_effects_per_observation,
-  const double numRows
-  ) {
+    const Allocator &inAllocator,
+    const ColumnVector &inCoef,
+    const ColumnVector &diagonal_of_variance_matrix,
+    const double inmarginal_effects_per_observation,
+    const double numRows
+                              ) {
 
-	  MutableNativeColumnVector marginal_effects(
+    MutableNativeColumnVector marginal_effects(
         inAllocator.allocateArray<double>(inCoef.size()));
-	  MutableNativeColumnVector coef(
+    MutableNativeColumnVector coef(
         inAllocator.allocateArray<double>(inCoef.size()));
     MutableNativeColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -1531,13 +1535,8 @@ AnyType marginalstateToResult(
 
         // P-values only make sense if numRows > coef.size()
         if (numRows > inCoef.size())
-          pValues(i) = 2. * prob::cdf(
-              boost::math::complement(
-                  prob::students_t(
-                      static_cast<double>(numRows - inCoef.size())
-                  ),
-                  std::fabs(tStats(i))
-              ));
+            pValues(i) = 2. * prob::cdf( prob::normal(),
+                                         -std::abs(tStats(i)));
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
@@ -1547,9 +1546,10 @@ AnyType marginalstateToResult(
           << coef
           << stdErr
           << tStats
-        	<< (numRows > inCoef.size()? pValues: Null());
+          << (numRows > inCoef.size()? pValues: Null());
     return tuple;
 }
+
 
 /**
  * @brief Perform the marginal effects transition step
@@ -1577,22 +1577,32 @@ marginal_logregr_step_transition::run(AnyType &args) {
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
-                "larger than 65535.");
+                                    "larger than 65535.");
         state.initialize(*this, static_cast<uint16_t>(x.size()));
-            state.coef = coef; //Copy this into the state for later
+        state.coef = coef; //Copy this into the state for later
     }
 
     // Now do the transition step
     state.numRows++;
     double xc = dot(x, coef);
-    double G_xc = std::exp(xc)/ (1 + std::exp(xc));
+    double p = std::exp(xc)/ (1 + std::exp(xc));
     double a = sigma(xc) * sigma(-xc);
 
     // TODO: Change the average code so it won't overflow
-    state.marginal_effects_per_observation += G_xc * (1 - G_xc);
+    state.marginal_effects_per_observation += p * (1 - p);
     state.X_bar += x;
     state.X_transp_AX += x * trans(x) * a;
 
+    Matrix delta;
+    delta = (1 - 2*p) * state.coef * trans(x);
+    // This should be faster than adding an identity
+    for (int i=0; i < state.widthOfX; i++){
+        delta(i,i) += 1;
+    }
+
+    // Standard error according to the delta method
+	state.delta += p * (1 - p) * delta;
+    
     return state;
 }
 
@@ -1605,7 +1615,7 @@ marginal_logregr_step_merge_states::run(AnyType &args) {
 
     MarginalLogRegrTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     MarginalLogRegrTransitionState<ArrayHandle<double> > stateRight = args[1];
-	 // We first handle the trivial case where this function is called with one
+    // We first handle the trivial case where this function is called with one
     // of the states being the initial state
     if (stateLeft.numRows == 0)
         return stateRight;
@@ -1623,39 +1633,29 @@ marginal_logregr_step_merge_states::run(AnyType &args) {
 AnyType
 marginal_logregr_step_final::run(AnyType &args) {
 
-  // We request a mutable object.
-  // Depending on the backend, this might perform a deep copy.
-  MarginalLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
+    // We request a mutable object.
+    // Depending on the backend, this might perform a deep copy.
+    MarginalLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
 	// Aggregates that haven't seen any data just return Null.
-  if (state.numRows == 0)
-      return Null();
-
-  // Compute variance matrix of logistic regression
+    if (state.numRows == 0)
+        return Null();
+    
+    // Compute variance matrix of logistic regression
 	SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
-
+    
 	Matrix variance = decomposition.pseudoInverse();
-  Matrix delta;
 
-  double xc = dot(state.coef, state.X_bar) / state.numRows;
-  double p = std::exp(xc)/ (1 + std::exp(xc));
-  delta = (1 - 2*p) * state.coef * trans(state.X_bar) / state.numRows;
-
-  // This should be faster than adding an identity
-  for (int i=0; i < state.widthOfX; i++){
-    delta(i,i) += 1;
-  }
-
-  // Standard error according to the delta method
+    // Standard error according to the delta method
 	Matrix std_err;
-	std_err = p * (1 - p) * delta * variance * trans(delta) * p * (1 - p);
-
-  // Computing the marginal effects
-  return marginalstateToResult(*this,
-                              state.coef,
-                              std_err.diagonal(),
-                              state.marginal_effects_per_observation,
-                              state.numRows);
+	std_err = state.delta * variance * trans(state.delta) / (state.numRows*state.numRows);
+    
+    // Computing the marginal effects
+    return marginalstateToResult(*this,
+                                 state.coef,
+                                 std_err.diagonal(),
+                                 state.marginal_effects_per_observation,
+                                 state.numRows);
 }
 
 // ------------------------ End of Marginal ------------------------------------

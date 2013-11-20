@@ -102,6 +102,7 @@ class mlogregrMarginalTransitionState {
         X_bar += inOtherState.X_bar;
         X_transp_AX += inOtherState.X_transp_AX;
         reference_margins+= inOtherState.reference_margins;
+        delta += inOtherState.delta;
         return *this;
     }
 
@@ -114,13 +115,14 @@ class mlogregrMarginalTransitionState {
         X_bar.fill(0);
         X_transp_AX.fill(0);
         reference_margins.fill(0);
+        delta.fill(0);
     }
 
   private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX,
                                      const uint16_t inNumCategories) {
-        return 4 + 3*inWidthOfX * inNumCategories + 1*inWidthOfX +
-            inNumCategories * inWidthOfX * inWidthOfX * inNumCategories;
+        return 4 + 2*inWidthOfX * inNumCategories + 2*inWidthOfX +
+            2 * inNumCategories * inWidthOfX * inWidthOfX * inNumCategories;
     }
 
     /**
@@ -150,10 +152,13 @@ class mlogregrMarginalTransitionState {
         margins_matrix.rebind(&mStorage[4 + inWidthOfX * inNumCategories],
                               inNumCategories , inWidthOfX );
         X_bar.rebind(&mStorage[4 + 2*inWidthOfX * inNumCategories], inWidthOfX);
-        reference_margins.rebind(&mStorage[4 + 2*inWidthOfX + 2*inWidthOfX*inNumCategories],
+        reference_margins.rebind(&mStorage[4 + inWidthOfX + 2*inWidthOfX*inNumCategories],
                                  inWidthOfX);
-        X_transp_AX.rebind(&mStorage[4 + 3*inWidthOfX * inNumCategories + 1*inWidthOfX],
+        X_transp_AX.rebind(&mStorage[4 + 2*inWidthOfX * inNumCategories + 2*inWidthOfX],
                            inNumCategories*inWidthOfX, inWidthOfX*inNumCategories);
+        delta.rebind(&mStorage[4 + 2*inWidthOfX * inNumCategories + 2*inWidthOfX +
+                               inNumCategories * inWidthOfX * inWidthOfX * inNumCategories],
+                     inNumCategories*inWidthOfX, inWidthOfX*inNumCategories);
     }
 
     Handle mStorage;
@@ -169,6 +174,7 @@ class mlogregrMarginalTransitionState {
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap reference_margins;
     typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap X_bar;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap delta;
 };
 
 // ----------------------------------------------------------------------
@@ -264,14 +270,6 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
     prob = prob / (1 + prob_sum);
 
     Matrix probDiag = prob.asDiagonal();
-
-    //    Variance Calculations
-    // ----------------------------------------------------------------------
-    /*
-      a is a matrix of size JxJ where J is the number of categories
-      a_j1j2 = -pi(j1)*(1-pi(j2))if j1 == j2
-      a_j1j2 =  pi(j1)*pi(j2) if j1 != j2
-    */
     Matrix a(numCategories,numCategories);
     a = prob * prob.transpose() - probDiag;
 
@@ -299,7 +297,36 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
     }
 
     triangularView<Lower>(state.X_transp_AX) += X_transp_AX;
-    state.X_bar += x; // It is called X_bar but it really is the sum
+    int numIndepVars = state.coef.size() / state.numCategories;
+
+    // Marginal effects (reference calculated separately)
+    ColumnVector coef_trans_prob;
+    coef_trans_prob = coef.transpose() * prob;
+    Matrix margins_matrix = coef;
+    margins_matrix.rowwise() -= coef_trans_prob.transpose();
+    margins_matrix = prob.asDiagonal() * margins_matrix;
+
+    int idx, index, e_j_J, e_k_K, e_k_K_j_J;
+    for (int K=0; K < numIndepVars; K++){
+        for (int J=0; J < numCategories; J++){
+            idx = K*numCategories + J;
+            for (int k=0; k < numIndepVars; k++){
+                for (int j=0; j < numCategories; j++){
+                    e_j_J = (j==J) ? 1: 0;
+                    e_k_K = (k==K) ? 1: 0;
+                    e_k_K_j_J = (j==J && k==K) ? 1: 0;
+
+                    index = k*numCategories + j;
+                    state.delta(index, idx) +=
+                        x(K) * (e_j_J  - prob(J)) * margins_matrix(j,k);
+                    state.delta(index, idx) += prob(j) *
+                        (e_k_K_j_J - prob(J) * e_k_K - x(K) * margins_matrix(J,k));
+                }
+            }      
+        }
+    }
+
+    state.margins_matrix += margins_matrix;
 
     return state;
 }
@@ -334,8 +361,6 @@ AnyType mlogregr_marginalstateToResult(
     const ColumnVector &inMargins,
     const ColumnVector &inVariance
                                        ) {
-
-
     MutableNativeColumnVector margins(
         inAllocator.allocateArray<double>(inMargins.size()));
     MutableNativeColumnVector coef(
@@ -355,13 +380,8 @@ AnyType mlogregr_marginalstateToResult(
 
         // P-values only make sense if numRows > coef.size()
         if (numRows > inCoef.size())
-            pValues(i) = 2. * prob::cdf(
-                boost::math::complement(
-                    prob::students_t(
-                        static_cast<double>(numRows - inCoef.size())
-                                     ),
-                    std::fabs(tStats(i))
-                                        ));
+            pValues(i) = 2. * prob::cdf( prob::normal(),
+                                         -std::abs(tStats(i)));
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
@@ -414,11 +434,6 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     // Precompute -(X^T * A * X)^-1
     Matrix V = decomposition.pseudoInverse();
 
-    // Marginal Effect calculation
-    // ---------------------------------------------------------
-    // Standard error calculation
-    // ----------------------------------------------------------
-    ColumnVector x_bar = state.X_bar / state.numRows;
     int numIndepVars = state.coef.size() / state.numCategories;
     int numCategories = state.numCategories;
 
@@ -430,53 +445,8 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     ColumnVector variance(size);
     variance.setOnes();
 
-    // Probibility vector at the mean
-    ColumnVector p_bar(state.numCategories);
-    ColumnVector coef_x_bar(state.numCategories);
-    ColumnVector coef_trans_p_bar(state.widthOfX);
-
-    coef_x_bar = coef*x_bar;
-    coef_trans_p_bar = coef.transpose() * p_bar;
-
-    p_bar = coef_x_bar;
-    p_bar = p_bar.array().exp();
-    p_bar = p_bar / (1 + p_bar.sum());
-
-    // Marginal effects (reference calculated separately)
-    ColumnVector coef_trans_prob;
-    coef_trans_prob = coef.transpose() * p_bar;
-    Matrix margins_matrix = coef;
-    margins_matrix.rowwise() -= coef_trans_prob.transpose();
-    margins_matrix = p_bar.asDiagonal() * margins_matrix;
-
-    // Compute the variance for each marginal effect
-    int index, e_j_J, e_k_K, e_k_K_j_J;
-    for (int K=0; K < numIndepVars; K++){
-        for (int J=0; J < numCategories; J++){
-
-            for (int k=0; k < numIndepVars; k++){
-                for (int j=0; j < numCategories; j++){
-
-                    e_j_J = (j==J) ? 1: 0;
-                    e_k_K = (k==K) ? 1: 0;
-                    e_k_K_j_J = (j==J && k==K) ? 1: 0;
-
-                    index = k*numCategories + j;
-                    marginal_gradient(index) =
-                        x_bar(k) * (e_j_J  - p_bar(j)) * margins_matrix(J,K);
-                    marginal_gradient(index) += p_bar(J) *
-                        ( e_k_K_j_J - p_bar(j) * e_k_K - x_bar(k) * margins_matrix(j,K));
-                }
-            }
-
-            // NOTE: Since the earlier Variance calculations are being done by
-            // stacking up the indepdent variables for each category separtely
-            variance(K * numCategories + J) =
-                marginal_gradient.transpose() * V * marginal_gradient;
-
-        }
-    }
-
+    variance = (state.delta * V * trans(state.delta) / (state.numRows*state.numRows)).diagonal();
+    
     // Add in reference variables to all the calculations
     // ----------------------------------------------------------
     ColumnVector coef_with_ref(size);
@@ -485,9 +455,9 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     // Vectorize the margins_matrix and add the reference variable
     for (int k=0; k < numIndepVars; k++){
         for (int j=0; j < numCategories; j++){
-            index = k * numCategories + j;
+            int index = k * numCategories + j;
             coef_with_ref(index) = coef(j,k);
-            margins_with_ref(index) = margins_matrix(j,k);
+            margins_with_ref(index) = state.margins_matrix(j,k) / state.numRows;
         }
     }
 
