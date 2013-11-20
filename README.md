@@ -6,9 +6,9 @@ It provides data-parallel implementations of mathematical, statistical and machi
 See the project web site located at [`MADlib Home`](http://madlib.net) for links to the latest binary and source packages.
 For installation and contribution guides, please see the [`MADlib Wiki`](https://github.com/madlib/madlib/wiki)
 The latest documentation of MADlib modules can be found at [`MADlib Docs`](http://doc.madlib.net) or can be accessed directly from the MADlib installation directory by opening
-`doc/user/html/index.html`.
+[`doc/user/html/index.html`](doc/user/html/index.html).
 
-Changes between MADlib versions are described in the `ReleaseNotes.txt` file.
+Changes between MADlib versions are described in the [`ReleaseNotes.txt`](/ReleaseNotes.txt) file.
 
 Third Party Components
 ======================
@@ -23,4 +23,4 @@ MADlib incorporates material from the following third-party components
 
 Licensing
 ==========
-License information regarding MADlib and included third-party libraries can be  found inside the `license` directory.
+License information regarding MADlib and included third-party libraries can be  found inside the [`license`](/license) directory.
