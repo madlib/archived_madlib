@@ -12,13 +12,13 @@ Changes between MADlib versions are described in the `ReleaseNotes.txt` file.
 
 Third Party Components
 ======================
-MADlib incorporates material from the following third-party components:
-1. [`argparse 1.2.1`](http://code.google.com/p/argparse/) "provides an easy, declarative interface for creating command line tools"
-2. [`Boost 1.46.1 (or newer)`](http://www.boost.org/) "provides peer-reviewed portable C++ source libraries"
-3. [`CERN ROOT`](http://root.cern.ch/) is "an object oriented framework for large scale data analysis"
-4. [`doxypy 0.4.2`](http://code.foosel.org/doxypy) "is an input filter for Doxygen"
-5. [`Eigen 3.0.3`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
-6. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "is a YAML parser and emitter for Python"
+MADlib incorporates material from the following third-party components
+1.[`argparse 1.2.1`](http://code.google.com/p/argparse/) "provides an easy, declarative interface for creating command line tools"
+2.[`Boost 1.46.1 (or newer)`](http://www.boost.org/) "provides peer-reviewed portable C++ source libraries"
+3.[`CERN ROOT`](http://root.cern.ch/) is "an object oriented framework for large scale data analysis"
+4.[`doxypy 0.4.2`](http://code.foosel.org/doxypy) "is an input filter for Doxygen"
+5.[`Eigen 3.0.3`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
+6.[`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "is a YAML parser and emitter for Python"
 
 Licensing
 ==========
