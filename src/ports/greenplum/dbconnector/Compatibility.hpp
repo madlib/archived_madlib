@@ -76,7 +76,7 @@ AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 	return 0;
 }
 
-} // namnespace
+} // namespace
 
 inline ArrayType* madlib_construct_array
 (

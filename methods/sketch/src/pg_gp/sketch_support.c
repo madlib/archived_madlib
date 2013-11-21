@@ -31,6 +31,9 @@
 /*
 @addtogroup grp_sketches
 */
+
+#include <math.h>
+
 /* THIS CODE MAY NEED TO BE REVISITED TO ENSURE ALIGNMENT! */
 
 #include <postgres.h>
@@ -171,10 +174,10 @@ uint32 leftmost_zero(uint8 *bits,
  * \param bitnum bit offset (from right, zero-indexed) in that sketch
  */
 Datum array_set_bit_in_place(bytea *bitmap,
-                             int4 numsketches,
-                             int4 sketchsz_bits,
-                             int4 sketchnum,
-                             int4 bitnum)
+                             int32 numsketches,
+                             int32 sketchsz_bits,
+                             int32 sketchnum,
+                             int32 bitnum)
 {
     char mask;
     char bytes_per_sketch = sketchsz_bits/CHAR_BIT;
@@ -370,10 +373,10 @@ Datum sketch_array_set_bit_in_place(PG_FUNCTION_ARGS)
 {
 
     bytea *bitmap = (bytea *)PG_GETARG_BYTEA_P(0);
-    int4   numsketches = PG_GETARG_INT32(1);
-    int4   sketchsz = PG_GETARG_INT32(2);        /* size in bits */
-    int4   sketchnum = PG_GETARG_INT32(3);        /* from the left! */
-    int4   bitnum = PG_GETARG_INT32(4);        /* from the right! */
+    int32   numsketches = PG_GETARG_INT32(1);
+    int32   sketchsz = PG_GETARG_INT32(2);        /* size in bits */
+    int32   sketchnum = PG_GETARG_INT32(3);        /* from the left! */
+    int32   bitnum = PG_GETARG_INT32(4);        /* from the right! */
 
     return array_set_bit_in_place(bitmap,
                                   numsketches,
@@ -383,9 +386,9 @@ Datum sketch_array_set_bit_in_place(PG_FUNCTION_ARGS)
 }
 
 /* In some cases with large numbers, log2 seems to round up incorrectly. */
-int4 safe_log2(int64 x)
+int32 safe_log2(int64 x)
 {
-    int4 out = trunc(log2(x));
+    int32 out = trunc(log2(x));
 
     while ((((int64)1) << out) > x)
         out--;

@@ -94,28 +94,40 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
     set(${PKG_NAME}_VERSION_MINOR 0)
     set(${PKG_NAME}_VERSION_PATCH 0)
     
-    if(EXISTS "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h")
+	set(CONFIG_FILE ${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h)
+
+    if(EXISTS ${CONFIG_FILE})
         # Read and parse postgres version header file for version number
         if(${CMAKE_COMPILER_IS_GNUCC})
             # If we know the compiler, we can do something that is a little
             # smarter: Dump the definitions only.
             execute_process(
-                COMMAND ${CMAKE_C_COMPILER} -E -dD
-                    "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h"
+                COMMAND ${CMAKE_C_COMPILER} -E -dD ${CONFIG_FILE}
                 OUTPUT_VARIABLE _PG_CONFIG_HEADER_CONTENTS
             )
         else(${CMAKE_COMPILER_IS_GNUCC})
-            file(READ "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h"
-            _PG_CONFIG_HEADER_CONTENTS)
+            file(READ ${CONFIG_FILE} _PG_CONFIG_HEADER_CONTENTS)
         endif(${CMAKE_COMPILER_IS_GNUCC})
         
-        string(REGEX REPLACE ".*#define PACKAGE_NAME \"([^\"]+)\".*" "\\1"
-            _PACKAGE_NAME "${_PG_CONFIG_HEADER_CONTENTS}")
-            
-        string(REGEX REPLACE
+
+		# Get PACKAGE_NAME
+		if (_PG_CONFIG_HEADER_CONTENTS MATCHES "#define PACKAGE_NAME \".*\"")
+          string(REGEX REPLACE
+			".*#define PACKAGE_NAME \"([^\"]+)\".*" "\\1"
+			_PACKAGE_NAME "${_PG_CONFIG_HEADER_CONTENTS}")
+		else(_PG_CONFIG_HEADER_CONTENTS MATCHES "#define PACKAGE_NAME \".*\"")
+          message(FATAL_ERROR "Unable to locate PACKAGE_NAME in \"${CONFIG_FILE}\".")
+		endif(_PG_CONFIG_HEADER_CONTENTS MATCHES "#define PACKAGE_NAME \".*\"")
+
+		# Get VERSION_NUM
+		if (_PG_CONFIG_HEADER_CONTENTS MATCHES "#define ${_PG_CONFIG_VERSION_NUM_MACRO} ([0-9]+).*")
+          string(REGEX REPLACE
             ".*#define ${_PG_CONFIG_VERSION_NUM_MACRO} ([0-9]+).*" "\\1"
             ${PKG_NAME}_VERSION_NUM "${_PG_CONFIG_HEADER_CONTENTS}")
-        
+		else(_PG_CONFIG_HEADER_CONTENTS MATCHES "#define ${_PG_CONFIG_VERSION_NUM_MACRO} ([0-9]+).*")
+		  set(${PKG_NAME}_VERSION_NUM "unknown")
+		endif(_PG_CONFIG_HEADER_CONTENTS MATCHES "#define ${_PG_CONFIG_VERSION_NUM_MACRO} ([0-9]+).*")
+
         if(${PKG_NAME}_VERSION_NUM MATCHES "^[0-9]+$")
             math(EXPR ${PKG_NAME}_VERSION_MAJOR "${${PKG_NAME}_VERSION_NUM} / 10000")
             math(EXPR ${PKG_NAME}_VERSION_MINOR "(${${PKG_NAME}_VERSION_NUM} % 10000) / 100")
@@ -125,17 +137,25 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
             # Macro with version number was not found. We use the version string
             # macro as a fallback. Example when this is used: Greenplum < 4.1
             # does not have a GP_VERSION_NUM macro, but only GP_VERSION.
-            string(REGEX REPLACE
-                ".*#define ${_PG_CONFIG_VERSION_MACRO} \"([^\"]+)\".*" "\\1"   
-                ${PKG_NAME}_VERSION_STRING "${_PG_CONFIG_HEADER_CONTENTS}")
-            string(REGEX REPLACE "([0-9]+).*" "\\1"
+
+			# Get VERSION
+			if (_PG_CONFIG_HEADER_CONTENTS MATCHES "#define ${_PG_CONFIG_VERSION_MACRO} ([0-9]+).*")
+			  string(REGEX REPLACE
+				".*#define ${_PG_CONFIG_VERSION_MACRO} ([0-9]+).*" "\\1"
+				${PKG_NAME}_VERSION_STRING "${_PG_CONFIG_HEADER_CONTENTS}")
+              string(REGEX REPLACE "([0-9]+).*" "\\1"
                 ${PKG_NAME}_VERSION_MAJOR "${${PKG_NAME}_VERSION_STRING}")
-            string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1"
+              string(REGEX REPLACE "[0-9]+\\.([0-9]+).*" "\\1"
                 ${PKG_NAME}_VERSION_MINOR "${${PKG_NAME}_VERSION_STRING}")
-            string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1"
+              string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1"
                 ${PKG_NAME}_VERSION_PATCH "${${PKG_NAME}_VERSION_STRING}")
+
+			else(_PG_CONFIG_HEADER_CONTENTS MATCHES "#define ${_PG_CONFIG_VERSION_MACRO} ([0-9]+).*")
+			  set(${PKG_NAME}_VERSION_STRING "unknown")
+			endif(_PG_CONFIG_HEADER_CONTENTS MATCHES "#define ${_PG_CONFIG_VERSION_MACRO} ([0-9]+).*")
+
         endif(${PKG_NAME}_VERSION_NUM MATCHES "^[0-9]+$")
-    endif(EXISTS "${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h")
+    endif(EXISTS ${CONFIG_FILE})
 
     if(_PACKAGE_NAME STREQUAL "${_NEEDED_PG_CONFIG_PACKAGE_NAME}")
         if((NOT DEFINED PACKAGE_FIND_VERSION) OR
@@ -170,18 +190,22 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
 
             architecture("${${PKG_NAME}_EXECUTABLE}" ${PKG_NAME}_ARCHITECTURE)
         else()
-            message(STATUS "Found pg_config at \"${${PKG_NAME}_PG_CONFIG}\", "
-                "but it belongs to version ${${PKG_NAME}_VERSION_STRING} "
-                "whereas ${PACKAGE_FIND_VERSION} was requested. We will ignore "
-                "this installation.")
+		  if(${PACKAGE_FIND_VERSION})
+            message(FATAL_ERROR "Found \"${${PKG_NAME}_PG_CONFIG}\", "
+              "but it belongs to ${_PACKAGE_NAME} ${${PKG_NAME}_VERSION_STRING} "
+              "where ${_NEEDED_PG_CONFIG_PACKAGE_NAME} ${PACKAGE_FIND_VERSION} "
+			  "was requested.")
+		  endif(${PACKAGE_FIND_VERSION})
         endif()
     else(_PACKAGE_NAME STREQUAL "${_NEEDED_PG_CONFIG_PACKAGE_NAME}")
+	  if(${PACKAGE_FIND_VERSION})
         # There are DBMSs derived from PostgreSQL that also contain pg_config.
         # So there might be many pg_config installed on a system.
-        message(STATUS "Found pg_config at "
-            "\"${${PKG_NAME}_PG_CONFIG}\", but it does not belong to "
-            "${_NEEDED_PG_CONFIG_PACKAGE_NAME}. "
-            "We will ignore this installation.")
+        message(FATAL_ERROR "Found \"${${PKG_NAME}_PG_CONFIG}\", "
+          "but it belongs to ${_PACKAGE_NAME} "
+          "where ${_NEEDED_PG_CONFIG_PACKAGE_NAME} ${PACKAGE_FIND_VERSION} "
+		  "was requested.")
+	  endif(${PACKAGE_FIND_VERSION})
     endif(_PACKAGE_NAME STREQUAL "${_NEEDED_PG_CONFIG_PACKAGE_NAME}")
 endif(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
 
@@ -194,5 +218,5 @@ find_package_handle_standard_args(${PACKAGE_FIND_NAME}
         ${PKG_NAME}_CLIENT_INCLUDE_DIR
         ${PKG_NAME}_SERVER_INCLUDE_DIR
     VERSION_VAR
-        ${PKG_NAME}_VERSION_STRING
+        "${_PACKAGE_NAME} ${PKG_NAME}_VERSION_STRING"
 )

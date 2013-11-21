@@ -17,8 +17,8 @@
  * \endinternal
  */
 typedef struct {
-	int4 vl_len_;   /**< This is unused at the moment */
-	int4 dimension; /**< Number of elements in this vector, special case is -1 indicates a scalar */
+	int32 vl_len_;   /**< This is unused at the moment */
+	int32 dimension; /**< Number of elements in this vector, special case is -1 indicates a scalar */
 	char data[1];   /**< The serialized SparseData representing the vector here */
 } SvecType;
 
@@ -33,7 +33,7 @@ typedef struct {
  *
  * All macros take an (SvecType *) as argument
  */
-#define SVECHDRSIZE	(VARHDRSZ + sizeof(int4))
+#define SVECHDRSIZE	(VARHDRSZ + sizeof(int32))
 /* Beginning of the serialized SparseData */
 #define SVEC_SDATAPTR(x)	((char *)(x)+SVECHDRSIZE)
 #define SVEC_SIZEOFSERIAL(x)	(SVECHDRSIZE+SIZEOF_SPARSEDATASERIAL((SparseData)SVEC_SDATAPTR(x)))
