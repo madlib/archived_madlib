@@ -12,6 +12,9 @@
 
 import plpy
 
+from utilities import __mad_version
+version_wrapper = __mad_version()
+
 class MinWarning:
     """
     @brief A wrapper for setting the level of logs going into client
@@ -110,6 +113,13 @@ class IterationController:
             \c expression
         """
 
+        ## For GPDB 4.3 we disable the optimzer (ORCA) for the query planner
+        ## since currently ORCA has a bug for left outer joins (MPP-21868).
+        ## This should be removed when the issue is fixed in ORCA.
+        if version_wrapper.is_gp43():
+            optimizer = plpy.execute("SHOW optimizer")[0]['optimizer']
+            plpy.execute("SET optimizer = off")
+
         resultObject = self.runSQL("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -121,6 +131,10 @@ class IterationController:
             """.format(expression = expression).format(
                 iteration = self.iteration,
                 **self.kwargs))
+
+        if version_wrapper.is_gp43():
+            plpy.execute("SET optimizer = " + optimizer)
+
         if resultObject.nrows() == 0:
             return None
         else:
@@ -165,9 +179,10 @@ class IterationController:
         is kept.
         """
 
+        updateKwargs.update(**self.kwargs)
         newState = newState.format(
             iteration = self.iteration,
-            **self.kwargs)
+            **updateKwargs)
         self.iteration = self.iteration + 1
         self.runSQL("""
             INSERT INTO {rel_state}
