@@ -180,11 +180,15 @@ class ChangeHandler(UpgradeBase):
         # _mad_dbrev = 1.0
         if float(self._mad_dbrev) < 1.1:
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.0_1.3.yaml')
+                                    'changelist_1.0_1.4.yaml')
         # _mad_dbrev = 1.1
         elif float(self._mad_dbrev) < 1.2:
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.1_1.3.yaml')
+                                    'changelist_1.1_1.4.yaml')
+        # _mad_dbrev = 1.2
+        elif float(self._mad_dbrev) < 1.3:
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.2_1.4.yaml')
         else:
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist.yaml')
