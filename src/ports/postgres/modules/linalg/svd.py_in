@@ -94,6 +94,8 @@ def _validate_args(schema_madlib, source_table, output_table_prefix, k,
                 "SVD error: {1} column does not exist in {0}!"
                 .format(source_table, val_id))
 
+
+
     if result_summary_table is not None:
         if not result_summary_table.strip():
             plpy.error("SVD error: Invalid result summary table name!")
@@ -110,9 +112,10 @@ def create_summary_table(**args):
 
     plpy.execute(
         """
-        SELECT {schema_madlib}.matrix_mult('{matrix_u}', NULL, NULL, NULL, False,
-                                           '{matrix_s}', 'row_id', 'col_id', 'value', False,
-                                           '{temp_prefix}_a');
+        SELECT {schema_madlib}.matrix_mult(
+            '{matrix_u}', NULL, NULL, NULL, False,
+            '{matrix_s}', 'row_id', 'col_id', 'value', False,
+            '{temp_prefix}_a');
         """.format(**args))
     plpy.execute(
         """
@@ -270,6 +273,11 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
     # copy the input table to a temporary table since all matrix operation
     # modules require the dimensionality of the sparse matrix in the table
     # as a row: (row_dim, col_dim, NULL)
+    # Further, this function also hard codes the name of the (row, col, val)
+    # triple as ('row_id', 'col_id', 'value'). It is important to note this
+    # for further calls.
+    ## FIXME: Hardcoded names is a poor design requirement for matrix ops
+    ##         and should be changed
     converted_tbl = __unique_string()
     create_temp_sparse_matrix_table_with_dims(source_table,
                                               converted_tbl,
@@ -280,15 +288,14 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
     x_dense = __unique_string() + "_1"
     plpy.execute("""
         SELECT {schema_madlib}.matrix_densify(
-            '{source_table}', '{in_row}', '{in_col}', '{in_val}',
+            '{source_table}', 'row_id', 'col_id', 'value',
             '{x_dense}', True)
         """.format(schema_madlib=schema_madlib, source_table=source_table,
-                   in_row=row_id, in_col=col_id, in_val=value,
                    x_dense=x_dense))
 
     # Call SVD for the dense matrix
     svd(schema_madlib, x_dense, output_table_prefix,
-        row_id, k, nIterations, result_summary_table)
+        'row_id', k, nIterations, result_summary_table)
 
     if result_summary_table:
         t1 = time.time()
@@ -355,18 +362,15 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
                  """.format(converted_tbl=converted_tbl, row_dim=row_dim,
                             col_dim=col_dim))
     source_table = converted_tbl
-
-    # [row_dim, col_dim] = __get_dims(source_table, row_id, col_id, val)
-    if row_dim < col_dim:
-        is_narrow_matrix = False
-    else:
-        is_narrow_matrix = True
+    ## NOTE: At this point source_table has hard-coded column names:
+    ##       'row_id' --- 'col_id' --- 'value'
 
     t0 = time.time()  # measure the starting time
     _svd(schema_madlib, source_table, output_table_prefix, k,
-         nIterations, False, row_id, col_id, val)
+         nIterations, False, 'row_id', 'col_id', 'value')
 
-    if not is_narrow_matrix:
+    # [row_dim, col_dim] = __get_dims(source_table, row_id, col_id, val)
+    if col_dim > row_dim:
         # Switch U and V
         tmp = __unique_string()
         plpy.execute("""
@@ -380,7 +384,7 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
         src_dense = __unique_string()
         plpy.execute("""
             select {schema_madlib}.matrix_densify(
-                '{source_table}', '{row_id}', '{col_id}', '{val}', '{src_dense}', True)
+                '{source_table}', 'row_id', 'col_id', 'value', '{src_dense}', True)
             """.format(source_table=source_table, row_id=row_id, col_id=col_id,
                        val=val, src_dense=src_dense, schema_madlib=schema_madlib))
         arguments = {'schema_madlib': schema_madlib,
@@ -583,7 +587,10 @@ def _svd(schema_madlib, source_table, output_table_prefix,
             i > 0
         """.format(svd_bidiagonal=svd_bidiagonal))[0]['nz']
     if k > non_zero_svals:
-        plpy.warning("k is set to the number of non-zero singular values")
+        plpy.warning("Value of 'k' is greater than the number of non-zero "
+                     "singular values. Outputing only {nz} instead of {k} "
+                     "eigen values/vectors".format(nz=non_zero_svals, k=k)
+                     )
         k = non_zero_svals
 
     # Compute the singular values and output to sparse table
@@ -698,7 +705,6 @@ def _lanczos_bidiagonalize_create_pq_table(schema_madlib, pq_table_prefix, col_d
         SELECT 1, 0, {schema_madlib}.__svd_unit_vector({col_dim})
         """.format(schema_madlib=schema_madlib,
                    pq_table_prefix=pq_table_prefix, col_dim=col_dim))
-
 # ------------------------------------------------------------------------
 
 
@@ -1110,22 +1116,22 @@ def svd_help_message(schema_madlib, message, **kwargs):
 
             -- example input data
             COPY mat (row_id, row_vec) FROM stdin;
-            1   {691,58,899,163,159,533,604,582,269,390}
-            0   {396,840,353,446,318,886,15,584,159,383}
-            3   {462,532,787,265,982,306,600,608,212,885}
-            2   {293,742,298,75,404,857,941,662,846,2}
-            5   {327,946,368,943,7,516,272,24,591,204}
-            4   {304,151,337,387,643,753,603,531,459,652}
-            7   {458,959,774,376,228,354,300,669,718,565}
-            6   {877,59,260,302,891,498,710,286,864,675}
-            9   {882,761,398,688,761,405,125,484,222,873}
-            8   {824,390,818,844,180,943,424,520,65,913}
-            11  {492,220,576,289,321,261,173,1,44,241}
-            10  {528,1,860,18,814,242,314,965,935,809}
-            13  {350,192,211,633,53,783,30,444,176,932}
-            12  {415,701,221,503,67,393,479,218,219,916}
-            15  {739,651,678,577,273,935,661,47,373,618}
-            14  {909,472,871,695,930,455,398,893,693,838}
+            1   {{691,58,899,163,159,533,604,582,269,390}}
+            0   {{396,840,353,446,318,886,15,584,159,383}}
+            3   {{462,532,787,265,982,306,600,608,212,885}}
+            2   {{293,742,298,75,404,857,941,662,846,2}}
+            5   {{327,946,368,943,7,516,272,24,591,204}}
+            4   {{304,151,337,387,643,753,603,531,459,652}}
+            7   {{458,959,774,376,228,354,300,669,718,565}}
+            6   {{877,59,260,302,891,498,710,286,864,675}}
+            9   {{882,761,398,688,761,405,125,484,222,873}}
+            8   {{824,390,818,844,180,943,424,520,65,913}}
+            11  {{492,220,576,289,321,261,173,1,44,241}}
+            10  {{528,1,860,18,814,242,314,965,935,809}}
+            13  {{350,192,211,633,53,783,30,444,176,932}}
+            12  {{415,701,221,503,67,393,479,218,219,916}}
+            15  {{739,651,678,577,273,935,661,47,373,618}}
+            14  {{909,472,871,695,930,455,398,893,693,838}}
             \.
 
             DROP TABLE if exists svd_u;
