@@ -114,8 +114,8 @@ def __run_sql_query(sql, show_error):
 
 def ____run_sql_query(sql, show_error, portid = portid, con_args = con_args):
 
-    # Postgres & Greenplum
-    if portid == 'greenplum' or portid == 'postgres':
+    # psql
+    if portid in ('greenplum', 'postgres', 'hawq'):
 
         # Define sqlcmd
         sqlcmd = 'psql'
@@ -234,7 +234,7 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
             open(tmpfile, 'w').write(sql)
 
     # Run the SQL using DB command-line utility
-    if portid == 'greenplum' or portid == 'postgres':
+    if portid in ('greenplum', 'postgres', 'hawq'):
         sqlcmd = 'psql'
         # Test the DB cmd line utility
         std, err = subprocess.Popen(['which', sqlcmd], stdout=subprocess.PIPE,
@@ -303,6 +303,9 @@ def __get_dbver():
         elif portid == 'greenplum':
             match = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)",
                 versionStr)
+        elif portid == 'hawq':
+            match = re.search("HAWQ[a-zA-Z\s]*(\d+\.\d+)",
+                versionStr)
         return None if match is None else match.group(1)
     except:
         __error("Failed reading database version", True)
@@ -323,6 +326,14 @@ def __check_db_port(portid):
             return True
     # Greenplum
     if portid == 'greenplum':
+        try:
+            row = __run_sql_query("SELECT version() AS version", True)
+        except:
+            __error("Cannot validate DB platform type", True)
+        if row[0]['version'].lower().find(portid) >= 0:
+            return True
+    # HAWQ
+    if portid == 'hawq':
         try:
             row = __run_sql_query("SELECT version() AS version", True)
         except:
@@ -415,8 +426,9 @@ def __plpy_check(py_min_ver):
 # Install MADlib
 # @param schema MADlib schema name
 # @param dbrev DB-level MADlib version
+# @param testcase command-line args for a subset of modules
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_install(schema, dbrev):
+def __db_install(schema, dbrev, testcase):
 
     __info("Installing MADlib into %s schema..." % schema.upper(), True)
 
@@ -443,32 +455,53 @@ def __db_install(schema, dbrev):
     ##
     if schema_writable == True and madlib_exists == True:
 
-        __info("***************************************************************************", True)
-        __info("* Schema %s already exists" % schema.upper(), True)
-        __info("* Installer will rename it to %s" % temp_schema.upper(), True)
-        __info("***************************************************************************", True)
-        __info("Would you like to continue? [Y/N]", True)
-        go = raw_input('>>> ').upper()
-        while go != 'Y' and go != 'N':
-            go = raw_input('Yes or No >>> ').upper()
-        if go == 'N':
-            __info('Installation stopped.', True)
-            return
+        global portid
 
-        # Rename MADlib schema
-        __db_rename_schema(schema, temp_schema)
+        # work-around before UDT is available in HAWQ
+        if portid == 'hawq' and schema.upper() == 'MADLIB':
+            __info("***************************************************************************", True)
+            __info("* Schema MADLIB already exists", True)
+            __info("* In HAWQ port, MADlib objects will be add to the MADLIB schema", True)
+            __info("***************************************************************************", True)
+            __info("Would you like to continue? [Y/N]", True)
+            go = raw_input('>>> ').upper()
+            while go != 'Y' and go != 'N':
+                go = raw_input('Yes or No >>> ').upper()
+            if go == 'N':
+                __info('Installation stopped.', True)
+                return
 
-        # Create MADlib schema
-        try:
-            __db_create_schema(schema)
-        except:
-            __db_rollback(schema, temp_schema)
+            try:
+                __db_create_objects(schema, temp_schema, testcase=testcase, hawq_debug=True)
+            except:
+                __db_rollback(schema, temp_schema)
+        else:
+            __info("***************************************************************************", True)
+            __info("* Schema %s already exists" % schema.upper(), True)
+            __info("* Installer will rename it to %s" % temp_schema.upper(), True)
+            __info("***************************************************************************", True)
+            __info("Would you like to continue? [Y/N]", True)
+            go = raw_input('>>> ').upper()
+            while go != 'Y' and go != 'N':
+                go = raw_input('Yes or No >>> ').upper()
+            if go == 'N':
+                __info('Installation stopped.', True)
+                return
 
-        # Create MADlib objects
-        try:
-            __db_create_objects(schema, temp_schema)
-        except:
-            __db_rollback(schema, temp_schema)
+            # Rename MADlib schema
+            __db_rename_schema(schema, temp_schema)
+
+            # Create MADlib schema
+            try:
+                __db_create_schema(schema)
+            except:
+                __db_rollback(schema, temp_schema)
+
+            # Create MADlib objects
+            try:
+                __db_create_objects(schema, temp_schema, testcase=testcase)
+            except:
+                __db_rollback(schema, temp_schema)
 
     ##
     # CASE #2: Target schema exists w/o MADlib objects:
@@ -479,7 +512,7 @@ def __db_install(schema, dbrev):
 
         # Create MADlib objects
         try:
-            __db_create_objects(schema, None)
+            __db_create_objects(schema, None, testcase=testcase)
         except:
             __error("Building database objects failed. " +
                     "Before retrying: drop %s schema OR install MADlib into a different schema." % schema.upper(), True)
@@ -499,7 +532,7 @@ def __db_install(schema, dbrev):
 
         # Create MADlib objects
         try:
-            __db_create_objects(schema, None)
+            __db_create_objects(schema, None, testcase=testcase)
         except:
             __db_rollback(schema, None)
 
@@ -644,11 +677,12 @@ def __db_create_schema(schema):
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Create MADlib DB objects in the schema
-# @param schema name of the target schema
+# @param schema Name of the target schema
 # @param sc ScriptCleaner object
+# @param testcase Command-line args for modules to install
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_create_objects(schema, old_schema, upgrade=False, sc=None):
-    if not upgrade:
+def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="", hawq_debug=False):
+    if not upgrade and not hawq_debug:
         # Create MigrationHistory table
         try:
             __info("> Creating %s.MigrationHistory table" % schema.upper(), True)
@@ -686,11 +720,30 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None):
     else:
         __info("> Creating objects for modules:", True)
 
+    caseset = set([test.strip()
+        for test in testcase.split(',')]) if testcase != "" else set()
+
+    modset = {}
+    for case in caseset:
+        if case.find('/') > -1:
+            [mod, algo] = case.split('/')
+            if mod not in modset:
+                modset[mod] = []
+            if algo not in modset[mod]:
+                modset[mod].append(algo)
+        else:
+            modset[case] = []
+
     # Loop through all modules/modules
     for moduleinfo in portspecs['modules']:
 
         # Get the module name
         module = moduleinfo['name']
+
+        # Skip if doesn't meet specified modules
+        if modset is not None and len(modset) > 0 and module not in modset:
+            continue
+
         __info("> - %s" % module, True)
 
         # Find the Python module dir (platform specific or generic)
@@ -722,6 +775,10 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None):
 
         # Execute all SQL files for the module
         for sqlfile in sql_files:
+            algoname = os.path.basename(sqlfile).split('.')[0]
+            if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
+                continue
+
             # Set file names
             tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
             logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
@@ -906,7 +963,7 @@ def main(argv):
         (c_user, c_pass, c_host, c_port, c_db) = parseConnectionStr(connStr)
 
         # Find the default values for PG and GP
-        if portid == 'postgres' or portid == 'greenplum':
+        if portid in ('postgres', 'greenplum', 'hawq'):
             if c_user is None:
                 c_user = os.environ.get('PGUSER', getpass.getuser())
             if c_pass is None:
@@ -1080,14 +1137,14 @@ def main(argv):
 
         # 1) Compare OS and DB versions. Continue if OS > DB.
         __print_revs(rev, dbrev, con_args, schema)
-        if __get_rev_num(dbrev) >= __get_rev_num(rev):
+        if __get_rev_num(dbrev) >= __get_rev_num(rev) and portid != 'hawq':
             __info("Current MADlib version already up to date.", True)
             return
 
         # 2) Run installation
         try:
             __plpy_check(py_min_ver)
-            __db_install(schema, dbrev)
+            __db_install(schema, dbrev, args.testcase)
         except:
             __error("MADlib installation failed.", True)
 
