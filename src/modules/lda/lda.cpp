@@ -617,6 +617,24 @@ AnyType lda_perplexity_ffunc::run(AnyType & args){
     return *perp;
 } 
 
+AnyType l1_norm_with_smoothing::run(AnyType & args){
+    MutableArrayHandle<double> arr = args[0].getAs<MutableArrayHandle<double> >();
+    double smooth = args[1].getAs<double>();
+    smooth = abs(smooth);
+
+    double sum = 0.0;
+    for(size_t i = 0; i < arr.size(); i++)
+        sum += abs(arr[i]);
+    sum += smooth * arr.size();
+
+    double inverse_sum = 0.0;
+    if (sum != 0.0)
+        inverse_sum = 1.0 / sum;
+    for(size_t i = 0; i < arr.size(); i++)
+        arr[i] = (arr[i] + smooth) * inverse_sum;
+    return arr;
+}
+
 }
 }
 }

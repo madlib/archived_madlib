@@ -450,12 +450,11 @@ def __db_install(schema, dbrev, testcase):
     except:
         schema_writable = False
 
+    global portid
     ##
     # CASE #1: Target schema exists with MADlib objects:
     ##
     if schema_writable == True and madlib_exists == True:
-
-        global portid
 
         # work-around before UDT is available in HAWQ
         if portid == 'hawq' and schema.upper() == 'MADLIB':
@@ -472,9 +471,9 @@ def __db_install(schema, dbrev, testcase):
                 return
 
             try:
-                __db_create_objects(schema, temp_schema, testcase=testcase, hawq_debug=True)
+                __db_create_objects(schema, None, testcase=testcase, hawq_debug=True)
             except:
-                __db_rollback(schema, temp_schema)
+                __db_rollback(None, None)
         else:
             __info("***************************************************************************", True)
             __info("* Schema %s already exists" % schema.upper(), True)
@@ -506,16 +505,27 @@ def __db_install(schema, dbrev, testcase):
     ##
     # CASE #2: Target schema exists w/o MADlib objects:
     ##
+    ##
+    # For HAWQ, after the DB initialization, there is no
+    # madlib.migrationhistory table, thus madlib_exists is False
+    ##
     elif schema_writable == True and madlib_exists == False:
+        # work-around before UDT is available in HAWQ
+        if portid == 'hawq' and schema.upper() == 'MADLIB':
+            __info("> Schema %s exists w/ pre-built MADlib objects" % schema.upper(), verbose)
+            try:
+                __db_create_objects(schema, None, testcase=testcase, hawq_fresh=True)
+            except:
+                __db_rollback(None, None)
+        else:
+            __info("> Schema %s exists w/o MADlib objects" % schema.upper(), verbose)
 
-        __info("> Schema %s exists w/o MADlib objects" % schema.upper(), verbose)
-
-        # Create MADlib objects
-        try:
-            __db_create_objects(schema, None, testcase=testcase)
-        except:
-            __error("Building database objects failed. " +
-                    "Before retrying: drop %s schema OR install MADlib into a different schema." % schema.upper(), True)
+            # Create MADlib objects
+            try:
+                __db_create_objects(schema, None, testcase=testcase)
+            except:
+                __error("Building database objects failed. " +
+                        "Before retrying: drop %s schema OR install MADlib into a different schema." % schema.upper(), True)
 
     ##
     # CASE #3: Target schema does not exist:
@@ -681,7 +691,7 @@ def __db_create_schema(schema):
 # @param sc ScriptCleaner object
 # @param testcase Command-line args for modules to install
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="", hawq_debug=False):
+def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="", hawq_debug=False, hawq_fresh=False):
     if not upgrade and not hawq_debug:
         # Create MigrationHistory table
         try:
@@ -776,6 +786,10 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
         # Execute all SQL files for the module
         for sqlfile in sql_files:
             algoname = os.path.basename(sqlfile).split('.')[0]
+            if (hawq_debug or hawq_fresh) and algoname in \
+                    ('logistic', 'robust', 'clustered_variance', 'marginal'):
+                continue
+
             if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
                 continue
 
@@ -1259,6 +1273,14 @@ def main(argv):
             # Loop through all test SQL files for this module
             sql_files = maddir_mod_sql + '/' + module + '/test/*.sql_in'
             for sqlfile in sorted(glob.glob(sql_files),reverse=True):
+                # work-around for HAWQ
+                algoname = os.path.basename(sqlfile).split('.')[0]
+                if portid == 'hawq' and algoname in \
+                        ('logistic', 'robust', 'clustered', 'marginal'):
+                    # Spit the line
+                    print "TEST CASE RESULT|Module: " + module + \
+                        "|" + os.path.basename(sqlfile) + "|SKIP"
+                    continue
 
                 result = 'PASS'
 

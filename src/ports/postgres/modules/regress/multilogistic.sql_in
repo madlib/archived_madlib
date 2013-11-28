@@ -412,6 +412,7 @@ File multilogistic.sql_in documenting the multinomial logistic regression functi
 */
 
 
+m4_ifdef(`__HAWQ__',`', `
 DROP TYPE IF EXISTS MADLIB_SCHEMA.mlogregr_result;
 CREATE TYPE MADLIB_SCHEMA.mlogregr_result AS
 (
@@ -426,7 +427,7 @@ CREATE TYPE MADLIB_SCHEMA.mlogregr_result AS
     num_iterations  INTEGER,
     num_processed   INTEGER
 );
-
+')
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mlogregr_irls_step_transition
 (
@@ -466,6 +467,8 @@ LANGUAGE C IMMUTABLE STRICT;
  * @brief Perform one iteration of the iteratively-reweighted-least-squares
  *        method for computing linear regression
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__mlogregr_irls_step(
+    INTEGER, INTEGER, INTEGER, DOUBLE PRECISION [], DOUBLE PRECISION []);
 CREATE AGGREGATE MADLIB_SCHEMA.__mlogregr_irls_step(
     /*+ y */ INTEGER,
     /*+ numCategories */ INTEGER,
@@ -475,7 +478,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__mlogregr_irls_step(
 
     STYPE=DOUBLE PRECISION[],
     SFUNC=MADLIB_SCHEMA.__mlogregr_irls_step_transition,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.__mlogregr_irls_step_merge_states,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__mlogregr_irls_step_merge_states,')
     FINALFUNC=MADLIB_SCHEMA.__mlogregr_irls_step_final,
     INITCOND='{0,0,0,0,0}'
 );
@@ -608,7 +611,7 @@ $$ LANGUAGE SQL VOLATILE;
 -- DEPRECATION NOTICE ----------------------------------------------------------
 -- The function 'mlogregr' has been deprecated and replaced by 'mlogregr_train'
 
-CREATE FUNCTION MADLIB_SCHEMA.__compute_mlogregr
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__compute_mlogregr
 (
     source_table        VARCHAR,
     dependent_varname   VARCHAR,
@@ -684,7 +687,7 @@ $$ LANGUAGE plpythonu VOLATILE STRICT;
  * @sa This function is a wrapper for multilogistic::__compute_mlogregr(), which
  *     sets the default values.
  */
-CREATE FUNCTION MADLIB_SCHEMA.mlogregr
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr
 (
     source              VARCHAR,
     depvar              VARCHAR,
@@ -792,7 +795,7 @@ END;
 $$ LANGUAGE plpgsql VOLATILE;
 
 
-CREATE FUNCTION MADLIB_SCHEMA.mlogregr
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr
 (
     source      VARCHAR,
     depvar      VARCHAR,
@@ -803,7 +806,7 @@ $$
     SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, 20, 'irls', 0.0001, 0);
 $$ LANGUAGE sql VOLATILE;
 
-CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr(
     source              VARCHAR,
     depvar              VARCHAR,
     indepvar            VARCHAR,
@@ -814,7 +817,7 @@ $$
     SELECT MADLIB_SCHEMA.mlogregr($1, $2, $3, $4, 'irls', 0.0001, 0);
 $$ LANGUAGE sql VOLATILE;
 
-CREATE FUNCTION MADLIB_SCHEMA.mlogregr(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr(
     source              VARCHAR,
     depvar              VARCHAR,
     indepvar            VARCHAR,
@@ -941,11 +944,13 @@ $$ LANGUAGE plpythonu VOLATILE;
 
 ----------------------------------------------------------------------
 
+m4_ifdef(`__HAWQ__',`', `
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__mlogregr_cat_coef;
 CREATE TYPE MADLIB_SCHEMA.__mlogregr_cat_coef AS (
     category    INTEGER,
     coef        DOUBLE PRECISION[]
 );
+')
 
 --------------------------------------
 

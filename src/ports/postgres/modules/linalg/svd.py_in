@@ -300,8 +300,22 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
         dt = (t1 - t0) * 1000.
         plpy.execute(
             """
-            UPDATE {result_summary_table} SET \"exec_time (ms)\" = '{dt:.2f}';
-            """.format(result_summary_table=result_summary_table, dt=dt))
+            m4_ifdef(`__HAWQ__',
+                `
+                CREATE TABLE {tmp_result_summary_table} AS
+                SELECT rows_used,
+                       {dt:.2f}::DOUBLE PRECISION AS \"exec_time (ms)\",
+                       recon_error,
+                       relative_recon_error
+                FROM {result_summary_table};
+                DROP TABLE IF EXISTS {result_summary_table};
+                ALTER TABLE {tmp_result_summary_table} RENAME TO {result_summary_table};
+                ',
+                `
+                UPDATE {result_summary_table} SET \"exec_time (ms)\" = {dt:.2f};
+                ')
+            """.format(tmp_result_summary_table=__unique_string(),
+                    result_summary_table=result_summary_table, dt=dt))
 
     plpy.execute("DROP TABLE if exists {x_dense}".format(x_dense=x_dense))
     plpy.execute("DROP TABLE if exists {converted_tbl}"
