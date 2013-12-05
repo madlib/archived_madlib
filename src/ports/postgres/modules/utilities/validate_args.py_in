@@ -197,6 +197,56 @@ def get_cols(tbl, schema_madlib="madlib"):
 #-------------------------------------------------------------------------
 
 
+def get_cols_and_types(tbl, schema_madlib="madlib"):
+    """
+    Get the data types for all columns in a table.
+
+    If the table is schema qualified then the appropriate schema is searched.
+    If no schema qualification is provided then the current schema is used.
+
+    Args:
+        @param tbl: string, Name of the table to search in
+        @param schema_madlib: string, Name of schema in which MADlib is installed
+
+    Returns:
+        Dictionary. Key is the column name and the Value is the data type
+
+    The data type returned will be the type name if it is a built-in type, or
+    'ARRAY' if it is some array. For any other case it will be 'USER-DEFINED'.
+    """
+    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
+
+    if tbl is None or tbl.lower() == 'null':
+        plpy.error('Input error: Table name (NULL) is invalid')
+    if not schema_madlib:
+        plpy.error('Input error: Invalid MADlib schema name')
+
+    names = tbl.split(".")
+
+    if len(names) == 1:
+        return _get_cols_in_current_schema(tbl, schema_madlib)
+    elif len(names) == 2:
+        schema = _unquote_name(names[0])
+        table = _unquote_name(names[1])
+        sql_string = """SELECT {array_agg_string}(column_name::varchar) AS cols,
+                               {array_agg_string}(data_type::varchar) AS types
+                        FROM information_schema.columns
+                        WHERE table_name = '{table_name}'
+                        AND table_schema = '{schema_name}'
+                    """.format(array_agg_string=array_agg_string,
+                               table_name=table,
+                               schema_name=schema)
+        result = plpy.execute(sql_string)[0]
+        col_names = mad_vec(result['cols'])
+        col_types = mad_vec(result['types'])
+
+    else:
+        plpy.error("Input error: Invalid table name - {0}!".format(tbl))
+
+    return dict(zip(col_names, col_types))
+#-------------------------------------------------------------------------
+
+
 def columns_exist_in_table(tbl, cols, schema_madlib="madlib"):
     """
     Does each column exist in the table?
