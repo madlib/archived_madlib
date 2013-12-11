@@ -174,6 +174,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/license"
 install(
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/ReadMe.txt"
+        "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
         "${CMAKE_CURRENT_SOURCE_DIR}/ReleaseNotes.txt"
     DESTINATION doc
     COMPONENT core
