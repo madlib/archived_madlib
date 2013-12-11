@@ -1,8 +1,8 @@
 MADlib Read Me
 --------------
 
-MADlib is an open-source library for scalable in-database analytics. 
-It provides data-parallel implementations of mathematical, statistical 
+MADlib is an open-source library for scalable in-database analytics.
+It provides data-parallel implementations of mathematical, statistical
 and machine learning methods for structured and unstructured data.
 
 See the project web site located at http://madlib.net for links to the latest
@@ -21,7 +21,7 @@ MADlib incorporates material from the following third-party components:
 - argparse 1.2.1 "provides an easy, declarative interface for creating command
   line tools"
   http://code.google.com/p/argparse/
-- Boost 1.46.1 (or newer) "provides peer-reviewed portable C++ source 
+- Boost 1.46.1 (or newer) "provides peer-reviewed portable C++ source
   libraries"
   http://www.boost.org/
 - CERN ROOT is "an object oriented framework for large scale data analysis"
@@ -33,5 +33,21 @@ MADlib incorporates material from the following third-party components:
 - PyYAML 3.10 "is a YAML parser and emitter for Python"
   http://pyyaml.org/wiki/PyYAML
 
-License information regarding MADlib and included third-party libraries can be 
+License information regarding MADlib and included third-party libraries can be
 found inside the license directory.
+
+-------------------------------------------------------------------------
+
+The following list of functions have been deprecated and will be removed on
+upgrading to the next major version:
+    - All overloaded functions 'cox_prop_hazards' and 'cox_prop_hazards_regr'.
+    - All overloaded functions 'mlogregr'.
+    - Overloaded forms of function 'robust_variance_mlogregr' that accept
+    individual optimizer parameters (max_iter, optimizer, tolerance). These
+    parameters have been replaced with a single optimizer parameter.
+    - Overloaded forms of function 'clusterd_variance_mlogregr' that accept
+    individual optimizer parameters (max_iter, optimizer, tolerance).  These
+    parameters have been replaced with a single optimizer parameter.
+    - Overloaded forms of function 'margins_mlogregr' that accept
+    individual optimizer parameters (max_iter, optimizer, tolerance).  These
+    parameters have been replaced with a single optimizer parameter.
