@@ -55,8 +55,7 @@ Papers and Talks
 
 Related Software
 =================
-* [`PivotalR`](https://github.com/madlib-internal/PivotalR) - PivotalR also lets
-the user to run the functions of the open-source big-data machine learning
+* [`PivotalR`](https://github.com/madlib-internal/PivotalR) - PivotalR also lets the user run the functions of the open-source big-data machine learning
 package `MADlib` directly from R.
 * [`PyMADlib`](https://github.com/gopivotal/pymadlib) - PyMADlib is a python
 wrapper for MADlib, which brings you the power and flexibility of python
