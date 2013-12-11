@@ -3,7 +3,7 @@ from utilities import __mad_version
 import re
 
 version_wrapper = __mad_version()
-mad_vec = version_wrapper.select_vecfunc()
+_string_to_array = version_wrapper.select_vecfunc()
 
 # Postgresql naming restrictions
 """
@@ -75,8 +75,8 @@ def _get_table_schema_names(tbl):
         plpy.error('Input error: Table name (NULL) is invalid')
     names = tbl.split(".")
     if len(names) == 1:
-        all_schemas = mad_vec(plpy.execute("SELECT current_schemas(True) ""AS cs"
-                                           )[0]["cs"])
+        all_schemas = _string_to_array(plpy.execute(
+            "SELECT current_schemas(True) ""AS cs")[0]["cs"])
         schema_str = "('{0}')".format("','".join(_unquote_name(s)
                                                  for s in all_schemas))
         table = _unquote_name(names[0])
@@ -103,19 +103,116 @@ def table_exists(tbl):
     """
     schema_str, table = _get_table_schema_names(tbl)
     if schema_str and table:
-        does_table_exist = plpy.execute("""
-                                        SELECT EXISTS(
-                                            SELECT 1 FROM information_schema.tables
-                                            WHERE table_name = '{table}'
-                                            AND table_schema IN {schema_str})
-                                        AS table_exists
-                                        """.format(table=table,
-                                                   schema_str=schema_str)
-                                        )[0]['table_exists']
+        does_table_exist = plpy.execute(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = '{table}'
+                AND table_schema IN {schema_str})
+            AS table_exists
+            """.format(table=table,
+                       schema_str=schema_str))[0]['table_exists']
         return bool(does_table_exist)
     else:
         return False
 #-------------------------------------------------------------------------
+
+
+def rename_table(schema_madlib, orig_name, new_name):
+    """
+    Renames possibly schema qualified table name to a new schema qualified name
+    ensuring the schema qualification are changed appropriately
+
+    Args:
+        @param orig_name: string, Original name of the table
+                          (must be schema qualified if table schema is not in search path)
+        @param new_name: string, New name of the table
+                          (can be schema qualified. If it is not then the original
+                           schema is maintained)
+    Returns:
+        String. The new table name qualified with the schema name
+    """
+    new_names_split = new_name.split(".")
+    if len(new_names_split) > 2:
+        raise AssertionError("Invalid table name")
+    new_table_name = new_names_split[-1]
+    new_table_schema = new_names_split[0] if len(new_names_split) > 1 else None
+
+    orig_names_split = orig_name.split(".")
+    if len(orig_names_split) > 2:
+        raise AssertionError("Invalid table name")
+
+    if len(orig_names_split) > 1:
+        orig_table_schema = orig_names_split[0]
+    else:
+        ## we need to get the schema name of the original table if we are
+        ## to change the schema of the new table. This is to ensure that we
+        ## change the schema of the correct table in case there are multiple
+        ## tables with the same new name.
+        orig_table_schema = get_first_schema(schema_madlib, orig_name)
+
+    if orig_table_schema is None:
+        raise AssertionError("Relation {0} not found during rename".
+                             format(orig_name))
+
+    plpy.execute("ALTER TABLE {orig_table} RENAME TO {new_table}".
+                 format(orig_table=orig_name, new_table=new_table_name))
+
+    if new_table_schema:
+        if new_table_schema != orig_table_schema:
+            ## set schema only if a change in schema is required
+            before_schema_string = "{0}.{1}".format(orig_table_schema,
+                                                    new_table_name)
+            plpy.execute("""ALTER TABLE {new_table}
+                            SET SCHEMA {schema_name}""".
+                         format(new_table=before_schema_string,
+                                schema_name=new_table_schema))
+        return new_name
+    else:
+        return orig_table_schema + "." + new_table_name
+# -------------------------------------------------------------------------
+
+
+def get_first_schema(schema_madlib, table_name):
+    """
+    Return first schema name from search path that contains given table.
+    The search does not include implicit schemas (like pg_catalog)
+
+    Args:
+        @param schema_madlib: String, schema where MADlib is installed
+        @param table_name: String, table name to search
+
+    Returns:
+        String, schema name if a schema containing the table is found.
+        None, if none of the schemas in search path contain the table.
+    """
+    ## create a list of schema names in search path
+    current_schemas = _string_to_array(plpy.execute(
+        "SELECT current_schemas(True) AS cs")[0]["cs"])
+
+    if not current_schemas:
+        return None
+
+    ## get all schemas that contain a table with this name
+    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
+    schemas_w_table = _string_to_array(plpy.execute(
+        """SELECT {array_agg}(table_schema::text) AS schemas
+           FROM information_schema.tables
+           WHERE table_name='{table_name}'""".
+        format(array_agg=array_agg_string,
+               table_name=table_name))[0]["schemas"])
+
+    if not schemas_w_table:
+        return None
+
+    for each_schema in current_schemas:
+    ## get the first schema in search path that contains the table
+        if each_schema in schemas_w_table:
+            return each_schema
+
+    ## None of the schemas in search path have the table
+    return None
+# -------------------------------------------------------------------------
 
 
 def table_is_empty(tbl):
@@ -142,7 +239,7 @@ def _get_cols_in_current_schema(tbl, schema_madlib="madlib"):
     """
     schema = plpy.execute("select current_schemas(True) as cs")[0]["cs"]
     # special handling for array in GPDB <= 4.1
-    schema = mad_vec(schema)
+    schema = _string_to_array(schema)
     array_agg_string = version_wrapper.select_array_agg(schema_madlib)
     sql_string = "SELECT " + array_agg_string + \
                  """(column_name::varchar) AS cols
@@ -156,7 +253,7 @@ def _get_cols_in_current_schema(tbl, schema_madlib="madlib"):
         existing_cols = plpy.execute(sql_string.format(table_name=tbl,
                                                        s=s))[0]["cols"]
         if existing_cols is not None:
-            return mad_vec(existing_cols)
+            return _string_to_array(existing_cols)
     return None
 #-------------------------------------------------------------------------
 
@@ -193,7 +290,7 @@ def get_cols(tbl, schema_madlib="madlib"):
     else:
         plpy.error("Input error: Invalid table name - {0}!".format(tbl))
 
-    return mad_vec(existing_cols)
+    return _string_to_array(existing_cols)
 #-------------------------------------------------------------------------
 
 
@@ -237,8 +334,8 @@ def get_cols_and_types(tbl, schema_madlib="madlib"):
                                table_name=table,
                                schema_name=schema)
         result = plpy.execute(sql_string)[0]
-        col_names = mad_vec(result['cols'])
-        col_types = mad_vec(result['types'])
+        col_names = _string_to_array(result['cols'])
+        col_types = _string_to_array(result['types'])
 
     else:
         plpy.error("Input error: Invalid table name - {0}!".format(tbl))
@@ -260,7 +357,6 @@ def columns_exist_in_table(tbl, cols, schema_madlib="madlib"):
         True if all columns in 'cols' exist in source table else False
     """
     existing_cols = set(get_cols(tbl, schema_madlib))
-
     for col in cols:
         col = _unquote_name(col)
         if not col or col not in existing_cols:

@@ -8,6 +8,7 @@ from utilities.utilities import __unique_string
 from utilities.utilities import _string_to_array
 from utilities.utilities import extract_optimizer_param
 from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import rename_table
 from utilities.validate_args import table_is_empty
 from utilities.validate_args import table_exists
 from utilities.utilities import _assert
@@ -114,16 +115,13 @@ def clustered_variance_linregr(schema_madlib, source_table, out_table,
         """.format(schema_madlib=schema_madlib, source_table=source_table,
                    fitres=fitres, depvar=depvar, indvar=indvar,
                    grouping_col=grouping_col_str))
+    # Rename the output summary table
+    rename_table(schema_madlib,
+                 "{old}_summary".format(old=fitres),
+                 "{new}_summary".format(new=out_table))
 
-    plpy.execute(
-        """
-        alter table {fitres}_summary rename to {out_table}_summary;
-        """.format(fitres=fitres, out_table=out_table))
-
-    plpy.execute(
-        """
-        update {out_table}_summary set out_table = '{out_table}'
-        """.format(out_table=out_table))
+    plpy.execute("UPDATE {out_table}_summary SET out_table = '{out_table}'".
+                 format(out_table=out_table))
 
     plpy.execute(
         __generate_clustered_sql(schema_madlib=schema_madlib, depvar=depvar,
@@ -336,15 +334,13 @@ def clustered_variance_logregr(schema_madlib, source_table, out_table,
     else:
         plpy.execute("set client_min_messages to error")
 
-    plpy.execute(
-        """
-        alter table {fitres}_summary rename to {out_table}_summary;
-        """.format(fitres=fitres, out_table=out_table))
+    # Rename the output summary table
+    rename_table(schema_madlib,
+                 "{old}_summary".format(old=fitres),
+                 "{new}_summary".format(new=out_table))
 
-    plpy.execute(
-        """
-        update {out_table}_summary set out_table = '{out_table}'
-        """.format(out_table=out_table))
+    plpy.execute("UPDATE {out_table}_summary SET out_table = '{out_table}'".
+                 format(out_table=out_table))
 
     plpy.execute(
         __generate_clustered_sql(schema_madlib=schema_madlib, depvar=depvar,
@@ -353,12 +349,9 @@ def clustered_variance_logregr(schema_madlib, source_table, out_table,
                                  cluster_grouping_str=cluster_grouping_str,
                                  out_table=out_table, regr_type="log"))
 
-    plpy.execute(
-        """
-        drop table if exists {fitres}
-        """.format(fitres=fitres))
+    plpy.execute("DROP TABLE IF EXISTS {fitres}".format(fitres=fitres))
+    plpy.execute("SET client_min_messages TO " + old_msg_level)
 
-    plpy.execute("set client_min_messages to " + old_msg_level)
     return None
 # ========================================================================
 
@@ -523,13 +516,12 @@ def clustered_variance_mlogregr(
                    ref_category=ref_category, **optimizer_param_dict))
 
     # Rename the output summary table
-    plpy.execute("""
-        ALTER TABLE {fitres}_summary RENAME TO {out_table}_summary
-        """.format(fitres=fitres, out_table=out_table))
-    plpy.execute(
-        """
-        UPDATE {out_table}_summary SET out_table = '{out_table}'
-        """.format(out_table=out_table))
+    rename_table(schema_madlib,
+                 "{old}_summary".format(old=fitres),
+                 "{new}_summary".format(new=out_table))
+
+    plpy.execute("UPDATE {out_table}_summary SET out_table = '{out_table}'".
+                 format(out_table=out_table))
 
     coef_table = __unique_string()
     plpy.execute("""
@@ -589,10 +581,14 @@ def clustered_variance_mlogregr(
         FROM
             {out_table};
         DROP TABLE IF EXISTS {out_table};
-        ALTER TABLE {tmp_table} RENAME TO {out_table}
         """.format(schema_madlib=schema_madlib, tmp_table=tmp_table,
-            num_features=num_features, num_categories=num_categories,
-            ref_category=ref_category, out_table=out_table))
+                   num_features=num_features, num_categories=num_categories,
+                   ref_category=ref_category, out_table=out_table))
+
+    # Rename the output table
+    rename_table(schema_madlib,
+                 "{old}".format(old=tmp_table),
+                 "{new}".format(new=out_table))
 
     plpy.execute("set client_min_messages to " + old_msg_level)
     return None

@@ -11,12 +11,7 @@
 import plpy
 from utilities.utilities import _assert
 from utilities.utilities import __unique_string
-from utilities.utilities import _string_to_array
-from utilities.utilities import _array_to_string
-
-from utilities.validate_args import table_exists
-from utilities.validate_args import table_is_empty
-from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import rename_table
 
 # use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
 from utilities.utilities import __mad_version
@@ -26,21 +21,23 @@ array_to_string = version_wrapper.select_vec_return()
 
 from regress.robust_linear import _robust_linregr_validate
 
+
 def _robust_logregr_validate(max_iter, optimizer, tolerance, **kwargs):
     _assert(max_iter is not None,
-        "Robust Variance error: The max_iter should not be NULL!")
+            "Robust Variance error: The max_iter should not be NULL!")
     _assert(max_iter > 0,
-        "Robust Variance error: Maximum number of iterations must be positive!")
+            "Robust Variance error: Maximum number of iterations must be positive!")
 
     _assert(tolerance is not None,
-        "Robust Variance error: The tolerance should not be NULL!")
+            "Robust Variance error: The tolerance should not be NULL!")
     _assert(tolerance >= 0,
-         "Robust Variance error: The tolerance cannot be negative!")
+            "Robust Variance error: The tolerance cannot be negative!")
 
     _assert(optimizer is not None,
-        "Robust Variance error: The optimizer should not be NULL!")
+            "Robust Variance error: The optimizer should not be NULL!")
     _assert(optimizer.lower() in ("irls", "newton"),
-        "Robust Variance error: Optimizer does not exist.  Must be 'newton'/'irls'.")
+            "Robust Variance error: Optimizer does not exist.  Must be 'newton'/'irls'.")
+
 
 def robust_logregr_help(schema_madlib, message,  **kwargs):
     if not message:
@@ -144,19 +141,20 @@ def robust_variance_logregr(
             '{dependent_varname}', '{independent_varname}', {group_col_str},
             {maxiter_str}, {optimizer_str}, {tolerance_str}, {verbose})
         """.format(schema_madlib=schema_madlib, source_table=source_table,
-                logr_out_table=logr_out_table, dependent_varname=dependent_varname,
-                independent_varname=independent_varname, group_col_str=group_col_str,
-                maxiter_str=maxiter_str, optimizer_str=optimizer_str,
-                tolerance_str=tolerance_str, verbose=verbose))
+                   logr_out_table=logr_out_table,
+                   dependent_varname=dependent_varname,
+                   independent_varname=independent_varname,
+                   group_col_str=group_col_str,
+                   maxiter_str=maxiter_str, optimizer_str=optimizer_str,
+                   tolerance_str=tolerance_str, verbose=verbose))
 
     # Rename the output summary table
-    plpy.execute("""
-        ALTER TABLE {logr_out_table}_summary RENAME TO {out_table}_summary
-        """.format(logr_out_table=logr_out_table, out_table=out_table))
-    plpy.execute(
-        """
-        UPDATE {out_table}_summary SET out_table = '{out_table}'
-        """.format(out_table=out_table))
+    rename_table(schema_madlib,
+                 "{old}_summary".format(old=logr_out_table),
+                 "{new}_summary".format(new=out_table))
+
+    plpy.execute("""UPDATE {out_table}_summary
+                    SET out_table = '{out_table}'""".format(out_table=out_table))
 
     # Run robust logistic regression
     plpy.execute("""
@@ -178,12 +176,12 @@ def robust_variance_logregr(
             {group_str}
         ) t1
         """.format(schema_madlib=schema_madlib,
-                source_table=source_table, out_table=out_table,
-                dependent_varname=dependent_varname,
-                independent_varname=independent_varname,
-                group_str_sel=group_str_sel, group_str=group_str,
-                join_str=join_str, using_str=using_str,
-                logr_out_table=logr_out_table, rb_model=rb_model))
+                   source_table=source_table, out_table=out_table,
+                   dependent_varname=dependent_varname,
+                   independent_varname=independent_varname,
+                   group_str_sel=group_str_sel, group_str=group_str,
+                   join_str=join_str, using_str=using_str,
+                   logr_out_table=logr_out_table, rb_model=rb_model))
 
     # Drop the output table of logregr_train()
     plpy.execute('DROP TABLE IF EXISTS ' + logr_out_table)

@@ -61,7 +61,8 @@ def _validate_args(schema_madlib,
 
     """
     _assert(source_table is not None and table_exists(source_table),
-            "PCA error: Source data table does not exist!")
+            "PCA error: Source data table {0} does not exist!".
+            format(str(source_table)))
 
     if k <= 0:
         plpy.error("PCA error: k must be a positive integer!")
@@ -101,7 +102,7 @@ def _validate_args(schema_madlib,
                 format(source_table, col_id))
         _assert(columns_exist_in_table(source_table, [val_id], schema_madlib),
                 "PCA error: {1} column does not exist in {0}!".
-                format(source_table, row_id))
+                format(source_table, val_id))
 
         if not col_dim:
             plpy.error("PCA error: Column dimensions should be provided if \
@@ -163,7 +164,7 @@ def _recenter_data(schema_madlib,
     # Step 2: Rescale the matrices
     plpy.execute(
         """
-        CREATE TEMP TABLE {output_table} AS
+        CREATE TABLE {output_table} AS
             SELECT
                 {row_id} as row_id,
                 ({schema_madlib}.utils_normalize_data(
@@ -263,24 +264,17 @@ def pca_sparse(schema_madlib,
     plpy.execute("""
         SELECT {schema_madlib}.matrix_densify(
             '{sparse_temp}', 'row_id', 'col_id', 'value',
-            '{x_dense}', True)
+            '{x_dense}', False)
         """.format(schema_madlib=schema_madlib, sparse_temp=sparse_temp,
                    x_dense=x_dense))
 
     #Step 3: Pass the densified matrix to regular PCA
-    pca(schema_madlib,
-        x_dense,
-        pc_table,
-        row_id,
-        k,
-        grouping_cols,
-        lanczos_iter,
-        use_correlation,
+    pca(schema_madlib, x_dense, pc_table, row_id,
+        k, grouping_cols, lanczos_iter, use_correlation,
         result_summary_table)
 
     #Step 4: Clean up
-    plpy.execute(
-        """
+    plpy.execute("""
         DROP TABLE IF EXISTS {x_dense};
         DROP TABLE IF EXISTS {sparse_temp};
         """.format(x_dense=x_dense, sparse_temp=sparse_temp))
@@ -394,11 +388,10 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                        result_summary_table_string=result_summary_table_string))
         # Step 5: Transpose SVD output matrix
         svd_v_transpose = __unique_string() + "transpose"
-
         plpy.execute(
             """
             SELECT  {schema_madlib}.matrix_trans('{svd_output_temp_table}_v',
-                    '{svd_v_transpose}', TRUE);
+                    '{svd_v_transpose}', False);
             """.format(svd_output_temp_table=svd_output_temp_table,
                        svd_v_transpose=svd_v_transpose,
                        schema_madlib=schema_madlib)
@@ -515,10 +508,10 @@ def pca_sparse_help_message(schema_madlib, message=None, **kwargs):
             prin_comp           -- FLOAT[], The principal components
             eigen_values        -- FLOAT[]  The eigenvalues associated with each principal component
 
-        A secondary output table named "pc_table"_mean is also generated.  
+        A secondary output table named "pc_table"_mean is also generated.
         This table has only the single column:
             column_mean         -- FLOAT[], The column means of the input data
-        
+
         -------------------------------------------------------------------------
                             RESULT SUMMARY TABLE
         -------------------------------------------------------------------------
@@ -587,8 +580,8 @@ def pca_help_message(schema_madlib, message=None, **kwargs):
             row_id              -- INTEGER, The ranking of the eigenvalues
             prin_comp           -- FLOAT[], The principal components
             eigen_values        -- FLOAT[]  The eigenvalues associated with each principal component
-        
-        A secondary output table named "pc_table"_mean is also generated.  
+
+        A secondary output table named "pc_table"_mean is also generated.
         This table has only the single column:
             column_mean         -- FLOAT[], The column means of the input data
         -------------------------------------------------------------------------
