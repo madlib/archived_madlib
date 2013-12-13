@@ -511,6 +511,10 @@ def __db_install(schema, dbrev):
 # @param dbrev DB-level MADlib version
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __db_upgrade(schema, dbrev):
+    if __get_rev_num(dbrev) >= __get_rev_num(rev):
+        __info("Current MADlib version already up to date.", True)
+        return
+
     __info("Upgrading MADlib into %s schema..." % schema.upper(), True)
     __info("\tDetecting dependencies...", True)
 
