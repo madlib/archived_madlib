@@ -9,3 +9,4 @@
 #include "average.hpp"
 #include "matrix_agg.hpp"
 #include "metric.hpp"
+#include "crossprod.hpp"

@@ -1,0 +1,4 @@
+
+DECLARE_UDF(linalg, __pivotalr_crossprod_transition)
+DECLARE_UDF(linalg, __pivotalr_crossprod_merge)
+DECLARE_UDF(linalg, __pivotalr_crossprod_sym_transition)
