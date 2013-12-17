@@ -204,6 +204,20 @@ closest_column::run(AnyType& args) {
         << std::get<1>(result);
 }
 
+AnyType
+closest_column_hawq::run(AnyType& args) {
+    MappedMatrix M = args[0].getAs<MappedMatrix>();
+    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+
+    std::tuple<Index, double> result;
+    closestColumnsAndDistances(M, x, squaredDistNorm2, &result, &result + 1);
+
+    AnyType tuple;
+    return tuple
+        << static_cast<int32_t>(std::get<0>(result))
+        << std::get<1>(result);
+}
+
 /**
  * @brief Compute the minimum distance between a vector and any column of a
  *     matrix
@@ -235,6 +249,29 @@ closest_columns::run(AnyType& args) {
     return tuple << indices << distances;
 }
 
+AnyType
+closest_columns_hawq::run(AnyType& args) {
+    MappedMatrix M = args[0].getAs<MappedMatrix>();
+    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    uint32_t num = args[2].getAs<uint32_t>();
+
+    if (0 == num) {
+        throw std::invalid_argument("the parameter number should be a positive integer"); 
+    }
+
+    std::vector<std::tuple<Index, double> > result(num);
+    closestColumnsAndDistances(M, x, squaredDistNorm2, result.begin(), result.end());
+
+    MutableArrayHandle<int32_t> indices = allocateArray<int32_t,
+        dbal::FunctionContext, dbal::DoNotZero, dbal::ThrowBadAlloc>(num);
+    MutableArrayHandle<double> distances = allocateArray<double,
+        dbal::FunctionContext, dbal::DoNotZero, dbal::ThrowBadAlloc>(num);
+    for (uint32_t i = 0; i < num; ++i)
+        std::tie(indices[i], distances[i]) = result[i];
+
+    AnyType tuple;
+    return tuple << indices << distances;
+}
 
 AnyType
 norm1::run(AnyType& args) {

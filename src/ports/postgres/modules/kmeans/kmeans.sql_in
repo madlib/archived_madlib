@@ -364,12 +364,14 @@ File kmeans.sql_in documenting the k-Means SQL functions
  *    different centroid in the current iteration.
  *  - <tt>num_iterations</tt> - Number of iterations performed (so far).
  */
+m4_ifdef(`__HAWQ__', `', `
 CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
     centroids DOUBLE PRECISION[][],
     objective_fn DOUBLE PRECISION,
     frac_reassigned DOUBLE PRECISION,
     num_iterations INTEGER
 );
+')
 
 /*
  * @brief k-Means inter-iteration state type
@@ -383,12 +385,14 @@ CREATE TYPE MADLIB_SCHEMA.kmeans_result AS (
  *    previous iteration.
  *  - <tt>num_iterations</tt> - Number of iterations performed (so far).
  */
+m4_ifdef(`__HAWQ__', `', `
 CREATE TYPE MADLIB_SCHEMA.kmeans_state AS (
     centroids DOUBLE PRECISION[][],
     old_centroid_ids INTEGER[],
     objective_fn DOUBLE PRECISION,
     frac_reassigned DOUBLE PRECISION
 );
+')
 
 /**
  * @internal
@@ -655,9 +659,11 @@ DECLARE
     num_centroids INTEGER;
     rel_filtered VARCHAR;
 BEGIN
-    rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
-    class_rel_source := rel_filtered;
-
+    m4_ifdef(`__HAWQ__',
+    `class_rel_source := rel_source;',
+    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;')
+    
     IF (initial_centroids IS NOT NULL) THEN
 	num_centroids := array_upper(initial_centroids,1);
     ELSE
@@ -1149,7 +1155,7 @@ BEGIN
     EXECUTE 'SET client_min_messages TO warning';
     EXECUTE 'DROP VIEW IF EXISTS _madlib_'||rel_source_filtered||'_filtered';
     EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered;
-    EXECUTE 'CREATE TEMP VIEW '||rel_source_filtered||'
+    EXECUTE 'CREATE VIEW '||rel_source_filtered||'
              AS SELECT * FROM '||rel_source||'
                     WHERE abs(
                               coalesce(
@@ -1359,13 +1365,20 @@ BEGIN
                     ELSE (distances[2] - distances[1]) / distances[2]
                 END)
         FROM (
-            SELECT
+            m4_ifdef(`__HAWQ__',
+            `SELECT
+                (MADLIB_SCHEMA.closest_columns_hawq(
+                    $1,
+                    ($sql$ || expr_point || $sql$)::FLOAT8[],
+                    2::INTEGER
+                )).distances',
+            `SELECT
                 (MADLIB_SCHEMA.closest_columns(
                     $1,
                     ($sql$ || expr_point || $sql$)::FLOAT8[],
                     2::INTEGER,
                     $2
-                )).distances
+                )).distances')
             FROM
                 $sql$ || textin(regclassout(class_rel_source)) || $sql$
         ) AS two_shortest_distances
@@ -1386,3 +1399,18 @@ AS $$
     SELECT MADLIB_SCHEMA.simple_silhouette($1, $2, $3,
         'MADLIB_SCHEMA.dist_norm2')
 $$;
+
+-------------------Only for In-Memory Iteration Controller-----------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__array_to_1d(
+    in_array    DOUBLE PRECISION[][]
+)
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'array_to_1d'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__array_to_2d(
+    in_array    DOUBLE PRECISION[]
+)
+RETURNS DOUBLE PRECISION[][]
+AS 'MODULE_PATHNAME', 'array_to_2d'
+LANGUAGE C STRICT;

@@ -1660,8 +1660,6 @@ marginal_logregr_step_final::run(AnyType &args) {
 
 // ------------------------ End of Marginal ------------------------------------
 
-
-
 } // namespace regress
 
 } // namespace modules

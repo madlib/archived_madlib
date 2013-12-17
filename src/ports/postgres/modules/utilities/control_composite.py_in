@@ -40,7 +40,7 @@ class MinWarning:
             SET client_min_messages = {oldMsgLevel};
             """.format(oldMsgLevel = self.oldMsgLevel))
 
-class IterationController:
+class IterationControllerComposite:
     """
     @brief Abstraction for implementing driver functions in PL/Python
 
@@ -80,8 +80,8 @@ class IterationController:
         self.inWith = False
         self.iteration = -1
         m4_ifdef(>>>__HAWQ__<<<, >>>
-        self.new_state = {"_iteration":0, "_state":None}
-        self.old_state = {"_iteration":0, "_state":None}
+        self.new_state = None
+        self.old_state = None
         <<<)
 
     def __enter__(self):
@@ -103,9 +103,14 @@ class IterationController:
         m4_ifdef(>>>__HAWQ__<<<, >>>
         insert_plan = plpy.prepare("""
             INSERT INTO {rel_state} 
-            SELECT $1, {schema_madlib}.__array_to_2d($2)
-            """.format(**self.kwargs), [ "INTEGER", "DOUBLE PRECISION[]" ])
-        plpy.execute(insert_plan, [ self.new_state['_iteration'], self.new_state['_state'] ])
+            SELECT $1, CAST( ({schema_madlib}.__array_to_2d($2), $3, $4, $5) AS {schema_madlib}.kmeans_state)
+            """.format(**self.kwargs), [ "INTEGER", "DOUBLE PRECISION[]",
+                "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION" ])
+        plpy.execute(insert_plan, [ self.new_state['_iteration'],
+            self.new_state['centroids'],
+            self.new_state['old_centroid_ids'],
+            self.new_state['objective_fn'],
+            self.new_state['frac_reassigned'] ])
         <<<)
 
     def runSQL(self, sql):
@@ -135,6 +140,14 @@ class IterationController:
             plpy.execute("SET optimizer = off")
 
         m4_ifdef(>>>__HAWQ__<<<, >>>
+        cast_str = "CAST (({schema_madlib}.__array_to_2d($1), $2, $3, $4) AS {schema_madlib}.kmeans_state)".format(**self.kwargs)
+        cast_type = [ "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION" ]
+        cast_para = [ 
+            None if self.new_state is None else self.new_state['centroids'],
+            None if self.new_state is None else self.new_state['old_centroid_ids'],
+            None if self.new_state is None else self.new_state['objective_fn'],
+            None if self.new_state is None else self.new_state['frac_reassigned'],
+            ]
         eval_plan = plpy.prepare("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -142,9 +155,10 @@ class IterationController:
                     SELECT {{schema_madlib}}.__array_to_2d($1) AS _state
                 ) AS _state ON True
             """.format(expression = expression).format(
-                **self.kwargs), [ "DOUBLE PRECISION[]" ])
+                iteration = self.iteration,
+                __state__=cast_str, **self.kwargs), cast_type)
 
-        resultObject = plpy.execute(eval_plan, [ [] if self.new_state['_state'] is None else self.new_state['_state'] ])
+        resultObject = plpy.execute(eval_plan, cast_para)
         <<<, >>>
         resultObject = self.runSQL("""
             SELECT ({expression}) AS expression
@@ -212,16 +226,41 @@ class IterationController:
         self.iteration = self.iteration + 1
         
         m4_ifdef(>>>__HAWQ__<<<, >>>
+        cast_str = """CAST (({schema_madlib}.__array_to_2d($1), $2, $3, $4)
+                        AS {schema_madlib}.kmeans_state)""".format(**self.kwargs)
+        cast_str_old  = """CAST (({schema_madlib}.__array_to_2d($5), $6, $7, $8)
+                            AS {schema_madlib}.kmeans_state)""".format(**self.kwargs)
+        cast_type = [
+            "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION",
+            "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION"
+        ]
+        cast_para = [ 
+            None if self.new_state is None else self.new_state['centroids'],
+            None if self.new_state is None else self.new_state['old_centroid_ids'],
+            None if self.new_state is None else self.new_state['objective_fn'],
+            None if self.new_state is None else self.new_state['frac_reassigned'],
+            None if self.old_state is None else self.old_state['centroids'],
+            None if self.old_state is None else self.old_state['old_centroid_ids'],
+            None if self.old_state is None else self.old_state['objective_fn'],
+            None if self.old_state is None else self.old_state['frac_reassigned']
+            ]
+        updateKwargs.update(__state__=cast_str, __old_state__=cast_str_old)
         self.old_state = self.new_state
         update_plan = plpy.prepare("""
             SELECT
                 {iteration} AS _iteration,
-                {schema_madlib}.__array_to_1d(({newState})) AS _state
-            """.format(
-                iteration = self.iteration,
-                newState = newState,
-                **self.kwargs), [ "DOUBLE PRECISION[]" ])
-        self.new_state = plpy.execute(update_plan, [ None if self.new_state['_state'] is None else self.new_state['_state'] ])[0]
+                {schema_madlib}.__array_to_1d((_state).centroids) AS centroids,
+                (_state).old_centroid_ids,
+                (_state).objective_fn,
+                (_state).frac_reassigned
+            FROM
+            (
+                SELECT ({newState}) AS _state 
+            ) q
+            """.format(iteration = self.iteration,
+                newState = newState, **self.kwargs).format(**updateKwargs),
+            cast_type)
+        self.new_state = plpy.execute(update_plan, cast_para)[0]
         <<<, >>>
         self.runSQL("""
             INSERT INTO {rel_state}

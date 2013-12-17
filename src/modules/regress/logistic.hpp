@@ -120,4 +120,3 @@ DECLARE_UDF(regress, marginal_logregr_step_merge_states)
  * @brief Marginal Effects Logistic regression step: Final function
  */
 DECLARE_UDF(regress, marginal_logregr_step_final)
-

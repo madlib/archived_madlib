@@ -1,4 +1,5 @@
 # coding=utf-8
+m4_changequote(`>>>', `<<<')
 
 """
 @file multilogistic.py_in
@@ -16,10 +17,88 @@ from utilities.validate_args import table_is_empty
 from utilities.utilities import preprocess_optimizer_params
 from utilities.utilities import _assert
 
-
+m4_ifdef(>>>__HAWQ__<<<, >>>
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
-                      terminateExpr, max_num_iterations,
-                      cyclesPerIteration=1):
+    terminateExpr, max_num_iterations, cyclesPerIteration=1):
+    """
+    Driver for an iterative algorithm
+
+    A general driver function for most iterative algorithms: The state between
+    iterations is kept in a variable of type <tt>stateType</tt>, which is
+    initialized with <tt><em>initialState</em></tt>. During each iteration, the
+    SQL statement <tt>updateSQL</tt> is executed in the database. Afterwards,
+    the SQL query <tt>updateSQL</tt> decides whether the algorithm terminates.
+
+    @param stateType SQL type of the state between iterations
+    @param initialState The initial value of the SQL state variable
+    @param source The source relation
+    @param updateExpr SQL expression that returns the new state of type
+        <tt>stateType</tt>. The expression may use the replacement fields
+        <tt>"{state}"</tt>, <tt>"{iteration}"</tt>, and
+        <tt>"{sourceAlias}"</tt>. Source alias is an alias for the source
+        relation <tt><em>source</em></tt>.
+    @param terminateExpr SQL expression that returns whether the algorithm should
+        terminate. The expression may use the replacement fields
+        <tt>"{oldState}"</tt>, <tt>"{newState}"</tt>, and
+        <tt>"{iteration}"</tt>. It must return a BOOLEAN value.
+    @param max_num_iterations Maximum number of iterations. Algorithm will then
+        terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
+    @param cyclesPerIteration Number of aggregate function calls per iteration.
+    """
+
+    updateSQL = """
+        SELECT
+            {{iteration}} AS iter,
+            {updateExpr} AS state
+        FROM
+            {source} AS src
+        """.format(updateExpr = updateExpr, source = source)
+    updateSQL = updateSQL.format(iteration = '$1', state = '$2')
+    terminateSQL = "SELECT {terminateExpr} AS should_terminate".format(terminateExpr = terminateExpr)
+    terminateSQL = terminateSQL.format(newState = '$1', oldState = '$2')
+    checkForNullStateSQL = """SELECT {state} IS NULL AS should_terminate"""
+    checkForNullStateSQL = checkForNullStateSQL.format(state = '$1')
+
+    plan_update = plpy.prepare(updateSQL, [ 'INTEGER', 'FLOAT8[]' ])
+    plan_terminatesql = plpy.prepare(terminateSQL, [ 'FLOAT8[]', 'FLOAT8[]' ])
+    plan_checkfornullstate = plpy.prepare(checkForNullStateSQL, [ 'FLOAT8[]' ])
+
+    oldMsgLevel = plpy.execute("""
+            SELECT setting FROM pg_settings
+            WHERE name='client_min_messages'""")[0]['setting']
+    plpy.execute("""
+        SET client_min_messages = error;
+        DROP TABLE IF EXISTS _madlib_iterative_alg;
+        CREATE TEMPORARY TABLE _madlib_iterative_alg (
+            _madlib_iteration INTEGER,
+            _madlib_state {stateType}
+        );
+        SET client_min_messages = {oldMsgLevel};
+        """.format(stateType = stateType, oldMsgLevel = oldMsgLevel))
+
+    iteration = 0
+    state_old = plpy.execute("""
+        SELECT {iteration} AS iter, {initialState} AS state
+        """.format(iteration = iteration, initialState = 'NULL'))
+    while True:
+        iteration = iteration + 1
+        state_new = plpy.execute(plan_update, [ iteration, state_old[0]['state'] ])
+
+        if (plpy.execute(plan_checkfornullstate, [ state_new[0]['state'] ])[0]['should_terminate'] or 
+            (iteration > cyclesPerIteration and (iteration >= cyclesPerIteration * max_num_iterations or
+                plpy.execute(plan_terminatesql, [ state_new[0]['state'], state_old[0]['state'] ])[0]['should_terminate']))):
+            # insert into the state table
+            plan_final = plpy.prepare('insert into _madlib_iterative_alg values($1, $2)',
+                [ 'INTEGER', 'FLOAT8[]' ])
+            plpy.execute(plan_final, [ state_new[0]['iter'], state_new[0]['state'] ])
+            break
+        state_old = state_new
+    
+    # Note: We do not drop the temporary table
+    return iteration
+<<<, >>>
+def __runIterativeAlg(stateType, initialState, source, updateExpr,
+    terminateExpr, max_num_iterations, cyclesPerIteration=1):
     """
     Driver for an iterative algorithm
 
@@ -57,6 +136,7 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         WHERE
             st._madlib_iteration = {{iteration}} - 1
         """.format(updateExpr=updateExpr)
+
     terminateSQL = """
         SELECT
             {terminateExpr} AS should_terminate
@@ -72,11 +152,13 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             WHERE _madlib_iteration = {{iteration}}
         ) AS newer
         """.format(terminateExpr=terminateExpr)
+
     checkForNullStateSQL = """
         SELECT _madlib_state IS NULL AS should_terminate
         FROM _madlib_iterative_alg
         WHERE _madlib_iteration = {iteration}
         """
+
     oldMsgLevel = plpy.execute("""SELECT setting
                                   FROM pg_settings
                                   WHERE name='client_min_messages'"""
@@ -86,7 +168,7 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         SET client_min_messages = error;
         DROP TABLE IF EXISTS _madlib_iterative_alg;
         CREATE TEMPORARY TABLE _madlib_iterative_alg (
-            _madlib_iteration INTEGER m4_ifdef(`__HAWQ__', `', `PRIMARY KEY'),
+            _madlib_iteration INTEGER m4_ifdef(>>>__HAWQ__<<<, >>><<<, >>>PRIMARY KEY<<<),
             _madlib_state {stateType}
         );
         SET client_min_messages = {oldMsgLevel};
@@ -104,21 +186,18 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             state="(st._madlib_state)",
             iteration=iteration,
             sourceAlias="src"))
-        if (
-            plpy.execute(checkForNullStateSQL.
-                         format(iteration=iteration))[0]['should_terminate'] or
-            (iteration > cyclesPerIteration and
-             (iteration >= cyclesPerIteration * max_num_iterations or
-                plpy.execute(terminateSQL.format(
-                    iteration=iteration,
-                    cyclesPerIteration=cyclesPerIteration,
-                    oldState="(older._madlib_state)",
-                    newState="(newer._madlib_state)")
-                )[0]['should_terminate']))):
+        if (plpy.execute(checkForNullStateSQL.format(iteration=iteration))[0]['should_terminate'] or
+            (iteration > cyclesPerIteration and (
+                iteration >= cyclesPerIteration * max_num_iterations or
+                    plpy.execute(terminateSQL.format(
+                        iteration=iteration, cyclesPerIteration=cyclesPerIteration,
+                        oldState="(older._madlib_state)", newState="(newer._madlib_state)")
+                    )[0]['should_terminate']))):
             break
 
     # Note: We do not drop the temporary table
     return iteration
+<<<)
 
 
 def compute_mlogregr(schema_madlib, source_table, dependent_varname,
@@ -683,3 +762,5 @@ SELECT madlib.mlogregr_train('test3',
 
     return help_string.format(schema_madlib=schema_madlib)
 # ---------------------------------------------------------------------------
+
+m4_changequote(>>>`<<<, >>>'<<<)

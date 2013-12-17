@@ -14,6 +14,7 @@ m4_changequote(<!,!>)
 import plpy
 
 from utilities.control import IterationController
+from utilities.control_composite import IterationControllerComposite
 
 def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     expr_point, **kwargs):
@@ -42,11 +43,11 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
         schema_madlib = schema_madlib, # Identifiers start here
         rel_source = rel_source,
         expr_point = expr_point)
-    with iterationCtrl as it:
+    with iterationCtrl as it: 
         if it.test("_args.initial_centroids IS NULL"):
             it.update("""
                 SELECT
-                    ARRAY[{schema_madlib}.weighted_sample(_src.{expr_point}::FLOAT8[], 1)]
+                    ARRAY[{schema_madlib}.weighted_sample(_src.{expr_point}::FLOAT8[], 1)] as b
                 FROM {rel_source} AS _src
                 """)
         else:
@@ -57,10 +58,18 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
             it.update("""
                 SELECT
                     (
+                        m4_ifdef(<!__HAWQ__!>, <!
+                        SELECT {schema_madlib}.__array_to_2d($1)
+                        !>, <!
                         SELECT _state FROM {rel_state}
                         WHERE _iteration = {iteration}
+                        !>)
                     ) || {schema_madlib}.weighted_sample(
                             _src.{expr_point}::FLOAT8[],
+                            m4_ifdef(<!__HAWQ__!>, <!
+                            ({schema_madlib}.closest_column_hawq(
+                                {schema_madlib}.__array_to_2d($1), _src.{expr_point}::FLOAT8[])).distance
+                            !>, <!
                             ({schema_madlib}.closest_column(
                                 (
                                     SELECT _state FROM {rel_state}
@@ -68,7 +77,7 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                                 ),
                                 _src.{expr_point}::FLOAT8[],
                                 (SELECT fn_dist FROM {rel_args})
-                            )).distance
+                            )).distance!>)
                         )
                 FROM {rel_source} AS _src
                 """)
@@ -109,7 +118,7 @@ def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
         while m > 0:
             it.update("""
                 SELECT
-                    _state._state || {schema_madlib}.matrix_agg(_point::FLOAT8[])
+                    m4_ifdef(<!__HAWQ__!>, <!$1!>, <!_state._state!>) || {schema_madlib}.matrix_agg(_point::FLOAT8[])
                 FROM (
                         SELECT
                             {expr_point} AS _point
@@ -123,14 +132,16 @@ def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
                             )
                         ORDER BY random()
                         LIMIT {m}
-                    ) AS _src,
-                    {rel_state} AS _state
+                    ) AS _src
+                    m4_ifdef(<!__HAWQ__!>, <!!>, <!
+                    , {rel_state} AS _state
                 WHERE
                     _state._iteration = {iteration}
                 GROUP BY
                     _state._state
+                !>)
                 """, m = m)
-            m = it.evaluate("_args.k - coalesce(array_upper(_state._state, 1), 0)")
+            m = it.evaluate("_args.k - coalesce(array_upper(m4_ifdef(<!__HAWQ__!>, <!$1!>, <!_state._state!>), 1), 0)")
     return iterationCtrl.iteration
 
 def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
@@ -153,7 +164,7 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
         result in \c rel_state
     """
 
-    iterationCtrl = IterationController(
+    iterationCtrl = IterationControllerComposite(
         rel_args = rel_args,
         rel_state = rel_state,
         stateType = "{schema_madlib}.kmeans_state",
@@ -172,7 +183,7 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
             """)
         while it.test("""
             {iteration} < _args.max_num_iterations AND
-            (_state._state).frac_reassigned > _args.min_frac_reassigned
+            (m4_ifdef(<!__HAWQ__!>, <!{__state__}!>, <!_state._state!>)).frac_reassigned > _args.min_frac_reassigned
             """):
             it.update("""
                 SELECT
@@ -195,9 +206,12 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                             CAST(
                                 coalesce(
                                     (CAST((
+                                        m4_ifdef(<!__HAWQ__!>, <!
+                                        SELECT ({{__state__}}).old_centroid_ids
+                                        !>, <!
                                         SELECT (_state).old_centroid_ids
                                         FROM {rel_state}
-                                        WHERE _iteration = {iteration})
+                                        WHERE _iteration = {iteration}!>))
                                     AS INTEGER[]))[
                                         (_new_centroid).column_id + 1
                                     ] != _old_centroid_id,
@@ -213,6 +227,11 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                             -- VOLATILE function as optimization fence
                             {schema_madlib}.noop(),
                             _src.{expr_point} AS _point,
+                            m4_ifdef(<!__HAWQ__!>, <!
+                            {schema_madlib}.closest_column_hawq(
+                                ({{__state__}}).centroids,
+                                 _src.{expr_point}::FLOAT8[])
+                            !>, <!
                             {schema_madlib}.closest_column(
                                 (
                                     SELECT (_state).centroids FROM {rel_state}
@@ -220,7 +239,12 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                                 ),
                                 _src.{expr_point}::FLOAT8[],
                                 (SELECT fn_dist FROM {rel_args})
-                            ) AS _new_centroid,
+                            )!>) AS _new_centroid,
+                            m4_ifdef(<!__HAWQ__!>, <!
+                            ({schema_madlib}.closest_column_hawq(
+                                ({{__old_state__}}).centroids,
+                                _src.{expr_point}::FLOAT8[])).column_id
+                            !>, <!
                             ({schema_madlib}.closest_column(
                                 (
                                     SELECT (_state).centroids FROM {rel_state}
@@ -228,7 +252,8 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                                 ),
                                 _src.{expr_point}::FLOAT8[],
                                 (SELECT fn_dist FROM {rel_args})
-                            )).column_id AS _old_centroid_id
+                            )).column_id
+                            !>) AS _old_centroid_id
                         FROM {rel_source} AS _src
                     ) AS _points_with_assignments
                     GROUP BY (_new_centroid).column_id
@@ -236,12 +261,20 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                 """)
 
             if it.test(
+                m4_ifdef(<!__HAWQ__!>, <!
+                "array_upper(({__state__}).centroids, 1) < _args.k"):
+                !>, <!
                 "array_upper((_state._state).centroids, 1) < _args.k"):
+                !>)
                 it.update("""
                     SELECT
                         CAST(((
+                                m4_ifdef(<!__HAWQ__!>, <!
+                                SELECT ({{__state__}}).centroids
+                                !>, <!
                                 SELECT (_state).centroids FROM {rel_state}
                                 WHERE _iteration = {iteration}
+                                !>)
                             ) || {schema_madlib}.kmeanspp_seeding(
                                 '{rel_source}',
                                 '{expr_point}',
@@ -250,14 +283,22 @@ m4_ifdef(<!__GREENPLUM__!>,<!m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,,<!
                                     (SELECT fn_dist FROM {rel_args})
                                 )),
                                 (
+                                    m4_ifdef(<!__HAWQ__!>, <!
+                                    SELECT ({{__state__}}).centroids
+                                    !>, <!
                                     SELECT (_state).centroids FROM {rel_state}
                                     WHERE _iteration = {iteration}
+                                    !>)
                                 )
                             ),
                             (
+                                m4_ifdef(<!__HAWQ__!>, <!
+                                SELECT ({{__state__}}).old_centroid_ids
+                                !>, <!
                                 SELECT (_state).old_centroid_ids
                                 FROM {rel_state}
                                 WHERE _iteration = {iteration}
+                                !>)
                             ),
                             'Inf',
                             1.0

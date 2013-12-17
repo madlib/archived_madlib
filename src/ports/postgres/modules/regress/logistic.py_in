@@ -21,7 +21,7 @@ from utilities.utilities import _string_to_array
 
 def __compute_logregr(schema_madlib, rel_args, rel_state, rel_source,
                       dep_col, ind_col, optimizer, grouping_col,
-                      grouping_str, **kwargs):
+                      grouping_str, col_grp_iteration, col_grp_state, **kwargs):
     """
     Compute logistic regression coefficients
 
@@ -60,8 +60,10 @@ def __compute_logregr(schema_madlib, rel_args, rel_state, rel_source,
         ind_col=ind_col,
         dep_col=dep_col,
         optimizer=optimizer,
-        grouping_col = grouping_col,
-        grouping_str = grouping_str)
+        grouping_col=grouping_col,
+        grouping_str=grouping_str,
+        col_grp_iteration=col_grp_iteration,
+        col_grp_state=col_grp_state)
 
     with iterationCtrl as it:
         it.iteration = 0
@@ -71,7 +73,7 @@ def __compute_logregr(schema_madlib, rel_args, rel_state, rel_source,
                 {schema_madlib}.__logregr_{optimizer}_step(
                     ({dep_col})::boolean,
                     ({ind_col})::double precision[],
-                    {rel_state}._state)
+                    rel_state.{col_grp_state})
                 """)
             if it.test(
                     """
@@ -204,6 +206,8 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                 tolerance = tolerance,
                 tbl_logregr_args = __unique_string(),
                 tbl_logregr_state = __unique_string(),
+                col_grp_iteration = __unique_string(),
+                col_grp_state = __unique_string(),
                 irls = "__logregr_irls_result",
                 newton = "__logregr_irls_result",
                 cg = "__logregr_cg_result",
@@ -233,7 +237,9 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                                       args["tbl_logregr_state"], tbl_source,
                                       dep_col, ind_col, optimizer,
                                       grouping_col = grouping_col,
-                                      grouping_str = grouping_str)
+                                      grouping_str = grouping_str,
+                                      col_grp_iteration = args["col_grp_iteration"],
+                                      col_grp_state = args["col_grp_state"])
 
     grouping_str1 = "" if grouping_col is None else grouping_col + ","
     grouping_str2 = "1 = 1" if grouping_col is None else grouping_col
@@ -266,17 +272,17 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                 (case when (result).status = 1 then num_rows - (result).num_processed
                     when result is null then num_rows
                     else NULL::bigint end) as num_missing_rows_skipped,
-                _iteration as num_iterations
+                {col_grp_iteration} as num_iterations
             from
             (
                 select
-                    _iteration, {grouping_str1} result, num_rows
+                    {col_grp_iteration}, {grouping_str1} result, num_rows
                 from
                 (
                     (select
                         {grouping_str1}
-                        {schema_madlib}.{fnName}(_state) as result,
-                        _iteration
+                        {schema_madlib}.{fnName}({col_grp_state}) as result,
+                        {col_grp_iteration}
                     from
                         {tbl_logregr_state}
                     ) t
@@ -284,11 +290,11 @@ def __logregr_train_compute(schema_madlib, tbl_source, tbl_output, dep_col,
                     (
                     select
                         {grouping_str1}
-                        max(_iteration) as _iteration
+                        max({col_grp_iteration}) as {col_grp_iteration}
                     from {tbl_logregr_state}
                     group by {grouping_str2}
                     ) s
-                    using ({grouping_str1} _iteration)
+                    using ({grouping_str1} {col_grp_iteration})
                 ) q1
                 {join_str}
                 (
