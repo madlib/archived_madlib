@@ -22,7 +22,7 @@ list(APPEND CMAKE_MODULE_PATH
     ${CMAKE_CURRENT_SOURCE_DIR}/../greenplum/cmake
     ${CMAKE_CURRENT_SOURCE_DIR}/../postgres/cmake)
 include(PostgreSQLUtils)
-include(GreenplumUtils)
+include(HawqUtils)
 
 
 # -- 1. Specify files that will be compiled into the shared library, for *all*
@@ -210,7 +210,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
 
 # -- 4.2. Preprocess all Python files ------------------------------------------
 
-    define_greenplum_features(${IN_PORT_VERSION} DBMS_FEATURES)
+    define_hawq_features(${IN_PORT_VERSION} DBMS_FEATURES)
     define_m4_macros(M4_DEFINES_CMD_LINE M4_DEFINES_CODE ${DBMS_FEATURES})
 
     add_python_files(
@@ -288,7 +288,7 @@ macro(add_current_${PORT_LC}_version)
 
     find_package(${PORT}_${_VERSION_UNDERSCORES})
     if(${PORT_UC}_${_VERSION_UNDERSCORES}_FOUND)
-        add_greenplum_library(${_VERSION})
+        add_hawq_library(${_VERSION})
     endif(${PORT_UC}_${_VERSION_UNDERSCORES}_FOUND)
 endmacro(add_current_${PORT_LC}_version)
 
