@@ -1,8 +1,8 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file utilities.hpp
+ * @file dim_conversion.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
-DECLARE_UDF(utilities, array_to_1d)
-DECLARE_UDF(utilities, array_to_2d)
+DECLARE_UDF(linalg, array_to_1d)
+DECLARE_UDF(linalg, array_to_2d)

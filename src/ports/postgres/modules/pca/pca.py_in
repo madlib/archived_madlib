@@ -170,7 +170,7 @@ def _recenter_data(schema_madlib,
                 ({schema_madlib}.utils_normalize_data(
                                   {col_name},
                                   '{x_mean_str}'::double precision[],
-                                  '{x_std_str}'::double precision[])).scaled
+                                  '{x_std_str}'::double precision[]))
                     AS row_vec
             FROM {source_table}
         """.format(schema_madlib=schema_madlib,
@@ -282,11 +282,28 @@ def pca_sparse(schema_madlib,
     if result_summary_table:
         stopTime = time.time()
         dt = (stopTime - startTime) * 1000.
-
+        summary_table_tmp_name = __unique_string()
         plpy.execute(
             """
-            UPDATE {result_summary_table} SET "exec_time (ms)"  = {dt};
-            """.format(result_summary_table=result_summary_table, dt=dt))
+            ALTER TABLE {result_summary_table}
+            RENAME TO {tmp_name};
+            """.format(result_summary_table=result_summary_table,
+                       tmp_name=summary_table_tmp_name))
+        plpy.execute(
+            """
+            CREATE TABLE {result_summary_table} AS
+            SELECT
+                rows_used,
+                {dt} AS "exec_time (ms)",
+                iter,
+                recon_error,
+                relative_recon_error,
+                use_correlation
+            FROM {tmp_name};
+            """.format(result_summary_table=result_summary_table,
+                       dt=str(dt), tmp_name=summary_table_tmp_name))
+        plpy.execute("DROP TABLE {tmp_name};".format(
+            tmp_name=summary_table_tmp_name))
 
     plpy.execute("SET client_min_messages TO %s" % old_msg_level)
 # ------------------------------------------------------------------------
@@ -420,29 +437,33 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             SELECT '{column_mean_str}'::FLOAT8[] AS column_mean
             """.format(pc_table=pc_table, column_mean_str=column_mean_str))
 
-        None
         # Step 7: Append to the SVD summary table to get the PCA summary table
         if result_summary_table:
+            stopTime = time.time()
+            dt = (stopTime - startTime) * 1000.
+            summary_table_tmp_name = __unique_string()
             plpy.execute(
                 """
                 ALTER TABLE {result_summary_table}
-                ADD column use_correlation BOOLEAN;
-                """.format(result_summary_table=result_summary_table))
+                RENAME TO {tmp_name};
+                """.format(result_summary_table=result_summary_table,
+                           tmp_name=summary_table_tmp_name))
             plpy.execute(
                 """
-                UPDATE {result_summary_table}
-                SET use_correlation = {use_correlation}
-                WHERE use_correlation is NULL;
+                CREATE TABLE {result_summary_table} AS
+                SELECT
+                    rows_used,
+                    {dt} AS "exec_time (ms)",
+                    iter,
+                    recon_error,
+                    relative_recon_error,
+                    {use_correlation} AS use_correlation
+                FROM {tmp_name};
                 """.format(result_summary_table=result_summary_table,
-                           use_correlation=bool(use_correlation)))
-            stopTime = time.time()
-            dt = (stopTime - startTime) * 1000.
-
-            plpy.execute(
-                """
-                UPDATE {result_summary_table} SET "exec_time (ms)" = {dt};
-                """.format(result_summary_table=result_summary_table,
-                           dt=str(dt)))
+                           dt=str(dt), use_correlation=bool(use_correlation),
+                           tmp_name=summary_table_tmp_name))
+            plpy.execute("DROP TABLE {tmp_name};".format(
+                tmp_name=summary_table_tmp_name))
 
         # Step 8: Output handling & cleanup
         plpy.execute(
@@ -556,7 +577,7 @@ def pca_help_message(schema_madlib, message=None, **kwargs):
         -----------------------------------------------------------------------
                                     USAGE
         -----------------------------------------------------------------------
-        SELECT {schema_madlib}.pca_sparse_train(
+        SELECT {schema_madlib}.pca_train(
             source_table        -- TEXT,    Name of data table
             pc_table            -- TEXT,    Name of the table containing the principle components
             row_id              -- TEXT,    Column name for the row coordinates.

@@ -20,4 +20,3 @@
 #include "linalg/matrix_op.hpp"
 #include "linalg/svd.hpp"
 #include "tsa/arima.hpp"
-#include "utilities/utilities.hpp"

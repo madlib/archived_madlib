@@ -13,8 +13,6 @@ namespace convex {
 
 using namespace madlib::dbal::eigen_integration;
 
-typedef HandleTraits<MutableArrayHandle<double> >::ColumnVectorTransparentHandleMap CVector;
-
 template <class Handle>
 class ScalesState
 {
@@ -156,23 +154,19 @@ AnyType __utils_var_scales_result::run (AnyType& args)
 
 AnyType utils_normalize_data::run (AnyType& args)
 {
-    CVector x = args[0].getAs<CVector>();
+    MutableMappedColumnVector x = args[0].getAs<MutableMappedColumnVector>();
     MappedColumnVector mean = args[1].getAs<MappedColumnVector>();
     MappedColumnVector std = args[2].getAs<MappedColumnVector>();
-
-    CVector sx(x);
 
     for (int i = 0; i < x.size(); i++)
     {
         if (std(i) == 0)
-            sx(i) = x(i) - mean(i);
+            x(i) = x(i) - mean(i);
         else
-            sx(i) = (x(i) - mean(i)) / std(i);
+            x(i) = (x(i) - mean(i)) / std(i);
     }
 
-    AnyType tuple;
-    tuple << sx;
-    return tuple;
+    return x;
 }
 
 }

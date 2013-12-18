@@ -1,12 +1,16 @@
+m4_include(`SQLCommon.m4')
 
+m4_ifdef(`__HAWQ__', `', `
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__utils_scales;
 CREATE TYPE MADLIB_SCHEMA.__utils_scales AS (
     mean                DOUBLE PRECISION[],
     std                 DOUBLE PRECISION[]
 );
+')
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__utils_var_scales_result (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__utils_var_scales_result (
     in_state            DOUBLE PRECISION[]
 ) RETURNS MADLIB_SCHEMA.__utils_scales AS
 'MODULE_PATHNAME', '__utils_var_scales_result'
@@ -14,7 +18,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 ------------------------------------------------------------------------
 
-CREATE FUNCTION MADLIB_SCHEMA.__utils_var_scales_transition (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__utils_var_scales_transition (
     state               DOUBLE PRECISION[],
     ind_var             DOUBLE PRECISION[],
     dimension           INTEGER
@@ -24,7 +28,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__utils_var_scales_merge (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__utils_var_scales_merge (
     state1              DOUBLE PRECISION[],
     state2              DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
@@ -33,7 +37,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__utils_var_scales_final (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__utils_var_scales_final (
     state               DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
 'MODULE_PATHNAME', 'utils_var_scales_final'
@@ -41,29 +45,25 @@ LANGUAGE C IMMUTABLE STRICT;
 
 --
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.utils_var_scales (
+    DOUBLE PRECISION[], INTEGER);
 CREATE AGGREGATE MADLIB_SCHEMA.utils_var_scales (
     /* ind_var  */      DOUBLE PRECISION[],
     /* dimension*/      INTEGER
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__utils_var_scales_transition,
-    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__utils_var_scales_merge,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc = MADLIB_SCHEMA.__utils_var_scales_merge,')
     FinalFunc = MADLIB_SCHEMA.__utils_var_scales_final,
     InitCond = '{0,0,0,0}'
 );
 
 ------------------------------------------------------------------------
 
-CREATE TYPE MADLIB_SCHEMA.__utils_scaled_data AS (
-    scaled      DOUBLE PRECISION[]
-);
-
---
-
-CREATE FUNCTION MADLIB_SCHEMA.utils_normalize_data (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.utils_normalize_data (
     x           DOUBLE PRECISION[],
     mean        DOUBLE PRECISION[],
     std         DOUBLE PRECISION[]
-) RETURNS MADLIB_SCHEMA.__utils_scaled_data AS
+) RETURNS DOUBLE PRECISION[] AS
 'MODULE_PATHNAME', 'utils_normalize_data'
 LANGUAGE C IMMUTABLE STRICT;

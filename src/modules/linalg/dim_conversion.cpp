@@ -1,34 +1,38 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file lda.cpp
+ * @file dim_conversion.cpp
  *
- * @brief Functions for Latent Dirichlet Allocation
+ * @brief Functions for converting b/w 1-D and 2-D arrays
  *
- * @date Dec 13, 2012
+ * @date Dec 17, 2013
  *//* ----------------------------------------------------------------------- */
 
 
 #include <dbconnector/dbconnector.hpp>
 #include <math.h>
 #include <iostream>
+#include <sstream>
 #include <algorithm>
 #include <functional>
 #include <numeric>
-#include "utilities.hpp"
+#include "dim_conversion.hpp"
 
 namespace madlib {
 namespace modules {
-namespace utilities{
+namespace linalg {
 
-AnyType array_to_1d::run(AnyType & args)
-{
-    if (args[0].isNull()) return args[0];
+AnyType array_to_1d::run(AnyType & args) {
+    if (args[0].isNull()) { return args[0]; }
     ArrayHandle<double> in_array = args[0].getAs<ArrayHandle<double> >();
-    if (in_array.size() == 0) return args[0];
-    if(in_array.dims() != 2){
-        throw std::invalid_argument("dimension mismatch - 2 expected");
+    if (in_array.size() == 0) { return args[0]; }
+    size_t dims = in_array.dims();
+    if(dims == 1) { return args[0]; }
+    if(dims != 2){
+        std::stringstream err_msg;
+        err_msg << "Can only handle 1-D or 2-D, given " << dims;
+        throw std::invalid_argument(err_msg.str());
     }
-    MutableArrayHandle<double> out_array = 
+    MutableArrayHandle<double> out_array =
         allocateArray<double, dbal::FunctionContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(in_array.size() + 2);
     // The fist two elements encode the dimension info
@@ -36,7 +40,7 @@ AnyType array_to_1d::run(AnyType & args)
     out_array[1] = in_array.sizeOfDim(1);
     memcpy(out_array.ptr() + 2, in_array.ptr(), sizeof(double) * in_array.size());
 
-    return out_array; 
+    return out_array;
 }
 
 AnyType array_to_2d::run(AnyType & args)
@@ -51,7 +55,7 @@ AnyType array_to_2d::run(AnyType & args)
         throw std::runtime_error("dimension mismatch in the encoded input array");
     }
 
-    MutableArrayHandle<double> out_array = 
+    MutableArrayHandle<double> out_array =
         allocateArray<double, dbal::FunctionContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(
                 static_cast<size_t>(in_array[0]), static_cast<size_t>(in_array[1]));

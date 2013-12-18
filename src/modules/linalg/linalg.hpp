@@ -10,3 +10,4 @@
 #include "matrix_agg.hpp"
 #include "metric.hpp"
 #include "crossprod.hpp"
+#include "dim_conversion.hpp"

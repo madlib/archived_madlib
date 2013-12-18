@@ -14,6 +14,6 @@ add_custom_target(configFilesHAWQ11 ALL DEPENDS ${CONFIG_TARGET_FILES_HAWQ_1_1})
 # -- 2. Install config files to $MADLIB_ROOT/config ----------------------------
 
 install(FILES ${CONFIG_TARGET_FILES_HAWQ_1_1}
-    DESTINATION config
-    COMPONENT core
+    DESTINATION ports/hawq/1.1/config
+    COMPONENT hawq_1_1
 )

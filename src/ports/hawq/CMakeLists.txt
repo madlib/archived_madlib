@@ -22,7 +22,8 @@ list(APPEND CMAKE_MODULE_PATH
     ${CMAKE_CURRENT_SOURCE_DIR}/../greenplum/cmake
     ${CMAKE_CURRENT_SOURCE_DIR}/../postgres/cmake)
 include(PostgreSQLUtils)
-include(HawqUtils)
+include(GreenplumUtils)
+include(HAWQUtils)
 
 
 # -- 1. Specify files that will be compiled into the shared library, for *all*
@@ -269,9 +270,10 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         COMPONENT ${DBMS}
     )
 
+
 # -- 5. Generate gppkg deployment scripts. Note: These are generated CMake
-#       scripts! ---------------------------------------------------------------
-    add_gppkg()
+#       scripts! But HAWQ has not gppkg support yet ----------------------------
+#    add_gppkg()
 endfunction(add_${PORT_LC}_library)
 
 
