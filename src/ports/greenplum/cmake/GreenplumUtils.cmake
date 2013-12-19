@@ -35,8 +35,8 @@ function(add_gppkg)
             COMMAND cmake -E create_symlink \"\${MADLIB_GPPKG_RPM_SOURCE_DIR}\"
                 \"\${CPACK_PACKAGE_FILE_NAME}-gppkg\"
             COMMAND \"\${RPMBUILD_BINARY}\" -bb SPECS/madlib.spec
-            COMMAND cmake -E rename "RPMS/\${MADLIB_GPPKG_RPM_FILE_NAME}"
-                "gppkg/\${MADLIB_GPPKG_RPM_FILE_NAME}"
+            COMMAND cmake -E rename \"RPMS/\${MADLIB_GPPKG_RPM_FILE_NAME}\"
+                \"gppkg/\${MADLIB_GPPKG_RPM_FILE_NAME}\"
             COMMAND \"\${GPPKG_BINARY}\" --build gppkg
             DEPENDS \"${CMAKE_BINARY_DIR}/\${CPACK_PACKAGE_FILE_NAME}.rpm\"
             WORKING_DIRECTORY \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}\"
@@ -49,11 +49,11 @@ function(add_gppkg)
                 \"Please rerun cmake.\"
         )
     endif(GPPKG_BINARY AND RPMBUILD_BINARY)
-    
+
     # Unfortunately, we cannot set a dependency to the built-in package target,
     # i.e., the following does not work:
     # add_dependencies(gppkg package)
-    
+
     add_dependencies(gppkg gppkg_${PORT_VERSION_UNDERSCORE})
     ")
 endfunction(add_gppkg)

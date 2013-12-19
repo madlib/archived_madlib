@@ -17,6 +17,7 @@ m4_include(`SQLCommon.m4')
 
 <div class="toc"><b>Contents</b><ul>
 <li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#predict">Prediction Function</a></li>
 <li class="level1"><a href="#examples">Examples</a></li>
 <li class="level1"><a href="#background">Technical Background</a></li>
 <li class="level1"><a href="#literature">Literature</a></li>
@@ -229,6 +230,39 @@ value of the machine epsilon). Although the result may look different, they are
 in fact the same.
 </dd>
 
+@anchor predict
+@par Prediction Function
+Two prediction functions are provided to either predict the boolean value of the
+dependent variable or the probability of the value of dependent variable being
+'True', both functions using the same syntax.
+
+The function to predict the boolean value (True/False) of the dependent variable
+has the following syntax:
+<pre class="syntax">
+logregr_predict(coefficients,
+                ind_var
+               )
+</pre>
+
+The function to predict the probability of the dependent variable being True
+has the following syntax:
+<pre class="syntax">
+logregr_predict_prob(coefficients,
+                     ind_var
+                    )
+</pre>
+
+\b Arguments
+<DL class="arglist">
+  <DT>coefficients</DT>
+  <DD>DOUBLE PRECISION[]. Model coefficients obtained from \ref logregr_train().</DD>
+
+  <DT>ind_var</DT>
+  <DD>Independent variables, as a DOUBLE array. This should be the same length
+  as the array obtained by evaluation of the 'independent_varname' argument in
+  \ref logregr_train().</DD>
+</DL>
+
 @anchor examples
 @examp
 -# Create the training data table.
@@ -300,6 +334,29 @@ SELECT unnest(array['intercept', 'treatment', 'trait_anxiety']) as attribute,
        unnest(odds_ratios) as odds_ratio
     FROM patients_logregr;
 </pre>
+
+-# Predicting dependent variable using the logistic regression model.
+(This example uses the original data table to perform the prediction. Typically
+a different test dataset with the same features as the original training dataset
+would be used for prediction.)
+<pre class="example">
+\\x off
+-- Display prediction value along with the original value
+SELECT p.id, madlib.logregr_predict(coef, ARRAY[1, treatment, trait_anxiety]),
+       p.second_attack
+FROM patients p, patients_logregr m
+ORDER BY p.id;
+</pre>
+
+-# Predicting the probability of the dependent variable being TRUE.
+<pre class="example">
+\\x off
+-- Display prediction value along with the original value
+SELECT p.id, madlib.logregr_predict_prob(coef, ARRAY[1, treatment, trait_anxiety])
+FROM patients p, patients_logregr m
+ORDER BY p.id;
+</pre>
+
 
 @anchor notes
 @par Notes
@@ -804,23 +861,20 @@ RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.logregr_train($1, $2, $3, $4, $5, $6, $7, $8, False);
 $$ LANGUAGE sql VOLATILE;
 
------------------------------------------------------------------------
-
--- Help messages
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_train ()
-RETURNS TEXT AS $$
-BEGIN
-    RETURN MADLIB_SCHEMA.logregr_train(NULL);
-END;
-$$ LANGUAGE plpgsql VOLATILE;
-
+------------------------------------------------------------------------
+-- Help messages -------------------------------------------------------
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_train(
     message    TEXT
 ) RETURNS TEXT AS $$
     PythonFunction(regress, logistic, logregr_help_msg)
 $$ LANGUAGE plpythonu VOLATILE;
 
+CREATE FUNCTION MADLIB_SCHEMA.logregr_train()
+RETURNS TEXT
+LANGUAGE SQL
+AS $$
+    SELECT MADLIB_SCHEMA.logregr_train(''::TEXT);
+$$;
 ------------------------------------------------------------------------
 
 /**
@@ -855,3 +909,91 @@ AS $$
           END;
 $$;
 
+-------------------------------------------------------------------------
+-- Logistic Regression: Prediction ---------------------------------------------
+
+/**
+ * @brief Predict the boolean value of a dependent variable for a specific
+ *        independent variable value in a logistic regression model
+ *
+ * @param coef Coefficients obtained by running logistic regression.
+ * @param col_ind Independent variable array
+ * @returns Boolean value of the dependent variable
+ *
+ * This function computes the dot product of the independent variable and the
+ * coefficients. This requires the length of the two vectors to be the same.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_predict(
+    coef            DOUBLE PRECISION[],
+    col_ind_var     DOUBLE PRECISION[]
+) RETURNS BOOLEAN AS $$
+DECLARE
+    dot_rst  DOUBLE PRECISION;
+BEGIN
+    IF (SELECT array_upper(coef, 1)) <> (SELECT array_upper(col_ind_var, 1)) THEN
+        RAISE EXCEPTION 'Coefficient and independent variables are of incompatible length';
+    END IF;
+    dot_rst := MADLIB_SCHEMA.array_dot(coef, col_ind_var);
+    IF (dot_rst > 0) THEN
+        RETURN True;
+    ELSE
+        RETURN False;
+    END IF;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- Help messages -------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_predict(
+    message    TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(regress, logistic, logregr_predict_help)
+$$ LANGUAGE plpythonu VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logregr_predict()
+RETURNS TEXT
+LANGUAGE SQL
+AS $$
+    SELECT MADLIB_SCHEMA.logregr_predict(''::TEXT);
+$$;
+-------------------------------------------------------------
+
+
+/**
+ * @brief Compute the probability of the boolean dependent variable being True
+ *         for a specific independent variable iin a logistic regression model
+ *
+ * @param coef Coefficients obtained by running logistic regression.
+ * @param col_ind Independent variable array
+ * @returns Probability value of the dependent variable being True
+ *
+ * This function computes the dot product of the independent variable and the
+ * coefficients, hence requires the length of the two vectors to be the same.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_predict_prob(
+    coef            DOUBLE PRECISION[],
+    col_ind_var     DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS $$
+BEGIN
+    IF (SELECT array_upper(coef, 1)) <> (SELECT array_upper(col_ind_var, 1)) THEN
+        RAISE EXCEPTION 'Coefficient and independent variables are of incompatible length';
+    END IF;
+    RETURN MADLIB_SCHEMA.logistic(MADLIB_SCHEMA.array_dot(coef, col_ind_var));
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- Help messages -------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_predict_prob(
+    message    TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(regress, logistic, logregr_predict_prob_help)
+$$ LANGUAGE plpythonu VOLATILE;
+
+CREATE FUNCTION MADLIB_SCHEMA.logregr_predict_prob()
+RETURNS TEXT
+LANGUAGE SQL
+AS $$
+    SELECT MADLIB_SCHEMA.logregr_predict_prob(''::TEXT);
+$$;
+-------------------------------------------------------------
