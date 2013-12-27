@@ -269,7 +269,14 @@ AnyType Fista<Model>::fista_final (AnyType& args)
         if (state.gradient_intercept != 0)
             extra_Q += - 0.5 * state.gradient_intercept * state.gradient_intercept * state.stepsize;
      
-        if (state.fn <= state.Qfn + extra_Q) { // use last backtracking coef
+
+        // In some case, the algo will be trapped into a single running pass
+        // and the state.backtracking will be increased forever until the algo
+        // exits after the max_iter is reached. This is only found with HAWQ.
+        // The possible reason is the precision loss of double values when
+        // passing between Python and C. The first part in the following if
+        // condition is added to solve the problem.
+        if (state.backtracking >= 3 || state.fn <= state.Qfn + extra_Q) { // use last backtracking coef
             // update tk
             double old_tk = state.tk;
             state.tk = 0.5 * (1 + sqrt(1 + 4 * old_tk * old_tk));

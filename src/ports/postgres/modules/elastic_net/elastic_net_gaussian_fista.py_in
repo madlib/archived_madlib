@@ -10,7 +10,7 @@ from elastic_net_utils import __compute_means
 from elastic_net_utils import __tbl_dimension_rownum
 from utilities.utilities import __unique_string
 from elastic_net_gaussian_igd import __tbl_dimension_rownum
-from utilities.control import IterationController
+from utilities.control import IterationController2S
 from elastic_net_utils import IterationControllerNoTableDrop
 from elastic_net_utils import __elastic_net_validate_args
 from elastic_net_utils import __compute_log_likelihood
@@ -373,7 +373,7 @@ def __compute_gaussian_fista(schema_madlib, tbl_args, tbl_state, tbl_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c tbl_state
     """
-    iterationCtrl = IterationController( #TableAppend(
+    iterationCtrl = IterationController2S( #TableAppend(
         rel_args = tbl_args,
         rel_state = tbl_state,
         stateType = "double precision[]",
@@ -397,8 +397,11 @@ def __compute_gaussian_fista(schema_madlib, tbl_args, tbl_state, tbl_source,
                           {schema_madlib}.__gaussian_fista_step(
                               ({col_ind_var})::double precision[],
                               ({col_dep_var})::double precision,
-                              (select _state from {rel_state}
-                                  where _iteration = {iteration}),
+
+                              m4_ifdef(`__HAWQ__', `{{__state__}}', 
+                              `(select _state from {rel_state}
+                                  where _iteration = {iteration})'),
+
                               (_args.{lambda_name}[{lambda_count}])::double precision,
                               (_args.{alpha_name})::double precision,
                               (_args.{dimension_name})::integer,
@@ -416,30 +419,31 @@ def __compute_gaussian_fista(schema_madlib, tbl_args, tbl_state, tbl_source,
 
             if it.kwargs["use_active_set"] == 1:
                 if state_size is None:
-                    state_size = plpy.execute(
+                    m4_ifdef(`__HAWQ__', 
+                    `state_size = it.get_state_size()',
+                    `state_size = plpy.execute(
                         """
                         select array_upper(_state, 1) as size
                         from {rel_state} limit 1;
-                        """.format(**it.kwargs))[0]["size"]
+                        """.format(**it.kwargs))[0]["size"]')
 
-                is_backtracking = plpy.execute(
+                m4_ifdef(`__HAWQ__',
+                `is_backtracking = it.get_state_value(state_size - 1)',
+                `is_backtracking = plpy.execute(
                     """
                     select _state[{state_size}] as backtracking
                     from {rel_state}
                     where _iteration = {iteration}
                     """.format(state_size = state_size,
                                iteration = it.iteration,
-                               **it.kwargs))[0]["backtracking"]
+                               **it.kwargs))[0]["backtracking"]')
 
                 if it.test(
                     """
                     {iteration} >= _args.{max_iter_name}
                     or
                     {schema_madlib}.__gaussian_fista_state_diff(
-                        (select _state from {rel_state}
-                            where _iteration = {iteration} - 1),
-                        (select _state from {rel_state}
-                            where _iteration = {iteration})) < _args.{tolerance_name}
+                        _state_previous, _state_current) < _args.{tolerance_name}
                     """):
                     if it.iteration < it.kwargs["max_iter"]:
                         if it.kwargs["is_active"] == 0:
@@ -460,10 +464,8 @@ def __compute_gaussian_fista(schema_madlib, tbl_args, tbl_state, tbl_source,
                     """
                     {iteration} >= _args.{max_iter_name} or
                     {schema_madlib}.__gaussian_fista_state_diff(
-                        (select _state from {rel_state}
-                            where _iteration = {iteration} - 1),
-                        (select _state from {rel_state}
-                            where _iteration = {iteration})) < _args.{tolerance_name}
+                        _state_previous, _state_current
+                            ) < _args.{tolerance_name}
                     """):
                     if (it.iteration < it.kwargs["max_iter"] and
                         it.kwargs["lambda_count"] < it.kwargs["warm_no"]):

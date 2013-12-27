@@ -10,7 +10,7 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-m4_include(`SQLCommon.m4') --'
+m4_include(`SQLCommon.m4')
 
 /**
 @addtogroup grp_elasticnet
@@ -830,6 +830,7 @@ LANGUAGE C IMMUTABLE STRICT;
 -- Compute the solution for just one step ------------------------------
 ------------------------------------------------------------------------
 
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__elastic_net_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__elastic_net_result AS (
     intercept       DOUBLE PRECISION,
     coefficients    DOUBLE PRECISION[],
@@ -840,7 +841,7 @@ CREATE TYPE MADLIB_SCHEMA.__elastic_net_result AS (
 
 /* IGD */
 
-CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_transition (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_igd_transition (
     state               DOUBLE PRECISION[],
     ind_var             DOUBLE PRECISION[],
     dep_var             DOUBLE PRECISION,
@@ -859,7 +860,7 @@ LANGUAGE C IMMUTABLE;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_merge (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_igd_merge (
     state1              DOUBLE PRECISION[],
     state2              DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
@@ -868,7 +869,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__gaussian_igd_final (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_igd_final (
     state               DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
 'MODULE_PATHNAME', 'gaussian_igd_final'
@@ -877,6 +878,19 @@ LANGUAGE C IMMUTABLE STRICT;
 /*
  * Perform one iteration step of IGD for linear models
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__gaussian_igd_step(
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           DOUBLE PRECISION,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
+);
 CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step(
     /* ind_var */           DOUBLE PRECISION[],
     /* dep_var */           DOUBLE PRECISION,
@@ -892,11 +906,24 @@ CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step(
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__gaussian_igd_transition,
-    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_igd_merge,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc = MADLIB_SCHEMA.__gaussian_igd_merge,')
     FinalFunc = MADLIB_SCHEMA.__gaussian_igd_final,
     InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__gaussian_igd_step_single_seg (
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           DOUBLE PRECISION,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
+);
 CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step_single_seg (
     /* ind_var */           DOUBLE PRECISION[],
     /* dep_var */           DOUBLE PRECISION,
@@ -912,7 +939,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_igd_step_single_seg (
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__gaussian_igd_transition,
-    -- m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_igd_merge,')
     FinalFunc = MADLIB_SCHEMA.__gaussian_igd_final,
     InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
@@ -941,7 +967,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 /* FISTA */
 
-CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_transition (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_fista_transition (
     state               DOUBLE PRECISION[],
     ind_var             DOUBLE PRECISION[],
     dep_var             DOUBLE PRECISION,
@@ -961,7 +987,7 @@ LANGUAGE C IMMUTABLE;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_merge (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_fista_merge (
     state1              DOUBLE PRECISION[],
     state2              DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
@@ -970,7 +996,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__gaussian_fista_final (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gaussian_fista_final (
     state               DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
 'MODULE_PATHNAME', 'gaussian_fista_final'
@@ -979,6 +1005,20 @@ LANGUAGE C IMMUTABLE STRICT;
 /*
   Perform one iteration step of FISTA for linear models
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__gaussian_fista_step(
+    /* ind_var      */      DOUBLE PRECISION[],
+    /* dep_var      */      DOUBLE PRECISION,
+    /* pre_state    */      DOUBLE PRECISION[],
+    /* lambda       */      DOUBLE PRECISION,
+    /* alpha        */      DOUBLE PRECISION,
+    /* dimension    */      INTEGER,
+    /* total_rows   */      INTEGER,
+    /* max_stepsize */      DOUBLE PRECISION,
+    /* eta          */      DOUBLE PRECISION,
+    /* use_active_set */    INTEGER,
+    /* is_active */         INTEGER,
+    /* random_stepsize */   INTEGER
+);
 CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_fista_step(
     /* ind_var      */      DOUBLE PRECISION[],
     /* dep_var      */      DOUBLE PRECISION,
@@ -995,7 +1035,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__gaussian_fista_step(
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__gaussian_fista_transition,
-    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__gaussian_fista_merge,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc = MADLIB_SCHEMA.__gaussian_fista_merge,')
     FinalFunc = MADLIB_SCHEMA.__gaussian_fista_final,
     InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
@@ -1023,7 +1063,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 /* Binomial IGD */
 
-CREATE FUNCTION MADLIB_SCHEMA.__binomial_igd_transition (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_igd_transition (
     state               DOUBLE PRECISION[],
     ind_var             DOUBLE PRECISION[],
     dep_var             BOOLEAN,
@@ -1042,7 +1082,7 @@ LANGUAGE C IMMUTABLE;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__binomial_igd_merge (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_igd_merge (
     state1              DOUBLE PRECISION[],
     state2              DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
@@ -1051,7 +1091,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__binomial_igd_final (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_igd_final (
     state               DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
 'MODULE_PATHNAME', 'binomial_igd_final'
@@ -1060,6 +1100,19 @@ LANGUAGE C IMMUTABLE STRICT;
 /*
  * Perform one iteration step of IGD for linear models
  */
+DROP AGGREGATE IF EXISTS  MADLIB_SCHEMA.__binomial_igd_step(
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           BOOLEAN,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
+);
 CREATE AGGREGATE MADLIB_SCHEMA.__binomial_igd_step(
     /* ind_var */           DOUBLE PRECISION[],
     /* dep_var */           BOOLEAN,
@@ -1075,11 +1128,24 @@ CREATE AGGREGATE MADLIB_SCHEMA.__binomial_igd_step(
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__binomial_igd_transition,
-    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__binomial_igd_merge,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc = MADLIB_SCHEMA.__binomial_igd_merge,')
     FinalFunc = MADLIB_SCHEMA.__binomial_igd_final,
     InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__binomial_igd_step_single_seg (
+    /* ind_var */           DOUBLE PRECISION[],
+    /* dep_var */           BOOLEAN,
+    /* pre_state */         DOUBLE PRECISION[],
+    /* lambda  */           DOUBLE PRECISION,
+    /* alpha */             DOUBLE PRECISION,
+    /* dimension */         INTEGER,
+    /* stepsize */          DOUBLE PRECISION,
+    /* total_rows */        INTEGER,
+    /* xmeans */            DOUBLE PRECISION[],
+    /* ymean */             DOUBLE PRECISION,
+    /* step_decay */        DOUBLE PRECISION
+);
 CREATE AGGREGATE MADLIB_SCHEMA.__binomial_igd_step_single_seg (
     /* ind_var */           DOUBLE PRECISION[],
     /* dep_var */           BOOLEAN,
@@ -1095,7 +1161,6 @@ CREATE AGGREGATE MADLIB_SCHEMA.__binomial_igd_step_single_seg (
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__binomial_igd_transition,
-    -- m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__binomial_igd_merge,')
     FinalFunc = MADLIB_SCHEMA.__binomial_igd_final,
     InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
@@ -1124,7 +1189,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 /* Binomial FISTA */
 
-CREATE FUNCTION MADLIB_SCHEMA.__binomial_fista_transition (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_fista_transition (
     state               DOUBLE PRECISION[],
     ind_var             DOUBLE PRECISION[],
     dep_var             BOOLEAN,
@@ -1144,7 +1209,7 @@ LANGUAGE C IMMUTABLE;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__binomial_fista_merge (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_fista_merge (
     state1              DOUBLE PRECISION[],
     state2              DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
@@ -1153,7 +1218,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 --
 
-CREATE FUNCTION MADLIB_SCHEMA.__binomial_fista_final (
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__binomial_fista_final (
     state               DOUBLE PRECISION[]
 ) RETURNS DOUBLE PRECISION[] AS
 'MODULE_PATHNAME', 'binomial_fista_final'
@@ -1162,6 +1227,20 @@ LANGUAGE C IMMUTABLE STRICT;
 /*
     Perform one iteration step of FISTA for linear models
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__binomial_fista_step(
+    /* ind_var      */      DOUBLE PRECISION[],
+    /* dep_var      */      BOOLEAN,
+    /* pre_state    */      DOUBLE PRECISION[],
+    /* lambda       */      DOUBLE PRECISION,
+    /* alpha        */      DOUBLE PRECISION,
+    /* dimension    */      INTEGER,
+    /* total_rows   */      INTEGER,
+    /* max_stepsize */      DOUBLE PRECISION,
+    /* eta          */      DOUBLE PRECISION,
+    /* use_active_set */    INTEGER,
+    /* is_active */         INTEGER,
+    /* random_stepsize */   INTEGER
+);
 CREATE AGGREGATE MADLIB_SCHEMA.__binomial_fista_step(
     /* ind_var      */      DOUBLE PRECISION[],
     /* dep_var      */      BOOLEAN,
@@ -1178,7 +1257,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__binomial_fista_step(
 ) (
     SType = DOUBLE PRECISION[],
     SFunc = MADLIB_SCHEMA.__binomial_fista_transition,
-    m4_ifdef(`GREENPLUM', `prefunc = MADLIB_SCHEMA.__binomial_fista_merge,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc = MADLIB_SCHEMA.__binomial_fista_merge,')
     FinalFunc = MADLIB_SCHEMA.__binomial_fista_final,
     InitCond = '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );

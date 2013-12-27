@@ -9,7 +9,7 @@ from elastic_net_utils import __compute_data_scales
 from elastic_net_utils import __compute_means
 from elastic_net_utils import __tbl_dimension_rownum
 from utilities.utilities import __unique_string
-from utilities.control import IterationController
+from utilities.control import IterationController2S
 from elastic_net_utils import IterationControllerNoTableDrop
 from elastic_net_utils import __elastic_net_validate_args
 from elastic_net_utils import __compute_log_likelihood
@@ -248,13 +248,13 @@ def __fista_cleanup_temp_tbls(**args):
     including tables used in the possible normalization
     and FISTA iterations.
     """
-    plpy.execute("""
-                 drop table if exists {tbl_ind_scales};
-                 drop table if exists {tbl_dep_scale};
-                 drop table if exists {tbl_data_scaled};
-                 drop table if exists {tbl_fista_args};
-                 drop table if exists pg_temp.{tbl_fista_state};
-                 """.format(**args))
+    #plpy.execute("""
+    #             drop table if exists {tbl_ind_scales};
+    #             drop table if exists {tbl_dep_scale};
+    #             drop table if exists {tbl_data_scaled};
+    #             drop table if exists {tbl_fista_args};
+    #             drop table if exists pg_temp.{tbl_fista_state};
+    #             """.format(**args))
 
     return None
 
@@ -421,7 +421,7 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c tbl_state
     """
-    iterationCtrl = IterationController( #TableAppend(
+    iterationCtrl = IterationController2S( #TableAppend(
         func_step_aggregate = func_step_aggregate,
         func_state_diff = func_state_diff,
         rel_args = tbl_args,
@@ -447,8 +447,9 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
                           {schema_madlib}.{func_step_aggregate}(
                               ({col_ind_var})::double precision[],
                               ({col_dep_var}),
-                              (select _state from {rel_state}
-                                  where _iteration = {iteration}),
+                              m4_ifdef(`__HAWQ__', `({{__state__}})',
+                              `(select _state from {rel_state}
+                                  where _iteration = {iteration})'),
                               (_args.{lambda_name}[{lambda_count}])::double precision,
                               (_args.{alpha_name})::double precision,
                               (_args.{dimension_name})::integer,
@@ -471,30 +472,31 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
 
             if it.kwargs["use_active_set"] == 1:
                 if state_size is None:
-                    state_size = plpy.execute(
+                    m4_ifdef(`__HAWQ__',
+                    `state_size = it.get_state_size()',
+                    `state_size = plpy.execute(
                         """
                         select array_upper(_state, 1) as size
                         from {rel_state} limit 1;
-                        """.format(**it.kwargs))[0]["size"]
+                        """.format(**it.kwargs))[0]["size"]')
 
-                is_backtracking = plpy.execute(
+                m4_ifdef(`__HAWQ__',
+                `is_backtracking = it.get_state_value(state_size - 1)',
+                `is_backtracking = plpy.execute(
                     """
                     select _state[{state_size}] as backtracking
                     from {rel_state}
                     where _iteration = {iteration}
                     """.format(state_size = state_size,
                                iteration = it.iteration,
-                               **it.kwargs))[0]["backtracking"]
+                               **it.kwargs))[0]["backtracking"]')
 
                 if it.test(
                     """
                     {iteration} >= _args.{max_iter_name}
                     or
                     {schema_madlib}.{func_state_diff}(
-                        (select _state from {rel_state}
-                            where _iteration = {iteration} - 1),
-                        (select _state from {rel_state}
-                            where _iteration = {iteration})) < {use_tolerance}
+                        _state_previous, _state_current) < {use_tolerance}
                     """):
                     if it.iteration < it.kwargs["max_iter"]:
                         if it.kwargs["is_active"] == 0:
@@ -515,10 +517,7 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
                     """
                     {iteration} >= _args.{max_iter_name} or
                     {schema_madlib}.{func_state_diff}(
-                        (select _state from {rel_state}
-                            where _iteration = {iteration} - 1),
-                        (select _state from {rel_state}
-                            where _iteration = {iteration})) < _args.{tolerance_name}
+                        _state_previous, _state_current) < _args.{tolerance_name}
                     """):
                     if (it.iteration < it.kwargs["max_iter"] and
                         it.kwargs["lambda_count"] < it.kwargs["warm_no"]):
