@@ -10,7 +10,7 @@
 @brief Low-rank Matrix Factorization using IGD: Driver functions
 """
 
-from utilities.control import IterationController
+from utilities.control import IterationController2S
 
 def compute_lmf_igd(schema_madlib, rel_args, rel_state, rel_source,
     col_row, col_column, col_value, **kwargs):
@@ -33,7 +33,7 @@ def compute_lmf_igd(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
-    iterationCtrl = IterationController(
+    iterationCtrl = IterationController2S(
         rel_args = rel_args,
         rel_state = rel_state,
         stateType = "DOUBLE PRECISION[]",
@@ -52,8 +52,9 @@ def compute_lmf_igd(schema_madlib, rel_args, rel_state, rel_source,
                         (_src.{col_row})::INT2, 
                         (_src.{col_column})::INT2, 
                         (_src.{col_value})::INT2,
+                        m4_ifdef(`__HAWQ__', `{{__state__}}', `
                         (SELECT _state FROM {rel_state}
-                            WHERE _iteration = {iteration}),
+                            WHERE _iteration = {iteration})'),
                         (_args.row_dim)::INT2,
                         (_args.column_dim)::INT2,
                         (_args.max_rank)::INT2,
@@ -64,10 +65,7 @@ def compute_lmf_igd(schema_madlib, rel_args, rel_state, rel_source,
             if it.test("""
                 {iteration} > _args.num_iterations OR
                 {schema_madlib}.internal_lmf_igd_distance(
-                    (SELECT _state FROM {rel_state}
-                        WHERE _iteration = {iteration} - 1),
-                    (SELECT _state FROM {rel_state}
-                        WHERE _iteration = {iteration})) < _args.tolerance
+                    _state_previous, _state_current) < _args.tolerance
                 """):
                 break
     return iterationCtrl.iteration

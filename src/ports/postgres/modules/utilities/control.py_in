@@ -151,7 +151,7 @@ class IterationController:
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
                 LEFT OUTER JOIN (
-                    SELECT *
+                    SELECT _state
                     FROM {{rel_state}} AS _state
                     WHERE _state._iteration = {{iteration}}
                 ) AS _state ON True
@@ -218,11 +218,11 @@ class IterationController:
         update_plan = plpy.prepare("""
             SELECT
                 {iteration} AS _iteration,
-                {schema_madlib}.array_to_1d(({newState})) AS _state
+                ({newState}) AS _state
             """.format(
                 iteration = self.iteration,
                 newState = newState,
-                **self.kwargs), [ "DOUBLE PRECISION[]" ])
+                **self.kwargs).format(__state__='$1'), [ "DOUBLE PRECISION[]" ])
         self.new_state = plpy.execute(update_plan, [ None if self.new_state['_state'] is None else self.new_state['_state'] ])[0]
         <<<, >>>
         self.runSQL("""
@@ -307,6 +307,114 @@ class IterationController2D(IterationController):
 
         if version_wrapper.is_gp43() or version_wrapper.is_hawq():
             plpy.execute("SET optimizer = " + optimizer)
+
+        if resultObject.nrows() == 0:
+            return None
+        else:
+            return resultObject[0]['expression']
+
+    def update(self, newState, **updateKwargs):
+        """
+        Update the inter-iteration state
+
+        @param newState SQL expression of type
+            <tt>stateType.kwargs.stateType</tt>. The
+            following names are defined and can be used in the condition:
+            - \c _args - The (single-row) argument table
+            - \c _state - The row of the state table containing the latest
+              inter-iteration state
+            .
+            Note that <tt>{iteration}</tt> will still be the current iteration.
+            For instance, it could be used in the expression as a WHERE
+            condition: <tt>[...] WHERE _state._iteration = {iteration}</tt>
+
+        This updates the current inter-iteration state to the result of
+        evaluating \c newState. If <tt>self.truncAfterIteration</tt> is true,
+        this will replace the old state, otherwise the history of all old states
+        is kept.
+        """
+        updateKwargs.update(**self.kwargs)
+        newState = newState.format(
+            iteration = self.iteration,
+            **updateKwargs)
+        self.iteration = self.iteration + 1
+
+        m4_ifdef(>>>__HAWQ__<<<, >>>
+        self.old_state = self.new_state
+        update_plan = plpy.prepare("""
+            SELECT
+                {iteration} AS _iteration,
+                {schema_madlib}.array_to_1d(({newState})) AS _state
+            """.format(
+                iteration = self.iteration,
+                newState = newState,
+                **self.kwargs), [ "DOUBLE PRECISION[]" ])
+        self.new_state = plpy.execute(update_plan, [ None if self.new_state['_state'] is None else self.new_state['_state'] ])[0]
+        <<<, >>>
+        self.runSQL("""
+            INSERT INTO {rel_state}
+            SELECT
+                {iteration},
+                ({newState})
+            """.format(
+                iteration = self.iteration,
+                newState = newState,
+                **self.kwargs))
+        <<<)
+
+        m4_ifdef(>>>__HAWQ__<<<, >>><<<, >>>
+        if self.truncAfterIteration:
+            self.runSQL("""
+                DELETE FROM {rel_state} AS _state
+                WHERE _state._iteration < {iteration}
+            """.format(iteration = self.iteration, **self.kwargs))
+        <<<)
+
+class IterationController2S(IterationController):
+    """
+    @brief Designed for the case where the state type is 1-D double array and
+    both the old state and new state are required
+    """
+
+    def evaluate(self, expression):
+        m4_ifdef(>>>__HAWQ__<<<, >>>
+        eval_plan = plpy.prepare("""
+            SELECT ({expression}) AS expression
+            FROM {{rel_args}} AS _args
+                LEFT OUTER JOIN (
+                    SELECT
+                        $1 AS _state_previous,
+                        $2 AS _state_current
+                ) AS _state ON True
+            """.format(expression = expression).format(
+                iteration = self.iteration,
+                **self.kwargs), [ "DOUBLE PRECISION[]", "DOUBLE PRECISION[]" ])
+
+        resultObject = plpy.execute(eval_plan, [
+            self.old_state['_state'], self.new_state['_state'] ])
+        <<<, >>>
+        resultObject = self.runSQL("""
+            SELECT ({expression}) AS expression
+            FROM {{rel_args}} AS _args
+                LEFT OUTER JOIN (
+                    SELECT
+                        _state_previous, _state_current
+                    FROM
+                    (
+                        SELECT _state AS _state_previous
+                        FROM {{rel_state}}
+                        WHERE _iteration = {{iteration}} - 1
+                    ) sub1,
+                    (
+                        SELECT _state AS _state_current
+                        FROM {{rel_state}}
+                        WHERE _iteration = {{iteration}}
+                    ) sub2
+                ) AS _state ON True
+            """.format(expression = expression).format(
+                iteration = self.iteration,
+                **self.kwargs))
+        <<<)
 
         if resultObject.nrows() == 0:
             return None
