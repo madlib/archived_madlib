@@ -478,7 +478,7 @@ $$ LANGUAGE plpythonu VOLATILE;
  * - Get vector of coefficients \f$ \boldsymbol \beta \f$:\n
  *  <pre>SELECT coef from '<em>output_table</em>'</pre>
   */
-CREATE FUNCTION MADLIB_SCHEMA.coxph_train(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
      source_table               VARCHAR     -- name of input  table
    , output_table               VARCHAR     -- name of output table
    , dependent_varname          VARCHAR     -- name of dependent variable
@@ -500,7 +500,7 @@ $$ LANGUAGE plpythonu;
 /**
   * @brief Cox regresison training function
  **/
-CREATE FUNCTION MADLIB_SCHEMA.coxph_train(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
      source_table           VARCHAR     -- name of input  table
    , output_table           VARCHAR     -- name of output table
    , dependent_variable     VARCHAR     -- name of dependent variable
@@ -517,7 +517,7 @@ $$ LANGUAGE sql VOLATILE;
 /**
   * @brief Cox regresison training function
  **/
-CREATE FUNCTION MADLIB_SCHEMA.coxph_train(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
      source_table               VARCHAR       -- name of input  table
    , output_table               VARCHAR       -- name of output table
    , dependent_variable         VARCHAR       -- name of dependent variable
@@ -533,7 +533,7 @@ $$ LANGUAGE sql VOLATILE;
 /**
   * @brief Cox regresison training function
  **/
-CREATE FUNCTION MADLIB_SCHEMA.coxph_train(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
      source_table               VARCHAR       -- name of input  table
    , output_table                  VARCHAR       -- name of output table
    , dependent_variable         VARCHAR       -- name of dependent variable
@@ -589,7 +589,7 @@ $$ LANGUAGE plpythonu VOLATILE;
 
 -- Internal functions and types-------------------------------------------------
 ----------------------------------------------------------------------
-DROP TYPE IF EXISTS MADLIB_SCHEMA.coxph_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.coxph_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.coxph_result AS (
     coef DOUBLE PRECISION[],
     logLikelihood DOUBLE PRECISION,
@@ -625,8 +625,14 @@ LANGUAGE C IMMUTABLE;
  * @internal
  * @brief Perform one iteration the Newton-Rhapson method.
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.coxph_step(
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,
+    /*+  status */ BOOLEAN,
+    /*+  coef */ DOUBLE PRECISION[]
+);
 CREATE
-m4_ifdef(`__GREENPLUM__',m4_ifdef(`__HAS_ORDERED_AGGREGATES__',`ORDERED'))
+m4_ifdef(`__POSTGRESQL__', `', m4_ifdef(`__HAS_ORDERED_AGGREGATES__',`ORDERED'))
 AGGREGATE MADLIB_SCHEMA.coxph_step(
     /*+  x */ DOUBLE PRECISION[],
     /*+  y */ DOUBLE PRECISION,
@@ -649,8 +655,14 @@ LANGUAGE C IMMUTABLE STRICT;
 
 ----------------------------
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.coxph_strata_step_inner(
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  y */ DOUBLE PRECISION,
+    /*+  status */ BOOLEAN,
+    /*+  coef */ DOUBLE PRECISION[]
+);
 CREATE
-m4_ifdef(`__GREENPLUM__',m4_ifdef(`__HAS_ORDERED_AGGREGATES__',`ORDERED'))
+m4_ifdef(`__POSTGRESQL__', `', m4_ifdef(`__HAS_ORDERED_AGGREGATES__',`ORDERED'))
 AGGREGATE MADLIB_SCHEMA.coxph_strata_step_inner(
     /*+  x */ DOUBLE PRECISION[],
     /*+  y */ DOUBLE PRECISION,
@@ -681,6 +693,9 @@ LANGUAGE C IMMUTABLE STRICT;
 
 ------------------------------------
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.coxph_strata_step_outer(
+    /*+  state */ DOUBLE PRECISION[]
+);
 CREATE AGGREGATE MADLIB_SCHEMA.coxph_strata_step_outer(
     /*+  state */ DOUBLE PRECISION[]
 )
@@ -688,10 +703,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.coxph_strata_step_outer(
     STYPE=DOUBLE PRECISION[],
     SFUNC=MADLIB_SCHEMA.coxph_step_outer_transition,
     FINALFUNC=MADLIB_SCHEMA.coxph_step_strata_final
-    m4_ifdef(
-        `GREENPLUM',
-        `, prefunc=MADLIB_SCHEMA.coxph_step_outer_transition'
-    )
+    m4_ifdef(`__POSTGRESQL__', `', `,prefunc=MADLIB_SCHEMA.coxph_step_outer_transition')
 );
 
 ----------------------------------------------------------------------
@@ -740,14 +752,19 @@ LANGUAGE c IMMUTABLE;
  * @brief Aggregate for the Schoenfeld residuals
  *        (should be used as part of an aggregate-defined window function)
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.zph_agg(
+    /*+  x */ DOUBLE PRECISION[],
+    /*+  coef */   DOUBLE PRECISION[]
+);
 CREATE AGGREGATE MADLIB_SCHEMA.zph_agg(
     /*+  x */ DOUBLE PRECISION[],
-    /*+  coef */   DOUBLE PRECISION[])
+    /*+  coef */   DOUBLE PRECISION[]
+)
 (
     STYPE=DOUBLE PRECISION[],
     SFUNC=MADLIB_SCHEMA.__zph_transition,
     FINALFUNC=MADLIB_SCHEMA.__zph_final
-    m4_ifdef(`__GREENPLUM__', `, PREFUNC = MADLIB_SCHEMA.__zph_merge')
+    m4_ifdef(`__POSTGRESQL__', `', `, PREFUNC = MADLIB_SCHEMA.__zph_merge')
 );
 
 -------------------------------------------------------------------------
@@ -791,6 +808,10 @@ LANGUAGE c IMMUTABLE;
  * @brief Correlation function to compute element-wise correlation between an
  *        array of variables with another scalar variable.
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.array_elem_corr_agg(
+    /*+  array_input */   DOUBLE PRECISION[],
+    /*+  common_elem */   DOUBLE PRECISION
+);
 CREATE AGGREGATE MADLIB_SCHEMA.array_elem_corr_agg(
     /*+  array_input */   DOUBLE PRECISION[],
     /*+  common_elem */   DOUBLE PRECISION)
@@ -799,7 +820,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.array_elem_corr_agg(
     SFUNC=MADLIB_SCHEMA.__array_elem_corr_transition,
     FINALFUNC=MADLIB_SCHEMA.__array_elem_corr_final,
     INITCOND='{0,0,0,0,0,0,0}'
-    m4_ifdef(`__GREENPLUM__', `, PREFUNC = MADLIB_SCHEMA.__array_elem_corr_merge')
+    m4_ifdef(`__POSTGRESQL__', `', `,PREFUNC = MADLIB_SCHEMA.__array_elem_corr_merge')
 );
 
 --------------------------------------------------------------------------------
@@ -823,7 +844,7 @@ AS 'MODULE_PATHNAME', 'coxph_resid_stat_merge'
 LANGUAGE c IMMUTABLE;
 
 ------------------------------------
-DROP TYPE IF EXISTS MADLIB_SCHEMA.__cox_resid_stat_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__cox_resid_stat_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.__cox_resid_stat_result AS
 (
     chi_square_stat DOUBLE PRECISION[],
@@ -839,6 +860,12 @@ LANGUAGE C IMMUTABLE STRICT;
 
 ------------------------------------
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__coxph_resid_stat_agg(
+    /*+ w        */ DOUBLE PRECISION,
+    /*+ residual */ DOUBLE PRECISION[],
+    /*+ hessian  */ DOUBLE PRECISION[],
+    /*+ m        */ INTEGER
+);
 CREATE AGGREGATE MADLIB_SCHEMA.__coxph_resid_stat_agg(
     /*+ w        */ DOUBLE PRECISION,
     /*+ residual */ DOUBLE PRECISION[],
@@ -849,10 +876,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__coxph_resid_stat_agg(
     STYPE=DOUBLE PRECISION[],
     SFUNC=MADLIB_SCHEMA.__coxph_resid_stat_transition,
     FINALFUNC=MADLIB_SCHEMA.__coxph_resid_stat_final
-    m4_ifdef(
-        `GREENPLUM',
-        `, prefunc=MADLIB_SCHEMA.__coxph_resid_stat_merge'
-    )
+    m4_ifdef(`__POSTGRESQL__', `', `,prefunc=MADLIB_SCHEMA.__coxph_resid_stat_merge')
 );
 
 ----------------------------------------------------------------------
@@ -970,7 +994,7 @@ $$ LANGUAGE plpgsql VOLATILE;
 
 -------------------------------------------------------------------------
 
-DROP TYPE IF EXISTS MADLIB_SCHEMA.cox_prop_hazards_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.cox_prop_hazards_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
     coef DOUBLE PRECISION[],
     logLikelihood DOUBLE PRECISION,
@@ -981,7 +1005,7 @@ CREATE TYPE MADLIB_SCHEMA.cox_prop_hazards_result AS (
 );
 
 
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,
@@ -1016,7 +1040,7 @@ $$ LANGUAGE plpythonu VOLATILE;
 
 
 -- Note: The function cox_prop_hazards_regr has been deprecated but maintained
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,
@@ -1026,7 +1050,7 @@ $$SELECT MADLIB_SCHEMA.cox_prop_hazards_regr($1, $2, $3, $4, 20, 'newton', 0.000
 LANGUAGE sql VOLATILE;
 
 -- Note: The function cox_prop_hazards_regr has been deprecated but maintained
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,
@@ -1037,7 +1061,7 @@ $$SELECT MADLIB_SCHEMA.cox_prop_hazards_regr($1, $2, $3, $4, $5, 'newton', 0.000
 LANGUAGE sql VOLATILE;
 
 -- Note: The function cox_prop_hazards_regr has been deprecated but maintained
-CREATE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards_regr(
     "source" VARCHAR,
     "indepColumn" VARCHAR,
     "depColumn" VARCHAR,

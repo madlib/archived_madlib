@@ -1,6 +1,11 @@
 import plpy
 import math
 
+from utilities.validate_args import table_exists
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import columns_exist_in_table
+from utilities.utilities import _string_to_array
+
 class Summarizer:
     def __init__(self, schema_madlib, source_table, output_table,
                     target_cols, grouping_cols, distinctify, get_quartiles,
@@ -44,11 +49,10 @@ class Summarizer:
         """
             Validate the required arguments for the summary function
         """
-        if (not self._source_table or self._source_table.strip() == ''):
-            plpy.error("""
-                Summary -- Invalid parameter: Source table name should be a
-                non-empty string""")
-
+        # source table
+        if self._source_table is None or self._source_table.strip() == '':
+            plpy.error("Summary error: Invalid data table name!")
+        # self._tableoid is needed for the other function
         try:
             self._tableoid = plpy.execute("""
                 SELECT '{source_table}'::regclass::oid
@@ -57,41 +61,28 @@ class Summarizer:
             plpy.error("""
                 Summary -- Relation '{source_table}' does not exist""".format(
                                             source_table=self._source_table))
+        if table_is_empty(self._source_table):
+            plpy.error("Summary error: Data table is empty!")
 
-        if not self._output_table or self._output_table.strip() == '':
-            plpy.error("""
-                Summary -- Invalid parameter: Output table name should be a
-                non-empty string""")
+        # output table
+        if self._output_table is None or self._output_table.strip() == '':
+            plpy.error("Logregr error: Invalid output table name!")
+        if (table_exists(self._output_table)):
+            plpy.error("Summary error: Output table name already exists. "
+                    "Drop the table before calling the function.")
+        try:
+            plpy.execute("CREATE TABLE {0}();"
+                    "DROP TABLE {0};".format(self._output_table))
+        except:
+            plpy.error("Summary error: Invalid output table name!")
 
-        rowcount = plpy.execute("""
-            SELECT count(*) FROM {source_table}""".format(
-                source_table=self._source_table))[0]['count']
-        if rowcount == 0:
-            plpy.error("""
-                Summary -- Relation '{source_table}' is empty""".format(
-                source_table=self._source_table))
-
-    def _validate_grouping_cols(self):
-        set_column_names = set(self._column_names)
-        non_exist_cols = [each_col for each_col in self._grouping_cols
-                          if each_col and each_col not in set_column_names]
-        if non_exist_cols:
-            plpy.error("""
-                Summary -- Invalid paramter: column(s) {0} missing from source table
-                """.format("\"" + ', '.join(non_exist_cols) + "\"")
-            )
-
-    def _validate_target_cols(self):
-        if not self._target_cols:
-            return
-        set_column_names = set(self._column_names)
-        non_exist_cols = [each_col for each_col in self._target_cols \
-                          if each_col and each_col not in set_column_names]
-        if non_exist_cols:
-            plpy.error("""
-                Summary -- Invalid paramter: column(s) {0} missing from source table
-                """.format("\"" + ', '.join(non_exist_cols) + "\"")
-            )
+    def _validate_required_cols(self, required_cols):
+        if required_cols is not None and required_cols != [None]:
+            clean_cols = [c for c in required_cols if c is not None]
+            if not columns_exist_in_table(
+                    self._source_table, clean_cols, self._schema_madlib):
+                plpy.error("Summary error: Columns {0} does not exist!"
+                        .format(", ".join(clean_cols)))
 
     def _validate_ntile_array(self):
         if self._ntile_array is not None:
@@ -120,15 +111,16 @@ class Summarizer:
         Validate all parameters in the class
         """
         self._validate_table_names()
-        self._populate_columns()
-        self._validate_target_cols()
-        self._validate_grouping_cols()
-        self._adjust_cols()
+        self._validate_required_cols(self._target_cols)
+        self._validate_required_cols(self._grouping_cols)
         self._validate_ntile_array()
         if self._how_many_mfv is None or self._how_many_mfv <= 0:
             plpy.error("""
                 Summary -- Invalid parameter: Number of most frequent values
                 required should be positive""")
+        self._populate_columns()
+        self._adjust_cols()
+
 # ----- End of argument validation functions -----------------------------
 
     def _build_subquery(self, group_var, cols):
@@ -306,7 +298,10 @@ class Summarizer:
         query = self._build_inner_query(group_val, cols)
         distinct_values = ''
         if self._distinctify != 'Skip':
-            distinct_values = 'distinct_values,'
+            distinct_values = """
+                (CASE WHEN rowcount < distinct_values THEN rowcount
+                ELSE distinct_values
+                END) AS distinct_values,"""
 
         first_quartile = ''
         median = ''
@@ -355,7 +350,7 @@ class Summarizer:
         """
         if create_table:
             final_query += """
-                m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (group_by)')"""
+                m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (group_by)')"""
 
         return final_query.format(
             output_table=self._output_table,

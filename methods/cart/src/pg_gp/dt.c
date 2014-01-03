@@ -2474,38 +2474,6 @@ PG_FUNCTION_INFO_V1(dt_acc_count_sfunc);
 
 
 /*
- * @brief Cast a value to text. On some databases, there
- *        are no such casts for certain data types, such as
- *        the cast for bool to text. 
- *
- * @param value   The value with any specific type
- *
- * @note This is a strict function.
- *
- */
-Datum
-dt_to_text
-    (
-    PG_FUNCTION_ARGS
-    )
-{
-    Datum   value            = PG_GETARG_DATUM(0);
-    Oid     valtype          = get_fn_expr_argtype(fcinfo->flinfo, 0);
-    Oid		typoutput        = 0;
-    bool    typIsVarlena     = 0;
-    char   *result           = NULL;
-
-    getTypeOutputInfo(valtype, &typoutput, &typIsVarlena);
-
-    // call the output function of the type to convert 
-    result = OidOutputFunctionCall(typoutput, value);
-
-    PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-PG_FUNCTION_INFO_V1(dt_to_text);
-
-
-/*
  * @brief The step function of the aggregate array_indexed_agg.
  *        To avoid allocating memory in each step function and manipulating
  *        the array bitmap for null values, we keep the null values by 
