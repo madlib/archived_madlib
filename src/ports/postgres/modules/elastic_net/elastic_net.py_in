@@ -9,9 +9,12 @@ from utilities.validate_args import table_exists
 from utilities.validate_args import table_is_empty
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import get_cols_and_types
+
 from utilities.utilities import _string_to_array
+from utilities.utilities import set_client_min_messages
 from utilities.utilities import __mad_version
 from utilities.utilities import is_psql_numeric_type
+import re
 
 version_wrapper = __mad_version()
 mad_vec = version_wrapper.select_vecfunc()
@@ -29,8 +32,7 @@ def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
     If an optimizer name is given, print out the necessary parameters.
     """
     if (family_or_optimizer is None or
-        family_or_optimizer.lower() == "help" or
-            family_or_optimizer.lower() == "?"):
+            family_or_optimizer.lower() in ("help", "?")):
         return """
         ----------------------------------------------------------------
                                 Summary
@@ -146,8 +148,7 @@ def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
         are BOOLEAN.
         """.format(schema_madlib=schema_madlib)
 
-    if (family_or_optimizer.lower() == "gaussian" or
-            family_or_optimizer.lower() == "linear"):
+    if (family_or_optimizer.lower() in ("gaussian", "linear")):
         return """
         ----------------------------------------------------------------
         Fitting of linear models
@@ -163,8 +164,7 @@ def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
         to see more help on each optimizer.
         """.format(schema_madlib=schema_madlib)
 
-    if (family_or_optimizer.lower() == "binomial" or
-            family_or_optimizer.lower() == "logistic"):
+    if (family_or_optimizer.lower() in ("binomial", "logistic")):
         return """
         ----------------------------------------------------------------
         Fitting of logistic models
@@ -307,8 +307,10 @@ def elastic_net_train(schema_madlib, tbl_source, tbl_result, col_dep_var,
                    """.format(schema_madlib=schema_madlib))
 
     # handle all special cases of col_ind_var
-    (col_ind_var, outstr_array) = analyze_input_str(schema_madlib, tbl_source, col_ind_var,
-                                                    col_dep_var, excluded)
+    col_ind_var, outstr_array = analyze_input_str(schema_madlib, tbl_source,
+                                                  col_ind_var, col_dep_var,
+                                                  excluded)
+
     # # Special case for ridge linear regression
     # if ((regress_family.lower() == "gaussian" or regress_family.lower() == "linear") and
     #     optimizer.lower() == "newton" and
@@ -325,42 +327,43 @@ def elastic_net_train(schema_madlib, tbl_source, tbl_result, col_dep_var,
     #                 standardize = standardize))
     #     return None
 
-    if ((regress_family.lower() == "gaussian" or regress_family.lower() == "linear") and
-            optimizer.lower() == "igd"):
-        __elastic_net_gaussian_igd_train(schema_madlib, tbl_source, col_ind_var,
-                                         col_dep_var, tbl_result, lambda_value, alpha,
-                                         standardize, optimizer_params, max_iter,
-                                         tolerance, outstr_array, **kwargs)
-        return None
+    not_supported_family = False
+    not_supported_opt = False
+    if regress_family.lower() in ("gaussian", "linear"):
+        if optimizer.lower() == "igd":
+            __elastic_net_gaussian_igd_train(schema_madlib, tbl_source, col_ind_var,
+                                             col_dep_var, tbl_result, lambda_value, alpha,
+                                             standardize, optimizer_params, max_iter,
+                                             tolerance, outstr_array, **kwargs)
+            return None
+        if optimizer.lower() == "fista":
+            __elastic_net_gaussian_fista_train(schema_madlib, tbl_source, col_ind_var,
+                                               col_dep_var, tbl_result, lambda_value, alpha,
+                                               standardize, optimizer_params, max_iter,
+                                               tolerance, outstr_array, **kwargs)
+            return None
+        not_supported_opt = True
+    elif regress_family.lower() in ("binomial", "logistic"):
+        if optimizer.lower() == "igd":
+            col_dep_var = "(" + col_dep_var + ")::boolean"
+            __elastic_net_binomial_igd_train(schema_madlib, tbl_source, col_ind_var,
+                                             col_dep_var, tbl_result, lambda_value, alpha,
+                                             standardize, optimizer_params, max_iter,
+                                             tolerance, outstr_array, **kwargs)
+            return None
 
-    if ((regress_family.lower() == "gaussian" or regress_family.lower() == "linear") and
-            optimizer.lower() == "fista"):
-        __elastic_net_gaussian_fista_train(schema_madlib, tbl_source, col_ind_var,
-                                           col_dep_var, tbl_result, lambda_value, alpha,
-                                           standardize, optimizer_params, max_iter,
-                                           tolerance, outstr_array, **kwargs)
-        return None
-
-    if ((regress_family.lower() == "binomial" or regress_family.lower() == "logistic") and
-            optimizer.lower() == "igd"):
-        col_dep_var = "(" + col_dep_var + ")::boolean"
-        __elastic_net_binomial_igd_train(schema_madlib, tbl_source, col_ind_var,
-                                         col_dep_var, tbl_result, lambda_value, alpha,
-                                         standardize, optimizer_params, max_iter,
-                                         tolerance, outstr_array, **kwargs)
-        return None
-
-    if ((regress_family.lower() == "binomial" or
-            regress_family.lower() == "logistic") and
-            optimizer.lower() == "fista"):
-        col_dep_var = "(" + col_dep_var + ")::boolean"
-        __elastic_net_binomial_fista_train(schema_madlib, tbl_source, col_ind_var,
-                                           col_dep_var, tbl_result, lambda_value, alpha,
-                                           standardize, optimizer_params, max_iter,
-                                           tolerance, outstr_array, **kwargs)
-        return None
-
-    plpy.error("""
+        if optimizer.lower() == "fista":
+            col_dep_var = "(" + col_dep_var + ")::boolean"
+            __elastic_net_binomial_fista_train(schema_madlib, tbl_source, col_ind_var,
+                                               col_dep_var, tbl_result, lambda_value, alpha,
+                                               standardize, optimizer_params, max_iter,
+                                               tolerance, outstr_array, **kwargs)
+            return None
+        not_supported_opt = True
+    else:
+        not_supported_family = True
+    if not_supported_family or not_supported_opt:
+        plpy.error("""
                Elastic Net error: Not a supported response family or supported optimizer of the given response family!
                Run:
                SELECT {schema_madlib}.elastic_net_train();
@@ -376,6 +379,8 @@ def __check_args(tbl_source, col_ind_var, col_dep_var):
     """
     if any(each_arg is None for each_arg in (tbl_source, col_ind_var, col_dep_var)):
         plpy.error("Elastic Net error: You have unsupported NULL value(s) in the arguments!")
+    if any(each_arg.strip() == '' for each_arg in (tbl_source, col_ind_var, col_dep_var)):
+        plpy.error("Elastic Net error: You have unsupported EMPTY value(s) in the arguments!")
 
     if not table_exists(tbl_source):
         plpy.error("Elastic Net error: Data table " + tbl_source + " does not exist!")
@@ -434,19 +439,23 @@ def analyze_input_str(schema_madlib, tbl_source,
                                         col_ind_var, excluded)
     else:
         ## if input is an expression resulting in an array output
-
-        ## Currently disabling the below regex since we allow expressions for independent
-        ##  variable that could start with something other than 'array'
+        matched = re.match(r"(?i)^array\[(.*)\]", col_ind_var)
+        if matched:
+            ## array expression starts with the word "ARRAY"
+            outstr_array = _string_to_array(matched.group(1))
+        else:
+            ## any other form of array expression
+            n_feat = plpy.execute(""" SELECT array_upper({indep_var}, 1) as num_feat
+                                      FROM {source}
+                                  """.format(indep_var=col_ind_var,
+                                             source=tbl_source))[0]["num_feat"]
+            outstr_array = ["[" + str(i) + "]" for i in range(1, n_feat+1)]
+        ## We allow expressions for independent variables that could start with
+        ## something other than 'array'
         ##    Example use case: input independent variable of array column
         ##     adding an intercept could be done as '1 || x' where 'x' is array
         ##     of independent variables.
-        # try:
-        #     matched = re.match(r"(?i)^array\[(.*)\]", col_ind_var)
-        #     if matched is None or len(matched.group(1)) == 0:
-        #         plpy.error("Elastic Net error: Independent variable format is not quite right!")
-        #     outstr_array = _string_to_array(matched.group(1))
-        # except:
-        #     plpy.error("Elastic Net error: Independent variable format is not quite right!")
+        # plpy.error("Elastic Net error: Independent variable format is not quite right!")
         return (col_ind_var, outstr_array)
 # ========================================================================
 
@@ -512,135 +521,47 @@ def elastic_net_predict_all(schema_madlib, tbl_model, tbl_new_source,
     """
     Predict and put the result in a table. Useful for general CV
     """
+    old_msg_level = set_client_min_messages("error")
     regress_family = plpy.execute("SELECT family FROM {tbl_model} ".
                                   format(tbl_model=tbl_model))[0]["family"]
 
-    if regress_family.lower() == "gaussian" or regress_family.lower() == "linear":
-        return __elastic_net_gaussian_predict_all(
-            schema_madlib, tbl_model, tbl_new_source, tbl_predict, col_id)
-
-    if regress_family.lower() == "binomial" or regress_family.lower() == "logistic":
-        return __elastic_net_binomial_predict_all(
-            schema_madlib, tbl_model, tbl_new_source, tbl_predict, col_id)
-
-    plpy.error("Not a supported response family!")
-    return None
-
-# ========================================================================
-
-
-def __elastic_net_gaussian_predict_all(schema_madlib, tbl_model, tbl_new_source,
-                                       tbl_predict, col_id):
-    """
-    Prediction for Gaussian model
-    """
-    old_msg_level = plpy.execute(
-        """
-        select setting from pg_settings
-        where name='client_min_messages'
-        """)[0]['setting']
-    plpy.execute("set client_min_messages to error")
-
-    if col_id is None:
-        col_id_str = "NULL"
+    if regress_family.lower() in ("gaussian", "linear"):
+        predict_func = "elastic_net_gaussian_predict"
+    elif regress_family.lower() in ("binomial", "logistic"):
+        predict_func = "elastic_net_binomial_predict"
     else:
-        col_id_str = col_id
+        plpy.error("Not a supported response family!")
 
-    dense_vars = mad_vec(plpy.execute(
-        """
-        select features_selected as fs
-        from {tbl_model}
-        """.format(tbl_model=tbl_model))[0]["fs"])
+    col_id_str = col_id if col_id is not None else "NULL"
 
-    dense_vars_str = "array["
-    for i in range(len(dense_vars)):
-        dense_vars_str += str(dense_vars[i])
-        if i != len(dense_vars) - 1:
-            dense_vars_str += ", "
-    dense_vars_str += "]"
-
+    dense_vars = mad_vec(plpy.execute(""" SELECT features_selected AS fs
+                                          FROM {tbl_model}
+                                      """.format(tbl_model=tbl_model))[0]["fs"])
+    dense_vars_str = "ARRAY[" + ", ".join(dense_vars) + "]"
     # Must be careful to avoid possible name conflicts
     plpy.execute(
         """
-        drop table if exists {tbl_predict};
-        create table {tbl_predict} as
-            select
+        DROP TABLE IF EXISTS {tbl_predict};
+        CREATE TABLE {tbl_predict} AS
+            SELECT
                 id,
-                {schema_madlib}.elastic_net_gaussian_predict(coef_nonzero,
-                                                            intercept, ind_var)
-                                 as prediction
-            from
+                {schema_madlib}.{predict_func}(coef_nonzero, intercept, ind_var)
+                     AS prediction
+            FROM
                 {tbl_model} as tbl1,
-                (select
+                (SELECT
                     {col_id} as id,
                     {dense_vars_str} as ind_var
-                from
+                FROM
                     {tbl_new_source}) tbl2
         """.format(tbl_model=tbl_model,
+                   predict_func=predict_func,
                    tbl_predict=tbl_predict,
                    col_id=col_id_str,
                    dense_vars_str=dense_vars_str,
                    schema_madlib=schema_madlib,
                    tbl_new_source=tbl_new_source))
 
-    plpy.execute("set client_min_messages to " + old_msg_level)
+    set_client_min_messages(old_msg_level)
     return None
 # ========================================================================
-
-
-def __elastic_net_binomial_predict_all(schema_madlib, tbl_model, tbl_new_source,
-                                       tbl_predict, col_id):
-    """
-    Prediction for Binomial model
-    """
-    old_msg_level = plpy.execute(
-        """
-        select setting from pg_settings
-        where name='client_min_messages'
-        """)[0]['setting']
-    plpy.execute("set client_min_messages to error")
-
-    if col_id is None:
-        col_id_str = "NULL"
-    else:
-        col_id_str = col_id
-
-    dense_vars = mad_vec(plpy.execute(
-        """
-        select features_selected as fs
-        from {tbl_model}
-        """.format(tbl_model=tbl_model))[0]["fs"])
-
-    dense_vars_str = "array["
-    for i in range(len(dense_vars)):
-        dense_vars_str += str(dense_vars[i])
-        if i != len(dense_vars) - 1:
-            dense_vars_str += ", "
-    dense_vars_str += "]"
-
-    # Must be careful to avoid possible name conflicts
-    plpy.execute(
-        """
-        drop table if exists {tbl_predict};
-        create table {tbl_predict} as
-            select
-                id,
-                {schema_madlib}.elastic_net_binomial_predict(coef_nonzero,
-                                                            intercept, ind_var)
-                                 as prediction
-            from
-                {tbl_model} as tbl1,
-                (select
-                    {col_id} as id,
-                    {dense_vars_str} as ind_var
-                from
-                    {tbl_new_source}) tbl2
-        """.format(tbl_model=tbl_model,
-                   tbl_predict=tbl_predict,
-                   col_id=col_id_str,
-                   dense_vars_str=dense_vars_str,
-                   schema_madlib=schema_madlib,
-                   tbl_new_source=tbl_new_source))
-
-    plpy.execute("set client_min_messages to " + old_msg_level)
-    return None
