@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file dt_preproc.sql_in
  *
@@ -38,22 +38,22 @@ m4_ifelse(
 )
 
 /*
- * The file contains the functions to encode a training/classification table for 
- * C4.5 and random forest (RF). Given a training table, we encode it into 4 tables: 
+ * The file contains the functions to encode a training/classification table for
+ * C4.5 and random forest (RF). Given a training table, we encode it into 4 tables:
  *     + A table that contains the distinct values and their assigned IDs for all
  *       features. We call it the Key-Value(KV) table for features.
- *     + A table that contains the distinct labels and their assigned IDs for the 
+ *     + A table that contains the distinct labels and their assigned IDs for the
  *       class column. We call it the KV table for class.
  *     + A table that contains metadata descriptions about the columns of the training
  *       table. We call it the metatable.
- *     + A table that contains an encoded version of the training table using the 
+ *     + A table that contains an encoded version of the training table using the
  *       KV tables. We call it the encoded table.
  *
  * For a classification table, we only need the first three tables. We will use
  * Golf dataset as an example to illustrate the generated tables:
  *
  * testdb=# select * from golf order by id;
- *  id | outlook  | temperature | humidity | windy  |    class     
+ *  id | outlook  | temperature | humidity | windy  |    class
  * ----+----------+-------------+----------+--------+--------------
  *   1 | sunny    |          85 |       85 |  false |  Do not Play
  *   2 | sunny    |          80 |       90 |  true  |  Do not Play
@@ -75,43 +75,43 @@ m4_ifelse(
  * The metatable contains the information of the columns in the training table.
  * For each column, it has a record whose structure is defined as:
  *
- *   +id             The ID assigned to a feature/class/id column. For the class 
+ *   +id             The ID assigned to a feature/class/id column. For the class
  *                   colum,it's 0. To be determistic, the IDs for feature columns
- *                   starts at 1 and are assigned according to the alphabet order 
+ *                   starts at 1 and are assigned according to the alphabet order
  *                   of the column names. The ID for the id column is the largest
- *                   feature ID plus one. 
+ *                   feature ID plus one.
  *   +column_name    The name of the class/feature/id column.
- *   +column_type    'c' means the column is a class. 
+ *   +column_type    'c' means the column is a class.
  *                   'f' means it's a feature column.
  *                   'i' means it's an id column.
  *   +is_cont        't' means the feature is continuous.
  *                   'f' means it's discrete.
- *   +table_oid      The OID of the KV table for features/class. 
+ *   +table_oid      The OID of the KV table for features/class.
  *                   For the id column, there is no KV table.
- *   +num_dist_value The number of distinct values for a feature/class column. 
+ *   +num_dist_value The number of distinct values for a feature/class column.
  *
  * The metatable for the Golf dataset looks like this:
  * testdb=# select * from golf_meta order by id;
- *  id | column_name | column_type | is_cont | table_oid | num_dist_value 
+ *  id | column_name | column_type | is_cont | table_oid | num_dist_value
  * ----+-------------+-------------+---------+-----------+----------------
  *   0 | class       | c           | f       |    787672 |              2
  *   1 | humidity    | f           | t       |    787749 |              9
  *   2 | outlook     | f           | f       |    787749 |              3
  *   3 | temperature | f           | t       |    787749 |             12
  *   4 | windy       | f           | f       |    787749 |              2
- *   5 | id          | i           | f       |           |              
+ *   5 | id          | i           | f       |           |
  * (6 rows)
- * 
+ *
  * The KV table for features contains a record for each distinct value. The record
  * structure is:
  *   +fid      The ID assigned to a feature.
- *   +fval     For a discrete feature, it's the distinct value. 
+ *   +fval     For a discrete feature, it's the distinct value.
  *             For a continuous feature, it's NULL.
- *   +code     For a discrete feature, it's the assigned key. 
+ *   +code     For a discrete feature, it's the assigned key.
  *             For a continuous feature, it's the average value.
  *
  * testdb=# select * from golf_kv_features order by fid, code;
- *  fid |   fval   |       code       
+ *  fid |   fval   |       code
  * -----+----------+------------------
  *    1 |          | 80.2857142857143
  *    2 | overcast |                1
@@ -125,23 +125,23 @@ m4_ifelse(
  * The KV table for class labels contains a record for each label. The record
  * structure is the same as the KV table for features.
  * testdb=# select * from golf_kv_class order by fid, code;
- *  fid |     fval     | code 
+ *  fid |     fval     | code
  * -----+--------------+------
  *    0 |  Do not Play |    1
  *    0 |  Play        |    2
- * 
+ *
  * The encoded table has a record for each cell in the training table. The record
  * structure is:
- *    +id       The ID from the training table. 
+ *    +id       The ID from the training table.
  *    +fid      The ID assigned to a feature
- *    +fval     For a discrete feature, it's the key. 
+ *    +fval     For a discrete feature, it's the key.
  *              For a continuous feature, it's the original feature value.
  *    +is_cont  't' if the feature is continuous, or 'f' for the discrete one.
  *    +class    The encoded value of the class label.
- * 
+ *
  * For Golf dataset, the vertical encoded table looks like this:
  * testdb=# select * from golf_ed order by fid, id;
- *  id | fid | fval | is_cont | class 
+ *  id | fid | fval | is_cont | class
  * ----+-----+------+---------+-------
  *   1 |   1 |   85 | t       |     1
  *   2 |   1 |   90 | t       |     1
@@ -204,11 +204,11 @@ m4_ifelse(
  * On databases that support compression, we can leverage that feature
  * to reduce the space required for keeping the encoded table.
  *
- * For classification, we will use the metatable and KV tables to encode 
- * the table (horizontal table) to be classified into some like this: 
+ * For classification, we will use the metatable and KV tables to encode
+ * the table (horizontal table) to be classified into some like this:
  *
  * testdb# select * from golf_ed order by id;
- *  id |    fvals    | class 
+ *  id |    fvals    | class
  * ----+-------------+-------
  *   1 | {85,3,85,1} |     1
  *   2 | {90,3,80,2} |     1
@@ -241,15 +241,15 @@ m4_ifelse(
  *
  *      pre_proc_time            The time of pre-processing.
  *      breakup_tbl_time         The time of breaking up the training table.
- *      gen_kv_time              The time of generating KV-table for 
- *                               features/class. 
+ *      gen_kv_time              The time of generating KV-table for
+ *                               features/class.
  *      gen_enc_time             The time of generating encoded table.
  *      post_proc_time           The time of post-processing.
  *
  */
 DROP TYPE IF EXISTS MADLIB_SCHEMA.__enc_tbl_result;
-CREATE TYPE MADLIB_SCHEMA.__enc_tbl_result AS 
-(     
+CREATE TYPE MADLIB_SCHEMA.__enc_tbl_result AS
+(
     pre_proc_time            INTERVAL,
     breakup_tbl_time         INTERVAL,
     gen_kv_time              INTERVAL,
@@ -264,21 +264,21 @@ CREATE TYPE MADLIB_SCHEMA.__enc_tbl_result AS
  *
  * @param full_table_name     The full table name.
  * @param feature_columns     The array including all feature names.
- * @param id_column           The name of the ID column.        
- * @param class_column        The name of the class column. 
+ * @param id_column           The name of the ID column.
+ * @param class_column        The name of the class column.
  *
  * @return If the table has unsupported data types, then raise exception
  *         otherwise return nothing.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_input_table    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_input_table
     (
     full_table_name     TEXT,
     feature_columns     TEXT[],
     id_column           TEXT,
     class_column        TEXT
     )
-RETURNS void AS $$  
+RETURNS void AS $$
 DECLARE
     rec             RECORD;
     stmt            TEXT;
@@ -286,35 +286,35 @@ DECLARE
     index           INT;
 BEGIN
     -- find the first (LIMIT 1) unsupported data type if the input table has.
-    stmt= 'SELECT atttypid 
-    FROM pg_attribute 
+    stmt= 'SELECT atttypid
+    FROM pg_attribute
     WHERE attrelid ='||quote_literal(full_table_name)||'::regclass  AND
-          attnum > 0                                                AND 
+          attnum > 0                                                AND
           (not attisdropped)                                        AND
-          atttypid NOT IN 
+          atttypid NOT IN
           (
               SELECT unnest
                     (
                         ARRAY[
                             ''SMALLINT''::regtype::oid,
-                            ''INT''::regtype::oid, 
-                            ''BIGINT''::regtype::oid, 
-                            ''FLOAT8''::regtype::oid, 
-                            ''REAL''::regtype::oid, 
+                            ''INT''::regtype::oid,
+                            ''BIGINT''::regtype::oid,
+                            ''FLOAT8''::regtype::oid,
+                            ''REAL''::regtype::oid,
                             ''DECIMAL''::regtype::oid,
-                            ''INET''::regtype::oid, 
-                            ''CIDR''::regtype::oid, 
-                            ''MACADDR''::regtype::oid, 
-                            ''BOOLEAN''::regtype::oid, 
-                            ''CHAR''::regtype::oid, 
-                            ''VARCHAR''::regtype::oid, 
-                            ''TEXT''::regtype::oid, 
-                            ''"char"''::regtype::oid, 
-                            ''DATE''::regtype::oid, 
+                            ''INET''::regtype::oid,
+                            ''CIDR''::regtype::oid,
+                            ''MACADDR''::regtype::oid,
+                            ''BOOLEAN''::regtype::oid,
+                            ''CHAR''::regtype::oid,
+                            ''VARCHAR''::regtype::oid,
+                            ''TEXT''::regtype::oid,
+                            ''"char"''::regtype::oid,
+                            ''DATE''::regtype::oid,
                             ''TIME''::regtype::oid,
-                            ''TIMETZ''::regtype::oid, 
-                            ''TIMESTAMP''::regtype::oid, 
-                            ''TIMESTAMPTZ''::regtype::oid, 
+                            ''TIMETZ''::regtype::oid,
+                            ''TIMESTAMP''::regtype::oid,
+                            ''TIMESTAMPTZ''::regtype::oid,
                             ''INTERVAL''::regtype::oid
                         ]
                     )
@@ -325,34 +325,34 @@ BEGIN
         -- Otherwise, we just need to check those specified columns.
         index = array_lower(feature_columns, 1);
         WHILE (index <= array_upper(feature_columns, 1)) LOOP
-            all_columns = all_columns                           || 
-                          quote_literal(feature_columns[index]) || 
+            all_columns = all_columns                           ||
+                          quote_literal(feature_columns[index]) ||
                           ',';
             index = index+1;
-        END LOOP; 
-        
+        END LOOP;
+
         all_columns = all_columns || quote_literal(id_column) || ',';
         all_columns = all_columns || quote_literal(class_column);
         stmt = stmt ||' AND attname IN ('||all_columns||') ';
     END IF;
-    
+
     stmt = stmt||' LIMIT 1;';
-    
+
     EXECUTE stmt INTO rec;
-            
+
     IF (rec IS NOT NULL) THEN
         -- Print the first unsupported data type, and supported types.
         RAISE EXCEPTION 'Unsupported data type [%]. Supported types include:
                          SMALLINT, INT, BIGINT, FLOAT8, REAL,
                          DECIMAL, INET, CIDR, MACADDR, BOOLEAN,
-                         CHAR, VARCHAR, TEXT, "char", 
-                         DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ, and INTERVAL', 
+                         CHAR, VARCHAR, TEXT, "char",
+                         DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ, and INTERVAL',
                          rec.atttypid::regtype;
     END IF;
 
     SELECT MADLIB_SCHEMA.__format
             ('SELECT % AS n
-              FROM % 
+              FROM %
               GROUP BY %
               HAVING COUNT(%) > 1
               LIMIT 1',
@@ -364,19 +364,20 @@ BEGIN
                 ]
             )
     INTO stmt;
-    
+
     EXECUTE stmt INTO rec;
-    
+
     -- check if the id column has duplicated value
     PERFORM MADLIB_SCHEMA.__assert
                 (
                     rec IS NULL,
                     'The training table ' || full_table_name || ' must not have duplicated id'
                 );
-                        
+
     RETURN;
 END
-$$ LANGUAGE PLPGSQL;    
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -386,11 +387,11 @@ $$ LANGUAGE PLPGSQL;
  *
  * @return The name of the class table
  *
- */  
+ */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_classtable_name
     (
-    meta_tbl_name TEXT 
-    ) 
+    meta_tbl_name TEXT
+    )
 RETURNS TEXT AS $$
 DECLARE
     classtable_name TEXT;
@@ -401,34 +402,35 @@ BEGIN
         (
             meta_tbl_name,
             't'
-        ); 
-          
+        );
+
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT MADLIB_SCHEMA.__regclass_to_text
-                (table_oid) as table_name 
+                (table_oid) as table_name
              FROM %
              WHERE column_type = ''c''',
             ARRAY[
                 meta_tbl_name
             ]
         );
-    
+
     EXECUTE curstmt INTO classtable_name;
-    
+
     RETURN classtable_name;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
- * @brief Drop the metatable and KV tables 
+ * @brief Drop the metatable and KV tables
  *        for the features and the class.
  *
  * @param meta_tbl_name The full name of the metatable.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__drop_metatable 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__drop_metatable
     (
     meta_tbl_name TEXT
     )
@@ -440,15 +442,15 @@ BEGIN
     IF (meta_tbl_name is NULL ) THEN
         RETURN;
     END IF;
-    
+
     PERFORM MADLIB_SCHEMA.__assert_table(meta_tbl_name, 't');
-    
+
     -- get the Key-Value tables
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT MADLIB_SCHEMA.__regclass_to_text
-                (table_oid) as table_name 
-             FROM 
+                (table_oid) as table_name
+             FROM
                 (
                 SELECT table_oid
                 FROM %
@@ -459,25 +461,26 @@ BEGIN
                  meta_tbl_name
              ]
         );
-    
+
     -- drop all the Key-Value tables
     FOR name IN EXECUTE curstmt LOOP
         EXECUTE 'DROP TABLE IF EXISTS ' || name || ' CASCADE;';
     END LOOP;
-    
+
     -- drop the metatable
     EXECUTE 'DROP TABLE ' || meta_tbl_name || ' CASCADE;';
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
  * @brief Create the metatable.
- 
+
  * @param meta_tbl_name    The full name of the metatable.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_metatable 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__create_metatable
     (
     meta_tbl_name TEXT
     )
@@ -489,15 +492,15 @@ BEGIN
     -- the maximum length of an identifier is 63
     PERFORM MADLIB_SCHEMA.__assert
         (
-            length(MADLIB_SCHEMA.__strip_schema_name(meta_tbl_name)) <= 63, 
+            length(MADLIB_SCHEMA.__strip_schema_name(meta_tbl_name)) <= 63,
             'The maximum length of '                            ||
-             MADLIB_SCHEMA.__strip_schema_name(meta_tbl_name)  || 
+             MADLIB_SCHEMA.__strip_schema_name(meta_tbl_name)  ||
              ' is 63'
         );
-        
+
     -- must not be existence
     PERFORM MADLIB_SCHEMA.__assert_table(meta_tbl_name, 'f');
-    
+
     -- 'f' for feature, 'c' for class, 'i' for id
     -- 't' for continuous value, 'f' for discrete value
     curstmt = MADLIB_SCHEMA.__format
@@ -514,7 +517,8 @@ BEGIN
         );
     EXECUTE curstmt;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
@@ -533,20 +537,20 @@ $$ LANGUAGE PLPGSQL;
  * @note  The null value will be included in the distinct values.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__insert_into_metatable 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__insert_into_metatable
     (
     meta_tbl_name       TEXT,
     col_index           INT,
     column_name         TEXT,
-    column_type         CHAR,   
-    is_cont             BOOLEAN,     
+    column_type         CHAR,
+    is_cont             BOOLEAN,
     table_name          TEXT,
-    num_dist_value      INT         
+    num_dist_value      INT
     )
 RETURNS void AS $$
 DECLARE
     curstmt TEXT := '';
-    tbl_txt TEXT := 'NULL';     
+    tbl_txt TEXT := 'NULL';
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert
         (
@@ -562,19 +566,20 @@ BEGIN
             'INSERT INTO % VALUES
                 (%, ''%'', ''%'', ''%'', %::regclass, %);',
             ARRAY[
-                meta_tbl_name, 
+                meta_tbl_name,
                 col_index::TEXT,
-                column_name, 
-                column_type, 
-                MADLIB_SCHEMA.__to_char(is_cont), 
+                column_name,
+                column_type,
+                MADLIB_SCHEMA.__to_char(is_cont),
                 tbl_txt,
                 num_dist_value::TEXT
             ]
-        ); 
+        );
 
     EXECUTE curstmt;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
@@ -584,7 +589,7 @@ $$ LANGUAGE PLPGSQL;
  * @param meta_tbl_name     The full name of the metatable.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_metatable 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__validate_metatable
     (
     meta_tbl_name TEXT
     )
@@ -594,14 +599,14 @@ DECLARE
     name    TEXT;
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert_table(meta_tbl_name, 't');
-    
-    -- if one of those KV tables doesn't exist, 
+
+    -- if one of those KV tables doesn't exist,
     -- we raise exception.
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT MADLIB_SCHEMA.__assert_table
-                (MADLIB_SCHEMA.__regclass_to_text(table_oid), ''t'') 
-             FROM 
+                (MADLIB_SCHEMA.__regclass_to_text(table_oid), ''t'')
+             FROM
                 (
                 SELECT table_oid
                 FROM %
@@ -614,7 +619,8 @@ BEGIN
         );
     EXECUTE curstmt;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 /*
  * @brief Get the number of distinct values for the feature with given ID.
@@ -625,7 +631,7 @@ $$ LANGUAGE PLPGSQL;
  * @return The number of the distinct values for the given feature.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__distinct_feature_value 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__distinct_feature_value
     (
     meta_tbl_name   TEXT,
     feature_id      INT
@@ -637,18 +643,19 @@ DECLARE
 BEGIN
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT num_dist_value 
-             FROM % 
+            'SELECT num_dist_value
+             FROM %
              WHERE column_type=''f'' AND id = %',
             meta_tbl_name,
             feature_id::TEXT
-        ); 
-                
+        );
+
     EXECUTE curstmt INTO result;
-    
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -659,7 +666,7 @@ $$ LANGUAGE PLPGSQL;
  * @return The number of features in the training table.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__num_of_feature 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__num_of_feature
     (
     meta_tbl_name TEXT
     )
@@ -670,17 +677,18 @@ DECLARE
 BEGIN
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT COUNT(*) 
-             FROM % 
+            'SELECT COUNT(*)
+             FROM %
              WHERE column_type=''f''',
             meta_tbl_name
-        ); 
-                
+        );
+
     EXECUTE curstmt INTO result;
-    
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -703,26 +711,27 @@ DECLARE
 BEGIN
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT MADLIB_SCHEMA.__regclass_to_text(table_oid) 
-             FROM % 
+            'SELECT MADLIB_SCHEMA.__regclass_to_text(table_oid)
+             FROM %
              WHERE column_type=''c''',
             meta_tbl_name
-        ); 
-                
+        );
+
     EXECUTE curstmt INTO class_table_name;
-    
+
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT COUNT(code)
              FROM %',
             class_table_name
         );
-    
+
     EXECUTE curstmt INTO result;
-    
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -734,7 +743,7 @@ $$ LANGUAGE PLPGSQL;
  * @return The feature name.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_name    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_name
     (
     feature_index   INT,
     meta_tbl_name  TEXT
@@ -746,18 +755,19 @@ DECLARE
 BEGIN
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT column_name 
-             FROM   % 
+            'SELECT column_name
+             FROM   %
              WHERE  id = % AND column_type = ''f'';',
             meta_tbl_name,
             MADLIB_SCHEMA.__to_char(feature_index)
         );
-        
+
     EXECUTE curstmt INTO result;
-    
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -768,18 +778,18 @@ $$ LANGUAGE PLPGSQL;
  * @param column_type       The type of the column.
  *                          'i' means id, 'c' means class, 'f' means feature.
  * @param meta_tbl_name     The full name of the metatable.
- * 
- * @return The column's value corresponding to the give code. 
+ *
+ * @return The column's value corresponding to the give code.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_column_value    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_column_value
     (
     column_index    INT,
     code            INT,
     column_type     CHAR,
     meta_tbl_name   TEXT
     )
-RETURNS TEXT AS $$  
+RETURNS TEXT AS $$
 DECLARE
     curstmt     TEXT;
     names       TEXT[];
@@ -788,53 +798,54 @@ DECLARE
 BEGIN
     PERFORM MADLIB_SCHEMA.__assert
         (
-            code IS NOT NULL, 
+            code IS NOT NULL,
             'the code of the value should not be null'
         );
 
     IF (column_type <> 'c') THEN
         tmp_txt = MADLIB_SCHEMA.__format
             (
-                ' WHERE id = % AND column_type = ''%''', 
-                column_index::TEXT, 
+                ' WHERE id = % AND column_type = ''%''',
+                column_index::TEXT,
                 column_type::TEXT
             );
     END IF;
 
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT 
-                 ARRAY[column_name, 
-                       MADLIB_SCHEMA.__regclass_to_text(table_oid)] 
-             FROM % 
+            'SELECT
+                 ARRAY[column_name,
+                       MADLIB_SCHEMA.__regclass_to_text(table_oid)]
+             FROM %
              %',
             meta_tbl_name,
             tmp_txt
-        ); 
-                   
+        );
+
     EXECUTE curstmt INTO names;
-    
+
     PERFORM MADLIB_SCHEMA.__assert(names[1] IS NOT NULL, 'No such column name');
     PERFORM MADLIB_SCHEMA.__assert(names[2] IS NOT NULL, 'No such table name');
-    
+
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT MADLIB_SCHEMA.__to_char(fval) 
-             FROM % 
+            'SELECT MADLIB_SCHEMA.__to_char(fval)
+             FROM %
              WHERE code = %;',
             names[2],
             code::TEXT
         );
 
     EXECUTE curstmt INTO result;
-    
+
     IF (result IS NULL) THEN
         result = 'NULL';
     END IF;
-    
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -842,33 +853,34 @@ $$ LANGUAGE PLPGSQL;
  *
  * @param feature_index     The ID of the feature.
  * @param code              The code of the feature value.
- * @param meta_tbl_name     The full name of the metatable.  
+ * @param meta_tbl_name     The full name of the metatable.
  *
- * @return The value of specified code of the feature 
+ * @return The value of specified code of the feature
  *         whose id specified in feature_index.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_value    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_feature_value
     (
     feature_index   INT,
     code            INT,
     meta_tbl_name  TEXT
     )
-RETURNS TEXT AS $$  
+RETURNS TEXT AS $$
 DECLARE
     result TEXT := '';
 BEGIN
     result = MADLIB_SCHEMA.__get_column_value
         (
-            feature_index, 
-            code, 
-            'f', 
+            feature_index,
+            code,
+            'f',
             meta_tbl_name
         );
-            
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -879,7 +891,7 @@ $$ LANGUAGE PLPGSQL;
  * @return The ID column name.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_id_column_name    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_id_column_name
     (
     meta_tbl_name  TEXT
     )
@@ -893,21 +905,22 @@ BEGIN
             meta_tbl_name,
             't'
         );
-        
+
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT column_name 
-             FROM   % 
-             WHERE  column_type = ''i'' 
+            'SELECT column_name
+             FROM   %
+             WHERE  column_type = ''i''
              LIMIT 1',
             meta_tbl_name
         );
-        
+
     EXECUTE curstmt INTO result;
-    
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -915,10 +928,10 @@ $$ LANGUAGE PLPGSQL;
  *
  * @param meta_tbl_name    The full name of the metatable.
  *
- * @return The class column name. 
+ * @return The class column name.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_column_name    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_column_name
     (
     meta_tbl_name  TEXT
     )
@@ -932,20 +945,21 @@ BEGIN
             meta_tbl_name,
             't'
         );
-        
+
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT column_name 
-             FROM   % 
+            'SELECT column_name
+             FROM   %
              WHERE  column_type = ''c'' LIMIT 1',
             meta_tbl_name
         );
-        
+
     EXECUTE curstmt INTO result;
-    
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
@@ -954,54 +968,55 @@ $$ LANGUAGE PLPGSQL;
  * @param code               The code of the class value.
  * @param meta_tbl_name      The full name of the metatable.
  *
- * @return The class value corresponding to the code. 
+ * @return The class value corresponding to the code.
  *
  */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_value    
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__get_class_value
     (
     code            INT,
     meta_tbl_name  TEXT
     )
-RETURNS TEXT AS $$  
+RETURNS TEXT AS $$
 DECLARE
     result TEXT := '';
 BEGIN
     result = MADLIB_SCHEMA.__get_column_value(0, code, 'c', meta_tbl_name);
-            
+
     RETURN result;
 END
-$$ LANGUAGE PLPGSQL;  
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
 /*
  * @brief breakup each record from the training table.
- *        For example, we have the training table t(id, f1, f2, f3, class), 
- *        then the breakup table is bt(id, fid, fval, is_cont, class). 
+ *        For example, we have the training table t(id, f1, f2, f3, class),
+ *        then the breakup table is bt(id, fid, fval, is_cont, class).
  *        The id column of the two tables is the same. Each feature will be
  *        encoded to continuous numeric number. Assume that t has values
- *          (1, 'a', 1, 10, '+') 
+ *          (1, 'a', 1, 10, '+')
  *          (2, 'b', 2, 8, '-')
- *          (3, 'd', null, 2, '+') 
- *        and all of them are discrete features, then the values of bt are 
- *          (1, 1, 'a', 'f', '+') 
- *          (2, 1, 'b', 'f', '-') 
+ *          (3, 'd', null, 2, '+')
+ *        and all of them are discrete features, then the values of bt are
+ *          (1, 1, 'a', 'f', '+')
+ *          (2, 1, 'b', 'f', '-')
  *          (3, 1, 'd', 'f', '+')
- *          (1, 2, 1, 'f', '+') 
- *          (2, 2, 2, 'f', '-') 
+ *          (1, 2, 1, 'f', '+')
+ *          (2, 2, 2, 'f', '-')
  *          (3, 2, null, 'f', '+')
- *          (1, 3, 10, 'f', '+') 
- *          (2, 3, 8, 'f', '-') 
+ *          (1, 3, 10, 'f', '+')
+ *          (2, 3, 8, 'f', '-')
  *          (3, 3, 2, 'f', '+')
  *
  * @param input_tbl_name      The full name of the input training table.
  * @param breakup_tbl_name    The name of the breakup table.
  * @param kv_cls_name         The name of the key-value table for class column.
- * @param id_col_name         The name of the ID column. 
+ * @param id_col_name         The name of the ID column.
  * @param attr_col_names      The array contains all the features' names.
  * @param is_conts            The subscript of the array denotes the feature index.
  *                            Each value of the array denotes the feature is
  *                            continuous ('t') or discrete ('f')
- * @param verbosity           > 0 means this function runs in verbose mode. 
+ * @param verbosity           > 0 means this function runs in verbose mode.
  *
  * @return The name of the breakup table, which will be used to generate the encoded
  *         table.
@@ -1009,7 +1024,7 @@ $$ LANGUAGE PLPGSQL;
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__breakup_table
     (
-    input_tbl_name        TEXT, 
+    input_tbl_name        TEXT,
     breakup_tbl_name      TEXT,
     kv_cls_name           TEXT,
     id_col_name           TEXT,
@@ -1018,7 +1033,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__breakup_table
     is_conts              BOOL[],
     h2hmv_routine_id      INT,
     verbosity             INT
-    ) 
+    )
 RETURNS VOID AS $$
 DECLARE
     curstmt             TEXT;
@@ -1027,7 +1042,7 @@ DECLARE
     fval_txt            TEXT := 'fval';
 BEGIN
     exec_begin = clock_timestamp();
-    
+
     EXECUTE 'DROP TABLE IF EXISTS ' || breakup_tbl_name;
 
 m4_changequote(`>>>', `<<<')
@@ -1086,15 +1101,15 @@ m4_changequote(>>>`<<<, >>>'<<<)
     END IF;
 
     IF (cls_col_name IS NULL) THEN
-        -- if the kv_cls_name is null, then the class column will be null        
+        -- if the kv_cls_name is null, then the class column will be null
         curstmt = MADLIB_SCHEMA.__format
             (
                 'INSERT INTO %(id, fid, fval, is_cont, class)
                  SELECT id, fid, % as fval, is_cont, class
-                 FROM 
+                 FROM
                     (
-                     SELECT %, generate_series(1, %) as fid, 
-                        unnest(array[MADLIB_SCHEMA.__to_char(%)]) as fval, 
+                     SELECT %, generate_series(1, %) as fid,
+                        unnest(array[MADLIB_SCHEMA.__to_char(%)]) as fval,
                         unnest(array[''%''::BOOL]::BOOL[]) as is_cont, NULL as class
                      FROM
                         % t1
@@ -1113,24 +1128,24 @@ m4_changequote(>>>`<<<, >>>'<<<)
             );
 
     ELSE
-        -- for scoring, as the class column may have some values which are not 
+        -- for scoring, as the class column may have some values which are not
         -- appear in the training table, we need use left join here to ensure all
-        -- the rows of the input table were breakup. Here, we simple encode those 
+        -- the rows of the input table were breakup. Here, we simple encode those
         -- values to 0. Therefore, during scoring, the samples with 0 (encoded
         -- value) as class label will be recognized as mis-classified.
         curstmt = MADLIB_SCHEMA.__format
             (
                 'INSERT INTO %(id, fid, fval, is_cont, class)
                  SELECT id, fid, % as fval, is_cont, class
-                 FROM 
+                 FROM
                     (
-                     SELECT %, generate_series(1, %) as fid, 
-                        unnest(array[MADLIB_SCHEMA.__to_char(%)]) as fval, 
+                     SELECT %, generate_series(1, %) as fid,
+                        unnest(array[MADLIB_SCHEMA.__to_char(%)]) as fval,
                         unnest(array[''%''::BOOL]::BOOL[]) as is_cont,
                         coalesce(code, 0::INT) as class
                      FROM
                         % t1 LEFT JOIN % t2
-                     ON MADLIB_SCHEMA.__to_char(t1.%) = t2.fval                    
+                     ON MADLIB_SCHEMA.__to_char(t1.%) = t2.fval
                     ) t
                  %',
                 ARRAY[
@@ -1141,7 +1156,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                     array_to_string(attr_col_names, '), MADLIB_SCHEMA.__to_char('),
                     array_to_string(is_conts, ''','''),
                     input_tbl_name,
-                    kv_cls_name, 
+                    kv_cls_name,
                     cls_col_name,
                     where_txt
                 ]
@@ -1152,11 +1167,12 @@ m4_changequote(>>>`<<<, >>>'<<<)
 
     IF (verbosity > 0) THEN
         RAISE INFO '%', curstmt;
-        RAISE INFO 'time of breaking up the training table:%', 
+        RAISE INFO 'time of breaking up the training table:%',
             clock_timestamp() - exec_begin;
     END IF;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
@@ -1164,27 +1180,27 @@ $$ LANGUAGE PLPGSQL;
  *
  * @param breakup_tbl_name    The full name of the breakup table.
  * @param enc_tbl_name        The name of the encoded table. its schema is:
- *                              id BIGINT, 
- *                              fid INT, 
- *                              fval FLOAT8, 
- *                              is_cont BOOL, 
+ *                              id BIGINT,
+ *                              fid INT,
+ *                              fval FLOAT8,
+ *                              is_cont BOOL,
  *                              class INT
  * @param kv_attr_name        The name of the key-value table contains the encoded
  *                            result for all the features. For continuous feature,
  *                            it kept the average value of it if in 'explicit' mode;
  *                            nothing will kept if in 'ignore' mode.
  * @param is_tbl_tmp          If ture we will create the encoded table as a temp one.
- * @param verbosity           > 0 means this function runs in verbose mode. 
+ * @param verbosity           > 0 means this function runs in verbose mode.
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gen_vertical_encoded_table
     (
-    breakup_tbl_name      TEXT,     
+    breakup_tbl_name      TEXT,
     enc_tbl_name          TEXT,
     kv_attr_name          TEXT,
     is_tbl_tmp            BOOL,
     verbosity             INT
-    ) 
+    )
 RETURNS VOID AS $$
 DECLARE
     curstmt             TEXT;
@@ -1194,7 +1210,7 @@ BEGIN
     IF (is_tbl_tmp) THEN
         tmp_txt = ' TEMP ';
     END IF;
-               
+
     EXECUTE 'DROP TABLE IF EXISTS ' || enc_tbl_name;
 
 m4_changequote(`>>>', `<<<')
@@ -1249,8 +1265,8 @@ m4_changequote(>>>`<<<, >>>'<<<)
              SELECT p.id AS id, p.fid AS fid,
                  CASE WHEN (p.is_cont AND p.fval IS NOT NULL) THEN
                     p.fval::FLOAT8
-                 ELSE 
-                    m.code::FLOAT8 
+                 ELSE
+                    m.code::FLOAT8
                  END AS fval,
                  p.is_cont AS is_cont,
                  p.class::INT AS class
@@ -1259,19 +1275,20 @@ m4_changequote(>>>`<<<, >>>'<<<)
             ON
                 m.fid = p.fid AND
                 (coalesce(m.fval, '''') = (coalesce(p.fval, '''')))',
-            ARRAY[    
+            ARRAY[
                 enc_tbl_name,
                 breakup_tbl_name,
                 kv_attr_name
             ]
         );
-    
+
     IF (verbosity > 0) THEN
         RAISE INFO '%', curstmt;
     END IF;
     EXECUTE curstmt;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
@@ -1280,7 +1297,7 @@ $$ LANGUAGE PLPGSQL;
  * @param hor_tbl_name          The full name of the horizontal table.
  * @param ver_tbl_name          The full name of the vertical table.
  * @param meta_tbl_name         The full name of the meta data table.
- * @param verbosity             > 0 means this function runs in verbose mode. 
+ * @param verbosity             > 0 means this function runs in verbose mode.
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gen_horizontal_encoded_table
@@ -1289,7 +1306,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__gen_horizontal_encoded_table
     ver_tbl_name        TEXT,
     attr_count          INT,
     verbosity           INT
-    ) 
+    )
 RETURNS VOID AS $$
 DECLARE
     curstmt             TEXT;
@@ -1317,28 +1334,29 @@ BEGIN
     EXECUTE curstmt;
 
     IF (verbosity > 0) THEN
-        RAISE INFO 'time of generating horizontal table from vertical table:%', 
+        RAISE INFO 'time of generating horizontal table from vertical table:%',
             clock_timestamp() - exec_begin;
     END IF;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
  * @brief Encode the continuous and discrete features and the class column.
- *        In 'ignore' mode, for each discrete feature/class, we will use 
- *        continuous integer to encode each distinct value (null value 
- *        will be excluded). Continuous feature will not be processed. 
- *        In 'explicit' mode, null value will be included for discrete 
+ *        In 'ignore' mode, for each discrete feature/class, we will use
+ *        continuous integer to encode each distinct value (null value
+ *        will be excluded). Continuous feature will not be processed.
+ *        In 'explicit' mode, null value will be included for discrete
  *        feature. For continuous feature, null value will be replaced by
  *        the average value of this feature.
- * 
+ *
  * @param kv_attr_name        The name of the key-value table contains the encoded
  *                            result for all the features. For continuous feature,
  *                            it kept the average value of it if in 'explicit' mode;
  *                            nothing will kept if in 'ignore' mode.
  * @param breakup_tbl_name    The name of the breakup table from raw training table.
- * @param h2hmv_routine_id    The ID of the routine which specifies 
+ * @param h2hmv_routine_id    The ID of the routine which specifies
  *                            How to handle missing value(h2hmv).
  * @param verbosity           > 0 means this function runs in verbose mode.
  *
@@ -1356,17 +1374,17 @@ DECLARE
     curstmt             TEXT;
     tmp_txt	        	TEXT = '';
 BEGIN
-    
+
     -- This table will be used to generate the KV table
-    -- for the discrete features and retrieve the number 
+    -- for the discrete features and retrieve the number
     -- of distinct values for a feature outside of this
     -- function. Therefore, don't drop this table in this
     -- function.
     EXECUTE 'DROP TABLE IF EXISTS tmp_dist_table';
 	curstmt = MADLIB_SCHEMA.__format
 		(
-			'CREATE TEMP TABLE tmp_dist_table AS 
-			 SELECT fid, fval, is_cont 
+			'CREATE TEMP TABLE tmp_dist_table AS
+			 SELECT fid, fval, is_cont
 			 FROM %
 			 GROUP BY fid, fval, is_cont',
 			ARRAY[
@@ -1378,7 +1396,7 @@ BEGIN
     END IF;
 
 	EXECUTE curstmt;
-    
+
     -- create the KV table for all the features and
     -- populate the keys of the discrete features
     -- to the table.
@@ -1401,7 +1419,7 @@ BEGIN
         RAISE INFO '%', curstmt;
     END IF;
 	EXECUTE curstmt;
-    
+
     -- In "explicit" mode, we need to replace the missing
     -- value with the average value. Therefore, we keep
     -- those values to the KV table.
@@ -1411,17 +1429,17 @@ BEGIN
                 'INSERT INTO %(fid, fval, code)
                     SELECT
                         fid,
-                        null, 
+                        null,
                         coalesce(avg(fval::FLOAT8), 0.0)
                     FROM
-                        % s 
+                        % s
                     WHERE is_cont
                     GROUP BY fid',
                 ARRAY[
                     kv_attr_name,
                     breakup_tbl_name
                 ]
-            );         
+            );
         IF (verbosity > 0) THEN
             RAISE INFO '%', curstmt;
         END IF;
@@ -1429,7 +1447,8 @@ BEGIN
         EXECUTE curstmt;
     END IF;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
@@ -1437,34 +1456,34 @@ $$ LANGUAGE PLPGSQL;
  *
  * @param input_tbl_name      The full name of the input table.
  * @param id_col_name         The name of id column.
- * @param feature_names       An array contains all the feature. If it's null, 
+ * @param feature_names       An array contains all the feature. If it's null,
  *                            we will get all the columns of the input table.
  * @param cls_col_name        The name of class column.
  * @param cont_attr_names     An array contains all the continuous feature.
  *                            Null means no continuous feature.
  * @param enc_table_name      The full name of the encoded table.
  * @param meta_tbl_name       The full name of the metatable.
- * @param h2hmv_routine_id    The ID of the routine which specifies 
+ * @param h2hmv_routine_id    The ID of the routine which specifies
  *                            How to handle missing value(h2hmv).
- * @param verbosity           > 0 means this function runs in verbose mode. 
+ * @param verbosity           > 0 means this function runs in verbose mode.
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_table
     (
-    input_tbl_name      TEXT, 
-    id_col_name         TEXT, 
+    input_tbl_name      TEXT,
+    id_col_name         TEXT,
     feature_names       TEXT[],
-    cls_col_name        TEXT, 
-    cont_attr_names     TEXT[], 
+    cls_col_name        TEXT,
+    cont_attr_names     TEXT[],
     enc_table_name      TEXT,
     meta_tbl_name       TEXT,
     h2hmv_routine_id    INT,
     verbosity           INT
-    ) 
+    )
 RETURNS VOID AS $$
 DECLARE
     curstmt             TEXT := '';
-    attr_col_names      TEXT[]; 
+    attr_col_names      TEXT[];
     lit_attr_col_names  TEXT[];
     kv_attr_name        TEXT := enc_table_name || '_col';
     kv_cls_name         TEXT := enc_table_name || '_class';
@@ -1474,7 +1493,7 @@ DECLARE
     ret                 MADLIB_SCHEMA.__enc_tbl_result;
 BEGIN
     exec_begin = clock_timestamp();
-        
+
     -- validate the training table
     PERFORM MADLIB_SCHEMA.__validate_input_table
         (
@@ -1483,59 +1502,59 @@ BEGIN
             id_col_name,
             cls_col_name
         );
-    
+
     -- create metatable
     PERFORM MADLIB_SCHEMA.__create_metatable(meta_tbl_name);
-    
+
     -- retrieve all the features' names
     IF (feature_names IS NULL) THEN
 m4_changequote(`>>>', `<<<')
 m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
         curstmt = MADLIB_SCHEMA.__format
             (
-                'SELECT array_agg(quote_ident(attname) ORDER BY attname) as attnames 
-                 FROM   pg_attribute 
-                 WHERE  attrelid = ''%''::regclass and attnum > 0 AND 
+                'SELECT array_agg(quote_ident(attname) ORDER BY attname) as attnames
+                 FROM   pg_attribute
+                 WHERE  attrelid = ''%''::regclass and attnum > 0 AND
                         attname <> ''%'' AND
                         attname <> ''%'' AND
-                        NOT attisdropped;', 
+                        NOT attisdropped;',
                 ARRAY[
                     input_tbl_name,
                     id_col_name,
                     cls_col_name
                 ]
-            );   
-        
+            );
+
         EXECUTE curstmt INTO attr_col_names;
 <<<, >>>
         curstmt = MADLIB_SCHEMA.__format
             (
                 'SELECT ARRAY
                  (
-                 SELECT quote_ident(attname) 
-                 FROM   pg_attribute 
-                 WHERE  attrelid = ''%''::regclass and attnum > 0 AND 
+                 SELECT quote_ident(attname)
+                 FROM   pg_attribute
+                 WHERE  attrelid = ''%''::regclass and attnum > 0 AND
                         attname <> ''%'' AND
                         attname <> ''%'' AND
                         NOT attisdropped
                  ORDER BY attname
                  LIMIT ALL
-                 )', 
+                 )',
                 ARRAY[
                     input_tbl_name,
                     id_col_name,
                     cls_col_name
                 ]
-            );          
+            );
         EXECUTE curstmt INTO attr_col_names;
 <<<)
-m4_changequote(>>>`<<<, >>>'<<<)    
+m4_changequote(>>>`<<<, >>>'<<<)
     ELSE
         attr_col_names = MADLIB_SCHEMA.__array_sort(feature_names);
     END IF;
 
     -- an array contains if a feature is continuous or not
-    -- the subscript is corresponding to the feature's ID 
+    -- the subscript is corresponding to the feature's ID
     is_conts = MADLIB_SCHEMA.__array_elem_in(cont_attr_names, attr_col_names);
 
     ret.pre_proc_time = clock_timestamp() - exec_begin;
@@ -1546,10 +1565,10 @@ m4_changequote(>>>`<<<, >>>'<<<)
     curstmt = MADLIB_SCHEMA.__format
             (
                 'CREATE TABLE % AS
-                    SELECT 0 as fid, 
-                        MADLIB_SCHEMA.__to_char(%) AS fval, 
+                    SELECT 0 as fid,
+                        MADLIB_SCHEMA.__to_char(%) AS fval,
                         rank() OVER (ORDER BY %) AS code
-                    FROM 
+                    FROM
                         (
                             SELECT % FROM % GROUP BY %
                         ) t
@@ -1567,10 +1586,10 @@ m4_changequote(>>>`<<<, >>>'<<<)
         RAISE INFO '%', curstmt;
     END IF;
     EXECUTE curstmt;
-    
+
     ret.gen_kv_time = clock_timestamp() - exec_begin;
     exec_begin = clock_timestamp();
-    
+
     -- breakup each record of the training table and keep the result
     -- into a new table.
     PERFORM MADLIB_SCHEMA.__breakup_table
@@ -1584,40 +1603,40 @@ m4_changequote(>>>`<<<, >>>'<<<)
             is_conts,
             h2hmv_routine_id,
             verbosity
-        );  
+        );
 
     ret.breakup_tbl_time= clock_timestamp() - exec_begin;
     exec_begin = clock_timestamp();
-    
+
     -- generate the KV table for both continuous features
     -- and discrete features.
     PERFORM MADLIB_SCHEMA.__encode_columns
-        (   
+        (
             kv_attr_name,
             breakup_tbl_name,
             h2hmv_routine_id,
             verbosity
         );
-    
+
     ret.gen_kv_time = ret.gen_kv_time + (clock_timestamp() - exec_begin);
     exec_begin = clock_timestamp();
-    
+
     -- generate the encoded table using the breakup table
     -- and KV table for all the features.
     PERFORM MADLIB_SCHEMA.__gen_vertical_encoded_table
         (
-            breakup_tbl_name, 
+            breakup_tbl_name,
             enc_table_name,
             kv_attr_name,
             'f'::BOOL,
             verbosity
-        );  
-        
+        );
+
     ret.gen_enc_time = clock_timestamp() - exec_begin;
     exec_begin = clock_timestamp();
-    
+
     SELECT ARRAY(SELECT quote_literal(unnest(attr_col_names))) INTO lit_attr_col_names;
-    
+
     -- put the features' meta information to the metatable
     curstmt = MADLIB_SCHEMA.__format
         (
@@ -1632,7 +1651,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
             ARRAY[
                 meta_tbl_name,
                 array_to_string(lit_attr_col_names, ','),
-                kv_attr_name,                
+                kv_attr_name,
                 'tmp_dist_table'
             ]
         );
@@ -1640,8 +1659,8 @@ m4_changequote(>>>`<<<, >>>'<<<)
     EXECUTE curstmt;
 
     IF (h2hmv_routine_id = 1) THEN
-        -- retrieve the information of the columns (all the values in those 
-        -- columns are missing), and insert them to the meta table. 
+        -- retrieve the information of the columns (all the values in those
+        -- columns are missing), and insert them to the meta table.
         curstmt = MADLIB_SCHEMA.__format
             (
                 'INSERT INTO %
@@ -1650,7 +1669,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                  FROM (
                      SELECT generate_series(1, %) id
                      EXCEPT
-                     SELECT id FROM % WHERE column_type = ''f'' 
+                     SELECT id FROM % WHERE column_type = ''f''
                  ) t',
                 ARRAY[
                     meta_tbl_name,
@@ -1661,7 +1680,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
             );
         EXECUTE curstmt;
     END IF;
-    
+
     -- no need this table
     EXECUTE 'DROP TABLE IF EXISTS tmp_dist_table';
 
@@ -1679,7 +1698,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
             ARRAY[
                 meta_tbl_name,
                 cls_col_name,
-                kv_cls_name,                
+                kv_cls_name,
                 kv_cls_name
             ]
         );
@@ -1689,9 +1708,9 @@ m4_changequote(>>>`<<<, >>>'<<<)
     -- put the id's meta information to the metatable
     PERFORM MADLIB_SCHEMA.__insert_into_metatable
         (
-            meta_tbl_name, 
-            array_upper(attr_col_names, 1) + 1, 
-            id_col_name, 
+            meta_tbl_name,
+            array_upper(attr_col_names, 1) + 1,
+            id_col_name,
             'i', 'f', NULL, 0
         );
 
@@ -1700,12 +1719,13 @@ m4_changequote(>>>`<<<, >>>'<<<)
     EXECUTE 'ANALYZE ' || enc_table_name;
 
     ret.post_proc_time = clock_timestamp() - exec_begin;
-    
+
     IF (verbosity > 0) THEN
         RAISE INFO 'time of encoding: %', ret;
     END IF;
 END
-$$ LANGUAGE PLPGSQL;  
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /*
@@ -1714,19 +1734,19 @@ $$ LANGUAGE PLPGSQL;
  * @param input_tbl_name        The full name of the input table.
  * @param enc_tbl_name          The full name of the encoded table.
  * @param meta_tbl_name         The full name of the metatable.
- * @param h2hmv_routine_id      The ID of the routine which specifies 
- *                              how to handle missing value(h2hmv). 
- * @param verbosity             > 0 means this function runs in verbose mode. 
+ * @param h2hmv_routine_id      The ID of the routine which specifies
+ *                              how to handle missing value(h2hmv).
+ * @param verbosity             > 0 means this function runs in verbose mode.
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_table
     (
-    input_tbl_name      TEXT, 
+    input_tbl_name      TEXT,
     enc_tbl_name        TEXT,
     meta_tbl_name       TEXT,
     h2hmv_routine_id    INT,
     verbosity           INT
-    ) 
+    )
 RETURNS VOID AS $$
 DECLARE
     curstmt             TEXT;
@@ -1745,14 +1765,14 @@ BEGIN
         (
             'SELECT column_name FROM % WHERE column_type=''i''',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO id_col_name;
 
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT column_name FROM % WHERE column_type=''c''',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO cls_col_name;
 
     IF (NOT MADLIB_SCHEMA.__column_exists(input_tbl_name, cls_col_name)) THEN
@@ -1763,69 +1783,69 @@ m4_changequote(`>>>', `<<<')
 m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT array_agg(column_name order by id) 
+            'SELECT array_agg(column_name order by id)
              FROM % WHERE column_type=''f''',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO attr_col_names;
 
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT 
-                array_agg(is_cont order by id) 
-             FROM % 
+            'SELECT
+                array_agg(is_cont order by id)
+             FROM %
              WHERE column_type=''f''',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO is_conts;
 <<<, >>>
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT ARRAY
              (
-              SELECT column_name 
+              SELECT column_name
               FROM % WHERE column_type=''f''
               ORDER BY id
               LIMIT ALL
              )',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO attr_col_names;
 
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT ARRAY
              (
-              SELECT is_cont 
-              FROM % 
+              SELECT is_cont
+              FROM %
               WHERE column_type=''f''
               ORDER BY id
               LIMIT ALL
              )',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO is_conts;
 <<<)
 m4_changequote(>>>`<<<, >>>'<<<)
 
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT 
-                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name 
-             FROM % 
+            'SELECT
+                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name
+             FROM %
              WHERE column_type=''f'' limit 1',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO kv_attr_name;
 
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT 
-                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name 
-             FROM % 
+            'SELECT
+                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name
+             FROM %
              WHERE column_type=''c'' limit 1',
             meta_tbl_name
-        ); 
+        );
     EXECUTE curstmt INTO kv_cls_name;
 
     PERFORM MADLIB_SCHEMA.__validate_input_table
@@ -1835,12 +1855,12 @@ m4_changequote(>>>`<<<, >>>'<<<)
             id_col_name,
             NULL
         );
-    
+
     -- breakup each record from the classification/scoring
     -- table and kept the results into a new table.
     PERFORM MADLIB_SCHEMA.__breakup_table
         (
-            input_tbl_name, 
+            input_tbl_name,
             breakup_tbl_name,
             kv_cls_name,
             id_col_name,
@@ -1849,27 +1869,27 @@ m4_changequote(>>>`<<<, >>>'<<<)
             is_conts,
             h2hmv_routine_id,
             verbosity
-        );  
-    
+        );
+
     -- generate the vertical encoded table.
     PERFORM MADLIB_SCHEMA.__gen_vertical_encoded_table
         (
-            breakup_tbl_name, 
+            breakup_tbl_name,
             'dt_tmp_ver_table',
             kv_attr_name,
             't'::BOOL,
             verbosity
-        );      
-    
+        );
+
     -- generate the horizontal encoded table.
-    EXECUTE 'DROP TABLE IF EXISTS ' || enc_tbl_name;    
+    EXECUTE 'DROP TABLE IF EXISTS ' || enc_tbl_name;
     PERFORM MADLIB_SCHEMA.__gen_horizontal_encoded_table
         (
             enc_tbl_name,
             'dt_tmp_ver_table',
             array_upper(is_conts, 1),
             verbosity
-        ); 
+        );
 
     EXECUTE 'DROP TABLE IF EXISTS dt_tmp_ver_table';
 
@@ -1877,4 +1897,5 @@ m4_changequote(>>>`<<<, >>>'<<<)
         RAISE INFO 'Encoding time:%', clock_timestamp() - exec_begin;
     END IF;
 END
-$$ LANGUAGE PLPGSQL;
+$$ LANGUAGE PLPGSQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

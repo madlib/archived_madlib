@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file conjugate_gradient.sql_in
  *
@@ -19,26 +19,26 @@
 </ul>
 </div>
 
-@brief Finds the solution to the function \f$ \boldsymbol Ax = \boldsymbol b \f$, where \f$A\f$ 
-is a symmetric, positive-definite matrix and \f$x\f$ and \f$ \boldsymbol b \f$ are vectors. 
+@brief Finds the solution to the function \f$ \boldsymbol Ax = \boldsymbol b \f$, where \f$A\f$
+is a symmetric, positive-definite matrix and \f$x\f$ and \f$ \boldsymbol b \f$ are vectors.
 
-\warning <em> This MADlib method is still in early stage development. There may be some 
+\warning <em> This MADlib method is still in early stage development. There may be some
 issues that will be addressed in a future version. Interface and implementation
 is subject to change. </em>
 
 This function uses the iterative conjugate gradient method [1] to find a solution to the function: \f[ \boldsymbol Ax = \boldsymbol b \f]
-where \f$ \boldsymbol A \f$ is a symmetric, positive definite matrix and \f$x\f$ and \f$ \boldsymbol b \f$ are vectors. 
+where \f$ \boldsymbol A \f$ is a symmetric, positive definite matrix and \f$x\f$ and \f$ \boldsymbol b \f$ are vectors.
 
 @anchor syntax
 @par Function Syntax
 Conjugate gradient returns x as an array. It has the following syntax.
 
 <pre class="syntax">
-conjugate_gradient( table_name, 
-                    name_of_row_values_col, 
-                    name_of_row_number_col, 
-                    aray_of_b_values, 
-                    desired_precision 
+conjugate_gradient( table_name,
+                    name_of_row_values_col,
+                    name_of_row_number_col,
+                    aray_of_b_values,
+                    desired_precision
                   )
 </pre>
 
@@ -52,7 +52,7 @@ The number of elements in each row should be the same.
 \f$ \boldsymbol b \f$ is passed as a FLOAT[] to the function.
 
 
-	
+
 @anchor examples
 @examp
 -# Construct matrix A according to structure.
@@ -61,7 +61,7 @@ SELECT * FROM data;
 </pre>
 Result:
 <pre class="result">
- row_num | row_val 
+ row_num | row_val
 &nbsp;--------+---------
        1 | {2,1}
        2 | {1,4}
@@ -82,7 +82,7 @@ INFO:  COMPUTE RESIDUAL ERROR 14.5655661859659
 INFO:  ERROR 0.144934004246004
 INFO:  ERROR 3.12963615962926e-31
 INFO:  TEST FINAL ERROR 2.90029642185163e-29
-    conjugate_gradient     
+    conjugate_gradient
 &nbsp;--------------------------
  {1,-1.31838984174237e-15}
 (1 row)
@@ -99,7 +99,7 @@ File conjugate_gradient.sql_in documenting the SQL function.
 
 /**
  * @brief Compute conjugate gradient
- * 
+ *
  * @param matrix Name of the table containing argument matrix A
  * @param val_id Name of the column contains row values
  * @param row_id Name of the column contains row number
@@ -125,29 +125,29 @@ declare
 	pAp_size FLOAT;
 	beta FLOAT;
 	exit_if_no_progess_in INT := 15;
-begin	
+begin
 	DROP TABLE IF EXISTS X_val;
 	CREATE TEMP TABLE X_val(
 		value FLOAT[]
 	);
-	
+
 	DROP TABLE IF EXISTS P_val;
 	CREATE TEMP TABLE P_val(
 		value FLOAT[]
-	); 
-	
+	);
+
 	SELECT INTO k array_upper(b,1);
 	--INSERT INTO X_val SELECT ARRAY(SELECT random() FROM generate_series(1, k));
 	EXECUTE 'INSERT INTO X_val SELECT ARRAY(SELECT random() FROM generate_series(1,' ||k|| '))';
 	LOOP
-		IF(iter%recidual_refresh = 0)THEN 
+		IF(iter%recidual_refresh = 0)THEN
 			EXECUTE 'SELECT array_agg(array_dot) FROM (SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||') subq' INTO Ax;
 			SELECT INTO r MADLIB_SCHEMA.array_sub(b, Ax);
 			SELECT INTO r_size MADLIB_SCHEMA.array_dot(r, r);
 			IF(verbosity > 0) THEN
 				RAISE INFO 'COMPUTE RESIDUAL ERROR %', r_size;
 			END IF;
-			SELECT INTO p r; 
+			SELECT INTO p r;
 		END IF;
 		iter = iter + 1;
 		TRUNCATE TABLE P_val;
@@ -156,18 +156,18 @@ begin
 		EXECUTE 'SELECT array_agg(array_dot) FROM (SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.p) FROM (SELECT value AS p FROM P_val) AS j,'|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||') subq' INTO Ap;
 		SELECT INTO pAp_size MADLIB_SCHEMA.array_dot(p, Ap);
 		alpha = r_size/pAp_size;
-		
+
 		--SELECT INTO x MADLIB_SCHEMA.array_add(value, MADLIB_SCHEMA.array_scalar_mult(p,alpha)) FROM X_val;
 		EXECUTE 'SELECT MADLIB_SCHEMA.array_add(value, MADLIB_SCHEMA.array_scalar_mult(array['|| array_to_string(p,',') ||']::float[],'||alpha||'::float)) FROM X_val' INTO x;
 		TRUNCATE TABLE X_val;
 		--INSERT INTO X_val VALUES(x);
 		EXECUTE 'INSERT INTO X_val VALUES(array['|| array_to_string(x,',') ||'])';
-		
+
 		SELECT INTO r MADLIB_SCHEMA.array_add(r,MADLIB_SCHEMA.array_scalar_mult(Ap, -alpha));
 		SELECT INTO r_new_size MADLIB_SCHEMA.array_dot(r,r);
-		
+
 		IF(verbosity > 0) THEN
-			RAISE INFO 'ERROR %',r_new_size; 
+			RAISE INFO 'ERROR %',r_new_size;
 		END IF;
 		IF (r_new_size < precision_limit) THEN
 			EXECUTE 'SELECT array_agg(array_dot) FROM (SELECT MADLIB_SCHEMA.array_dot('||val_id||', j.x) FROM (SELECT value AS x FROM X_val) AS j, '|| Matrix ||' ORDER BY '||row_id||' LIMIT '|| k ||') subq' INTO Ax;
@@ -184,7 +184,7 @@ begin
 		IF(r_size < r_new_size) THEN
 			exit_if_no_progess_in = exit_if_no_progess_in-1;
 			RAISE INFO 'No progress! count = %',exit_if_no_progess_in;
-			
+
 			IF(exit_if_no_progess_in <= 0) THEN
 				RAISE EXCEPTION 'Algorithm failed to converge. Check is input is positive definate.';
 			END IF;
@@ -192,7 +192,7 @@ begin
 			exit_if_no_progess_in = 15;
 		END IF;
 		r_size = r_new_size;
-	END LOOP; 
+	END LOOP;
 	IF(verbosity > 1) THEN
 		RETURN ARRAY[r_new_size];
 	END IF;
@@ -200,11 +200,13 @@ begin
 	EXECUTE 'SELECT value FROM X_val' INTO x;
 	RETURN x;
 end
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.conjugate_gradient(Matrix TEXT, val_id TEXT, row_id TEXT, b FLOAT[], precision_limit FLOAT)  RETURNS FLOAT[] AS $$
 declare
 begin
 	RETURN MADLIB_SCHEMA.conjugate_gradient(Matrix, val_id, row_id, b, precision_limit,0);
 end
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

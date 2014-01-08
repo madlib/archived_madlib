@@ -5,6 +5,10 @@ function(define_greenplum_features IN_VERSION OUT_FEATURES)
         list(APPEND ${OUT_FEATURES} __HAS_ORDERED_AGGREGATES__)
     endif()
 
+    if(NOT ${IN_VERSION} VERSION_LESS "4.3")
+        list(APPEND ${OUT_FEATURES} __HAS_FUNCTION_PROPERTIES__)
+    endif()
+
     # Pass values to caller
     set(${OUT_FEATURES} "${${OUT_FEATURES}}" PARENT_SCOPE)
 endfunction(define_greenplum_features)

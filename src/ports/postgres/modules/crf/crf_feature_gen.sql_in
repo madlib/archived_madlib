@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file crf_feature_gen.sql_in 
+ * @file crf_feature_gen.sql_in
  *
  * @brief SQL function for POS/NER feature extraction
  * @date February 2012
@@ -13,24 +13,24 @@ m4_include(`SQLCommon.m4')
 
 /**
  * @brief This function extracts POS/NER features from the training data.
- * 
- * @param segmenttbl Name of table containing all the tokenized training sentences. 
+ *
+ * @param segmenttbl Name of table containing all the tokenized training sentences.
  * @param regextbl Name of table containing all the regular expressions to capture regex features.
  * @param dictionary Name of table containing the dictionary.
  * @param featuretbl features generated from the traning dataset
- * @param featureset unique feature set generated from the training dataset 
+ * @param featureset unique feature set generated from the training dataset
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.crf_train_fgen(
-        segmenttbl text, 
-        regextbl text, 
+        segmenttbl text,
+        regextbl text,
         dictionary text,
         featuretbl text,
-        featureset text) RETURNS void AS 
+        featureset text) RETURNS void AS
 $$
     origClientMinMessages =  plpy.execute("SELECT setting AS setting FROM pg_settings WHERE name = \'client_min_messages\';")
     plpy.execute("SET client_min_messages TO warning;")
-    
+
     plpy.execute("SELECT MADLIB_SCHEMA.create_schema_pg_temp();");
     tmp1_feature = "pg_temp._madlib_tmp1_feature"
     tmp_rtbl = "pg_temp._madlib_tmp_rtbl"
@@ -43,7 +43,7 @@ $$
 
 
     plpy.execute("""DROP TABLE IF EXISTS """ + tmp1_feature + """,""" +  tmp_rtbl + """,""" + tmp_dense_mtbl + """,""" + dense_mtbl  + """,""" + sparse_rtbl + """,""" +  sparse_mtbl + """,""" + tmp_featureset + """,""" + tmp_segmenttbl + """;""")
- 
+
     plpy.execute("""CREATE TABLE """ + tmp1_feature + """(start_pos integer,doc_id integer, f_name text, feature integer[]);""")
     plpy.execute("""CREATE TABLE """ +  tmp_rtbl + """(start_pos integer,doc_id integer, feature integer[]);""")
     plpy.execute("""CREATE TABLE """ + tmp_dense_mtbl + """(start_pos integer,doc_id integer, feature integer[]);""")
@@ -56,55 +56,55 @@ $$
     plpy.execute("""SET client_min_messages TO """ + str(origClientMinMessages[0]['setting']) + """;""")
 
     # replace digits with "DIGIT" keyword
-    plpy.execute("""INSERT INTO """ + tmp_segmenttbl + """ SELECT start_pos,doc_id,seg_text,label,max_pos FROM """ + segmenttbl + """ WHERE 
+    plpy.execute("""INSERT INTO """ + tmp_segmenttbl + """ SELECT start_pos,doc_id,seg_text,label,max_pos FROM """ + segmenttbl + """ WHERE
 			NOT (seg_text ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR seg_text ~ E'^[-+]?[0-9]*[.][0-9]+$');""")
-    plpy.execute("""INSERT INTO """ + tmp_segmenttbl + """ SELECT start_pos,doc_id,'DIGIT',label,max_pos FROM """ + segmenttbl + """ WHERE  
-		    seg_text ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR seg_text ~E'^[-+]?[0-9]*[.][0-9]+$';""") 
+    plpy.execute("""INSERT INTO """ + tmp_segmenttbl + """ SELECT start_pos,doc_id,'DIGIT',label,max_pos FROM """ + segmenttbl + """ WHERE
+		    seg_text ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR seg_text ~E'^[-+]?[0-9]*[.][0-9]+$';""")
 
     # insert into dictionary table
     plpy.execute("""INSERT INTO """ + dictionary + """(token, total)
                     SELECT seg_text, count(*)
-                    FROM """ + tmp_segmenttbl + """ 
+                    FROM """ + tmp_segmenttbl + """
                     GROUP BY seg_text;""")
- 
+
     # create a temporary table to store all the features
-        
+
     # extract all the edge features
-    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature) 
+    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature)
                     SELECT doc2.start_pos, doc2.doc_id, 'E.', ARRAY[doc1.label, doc2.label]
                     FROM """ + tmp_segmenttbl + """ doc1, """ + tmp_segmenttbl + """ doc2
                     WHERE  doc1.doc_id = doc2.doc_id AND doc1.start_pos+1 = doc2.start_pos;""")
-         
+
     #extract all the regex features
-    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature) 
+    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature)
                     SELECT start_pos, doc_id, 'R_' || name, ARRAY[-1, label]
-                    FROM   """ + regextbl + """, """ + tmp_segmenttbl + """  
+                    FROM   """ + regextbl + """, """ + tmp_segmenttbl + """
                     WHERE  seg_text ~ pattern;""")
-           
+
     #extract all the start feature
-    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature) 
+    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature)
                     SELECT start_pos, doc_id, 'S.', ARRAY[-1, label]
-                    FROM  """ + tmp_segmenttbl + """  
+                    FROM  """ + tmp_segmenttbl + """
                     WHERE  start_pos = 0;""")
-        
+
     #extract all the end featue
-    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature) 
+    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature)
                     SELECT start_pos, doc_id, 'End.', ARRAY[-1, label]
-                    FROM  """ + tmp_segmenttbl + """  
+                    FROM  """ + tmp_segmenttbl + """
                     WHERE  start_pos = max_pos;""")
 
     #word feature
-    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature) 
+    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature)
                     SELECT start_pos, doc_id, 'W_' || seg_text, ARRAY[-1, label]
                     FROM  """ + tmp_segmenttbl + """;""")
-        
+
     #unknown feature
-    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature) 
+    plpy.execute("""INSERT INTO """ + tmp1_feature + """(start_pos, doc_id, f_name, feature)
                     SELECT start_pos, doc_id, 'U', ARRAY[-1, label]
                     FROM """ + tmp_segmenttbl + """ seg, """ + dictionary + """ dic
                     WHERE  seg.seg_text = dic.token AND dic.total <= 1;""")
- 
-    plpy.execute("""INSERT INTO """ + tmp_featureset + """(f_name, feature) 
+
+    plpy.execute("""INSERT INTO """ + tmp_featureset + """(f_name, feature)
                     SELECT DISTINCT f_name, feature
                     FROM   """ + tmp1_feature + """;""")
 
@@ -112,15 +112,15 @@ $$
                     CREATE  SEQUENCE seq START 1 INCREMENT 1;""")
 
     #get all distcint features
-    plpy.execute("""INSERT INTO """ + featureset + """(f_index, f_name, feature) 
+    plpy.execute("""INSERT INTO """ + featureset + """(f_index, f_name, feature)
                     SELECT nextval('seq')-1, f_name, feature
                     FROM   """ + tmp_featureset + """;""")
-    
+
     rv = plpy.execute("""SELECT COUNT(*) AS total_feature FROM """ + featureset + """;""")
 
     plpy.execute("""INSERT INTO """ +  tmp_rtbl + """(start_pos,doc_id,feature)
-                    SELECT start_pos, doc_id, array_cat(fset.feature, 
-                                                        ARRAY[f_index,start_pos, 
+                    SELECT start_pos, doc_id, array_cat(fset.feature,
+                                                        ARRAY[f_index,start_pos,
                                                               CASE WHEN """ + tmp1_feature + """.feature = fset.feature THEN 1
                                                                    ELSE 0
                                                               END] )
@@ -128,13 +128,13 @@ $$
                     WHERE  """ + tmp1_feature + """.f_name = fset.f_name AND fset.f_name <> 'E.';""")
 
     plpy.execute("""INSERT INTO """ + sparse_rtbl + """(doc_id, f_size, sparse_r)
-                    SELECT doc_id,""" + str(rv[0]['total_feature']) + """, 
+                    SELECT doc_id,""" + str(rv[0]['total_feature']) + """,
                            MADLIB_SCHEMA.array_union(feature::integer[] order by start_pos)
                     FROM   """ +  tmp_rtbl + """
                     GROUP BY doc_id;""")
 
     plpy.execute("""INSERT INTO """ + tmp_dense_mtbl + """(start_pos,doc_id,feature)
-                    SELECT start_pos, doc_id, 
+                    SELECT start_pos, doc_id,
                            array_cat(fset.feature, ARRAY[f_index,start_pos,1])
                     FROM   """ + tmp1_feature + """, """ + featureset + """ fset
                     WHERE  start_pos > 0 AND """ + tmp1_feature + """.f_name = fset.f_name AND """ + tmp1_feature + """.feature = fset.feature AND fset.f_name = 'E.';""")
@@ -150,11 +150,12 @@ $$
                     WHERE  f_name = 'E.';""")
 
     plpy.execute("""INSERT INTO """ + featuretbl + """(doc_id, f_size, sparse_r, dense_m, sparse_m)
-                    SELECT """ + sparse_rtbl + """.doc_id, f_size, sparse_r, dense_m, sparse_m 
+                    SELECT """ + sparse_rtbl + """.doc_id, f_size, sparse_r, dense_m, sparse_m
                     FROM   """ + sparse_rtbl + """, """ + dense_mtbl  + """, """ +  sparse_mtbl + """
                     WHERE  """ + sparse_rtbl + """.doc_id = """ + dense_mtbl  + """.doc_id;""")
 
-$$ LANGUAGE plpythonu STRICT;         
+$$ LANGUAGE plpythonu STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 /**
@@ -265,7 +266,7 @@ $$
 
         # Generate M factor table
         plpy.execute("""CREATE  TABLE """ + mtbl + """(prev_label integer, label integer, value double precision);""")
-        
+
 	# temp tables to keep segments and dictionary with all digits replaced by the word 'DIGIT'
 	plpy.execute("""CREATE  TABLE """ +  tmp_segmenttbl + """(start_pos int,doc_id int,seg_text text,max_pos int);""")
 	plpy.execute("""CREATE  TABLE """+ tmp_dict + """(token text, total int);""")
@@ -279,12 +280,12 @@ $$
 	# replace digits with "DIGIT" keyword
         plpy.execute("""INSERT INTO """ +  tmp_segmenttbl + """ SELECT start_pos,doc_id,seg_text,max_pos FROM """ + segmenttbl + """ WHERE
 			NOT (seg_text ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR seg_text ~ E'^[-+]?[0-9]*[.][0-9]+$');""")
- 	plpy.execute("""INSERT INTO """ +  tmp_segmenttbl + """ SELECT start_pos,doc_id,'DIGIT',max_pos FROM """ + segmenttbl + """ WHERE  
+ 	plpy.execute("""INSERT INTO """ +  tmp_segmenttbl + """ SELECT start_pos,doc_id,'DIGIT',max_pos FROM """ + segmenttbl + """ WHERE
 		    seg_text ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR seg_text ~E'^[-+]?[0-9]*[.][0-9]+$';""")
 
-	plpy.execute("""INSERT INTO """+ tmp_dict + """ SELECT token,sum(total) FROM """ + dictionary + """ GROUP BY token 
+	plpy.execute("""INSERT INTO """+ tmp_dict + """ SELECT token,sum(total) FROM """ + dictionary + """ GROUP BY token
                              HAVING (token NOT LIKE E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' AND token NOT LIKE E'^[-+]?[0-9]*[.][0-9]+$');""")
-        plpy.execute("""INSERT INTO """+ tmp_dict + """ SELECT 'DIGIT',sum(total) FROM """ + dictionary + """ WHERE 
+        plpy.execute("""INSERT INTO """+ tmp_dict + """ SELECT 'DIGIT',sum(total) FROM """ + dictionary + """ WHERE
 			 (token ~ E'^[-+]?([0-9]{1,3}[,]?)*[0-9]{1,3}$' OR token ~ E'^[-+]?[0-9]*[.][0-9]+$') GROUP BY token;""")
 
         plpy.execute("""INSERT INTO """ +  segment_hashtbl + """(seg_text)
@@ -296,7 +297,7 @@ $$
                           FROM   """ +  segment_hashtbl + """)
                          EXCEPT
                          (SELECT DISTINCT token
-                          FROM """+ tmp_dict + """  
+                          FROM """+ tmp_dict + """
                           WHERE  total>1));""")
 
         plpy.execute("""INSERT INTO """ + prev_labeltbl + """
@@ -382,4 +383,5 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `
                         FROM   """ + rtbl  + """
                         GROUP BY seg_text,label;""")
 
-$$ LANGUAGE plpythonu STRICT;
+$$ LANGUAGE plpythonu STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
