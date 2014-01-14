@@ -18,6 +18,7 @@ m4_include(`SQLCommon.m4')
 <ul>
 <li class="level1"><a href="#train">Training Function</a></li>
 <li class="level1"><a href="#output">Output Format</a></li>
+<li class="level1"><a href="#assignment">Cluster Assignment</a></li>
 <li class="level1"><a href="#examples">Examples</a></li>
 <li class="level1"><a href="#notes">Notes</a></li>
 <li class="level1"><a href="#background">Technical Background</a></li>
@@ -179,28 +180,55 @@ The output of the k-means module is a composite type with the following columns:
 </table>
 
 
+@anchor assignment
+@par Cluster Assignment
+
+After training, the cluster assignment for each data point can be computed with
+the help of the following function:
+
+<pre class="syntax">
+closest_column( m, x )
+</pre>
+
+\b Argument
+<dl class="arglist">
+<dt>m</dt>
+<dd>DOUBLE PRECISION[][]. The learned centroids from the training function.</dd>
+<dt>x</dt>
+<dd>DOUBLE PRECISION[]. The data point.</dd>
+</dl>
+
+\b "Return Value"
+<dl class="arglist">
+<dt>column_id</dt>
+<dd>INTEGER. The cluster assignment (zero-based).</dd>
+<dt> distance </dt>
+<dd>DOUBLE PRECISION. The distance to the cluster centroid.
+</dl>
 
 @anchor examples
 @examp
 
 -#  Prepare some input data.
 <pre class="example">
-SELECT * FROM public.km_sample LIMIT 5;
+CREATE TABLE public.km_sample(pid int, points double precision[]);
+COPY km_sample (pid, points) FROM stdin DELIMITER '|';
+1 | {14.23, 1.71, 2.43, 15.6, 127, 2.8, 3.0600, 0.2800, 2.29, 5.64, 1.04, 3.92, 1065}
+2 | {13.2, 1.78, 2.14, 11.2, 1, 2.65, 2.76, 0.26, 1.28, 4.38, 1.05, 3.49, 1050}
+3 | {13.16, 2.36,  2.67, 18.6, 101, 2.8,  3.24, 0.3, 2.81, 5.6799, 1.03, 3.17, 1185}
+4 | {14.37, 1.95, 2.5, 16.8, 113, 3.85, 3.49, 0.24, 2.18, 7.8, 0.86, 3.45, 1480}
+5 | {13.24, 2.59, 2.87, 21, 118, 2.8, 2.69, 0.39, 1.82, 4.32, 1.04, 2.93, 735}
+6 | {14.2, 1.76, 2.45, 15.2, 112, 3.27, 3.39, 0.34, 1.97, 6.75, 1.05, 2.85, 1450}
+7 | {14.39, 1.87, 2.45, 14.6, 96, 2.5, 2.52, 0.3, 1.98, 5.25, 1.02, 3.58, 1290}
+8 | {14.06, 2.15, 2.61, 17.6, 121, 2.6, 2.51, 0.31, 1.25, 5.05, 1.06, 3.58, 1295}
+9 | {14.83, 1.64, 2.17, 14, 97, 2.8, 2.98, 0.29, 1.98, 5.2, 1.08, 2.85, 1045}
+10 | {13.86, 1.35, 2.27, 16, 98, 2.98, 3.15, 0.22, 1.8500, 7.2199, 1.01, 3.55, 1045}
+\\.
 </pre>
-Result:
-<pre class="result">
-                  points
-&nbsp;------------------------------------------
- {1,1}:{15.8822241332382,105.945462542586}
- {1,1}:{34.5065216883086,72.3126099305227}
- {1,1}:{22.5074400822632,95.3209559689276}
- {1,1}:{70.2589857042767,68.7395178806037}
- {1,1}:{30.9844257542863,25.3213323024102}
-(5 rows)
-</pre>
-Note: the example <em>points</em> is type <tt>\ref grp_svec "SVEC"</tt>.
+
 -#  Run k-means clustering using kmeans++ for centroid seeding:
 <pre class="example">
+\\x on;
 SELECT * FROM madlib.kmeanspp( 'km_sample',
                                'points',
                                2,
@@ -212,16 +240,18 @@ SELECT * FROM madlib.kmeanspp( 'km_sample',
 </pre>
 Result:
 <pre class="result">
-                                centroids                                |   objective_fn   | frac_reassigned | num_iterations
-&nbsp;------------------------------------------------------------------------+------------------+-----------------+----------------
- {{68.01668579784,48.9667382972952},{28.1452167573446,84.5992507653263}} | 586729.010675982 |           0.001 |              5
+centroids       | {{13.872,1.814,2.376,15.56,88.2,2.806,2.928,0.288,1.844,5.35198,1.044,3.348,988},
+                   {14.036,2.018,2.536,16.56,108.6,3.004,3.03,0.298,2.038,6.10598,1.004,3.326,1340}}
+objective_fn    | 151184.962672
+frac_reassigned | 0
+num_iterations  | 2
 </pre>
 -# Calculate the simplified silhouette coefficient:
 <pre class="example">
-SELECT * FROM madlib.simple_silhouette( 'km_test_svec',
+SELECT * FROM madlib.simple_silhouette( 'km_sample',
                                         'points',
                                         (SELECT centroids FROM
-                                            madlib.kmeanspp( 'km_test_svec',
+                                            madlib.kmeanspp( 'km_sample',
                                                             'points',
                                                             2,
                                                             'madlib.squared_dist_norm2',
@@ -233,9 +263,34 @@ SELECT * FROM madlib.simple_silhouette( 'km_test_svec',
 </pre>
 Result:
 <pre class="result">
- simple_silhouette
-&nbsp;------------------
- 0.611022970398174
+simple_silhouette | 0.68978804882941
+</pre>
+
+-#  Find the cluster assignment for each point
+<pre class="example">
+\\x off;
+SELECT data.*, (madlib.closest_column(centroids, points)).column_id as cluster_id
+FROM public.km_sample as data,
+     (SELECT centroids
+      FROM madlib.kmeanspp('km_sample', 'points', 2,
+                           'madlib.squared_dist_norm2',
+                           'madlib.avg', 20, 0.001)) as centroids
+ORDER BY data.pid;
+</pre>
+
+<pre class="result">
+ pid |                               points                               | cluster_id
+-----+--------------------------------------------------------------------+------------
+   1 | {14.23,1.71,2.43,15.6,127,2.8,3.06,0.28,2.29,5.64,1.04,3.92,1065}  |          0
+   2 | {13.2,1.78,2.14,11.2,1,2.65,2.76,0.26,1.28,4.38,1.05,3.49,1050}    |          0
+   3 | {13.16,2.36,2.67,18.6,101,2.8,3.24,0.3,2.81,5.6799,1.03,3.17,1185} |          1
+   4 | {14.37,1.95,2.5,16.8,113,3.85,3.49,0.24,2.18,7.8,0.86,3.45,1480}   |          1
+   5 | {13.24,2.59,2.87,21,118,2.8,2.69,0.39,1.82,4.32,1.04,2.93,735}     |          0
+   6 | {14.2,1.76,2.45,15.2,112,3.27,3.39,0.34,1.97,6.75,1.05,2.85,1450}  |          1
+   7 | {14.39,1.87,2.45,14.6,96,2.5,2.52,0.3,1.98,5.25,1.02,3.58,1290}    |          1
+   8 | {14.06,2.15,2.61,17.6,121,2.6,2.51,0.31,1.25,5.05,1.06,3.58,1295}  |          1
+   9 | {14.83,1.64,2.17,14,97,2.8,2.98,0.29,1.98,5.2,1.08,2.85,1045}      |          0
+  10 | {13.86,1.35,2.27,16,98,2.98,3.15,0.22,1.85,7.2199,1.01,3.55,1045}  |          0
 </pre>
 
 @anchor notes
@@ -350,7 +405,7 @@ File kmeans.sql_in documenting the k-Means SQL functions
  *  - <tt>centroids</tt> - Matrix containing the new \f$ l \leq k \f$
  *    repositioned centroids as columns. If this matrix has \f$ l < k \f$
  *    columns, one or more old centroids no longer were closest to any point.
- *  - <tt>old_centroid_its</tt> - The order of the centroids in
+ *  - <tt>old_centroid_ids</tt> - The order of the centroids in
  *    <tt>centroid</tt> is not guaranteed to be consitent across iterations.
  *    In particular, if a centroid is no longer closest to any point it can be
  *    dropped and a new centroid is added afterwards. We therefore need to map
@@ -398,7 +453,7 @@ CREATE TYPE MADLIB_SCHEMA.kmeans_state AS (
   *     given arguments.
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeans_args(
-    sql VARCHAR, DOUBLE PRECISION[][], REGPROC, INTEGER, DOUBLE PRECISION
+    sql VARCHAR, DOUBLE PRECISION[][], REGPROC, INTEGER, DOUBLE PRECISION, VARCHAR
 ) RETURNS VOID
 VOLATILE
 CALLED ON NULL INPUT
@@ -547,12 +602,15 @@ BEGIN
         DROP TABLE IF EXISTS pg_temp._madlib_kmeans_args;
         CREATE TABLE pg_temp._madlib_kmeans_args AS
         SELECT
-            $1 AS initial_centroids, array_upper($1, 1) AS k,
-            $2 AS fn_dist, $3 AS max_num_iterations,
-            $4 AS min_frac_reassigned;
+            $1 AS initial_centroids,
+            array_upper($1, 1) AS k,
+            $2 AS fn_dist,
+            $3 AS max_num_iterations,
+            $4 AS min_frac_reassigned,
+            $5 as fn_dist_name;
         $sql$,
         initial_centroids, proc_fn_dist, max_num_iterations,
-        min_frac_reassigned);
+        min_frac_reassigned, fn_dist);
 
     -- Perform acutal computation.
     -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
@@ -634,7 +692,7 @@ $$
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args(
-    sql VARCHAR, INTEGER, REGPROC, DOUBLE PRECISION[][]
+    sql VARCHAR, INTEGER, REGPROC, DOUBLE PRECISION[][], VARCHAR
 ) RETURNS VOID
 VOLATILE
 CALLED ON NULL INPUT
@@ -735,9 +793,13 @@ BEGIN
     PERFORM MADLIB_SCHEMA.internal_execute_using_kmeanspp_seeding_args($sql$
         DROP TABLE IF EXISTS pg_temp._madlib_kmeanspp_args;
         CREATE TEMPORARY TABLE _madlib_kmeanspp_args AS
-        SELECT $1 AS k, $2 AS fn_dist, $3 AS initial_centroids;
+        SELECT
+            $1 AS k,
+            $2 AS fn_dist,
+            $3 AS initial_centroids,
+            $4 AS fn_dist_name;
         $sql$,
-        k, proc_fn_dist, initial_centroids);
+        k, proc_fn_dist, initial_centroids, fn_dist);
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
     -- Perform acutal computation.
@@ -903,7 +965,7 @@ BEGIN
     ret = MADLIB_SCHEMA.kmeans(
         $1, $2,
         MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3,
-            'MADLIB_SCHEMA.squared_dist_norm2'),
+            'MADLIB_SCHEMA.squared_dist_norm2'::VARCHAR),
         'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001);
     RETURN ret;
 END
@@ -1349,7 +1411,10 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  *     given arguments.
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_execute_using_silhouette_args(
-    sql VARCHAR, centroids DOUBLE PRECISION[][], fn_dist REGPROC
+    sql VARCHAR,
+    centroids DOUBLE PRECISION[][],
+    fn_dist REGPROC,
+    fn_dist_name VARCHAR
 ) RETURNS DOUBLE PRECISION
 STABLE
 CALLED ON NULL INPUT
@@ -1420,25 +1485,18 @@ BEGIN
                     ELSE (distances[2] - distances[1]) / distances[2]
                 END)
         FROM (
-            m4_ifdef(`__HAWQ__',
-            `SELECT
-                (MADLIB_SCHEMA.closest_columns_hawq(
-                    $1,
-                    ($sql$ || expr_point || $sql$)::FLOAT8[],
-                    2::INTEGER
-                )).distances',
-            `SELECT
+            SELECT
                 (MADLIB_SCHEMA.closest_columns(
                     $1,
                     ($sql$ || expr_point || $sql$)::FLOAT8[],
                     2::INTEGER,
-                    $2
-                )).distances')
+                    m4_ifdef(`__HAWQ__', $3, $2)
+                )).distances
             FROM
                 $sql$ || textin(regclassout(class_rel_source)) || $sql$
         ) AS two_shortest_distances
         $sql$,
-        centroids, proc_fn_dist);
+        centroids, proc_fn_dist, fn_dist);
 END;
 $$
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');

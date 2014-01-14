@@ -1,5 +1,5 @@
 # coding=utf-8
-m4_changequote(`>>>', `<<<')
+m4_changequote(`<!', `!>')
 
 """
 @file control.py_in
@@ -18,12 +18,13 @@ version_wrapper = __mad_version()
 from utilities import __unique_string
 _unique_string = __unique_string
 
+
 class MinWarning:
     """
     @brief A wrapper for setting the level of logs going into client
     """
 
-    def __init__(self, warningLevel = 'error'):
+    def __init__(self, warningLevel='error'):
         self.warningLevel = warningLevel
 
     def __enter__(self):
@@ -32,13 +33,14 @@ class MinWarning:
         """)[0]['setting']
         plpy.execute("""
             SET client_min_messages = {warningLevel}
-            """.format(warningLevel = self.warningLevel))
+            """.format(warningLevel=self.warningLevel))
         return self
 
     def __exit__(self, *args):
         plpy.execute("""
             SET client_min_messages = {oldMsgLevel};
-            """.format(oldMsgLevel = self.oldMsgLevel))
+            """.format(oldMsgLevel=self.oldMsgLevel))
+
 
 class IterationControllerComposite:
     """
@@ -62,47 +64,47 @@ class IterationControllerComposite:
     """
 
     def __init__(self, rel_args, rel_state, stateType,
-            temporaryTables = True,
-            truncAfterIteration = False,
-            schema_madlib = "MADLIB_SCHEMA_MISSING",
-            verbose = False,
-            **kwargs):
+                 temporaryTables=True,
+                 truncAfterIteration=False,
+                 schema_madlib="MADLIB_SCHEMA_MISSING",
+                 verbose=False,
+                 **kwargs):
         self.kwargs = kwargs
         self.kwargs.update(
-            unqualified_rel_state = rel_state,
-            rel_args = ('pg_temp.' if temporaryTables else '') + rel_args,
-            rel_state = ('pg_temp.' if temporaryTables else '') + rel_state,
-            stateType = stateType.format(schema_madlib = schema_madlib),
+            unqualified_rel_state=rel_state,
+            rel_args=('pg_temp.' if temporaryTables else '') + rel_args,
+            rel_state=('pg_temp.' if temporaryTables else '') + rel_state,
+            stateType=stateType.format(schema_madlib=schema_madlib),
             schema_madlib = schema_madlib)
         self.temporaryTables = temporaryTables
         self.truncAfterIteration = truncAfterIteration
         self.verbose = verbose
         self.inWith = False
         self.iteration = -1
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         self.new_state = None
         self.old_state = None
-        <<<)
+        !>)
 
     def __enter__(self):
         with MinWarning('warning'):
             self.runSQL("""
                 DROP TABLE IF EXISTS {rel_state};
                 CREATE {temp} TABLE {unqualified_rel_state} (
-                    _iteration  INTEGER m4_ifdef(>>>__HAWQ__<<<, >>><<<, >>>PRIMARY KEY<<<),
+                    _iteration  INTEGER m4_ifdef(<!__HAWQ__!>, <!!>, <!PRIMARY KEY!>),
                     _state      {stateType}
                 );
                 """.format(
-                    temp = 'TEMPORARY' if self.temporaryTables else '',
-                    **self.kwargs))
+                        temp='TEMPORARY' if self.temporaryTables else '',
+                        **self.kwargs))
         self.inWith = True
         return self
 
     def __exit__(self, type, value, tb):
         self.inWith = False
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         insert_plan = plpy.prepare("""
-            INSERT INTO {rel_state} 
+            INSERT INTO {rel_state}
             SELECT $1, CAST( ({schema_madlib}.array_to_2d($2), $3, $4, $5) AS {schema_madlib}.kmeans_state)
             """.format(**self.kwargs), [ "INTEGER", "DOUBLE PRECISION[]",
                 "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION" ])
@@ -111,7 +113,7 @@ class IterationControllerComposite:
             self.new_state['old_centroid_ids'],
             self.new_state['objective_fn'],
             self.new_state['frac_reassigned'] ])
-        <<<)
+        !>)
 
     def runSQL(self, sql):
         if self.verbose:
@@ -139,15 +141,12 @@ class IterationControllerComposite:
             optimizer = plpy.execute("SHOW optimizer")[0]['optimizer']
             plpy.execute("SET optimizer = off")
 
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         cast_str = "CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4) AS {schema_madlib}.kmeans_state)".format(**self.kwargs)
         cast_type = [ "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION" ]
-        cast_para = [ 
-            None if self.new_state is None else self.new_state['centroids'],
-            None if self.new_state is None else self.new_state['old_centroid_ids'],
-            None if self.new_state is None else self.new_state['objective_fn'],
-            None if self.new_state is None else self.new_state['frac_reassigned'],
-            ]
+        cast_para = [None if self.new_state is None else self.new_state[i]
+                     for i in ('centroids', 'old_centroid_ids',
+                               'objective_fn', 'frac_reassigned')]
         eval_plan = plpy.prepare("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -155,11 +154,11 @@ class IterationControllerComposite:
                     SELECT {{schema_madlib}}.array_to_2d($1) AS _state
                 ) AS _state ON True
             """.format(expression = expression).format(
-                iteration = self.iteration,
-                __state__=cast_str, **self.kwargs), cast_type)
+                    iteration = self.iteration,
+                    curr_state=cast_str, **self.kwargs), cast_type)
 
         resultObject = plpy.execute(eval_plan, cast_para)
-        <<<, >>>
+        !>, <!
         resultObject = self.runSQL("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -171,7 +170,7 @@ class IterationControllerComposite:
             """.format(expression = expression).format(
                 iteration = self.iteration,
                 **self.kwargs))
-        <<<)
+        !>)
 
         if version_wrapper.is_gp43() or version_wrapper.is_hawq():
             plpy.execute("SET optimizer = " + optimizer)
@@ -224,8 +223,8 @@ class IterationControllerComposite:
             iteration = self.iteration,
             **updateKwargs)
         self.iteration = self.iteration + 1
-        
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+
+        m4_ifdef(<!__HAWQ__!>, <!
         cast_str = """CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4)
                         AS {schema_madlib}.kmeans_state)""".format(**self.kwargs)
         cast_str_old  = """CAST (({schema_madlib}.array_to_2d($5), $6, $7, $8)
@@ -234,17 +233,11 @@ class IterationControllerComposite:
             "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION",
             "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION"
         ]
-        cast_para = [ 
-            None if self.new_state is None else self.new_state['centroids'],
-            None if self.new_state is None else self.new_state['old_centroid_ids'],
-            None if self.new_state is None else self.new_state['objective_fn'],
-            None if self.new_state is None else self.new_state['frac_reassigned'],
-            None if self.old_state is None else self.old_state['centroids'],
-            None if self.old_state is None else self.old_state['old_centroid_ids'],
-            None if self.old_state is None else self.old_state['objective_fn'],
-            None if self.old_state is None else self.old_state['frac_reassigned']
-            ]
-        updateKwargs.update(__state__=cast_str, __old_state__=cast_str_old)
+        cast_para = [None if self.new_state is None else self.new_state[i]
+                     for i in ('centroids', 'old_centroid_ids', 'objective_fn',
+                               'frac_reassigned', 'centroids', 'old_centroid_ids',
+                               'objective_fn', 'frac_reassigned')]
+        updateKwargs.update(curr_state=cast_str, old_state=cast_str_old)
         self.old_state = self.new_state
         update_plan = plpy.prepare("""
             SELECT
@@ -255,13 +248,13 @@ class IterationControllerComposite:
                 (_state).frac_reassigned
             FROM
             (
-                SELECT ({newState}) AS _state 
+                SELECT ({newState}) AS _state
             ) q
-            """.format(iteration = self.iteration,
-                newState = newState, **self.kwargs).format(**updateKwargs),
+            """.format(iteration=self.iteration,
+                       newState=newState, **self.kwargs).format(**updateKwargs),
             cast_type)
         self.new_state = plpy.execute(update_plan, cast_para)[0]
-        <<<, >>>
+        !>, <!
         self.runSQL("""
             INSERT INTO {rel_state}
             SELECT
@@ -271,14 +264,14 @@ class IterationControllerComposite:
                 iteration = self.iteration,
                 newState = newState,
                 **self.kwargs))
-        <<<)
+        !>)
 
-        m4_ifdef(>>>__HAWQ__<<<, >>><<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!!>, <!
         if self.truncAfterIteration:
             self.runSQL("""
                 DELETE FROM {rel_state} AS _state
                 WHERE _state._iteration < {iteration}
             """.format(iteration = self.iteration, **self.kwargs))
-        <<<)
+        !>)
 
-m4_changequote(>>>`<<<, >>>'<<<)
+m4_changequote(<!`!>, <!'!>)

@@ -1,5 +1,5 @@
 # coding=utf-8
-m4_changequote(`>>>', `<<<')
+m4_changequote(`<!', `!>')
 
 """
 @file control.py_in
@@ -79,17 +79,17 @@ class IterationController:
         self.verbose = verbose
         self.inWith = False
         self.iteration = -1
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         self.new_state = {"_iteration":0, "_state":None}
         self.old_state = {"_iteration":0, "_state":None}
-        <<<)
+        !>)
 
     def __enter__(self):
         with MinWarning('warning'):
             self.runSQL("""
                 DROP TABLE IF EXISTS {rel_state};
                 CREATE {temp} TABLE {unqualified_rel_state} (
-                    _iteration  INTEGER m4_ifdef(>>>__HAWQ__<<<, >>><<<, >>>PRIMARY KEY<<<),
+                    _iteration  INTEGER m4_ifdef(<!__HAWQ__!>, <!!>, <!PRIMARY KEY!>),
                     _state      {stateType}
                 );
                 """.format(
@@ -100,13 +100,13 @@ class IterationController:
 
     def __exit__(self, type, value, tb):
         self.inWith = False
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         insert_plan = plpy.prepare("""
             INSERT INTO {rel_state}
             SELECT $1, $2
             """.format(**self.kwargs), [ "INTEGER", "DOUBLE PRECISION[]" ])
         plpy.execute(insert_plan, [ self.new_state['_iteration'], self.new_state['_state'] ])
-        <<<)
+        !>)
 
     def runSQL(self, sql):
         if self.verbose:
@@ -134,7 +134,7 @@ class IterationController:
             optimizer = plpy.execute("SHOW optimizer")[0]['optimizer']
             plpy.execute("SET optimizer = off")
 
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         eval_plan = plpy.prepare("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -146,7 +146,7 @@ class IterationController:
                 **self.kwargs), [ "DOUBLE PRECISION[]" ])
 
         resultObject = plpy.execute(eval_plan, [ [] if self.new_state['_state'] is None else self.new_state['_state'] ])
-        <<<, >>>
+        !>, <!
         resultObject = self.runSQL("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -158,7 +158,7 @@ class IterationController:
             """.format(expression = expression).format(
                 iteration = self.iteration,
                 **self.kwargs))
-        <<<)
+        !>)
 
         if version_wrapper.is_gp43() or version_wrapper.is_hawq():
             plpy.execute("SET optimizer = " + optimizer)
@@ -213,7 +213,7 @@ class IterationController:
             **updateKwargs)
         self.iteration = self.iteration + 1
 
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         self.old_state = self.new_state
         update_plan = plpy.prepare("""
             SELECT
@@ -226,7 +226,7 @@ class IterationController:
         self.new_state = plpy.execute(update_plan, [ None if self.new_state['_state'] is None else self.new_state['_state'] ])[0]
         # Deal with possible double underflow
         #self.new_state['_state'] = map(lambda r: 1e-307 if abs(r) < 1e-307 else r, self.new_state['_state'])
-        <<<, >>>
+        !>, <!
         self.runSQL("""
             INSERT INTO {rel_state}
             SELECT
@@ -236,15 +236,16 @@ class IterationController:
                 iteration = self.iteration,
                 newState = newState,
                 **self.kwargs))
-        <<<)
+        !>)
 
-        m4_ifdef(>>>__HAWQ__<<<, >>><<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!!>, <!
         if self.truncAfterIteration:
             self.runSQL("""
                 DELETE FROM {rel_state} AS _state
                 WHERE _state._iteration < {iteration}
             """.format(iteration = self.iteration, **self.kwargs))
-        <<<)
+        !>)
+
 
 class IterationController2D(IterationController):
     """
@@ -253,13 +254,13 @@ class IterationController2D(IterationController):
 
     def __exit__(self, type, value, tb):
         self.inWith = False
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         insert_plan = plpy.prepare("""
             INSERT INTO {rel_state}
             SELECT $1, {schema_madlib}.array_to_2d($2)
             """.format(**self.kwargs), [ "INTEGER", "DOUBLE PRECISION[]" ])
         plpy.execute(insert_plan, [ self.new_state['_iteration'], self.new_state['_state'] ])
-        <<<)
+        !>)
 
     def evaluate(self, expression):
         """
@@ -282,7 +283,7 @@ class IterationController2D(IterationController):
             optimizer = plpy.execute("SHOW optimizer")[0]['optimizer']
             plpy.execute("SET optimizer = off")
 
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         eval_plan = plpy.prepare("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -293,7 +294,7 @@ class IterationController2D(IterationController):
                 **self.kwargs), [ "DOUBLE PRECISION[]" ])
 
         resultObject = plpy.execute(eval_plan, [ [] if self.new_state['_state'] is None else self.new_state['_state'] ])
-        <<<, >>>
+        !>, <!
         resultObject = self.runSQL("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -305,7 +306,7 @@ class IterationController2D(IterationController):
             """.format(expression = expression).format(
                 iteration = self.iteration,
                 **self.kwargs))
-        <<<)
+        !>)
 
         if version_wrapper.is_gp43() or version_wrapper.is_hawq():
             plpy.execute("SET optimizer = " + optimizer)
@@ -341,7 +342,7 @@ class IterationController2D(IterationController):
             **updateKwargs)
         self.iteration = self.iteration + 1
 
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         self.old_state = self.new_state
         update_plan = plpy.prepare("""
             SELECT
@@ -352,7 +353,7 @@ class IterationController2D(IterationController):
                 newState = newState,
                 **self.kwargs), [ "DOUBLE PRECISION[]" ])
         self.new_state = plpy.execute(update_plan, [ None if self.new_state['_state'] is None else self.new_state['_state'] ])[0]
-        <<<, >>>
+        !>, <!
         self.runSQL("""
             INSERT INTO {rel_state}
             SELECT
@@ -362,15 +363,15 @@ class IterationController2D(IterationController):
                 iteration = self.iteration,
                 newState = newState,
                 **self.kwargs))
-        <<<)
+        !>)
 
-        m4_ifdef(>>>__HAWQ__<<<, >>><<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!!>, <!
         if self.truncAfterIteration:
             self.runSQL("""
                 DELETE FROM {rel_state} AS _state
                 WHERE _state._iteration < {iteration}
             """.format(iteration = self.iteration, **self.kwargs))
-        <<<)
+        !>)
 
 class IterationController2S(IterationController):
     """
@@ -379,7 +380,7 @@ class IterationController2S(IterationController):
     """
 
     def evaluate(self, expression):
-        m4_ifdef(>>>__HAWQ__<<<, >>>
+        m4_ifdef(<!__HAWQ__!>, <!
         eval_plan = plpy.prepare("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -394,7 +395,7 @@ class IterationController2S(IterationController):
 
         resultObject = plpy.execute(eval_plan, [
             self.old_state['_state'], self.new_state['_state'] ])
-        <<<, >>>
+        !>, <!
         resultObject = self.runSQL("""
             SELECT ({expression}) AS expression
             FROM {{rel_args}} AS _args
@@ -416,19 +417,19 @@ class IterationController2S(IterationController):
             """.format(expression = expression).format(
                 iteration = self.iteration,
                 **self.kwargs))
-        <<<)
+        !>)
 
         if resultObject.nrows() == 0:
             return None
         else:
             return resultObject[0]['expression']
 
-    m4_ifdef(>>>__HAWQ__<<<, >>>
+    m4_ifdef(<!__HAWQ__!>, <!
     def get_state_size():
         return len(self.new_state)
 
     def get_state_value(index):
         return self.new_state[index]
-    <<<)
+    !>)
 
-m4_changequote(>>>`<<<, >>>'<<<)
+m4_changequote(<!`!>, <!'!>)

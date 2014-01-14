@@ -8,8 +8,12 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <limits>
+#include <string>
+#include <boost/algorithm/string.hpp>
 
 #include "metric.hpp"
+
+using std::string;
 
 namespace madlib {
 
@@ -121,7 +125,7 @@ distAngle(
 	if (xnorm < std::numeric_limits<double>::denorm_min()
 		|| ynorm < std::numeric_limits<double>::denorm_min())
 		return std::acos(-1);
-	
+
     double cosine = dot(inX, inY) / (xnorm * ynorm);
     if (cosine > 1)
         cosine = 1;
@@ -180,6 +184,7 @@ closestColumnsAndDistancesShortcut(
             ioFirst, ioLast);
 }
 
+
 /**
  * @brief Compute the minimum distance between a vector and any column of a
  *     matrix
@@ -208,9 +213,39 @@ AnyType
 closest_column_hawq::run(AnyType& args) {
     MappedMatrix M = args[0].getAs<MappedMatrix>();
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    string distance_metric_str = args[2].getAs<char *>();
+    boost::trim(distance_metric_str);
+
+    double (*distance_metric)(const MappedColumnVector&, const MappedColumnVector&);
+
+    // we hard-code comparision and selection of the distance function since
+    // we are currently limited in not being able to access the catalog
+    // in a function executed at the segments. This is a limitation in HAWQ
+    // and will probably be eliminated in a future HAWQ release
+    if ((distance_metric_str.compare("squared_dist_norm2") == 0) ||
+            (distance_metric_str.compare("madlib.squared_dist_norm2") == 0)){
+        distance_metric = squaredDistNorm2;
+    } else if ((distance_metric_str.compare("dist_norm2") == 0) ||
+            (distance_metric_str.compare("madlib.dist_norm2") == 0)){
+        distance_metric = distNorm2;
+    } else if ((distance_metric_str.compare("dist_norm1") == 0) ||
+            (distance_metric_str.compare("madlib.dist_norm1") == 0)){
+        distance_metric = distNorm1;
+    } else if ((distance_metric_str.compare("dist_angle") == 0) ||
+            (distance_metric_str.compare("madlib.dist_angle") == 0)){
+        distance_metric = distAngle;
+    } else if ((distance_metric_str.compare("dist_tanimoto") == 0) ||
+            (distance_metric_str.compare("madlib.dist_tanimoto") == 0)){
+        distance_metric = distTanimoto;
+    } else{
+        string errorMessage = string("Invalid distance metric provided: ") + \
+                                distance_metric_str + \
+                                string(". Currently only madlib provided distance functions are supported.");
+        throw std::invalid_argument(errorMessage);
+    }
 
     std::tuple<Index, double> result;
-    closestColumnsAndDistances(M, x, squaredDistNorm2, &result, &result + 1);
+    closestColumnsAndDistances(M, x, distance_metric, &result, &result + 1);
 
     AnyType tuple;
     return tuple
@@ -254,13 +289,39 @@ closest_columns_hawq::run(AnyType& args) {
     MappedMatrix M = args[0].getAs<MappedMatrix>();
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
     uint32_t num = args[2].getAs<uint32_t>();
+    string distance_metric_str = args[3].getAs<char *>();
+    boost::trim(distance_metric_str);
 
     if (0 == num) {
-        throw std::invalid_argument("the parameter number should be a positive integer"); 
+        throw std::invalid_argument("the parameter number should be a positive integer");
+    }
+
+    double (*distance_metric)(const MappedColumnVector&, const MappedColumnVector&);
+
+    if ((distance_metric_str.compare("squared_dist_norm2") == 0) ||
+            (distance_metric_str.compare("madlib.squared_dist_norm2") == 0)){
+        distance_metric = squaredDistNorm2;
+    } else if ((distance_metric_str.compare("dist_norm2") == 0) ||
+            (distance_metric_str.compare("madlib.dist_norm2") == 0)){
+        distance_metric = distNorm2;
+    } else if ((distance_metric_str.compare("dist_norm1") == 0) ||
+            (distance_metric_str.compare("madlib.dist_norm1") == 0)){
+        distance_metric = distNorm1;
+    } else if ((distance_metric_str.compare("dist_angle") == 0) ||
+            (distance_metric_str.compare("madlib.dist_angle") == 0)){
+        distance_metric = distAngle;
+    } else if ((distance_metric_str.compare("dist_tanimoto") == 0) ||
+            (distance_metric_str.compare("madlib.dist_tanimoto") == 0)){
+        distance_metric = distTanimoto;
+    } else{
+        string errorMessage = string("Invalid distance metric provided: ") + \
+                                distance_metric_str + \
+                                string(". Currently only madlib provided distance functions are supported.");
+        throw std::invalid_argument(errorMessage);
     }
 
     std::vector<std::tuple<Index, double> > result(num);
-    closestColumnsAndDistances(M, x, squaredDistNorm2, result.begin(), result.end());
+    closestColumnsAndDistances(M, x, distance_metric, result.begin(), result.end());
 
     MutableArrayHandle<int32_t> indices = allocateArray<int32_t,
         dbal::FunctionContext, dbal::DoNotZero, dbal::ThrowBadAlloc>(num);
