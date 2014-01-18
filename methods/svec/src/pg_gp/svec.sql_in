@@ -18,6 +18,7 @@ m4_include(`SQLCommon.m4')
 <div class="toc"><b>Contents</b>
 <ul>
 <li><a href="#usage">Using Sparse Vectors</a></li>
+<li><a href="#vectorization">Document Vectorization into Sparse Vectors</a></li>
 <li><a href="#examples">Examples</a></li>
 <li><a href="#related">Related Topics</a></li>
 </ul>
@@ -115,6 +116,174 @@ produces this SVEC:
 
 Add MADLIB_SCHEMA to the search_path to use the svec operators
 defined in the module.
+
+@anchor vectorization
+@par Document Vectorization into Sparse Vectors
+This module implements an efficient way for document vectorization, converting
+text documents into sparse vector representation (MADlib.svec), required by various
+machine learning algorithms in MADlib.
+
+The function accepts two tables as input, dictionary table and documents
+table, and produces the specified output table containing sparse vectors
+for the represented documents (in documents table).
+
+<pre class="syntax">
+madlib.gen_doc_svecs(output_tbl,
+                     dictionary_tbl,
+                     dict_id_col,
+                     dict_term_col,
+                     documents_tbl,
+                     doc_id_col,
+                     doc_term_col,
+                     doc_term_info_col
+                    )
+</pre>
+\b Arguments
+<DL class="arglist">
+<DT>output_tbl</DT>
+<DD>TEXT. Name of the output table to be created containing the sparse
+vector representation of the documents. It has the following columns:
+    <table class="output">
+    <tr>
+        <th>doc_id</th>
+        <td>__TYPE_DOC__. Document id.
+            \n \__TYPE_DOC__: Column type depends on the type of \c doc_id_col in \c documents_tbl.
+        </td>
+    </tr>
+    <tr>
+        <th>sparse_vector</th>
+        <td>MADlib.svec. Corresponding sparse vector representation.</td>
+    </tr>
+    </table>
+</DD>
+
+<DT>dictionary_tbl</DT>
+<DD>TEXT. Name of the dictionary table containing features.
+    <table class="output">
+    <tr>
+        <th>dict_id_col</th>
+        <td>TEXT. Name of the id column in the \c dictionary_tbl.
+            \n Expected Type: INTEGER or BIGINT.
+            \n NOTE: Values must be continuous ranging from 0 to total number of elements in
+            the dictionary - 1.</dt>
+    </tr>
+    <tr>
+        <th>dict_term_col</th>
+        <td>TEXT. Name of the column containing term (features) in \c dictionary_tbl.</td>
+    </tr>
+    </table>
+</DD>
+
+<DT>documents_tbl</DT>
+<DD>TEXT. Name of the documents table representing documents.
+    <table class="output">
+    <tr>
+        <th>doc_id_col</th>
+        <td>TEXT. Name of the id column in the \c documents_tbl.</td>
+    </tr>
+    <tr>
+        <th>doc_term_col</th>
+        <td>TEXT. Name of the term column in the \c documents_tbl.</td>
+    </tr>
+    <tr>
+        <th>doc_term_info_col</th>
+        <td>TEXT. Name of the term info column in \c documents_tbl. The expected type of this column should be:
+            \n - INTEGER, BIGINT or DOUBLE PRECISION: Values directly used to populate vector.
+            \n - ARRAY: Length of the array used to populate the vector.
+            \n ** For an example use case on using these types of column types, please refer to the example below.
+        </td>
+    </tr>
+    </table>
+</DD>
+</DL>
+
+\b Example:
+\n Consider a corpus consisting of set of documents consisting of features (terms) along with doc ids:
+<pre class="example">
+1, {this,is,one,document,in,the,corpus}
+2, {i,am,the,second,document,in,the,corpus}
+3, {being,third,never,really,bothered,me,until,now}
+4, {the,document,before,me,is,the,third,document}
+</pre>
+
+-# Prepare documents table in appropriate format.
+\n The corpus specified above can be represented by any of the following \c documents_table:
+<pre class="example">
+SELECT * FROM documents_table ORDER BY id;
+</pre>
+Result:
+<pre class="result">
+  id |   term   | count                 id |   term   | positions
+&nbsp;----+----------+-------               ----+----------+-----------
+   1 | is       |     1                  1 | is       | {1}
+   1 | in       |     1                  1 | in       | {4}
+   1 | one      |     1                  1 | one      | {2}
+   1 | this     |     1                  1 | this     | {0}
+   1 | the      |     1                  1 | the      | {5}
+   1 | document |     1                  1 | document | {3}
+   1 | corpus   |     1                  1 | corpus   | {6}
+   2 | second   |     1                  2 | second   | {3}
+   2 | document |     1                  2 | document | {4}
+   2 | corpus   |     1                  2 | corpus   | {7}
+   . | ...      |    ..                  . | ...      | ...
+   4 | document |     2                  4 | document | {1,7}
+...
+</pre>
+
+-# Prepare dictionary table in appropriate format.
+<pre class="example">
+SELECT * FROM dictionary_table ORDER BY id;
+</pre>
+Result:
+<pre class="result">
+  id |   term
+&nbsp;----+----------
+   0 | am
+   1 | before
+   2 | being
+   3 | bothered
+   4 | corpus
+   5 | document
+   6 | i
+   7 | in
+   8 | is
+   9 | me
+...
+</pre>
+
+-# Generate sparse vector for the documents using dictionary_table and documents_table.
+\n \c doc_term_info_col \c (count) of type INTEGER:
+<pre class="example">
+SELECT * FROM madlib.gen_doc_svecs('svec_output', 'dictionary_table', 'id', 'term',
+                            'documents_table', 'id', 'term', 'count');
+</pre>
+\c  doc_term_info_col \c (positions) of type ARRAY:
+<pre class="example">
+SELECT * FROM madlib.gen_doc_svecs('svec_output', 'dictionary_table', 'id', 'term',
+                            'documents_table', 'id', 'term', 'positions');
+</pre>
+Result:
+<pre class="result">
+                                 gen_doc_svecs
+&nbsp;--------------------------------------------------------------------------------------
+ Created table svec_output (doc_id, sparse_vector) containing sparse vectors
+(1 row)
+</pre>
+
+-# Analyze the sparse vectors created.
+<pre class="example">
+SELECT * FROM svec_output ORDER by doc_id;
+</pre>
+Result:
+<pre class="result">
+ doc_id |                  sparse_vector
+&nbsp;--------+-------------------------------------------------
+      1 | {4,2,1,2,3,1,2,1,1,1,1}:{0,1,0,1,0,1,0,1,0,1,0}
+      2 | {1,3,4,6,1,1,3}:{1,0,1,0,1,2,0}
+      3 | {2,2,5,3,1,1,2,1,1,1}:{0,1,0,1,0,1,0,1,0,1}
+      4 | {1,1,3,1,2,2,5,1,1,2}:{0,1,0,2,0,1,0,2,1,0}
+(4 rows)
+</pre>
 
 See the file svec.sql_in for complete syntax.
 
@@ -283,7 +452,10 @@ number of dictionary words, and in each cell of an SFV is a count of
 each dictionary word in the document.
 
 Inside the sparse vector library, we have a function that will create
-an SFV from a document, so we can just do this:
+an SFV from a document, so we can just do this (For a more efficient
+way for converting documents into sparse vectors, especially for larger
+datasets, please refer to <li><a href="#vectorization">Document
+Vectorization into Sparse Vectors</a></li>):
 
 <pre class="example">
 SELECT madlib.svec_sfv((SELECT a FROM features LIMIT 1),b)\::float8[]

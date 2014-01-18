@@ -1,0 +1,185 @@
+
+"""
+@file generate_svec.py_in
+
+@namespace generate_svec
+
+"""
+import plpy
+from utilities.validate_args import table_exists
+from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import get_cols_and_types
+from utilities.utilities import _assert
+
+def generate_doc_svecs_help(schema_madlib, **kwargs):
+    return """
+    -----------------------------------------------------
+                             Usage
+    -----------------------------------------------------
+    SELECT * FROM {schema_madlib}.generate_doc_svecs (
+        'output_tbl'        -- Output table to be created containing
+                               sparse vectors for the documents.
+        'dictionary_tbl'    -- Dictionary table
+        'dict_id_col'       -- Name of the id column in the dictionary table
+                               Supported Types: INTEGER or BIGINT
+                               NOTE: Values must range from 0 to total number
+                                     of elements in the dictionary - 1
+        'dict_term_col'     -- Name of the terms column in the dictionary table
+        'documents_tbl'     -- Documents table
+        'doc_id_col'        -- Name of the id column in documents table
+        'doc_term_col'      -- Name of the terms column in documents table
+        'doc_term_info_col' -- Name of the term info column in documents table
+                               Supported Types:
+                               INTEGER, BIGINT   :- Values directly used to populate the vectors
+                               DOUBLE PRECISION
+                                    ARRAY        :- Length of the array is used as values
+    );
+
+   -----------------------------------------------------------
+                              Output
+   -----------------------------------------------------------
+   The output table (output_tbl in the above) has the following columns:
+   doc_id           __TYPE_DOC__    -- Document id column
+   sparse_vector    {schema_madlib}.svec     -- Column containing the sparse vector
+                                       representation for the document
+   ** __TYPE_DOC__: Type Depends on Type of Column doc_id_col
+                    in documents_tbl.
+   """.format(schema_madlib = schema_madlib)
+
+def generate_doc_svecs(schema_madlib, output_tbl, dictionary_tbl,
+                       dict_id_col, dict_term_col, documents_tbl,
+                       doc_id_col, doc_term_col, doc_term_info_col, **kwargs):
+
+    """
+    Creates the sparse vector representations of the documents represented by
+    documents table
+
+    @param output_tbl Name of the output table to be created containing sparse
+                        vector representations of the documents
+    @param dictionary_tbl Name of the dictionary table
+    @param dict_id_col Name of the id column in dictionary table
+    @param dict_term_col Name of the term column in dictionary table
+    @param documents_tbl Name of the documents table
+    @param doc_id_col Name of the id column in documents table
+    @param doc_term_col Name of the term column in documents table
+    @param doc_term_info_col Name of the term info column in documents table.
+
+    """
+
+    # Validate arguments and get the column type for term info column in documents table.
+    term_info_col_type =  _validate_args(schema_madlib, output_tbl, dictionary_tbl, dict_id_col,
+                        dict_term_col, documents_tbl, doc_id_col, doc_term_col, doc_term_info_col)
+
+    if term_info_col_type == 'array':
+        term_count_expr = """ array_upper(doc_table.{doc_term_info_col}, 1) """
+    else:
+        term_count_expr = " doc_table.{doc_term_info_col} "
+
+    dict_count = plpy.execute("""
+                SELECT count(*) FROM {dict_table}
+                """.format(dict_table = dictionary_tbl))[0]['count']
+
+    query = """
+        CREATE TABLE {output_tbl} AS
+            SELECT
+                doc_table.{doc_id_col} doc_id,
+                {schema_madlib}.__gen_svec(
+                        array_agg(dict_table.{dict_id_col}),
+                        array_agg( """ + term_count_expr + """),
+                        {dict_count}) sparse_vector
+            FROM
+                {doc_table} doc_table,
+                {dict_table} dict_table
+            WHERE
+                doc_table.{doc_term_col} = dict_table.{dict_term_col}
+            GROUP BY
+               doc_table.{doc_id_col}
+            m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (doc_id)')
+        """
+
+    plpy.execute(query.format(
+        output_tbl = output_tbl,
+        doc_table = documents_tbl,
+        dict_table = dictionary_tbl,
+        doc_id_col = doc_id_col,
+        doc_term_col = doc_term_col,
+        doc_term_info_col = doc_term_info_col,
+        dict_id_col = dict_id_col,
+        dict_term_col = dict_term_col,
+        dict_count = dict_count,
+        schema_madlib = schema_madlib))
+
+    return "Created table %s (doc_id, sparse_vector) containing sparse vectors" % output_tbl
+
+def verify_type(type_dict, col_name, isIdColumn):
+    """
+    @brief We validate two types of columns
+        id column: Expected types: int or bigint
+        term info column: Expected types: int, bigint, float8 or array
+    """
+
+    if isIdColumn:
+        if type_dict[col_name].lower() not in ['integer', 'bigint']:
+            return False
+    else:
+        if type_dict[col_name].lower() not in ['integer', 'bigint',
+                                        'double precision', 'array']:
+            return False
+
+    return True
+
+def _validate_args(schema_madlib, output_tbl, dictionary_tbl, dict_id_col,
+                    dict_term_col, documents_tbl, doc_id_col,
+                    doc_term_col, doc_term_info_col):
+    """
+    @brief Validate the arguments
+    """
+
+    _assert(dictionary_tbl is not None and
+        dictionary_tbl.lower().strip() not in ('null', ''),
+        "Svec error: Invalid dictionary table name")
+    _assert(documents_tbl is not None and
+        documents_tbl.lower().strip() not in ('null', ''),
+        "Svec error: Invalid documents table name")
+    _assert(table_exists(dictionary_tbl),
+        "Svec error: Dictionary table does not exist!")
+    _assert(table_exists(documents_tbl),
+        "Svec error: Documents table does not exist!")
+    _assert(not table_is_empty(dictionary_tbl),
+        "Svec error: Dictionary table is empty!")
+    _assert(not table_is_empty(documents_tbl),
+        "Svec error: Documents table is empty!")
+
+    _assert(output_tbl is not None and
+        output_tbl.strip().lower() not in ('null', ''),
+        "Svec error: Invalid output table name!")
+
+    dict_cols = [dict_id_col, dict_term_col]
+    _assert(columns_exist_in_table(dictionary_tbl, dict_cols),
+       "Svec error: Missing specified column names from dictionary table")
+
+    doc_cols = [doc_id_col, doc_term_col, doc_term_info_col]
+    _assert(columns_exist_in_table(documents_tbl, doc_cols),
+        "Svec error: Missing specified columns names from documents table")
+
+    # Verify column types. We only need to verify id column from dictionary
+    # table and term info column from documents table to be of any of the
+    # respective required types.
+    #
+    dict_col_type_dict = get_cols_and_types(dictionary_tbl, schema_madlib)
+    _assert(verify_type(dict_col_type_dict, dict_id_col, True),
+        "Svec error: Unexpected type for column '%s' in dictionary table."
+        " Should be int or bigint type" % dict_id_col)
+
+    doc_col_type_dict = get_cols_and_types(documents_tbl, schema_madlib)
+    _assert(verify_type(doc_col_type_dict, doc_term_info_col, False),
+        "Svec error: Unexpected type for column '%s' in documents table."
+        " Should be int, bigint, double precision or Array type" % doc_term_info_col)
+
+    # When everything else has been verified, check if output table exists and
+    # notify if needs to be dropped.
+    _assert(not table_exists(output_tbl),
+        "Svec error: Output table name already exists. Drop the table before calling the function.")
+
+    return doc_col_type_dict[doc_term_info_col].lower()
