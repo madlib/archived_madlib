@@ -10,7 +10,6 @@ import glob
 import traceback
 import subprocess
 import datetime
-from time import strftime
 import tempfile
 import shutil
 
@@ -20,7 +19,7 @@ from upgrade_util import TableDependency
 from upgrade_util import ScriptCleaner
 
 # Required Python version
-py_min_ver = [2,6]
+py_min_ver = [2, 6]
 
 # Check python version
 if sys.version_info[:2] < py_min_ver:
@@ -46,11 +45,11 @@ this = os.path.basename(sys.argv[0])    # name of this script
 
 # Default directories
 maddir_conf = maddir + "/config"           # Config dir
-maddir_lib  = maddir + "/lib/libmadlib.so" # C/C++ libraries
+maddir_lib = maddir + "/lib/libmadlib.so"  # C/C++ libraries
 
 # Read the config files
-ports = configyml.get_ports(maddir_conf )  # object made of Ports.yml
-rev = configyml.get_version(maddir_conf )  # MADlib OS-level version
+ports = configyml.get_ports(maddir_conf)  # object made of Ports.yml
+rev = configyml.get_version(maddir_conf)  # MADlib OS-level version
 portid_list = []
 for port in ports:
     portid_list.append(port)
@@ -61,101 +60,107 @@ dbconn = None       # DB Connection object
 dbver = None        # DB version
 con_args = {}       # DB connection arguments
 verbose = None      # Verbose flag
+keeplogs = None
+tmpdir = None
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Create a temp dir
-# @param dir temp directory path
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __make_dir(dir):
+    """
+    # Create a temp dir
+    # @param dir temp directory path
+    """
     if not os.path.isdir(dir):
         try:
             os.makedirs(dir)
         except:
             print "ERROR: can not create directory: %s. Check permissions." % dir
             exit(1)
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Error message wrapper
-# @param msg error message
-# @param stop program exit flag
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __error(msg, stop):
+    """
+    Error message wrapper
+        @param msg error message
+        @param stop program exit flag
+    """
     # Print to stdout
     print this + ' : ERROR : ' + msg
     # Print stack trace
-    if stop == True:
+    if stop:
         exit(2)
+#------------------------------------------------------------------------------
 
-#class MadpackError(Exception):
-#    pass
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Info message wrapper (verbose)
-# @param msg info message
-# @param verbose prints only if True
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 def __info(msg, verbose=True):
+    """
+    Info message wrapper (verbose)
+        @param msg info message
+        @param verbose prints only if True
+    """
     # Print to stdout
     if verbose:
         print this + ' : INFO : ' + msg
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Runs a SQL query on the target platform DB
-# using the default command-line utility.
-# Very limited:
-#   - no text output with "new line" characters allowed
-# @param sql query text to execute
-# @param show_error displays the SQL error msg
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __run_sql_query(sql, show_error):
-    global portid
-    global con_args
+    """
+    Runs a SQL query on the target platform DB
+    using the default command-line utility.
+    Very limited:
+      - no text output with "new line" characters allowed
+         @param sql query text to execute
+         @param show_error displays the SQL error msg
+    """
     return ____run_sql_query(sql, show_error, portid, con_args)
+#------------------------------------------------------------------------------
 
-def ____run_sql_query(sql, show_error, portid = portid, con_args = con_args):
 
+def ____run_sql_query(sql, show_error, portid=portid, con_args=con_args):
     # psql
     if portid in ('greenplum', 'postgres', 'hawq'):
-
         # Define sqlcmd
         sqlcmd = 'psql'
         delimiter = '|'
 
         # Test the DB cmd line utility
-        std, err = subprocess.Popen(['which', sqlcmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        std, err = subprocess.Popen(['which', sqlcmd], stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE).communicate()
         if std == '':
             __error("Command not found: %s" % sqlcmd, True)
 
         # Run the query
-        runcmd = [ sqlcmd,
-                    '-h', con_args['host'].split(':')[0],
-                    '-p', con_args['host'].split(':')[1],
-                    '-d', con_args['database'],
-                    '-U', con_args['user'],
-                    '-F', delimiter,
-                    '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
+        runcmd = [sqlcmd,
+                  '-h', con_args['host'].split(':')[0],
+                  '-p', con_args['host'].split(':')[1],
+                  '-d', con_args['database'],
+                  '-U', con_args['user'],
+                  '-F', delimiter,
+                  '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
         runenv["PGOPTIONS"] = '-c search_path=public'
-        std, err = subprocess.Popen(runcmd, env=runenv, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        std, err = subprocess.Popen(runcmd, env=runenv, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE).communicate()
         if err:
             if show_error:
                 __error("SQL command failed: \nSQL: %s \n%s" % (sql, err), False)
             raise Exception
 
         # Convert the delimited output into a dictionary
-        results = [] # list of rows
+        results = []  # list of rows
         i = 0
         for line in std.splitlines():
             if i == 0:
                 cols = [name for name in line.split(delimiter)]
             else:
-                row = {} # dict of col_name:col_value pairs
+                row = {}  # dict of col_name:col_value pairs
                 c = 0
                 for val in line.split(delimiter):
                     row[cols[c]] = val
                     c += 1
-                results.insert(i,row)
+                results.insert(i, row)
             i += 1
         # Drop the last line: "(X rows)"
         try:
@@ -164,22 +169,23 @@ def ____run_sql_query(sql, show_error, portid = portid, con_args = con_args):
             pass
 
     return results
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Run SQL file
-# @param schema name of the target schema
-# @param maddir_mod_py name of the module dir with Python code
-# @param module  name of the module
-# @param sqlfile name of the file to parse
-# @param tmpfile name of the temp file to run
-# @param logfile name of the log file (stdout)
-# @param pre_sql optional SQL to run before executing the file
-# @param upgrade are we upgrading as part of this sql run
-# @param sc object of ScriptCleaner
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
-                    tmpfile, logfile, pre_sql, upgrade=False,
-                    sc=None):
+                   tmpfile, logfile, pre_sql, upgrade=False,
+                   sc=None):
+    """Run SQL file
+            @param schema name of the target schema
+            @param maddir_mod_py name of the module dir with Python code
+            @param module  name of the module
+            @param sqlfile name of the file to parse
+            @param tmpfile name of the temp file to run
+            @param logfile name of the log file (stdout)
+            @param pre_sql optional SQL to run before executing the file
+            @param upgrade are we upgrading as part of this sql run
+            @param sc object of ScriptCleaner
+    """
 
     # Check if the SQL file exists
     if not os.path.isfile(sqlfile):
@@ -194,24 +200,23 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
         if pre_sql:
             f.writelines([pre_sql, '\n\n'])
             f.flush()
-
         # Find the madpack dir (platform specific or generic)
         if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/madpack"):
-            maddir_madpack  = maddir + "/ports/" + portid + "/" + dbver + "/madpack"
+            maddir_madpack = maddir + "/ports/" + portid + "/" + dbver + "/madpack"
         else:
-            maddir_madpack  = maddir + "/madpack"
+            maddir_madpack = maddir + "/madpack"
 
-        m4args = [ 'm4',
-                    '-P',
-                    '-DMADLIB_SCHEMA=' + schema,
-                    '-DPLPYTHON_LIBDIR=' + maddir_mod_py,
-                    '-DMODULE_PATHNAME=' + maddir_lib,
-                    '-DMODULE_NAME=' + module,
-                    '-I' + maddir_madpack,
-                    '-D' + portid.upper(),
-                    sqlfile ]
+        m4args = ['m4',
+                  '-P',
+                  '-DMADLIB_SCHEMA=' + schema,
+                  '-DPLPYTHON_LIBDIR=' + maddir_mod_py,
+                  '-DMODULE_PATHNAME=' + maddir_lib,
+                  '-DMODULE_NAME=' + module,
+                  '-I' + maddir_madpack,
+                  '-D' + portid.upper(),
+                  sqlfile]
 
-        __info("> ... parsing: " + " ".join(m4args), verbose )
+        __info("> ... parsing: " + " ".join(m4args), verbose)
 
         subprocess.call(m4args, stdout=f)
         f.close()
@@ -227,8 +232,9 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
         __info(sub_module, False)
 
         # Special treatment for new module and 'svec' module
-        if (sub_module not in sc.get_change_handler().newmodule) and \
-            not (sub_module == 'svec' and 'svec' in sc.get_change_handler().udt):
+        if ((sub_module not in sc.get_change_handler().newmodule) and
+                not (sub_module == 'svec' and
+                     'svec' in sc.get_change_handler().udt)):
             sql = open(tmpfile).read()
             sql = sc.cleanup(sql)
             open(tmpfile, 'w').write(sql)
@@ -238,17 +244,17 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
         sqlcmd = 'psql'
         # Test the DB cmd line utility
         std, err = subprocess.Popen(['which', sqlcmd], stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE).communicate()
+                                    stderr=subprocess.PIPE).communicate()
         if not std:
             __error("Command not found: %s" % sqlcmd, True)
 
-        runcmd = [ sqlcmd, '-a',
-                    '-v', 'ON_ERROR_STOP=1',
-                    '-h', con_args['host'].split(':')[0],
-                    '-p', con_args['host'].split(':')[1],
-                    '-d', con_args['database'],
-                    '-U', con_args['user'],
-                    '-f', tmpfile]
+        runcmd = [sqlcmd, '-a',
+                  '-v', 'ON_ERROR_STOP=1',
+                  '-h', con_args['host'].split(':')[0],
+                  '-p', con_args['host'].split(':')[1],
+                  '-d', con_args['database'],
+                  '-U', con_args['user'],
+                  '-f', tmpfile]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
 
@@ -261,8 +267,8 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
 
     # Run the SQL
     try:
-        __info("> ... executing " + tmpfile, verbose )
-        retval = subprocess.call(runcmd , env=runenv, stdout=log, stderr=log)
+        __info("> ... executing " + tmpfile, verbose)
+        retval = subprocess.call(runcmd, env=runenv, stdout=log, stderr=log)
     except:
         __error("Failed executing %s" % tmpfile, False)
         raise Exception
@@ -270,13 +276,15 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
         log.close()
 
     return retval
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Read MADlib version from database
-# @param dbconn database conection object
-# @param schema MADlib schema name
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __get_madlib_dbver(schema):
+    """
+    Read MADlib version from database
+        @param dbconn database conection object
+        @param schema MADlib schema name
+    """
     try:
         row = __run_sql_query("""SELECT count(*) AS cnt FROM pg_tables
             WHERE schemaname='%s' AND tablename='migrationhistory'""" % (schema), True)
@@ -289,32 +297,31 @@ def __get_madlib_dbver(schema):
         __error("Failed reading MADlib db version", True)
 
     return None
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Read version number from database (of form X.Y)
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __get_dbver():
+    """ Read version number from database (of form X.Y) """
     try:
         versionStr = __run_sql_query("""SELECT pg_catalog.version()""",
-            True)[0]['version']
+                                     True)[0]['version']
         if portid == 'postgres':
-            match = re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)",
-                versionStr)
+            match = re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         elif portid == 'greenplum':
-            match = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)",
-                versionStr)
+            match = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         elif portid == 'hawq':
-            match = re.search("HAWQ[a-zA-Z\s]*(\d+\.\d+)",
-                versionStr)
+            match = re.search("HAWQ[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         return None if match is None else match.group(1)
     except:
         __error("Failed reading database version", True)
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Make sure we are connected to the expected DB platform
-# @param portid expected DB port id - to be validates
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __check_db_port(portid):
+    """
+    Make sure we are connected to the expected DB platform
+        @param portid expected DB port id - to be validates
+    """
     # Postgres
     if portid == 'postgres':
         try:
@@ -322,7 +329,7 @@ def __check_db_port(portid):
         except:
             __error("Cannot validate DB platform type", True)
         if (row[0]['version'].lower().find(portid) >= 0 and
-            row[0]['version'].lower().find('greenplum') < 0):
+                row[0]['version'].lower().find('greenplum') < 0):
             return True
     # Greenplum
     if portid == 'greenplum':
@@ -341,12 +348,14 @@ def __check_db_port(portid):
         if row[0]['version'].lower().find(portid) >= 0:
             return True
     return False
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Convert version string into number for comparison
-# @param rev version text
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __get_rev_num(rev):
+    """
+    Convert version string into number for comparison
+        @param rev version text
+    """
     try:
         num = re.findall('[0-9]', rev)
         if num:
@@ -355,31 +364,34 @@ def __get_rev_num(rev):
             return ['0']
     except:
         return ['0']
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Print version information
-# @param rev OS-level MADlib version
-# @param dbrev DB-level MADlib version
-# @param con_args database connection arguments
-# @param schema MADlib schema name
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __print_revs(rev, dbrev, con_args, schema):
-
+    """
+    Print version information
+        @param rev OS-level MADlib version
+        @param dbrev DB-level MADlib version
+        @param con_args database connection arguments
+        @param schema MADlib schema name
+    """
     __info("MADlib tools version    = %s (%s)" % (rev, sys.argv[0]), True)
     if con_args:
         try:
             __info("MADlib database version = %s (host=%s, db=%s, schema=%s)"
-                    % (dbrev, con_args['host'], con_args['database'], schema), True)
+                   % (dbrev, con_args['host'], con_args['database'], schema), True)
         except:
             __info("MADlib database version = [Unknown] (host=%s, db=%s, schema=%s)"
-                    % (dbrev, con_args['host'], con_args['database'], schema), True)
+                   % (dbrev, con_args['host'], con_args['database'], schema), True)
     return
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Check pl/python existence and version
-# @param py_min_ver min Python version to run MADlib
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __plpy_check(py_min_ver):
+    """
+    Check pl/python existence and version
+        @param py_min_ver min Python version to run MADlib
+    """
 
     __info("Testing PL/Python environment...", True)
 
@@ -415,21 +427,21 @@ def __plpy_check(py_min_ver):
     if py_cur_ver >= py_min_ver:
         __info("> PL/Python version: %s" % python, verbose)
     else:
-        __error("PL/Python version too old: %s. You need %s or greater" \
-                % (python, '.'.join(str(i) for i in py_min_ver))
-                , False)
+        __error("PL/Python version too old: %s. You need %s or greater"
+                % (python, '.'.join(str(i) for i in py_min_ver)), False)
         raise Exception
 
     __info("> PL/Python environment OK (version: %s)" % python, True)
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Install MADlib
-# @param schema MADlib schema name
-# @param dbrev DB-level MADlib version
-# @param testcase command-line args for a subset of modules
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __db_install(schema, dbrev, testcase):
-
+    """
+    Install MADlib
+        @param schema MADlib schema name
+        @param dbrev DB-level MADlib version
+        @param testcase command-line args for a subset of modules
+    """
     __info("Installing MADlib into %s schema..." % schema.upper(), True)
 
     temp_schema = schema + '_v' + ''.join(__get_rev_num(dbrev))
@@ -437,10 +449,7 @@ def __db_install(schema, dbrev, testcase):
     madlib_exists = None
 
     # Check the status of MADlib objects in database
-    if dbrev is not None:
-        madlib_exists = True
-    else:
-        madlib_exists = False
+    madlib_exists = False if dbrev is None else True
 
     # Test if schema is writable
     try:
@@ -450,26 +459,23 @@ def __db_install(schema, dbrev, testcase):
     except:
         schema_writable = False
 
-    global portid
     ##
     # CASE #1: Target schema exists with MADlib objects:
     ##
-    if schema_writable == True and madlib_exists == True:
-
+    if schema_writable and madlib_exists:
         # work-around before UDT is available in HAWQ
-        if portid == 'hawq' and schema.upper() == 'MADLIB':
+        if portid == 'hawq':
             __info("***************************************************************************", True)
             __info("* Schema MADLIB already exists", True)
-            __info("* In HAWQ port, MADlib objects will be add to the MADLIB schema", True)
+            __info("* For HAWQ, MADlib objects will be overwritten to the 'MADLIB' schema", True)
             __info("***************************************************************************", True)
             __info("Would you like to continue? [Y/N]", True)
             go = raw_input('>>> ').upper()
-            while go != 'Y' and go != 'N':
+            while not go in ('Y', 'YES', 'N', 'NO'):
                 go = raw_input('Yes or No >>> ').upper()
-            if go == 'N':
+            if go in ('N', 'NO'):
                 __info('Installation stopped.', True)
                 return
-
             try:
                 __db_create_objects(schema, None, testcase=testcase, hawq_debug=True)
             except:
@@ -481,9 +487,9 @@ def __db_install(schema, dbrev, testcase):
             __info("***************************************************************************", True)
             __info("Would you like to continue? [Y/N]", True)
             go = raw_input('>>> ').upper()
-            while go != 'Y' and go != 'N':
+            while not go in ('Y', 'YES', 'N', 'NO'):
                 go = raw_input('Yes or No >>> ').upper()
-            if go == 'N':
+            if go in ('N', 'NO'):
                 __info('Installation stopped.', True)
                 return
 
@@ -509,9 +515,9 @@ def __db_install(schema, dbrev, testcase):
     # For HAWQ, after the DB initialization, there is no
     # madlib.migrationhistory table, thus madlib_exists is False
     ##
-    elif schema_writable == True and madlib_exists == False:
+    elif schema_writable and not madlib_exists:
         # work-around before UDT is available in HAWQ
-        if portid == 'hawq' and schema.upper() == 'MADLIB':
+        if portid == 'hawq':
             __info("> Schema %s exists w/ pre-built MADlib objects" % schema.upper(), verbose)
             try:
                 __db_create_objects(schema, None, testcase=testcase, hawq_fresh=True)
@@ -530,8 +536,7 @@ def __db_install(schema, dbrev, testcase):
     ##
     # CASE #3: Target schema does not exist:
     ##
-    elif schema_writable == False:
-
+    elif not schema_writable:
         __info("> Schema %s does not exist" % schema.upper(), verbose)
 
         # Create MADlib schema
@@ -547,13 +552,15 @@ def __db_install(schema, dbrev, testcase):
             __db_rollback(schema, None)
 
     __info("MADlib %s installed successfully in %s schema." % (rev, schema.upper()), True)
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Upgrade MADlib
-# @param schema MADlib schema name
-# @param dbrev DB-level MADlib version
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __db_upgrade(schema, dbrev):
+    """
+    Upgrade MADlib
+        @param schema MADlib schema name
+        @param dbrev DB-level MADlib version
+    """
     if __get_rev_num(dbrev) >= __get_rev_num(rev):
         __info("Current MADlib version already up to date.", True)
         return
@@ -576,8 +583,7 @@ def __db_upgrade(schema, dbrev):
         __info("\tFollowing user tables are dependent on updated MADlib types:", True)
         __info(td.get_dependency_str(), True)
         __info("*"*50, True)
-        cd_udt = [udt for udt in td.get_depended_udt()
-                      if udt in ch.udt]
+        cd_udt = [udt for udt in td.get_depended_udt() if udt in ch.udt]
         if len(cd_udt) > 0:
             __error("""
                 User has objects dependent on following updated MADlib types!
@@ -641,7 +647,6 @@ def __db_upgrade(schema, dbrev):
         raise e
     __info("Script Cleaner initialized ...", False)
 
-
     # __info("\tChanged functions: " + str(ch.udf), True)
     # __info("\tChanged aggregates: " + str(ch.uda), True)
     # __info("\tChanged types: " + str(ch.udt), True)
@@ -656,13 +661,15 @@ def __db_upgrade(schema, dbrev):
     if vd.has_dependency():
         vd.restore()
     __info("MADlib %s upgraded successfully in %s schema." % (rev, schema.upper()), True)
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Rename schema
-# @param from_schema name of the schema to rename
-# @param to_schema new name for the schema
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __db_rename_schema(from_schema, to_schema):
+    """
+    Rename schema
+        @param from_schema name of the schema to rename
+        @param to_schema new name for the schema
+    """
 
     __info("> Renaming schema %s to %s" % (from_schema.upper(), to_schema.upper()), True)
     try:
@@ -670,13 +677,15 @@ def __db_rename_schema(from_schema, to_schema):
     except:
         __error('Cannot rename schema. Stopping installation...', False)
         raise Exception
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Create schema
-# @param from_schema name of the schema to rename
-# @param to_schema new name for the schema
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __db_create_schema(schema):
+    """
+    Create schema
+        @param from_schema name of the schema to rename
+        @param to_schema new name for the schema
+    """
 
     __info("> Creating %s schema" % schema.upper(), True)
     try:
@@ -684,22 +693,26 @@ def __db_create_schema(schema):
     except:
         __info('Cannot create new schema. Rolling back installation...', True)
         pass
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Create MADlib DB objects in the schema
-# @param schema Name of the target schema
-# @param sc ScriptCleaner object
-# @param testcase Command-line args for modules to install
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="", hawq_debug=False, hawq_fresh=False):
+
+def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
+                        hawq_debug=False, hawq_fresh=False):
+    """
+    Create MADlib DB objects in the schema
+        @param schema Name of the target schema
+        @param sc ScriptCleaner object
+        @param testcase Command-line args for modules to install
+    """
     if not upgrade and not hawq_debug:
         # Create MigrationHistory table
         try:
             __info("> Creating %s.MigrationHistory table" % schema.upper(), True)
             __run_sql_query("DROP TABLE IF EXISTS %s.migrationhistory;" % schema, True)
             sql = """CREATE TABLE %s.migrationhistory
-                   (id serial, version varchar(255), applied timestamp default current_timestamp);""" % schema
-            __run_sql_query(sql, True);
+                   (id serial, version varchar(255),
+                    applied timestamp default current_timestamp);""" % schema
+            __run_sql_query(sql, True)
         except:
             __error("Cannot crate MigrationHistory table", False)
             raise Exception
@@ -711,7 +724,7 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
                 sql = """INSERT INTO %s.migrationhistory (version, applied)
                        SELECT version, applied FROM %s.migrationhistory
                        ORDER BY id;""" % (schema, old_schema)
-                __run_sql_query(sql, True);
+                __run_sql_query(sql, True)
             except:
                 __error("Cannot copy MigrationHistory table", False)
                 raise Exception
@@ -719,7 +732,8 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
     # Stamp the DB installation
     try:
         __info("> Writing version info in MigrationHistory table", True)
-        __run_sql_query("INSERT INTO %s.migrationhistory(version) VALUES('%s')" % (schema, rev), True);
+        __run_sql_query("INSERT INTO %s.migrationhistory(version) "
+                        "VALUES('%s')" % (schema, rev), True)
     except:
         __error("Cannot insert data into %s.migrationhistory table" % schema, False)
         raise Exception
@@ -730,8 +744,8 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
     else:
         __info("> Creating objects for modules:", True)
 
-    caseset = set([test.strip()
-        for test in testcase.split(',')]) if testcase != "" else set()
+    caseset = (set([test.strip() for test in testcase.split(',')])
+               if testcase != "" else set())
 
     modset = {}
     for case in caseset:
@@ -745,6 +759,7 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
             modset[case] = []
 
     # Loop through all modules/modules
+    ## portspecs is a global variable
     for moduleinfo in portspecs['modules']:
 
         # Get the module name
@@ -758,15 +773,15 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
 
         # Find the Python module dir (platform specific or generic)
         if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/modules/" + module):
-            maddir_mod_py  = maddir + "/ports/" + portid + "/" + dbver + "/modules"
+            maddir_mod_py = maddir + "/ports/" + portid + "/" + dbver + "/modules"
         else:
-            maddir_mod_py  = maddir + "/modules"
+            maddir_mod_py = maddir + "/modules"
 
         # Find the SQL module dir (platform specific or generic)
         if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
-            maddir_mod_sql  = maddir + "/ports/" + portid + "/modules"
+            maddir_mod_sql = maddir + "/ports/" + portid + "/modules"
         elif os.path.isdir(maddir + "/modules/" + module):
-            maddir_mod_sql  = maddir + "/modules"
+            maddir_mod_sql = maddir + "/modules"
         else:
             # This was a platform-specific module, for which no default exists.
             # We can just skip this module.
@@ -788,7 +803,7 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
             algoname = os.path.basename(sqlfile).split('.')[0]
             if (hawq_debug or hawq_fresh) and algoname in \
                     ('cox_prop_hazards', 'clustered_variance_coxph',
-                            'robust_variance_coxph'):
+                     'robust_variance_coxph'):
                 continue
 
             if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
@@ -798,20 +813,22 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
             tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
             logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
             retval = __run_sql_file(schema, maddir_mod_py, module, sqlfile,
-                                        tmpfile, logfile, None, upgrade,
-                                        sc)
+                                    tmpfile, logfile, None, upgrade,
+                                    sc)
             # Check the exit status
             if retval != 0:
                 __error("Failed executing %s" % tmpfile, False)
                 __error("Check the log at %s" % logfile, False)
                 raise Exception
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Rollback installation
-# @param drop_schema name of the schema to drop
-# @param keep_schema name of the schema to rename and keep
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def __db_rollback(drop_schema, keep_schema):
+    """
+    Rollback installation
+        @param drop_schema name of the schema to drop
+        @param keep_schema name of the schema to rename and keep
+    """
 
     __info("Rolling back the installation...", True)
 
@@ -831,6 +848,7 @@ def __db_rollback(drop_schema, keep_schema):
 
     __info("Rollback finished successfully.", True)
     raise Exception
+#------------------------------------------------------------------------------
 
 
 def unescape(string):
@@ -842,6 +860,8 @@ def unescape(string):
         return None
     else:
         return re.sub(r'\\(?P<char>[/@:\\])', '\g<char>', string)
+#------------------------------------------------------------------------------
+
 
 def parseConnectionStr(connectionStr):
     """
@@ -864,69 +884,69 @@ def parseConnectionStr(connectionStr):
         unescape(match.group('host')),
         match.group('port'),
         unescape(match.group('database')))
+#------------------------------------------------------------------------------
 
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Main
-## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
 def main(argv):
 
     parser = argparse.ArgumentParser(
-                description='MADlib package manager (' + rev + ')',
-                argument_default=False,
-                formatter_class=argparse.RawTextHelpFormatter,
-                epilog="""Example:
+        description='MADlib package manager (' + rev + ')',
+        argument_default=False,
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="""Example:
 
   $ madpack install -s madlib -p greenplum -c gpadmin@mdw:5432/testdb
 
   This will install MADlib objects into a Greenplum database called TESTDB
   running on server MDW:5432. Installer will try to login as GPADMIN
   and will prompt for password. The target schema will be MADLIB.
-
 """)
 
-    parser.add_argument(
-        'command', metavar='COMMAND', nargs=1,
-        choices=['install','update', 'upgrade', 'uninstall','reinstall','version','install-check'],
-        help = "One of the following options:\n"
-            + "  install        : run sql scripts to load into DB\n"
-            + "  upgrade        : run sql scripts to upgrade\n"
-            + "  uninstall      : run sql scripts to uninstall from DB\n"
-            + "  reinstall      : performs uninstall and install\n"
-            + "  version        : compare and print MADlib version (binaries vs database objects)\n"
-            + "  install-check  : test all installed modules\n"
-    )
+    help_msg="""One of the following options:
+                  install        : run sql scripts to load into DB
+                  upgrade        : run sql scripts to upgrade
+                  uninstall      : run sql scripts to uninstall from DB
+                  reinstall      : performs uninstall and install
+                  version        : compare and print MADlib version (binaries vs database objects)
+                  install-check  : test all installed modules
+
+                  (upgrade and uninstall are currently unavailable for the HAWQ port)"""
+    choice_list = ['install', 'update',  'upgrade',  'uninstall',
+                   'reinstall', 'version', 'install-check']
+
+    parser.add_argument('command', metavar='COMMAND', nargs=1,
+                        choices=choice_list, help=help_msg)
 
     parser.add_argument(
         '-c', '--conn', metavar='CONNSTR', nargs=1, dest='connstr', default=None,
-        help= "Connection string of the following syntax:\n"
-            + "  [user[/password]@][host][:port][/database]\n"
-            + "If not provided default values will be derived for PostgerSQL and Greenplum:\n"
-            + "- user: PGUSER or USER env variable or OS username\n"
-            + "- pass: PGPASSWORD env variable or runtime prompt\n"
-            + "- host: PGHOST env variable or 'localhost'\n"
-            + "- port: PGPORT env variable or '5432'\n"
-            + "- db: PGDATABASE env variable or OS username\n"
-            )
+        help="""Connection string of the following syntax:
+                   [user[/password]@][host][:port][/database]
+                 If not provided default values will be derived for PostgerSQL and Greenplum:
+                 - user: PGUSER or USER env variable or OS username
+                 - pass: PGPASSWORD env variable or runtime prompt
+                 - host: PGHOST env variable or 'localhost'
+                 - port: PGPORT env variable or '5432'
+                 - db: PGDATABASE env variable or OS username""")
 
     parser.add_argument('-s', '--schema', nargs=1, dest='schema',
-                         metavar='SCHEMA', default='madlib',
-                         help="Target schema for the database objects.")
+                        metavar='SCHEMA', default='madlib',
+                        help="Target schema for the database objects.")
 
     parser.add_argument('-p', '--platform', nargs=1, dest='platform',
-                         metavar='PLATFORM', choices=portid_list,
-                         help="Target database platform, current choices: " + str(portid_list))
+                        metavar='PLATFORM', choices=portid_list,
+                        help="Target database platform, current choices: " + str(portid_list))
 
     parser.add_argument('-v', '--verbose', dest='verbose',
-                         action="store_true", help="Verbose mode.")
+                        action="store_true", help="Verbose mode.")
 
     parser.add_argument('-l', '--keeplogs', dest='keeplogs', default=False,
-                         action="store_true", help="Do not remove installation log files.")
+                        action="store_true", help="Do not remove installation log files.")
 
-    parser.add_argument('-d', '--tmpdir', dest='tmpdir', default = '/tmp/',
-                         help="Temporary directory location for installation log files.")
+    parser.add_argument('-d', '--tmpdir', dest='tmpdir', default='/tmp/',
+                        help="Temporary directory location for installation log files.")
 
     parser.add_argument('-t', '--testcase', dest='testcase', default="",
-                         help="Module names to test, comma separated. Effective only for install-check.")
+                        help="Module names to test, comma separated. Effective only for install-check.")
 
     ##
     # Get the arguments
@@ -934,7 +954,7 @@ def main(argv):
     args = parser.parse_args()
     global verbose
     verbose = args.verbose
-    __info("Arguments: " + str(args), verbose);
+    __info("Arguments: " + str(args), verbose)
     global keeplogs
     keeplogs = args.keeplogs
 
@@ -944,7 +964,6 @@ def main(argv):
     except OSError, e:
         tmpdir = e.filename
         __error("cannot create temporary directory: '%s'." % tmpdir, True)
-
 
     ##
     # Parse SCHEMA
@@ -1006,6 +1025,11 @@ def main(argv):
         con_args['user'] = c_user
         con_args['password'] = c_pass
 
+        # Currently Madlib can only be installed in 'madlib' schema in HAWQ
+        if portid == 'hawq' and schema.lower() != 'madlib':
+            __info("*** Installation is currently restricted to 'madlib' schema ***", True)
+            schema = 'madlib'
+
         # Get MADlib version in DB
         dbrev = __get_madlib_dbver(schema)
 
@@ -1013,27 +1037,25 @@ def main(argv):
         dbver = __get_dbver()
         portdir = os.path.join(maddir, "ports", portid)
         supportedVersions = [dirItem for dirItem in os.listdir(portdir)
-                                if os.path.isdir(os.path.join(portdir, dirItem))
-                                and re.match("^\d+\.\d+", dirItem)]
+                             if os.path.isdir(os.path.join(portdir, dirItem))
+                             and re.match("^\d+\.\d+", dirItem)]
         if dbver is None:
             dbver = ".".join(map(str, max([map(int, versionStr.split('.'))
                     for versionStr in supportedVersions])))
             __info("Could not parse version string reported by {DBMS}. Will "
-                "default to newest supported version of {DBMS} "
-                "({version}).".format(
-                    DBMS = ports[portid]['name'],
-                    version = dbver
-                ), True)
+                   "default to newest supported version of {DBMS} "
+                   "({version}).".format(DBMS=ports[portid]['name'],
+                                         version=dbver), True)
         else:
             __info("Detected %s version %s." % (ports[portid]['name'], dbver),
-                True)
+                   True)
             if not os.path.isdir(os.path.join(portdir, dbver)):
                 __error("This version is not among the %s versions for which "
-                    "MADlib support files have been installed (%s)." %
-                    (ports[portid]['name'], ", ".join(supportedVersions)), True)
+                        "MADlib support files have been installed (%s)." %
+                        (ports[portid]['name'], ", ".join(supportedVersions)), True)
 
         # Validate that db platform is correct
-        if __check_db_port(portid) == False:
+        if not __check_db_port(portid):
             __error("Invalid database platform specified.", True)
 
         # Adjust MADlib directories for this port (if they exist)
@@ -1041,9 +1063,9 @@ def main(argv):
         if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/config"):
             maddir_conf = maddir + "/ports/" + portid + "/" + dbver + "/config"
         global maddir_lib
-        if os.path.isfile(maddir + "/ports/" + portid + "/" + dbver + \
-                "/lib/libmadlib.so"):
-            maddir_lib  = maddir + "/ports/" + portid + "/" + dbver + \
+        if os.path.isfile(maddir + "/ports/" + portid + "/" + dbver +
+                          "/lib/libmadlib.so"):
+            maddir_lib = maddir + "/ports/" + portid + "/" + dbver + \
                 "/lib/libmadlib.so"
         # Get the list of modules for this port
         global portspecs
@@ -1071,14 +1093,12 @@ def main(argv):
     # COMMAND: version
     ###
     if args.command[0] == 'version':
-
         __print_revs(rev, dbrev, con_args, schema)
 
     ###
     # COMMAND: uninstall/reinstall
     ###
-    if args.command[0] in ('uninstall', 'reinstall'):
-
+    if args.command[0] in ('uninstall', 'reinstall') and portid != 'hawq':
         if __get_rev_num(dbrev) == ['0']:
             __info("Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
             return
@@ -1104,9 +1124,7 @@ def main(argv):
                 AND c.relnamespace = n1.oid
                 AND c.relkind = 'r'
             ORDER BY
-                n1.nspname, relname, attname, typname""" % schema.lower()
-                , True
-        );
+                n1.nspname, relname, attname, typname""" % schema.lower(), True)
 
         __info("*** Uninstalling MADlib ***", True)
         __info("***********************************************************************************", True)
@@ -1114,7 +1132,8 @@ def main(argv):
         if affected_objects:
             __info("* If you continue the following data will be lost (schema : table.column : type):", True)
             for ao in affected_objects:
-                __info ( '* - ' + ao['schema'] + ' : ' + ao['relation'] + '.' + ao['column'] + ' : ' + ao['type'], True);
+                __info('* - ' + ao['schema'] + ' : ' + ao['relation'] + '.' +
+                       ao['column'] + ' : ' + ao['type'], True)
         __info("***********************************************************************************", True)
         __info("Would you like to continue? [Y/N]", True)
         go = raw_input('>>> ').upper()
@@ -1152,7 +1171,7 @@ def main(argv):
 
         # 1) Compare OS and DB versions. Continue if OS > DB.
         __print_revs(rev, dbrev, con_args, schema)
-        if __get_rev_num(dbrev) >= __get_rev_num(rev) and portid != 'hawq':
+        if portid != 'hawq' and __get_rev_num(dbrev) >= __get_rev_num(rev):
             __info("Current MADlib version already up to date.", True)
             return
 
@@ -1166,7 +1185,7 @@ def main(argv):
     ###
     # COMMAND: upgrade
     ###
-    if args.command[0] in ('upgrade', 'update'):
+    if args.command[0] in ('upgrade', 'update') and portid != 'hawq':
         __info("*** Upgrading MADlib ***", True)
         dbrev = __get_madlib_dbver(schema)
 
@@ -1210,7 +1229,7 @@ def main(argv):
             return
 
         # Create install-check user
-        test_user = 'madlib_' + rev.replace('.','') + '_installcheck'
+        test_user = 'madlib_' + rev.replace('.', '') + '_installcheck'
         try:
             __run_sql_query("DROP USER IF EXISTS %s;" % (test_user), False)
         except:
@@ -1226,8 +1245,8 @@ def main(argv):
         # 2) Run test SQLs
         __info("> Running test scripts for:", verbose)
 
-        caseset = set([test.strip()
-            for test in args.testcase.split(',')]) if args.testcase != "" else set()
+        caseset = (set([test.strip() for test in args.testcase.split(',')])
+                   if args.testcase != "" else set())
 
         # Loop through all modules
         for moduleinfo in portspecs['modules']:
@@ -1242,20 +1261,20 @@ def main(argv):
             __info("> - %s" % module, verbose)
 
             # Make a temp dir for this module (if doesn't exist)
-            cur_tmpdir = tmpdir + '/' + module + '/test'
+            cur_tmpdir = tmpdir + '/' + module + '/test'  # tmpdir is a global variable
             __make_dir(cur_tmpdir)
 
             # Find the Python module dir (platform specific or generic)
             if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/modules/" + module):
-                maddir_mod_py  = maddir + "/ports/" + portid + "/" + dbver + "/modules"
+                maddir_mod_py = maddir + "/ports/" + portid + "/" + dbver + "/modules"
             else:
-                maddir_mod_py  = maddir + "/modules"
+                maddir_mod_py = maddir + "/modules"
 
             # Find the SQL module dir (platform specific or generic)
             if os.path.isdir(maddir + "/ports/" + portid + "/modules/" + module):
-                maddir_mod_sql  = maddir + "/ports/" + portid + "/modules"
+                maddir_mod_sql = maddir + "/ports/" + portid + "/modules"
             else:
-                maddir_mod_sql  = maddir + "/modules"
+                maddir_mod_sql = maddir + "/modules"
 
             # Prepare test schema
             test_schema = "madlib_installcheck_%s" % (module)
@@ -1273,16 +1292,16 @@ def main(argv):
 
             # Loop through all test SQL files for this module
             sql_files = maddir_mod_sql + '/' + module + '/test/*.sql_in'
-            for sqlfile in sorted(glob.glob(sql_files),reverse=True):
+            for sqlfile in sorted(glob.glob(sql_files), reverse=True):
                 # work-around for HAWQ
                 algoname = os.path.basename(sqlfile).split('.')[0]
                 if portid == 'hawq' and algoname in \
                         ('cm', 'cox_prop_hazards',
-                                'robust_and_clustered_variance_coxph'):
+                         'robust_and_clustered_variance_coxph'):
                     # Spit the line
-                    print "TEST CASE RESULT|Module: " + module + \
-                            "|" + os.path.basename(sqlfile) + \
-                            "|SKIP|Time: 0 milliseconds"
+                    print("TEST CASE RESULT|Module: " + module +
+                          "|" + os.path.basename(sqlfile) +
+                          "|SKIP|Time: 0 milliseconds")
                     continue
 
                 result = 'PASS'
@@ -1300,8 +1319,8 @@ def main(argv):
                                         sqlfile, tmpfile, logfile, pre_sql)
                 # Runtime evaluation
                 run_end = datetime.datetime.now()
-                milliseconds = round((run_end - run_start).seconds * 1000
-                                    + (run_end - run_start).microseconds / 1000)
+                milliseconds = round((run_end - run_start).seconds * 1000 +
+                                     (run_end - run_start).microseconds / 1000)
 
                 # Check the exit status
                 if retval != 0:
@@ -1323,11 +1342,11 @@ def main(argv):
                     "|Time: %d milliseconds" % (milliseconds)
 
             # Cleanup test schema for the module
-            __run_sql_query( "DROP SCHEMA IF EXISTS %s CASCADE;" % (test_schema), True)
+            __run_sql_query("DROP SCHEMA IF EXISTS %s CASCADE;" % (test_schema), True)
 
         # Drop install-check user
-        __run_sql_query( "DROP OWNED BY %s CASCADE;" % (test_user), True)
-        __run_sql_query( "DROP USER %s;" % (test_user), True)
+        __run_sql_query("DROP OWNED BY %s CASCADE;" % (test_user), True)
+        __run_sql_query("DROP USER %s;" % (test_user), True)
 
 ## # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Start Here
@@ -1338,8 +1357,8 @@ if __name__ == "__main__":
     main(sys.argv[1:])
 
     # Optional log files cleanup
+    # keeplogs and tmpdir are global variables
     if not keeplogs:
         shutil.rmtree(tmpdir)
     else:
         print "INFO: Log files saved in " + tmpdir
-

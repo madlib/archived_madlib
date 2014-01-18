@@ -168,6 +168,8 @@ class ChangeHandler(UpgradeBase):
                                                 'schema_madlib', self._schema)
                         all_arguments = [each_arg.strip()
                                          for each_arg in argument.split(',')]
+                    else:
+                        all_arguments = []
                     _return_obj[obj_name].append(
                                     {'rettype': rettype,
                                      'argument': ','.join(all_arguments)})
