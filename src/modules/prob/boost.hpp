@@ -358,10 +358,14 @@ struct DomainCheck<boost::math::bernoulli_distribution<RealType, Policy> >
             "DomainCheck<bernoulli_distribution<%1%> >::quantile(...)";
 
         if (!boost::math::detail::check_probability(function,
-            inDist.success_fraction(), &outResult, Policy()))
+            inDist.success_fraction(), &outResult, Policy())) {
             return kResultIsReady;
-
-        return Base::template quantile<Complement>(inDist, inP, outResult);
+        } else if (inP == 1 || inP == 0){
+            outResult = inP;
+            return kResultIsReady;
+        } else {
+            return Base::template quantile<Complement>(inDist, inP, outResult);
+        }
     }
 };
 
@@ -429,12 +433,16 @@ struct DomainCheck<boost::math::binomial_distribution<RealType, Policy> >
             || !boost::math::detail::check_probability(function, inP,
                 &outResult, Policy())) {
             return kResultIsReady;
+        } else if (inP == 1) {
+            outResult = inDist.trials();
+            return kResultIsReady;
+        } else if (inP == 0) {
+            outResult = 0;
+            return kResultIsReady;
         } else if (inDist.success_fraction() == 1) {
-            // distribution is single-point measure, i.e., same for complement
             outResult = inDist.trials();
             return kResultIsReady;
         } else if (inDist.success_fraction() == 0) {
-            // distribution is single-point measure, i.e., same for complement
             outResult = 0;
             return kResultIsReady;
         }
