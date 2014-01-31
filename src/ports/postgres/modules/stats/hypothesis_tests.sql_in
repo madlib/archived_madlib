@@ -103,18 +103,323 @@ forms of usage are given. Specific function signatures, as described in
 
 - Run a parametric one-sample test:
   <pre>SELECT <em>test</em>(<em>value</em>) FROM <em>source</em></pre>
-- Run a parametric two-sample test:
-  <pre>SELECT <em>test</em>(<em>first</em>, <em>value</em>) FROM <em>source</em></pre>
-- Run a non-parametric one-sample test:
-  <pre>SELECT <em>test</em>(<em>value</em> ORDER BY <em>value</em>) FROM <em>source</em></pre>
-- Run a non-parametric two-sample test:
-  <pre>SELECT <em>test</em>(<em>first</em>, <em>value</em> ORDER BY <em>value</em>) FROM <em>source</em></pre>
+    where '<em>test</em>' can be one of
+        - t_test_one
+        - chi2_gof_test
+
+- Run a parametric two-sample/multi-sample test:
+  <pre>SELECT <em>test</em>(<em>first/group</em>, <em>value</em>) FROM <em>source</em></pre>
+    where '<em>test</em>' can be one of
+        - f_test
+        - t_test_two_pooled
+        - t_test_two_unpooled
+        - one_way_anova (multi-sample)
+
+- Run a non-parametric two-sample/multi-sample test:
+  <pre>SELECT <em>test</em>(<em>first/group</em>, <em>value</em> ORDER BY <em>value</em>) FROM <em>source</em></pre>
+    where '<em>test</em>' can be one of
+        - ks_test
+        - mw_test
+        - wsr_test (multi-sample)
 
 @anchor examples
 @examp
 
-See \ref hypothesis_tests.sql_in for examples of each of the aggregate
-functions.
+- <b>One-sample and two-sample t-test</b> (data is subset of mpg data from
+<a href="http://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm">NIST/SEMATECH</a>)
+
+<pre class="example">
+DROP TABLE IF EXISTS auto83b;
+CREATE TABLE auto83b (
+    id SERIAL,
+    mpg_us DOUBLE PRECISION,
+    mpg_j DOUBLE PRECISION
+);
+COPY auto83b (mpg_us, mpg_j) FROM stdin DELIMITER '|';
+18|24
+15|27
+18|27
+16|25
+17|31
+15|35
+14|24
+14|19
+21|31
+10|32
+10|24
+11|26
+9| 9
+\\N|32
+\\N|37
+\\N|38
+\\N|34
+\\N|34
+\\N|32
+\\N|33
+\\N|32
+\\N|25
+\\N|24
+\\N|37
+13|\\N
+12|\\N
+18|\\N
+21|\\N
+19|\\N
+21|\\N
+15|\\N
+16|\\N
+15|\\N
+11|\\N
+20|\\N
+21|\\N
+19|\\N
+15|\\N
+\\.
+
+DROP TABLE IF EXISTS auto83b_one_sample;
+CREATE TABLE auto83b_one_sample AS
+    SELECT mpg_us AS mpg
+    FROM auto83b
+    WHERE mpg_us is not NULL;
+\s
+DROP TABLE IF EXISTS auto83b_two_sample;
+CREATE TABLE auto83b_two_sample AS
+SELECT TRUE AS is_us, mpg_us AS mpg
+    FROM auto83b
+    WHERE mpg_us is not NULL
+    UNION ALL
+    SELECT FALSE, mpg_j
+    FROM auto83b
+    WHERE mpg_j is not NULL;
+</pre>
+
+<pre class="example">
+-- One sample tests
+SELECT (t_test_one(mpg - 20)).* FROM auto83b_one_sample;  -- test rejected for mean = 20
+</pre>
+
+<pre class="result">
+     statistic     | df | p_value_one_sided |  p_value_two_sided
+ ------------------+----+-------------------+----------------------
+  -6.0532478722666 | 26 | 0.999998926789141 | 2.14642171769697e-06
+ </pre>
+
+<pre class="example">
+SELECT (t_test_one(mpg - 15.7)).* FROM auto83b_one_sample;  -- test not rejected
+</pre>
+
+<pre class="result">
+       statistic      | df | p_value_one_sided | p_value_two_sided
+ ---------------------+----+-------------------+-------------------
+  0.00521831713126531 | 26 | 0.497938118950661 | 0.995876237901321
+</pre>
+
+<pre class="example">
+-- Two sample tests
+SELECT (t_test_two_pooled(is_us, mpg)).* FROM auto83b_two_sample;
+</pre>
+<pre class="result">
+     statistic     | df | p_value_one_sided |  p_value_two_sided
+ -------------------+----+-------------------+----------------------
+  -8.89342267075968 | 49 | 0.999999999995748 | 8.50408632402377e-12
+ </pre>
+
+<pre class="example">
+SELECT (t_test_two_unpooled(is_us, mpg)).* FROM auto83b_two_sample;
+</pre>
+
+<pre class="result">
+      statistic     |        df        | p_value_one_sided |  p_value_two_sided
+ -------------------+------------------+-------------------+----------------------
+  -8.61746388524314 | 35.1283818346179 | 0.999999999821218 | 3.57563867403599e-10
+</pre>
+
+- <b>F-Test</b> (Uses same data as above t-test)
+
+<pre class="example">
+SELECT (f_test(is_us, mpg)).* FROM auto83b_two_sample;
+-- Test result indicates that the two distributions have different variances
+</pre>
+<pre class="result">
+      statistic     | df1 | df2 | p_value_one_sided |  p_value_two_sided
+ -------------------+-----+-----+-------------------+---------------------
+  0.311786921089247 |  26 |  23 | 0.997559863672441 | 0.00488027265511803
+</pre>
+
+- <b>Chi-squared goodness-of-fit test</b> (<a href="http://www.statsdirect.com/help/chi_square_tests/chi_good.htm">Data source</a>)
+
+<pre class="example">
+CREATE TABLE chi2_test_blood_group (
+    id SERIAL,
+    blood_group VARCHAR,
+    observed BIGINT,
+    expected DOUBLE PRECISION
+);
+INSERT INTO chi2_test_blood_group(blood_group, observed, expected) VALUES
+    ('O', 67, 82.28),
+    ('A', 83, 84.15),
+    ('B', 29, 14.96),
+    ('AB', 8, 5.61);
+SELECT (madlib.chi2_gof_test(observed, expected)).* FROM chi2_test_blood_group;
+</pre>
+<pre class="result">
+     statistic     |       p_value        | df |       phi        | contingency_coef
+ ------------------+----------------------+----+------------------+-------------------
+  17.0481013341976 | 0.000690824622923826 |  3 | 2.06446732440826 | 0.899977280680593
+ </pre>
+
+- <b>Chi-squared independence test</b> (<a href=http://itl.nist.gov/div898/software/dataplot/refman1/auxillar/chistest.htm>Data source</a>)
+
+<pre class="example">
+CREATE TABLE chi2_test_friendly (
+    id_x SERIAL,
+    values INTEGER[]
+);
+INSERT INTO chi2_test_friendly(values) VALUES
+    (array[5, 29, 14, 16]),
+    (array[15, 54, 14, 10]),
+    (array[20, 84, 17, 94]),
+    (array[68, 119, 26, 7]);
+
+-- we expect the table to be unpivoted
+CREATE TABLE chi2_test_friendly_unpivoted AS
+SELECT id_x, id_y, values[id_y] AS observed
+FROM
+    chi2_test_friendly,
+    generate_series(1,4) AS id_y;
+
+-- Compute Chi-squared independence statistic
+SELECT (madlib.chi2_gof_test(observed, expected, deg_freedom)).*
+FROM (
+    -- Compute expected values and degrees of freedom
+    SELECT
+        observed,
+        sum(observed) OVER (PARTITION BY id_x)::DOUBLE PRECISION
+            * sum(observed) OVER (PARTITION BY id_y) AS expected
+    FROM chi2_test_friendly_unpivoted
+) p, (
+    SELECT
+        (count(DISTINCT id_x) - 1) * (count(DISTINCT id_y) - 1) AS deg_freedom
+    FROM chi2_test_friendly_unpivoted
+);
+</pre>
+ <pre class="result">
+     statistic     |       p_value        | df |       phi        | contingency_coef
+ ------------------+----------------------+----+------------------+-------------------
+  138.289841626008 | 2.32528678709871e-25 |  9 | 2.93991753313346 | 0.946730727519112
+ </pre>
+
+- <b>ANOVA test</b> (<a href="http://www.itl.nist.gov/div898/handbook/prc/section4/prc433.htm">Data source</a>)
+
+<pre class="example">
+CREATE TABLE nist_anova_test (
+    id SERIAL,
+    resistance FLOAT8[]
+);
+COPY nist_anova_test(resistance) FROM stdin;
+{6.9,8.3,8.0}
+{5.4,6.8,10.5}
+{5.8,7.8,8.1}
+{4.6,9.2,6.9}
+{4.0,6.5,9.3}
+\.
+SELECT (madlib.one_way_anova(level, value)).* FROM (
+    SELECT level, resistance[level] AS value
+    FROM
+        nist_anova_test, (SELECT * FROM generate_series(1,3) level) q1
+) q2;
+</pre>
+<pre class="result">
+  sum_squares_between | sum_squares_within | df_between | df_within | mean_squares_between | mean_squares_within |    statistic     |      p_value
+ ---------------------+--------------------+------------+-----------+----------------------+---------------------+------------------+--------------------
+     27.8973333333333 |             17.452 |          2 |        12 |     13.9486666666667 |    1.45433333333333 | 9.59110703644281 | 0.0032482226008593
+</pre>
+
+
+- <b>Kolmogorov-Smirnov test</b> (<a href="http://www.physics.csbsju.edu/stats/KS-test.html">Data source</a>)
+
+<pre class="example">
+CREATE TABLE ks_sample_1 AS
+SELECT
+    TRUE AS first,
+    unnest(ARRAY[0.22, -0.87, -2.39, -1.79, 0.37, -1.54, 1.28, -0.31, -0.74, 1.72, 0.38, -0.17, -0.62, -1.10, 0.30, 0.15, 2.30, 0.19, -0.50, -0.09]) AS value
+UNION ALL
+SELECT
+    FALSE,
+    unnest(ARRAY[-5.13, -2.19, -2.43, -3.83, 0.50, -3.25, 4.32, 1.63, 5.18, -0.43, 7.11, 4.87, -3.10, -5.81, 3.76, 6.31, 2.58, 0.07, 5.76, 3.50]);
+
+SELECT (ks_test(first, value,
+    (SELECT count(value) FROM ks_sample_1 WHERE first),
+    (SELECT count(value) FROM ks_sample_1 WHERE NOT first)
+    ORDER BY value)).*
+FROM ks_sample_1;
+</pre>
+ <pre class="result">
+  statistic |   k_statistic   |      p_value
+ -----------+-----------------+--------------------
+       0.45 | 1.4926782214936 | 0.0232132758544496
+</pre>
+
+- <b>Mann-Whitney test</b> (use same data as t-test)
+
+<pre class="example">
+SELECT (mw_test(is_us, mpg ORDER BY mpg)).* from auto83b_two_sample;
+</pre>
+<pre class="result">
+      statistic     | u_statistic | p_value_one_sided |  p_value_two_sided
+ -------------------+-------------+-------------------+----------------------
+  -5.50097925755249 |        32.5 | 0.999999981115618 | 3.77687645883758e-08
+</pre>
+
+- <b>Wilcoxon signed-rank test</b>
+
+<pre class="example">
+DROP TABLE IF EXISTS test_wsr;
+CREATE TABLE test_wsr (
+    x DOUBLE PRECISION,
+    y DOUBLE PRECISION
+);
+COPY test_wsr (x, y) FROM stdin DELIMITER '|';
+0.32|0.39
+0.4|0.47
+0.11|0.11
+0.47|0.43
+0.32|0.42
+0.35|0.3
+0.32|0.43
+0.63|0.98
+0.5|0.86
+0.6|0.79
+0.38|0.33
+0.46|0.45
+0.2|0.22
+0.31|0.3
+0.62|0.6
+0.52|0.53
+0.77|0.85
+0.23|0.21
+0.3|0.33
+0.7|0.57
+0.41|0.43
+0.53|0.49
+0.19|0.2
+0.31|0.35
+0.48|0.4
+\\.
+\s
+SELECT (wsr_test(
+    x - y,
+    2 * 2^(-52) * greatest(x,y)
+    ORDER BY abs(x - y)
+)).*
+FROM test_wsr;
+</pre>
+<pre class="result">
+  statistic | rank_sum_pos | rank_sum_neg | num |    z_statistic    | p_value_one_sided | p_value_two_sided
+ -----------+--------------+--------------+-----+-------------------+-------------------+-------------------
+      105.5 |        105.5 |        194.5 |  24 | -1.27318365656729 | 0.898523560667509 | 0.202952878664983
+</pre>
+
 
 @anchor literature
 @literature
@@ -597,6 +902,7 @@ RETURNS MADLIB_SCHEMA.ks_test_result
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT
 m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!NO SQL!>, <!!>);
+
 /**
  * @brief Perform Kolmogorov-Smirnov test
  *
