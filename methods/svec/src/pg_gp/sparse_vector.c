@@ -109,39 +109,6 @@ Datum svec_recv(PG_FUNCTION_ARGS)
 	PG_RETURN_SVECTYPE_P(svec);
 }
 
-/*
- * Basic floating point operators like MIN,MAX
- */
-PG_FUNCTION_INFO_V1( float8_min );
-Datum float8_min(PG_FUNCTION_ARGS);
-Datum float8_min(PG_FUNCTION_ARGS)
-{
-	if (PG_ARGISNULL(0)) {
-		if (PG_ARGISNULL(1)) PG_RETURN_NULL();
-		else PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(1));
-	} else if (PG_ARGISNULL(1))
-		PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(0));
-
-	float8 left = PG_GETARG_FLOAT8(0);
-	float8 right = PG_GETARG_FLOAT8(1);
-	PG_RETURN_FLOAT8(Min(left,right));
-}
-
-PG_FUNCTION_INFO_V1( float8_max );
-Datum float8_max(PG_FUNCTION_ARGS);
-Datum float8_max(PG_FUNCTION_ARGS)
-{
-	if (PG_ARGISNULL(0)) {
-		if (PG_ARGISNULL(1)) PG_RETURN_NULL();
-		else PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(1));
-	} else if (PG_ARGISNULL(1))
-		PG_RETURN_FLOAT8(PG_GETARG_FLOAT8(0));
-
-	float8 left = PG_GETARG_FLOAT8(0);
-	float8 right = PG_GETARG_FLOAT8(1);
-	PG_RETURN_FLOAT8(Max(left,right));
-}
-
 PG_FUNCTION_INFO_V1( svec_return_array );
 /**
  *  svec_return_array - returns an uncompressed Array
@@ -341,28 +308,6 @@ SvecType * svec_in_internal(char * str)
 	return result;
 }
 
-PG_FUNCTION_INFO_V1(svec_to_string);
-/**
- *  svec_to_string - converts a sparse vector to a text 
- */
-Datum svec_to_string(PG_FUNCTION_ARGS)
-{
-	SvecType *svec = PG_GETARG_SVECTYPE_P(0);
-	char *result = svec_out_internal(svec);
-	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
-PG_FUNCTION_INFO_V1(svec_from_string);
-/**
- *  svec_from_string - converts a text into an svec
- */
-Datum svec_from_string(PG_FUNCTION_ARGS)
-{
-	char *str = pstrdup(text_to_cstring(PG_GETARG_TEXT_P(0)));
-	SvecType *result = svec_in_internal(str);
-	PG_RETURN_SVECTYPE_P(result);
-}
-
 /**
  * Produces an svec from a SparseData
  */
@@ -444,105 +389,4 @@ SvecType *reallocSvec(SvecType *source)
 	return(svec);
 }
 
-typedef struct
-{
-	SvecType *svec;
-	SparseData sdata;
-	int dimension;
-	int absolute_value_position;
-	int unique_value_position;
-	int run_position;
-	char *index_position;
-}	svec_unnest_fctx;
-
-/**
- * Turns an svec into a table of values
- */
-PG_FUNCTION_INFO_V1(svec_unnest);
-Datum svec_unnest(PG_FUNCTION_ARGS)
-{
-        FuncCallContext *funcctx;
-        svec_unnest_fctx *fctx;
-        MemoryContext oldcontext;
-	float8 result;
-	SvecType *svec;
-	int run_length=0;
-
-        /* stuff done only on the first call of the function */
-        if (SRF_IS_FIRSTCALL())
-        {
-                /* create a function context for cross-call persistence */
-                funcctx = SRF_FIRSTCALL_INIT();
-
-                /* switch to memory context appropriate for multiple 
-		 * function calls
-                 */
-                oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-
-                /* allocate memory for user context */
-                fctx = (svec_unnest_fctx *)
-			palloc(sizeof(svec_unnest_fctx));
-
-		svec   = PG_GETARG_SVECTYPE_P(0);
-		fctx->sdata = sdata_from_svec(svec);
-
-		/* set initial index into the sparse vector argument */
-		fctx->dimension               = svec->dimension;
-		if (fctx->dimension == -1) fctx->dimension = 1;
-		fctx->absolute_value_position = 0;
-		fctx->unique_value_position   = 0;
-		fctx->index_position          = fctx->sdata->index->data;
-		fctx->run_position            = 1;
-
-                funcctx->user_fctx = fctx;
-
-                MemoryContextSwitchTo(oldcontext);
-        }
-
-        /* stuff done on every call of the function */
-	funcctx = SRF_PERCALL_SETUP();
-
-        fctx = funcctx->user_fctx;
-
-	run_length = compword_to_int8(fctx->index_position);
-
-	if (fctx->dimension > fctx->absolute_value_position)
-	{
-		result = ((float8 *)(fctx->sdata->vals->data))
-			[fctx->unique_value_position];
-
-		fctx->absolute_value_position++;
-		fctx->run_position++;
-		if (fctx->run_position > run_length)
-		{
-			fctx->run_position = 1;
-			fctx->unique_value_position++;
-			fctx->index_position += int8compstoragesize(fctx->index_position);
-		}
-
-                /* send the result */
-		if (IS_NVP(result)) {
-			/* Here we simply copied the SRF_RETURN_NEXT macro, but 
-			   return null in the last line */
-			do {
-				ReturnSetInfo * rsi;
-				funcctx->call_cntr++;
-				rsi = (ReturnSetInfo *) fcinfo->resultinfo;
-				rsi->isDone = ExprMultipleResult;
-				PG_RETURN_NULL();
-			} while (0);
-		}
-                else SRF_RETURN_NEXT(funcctx, Float8GetDatum(result));
-        }
-        else
-	{
-                /* do when there is no more left */
-                SRF_RETURN_DONE(funcctx);
-	}
-		
-}
-
-
-
 			// 
-

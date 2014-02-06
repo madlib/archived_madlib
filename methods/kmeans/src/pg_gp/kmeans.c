@@ -4,7 +4,7 @@
 #include <utils/memutils.h>
 #include <math.h>
 #include "../../../svec/src/pg_gp/sparse_vector.h"
-#include "../../../svec/src/pg_gp/operators.h"
+#include "../../../svec_util/src/pg_gp/svec_util.h"
 
 typedef enum {
     L1NORM = 1,

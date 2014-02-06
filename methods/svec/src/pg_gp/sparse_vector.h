@@ -103,6 +103,11 @@ SvecType *svec_operate_on_sdata_pair(int scalar_args,enum operation_t operation,
 SvecType *makeEmptySvec(int allocation);
 SvecType *reallocSvec(SvecType *source);
 
+SvecType * svec_in_internal(char * str);
+void check_dimension(SvecType *svec1, SvecType *svec2, char *msg);
+double svec_svec_dot_product(SvecType *svec1, SvecType *svec2);
+SparseData sdata_uncompressed_from_float8arr_internal(ArrayType *array);
+
 Datum svec_in(PG_FUNCTION_ARGS);
 Datum svec_out(PG_FUNCTION_ARGS);
 Datum svec_return_vector(PG_FUNCTION_ARGS);
@@ -117,11 +122,7 @@ Datum svec_minus(PG_FUNCTION_ARGS);
 Datum svec_plus(PG_FUNCTION_ARGS);
 Datum svec_div(PG_FUNCTION_ARGS);
 Datum svec_dot(PG_FUNCTION_ARGS);
-Datum svec_l2norm(PG_FUNCTION_ARGS);
-Datum svec_count(PG_FUNCTION_ARGS);
 Datum svec_mult(PG_FUNCTION_ARGS);
-Datum svec_log(PG_FUNCTION_ARGS);
-Datum svec_l1norm(PG_FUNCTION_ARGS);
 Datum svec_summate(PG_FUNCTION_ARGS);
 
 Datum float8arr_minus_float8arr(PG_FUNCTION_ARGS);
@@ -156,9 +157,5 @@ Datum float8arr_cast_numeric(PG_FUNCTION_ARGS);
 
 Datum svec_cast_float8arr(PG_FUNCTION_ARGS);
 Datum svec_cast_positions_float8arr(PG_FUNCTION_ARGS);
-Datum svec_unnest(PG_FUNCTION_ARGS);
-Datum svec_pivot(PG_FUNCTION_ARGS);
-
-Datum svec_hash(PG_FUNCTION_ARGS);
 
 #endif  /* SPARSEVECTOR_H */

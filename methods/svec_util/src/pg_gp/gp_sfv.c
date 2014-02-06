@@ -15,7 +15,7 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 
-#include "sparse_vector.h"
+#include "../../../svec/src/pg_gp/sparse_vector.h"
 
 Datum gp_extract_feature_histogram(PG_FUNCTION_ARGS);
 
