@@ -98,6 +98,9 @@ chi2_gof_test_transition::run(AnyType &args) {
     if (observed < 0)
         throw std::invalid_argument("Number of observations must be "
             "nonnegative.");
+    else if (expected < 0) 
+        throw std::invalid_argument("Value of expected (count or probability) "
+         "must be nonnegative.");
     else if (df < 0)
         throw std::invalid_argument("Degree of freedom must be positive (or 0 "
             "to use the default of <number of rows> - 1).");

@@ -127,9 +127,9 @@ ks_test_final::run(AnyType &args) {
         std::stringstream tmp;
         tmp << "Actual sample sizes differ from specified sizes. "
                 "Actual/specified: "
-            << uint64_t(state.num(0)) << "/" << uint64_t(state.expectedNum(0))
+            << static_cast<int>(state.num(0)) << "/" << static_cast<int>(state.expectedNum(0))
             << " and "
-            << uint64_t(state.num(1)) << "/" << uint64_t(state.expectedNum(1));
+            << static_cast<int>(state.num(1)) << "/" << static_cast<int>(state.expectedNum(1));
         throw std::invalid_argument(tmp.str());
     }
 
