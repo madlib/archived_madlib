@@ -11,6 +11,7 @@ from validation.cv_utils import __cv_generate_random_id
 from utilities.utilities import __mad_version
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
+from utilities.validate_args import get_cols
 import plpy
 
 version_wrapper = __mad_version()
@@ -108,7 +109,8 @@ def __cv_param_type_explored(params, params_type, param_explored):
 ## ========================================================================
 
 
-def __validate_cv_args(schema_madlib, modelling_func, modelling_params, modelling_params_type,
+def __validate_cv_args(schema_madlib, modelling_func, modelling_params,
+                       modelling_params_type,
                        param_explored, explore_values,
                        predict_func, predict_params, predict_params_type,
                        metric_func, metric_params, metric_params_type,
@@ -119,7 +121,7 @@ def __validate_cv_args(schema_madlib, modelling_func, modelling_params, modellin
             (modelling_func, modelling_params, modelling_params_type,
              predict_func, predict_params, predict_params_type,
              metric_func, metric_params, metric_params_type, data_tbl,
-             validation_result, fold_num, data_cols)):
+             validation_result, fold_num)):
         plpy.error("CV error: You have unsupported Null value(s) in arguments!")
 
     if not table_exists(data_tbl):
@@ -137,7 +139,7 @@ def __validate_cv_args(schema_madlib, modelling_func, modelling_params, modellin
     if fold_num <= 1:
         plpy.error("CV error: Cross validation total fold number should be larger than 1!")
 
-    return None
+    return data_cols
 ## ========================================================================
 
 
@@ -156,26 +158,19 @@ def cross_validation_general(
     A general framework that runs cross-validation for modules that are
     consistent with certain SQL API.
 
-    Sed dev-doc for details.
+    See dev-doc for details.
     """
-    # Older versions of PG84, GP40, GP41 all need
-    # sepcial treatment of arrays
-    modelling_params = mad_vec(modelling_params)
-    modelling_params_type = mad_vec(modelling_params_type)
-    explore_values = mad_vec(explore_values)
-    predict_params = mad_vec(predict_params)
-    predict_params_type = mad_vec(predict_params_type)
-    metric_params = mad_vec(metric_params)
-    metric_params_type = mad_vec(metric_params_type)
-    data_cols = mad_vec(data_cols)
+    if data_cols is None:
+        data_cols = get_cols(data_tbl, schema_madlib)
 
-    __validate_cv_args(schema_madlib, modelling_func, modelling_params, modelling_params_type,
-                       param_explored, explore_values,
-                       predict_func, predict_params, predict_params_type,
-                       metric_func, metric_params, metric_params_type,
-                       data_tbl, data_id, id_is_random,
-                       validation_result,
-                       fold_num, data_cols)
+    __validate_cv_args(
+        schema_madlib, modelling_func, modelling_params, modelling_params_type,
+        param_explored, explore_values,
+        predict_func, predict_params, predict_params_type,
+        metric_func, metric_params, metric_params_type,
+        data_tbl, data_id, id_is_random,
+        validation_result,
+        fold_num, data_cols)
 
     row_num = plpy.execute("select count(*) as row_num from " + data_tbl)[0]["row_num"]
     if row_num <= fold_num:
@@ -214,6 +209,7 @@ def cross_validation_general(
     elif id_is_random:
         # unique ID column is given and is random
         tbl_used = data_tbl
+        col_random_id = data_id
     else:
         # the provided unique ID is not random, create a table
         # mapping the given ID to a random ID
@@ -324,20 +320,6 @@ def cv_linregr_train(schema_madlib, tbl_source, col_ind_var,
                             col_ind_var=col_ind_var,
                             col_dep_var=col_dep_var))
     return None
-## ========================================================================
-
-
-def linregr_predict(schema_madlib, coef, col_ind, **kwargs):
-    """
-    Compute the prediction of linear regression
-
-    @param coef Coefficients of linear regression
-    @param col_ind Independent variables
-    """
-    coef = mad_vec(coef, text=False)
-    col_ind = mad_vec(col_ind, text=False)
-    dot = sum(p * q for p, q in zip(coef, col_ind))
-    return dot
 ## ========================================================================
 
 

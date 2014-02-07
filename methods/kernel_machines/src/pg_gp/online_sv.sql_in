@@ -483,6 +483,7 @@ File online_sv.sql_in documenting the SQL functions.
 -- The following is the structure to record the results of a learning process.
 -- We work with arrays of float8 for now; we'll extend the code to work with sparse vectors next.
 --
+DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_model_rec CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
        inds int,        -- number of individuals processed
        cum_err float8,  -- cumulative error
@@ -498,6 +499,7 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
 
 -- The following is the structure to record the results of the linear SVM sgd algorithm
 --
+DROP TYPE IF EXISTS MADLIB_SCHEMA.lsvm_sgd_model_rec CASCADE;
 CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_model_rec AS (
        weights float8[], -- the weight vector
        wdiv float8,      -- scaling factor for the weights
@@ -510,6 +512,7 @@ CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_model_rec AS (
 
 -- The following is the return type of a regression learning process
 --
+DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_reg_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_reg_result AS (
        model_table text, -- table where the model is stored
        model_name text,  -- model name
@@ -522,6 +525,7 @@ CREATE TYPE MADLIB_SCHEMA.svm_reg_result AS (
 
 -- The following is the return type of a classification learning process
 --
+DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_cls_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_cls_result AS (
        model_table text, -- table where the model is stored
        model_name text,  -- model name
@@ -534,6 +538,7 @@ CREATE TYPE MADLIB_SCHEMA.svm_cls_result AS (
 
 -- The following is the return type of a linear classifier learning process
 --
+DROP TYPE IF EXISTS MADLIB_SCHEMA.lsvm_sgd_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_result AS (
        model_table text, -- table where the model is stored
        model_name text,  -- model name
@@ -546,6 +551,7 @@ CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_result AS (
 
 -- The following is the return type of a novelty detection learning process
 --
+DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_nd_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_nd_result AS (
        model_table text, -- table where the model is stored
        model_name text,  -- model name
@@ -556,6 +562,7 @@ CREATE TYPE MADLIB_SCHEMA.svm_nd_result AS (
 
 -- The type for representing support vectors
 --
+DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_support_vector CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_support_vector AS ( id text, weight float8, sv float8[] );
 
 
@@ -621,6 +628,7 @@ MADLIB_SCHEMA.svm_reg_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], labe
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_reg_update' LANGUAGE C STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.svm_reg_agg(float8[], float8, text, float8, float8, float8);
 CREATE AGGREGATE MADLIB_SCHEMA.svm_reg_agg(float8[], float8, text, float8, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_reg_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
@@ -636,6 +644,7 @@ MADLIB_SCHEMA.svm_cls_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], labe
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_cls_update' LANGUAGE C STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.svm_cls_agg(float8[], float8, text, float8, float8);
 CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, text, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_cls_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
@@ -652,6 +661,7 @@ MADLIB_SCHEMA.svm_nd_update(svs MADLIB_SCHEMA.svm_model_rec, ind FLOAT8[], kerne
 RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_nd_update' LANGUAGE C STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.svm_nd_agg(float8[], text, float8, float8);
 CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], text, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_nd_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
@@ -667,6 +677,7 @@ MADLIB_SCHEMA.lsvm_sgd_update(svs MADLIB_SCHEMA.lsvm_sgd_model_rec, ind FLOAT8[]
 RETURNS MADLIB_SCHEMA.lsvm_sgd_model_rec AS 'MODULE_PATHNAME', 'lsvm_sgd_update' LANGUAGE C STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.lsvm_sgd_agg(float8[], float8, float8, float8);
 CREATE AGGREGATE MADLIB_SCHEMA.lsvm_sgd_agg(float8[], float8, float8, float8) (
        sfunc = MADLIB_SCHEMA.lsvm_sgd_update,
        stype = MADLIB_SCHEMA.lsvm_sgd_model_rec,
@@ -715,6 +726,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_drop_model(model_table TEXT) RETURN
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+DROP TYPE IF EXISTS MADLIB_SCHEMA.svm_model_pr CASCADE;
 CREATE TYPE MADLIB_SCHEMA.svm_model_pr AS ( model text, prediction float8 );
 
 /**
@@ -979,10 +991,25 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_generate_reg_data(output_table text, num int, dim int) RETURNS VOID AS $$
-    plpy.execute("drop table if exists " + output_table)
-    plpy.execute("create table " + output_table + " ( id int, ind float8[], label float8 ) m4_ifdef(`__GREENPLUM__', `distributed by (id)')")
-    plpy.execute("INSERT INTO " + output_table + " SELECT a.val, MADLIB_SCHEMA.__svm_random_ind(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
-    plpy.execute("UPDATE " + output_table + " SET label = MADLIB_SCHEMA.__svm_target_reg_func(ind)")
+    temp_table = "madlib_temp_" + output_table
+    plpy.execute("DROP TABLE IF EXISTS " + output_table)
+    plpy.execute("DROP TABLE IF EXISTS " + temp_table)
+    plpy.execute("""
+        CREATE TABLE {temp_table} AS
+            SELECT
+                subq.val AS id,
+                MADLIB_SCHEMA.__svm_random_ind({dim}) AS ind
+            FROM
+                (SELECT generate_series(1, {num}) AS val) subq
+        m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)')"""
+        .format(temp_table=temp_table, dim=str(dim), num=str(num)))
+    plpy.execute("""
+        CREATE TABLE {output_table} AS
+            SELECT id, ind, MADLIB_SCHEMA.__svm_target_reg_func(ind) AS label
+            FROM {temp_table}
+        m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)')"""
+        .format(output_table=output_table, temp_table=temp_table))
+    plpy.execute("drop table madlib_temp_" + output_table)
 $$ LANGUAGE 'plpythonu'
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -998,10 +1025,24 @@ $$ LANGUAGE plpgsql
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_generate_cls_data(output_table text, num int, dim int) RETURNS VOID AS $$
-    plpy.execute("drop table if exists " + output_table);
-    plpy.execute("create table " + output_table + " ( id int, ind float8[], label float8 ) m4_ifdef(`__GREENPLUM__', `distributed by (id)')")
-    plpy.execute("INSERT INTO " + output_table + " SELECT a.val, MADLIB_SCHEMA.__svm_random_ind(" + str(dim) + "), 0 FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
-    plpy.execute("UPDATE " + output_table + " SET label = MADLIB_SCHEMA.__svm_target_cl_func(ind)")
+    temp_table = "madlib_temp_" + output_table
+    plpy.execute("DROP TABLE IF EXISTS " + output_table)
+    plpy.execute("DROP TABLE IF EXISTS " + temp_table)
+    plpy.execute("""
+        CREATE TABLE {temp_table} AS
+            SELECT
+                subq.val AS id,
+                MADLIB_SCHEMA.__svm_random_ind({dim}) AS ind
+            FROM
+                (SELECT generate_series(1, {num}) AS val) subq
+        m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)')"""
+        .format(temp_table=temp_table, dim=str(dim), num=str(num)))
+    plpy.execute("""
+        CREATE TABLE {output_table} AS
+            SELECT id, ind, MADLIB_SCHEMA.__svm_target_cl_func(ind) AS label
+            FROM {temp_table}
+        m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)')"""
+        .format(output_table=output_table, temp_table=temp_table))
 $$ LANGUAGE 'plpythonu'
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -1015,7 +1056,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_generate_nd_data(output_table text, num int, dim int) RETURNS VOID AS $$
     plpy.execute("drop table if exists " + output_table);
-    plpy.execute("create table " + output_table + " ( id int, ind float8[] ) m4_ifdef(`__GREENPLUM__', `distributed by (id)')")
+    plpy.execute("create table " + output_table + " ( id int, ind float8[] ) m4_ifdef(`__POSTGRESQL__', `', `distributed by (id)')")
     plpy.execute("INSERT INTO " + output_table + " SELECT a.val, MADLIB_SCHEMA.__svm_random_ind2(" + str(dim) + ") FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
 $$ LANGUAGE 'plpythonu'
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -1029,7 +1070,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_data_normalization(input_table TEXT) RETURNS VOID AS $$
     output_table = input_table + "_scaled";
     plpy.execute("DROP TABLE IF EXISTS " + output_table);
-    plpy.execute("CREATE TABLE " + output_table + " ( id int, ind float8[], label int ) m4_ifdef(`__GREENPLUM__', `distributed by (id)')");
+    plpy.execute("CREATE TABLE " + output_table + " ( id int, ind float8[], label int ) m4_ifdef(`__POSTGRESQL__', `', `distributed by (id)')");
     plpy.execute("INSERT INTO " + output_table + " SELECT id, MADLIB_SCHEMA.svm_normalization(ind), label FROM " + input_table);
     plpy.info("output table: %s" % output_table)
 $$ LANGUAGE plpythonu
