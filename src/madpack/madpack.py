@@ -213,7 +213,6 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
                   '-DMODULE_PATHNAME=' + maddir_lib,
                   '-DMODULE_NAME=' + module,
                   '-I' + maddir_madpack,
-                  '-D' + portid.upper(),
                   sqlfile]
 
         __info("> ... parsing: " + " ".join(m4args), verbose)
