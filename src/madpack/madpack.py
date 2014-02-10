@@ -1295,7 +1295,7 @@ def main(argv):
                 # work-around for HAWQ
                 algoname = os.path.basename(sqlfile).split('.')[0]
                 if portid == 'hawq' and algoname in \
-                        ('cm', 'cox_prop_hazards',
+                        ('cox_prop_hazards',
                          'robust_and_clustered_variance_coxph'):
                     # Spit the line
                     print("TEST CASE RESULT|Module: " + module +

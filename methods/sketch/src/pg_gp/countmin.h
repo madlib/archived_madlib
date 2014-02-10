@@ -175,7 +175,7 @@ int cnt_cmp_desc(const void *i, const void *j);
 Datum __cmsketch_int8_trans(PG_FUNCTION_ARGS);
 Datum cmsketch_width_histogram(PG_FUNCTION_ARGS);
 Datum cmsketch_dhistogram(PG_FUNCTION_ARGS);
-Datum __cmsketch_final(PG_FUNCTION_ARGS);
+Datum __cmsketch_base64_final(PG_FUNCTION_ARGS);
 Datum __cmsketch_merge(PG_FUNCTION_ARGS);
 Datum cmsketch_dump(PG_FUNCTION_ARGS);
 Datum __cmsketch_count_final(PG_FUNCTION_ARGS);

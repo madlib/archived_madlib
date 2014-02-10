@@ -172,11 +172,83 @@ Datum countmin_trans_c(countmin sketch, Datum dat, Oid outFuncOid, Oid typOid)
  * FINAL functions for various UDAs built on countmin sketches
  */
 
-/*!
- * return the array of sketch counters as a bytea
+/*
+ * pasted code from utils/encode.c, facilitating __cmsketch_base64_final
  */
-PG_FUNCTION_INFO_V1(__cmsketch_final);
-Datum __cmsketch_final(PG_FUNCTION_ARGS)
+static const char _base64[] =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static const int8 b64lookup[128] = {
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
+    -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
+    -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
+};
+
+static unsigned
+b64_encode(const char *src, unsigned len, char *dst)
+{
+    char       *p,
+               *lend = dst + 76;
+    const char *s,
+               *end = src + len;
+    int         pos = 2;
+    uint32      buf = 0;
+
+    s = src;
+    p = dst;
+
+    while (s < end)
+    {
+        buf |= (unsigned char) *s << (pos << 3);
+        pos--;
+        s++;
+
+        /* write it out */
+        if (pos < 0)
+        {
+            *p++ = _base64[(buf >> 18) & 0x3f];
+            *p++ = _base64[(buf >> 12) & 0x3f];
+            *p++ = _base64[(buf >> 6) & 0x3f];
+            *p++ = _base64[buf & 0x3f];
+
+            pos = 2;
+            buf = 0;
+        }
+        if (p >= lend)
+        {
+            *p++ = '\n';
+            lend = p + 76;
+        }
+    }
+    if (pos != 2)
+    {
+        *p++ = _base64[(buf >> 18) & 0x3f];
+        *p++ = _base64[(buf >> 12) & 0x3f];
+        *p++ = (pos == 0) ? _base64[(buf >> 6) & 0x3f] : '=';
+        *p++ = '=';
+    }
+
+    return p - dst;
+}
+
+static unsigned
+b64_enc_len(unsigned srclen)
+{
+    /* 3 bytes will be converted to 4, linefeed after 76 chars */
+    return (srclen + 2) * 4 / 3 + srclen / (76 * 3 / 4);
+}
+// done pasted code
+
+/*!
+ * return the array of sketch counters as a int8
+ */
+PG_FUNCTION_INFO_V1(__cmsketch_base64_final);
+Datum __cmsketch_base64_final(PG_FUNCTION_ARGS)
 {
     bytea *     blob = PG_GETARG_BYTEA_P(0);
     cmtransval *sketch = NULL;
@@ -194,7 +266,22 @@ Datum __cmsketch_final(PG_FUNCTION_ARGS)
     }
     SET_VARSIZE(out, len);
 
-    PG_RETURN_BYTEA_P(out);
+    // pasted code from utils/builtins.h:binary_encode()
+    bytea *data = out;
+    text       *result;
+    int         datalen,
+                resultlen,
+                res;
+    datalen = VARSIZE(data) - VARHDRSZ;
+    resultlen = b64_enc_len(datalen);
+    result = palloc(VARHDRSZ + resultlen);
+    res = b64_encode(VARDATA(data), datalen, VARDATA(result));
+    /* Make this FATAL 'cause we've trodden on memory ... */
+    if (res > resultlen)
+        elog(FATAL, "overflow - encode estimate too small");
+    SET_VARSIZE(result, VARHDRSZ + res);
+
+    PG_RETURN_TEXT_P(result);
 }
 
 /*!
