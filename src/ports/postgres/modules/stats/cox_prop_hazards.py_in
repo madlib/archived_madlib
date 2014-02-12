@@ -20,6 +20,7 @@ from utilities.utilities import preprocess_optimizer_params
 from utilities.utilities import _assert
 from utilities.validate_args import columns_exist_in_table
 from utilities.utilities import __mad_version
+from utilities.control import IterationController2S
 
 # ----------------------------------------------------------------------
 
@@ -233,10 +234,10 @@ def coxph(schema_madlib, source_table, output_table, dependent_varname,
                            {theIteration} AS num_iterations
                     FROM (
                         SELECT
-                            {schema_madlib}.internal_coxph_result(_madlib_state)
+                            {schema_madlib}.internal_coxph_result(_state)
                                 AS result
                         FROM {madlib_iterative_alg}
-                        WHERE _madlib_iteration = {theIteration}
+                        WHERE _iteration = {theIteration}
                     ) subq
                 """.format(schema_madlib=schema_madlib,
                            output_table=output_table,
@@ -467,107 +468,81 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
     @param cyclesPerIteration Number of aggregate function calls per iteration.
     """
-    madlib_iterative_alg = __unique_string()
+    rel_args = __unique_string()
+    rel_state = __unique_string()
+
+    plpy.execute("""
+        CREATE TEMP TABLE {rel_args} AS 
+        SELECT
+            {maxNumIterations} AS maxNumIterations,
+            {cyclesPerIteration} AS cyclesPerIteration
+        """.format(rel_args=rel_args, maxNumIterations=maxNumIterations,
+            cyclesPerIteration=cyclesPerIteration))
 
     # updateExpr is used to branch b/w stratified cox and normal cox
     if updateExpr.strip() != '':
         updateSQL = """
-            INSERT INTO {madlib_iterative_alg}
             SELECT
-                {{iteration}},
                 {updateExpr}
             FROM (
-                SELECT {resultExpr} AS result
-                FROM {madlib_iterative_alg}
-                WHERE _madlib_iteration = {{iteration}} - 1
+                m4_ifdef(`__HAWQ__',
+                `SELECT {resultExpr} AS result',
+                `SELECT {resultExpr} AS result FROM {rel_state}
+                WHERE _iteration = {{iteration}}')
             ) st,
             {{source}} as src
             """.format(updateExpr=updateExpr, resultExpr=resultExpr,
-                       madlib_iterative_alg=madlib_iterative_alg)
+                       rel_state=rel_state)
     else:
         updateSQL = """
-            INSERT INTO {madlib_iterative_alg}
             SELECT
-                {{iteration}},
                 {updateExprOuter}
             FROM (
                 SELECT {updateExprInner} AS inner_state
                 FROM (
-                    SELECT {resultExpr} AS result
-                    FROM {madlib_iterative_alg}
-                    WHERE _madlib_iteration = {{iteration}} - 1
+                    m4_ifdef(`__HAWQ__',
+                    `SELECT {resultExpr} AS result',
+                    `SELECT {resultExpr} AS result
+                    FROM {rel_state}
+                    WHERE _iteration = {{iteration}}')
                 ) s1,
                 {{source}} as src
                 GROUP BY {strata}
             ) s2
             """.format(updateExprOuter=updateExprOuter, strata=strata,
                        updateExprInner=updateExprInner, resultExpr=resultExpr,
-                       madlib_iterative_alg=madlib_iterative_alg)
+                       rel_state=rel_state)
 
-    terminateSQL = """
-        SELECT
-            {terminateExpr} AS should_terminate
-        FROM (
-                SELECT _madlib_state
-                FROM {madlib_iterative_alg}
-                WHERE _madlib_iteration = {{iteration}} - {{cyclesPerIteration}}
-             ) AS older,
-             (
-                SELECT _madlib_state
-                FROM {madlib_iterative_alg}
-                WHERE _madlib_iteration = {{iteration}}
-             ) AS newer
-        """.format(terminateExpr=terminateExpr,
-                   madlib_iterative_alg=madlib_iterative_alg)
-    checkForNullStateSQL = """
-        SELECT _madlib_state IS NULL AS should_terminate
-        FROM {madlib_iterative_alg}
-        WHERE _madlib_iteration = {iteration}
-        """
+    terminateSQL = terminateExpr
+    checkForNullStateSQL = '_state_current IS NULL'
 
-    oldMsgLevel = plpy.execute("SELECT setting FROM pg_settings "
-                               "WHERE name='client_min_messages'")[0]['setting']
+    iterationCtrl = IterationController2S(
+        rel_args = rel_args,
+        rel_state = rel_state,
+        stateType = "double precision[]",
+        initialize_state = True,
+        **kwargs)
 
-    plpy.execute("""
-        SET client_min_messages = error;
-        CREATE TEMPORARY TABLE {madlib_iterative_alg} (
-            _madlib_iteration INTEGER m4_ifdef(`__HAWQ__', `', `PRIMARY KEY'),
-            _madlib_state {stateType}
-        );
-        SET client_min_messages = {oldMsgLevel};
-        """.format(stateType=stateType,
-                   oldMsgLevel=oldMsgLevel,
-                   madlib_iterative_alg=madlib_iterative_alg))
+    with iterationCtrl as it: 
+        it.iteration = 0
+        while True:
+            it.update(
+                updateSQL.format(
+                source=source,
+                state=m4_ifdef(`__HAWQ__', `"{{__state__}}"', `"(_state)"'),
+                oldCoef="(result).coef",
+                iteration=it.iteration))
 
-    iteration = 0
-    plpy.execute("""
-        INSERT INTO {madlib_iterative_alg} VALUES ({iteration}, {initialState})
-        """.format(iteration=iteration, initialState=initialState,
-                   madlib_iterative_alg=madlib_iterative_alg))
-    while True:
-        iteration = iteration + 1
-        plpy.execute(updateSQL.format(
-            source=source,
-            state="(_madlib_state)",
-            oldCoef="(result).coef",
-            iteration=iteration,
-            sourceAlias="src",
-            madlib_iterative_alg=madlib_iterative_alg))
-        if (plpy.execute(checkForNullStateSQL.format(iteration=iteration,
-                                                     madlib_iterative_alg=madlib_iterative_alg)
-                         )[0]['should_terminate'] or
-                (iteration > cyclesPerIteration and
-                    (iteration >= cyclesPerIteration * maxNumIterations or
-                        plpy.execute(terminateSQL.format(
-                            iteration=iteration,
-                            cyclesPerIteration=cyclesPerIteration,
-                            oldState="(older._madlib_state)",
-                            newState="(newer._madlib_state)")
-                            )[0]['should_terminate']))):
-            break
+            if it.test(checkForNullStateSQL) or \
+                    (it.iteration > cyclesPerIteration and \
+                        (it.iteration >= cyclesPerIteration * maxNumIterations or \
+                            it.test(terminateSQL.format(
+                                iteration=it.iteration,
+                                cyclesPerIteration=cyclesPerIteration)))):
+                break
 
     # Note: We do not drop the temporary table
-    return (iteration, madlib_iterative_alg)
+    return (iterationCtrl.iteration, rel_state)
 # ----------------------------------------------------------------------
 
 
@@ -627,7 +602,7 @@ def compute_coxph(schema_madlib, source, indepColumn,
                        status=status),
         terminateExpr="""
             {schema_madlib}.internal_coxph_step_distance(
-                {{newState}}, {{oldState}}
+                _state_current, _state_previous
             ) < {precision}
             """.format(schema_madlib=schema_madlib, precision=precision),
         resultExpr="""
@@ -683,7 +658,7 @@ def compute_coxph_strata(schema_madlib, source, indepColumn,
 
     terminateExpr = """
             {schema_madlib}.internal_coxph_step_distance(
-                {{newState}}, {{oldState}}
+                _state_current, _state_previous
             ) < {precision}
             """.format(schema_madlib=schema_madlib, precision=precision)
 

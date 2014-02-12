@@ -801,8 +801,7 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
         for sqlfile in sql_files:
             algoname = os.path.basename(sqlfile).split('.')[0]
             if (hawq_debug or hawq_fresh) and algoname in \
-                    ('svec', 'cox_prop_hazards', 'clustered_variance_coxph',
-                            'robust_variance_coxph'):
+                    ('svec'):
                 continue
 
             if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
@@ -1292,19 +1291,6 @@ def main(argv):
             # Loop through all test SQL files for this module
             sql_files = maddir_mod_sql + '/' + module + '/test/*.sql_in'
             for sqlfile in sorted(glob.glob(sql_files), reverse=True):
-                # work-around for HAWQ
-                algoname = os.path.basename(sqlfile).split('.')[0]
-                if portid == 'hawq' and algoname in \
-                        ('cox_prop_hazards',
-                         'robust_and_clustered_variance_coxph'):
-                    # Spit the line
-                    print("TEST CASE RESULT|Module: " + module +
-                          "|" + os.path.basename(sqlfile) +
-                          "|SKIP|Time: 0 milliseconds")
-                    continue
-
-                result = 'PASS'
-
                 # Set file names
                 tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
                 logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
