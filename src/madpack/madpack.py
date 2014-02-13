@@ -1291,6 +1291,15 @@ def main(argv):
             # Loop through all test SQL files for this module
             sql_files = maddir_mod_sql + '/' + module + '/test/*.sql_in'
             for sqlfile in sorted(glob.glob(sql_files), reverse=True):
+                # work-around for HAWQ
+                algoname = os.path.basename(sqlfile).split('.')[0]
+                if portid == 'hawq' and algoname in ():
+                    # Spit the line
+                    print("TEST CASE RESULT|Module: " + module +
+                          "|" + os.path.basename(sqlfile) +
+                          "|SKIP|Time: 0 milliseconds")
+                    continue
+
                 # Set file names
                 tmpfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.tmp'
                 logfile = cur_tmpdir + '/' + os.path.basename(sqlfile) + '.log'
