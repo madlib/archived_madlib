@@ -34,6 +34,129 @@ Naive Bayes: Setup Functions
 """
 
 import plpy
+from utilities.validate_args import table_exists
+from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import table_is_empty
+
+def __nb_validate_args(**kwargs):
+    """Validate parameters for Naive Bayes functions.
+
+    This function performs general checkings for all Naive Bayes functions,
+    assuming valid if the argument is not in **kwargs.
+
+    Possible keys in **kwargs:
+    @param trainingSource name of relation containing training data
+    @param trainingClassColumn name of column with class
+    @param trainingAttrColumn name of column with attributes array
+    @param numAttrs Number of attributes to use for classification
+    @param classPriorsDestName Name of class-priors relation to create
+    @param featureProbsDestName Name of feature-probabilities relation to create
+    @param classPriorsSource Relation (class, class_cnt, all_cnt) where
+           class is c, class_cnt is \#c, all_cnt is the number of rows in
+           \em trainingSource
+    @param featureProbsSource Relation (class, attr, value, cnt, attr_cnt) where
+           (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+    @param classifySource Name of the relation that contains data to be classified
+    @param classifyKeyColumn Name of column in \em classifySource that can
+           serve as unique identifier
+    @param classifyAttrColumn Name of attributes-array column in \em classifySource
+    @param destName Name of the table or view to create
+    """
+
+    for k in ('classPriorsDestName', 'featureProbsDestName', 'destName'):
+        if k in kwargs:
+            out = kwargs[k]
+            if out is None or out == '':
+                plpy.error("Naive Bayes error: Invalid output table name!")
+            if table_exists(out):
+                plpy.error("Naive Bayes error: Output table already exists. " + \
+                    "Drop table '{0}' before calling the function.".format(out))
+
+    if 'numAttrs' in kwargs:
+        n_attr = kwargs['numAttrs']
+        if n_attr is None or n_attr <= 0:
+            plpy.error("Naive Bayes error: 'numAttrs' should be > 0!")
+
+    model_tbl = {'classPriorsSource': ('class', 'class_cnt', 'all_cnt'),
+            'featureProbsSource': ('class', 'attr', 'value', 'cnt', 'attr_cnt')}
+    for mdl in model_tbl:
+        if mdl in kwargs:
+            tbl = kwargs[mdl]
+
+            if tbl is None or tbl == '':
+                plpy.error("Naive Bayes error: Invalid {0} name!".format(mdl))
+            if not table_exists(tbl):
+                plpy.error("Naive Bayes error: " + \
+                        "{0} '{1}' does not exist!".format(mdl, tbl))
+            if table_is_empty(tbl):
+                plpy.error("Naive Bayes error: " + \
+                        "{0} '{1}' is empty!".format(mdl, tbl))
+
+            for c in model_tbl[mdl]:
+                if c is None or c == '':
+                    plpy.error("Naive Bayes error: Invalid column name!")
+            if not columns_exist_in_table(tbl, model_tbl[mdl]):
+                plpy.error("Naive Bayes error: {0} '{1}' does not have the" + \
+                        "necessary column(s)!".format(mdl, tbl))
+
+    if 'trainingSource' in kwargs:
+        tbl = kwargs['trainingSource']
+        c_col = kwargs['trainingClassColumn']
+        a_col = kwargs['trainingAttrColumn']
+        n_attr = kwargs['numAttrs']
+
+        if tbl is None or tbl == '':
+            plpy.error("Naive Bayes error: Invalid training table name!")
+        if not table_exists(tbl):
+            plpy.error("Naive Bayes error: " + \
+                    "Training table '{0}' does not exist!".format(tbl))
+        if table_is_empty(tbl):
+            plpy.error("Naive Bayes error: " + \
+                    "Training table '{0}' is empty!".format(tbl))
+
+        for c in (a_col, c_col):
+            if c is None or c == '':
+                plpy.error("Naive Bayes error: Invalid column name!")
+            if not columns_exist_in_table(tbl, [c]):
+                plpy.error("Naive Bayes error: " + \
+                        "Column '{0}' does not exist!".format(c))
+
+        bound = plpy.execute("""SELECT {n_attr} <= array_upper({a_col}, 1)
+            AS bound FROM {tbl} LIMIT 1""".format(n_attr=str(n_attr),
+            a_col=a_col, tbl=tbl))[0]['bound']
+        if not bound:
+            plpy.error("Naive Bayes error:" + \
+                    "'numAttrs' {0} is out of bound!".format(str(n_attr)))
+
+    if 'classifySource' in kwargs:
+        tbl = kwargs['classifySource']
+        k_col = kwargs['classifyKeyColumn']
+        a_col = kwargs['classifyAttrColumn']
+        n_attr = kwargs['numAttrs']
+
+        if tbl is None or tbl == '':
+            plpy.error("Naive Bayes error: Invalid classify table name!")
+        if not table_exists(tbl):
+            plpy.error("Naive Bayes error: " + \
+                    "Classify table '{0}' does not exist!".format(tbl))
+        if table_is_empty(tbl):
+            plpy.error("Naive Bayes error: " + \
+                    "Classify table '{0}' is empty!".format(tbl))
+
+        for c in (a_col, k_col):
+            if c is None or c == '':
+                plpy.error("Naive Bayes error: Invalid column name!")
+            if not columns_exist_in_table(tbl, [c]):
+                plpy.error("Naive Bayes error: " + \
+                        "Column '{0}' does not exist!".format(c))
+
+        bound = plpy.execute("""SELECT {n_attr} <= array_upper({a_col}, 1)
+            AS bound FROM {tbl} LIMIT 1""".format(n_attr=str(n_attr),
+            a_col=a_col, tbl=tbl))[0]['bound']
+        if not bound:
+            plpy.error("Naive Bayes error:" + \
+                    "'numAttrs' {0} is out of bound!".format(str(n_attr)))
+
 
 def __get_feature_probs_sql(**kwargs):
     """Return SQL query with columns (class, attr, value, cnt, attr_cnt).
@@ -95,6 +218,8 @@ def __get_feature_probs_sql(**kwargs):
                 count(*) AS cnt
             FROM
                 {trainingSource} AS trainingSource
+            WHERE
+                {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
             GROUP BY
                 class,
                 attr,
@@ -136,6 +261,8 @@ def __get_attr_values_sql(**kwargs):
                 unnest(trainingSource.{trainingAttrColumn}) AS value
             FROM
                 {trainingSource} AS trainingSource
+            WHERE
+                {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
             GROUP BY attr, value
         ) l
         WHERE value IS NOT NULL
@@ -167,6 +294,8 @@ def __get_attr_counts_sql(**kwargs):
                     unnest(trainingSource.{trainingAttrColumn}) AS value
                 FROM
                     {trainingSource} AS trainingSource
+                WHERE
+                    {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
                 ) l
             GROUP BY attr, value
         ) m
@@ -193,6 +322,8 @@ def __get_class_priors_sql(**kwargs):
                 trainingSource.{trainingClassColumn} AS class,
                 count(*) AS class_cnt
             FROM {trainingSource} AS trainingSource
+            WHERE
+                {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
             GROUP BY trainingSource.{trainingClassColumn}
             ) l
         CROSS JOIN
@@ -200,6 +331,8 @@ def __get_class_priors_sql(**kwargs):
             SELECT
                 count(*) AS all_cnt
             FROM {trainingSource} AS trainingSource
+            WHERE
+                {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
             ) m
         """.format(**kwargs)
 
@@ -245,9 +378,9 @@ def __get_keys_and_prob_values_sql(**kwargs):
                                           -- {numAttrs} THEN NULL
                  ELSE
                     log(classPriors.class_cnt::DOUBLE PRECISION /
-                        classPriors.all_cnt) + 
-                        sum( log((featureProbs.cnt::DOUBLE PRECISION + 
-                            {smoothingFactor})/ (classPriors.class_cnt + 
+                        classPriors.all_cnt) +
+                        sum( log((featureProbs.cnt::DOUBLE PRECISION +
+                            {smoothingFactor})/ (classPriors.class_cnt +
                             {smoothingFactor} * featureProbs.attr_cnt)) )
                  END
             AS log_prob
@@ -261,12 +394,14 @@ def __get_keys_and_prob_values_sql(**kwargs):
                     unnest(classifySource.{classifyAttrColumn}) AS value
                 FROM
                     {classifySource} AS classifySource
+                WHERE
+                    {schema_madlib}.array_contains_null({classifyAttrColumn}) = 'f'
             ) AS classify
         WHERE
             featureProbs.class = classPriors.class AND
             featureProbs.attr = classify.attr AND
             (   CASE WHEN classify.value is NULL
-                THEN false 
+                THEN false
                 ELSE featureProbs.value = classify.value
                 END
             )
@@ -283,76 +418,11 @@ def __get_keys_and_prob_values_sql(**kwargs):
         FROM
             {classifySource} AS classify,
             {classPriorsSource} AS classes
+        WHERE
+            {schema_madlib}.array_contains_null({classifyAttrColumn}) = 'f'
         GROUP BY classify.{classifyKeyColumn}, classes.class
     ) t2
     ON t1.key = t2.key AND t1.class=t2.class
-    """.format(**kwargs)
-
-
-def __get_prob_values_sql(**kwargs):
-    """
-    Return SQL query with columns (class, log_prob), given an array of
-    attributes.
-
-    The query binds to an attribute array a[]. For every class c, log_prob
-    is log( P(C = c) * P(A = a[] | C = c) ).
-
-    @param classifyAttrColumn Array of attributes to bind to. This can be
-           a column name of an outer query or a literal.
-    @param smoothingFactor Smoothing factor to use for estimating the feature
-           probabilities.
-    @param numAttrs Number of attributes to use for classification
-    @param classPriorsSource
-           Relation (class, class_cnt, all_cnt) where
-           class is c, class_cnt is \#c, all_cnt is the number of training
-           samples.
-    @param featureProbsSource
-           Relation (class, attr, value, cnt, attr_cnt) where
-           (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
-
-    Note that unless \em classifyAttrColumn is a literal, the SQL query will
-    become a correlated subquery and will not work in Greenplum.
-
-    """
-
-    # {classifyAttrColumn} binds to a names declared outside of the following
-    # SQL. We need to ensure that ther are no conflicting names with
-    # {classifyAttrColumn}. Therefore, we only introduce the unusual name
-    # __attr. Note that by the structure of the query, there can be no other
-    # name conflicts.
-    return """
-    SELECT
-        classPriors.class,
-        CASE WHEN count(*) < {numAttrs} THEN NULL
-             ELSE
-                log(classPriors.class_cnt::DOUBLE PRECISION / classPriors.all_cnt)
-                + sum( log((featureProbs.cnt::DOUBLE PRECISION + {smoothingFactor})
-                    / (classPriors.class_cnt + {smoothingFactor} * featureProbs.attr_cnt)) )
-             END
-        AS log_prob
-    FROM
-        {featureProbsSource} AS featureProbs,
-        {classPriorsSource} AS classPriors,
-        (
-            SELECT
-                __attr.__attr,
-                {classifyAttrColumn}[__attr.__attr] AS value
-            FROM
-                generate_series(1, {numAttrs}) AS __attr
-        ) AS classify
-    WHERE
-        featureProbs.class = classPriors.class AND
-        featureProbs.attr = classify.__attr AND featureProbs.value = classify.value AND
-        ({smoothingFactor} > 0 OR featureProbs.cnt > 0) -- prevent division by 0
-    GROUP BY classPriors.class, classPriors.class_cnt, classPriors.all_cnt
-
-    UNION
-
-    SELECT
-        classes.class,
-        NULL
-    FROM
-        {classPriorsSource} AS classes
     """.format(**kwargs)
 
 
@@ -379,8 +449,13 @@ def __get_classification_sql(**kwargs):
 def create_prepared_data_table(**kwargs):
     """Wrapper around create_prepared_data() to create a table (and not a view)
     """
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                  name='client_min_messages'")[0]['setting']
+    plpy.execute("set client_min_messages to error")
     kwargs.update(whatToCreate = 'TABLE')
+    __nb_validate_args(**kwargs)
     create_prepared_data(**kwargs)
+    plpy.execute("set client_min_messages to " + old_msg_level)
 
 def create_prepared_data(**kwargs):
     """Precompute all class priors and feature probabilities.
@@ -428,14 +503,16 @@ def create_prepared_data(**kwargs):
             CREATE TEMPORARY TABLE {attrCountsSource}
             AS
             {attr_counts_sql};
-            ALTER TABLE {attrCountsSource} ADD PRIMARY KEY (attr);
+            m4_ifdef(`__HAWQ__', `',
+            `ALTER TABLE {attrCountsSource} ADD PRIMARY KEY (attr);')
             ANALYZE {attrCountsSource};
 
             DROP TABLE IF EXISTS {attrValuesSource};
             CREATE TEMPORARY TABLE {attrValuesSource}
             AS
             {attr_values_sql};
-            ALTER TABLE {attrValuesSource} ADD PRIMARY KEY (attr, value);
+            m4_ifdef(`__HAWQ__', `',
+            `ALTER TABLE {attrValuesSource} ADD PRIMARY KEY (attr, value);')
             ANALYZE {attrValuesSource};
             """.format(
                 attrCountsSource = kwargs['attrCountsSource'],
@@ -457,7 +534,8 @@ def create_prepared_data(**kwargs):
         )
     if kwargs['whatToCreate'] == 'TABLE':
         plpy.execute("""
-            ALTER TABLE {classPriorsDestName} ADD PRIMARY KEY (class);
+            m4_ifdef(`__HAWQ__', `',
+            `ALTER TABLE {classPriorsDestName} ADD PRIMARY KEY (class);')
             ANALYZE {classPriorsDestName};
             """.format(**kwargs))
 
@@ -474,7 +552,8 @@ def create_prepared_data(**kwargs):
         )
     if kwargs['whatToCreate'] == 'TABLE':
         plpy.execute("""
-            ALTER TABLE {featureProbsDestName} ADD PRIMARY KEY (class, attr, value);
+            m4_ifdef(`__HAWQ__', `',
+            `ALTER TABLE {featureProbsDestName} ADD PRIMARY KEY (class, attr, value);')
             ANALYZE {featureProbsDestName};
             DROP TABLE {attrCountsSource};
             DROP TABLE {attrValuesSource};
@@ -484,8 +563,13 @@ def create_prepared_data(**kwargs):
 def create_classification_view(**kwargs):
     """Wrapper around create_classification() to create a view (and not a table)
     """
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                  name='client_min_messages'")[0]['setting']
+    plpy.execute("set client_min_messages to error")
     kwargs.update(whatToCreate = 'VIEW')
+    __nb_validate_args(**kwargs)
     create_classification(**kwargs)
+    plpy.execute("set client_min_messages to " + old_msg_level)
 
 
 def create_classification(**kwargs):
@@ -571,8 +655,13 @@ def create_classification(**kwargs):
 def create_bayes_probabilities_view(**kwargs):
     """Wrapper around create_bayes_probabilities() to create a view (and not a table)
     """
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                  name='client_min_messages'")[0]['setting']
+    plpy.execute("set client_min_messages to error")
     kwargs.update(whatToCreate = 'VIEW')
+    __nb_validate_args(**kwargs)
     create_bayes_probabilities(**kwargs)
+    plpy.execute("set client_min_messages to " + old_msg_level)
 
 def create_bayes_probabilities(**kwargs):
     """Create table/view with columns (key, class, nb_prob)
@@ -690,61 +779,6 @@ where P(A = a | C = c) = ||  P(A_i = a_i | C = c).
         ) AS keys_and_nb_values
         ORDER BY
             key, class
-        """.format(**kwargs))
-
-
-def create_classification_function(**kwargs):
-    """Create a SQL function mapping arrays of attribute values to the Naive
-    Bayes classification.
-
-    The created SQL function will be:
-
-    <tt>
-    FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
-    RETURNS INTEGER[]</tt>
-
-    There are two sets of arguments this function can be called with. The
-    following parameters are always needed:
-    @param classifyAttrColumn Array of attributes to bind to. This can be
-           a column name of an outer query or a literal.
-    @param smoothingFactor Smoothing factor to use for estimating the feature
-           probabilities.
-    @param numAttrs Number of attributes to use for classification
-
-    Furthermore, provide either:
-    @param classPriorsSource
-           Relation (class, class_cnt, all_cnt) where
-           class is c, class_cnt is \#c, all_cnt is the number of training
-           samples.
-    @param featureProbsSource
-           Relation (class, attr, value, cnt, attr_cnt) where
-           (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
-
-    Or have this function operate on the "raw" training data:
-    @param trainingSource Name of relation containing the training data
-    @param trainingClassColumn Name of class column in training data
-    @param trainingAttrColumn Name of attributes-array column in training data
-
-    Note: Greenplum does not support executing STABLE and VOLATILE functions on
-    segments. The created function can therefore only be called on the master.
-    """
-    kwargs.update(dict(
-        classifyAttrColumn = "$1",
-        smoothingFactor = "$2"
-        ))
-    __init_prepared_data(kwargs)
-    kwargs.update(
-        keys_and_prob_values = "(" + __get_prob_values_sql(**kwargs) + ")"
-        )
-    plpy.execute("""
-        CREATE FUNCTION {destName} (inAttributes INTEGER[], inSmoothingFactor DOUBLE PRECISION)
-        RETURNS INTEGER[] AS
-        $$
-            SELECT
-                {schema_madlib}.argmax(class, log_prob)
-            FROM {keys_and_prob_values} AS key_and_nb_values
-        $$
-        LANGUAGE sql STABLE
         """.format(**kwargs))
 
 

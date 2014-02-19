@@ -376,27 +376,28 @@ File bayes.sql_in documenting the SQL functions.
 
 -- Begin of argmax definition
 
-CREATE TYPE MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE AS (
+DROP TYPE IF EXISTS MADLIB_SCHEMA.args_and_value_double CASCADE;
+CREATE TYPE MADLIB_SCHEMA.args_and_value_double AS (
     args INTEGER[],
     value DOUBLE PRECISION
 );
 
-CREATE FUNCTION MADLIB_SCHEMA.argmax_transition(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.argmax_transition(
     oldmax MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE,
     newkey INTEGER,
     newvalue DOUBLE PRECISION)
-RETURNS MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE AS
+RETURNS MADLIB_SCHEMA.args_and_value_double AS
 $$
     SELECT CASE WHEN $3 < $1.value OR $2 IS NULL OR ($3 IS NULL AND NOT $1.value IS NULL) THEN $1
                 WHEN $3 = $1.value OR ($3 IS NULL AND $1.value IS NULL AND NOT $1.args IS NULL)
-                    THEN ($1.args || $2, $3)::MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE
-                ELSE (array[$2], $3)::MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE
+                    THEN ($1.args || $2, $3)::MADLIB_SCHEMA.args_and_value_double
+                ELSE (array[$2], $3)::MADLIB_SCHEMA.args_and_value_double
            END
 $$
 LANGUAGE sql IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
-CREATE FUNCTION MADLIB_SCHEMA.argmax_combine(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.argmax_combine(
     max1 MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE,
     max2 MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE)
 RETURNS MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE AS
@@ -423,7 +424,7 @@ $$
 LANGUAGE sql IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
-CREATE FUNCTION MADLIB_SCHEMA.argmax_final(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.argmax_final(
     finalstate MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE)
 RETURNS INTEGER[] AS
 $$
@@ -447,6 +448,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
  * The implementation is in SQL, with a flavor of functional programming.
  * The hope is that the optimizer does a good job here.
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.argmax(/*+ key */ INTEGER, /*+ value */ DOUBLE PRECISION) CASCADE;
 CREATE AGGREGATE MADLIB_SCHEMA.argmax(/*+ key */ INTEGER, /*+ value */ DOUBLE PRECISION) (
     SFUNC=MADLIB_SCHEMA.argmax_transition,
     STYPE=MADLIB_SCHEMA.ARGS_AND_VALUE_DOUBLE,
@@ -491,7 +493,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.argmax(/*+ key */ INTEGER, /*+ value */ DOUBLE PR
  * @internal
  * @sa This function is a wrapper for bayes::create_prepared_data().
  */
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_prepared_data_tables(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_prepared_data_tables(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
     "trainingAttrColumn" VARCHAR,
@@ -541,7 +543,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  * @sa This function is a wrapper for bayes::create_classification(). See there
  *     for details.
  */
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
     "featureProbsSource" VARCHAR,
     "classPriorsSource" VARCHAR,
     "classifySource" VARCHAR,
@@ -554,7 +556,7 @@ AS $$PythonFunction(bayes, bayes, create_classification_view)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
     "trainingAttrColumn" VARCHAR,
@@ -610,7 +612,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  * @internal
  * @sa This function is a wrapper for bayes::create_bayes_probabilities().
  */
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
     "featureProbsSource" VARCHAR,
     "classPriorsSource" VARCHAR,
     "classifySource" VARCHAR,
@@ -623,7 +625,7 @@ AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
     "trainingAttrColumn" VARCHAR,
@@ -637,65 +639,3 @@ AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-
-/**
- * @brief Create a SQL function mapping arrays of attribute values to the Naive
- *        Bayes classification.
- *
- * The created SQL function is bound to the given feature probabilities and
- * class priors. Its declaration will be:
- *
- * <tt>
- * FUNCTION <em>destName</em> (attributes INTEGER[], smoothingFactor DOUBLE PRECISION)
- * RETURNS INTEGER[]</tt>
- *
- * The return type is \c INTEGER[] because the Naive Bayes classification might
- * be ambiguous (in which case all of the most likely candiates are returned).
- *
- * @param featureProbsSource Name of table with precomputed feature
- *        probabilities, as created with create_nb_prepared_data_tables()
- * @param classPriorsSource Name of table with precomputed class priors, as
- *        created with create_nb_prepared_data_tables()
- * @param numAttrs Number of attributes to use for classification
- * @param destName Name of the function to create
- *
- * @note
- * Just like \ref create_nb_classify_view and \ref create_nb_probs_view,
- * also \c create_nb_classify_fn can be called in an ad-hoc fashion. See
- * \ref grp_bayes for instructions.
- *
- * @usage
- * -# Create classification function:
- *    <pre>SELECT create_nb_classify_fn(
- *    '<em>featureProbsSource</em>', '<em>classPriorsSource</em>',
- *    <em>numAttrs</em>, '<em>destName</em>'
- *);</pre>
- * -# Run classification function:
- *    <pre>SELECT <em>destName</em>(<em>attributes</em>, <em>smoothingFactor</em>);</pre>
- *
- * @note
- * On Greenplum, the generated SQL function can only be called on the master.
- *
- * @internal
- * @sa This function is a wrapper for bayes::create_classification_function().
- */
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_fn(
-    "featureProbsSource" VARCHAR,
-    "classPriorsSource" VARCHAR,
-    "numAttrs" INTEGER,
-    "destName" VARCHAR)
-RETURNS VOID
-AS $$PythonFunction(bayes, bayes, create_classification_function)$$
-LANGUAGE plpythonu VOLATILE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-CREATE FUNCTION MADLIB_SCHEMA.create_nb_classify_fn(
-    "trainingSource" VARCHAR,
-    "trainingClassColumn" VARCHAR,
-    "trainingAttrColumn" VARCHAR,
-    "numAttrs" INTEGER,
-    "destName" VARCHAR)
-RETURNS VOID
-AS $$PythonFunction(bayes, bayes, create_classification_function)$$
-LANGUAGE plpythonu VOLATILE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
