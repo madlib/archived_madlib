@@ -656,6 +656,7 @@ def __db_upgrade(schema, dbrev):
     ch.drop_changed_udt()
     ch.drop_changed_udc()
     ch.drop_changed_udf()
+    ch.drop_traininginfo_4dt()
     __db_create_objects(schema, None, True, sc)
 
     if vd.has_dependency():

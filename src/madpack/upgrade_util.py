@@ -183,20 +183,24 @@ class ChangeHandler(UpgradeBase):
         # _mad_dbrev = 1.0
         if self._mad_dbrev.split('.') < '1.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.0_1.4.1.yaml')
+                                    'changelist_1.0_1.5.yaml')
         # _mad_dbrev = 1.1
         elif self._mad_dbrev.split('.') < '1.2'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.1_1.4.1.yaml')
+                                    'changelist_1.1_1.5.yaml')
         # _mad_dbrev = 1.2
         elif self._mad_dbrev.split('.') < '1.3'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.2_1.4.1.yaml')
+                                    'changelist_1.2_1.5.yaml')
         # _mad_dbrev = 1.3
         elif self._mad_dbrev.split('.') < '1.4'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.3_1.4.1.yaml')
+                                    'changelist_1.3_1.5.yaml')
         # _mad_dbrev = 1.4
+        elif self._mad_dbrev.split('.') < '1.4.1'.split('.'):
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.4_1.5.yaml')
+        # _mad_dbrev = 1.4.1
         else:
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist.yaml')
@@ -311,7 +315,13 @@ class ChangeHandler(UpgradeBase):
             self._run_sql("DROP CAST IF EXISTS ({sourcetype} AS {targettype})".
                           format(sourcetype=self._udc[udc]['sourcetype'],
                                  targettype=self._udc[udc]['targettype']))
-
+    def drop_traininginfo_4dt(self):
+        """
+        @brief Drop the madlib.training_info table, which is no longer used since
+        the version 1.5
+        """
+        self._run_sql("DROP TABLE IF EXISTS {schema}.training_info".format(
+            schema=self._schema))
 
 class ViewDependency(UpgradeBase):
     """
