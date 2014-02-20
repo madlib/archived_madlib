@@ -537,39 +537,42 @@ INSERT INTO crx_dt_test VALUES (486, 'b', 74.829999999999998, 19, 'y', 'p', 'ff'
 INSERT INTO crx_dt_test VALUES (488, 'b', 24.5, 13.335000000000001, 'y', 'p', 'aa', 'v', 0.040000000000000001, 'f', 'f', 0, 't', 'g', 120, 475, '-');
 INSERT INTO crx_dt_test VALUES (490, NULL, 45.329999999999998, 1, 'u', 'g', 'q', 'v', 0.125, 'f', 'f', 0, 't', 'g', 263, 0, '-');
 
-DROP FUNCTION IF EXISTS c45_test(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,INT,TEXT,TEXT);
-CREATE OR REPLACE FUNCTION c45_test
+drop function if exists rf_test( TEXT, TEXT, TEXT, TEXT,TEXT, INT,TEXT,INT);
+CREATE OR REPLACE FUNCTION rf_test
     (
     training_set        TEXT,
     method              TEXT,
     cont_features       TEXT,
     class_column        TEXT,
     score_set           TEXT,
-    validation_set      TEXT,
     tree_dep            INT,
     missing_operation   TEXT,
-    exp_display_result  TEXT
+    num_of_tree         INT
     )
 RETURNS TEXT AS $$
-declare
-    result              TEXT := 'PASS';
-    display_result      TEXT;
-    exp_display_result  TEXT;
+DECLARE
+    result              TEXT;
     score_accuracy      FLOAT8;
-    train_result        c45_train_result;
-    tree_name           TEXT := 'trained_tree';
+    train_result        rf_train_result;
+    tree_name           TEXT := 'trained_rf';
     classify_result     TEXT := 'classify_result';
+    classify_result2    TEXT := 'classify_result2';
+    size                INT;
+    size_consistent     INT;
     pass                BOOL;
-begin
+BEGIN
+    result='PASS';
 
-    train_result = c45_train(method,training_set,tree_name,
-        validation_set,cont_features,null,'id',class_column, 100,
+    train_result = rf_train(method,training_set,tree_name,
+        num_of_tree,null,1,cont_features,null,'id',class_column,
         missing_operation,tree_dep,0,0,0);
+
     -- ensure we didn't change the variable names of the returned type
-    EXECUTE 'SELECT COUNT(*) = 5 FROM pg_attribute
-             WHERE attrelid = ''c45_train_result''::regclass and
-                   attname IN (''training_set_size'', ''tree_nodes'',
-                                ''tree_depth'', ''training_time'',
+    EXECUTE 'SELECT COUNT(*) = 7 FROM pg_attribute
+             WHERE attrelid = ''rf_train_result''::regclass and
+                   attname IN (''training_time'', ''num_of_samples'',
+                                ''num_trees'', ''features_per_node'',
+                                ''num_tree_nodes'', ''max_tree_depth'',
                                 ''split_criterion'')'
            INTO pass;
     IF (NOT pass) THEN
@@ -577,320 +580,52 @@ begin
         RAISE EXCEPTION 'Install check failed.';
     END IF;
 
-    score_accuracy =  c45_score(tree_name,score_set,0);
+    score_accuracy = rf_score(tree_name,score_set,0);
+    -- parallel classify should work.
+    PERFORM rf_classify(tree_name,score_set,classify_result,'f',0);
 
-    -- classify should work.
-    PERFORM c45_classify(tree_name,score_set,classify_result,0);
+    -- serial classify should work.
+    PERFORM rf_classify(tree_name,score_set,classify_result2,'t',0);
+
     -- Check the classification result is OK
-    IF ( __table_exists(classify_result) ) THEN
+    IF ( __table_exists(classify_result)
+            AND __table_exists(classify_result2) ) THEN
+        EXECUTE 'SELECT COUNT(*) FROM '||classify_result||';' INTO size;
+
+        EXECUTE 'SELECT COUNT(*) FROM '||classify_result||' t1,'||classify_result2||
+            ' t2 WHERE t1.id=t2.id AND t1.class=t2.class;' INTO size_consistent;
+
         EXECUTE 'DROP TABLE '||classify_result;
+        EXECUTE 'DROP TABLE '||classify_result2;
+
+        -- The results from the two classification method should be consistent.
+        IF (size <> size_consistent) THEN
+            result = 'FAIL';
+            RAISE EXCEPTION 'Install check failed.';
+        END IF;
     ELSE
         result = 'FAIL';
         RAISE EXCEPTION 'Install check failed.';
     END IF;
 
-    -- For those two datasets, we should not get an accuracy lower than 0.9
-    IF (score_accuracy<0.9) THEN
+    PERFORM rf_clean(tree_name);
+
+    -- Since random forest use sampling, the trained model varies each time.
+    -- As a result, we cannot check the display result as the test for c4.5.
+    -- But for the chosen data set, we should not get an accuracy lower than 0.8.
+    IF (score_accuracy<0.8) THEN
         result = 'FAIL';
         RAISE EXCEPTION 'Install check failed.';
     END IF;
-
-    -- remove space and some control character
-    exp_display_result = replace(exp_display_result,' ','');
-    exp_display_result = replace(exp_display_result,E'\n','');
-
-    SELECT * FROM c45_display(tree_name) LIMIT 1
-        INTO display_result;
-    -- remove space and some control character
-    display_result = replace(display_result,' ','');
-    display_result = replace(display_result,E'\n','');
-
-    IF (exp_display_result  <> display_result) THEN
-        result = 'FAIL';
-        RAISE INFO 'Expected:%',exp_display_result;
-        RAISE INFO 'Actual:%',display_result;
-        RAISE EXCEPTION 'Install check failed.';
-    END IF;
-
-    PERFORM c45_clean(tree_name);
     RETURN result;
-end
+END
 $$ language plpgsql;
 
--- Golf dataset is very small. Since random forest uses sampling, we think this dataset
--- is not appropriate for random forest test. We only test c4.5 based on golf.
-SELECT c45_test('golf_dt_test','infogain','temperature,humidity',
-    'class','golf_dt_test','golf_dt_test',10,'explicit',
-    'Tree 1
-    Root Node  : class( Play)   num_elements(14)  predict_prob(0.642857142857143)
-         outlook:  = overcast  : class( Play)   num_elements(4)  predict_prob(1)
-         outlook:  = rain  : class( Play)   num_elements(5)  predict_prob(0.6)
-             windy:  =  false  : class( Play)   num_elements(3)  predict_prob(1)
-             windy:  =  true  : class( Do not Play)   num_elements(2)  predict_prob(1)
-         outlook:  = sunny  : class( Do not Play)   num_elements(5)  predict_prob(0.6)
-             humidity:  <= 70  : class( Play)   num_elements(2)  predict_prob(1)
-             humidity:  > 70  : class( Do not Play)   num_elements(3)  predict_prob(1)');
+SELECT rf_test('crx_dt_test','gini','A2,A3,A8,A11,A14,A15',
+    'a16','crx_dt_test',10,'ignore',5);
 
+SELECT rf_test('crx_dt_test','gainratio','A2,A3,A8,A11,A14,A15',
+    'a16','crx_dt_test',10,'explicit',5);
 
-SELECT c45_test('golf_dt_test','gini','temperature,humidity',
-    'class','golf_dt_test','golf_dt_test',10,'explicit',
-    'Tree 1
-    Root Node  : class( Play)   num_elements(14)  predict_prob(0.642857142857143)
-         outlook:  = overcast  : class( Play)   num_elements(4)  predict_prob(1)
-         outlook:  = rain  : class( Play)   num_elements(5)  predict_prob(0.6)
-             windy:  =  false  : class( Play)   num_elements(3)  predict_prob(1)
-             windy:  =  true  : class( Do not Play)   num_elements(2)  predict_prob(1)
-         outlook:  = sunny  : class( Do not Play)   num_elements(5)  predict_prob(0.6)
-             humidity:  <= 70  : class( Play)   num_elements(2)  predict_prob(1)
-             humidity:  > 70  : class( Do not Play)   num_elements(3)  predict_prob(1)');
-
--- Verify temporary table can be used as training table.
-CREATE TABLE golf_tmp AS SELECT * from golf_dt_test;
-SELECT c45_test('golf_tmp','gainratio','temperature,humidity',
-    'class','golf_dt_test','golf_dt_test',10,'explicit',
-    'Tree 1
-    Root Node  : class( Play)   num_elements(14)  predict_prob(0.642857142857143)
-         temperature:  <= 83  : class( Play)   num_elements(13)  predict_prob(0.692307692307692)
-             temperature:  <= 80  : class( Play)   num_elements(11)  predict_prob(0.636363636363636)
-                 temperature:  <= 75  : class( Play)   num_elements(10)  predict_prob(0.7)
-                     temperature:  <= 72  : class( Play)   num_elements(8)  predict_prob(0.625)
-                         humidity:  <= 95  : class( Play)   num_elements(7)  predict_prob(0.571428571428571)
-                             humidity:  <= 90  : class( Play)   num_elements(6)  predict_prob(0.666666666666667)
-                                 outlook:  = overcast  : class( Play)   num_elements(2)  predict_prob(1)
-                                 outlook:  = rain  : class( Do not Play)   num_elements(3)  predict_prob(0.666666666666667)
-                                     windy:  =  false  : class( Play)   num_elements(1)  predict_prob(1)
-                                     windy:  =  true  : class( Do not Play)   num_elements(2)  predict_prob(1)
-                                 outlook:  = sunny  : class( Play)   num_elements(1)  predict_prob(1)
-                             humidity:  > 90  : class( Do not Play)   num_elements(1)  predict_prob(1)
-                         humidity:  > 95  : class( Play)   num_elements(1)  predict_prob(1)
-                     temperature:  > 72  : class( Play)   num_elements(2)  predict_prob(1)
-                 temperature:  > 75  : class( Do not Play)   num_elements(1)  predict_prob(1)
-             temperature:  > 80  : class( Play)   num_elements(2)  predict_prob(1)
-         temperature:  > 83  : class( Do not Play)   num_elements(1)  predict_prob(1)');
-
-SELECT c45_test('crx_dt_test','gainratio','A2,A3,A8,A11,A14,A15',
-    'a16','crx_dt_test','crx_dt_test',10,'explicit',
-    'Tree 1
-    Root Node  : class(-)   num_elements(490)  predict_prob(0.557142857142857)
-         a9:  = f  : class(-)   num_elements(239)  predict_prob(0.933054393305439)
-             a15:  <= 5552  : class(-)   num_elements(238)  predict_prob(0.936974789915966)
-                 a2:  <= 69.5  : class(-)   num_elements(236)  predict_prob(0.940677966101695)
-                     a8:  <= 7  : class(-)   num_elements(233)  predict_prob(0.944206008583691)
-                         a14:  <= 480  : class(-)   num_elements(224)  predict_prob(0.950892857142857)
-                             a2:  <= 36.67  : class(-)   num_elements(186)  predict_prob(0.967741935483871)
-                                 a8:  <= 0.125  : class(-)   num_elements(70)  predict_prob(1)
-                                 a8:  > 0.125  : class(-)   num_elements(116)  predict_prob(0.948275862068966)
-                                     a3:  <= 0.83  : class(-)   num_elements(29)  predict_prob(0.862068965517241)
-                                         a3:  <= 0.75  : class(-)   num_elements(28)  predict_prob(0.892857142857143)
-                                             a2:  <= 33.58  : class(-)   num_elements(27)  predict_prob(0.925925925925926)
-                                             a2:  > 33.58  : class(+)   num_elements(1)  predict_prob(1)
-                                         a3:  > 0.75  : class(+)   num_elements(1)  predict_prob(1)
-                                     a3:  > 0.83  : class(-)   num_elements(87)  predict_prob(0.977011494252874)
-                             a2:  > 36.67  : class(-)   num_elements(38)  predict_prob(0.868421052631579)
-                                 a15:  <= 500  : class(-)   num_elements(37)  predict_prob(0.891891891891892)
-                                     a2:  <= 37.58  : class(+)   num_elements(5)  predict_prob(0.6)
-                                         a5:  = g  : class(-)   num_elements(2)  predict_prob(1)
-                                         a5:  = p  : class(+)   num_elements(2)  predict_prob(1)
-                                         a5:  = null  : class(+)   num_elements(1)  predict_prob(1)
-                                     a2:  > 37.58  : class(-)   num_elements(32)  predict_prob(0.96875)
-                                         a8:  <= 3.085  : class(-)   num_elements(27)  predict_prob(1)
-                                         a8:  > 3.085  : class(-)   num_elements(5)  predict_prob(0.8)
-                                             a15:  <= 0  : class(+)   num_elements(1)  predict_prob(1)
-                                             a15:  > 0  : class(-)   num_elements(4)  predict_prob(1)
-                                 a15:  > 500  : class(+)   num_elements(1)  predict_prob(1)
-                         a14:  > 480  : class(-)   num_elements(9)  predict_prob(0.777777777777778)
-                             a14:  <= 500  : class(+)   num_elements(1)  predict_prob(1)
-                             a14:  > 500  : class(-)   num_elements(8)  predict_prob(0.875)
-                                 a8:  <= 1.75  : class(-)   num_elements(7)  predict_prob(1)
-                                 a8:  > 1.75  : class(+)   num_elements(1)  predict_prob(1)
-                     a8:  > 7  : class(-)   num_elements(3)  predict_prob(0.666666666666667)
-                         a1:  = a  : class(+)   num_elements(1)  predict_prob(1)
-                         a1:  = b  : class(-)   num_elements(2)  predict_prob(1)
-                 a2:  > 69.5  : class(-)   num_elements(2)  predict_prob(0.5)
-                     a13:  = g  : class(-)   num_elements(1)  predict_prob(1)
-                     a13:  = p  : class(+)   num_elements(1)  predict_prob(1)
-             a15:  > 5552  : class(+)   num_elements(1)  predict_prob(1)
-         a9:  = t  : class(+)   num_elements(251)  predict_prob(0.800796812749004)
-             a2:  <= 14.17  : class(-)   num_elements(4)  predict_prob(1)
-             a2:  > 14.17  : class(+)   num_elements(247)  predict_prob(0.813765182186235)
-                 a14:  <= 583  : class(+)   num_elements(246)  predict_prob(0.817073170731707)
-                     a15:  <= 500  : class(+)   num_elements(166)  predict_prob(0.728915662650602)
-                         a14:  <= -1  : class(-)   num_elements(1)  predict_prob(1)
-                         a14:  > -1  : class(+)   num_elements(165)  predict_prob(0.733333333333333)
-                             a14:  <= 100  : class(+)   num_elements(72)  predict_prob(0.902777777777778)
-                                 a3:  <= 18.5  : class(+)   num_elements(69)  predict_prob(0.927536231884058)
-                                     a3:  <= 16  : class(+)   num_elements(67)  predict_prob(0.940298507462687)
-                                         a3:  <= 5  : class(+)   num_elements(30)  predict_prob(0.866666666666667)
-                                             a2:  <= 44  : class(+)   num_elements(29)  predict_prob(0.896551724137931)
-                                             a2:  > 44  : class(-)   num_elements(1)  predict_prob(1)
-                                         a3:  > 5  : class(+)   num_elements(37)  predict_prob(1)
-                                     a3:  > 16  : class(-)   num_elements(2)  predict_prob(0.5)
-                                         a12:  = f  : class(-)   num_elements(1)  predict_prob(1)
-                                         a12:  = t  : class(+)   num_elements(1)  predict_prob(1)
-                                 a3:  > 18.5  : class(-)   num_elements(3)  predict_prob(0.666666666666667)
-                                     a7:  = ff  : class(-)   num_elements(2)  predict_prob(1)
-                                     a7:  = v  : class(+)   num_elements(1)  predict_prob(1)
-                             a14:  > 100  : class(+)   num_elements(93)  predict_prob(0.602150537634409)
-                                 a8:  <= 10  : class(+)   num_elements(91)  predict_prob(0.615384615384615)
-                                     a2:  <= 59.67  : class(+)   num_elements(89)  predict_prob(0.629213483146067)
-                                         a2:  <= 16.25  : class(-)   num_elements(1)  predict_prob(1)
-                                         a2:  > 16.25  : class(+)   num_elements(88)  predict_prob(0.636363636363636)
-                                             a2:  <= 23  : class(-)   num_elements(12)  predict_prob(0.75)
-                                             a2:  > 23  : class(+)   num_elements(76)  predict_prob(0.697368421052632)
-                                     a2:  > 59.67  : class(-)   num_elements(2)  predict_prob(1)
-                                 a8:  > 10  : class(-)   num_elements(2)  predict_prob(1)
-                     a15:  > 500  : class(+)   num_elements(80)  predict_prob(1)
-                 a14:  > 583  : class(-)   num_elements(1)  predict_prob(1)');
-
-SELECT c45_test('crx_dt_test','infogain','A2,A3,A8,A11,A14,A15',
-    'a16','crx_dt_test','crx_dt_test',10,'explicit',
-    'Tree 1
-    Root Node  : class(-)   num_elements(490)  predict_prob(0.557142857142857)
-         a9:  = f  : class(-)   num_elements(239)  predict_prob(0.933054393305439)
-             a6:  = aa  : class(-)   num_elements(14)  predict_prob(1)
-             a6:  = c  : class(-)   num_elements(48)  predict_prob(0.9375)
-                 a3:  <= 0.83  : class(-)   num_elements(16)  predict_prob(0.8125)
-                     a2:  <= 21.92  : class(-)   num_elements(8)  predict_prob(1)
-                     a2:  > 21.92  : class(-)   num_elements(8)  predict_prob(0.625)
-                         a10:  = f  : class(-)   num_elements(6)  predict_prob(0.5)
-                             a14:  <= 128  : class(+)   num_elements(2)  predict_prob(1)
-                             a14:  > 128  : class(-)   num_elements(4)  predict_prob(0.75)
-                                 a3:  <= 0.125  : class(+)   num_elements(1)  predict_prob(1)
-                                 a3:  > 0.125  : class(-)   num_elements(3)  predict_prob(1)
-                         a10:  = t  : class(-)   num_elements(2)  predict_prob(1)
-                 a3:  > 0.83  : class(-)   num_elements(32)  predict_prob(1)
-             a6:  = cc  : class(-)   num_elements(7)  predict_prob(0.714285714285714)
-                 a1:  = a  : class(+)   num_elements(2)  predict_prob(1)
-                 a1:  = b  : class(-)   num_elements(5)  predict_prob(1)
-             a6:  = d  : class(-)   num_elements(15)  predict_prob(0.933333333333333)
-                 a5:  = g  : class(-)   num_elements(14)  predict_prob(1)
-                 a5:  = p  : class(+)   num_elements(1)  predict_prob(1)
-             a6:  = e  : class(-)   num_elements(7)  predict_prob(1)
-             a6:  = ff  : class(-)   num_elements(33)  predict_prob(0.96969696969697)
-                 a13:  = g  : class(-)   num_elements(30)  predict_prob(1)
-                 a13:  = p  : class(+)   num_elements(1)  predict_prob(1)
-                 a13:  = s  : class(-)   num_elements(2)  predict_prob(1)
-             a6:  = i  : class(-)   num_elements(31)  predict_prob(0.967741935483871)
-                 a2:  <= 40.83  : class(-)   num_elements(27)  predict_prob(1)
-                 a2:  > 40.83  : class(-)   num_elements(4)  predict_prob(0.75)
-                     a14:  <= 141  : class(-)   num_elements(3)  predict_prob(1)
-                     a14:  > 141  : class(+)   num_elements(1)  predict_prob(1)
-             a6:  = j  : class(-)   num_elements(6)  predict_prob(1)
-             a6:  = k  : class(-)   num_elements(23)  predict_prob(0.956521739130435)
-                 a15:  <= 2100  : class(-)   num_elements(22)  predict_prob(1)
-                 a15:  > 2100  : class(+)   num_elements(1)  predict_prob(1)
-             a6:  = m  : class(-)   num_elements(12)  predict_prob(0.916666666666667)
-                 a7:  = bb  : class(+)   num_elements(1)  predict_prob(1)
-                 a7:  = v  : class(-)   num_elements(11)  predict_prob(1)
-             a6:  = q  : class(-)   num_elements(12)  predict_prob(0.916666666666667)
-                 a7:  = h  : class(-)   num_elements(3)  predict_prob(1)
-                 a7:  = n  : class(+)   num_elements(1)  predict_prob(1)
-                 a7:  = v  : class(-)   num_elements(8)  predict_prob(1)
-             a6:  = r  : class(-)   num_elements(1)  predict_prob(1)
-             a6:  = w  : class(-)   num_elements(20)  predict_prob(0.95)
-                 a2:  <= 21.25  : class(-)   num_elements(4)  predict_prob(0.75)
-                     a10:  = f  : class(+)   num_elements(1)  predict_prob(1)
-                     a10:  = t  : class(-)   num_elements(3)  predict_prob(1)
-                 a2:  > 21.25  : class(-)   num_elements(16)  predict_prob(1)
-             a6:  = x  : class(-)   num_elements(5)  predict_prob(0.6)
-                 a15:  <= 0  : class(+)   num_elements(2)  predict_prob(1)
-                 a15:  > 0  : class(-)   num_elements(3)  predict_prob(1)
-             a6:  = null  : class(-)   num_elements(5)  predict_prob(0.6)
-                 a2:  <= 34.58  : class(-)   num_elements(3)  predict_prob(1)
-                 a2:  > 34.58  : class(+)   num_elements(2)  predict_prob(1)
-         a9:  = t  : class(+)   num_elements(251)  predict_prob(0.800796812749004)
-             a15:  <= 225  : class(+)   num_elements(145)  predict_prob(0.668965517241379)
-                 a6:  = aa  : class(+)   num_elements(17)  predict_prob(0.529411764705882)
-                     a3:  <= 6.5  : class(-)   num_elements(9)  predict_prob(0.777777777777778)
-                         a14:  <= 200  : class(-)   num_elements(5)  predict_prob(1)
-                         a14:  > 200  : class(-)   num_elements(4)  predict_prob(0.5)
-                             a3:  <= 3.5  : class(+)   num_elements(2)  predict_prob(1)
-                             a3:  > 3.5  : class(-)   num_elements(2)  predict_prob(1)
-                     a3:  > 6.5  : class(+)   num_elements(8)  predict_prob(0.875)
-                         a5:  = g  : class(+)   num_elements(7)  predict_prob(1)
-                         a5:  = p  : class(-)   num_elements(1)  predict_prob(1)
-                 a6:  = c  : class(+)   num_elements(23)  predict_prob(0.521739130434783)
-                     a11:  <= 5  : class(-)   num_elements(20)  predict_prob(0.55)
-                         a2:  <= 29.92  : class(+)   num_elements(13)  predict_prob(0.615384615384615)
-                             a8:  <= 1.5  : class(-)   num_elements(9)  predict_prob(0.555555555555556)
-                                 a15:  <= 0  : class(+)   num_elements(6)  predict_prob(0.666666666666667)
-                                     a2:  <= 21.5  : class(-)   num_elements(3)  predict_prob(0.666666666666667)
-                                         a10:  = f  : class(-)   num_elements(2)  predict_prob(1)
-                                         a10:  = t  : class(+)   num_elements(1)  predict_prob(1)
-                                     a2:  > 21.5  : class(+)   num_elements(3)  predict_prob(1)
-                                 a15:  > 0  : class(-)   num_elements(3)  predict_prob(1)
-                             a8:  > 1.5  : class(+)   num_elements(4)  predict_prob(1)
-                         a2:  > 29.92  : class(-)   num_elements(7)  predict_prob(0.857142857142857)
-                             a14:  <= 0  : class(+)   num_elements(1)  predict_prob(1)
-                             a14:  > 0  : class(-)   num_elements(6)  predict_prob(1)
-                     a11:  > 5  : class(+)   num_elements(3)  predict_prob(1)
-                 a6:  = cc  : class(+)   num_elements(13)  predict_prob(0.923076923076923)
-                     a14:  <= 440  : class(+)   num_elements(12)  predict_prob(1)
-                     a14:  > 440  : class(-)   num_elements(1)  predict_prob(1)
-                 a6:  = d  : class(-)   num_elements(6)  predict_prob(0.5)
-                     a14:  <= 100  : class(+)   num_elements(4)  predict_prob(0.75)
-                         a14:  <= -1  : class(-)   num_elements(1)  predict_prob(1)
-                         a14:  > -1  : class(+)   num_elements(3)  predict_prob(1)
-                     a14:  > 100  : class(-)   num_elements(2)  predict_prob(1)
-                 a6:  = e  : class(+)   num_elements(7)  predict_prob(0.714285714285714)
-                     a7:  = bb  : class(-)   num_elements(1)  predict_prob(1)
-                     a7:  = h  : class(+)   num_elements(2)  predict_prob(1)
-                     a7:  = v  : class(+)   num_elements(1)  predict_prob(1)
-                     a7:  = z  : class(+)   num_elements(3)  predict_prob(0.666666666666667)
-                         a12:  = f  : class(-)   num_elements(1)  predict_prob(1)
-                         a12:  = t  : class(+)   num_elements(2)  predict_prob(1)
-                 a6:  = ff  : class(-)   num_elements(3)  predict_prob(1)
-                 a6:  = i  : class(+)   num_elements(8)  predict_prob(0.75)
-                     a3:  <= 2.335  : class(+)   num_elements(4)  predict_prob(1)
-                     a3:  > 2.335  : class(-)   num_elements(4)  predict_prob(0.5)
-                         a11:  <= 2  : class(-)   num_elements(2)  predict_prob(1)
-                         a11:  > 2  : class(+)   num_elements(2)  predict_prob(1)
-                 a6:  = j  : class(-)   num_elements(2)  predict_prob(0.5)
-                     a10:  = f  : class(-)   num_elements(1)  predict_prob(1)
-                     a10:  = t  : class(+)   num_elements(1)  predict_prob(1)
-                 a6:  = k  : class(+)   num_elements(9)  predict_prob(0.555555555555556)
-                     a3:  <= 1.165  : class(-)   num_elements(3)  predict_prob(1)
-                     a3:  > 1.165  : class(+)   num_elements(6)  predict_prob(0.833333333333333)
-                         a15:  <= 0  : class(+)   num_elements(5)  predict_prob(1)
-                         a15:  > 0  : class(-)   num_elements(1)  predict_prob(1)
-                 a6:  = m  : class(+)   num_elements(11)  predict_prob(0.545454545454545)
-                     a13:  = g  : class(+)   num_elements(6)  predict_prob(1)
-                     a13:  = s  : class(-)   num_elements(5)  predict_prob(1)
-                 a6:  = q  : class(+)   num_elements(24)  predict_prob(0.791666666666667)
-                     a2:  <= 37.75  : class(+)   num_elements(16)  predict_prob(0.6875)
-                         a14:  <= 120  : class(+)   num_elements(9)  predict_prob(0.888888888888889)
-                             a2:  <= 18.67  : class(-)   num_elements(1)  predict_prob(1)
-                             a2:  > 18.67  : class(+)   num_elements(8)  predict_prob(1)
-                         a14:  > 120  : class(-)   num_elements(7)  predict_prob(0.571428571428571)
-                             a2:  <= 25.42  : class(-)   num_elements(3)  predict_prob(1)
-                             a2:  > 25.42  : class(+)   num_elements(4)  predict_prob(0.75)
-                                 a11:  <= 6  : class(+)   num_elements(3)  predict_prob(1)
-                                 a11:  > 6  : class(-)   num_elements(1)  predict_prob(1)
-                     a2:  > 37.75  : class(+)   num_elements(8)  predict_prob(1)
-                 a6:  = w  : class(+)   num_elements(13)  predict_prob(0.846153846153846)
-                     a14:  <= 240  : class(+)   num_elements(9)  predict_prob(1)
-                     a14:  > 240  : class(-)   num_elements(4)  predict_prob(0.5)
-                         a13:  = g  : class(-)   num_elements(3)  predict_prob(0.666666666666667)
-                             a15:  <= 0  : class(-)   num_elements(2)  predict_prob(1)
-                             a15:  > 0  : class(+)   num_elements(1)  predict_prob(1)
-                         a13:  = s  : class(+)   num_elements(1)  predict_prob(1)
-                 a6:  = x  : class(+)   num_elements(9)  predict_prob(0.888888888888889)
-                     a10:  = f  : class(-)   num_elements(1)  predict_prob(1)
-                     a10:  = t  : class(+)   num_elements(8)  predict_prob(1)
-             a15:  > 225  : class(+)   num_elements(106)  predict_prob(0.981132075471698)
-                 a8:  <= 1  : class(+)   num_elements(25)  predict_prob(0.92)
-                     a6:  = aa  : class(+)   num_elements(1)  predict_prob(1)
-                     a6:  = c  : class(-)   num_elements(2)  predict_prob(0.5)
-                         a10:  = f  : class(-)   num_elements(1)  predict_prob(1)
-                         a10:  = t  : class(+)   num_elements(1)  predict_prob(1)
-                     a6:  = cc  : class(+)   num_elements(4)  predict_prob(1)
-                     a6:  = e  : class(+)   num_elements(1)  predict_prob(1)
-                     a6:  = j  : class(+)   num_elements(1)  predict_prob(1)
-                     a6:  = k  : class(+)   num_elements(1)  predict_prob(1)
-                     a6:  = m  : class(+)   num_elements(2)  predict_prob(1)
-                     a6:  = q  : class(+)   num_elements(5)  predict_prob(0.8)
-                         a3:  <= 1  : class(-)   num_elements(1)  predict_prob(1)
-                         a3:  > 1  : class(+)   num_elements(4)  predict_prob(1)
-                     a6:  = w  : class(+)   num_elements(4)  predict_prob(1)
-                     a6:  = x  : class(+)   num_elements(4)  predict_prob(1)
-                 a8:  > 1  : class(+)   num_elements(81)  predict_prob(1)');
+SELECT rf_test('crx_dt_test','infogain','A2,A3,A8,A11,A14,A15',
+    'a16','crx_dt_test',10,'explicit',5);

@@ -801,7 +801,7 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
         for sqlfile in sql_files:
             algoname = os.path.basename(sqlfile).split('.')[0]
             if (hawq_debug or hawq_fresh) and algoname in \
-                    ('svec'):
+                    ('svec', 'rf'):
                 continue
 
             if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
@@ -1199,7 +1199,7 @@ def main(argv):
             return
 
         # FIXME: Change this to get the previous version from a config file
-        if float(dbrev) < 1.0:
+        if float('.'.join(dbrev.split('.')[0:2])) < 1.0:
             __info("""The version gap is too large, upgrade is supported only for
                    packages greater than or equal to v1.0.""", True)
             return
@@ -1293,7 +1293,7 @@ def main(argv):
             for sqlfile in sorted(glob.glob(sql_files), reverse=True):
                 # work-around for HAWQ
                 algoname = os.path.basename(sqlfile).split('.')[0]
-                if portid == 'hawq' and algoname in ():
+                if portid == 'hawq' and algoname in ('rf_test'):
                     # Spit the line
                     print("TEST CASE RESULT|Module: " + module +
                           "|" + os.path.basename(sqlfile) +

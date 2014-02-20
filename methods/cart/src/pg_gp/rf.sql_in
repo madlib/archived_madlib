@@ -9,22 +9,6 @@
 
 m4_include(`SQLCommon.m4')
 
-/* Own macro definitions */
-m4_ifelse(
-    m4_eval(
-        m4_ifdef(`__GREENPLUM__', 1, 0) &&
-        __DBMS_VERSION_MAJOR__ * 100 + __DBMS_VERSION_MINOR__ < 401
-    ), 1,
-    `m4_define(`__GREENPLUM_PRE_4_1__')'
-)
-m4_ifelse(
-    m4_eval(
-        m4_ifdef(`__POSTGRESQL__', 1, 0) &&
-        __DBMS_VERSION_MAJOR__ < 9
-    ), 1,
-    `m4_define(`__POSTGRESQL_PRE_9_0__')'
-)
-
 /**
 @addtogroup grp_rf
 
@@ -252,25 +236,23 @@ Result:
 
 -# Train the random forest.
 <pre class="example">
-SELECT * FROM madlib.rf_clean( 'trained_tree_infogain'
-                             );
-SELECT * FROM madlib.rf_train( 'infogain',
-                               'golf_data',
-                               'trained_tree_infogain',
-                               10,
-                               NULL,
-                               0.632,
-                               'temperature,humidity',
-                               'outlook,temperature,humidity,windy',
-                               'id',
-                               'class',
-                               'explicit',
-                               10,
-                               0.0,
-                               0.0,
-                               0,
-                               0
-                             );
+SELECT * FROM madlib.rf_clean('trained_tree_infogain');
+SELECT * FROM madlib.rf_train(
+    'infogain',
+    'golf_data',
+    'trained_tree_infogain',
+    10,
+    NULL,
+    0.632,
+    'temperature,humidity',
+    'outlook,temperature,humidity,windy',
+    'id',
+    'class',
+    'explicit',
+    10,
+    0.0,
+    0.0,
+    0);
 </pre>
 Result:
 <pre class="result">
@@ -487,7 +469,7 @@ Result:
 -# Score the data against a validation set.
 <pre class="example">
 SELECT * FROM madlib.rf_score( 'trained_tree_infogain',
-                               'golf_data_validation',
+                               'golf_data',
                                0
                              );
 </pre>
@@ -537,7 +519,7 @@ File rf.sql_in documenting the SQL functions.
  * split_criterion    The split criterion used to train the RF.
  *
  */
-DROP TYPE IF EXISTS MADLIB_SCHEMA.rf_train_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.rf_train_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.rf_train_result AS
 (
     training_time            INTERVAL,
@@ -558,7 +540,7 @@ CREATE TYPE MADLIB_SCHEMA.rf_train_result AS
  * classification_time    The time consumed during classification.
  *
  */
-DROP TYPE IF EXISTS MADLIB_SCHEMA.rf_classify_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.rf_classify_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.rf_classify_result AS
     (
     input_set_size        BIGINT,
@@ -666,7 +648,15 @@ DECLARE
     features_per_node_tmp           INT;
     curstmt                         TEXT;
     enc_info                        TEXT[];
+    old_optimizer                   TEXT;
 BEGIN
+    m4_changequote(`<!', `!>')
+    m4_ifdef(<!__HAWQ__!>, <!
+    EXECUTE 'SHOW optimizer' into old_optimizer;
+    EXECUTE 'SET optimizer = off';
+    !>)
+    m4_changequote(<!`!>, <!'!>)
+
     begin_func_exec = clock_timestamp();
 
     IF (verbosity < 1) THEN
@@ -738,6 +728,13 @@ BEGIN
     ret.num_tree_nodes          = train_rs.num_tree_nodes;
     ret.max_tree_depth          = train_rs.max_tree_depth;
     ret.split_criterion         = split_criterion;
+
+    m4_changequote(`<!', `!>')
+    m4_ifdef(<!__HAWQ__!>, <!
+    EXECUTE 'SET optimizer = '|| old_optimizer;
+    !>)
+    m4_changequote(<!`!>, <!'!>)
+
     RETURN ret;
 END
 $$ LANGUAGE PLPGSQL
@@ -747,7 +744,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 /**
  * @brief This API (short form) is defined for training a random forest.
  *        For convenience, a short form of the training API with three parameters is
- *		  also defined. This one needs only the split criterion name, the name of the
+ *        also defined. This one needs only the split criterion name, the name of the
  *        table where training data is kept, and the name of the table where the
  *        trained RF should be kept. All other parameters in the full form will take
  *        their default values.
@@ -859,9 +856,9 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-				max_depth IS NULL OR
-				max_depth > 0,
-				'the max tree depth must be NULL or greater than 0'
+                max_depth IS NULL OR
+                max_depth > 0,
+                'the max tree depth must be NULL or greater than 0'
             );
 
     -- IF tree_id is null, display all these trees
@@ -870,41 +867,41 @@ BEGIN
             tids = array_append(tids, tid);
         END LOOP;
     ELSE
-		tids = tree_id;
-		EXECUTE 'SELECT max(tid) FROM '||rf_table_name INTO max_tid;
+        tids = tree_id;
+        EXECUTE 'SELECT max(tid) FROM '||rf_table_name INTO max_tid;
 
-		FOR i IN 1..array_upper(tids, 1) LOOP
-			tid = tids[i];
-			PERFORM MADLIB_SCHEMA.__assert
-					(
-						tid IS NOT NULL AND
-						tid > 0			AND
-						tid <= max_tid,
-						'the ID of the tree in the array must be in range [1, ' ||
-						max_tid 												||
-						']'
-					);
-		END LOOP;
-	END IF;
+        FOR i IN 1..array_upper(tids, 1) LOOP
+            tid = tids[i];
+            PERFORM MADLIB_SCHEMA.__assert
+                    (
+                        tid IS NOT NULL AND
+                        tid > 0			AND
+                        tid <= max_tid,
+                        'the ID of the tree in the array must be in range [1, ' ||
+                        max_tid                                                 ||
+                        ']'
+                    );
+        END LOOP;
+    END IF;
 
     FOR str IN SELECT * FROM
-m4_changequote(`>>>', `<<<')
-m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
+m4_changequote(`<!', `!>')
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>, <!
          MADLIB_SCHEMA.__treemodel_display_with_ordered_aggr
          (
             rf_table_name,
             tids,
             max_depth
          ) LOOP
-<<<, >>>
+!>, <!
          MADLIB_SCHEMA.__treemodel_display_no_ordered_aggr
          (
             rf_table_name,
             tids,
             max_depth
          ) LOOP
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+!>)
+m4_changequote(<!`!>, <!'!>)
         RETURN NEXT str;
     END LOOP;
     RETURN;
@@ -1024,8 +1021,8 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
             (
-				is_serial_classification IS NOT NULL,
-				'is_serial_classification must not be null'
+                is_serial_classification IS NOT NULL,
+                'is_serial_classification must not be null'
             );
 
     PERFORM MADLIB_SCHEMA.__assert
@@ -1042,21 +1039,21 @@ BEGIN
 
     IF (is_serial_classification) THEN
         table_names = MADLIB_SCHEMA.__treemodel_classify_internal_serial
-            			(
-            				classification_table_name,
-            				rf_table_name,
-							verbosity
-						);
+                        (
+                            classification_table_name,
+                            rf_table_name,
+                            verbosity
+                        );
     ELSE
         table_names = MADLIB_SCHEMA.__treemodel_classify_internal
-            			(
-            				classification_table_name,
-            				rf_table_name,
-							verbosity
-						);
+                        (
+                            classification_table_name,
+                            rf_table_name,
+                            verbosity
+                        );
     END IF;
 
-	encoded_table_name= table_names[1];
+    encoded_table_name= table_names[1];
     temp_result_table = table_names[2];
     vote_result_table = temp_result_table||'_vote';
 
@@ -1066,13 +1063,13 @@ BEGIN
         vote_result_table
         );
 
-    metatable_name = MADLIB_SCHEMA.__get_metatable_name( rf_table_name );
+    metatable_name = rf_table_name || '_di';
 
     SELECT MADLIB_SCHEMA.__format
         (
             'SELECT
                 column_name,
-                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name
+                table_name
              FROM %
              WHERE column_type=''c'' LIMIT 1',
             ARRAY[
@@ -1086,7 +1083,7 @@ BEGIN
     EXECUTE 'CREATE TABLE '||result_table_name||' AS SELECT n.id,
              m.fval as class,n.prob from '||vote_result_table||
         ' n,'||result_rec.table_name||' m where n.class=m.code
-        m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');';
+        m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)');';
 
     EXECUTE 'DROP TABLE IF EXISTS ' || encoded_table_name || ';';
     EXECUTE 'DROP TABLE IF EXISTS ' || temp_result_table || ';';
@@ -1127,14 +1124,14 @@ RETURNS MADLIB_SCHEMA.rf_classify_result AS $$
 DECLARE
     ret MADLIB_SCHEMA.rf_classify_result;
 BEGIN
-	ret = MADLIB_SCHEMA.rf_classify
-	          (
-	          rf_table_name,
-	          classification_table_name,
-	          result_table_name,
+    ret = MADLIB_SCHEMA.rf_classify
+              (
+              rf_table_name,
+              classification_table_name,
+              result_table_name,
               'f',
-	          verbosity
-	          );
+              verbosity
+              );
 
     RETURN ret;
 END $$ LANGUAGE PLPGSQL
@@ -1165,14 +1162,14 @@ RETURNS MADLIB_SCHEMA.rf_classify_result AS $$
 DECLARE
     ret MADLIB_SCHEMA.rf_classify_result;
 BEGIN
-	ret = MADLIB_SCHEMA.rf_classify
-	          (
-	          rf_table_name,
-	          classification_table_name,
-	          result_table_name,
+    ret = MADLIB_SCHEMA.rf_classify
+              (
+              rf_table_name,
+              classification_table_name,
+              result_table_name,
               'f',
-	          0
-	          );
+              0
+              );
 
     RETURN ret;
 END $$ LANGUAGE PLPGSQL
@@ -1249,8 +1246,13 @@ RETURNS BOOLEAN AS $$
 DECLARE
     result BOOLEAN;
 BEGIN
-    result = MADLIB_SCHEMA.__treemodel_clean(rf_table_name);
-    RETURN result;
+    EXECUTE 'DROP TABLE IF EXISTS ' || rf_table_name || '_di';
+    EXECUTE 'DROP TABLE IF EXISTS ' || rf_table_name || '_ed';
+    EXECUTE 'DROP TABLE IF EXISTS ' || rf_table_name || '_ed_col';
+    EXECUTE 'DROP TABLE IF EXISTS ' || rf_table_name || '_ed_class';
+    EXECUTE 'DROP TABLE IF EXISTS ' || rf_table_name || '_summary';
+    EXECUTE 'DROP TABLE IF EXISTS ' || rf_table_name;
+    RETURN TRUE;
 END
 $$ LANGUAGE PLPGSQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

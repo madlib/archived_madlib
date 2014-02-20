@@ -13,20 +13,7 @@
 m4_include(`SQLCommon.m4')
 
 /* Own macro definitions */
-m4_ifelse(
-    m4_eval(
-        m4_ifdef(`__GREENPLUM__', 1, 0) &&
-        __DBMS_VERSION_MAJOR__ * 100 + __DBMS_VERSION_MINOR__ < 401
-    ), 1,
-    `m4_define(`__GREENPLUM_PRE_4_1__')'
-)
-m4_ifelse(
-    m4_eval(
-        m4_ifdef(`__POSTGRESQL__', 1, 0) &&
-        __DBMS_VERSION_MAJOR__ < 9
-    ), 1,
-    `m4_define(`__POSTGRESQL_PRE_9_0__')'
-)
+
 m4_ifelse(
     m4_eval(
         m4_ifdef(`__GREENPLUM__', 1, 0) &&
@@ -284,7 +271,15 @@ DECLARE
     stmt            TEXT;
     all_columns     TEXT := '';
     index           INT;
+    old_optimizer   TEXT;
 BEGIN
+    m4_changequote(`<!', `!>')
+    m4_ifdef(<!__HAWQ__!>, <!
+    EXECUTE 'SHOW optimizer' into old_optimizer;
+    EXECUTE 'SET optimizer = off';
+    !>)
+    m4_changequote(<!`!>, <!'!>)
+
     -- find the first (LIMIT 1) unsupported data type if the input table has.
     stmt= 'SELECT atttypid
     FROM pg_attribute
@@ -374,6 +369,12 @@ BEGIN
                     'The training table ' || full_table_name || ' must not have duplicated id'
                 );
 
+    m4_changequote(`<!', `!>')
+    m4_ifdef(<!__HAWQ__!>, <!
+    EXECUTE 'SET optimizer = '|| old_optimizer;
+    !>)
+    m4_changequote(<!`!>, <!'!>)
+
     RETURN;
 END
 $$ LANGUAGE PLPGSQL
@@ -406,8 +407,8 @@ BEGIN
 
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT MADLIB_SCHEMA.__regclass_to_text
-                (table_oid) as table_name
+            'SELECT
+                table_name
              FROM %
              WHERE column_type = ''c''',
             ARRAY[
@@ -448,14 +449,14 @@ BEGIN
     -- get the Key-Value tables
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT MADLIB_SCHEMA.__regclass_to_text
-                (table_oid) as table_name
+            'SELECT
+                table_name
              FROM
                 (
-                SELECT table_oid
+                SELECT table_name
                 FROM %
                 WHERE table_oid IS NOT NULL
-                GROUP BY table_oid
+                GROUP BY table_name
                 ) t',
              ARRAY[
                  meta_tbl_name
@@ -511,8 +512,9 @@ BEGIN
              column_type    TEXT,
              is_cont        BOOL,
              table_oid      OID,
+             table_name     TEXT,
              num_dist_value INT
-             ) m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)')',
+             ) m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)')',
             meta_tbl_name
         );
     EXECUTE curstmt;
@@ -564,7 +566,7 @@ BEGIN
     curstmt = MADLIB_SCHEMA.__format
         (
             'INSERT INTO % VALUES
-                (%, ''%'', ''%'', ''%'', %::regclass, %);',
+                (%, ''%'', ''%'', ''%'', %::regclass, %, %);',
             ARRAY[
                 meta_tbl_name,
                 col_index::TEXT,
@@ -572,6 +574,7 @@ BEGIN
                 column_type,
                 MADLIB_SCHEMA.__to_char(is_cont),
                 tbl_txt,
+                tbl_txt::TEXT,
                 num_dist_value::TEXT
             ]
         );
@@ -711,7 +714,7 @@ DECLARE
 BEGIN
     curstmt = MADLIB_SCHEMA.__format
         (
-            'SELECT MADLIB_SCHEMA.__regclass_to_text(table_oid)
+            'SELECT table_name
              FROM %
              WHERE column_type=''c''',
             meta_tbl_name
@@ -814,8 +817,7 @@ BEGIN
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT
-                 ARRAY[column_name,
-                       MADLIB_SCHEMA.__regclass_to_text(table_oid)]
+                 ARRAY[column_name, table_name]
              FROM %
              %',
             meta_tbl_name,
@@ -1045,8 +1047,8 @@ BEGIN
 
     EXECUTE 'DROP TABLE IF EXISTS ' || breakup_tbl_name;
 
-m4_changequote(`>>>', `<<<')
-m4_ifdef(>>>__GREENPLUM_GE_4_2_1__<<<, >>>
+m4_changequote(`<!', `!>')
+m4_ifdef(<!__GREENPLUM_GE_4_2_1__!>, <!
     -- if the DB is GPDB and its version is greater than or equal
     -- to 4.2, then we will use RLE compression for the encoded table.
     curstmt = MADLIB_SCHEMA.__format
@@ -1065,7 +1067,7 @@ m4_ifdef(>>>__GREENPLUM_GE_4_2_1__<<<, >>>
                 breakup_tbl_name
             ]
         );
-<<<, >>>
+!>, <!
     curstmt = MADLIB_SCHEMA.__format
         (
             'CREATE TEMP TABLE %
@@ -1076,13 +1078,13 @@ m4_ifdef(>>>__GREENPLUM_GE_4_2_1__<<<, >>>
              is_cont BOOL,
              class   INT
              )
-            m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)')',
+            m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!DISTRIBUTED BY (id)!>)',
             ARRAY[
                 breakup_tbl_name
             ]
         );
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+!>)
+m4_changequote(<!`!>, <!'!>)
 
     EXECUTE curstmt;
 
@@ -1213,8 +1215,8 @@ BEGIN
 
     EXECUTE 'DROP TABLE IF EXISTS ' || enc_tbl_name;
 
-m4_changequote(`>>>', `<<<')
-m4_ifdef(>>>__GREENPLUM_GE_4_2_1__<<<, >>>
+m4_changequote(`<!', `!>')
+m4_ifdef(<!__GREENPLUM_GE_4_2_1__!>, <!
     curstmt = MADLIB_SCHEMA.__format
         (
             'CREATE % TABLE %
@@ -1232,7 +1234,7 @@ m4_ifdef(>>>__GREENPLUM_GE_4_2_1__<<<, >>>
                 enc_tbl_name
             ]
         );
-<<<, >>>
+!>, <!
     curstmt = MADLIB_SCHEMA.__format
         (
             'CREATE % TABLE %
@@ -1243,14 +1245,14 @@ m4_ifdef(>>>__GREENPLUM_GE_4_2_1__<<<, >>>
              is_cont BOOL,
              class   INT
              )
-            m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)')',
+            m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!DISTRIBUTED BY (id)!>)',
             ARRAY[
                 tmp_txt,
                 enc_tbl_name
             ]
         );
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+!>)
+m4_changequote(<!`!>, <!'!>)
 
     IF (verbosity > 0) THEN
         RAISE INFO '%', curstmt;
@@ -1324,7 +1326,7 @@ BEGIN
                  min(class)::INT as class
              FROM %
              GROUP BY id
-             m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)')',
+             m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)')',
             ARRAY[
                 hor_tbl_name,
                 attr_count::TEXT,
@@ -1372,7 +1374,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__encode_columns
 RETURNS VOID AS $$
 DECLARE
     curstmt             TEXT;
-    tmp_txt	        	TEXT = '';
+    tmp_txt             TEXT = '';
 BEGIN
 
     -- This table will be used to generate the KV table
@@ -1381,44 +1383,44 @@ BEGIN
     -- function. Therefore, don't drop this table in this
     -- function.
     EXECUTE 'DROP TABLE IF EXISTS tmp_dist_table';
-	curstmt = MADLIB_SCHEMA.__format
-		(
-			'CREATE TEMP TABLE tmp_dist_table AS
-			 SELECT fid, fval, is_cont
-			 FROM %
-			 GROUP BY fid, fval, is_cont',
-			ARRAY[
-				breakup_tbl_name
-			]
-		);
+    curstmt = MADLIB_SCHEMA.__format
+        (
+            'CREATE TEMP TABLE tmp_dist_table AS
+             SELECT fid, fval, is_cont
+             FROM %
+             GROUP BY fid, fval, is_cont',
+            ARRAY[
+                breakup_tbl_name
+            ]
+        );
     IF (verbosity > 0) THEN
         RAISE INFO '%', curstmt;
     END IF;
 
-	EXECUTE curstmt;
+    EXECUTE curstmt;
 
     -- create the KV table for all the features and
     -- populate the keys of the discrete features
     -- to the table.
     EXECUTE 'DROP TABLE IF EXISTS ' || kv_attr_name;
-	curstmt = MADLIB_SCHEMA.__format
-		(
-			'CREATE TABLE %(fid, fval, code) AS
-		     SELECT
-				fid,
-				fval,
-				(rank() OVER (PARTITION BY fid ORDER BY fval))::FLOAT8 AS code
-			 FROM tmp_dist_table
-			 WHERE (NOT is_cont)
-			 m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (fid, fval)')',
-			ARRAY[
-				kv_attr_name
-			]
-		);
+    curstmt = MADLIB_SCHEMA.__format
+        (
+            'CREATE TABLE %(fid, fval, code) AS
+             SELECT
+                fid,
+                fval,
+                (rank() OVER (PARTITION BY fid ORDER BY fval))::FLOAT8 AS code
+             FROM tmp_dist_table
+             WHERE (NOT is_cont)
+             m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (fid, fval)')',
+            ARRAY[
+                kv_attr_name
+            ]
+        );
     IF (verbosity > 0) THEN
         RAISE INFO '%', curstmt;
     END IF;
-	EXECUTE curstmt;
+    EXECUTE curstmt;
 
     -- In "explicit" mode, we need to replace the missing
     -- value with the average value. Therefore, we keep
@@ -1508,8 +1510,8 @@ BEGIN
 
     -- retrieve all the features' names
     IF (feature_names IS NULL) THEN
-m4_changequote(`>>>', `<<<')
-m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
+m4_changequote(`<!', `!>')
+m4_ifdef(`__HAS_ORDERED_AGGREGATES__', <!
         curstmt = MADLIB_SCHEMA.__format
             (
                 'SELECT array_agg(quote_ident(attname) ORDER BY attname) as attnames
@@ -1526,7 +1528,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
             );
 
         EXECUTE curstmt INTO attr_col_names;
-<<<, >>>
+!>, <!
         curstmt = MADLIB_SCHEMA.__format
             (
                 'SELECT ARRAY
@@ -1547,8 +1549,8 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
                 ]
             );
         EXECUTE curstmt INTO attr_col_names;
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+!>)
+m4_changequote(<!`!>, <!'!>)
     ELSE
         attr_col_names = MADLIB_SCHEMA.__array_sort(feature_names);
     END IF;
@@ -1572,7 +1574,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                         (
                             SELECT % FROM % GROUP BY %
                         ) t
-                 m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (fval)')',
+                 m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (fval)')',
                 ARRAY[
                     kv_cls_name,
                     cls_col_name,
@@ -1645,6 +1647,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                     ''f'' as column_type,
                     is_cont,
                     ''%''::regclass::OID,
+                    ''%'',
                 count(fid) as num_dist_value
              FROM % t
              GROUP BY fid, is_cont',
@@ -1652,6 +1655,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
                 meta_tbl_name,
                 array_to_string(lit_attr_col_names, ','),
                 kv_attr_name,
+                kv_attr_name::TEXT,
                 'tmp_dist_table'
             ]
         );
@@ -1665,7 +1669,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
             (
                 'INSERT INTO %
                  SELECT id, (ARRAY[%])[id] as column_name,
-                        ''f'' as column_type, ''t'', NULL, 0
+                        ''f'' as column_type, ''t'', NULL, NULL, 0
                  FROM (
                      SELECT generate_series(1, %) id
                      EXCEPT
@@ -1692,12 +1696,14 @@ m4_changequote(>>>`<<<, >>>'<<<)
                     ''c'' as column_type,
                     ''f''::BOOL,
                     ''%''::regclass::OID,
+                    ''%'',
                 count(code) as num_dist_value
              FROM % t
              GROUP BY fid',
             ARRAY[
                 meta_tbl_name,
                 cls_col_name,
+                kv_cls_name,
                 kv_cls_name,
                 kv_cls_name
             ]
@@ -1779,8 +1785,8 @@ BEGIN
         cls_col_name = NULL;
     END IF;
 
-m4_changequote(`>>>', `<<<')
-m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
+m4_changequote(`<!', `!>')
+m4_ifdef(`__HAS_ORDERED_AGGREGATES__', <!
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT array_agg(column_name order by id)
@@ -1798,7 +1804,7 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
             meta_tbl_name
         );
     EXECUTE curstmt INTO is_conts;
-<<<, >>>
+!>, <!
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT ARRAY
@@ -1825,13 +1831,13 @@ m4_ifdef(`__HAS_ORDERED_AGGREGATES__', >>>
             meta_tbl_name
         );
     EXECUTE curstmt INTO is_conts;
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+!>)
+m4_changequote(<!`!>, <!'!>)
 
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT
-                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name
+                table_name
              FROM %
              WHERE column_type=''f'' limit 1',
             meta_tbl_name
@@ -1841,7 +1847,7 @@ m4_changequote(>>>`<<<, >>>'<<<)
     curstmt = MADLIB_SCHEMA.__format
         (
             'SELECT
-                MADLIB_SCHEMA.__regclass_to_text(table_oid) as table_name
+                table_name
              FROM %
              WHERE column_type=''c'' limit 1',
             meta_tbl_name

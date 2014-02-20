@@ -12,22 +12,6 @@
 
 m4_include(`SQLCommon.m4')
 
-/* Own macro definitions */
-m4_ifelse(
-    m4_eval(
-        m4_ifdef(`__GREENPLUM__', 1, 0) &&
-        __DBMS_VERSION_MAJOR__ * 100 + __DBMS_VERSION_MINOR__ < 401
-    ), 1,
-    `m4_define(`__GREENPLUM_PRE_4_1__')'
-)
-m4_ifelse(
-    m4_eval(
-        m4_ifdef(`__POSTGRESQL__', 1, 0) &&
-        __DBMS_VERSION_MAJOR__ < 9
-    ), 1,
-    `m4_define(`__POSTGRESQL_PRE_9_0__')'
-)
-
 /**
 @addtogroup grp_dectree
 
@@ -37,6 +21,8 @@ m4_ifelse(
 <li><a href="#train">Training Function</a></li>
 <li><a href="#classify">Classification Function</a></li>
 <li><a href="#score">Scoring Function</a></li>
+<li><a href="#display">Display Tree Function</a></li>
+<li><a href="#notes">Implementation Notes</a></li>
 <li><a href="#examples">Examples</a></li>
 <li><a href="#related">Related Topics</a></li>
 </ul>
@@ -78,7 +64,8 @@ c45_train( split_criterion,
            id_col_name,
            class_col_name,
            confidence_level,
-           how2handle_missing_value max_tree_depth,
+           how2handle_missing_value,
+           max_tree_depth,
            node_prune_threshold,
            node_split_threshold,
            verbosity
@@ -254,6 +241,21 @@ The clean tree function cleans up the learned model and all metadata.
            );
 </pre>
 
+@anchor notes
+@par Implementation Notes
+
+Due to some implementation difference, decisiont tree on HAWQ is much
+slower than on Greenplum database when running on small data
+sets. However, for larger data sets, the performance difference is
+much smaller. For example, in a test with 0.75 million rows of data,
+decision tree on HAWQ is only one time slower than on GPDB. This is
+because the overhead due to the different implementation is
+proportional to the tree size, and is usually negligible as data size
+increases (The tree size is not likely to increase proportionally with
+the data size. For example, if a 10-node tree is used to fit a data
+set with 1000 rows, it is very unlikely to fit another data set with 1
+million rows with a 10000-node tree).
+
 @anchor examples
 @examp
 
@@ -287,19 +289,19 @@ Result:
 SELECT * FROM madlib.c45_clean( 'trained_tree_infogain'
                               );
 SELECT * FROM madlib.c45_train( 'infogain',
-                          	    'golf_data',
-                          	    'trained_tree_infogain',
-                          	    null,
-                          	    'temperature,humidity',
-                          	    'outlook,temperature,humidity,windy',
-                          	    'id',
-                           	    'class',
-                           	    100,
-                          	    'explicit',
-                          	    5,
-                          	    0.001,
-                          	    0.001,
-                          	    0
+                                'golf_data',
+                                'trained_tree_infogain',
+                                null,
+                                'temperature,humidity',
+                                'outlook,temperature,humidity,windy',
+                                'id',
+                                'class',
+                                100,
+                                'explicit',
+                                5,
+                                0.001,
+                                0.001,
+                                0
                               );
 </pre>
 Result:
@@ -534,7 +536,15 @@ DECLARE
     tree_table_name                 TEXT;
     ret                             MADLIB_SCHEMA.c45_train_result;
     train_rs                        RECORD;
+    old_optimizer                   TEXT;
 BEGIN
+    m4_changequote(`<!', `!>')
+    m4_ifdef(<!__HAWQ__!>, <!
+    EXECUTE 'SHOW optimizer' into old_optimizer;
+    EXECUTE 'SET optimizer = off';
+    !>)
+    m4_changequote(<!`!>, <!'!>)
+
     begin_func_exec = clock_timestamp();
 
     IF (verbosity < 1) THEN
@@ -616,6 +626,12 @@ BEGIN
     ret.tree_depth          = train_rs.max_tree_depth;
     ret.training_time       = clock_timestamp() - begin_func_exec;
     ret.split_criterion     = split_criterion;
+
+    m4_changequote(`<!', `!>')
+    m4_ifdef(<!__HAWQ__!>, <!
+    EXECUTE 'SET optimizer = '|| old_optimizer;
+    !>)
+    m4_changequote(<!`!>, <!'!>)
 
     RETURN ret;
 END
@@ -820,7 +836,7 @@ BEGIN
     END IF;
 
     -- get metatable and classtable name given the tree table name
-    metatable_name    = MADLIB_SCHEMA.__get_metatable_name(tree_table_name);
+    metatable_name = tree_table_name || '_di';
     classtable_name   = MADLIB_SCHEMA.__get_classtable_name(metatable_name);
     class_column_name = MADLIB_SCHEMA.__get_class_column_name(metatable_name);
 
@@ -952,7 +968,7 @@ BEGIN
              WHERE key IS NOT NULL
             ) n2
             ON n1.maxclass = n2.key
-         m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (location)')',
+         m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (location)')',
         ARRAY[
             tree_table_name,
             class_column_name,
@@ -1001,7 +1017,7 @@ BEGIN
                 ON n1.feature = n2.fid
             WHERE
                 (lmc_nid + key - lmc_fval) IN (SELECT id from %)
-            m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (location)')',
+            m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (location)')',
             ARRAY[
                 tree_table_name,
                 union_stmt,
@@ -1112,15 +1128,15 @@ BEGIN
             );
 
     FOR str IN SELECT * FROM
-m4_changequote(`>>>', `<<<')
-m4_ifdef(>>>__HAS_ORDERED_AGGREGATES__<<<, >>>
+m4_changequote(`<!', `!>')
+m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>, <!
          MADLIB_SCHEMA.__treemodel_display_with_ordered_aggr
                                 (tree_table,tids,max_depth) LOOP
-<<<, >>>
+!>, <!
          MADLIB_SCHEMA.__treemodel_display_no_ordered_aggr
                                 (tree_table,tids,max_depth) LOOP
-<<<)
-m4_changequote(>>>`<<<, >>>'<<<)
+!>)
+m4_changequote(<!`!>, <!'!>)
         RETURN NEXT str;
     END LOOP;
     RETURN;
@@ -1189,6 +1205,7 @@ DECLARE
     result_rec          RECORD;
     curstmt             TEXT;
     table_names         TEXT[];
+    swap_table          TEXT;
 BEGIN
     IF (verbosity < 1) THEN
         -- get rid of the messages whose severity level is lower than 'WARNING'
@@ -1219,15 +1236,29 @@ BEGIN
     encoded_table_name = table_names[1];
     temp_result_table  = table_names[2];
 
+m4_changequote(`<!', `!>')
+m4_ifdef(<!__HAWQ__!>, <!
+    SELECT MADLIB_SCHEMA.__unique_string() INTO swap_table;
+    EXECUTE '
+        DROP TABLE IF EXISTS ' || swap_table || ';
+        CREATE TEMP TABLE ' || swap_table || ' AS
+        SELECT * FROM ' || temp_result_table || '
+        WHERE tid = 1';
+    EXECUTE '
+        DROP TABLE IF EXISTS ' || temp_result_table || ';
+        ALTER TABLE ' || swap_table || ' RENAME TO ' || temp_result_table;
+!>, <!
     EXECUTE 'DELETE FROM '||temp_result_table||' WHERE tid <> 1;';
-    metatable_name = MADLIB_SCHEMA.__get_metatable_name( tree_table_name );
+!>)
+m4_changequote(<!`!>, <!'!>)
+
+    metatable_name = tree_table_name || '_di';
 
     curstmt = MADLIB_SCHEMA.__format
                 (
                     'SELECT
                         column_name,
-                        MADLIB_SCHEMA.__regclass_to_text
-                            (table_oid) as table_name
+                        table_name
                      FROM %
                      WHERE column_type=''c'' LIMIT 1',
                     ARRAY[
@@ -1243,7 +1274,7 @@ BEGIN
                     'CREATE TABLE % AS SELECT n.id, m.fval as class, n.prob
                      From % n, % m
                      WHERE n.class = m.code
-                     m4_ifdef(`__GREENPLUM__', `DISTRIBUTED BY (id)');',
+                     m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)');',
                     ARRAY[
                         result_table_name,
                         temp_result_table,
@@ -1297,13 +1328,13 @@ BEGIN
     -- get rid of the messages whose severity level is lower than 'WARNING'
     SET client_min_messages = WARNING;
 
-	ret = MADLIB_SCHEMA.c45_classify
-	       (
-    	       tree_table_name,
-    	       classification_table_name,
-    	       result_table_name,
-    	       0
-	       );
+    ret = MADLIB_SCHEMA.c45_classify
+           (
+               tree_table_name,
+               classification_table_name,
+               result_table_name,
+               0
+           );
 
     RETURN ret;
 END $$ LANGUAGE PLPGSQL
@@ -1389,8 +1420,16 @@ RETURNS BOOLEAN AS $$
 DECLARE
     result BOOLEAN;
 BEGIN
-    result=MADLIB_SCHEMA.__treemodel_clean(result_tree_table_name);
-    RETURN result;
+    EXECUTE 'DROP TABLE IF EXISTS ' || result_tree_table_name || '_di';
+    EXECUTE 'DROP TABLE IF EXISTS ' || result_tree_table_name || '_ed';
+    EXECUTE 'DROP TABLE IF EXISTS ' || result_tree_table_name || '_ed_col';
+    EXECUTE 'DROP TABLE IF EXISTS ' || result_tree_table_name || '_ed_class';
+    EXECUTE 'DROP TABLE IF EXISTS ' || result_tree_table_name || '_summary';
+    EXECUTE 'DROP TABLE IF EXISTS ' || result_tree_table_name;
+    DROP TABLE IF EXISTS classified_instance_ping;
+    DROP TABLE IF EXISTS classified_instance_pong;
+
+    RETURN TRUE;
 END
 $$ LANGUAGE PLPGSQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
