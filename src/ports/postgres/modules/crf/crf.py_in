@@ -11,6 +11,9 @@ Conditional Random Field: Driver functions
 """
 
 import plpy
+from utilities.validate_args import table_exists
+from utilities.validate_args import columns_exist_in_table
+from utilities.utilities import _assert
 
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
     terminateExpr, maxNumIterations, cyclesPerIteration = 1):
@@ -77,9 +80,11 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         SET client_min_messages = error;
         DROP TABLE IF EXISTS _madlib_iterative_alg;
         CREATE TEMPORARY TABLE _madlib_iterative_alg (
-            _madlib_iteration INTEGER PRIMARY KEY,
+            _madlib_iteration INTEGER
+                m4_ifdef(`__HAWQ__', `', ` PRIMARY KEY'),
             _madlib_state {stateType}
-        );
+        )
+        m4_ifdef(`__POSTGRESQL__', `', ` DISTRIBUTED BY (_madlib_iteration)');
         SET client_min_messages = {oldMsgLevel};
         """.format(stateType = stateType, oldMsgLevel = oldMsgLevel))
     
@@ -160,3 +165,100 @@ def compute_lincrf(schema_madlib, source, sparse_R, dense_M, sparse_M, featureSi
             """.format(
                 schema_madlib = schema_madlib),
         maxNumIterations = maxNumIterations)
+
+def lincrf_train(schema_madlib, train_feature_tbl, train_featureset_tbl,
+        label_tbl, crf_stats_tbl, crf_weights_tbl, max_iterations, **kwargs):
+
+    tag_size = _validate_args(train_feature_tbl, train_featureset_tbl, label_tbl,
+                    crf_stats_tbl, crf_weights_tbl, max_iterations)
+
+    rv = plpy.execute("""
+                SELECT {schema_madlib}.compute_lincrf('{train_feature_tbl}',
+                            'sparse_r', 'dense_m', 'sparse_m', 'f_size',
+                            {tag_size}, {max_iterations}) iterations
+                      """.format(schema_madlib = schema_madlib,
+                            train_feature_tbl = train_feature_tbl,
+                            tag_size = tag_size,
+                            max_iterations = max_iterations))
+
+    iterations = rv[0]['iterations']
+
+    plpy.execute("""CREATE TABLE {crf_stats_tbl} AS
+                        SELECT (result).coef, (result).log_likelihood, (result).num_iterations
+                        FROM
+                            (SELECT {schema_madlib}.internal_lincrf_lbfgs_result(_madlib_state) AS result
+                               FROM _madlib_iterative_alg
+                              WHERE _madlib_iteration = {iteration}
+                            ) Q
+                        m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (num_iterations)')
+                 """.format(crf_stats_tbl = crf_stats_tbl,
+                            iteration = iterations,
+                            schema_madlib = schema_madlib))
+
+    plpy.execute("""CREATE TABLE {crf_weights_tbl} AS
+                        SELECT f_index id, f_name as name,
+                               feature[1] prev_label_id,
+                               feature[2] label_id,
+                               coef[f_index + 1] weight
+                          FROM
+                            {crf_stats_tbl},
+                            {train_featureset_tbl}
+                          m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (id)')
+                  """.format(crf_weights_tbl = crf_weights_tbl,
+                            crf_stats_tbl = crf_stats_tbl,
+                            train_featureset_tbl = train_featureset_tbl,
+                            schema_madlib = schema_madlib))
+
+    # Enforce ANALYZE to gather proper table statistics required to generate optimized query plans
+    plpy.execute(""" ANALYZE {crf_weights_tbl} """.format(crf_weights_tbl = crf_weights_tbl))
+
+    return "CRF Train successful. Results stored in the specified CRF stats and weights table"
+
+def _validate_columns(cols, table_name, err_msg_tbl):
+    """
+    @brief Validate if cols exists in the table
+    """
+
+    _assert(columns_exist_in_table(table_name, cols),
+        "CRF error: Missing required columns from %s table: %s" % (err_msg_tbl, ', '.join(cols)))
+
+def _validate_args(train_feature_tbl, train_featureset_tbl, label_tbl,
+        crf_stats_tbl, crf_weights_tbl, max_iterations):
+    _assert(table_exists(train_feature_tbl),
+        "CRF error: Train feature table does not exist!")
+    _assert(table_exists(train_featureset_tbl),
+        "CRF error: Train featureset table does not exist!")
+    _assert(table_exists(label_tbl),
+        "CRF error: Label table does not exist!")
+
+    _assert(max_iterations > 0,
+        "CRF error: max iterations cannot be zero or negative")
+
+    # Validate required columns
+    _validate_columns(['doc_id', 'f_size', 'sparse_r', 'dense_m', 'sparse_m'],
+            train_feature_tbl, "feature")
+    _validate_columns(['f_index', 'f_name', 'feature'], train_featureset_tbl, "featureset")
+    _validate_columns(['id', 'label'], label_tbl, "label")
+
+    rv = plpy.execute(""" SELECT count(*) FROM {label_tbl}
+                      """.format(label_tbl = label_tbl))
+
+    tag_size = rv[0]['count']
+    _assert(tag_size > 0,
+        "CRF error: Label table is empty")
+
+    _assert(crf_stats_tbl is not None and
+        crf_stats_tbl.lower().strip() not in ('null', ''),
+        "CRF error: Invalid CRF stats table name")
+    _assert(crf_weights_tbl is not None and
+        crf_weights_tbl.lower().strip() not in ('null', ''),
+        "CRF error: Invalid CRF weights table name")
+
+    _assert(not table_exists(crf_stats_tbl),
+        "CRF error: CRF stats table already exist!"
+        " Please provide a different table name.")
+    _assert(not table_exists(crf_weights_tbl),
+        "CRF error: CRF weights table already exist!"
+        " Please provide a different table name.")
+
+    return tag_size

@@ -14,6 +14,7 @@
 #include "stats/stats.hpp"
 #include "convex/convex.hpp"
 #include "crf/linear_crf.hpp"
+#include "crf/viterbi.hpp"
 #include "assoc_rules/assoc_rules.hpp"
 #include "lda/lda.hpp"
 #include "elastic_net/elastic_net.hpp"

@@ -17,9 +17,11 @@ m4_include(`SQLCommon.m4')
 
 <div class="toc"><b>Contents</b>
 <ul>
-<li><a href="#train">Training Function</a></li>
+<li><a href="#train_feature">Training Feature Generation</a></li>
+<li><a href="#train">CRF Training Function</a></li>
+<li><a href="#test_feature">Testing Feature Generation</a></li>
+<li><a href="#inference">Inference using Viterbi</a></li>
 <li><a href="#usage">Using CRF</a></li>
-<li><a href="#input">Input</a></li>
 <li><a href="#examples">Examples</a></li>
 <li><a href="#background">Technical Background</a></li>
 <li><a href="#literature">Literature</a></li>
@@ -56,166 +58,319 @@ A Viterbi implementation is also provided
 to get the best label sequence and the conditional probability
 \f$ \Pr( \text{best label sequence} \mid \text{sequence}) \f$.
 
+Following steps are required for CRF Learning and Inference:
+-# <li><a href="#train_feature">Training Feature Generation</a></li>
+-# <li><a href="#train">CRF Training</a></li>
+-# <li><a href="#test_feature">Testing Feature Generation</a></li>
+-# <li><a href="#inference">Inference using Viterbi</a></li>
 
-@anchor train
-@par Training Function
-Get number of iterations and weights for features:\n
-
+@anchor train_feature
+@par Training Feature Generation
+The function takes \c train_segment_tbl and \c regex_tbl as input and does feature generation generating three tables
+\c dictionary_tbl, \c train_feature_tbl and \c train_featureset_tbl, that are required as an input for CRF training.
 <pre class="syntax">
-lincrf( source,
-        sparse_R,
-        dense_M,
-        sparse_M,
-        featureSize,
-        tagSize,
-        featureset,
-        crf_feature,
-        maxNumIterations
-      )
+crf_train_fgen(train_segment_tbl,
+               regex_tbl,
+               label_tbl,
+               dictionary_tbl,
+               train_feature_tbl,
+               train_featureset_tbl)
 </pre>
 \b Arguments
 <dl class="arglist">
-<dt>source</dt>  <dd>Name of the source relation containing the training data</dd>
-<dt>sparse_R</dt>  <dd>Name of the sparse single state feature column (of type DOUBLE PRECISION[])</dd>
-<dt>dense_M</dt> <dd>Name of the dense two state feature column (of type DOUBLE PRECISION[])</dd>
-<dt>sparse_M</dt>  <dd>Name of the sparse two state feature column (of type DOUBLE PRECISION[])</dd>
-<dt>featureSize</dt> <dd>Name of feature size column (of type DOUBLE PRECISION)</dd>
-<dt>tagSize</dt> <dd>The number of tags in the tag set</dd>
-<dt>featureset</dt>  <dd>The unique feature set</dd>
-<dt>crf_feature</dt> <dd>The Name of output feature table</dd>
-<dt>maxNumIterations</dt>  <dd>The maximum number of iterations</dd>
+    <dt>train_segment_tbl</dt>
+    <dd>TEXT. Name of the training segment table. The table is expected to have the following columns:
+        <table class="output">
+            <tr>
+                <th>doc_id</th>
+                <td>INTEGER. Document id column</td>
+             </tr>
+             <tr>
+                <th>start_pos</th>
+                <td>INTEGER. Index of a particular term in the respective document</td>
+             </tr>
+             <tr>
+                <th>seg_text</th>
+                <td>TEXT. Term at the respective \c start_pos in the document</td>
+              </tr>
+            <tr>
+                <th>label</th>
+                <td>INTEGER. Label id for the term corresponding to the actual label from \c label_tbl</td>
+            </tr>
+        </table>
+    </dd>
+    <dt>regex_tbl</dt>
+    <dd>TEXT. Name of the regular expression table. The table is expected to have the following columns:
+        <table class="output">
+            <tr>
+                <th>pattern</th>
+                <td>TEXT. Regular Expression</td>
+            </tr>
+            <tr>
+                <th>name</th>
+                <td>TEXT. Regular Expression name</td>
+            </tr>
+         </table>
+     </dd>
+    <dt>label_tbl</dt>
+    <dd>TEXT. Name of the table containing unique labels and their id's. The table is expected to have the following columns:
+        <table class="output">
+            <tr>
+                <th>id</th>
+                <td>INTEGER. Unique label id. NOTE: Must range from 0 to total number of labels in the table - 1.
+                </td>
+            </tr>
+            <tr>
+                <th>label</th>
+                <td>TEXT. Label name</td>
+            </tr>
+        </table>
+    </dd>
+    <dt>dictionary_tbl</dt>
+    <dd>TEXT. Name of the dictionary table to be created containing unique terms along with their counts. The table will have the following columns:
+        <table class="output">
+            <tr>
+                <th>token</th>
+                <td>TEXT. Contains all the unique terms found in \c train_segment_tbl</td>
+            </tr>
+            <tr>
+                <th>total</th>
+                <td>INTEGER. Respective counts for the terms</td>
+            </tr>
+        </table>
+    <dd>
+    <dt>train_feature_tbl<dt>
+    <dd>TEXT. Name of the training feature table to be created. The table will have the following columns:
+        <table class="output">
+            <tr>
+                <th>doc_id</th>
+                <td>INTEGER. Document id</td>
+            </tr>
+            <tr>
+                <th>f_size</th>
+                <td>INTEGER. Feature set size. This value will be same for all the tuples in the table</td>
+            </tr>
+            <tr>
+                <th>sparse_r</th>
+                <td>DOUBLE PRECISION[]. Array union of individual single state features (previous label, label, feature index, start position, training existance indicator), ordered by their start position.</td>
+             </tr>
+             <tr>
+                <th>dense_m</th>
+                <td>DOUBLE PRECISION[]. Array union of (previous label, label, feature index, start position, training existance indicator) of edge features ordered by start position.</td>
+             </tr>
+             <tr>
+                <th>sparse_m</th>
+                <td>DOUBLE PRECISION[]. Array union of (feature index, previous label, label) of edge features ordered by feature index.</td>
+             </tr>
+          </table>
+    </dd>
+
+    <dt>train_featureset_tbl</dt>
+    <dd>TEXT. Name of the table to be created containing distinct featuresets generated from training feature extraction. The table will have the following columns:
+        <table class="output">
+            <tr>
+                <th>f_index</th>
+                <td>INTEGER. Column containing distinct featureset ids</td>
+            </tr>
+            <tr>
+                <th>f_name</th>
+                <td>TEXT. Feature name </td>
+            </tr>
+            <tr>
+                <th>feature</th>
+                <td>ARRAY. Feature value. The value is of the form [L1, L2]
+                           \n - If L1 = -1: represents single state feature with L2 being the current label id.
+                           \n - If L1 != -1: represents transition feature with L1 be the previous label and L2 be the current label.
+                </td>
+            </tr>
+    </dd>
 </dl>
-The features and weights are stored in the table named by \e crf_feature.
-This function returns a composite value containing the following columns:
-<table class="output">
-  <tr><th>coef</th> <td>FLOAT8[]. Array of coefficients</td></tr>
-<tr><th>log_likelihood</th> <td>FLOAT8. Log-likelihood </td></tr>
-<tr><th>num_iterations</th> <td>INTEGER. The number of iterations before the algorithm terminated </td></tr>
-</table>
+
+@anchor train
+@par Linear Chain CRF Training Function
+The function takes \c train_feature_tbl and \c train_featureset_tbl tables generated in the training feature generation steps as input
+along with other required parameters and produces two output tables \c crf_stats_tbl and \c crf_weights_tbl.
+
+<pre class="syntax">
+lincrf_train(train_feature_tbl,
+             train_featureset_tbl,
+             label_tbl,
+             crf_stats_tbl,
+             crf_weights_tbl
+             max_iterations
+            )
+</pre>
+\b Arguments
+<dl class="arglist">
+    <dt>train_feature_tbl</dt>
+    <dd>TEXT. Name of the feature table generated during training feature generation</dd>
+
+    <dt>train_featureset_tbl</dt>
+    <dd>TEXT. Name of the featureset table generated during training feature generation</dd>
+
+    <dt>label_tbl</dt>
+    <dd>TEXT. Name of the label table used</dd>
+
+    <dt>crf_stats_table</dt>
+    <dd>TEXT. Name of the table to be created containing statistics for CRF training. The table has the following columns:
+        <table class="output">
+            <tr>
+                <th>coef</th>
+                <td>DOUBLE PRECISION[]. Array of coefficients</td>
+            </tr>
+            <tr>
+                <th>log_likelihood</th>
+                <td>DOUBLE. Log-likelihood</td>
+            </tr>
+            <tr>
+                <th>num_iterations</th>
+                <td>INTEGER. The number of iterations at which the algorithm terminated</td>
+            </tr>
+        </table>
+    </dd>
+    <dt>crf_weights_table</dt>
+    <dd>TEXT. Name of the table to be created creating learned feature weights. The table has the following columns:
+        <table class="output">
+            <tr>
+                <th>id</th>
+                <td>INTEGER. Feature set id</td>
+            </tr>
+            <tr>
+                <th>name</th>
+                <td>TEXT. Feature name</td>
+            </tr>
+            <tr>
+                <th>prev_label_id</th>
+                <td>INTEGER. Label for the previous token encountered</td>
+            </tr>
+            <tr>
+                <th>label_id</th>
+                <td>INTEGER. Label of the token with the respective feature</td>
+            </tr>
+            <tr>
+                <th>weight</th>
+                <td>DOUBLE PRECISION. Weight for the respective feature set</td>
+            </tr>
+        </table>
+    </dd>
+
+    <dt>max_iterations</dt>
+    <dd>INTEGER. The maximum number of iterations</dd>
+</dl>
+
+@anchor test_feature
+@par Testing Feature Generation
+
+<pre class="syntax">
+crf_test_fgen(test_segment_tbl,
+              dictionary_tbl,
+              label_tbl,
+              regex_tbl,
+              crf_weights_tbl,
+              viterbi_mtbl,
+              viterbi_rtbl
+             )
+</pre>
+\b Arguments
+<dl class="arglist">
+    <dt>test_segment_tbl</dt>
+    <dd>TEXT. Name of the testing segment table. The table is expected to have the following columns:
+        <table class="output">
+            <tr>
+                <th>doc_id</th>
+                <td>INTEGER. Document id column</td>
+             </tr>
+             <tr>
+                <th>start_pos</th>
+                <td>INTEGER. Index of a particular term in the respective document</td>
+             </tr>
+             <tr>
+                <th>seg_text</th>
+                <td>TEXT. Term at the respective \c start_pos in the document</td>
+              </tr>
+        </table>
+    </dd>
+
+    <dt>dictionary_tbl</dt>
+    <dd>TEXT. Name of the dictionary table created during training feature generation (\c crf_train_fgen)</dd>
+
+    <dt>label_tbl</dt>
+    <dd>TEXT. Name of the label table</dd>
+
+    <dt>regex_tbl</dt>
+    <dd>TEXT. Name of the regular expression table</dd>
+
+    <dt>crf_weights_tbl</dt>
+    <dd>TEXT. Name of the weights table generated during CRF training (\c lincrf_train)
+
+    <dt>viterbi_mtbl</dt>
+    <dd>TEXT. Name of the Viterbi M table to be created</dd>
+
+    <dt>viterbi_rtbl</dt>
+    <dd>TEXT. Name of the Viterbi R table to be created</dd>
+</dl>
+
+@anchor inference
+@par Inference using Viterbi
+<pre class="syntax">
+vcrf_label(test_segment_tbl,
+           viterbi_mtbl,
+           viterbi_rtbl,
+           label_tbl,
+           result_tbl)
+</pre>
+\b Arguments
+<dl class="arglist">
+    <dt>test_segment_tbl</dt>
+    <dd>TEXT. Name of the testing segment table. For required table schema, please refer to arguments in previous section</dd>
+    <dt>viterbi_mtbl</dt>
+    <dd>TEXT. Name of the table \c viterbi_mtbl generated from testing feature generation \c crf_test_fgen.
+    <dt>viterbi_rtbl</dt>
+    <dd>TEXT. Name of the table \c viterbi_rtbl generated from testing feature generation \c crf_test_fgen.
+    <dt>label_tbl</dt>
+    <dd>TEXT. Name of the label table.</dd>
+    <dt>result_tbl</dt>
+    <dd>TEXT. Name of the result table to be created containing extracted best label sequences.</dd>
+</dl>
 
 @anchor usage
 @par Using CRF
 
 Generate text features, calculate their weights, and output the best label sequence for test data:\n
 
- -# Create tables to store the input data, intermediate data, and output data.
-    Also import the training data to the database.
-    <pre>
-    SELECT madlib.crf_train_data( '<em>/path/to/data</em>');
-    </pre>
- -# Generate text analytics features for the training data.
+ -# Perform feature generation on training data i.e. \c train_segment_tbl generating \c train_feature_tbl and \c train_featureset_tbl.
     <pre>SELECT madlib.crf_train_fgen(
-         '<em>segmenttbl</em>',
-         '<em>regextbl</em>',
-         '<em>dictionary</em>',
-         '<em>featuretbl</em>',
-         '<em>featureset</em>');</pre>
- -# Use linear-chain CRF for training.
-    <pre>SELECT madlib.lincrf(
-         '<em>source</em>',
-         '<em>sparse_r</em>',
-         '<em>dense_m</em>',
-         '<em>sparse_m</em>',
-         '<em>f_size</em>',
-         <em>tag_size</em>,
-         '<em>feature_set</em>',
-         '<em>featureWeights</em>',
-         '<em>maxNumIterations</em>');</pre>
- -# Import CRF model to the database.
-    Also load the CRF testing data to the database.
-    <pre>SELECT madlib.crf_test_data(
-         '<em>/path/to/data</em>');</pre>
- -# Generate text analytics features for the testing data.
+         '<em>train_segment_tbl</em>',
+         '<em>regex_tbl</em>',
+         '<em>label_tbl</em>',
+         '<em>dictionary_tbl</em>',
+         '<em>train_feature_tbl</em>',
+         '<em>train_featureset_tbl</em>');</pre>
+ -# Use linear-chain CRF for training providing \c train_feature_tbl and \c train_featureset_tbl generated from previous step as an input.
+    <pre>SELECT madlib.lincrf_train(
+         '<em>train_feature_tbl</em>',
+         '<em>train_featureset_tbl</em>',
+         '<em>label_tbl</em>',
+         '<em>crf_stats_tbl</em>',
+         '<em>crf_weights_tbl</em>',
+         <em>max_iterations</em>);</pre>
+ -# Perform feature generation on testing data \c test_segment_tbl generating \c viterbi_mtbl and \c viterbi_rtbl required for inferencing.
     <pre>SELECT madlib.crf_test_fgen(
-         '<em>segmenttbl</em>',
-         '<em>dictionary</em>',
-         '<em>labeltbl</em>',
-         '<em>regextbl</em>',
-         '<em>featuretbl</em>',
+         '<em>test_segment_tbl</em>',
+         '<em>dictionary_tbl</em>',
+         '<em>label_tbl</em>',
+         '<em>regex_tbl</em>',
+         '<em>crf_weights_tbl</em>',
          '<em>viterbi_mtbl</em>',
          '<em>viterbi_rtbl</em>');</pre>
-    'viterbi_mtbl' and 'viterbi_rtbl' are simply text representing names for tables created in the feature generation module (i.e. they are NOT empty tables).
  -# Run the Viterbi function to get the best label sequence and the conditional
     probability \f$ \Pr( \text{best label sequence} \mid \text{sequence}) \f$.
     <pre>SELECT madlib.vcrf_label(
-         '<em>segmenttbl</em>',
+         '<em>test_segment_tbl</em>',
          '<em>viterbi_mtbl</em>',
          '<em>viterbi_rtbl</em>',
-         '<em>labeltbl</em>',
-         '<em>resulttbl</em>');</pre>
-
-@anchor Input
-@input
-- User-provided input:\n
-The user is expected to at least provide the label table, the regular expression table, and the segment table:
-<pre>{TABLE|VIEW} <em>labelTableName</em> (
-    ...
-    <em>id</em> INTEGER,
-    <em>label</em> TEXT,
-    ...
-)</pre>
-where <em>id</em> is a unique ID for the label and <em>label</em> is the label name.
-<pre>{TABLE|VIEW} <em>regexTableName</em> (
-    ...
-    <em>pattern</em> TEXT,
-    <em>name</em> TEXT,
-    ...
-)</pre>
-where <em>pattern</em> is a regular expression pattern (e.g. '^.+ing$') and <em>name</em> is a name for the regular expression pattern (e.g. 'endsWithIng').
-<pre>{TABLE|VIEW} <em>segmentTableName</em> (
-    ...
-    <em>start_pos</em> INTEGER,
-    <em>doc_id</em> INTEGER,
-    <em>seg_text</em> TEXT,
-    <em>label</em> INTEGER,
-    <em>max_pos</em> INTEGER,
-    ...
-)</pre>
-where <em>start_pos</em> is the position of the word in the sequence, <em>doc_id</em> is a unique ID for the sequence, <em>seg_text</em> is the word, <em>label</em> is the label for the word, and <em>max_pos</em> is the length of the sequence.
-
-- Training (\ref lincrf) input:\n
-The feature table used for training is expected to be of the following form (this table can also be generated by \ref crf_train_fgen):\n
-<pre>{TABLE|VIEW} <em>featureTableName</em> (
-    ...
-    <em>doc_id</em> INTEGER,
-    <em>f_size</em> INTEGER,
-    <em>sparse_r</em> FLOAT8[],
-    <em>dense_m</em> FLOAT8[],
-    <em>sparse_m</em> FLOAT8[],
-    ...
-)</pre>
-where
-  - <em>doc_id</em> is a unique ID for the sequence
-  - <em>f_size</em> is the number of features
-  - <em>sparse_r</em> is the array union of (previous label, label, feature index, start position, training existance indicator) of individal single-state features (e.g. word features, regex features) ordered by their start positon
-  - <em>dense_m</em> is the array union of (previous label, label, feature index, start position, training existance indicator) of edge features ordered by start position
-  - <em>sparse_m</em> is the array union of (feature index, previous label, label) of edge features ordered by feature index.
-Edge features were split into dense_m and sparse_m for performance reasons.
-
-The set of features used for training is expected to be of the following form (also can be generated by \ref crf_train_fgen):\n
-<pre>{TABLE|VIEW} <em>featureSetName</em> (
-    ...
-    <em>f_index</em> INTEGER,
-    <em>f_name</em> TEXT,
-    <em>feature_labels</em> INTEGER[],
-    ...
-)</pre>
-where
-  - <em>f_index</em> is a unique ID for the feature
-  - <em>f_name</em> is the feature name
-  - <em>feature_labels</em> is an array representing {previous label, label}.
-
-The empty feature weight table (which will be populated after training) is expected to be of the following form:
-<pre>{TABLE|VIEW} <em>featureWeightsName</em> (
-    ...
-    <em>f_index</em> INTEGER,
-    <em>f_name</em> TEXT,
-    <em>previous_label</em> INTEGER,
-    <em>label</em> INTEGER,
-    <em>weight</em> FLOAT8,
-    ...
-)</pre>
-
+         '<em>label_tbl</em>',
+         '<em>result_tbl</em>');</pre>
 
 @anchor examples
 @examp
@@ -223,20 +378,23 @@ This example uses a trivial training and test data set.
 
 -# Load the label table, the regular expressions table, and the training segment table:
 <pre class="example">
-SELECT * FROM crf_label;
+SELECT * FROM crf_label ORDER BY id;
 </pre>
 Result:
 <pre class="result">
  id | label
 &nbsp;---+-------
-  1 | CD
- 13 | NNP
- 15 | PDT
- 17 | PRP
- 29 | VBN
- 31 | VBZ
- 33 | WP
- 35 | WRB
+  0 | #
+  1 | $
+  2 | ''
+...
+  8 | CC
+  9 | CD
+ 10 | DT
+ 11 | EX
+ 12 | FW
+ 13 | IN
+ 14 | JJ
 ...
 </pre>
 The regular expressions table:
@@ -254,37 +412,31 @@ SELECT * from crf_regex;
 </pre>
 The training segment table:
 <pre class="example">
-SELECT * from train_segmenttbl;
+SELECT * from train_segmenttbl ORDER BY doc_id, start_pos;
 </pre>
 <pre class="result">
- start_pos | doc_id |  seg_text  | label | max_pos
-&nbsp;----------+--------+------------+-------+---------
-         8 |      1 | alliance   |    11 |      26
-        10 |      1 | Ford       |    13 |      26
-        12 |      1 | that       |     5 |      26
-        24 |      1 | likely     |     6 |      26
-        26 |      1 | .          |    43 |      26
-         8 |      2 | interest   |    11 |      10
-        10 |      2 | .          |    43 |      10
-         9 |      1 | after      |     5 |      26
-        11 |      1 | concluded  |    27 |      26
-        23 |      1 | the        |     2 |      26
-        25 |      1 | return     |    11 |      26
-         9 |      2 | later      |    19 |      10
+ doc_id | start_pos |  seg_text  | label
+&nbsp;-------+-----------+------------+-------
+      0 |         0 | Confidence |    18
+      0 |         1 | in         |    13
+      0 |         2 | the        |    10
+      0 |         3 | pound      |    18
+      0 |         4 | is         |    38
+      0 |         5 | widely     |    26
 ...
-</pre>
-
--# Create the (empty) dictionary table, feature table, and feature set:
-<pre class="example">
-CREATE TABLE crf_dictionary(token text,total integer);
-CREATE TABLE train_featuretbl(doc_id integer,f_size FLOAT8,sparse_r FLOAT8[],dense_m FLOAT8[],sparse_m FLOAT8[]);
-CREATE TABLE train_featureset(f_index integer, f_name text, feature integer[]);
+      1 |         0 | Chancellor |    19
+      1 |         1 | of         |    13
+      1 |         2 | the        |    10
+      1 |         3 | Exchequer  |    19
+      1 |         4 | Nigel      |    19
+...
 </pre>
 
 -# Generate the training features:
 <pre class="example">
 SELECT crf_train_fgen( 'train_segmenttbl',
                        'crf_regex',
+                       'crf_label',
                        'crf_dictionary',
                        'train_featuretbl',
                        'train_featureset'
@@ -293,16 +445,18 @@ SELECT * from crf_dictionary;
 </pre>
 Result:
 <pre class="result">
-   token    | total
-&nbsp;-----------+-------
- talks      |     1
- that       |     1
- would      |     1
- alliance   |     1
- Saab       |     2
- cost       |     1
- after      |     1
- operations |     1
+     token       | total
+&nbsp;----------------+-------
+ Hawthorne       |     1
+ Mercedes-Benzes |     1
+ Wolf            |     3
+ best-known      |     1
+ hairline        |     1
+ accepting       |     2
+ purchases       |    14
+ trash           |     5
+ co-venture      |     1
+ restaurants     |     7
 ...
 </pre>
 <pre class="example">
@@ -341,31 +495,25 @@ SELECT * from train_featureset;
 ...
 </pre>
 
--# Create the (empty) feature weight table:
-<pre class="example">
-CREATE TABLE train_crf_feature (id integer,name text,prev_label_id integer,label_id integer,weight float);
-</pre>
-
 -# Train using linear CRF:
 <pre class="example">
-SELECT lincrf( 'train_featuretbl',
-               'sparse_r',
-               'dense_m',
-               'sparse_m',
-               'f_size',45,
-               'train_featureset',
-               'train_crf_feature',
-               20
+SELECT lincrf_train( 'train_featuretbl',
+                     'train_featureset',
+                     'crf_label',
+                     'crf_stats_tbl',
+                     'crf_weights_tbl',
+                     20
              );
 </pre>
 <pre class="result">
+                                lincrf_train
+&nbsp;-----------------------------------------------------------------------------------
+ CRF Train successful. Results stored in the specified CRF stats and weights table
  lincrf
-&nbsp;-------
-     20
 </pre>
 View the feature weight table.
 <pre class="example">
-SELECT * from train_crf_feature;
+SELECT * from crf_weights_tbl;
 </pre>
 Result:
 <pre class="result">
@@ -391,20 +539,25 @@ Result:
 
 -# To find the best labels for a test set using the trained linear CRF model, repeat steps #1-2 and generate the test features, except instead of creating a new dictionary, use the dictionary generated from the training set.
 <pre class="example">
-SELECT * from test_segmenttbl;
+SELECT * from test_segmenttbl ORDER BY doc_id, start_pos;
 </pre>
 Result:
 <pre class="result">
- start_pos | doc_id |  seg_text   | max_pos
-&nbsp;----------+--------+-------------+---------
-         1 |      1 | collapse    |      22
-        13 |      1 | ,           |      22
-        15 |      1 | is          |      22
-        17 |      1 | a           |      22
-         4 |      1 | speculation |      22
-         6 |      1 | Ford        |      22
-        18 |      1 | defensive   |      22
-        20 |      1 | with        |      22
+ doc_id | start_pos |   seg_text
+&nbsp;-------+-----------+---------------
+      0 |         0 | Rockwell
+      0 |         1 | International
+      0 |         2 | Corp.
+      0 |         3 | 's
+      0 |         4 | Tulsa
+      0 |         5 | unit
+      0 |         6 | said
+...
+      1 |         0 | Rockwell
+      1 |         1 | said
+      1 |         2 | the
+      1 |         3 | agreement
+      1 |         4 | calls
 ...
 </pre>
 <pre class="example">
@@ -412,7 +565,7 @@ SELECT crf_test_fgen( 'test_segmenttbl',
                       'crf_dictionary',
                       'crf_label',
                       'crf_regex',
-                      'train_crf_feature',
+                      'crf_weights_tbl',
                       'viterbi_mtbl',
                       'viterbi_rtbl'
                     );
@@ -433,19 +586,18 @@ SELECT * FROM extracted_best_labels;
 </pre>
 Result:
 <pre class="result">
- doc_id | start_pos |  seg_text   | label | id | prob
-&nbsp;-------+-----------+-------------+-------+----+-------
-      1 |         2 | Friday      | NNP   | 14 | 9e-06
-      1 |         6 | Ford        | NNP   | 14 | 9e-06
-      1 |        12 | Jaguar      | NNP   | 14 | 9e-06
-      1 |         3 | prompted    | VBD   | 28 | 9e-06
-      1 |         8 | intensify   | NN    | 12 | 9e-06
-      1 |        14 | which       | NN    | 12 | 9e-06
-      1 |        18 | defensive   | NN    | 12 | 9e-06
-      1 |        21 | GM          | NN    | 12 | 9e-06
-      1 |        22 | .           | .     | 44 | 9e-06
-      1 |         1 | collapse    | CC    |  1 | 9e-06
-      1 |         7 | would       | POS   | 17 | 9e-06
+ doc_id | start_pos |   seg_text    | label | id | max_pos |   prob
+&nbsp;-------+-----------+---------------+-------+----+---------+----------
+      0 |         0 | Rockwell      | NNP   | 19 |      27 | 0.000269
+      0 |         1 | International | NNP   | 19 |      27 | 0.000269
+      0 |         2 | Corp.         | NNP   | 19 |      27 | 0.000269
+      0 |         3 | 's            | NNP   | 19 |      27 | 0.000269
+...
+      1 |         0 | Rockwell      | NNP   | 19 |      16 | 0.000168
+      1 |         1 | said          | NNP   | 19 |      16 | 0.000168
+      1 |         2 | the           | DT    | 10 |      16 | 0.000168
+      1 |         3 | agreement     | JJ    | 14 |      16 | 0.000168
+      1 |         4 | calls         | NNS   | 21 |      16 | 0.000168
 ...
 </pre>
 
@@ -543,7 +695,7 @@ File crf.sql_in crf_feature_gen.sql_in viterbi.sql_in (documenting the SQL funct
 
 */
 
-DROP TYPE IF EXISTS MADLIB_SCHEMA.lincrf_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.lincrf_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.lincrf_result AS (
     coef DOUBLE PRECISION[],
     log_likelihood DOUBLE PRECISION,
@@ -560,43 +712,47 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_step_transition(
     DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+LANGUAGE C IMMUTABLE;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_step_merge_states(
     state1 DOUBLE PRECISION[],
     state2 DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+LANGUAGE C IMMUTABLE STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_lbfgs_step_final(
     state DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+LANGUAGE C IMMUTABLE STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_lincrf_lbfgs_converge(
     /*+ state */ DOUBLE PRECISION[])
 RETURNS DOUBLE PRECISION AS
 'MODULE_PATHNAME'
-LANGUAGE c IMMUTABLE STRICT
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+LANGUAGE c IMMUTABLE STRICT;
+
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_lincrf_lbfgs_result(
     /*+ state */ DOUBLE PRECISION[])
 RETURNS MADLIB_SCHEMA.lincrf_result AS
 'MODULE_PATHNAME'
-LANGUAGE c IMMUTABLE STRICT
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+LANGUAGE c IMMUTABLE STRICT;
 
 /**
  * @internal
  * @brief Perform one iteration of the L-BFGS method for computing
  * conditional random field
  */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.lincrf_lbfgs_step(
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION,
+    DOUBLE PRECISION,
+    DOUBLE PRECISION[]
+) CASCADE;
 CREATE AGGREGATE MADLIB_SCHEMA.lincrf_lbfgs_step(
     /* sparse_r columns */ DOUBLE PRECISION[],
     /* dense_m columns */ DOUBLE PRECISION[],
@@ -607,30 +763,27 @@ CREATE AGGREGATE MADLIB_SCHEMA.lincrf_lbfgs_step(
 
     STYPE=DOUBLE PRECISION[],
     SFUNC=MADLIB_SCHEMA.lincrf_lbfgs_step_transition,
-    m4_ifdef(`__GREENPLUM__',`prefunc=MADLIB_SCHEMA.lincrf_lbfgs_step_merge_states,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.lincrf_lbfgs_step_merge_states,')
     FINALFUNC=MADLIB_SCHEMA.lincrf_lbfgs_step_final,
     INITCOND='{0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
 );
 
-m4_changequote(<!,!>)
-m4_ifdef(<!__HAS_ORDERED_AGGREGATES__!>,<!
-CREATE
-m4_ifdef(<!__GREENPLUM__!>,<!ORDERED!>)
-AGGREGATE MADLIB_SCHEMA.array_union(anyarray) (
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.array_union(anyarray) CASCADE;
+CREATE m4_ifdef(`__POSTGRESQL__', `',
+    m4_ifdef(`__HAS_ORDERED_AGGREGATES__', `ORDERED')) AGGREGATE
+MADLIB_SCHEMA.array_union(anyarray) (
     SFUNC = array_cat,
     STYPE = anyarray
 );
-!>)
-m4_changequote(`,')
 
 -- We only need to document the last one (unfortunately, in Greenplum we have to
 -- use function overloading instead of default arguments).
-CREATE FUNCTION MADLIB_SCHEMA.compute_lincrf(
-    "source" VARCHAR,
-    "sparse_R" VARCHAR,
-    "dense_M" VARCHAR,
-    "sparse_M" VARCHAR,
-    "featureSize" VARCHAR,
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.compute_lincrf(
+    "source" TEXT,
+    "sparse_R" TEXT,
+    "dense_M" TEXT,
+    "sparse_M" TEXT,
+    "featureSize" TEXT,
     "tagSize" INTEGER,
     "maxNumIterations" INTEGER)
 RETURNS INTEGER
@@ -667,52 +820,26 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  * sets the default values.
  */
 
-CREATE FUNCTION MADLIB_SCHEMA.lincrf(
-    "source" VARCHAR,
-    "sparse_R" VARCHAR,
-    "dense_M" VARCHAR,
-    "sparse_M" VARCHAR,
-    "featureSize" VARCHAR,
-    "tagSize" INTEGER,
-    "featureset" VARCHAR,
-    "crf_feature" VARCHAR,
-    "maxNumIterations" INTEGER /*+ DEFAULT 20 */)
-RETURNS INTEGER AS $$
-DECLARE
-    theIteration INTEGER;
-BEGIN
-    theIteration := (
-        SELECT MADLIB_SCHEMA.compute_lincrf($1, $2, $3, $4, $5, $6, $9)
-    );
-    -- Because of Greenplum bug MPP-10050, we have to use dynamic SQL (using
-    -- EXECUTE) in the following
-    -- Because of Greenplum bug MPP-6731, we have to hide the tuple-returning
-    -- function in a subquery
-    EXECUTE
-        $sql$
-        INSERT INTO $sql$ || $8 || $sql$
-        SELECT f_index, f_name, feature[1], feature[2], (result).coef[f_index+1]
-        FROM (
-              SELECT MADLIB_SCHEMA.internal_lincrf_lbfgs_result(_madlib_state) AS result
-              FROM   _madlib_iterative_alg
-              WHERE  _madlib_iteration = $sql$ || theIteration || $sql$
-             ) subq, $sql$ || $7 || $sql$
-        $sql$;
-    RETURN theIteration;
-END;
-$$ LANGUAGE plpgsql VOLATILE
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_train(
+     train_feature_tbl      TEXT,
+     train_featureset_tbl   TEXT,
+     label_tbl              TEXT,
+     crf_stats_tbl          TEXT,
+     crf_weights_tbl        TEXT,
+     max_iterations         INTEGER /* DEFAULT 20 */
+) RETURNS TEXT AS $$
+PythonFunction(crf, crf, lincrf_train)
+$$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-CREATE FUNCTION MADLIB_SCHEMA.lincrf(
-    "source" VARCHAR,
-    "sparse_R" VARCHAR,
-    "dense_M" VARCHAR,
-    "sparse_M" VARCHAR,
-    "featureSize" VARCHAR,
-    "tagSize" INTEGER,
-    "featureset" VARCHAR,
-    "crf_feature" VARCHAR)
-RETURNS INTEGER AS
-$$SELECT MADLIB_SCHEMA.lincrf($1, $2, $3, $4, $5, $6, $7, $8, 20);$$
-LANGUAGE sql VOLATILE
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lincrf_train(
+     train_feature_tbl      TEXT,
+     train_featureset_tbl   TEXT,
+     label_tbl              TEXT,
+     crf_stats_tbl          TEXT,
+     crf_weights_tbl        TEXT
+) RETURNS TEXT AS
+$$
+SELECT MADLIB_SCHEMA.lincrf_train($1, $2, $3, $4, $5, 20);
+$$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

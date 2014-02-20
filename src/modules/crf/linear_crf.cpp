@@ -11,7 +11,6 @@
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 #include "linear_crf.hpp"
-
 namespace madlib {
 
 // Use Eigen
@@ -28,7 +27,7 @@ namespace crf {
 AnyType stateToResult(const Allocator &inAllocator,
                       const HandleMap<const ColumnVector,
                       TransparentHandle<double> > &incoef,
-                      double loglikelihood);
+                      double loglikelihood, const uint32_t &iterations);
 
 /**
  * @brief Inter- and intra-iteration state for lbfgs method for
@@ -492,12 +491,8 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g,
                 stmax = stp + xtrapf * (stp - stx);
             }
 
-            if (stp > stpmax) {
-                stp = stpmax;
-            }
-            if (stp < stpmin) {
-                stp = stpmin;
-            }
+            stp = std::max(stpmin, std::min(stpmax, stp));
+
             if ((brackt && ((stp <= stmin) || (stp >= stmax))) ||
                     (nfev == maxfev - 1) ||
                     (!infoc) || (brackt && ((stmax - stmin) <= xtol * stmax))) {
@@ -505,6 +500,7 @@ void LBFGS::mcsrch(int n, Eigen::VectorXd& x, double f, Eigen::VectorXd& g,
             }
 
             x = wa + stp * s;
+
             info = -1;
             return;
         }
@@ -586,6 +582,7 @@ void LBFGS::lbfgs(int n, int m, double f, Eigen::VectorXd g, double eps,
         iypt = ispt + n*m;
         npt = 0;
         w.segment(ispt, n) = (-g).cwiseProduct(diag);
+
         stp1 = 1.0 / g.norm();
         ftol= 0.0001;
         maxfev= 20;
@@ -701,6 +698,12 @@ Eigen::VectorXd mult(Eigen::MatrixXd Mi, Eigen::VectorXd Vi, bool trans,
 /**
  *@brief compute loglikelihood and gradient using forward-backward algorithm
  */
+void validate_label(int label_id, int num_labels)
+{
+    if ((label_id < 0) || (label_id >= num_labels))
+        throw std::runtime_error("Out of bound label ids found in feature table.");
+}
+
 void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double> >& state,
                             MappedColumnVector& sparse_r,
                             MappedColumnVector& dense_m,
@@ -724,6 +727,7 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
     next_alpha.fill(0);
     temp.fill(0);
     ExpF.fill(0);
+
     // compute beta values in a backward fashion
     // also scale beta-values to 1 to avoid numerical problems
     scale(seq_len - 1) = state.num_labels;
@@ -736,14 +740,19 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
         // examine all features at position "pos"
         //(prev_labe, curr_label, f_index, start_pos, exist)
         while (index-4>=0 && sparse_r(index-1) == i) {
-            int curr_index =  (int)sparse_r(index-3);
-            int f_index =  (int)sparse_r(index-2);
-            Vi(curr_index) += state.coef(f_index);
+            int curr_label =  static_cast<int>(sparse_r(index-3));
+            validate_label(curr_label, state.num_labels);
+            int f_index =  static_cast<int>(sparse_r(index-2));
+            Vi(curr_label) += state.coef(f_index);
             index-=5;
         }
         //(f_index, prev_label, curr_label)
         for(int n=0; n+2<sparse_m_size ; n+=3) {
-            Mi((int)sparse_m(n+1), (int)sparse_m(n+2)) += state.coef((int)sparse_m(n));
+            int prev_label = static_cast<int>(sparse_m(n+1));
+            int curr_label = static_cast<int>(sparse_m(n+2));
+            validate_label(prev_label, state.num_labels);
+            validate_label(curr_label, state.num_labels);
+            Mi(prev_label, curr_label) += state.coef(static_cast<int>(sparse_m(n)));
         }
 
         compute_exp_Mi(state.num_labels, Mi, Vi);
@@ -763,16 +772,20 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
         Vi.fill(0);
         // examine all features at position "pos"
         int ori_index = index;
+
         while (((index+4) <= (r_size-1)) && sparse_r(index+3) == j) {
-            int curr_index =  (int)sparse_r(index+1);
-            int f_index =  (int)sparse_r(index+2);
-            Vi(curr_index) += state.coef(f_index);
+            int curr_label =  static_cast<int>(sparse_r(index+1));
+            int f_index =  static_cast<int>(sparse_r(index+2));
+            Vi(curr_label) += state.coef(f_index);
             index+=5;
         }
-        if(j>=1)
+        if(j>=1) {
             for(int n=0; n+2<sparse_m_size ; n+=3) {
-                Mi((int)sparse_m(n+1), (int)sparse_m(n+2)) += state.coef((int)sparse_m(n));
+                int prev_label = static_cast<int>(sparse_m(n+1));
+                int curr_label = static_cast<int>(sparse_m(n+2));
+                Mi(prev_label, curr_label) += state.coef(static_cast<int>(sparse_m(n)));
             }
+        }
 
         compute_exp_Mi(state.num_labels, Mi, Vi);
 
@@ -787,14 +800,15 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
 
         index = ori_index;
         while (((index+4) <= (r_size-1)) && sparse_r(index+3) == j) {
-            int curr_index =  (int)sparse_r(index+1);
+            int curr_label =  (int)sparse_r(index+1);
             int f_index =  (int)sparse_r(index+2);
             int exist = (int)sparse_r(index+4);
             if (exist == 1) {
                 state.grad(f_index) += 1;
                 state.loglikelihood += state.coef(f_index);
             }
-            ExpF(f_index) += next_alpha(curr_index) * betas(curr_index,j);
+            ExpF(f_index) += next_alpha(curr_label) * betas(curr_label,j);
+
             index+=5;
         }
         // Edge feature
@@ -805,9 +819,9 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
             //(f_index, prev_label, curr_label)
             for(int n=0; n+2<sparse_m_size ; n+=3) {
                 int f_index = (int)sparse_m(n);
-                int prev_index = (int)sparse_m(n+1);
-                int curr_index = (int)sparse_m(n+2);
-                ExpF(f_index) += alpha[prev_index] * Vi(curr_index) * Mi(prev_index,curr_index) * betas(curr_index, j);
+                int prev_label = static_cast<int>(sparse_m(n+1));
+                int curr_label = static_cast<int>(sparse_m(n+2));
+                ExpF(f_index) += alpha[prev_label] * Vi(curr_label) * Mi(prev_label,curr_label) * betas(curr_label, j);
             }
         }
 
@@ -828,7 +842,6 @@ void compute_logli_gradient(LinCrfLBFGSTransitionState<MutableArrayHandle<double
     for (size_t k = 0; k < state.num_features; k++) {
         state.grad(k) -= ExpF(k) / Zx;
     }
-
 }
 
 /**
@@ -903,7 +916,6 @@ lincrf_lbfgs_step_final::run(AnyType &args) {
     LBFGS instance(state);// initialize the lbfgs with state of last iteration
     instance.lbfgs(state.num_features, state.m, state.loglikelihood, state.grad, eps, xtol);// lbfgs optimization
     instance.save_state(state);//save current state for the next iteration of lbfgs
-
     switch(instance.iflag)
     {
     case -1:
@@ -942,7 +954,7 @@ internal_lincrf_lbfgs_converge::run(AnyType &args) {
 AnyType
 internal_lincrf_lbfgs_result::run(AnyType &args) {
     LinCrfLBFGSTransitionState<ArrayHandle<double> > state = args[0];
-    return stateToResult(*this, state.coef, state.loglikelihood);
+    return stateToResult(*this, state.coef, state.loglikelihood, state.iteration);
 }
 
 /**
@@ -951,7 +963,7 @@ internal_lincrf_lbfgs_result::run(AnyType &args) {
 AnyType stateToResult(
     const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &incoef,
-    double loglikelihood) {
+    double loglikelihood, const uint32_t &iterations) {
     // FIXME: We currently need to copy the coefficient to a native array
     // This should be transparent to user code
     MutableNativeColumnVector coef(
@@ -960,7 +972,7 @@ AnyType stateToResult(
 
     // Return all coefficients, loglikelihood in a tuple
     AnyType tuple;
-    tuple << coef << loglikelihood;
+    tuple << coef << loglikelihood << iterations;
     return tuple;
 }
 
