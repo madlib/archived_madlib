@@ -140,7 +140,7 @@ def ____run_sql_query(sql, show_error, portid=portid, con_args=con_args):
                   '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
-        runenv["PGOPTIONS"] = '-c search_path=public'
+        runenv["PGOPTIONS"] = '-c search_path=public -c client_min_messages=notice'
         std, err = subprocess.Popen(runcmd, env=runenv, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE).communicate()
         if err:
@@ -256,6 +256,7 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
                   '-f', tmpfile]
         runenv = os.environ
         runenv["PGPASSWORD"] = con_args['password']
+        runenv["PGOPTIONS"] = '-c client_min_messages=notice'
 
     # Open log file
     try:
