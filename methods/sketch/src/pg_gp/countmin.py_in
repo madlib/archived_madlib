@@ -1,8 +1,11 @@
+import plpy
 import hashlib
+import struct
 from struct import pack, unpack
 from math import log
 import base64
 # import numpy as np
+
 __ranges = 8*8 # INT64BITS
 __depth = 8 # magic # of hash functions
 __numcounters = 1024 # magic mod of hash function 
@@ -13,7 +16,13 @@ __max_int64 = (1L << 63) - 1
 __min_int64 = __max_int64 * (-1)
 
 def count(b64sketch, val):
-    return __do_count(base64.b64decode(b64sketch), val)
+    if b64sketch is None:
+        plpy.error("Sketch error: NULL sketch is provided!")
+
+    try:
+        return __do_count(base64.b64decode(b64sketch), val)
+    except (TypeError, struct.error) as e:
+        plpy.error("Sketch error: wrongly formatted cmsketch object provided!")
 
 def __do_count(all_sketch, val):
     rows = [ all_sketch[i*__countmin_sz:(i+1)*__countmin_sz] for i in range(0,__depth) ]
@@ -146,7 +155,16 @@ def __find_ranges_recursive(bot, top, power, r):
     return r
 
 def rangecount(b64sketch, bot, top):
-    return __do_rangecount(base64.b64decode(b64sketch), bot, top)
+    if b64sketch is None:
+        plpy.error("Sketch error: NULL sketch is provided!")
+    if bot > top:
+        plpy.error("Sketch error: wrong range [{0}, {1}] provided!".format(
+            str(bot), str(top)))
+
+    try:
+        return __do_rangecount(base64.b64decode(b64sketch), bot, top)
+    except (TypeError, struct.error) as e:
+        plpy.error("Sketch error: wrongly formatted cmsketch object provided!")
 
 def __do_rangecount(all_sketch, bot, top):
     cursum = 0
@@ -188,52 +206,82 @@ def __do_rangecount(all_sketch, bot, top):
 # \param intcentile the centile to return
 # \param total the total count of items
 def centile(b64sketch, intcentile, total):
-    return __do_centile(base64.b64decode(b64sketch), intcentile, total)
+    if b64sketch is None:
+        plpy.error("Sketch error: NULL sketch is provided!")
+    if (intcentile <= 0 or intcentile >= 100):
+        plpy.error("Sketch error: invalid centile {0} provided!".format(
+            str(intcentile)))
+    if total < 0:
+        plpy.error("Sketch error: invalid count {0} is provided!".format(
+            str(total)))
+
+    try:
+        return __do_centile(base64.b64decode(b64sketch), intcentile, total)
+    except (TypeError, struct.error) as e:
+        plpy.error("Sketch error: wrongly formatted cmsketch object provided!")
 
 def __do_centile(all_sketches, intcentile, total):
-    if (intcentile <= 0 or intcentile >= 100):
-        print "centiles must be between 1-99 inclusive, was " + str(intcentile)
+    # est_cnt = __do_rangecount(all_sketches, __min_int64, __max_int64)
+    # if total != est_cnt:
+    #     plpy.error("Sketch error: cnt is {0}, but sketch has {1}".format(
+    #         str(total), str(est_cnt)))
 
     centile_cnt = (total * intcentile/100.0);
 
     loguess = __min_int64
     higuess = __max_int64
-    curguess = 0
-    i = 0
-    while i < (__ranges - 1) and (higuess-loguess > 1):
+    while loguess < higuess:
+        curguess = loguess + int((higuess - loguess) / 2)
         curcount = __do_rangecount(all_sketches, __min_int64, curguess)
-        if (curcount == centile_cnt):
-            break
-        if (curcount > centile_cnt):
+        if (curcount >= centile_cnt):
             # overshot
             higuess = curguess
-            curguess = loguess + int((curguess - loguess) / 2)
         else:
             # undershot
-            loguess = curguess;
-            curguess = higuess - int((higuess - curguess) / 2)
-        i += 1
-    return curguess
+            loguess = curguess + 1
+    return loguess
     
     
-def width_histogram(b64sketch, min, max, buckets):
-    return __do_width_histo(base64.b64decode(b64sketch), min, max, buckets)
+def width_histogram(b64sketch, themin, themax, buckets):
+    if b64sketch is None:
+        plpy.error("Sketch error: NULL sketch is provided!")
+    if themin > themax:
+        plpy.error("Sketch error: wrong range [{0}, {1}] provided!".format(
+            str(themin), str(themax)))
+    if buckets <= 0:
+        plpy.error("Sketch error: negative nbuckets {0} provided!".format(
+            str(buckets)))
 
-def __do_width_histo(all_sketches, min, max, buckets):
-    step = int(float(max-min+1) / float(buckets))
+    try:
+        return __do_width_histo(base64.b64decode(b64sketch), themin, themax,
+                buckets)
+    except (TypeError, struct.error) as e:
+        plpy.error("Sketch error: wrongly formatted cmsketch object provided!")
+
+def __do_width_histo(all_sketches, themin, themax, buckets):
+    step = int(float(themax-themin+1) / float(buckets))
     step = 1 if step < 1 else step
     histo = []
     for i in range(0, buckets):
-        binlo = min + i*step;
-        if (binlo > max):
+        binlo = themin + i*step;
+        if (binlo > themax):
             break
-        binhi = max if (i == buckets-1) else (min + (i+1)*step - 1)
+        binhi = themax if (i == buckets-1) else (themin + (i+1)*step - 1)
         binval = __do_rangecount(all_sketches, binlo, binhi)        
         histo.append([binlo,binhi,binval])
     return histo
     
 def depth_histogram(b64sketch, buckets):
-    return __do_depth_histo(base64.b64decode(b64sketch), buckets)
+    if b64sketch is None:
+        plpy.error("Sketch error: NULL sketch is provided!")
+    if buckets <= 0:
+        plpy.error("Sketch error: negative nbuckets {0} provided!".format(
+            str(buckets)))
+
+    try:
+        return __do_depth_histo(base64.b64decode(b64sketch), buckets)
+    except (TypeError, struct.error) as e:
+        plpy.error("Sketch error: wrongly formatted cmsketch object provided!")
 
 def __do_depth_histo(all_sketches, buckets):
     step = int(100.0 / float(buckets))
