@@ -802,8 +802,8 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
         # Execute all SQL files for the module
         for sqlfile in sql_files:
             algoname = os.path.basename(sqlfile).split('.')[0]
-            if (hawq_debug or hawq_fresh) and algoname in \
-                    ('svec', 'rf'):
+            if ((hawq_debug or hawq_fresh) and
+                    algoname in ('svec')):
                 continue
 
             if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
@@ -1295,7 +1295,7 @@ def main(argv):
             for sqlfile in sorted(glob.glob(sql_files), reverse=True):
                 # work-around for HAWQ
                 algoname = os.path.basename(sqlfile).split('.')[0]
-                if portid == 'hawq' and algoname in ('rf_test'):
+                if portid == 'hawq' and algoname in ():  # 'rf_test'
                     # Spit the line
                     print("TEST CASE RESULT|Module: " + module +
                           "|" + os.path.basename(sqlfile) +

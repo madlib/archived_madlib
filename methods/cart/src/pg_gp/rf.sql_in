@@ -644,8 +644,9 @@ DECLARE
     h2hmv_routine_id                INT := 1;
     ret                             MADLIB_SCHEMA.rf_train_result;
     train_rs                        RECORD;
+    sampling_per_tmp              FLOAT;
+    num_trees_tmp                    INT;
     n_fids                          INT;
-    features_per_node_tmp           INT;
     curstmt                         TEXT;
     enc_info                        TEXT[];
     old_optimizer                   TEXT;
@@ -666,13 +667,23 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__assert
         (
-            num_trees IS NOT NULL                                   AND
-            sampling_percentage IS NOT NULL                         AND
-            num_trees  > 0                                          AND
+            (num_trees IS NULL OR num_trees  > 0) AND
             (features_per_node IS NULL OR  features_per_node > 0)   AND
-            sampling_percentage > 0,
+            (sampling_percentage IS NULL OR
+              (sampling_percentage > 0 AND sampling_percentage <= 1)),
             'invalid parameter value for num_trees, features_per_node or sampling_percentage'
         );
+
+    IF num_trees is NULL THEN
+        num_trees_tmp = 10;
+    ELSE
+        num_trees_tmp = num_trees;
+    END IF;
+    IF sampling_percentage is NULL THEN
+        sampling_per_tmp = 0.632;
+    ELSE
+        sampling_per_tmp = sampling_percentage;
+    END IF;
 
     rf_table_name = btrim(lower(result_rf_table_name), ' ');
     PERFORM MADLIB_SCHEMA.__check_dt_common_params
@@ -696,7 +707,7 @@ BEGIN
         (
             'RF',
             split_criterion,
-            num_trees,
+            num_trees_tmp,
             features_per_node,
             training_table_name,
             NULL,
@@ -708,7 +719,7 @@ BEGIN
             100.0,
             how2handle_missing_value,
             max_tree_depth,
-            sampling_percentage,
+            sampling_per_tmp,
             't',
             node_prune_threshold,
             node_split_threshold,
@@ -723,7 +734,7 @@ BEGIN
 
     ret.training_time           = clock_timestamp() - begin_func_exec;
     ret.num_of_samples          = train_rs.num_of_samples;
-    ret.num_trees               = num_trees;
+    ret.num_trees               = num_trees_tmp;
     ret.features_per_node       = train_rs.features_per_node;
     ret.num_tree_nodes          = train_rs.num_tree_nodes;
     ret.max_tree_depth          = train_rs.max_tree_depth;
