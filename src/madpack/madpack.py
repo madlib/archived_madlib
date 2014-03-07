@@ -476,10 +476,9 @@ def __db_install(schema, dbrev, testcase):
             if go in ('N', 'NO'):
                 __info('Installation stopped.', True)
                 return
-            try:
-                __db_create_objects(schema, None, testcase=testcase, hawq_debug=True)
-            except:
-                __db_rollback(None, None)
+            # Rolling back in HAWQ will drop catalog functions. For exception, we
+            # simply push the exception to the caller to terminate the install
+            __db_create_objects(schema, None, testcase=testcase, hawq_debug=True)
         else:
             __info("***************************************************************************", True)
             __info("* Schema %s already exists" % schema.upper(), True)
@@ -519,10 +518,9 @@ def __db_install(schema, dbrev, testcase):
         # work-around before UDT is available in HAWQ
         if portid == 'hawq':
             __info("> Schema %s exists w/ pre-built MADlib objects" % schema.upper(), verbose)
-            try:
-                __db_create_objects(schema, None, testcase=testcase, hawq_fresh=True)
-            except:
-                __db_rollback(None, None)
+            # Rolling back in HAWQ will drop catalog functions. For exception, we
+            # simply push the exception to the caller to terminate the install
+            __db_create_objects(schema, None, testcase=testcase, hawq_fresh=True)
         else:
             __info("> Schema %s exists w/o MADlib objects" % schema.upper(), verbose)
 
@@ -537,6 +535,11 @@ def __db_install(schema, dbrev, testcase):
     # CASE #3: Target schema does not exist:
     ##
     elif not schema_writable:
+        if portid == 'hawq':
+            # Rolling back in HAWQ will drop catalog functions. For exception, we
+            # simply push the exception to the caller to terminate the install
+            raise Exception("MADLIB schema is required for HAWQ")
+
         __info("> Schema %s does not exist" % schema.upper(), verbose)
 
         # Create MADlib schema
@@ -1295,7 +1298,7 @@ def main(argv):
             for sqlfile in sorted(glob.glob(sql_files), reverse=True):
                 # work-around for HAWQ
                 algoname = os.path.basename(sqlfile).split('.')[0]
-                if portid == 'hawq' and algoname in ():  # 'rf_test'
+                if portid == 'hawq' and algoname in ():
                     # Spit the line
                     print("TEST CASE RESULT|Module: " + module +
                           "|" + os.path.basename(sqlfile) +

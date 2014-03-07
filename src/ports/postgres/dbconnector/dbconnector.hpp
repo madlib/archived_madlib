@@ -16,6 +16,7 @@
 
 extern "C" {
     #include <postgres.h>
+    #include <pg_config.h>         // Use the macro defined in the header to detect the platform
     #include <funcapi.h>
     #include <catalog/pg_proc.h>
     #include <catalog/pg_type.h>
