@@ -52,8 +52,8 @@ OPTIONS
  use the environment variable.
 
 --prefix <MADLIB_INSTALL_PATH>
- Optional. Expected MADlib installation path. If not set, a default value
- in the RPM file will be used.
+ Optional. Expected MADlib installation path. If not set, the default value
+ \${GPHOME}/madlib is used.
 
 -s | --skip-localhost
  Optional. If not set, the RPM file will be installed to localhost as well
@@ -187,4 +187,13 @@ if [ 0 -ne $? ]; then
 fi
 
 echo "MADlib successfully installed."
+echo "Please run the following command to deploy MADlib"
+echo "usage:  madpack install -p hawq -c user@host:port/database"
+echo "Example:"
+echo "        \$ \${GPHOME}/madlib/bin/madpack install -p hawq -c gpadmin@mdw:5432/testdb"
+echo "        This will install MADlib objects into a Greenplum database named \"testdb\""
+echo "        running on server \"mdw\" on port 5432. Installer will try to login as \"gpadmin\""
+echo "        and will prompt for password. The target schema will be \"madlib\"."
+echo "For additional options run: madpack --help"
+echo "Release notes and additional documentation can be found at http://madlib.net"
 
