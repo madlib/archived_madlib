@@ -23,7 +23,7 @@ Datum generate_sparse_vector(PG_FUNCTION_ARGS)
 	ArrayType   *term_index = PG_GETARG_ARRAYTYPE_P(0);
 	ArrayType   *term_count = PG_GETARG_ARRAYTYPE_P(1);
 
-	int16_t dict_size = PG_GETARG_INT16(2);
+	int64_t dict_size = PG_GETARG_INT64(2);
 
 	/* Check if arrays have null entries */
 	if (ARR_HASNULL(term_index) || ARR_HASNULL(term_count))
