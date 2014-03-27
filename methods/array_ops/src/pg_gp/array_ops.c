@@ -69,6 +69,7 @@ Datum array_of_float(PG_FUNCTION_ARGS);
 Datum array_of_bigint(PG_FUNCTION_ARGS);
 Datum array_fill(PG_FUNCTION_ARGS);
 Datum array_scalar_mult(PG_FUNCTION_ARGS);
+Datum array_scalar_add(PG_FUNCTION_ARGS);
 Datum array_sqrt(PG_FUNCTION_ARGS);
 Datum array_normalize(PG_FUNCTION_ARGS);
 
@@ -702,6 +703,27 @@ Datum array_scalar_mult(PG_FUNCTION_ARGS){
 	PG_FREE_IF_COPY(v1, 0);
 	return(res);
 }
+
+PG_FUNCTION_INFO_V1(array_scalar_add);
+Datum array_scalar_add(PG_FUNCTION_ARGS){
+	ArrayType *v1;
+	Datum v2;
+	Datum res;
+
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+	if (PG_ARGISNULL(1))
+		PG_RETURN_NULL();
+
+	v1 = PG_GETARG_ARRAYTYPE_P(0);
+	v2 = PG_GETARG_DATUM(1);
+
+	res = General_Array_to_Array(v1, v2, element_add);
+
+	PG_FREE_IF_COPY(v1, 0);
+	return(res);
+}
+
 
 PG_FUNCTION_INFO_V1(array_sqrt);
 Datum array_sqrt(PG_FUNCTION_ARGS){
