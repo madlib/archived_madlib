@@ -10,46 +10,75 @@
 ---------------------------------------------------------------------------
 -- Setup: 
 ---------------------------------------------------------------------------
-CREATE FUNCTION install_test() 
-RETURNS TEXT AS $$ 
-declare
-    an float[] := '{1,2,3}';
-    b float[] := '{4,5,7}';
-    result_num1 float := 0;
-    result_num2 float := 0;
-    result_num3 float := 0;
-    result TEXT;
-begin
+CREATE TABLE data AS
+SELECT
+    '{1,2,3}'::float8[] AS an,
+    '{4,5,7}'::float8[] AS b;
 
-    SELECT INTO result_num1 array_dot(array_mult(array_add(an,b), array_sub(an,b)), array_mult(array_div(an,b), normalize(an)));
-    b[4] = NULL;
-    SELECT INTO result_num2 (array_max(b)+array_min(b)+array_sum(b)+array_sum_big(b)+
-    array_mean(b)+array_stddev(b));
-    SELECT INTO result_num3 array_sum(array_scalar_mult(array_fill(array_of_float(20), 234.343::FLOAT8),3.7::FLOAT));
-    result_num1 = result_num1+result_num2+result_num3-17371.7254700712;
-    
-    SELECT INTO result CASE WHEN((result_num1 < .01)AND(result_num1 > -.01)) THEN 'PASS' ELSE 'FAIL' END;
-    
-    IF result = 'FAIL' THEN
-        RAISE EXCEPTION 'Failed install check';
-    END IF;
-       
-    RETURN result;
-    
-end $$ language plpgsql;
+SELECT array_dot(
+    array_mult(
+        array_add(an,b),
+        array_sub(an,b)),
+    array_mult(
+        array_div(an,b),
+        normalize(an))) AS result1
+FROM data;
 
----------------------------------------------------------------------------
--- Test
----------------------------------------------------------------------------
-SELECT install_test();
+SELECT array_max(b) FROM data;
+SELECT array_min(b) FROM data;
+SELECT array_sum(b) FROM data;
+SELECT array_sum_big(b) FROM data;
+SELECT array_mean(b) FROM data;
+SELECT array_stddev(b) FROM data;
+
+SELECT array_max(b)
+    + array_min(b)
+    + array_sum(b)
+    + array_sum_big(b)
+    + array_mean(b)
+    + array_stddev(b) AS result2
+FROM data;
+
+SELECT array_sum(
+    array_scalar_mult(
+        array_fill(
+            array_of_float(20),
+            234.343::FLOAT8),
+        3.7::FLOAT8))
+FROM data;
 
 -- array_agg
-create table test as select generate_series(1,100) x;
-select array_agg(x) from test;
+CREATE TABLE test AS SELECT generate_series(1,100) x;
+SELECT array_agg(x) FROM test;
 
 -- array_scalar_add
-select assert(
+SELECT assert(
     relative_error(
         array_scalar_add(ARRAY[0.8, 9.5, 2.6]::float8[], 2.2::float8),
         ARRAY[3.0, 11.7, 4.8]::float8[]) < 1e-6,
     'array_scalar_add: Wrong results');
+
+SELECT array_filter(ARRAY[0.8, 9.5, 0, 2.6]::float8[]);
+SELECT array_filter(ARRAY[0.8, 9.5, 0, 2.6]::float8[], 2.5::float8, '<');
+
+------------------------------------------------------------
+-- numeric[]
+------------------------------------------------------------
+-- (array) -> scalar
+SELECT array_sum_big(ARRAY[-1, 1.3, 2.9]);
+SELECT array_sum(ARRAY[-1, 1.3, 2.9]);
+SELECT array_max(ARRAY[-1, 1.3, 2.9]);
+SELECT array_min(ARRAY[-1, 1.3, 2.9]);
+SELECT array_stddev(ARRAY[-1, 1.3, 2.9]);
+SELECT array_mean(ARRAY[-1, 1.3, 2.9]);
+
+-- (array, array) -> scalar
+SELECT array_dot(ARRAY[-1, 1.3, 2.9], ARRAY[1,2,3]::numeric[]);
+SELECT array_contains(ARRAY[1., 2.], ARRAY[1., 0]);
+
+-- (array,) -> array
+SELECT array_scalar_mult(
+    ARRAY[1,2,3,4]::numeric[],
+    (1.0/MADLIB_SCHEMA.array_sum(ARRAY[1.,2,3,4]))
+);
+
