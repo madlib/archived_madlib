@@ -17,17 +17,22 @@ m4_include(`SQLCommon.m4')
 <ul>
 <li><a href="#notes">Implementation Notes</a></li>
 <li><a href="#list">List of Array Operations</a></li>
+<li><a href="#examples">Examples</a></li>
 <li><a href="#related">Related Topics</a></li>
 </ul>
 </div>
 
 @brief Provides fast array operations supporting other MADlib modules.
 
-This module provides a set of basic array operations implemented in C. It is a support module for several machine learning algorithms that
+This module provides a set of basic array operations implemented in C.
+It is a support module for several machine learning algorithms that
 require fast array operations.
 
 @anchor notes
 @par Implementation Notes
+
+All functions (except normalize() and array_filter()) described in this module
+work with matrices, which is considered as 2-D array in the database.
 
 These functions support several numeric types:
     - SMALLINT
@@ -66,7 +71,8 @@ Several of the function require NO NULL VALUES, while others omit NULLs and retu
 <tr><th>array_sum()</th><td>This function finds the sum of the values in the array. NULLs are ignored. Return type is the same as the input type.
  </td></tr>
 
-<tr><th>array_sum_big()</th><td>This function finds the sum of the values in the array. NULLs are ignored. Return type is always FLOAT8 regardless of input. This function is meant to replace array_sum in the cases when sum may overflow the array type.
+<tr><th>array_sum_big()</th><td>This function finds the sum of the values in the array. NULLs are ignored. Return type is always FLOAT8 regardless of input.
+ This function is meant to replace array_sum() in cases when a sum may overflow the element type.
  </td></tr>
 
 <tr><th>array_mean()</th><td> This function finds the mean of the values in the array. NULLs are ignored.
@@ -84,21 +90,115 @@ Several of the function require NO NULL VALUES, while others omit NULLs and retu
 <tr><th>array_fill()</th><td> This functions set every value in the array to some desired value (provided as the argument).
  </td></tr>
 
-<tr><th>array_filter()</th><td> This function takes an array as the input and keep only elements that satisfy the operator on specified scalar. It requires that all the values are NON-NULL. Return type is the same as the input type. By default, this function removes all zeros.
+<tr><th>array_filter()</th><td> This function takes an array as the input and keep only elements that satisfy the operator on specified scalar. It requires that the array is 1-D and all the values are NON-NULL. Return type is the same as the input type. By default, this function removes all zeros.
 </td></tr>
 
 <tr><th>array_scalar_mult()</th><td> This function takes an array as the input and executes element-wise multiplication by the scalar provided as the second argument, returning the resulting array. It requires that all the values are NON-NULL. Return type is the same as the input type.
 </td></tr>
 
-<tr><th>array_scalar_add()</th><td> This function takes an array as the input and executes element-wise addition of the scalar provided as the second argument, returning the resulting array. It requires that all the values are NON-NULL. Return type is the same as the input type.
+<tr><th>array_scalar_add()</th><td> This function takes an array as the input and executes element-wise addition of the scalar provided as the second argument,
+ returning the resulting array. It requires that all the values are NON-NULL. Return type is the same as the input type.
 </td></tr>
 
 <tr><th>array_sqrt()</th><td> This function takes an array as the input and finds square root of each element in the array, returning the resulting array. It requires that all the values are NON-NULL.
 </td></tr>
 
-<tr><th>normalize()</th><td> Array normalization function.
+<tr><th>normalize()</th><td> This function normalizes an array as sum of squares to be 1. It requires that the array is 1-D and all the values are NON-NULL.
 </td></tr>
 </table>
+
+@anchor examples
+@examp
+
+-# Create a database table with two integer array columns and add some data.
+<pre class="example">
+CREATE TABLE array_tbl ( id integer,
+                         array1 integer[],
+                         array2 integer[]
+                       );
+INSERT INTO array_tbl VALUES
+                       ( 1, '{1,2,3,4,5,6,7,8,9}', '{9,8,7,6,5,4,3,2,1}' ),
+                       ( 2, '{1,1,0,1,1,2,3,99,8}','{0,0,0,-5,4,1,1,7,6}' );
+</pre>
+-# Find the minimum, maximum, mean, and standard deviation of the `array1` column.
+<pre class="example">
+SELECT id, madlib.array_min(array1), madlib.array_max(array1),
+           madlib.array_mean(array1), madlib.array_stddev(array1)
+FROM array_tbl;
+</pre>
+Result:
+<pre class="result">
+ id | array_min | array_max |    array_mean    |   array_stddev
+&nbsp;---+-----------+-----------+------------------+------------------
+  1 |         1 |         9 |                5 | 2.73861278752583
+  2 |         0 |        99 | 12.8888888888889 | 32.3784050118457
+(2 rows)
+</pre>
+-# Perform array addition and subtraction.
+<pre class="example">
+SELECT id, madlib.array_add(array1,array2),
+          madlib.array_sub(array1,array2)
+FROM array_tbl;
+</pre>
+Result:
+<pre class="result">
+ id |          array_add           |        array_sub
+&nbsp;---+------------------------------+-------------------------
+  2 | {1,1,0,-4,5,3,4,106,14}      | {1,1,0,6,-3,1,2,92,2}
+  1 | {10,10,10,10,10,10,10,10,10} | {-8,-6,-4,-2,0,2,4,6,8}
+(2 rows)
+</pre>
+-# Perform element-wise array multiplication and division. The row with `id=2` is
+excluded because the divisor array contains zero, which would cause a divide-by-zero error.
+<pre class="example">
+SELECT id, madlib.array_mult(array1,array2),
+           madlib.array_div(array1,array2)
+FROM array_tbl
+WHERE 0 != ALL(array2);</pre>
+Result:
+<pre class="result">
+ id |         array_mult         |      array_div
+&nbsp;---+----------------------------+---------------------
+  1 | {9,16,21,24,25,24,21,16,9} | {0,0,0,0,1,1,2,4,9}
+(1 row)
+</pre>
+-# Calculate the dot product of the arrays.
+<pre class="example">
+SELECT id, madlib.array_dot(array1, array2)
+FROM array_tbl;
+</pre>
+Result:
+<pre class="result">
+ id | array_dot
+&nbsp;---+----------
+  2 |       745
+  1 |       165
+(2 rows)
+</pre>
+-# Multiply an array by a scalar 3.
+<pre class="example">
+SELECT id, madlib.array_scalar_mult(array1,3)
+FROM array_tbl;
+</pre>
+Result:
+<pre class="result">
+ id |     array_scalar_mult
+&nbsp;---+--------------------------
+  1 | {3,6,9,12,15,18,21,24,27}
+  2 | {3,3,0,3,3,6,9,297,24}
+(2 rows)
+</pre>
+-# Construct a nine-element array with each element set to the value 1.3.
+<pre class="example">
+SELECT madlib.array_fill(madlib.array_of_float(9), 1.3::float);
+</pre>
+Result:
+<pre class="result">
+              array_fill
+&nbsp;--------------------------------------
+ {1.3,1.3,1.3,1.3,1.3,1.3,1.3,1.3,1.3}
+(1 row)
+</pre>
 
 @anchor related
 @par Related Topics
@@ -221,7 +321,8 @@ LANGUAGE C IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 /**
- * @brief This function finds the sum of the values in the array. NULLs are ignored. Return type is always FLOAT8 regardless of input. This function is meant to replace array_sum in the cases when sum may overflow the array type.
+ * @brief This function finds the sum of the values in the array. NULLs are ignored. Return type is always FLOAT8 regardless of input.
+ * This function is meant to replace array_sum() in the cases when sum may overflow the element type.
  *
  * @param x Array x
  * @returns Sum of x.
@@ -361,10 +462,10 @@ LANGUAGE C IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 /**
- * @brief Array normalization function.
+ * @brief This function normalizes an array as sum of squares to be 1.
  *
  * @param x Array x.
- * @return  Array normalized by its norm.
+ * @return  Array normalized by its 2-norm.
  *
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.normalize(x anyarray) RETURNS float8[]
@@ -372,9 +473,9 @@ AS 'MODULE_PATHNAME', 'array_normalize' LANGUAGE C IMMUTABLE STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 /**
- * @brief ARRAY_AGG aggregate for compatibility with GPDB < 4.1 and Postgres < 9.0
+ * @brief ARRAY_AGG aggregate for compatibility with GPDB < 4.1 and Postgres < 9.0.
  *        This is a slower solution than the built in array_agg that appears
- *        in later GPDB and Postgres versions
+ *        in later GPDB and Postgres versions.
  */
 DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.array_agg(anyelement);
 CREATE AGGREGATE MADLIB_SCHEMA.array_agg( anyelement) (
