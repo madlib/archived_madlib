@@ -1,0 +1,888 @@
+"""
+@file margins_common.py_in
+
+@brief Marginal Effects with Interactions: Common functions
+
+@namespace marginal
+"""
+import re
+from collections import defaultdict
+from itertools import chain
+
+if __name__ != "__main__":
+    ## The import statements are called only when this file is not executed
+    ## as a standalone (for unit testing)
+    from utilities.utilities import _assert
+    from utilities.validate_args import table_exists
+    from utilities.validate_args import columns_exist_in_table
+    from utilities.validate_args import table_is_empty
+    from utilities.utilities import py_list_to_sql_string
+# ========================================================================
+
+def margins_validate_model_table(model_table):
+    """
+    Args:
+        @param schema_madlib
+        @param model_table
+
+    Returns:
+
+    """
+    _assert(model_table and
+            model_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid regression model table name!")
+    _assert(table_exists(model_table),
+            "Margins error: Specified Model table ({0}) is missing! "
+            "Rerun underlying regression".format(model_table))
+
+    model_summary_table = model_table + '_summary'
+    _assert(table_exists(model_summary_table),
+            "Margins error: Summary for model table ({0}) is missing! "
+            "Rerun underlying regression".format(model_summary_table))
+
+    _assert(columns_exist_in_table(model_summary_table,
+            ['method', 'source_table', 'out_table', 'dependent_varname',
+             'independent_varname']),
+            "Margins error: Invalid model summary table ({0})"
+            " - some required columns missing".format(model_summary_table))
+    return True
+#------------------------------------------------------------------------------
+
+
+def margins_validate_args(out_table, source_table, x_design=None,
+                          **kwargs):
+    _assert(out_table and
+            out_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid output table name!")
+    _assert(not table_exists(out_table),
+            "Margins error: Output table already exists!")
+    _assert(not table_exists(out_table + '_summary'),
+            "Margins error: Output summary table already exists!")
+
+    _assert(source_table and source_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid data table name!")
+    _assert(table_exists(source_table),
+            "Margins error: Data table ({0}) is missing!".format(source_table))
+    _assert(not table_is_empty(source_table),
+            "Margins error: Data table ({0}) is empty!".format(source_table))
+# -------------------------------------------------------------------------
+
+
+def parse_marginal_vars(marginal_var_str):
+    """
+    Marginal vars is supposed to be a list of integers separated by ','.
+    It's possible that the user inputs it as an array string
+    eg: ARRAY[1, 2, 3, 4] or '{2, 4, 5}'. We strip out the 'ARRAY' if present in
+    front and also strip and square/curly brackets.
+    """
+    if str.lower(marginal_var_str.strip()[:6]) == "array[":
+        marginal_var_str = marginal_var_str[5:]
+    marginal_var_str = marginal_var_str.strip(" {}[]")
+    try:
+        marginal_var_list = map(int, marginal_var_str.split(','))
+    except Exception:
+        raise ValueError("Margins error: Invalid input for marginal vars: {0}".
+                         format(marginal_var_str))
+    return marginal_var_list
+#------------------------------------------------------------------------------
+
+
+class InteractionTermBuilder(object):
+
+    def __init__(self, design_str):
+        """
+        Args:
+            @param self
+            @param design_string
+        """
+        self.design_str = design_str
+
+        # basis_terms (list): Indices from independent_variable that are basis variables
+        self.basis_terms = []
+
+        # indicator_terms (dict): Elements in 'basis_terms' that are indicator
+        #  key = category of the indicator variable,
+        #  value = list of all variables for this category
+        self.indicator_terms = defaultdict(list)
+
+        # reference_terms (dict): For each category in indicator terms, if the
+        #  reference category is provided then it is added to this dictionary
+        #   key = category of the indicator variable,
+        #   value = index (int) of reference variable
+        self.reference_terms = defaultdict(lambda: None)
+
+        # interaction_terms (dict): Each interaction term
+        #  is placed in this dictionary with the index from independent_variable
+        #  as the key and an interaction_term represented as a dictionary.
+        # see _parse_design_string() for an example of the format
+        # of a single interaction term.
+        self.interaction_terms = defaultdict(dict)
+        self.n_basis_terms, self.n_int_terms = self._parse_design_string()
+        self.n_terms = self.n_basis_terms + self.n_int_terms
+    #------------------------------------------------------------------------------
+
+    @staticmethod
+    def _strip_indicator(indicator_term):
+        """
+        Find if input is an indicator term and strip the 'i.' prefix and the
+        category suffix. Return the underlying index and the category string.
+        If the category string is None then the variable is not an indicator term.
+        (see usage examples)
+
+        Args:
+            @param indicator_term: string, Index of variable, possibly prefixed by
+                                    'i.' to indicate it as an indicator variable.
+                                    If prefix exists then a suffix should also be
+                                    present giving the category of the indicator term
+
+        Returns:
+            Tuple. (Stripped indicator index, True if it was an indicator variable)
+
+        Raises:
+            ValueError, if input is invalid
+
+        Examples:
+                   (Input -- Output):
+            'i.1.color'   -- (1, 'color', False)
+            'i.2.gender'  -- (2, 'gender', False)
+            'ir.2.gender' -- (2, 'gender', True)
+            '1'           -- (1, None, False)
+            'i.1'         -- ValueError
+            'i*1'         -- ValueError
+            '2*3'         -- ValueError
+        """
+        t = re.match(r'(^i[r]?\.)(\d+)(\.)(.*)', indicator_term.strip())
+        # (1) is the prefix, (2) is the index, (4) is the suffix
+        if t:
+            indicator_var = t.group(2)
+            indicator_category = t.group(4)
+            is_reference = (t.group(1) == 'ir.')
+        else:
+            indicator_var = indicator_term
+            indicator_category = None
+            is_reference = False
+
+        try:
+            indicator_index = int(indicator_var)
+        except (ValueError, TypeError):
+            raise ValueError("Invalid input for indicator term: {0}".format(indicator_term))
+        return indicator_index, indicator_category, is_reference
+    # ------------------------------------------------------------------------------
+
+    @classmethod
+    def _parse_interaction_term(cls, interaction_term):
+        """
+        Parse each interaction term containing product of powers of various basis terms
+        to generate a list of the terms involved in the product.
+
+        Args:
+            @param interaction_term: string, Interaction between variables represented
+                                        as a product of powers of variables.
+
+        Returns:
+            Dict: Dictionary of interaction elements. Each key is the variable index
+            and the value is the power for that variable
+
+        Example
+            interaction_term = "1*3^2"
+            output = {1: 1, 3: 2}
+
+            interaction_term = "i.1.color^2 * 2^2"
+            output = {1: 2, 2: 2}
+
+            Here the key in the dictionary is an index in the
+            original independent variable list (represents a basis term).
+        """
+        # split string by '*'; eg: '1^2 * 2^2' would give two element list
+        product_terms = interaction_term.strip().split('*')
+        if not product_terms:
+            raise ValueError("Invalid input for interaction term: {0}".
+                             format(interaction_term))
+        if len(product_terms) == 1:
+            if len(product_terms[0].strip().split("^")) == 1:
+                # a single variable is input without any power or product operation.
+                # this should be treated as a basis variable instead of interaction term
+                raise ValueError("""Inputed interaction term {0} is actually a
+                                    basis term""".format(interaction_term))
+
+        all_inter_terms = defaultdict(int)
+        for each_term in product_terms:
+            try:
+                power_terms = each_term.strip().split('^')
+                term_index = cls._strip_indicator(power_terms[0])[0]
+                if len(power_terms) > 1:
+                    term_power = int(power_terms[1])
+                    if term_power < 0:
+                        # negative powers not allowed
+                        raise ValueError("Invalid input for interaction term: {0}".
+                                         format(each_term))
+                else:
+                    # if no power is provided (eg. '1 * 2') then default power = 1
+                    term_power = 1
+                all_inter_terms[term_index] += term_power
+            except (TypeError, ValueError):
+                raise ValueError("Invalid input for interaction term: {0}".
+                                 format(each_term))
+        return all_inter_terms
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def str_int_term(int_term, array_name=None, quoted=False):
+        """
+        Create a string representation from the dict representation of an
+        interaction term.
+
+        Args:
+            @param int_term: dict, Dictionary representation of a single interaction term.
+            @param array_name: string. If the int_term indices are to be treated as
+                                indices of an array then 'array_name' can be used
+                                while building the string. If None, then the
+                                indices are printed as is.
+            @param quoted: bool. If true, double quotes are added around the
+                                 array_name. Ignored if array_name is None.
+        Returns:
+            String: String representation of interaction term.
+
+        Example:
+            int_term_list = {1:1, 3:2}
+            array_name = 'x'
+            quoted = True
+            output = '"x"[1]^1 * "x"[3]^2'
+
+            int_term_list = {0:3, 1:1, 3:2}
+            array_name = 'x'
+            quoted = False
+            output = '3 * "x"[1]^1 * "x"[3]^2'
+
+            int_term_list = {1: 1, 3: 2}
+            array_name = None
+            output = "1 * 3^2"
+        """
+        if not int_term:
+            return ""
+        str_rst = []
+        for var, power in int_term.items():
+            if power < 1:
+                continue
+            if var == 0:
+                # var = 0 indicates a constant term whose value is 'power'
+                prefix_str = ""
+                power_suffix = "{0}".format(power)
+            else:
+                power_suffix = "^" + str(power) if power > 1 else ""
+                if array_name:
+                    quote_str = "\"" if quoted else ""
+                    prefix_str = "{q}{0}{q}[{1}]".format(array_name, var, q=quote_str)
+                else:
+                    prefix_str = "{0}".format(var)
+            str_append = ("{prefix}{suffix}".
+                          format(prefix=prefix_str, suffix=power_suffix))
+            str_rst.append(str_append)
+        return ' * '.join(str_rst)
+    #------------------------------------------------------------------------------
+
+    def str_sum_int_terms(self, coef_array_name, indep_array_name=None, quoted=False):
+        """
+            Generate the string representation for computing \sigma_i (f_i * beta_i)
+            where f_i is an interaction term
+        """
+        return self.create_sum_int_terms(self.interaction_terms,
+                                         coef_array_name, indep_array_name,
+                                         quoted)
+    #------------------------------------------------------------------------------
+
+    def str_sum_deriv_int_terms(self, ref, coef_array_name, indep_array_name=None, quoted=False):
+        return self.create_sum_int_terms(self.interaction_partial_deriv(ref),
+                                         coef_array_name, indep_array_name,
+                                         quoted)
+    #------------------------------------------------------------------------------
+
+    @classmethod
+    def create_sum_int_terms(cls, interaction_terms, coef_array_name, indep_array_name=None, quoted=False):
+        if not interaction_terms:
+            return ""
+        result = []
+        for each_index, each_term in interaction_terms.items():
+            quote_str = "\"" if quoted else ""
+            coef_str = "{q}{0}{q}[{1}]".format(coef_array_name, str(each_index), q=quote_str)
+            result.append(coef_str + " * " + cls.str_int_term(each_term, indep_array_name, quoted))
+        return " + ".join(result)
+    #------------------------------------------------------------------------------
+
+    def create_2nd_derivative_matrix(self, indep_array_name=None, quoted=False):
+        """
+            Compute the \frac{\partial f_i}{\partial x_k}
+            where i is the index of independant variable
+            and k is the index of basis variable
+        """
+        derivative_matrix_str_list = []
+        if not self.interaction_terms:
+            # return an identity matrix of size num_basis_terms x num_basis_terms
+            for i in range(self.n_basis_terms):
+                derivative_matrix_str_list.append(py_list_to_sql_string(
+                    [1 if j==i else 0 for j in range(self.n_basis_terms)]))
+        else:
+            for index, each_basis in enumerate(self.basis_terms):
+                all_partial_deriv_list = ['0'] * self.n_terms
+                all_partial_deriv_list[each_basis - 1] = 1
+                curr_partial_deriv_dict = self.interaction_partial_deriv(each_basis)
+                for each_index, each_term in curr_partial_deriv_dict.items():
+                    all_partial_deriv_list[each_index - 1] = \
+                        self.str_int_term(each_term, indep_array_name, quoted)
+                derivative_matrix_str_list.append(py_list_to_sql_string(all_partial_deriv_list) + "::double precision[]")
+        return py_list_to_sql_string(derivative_matrix_str_list)
+
+    #------------------------------------------------------------------------------
+
+    def interaction_partial_deriv(self, ref):
+        """
+        Args:
+            @param ref: int. Variable for which to compute partial derivative
+
+        Returns:
+            Dict. Partial derivative of all the interaction terms that contain the
+            'ref' variable in the same format as the interaction terms
+        """
+        if not self.interaction_terms:
+            return self.interaction_terms
+        result = defaultdict(lambda: defaultdict(int))
+        for index, int_term in self.interaction_terms.items():
+            if ref in int_term:
+                result[index] = self._int_term_partial_deriv(index, ref)
+        return result
+    #------------------------------------------------------------------------------
+
+    def _parse_design_string(self):
+        """
+        Parse the design string to compute the basis terms,
+        interaction terms, and any indicator variables in the independent
+        variables list.
+
+        Updates:
+            self.basis_terms, self.indicator_terms, self.interaction_terms
+
+        Raises:
+            ValueError
+
+        Example:
+            self.design_str = "ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,
+                    i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,
+                    i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,
+                    11, 11^2, i.5.degree*11, i.5.degree*11^2, 15"
+
+            self.basis_terms = [1, 2, 3, 4, 5, 11, 15],
+            self.interaction_terms = {6: {5:1, 2:1}, 7: {5: 1, 3: 1},
+                                         8: {5:1, 4:1}, 9: {5: 1, 4: 1, 2: 1},
+                                         10: {5: 1, 4: 1, 3: 1},, 12: {11: 2},
+                                         13: {5: 1, 11: 1}, 14: {5:1, 11: 2}}
+            self.indicator_terms = {'color': [1, 2, 3], 'gender': [4], 'degree': [5]}
+            self.reference_terms = {'color': 1}
+
+        A constant is not allowed as a multiplicative term in interaction_terms.
+        The partial derivative of an interaction term, however, can contain a
+        constant. This is represented as the value for key '0'.
+        Example: {0:2, 5: 1, 3: 1} corresponds to 2*x[5]*x[3] where 'x'
+        represents the original array for which '5' and '3' are indices.
+        The indices are assumed to be 1-base, thus no index of value '0' should
+        be present.
+        """
+        if not self.design_str:
+            raise ValueError("Invalid input for x_design: {0}".format(str(self.design_str)))
+
+        indicator_term_chars = r"[\*\^]"
+
+        design_terms = self.design_str.strip().split(",")
+        for index, each_term in enumerate(design_terms):
+            # find if it is an interaction term
+            if re.search(indicator_term_chars, each_term):
+                self.interaction_terms[index + 1] = self._parse_interaction_term(each_term)
+                # Database indexing starts from 1 instead of 0
+            else:
+                # get the basis terms (should be int after striping any "i.")
+                basis_var, indicator_cat, is_reference = self._strip_indicator(each_term)
+                self.basis_terms.append(basis_var)
+                if indicator_cat:
+                    self.indicator_terms[indicator_cat].append(basis_var)
+                    if is_reference:
+                        if not indicator_cat in self.reference_terms:
+                            self.reference_terms[indicator_cat] = basis_var
+                        else:
+                            raise ValueError(
+                                "Invalid input in x_design. Multiple reference terms "
+                                "present for category '{0}'".format(indicator_cat))
+        self.basis_terms.sort()
+
+        # Verify if each variable in interactions_terms are found in basis_terms
+        for each_term in self.interaction_terms.values():
+            # each term is represented as a dictionary of dictionaries
+            for each_var in each_term:
+                if each_var not in self.basis_terms:
+                    raise ValueError(
+                        "Invalid input in x_design. Interaction term '{0}' "
+                        "contains variable '{1}' not defined as a basis "
+                        "variable".format(self.str_int_term(each_term), each_var))
+        return len(self.basis_terms), len(self.interaction_terms)
+    # -------------------------------------------------------------------------
+
+    def get_indicator_category(self, term):
+        """
+        Get the category for a given indicator term
+        Args:
+            @param term
+
+        Returns:
+            str.
+        """
+        if not self.indicator_terms or not term:
+            return None
+        for each_cat, all_ind_terms in self.indicator_terms.items():
+            if term in all_ind_terms:
+                return each_cat
+        return None
+    #------------------------------------------------------------------------------
+
+    def get_indicator_reference(self, term):
+        """
+        Get the reference variable for a given indicator term
+        Args:
+            @param term
+
+        Returns:
+            str.
+        """
+        if not self.indicator_terms or not term:
+            return None
+        return self.reference_terms[self.get_indicator_category(term)]
+    #------------------------------------------------------------------------------
+
+    def n_total_terms(self):
+        """
+        Get the total number of terms in the x_design string
+        """
+        return len(self.basis_terms) + len(self.interaction_terms)
+    #------------------------------------------------------------------------------
+
+    def get_siblings(self, ind_term):
+        """
+        Args:
+            @param self
+            @param ind_term
+
+        Returns:
+            tuple (list, int). A tuple containing a list of terms that are
+            in the same category as the ind_term (without the reference) and an
+            int representing the index of the reference term. If no reference
+            term is provided then the 2nd output is None.
+        """
+        term_siblings = None
+        for each_cat, each_ind_list in self.indicator_terms.items():
+            if ind_term in each_ind_list:
+                term_siblings = list(each_ind_list)
+                term_siblings.remove(ind_term)
+                ref_term = self.get_indicator_reference(ind_term)
+                if ref_term and ref_term in term_siblings:
+                    term_siblings.remove(ref_term)
+                break
+        if term_siblings is None:  # term_siblings can be an empty list
+            raise ValueError("Computing discrete difference for a non-indicator term")
+        return (term_siblings, ref_term)
+    #------------------------------------------------------------------------------
+
+    def get_discrete_diff_arrays(self, term_to_explore, array_name='x', quoted=False):
+        """
+        Create a pair of strings that corresponds to the array expressions for
+        computing the marginal effect for an indicator term using
+        discrete differences
+
+        Args:
+            @param term_to_explore: int, For which term to create discrete
+                                        difference expression
+            @param array_name: str, All variables that are not siblings of the
+                                   indicator variable in question are expressed
+                                   as they were in original expression.
+                                   'array_name' is the name of the array that
+                                   contains the values for the variables.
+        Returns:
+            tuple. A pair of strings each representing an array of data.
+            First one corresponding to term_to_explore
+            being 'set' (=1) with other siblings unset (=0) and the second one
+            corresponding to term_to_explore as 'unset' and other siblings also
+            'unset' (reference variable, if present, is 'set'). In both cases,
+            variables unrelated to term_to_explore are unchanged.
+        """
+        quote_str = "\"" if quoted else ""
+        term_siblings, ref_term = self.get_siblings(term_to_explore)
+        n_terms = self.n_total_terms()  # len(self.basis_terms) + len(self.interaction_terms)
+        indicator_set_list = [None] * n_terms
+        indicator_unset_list = [None] * n_terms
+
+        for each_basis_index in self.basis_terms:
+            # each_basis_index is an index in the original array (in DB) which is 1-base
+            if each_basis_index == term_to_explore:
+                indicator_set_list[each_basis_index - 1] = '1'
+                indicator_unset_list[each_basis_index - 1] = '0'
+            elif each_basis_index in term_siblings:
+                # unset all siblings in both cases
+                indicator_set_list[each_basis_index - 1] = '0'
+                indicator_unset_list[each_basis_index - 1] = '0'
+            elif ref_term and each_basis_index == ref_term:
+                # set the reference when unsetting the term_to_explore
+                indicator_set_list[each_basis_index - 1] = '0'
+                indicator_unset_list[each_basis_index - 1] = '1'
+            else:
+                # all other variables are added in as is
+                basis_str = "{q}{0}{q}[{1}]".format(array_name, each_basis_index,
+                                                    q=quote_str)
+                indicator_set_list[each_basis_index - 1] = basis_str
+                indicator_unset_list[each_basis_index - 1] = basis_str
+
+        for index, each_int_term in self.interaction_terms.items():
+            # again 'index' is for the original array (in DB) which is 1-base
+            for each_sibling in term_siblings:
+                if each_sibling in each_int_term:
+                    indicator_set_list[index - 1] = '0'
+                    indicator_unset_list[index - 1] = '0'
+                    break
+            else:
+                if term_to_explore in each_int_term:
+                    indicator_unset_list[index - 1] = '0'
+                    copy_int_term = dict(each_int_term)
+                    copy_int_term.pop(term_to_explore)
+                    indicator_set_list[index - 1] = self.str_int_term(copy_int_term,
+                                                                      array_name,
+                                                                      quoted)
+                else:
+                    term_as_is = self.str_int_term(each_int_term, array_name, quoted)
+                    indicator_set_list[index - 1] = term_as_is
+                    indicator_unset_list[index - 1] = term_as_is
+        return (py_list_to_sql_string(indicator_set_list),
+                py_list_to_sql_string(indicator_unset_list))
+    #------------------------------------------------------------------------------
+
+    def get_all_ind_indices(self):
+        """
+        Get the indices for all indicator terms as a sorted list
+
+        Returns:
+            List
+        """
+        return list(sorted(chain(* self.indicator_terms.values())))
+    #------------------------------------------------------------------------------
+
+    def get_all_reference_indices(self):
+        """
+        Get the indices for all reference indicator terms as a sorted list
+
+        Returns:
+            List
+        """
+        return list(sorted(self.reference_terms.values()))
+    #------------------------------------------------------------------------------
+
+    def _int_term_partial_deriv(self, int_term_index, ref):
+        """
+        Compute the derivate of product of polynomial terms (together making the
+        a single interaction term)
+
+        Args:
+            @param int_terms: dict, Dictionary representing the product of
+                                power of basis terms (key is index of basis term,
+                                                      and value is the power)
+            @param ref: int, reference variable (index) to compute partial derivative
+        Returns:
+            Dict.
+        """
+        int_term = self.interaction_terms[int_term_index]
+        if not int_term:
+            return int_term
+        if ref in int_term and int_term[ref] > 0:
+            result = defaultdict(int)
+            result.update(int_term)
+            if int_term[ref] > 1:
+                result[0] = int_term[ref]
+            result[ref] -= 1
+            return result
+        else:
+            return defaultdict(int)
+    #------------------------------------------------------------------------------
+
+    def _get_subset_int_terms(self, ref):
+        """
+        Args:
+            @param ref: int. The reference term to search for in each interaction term
+
+        Returns:
+            Dict. A subset of 'interaction_terms' where each interaction term contains 'ref'
+        """
+        if not self.interaction_terms:
+            return self.interaction_terms
+        result = defaultdict(lambda: defaultdict(int))
+        for index, int_terms in self.interaction_terms.items():
+            if ref in int_terms:
+                result[index] = int_terms
+        return result
+    #------------------------------------------------------------------------------
+
+
+import unittest
+
+
+class MarginsTestCase(unittest.TestCase):
+
+    def setUp(self):
+        self.xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+                   "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+                   "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+                   "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
+        self.int_obj = InteractionTermBuilder(self.xd)
+
+        self.xd2 = '1, 2, 3, 4, 5, 6, 7, 8, 3*2, 4*3*5, 5^2*4*6, 6^2, 7^3*8'
+        self.int_obj2 = InteractionTermBuilder(self.xd2)
+
+    def tearDown(self):
+        pass
+
+    def test_ind_prefix(self):
+        self.assertEqual(InteractionTermBuilder._strip_indicator('i.1.color'), (1, 'color', False))
+        self.assertEqual(InteractionTermBuilder._strip_indicator('1'), (1, None, False))
+        self.assertEqual(InteractionTermBuilder._strip_indicator('10'), (10, None, False))
+        self.assertEqual(InteractionTermBuilder._strip_indicator('i.10.gender'), (10, 'gender', False))
+        self.assertEqual(InteractionTermBuilder._strip_indicator('ir.10.gender'), (10, 'gender', True))
+        self.assertEqual(InteractionTermBuilder._strip_indicator('i.10.1'), (10, '1', False))
+        self.assertRaises(ValueError, InteractionTermBuilder._strip_indicator, 'i.21*2')
+        self.assertRaises(ValueError, InteractionTermBuilder._strip_indicator, 'i.1')
+
+    def test_parse_interaction(self):
+        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1*2'), {1: 1, 2: 1})
+        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1^2'), {1: 2})
+        self.assertEqual(InteractionTermBuilder._parse_interaction_term('i.1.color*2*i.3.size^4'), {1: 1, 2: 1, 3: 4})
+        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1^2*i.2.2^7*3^4'), {1: 2, 2: 7, 3: 4})
+        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1^2*i.2.2^7*3*3^2'), {1: 2, 2: 7, 3: 3})
+        self.assertRaises(ValueError, InteractionTermBuilder._parse_interaction_term, '1^-2*2^7*3^4')
+        self.assertRaises(ValueError, InteractionTermBuilder._parse_interaction_term, '1^2*2^7.1*3^4')
+        self.assertRaises(ValueError, InteractionTermBuilder._parse_interaction_term, '1^2/2^7.1*3^4')
+
+    def test_str_interaction(self):
+        self.assertEqual(InteractionTermBuilder.str_int_term(
+                         InteractionTermBuilder._parse_interaction_term('1*2')), "1 * 2")
+        self.assertEqual(InteractionTermBuilder.str_int_term(
+                         InteractionTermBuilder._parse_interaction_term('1*2^2')), "1 * 2^2")
+        self.assertEqual(InteractionTermBuilder.str_int_term(
+                         InteractionTermBuilder._parse_interaction_term('1^1*2^2*2^3')), "1 * 2^5")
+        self.assertEqual(InteractionTermBuilder.str_int_term(
+                         InteractionTermBuilder._parse_interaction_term('i.1.color*2^2')), "1 * 2^2")
+        self.assertEqual(InteractionTermBuilder.str_int_term(
+                         InteractionTermBuilder._parse_interaction_term('i.1.color*2^2'),
+                         'x', quoted=False), 'x[1] * x[2]^2')
+        self.assertEqual(InteractionTermBuilder.str_int_term(
+                         InteractionTermBuilder._parse_interaction_term('i.1.color*2^2'),
+                         'Abc', quoted=True), '"Abc"[1] * "Abc"[2]^2')
+        self.assertEqual(
+            self.int_obj.str_sum_int_terms('B', 'A', True),
+            '"B"[6] * "A"[2] * "A"[5] + "B"[7] * "A"[3] * "A"[5] + '
+            '"B"[8] * "A"[4] * "A"[5] + "B"[9] * "A"[2] * "A"[4] * "A"[5] + '
+            '"B"[10] * "A"[3] * "A"[4] * "A"[5] + "B"[12] * "A"[11]^2 + '
+            '"B"[13] * "A"[11] * "A"[5] + "B"[14] * "A"[11]^2 * "A"[5]')
+
+    def test_x_design(self):
+        self.assertEqual(self.int_obj2.basis_terms, [1, 2, 3, 4, 5, 6, 7, 8])
+        self.assertEqual(self.int_obj2.interaction_terms,
+                         {9: {2: 1, 3: 1},
+                          10: {3: 1, 4: 1, 5: 1},
+                          11: {5: 2, 4: 1, 6: 1},
+                          12: {6: 2},
+                          13: {7: 3, 8: 1}})
+        self.assertEqual(self.int_obj2.indicator_terms, {})
+        self.assertEqual(self.int_obj2.reference_terms, {})
+        self.assertEqual(self.int_obj2.interaction_partial_deriv(5),
+                         {10: {3: 1, 4: 1, 5: 0}, 11: {0: 2, 5: 1, 4: 1, 6: 1}})
+
+    def test_x_design1(self):
+        xd = '1, 2, 1*2, 1^1*i.2.color^2*  5^4  , 5, 6, 5^2'
+        int_obj = InteractionTermBuilder(xd)
+        self.assertEqual(int_obj.basis_terms, [1, 2, 5, 6])
+        self.assertEqual(int_obj.interaction_terms, {3: {1: 1, 2: 1},
+                                                     4: {1: 1, 2: 2, 5: 4},
+                                                     7: {5: 2}})
+        self.assertEqual(int_obj.indicator_terms, {})
+        self.assertEqual(int_obj.reference_terms, {})
+
+    def test_x_design2(self):
+        xd = '1, i.2.color, 1*2, 1^1*2^2*  5^4  , 5, 6, 5^2'
+        int_obj = InteractionTermBuilder(xd)
+        self.assertEqual(int_obj.basis_terms, [1, 2, 5, 6])
+        self.assertEqual(int_obj.interaction_terms, {3: {1: 1, 2: 1},
+                                                     4: {1: 1, 2: 2, 5: 4},
+                                                     7: {5: 2}})
+        self.assertEqual(int_obj.indicator_terms, {'color': [2]})
+        self.assertEqual(int_obj.reference_terms, {})
+
+    def test_x_design3(self):
+        xd = '1, 2, 3'
+        int_obj = InteractionTermBuilder(xd)
+        self.assertEqual(int_obj.basis_terms, [1, 2, 3])
+        self.assertEqual(int_obj.interaction_terms, {})
+        self.assertEqual(int_obj.indicator_terms, {})
+        self.assertEqual(int_obj.reference_terms, {})
+
+    def test_x_design4(self):
+        xd = '1, 2, i.1*i.2, 1*2^2, i.5, i.6'
+        # i.1, i.2 is invalid input
+        self.assertRaises(ValueError, InteractionTermBuilder, xd)
+
+    def test_x_design5(self):
+        xd = '1, i.2, 1*i.2.color, 1^1*2^2*3^4'
+        # '3' in interaction term is invalid
+        self.assertRaises(ValueError, InteractionTermBuilder, xd)
+
+    def test_x_design6(self):
+        self.assertEqual(self.int_obj.basis_terms, [1, 2, 3, 4, 5, 11, 15])
+        self.assertEqual(self.int_obj.interaction_terms,
+                         {6: {5: 1, 2: 1}, 7: {5: 1, 3: 1},
+                          8: {5: 1, 4: 1}, 9: {5: 1, 4: 1, 2: 1},
+                          10: {5: 1, 4: 1, 3: 1}, 12: {11: 2},
+                          13: {5: 1, 11: 1}, 14: {5: 1, 11: 2}})
+        self.assertEqual(self.int_obj.indicator_terms, {'color': [1, 2, 3], 'gender': [4], 'degree': [5]})
+        self.assertEqual(self.int_obj.reference_terms, {'color': 1})
+
+    def test_int_term_partial_deriv(self):
+        self.assertEqual(self.int_obj._int_term_partial_deriv(6, 2), {5: 1, 2: 0})
+        self.assertEqual(self.int_obj._int_term_partial_deriv(7, 5), {5: 0, 3: 1})
+        self.assertEqual(self.int_obj._int_term_partial_deriv(10, 5), {4: 1, 3: 1, 5: 0})
+        self.assertEqual(self.int_obj._int_term_partial_deriv(12, 11), {0: 2, 11: 1})
+        self.assertEqual(self.int_obj._int_term_partial_deriv(14, 11), {0: 2, 5: 1, 11: 1})
+        self.assertEqual(self.int_obj._int_term_partial_deriv(15, 2), {})
+
+    def test_get_subset_int_terms(self):
+        self.assertEqual(self.int_obj._get_subset_int_terms(5),
+                         {6: {5: 1, 2: 1}, 7: {5: 1, 3: 1}, 8: {5: 1, 4: 1},
+                          9: {5: 1, 4: 1, 2: 1}, 10: {5: 1, 4: 1, 3: 1},
+                          13: {5: 1, 11: 1}, 14: {5: 1, 11: 2}})
+
+    def test_partial_deriv_all(self):
+        # self.xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+        #            "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+        #            "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+        #            "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
+
+        self.assertEqual(self.int_obj.interaction_partial_deriv(5),
+                         {6: {5: 0, 2: 1}, 7: {5: 0, 3: 1}, 8: {5: 0, 4: 1},
+                          9: {5: 0, 4: 1, 2: 1}, 10: {5: 0, 4: 1, 3: 1},
+                          13: {5: 0, 11: 1}, 14: {5: 0, 11: 2}})
+        self.assertEqual(self.int_obj.interaction_partial_deriv(2),
+                         {6: {5: 1, 2: 0}, 9: {5: 1, 4: 1, 2: 0}})
+        self.assertEqual(self.int_obj.interaction_partial_deriv(11),
+                         {12: {0: 2, 11: 1}, 13: {5: 1, 11: 0}, 14: {0: 2, 5: 1, 11: 1}})
+
+    def test_deriv_str(self):
+        me_str = []
+        coeff_array_str = 'B'
+        for each_basis in self.int_obj.basis_terms:
+            # if each_basis not in flattened_indicator_terms:
+            basis_deriv_str = self.int_obj.str_sum_deriv_int_terms(
+                each_basis, coeff_array_str, 'x', quoted=True)
+            basis_str = "\"{0}\"[{1}]".format(coeff_array_str, each_basis)
+            if basis_deriv_str:
+                basis_str += " + " + basis_deriv_str
+            me_str.append(basis_str)
+
+        # the above code generates the string for \beta_k + \sum \bet_s I_s
+        self.assertEqual(
+            ', '.join(me_str),
+            '"B"[1], '
+            '"B"[2] + "B"[9] * "x"[4] * "x"[5] + "B"[6] * "x"[5], '
+            '"B"[3] + "B"[10] * "x"[4] * "x"[5] + "B"[7] * "x"[5], '
+            '"B"[4] + "B"[8] * "x"[5] + "B"[9] * "x"[2] * "x"[5] + "B"[10] * "x"[3] * "x"[5], '
+            '"B"[5] + "B"[6] * "x"[2] + "B"[7] * "x"[3] + "B"[8] * "x"[4] + '
+            '"B"[9] * "x"[2] * "x"[4] + "B"[10] * "x"[3] * "x"[4] + '
+            '"B"[13] * "x"[11] + "B"[14] * "x"[11]^2, '
+            '"B"[11] + "B"[12] * 2 * "x"[11] + "B"[13] * "x"[5] + "B"[14] * 2 * "x"[11] * "x"[5], '
+            '"B"[15]')
+
+    def test_create_indicator_me_expr(self):
+
+        ind_set, ind_unset = self.int_obj.get_discrete_diff_arrays(5, 'x', True)
+        self.assertEqual(ind_set,
+                         'ARRAY["x"[1],"x"[2],"x"[3],"x"[4],1,"x"[2],"x"[3],"x"[4],'
+                         '"x"[2] * "x"[4],"x"[3] * "x"[4],"x"[11],"x"[11]^2,"x"[11],"x"[11]^2,"x"[15]]')
+        self.assertEqual(ind_unset,
+                         'ARRAY["x"[1],"x"[2],"x"[3],"x"[4],0,0,0,0,0,0,"x"[11],"x"[11]^2,0,0,"x"[15]]')
+
+        ind_set2, ind_unset2 = self.int_obj.get_discrete_diff_arrays(2, 'x', True)
+        self.assertEqual(ind_set2,
+                         'ARRAY[0,1,0,"x"[4],"x"[5],"x"[5],0,"x"[4] * "x"[5],'
+                         '"x"[4] * "x"[5],0,"x"[11],"x"[11]^2,"x"[11] * "x"[5],'
+                         '"x"[11]^2 * "x"[5],"x"[15]]')
+        self.assertEqual(ind_unset2,
+                         'ARRAY[1,0,0,"x"[4],"x"[5],0,0,"x"[4] * "x"[5],0,0,'
+                         '"x"[11],"x"[11]^2,"x"[11] * "x"[5],"x"[11]^2 * "x"[5],"x"[15]]')
+
+    def test_parse_marginal_vars(self):
+        self.assertEqual(parse_marginal_vars('1,2,3,4'), [1, 2, 3, 4])
+        self.assertEqual(parse_marginal_vars('{1,2,3,4}'), [1, 2, 3, 4])
+        self.assertEqual(parse_marginal_vars('ARRAY[1,2,3,4]'), [1, 2, 3, 4])
+
+    def test_derivative_matrix(self):
+        self.xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+                   "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+                   "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+                   "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
+
+        self.xd2 = '1, 2, 3, 4, 5, 6, 7, 8, 3*2, 4*3*5, 5^2*4*6, 6^2, 7^3*8'
+
+        self.assertEqual(self.int_obj.create_2nd_derivative_matrix('x'),
+                         "ARRAY["
+                         "ARRAY[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,1,0,0,0,x[5],0,0,x[4] * x[5],0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,1,0,0,0,x[5],0,0,x[4] * x[5],0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,1,0,0,0,x[5],x[2] * x[5],x[3] * x[5],0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,0,1,x[2],x[3],x[4],x[2] * x[4],x[3] * x[4],0,0,x[11],x[11]^2,0]::double precision[],"
+                         "ARRAY[0,0,0,0,0,0,0,0,0,0,1,2 * x[11],x[5],2 * x[11] * x[5],0]::double precision[],"
+                         "ARRAY[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]::double precision[]]")
+
+        self.assertEqual(self.int_obj2.create_2nd_derivative_matrix('x'),
+                         "ARRAY["
+                            "ARRAY[1,0,0,0,0,0,0,0,0,0,0,0,0]::double precision[],"
+                            "ARRAY[0,1,0,0,0,0,0,0,x[3],0,0,0,0]::double precision[],"
+                            "ARRAY[0,0,1,0,0,0,0,0,x[2],x[4] * x[5],0,0,0]::double precision[],"
+                            "ARRAY[0,0,0,1,0,0,0,0,0,x[3] * x[5],x[5]^2 * x[6],0,0]::double precision[],"
+                            "ARRAY[0,0,0,0,1,0,0,0,0,x[3] * x[4],2 * x[4] * x[5] * x[6],0,0]::double precision[],"
+                            "ARRAY[0,0,0,0,0,1,0,0,0,0,x[4] * x[5]^2,2 * x[6],0]::double precision[],"
+                            "ARRAY[0,0,0,0,0,0,1,0,0,0,0,0,x[8] * 3 * x[7]^2]::double precision[],"
+                            "ARRAY[0,0,0,0,0,0,0,1,0,0,0,0,x[7]^3]::double precision[]]")
+
+        self.int_obj3 = InteractionTermBuilder('1, 2, 2*2')
+        self.assertEqual(self.int_obj3.create_2nd_derivative_matrix('x', quoted=True),
+                         "ARRAY[ARRAY[1,0,0]::double precision[],ARRAY[0,1,2 * \"x\"[2]]::double precision[]]")
+
+
+if __name__ == '__main__':
+    # Uncomment this function if running unit tests
+    def py_list_to_sql_string(array):
+        """Convert numeric array to SQL string """
+        return "ARRAY[{0}]".format(','.join(map(str, array)))
+
+    xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+                   "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+                   "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+                   "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
+    obj = InteractionTermBuilder(xd)
+
+    print obj.str_sum_int_terms('w', 'x')
+    print obj.create_2nd_derivative_matrix('x')
+
+    unittest.main()
+    # # import cProfile
+    # xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+    #       "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+    #       "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+    #       "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
+    # basis_terms, interaction_terms, indicator_terms, reference_terms = \
+    #     parse_design_string(xd)
+    # me_str = []
+    # for each_basis in basis_terms:
+    #     basis_deriv_str = str_sum_int_terms(interaction_partial_deriv(
+    #         interaction_terms, each_basis), 'A')
+    #     if basis_deriv_str:
+    #         me_str.append(basis_deriv_str)
+    # print(', '.join(me_str))

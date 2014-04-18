@@ -52,16 +52,16 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             {updateExpr} AS state
         FROM
             {source} AS src
-        """.format(updateExpr = updateExpr, source = source)
-    updateSQL = updateSQL.format(iteration = '$1', state = '$2')
+        """.format(updateExpr=updateExpr, source=source)
+    updateSQL = updateSQL.format(iteration='$1', state='$2')
     terminateSQL = "SELECT {terminateExpr} AS should_terminate".format(terminateExpr = terminateExpr)
-    terminateSQL = terminateSQL.format(newState = '$1', oldState = '$2')
+    terminateSQL = terminateSQL.format(newState='$1', oldState='$2')
     checkForNullStateSQL = """SELECT {state} IS NULL AS should_terminate"""
-    checkForNullStateSQL = checkForNullStateSQL.format(state = '$1')
+    checkForNullStateSQL = checkForNullStateSQL.format(state='$1')
 
-    plan_update = plpy.prepare(updateSQL, [ 'INTEGER', 'FLOAT8[]' ])
-    plan_terminatesql = plpy.prepare(terminateSQL, [ 'FLOAT8[]', 'FLOAT8[]' ])
-    plan_checkfornullstate = plpy.prepare(checkForNullStateSQL, [ 'FLOAT8[]' ])
+    plan_update = plpy.prepare(updateSQL, ['INTEGER', 'FLOAT8[]'])
+    plan_terminatesql = plpy.prepare(terminateSQL, ['FLOAT8[]', 'FLOAT8[]'])
+    plan_checkfornullstate = plpy.prepare(checkForNullStateSQL, ['FLOAT8[]'])
 
     oldMsgLevel = plpy.execute("""
             SELECT setting FROM pg_settings
@@ -74,23 +74,23 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
             _madlib_state {stateType}
         );
         SET client_min_messages = {oldMsgLevel};
-        """.format(stateType = stateType, oldMsgLevel = oldMsgLevel))
+        """.format(stateType=stateType, oldMsgLevel=oldMsgLevel))
 
     iteration = 0
     state_old = plpy.execute("""
         SELECT {iteration} AS iter, {initialState} AS state
-        """.format(iteration = iteration, initialState = 'NULL'))
+        """.format(iteration=iteration, initialState='NULL'))
     while True:
         iteration = iteration + 1
-        state_new = plpy.execute(plan_update, [ iteration, state_old[0]['state'] ])
+        state_new = plpy.execute(plan_update, [iteration, state_old[0]['state']])
 
-        if (plpy.execute(plan_checkfornullstate, [ state_new[0]['state'] ])[0]['should_terminate'] or
+        if (plpy.execute(plan_checkfornullstate, [ state_new[0]['state'] ])[0]['should_terminate'] or 
             (iteration > cyclesPerIteration and (iteration >= cyclesPerIteration * max_num_iterations or
                 plpy.execute(plan_terminatesql, [ state_new[0]['state'], state_old[0]['state'] ])[0]['should_terminate']))):
             # insert into the state table
             plan_final = plpy.prepare('insert into _madlib_iterative_alg values($1, $2)',
-                [ 'INTEGER', 'FLOAT8[]' ])
-            plpy.execute(plan_final, [ state_new[0]['iter'], state_new[0]['state'] ])
+                                      ['INTEGER', 'FLOAT8[]'])
+            plpy.execute(plan_final, [state_new[0]['iter'], state_new[0]['state']])
             break
         state_old = state_new
 
@@ -98,7 +98,7 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
     return iteration
 <<<, >>>
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
-    terminateExpr, max_num_iterations, cyclesPerIteration=1):
+                         terminateExpr, max_num_iterations, cyclesPerIteration=1):
     """
     Driver for an iterative algorithm
 
@@ -189,10 +189,10 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         if (plpy.execute(checkForNullStateSQL.format(iteration=iteration))[0]['should_terminate'] or
             (iteration > cyclesPerIteration and (
                 iteration >= cyclesPerIteration * max_num_iterations or
-                    plpy.execute(terminateSQL.format(
-                        iteration=iteration, cyclesPerIteration=cyclesPerIteration,
-                        oldState="(older._madlib_state)", newState="(newer._madlib_state)")
-                    )[0]['should_terminate']))):
+             plpy.execute(terminateSQL.format(
+                          iteration=iteration, cyclesPerIteration=cyclesPerIteration,
+                          oldState="(older._madlib_state)", newState="(newer._madlib_state)")
+                          )[0]['should_terminate']))):
             break
 
     # Note: We do not drop the temporary table
@@ -312,6 +312,7 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
      'num_iterations' INTEGER             -- Number of iterations performed by the optimizer
 
     The output summary table is named as <output_table>_summary has the following columns
+    'method'         VARCHAR,            -- modeling method name ('mlogregr')
     'source_table'   VARCHAR,            -- source table name
     'dep_var'        VARCHAR,            -- dependent variable name
     'ind_var'        VARCHAR,            -- independent variable name
@@ -341,8 +342,8 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
     non_null_results = plpy.execute(""" SELECT count(DISTINCT {dependent_varname}) AS cnt,
                                                  max({dependent_varname}) as max_cat,
                                                  min({dependent_varname}) as min_cat
-                                          FROM {source_table}
-                                          WHERE
+                                        FROM {source_table}
+                                        WHERE
                                             {dependent_varname} IS NOT NULL
                                             AND {independent_varname} IS NOT NULL
                                             AND NOT {schema_madlib}.array_contains_null({independent_varname})
@@ -351,14 +352,13 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
     num_categories, max_category, min_category = map(
         int, [non_null_results[i] for i in ('cnt', 'max_cat', 'min_cat')])
 
-
-    _assert(max_category == num_categories-1 and min_category == 0,
+    _assert(max_category == num_categories - 1 and min_category == 0,
             "Mlogregr error: Value of the dependent variable should be "
-            "integers in the range [0, {0}]".format(num_categories-1))
+            "integers in the range [0, {0}]".format(num_categories - 1))
     _assert(ref_category >= 0 and ref_category < num_categories,
             "Mlogregr error: Invalid reference category value {0}. "
             "It should be between 0 and {1}".format(ref_category,
-                                                    num_categories-1))
+                                                    num_categories - 1))
     all_arguments['num_categories'] = num_categories
 
     all_arguments['total_rows'] = int(plpy.execute("""SELECT count(*) as cnt
@@ -441,6 +441,7 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
         """
         CREATE TABLE {output_table}_summary AS
             SELECT
+              'mlogregr'::VARCHAR                  as method,
               '{source_table}'::VARCHAR            as source_table,
               '{output_table}'::VARCHAR            as out_table,
               '{dependent_varname}'::VARCHAR       as dependent_varname,
@@ -496,10 +497,12 @@ def _validate_params(schema_madlib,
     _assert(not table_is_empty(source_table),
             "Mlogregr error: Source table {0} is empty".format(source_table))
 
-    _assert(dependent_varname is not None and dependent_varname.strip().lower() not in ('null', ''),
+    _assert(dependent_varname is not None and
+            dependent_varname.strip().lower() not in ('null', ''),
             "Mlogregr error: Invalid dependent column name")
 
-    _assert(independent_varname is not None and independent_varname.lower() not in ('null', ''),
+    _assert(independent_varname is not None and
+            independent_varname.lower() not in ('null', ''),
             "Mlogregr error: Invalid independent column name")
 
     result_w_null = plpy.execute("""
@@ -664,6 +667,7 @@ The output table ('output_table' above) has the following columns
      num_iterations -- INTEGER, Number of iterations performed by the optimizer
 
 The output summary table named as <'output_table'>_summary has the following columns
+    method                   -- VARCHAR, Modeling method name ('logregr')
     source_table             -- VARCHAR, Source table name
     out_table                -- VARCHAR, Output table name
     dependent_varname        -- VARCHAR, Dependent variable name
@@ -763,4 +767,4 @@ SELECT madlib.mlogregr_train('test3',
     return help_string.format(schema_madlib=schema_madlib)
 # ---------------------------------------------------------------------------
 
-m4_changequote(>>>`<<<, >>>'<<<)
+m4_changequote(>>>`<<<, >>>'<<< )

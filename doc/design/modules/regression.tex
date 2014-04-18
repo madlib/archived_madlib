@@ -5,11 +5,11 @@
 \begin{moduleinfo}
 \item[Authors] {Rahul Iyer and Hai Qian}
 \item[History]
-	\begin{modulehistory}
+    \begin{modulehistory}
     \item[v0.3] Added section on Clustered Sandwich Estimators
     \item[v0.2] Added section on Marginal Effects
-		\item[v0.1] Initial version, including background of regularization
-	\end{modulehistory}
+        \item[v0.1] Initial version, including background of regularization
+    \end{modulehistory}
 \end{moduleinfo}
 
 \newcommand{\bS}[1]{\boldsymbol{#1}}
@@ -718,19 +718,29 @@ given a vector of independent variables $x_i$. In the case where $y$ is a
 linear function of $(x_1, \dots, x_m) = X$ and $y$ is a continuous variable, a
 linear regression model can be stated as follows:
 \begin{align*}
-    & y = X' \beta \\
+    & y = X^T\beta \\
     & \text{or} \\
     & y = \beta_0 + \beta_1 x_1 +  \dots  + \beta_l x_m.
 \end{align*}
 From the above equation it is straightforward to see that the marginal effect of
-variable $x_k$ on the dependent variable is $\partial y / \partial x = \beta_k$.
+variable $x_k$ on the dependent variable is $\partial y / \partial x =
+\beta_k$. However, this is just for the cases where there is no
+interactions between the variables. If there is any interactions, the
+model would be
+\begin{align*}
+    & y = F^T\beta \\
+    & \text{or} \\
+    & y = \beta_0 + \beta_1 f_1 + \dots + \beta_l f_m.
+\end{align*}
+where $f_i$ is a function of the base variables $x_1, x_2, \dots, x_l$ and describes the
+interaction between the base variables.
 
 The standard approach to modeling dichotomous/binary variables
 (so $y \in {0, 1}$) is to estimate a generalized linear model under the
 assumption that y follows some form of Bernoulli distribution. Thus the expected
 value of $y$ becomes,
 \begin{equation*}
-    y = G(X' \beta),
+    y = G(X^T \beta),
   \end{equation*}
 where G is the specified binomial distribution. Here we assume to use
 logistic regression and use $g$ to refer to the inverse logit function.
@@ -739,15 +749,34 @@ logistic regression and use $g$ to refer to the inverse logit function.
 \label{sub:logistic_regression}
 In logistic regression:
 \begin{align*}
-  P &= \frac{1}{1 + e^{-(\beta_0 + \beta_1 x_1 + \dots  \beta_m x_m)}} \\
+  P &= \frac{1}{1 + e^{-(\beta_0 + \beta_1 f_1 + \dots  \beta_m f_m)}} \\
     &= \frac{1}{1 + e^{-z}}
 \end{align*}
 \begin{align*}
-  \implies \frac{\partial P}{\partial X_k} &= \beta_k \cdot \frac{1}{1 + e^{-z}} \cdot
-              \frac{e^{-z}}{1 + e^{-z}} \\
-      &= \beta_k \cdot P \cdot (1-P)
+  \implies \frac{\partial P}{\partial X_k} &= P \cdot (1-P) \cdot
+  \frac{\partial z}{\partial x_k},
 \end{align*}
+where the partial derivative in the last equation equals to $\beta_k$
+if there is no interaction terms. However, in general cases, there is
+no simple expression for it, and we just keep it as it is.
 
+For categorical variables, things are a little bit complicated. Dummy
+variables are created for a categorical variable. There
+are two options. First, we can treat the dummy variables as if they
+were continuous ones, and use the above equation to compute their
+marginal effect. Second, for each dummy variable we can compute the discrete change with
+respect to the reference level of this categorical variable:
+\begin{align*}
+    \Delta_{x_k^{(v)}} P = \left.P\right\vert_{x_k^{(v)}=1, x_k^{(w)}=0\ (w\neq
+    v)} - \left.P\right\vert_{x_k^{(0)}=1, x_k^{(w)}=0 \  (w \neq 0)}\ = P_{set} - P_{unset},
+\end{align*}
+where $x_k$ is a categorical variable, and $v$, $w$ denote the levels
+of the categorical variable. $0$ denotes the reference level of this
+categorical variable. Note that in many cases, the dummy variable for
+the reference level does not appear in the regression model, and
+setting $x_k^{(w)}$ for $w\neq 0$ is enough in the second term of the
+above equation.
+Both options are valid. The default for MADlib is the second one.
 
 There are two main methods of calculating the marginal effects for dichotomous
 dependent variables.
@@ -755,9 +784,9 @@ dependent variables.
   \item The first uses the average of the marginal effects at every sample
   observation. This is calculated as follows:
   \begin{gather*}
-    \frac{\partial y}{\partial x_k} = \beta_k \frac{\sum_{i=1}^{n} P(y_i = 1)(1-P(y_i = 1))}{n}, \\
-    \text{where, } P(y_i=1) = g(X^{(i)} \beta) \\
-    \text{and, } g(z) = \frac{1}{1 + e^{-z}} \\
+    \langle \frac{\partial P(y_i = 1)}{\partial x_k} \rangle = \frac{1}{n}\sum_{i=1}^{n} P(y_i = 1)(1-P(y_i = 1))\cdot\frac{\partial z_i}{\partial x_k}, \\
+    \text{where, } P(y_i=1) = \frac{1}{1 + e^{-z_i}}, \\
+    \text{and, } z_i = F(X_i)^T\beta \\
   \end{gather*}
 
   \item The second approach calculates the marginal effect for $x_k$ by taking
@@ -765,11 +794,18 @@ dependent variables.
     value from the same formulation with the exception of adding one unit to $x_k$.
     The derivation of this marginal effect is captured by the following:
     \begin{gather*}
-      \frac{\partial y}{\partial x_k} = \quad \beta_k P(y=1|\bar{X})(1-P(y=1|\bar{X})) \\
-      \text{where, } \bar{X} = \frac{\sum_{i=1}^{n}X^{(i)}}{n}
+      \left.\frac{\partial P(y=1)}{\partial
+          x_k}\right\vert_{X=\bar{X}} = \quad
+      P(y=1|\bar{X})(1-P(y=1|\bar{X}))
+      \left.\frac{\partial z}{\partial x_k}\right\vert_{X=\bar{X}} \\
+      \text{where, } \bar{X} = \frac{\sum_{i=1}^{n}X_i}{n}
     \end{gather*}
 \end{enumerate}
 % subsection logistic_regression (end)
+
+For categorical variables, we do the same thing: either evaluate the
+marginal effect for each data record and compute the average, or
+evaluate the marginal effect at the means of the variables.
 
 \subsection{Discrete change effect} % (fold)
 \label{sub:discrete_change_effect}
@@ -840,68 +876,74 @@ variance of a linear function of a random variable, it is not for a nonlinear
 function. The delta method therefore relies on finding a linear approximation
 of the function by using a first-order Taylor expansion.
 
-We can approximate a function $f(x)$ about a value $a$ as,
+We can approximate a function $g(x)$ about a value $a$ as,
 \[
-  f(x) \approx f(a) + (x-a)f'(a)
+g(x) \approx g(a) + (x-a)g'(a)
 \]
 
 Taking the variance and setting $a = \mu_x$,
 \[
-  Var(f(X)) \approx \left[f'(\mu_x)\right]^2 Var(X)
+Var(g(X)) \approx \left[g'(\mu_x)\right]^2 Var(X)
 \]
 
 \subsubsection*{Logistic Regression}
-Using this technique, to compute the variance of the marginal effects at the
-mean observation value in \emph{logistic regression}, we obtain:
-\begin{gather*}
-  Var(ME_k) = \frac{\partial (\beta_k \bar{P} (1- \bar{P}))}{\partial \beta_k} Var(\beta_k),\\
-  \text{where, } \bar{P} = g(\bar{X}' \beta) = \frac{1}{1 + e^{-\bar{z}}} \\
-  \text{and }    \bar{z} = \beta_0 + \beta_1 \bar{x}_1 + \dots + \beta_m \bar{x}_m
-\end{gather*}
+Using this technique, to compute the variance of the marginal effects
+at the mean observation value in \emph{logistic regression}, we obtain
+the standard error by first computing the marginal effect's derivative
+over the coefficients, which is a $n\times m$ matrix $S_{kl}
+= \frac{\partial \mathit{ME}_k}{\partial \beta_l}$:
+\begin{eqnarray*}
+  S_{kl} &=& \frac{\partial}{\partial\beta_l} \left[P (1- P)
+    \cdot \frac{\partial z}{\partial x_k}\right]\\
+  &=& P (1- P) \cdot \frac{\partial}{\partial\beta_l}\left(\frac{\partial z}{\partial x_k}\right)
+    + \frac{\partial \left[P (1- P)\right]}{\partial\beta_l} \cdot \frac{\partial z}{\partial x_k}\\
+  &=& P(1-P)\cdot\frac{\partial^2 z}{\partial x_k\partial\beta_l}
+    + P(1-P)(1-2P) \cdot \frac{\partial z}{\partial \beta_l} \cdot \frac{\partial z}{\partial x_k},\\
+  \text{where } P &=& \frac{1}{1 + e^{-z}} \\
+  \text{and } z &=& \beta_0 + \beta_1 f_1(X)+ \dots + \beta_m f_m(X),
+  X = x_1, x_2, \dots, x_n.
+\end{eqnarray*}
+And for categorical variables, just replace $P(1-P)\cdot(\partial z/\partial x_k)$
+with $\Delta_{x_k^{(v)}}P$ in the first equation above. And we can get
+\begin{eqnarray*}
+  S_{kl} &=& \frac{\partial(P_{set}-P_{unset})}{\partial\beta_l}  \\
+  &=& P_{set} (1 - P_{set}) \cdot f_{l_{set}} - P_{unset} (1 - P_{unset}) \cdot f_{l_{unset}}
+\end{eqnarray*}
 
-Thus, using the rule for differentiating compositions of functions, we get
+Thus, the variance of the marginal effects is
 \begin{align*}
-  Var(ME_k) & = \left(-\beta_k \bar{P} \frac{\partial \bar{P}}{\partial \beta_k} +
-              \beta_k (1-\bar{P})\frac{\partial \bar{P}}{\partial \beta_k} +
-              \bar{P}(1-\bar{P}) \right) Var(\beta_k) \\
-          & = \left( (1-2\bar{P})\beta_k \frac{\partial \bar{P}}{\partial \beta_k} + \bar{P}(1-\bar{P}) \right) Var(\beta_k)
+  Var(\mathit{ME}) = S \cdot Var(\beta)\cdot S^T\,
 \end{align*}
-We have,
-\begin{align*}
-  \frac{\partial \bar{P}}{\partial \beta_k} & = \frac{\partial (\frac{1}{1 + e^{-z}})}{\partial \beta_k} \\
-                                 & = \frac{1}{(1+e^{-z})^2} e^{-z} \frac{\partial z}{\partial \beta_k} \\
-                                 & = \frac{x_k e^{-z}}{(1+e^{-z})^2} \\
-                                 & = x_k \bar{P} (1 - \bar{P})
-\end{align*}
-Replacing this in the equation for $Var(ME_k)$,
+where $Var(\beta)$ is a $m\times m$ matrix and $S$ is a $n\times m$
+matrix. $n$ is the number of different base variables, and $m$ is the
+number of $\beta_i$.
 
-\begin{align*}
-  Var(ME_k) =  \bar{P}(1-\bar{P}) \left(1 + (1-2\bar{P})\beta_k x_k \right) Var(\beta_k)
-\end{align*}
+Note: The $Var(\beta)$ is computed with respect to the training data
+for the logistic regression, but not the data used to compute the
+marginal effects (if we use a different data set for computing the
+marginal effects).
 
-Since $\beta$, is a multivariate variable, we will have to use the variance-
-covariance matrix of $\beta$  to compute the variance of the marginal effects.
-Thus for the vector of marginal effects the equation becomes,
-
-\begin{gather*}
-  Var(ME) = \bar{P}^2(1-\bar{P})^2 \left[I + (1-2\bar{P})\beta \bar{X}' \right] V \left[I+ (1-2\bar{P}) \bar{X} \beta' \right],
-\end{gather*}
-where $V$ is the estimated variance-covariance matrix of $\beta$.
+Using the definition of $z$, we can simplify $S$ a little bit
+\begin{equation}
+  S_{kl} = P(1-P)\left(\frac{\partial f_l}{\partial x_k} + (1-2P)\cdot f_l\sum_{i=1}^{m}\frac{\beta_i\partial f_i(X)}{\partial x_k}\right)
+\end{equation}
+So we just need to compute $\partial f_i/\partial x_k$ and all the
+other derivatives can be obtained.
 
 \subsubsection*{Multinomial Logistic Regression}
 For multinomial logistic regression, the coefficients $\beta$ form a matrix of
 dimension $(J-1) \times K$ where $J$ is the number of categories and $K$ is the
 number of features. In order to compute the standard errors on the marginal
 effects of category $j$ for independent variable $k$, we need to compute
-the term $\frac{\partial ME_{k,j}} {\partial \beta_{k_1, j_1}}$ for each
+the term $\frac{\partial \mathit{ME}_{k,j}} {\partial \beta_{k_1, j_1}}$ for each
 $k_1 \in \{1 \ldots K \}$ and $j_1 \in \{1 \ldots J-1 \}$. The result is a column
 vector of length $K \times (J-1)$ denoted by
-$\frac{\partial ME_{k,j}}{\partial \vec{\beta}}$. Hence, for each category
+$\frac{\partial \mathit{ME}_{k,j}}{\partial \vec{\beta}}$. Hence, for each category
 $j \in \{1 \ldots J\}$ and independent variable $k \in \{1 \ldots K\}$, we
 perform the following computation
 
 \begin{equation}
- Var(ME_{j,k}) = \frac{\partial ME_{k,j}}{\partial \vec{\beta}}^T V \frac{\partial ME_{k,j}}{\partial \vec{\beta}}.
+ Var(\mathit{ME}_{j,k}) = \frac{\partial \mathit{ME}_{k,j}}{\partial \vec{\beta}}^T V \frac{\partial \mathit{ME}_{k,j}}{\partial \vec{\beta}}.
 \end{equation}
 
 where $V$ is the variance-covariance matrix of the multinomial logistic
@@ -911,13 +953,13 @@ is vectorized.
 From our earlier derivation, we know that the marginal effects for multinomial
 logistic regression are:
 \begin{gather*}
-  \frac{ME_{j,k}}{\partial x} = \bar{P}_j \left[ \beta_{kj} - \sum_{l=1}^{j}\beta_{kl} \bar{P}_l \right]
+  \frac{\mathit{ME}_{j,k}}{\partial x} = \bar{P}_j \left[ \beta_{kj} - \sum_{l=1}^{j}\beta_{kl} \bar{P}_l \right]
 \end{gather*}
 where
 \begin{gather*}
   \bar{P}_j = \frac{e^{X\beta_{j,.}}}{\sum_{l=1}^{j} e^{X\beta_{l,.}}} \ \ \ \forall j \in \{ 1 \ldots J \}
 \end{gather*}
-We now compute the term $\frac{\partial ME_{k,j}}{\partial \vec{\beta}}$. First,
+We now compute the term $\frac{\partial \mathit{ME}_{k,j}}{\partial \vec{\beta}}$. First,
 we define the following three indicator variables:
 $$
 e_{j,j\_1} = \begin{cases} 1 & \mbox{if } $j=j\_1$ \\
@@ -933,7 +975,7 @@ $$
 Using the above definition, we can show that for each $j_1 \in \{ 1 \ldots J \}$ and
 $k_1 \in \{1 \ldots K\}$, the partial derivative
 \begin{align*}
-  \frac{\partial ME_{k,j}}{\partial \beta_{j_1, k_1}} &= \frac{\partial \bar{P}_{j}}{\partial \beta_{j_1, k_1}}
+  \frac{\partial \mathit{ME}_{k,j}}{\partial \beta_{j_1, k_1}} &= \frac{\partial \bar{P}_{j}}{\partial \beta_{j_1, k_1}}
   + \bar{P}_j \Bigg{[} e_{j,j_1,k,k_1} -  e_{k,k_1} \bar{P}_{j_1} -
   \sum_{l=1}^{j} \beta_{l,k} \frac{\partial \bar{P}_l}{\partial \beta_{j_1, k_1}} \Bigg{]}
 \end{align*}
@@ -944,16 +986,16 @@ where
 \end{align*}
 The two expressions above can be simplified to obtain
 \begin{align*}
-  \frac{\partial ME_{k,j}}{\partial \beta_{j_1, k_1}} &= \bar{P}_j
+  \frac{\partial \mathit{ME}_{k,j}}{\partial \beta_{j_1, k_1}} &= \bar{P}_j
   \bar{X}_{k_1} [e_{j,j_1} - \bar{P}_{j_1}] [\beta_{j,k} -
   \beta_{. k}^T \bar{P}] + \bar{P}_j \Bigg{[} e_{j,j_1,k,k_1} -
   e_{k,k_1} \bar{P}_{j_1} -
   \bar{X}_{k_1} \bar{P}_{j_1} ( \beta_{k,k_1} - \beta_{. k}^T \bar{P}) \Bigg{]} \\
-  &= \bar{X}_{k_1} \bar{ME}_{j,k} [ e_{j,j_1} - \bar{P}_{j_1} ] +
+  &= \bar{X}_{k_1} \bar{\mathit{ME}}_{j,k} [ e_{j,j_1} - \bar{P}_{j_1} ] +
   \bar{P}_j [e_{k,k_1,j,j_1} - e_{k,k_1}\bar{P}_{j_1} - \bar{X}_{k_1}
-  \bar{ME}_{j_1,k} ]
+  \bar{\mathit{ME}}_{j_1,k} ]
 \end{align*}
-where $\bar{ME}$ is the marginal effects computed at the mean observation $\bar{X}$.
+where $\bar{\mathit{ME}}$ is the marginal effects computed at the mean observation $\bar{X}$.
 
 
 % subsection standard_errors (end)

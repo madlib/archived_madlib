@@ -35,7 +35,7 @@ enum { IN_PROCESS, COMPLETED, TERMINATED, NULL_EMPTY };
 // Internal functions
 AnyType stateToResult(const Allocator &inAllocator,
                       const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
-                      const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+                      const Matrix & hessian,
                       const double &logLikelihood, const double &conditionNo, int status,
                       const uint64_t &numRows);
 
@@ -200,7 +200,7 @@ class LogRegrCGTransitionState {
  * @brief Logistic function
  */
 inline double sigma(double x) {
-	return 1. / (1. + std::exp(-x));
+    return 1. / (1. + std::exp(-x));
 }
 
 /**
@@ -308,16 +308,16 @@ logregr_cg_step_final::run(AnyType &args) {
 
     // Note: k = state.iteration
     if (state.iteration == 0) {
-		// Iteration computes the gradient
+        // Iteration computes the gradient
 
-		state.dir = state.gradNew;
-		state.grad = state.gradNew;
-	} else {
+        state.dir = state.gradNew;
+        state.grad = state.gradNew;
+    } else {
         // We use the Hestenes-Stiefel update formula:
         //
-		//            g_k^T (g_k - g_{k-1})
-		// beta_k = -------------------------
-		//          d_{k-1}^T (g_k - g_{k-1})
+        //            g_k^T (g_k - g_{k-1})
+        // beta_k = -------------------------
+        //          d_{k-1}^T (g_k - g_{k-1})
         ColumnVector gradNewMinusGrad = state.gradNew - state.grad;
         state.beta
             = dot(state.gradNew, gradNewMinusGrad)
@@ -341,8 +341,8 @@ logregr_cg_step_final::run(AnyType &args) {
 
         // d_k = g_k - beta_k * d_{k-1}
         state.dir = state.gradNew - state.beta * state.dir;
-		state.grad = state.gradNew;
-	}
+        state.grad = state.gradNew;
+    }
 
     // H_k = - X^T A_k X
     // where A_k = diag(a_1, ..., a_n) and a_i = sigma(x_i c_{k-1}) sigma(-x_i c_{k-1})
@@ -405,7 +405,7 @@ internal_logregr_cg_result::run(AnyType &args) {
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
     return stateToResult(*this, state.coef,
-                         decomposition.pseudoInverse().diagonal(), state.logLikelihood,
+                         state.X_transp_AX, state.logLikelihood,
                          decomposition.conditionNo(), state.status, state.numRows);
 }
 
@@ -693,9 +693,9 @@ AnyType logregr_irls_step_final::run(AnyType &args) {
     // of X^T A X, so that we don't have to recompute it in the result function.
     // Likewise, we store the condition number.
     // FIXME: This feels a bit like a hack.
-    state.X_transp_Az = inverse_of_X_transp_AX.diagonal();
-    state.X_transp_AX(0,0) = decomposition.conditionNo();
-
+    // state.X_transp_Az = inverse_of_X_transp_AX.diagonal();
+    // state.X_transp_AX(0,0) = decomposition.conditionNo();
+    // state.X_transp_Az(0) = decomposition.conditionNo();
     return state;
 }
 
@@ -724,8 +724,8 @@ AnyType internal_logregr_irls_result::run(AnyType &args) {
     if (state.status == NULL_EMPTY)
         return Null();
 
-    return stateToResult(*this, state.coef, state.X_transp_Az,
-                         state.logLikelihood, state.X_transp_AX(0,0),
+    return stateToResult(*this, state.coef, state.X_transp_AX,
+                         state.logLikelihood, state.X_transp_Az(0),
                          state.status, state.numRows);
 }
 
@@ -800,16 +800,16 @@ class LogRegrIGDTransitionState {
             throw std::logic_error("Internal error: Incompatible transition "
                                    "states");
 
-		// Compute the average of the models. Note: The following remains an
+        // Compute the average of the models. Note: The following remains an
         // invariant, also after more than one merge:
         // The model is a linear combination of the per-segment models
         // where the coefficient (weight) for each per-segment model is the
         // ratio "# rows in segment / total # rows of all segments merged so
         // far".
-		double totalNumRows = static_cast<double>(numRows)
+        double totalNumRows = static_cast<double>(numRows)
             + static_cast<double>(inOtherState.numRows);
-		coef = double(numRows) / totalNumRows * coef
-			+ double(inOtherState.numRows) / totalNumRows * inOtherState.coef;
+        coef = double(numRows) / totalNumRows * coef
+            + double(inOtherState.numRows) / totalNumRows * inOtherState.coef;
 
         numRows += inOtherState.numRows;
         X_transp_AX += inOtherState.X_transp_AX;
@@ -824,7 +824,7 @@ class LogRegrIGDTransitionState {
      * @brief Reset the inter-iteration fields.
      */
     inline void reset() {
-		// FIXME: HAYING: stepsize is hard-coded here now
+        // FIXME: HAYING: stepsize is hard-coded here now
         stepsize = .01;
         numRows = 0;
         X_transp_AX.fill(0);
@@ -870,7 +870,7 @@ class LogRegrIGDTransitionState {
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
 
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-	typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
     typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
     typename HandleTraits<Handle>::ReferenceToUInt16 status;
 };
@@ -1025,7 +1025,7 @@ internal_logregr_igd_result::run(AnyType &args) {
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
     return stateToResult(*this, state.coef,
-                         decomposition.pseudoInverse().diagonal(),
+                         state.X_transp_AX,
                          state.logLikelihood, decomposition.conditionNo(),
                          state.status, state.numRows);
 }
@@ -1039,11 +1039,17 @@ internal_logregr_igd_result::run(AnyType &args) {
 AnyType stateToResult(
     const Allocator &inAllocator,
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
-    const ColumnVector &diagonal_of_inverse_of_X_transp_AX,
+    const Matrix & hessian,
     const double &logLikelihood,
     const double &conditionNo,
     int status,
     const uint64_t &numRows) {
+
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+        hessian, EigenvaluesOnly, ComputePseudoInverse);
+
+    const Matrix &inverse_of_X_transp_AX = decomposition.pseudoInverse();
+    const ColumnVector &diagonal_of_X_transp_AX = inverse_of_X_transp_AX.diagonal();
 
     MutableNativeColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -1055,22 +1061,21 @@ AnyType stateToResult(
         inAllocator.allocateArray<double>(inCoef.size()));
 
     for (Index i = 0; i < inCoef.size(); ++i) {
-        stdErr(i) = std::sqrt(diagonal_of_inverse_of_X_transp_AX(i));
+        stdErr(i) = std::sqrt(diagonal_of_X_transp_AX(i));
         waldZStats(i) = inCoef(i) / stdErr(i);
         waldPValues(i) = 2. * prob::cdf( prob::normal(),
                                          -std::abs(waldZStats(i)));
         oddsRatios(i) = std::exp( inCoef(i) );
     }
 
+
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
     tuple << inCoef << logLikelihood << stdErr << waldZStats << waldPValues
-          << oddsRatios << sqrt(conditionNo) << status << numRows;
+          << oddsRatios << inverse_of_X_transp_AX
+          << sqrt(decomposition.conditionNo()) << status << numRows;
     return tuple;
 }
-
-
-
 
 // ---------------------------------------------------------------------------
 //             Robust Logistic Regression States
@@ -1187,7 +1192,7 @@ class RobustLogRegrTransitionState {
      */
     void rebind(uint16_t inWidthOfX) {
 
-    	iteration.rebind(&mStorage[0]);
+        iteration.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
         coef.rebind(&mStorage[2], inWidthOfX);
         numRows.rebind(&mStorage[2 + inWidthOfX]);
@@ -1202,7 +1207,7 @@ class RobustLogRegrTransitionState {
 
 
 
-	typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
+    typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
 
@@ -1219,13 +1224,13 @@ class RobustLogRegrTransitionState {
 
 AnyType robuststateToResult(
     const Allocator &inAllocator,
-	const ColumnVector &inCoef,
+    const ColumnVector &inCoef,
     const ColumnVector &diagonal_of_varianceMat) {
 
-	MutableNativeColumnVector variance(
+    MutableNativeColumnVector variance(
         inAllocator.allocateArray<double>(inCoef.size()));
 
-	MutableNativeColumnVector coef(
+    MutableNativeColumnVector coef(
         inAllocator.allocateArray<double>(inCoef.size()));
 
     MutableNativeColumnVector stdErr(
@@ -1332,23 +1337,23 @@ robust_logregr_step_final::run(AnyType &args) {
     // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
     RobustLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
-	// Aggregates that haven't seen any data just return Null.
+    // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
         return Null();
 
-	//Compute the robust variance with the White sandwich estimator
-	SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+    //Compute the robust variance with the White sandwich estimator
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
 
-	Matrix bread = decomposition.pseudoInverse();
+    Matrix bread = decomposition.pseudoInverse();
 
-	/*
+    /*
       This is written a little strangely because it prevents Eigen warnings.
       The following two lines are equivalent to:
       Matrix variance = bread*state.meat*bread;
       but eigen throws a warning on that.
-	*/
-	Matrix varianceMat;// = meat;
+    */
+    Matrix varianceMat;// = meat;
     varianceMat = bread*state.meat*bread;
 
     /*
@@ -1478,7 +1483,7 @@ class MarginalLogRegrTransitionState {
      * - 3 + widthOfX: X_transp_AX (X^T A X)
      */
     void rebind(uint16_t inWidthOfX) {
-    	iteration.rebind(&mStorage[0]);
+        iteration.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
         coef.rebind(&mStorage[2], inWidthOfX);
         numRows.rebind(&mStorage[2 + inWidthOfX]);
@@ -1491,7 +1496,7 @@ class MarginalLogRegrTransitionState {
 
   public:
 
-	typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
+    typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
@@ -1601,8 +1606,8 @@ marginal_logregr_step_transition::run(AnyType &args) {
     }
 
     // Standard error according to the delta method
-	state.delta += p * (1 - p) * delta;
-    
+    state.delta += p * (1 - p) * delta;
+
     return state;
 }
 
@@ -1636,20 +1641,23 @@ marginal_logregr_step_final::run(AnyType &args) {
     // We request a mutable object.
     // Depending on the backend, this might perform a deep copy.
     MarginalLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
-	// Aggregates that haven't seen any data just return Null.
+    // Aggregates that haven't seen any data just return Null.
     if (state.numRows == 0)
         return Null();
-    
+
     // Compute variance matrix of logistic regression
-	SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+    SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
-    
-	Matrix variance = decomposition.pseudoInverse();
+
+    Matrix variance = decomposition.pseudoInverse();
+
+    // dberr << "Delta = " << state.delta << " numrows = " << state.numRows << std::endl;
+    // dberr << "Variance = " << variance << std::endl;
 
     // Standard error according to the delta method
-	Matrix std_err;
-	std_err = state.delta * variance * trans(state.delta) / (state.numRows*state.numRows);
-    
+    Matrix std_err;
+    std_err = state.delta * variance * trans(state.delta) / (state.numRows*state.numRows);
+
     // Computing the marginal effects
     return marginalstateToResult(*this,
                                  state.coef,

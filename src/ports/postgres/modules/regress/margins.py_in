@@ -1,0 +1,109 @@
+"""
+@file margins_common.py_in
+
+@brief Marginal Effects with Interactions: Common functions
+
+@namespace marginal
+"""
+
+import plpy
+from margins_common import margins_validate_model_table
+from margins_logregr import margins_int_logregr
+#------------------------------------------------------------------------------
+
+
+def margins(schema_madlib, model_table, out_table, x_design=None,
+            source_table=None, marginal_vars=None, *args, **kwargs):
+    """
+    Call the appropriate margins functions depending on the regression type
+    found in the model table.
+
+    Args:
+        @param schema_madlib
+        @param model_table
+        @param out_table
+        @param x_design
+        @param source_table
+        @param marginal_vars
+        @param args
+        @param kwargs
+
+    Returns:
+        None
+    """
+    margins_validate_model_table(model_table)
+    # get the relevant regression type
+    if model_table:
+        model_summary_table = model_table + "_summary"
+    else:
+        raise ValueError("Margins error: Invalid regression model table name!")
+
+    reg_type = plpy.execute("SELECT method from {0}".format(model_summary_table))[0]['method']
+    if not reg_type:
+        plpy.error("Margins error: Regression type cannot be obtained from the model table")
+    elif reg_type in ("logregr", "logistic", "logistic_regression"):
+        margins_int_logregr(schema_madlib, model_table, out_table, x_design,
+                            source_table, marginal_vars, *args, **kwargs)
+    else:
+        plpy.error("Margins not supported for {0}".format(str(reg_type)))
+#------------------------------------------------------------------------------
+
+
+def margins_help(schema_madlib, message, **kwargs):
+    """
+    Help function for margins
+
+    Args:
+        @param schema_madlib
+        @param message: string, Help message string
+        @param kwargs
+
+    Returns:
+        String. Help/usage information
+    """
+    if not message:
+        help_string = """
+-----------------------------------------------------------------------
+                            SUMMARY
+-----------------------------------------------------------------------
+Functionality: Calculate marginal effects for binomial/multinomial logistic
+regression with interaction terms.
+A marginal effect (ME) or partial effect measures the effect on the
+conditional mean of a response (dependent variable) for a change in one of the
+regressors (independent variable).
+
+For more details on function usage:
+    SELECT {schema_madlib}.margins('usage')
+            """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+ SELECT {schema_madlib}.margins(
+    'model_table',              -- Name of table containing regression model
+    'output_table',             -- Name of result table
+    'x_design',                 -- Design of the independent variables
+                                --  (Optional, if not provided or NULL then independent variable list
+                                         is assumed to have no interaction terms)
+    'source_table',             -- Source table to apply marginal effects on
+                                --  (Optional, if not provided or NULL then assume training table as the source)
+    'marginal_vars'             -- Indices of variables to calculate marginal effects on
+                                --  (Optional, if not provided or NULL then compute marginal effects for all basis variables)
+    );
+
+-----------------------------------------------------------------------
+                            OUTUPT
+-----------------------------------------------------------------------
+The output table ('output_table' above) has the following columns
+    variables       INTEGER[],            -- Indices of the basis variables,
+                                          --   will be same as marginal vars if provided
+    margins         DOUBLE PRECISION[],   -- Marginal effects
+    std_err         DOUBLE PRECISION[],   -- Standard errors using delta method
+    z_stats         DOUBLE PRECISION[],   -- z-stats of the standard errors
+    p_values        DOUBLE PRECISION[],   -- p-values of the standard errors
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.margins()"
+
+    return help_string.format(schema_madlib=schema_madlib)

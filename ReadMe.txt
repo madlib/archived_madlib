@@ -51,3 +51,4 @@ upgrading to the next major version:
     - Overloaded forms of function 'margins_mlogregr' that accept
     individual optimizer parameters (max_iter, optimizer, tolerance).  These
     parameters have been replaced with a single optimizer parameter.
+    - All overloaded functions 'margins_logregr'.
