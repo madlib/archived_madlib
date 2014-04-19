@@ -19,6 +19,7 @@ if __name__ != "__main__":
     from utilities.utilities import py_list_to_sql_string
 # ========================================================================
 
+
 def margins_validate_model_table(model_table):
     """
     Args:
@@ -309,11 +310,15 @@ class InteractionTermBuilder(object):
         return " + ".join(result)
     #------------------------------------------------------------------------------
 
-    def create_2nd_derivative_matrix(self, indep_array_name=None, quoted=False):
+    def create_2nd_derivative_matrix(self, data_arary_name=None, quoted=False,
+                                     discrete=True):
         """
-            Compute the \frac{\partial f_i}{\partial x_k}
-            where i is the index of independant variable
-            and k is the index of basis variable
+        Compute the \frac{\partial f_i}{\partial x_k} where i is the index of
+        independant variable     and k is the index of basis variable
+
+        Args:
+            @param data_arary_name: str, Array name of the data
+
         """
         derivative_matrix_str_list = []
         if not self.interaction_terms:
@@ -323,13 +328,24 @@ class InteractionTermBuilder(object):
                     [1 if j==i else 0 for j in range(self.n_basis_terms)]))
         else:
             for index, each_basis in enumerate(self.basis_terms):
-                all_partial_deriv_list = ['0'] * self.n_terms
-                all_partial_deriv_list[each_basis - 1] = 1
-                curr_partial_deriv_dict = self.interaction_partial_deriv(each_basis)
-                for each_index, each_term in curr_partial_deriv_dict.items():
-                    all_partial_deriv_list[each_index - 1] = \
-                        self.str_int_term(each_term, indep_array_name, quoted)
-                derivative_matrix_str_list.append(py_list_to_sql_string(all_partial_deriv_list) + "::double precision[]")
+                indicator_indices = self.get_all_ind_indices()
+                if discrete and each_basis in indicator_indices:
+                    set_values, unset_values = self.get_discrete_diff_arrays(
+                        each_basis, data_arary_name, quoted)
+                    derivative_matrix_str_list.append(
+                        py_list_to_sql_string(["{0}-{1}".format(i, j)
+                                              for i, j in zip(set_values, unset_values)],
+                                              array_type="double precision[]"))
+                else:
+                    all_partial_deriv_list = ['0'] * self.n_terms
+                    all_partial_deriv_list[each_basis - 1] = 1
+                    curr_partial_deriv_dict = self.interaction_partial_deriv(each_basis)
+                    for each_index, each_term in curr_partial_deriv_dict.items():
+                        all_partial_deriv_list[each_index - 1] = \
+                            self.str_int_term(each_term, data_arary_name, quoted)
+                    derivative_matrix_str_list.append(
+                        py_list_to_sql_string(all_partial_deriv_list,
+                                              array_type="double precision[]"))
         return py_list_to_sql_string(derivative_matrix_str_list)
 
     #------------------------------------------------------------------------------
@@ -512,51 +528,55 @@ class InteractionTermBuilder(object):
         """
         quote_str = "\"" if quoted else ""
         term_siblings, ref_term = self.get_siblings(term_to_explore)
-        n_terms = self.n_total_terms()  # len(self.basis_terms) + len(self.interaction_terms)
+        n_terms = self.n_total_terms()
         indicator_set_list = [None] * n_terms
         indicator_unset_list = [None] * n_terms
 
-        for each_basis_index in self.basis_terms:
-            # each_basis_index is an index in the original array (in DB) which is 1-base
-            if each_basis_index == term_to_explore:
-                indicator_set_list[each_basis_index - 1] = '1'
-                indicator_unset_list[each_basis_index - 1] = '0'
-            elif each_basis_index in term_siblings:
-                # unset all siblings in both cases
-                indicator_set_list[each_basis_index - 1] = '0'
-                indicator_unset_list[each_basis_index - 1] = '0'
-            elif ref_term and each_basis_index == ref_term:
-                # set the reference when unsetting the term_to_explore
-                indicator_set_list[each_basis_index - 1] = '0'
-                indicator_unset_list[each_basis_index - 1] = '1'
+        def assign_discrete_diff(index, set_val, unset_val):
+            indicator_set_list[index] = set_val
+            indicator_unset_list[index] = unset_val
+
+        for basis_index in self.basis_terms:
+            # basis_index is an index in the original array (in DB) which is 1-base
+            if basis_index == term_to_explore:
+                set_value, unset_value = '1', '0'  # set/unset the current variable ...
+            elif basis_index in term_siblings:
+                set_value, unset_value = '0', '0'  # unset all siblings in both cases ...
+            elif ref_term and basis_index == ref_term:
+                # except for the reference, set it when unsetting term_to_explore
+                set_value, unset_value = '0', '1'
             else:
                 # all other variables are added in as is
-                basis_str = "{q}{0}{q}[{1}]".format(array_name, each_basis_index,
+                basis_str = "{q}{0}{q}[{1}]".format(array_name, basis_index,
                                                     q=quote_str)
-                indicator_set_list[each_basis_index - 1] = basis_str
-                indicator_unset_list[each_basis_index - 1] = basis_str
+                set_value, unset_value = basis_str, basis_str
+            assign_discrete_diff(basis_index - 1, set_value, unset_value)
 
+        # repeat the process for interaction terms
         for index, each_int_term in self.interaction_terms.items():
             # again 'index' is for the original array (in DB) which is 1-base
-            for each_sibling in term_siblings:
-                if each_sibling in each_int_term:
-                    indicator_set_list[index - 1] = '0'
-                    indicator_unset_list[index - 1] = '0'
-                    break
+            if any(i in each_int_term for i in term_siblings):
+                # each sibling is unset in both cases
+                assign_discrete_diff(index - 1, '0', '0')
             else:
-                if term_to_explore in each_int_term:
-                    indicator_unset_list[index - 1] = '0'
+                def str_wo_term(term):
                     copy_int_term = dict(each_int_term)
                     copy_int_term.pop(term_to_explore)
-                    indicator_set_list[index - 1] = self.str_int_term(copy_int_term,
-                                                                      array_name,
-                                                                      quoted)
+                    return self.str_int_term(copy_int_term, array_name, quoted)
+
+                if term_to_explore in each_int_term:
+                    if ref_term and ref_term in each_int_term:
+                        # reference is unset, when term_to_explore is set
+                        set_value = '0'
+                    else:
+                        set_value = str_wo_term(term_to_explore)
+                    assign_discrete_diff(index - 1, set_value, '0')
+                elif ref_term and ref_term in each_int_term:
+                    assign_discrete_diff(index - 1, '0', str_wo_term(ref_term))
                 else:
                     term_as_is = self.str_int_term(each_int_term, array_name, quoted)
-                    indicator_set_list[index - 1] = term_as_is
-                    indicator_unset_list[index - 1] = term_as_is
-        return (py_list_to_sql_string(indicator_set_list),
-                py_list_to_sql_string(indicator_unset_list))
+                    assign_discrete_diff(index - 1, term_as_is, term_as_is)
+        return (indicator_set_list, indicator_unset_list)
     #------------------------------------------------------------------------------
 
     def get_all_ind_indices(self):
@@ -800,22 +820,25 @@ class MarginsTestCase(unittest.TestCase):
             '"B"[15]')
 
     def test_create_indicator_me_expr(self):
-
         ind_set, ind_unset = self.int_obj.get_discrete_diff_arrays(5, 'x', True)
         self.assertEqual(ind_set,
-                         'ARRAY["x"[1],"x"[2],"x"[3],"x"[4],1,"x"[2],"x"[3],"x"[4],'
-                         '"x"[2] * "x"[4],"x"[3] * "x"[4],"x"[11],"x"[11]^2,"x"[11],"x"[11]^2,"x"[15]]')
+                         ['"x"[1]', '"x"[2]', '"x"[3]', '"x"[4]', '1', '"x"[2]',
+                          '"x"[3]', '"x"[4]', '"x"[2] * "x"[4]', '"x"[3] * "x"[4]',
+                          '"x"[11]', '"x"[11]^2', '"x"[11]', '"x"[11]^2', '"x"[15]'])
         self.assertEqual(ind_unset,
-                         'ARRAY["x"[1],"x"[2],"x"[3],"x"[4],0,0,0,0,0,0,"x"[11],"x"[11]^2,0,0,"x"[15]]')
+                         ['"x"[1]', '"x"[2]', '"x"[3]', '"x"[4]', '0', '0', '0',
+                          '0', '0', '0', '"x"[11]', '"x"[11]^2', '0', '0', '"x"[15]'])
 
         ind_set2, ind_unset2 = self.int_obj.get_discrete_diff_arrays(2, 'x', True)
         self.assertEqual(ind_set2,
-                         'ARRAY[0,1,0,"x"[4],"x"[5],"x"[5],0,"x"[4] * "x"[5],'
-                         '"x"[4] * "x"[5],0,"x"[11],"x"[11]^2,"x"[11] * "x"[5],'
-                         '"x"[11]^2 * "x"[5],"x"[15]]')
+                         ['0', '1', '0', '"x"[4]', '"x"[5]', '"x"[5]', '0',
+                          '"x"[4] * "x"[5]', '"x"[4] * "x"[5]', '0', '"x"[11]',
+                          '"x"[11]^2', '"x"[11] * "x"[5]', '"x"[11]^2 * "x"[5]',
+                          '"x"[15]'])
         self.assertEqual(ind_unset2,
-                         'ARRAY[1,0,0,"x"[4],"x"[5],0,0,"x"[4] * "x"[5],0,0,'
-                         '"x"[11],"x"[11]^2,"x"[11] * "x"[5],"x"[11]^2 * "x"[5],"x"[15]]')
+                         ['1', '0', '0', '"x"[4]', '"x"[5]', '0', '0',
+                          '"x"[4] * "x"[5]', '0', '0', '"x"[11]', '"x"[11]^2',
+                          '"x"[11] * "x"[5]', '"x"[11]^2 * "x"[5]', '"x"[15]'])
 
     def test_parse_marginal_vars(self):
         self.assertEqual(parse_marginal_vars('1,2,3,4'), [1, 2, 3, 4])
@@ -832,24 +855,24 @@ class MarginsTestCase(unittest.TestCase):
 
         self.assertEqual(self.int_obj.create_2nd_derivative_matrix('x'),
                          "ARRAY["
-                         "ARRAY[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0]::double precision[],"
-                         "ARRAY[0,1,0,0,0,x[5],0,0,x[4] * x[5],0,0,0,0,0,0]::double precision[],"
-                         "ARRAY[0,0,1,0,0,0,x[5],0,0,x[4] * x[5],0,0,0,0,0]::double precision[],"
-                         "ARRAY[0,0,0,1,0,0,0,x[5],x[2] * x[5],x[3] * x[5],0,0,0,0,0]::double precision[],"
-                         "ARRAY[0,0,0,0,1,x[2],x[3],x[4],x[2] * x[4],x[3] * x[4],0,0,x[11],x[11]^2,0]::double precision[],"
+                         "ARRAY[1-0,0-0,0-0,x[4]-x[4],x[5]-x[5],0-0,0-0,x[4] * x[5]-x[4] * x[5],0-0,0-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
+                         "ARRAY[0-1,1-0,0-0,x[4]-x[4],x[5]-x[5],x[5]-0,0-0,x[4] * x[5]-x[4] * x[5],x[4] * x[5]-0,0-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
+                         "ARRAY[0-1,0-0,1-0,x[4]-x[4],x[5]-x[5],0-0,x[5]-0,x[4] * x[5]-x[4] * x[5],0-0,x[4] * x[5]-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
+                         "ARRAY[x[1]-x[1],x[2]-x[2],x[3]-x[3],1-0,x[5]-x[5],x[2] * x[5]-x[2] * x[5],x[3] * x[5]-x[3] * x[5],x[5]-0,x[2] * x[5]-0,x[3] * x[5]-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
+                         "ARRAY[x[1]-x[1],x[2]-x[2],x[3]-x[3],x[4]-x[4],1-0,x[2]-0,x[3]-0,x[4]-0,x[2] * x[4]-0,x[3] * x[4]-0,x[11]-x[11],x[11]^2-x[11]^2,x[11]-0,x[11]^2-0,x[15]-x[15]]::double precision[],"
                          "ARRAY[0,0,0,0,0,0,0,0,0,0,1,2 * x[11],x[5],2 * x[11] * x[5],0]::double precision[],"
                          "ARRAY[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]::double precision[]]")
 
         self.assertEqual(self.int_obj2.create_2nd_derivative_matrix('x'),
                          "ARRAY["
-                            "ARRAY[1,0,0,0,0,0,0,0,0,0,0,0,0]::double precision[],"
-                            "ARRAY[0,1,0,0,0,0,0,0,x[3],0,0,0,0]::double precision[],"
-                            "ARRAY[0,0,1,0,0,0,0,0,x[2],x[4] * x[5],0,0,0]::double precision[],"
-                            "ARRAY[0,0,0,1,0,0,0,0,0,x[3] * x[5],x[5]^2 * x[6],0,0]::double precision[],"
-                            "ARRAY[0,0,0,0,1,0,0,0,0,x[3] * x[4],2 * x[4] * x[5] * x[6],0,0]::double precision[],"
-                            "ARRAY[0,0,0,0,0,1,0,0,0,0,x[4] * x[5]^2,2 * x[6],0]::double precision[],"
-                            "ARRAY[0,0,0,0,0,0,1,0,0,0,0,0,x[8] * 3 * x[7]^2]::double precision[],"
-                            "ARRAY[0,0,0,0,0,0,0,1,0,0,0,0,x[7]^3]::double precision[]]")
+                         "ARRAY[1,0,0,0,0,0,0,0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,1,0,0,0,0,0,0,x[3],0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,1,0,0,0,0,0,x[2],x[4] * x[5],0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,1,0,0,0,0,0,x[3] * x[5],x[5]^2 * x[6],0,0]::double precision[],"
+                         "ARRAY[0,0,0,0,1,0,0,0,0,x[3] * x[4],2 * x[4] * x[5] * x[6],0,0]::double precision[],"
+                         "ARRAY[0,0,0,0,0,1,0,0,0,0,x[4] * x[5]^2,2 * x[6],0]::double precision[],"
+                         "ARRAY[0,0,0,0,0,0,1,0,0,0,0,0,x[8] * 3 * x[7]^2]::double precision[],"
+                         "ARRAY[0,0,0,0,0,0,0,1,0,0,0,0,x[7]^3]::double precision[]]")
 
         self.int_obj3 = InteractionTermBuilder('1, 2, 2*2')
         self.assertEqual(self.int_obj3.create_2nd_derivative_matrix('x', quoted=True),
@@ -858,18 +881,24 @@ class MarginsTestCase(unittest.TestCase):
 
 if __name__ == '__main__':
     # Uncomment this function if running unit tests
-    def py_list_to_sql_string(array):
+    def py_list_to_sql_string(array, array_type=None):
         """Convert numeric array to SQL string """
-        return "ARRAY[{0}]".format(','.join(map(str, array)))
+        if array:
+            type_str = "::" + array_type if array_type else ""
+            return "ARRAY[{0}]{1}".format(','.join(map(str, array)), type_str)
+        else:
+            if not array_type:
+                array_type = "double precision[]"
+            return "'{{}}'::{0}".format(array_type)
 
-    xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
-                   "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
-                   "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
-                   "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
-    obj = InteractionTermBuilder(xd)
+    # xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+    #                "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+    #                "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+    #                "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
+    # obj = InteractionTermBuilder(xd)
 
-    print obj.str_sum_int_terms('w', 'x')
-    print obj.create_2nd_derivative_matrix('x')
+    # print obj.str_sum_int_terms('w', 'x')
+    # print obj.create_2nd_derivative_matrix('x')
 
     unittest.main()
     # # import cProfile
