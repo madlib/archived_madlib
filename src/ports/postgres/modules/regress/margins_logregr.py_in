@@ -21,9 +21,9 @@ from utilities.control import MinWarning
 #------------------------------------------------------------------------------
 
 
-def margins_int_logregr(schema_madlib, model_table, out_table,
-                        x_design=None, source_table=None, marginal_vars=None,
-                        *args, **kwargs):
+def margins_logregr(schema_madlib, model_table, out_table,
+                    x_design=None, source_table=None, marginal_vars=None,
+                    *args, **kwargs):
     """
     Args:
         @param schema_madlib
@@ -56,9 +56,24 @@ def margins_int_logregr(schema_madlib, model_table, out_table,
                                            format(model_summary_table))[0]['x']
         dependent_varname = plpy.execute("SELECT dependent_varname as x FROM {0}".
                                          format(model_summary_table))[0]['x']
+
         if any(i is None for i in (coef, independent_varname, dependent_varname)):
             plpy.error("Margins error: Model table ({0}) is missing important parameters. "
                        "Rerun logistic regression.".format(model_table))
+
+        # grouping arguments
+        grouping_col = plpy.execute("SELECT grouping_col AS x FROM {0}".
+                                    format(model_summary_table))[0]['x']
+        if not grouping_col:
+            grouping_str1 = ""
+            grouping_str2 = ""
+            using_str = ""
+            join_str = ","
+        else:
+            grouping_str1 = grouping_col + ","
+            grouping_str2 = "GROUP BY " + grouping_col
+            using_str = "USING (" + grouping_col + ")"
+            join_str = "JOIN "
 
         margins_validate_args(out_table, source_table, x_design)
 
@@ -132,14 +147,17 @@ def margins_int_logregr(schema_madlib, model_table, out_table,
         execute_string = """
             CREATE TABLE {out_table} AS
                 SELECT
+                    {grouping_str1}
                     {index_array} as variables,
                     -- sub_array: get only 'marginal_vars' from all variable results
                     {schema_madlib}.__sub_array((res).margins, {index_array}) AS margins,
                     {schema_madlib}.__sub_array((res).std_err, {index_array}) AS std_err,
                     {schema_madlib}.__sub_array((res).z_stats, {index_array}) AS z_stats,
                     {schema_madlib}.__sub_array((res).p_values,{index_array}) AS p_values
-                FROM(
+                FROM
+                (
                     SELECT
+                        {grouping_str1}
                         {schema_madlib}.__margins_int_logregr_agg(
                             {indep_name}
                             , coef
@@ -149,12 +167,15 @@ def margins_int_logregr(schema_madlib, model_table, out_table,
                             , {set_string}
                             , {unset_string})
                             as res
-                    FROM (
-                            SELECT {independent_varname} as {indep_name}
-                            FROM {source_table} as s
-                          ) q1,
-                          {model_table} as m
-                     ) q2
+                    FROM
+                    (
+                        SELECT
+                            {grouping_str1}
+                            {independent_varname} as {indep_name}
+                        FROM {source_table} as s
+                    ) q1 {join_str} {model_table} as m {using_str}
+                    {grouping_str2}
+                ) q2
             """.format(schema_madlib=schema_madlib,
                        source_table=source_table,
                        out_table=out_table,
@@ -167,8 +188,12 @@ def margins_int_logregr(schema_madlib, model_table, out_table,
                        model_table=model_table,
                        derivative_str=derivative_str,
                        set_string=set_string,
-                       unset_string=unset_string)
-        # plpy.info(execute_string)
+                       unset_string=unset_string,
+                       grouping_str1=grouping_str1,
+                       grouping_str2=grouping_str2,
+                       using_str=using_str,
+                       join_str=join_str)
+        plpy.info(execute_string)
         plpy.execute(execute_string)
     return None
 # -------------------------------------------------------------------------
