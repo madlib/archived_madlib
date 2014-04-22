@@ -143,7 +143,7 @@ fi
 ## ########################################################################
 ## checking and erasing any installed matching-version RPMs
 RPM=`basename ${RPM_FILEPATH}`
-RPM_PACKAGE=`echo ${RPM} | sed -e "s/\(madlib-[0-9][.0-9]*\)-.*.rpm/\1/"`
+RPM_PACKAGE=`echo ${RPM} | sed -e s/-Linux// | sed -e s/\.rpm//`
 echo "RPM_PACKAGE: ${RPM_PACKAGE}"
 RPM_DATABASE="${GPHOME}/share/packages/database"
 # on localhost
