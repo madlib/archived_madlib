@@ -219,6 +219,7 @@ AnyType margins_stateToResult(
           << (numRows > n_basis_terms? pValues: Null());
     return tuple;
 }
+// -------------------------------------------------------------------------
 
 
 /**
@@ -287,9 +288,6 @@ margins_logregr_int_transition::run(AnyType &args) {
 
     // update marginal effects and delta using discrete differences just for
     // categorical variables
-    // if (state.numRows == 100) {
-    //         dberr << "Delta before: " << current_delta << std::endl;
-    // }
     Matrix x_set;
     Matrix x_unset;
     if (!args[6].isNull() && !args[7].isNull()){
@@ -311,11 +309,6 @@ margins_logregr_int_transition::run(AnyType &args) {
         current_delta.row(static_cast<uint16_t>(state.categorical_indices(i))) = (
                (p_set * (1 - p_set) * x_set.row(i) -
                 p_unset * (1 - p_unset) * x_unset.row(i)));
-
-        // if (state.numRows == 100) {
-        //     dberr << "Delta after updating " << static_cast<uint16_t>(state.categorical_indices(i))
-        //           << " : " << current_delta << std::endl;
-        // }
     }
 
     state.marginal_effects += current_me;
@@ -355,24 +348,241 @@ margins_logregr_int_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
-    // dberr << "Delta = " << state.delta << std::endl;
-    // dberr << "----------------------------------------------------" << std::endl;
-    // dberr << "Variance = " << state.training_data_vcov << std::endl;
+    // Variance for marginal effects according to the delta method
+    Matrix variance;
+    variance = state.delta * state.training_data_vcov;
+    // we only need the diagonal elements of the variance, so we perform a dot
+    // product of each row with itself to compute each diagonal element.
+    // We divide by numRows^2 since we need the average variance
+    ColumnVector variance_diagonal =
+        variance.cwiseProduct(state.delta).rowwise().sum() / (state.numRows * state.numRows);
 
-    // Standard error for continuous variables according to the delta method
-    Matrix std_err;
-    std_err = state.delta * state.training_data_vcov * trans(state.delta) / (state.numRows*state.numRows);
+    // Computing the final results
+    return margins_stateToResult(*this, variance_diagonal,
+                                 state.marginal_effects, state.numRows);
+}
+// ------------------------ End of Logistic Marginal ---------------------------
 
-    // Standard error for categorical variables according to the delta method
+// ---------------------------------------------------------------------------
+//             Marginal Effects Linear Regression States
+// ---------------------------------------------------------------------------
 
-    // Combining the two standard error vectors
+/**
+ * @brief State for marginal effects calculation for logistic regression
+ *
+ * TransitionState encapsualtes the transition state during the
+ * marginal effects calculation for the logistic-regression aggregate function.
+ * To the database, the state is exposed as a single DOUBLE PRECISION array,
+ * to the C++ code it is a proper object containing scalars and vectors.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 5, and all elemenets are 0.
+ *
+ */
+template <class Handle>
+class MarginsLinregrInteractionState {
+    template <class OtherHandle>
+    friend class MarginsLinregrInteractionState;
+
+  public:
+    MarginsLinregrInteractionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
+        rebind(static_cast<uint16_t>(mStorage[1]),
+               static_cast<uint16_t>(mStorage[2]));
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Initialize the marginal variance calculation state.
+     *
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(const Allocator &inAllocator,
+                           const uint16_t inWidthOfX,
+                           const uint16_t inNumBasis) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+                                             dbal::DoZero, dbal::ThrowBadAlloc>(
+                arraySize(inWidthOfX, inNumBasis));
+        rebind(inWidthOfX, inNumBasis);
+        widthOfX = inWidthOfX;
+        numBasis = inNumBasis;
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    MarginsLinregrInteractionState &operator=(
+        const MarginsLinregrInteractionState<OtherHandle> &inOtherState) {
+
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
+        return *this;
+    }
+
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
+     */
+    template <class OtherHandle>
+    MarginsLinregrInteractionState &operator+=(
+        const MarginsLinregrInteractionState<OtherHandle> &inOtherState) {
+
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX != inOtherState.widthOfX)
+            throw std::logic_error("Internal error: Incompatible transition "
+                                   "states");
+        numRows += inOtherState.numRows;
+        marginal_effects += inOtherState.marginal_effects;
+        delta += inOtherState.delta;
+        return *this;
+    }
+
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+        numRows = 0;
+        training_data_vcov.fill(0);
+        marginal_effects.fill(0);
+        delta.fill(0);
+    }
+
+  private:
+    static inline size_t arraySize(const uint16_t inWidthOfX,
+                                   const uint16_t inNumBasis) {
+        return 4 + inNumBasis + (inWidthOfX + inNumBasis) * inWidthOfX;
+    }
+
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX The number of independent variables.
+     *
+     */
+    void rebind(uint16_t inWidthOfX, uint16_t inNumBasis) {
+        iteration.rebind(&mStorage[0]);
+        widthOfX.rebind(&mStorage[1]);
+        numBasis.rebind(&mStorage[2]);
+        numRows.rebind(&mStorage[3]);
+        marginal_effects.rebind(&mStorage[4], inNumBasis);
+        training_data_vcov.rebind(&mStorage[4 + inNumBasis], inWidthOfX, inWidthOfX);
+        delta.rebind(&mStorage[4 + inNumBasis + inWidthOfX * inWidthOfX],
+                     inNumBasis, inWidthOfX);
+    }
+    Handle mStorage;
+
+  public:
+
+    typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToUInt16 numBasis;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap marginal_effects;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap training_data_vcov;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap delta;
+};
+// ----------------------------------------------------------------------
+
+/**
+ * @brief Perform the marginal effects transition step
+ */
+AnyType
+margins_linregr_int_transition::run(AnyType &args) {
+    MarginsLinregrInteractionState<MutableArrayHandle<double> > state = args[0];
+    if (args[1].isNull()) { return args[0]; }
+    MappedColumnVector x;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
+    // The following check was added with MADLIB-138.
+    if (!dbal::eigen_integration::isfinite(x))
+        throw std::domain_error("Design matrix is not finite.");
+
+    MappedColumnVector coef = args[2].getAs<MappedColumnVector>();
+
+    // matrix is read in as a column-order matrix, the input is row-order.
+    Matrix derivative_matrix = args[4].getAs<MappedMatrix>();
+    derivative_matrix.transposeInPlace();
+
+    if (state.numRows == 0) {
+        if (x.size() > std::numeric_limits<uint16_t>::max())
+            throw std::domain_error("Number of independent variables cannot be "
+                                    "larger than 65535.");
+        state.initialize(*this,
+                         static_cast<uint16_t>(coef.size()),
+                         static_cast<uint16_t>(derivative_matrix.rows()));
+        Matrix training_data_vcov = args[3].getAs<MappedMatrix>();
+        state.training_data_vcov = training_data_vcov;
+    }
+
+    // Now do the transition step
+    state.numRows++;
+    // compute marginal effects and delta using 1st and 2nd derivatives
+    state.marginal_effects += derivative_matrix * coef;
+    state.delta += derivative_matrix;
+    return state;
+}
+
+
+/**
+ * @brief Marginal effects: Merge transition states
+ */
+AnyType
+margins_linregr_int_merge::run(AnyType &args) {
+    MarginsLinregrInteractionState<MutableArrayHandle<double> > stateLeft = args[0];
+    MarginsLinregrInteractionState<ArrayHandle<double> > stateRight = args[1];
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
+
+    // Merge states together and return
+    stateLeft += stateRight;
+    return stateLeft;
+}
+
+/**
+ * @brief Marginal effects: Final step
+ */
+AnyType
+margins_linregr_int_final::run(AnyType &args) {
+    // We request a mutable object.
+    // Depending on the backend, this might perform a deep copy.
+    MarginsLinregrInteractionState<ArrayHandle<double> > state = args[0];
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+
+    // Variance of the marginal effects (computed by delta method)
+    Matrix variance;
+    variance = state.delta * state.training_data_vcov;
+    // we only need the diagonal elements of the variance, so we perform a dot
+    // product of each row with itself to compute each diagonal element.
+    ColumnVector variance_diagonal =
+        variance.cwiseProduct(state.delta).rowwise().sum() / (state.numRows * state.numRows);
 
     // Computing the marginal effects
-    return margins_stateToResult(*this, std_err.diagonal(),
-                                 state.marginal_effects,
-                                 state.numRows);
+    return margins_stateToResult(*this, variance_diagonal,
+                                 state.marginal_effects, state.numRows);
 }
-// ------------------------ End of Marginal ------------------------------------
 
 } // namespace regress
 

@@ -36,7 +36,8 @@ enum { IN_PROCESS, COMPLETED, TERMINATED, NULL_EMPTY };
 AnyType stateToResult(const Allocator &inAllocator,
                       const HandleMap<const ColumnVector, TransparentHandle<double> >& inCoef,
                       const Matrix & hessian,
-                      const double &logLikelihood, const double &conditionNo, int status,
+                      const double &logLikelihood,
+                      int status,
                       const uint64_t &numRows);
 
 
@@ -406,7 +407,7 @@ internal_logregr_cg_result::run(AnyType &args) {
 
     return stateToResult(*this, state.coef,
                          state.X_transp_AX, state.logLikelihood,
-                         decomposition.conditionNo(), state.status, state.numRows);
+                         state.status, state.numRows);
 }
 
 
@@ -725,7 +726,7 @@ AnyType internal_logregr_irls_result::run(AnyType &args) {
         return Null();
 
     return stateToResult(*this, state.coef, state.X_transp_AX,
-                         state.logLikelihood, state.X_transp_Az(0),
+                         state.logLikelihood,
                          state.status, state.numRows);
 }
 
@@ -1026,7 +1027,7 @@ internal_logregr_igd_result::run(AnyType &args) {
 
     return stateToResult(*this, state.coef,
                          state.X_transp_AX,
-                         state.logLikelihood, decomposition.conditionNo(),
+                         state.logLikelihood,
                          state.status, state.numRows);
 }
 
@@ -1041,7 +1042,6 @@ AnyType stateToResult(
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
     const Matrix & hessian,
     const double &logLikelihood,
-    const double &conditionNo,
     int status,
     const uint64_t &numRows) {
 
@@ -1067,7 +1067,6 @@ AnyType stateToResult(
                                          -std::abs(waldZStats(i)));
         oddsRatios(i) = std::exp( inCoef(i) );
     }
-
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
@@ -1648,12 +1647,7 @@ marginal_logregr_step_final::run(AnyType &args) {
     // Compute variance matrix of logistic regression
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.X_transp_AX, EigenvaluesOnly, ComputePseudoInverse);
-
     Matrix variance = decomposition.pseudoInverse();
-
-    // dberr << "Delta = " << state.delta << " numrows = " << state.numRows << std::endl;
-    // dberr << "Variance = " << variance << std::endl;
-
     // Standard error according to the delta method
     Matrix std_err;
     std_err = state.delta * variance * trans(state.delta) / (state.numRows*state.numRows);

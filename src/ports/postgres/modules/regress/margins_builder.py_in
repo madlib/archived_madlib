@@ -1,7 +1,10 @@
 """
 @file margins_common.py_in
 
-@brief Marginal Effects with Interactions: Common functions
+@brief Marginal Effects with Interactions: Builds the main interaction effects
+class and describes multiple functions that are common to the various methods.
+These functions are not directly related to database constructs. Functions that
+depend on the database should not be included in this file.
 
 @namespace marginal
 """
@@ -11,84 +14,12 @@ from itertools import chain
 
 if __name__ != "__main__":
     ## The import statements are called only when this file is not executed
-    ## as a standalone (for unit testing)
-    from utilities.utilities import _assert
-    from utilities.validate_args import table_exists
-    from utilities.validate_args import columns_exist_in_table
-    from utilities.validate_args import table_is_empty
+    ## as a standalone
     from utilities.utilities import py_list_to_sql_string
 # ========================================================================
 
 
-def margins_validate_model_table(model_table):
-    """
-    Args:
-        @param schema_madlib
-        @param model_table
-
-    Returns:
-
-    """
-    _assert(model_table and
-            model_table.strip().lower() not in ('null', ''),
-            "Margins error: Invalid regression model table name!")
-    _assert(table_exists(model_table),
-            "Margins error: Specified Model table ({0}) is missing! "
-            "Rerun underlying regression".format(model_table))
-
-    model_summary_table = model_table + '_summary'
-    _assert(table_exists(model_summary_table),
-            "Margins error: Summary for model table ({0}) is missing! "
-            "Rerun underlying regression".format(model_summary_table))
-
-    _assert(columns_exist_in_table(model_summary_table,
-            ['method', 'source_table', 'out_table', 'dependent_varname',
-             'independent_varname']),
-            "Margins error: Invalid model summary table ({0})"
-            " - some required columns missing".format(model_summary_table))
-    return True
-#------------------------------------------------------------------------------
-
-
-def margins_validate_args(out_table, source_table, x_design=None,
-                          **kwargs):
-    _assert(out_table and
-            out_table.strip().lower() not in ('null', ''),
-            "Margins error: Invalid output table name!")
-    _assert(not table_exists(out_table),
-            "Margins error: Output table already exists!")
-    _assert(not table_exists(out_table + '_summary'),
-            "Margins error: Output summary table already exists!")
-
-    _assert(source_table and source_table.strip().lower() not in ('null', ''),
-            "Margins error: Invalid data table name!")
-    _assert(table_exists(source_table),
-            "Margins error: Data table ({0}) is missing!".format(source_table))
-    _assert(not table_is_empty(source_table),
-            "Margins error: Data table ({0}) is empty!".format(source_table))
-# -------------------------------------------------------------------------
-
-
-def parse_marginal_vars(marginal_var_str):
-    """
-    Marginal vars is supposed to be a list of integers separated by ','.
-    It's possible that the user inputs it as an array string
-    eg: ARRAY[1, 2, 3, 4] or '{2, 4, 5}'. We strip out the 'ARRAY' if present in
-    front and also strip and square/curly brackets.
-    """
-    if str.lower(marginal_var_str.strip()[:6]) == "array[":
-        marginal_var_str = marginal_var_str[5:]
-    marginal_var_str = marginal_var_str.strip(" {}[]")
-    try:
-        marginal_var_list = map(int, marginal_var_str.split(','))
-    except Exception:
-        raise ValueError("Margins error: Invalid input for marginal vars: {0}".
-                         format(marginal_var_str))
-    return marginal_var_list
-#------------------------------------------------------------------------------
-
-
-class InteractionTermBuilder(object):
+class MarginalEffectsBuilder(object):
 
     def __init__(self, design_str):
         """
@@ -416,6 +347,13 @@ class InteractionTermBuilder(object):
             else:
                 # get the basis terms (should be int after striping any "i.")
                 basis_var, indicator_cat, is_reference = self._strip_indicator(each_term)
+                if basis_var in self.basis_terms:
+                    raise ValueError(
+                        "Invalid input in x_design. Duplicate indices ({0}) "
+                        "for basis terms ".format(basis_var))
+                if basis_var <= 0:
+                    raise ValueError("Basis variable index ({0}) must be "
+                                     "positive".format(basis_var))
                 self.basis_terms.append(basis_var)
                 if indicator_cat:
                     self.indicator_terms[indicator_cat].append(basis_var)
@@ -424,14 +362,19 @@ class InteractionTermBuilder(object):
                             self.reference_terms[indicator_cat] = basis_var
                         else:
                             raise ValueError(
-                                "Invalid input in x_design. Multiple reference terms "
-                                "present for category '{0}'".format(indicator_cat))
+                                "Invalid input in x_design. Multiple reference "
+                                "terms present for category '{0}'".
+                                format(indicator_cat))
         self.basis_terms.sort()
 
         # Verify if each variable in interactions_terms are found in basis_terms
-        for each_term in self.interaction_terms.values():
-            # each term is represented as a dictionary of dictionaries
+        for each_index, each_term in self.interaction_terms.items():
+            if each_index in self.basis_terms:
+                raise ValueError("A basis term ({0}) referenced to the same "
+                                 "index as another interaction term ({1})".
+                                 format(each_index, self.str_int_term(each_term)))
             for each_var in each_term:
+                # each term is represented as a dictionary of dictionaries
                 if each_var not in self.basis_terms:
                     raise ValueError(
                         "Invalid input in x_design. Interaction term '{0}' "
@@ -504,7 +447,8 @@ class InteractionTermBuilder(object):
         return (term_siblings, ref_term)
     #------------------------------------------------------------------------------
 
-    def get_discrete_diff_arrays(self, term_to_explore, array_name='x', quoted=False):
+    def get_discrete_diff_arrays(self, term_to_explore,
+                                 array_name='x', quoted=False):
         """
         Create a pair of strings that corresponds to the array expressions for
         computing the marginal effect for an indicator term using
@@ -537,11 +481,13 @@ class InteractionTermBuilder(object):
             indicator_unset_list[index] = unset_val
 
         for basis_index in self.basis_terms:
-            # basis_index is an index in the original array (in DB) which is 1-base
+            # basis_index is index in the original array which is assumed to be 1-base
             if basis_index == term_to_explore:
-                set_value, unset_value = '1', '0'  # set/unset the current variable ...
+                # set/unset the current variable ...
+                set_value, unset_value = '1', '0'
             elif basis_index in term_siblings:
-                set_value, unset_value = '0', '0'  # unset all siblings in both cases ...
+                # unset all siblings in both cases ...
+                set_value, unset_value = '0', '0'
             elif ref_term and basis_index == ref_term:
                 # except for the reference, set it when unsetting term_to_explore
                 set_value, unset_value = '0', '1'
@@ -654,48 +600,48 @@ class MarginsTestCase(unittest.TestCase):
                    "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
                    "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
                    "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
-        self.int_obj = InteractionTermBuilder(self.xd)
+        self.int_obj = MarginalEffectsBuilder(self.xd)
 
         self.xd2 = '1, 2, 3, 4, 5, 6, 7, 8, 3*2, 4*3*5, 5^2*4*6, 6^2, 7^3*8'
-        self.int_obj2 = InteractionTermBuilder(self.xd2)
+        self.int_obj2 = MarginalEffectsBuilder(self.xd2)
 
     def tearDown(self):
         pass
 
     def test_ind_prefix(self):
-        self.assertEqual(InteractionTermBuilder._strip_indicator('i.1.color'), (1, 'color', False))
-        self.assertEqual(InteractionTermBuilder._strip_indicator('1'), (1, None, False))
-        self.assertEqual(InteractionTermBuilder._strip_indicator('10'), (10, None, False))
-        self.assertEqual(InteractionTermBuilder._strip_indicator('i.10.gender'), (10, 'gender', False))
-        self.assertEqual(InteractionTermBuilder._strip_indicator('ir.10.gender'), (10, 'gender', True))
-        self.assertEqual(InteractionTermBuilder._strip_indicator('i.10.1'), (10, '1', False))
-        self.assertRaises(ValueError, InteractionTermBuilder._strip_indicator, 'i.21*2')
-        self.assertRaises(ValueError, InteractionTermBuilder._strip_indicator, 'i.1')
+        self.assertEqual(MarginalEffectsBuilder._strip_indicator('i.1.color'), (1, 'color', False))
+        self.assertEqual(MarginalEffectsBuilder._strip_indicator('1'), (1, None, False))
+        self.assertEqual(MarginalEffectsBuilder._strip_indicator('10'), (10, None, False))
+        self.assertEqual(MarginalEffectsBuilder._strip_indicator('i.10.gender'), (10, 'gender', False))
+        self.assertEqual(MarginalEffectsBuilder._strip_indicator('ir.10.gender'), (10, 'gender', True))
+        self.assertEqual(MarginalEffectsBuilder._strip_indicator('i.10.1'), (10, '1', False))
+        self.assertRaises(ValueError, MarginalEffectsBuilder._strip_indicator, 'i.21*2')
+        self.assertRaises(ValueError, MarginalEffectsBuilder._strip_indicator, 'i.1')
 
     def test_parse_interaction(self):
-        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1*2'), {1: 1, 2: 1})
-        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1^2'), {1: 2})
-        self.assertEqual(InteractionTermBuilder._parse_interaction_term('i.1.color*2*i.3.size^4'), {1: 1, 2: 1, 3: 4})
-        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1^2*i.2.2^7*3^4'), {1: 2, 2: 7, 3: 4})
-        self.assertEqual(InteractionTermBuilder._parse_interaction_term('1^2*i.2.2^7*3*3^2'), {1: 2, 2: 7, 3: 3})
-        self.assertRaises(ValueError, InteractionTermBuilder._parse_interaction_term, '1^-2*2^7*3^4')
-        self.assertRaises(ValueError, InteractionTermBuilder._parse_interaction_term, '1^2*2^7.1*3^4')
-        self.assertRaises(ValueError, InteractionTermBuilder._parse_interaction_term, '1^2/2^7.1*3^4')
+        self.assertEqual(MarginalEffectsBuilder._parse_interaction_term('1*2'), {1: 1, 2: 1})
+        self.assertEqual(MarginalEffectsBuilder._parse_interaction_term('1^2'), {1: 2})
+        self.assertEqual(MarginalEffectsBuilder._parse_interaction_term('i.1.color*2*i.3.size^4'), {1: 1, 2: 1, 3: 4})
+        self.assertEqual(MarginalEffectsBuilder._parse_interaction_term('1^2*i.2.2^7*3^4'), {1: 2, 2: 7, 3: 4})
+        self.assertEqual(MarginalEffectsBuilder._parse_interaction_term('1^2*i.2.2^7*3*3^2'), {1: 2, 2: 7, 3: 3})
+        self.assertRaises(ValueError, MarginalEffectsBuilder._parse_interaction_term, '1^-2*2^7*3^4')
+        self.assertRaises(ValueError, MarginalEffectsBuilder._parse_interaction_term, '1^2*2^7.1*3^4')
+        self.assertRaises(ValueError, MarginalEffectsBuilder._parse_interaction_term, '1^2/2^7.1*3^4')
 
     def test_str_interaction(self):
-        self.assertEqual(InteractionTermBuilder.str_int_term(
-                         InteractionTermBuilder._parse_interaction_term('1*2')), "1 * 2")
-        self.assertEqual(InteractionTermBuilder.str_int_term(
-                         InteractionTermBuilder._parse_interaction_term('1*2^2')), "1 * 2^2")
-        self.assertEqual(InteractionTermBuilder.str_int_term(
-                         InteractionTermBuilder._parse_interaction_term('1^1*2^2*2^3')), "1 * 2^5")
-        self.assertEqual(InteractionTermBuilder.str_int_term(
-                         InteractionTermBuilder._parse_interaction_term('i.1.color*2^2')), "1 * 2^2")
-        self.assertEqual(InteractionTermBuilder.str_int_term(
-                         InteractionTermBuilder._parse_interaction_term('i.1.color*2^2'),
+        self.assertEqual(MarginalEffectsBuilder.str_int_term(
+                         MarginalEffectsBuilder._parse_interaction_term('1*2')), "1 * 2")
+        self.assertEqual(MarginalEffectsBuilder.str_int_term(
+                         MarginalEffectsBuilder._parse_interaction_term('1*2^2')), "1 * 2^2")
+        self.assertEqual(MarginalEffectsBuilder.str_int_term(
+                         MarginalEffectsBuilder._parse_interaction_term('1^1*2^2*2^3')), "1 * 2^5")
+        self.assertEqual(MarginalEffectsBuilder.str_int_term(
+                         MarginalEffectsBuilder._parse_interaction_term('i.1.color*2^2')), "1 * 2^2")
+        self.assertEqual(MarginalEffectsBuilder.str_int_term(
+                         MarginalEffectsBuilder._parse_interaction_term('i.1.color*2^2'),
                          'x', quoted=False), 'x[1] * x[2]^2')
-        self.assertEqual(InteractionTermBuilder.str_int_term(
-                         InteractionTermBuilder._parse_interaction_term('i.1.color*2^2'),
+        self.assertEqual(MarginalEffectsBuilder.str_int_term(
+                         MarginalEffectsBuilder._parse_interaction_term('i.1.color*2^2'),
                          'Abc', quoted=True), '"Abc"[1] * "Abc"[2]^2')
         self.assertEqual(
             self.int_obj.str_sum_int_terms('B', 'A', True),
@@ -719,7 +665,7 @@ class MarginsTestCase(unittest.TestCase):
 
     def test_x_design1(self):
         xd = '1, 2, 1*2, 1^1*i.2.color^2*  5^4  , 5, 6, 5^2'
-        int_obj = InteractionTermBuilder(xd)
+        int_obj = MarginalEffectsBuilder(xd)
         self.assertEqual(int_obj.basis_terms, [1, 2, 5, 6])
         self.assertEqual(int_obj.interaction_terms, {3: {1: 1, 2: 1},
                                                      4: {1: 1, 2: 2, 5: 4},
@@ -729,7 +675,7 @@ class MarginsTestCase(unittest.TestCase):
 
     def test_x_design2(self):
         xd = '1, i.2.color, 1*2, 1^1*2^2*  5^4  , 5, 6, 5^2'
-        int_obj = InteractionTermBuilder(xd)
+        int_obj = MarginalEffectsBuilder(xd)
         self.assertEqual(int_obj.basis_terms, [1, 2, 5, 6])
         self.assertEqual(int_obj.interaction_terms, {3: {1: 1, 2: 1},
                                                      4: {1: 1, 2: 2, 5: 4},
@@ -739,7 +685,7 @@ class MarginsTestCase(unittest.TestCase):
 
     def test_x_design3(self):
         xd = '1, 2, 3'
-        int_obj = InteractionTermBuilder(xd)
+        int_obj = MarginalEffectsBuilder(xd)
         self.assertEqual(int_obj.basis_terms, [1, 2, 3])
         self.assertEqual(int_obj.interaction_terms, {})
         self.assertEqual(int_obj.indicator_terms, {})
@@ -748,12 +694,12 @@ class MarginsTestCase(unittest.TestCase):
     def test_x_design4(self):
         xd = '1, 2, i.1*i.2, 1*2^2, i.5, i.6'
         # i.1, i.2 is invalid input
-        self.assertRaises(ValueError, InteractionTermBuilder, xd)
+        self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
 
     def test_x_design5(self):
         xd = '1, i.2, 1*i.2.color, 1^1*2^2*3^4'
         # '3' in interaction term is invalid
-        self.assertRaises(ValueError, InteractionTermBuilder, xd)
+        self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
 
     def test_x_design6(self):
         self.assertEqual(self.int_obj.basis_terms, [1, 2, 3, 4, 5, 11, 15])
@@ -840,19 +786,12 @@ class MarginsTestCase(unittest.TestCase):
                           '"x"[4] * "x"[5]', '0', '0', '"x"[11]', '"x"[11]^2',
                           '"x"[11] * "x"[5]', '"x"[11]^2 * "x"[5]', '"x"[15]'])
 
-    def test_parse_marginal_vars(self):
-        self.assertEqual(parse_marginal_vars('1,2,3,4'), [1, 2, 3, 4])
-        self.assertEqual(parse_marginal_vars('{1,2,3,4}'), [1, 2, 3, 4])
-        self.assertEqual(parse_marginal_vars('ARRAY[1,2,3,4]'), [1, 2, 3, 4])
+    # def test_parse_marginal_vars(self):
+    #     self.assertEqual(parse_marginal_vars('1,2,3,4'), [1, 2, 3, 4])
+    #     self.assertEqual(parse_marginal_vars('{1,2,3,4}'), [1, 2, 3, 4])
+    #     self.assertEqual(parse_marginal_vars('ARRAY[1,2,3,4]'), [1, 2, 3, 4])
 
     def test_derivative_matrix(self):
-        self.xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
-                   "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
-                   "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
-                   "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
-
-        self.xd2 = '1, 2, 3, 4, 5, 6, 7, 8, 3*2, 4*3*5, 5^2*4*6, 6^2, 7^3*8'
-
         self.assertEqual(self.int_obj.create_2nd_derivative_matrix('x'),
                          "ARRAY["
                          "ARRAY[1-0,0-0,0-0,x[4]-x[4],x[5]-x[5],0-0,0-0,x[4] * x[5]-x[4] * x[5],0-0,0-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
@@ -874,7 +813,7 @@ class MarginsTestCase(unittest.TestCase):
                          "ARRAY[0,0,0,0,0,0,1,0,0,0,0,0,x[8] * 3 * x[7]^2]::double precision[],"
                          "ARRAY[0,0,0,0,0,0,0,1,0,0,0,0,x[7]^3]::double precision[]]")
 
-        self.int_obj3 = InteractionTermBuilder('1, 2, 2*2')
+        self.int_obj3 = MarginalEffectsBuilder('1, 2, 2*2')
         self.assertEqual(self.int_obj3.create_2nd_derivative_matrix('x', quoted=True),
                          "ARRAY[ARRAY[1,0,0]::double precision[],ARRAY[0,1,2 * \"x\"[2]]::double precision[]]")
 
@@ -895,7 +834,7 @@ if __name__ == '__main__':
     #                "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
     #                "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
     #                "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
-    # obj = InteractionTermBuilder(xd)
+    # obj = MarginalEffectsBuilder(xd)
 
     # print obj.str_sum_int_terms('w', 'x')
     # print obj.create_2nd_derivative_matrix('x')

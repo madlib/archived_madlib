@@ -243,6 +243,12 @@ LinearRegression::compute(
         }
     }
 
+    // Matrix of variance-covariance matrix : For efficiency reasons, we want to return this
+    // by reference, so we need to bind to db memory
+    vcov.rebind(allocator.allocateArray<double>(inState.widthOfX * inState.widthOfX),
+                inState.widthOfX, inState.widthOfX);
+    vcov = variance * inverse_of_X_transp_X;
+
     // Vector of p-values: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
     pValues.rebind(allocator.allocateArray<double>(inState.widthOfX));
@@ -258,8 +264,8 @@ LinearRegression::compute(
     return *this;
 }
 
-/* 
-	Robust Linear Regression: Huber-White Sandwich estimator 
+/*
+	Robust Linear Regression: Huber-White Sandwich estimator
 */
 
 template <class Container>
@@ -294,7 +300,7 @@ RobustLinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
 /**
  * @brief Update the accumulation state
  *
- * We update the number of rows \f$ n \f$, the matrix \f$ X^T X \f$, 
+ * We update the number of rows \f$ n \f$, the matrix \f$ X^T X \f$,
  * and the matrix \f$ X^T diag(r_1^2, r_2^2 ... r_n^2 X \f$
  */
 template <class Container>

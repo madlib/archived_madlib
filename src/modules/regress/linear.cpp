@@ -28,7 +28,7 @@ typedef RobustLinearRegressionAccumulator<MutableRootContainer> MutableRobustLin
 
 // Heteroskedasticitic regression
 typedef HeteroLinearRegressionAccumulator<RootContainer> HeteroLinRegrState;
-typedef HeteroLinearRegressionAccumulator<MutableRootContainer>	
+typedef HeteroLinearRegressionAccumulator<MutableRootContainer>
                                                     MutableHeteroLinRegrState;
 // -----------------------------------------------------------------------
 // Linear regression
@@ -71,15 +71,15 @@ linregr_final::run(AnyType& args) {
 
     AnyType tuple;
     LinearRegression result(state);
-    tuple << result.coef 
-					<< result.r2 
-					<< result.stdErr 
-					<< result.tStats
-          << (state.numRows > state.widthOfX
-              ? result.pValues
-              : Null())
+    Matrix resultVcov = result.vcov;
+    tuple << result.coef
+		  << result.r2
+		  << result.stdErr
+		  << result.tStats
+          << (state.numRows > state.widthOfX ? result.pValues : Null())
           << sqrt(result.conditionNo)
-          << (int64_t)state.numRows;
+          << (int64_t)state.numRows
+          << resultVcov;
     return tuple;
 }
 // -----------------------------------------------------------------------
@@ -137,7 +137,7 @@ robust_linregr_final::run(AnyType& args) {
     RobustLinearRegression result(state);
 
     tuple << result.coef
-          << result.stdErr 
+          << result.stdErr
           << result.tStats
           << (state.numRows > state.widthOfX
               ? result.pValues

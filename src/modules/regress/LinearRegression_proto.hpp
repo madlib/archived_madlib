@@ -54,6 +54,7 @@ public:
     MutableNativeColumnVector tStats;
     MutableNativeColumnVector pValues;
     double conditionNo;
+    MutableNativeMatrix vcov;
 };
 
 // ------------------------------------------------------------------------
@@ -95,7 +96,7 @@ public:
 };
 
 // ------------------------------------------------------------------------
-// Accumulator class for testing heteroskedasticity 
+// Accumulator class for testing heteroskedasticity
 template <class Container>
 class HeteroLinearRegressionAccumulator
   : public DynamicStruct<HeteroLinearRegressionAccumulator<Container>, Container>

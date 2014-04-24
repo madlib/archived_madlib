@@ -18,7 +18,7 @@ m4_include(`SQLCommon.m4')
 
 <div class="toc"><b>Contents</b>
 <ul>
-<li><a href="#margins">Marginal Effects for Logistic Regression with Interaction Terms</a></li>
+<li><a href="#margins">Marginal Effects with Interaction Terms</a></li>
 <li><a href="#mlogregr_train">Marginal Effects for Multinomial Logistic Regression</a></li>
 <li><a href="#examples">Examples</a></li>
 <li><a href="#notes">Notes</a></li>
@@ -38,7 +38,7 @@ specialized algorithms are required for calculating ME. The marginal effect
 computed is the average of the marginal effect at every data point present in the
 source table.
 
-MADlib provides marginal effects regression functions for logistic and
+MADlib provides marginal effects regression functions for linear, logistic and
 multinomial logistic regressions.
 
 @warning The margins_logregr has been deprecated in favor of the 'margins' function.
@@ -116,7 +116,8 @@ margins( modele_table,
 
 
 @anchor logregr_train
-@par Marginal Effects for Logistic Regression(Deprecated)
+@warning This function has been deprecated.
+@par Marginal Effects for Logistic Regression
 <pre class="syntax">
 margins_logregr( source_table,
                  output_table,
@@ -1182,17 +1183,77 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 -- Marginal effects with Interactions terms
 -----------------------------------------------------------------------
 
------------------- Marginal Logistic Regression w/ Interaction -----------------
------------------------ New interface for marginal -----------------------------
-
-DROP TYPE IF EXISTS MADLIB_SCHEMA.margins_int_logregr_result;
-CREATE TYPE MADLIB_SCHEMA.margins_int_logregr_result AS (
+DROP TYPE IF EXISTS MADLIB_SCHEMA.margins_result;
+CREATE TYPE MADLIB_SCHEMA.margins_result AS (
     margins  DOUBLE PRECISION[],
     std_err  DOUBLE PRECISION[],
     z_stats  DOUBLE PRECISION[],
     p_values DOUBLE PRECISION[]
 );
+
+------------------ Marginal Linear Regression w/ Interaction -----------------
+----------------------- New interface for margins -----------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_linregr_int_transition(
+    state                 DOUBLE PRECISION[],
+    x                     DOUBLE PRECISION[],
+    coef                  DOUBLE PRECISION[],
+    vcov                  DOUBLE PRECISION[],
+    derivative            DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'margins_linregr_int_transition'
+LANGUAGE C IMMUTABLE;
+
 --------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_linregr_int_merge(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'margins_linregr_int_merge'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_linregr_int_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.margins_result
+AS 'MODULE_PATHNAME', 'margins_linregr_int_final'
+LANGUAGE C IMMUTABLE STRICT;
+
+--------------------------------------
+
+/**
+ * @brief Compute marginal effects for linear regression.
+ *
+ * @param independentVariables Column containing the array of independent variables
+ * @param coef Column containing the array of the  coefficients (as obtained by logregr)
+ *
+ *
+ * @return A composite value:
+ *  - <tt>margins FLOAT8[] </tt>          - Array of marginal effects
+ *  - <tt>std_err FLOAT8[]</tt>           - Array of standard-errors (calculated by the delta method),
+ *  - <tt>z_stats FLOAT8[]</tt>           - Array of z-statistics
+ *  - <tt>p_values FLOAT8[]</tt>          - Array of p-values
+ *
+ * </pre>
+ */
+
+CREATE AGGREGATE MADLIB_SCHEMA.__margins_int_linregr_agg(
+    /*+ "independentVariables" */  DOUBLE PRECISION[],
+    /*+ "coef" */                  DOUBLE PRECISION[],
+    /*+ "vcov" */                  DOUBLE PRECISION[],
+    /*+ "derivative matrix" */     DOUBLE PRECISION[]
+)(
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.__margins_linregr_int_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `PREFUNC=MADLIB_SCHEMA.__margins_linregr_int_merge,')
+    FINALFUNC=MADLIB_SCHEMA.__margins_linregr_int_final,
+    INITCOND='{0, 0, 0, 0, 0, 0}'
+);
+
+-------------------------------------------------------------------------
+------------------ Marginal Logregr Regression w/ Interaction -----------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_logregr_int_transition(
     state                 DOUBLE PRECISION[],
@@ -1220,7 +1281,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_logregr_int_final(
     state DOUBLE PRECISION[])
-RETURNS MADLIB_SCHEMA.margins_int_logregr_result
+RETURNS MADLIB_SCHEMA.margins_result
 AS 'MODULE_PATHNAME', 'margins_logregr_int_final'
 LANGUAGE C IMMUTABLE STRICT;
 

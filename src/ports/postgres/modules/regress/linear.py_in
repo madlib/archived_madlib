@@ -4,174 +4,172 @@
 
 import plpy
 from utilities.utilities import _string_to_array
-from utilities.utilities import _array_to_string
 from utilities.utilities import __unique_string
 from utilities.validate_args import table_exists
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
 from utilities.utilities import _assert
-
+from utilities.control import MinWarning
 # ----------------------------------------------------------------------
+
+
 def linregr_train(schema_madlib, source_table, out_table,
-    dependent_varname, independent_varname, grouping_cols,
-    heteroskedasticity_option, **kwargs):
+                  dependent_varname, independent_varname, grouping_cols,
+                  heteroskedasticity_option, **kwargs):
+    with MinWarning('warning'):
+        _validate_args(schema_madlib, source_table, out_table,
+                       dependent_varname, independent_varname,
+                       grouping_cols, heteroskedasticity_option)
 
-    old_msg_level = plpy.execute(
-        """select setting from pg_settings where
-        name='client_min_messages'""")[0]['setting']
-    plpy.execute("set client_min_messages to error")
+        group_str = '' if grouping_cols is None else 'GROUP BY %s' % grouping_cols
+        group_str_sel = '' if grouping_cols is None else grouping_cols + ','
+        join_str = ',' if grouping_cols is None else 'JOIN'
+        using_str = '' if grouping_cols is None else 'USING (%s)' % grouping_cols
 
-    _validate_args(schema_madlib, source_table, out_table,
-        dependent_varname, independent_varname, grouping_cols,
-        heteroskedasticity_option)
-
-    group_str = '' if grouping_cols is None else 'GROUP BY %s' % grouping_cols
-    group_str_sel = '' if grouping_cols is None else grouping_cols + ','
-    join_str = ',' if grouping_cols is None else 'JOIN'
-    using_str = '' if grouping_cols is None else 'USING (%s)' % grouping_cols
-
-    # Run linear regression
-    temp_lin_rst = __unique_string()
-    plpy.execute(
-        """
-        DROP TABLE IF EXISTS {temp_lin_rst};
-        CREATE TEMP TABLE {temp_lin_rst} AS
-        SELECT
-            {group_str_sel}
-            {schema_madlib}.linregr(
-                {dependent_varname},
-                {independent_varname}) AS lin_rst,
-            count(*) AS num_rows
-        FROM
-            {source_table}
-        {group_str}
-        """.format(schema_madlib=schema_madlib,
-                   temp_lin_rst=temp_lin_rst,
-                   group_str=group_str,
-                   group_str_sel=group_str_sel,
-                   dependent_varname=dependent_varname,
-                   independent_varname=independent_varname,
-                   source_table=source_table))
-
-    # Run heteroskedasticity test
-    if heteroskedasticity_option:
-        temp_hsk_rst = __unique_string()
+        # Run linear regression
+        temp_lin_rst = __unique_string()
         plpy.execute(
             """
-            DROP TABLE IF EXISTS {temp_hsk_rst};
-            CREATE TEMP TABLE {temp_hsk_rst} AS
+            DROP TABLE IF EXISTS {temp_lin_rst};
+            CREATE TEMP TABLE {temp_lin_rst} AS
             SELECT
                 {group_str_sel}
-                {schema_madlib}.heteroskedasticity_test_linregr(
+                {schema_madlib}.linregr(
                     {dependent_varname},
-                    {independent_varname},
-                    (lin_rst).coef) AS hsk_rst
+                    {independent_varname}) AS lin_rst,
+                count(*) AS num_rows
             FROM
-                {source_table} {join_str} {temp_lin_rst} {using_str}
+                {source_table}
             {group_str}
             """.format(schema_madlib=schema_madlib,
-                       temp_hsk_rst=temp_hsk_rst,
+                       temp_lin_rst=temp_lin_rst,
+                       group_str=group_str,
+                       group_str_sel=group_str_sel,
                        dependent_varname=dependent_varname,
                        independent_varname=independent_varname,
-                       group_str_sel=group_str_sel, group_str=group_str,
-                       join_str=join_str, using_str=using_str,
-                       source_table=source_table, temp_lin_rst=temp_lin_rst))
+                       source_table=source_table))
 
-    # Output the results
-    join_str = ''
-    using_str = ''
-    if heteroskedasticity_option:
-        if grouping_cols is not None:
-            join_str = 'JOIN %s AS hsk' % temp_hsk_rst
-            using_str = 'USING (%s)' % (grouping_cols)
-        else:
-            join_str = ', %s AS hsk' % temp_hsk_rst
-    bp_stats = '(hsk.hsk_rst).bp_stats,' if heteroskedasticity_option else ''
-    bp_p_value = '(hsk.hsk_rst).bp_p_value,' if heteroskedasticity_option else ''
+        # Run heteroskedasticity test
+        if heteroskedasticity_option:
+            temp_hsk_rst = __unique_string()
+            plpy.execute(
+                """
+                DROP TABLE IF EXISTS {temp_hsk_rst};
+                CREATE TEMP TABLE {temp_hsk_rst} AS
+                SELECT
+                    {group_str_sel}
+                    {schema_madlib}.heteroskedasticity_test_linregr(
+                        {dependent_varname},
+                        {independent_varname},
+                        (lin_rst).coef) AS hsk_rst
+                FROM
+                    {source_table} {join_str} {temp_lin_rst} {using_str}
+                {group_str}
+                """.format(schema_madlib=schema_madlib,
+                           temp_hsk_rst=temp_hsk_rst,
+                           dependent_varname=dependent_varname,
+                           independent_varname=independent_varname,
+                           group_str_sel=group_str_sel, group_str=group_str,
+                           join_str=join_str, using_str=using_str,
+                           source_table=source_table, temp_lin_rst=temp_lin_rst))
 
-    plpy.execute(
-        """
-        CREATE TABLE {out_table} AS
-        SELECT
-            {group_str_sel}
-            (lin.lin_rst).coef,
-            (lin.lin_rst).r2,
-            (lin.lin_rst).std_err,
-            (lin.lin_rst).t_stats,
-            (lin.lin_rst).p_values,
-            (lin.lin_rst).condition_no,
-            {bp_stats}
-            {bp_p_value}
-            CASE WHEN (lin.lin_rst).num_processed IS NULL
-                THEN 0
-                ELSE (lin.lin_rst).num_processed
-            END AS num_rows_processed,
-            CASE WHEN (lin.lin_rst).num_processed IS NULL
-                THEN lin.num_rows
-                ELSE lin.num_rows - (lin.lin_rst).num_processed
-            END AS num_missing_rows_skipped
-        FROM
-            {temp_lin_rst} AS lin {join_str} {using_str}
-       """.format(out_table=out_table, group_str_sel=group_str_sel,
-           bp_stats=bp_stats, bp_p_value=bp_p_value,
-           temp_lin_rst=temp_lin_rst, join_str=join_str, using_str=using_str))
+        # Output the results
+        join_str = ''
+        using_str = ''
+        if heteroskedasticity_option:
+            if grouping_cols is not None:
+                join_str = 'JOIN %s AS hsk' % temp_hsk_rst
+                using_str = 'USING (%s)' % (grouping_cols)
+            else:
+                join_str = ', %s AS hsk' % temp_hsk_rst
+        bp_stats = '(hsk.hsk_rst).bp_stats,' if heteroskedasticity_option else ''
+        bp_p_value = '(hsk.hsk_rst).bp_p_value,' if heteroskedasticity_option else ''
 
-    num_rows = plpy.execute(
-        """
-        select
-            sum(num_rows_processed) as num_rows_processed,
-            sum(num_missing_rows_skipped) as num_rows_skipped
-        from {tbl_output}
-        """.format(tbl_output=out_table))[0]
+        plpy.execute(
+            """
+            CREATE TABLE {out_table} AS
+            SELECT
+                {group_str_sel}
+                (lin.lin_rst).coef,
+                (lin.lin_rst).r2,
+                (lin.lin_rst).std_err,
+                (lin.lin_rst).t_stats,
+                (lin.lin_rst).p_values,
+                (lin.lin_rst).condition_no,
+                {bp_stats}
+                {bp_p_value}
+                CASE WHEN (lin.lin_rst).num_processed IS NULL
+                    THEN 0
+                    ELSE (lin.lin_rst).num_processed
+                END AS num_rows_processed,
+                CASE WHEN (lin.lin_rst).num_processed IS NULL
+                    THEN lin.num_rows
+                    ELSE lin.num_rows - (lin.lin_rst).num_processed
+                END AS num_missing_rows_skipped,
+                (lin.lin_rst).vcov as variance_covariance
+            FROM
+                {temp_lin_rst} AS lin {join_str} {using_str}
+           """.format(out_table=out_table, group_str_sel=group_str_sel,
+                      bp_stats=bp_stats, bp_p_value=bp_p_value,
+                      temp_lin_rst=temp_lin_rst, join_str=join_str, using_str=using_str))
 
-    if num_rows['num_rows_processed'] is None:
-        num_rows['num_rows_processed'] = "NULL"
-        num_rows['num_rows_skipped'] = "NULL"
-
-    plpy.execute(
-        """
-        create table {out_table}_summary as
+        num_rows = plpy.execute(
+            """
             select
-                'linregr'::varchar                  as method,
-                '{source_table}'::varchar           as source_table,
-                '{out_table}'::varchar              as out_table,
-                '{dependent_varname}'::varchar      as dependent_varname,
-                '{independent_varname}'::varchar    as independent_varname,
-                {num_rows_processed}::integer       as num_rows_processed,
-                {num_rows_skipped}::integer         as num_missing_rows_skipped
-        """.format(out_table=out_table, source_table=source_table,
-                   dependent_varname=dependent_varname,
-                   independent_varname=independent_varname,
-                   **num_rows))
+                sum(num_rows_processed) as num_rows_processed,
+                sum(num_missing_rows_skipped) as num_rows_skipped
+            from {tbl_output}
+            """.format(tbl_output=out_table))[0]
 
-    plpy.execute("set client_min_messages to " + old_msg_level)
+        if num_rows['num_rows_processed'] is None:
+            num_rows['num_rows_processed'] = "NULL"
+            num_rows['num_rows_skipped'] = "NULL"
+
+        plpy.execute(
+            """
+            create table {out_table}_summary as
+                select
+                      'linregr'::varchar                  as method
+                    , '{source_table}'::varchar           as source_table
+                    , '{out_table}'::varchar              as out_table
+                    , '{dependent_varname}'::varchar      as dependent_varname
+                    , '{independent_varname}'::varchar    as independent_varname
+                    , {num_rows_processed}::integer       as num_rows_processed
+                    , {num_rows_skipped}::integer         as num_missing_rows_skipped
+                    , {grouping_col}::text                as grouping_col
+            """.format(out_table=out_table, source_table=source_table,
+                       dependent_varname=dependent_varname,
+                       independent_varname=independent_varname,
+                       grouping_col="'" + grouping_cols + "'" if grouping_cols else "NULL",
+                       **num_rows))
     return None
-
 # ----------------------------------------------------------------------
+
+
 def _validate_args(schema_madlib, source_table, out_table, dependent_varname,
                    independent_varname, grouping_cols, heteroskedasticity_option):
     """
     @brief validate the arguments
     """
     _assert(source_table is not None and
-         source_table.strip().lower() not in ('null', ''),
+            source_table.strip().lower() not in ('null', ''),
             "Linregr error: Invalid data table name!")
     _assert(table_exists(source_table),
-        "Linregr error: Data table does not exist!")
+            "Linregr error: Data table does not exist!")
     _assert(not table_is_empty(source_table),
-        "Linregr error: Data table is empty!")
+            "Linregr error: Data table is empty!")
 
     _assert(out_table is not None and
-        out_table.strip().lower() not in ('null', ''),
+            out_table.strip().lower() not in ('null', ''),
             "Linregr error: Invalid output table name!")
     _assert(not table_exists(out_table),
-        "Output table name already exists. Drop the table before calling the function.")
+            "Output table name already exists. Drop the table before calling the function.")
 
     _assert(dependent_varname is not None and
             dependent_varname.strip().lower() not in ('null', ''),
-                "Linregr error: Invalid dependent column name!")
+            "Linregr error: Invalid dependent column name!")
     _assert(independent_varname is not None and
-        independent_varname.strip().lower() not in ('null', ''),
+            independent_varname.strip().lower() not in ('null', ''),
             "Linregr error: Invalid independent column name!")
     # Note: We do not further validate dependent_varname/independent_varname
     # because we allow flexible forms (e.g. valid expression), but we need
@@ -191,7 +189,8 @@ def _validate_args(schema_madlib, source_table, out_table, dependent_varname,
 
         predefined = set(('coef', 'r2', 'std_err', 't_stats',
                           'p_values', 'condition_no',
-                          'num_processed', 'num_missing_rows_skipped'))
+                          'num_processed', 'num_missing_rows_skipped',
+                          'variance_covariance'))
         if heteroskedasticity_option is not None:
             predefined.update(frozenset(('bp_stats', 'bp_p_value')))
         intersect = frozenset(grouping_list).intersection(predefined)
@@ -203,6 +202,7 @@ def _validate_args(schema_madlib, source_table, out_table, dependent_varname,
 # ------------------------------------------------------------------------------
 # -- Online help function ------------------------------------------------------
 # ------------------------------------------------------------------------------
+
 
 def linregr_help_message(schema_madlib, message, **kwargs):
     """ Help message for Linear Regression

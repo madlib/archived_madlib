@@ -1,19 +1,22 @@
 """
 @file margins.py_in
 
-@brief Marginal Effects with Interactions: Common functions
+@brief Marginal Effects with Interactions: Contains the main interface function
+and other functions that are common to the various methods and related to
+database constructs.
 
 @namespace marginal
 """
-
 import plpy
-from margins_common import margins_validate_model_table
-import margins_logregr
-
 from utilities.utilities import _assert
 from utilities.validate_args import table_exists
-from utilities.validate_args import table_is_empty
 from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import table_is_empty
+
+from utilities.utilities import py_list_to_sql_string
+from utilities.control import MinWarning
+
+from margins_builder import MarginalEffectsBuilder
 #------------------------------------------------------------------------------
 
 
@@ -36,22 +39,39 @@ def margins(schema_madlib, model_table, out_table, x_design=None,
     Returns:
         None
     """
-    margins_validate_model_table(model_table)
-    # get the relevant regression type
-    if model_table:
-        model_summary_table = model_table + "_summary"
-    else:
-        raise ValueError("Margins error: Invalid regression model table name!")
+    with MinWarning('warning'):
+        # 1) validate all arguments
+        # plpy.info("Validating ...")
+        margins_validate_model_table(model_table)
+        if model_table:
+            model_summary_table = model_table + "_summary"
+        else:
+            raise ValueError("Margins error: Invalid regression model table name!")
 
-    reg_type = plpy.execute("SELECT method from {0}".format(model_summary_table))[0]['method']
-    if not reg_type:
-        plpy.error("Margins error: Regression type cannot be obtained from the model table")
-    elif reg_type in ("logregr", "logistic", "logistic_regression"):
-        margins_logregr.margins_logregr(schema_madlib, model_table, out_table,
-                                        x_design, source_table, marginal_vars,
-                                        *args, **kwargs)
-    else:
-        plpy.error("Margins not supported for {0}".format(str(reg_type)))
+        if not source_table:
+            source_table = plpy.execute("SELECT source_table FROM {0}".
+                                        format(model_summary_table))[0]['source_table']
+
+        margins_validate_args(out_table, source_table, x_design)
+
+        # 2) get the regression type ...
+        reg_type = plpy.execute(
+            "SELECT method from {0}".format(model_summary_table))[0]['method']
+        margins_method = None
+        if not reg_type:
+            plpy.error("Margins error: Regression type cannot be obtained from the model table")
+        elif reg_type in ("linregr", "linear", "linear_regression",
+                          "linear regression"):
+            margins_method = margins_linregr
+        elif reg_type in ("logregr", "logistic", "logistic_regression",
+                          "logistic regression"):
+            margins_method = margins_logregr
+        else:
+            plpy.error("Margins not supported for {0}".format(str(reg_type)))
+
+        # 3) ... and call the appropriate sub-function
+        margins_method(schema_madlib, model_table, out_table, source_table,
+                       x_design, marginal_vars, *args, **kwargs)
 #------------------------------------------------------------------------------
 
 
@@ -77,6 +97,8 @@ regression with interaction terms.
 A marginal effect (ME) or partial effect measures the effect on the
 conditional mean of a response (dependent variable) for a change in one of the
 regressors (independent variable).
+
+We currently only support margins for linear and logistic regression.
 
 For more details on function usage:
     SELECT {schema_madlib}.margins('usage')
@@ -176,3 +198,371 @@ def validate_create_dummy_coding(origin_table, out_table, cols):
     _assert(columns_exist_in_table(origin_table, cols),
             "Creating dummy coding error: Invalid original table ({0})"
             " - some required columns missing".format(origin_table))
+#------------------------------------------------------------------------------
+
+
+def margins_validate_model_table(model_table):
+    """
+    Args:
+        @param schema_madlib
+        @param model_table
+
+    Returns:
+
+    """
+    _assert(model_table and
+            model_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid regression model table name!")
+    _assert(table_exists(model_table),
+            "Margins error: Specified Model table ({0}) is missing! "
+            "Rerun underlying regression".format(model_table))
+
+    model_summary_table = model_table + '_summary'
+    _assert(table_exists(model_summary_table),
+            "Margins error: Summary for model table ({0}) is missing! "
+            "Rerun underlying regression".format(model_summary_table))
+
+    _assert(columns_exist_in_table(model_summary_table,
+            ['method', 'source_table', 'out_table', 'dependent_varname',
+             'independent_varname']),
+            "Margins error: Invalid model summary table ({0})"
+            " - some required columns missing".format(model_summary_table))
+    return True
+#------------------------------------------------------------------------------
+
+
+def margins_validate_args(out_table, source_table, x_design=None,
+                          **kwargs):
+    _assert(out_table and
+            out_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid output table name!")
+    _assert(not table_exists(out_table),
+            "Margins error: Output table already exists!")
+    _assert(not table_exists(out_table + '_summary'),
+            "Margins error: Output summary table already exists!")
+
+    _assert(source_table and source_table.strip().lower() not in ('null', ''),
+            "Margins error: Invalid data table name!")
+    _assert(table_exists(source_table),
+            "Margins error: Data table ({0}) is missing!".format(source_table))
+    _assert(not table_is_empty(source_table),
+            "Margins error: Data table ({0}) is empty!".format(source_table))
+# -------------------------------------------------------------------------
+
+
+def parse_marginal_vars(marginal_var_str):
+    """
+    Marginal vars is supposed to be a list of integers separated by ','.
+    It's possible that the user inputs it as an array string
+    eg: ARRAY[1, 2, 3, 4] or '{2, 4, 5}'. We strip out the 'ARRAY' if present in
+    front and also strip and square/curly brackets.
+    """
+    if str.lower(marginal_var_str.strip()[:6]) == "array[":
+        marginal_var_str = marginal_var_str[5:]
+    marginal_var_str = marginal_var_str.strip(" {}[]")
+    try:
+        marginal_var_list = map(int, marginal_var_str.split(','))
+    except Exception:
+        raise ValueError("Margins error: Invalid input for marginal vars: {0}".
+                         format(marginal_var_str))
+    return marginal_var_list
+#------------------------------------------------------------------------------
+
+
+def get_regression_arguments(model_table):
+    """
+    Return all necessary argument values from the model and summary table of
+    underlying regression
+
+    Args:
+        @params model_table: str, Name of the model table containing regression
+                                model
+    Returns:
+        Tuple:
+            coef: list, Coefficient values from regression.
+            independent_varname: str, The string passed as independent_varname
+                                    in underlying regression.
+            grouping_col: str, If grouping was used in the underlying regression,
+                                then this argument gives the grouping columns
+                                as a comma-separated list. This value is None
+                                if no grouping was used.
+    """
+    if model_table:
+        model_summary_table = model_table + "_summary"
+    else:
+        raise ValueError("Margins error: Invalid regression model table name!")
+
+    coef = plpy.execute("SELECT coef as x FROM {0}".format(model_table))[0]['x']
+    independent_varname = plpy.execute("SELECT independent_varname as x FROM {0}".
+                                       format(model_summary_table))[0]['x']
+    grouping_col = plpy.execute("SELECT grouping_col AS x FROM {0}".
+                                format(model_summary_table))[0]['x']
+    if any(i is None for i in (coef, independent_varname)):
+        plpy.error("Margins error: Model table ({0}) is missing important parameters. "
+                   "Rerun logistic regression.".format(model_table))
+    return coef, independent_varname, grouping_col
+#------------------------------------------------------------------------------
+
+
+def get_parser_and_marginal_vars(coef, x_design, marginal_vars):
+    """
+    Args:
+        @param x_design
+
+    Returns:
+
+    """
+    n_indep = len(coef)
+    if not x_design:
+        x_design = ','.join(str(i+1) for i in range(n_indep))
+
+    x_design_parser = MarginalEffectsBuilder(x_design)
+    _assert(x_design_parser.n_terms == n_indep,
+            "Margins error: Invalid x_design. Number of terms in x_design ({0}) "
+            "not same as number of independent variables ({1})".
+            format(x_design_parser.n_terms, n_indep))
+
+    if marginal_vars:
+        # basis terms are not necessarily continguous
+        # example: basis_terms = [1, 2, 3, 5, 8, 11]
+        # If all variables are needed in output then
+        #   marginal_var_list would be [1, 2, 3, 4, 5, 6] (max value would be len(basis_terms))
+        marginal_var_list = parse_marginal_vars(marginal_vars)
+        _assert(all(x in x_design_parser.basis_terms for x in marginal_var_list),
+                "Margins error: marginal_vars argument contains values not "
+                "present as a basis variable in x_design")
+        marginal_var_list = [x_design_parser.basis_terms.index(i) + 1 for i in marginal_var_list]
+    else:
+        marginal_var_list = range(1, x_design_parser.n_basis_terms + 1)
+
+    # do not return any answer for reference terms
+    if x_design_parser.reference_terms:
+        ref_indices = x_design_parser.get_all_reference_indices()
+        for each_ref in ref_indices:
+            each_ref_index = x_design_parser.basis_terms.index(each_ref) + 1
+            if each_ref_index in marginal_var_list:
+                marginal_var_list.remove(each_ref_index)
+    return x_design_parser, marginal_var_list
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+# Linear regression marginal effects
+#------------------------------------------------------------------------------
+
+
+def margins_linregr(schema_madlib, model_table, out_table, source_table,
+                    x_design=None, marginal_vars=None, *args, **kwargs):
+    """
+    Args:
+        @param schema_madlib
+        @param model_table
+        @param out_table
+        @param x_design
+        @param source_table
+        @param marginal_vars
+
+    Returns:
+        None
+
+    Raises:
+
+    """
+    # 1) Get all arguments and validate them
+    coef, independent_varname, grouping_col = get_regression_arguments(model_table)
+
+    # 2) Parse x_design and marginal_vars argument
+    x_design_parser, marginal_var_list = get_parser_and_marginal_vars(
+        coef, x_design, marginal_vars)
+
+    # 3) Create a matrix representing the 2nd partial derivative
+    #  (1st order wrt x and 2nd order wrt \beta). For categorical, this is
+    # the discrete difference.
+    indep_name = 'x'
+    derivative_str = x_design_parser.create_2nd_derivative_matrix(
+        indep_name, quoted=True, discrete=True)
+
+    # grouping arguments
+    if not grouping_col:
+        grouping_str1 = ""
+        grouping_str2 = ""
+        using_str = ""
+        join_str = ","
+    else:
+        grouping_str1 = grouping_col + ","
+        grouping_str2 = "GROUP BY " + grouping_col
+        using_str = "USING (" + grouping_col + ")"
+        join_str = "JOIN "
+    execute_string = """
+        CREATE TABLE {out_table} AS
+            SELECT
+                {grouping_str1}
+                {index_array} as variables,
+                -- sub_array: get only 'marginal_vars' from all results
+                {schema_madlib}.__sub_array((res).margins,
+                                            {index_array}) AS margins,
+                {schema_madlib}.__sub_array((res).std_err,
+                                            {index_array}) AS std_err,
+                {schema_madlib}.__sub_array((res).z_stats,
+                                            {index_array}) AS z_stats,
+                {schema_madlib}.__sub_array((res).p_values,
+                                            {index_array}) AS p_values
+            FROM(
+                SELECT
+                    {grouping_str1}
+                    {schema_madlib}.__margins_int_linregr_agg(
+                        {indep_name}
+                        , coef
+                        , variance_covariance
+                        , {derivative_str})
+                        as res
+                FROM (
+                    SELECT
+                        {grouping_str1}
+                        {independent_varname} as {indep_name}
+                    FROM {source_table} as s
+                    ) q1 {join_str} {model_table} as m {using_str}
+                    {grouping_str2}
+                ) q2
+        """.format(schema_madlib=schema_madlib,
+                   source_table=source_table,
+                   out_table=out_table,
+                   independent_varname=independent_varname,
+                   indep_name=indep_name,
+                   index_array=py_list_to_sql_string(marginal_var_list),
+                   model_table=model_table,
+                   derivative_str=derivative_str,
+                   grouping_str1=grouping_str1,
+                   grouping_str2=grouping_str2,
+                   using_str=using_str,
+                   join_str=join_str)
+    plpy.execute(execute_string)
+
+
+#------------------------------------------------------------------------------
+# Logistic regression marginal effects
+#------------------------------------------------------------------------------
+
+
+def margins_logregr(schema_madlib, model_table, out_table, source_table,
+                    x_design=None, marginal_vars=None,
+                    *args, **kwargs):
+    """
+    Args:
+        @param schema_madlib
+        @param model_table
+        @param out_table
+        @param x_design
+        @param source_table
+        @param marginal_vars
+
+    Returns:
+        None
+
+    Raises:
+
+    """
+    # 1) Get all arguments and validate them
+    coef, independent_varname, grouping_col = get_regression_arguments(model_table)
+
+    # 2) Get the x_design and marginal_vars arguments
+    x_design_parser, marginal_var_list = get_parser_and_marginal_vars(
+        coef, x_design, marginal_vars)
+
+    # 3) Build various strings to compute the marginal effects
+    # get_all_ind_indices returns 1-based indices whereas the underlying
+    # aggregate expects this to 0-based.
+    all_categorical_indices = [i -1 for i in x_design_parser.get_all_ind_indices()]
+
+    # Create a matrix representing the 2nd partial derivative
+    #  (1st order wrt x and 2nd order wrt \beta)
+    coef_array_name = 'coef'
+    indep_name = 'x'
+    derivative_str = x_design_parser.create_2nd_derivative_matrix(indep_name)
+
+    # 4) Build the margins for indicator variables as discrete differences
+    indicator_me_strings = []
+    for each_index in all_categorical_indices:
+        indicator_me_strings.append(
+            x_design_parser.get_discrete_diff_arrays(each_index + 1,
+                                                     indep_name))
+    indicators_set_string = []
+    indicators_unset_string = []
+    if indicator_me_strings:
+        # create two matrices - 1 with all set expressions,
+        #                       1 with all unset expressions
+        create_indicator_string = lambda x: (py_list_to_sql_string(x,
+                                             array_type="double precision[]"))
+        for i in indicator_me_strings:
+            indicators_set_string.append(create_indicator_string(i[0]))
+            indicators_unset_string.append(create_indicator_string(i[1]))
+
+    # 5) Run marginal effects for logistic regression with interaction terms
+    if all_categorical_indices:
+        categorical_indices_str = py_list_to_sql_string(all_categorical_indices, "integer[]")
+        set_string = py_list_to_sql_string(indicators_set_string)
+        unset_string = py_list_to_sql_string(indicators_unset_string)
+    else:
+        categorical_indices_str, set_string, unset_string = \
+            ("NULL::double precision[]", ) * 3
+
+    # grouping arguments
+    if not grouping_col:
+        grouping_str1 = ""
+        grouping_str2 = ""
+        using_str = ""
+        join_str = ","
+    else:
+        grouping_str1 = grouping_col + ","
+        grouping_str2 = "GROUP BY " + grouping_col
+        using_str = "USING (" + grouping_col + ")"
+        join_str = "JOIN "
+    execute_string = """
+        CREATE TABLE {out_table} AS
+            SELECT
+                {grouping_str1}
+                {index_array} as variables,
+                -- sub_array: get only 'marginal_vars' from all variable results
+                {schema_madlib}.__sub_array((res).margins, {index_array}) AS margins,
+                {schema_madlib}.__sub_array((res).std_err, {index_array}) AS std_err,
+                {schema_madlib}.__sub_array((res).z_stats, {index_array}) AS z_stats,
+                {schema_madlib}.__sub_array((res).p_values,{index_array}) AS p_values
+            FROM
+            (
+                SELECT
+                    {grouping_str1}
+                    {schema_madlib}.__margins_int_logregr_agg(
+                        {indep_name}
+                        , coef
+                        , variance_covariance
+                        , {derivative_str}
+                        , {categorical_indices}
+                        , {set_string}
+                        , {unset_string})
+                        as res
+                FROM
+                (
+                    SELECT
+                        {grouping_str1}
+                        {independent_varname} as {indep_name}
+                    FROM {source_table} as s
+                ) q1 {join_str} {model_table} as m {using_str}
+                {grouping_str2}
+            ) q2
+        """.format(schema_madlib=schema_madlib,
+                   source_table=source_table,
+                   out_table=out_table,
+                   independent_varname=independent_varname,
+                   indep_name=indep_name,
+                   coef_array_name=coef_array_name,
+                   index_array=py_list_to_sql_string(marginal_var_list),
+                   categorical_indices=categorical_indices_str,
+                   model_table=model_table,
+                   derivative_str=derivative_str,
+                   set_string=set_string,
+                   unset_string=unset_string,
+                   grouping_str1=grouping_str1,
+                   grouping_str2=grouping_str2,
+                   using_str=using_str,
+                   join_str=join_str)
+    plpy.execute(execute_string)
+# -------------------------------------------------------------------------
