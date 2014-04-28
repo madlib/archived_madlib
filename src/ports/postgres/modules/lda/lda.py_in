@@ -15,6 +15,8 @@ import time
 
 # use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
 from utilities.utilities import __mad_version
+from utilities.validate_args import output_tbl_valid
+
 version_wrapper = __mad_version()
 string_to_array = version_wrapper.select_vecfunc()
 array_to_string = version_wrapper.select_vec_return()
@@ -25,7 +27,7 @@ array_to_string = version_wrapper.select_vec_return()
 class LDATrainer:
     def __init__(
         self, schema_madlib, data_table, model_table, output_data_table,
-        voc_size, topic_num, iter_num, alpha, beta): 
+        voc_size, topic_num, iter_num, alpha, beta):
         self.schema_madlib = schema_madlib
         self.data_table = data_table
         self.voc_size = voc_size
@@ -41,59 +43,57 @@ class LDATrainer:
         plpy.execute('DROP TABLE IF EXISTS ' + self.work_table_0)
         plpy.execute("""
             CREATE TEMP TABLE {work_table_0}(
-                docid       INT4, 
-                wordcount   INT4, 
-                words       INT4[], 
-                counts      INT4[], 
+                docid       INT4,
+                wordcount   INT4,
+                words       INT4[],
+                counts      INT4[],
                 doc_topic   INT4[]
                 )
                 m4_ifdef(`__POSTGRESQL__', `',
-                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) 
-                    DISTRIBUTED BY (docid)') 
-            """.format(work_table_0=self.work_table_0)) 
+                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
+                    DISTRIBUTED BY (docid)')
+            """.format(work_table_0=self.work_table_0))
 
         plpy.execute('DROP TABLE IF EXISTS ' + self.work_table_1)
         plpy.execute("""
             CREATE TEMP TABLE {work_table_1}(
-                docid       INT4, 
-                wordcount   INT4, 
-                words       INT4[], 
-                counts      INT4[], 
+                docid       INT4,
+                wordcount   INT4,
+                words       INT4[],
+                counts      INT4[],
                 doc_topic   INT4[]
                 )
                 m4_ifdef(`__POSTGRESQL__', `',
-                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) 
-                    DISTRIBUTED BY (docid)') 
-            """.format(work_table_1=self.work_table_1)) 
+                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
+                    DISTRIBUTED BY (docid)')
+            """.format(work_table_1=self.work_table_1))
 
-        plpy.execute('DROP TABLE IF EXISTS ' + self.model_table)
         plpy.execute("""
             CREATE TABLE {model_table}(
-                voc_size    INT4, 
-                topic_num   INT4, 
-                alpha       FLOAT8, 
-                beta        FLOAT8, 
-                model       INT8[][] 
+                voc_size    INT4,
+                topic_num   INT4,
+                alpha       FLOAT8,
+                beta        FLOAT8,
+                model       INT8[][]
                 )
                 m4_ifdef(`__POSTGRESQL__', `',
-                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) 
-                    DISTRIBUTED RANDOMLY') 
-            """.format(model_table=self.model_table)) 
+                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
+                    DISTRIBUTED RANDOMLY')
+            """.format(model_table=self.model_table))
 
-        plpy.execute('DROP TABLE IF EXISTS ' + self.output_data_table)
         plpy.execute("""
             CREATE TABLE {output_data_table}(
-                docid               INT4, 
-                wordcount           INT4, 
+                docid               INT4,
+                wordcount           INT4,
                 words               INT4[],
                 counts              INT4[],
                 topic_count         INT4[],
                 topic_assignment    INT4[]
-                ) 
+                )
                 m4_ifdef(`__POSTGRESQL__', `',
-                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) 
-                    DISTRIBUTED BY (docid)') 
-            """.format(output_data_table=self.output_data_table)) 
+                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
+                    DISTRIBUTED BY (docid)')
+            """.format(output_data_table=self.output_data_table))
 
     def init_random(self):
         stime = time.time()
@@ -103,12 +103,12 @@ class LDATrainer:
         plpy.execute("""
             INSERT INTO {work_table}
             SELECT
-                docid, wordcount, words, counts, 
+                docid, wordcount, words, counts,
                 {schema_madlib}.__lda_random_assign(wordcount, {topic_num}) AS topics
             FROM {data_table}
             """.format(
-                work_table = self.work_table_0, 
-                schema_madlib = self.schema_madlib, 
+                work_table = self.work_table_0,
+                schema_madlib = self.schema_madlib,
                 topic_num = self.topic_num,
                 data_table = self.data_table)
             )
@@ -127,13 +127,13 @@ class LDATrainer:
         plpy.execute('TRUNCATE TABLE ' +  self.output_data_table)
         plpy.execute("""
             INSERT INTO {output_data_table}
-            SELECT 
+            SELECT
                 docid, wordcount, words, counts, doc_topic[1:{topic_num}] topic_count,
                 doc_topic[{topic_num} + 1:array_upper(doc_topic,1)] topic_assignment
             FROM
                 {work_table_final}
             """.format(
-                output_data_table=self.output_data_table, 
+                output_data_table=self.output_data_table,
                 topic_num=self.topic_num,
                 work_table_final=work_table_final))
 
@@ -160,9 +160,9 @@ class LDATrainer:
                 {voc_size}, {topic_num}, {alpha}, {beta},
                 {schema_madlib}.__lda_count_topic_agg(
                     words, counts,
-                    doc_topic[{topic_num} + 1:array_upper(doc_topic, 1)], 
-                    {voc_size}, {topic_num}) model 
-            FROM {work_table_in} 
+                    doc_topic[{topic_num} + 1:array_upper(doc_topic, 1)],
+                    {voc_size}, {topic_num}) model
+            FROM {work_table_in}
             """.format(
                 model_table=self.model_table,
                 schema_madlib=self.schema_madlib,
@@ -176,19 +176,19 @@ class LDATrainer:
         plpy.execute('TRUNCATE TABLE ' + work_table_out)
         query = """
             INSERT INTO {work_table_out}
-            SELECT  
-                docid, wordcount, words, counts,  
+            SELECT
+                docid, wordcount, words, counts,
                 {schema_madlib}.__lda_gibbs_sample(
-                    words, counts, doc_topic, 
-                    (SELECT model FROM {model_table}), 
+                    words, counts, doc_topic,
+                    (SELECT model FROM {model_table}),
                     {alpha}, {beta}, {voc_size}, {topic_num}, 1)
             FROM
                 {work_table_in}
             """.format(
-                work_table_out = work_table_out, 
-                schema_madlib = self.schema_madlib, 
+                work_table_out = work_table_out,
+                schema_madlib = self.schema_madlib,
                 model_table=self.model_table,
-                alpha = self.alpha, 
+                alpha = self.alpha,
                 beta = self.beta,
                 voc_size = self.voc_size,
                 topic_num = self.topic_num,
@@ -220,16 +220,16 @@ class LDAPredictor:
     def __init__(
         self, schema_madlib, test_table, model_table, output_table, iter_num):
         self.schema_madlib = schema_madlib
-        self.test_table = test_table 
+        self.test_table = test_table
         self.model_table = model_table
         self.iter_num = iter_num
 
         rv = plpy.execute("""
-            SELECT 
-                voc_size, topic_num, alpha, beta 
+            SELECT
+                voc_size, topic_num, alpha, beta
             FROM
                 {model_table}
-            """.format(model_table=self.model_table)) 
+            """.format(model_table=self.model_table))
         self.voc_size = rv[0]['voc_size']
         self.topic_num = rv[0]['topic_num']
         self.alpha = rv[0]['alpha']
@@ -238,39 +238,38 @@ class LDAPredictor:
         self.doc_topic = output_table
         self.work_table_0 = '__work_table_pred_0__'
         self.work_table_1 = '__word_table_pred_1__'
-        
-        plpy.execute('DROP TABLE IF EXISTS ' + self.work_table_0) 
+
+        plpy.execute('DROP TABLE IF EXISTS ' + self.work_table_0)
         plpy.execute("""
             CREATE TEMP TABLE {work_table_0}(
-                docid       INT4, 
-                wordcount   INT4, 
-                words       INT4[], 
-                counts      INT4[], 
+                docid       INT4,
+                wordcount   INT4,
+                words       INT4[],
+                counts      INT4[],
                 doc_topic   INT4[]
                 )
                 m4_ifdef(`__POSTGRESQL__', `',
-                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) 
-                    DISTRIBUTED BY (docid)') 
-            """.format(work_table_0=self.work_table_0)) 
+                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
+                    DISTRIBUTED BY (docid)')
+            """.format(work_table_0=self.work_table_0))
 
         plpy.execute('DROP TABLE IF EXISTS ' + self.work_table_1)
         plpy.execute("""
             CREATE TEMP TABLE {work_table_1}(
-                docid       INT4, 
-                wordcount   INT4, 
-                words       INT4[], 
-                counts      INT4[], 
+                docid       INT4,
+                wordcount   INT4,
+                words       INT4[],
+                counts      INT4[],
                 doc_topic   INT4[]
                 )
                 m4_ifdef(`__POSTGRESQL__', `',
-                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) 
-                    DISTRIBUTED BY (docid)') 
-            """.format(work_table_1=self.work_table_1)) 
+                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
+                    DISTRIBUTED BY (docid)')
+            """.format(work_table_1=self.work_table_1))
 
-        plpy.execute('DROP TABLE IF EXISTS ' + self.doc_topic)
         plpy.execute("""
             CREATE TABLE {doc_topic}(
-                docid               INT4, 
+                docid               INT4,
                 wordcount           INT4,
                 words               INT4[],
                 counts              INT4[],
@@ -278,9 +277,9 @@ class LDAPredictor:
                 topic_assignment    INT4[]
                 )
                 m4_ifdef(`__POSTGRESQL__', `',
-                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) 
-                    DISTRIBUTED BY (docid)') 
-            """.format(doc_topic=self.doc_topic)) 
+                    `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
+                    DISTRIBUTED BY (docid)')
+            """.format(doc_topic=self.doc_topic))
 
     def init_random(self):
         stime = time.time()
@@ -290,12 +289,12 @@ class LDAPredictor:
         plpy.execute("""
             INSERT INTO {work_table}
             SELECT
-                docid, wordcount, words, counts, 
+                docid, wordcount, words, counts,
                 {schema_madlib}.__lda_random_assign(wordcount, {topic_num}) AS topics
             FROM {data_table}
             """.format(
-                work_table = self.work_table_0, 
-                schema_madlib = self.schema_madlib, 
+                work_table = self.work_table_0,
+                schema_madlib = self.schema_madlib,
                 topic_num = self.topic_num,
                 data_table = self.test_table)
             )
@@ -307,12 +306,12 @@ class LDAPredictor:
         plpy.execute('TRUNCATE TABLE '  + self.doc_topic)
         plpy.execute("""
             INSERT INTO {doc_topic}
-            SELECT 
+            SELECT
                 docid, wordcount, words, counts, doc_topic[1:{topic_num}] topic_count,
                 doc_topic[{topic_num} + 1:array_upper(doc_topic,1)] topic_assignment
             FROM {work_table_out}
             """.format(
-                doc_topic=self.doc_topic, 
+                doc_topic=self.doc_topic,
                 topic_num=self.topic_num,
                 work_table_out=self.work_table_1))
 
@@ -325,7 +324,7 @@ class LDAPredictor:
             SELECT
                 docid, wordcount, words, counts,
                 {schema_madlib}.__lda_gibbs_sample(
-                    words, counts, doc_topic, 
+                    words, counts, doc_topic,
                     (SELECT model FROM {model_table}),
                     {alpha}, {beta},
                     {voc_size}, {topic_num}, {iter_num}
@@ -333,11 +332,11 @@ class LDAPredictor:
             FROM
                 {work_table_in}
             """.format(
-                work_table_out = self.work_table_1, 
-                work_table_in = self.work_table_0, 
-                model_table = self.model_table, 
-                schema_madlib = self.schema_madlib, 
-                alpha = self.alpha, 
+                work_table_out = self.work_table_1,
+                work_table_in = self.work_table_0,
+                model_table = self.model_table,
+                schema_madlib = self.schema_madlib,
+                alpha = self.alpha,
                 beta = self.beta,
                 voc_size = self.voc_size,
                 topic_num = self.topic_num,
@@ -360,7 +359,7 @@ class LDAPredictor:
         # plpy.notice('finished, time elapsed: %.2f seconds' % (etime - stime))
 
 """
-@brief This function provides the entry for the LDA training process. 
+@brief This function provides the entry for the LDA training process.
 @param schema_madlib        MDALib schema
 @param data_table           Training data table
 @param voc_size             Size of vocabulary
@@ -399,6 +398,9 @@ def lda_train(
     __assert(
         beta > 0,
         'invalid argument: positive real expected for beta')
+
+    output_tbl_valid(model_table, 'LDA')
+    output_tbl_valid(output_data_table, 'LDA')
 
     __warn(
         voc_size <= 1e5,
@@ -450,6 +452,8 @@ def lda_predict(
     __assert(
         iter_num >= 0,
         'invalid argument: positive integer expected for iter_num')
+    output_tbl_valid(output_data_table, 'LDA')
+
     __warn(
         iter_num <= 20,
         """the iter_num is large: %d - a smaller iter_num (e.g. 20) should be
@@ -498,6 +502,8 @@ def get_topic_desc(
     __check_model_table(model_table)
     __check_vocab_table(vocab_table)
 
+    output_tbl_valid(desc_table, 'LDA')
+
     plpy.execute('DROP TABLE IF EXISTS __lda_topic_word_count__')
     plpy.execute("""
         CREATE TEMP TABLE __lda_topic_word_count__(
@@ -520,7 +526,7 @@ def get_topic_desc(
             beta
         FROM {model_table}
         """.format(
-            schema_madlib=schema_madlib, 
+            schema_madlib=schema_madlib,
             model_table=model_table))
 
     plpy.execute('DROP TABLE IF EXISTS __lda_topic_word_dist__')
@@ -530,31 +536,30 @@ def get_topic_desc(
             word_dist FLOAT[]
         )
         m4_ifdef(
-            `__POSTGRESQL__', `', 
-            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ) 
-            DISTRIBUTED BY (topicid)') 
+            `__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ)
+            DISTRIBUTED BY (topicid)')
         """)
 
     plpy.execute("""
         INSERT INTO __lda_topic_word_dist__
-        SELECT 
-            topicid, 
-            {schema_madlib}.__lda_util_norm_with_smoothing(word_count, beta) dist 
+        SELECT
+            topicid,
+            {schema_madlib}.__lda_util_norm_with_smoothing(word_count, beta) dist
         FROM
             __lda_topic_word_count__
         """.format(schema_madlib=schema_madlib))
 
-    plpy.execute('DROP TABLE IF EXISTS ' + desc_table)
     plpy.execute("""
         CREATE TABLE {desc_table} (
-            topicid INT4, 
-            wordid INT4, 
-            prob FLOAT, 
+            topicid INT4,
+            wordid INT4,
+            prob FLOAT,
             word TEXT)
         m4_ifdef(
             `__POSTGRESQL__', `',
-            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ) 
-            DISTRIBUTED BY (topicid)') 
+            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ)
+            DISTRIBUTED BY (topicid)')
         """.format(desc_table=desc_table))
 
     plpy.execute("""
@@ -577,7 +582,7 @@ def get_topic_desc(
             ) t1
         ) t2, {vocab_table} AS vocab
         WHERE t2.r < {top_k} AND t2.wordid = vocab.wordid
-        """.format(desc_table=desc_table, 
+        """.format(desc_table=desc_table,
             vocab_table=vocab_table, top_k=top_k))
 
 """
@@ -587,27 +592,25 @@ def get_topic_desc(
 """
 def get_topic_word_count(schema_madlib, model_table, output_table):
     __assert(
-        model_table != '' and
-        output_table != '',
-        'invalid argument: at least one of the table names is not specified')
-
+        model_table != '',
+        'invalid argument: model table name is not specified')
     __check_model_table(model_table)
+    output_tbl_valid(output_table, 'LDA')
 
-    plpy.execute('DROP TABLE IF EXISTS ' + output_table)
     plpy.execute("""
         CREATE TABLE {output_table} (
-            topicid INT4, 
-            word_count INT4[]) 
+            topicid INT4,
+            word_count INT4[])
         m4_ifdef(
             `__POSTGRESQL__', `',
-            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ) 
-            DISTRIBUTED BY (topicid)') 
-        """.format(output_table=output_table)) 
+            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ)
+            DISTRIBUTED BY (topicid)')
+        """.format(output_table=output_table))
 
     plpy.execute("""
-        INSERT INTO {output_table} 
-        SELECT 
-            generate_series(1, topic_num) topicid,   
+        INSERT INTO {output_table}
+        SELECT
+            generate_series(1, topic_num) topicid,
             {schema_madlib}.__lda_util_unnest(
                 {schema_madlib}.__lda_util_transpose(model[1:array_upper(model, 1) - 1])) word_count
         FROM
@@ -622,27 +625,25 @@ def get_topic_word_count(schema_madlib, model_table, output_table):
 """
 def get_word_topic_count(schema_madlib, model_table, output_table):
     __assert(
-        model_table != '' and
-        output_table != '',
-        'invalid argument: at least one of the table names is not specified')
-
+        model_table != '',
+        'invalid argument: model table name is not specified')
     __check_model_table(model_table)
+    output_tbl_valid(output_table, 'LDA')
 
-    plpy.execute('DROP TABLE IF EXISTS ' + output_table)
     plpy.execute("""
-        CREATE TABLE {output_table} ( 
-            wordid INT4, 
-            topic_count INT4[]) 
+        CREATE TABLE {output_table} (
+            wordid INT4,
+            topic_count INT4[])
         m4_ifdef(
-            `__POSTGRESQL__', `', 
-            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ) 
-            DISTRIBUTED BY (wordid)') 
-        """.format(output_table=output_table)) 
+            `__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE, COMPRESSTYPE=QUICKLZ)
+            DISTRIBUTED BY (wordid)')
+        """.format(output_table=output_table))
 
     plpy.execute("""
-        INSERT INTO {output_table} 
-        SELECT 
-            generate_series(0, voc_size - 1) wordid,   
+        INSERT INTO {output_table}
+        SELECT
+            generate_series(0, voc_size - 1) wordid,
             {schema_madlib}.__lda_util_unnest(
                 model[1:array_upper(model, 1) - 1]) topic_count
         FROM {model_table}
@@ -693,7 +694,7 @@ def get_perplexity(schema_madlib, model_table, output_data_table):
         ) t2
         """.format(
             schema_madlib = schema_madlib,
-            out_data_table = output_data_table, 
+            out_data_table = output_data_table,
             model_table = model_table,
             alpha = alpha,
             beta = beta,
@@ -716,10 +717,11 @@ integers ranging from 0 to voc_size - 1.
 """
 def norm_vocab(vocab_table, out_table):
     __check_vocab_table(vocab_table)
-    plpy.execute('DROP TABLE IF EXISTS ' + out_table)
+    output_tbl_valid(out_table, 'LDA')
+
     plpy.execute("""
         CREATE TABLE {out_table}(
-            wordid INT4, 
+            wordid INT4,
             old_wordid INT4,
             word TEXT
         )
@@ -744,8 +746,8 @@ def norm_vocab(vocab_table, out_table):
                         wordid,
                         word,
                         rank() OVER(PARTITION BY wordid ORDER BY word ASC) r
-                    FROM 
-                        {vocab_table} 
+                    FROM
+                        {vocab_table}
                 ) t1
                 WHERE r = 1
             ) t2
@@ -762,11 +764,12 @@ with non-positive count values will be removed
 def norm_dataset(data_table, vocab_table, output_table):
     __check_data_table(data_table)
     __check_norm_vocab_table(vocab_table)
-    plpy.execute('DROP TABLE IF EXISTS ' + output_table)
+    output_tbl_valid(output_table, 'LDA')
+
     plpy.execute("""
         CREATE TABLE {output_table}(
-            docid INT4, 
-            wordid INT4, 
+            docid INT4,
+            wordid INT4,
             count INT4
         )
         m4_ifdef(`__POSTGRESQL__', `',
@@ -776,15 +779,15 @@ def norm_dataset(data_table, vocab_table, output_table):
 
     plpy.execute("""
         INSERT INTO {output_table}
-        SELECT 
-            docid, 
-            vocab.wordid, 
+        SELECT
+            docid,
+            vocab.wordid,
             count
         FROM
-            {data_table} AS data, 
+            {data_table} AS data,
             {vocab_table} AS vocab
-        WHERE 
-            data.wordid = vocab.old_wordid AND data.count > 0 
+        WHERE
+            data.wordid = vocab.old_wordid AND data.count > 0
         """.format(output_table=output_table,
             data_table=data_table,
             vocab_table=vocab_table))
@@ -800,28 +803,8 @@ def conorm_data(
     data_table, vocab_table, output_data_table, output_vocab_table):
     __check_data_table(data_table)
     __check_vocab_table(vocab_table)
-
-    plpy.execute('DROP TABLE IF EXISTS ' + output_data_table)
-    plpy.execute("""
-        CREATE TABLE {output_data_table}(
-            docid   INT4, 
-            wordid  INT4, 
-            count   INT4
-        )
-        m4_ifdef(`__POSTGRESQL__', `', `WITH(APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
-        DISTRIBUTED BY (docid)')
-        """.format(output_data_table=output_data_table))
-
-    plpy.execute('DROP TABLE IF EXISTS ' + output_vocab_table)
-    plpy.execute("""
-        CREATE TABLE {output_vocab_table}(
-            wordid      INT4, 
-            old_wordid  INT4,
-            word        TEXT
-        )
-        m4_ifdef(`__POSTGRESQL__', `', `WITH(APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)
-        DISTRIBUTED BY (wordid)')
-        """.format(output_vocab_table=output_vocab_table))
+    output_tbl_valid(output_data_table, 'LDA')
+    output_tbl_valid(output_vocab_table, 'LDA')
 
     plpy.execute('DROP TABLE IF EXISTS __vocab__')
     plpy.execute("""
@@ -841,7 +824,7 @@ def conorm_data(
             SELECT
                 wordid
             FROM
-                {data_table} AS data 
+                {data_table} AS data
             GROUP BY wordid
         ) tvoc, {vocab_table} voc
         WHERE tvoc.wordid = voc.wordid
@@ -886,8 +869,8 @@ def __convert_data_table(schema_madlib, data_table):
 
     plpy.execute("""
         INSERT INTO {convt_table}
-        SELECT 
-            docid, 
+        SELECT
+            docid,
             sum(count) wordcount,
             {schema_madlib}.array_agg(wordid) words,
             {schema_madlib}.array_agg(count) counts
@@ -928,12 +911,12 @@ def __warn(condition, msg):
 """
 def __check_data_table(data_table):
     # plpy.notice('checking the data table ... ')
-    __assert(data_table is not None and data_table.strip() != '', 
+    __assert(data_table is not None and data_table.strip() != '',
         'no data table is specified')
     try:
         rv = plpy.execute("""
-            SELECT count(*) cnt FROM pg_attribute 
-            WHERE 
+            SELECT count(*) cnt FROM pg_attribute
+            WHERE
                 attrelid = '{data_table}'::regclass AND
                 ((atttypid = 'INT4'::regtype AND attname = 'docid') OR
                 (atttypid = 'INT4'::regtype AND attname = 'wordid') OR
@@ -975,7 +958,7 @@ def __validate_data_table(data_table, voc_size):
             max(wordid) max_wordid
         FROM
         (
-            SELECT wordid 
+            SELECT wordid
             FROM {data_table}
             GROUP BY wordid
         ) t1
@@ -1019,8 +1002,8 @@ def __check_vocab_table(vocab_table):
     # plpy.notice('checking the vocabulary table ...')
     try:
         rv = plpy.execute("""
-            SELECT count(*) cnt FROM pg_attribute 
-            WHERE 
+            SELECT count(*) cnt FROM pg_attribute
+            WHERE
                 attrelid = '{vocab_table}'::regclass AND
                 ((atttypid = 'INT4'::regtype AND attname = 'wordid') OR
                 (atttypid = 'text'::regtype AND attname = 'word'))
@@ -1041,8 +1024,8 @@ def __check_norm_vocab_table(vocab_table):
     # plpy.notice('checking the normalized vocabulary table ...')
     try:
         rv = plpy.execute("""
-            SELECT count(*) cnt FROM pg_attribute 
-            WHERE 
+            SELECT count(*) cnt FROM pg_attribute
+            WHERE
                 attrelid = '{vocab_table}'::regclass AND
                 ((atttypid = 'INT4'::regtype AND attname = 'wordid') OR
                 (atttypid = 'INT4'::regtype AND attname = 'old_wordid') OR
@@ -1067,13 +1050,13 @@ def __check_output_data_table(output_data_table, topic_num):
     # plpy.notice('checking the output data table ...')
     try:
         rv = plpy.execute("""
-            SELECT count(*) cnt 
-            FROM pg_attribute 
-            WHERE 
+            SELECT count(*) cnt
+            FROM pg_attribute
+            WHERE
                attrelid = '{output_data_table}'::regclass AND
                ((atttypid = 'INT4[]'::regtype AND attname = 'words') OR
                (atttypid = 'INT4[]'::regtype AND attname = 'counts') OR
-               (atttypid = 'INT4[]'::regtype AND attname = 'topic_count')) 
+               (atttypid = 'INT4[]'::regtype AND attname = 'topic_count'))
            """.format(output_data_table=output_data_table))
         __assert(
             rv[0]['cnt'] == 3,
@@ -1105,15 +1088,15 @@ def __check_model_table(model_table):
     # plpy.notice('checking the model table ...')
     try:
         rv = plpy.execute("""
-            SELECT count(*) cnt 
-            FROM pg_attribute 
-            WHERE 
+            SELECT count(*) cnt
+            FROM pg_attribute
+            WHERE
                attrelid = '{model_table}'::regclass AND
                ((atttypid = 'INT4'::regtype AND attname = 'voc_size') OR
                (atttypid = 'INT4'::regtype AND attname = 'topic_num') OR
                (atttypid = 'FLOAT8'::regtype AND attname = 'alpha') OR
                (atttypid = 'FLOAT8'::regtype AND attname = 'beta') OR
-               (atttypid = 'INT8[]'::regtype AND attname = 'model')) 
+               (atttypid = 'INT8[]'::regtype AND attname = 'model'))
            """.format(model_table=model_table))
         __assert(
             rv[0]['cnt'] == 5,
