@@ -26,6 +26,11 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/etc/madlib_extra.css"
     @ONLY
 )
+file(
+    COPY 
+    imgs/madlib.png
+    DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/imgs"
+)
 set(_DOXYGEN_INPUT_USER
     "\"${CMAKE_CURRENT_BINARY_DIR}/mainpage.dox\""
     "\"${CMAKE_SOURCE_DIR}/src/dbal\""
