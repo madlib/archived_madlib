@@ -62,6 +62,13 @@ linear_svm_igd_transition::run(AnyType &args) {
         state.reset();
     }
 
+    // Skip the current record if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
     // tuple
     using madlib::dbal::eigen_integration::MappedColumnVector;
     GLMTuple tuple;
@@ -166,6 +173,21 @@ internal_linear_svm_igd_result::run(AnyType &args) {
 AnyType
 linear_svm_igd_predict::run(AnyType &args) {
     using madlib::dbal::eigen_integration::MappedColumnVector;
+    
+    try {
+        args[0].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        throw std::runtime_error(
+            "SVM error: the coefficients contain NULL values");
+    }
+
+    // returns NULL if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return Null(); 
+    }
+
     MappedColumnVector model = args[0].getAs<MappedColumnVector>();
     MappedColumnVector indVar = args[1].getAs<MappedColumnVector>();
 
