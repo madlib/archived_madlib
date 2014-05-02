@@ -151,24 +151,25 @@ def create_dummy_coding(schema_madlib, origin_table, out_table,
         @param indicators   A string, comma separated column names for
                             for categorical variables
     """
-    cols = indicators.split(',').strip()
+    cols = [s.strip() for s in indicators.split(',')]
     validate_create_dummy_coding(origin_table, out_table, cols)
-    sql_list = ["create table " + out_table + " as (select *, "]
+    sql_list = ["create table " + out_table + " as (select *"]
     for col in cols:
         distinct = plpy.execute("""
                 SELECT {col} AS value FROM {origin_table} GROUP BY {col}
                 """.format(col=col, origin_table=origin_table))
         distinct = [item['value'] for item in distinct]
-        sql_list.append(', '.join("case when " + col + " = " + str(value) +
-                                  " then 1 else 0 end) as " + col + "_" + str(value)
+        sql_list.append(", " + ', '.join("(case when " + col + " = '" + str(value) +
+                                  "' then 1 else 0 end) as \"" + col + "_" +
+                                  str(value) + "\""
                                   for value in distinct if value is not None))
         if keep_null and None in distinct:
             sql_list.append(", (case when " + col + " is NULL then 1 else 0) as "+
                             col + "_NULL")
-        sql_list.append(" from " + origin_table + ")")
-        if distributed_by is not None:
-            sql_list.append("distributed by" + "(" + ",".join(distributed_by) + ")")
-        plpy.execute(''.join(sql_list))
+    sql_list.append(" from " + origin_table + ")")
+    if distributed_by is not None:
+        sql_list.append("distributed by" + "(" + ",".join(distributed_by) + ")")
+    plpy.execute(''.join(sql_list))
     return None
 # ---------------------------------------------------------------
 
@@ -304,12 +305,19 @@ def get_regression_arguments(model_table):
 #------------------------------------------------------------------------------
 
 
-def get_parser_and_marginal_vars(coef, x_design, marginal_vars):
+def get_parser_and_marginal_vars(coef, x_design, marginal_vars=None):
     """
     Args:
-        @param x_design
+        @param x_design: str, String representation of the design elements
+                            (see MarginalEffectsBuilder for example)
+        @param marginal_vars: str, comma-separated list of integers - indexes
+                            of independent variables to output.
+                            If None, then all variables are output.
 
     Returns:
+        Tuple.
+            x_design_parser: Object representing a marginal effects parser
+            marginal_var_list: List of marginal variables
 
     """
     n_indep = len(coef)
@@ -336,13 +344,15 @@ def get_parser_and_marginal_vars(coef, x_design, marginal_vars):
         marginal_var_list = range(1, x_design_parser.n_basis_terms + 1)
 
     # do not return any answer for reference terms
+    ref_terms_removed = []
     if x_design_parser.reference_terms:
-        ref_indices = x_design_parser.get_all_reference_indices()
-        for each_ref in ref_indices:
+        for each_ref in x_design_parser.get_all_reference_indices():
             each_ref_index = x_design_parser.basis_terms.index(each_ref) + 1
             if each_ref_index in marginal_var_list:
                 marginal_var_list.remove(each_ref_index)
-    return x_design_parser, marginal_var_list
+                ref_terms_removed.append(each_ref_index)
+
+    return x_design_parser, marginal_var_list, ref_terms_removed
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -371,8 +381,13 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
     coef, independent_varname, grouping_col = get_regression_arguments(model_table)
 
     # 2) Parse x_design and marginal_vars argument
-    x_design_parser, marginal_var_list = get_parser_and_marginal_vars(
+    x_design_parser, marginal_var_list, ref_terms_removed = get_parser_and_marginal_vars(
         coef, x_design, marginal_vars)
+
+    if ref_terms_removed:
+        plpy.warning("Warning: Reference terms (Variable(s): {ref_terms}) present in output variables. "
+                     "\n No coefficients (and statistics) will be provided for these terms".
+                     format(ref_terms=', '.join(str(i) for i in ref_terms_removed)))
 
     # 3) Create a matrix representing the 2nd partial derivative
     #  (1st order wrt x and 2nd order wrt \beta). For categorical, this is
@@ -391,7 +406,8 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
         grouping_str1 = grouping_col + ","
         grouping_str2 = "GROUP BY " + grouping_col
         using_str = "USING (" + grouping_col + ")"
-        join_str = "JOIN "
+        join_str = "LEFT OUTER JOIN "
+
     execute_string = """
         CREATE TABLE {out_table} AS
             SELECT
@@ -406,7 +422,7 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
                                             {index_array}) AS z_stats,
                 {schema_madlib}.__sub_array((res).p_values,
                                             {index_array}) AS p_values
-            FROM(
+            FROM (
                 SELECT
                     {grouping_str1}
                     {schema_madlib}.__margins_int_linregr_agg(
@@ -421,7 +437,7 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
                         {independent_varname} as {indep_name}
                     FROM {source_table} as s
                     ) q1 {join_str} {model_table} as m {using_str}
-                    {grouping_str2}
+                {grouping_str2}
                 ) q2
         """.format(schema_madlib=schema_madlib,
                    source_table=source_table,
@@ -465,8 +481,13 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
     coef, independent_varname, grouping_col = get_regression_arguments(model_table)
 
     # 2) Get the x_design and marginal_vars arguments
-    x_design_parser, marginal_var_list = get_parser_and_marginal_vars(
-        coef, x_design, marginal_vars)
+    x_design_parser, marginal_var_list, ref_terms_removed = \
+        get_parser_and_marginal_vars(coef, x_design, marginal_vars)
+
+    if ref_terms_removed:
+        plpy.warning("Warning: Reference terms (Variable(s): {ref_terms}) present in output variables. "
+                     "\n No coefficients (and statistics) will be provided for these terms".
+                     format(ref_terms=', '.join(str(i) for i in ref_terms_removed)))
 
     # 3) Build various strings to compute the marginal effects
     # get_all_ind_indices returns 1-based indices whereas the underlying
@@ -515,7 +536,7 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
         grouping_str1 = grouping_col + ","
         grouping_str2 = "GROUP BY " + grouping_col
         using_str = "USING (" + grouping_col + ")"
-        join_str = "JOIN "
+        join_str = "LEFT OUTER JOIN "
     execute_string = """
         CREATE TABLE {out_table} AS
             SELECT
@@ -526,8 +547,7 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
                 {schema_madlib}.__sub_array((res).std_err, {index_array}) AS std_err,
                 {schema_madlib}.__sub_array((res).z_stats, {index_array}) AS z_stats,
                 {schema_madlib}.__sub_array((res).p_values,{index_array}) AS p_values
-            FROM
-            (
+            FROM (
                 SELECT
                     {grouping_str1}
                     {schema_madlib}.__margins_int_logregr_agg(
@@ -539,8 +559,7 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
                         , {set_string}
                         , {unset_string})
                         as res
-                FROM
-                (
+                FROM (
                     SELECT
                         {grouping_str1}
                         {independent_varname} as {indep_name}

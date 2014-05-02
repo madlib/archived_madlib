@@ -228,8 +228,10 @@ AnyType margins_stateToResult(
 AnyType
 margins_logregr_int_transition::run(AnyType &args) {
     MarginsLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
-    if (args[1].isNull()) { return args[0]; }
-    MappedColumnVector x;
+    if (args[1].isNull() || args[2].isNull() ||
+            args[3].isNull() || args[4].isNull()) {
+        return args[0];
+    }    MappedColumnVector x;
     try {
         // an exception is raised in the backend if args[2] contains nulls
         MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
@@ -499,7 +501,10 @@ class MarginsLinregrInteractionState {
 AnyType
 margins_linregr_int_transition::run(AnyType &args) {
     MarginsLinregrInteractionState<MutableArrayHandle<double> > state = args[0];
-    if (args[1].isNull()) { return args[0]; }
+    if (args[1].isNull() || args[2].isNull() ||
+            args[3].isNull() || args[4].isNull()) {
+        return args[0];
+    }
     MappedColumnVector x;
     try {
         // an exception is raised in the backend if args[2] contains nulls
