@@ -742,6 +742,7 @@ DECLARE
     num_points INTEGER;
     num_centroids INTEGER;
     rel_filtered VARCHAR;
+    num_array_dim INTEGER;    
 BEGIN
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
@@ -778,6 +779,20 @@ BEGIN
     END IF;
     IF (k < num_centroids) THEN
 	RAISE WARNING 'Number of clusters k is less than number of supplied initial centroids. Number of final clusters will equal number of supplied initial centroids.';
+    END IF;
+
+    EXECUTE $sql$
+        SELECT count(*) FROM (
+            SELECT (
+                array_upper( $sql$ || expr_point || $sql$::float8[], 1)
+                - array_lower( $sql$ || expr_point || $sql$::float8[], 1)
+            ) AS length,
+            array_lower( $sql$ || expr_point || $sql$::float8[], 1) AS lower
+            FROM $sql$ || textin(regclassout(class_rel_source)) || $sql$
+            GROUP BY length, lower) t $sql$
+    INTO num_array_dim; 
+    IF num_array_dim > 1 THEN
+        RAISE EXCEPTION 'The input table contains arrays (evaluated from expr_point) of different dimensions.';
     END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data

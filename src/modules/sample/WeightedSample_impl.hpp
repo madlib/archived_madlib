@@ -87,7 +87,7 @@ prepareSample(
     const MappedColumnVector& inX) {
     
     uint32_t width = static_cast<uint32_t>(inX.size());
-    if (width != ioAccumulator.header.width) {
+    if (width > ioAccumulator.header.width) {
         ioAccumulator.header.width = width;
         ioAccumulator.resize();
     }
