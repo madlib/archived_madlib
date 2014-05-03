@@ -387,7 +387,7 @@ on the final sum (`final' function).
 In ``coxph\_train'', Breslow method is used to resolve ties, which uses
 as the partial likelihood~\cite{hosmer2011applied}
 \begin{eqnarray}
-  L &=& \sum_{i=1}^{m}\left[ \vec{\beta}^{T} \vec{x}_{i+} - 
+  L &=& \sum_{i=1}^{m}\left[ \vec{\beta}^{T} \vec{x}_{i+} -
     d_i \log\left( \sum_{j \in R(t_i)} e^{\vec{\beta}^T
         \vec{x}_j}\right) \right]\\
   &=& \sum_{i=1}^{m}\left[ \vec{\beta}^{T} \vec{x}_i - \log\left( \sum_{j \in R(t_i)} e^{\vec{\beta}^T
@@ -457,3 +457,139 @@ With stratification, we take into account of the strata only when we
 compute $\vec{H}_i$, $S_i$, $A_i$, $\vec{B}_i$ and $\vec{W}_i$. The
 calculations of $\mathbb{A}_m$ and $\mathbb{M}$ only need to group by
 the clustered variables and the strata variables are irrelavent.
+
+\section{Marginal Effects}
+We implement the default algorithm used by Stata 13.1 for computing the
+marginal effects. Note that older versions of Stata may use a
+different default algorithm to compute a different marginal effect.
+
+\subsection{Basic Steps}
+
+The relative hazard ratio for $i$-th record is given by
+\begin{equation}
+    h_i = h_0 \exp \left( \vec{\beta}\cdot\vec{f}(\vec{x}_i) \right)\ ,
+\end{equation}
+where $h_0$ is the baseline and both $\vec{\beta}$ and
+$\vec{f}(\vec{x}_i)$ are vectors.  The component $f_a(\vec{x}_i)$
+is a function of the independent variables. Here we use the indices
+$i$ or $j$ for the data records, and $a$ or $b$ for the indices of
+covariate terms in $\vec{\beta}\cdot \vec{f}(\vec{x}_i)$. And we will use
+$u$ or $v$ to denote the indices of $\vec{x}$.
+
+The value of the baseline $h_0$ is quite arbitrary. In the training of
+CoxPH model, the evaluattion of $h_0$ is completely avoided. However,
+we cannot avoid estimating $h_0$ while computing the marginal
+effects. Stata estimates $h_0$ by
+\begin{equation} \label{eq:h0}
+    h_0 = \exp\left( \vec{\beta}\cdot \bar{\vec{f}} \right)\ ,
+\end{equation}
+where
+\begin{equation}
+    \bar{\vec{f}} = \frac{1}{N}\sum_{i=1}^{N} \vec{f}(\vec{x}_i)
+\end{equation}
+are the average values of all covariates. Note the average is over the
+function $\vec{f}$ instead of the independent variables $\vec{x}$. $N$
+is the total number of records.
+
+Then the marginal effects are computed as
+\begin{equation} \label{eq:me1}
+    ME_{u} = \frac{1}{N}\sum_i \frac{\partial h_i}{\partial x_i^{(u)}} =
+    \frac{h_0}{N}\sum_i e^{\vec{\beta}\cdot
+        \vec{f}(\vec{x}_i)}\,\vec{\beta}\cdot\frac{\partial
+        \vec{f}(\vec{x}_i)}{\partial x_i^{(u)}} \ .
+\end{equation}
+
+Censoring status is irrelavent in the above computation, and we can
+just forget about it when computing the marginal effects.
+
+\subsection{Categorical variables}
+
+First, the baseline constant is still given by Eq. (\ref{eq:h0}). The
+dummy variables are treated in the same way as the other continuous
+variables, even though the dummies have only two possible values $0$
+and $1$.
+
+Second, discrete difference replaces the continuous derivative in Eq.
+(\ref{eq:me1}). Suppose that $x^{(u)}$ is a dummy variable, and
+$x^{(w)}$ is another dummy variable of the same categorical variable.
+The discrete difference with respect to $x^{(u)}$ is defined as
+\begin{equation}
+    \Delta_{x^{(u)}} h = \left. h \right\vert_{x^{(u)}=1, x^{(w)}=0} -
+    \left. h \right\vert_{x^{u}=0,x^{(w)}=0}\ .
+\end{equation}
+However, if $x^{(w)}$ is the reference level of the categorical
+variable, then we need to use
+\begin{equation}
+    \Delta_{x^{(u)}} h = \left. h \right\vert_{x^{(u)}=1, x^{(w)}=0} -
+    \left. h \right\vert_{x^{u}=0,x^{(w)}=1}\ .
+\end{equation}
+And the corresponding marginal effect is
+\begin{equation}
+    ME_u = \frac{1}{N}\sum_i \left( \Delta_{x_i^{(u)}} h_i \right)\ .
+\end{equation}
+
+\subsection{With Stratefication}
+
+When we train the CoxPH model with stratification, we fit the data
+with a single set of coefficients $\vec{\beta}$. Howevere, each
+stratum of the data has a different baseline.
+
+We will use the following notations. Suppose that we have $K$ strata,
+each of which has $n_k$ records. The sum of $n_k$ equals to $N$. Then
+the baseline estimate for the $k$-th stratum is
+\begin{equation}
+    h_0^{(k)} = \exp\left( \vec{\beta}\cdot\bar{\vec{f}}^{(k)} \right)\ ,
+\end{equation}
+where the exponential is evaluated at the average value
+\begin{equation}
+    \bar{\vec{f}}^{(k)} = \frac{1}{n_k}\sum_{i\in
+        ST_k}\vec{f}(\vec{x}_i)
+\end{equation}
+is computed inside the stratum. Here $ST_k$ represents the set of all
+records that belong to the $k$-th stratum.
+
+And the marginal effect for $x^{(u)}$ is
+\begin{equation}
+    ME_u = \frac{1}{N} \sum_{k=1}^K \sum_{i\in ST_k}
+    h_0^{(k)}\,\frac{\partial e^{\vec{\beta}\cdot\vec{f}(\vec{x}_i)}}{\partial
+        x_i^{(u)}} = \frac{1}{N} \sum_{k=1}^K \sum_{i\in ST_k}
+    h_0^{(k)}e^{\vec{\beta}\cdot\vec{f}(\vec{x}_i)}\,\vec{\beta}\cdot\frac{\partial
+        \vec{f}(\vec{x}_i)}{\partial x_i^{(u)}}\ .
+\end{equation}
+
+For the dummy variables, we just replace the derivative with discrete
+difference,
+\begin{equation}
+    ME_u = \frac{1}{N} \sum_{k=1}^K \sum_{i\in ST_k} \left(
+        \Delta_{x_i^{(u)}}h_i \right)
+\end{equation}
+
+\subsection{The Standard Errors}
+
+As has already been described in Section 6.5.5, the method to compute
+the standard errors is
+\begin{equation}
+    \mbox{Var}(ME) = \mathbb{S}\, \mbox{Var}(\vec{\beta})\,
+    \mathbb{S}^T,
+\end{equation}
+where the matrix $\mathbb{S}$ is defined as
+\begin{equation}
+    \mathbb{S}_{ua} = \frac{\partial ME_u}{\partial \beta_a}.
+\end{equation}
+Just a reminder: we use the indices $i$ or $j$ for the data records,
+and $a$ or $b$ for the indices of covariate terms in $\vec{\beta}
+\cdot \vec{f}(\vec{x}_i)$, and use $u$ or $v$ to denote the indices of
+$x$.
+
+Several useful results:
+\begin{eqnarray}
+    \frac{\partial}{\partial \beta_a}
+    e^{\vec{\beta}\cdot\vec{f}(\vec{x}_i)} &=&
+    f_a(\vec{x}_i)e^{\vec{\beta}\cdot\vec{f}(\vec{x}_i)}\ ,\\
+    \frac{\partial^2}{\partial x_i^{(u)} \partial \beta_a}
+    e^{\vec{\beta}\cdot\vec{f}(\vec{x}_i)} &=&
+    f_a(\vec{x}_i)e^{\vec{\beta}\cdot\vec{f}(\vec{x}_i)}
+    \vec{\beta}\cdot\frac{\partial \vec{f}(\vec{x}_i)}{\partial
+        x_i^{(u)}} + e^{\vec{\beta}\cdot\vec{f}(\vec{x}_i)}
+    \frac{\partial f_a(\vec{x}_i)}{\partial x_i^{(u)}}\ .
+\end{eqnarray}
