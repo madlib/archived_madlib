@@ -7,15 +7,14 @@
 /**
  * @brief family class: distribution families
  */
-namespace madlib {
-namespace modules {
-namespace regress {
-class family
+namespace madlib { namespace modules { namespace regress {
+
+class Family
 {
 public:
     typedef double (*LINKFUN)(double);
     typedef double (*LINKINV)(double);
-    family(const std::string f, const std::string l);
+    Family(const std::string f, const std::string l);
 
     LINKFUN linkfun;
     LINKINV linkinv;
@@ -30,9 +29,8 @@ protected:
     static double linkinv_gaussian_inverse(double);
     static double linkinv_gaussian_log(double);
 };
-} // regress
-} // modules
-} // madlib
+
+} } } // madlib::modules::regress
 
 /**
  * @brief Gaussian family (conjugate-gradient step): Final function
