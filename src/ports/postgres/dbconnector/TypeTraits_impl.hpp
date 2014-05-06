@@ -233,14 +233,14 @@ struct TypeTraits<char*> {
 };
 
 template <>
-struct TypeTraits<const char*> {
-    typedef const char* value_type;
+struct TypeTraits<std::string> {
+    typedef std::string value_type;
 
     WITH_OID( TEXTOID );
     WITH_TYPE_CLASS( dbal::SimpleType );
     WITH_MUTABILITY( dbal::Immutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
-    WITH_TO_PG_CONVERSION(PointerGetDatum(cstring_to_text(value)));
+    WITH_TO_PG_CONVERSION(PointerGetDatum(cstring_to_text(value.c_str())));
     WITH_TO_CXX_CONVERSION(text_to_cstring(DatumGetTextPP(value)));
 };
 
