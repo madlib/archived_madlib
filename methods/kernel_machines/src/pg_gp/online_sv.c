@@ -187,22 +187,6 @@ static float8 apply_kernel_hawq(text * kernel, ArrayType * x1, ArrayType * x2, f
 
 // ----------------------------------------------------------------------
 
-Datum svm_dot(PG_FUNCTION_ARGS);
-PG_FUNCTION_INFO_V1(svm_dot);
-
-/*
- * This function computes the inner product of two points.
- */
-Datum svm_dot(PG_FUNCTION_ARGS)
-{
-    ArrayType * arg1 = PG_GETARG_ARRAYTYPE_P(0);
-    ArrayType * arg2 = PG_GETARG_ARRAYTYPE_P(1);
-
-    PG_RETURN_FLOAT8(svm_dot_compute(arg1, arg2));
-}
-
-// ----------------------------------------------------------------------
-
 Datum svm_polynomial(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(svm_polynomial);
 
