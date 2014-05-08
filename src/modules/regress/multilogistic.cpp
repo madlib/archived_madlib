@@ -137,46 +137,26 @@ public:
 private:
     static inline uint32_t arraySize(const uint16_t inWidthOfX,
         const uint16_t inNumCategories) {
-        return 5 + inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
+        return 6 + inWidthOfX * inWidthOfX * inNumCategories * inNumCategories
                                  + 2 * inWidthOfX * inNumCategories;
     }
 
-    /**
-     * @brief Rebind to a new storage array
-     *
-     * @param inWidthOfX             The number of independent variables.
-     * @param inNumCategories The number of categories of the dependant var
-
-
-     * Array layout (iteration refers to one aggregate-function call):
-     * Inter-iteration components (updated in final function):
-     * - 0: widthOfX (number of independant variables)
-     * - 1: numCategories (number of categories)
-     * - 2: coef (vector of coefficients)
-     *
-     * Intra-iteration components (updated in transition step):
-     * - 2 + widthOfX*numCategories: numRows (number of rows already processed in this iteration)
-     * - 3 + widthOfX*numCategories: gradient (X^T A z)
-     * - 3 + 2 * widthOfX * inNumCategories: X_transp_AX (X^T A X)
-     * - 3 + widthOfX^2*numCategories^2
-                         + 2 * widthOfX*numCategories: logLikelihood ( ln(l(c)) )
-     * - 4 + widthOfX^2*numCategories^2
-                         + 2 * widthOfX*numCategories: ref_category
-     */
     void rebind(uint16_t inWidthOfX = 0, uint16_t inNumCategories = 0) {
         widthOfX.rebind(&mStorage[0]);
         numCategories.rebind(&mStorage[1]);
-        coef.rebind(&mStorage[2], inWidthOfX*inNumCategories);
+        conditionNo.rebind(&mStorage[2]);
 
-        numRows.rebind(&mStorage[2 + inWidthOfX*inNumCategories]);
+        coef.rebind(&mStorage[3], inWidthOfX*inNumCategories);
 
-        gradient.rebind(&mStorage[3 + inWidthOfX*inNumCategories],inWidthOfX*inNumCategories);
-        X_transp_AX.rebind(&mStorage[3 + 2 * inWidthOfX*inNumCategories],
+        numRows.rebind(&mStorage[3 + inWidthOfX*inNumCategories]);
+
+        gradient.rebind(&mStorage[4 + inWidthOfX*inNumCategories],inWidthOfX*inNumCategories);
+        X_transp_AX.rebind(&mStorage[4 + 2 * inWidthOfX*inNumCategories],
             inNumCategories*inWidthOfX, inWidthOfX*inNumCategories);
-        logLikelihood.rebind(&mStorage[3 +
+        logLikelihood.rebind(&mStorage[4 +
              inNumCategories*inNumCategories*inWidthOfX*inWidthOfX
              + 2 * inWidthOfX*inNumCategories]);
-        ref_category.rebind(&mStorage[4 +
+        ref_category.rebind(&mStorage[5 +
              inNumCategories*inNumCategories*inWidthOfX*inWidthOfX
              + 2 * inWidthOfX*inNumCategories]);
     }
@@ -186,6 +166,7 @@ private:
 public:
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;
+    typename HandleTraits<Handle>::ReferenceToDouble conditionNo;
 
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
@@ -326,12 +307,12 @@ private:
 public:
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;
+    typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
 
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap X_transp_AX;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap meat;
-    typename HandleTraits<Handle>::ReferenceToUInt16 ref_category;
 };
 
 /**
@@ -398,6 +379,7 @@ __mlogregr_irls_step_transition::run(AnyType &args) {
                 state.reset();
         }
     }
+
 
     /*
      * This check should be done for each iteration. Only checking the first
@@ -555,8 +537,8 @@ __mlogregr_irls_step_final::run(AnyType &args) {
     // of X^T A X, so that we don't have to recompute it in the result function.
     // Likewise, we store the condition number.
     // FIXME: This feels a bit like a hack.
-    state.gradient = -1 * hessianInv.diagonal();
-    state.X_transp_AX(0,0) = decomposition.conditionNo();
+    state.conditionNo = decomposition.conditionNo();
+    state.X_transp_AX = -1 * hessianInv;
 
     return state;
 }
@@ -573,10 +555,13 @@ AnyType mLogstateToResult(
 
     int ref_category = state.ref_category;
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef = state.coef;
-    const ColumnVector &diagonal_of_hessian = state.gradient;
     double logLikelihood = state.logLikelihood;
-    double conditionNo = state.X_transp_AX(0,0);
     int num_processed = state.numRows;
+
+    // Per the hack at the end of the final function we place the inverse
+    // of the X_tranp_AX into the state.X_transp_AX
+    const Matrix & X_transp_AX_inverse = state.X_transp_AX;
+    const ColumnVector &diagonal_of_hessian = X_transp_AX_inverse.diagonal();
 
     MutableNativeColumnVector stdErr(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -599,7 +584,7 @@ AnyType mLogstateToResult(
     AnyType tuple;
     tuple << ref_category << inCoef << logLikelihood << stdErr
           << waldZStats << waldPValues << oddsRatios
-          << conditionNo << num_iterations << num_processed;
+          << static_cast<double>(state.conditionNo) << num_iterations << num_processed;
     return tuple;
 }
 
@@ -627,6 +612,22 @@ __internal_mlogregr_irls_result::run(AnyType &args) {
     // state.gradient, state.logLikelihood, state.X_transp_AX(0,0));
 }
 
+/**
+ * @brief Return the coefficients and diagnostic statistics of the state
+ */
+AnyType
+__internal_mlogregr_summary_results::run(AnyType &args) {
+    MLogRegrIRLSTransitionState<ArrayHandle<double> > state = args[0];
+    const Matrix & X_transp_AX_inverse = state.X_transp_AX;
+    // X_transp_AX is actually it's inverse - this is a hack added at the end of
+    // the final function
+    AnyType tuple;
+    Matrix coef = state.coef;
+    coef.resize(state.numCategories, state.widthOfX);
+    coef.transposeInPlace();
+    tuple << coef << X_transp_AX_inverse;
+    return tuple;
+}
 // ----------------- End of Multinomial Logistic Regression --------------------
 
 // ---------------------------------------------------------------------------
@@ -681,7 +682,7 @@ mlogregr_robust_step_transition::run(AnyType &args) {
             static_cast<uint16_t>(x.size()) ,
             static_cast<uint16_t>(numCategories),
             static_cast<uint16_t>(ref_category));
-       
+
         Matrix mat = coefMat;
         mat.transposeInPlace();
         mat.resize(coefMat.size(), 1);
@@ -897,14 +898,14 @@ typedef struct __sr_ctx{
     int32_t curcall;
 } sr_ctx;
 
-void * __mlogregr_format::SRF_init(AnyType &args) 
+void * __mlogregr_format::SRF_init(AnyType &args)
 {
     sr_ctx * ctx = new sr_ctx;
 
     if(args[0].isNull() || args[1].isNull() ||
        args[2].isNull() || args[3].isNull()){
         ctx->maxcall = 1;
-        ctx->curcall = -1; 
+        ctx->curcall = -1;
         return ctx;
     }
 
@@ -915,7 +916,7 @@ void * __mlogregr_format::SRF_init(AnyType &args)
         ctx->maxcall = 0;
         return ctx;
     }
-    
+
     int32_t num_feature = args[1].getAs<int32_t>();
     int32_t num_category = args[2].getAs<int32_t>();
     int32_t ref_category = args[3].getAs<int32_t>();
@@ -945,7 +946,7 @@ AnyType __mlogregr_format::SRF_next(void * user_fctx, bool * is_last_call)
         *is_last_call = true;
         return Null();
     }
-    
+
     if(ctx->maxcall == 1 and ctx->curcall == -1){
         ctx->maxcall =0;
         return Null();
@@ -964,7 +965,7 @@ AnyType __mlogregr_format::SRF_next(void * user_fctx, bool * is_last_call)
         ctx->curcall++;
         ctx->maxcall--;
 
-        return tuple; 
+        return tuple;
     }catch(...){
         ctx->maxcall = 0;
         return Null();

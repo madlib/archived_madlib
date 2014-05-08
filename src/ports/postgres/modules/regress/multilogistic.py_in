@@ -84,7 +84,7 @@ def __runIterativeAlg(stateType, initialState, source, updateExpr,
         iteration = iteration + 1
         state_new = plpy.execute(plan_update, [iteration, state_old[0]['state']])
 
-        if (plpy.execute(plan_checkfornullstate, [ state_new[0]['state'] ])[0]['should_terminate'] or 
+        if (plpy.execute(plan_checkfornullstate, [ state_new[0]['state'] ])[0]['should_terminate'] or
             (iteration > cyclesPerIteration and (iteration >= cyclesPerIteration * max_num_iterations or
                 plpy.execute(plan_terminatesql, [ state_new[0]['state'], state_old[0]['state'] ])[0]['should_terminate']))):
             # insert into the state table
@@ -448,9 +448,18 @@ def mlogregr_train(schema_madlib, source_table, output_table, dependent_varname,
               '{independent_varname}'::VARCHAR     as independent_varname,
               '{optimizer_params}'::VARCHAR        as optimizer_params,
               {ref_category}::INTEGER              as ref_category,
+              {num_categories}::INTEGER            as num_categories,
               {num_processed}::INTEGER             as num_rows_processed,
-              {num_missing_rows_skipped}::INTEGER  as num_missing_rows_skipped
-        """.format(num_processed=result["num_processed"],
+              {num_missing_rows_skipped}::INTEGER  as num_missing_rows_skipped,
+              (result).variance_covariance         as variance_covariance,
+              (result).coef                        as coef
+              FROM (
+                SELECT {schema_madlib}.__internal_mlogregr_summary_results(
+                   _madlib_state) AS result
+                FROM _madlib_iterative_alg
+                WHERE _madlib_iteration = {n_iterations}
+              ) q1
+        """.format(num_processed=result["num_processed"], n_iterations=n_iterations,
                    num_missing_rows_skipped=result["num_missing_rows_skipped"],
                    **all_arguments))
 
@@ -674,9 +683,12 @@ The output summary table named as <'output_table'>_summary has the following col
     independent_varname      -- VARCHAR, Independent variable name
     optimizer_params         -- VARCHAR, Optimizer parameters used
     ref_category             -- INTEGER, The value of reference category used
+    num_categories           -- INTEGER, The number of categories
     num_rows_processed       -- INTEGER, Number of rows processed during training
     num_missing_rows_skipped -- INTEGER, Number of rows skipped during training due
                                          to missing values
+    vcov                     -- DOUBLE PRECISION[], Covariance matrix
+    coef                     -- DOUBLE PRECISION[], Coefficients of regression
         """
     elif message in ['example', 'examples']:
         help_string = """

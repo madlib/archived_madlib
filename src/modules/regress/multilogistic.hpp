@@ -35,6 +35,9 @@ DECLARE_UDF(regress, __internal_mlogregr_irls_step_distance)
  */
 DECLARE_UDF(regress, __internal_mlogregr_irls_result)
 
+
+DECLARE_UDF(regress, __internal_mlogregr_summary_results)
+
 //Robust variance calculation functions
 /**
  * @brief Robust Variance Logistic regression step: Transition function
