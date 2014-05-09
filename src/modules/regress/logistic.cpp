@@ -233,7 +233,7 @@ logregr_cg_step_transition::run(AnyType &args) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
             // throw std::domain_error("Number of independent variables cannot be "
             // "larger than 65535.");
-            dberr << "Number of independent variables cannot be"
+            dberr << "Number of independent variables cannot be "
                 "larger than 65535." << std::endl;
             state.status = TERMINATED;
             return state;

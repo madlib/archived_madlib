@@ -91,33 +91,41 @@ closestColumnsAndDistances(
 }
 
 double
-distNorm1(
-    const MappedColumnVector& inX,
-    const MappedColumnVector& inY) {
+distNorm1(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+    if (inX.size() != inY.size()) {
+        throw std::runtime_error("Found input arrays of "
+                "different lengths unexpectedly.");
+    }
 
     return (inX - inY).lpNorm<1>();
 }
 
 double
-distNorm2(
-    const MappedColumnVector& inX,
-    const MappedColumnVector& inY) {
+distNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+    if (inX.size() != inY.size()) {
+        throw std::runtime_error("Found input arrays of "
+                "different lengths unexpectedly.");
+    }
 
     return (inX - inY).norm();
 }
 
 double
-squaredDistNorm2(
-    const MappedColumnVector& inX,
-    const MappedColumnVector& inY) {
+squaredDistNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+    if (inX.size() != inY.size()) {
+        throw std::runtime_error("Found input arrays of "
+                "different lengths unexpectedly.");
+    }
 
     return (inX - inY).squaredNorm();
 }
 
 double
-distAngle(
-    const MappedColumnVector& inX,
-    const MappedColumnVector& inY) {
+distAngle(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+    if (inX.size() != inY.size()) {
+        throw std::runtime_error("Found input arrays of "
+                "different lengths unexpectedly.");
+    }
 
 	// Deal with the undefined case where one of the norm is zero
 	// Angle is not defined. Just return \pi.
@@ -135,9 +143,11 @@ distAngle(
 }
 
 double
-distTanimoto(
-    const MappedColumnVector& inX,
-    const MappedColumnVector& inY) {
+distTanimoto(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+    if (inX.size() != inY.size()) {
+        throw std::runtime_error("Found input arrays of "
+                "different lengths unexpectedly.");
+    }
 
     // Note that this is not a metric in general!
     double dotProduct = dot(inX, inY);
