@@ -7,6 +7,7 @@
  * -------------------------------------------------------------------------- */
 
 #include "linear.hpp"
+#include "glm.hpp"
 #include "clustered_errors.hpp"
 #include "logistic.hpp"
 #include "multilogistic.hpp"

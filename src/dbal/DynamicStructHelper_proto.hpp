@@ -9,6 +9,9 @@
 
 namespace madlib { namespace dbal {
 
+using namespace dbal;
+using namespace madlib::dbal::eigen_integration;
+
 template <class Container>
 class DynamicStructHelper: public DynamicStruct<DynamicStructHelper<Container>, Container>
 {
@@ -17,8 +20,8 @@ class DynamicStructHelper: public DynamicStruct<DynamicStructHelper<Container>, 
     MADLIB_DYNAMIC_STRUCT_TYPEDEFS;
 
     DynamicStructHelper(Init_type& inInitialization);
-    void bind(ByteStream_type& inStream) = 0;
-    template <class OtherContainer> DynamicStructHelper& operator=(
+    virtual void bind(ByteStream_type& inStream);
+    virtual template <class OtherContainer> DynamicStructHelper& operator=(
         const DynamicStructHelper<OtherContainer>& inOther);
 };
 

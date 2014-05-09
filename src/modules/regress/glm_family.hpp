@@ -7,6 +7,7 @@
 /**
  * @brief family class: distribution families
  */
+
 namespace madlib { namespace modules { namespace regress {
 
 class Family
@@ -30,10 +31,5 @@ protected:
     static double linkinv_gaussian_log(double);
 };
 
-} } } // madlib::modules::regress
-
-/**
- * @brief Gaussian family (conjugate-gradient step): Final function
- */
-DECLARE_UDF(regress, gaussian)
+} } }
 

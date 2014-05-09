@@ -70,6 +70,7 @@ enum OnMemoryAllocationFailure {
 #include "ByteStream_proto.hpp"
 #include "ByteStreamHandleBuf_proto.hpp"
 #include "DynamicStruct_proto.hpp"
+//#include "DynamicStructHelper_proto.hpp"
 #include "OutputStreamBufferBase_proto.hpp"
 #include "Reference_proto.hpp"
 
