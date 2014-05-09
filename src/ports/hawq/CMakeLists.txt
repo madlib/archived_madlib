@@ -271,9 +271,11 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
     )
 
 
-# -- 5. Generate gppkg deployment scripts. Note: These are generated CMake
-#       scripts! But HAWQ has not gppkg support yet ----------------------------
-#    add_gppkg()
+# -- 4.4. Generate gppkg deployment scripts. ----------------------------
+    if(NOT (${IN_PORT_VERSION} VERSION_LESS "1.2"))
+        add_gppkg(${IN_PORT_VERSION} "HAWQ" "hawq" "1.5")
+    endif(NOT (${IN_PORT_VERSION} VERSION_LESS "1.2"))
+
 endfunction(add_${PORT_LC}_library)
 
 

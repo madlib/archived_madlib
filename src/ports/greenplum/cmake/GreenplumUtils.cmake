@@ -13,29 +13,34 @@ function(define_greenplum_features IN_VERSION OUT_FEATURES)
     set(${OUT_FEATURES} "${${OUT_FEATURES}}" PARENT_SCOPE)
 endfunction(define_greenplum_features)
 
-function(add_gppkg)
-    if(${IN_PORT_VERSION} VERSION_LESS "4.2")
-        return()
-    endif(${IN_PORT_VERSION} VERSION_LESS "4.2")
+function(add_gppkg GPDB_VERSION GPDB_VARIANT GPDB_VARIANT_SHORT UPGRADE_SUPPORT)
+    string(REPLACE "." "_" VERSION_ "${GPDB_VERSION}")
 
-    file(WRITE "${CMAKE_BINARY_DIR}/deploy/gppkg/Version_${IN_PORT_VERSION}.cmake" "
+    file(WRITE "${CMAKE_BINARY_DIR}/deploy/gppkg/${GPDB_VARIANT}_${VERSION_}_gppkg.cmake" "
     file(MAKE_DIRECTORY
-        \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}/BUILD\"
-        \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}/SPECS\"
-        \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}/RPMS\"
-        \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}/gppkg\"
+        \"\${CMAKE_CURRENT_BINARY_DIR}/${GPDB_VERSION}/BUILD\"
+        \"\${CMAKE_CURRENT_BINARY_DIR}/${GPDB_VERSION}/SPECS\"
+        \"\${CMAKE_CURRENT_BINARY_DIR}/${GPDB_VERSION}/RPMS\"
+        \"\${CMAKE_CURRENT_BINARY_DIR}/${GPDB_VERSION}/gppkg\"
     )
-    set(GPDB_VERSION ${IN_PORT_VERSION})
+
+    set(GPDB_VERSION \"${GPDB_VERSION}\")
+    set(GPDB_VARIANT \"${GPDB_VARIANT}\")
+    set(GPDB_VARIANT_SHORT \"${GPDB_VARIANT_SHORT}\")
+    set(UPGRADE_SUPPORT \"${UPGRADE_SUPPORT}\")
+    string(TOLOWER \"${GPDB_VARIANT}\" PORT_NAME)
+
     configure_file(
         madlib.spec.in
-        \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}/SPECS/madlib.spec\"
+        \"\${CMAKE_CURRENT_BINARY_DIR}/${GPDB_VERSION}/SPECS/madlib.spec\"
     )
     configure_file(
         gppkg_spec.yml.in
-        \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}/gppkg/gppkg_spec.yml\"
+        \"\${CMAKE_CURRENT_BINARY_DIR}/${GPDB_VERSION}/gppkg/gppkg_spec.yml\"
     )
+
     if(GPPKG_BINARY AND RPMBUILD_BINARY)
-        add_custom_target(gppkg_${PORT_VERSION_UNDERSCORE}
+        add_custom_target(gppkg_${GPDB_VARIANT}_${VERSION_}
             COMMAND cmake -E create_symlink \"\${MADLIB_GPPKG_RPM_SOURCE_DIR}\"
                 \"\${CPACK_PACKAGE_FILE_NAME}-gppkg\"
             COMMAND \"\${RPMBUILD_BINARY}\" -bb SPECS/madlib.spec
@@ -43,12 +48,12 @@ function(add_gppkg)
                 \"gppkg/\${MADLIB_GPPKG_RPM_FILE_NAME}\"
             COMMAND \"\${GPPKG_BINARY}\" --build gppkg
             DEPENDS \"${CMAKE_BINARY_DIR}/\${CPACK_PACKAGE_FILE_NAME}.rpm\"
-            WORKING_DIRECTORY \"\${CMAKE_CURRENT_BINARY_DIR}/${IN_PORT_VERSION}\"
-            COMMENT \"Generating Greenplum ${IN_PORT_VERSION} gppkg installer...\"
+            WORKING_DIRECTORY \"\${CMAKE_CURRENT_BINARY_DIR}/${GPDB_VERSION}\"
+            COMMENT \"Generating ${GPDB_VARIANT} ${GPDB_VERSION} gppkg installer...\"
             VERBATIM
         )
     else(GPPKG_BINARY AND RPMBUILD_BINARY)
-        add_custom_target(gppkg_${PORT_VERSION_UNDERSCORE}
+        add_custom_target(gppkg_${GPDB_VARIANT}_${VERSION_}
             COMMAND cmake -E echo \"Could not find gppkg and/or rpmbuild.\"
                 \"Please rerun cmake.\"
         )
@@ -58,6 +63,7 @@ function(add_gppkg)
     # i.e., the following does not work:
     # add_dependencies(gppkg package)
 
-    add_dependencies(gppkg gppkg_${PORT_VERSION_UNDERSCORE})
+    add_dependencies(gppkg gppkg_${GPDB_VARIANT}_${VERSION_})
     ")
 endfunction(add_gppkg)
+

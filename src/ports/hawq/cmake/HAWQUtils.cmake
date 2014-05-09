@@ -7,3 +7,4 @@ function(define_hawq_features IN_VERSION OUT_FEATURES)
     # Pass values to caller
     set(${OUT_FEATURES} "${${OUT_FEATURES}}" PARENT_SCOPE)
 endfunction(define_hawq_features)
+
