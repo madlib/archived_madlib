@@ -228,6 +228,9 @@ AnyType arima_lm::run (AnyType & args)
     else 
         mean = args[6].getAs<double>();
 
+    int l = p + q;
+    if (include_mean) l++;
+
     MutableArrayHandle<double> prez(
         madlib_construct_array(
             NULL, 0, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
@@ -235,16 +238,16 @@ AnyType arima_lm::run (AnyType & args)
         madlib_construct_array(
             NULL, 0, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
     if (q > 0) {
-        prez = args[7].getAs<MutableArrayHandle<double> >();
-        prej = args[8].getAs<MutableArrayHandle<double> >();
         if (distid == 1) {
-            for (size_t i = 0; i < prez.size(); i++) prez[i] = 0.;
-            for (size_t i = 0; i < prej.size(); i++) prej[i] = 0.;
+            prez = madlib_construct_array(
+                NULL, q, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+            prej = madlib_construct_array(
+                NULL, q * l,  FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+        } else {
+            prez = args[7].getAs<MutableArrayHandle<double> >();
+            prej = args[8].getAs<MutableArrayHandle<double> >();
         }
     } 
-
-    int l = p + q;
-    if (include_mean) l++;
     
     // minus the mean
     if (include_mean) 

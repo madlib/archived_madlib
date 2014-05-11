@@ -948,68 +948,23 @@ def _compute_onestep (schema_madlib, tbl_ts, p, q, phi, theta, mean,
         # Each group uses previous group's final prez and prej from
         # previous iteration.
         # ** First group's prez and prej are always 0. **
-        if q != 0:
-            # sequential initalization
-            plpy.execute(
-                """
-                create temp table {tbl_grp_init} (
-                    distid  integer,
-                    prez    double precision[],
-                    prej    double precision[],
-                    jj      double precision[],
-                    jz      double precision[],
-                    z2      double precision,
-                    iter    integer)
-                m4_ifdef(`__POSTGRESQL__', `', `distributed by (distid)');
-                m4_ifdef(`__HAWQ__', `',
-                    `alter table {tbl_grp_init} add primary key (distid, iter);')
-                """.format(tbl_grp_init=tbl_grp_init))
-
-            for i in range(1, ngrps + 1):
-                plpy.execute(
-                    """
-                    insert into {tbl_grp_init}
-                    select
-                        distid, (f).prez, (f).prej, (f).jj, (f).jz, (f).z2,
-                        0::integer as iter
-                    from (
-                        select
-                            s1.distid,
-                            {schema_madlib}.__arima_lm(
-                                tid, tvals, {p}, {q},
-                                {phi}::double precision[],
-                                {theta}::double precision[],
-                                {mean}, {arrz}, {arrj}
-                            ) as f
-                        from
-                            {tbl_ts} s1 left join {tbl_grp_init} s2
-                        on
-                            (s1.distid = s2.distid + 1)
-                        where s1.distid = {distid}
-                    ) s
-                    """.format(tbl_grp_init=tbl_grp_init, schema_madlib=schema_madlib,
-                           tbl_ts=tbl_ts, phi=phi_str, theta=theta_str, mean=mean,
-                           arrz=arrz_str if i == 1 else 'prez',
-                           arrj=arrj_str if i == 1 else 'prej',
-                           distid=i, p=p, q=q))
-        else:
-            plpy.execute(
-                """
-                create temp table {tbl_grp_init} as
-                    select
-                        i as distid,
-                        {arrz}::double precision[] as prez,
-                        {arrj}::double precision[] as prej,
-                        {arrjj}::double precision[] as jj,
-                        {arrjz}::double precision[] as jz,
-                        0.0::double precision as z2, 0 as iter
-                    from generate_series(1,{ngrps}) i
-                m4_ifdef(`__POSTGRESQL__', `', `distributed by (distid)');
-                m4_ifdef(`__HAWQ__', `',
-                    `alter table {tbl_grp_init} add primary key (distid, iter);')
-                """.format(tbl_grp_init=tbl_grp_init, arrz=arrz_str,
-                           arrj = arrj_str, ngrps=ngrps, arrjj=arrjj_str,
-                           arrjz=arrjz_str))
+        plpy.execute(
+            """
+            create temp table {tbl_grp_init} as
+                select
+                    i as distid,
+                    {arrz}::double precision[] as prez,
+                    {arrj}::double precision[] as prej,
+                    {arrjj}::double precision[] as jj,
+                    {arrjz}::double precision[] as jz,
+                    0.0::double precision as z2, 0 as iter
+                from generate_series(1,{ngrps}) i
+            m4_ifdef(`__POSTGRESQL__', `', `distributed by (distid)');
+            m4_ifdef(`__HAWQ__', `',
+            `alter table {tbl_grp_init} add primary key (distid, iter);')
+            """.format(tbl_grp_init=tbl_grp_init, arrz=arrz_str,
+                arrj = arrj_str, ngrps=ngrps, arrjj=arrjj_str,
+                arrjz=arrjz_str))
 
     if tbl_jj_g is None:
         tbl_jj_g = __unique_string() + "jj_g__"
@@ -1026,7 +981,6 @@ def _compute_onestep (schema_madlib, tbl_ts, p, q, phi, theta, mean,
                 `alter table {tbl_jj_g} add primary key (iter);')
             """.format(tbl_jj_g=tbl_jj_g))
 
-
     plpy.execute(
         """
         insert into {tbl_grp_init}
@@ -1042,11 +996,13 @@ def _compute_onestep (schema_madlib, tbl_ts, p, q, phi, theta, mean,
                         {mean}, prez, prej
                     ) as f,
                     s1.distid
-                from {tbl_ts} s1, {tbl_grp_init} s2
-                where
-                    (s1.distid = s2.distid + 1 or
-                    (s1.distid = 1 and s2.distid = 1)) and
-                    s2.iter = {prev_iter}
+                --from {tbl_ts} s1, {tbl_grp_init} s2
+                --where
+                --    (s1.distid = s2.distid + 1 or
+                --    (s1.distid = 1 and s2.distid = 1)) and
+                --    s2.iter = {prev_iter}
+                from {tbl_ts} s1 left join {tbl_grp_init} s2
+                on (s1.distid = s2.distid + 1 and s2.iter = {prev_iter})
             ) s
         """.format(schema_madlib=schema_madlib, tbl_ts=tbl_ts,
                    tbl_grp_init=tbl_grp_init, p=p, q=q,
