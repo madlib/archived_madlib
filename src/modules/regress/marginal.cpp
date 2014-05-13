@@ -36,149 +36,6 @@ inline double logistic(double x) {
     return 1. / (1. + std::exp(-x));
 }
 
-// ---------------------------------------------------------------------------
-//             Marginal Effects Logistic Regression States
-// ---------------------------------------------------------------------------
-/**
- * @brief State for marginal effects calculation for logistic regression
- *
- * TransitionState encapsualtes the transition state during the
- * marginal effects calculation for the logistic-regression aggregate function.
- * To the database, the state is exposed as a single DOUBLE PRECISION array,
- * to the C++ code it is a proper object containing scalars and vectors.
- *
- * Note: We assume that the DOUBLE PRECISION array is initialized by the
- * database with length at least 5, and all elemenets are 0.
- *
- */
-template <class Handle>
-class MarginsLogregrInteractionState {
-    template <class OtherHandle>
-    friend class MarginsLogregrInteractionState;
-
-  public:
-    MarginsLogregrInteractionState(const AnyType &inArray)
-        : mStorage(inArray.getAs<Handle>()) {
-
-        rebind(static_cast<uint16_t>(mStorage[1]),
-               static_cast<uint16_t>(mStorage[2]),
-               static_cast<uint16_t>(mStorage[3]));
-    }
-
-    /**
-     * @brief Convert to backend representation
-     *
-     * We define this function so that we can use State in the
-     * argument list and as a return type.
-     */
-    inline operator AnyType() const {
-        return mStorage;
-    }
-
-    /**
-     * @brief Initialize the marginal variance calculation state.
-     *
-     * This function is only called for the first iteration, for the first row.
-     */
-    inline void initialize(const Allocator &inAllocator,
-                           const uint16_t inWidthOfX,
-                           const uint16_t inNumBasis,
-                           const uint16_t inNumCategoricals) {
-        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-                                             dbal::DoZero, dbal::ThrowBadAlloc>(
-                arraySize(inWidthOfX, inNumBasis, inNumCategoricals));
-        rebind(inWidthOfX, inNumBasis, inNumCategoricals);
-        widthOfX = inWidthOfX;
-        numBasis = inNumBasis;
-        numCategoricals = inNumCategoricals;
-    }
-
-    /**
-     * @brief We need to support assigning the previous state
-     */
-    template <class OtherHandle>
-    MarginsLogregrInteractionState &operator=(
-        const MarginsLogregrInteractionState<OtherHandle> &inOtherState) {
-
-        for (size_t i = 0; i < mStorage.size(); i++)
-            mStorage[i] = inOtherState.mStorage[i];
-        return *this;
-    }
-
-    /**
-     * @brief Merge with another State object by copying the intra-iteration
-     *     fields
-     */
-    template <class OtherHandle>
-    MarginsLogregrInteractionState &operator+=(
-        const MarginsLogregrInteractionState<OtherHandle> &inOtherState) {
-
-        if (mStorage.size() != inOtherState.mStorage.size() ||
-            widthOfX != inOtherState.widthOfX)
-            throw std::logic_error("Internal error: Incompatible transition "
-                                   "states");
-
-        numRows += inOtherState.numRows;
-        marginal_effects += inOtherState.marginal_effects;
-        delta += inOtherState.delta;
-        return *this;
-    }
-
-    /**
-     * @brief Reset the inter-iteration fields.
-     */
-    inline void reset() {
-        numRows = 0;
-        marginal_effects.fill(0);
-        categorical_indices.fill(0);
-        training_data_vcov.fill(0);
-        delta.fill(0);
-    }
-
-  private:
-    static inline size_t arraySize(const uint16_t inWidthOfX,
-                                   const uint16_t inNumBasis,
-                                   const uint16_t inNumCategoricals) {
-        return 5 + inNumBasis + inNumCategoricals + (inWidthOfX + inNumBasis) * inWidthOfX;
-    }
-
-    /**
-     * @brief Rebind to a new storage array
-     *
-     * @param inWidthOfX The number of independent variables.
-     *
-     */
-    void rebind(uint16_t inWidthOfX, uint16_t inNumBasis, uint16_t inNumCategoricals) {
-        iteration.rebind(&mStorage[0]);
-        widthOfX.rebind(&mStorage[1]);
-        numBasis.rebind(&mStorage[2]);
-        numCategoricals.rebind(&mStorage[3]);
-        numRows.rebind(&mStorage[4]);
-        marginal_effects.rebind(&mStorage[5], inNumBasis);
-        training_data_vcov.rebind(&mStorage[5 + inNumBasis], inWidthOfX, inWidthOfX);
-        delta.rebind(&mStorage[5 + inNumBasis + inWidthOfX * inWidthOfX],
-                     inNumBasis, inWidthOfX);
-        if (inNumCategoricals > 0)
-            categorical_indices.rebind(&mStorage[5 + inNumBasis +
-                                            (inWidthOfX + inNumBasis) * inWidthOfX],
-                                   inNumCategoricals);
-    }
-    Handle mStorage;
-
-  public:
-
-    typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
-    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
-    typename HandleTraits<Handle>::ReferenceToUInt16 numBasis;
-    typename HandleTraits<Handle>::ReferenceToUInt16 numCategoricals;
-    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap marginal_effects;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap categorical_indices;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap training_data_vcov;
-    typename HandleTraits<Handle>::MatrixTransparentHandleMap delta;
-};
-// ----------------------------------------------------------------------
-
 /**
  * @brief Helper function that computes the final statistics for the marginal variance
  */
@@ -221,153 +78,6 @@ AnyType margins_stateToResult(
 }
 // -------------------------------------------------------------------------
 
-
-/**
- * @brief Perform the marginal effects transition step
- */
-AnyType
-margins_logregr_int_transition::run(AnyType &args) {
-    MarginsLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
-    if (args[1].isNull() || args[2].isNull() ||
-            args[3].isNull() || args[4].isNull()) {
-        return args[0];
-    }    MappedColumnVector x;
-    try {
-        // an exception is raised in the backend if args[2] contains nulls
-        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
-        // x is a const reference, we can only rebind to change its pointer
-        x.rebind(xx.memoryHandle(), xx.size());
-    } catch (const ArrayWithNullException &e) {
-        return args[0];
-    }
-
-    // The following check was added with MADLIB-138.
-    if (!dbal::eigen_integration::isfinite(x))
-        throw std::domain_error("Design matrix is not finite.");
-
-    MappedColumnVector coef = args[2].getAs<MappedColumnVector>();
-
-    // matrix is read in as a column-order matrix, the input is passed-in as row-order.
-    Matrix derivative_matrix = args[4].getAs<MappedMatrix>();
-    derivative_matrix.transposeInPlace();
-
-    if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                                    "larger than 65535.");
-        Matrix training_data_vcov = args[3].getAs<MappedMatrix>();
-
-        MappedColumnVector categorical_indices;
-        uint16_t numCategoricals = 0;
-        if (!args[5].isNull()) {
-            try {
-                MappedColumnVector xx = args[5].getAs<MappedColumnVector>();
-                categorical_indices.rebind(xx.memoryHandle(), xx.size());
-            } catch (const ArrayWithNullException &e) {
-                throw std::runtime_error("The categorical indices contain NULL values");
-            }
-            numCategoricals = categorical_indices.size();
-        }
-        state.initialize(*this,
-                         static_cast<uint16_t>(coef.size()),
-                         static_cast<uint16_t>(derivative_matrix.rows()),
-                         static_cast<uint16_t>(numCategoricals));
-        state.training_data_vcov = training_data_vcov;
-        if (numCategoricals > 0)
-            state.categorical_indices = categorical_indices;
-    }
-
-    // Now do the transition step
-    state.numRows++;
-    double xc = dot(x, coef);
-    double p = std::exp(xc)/ (1 + std::exp(xc));
-
-    // compute marginal effects and delta using 1st and 2nd derivatives
-    ColumnVector coef_interaction_sum;
-    coef_interaction_sum = derivative_matrix * coef;
-    ColumnVector current_me = coef_interaction_sum * p * (1 - p);
-
-    Matrix current_delta;
-    current_delta = p * (1 - p) * (
-                        (1 - 2 * p) * coef_interaction_sum * trans(x) +
-                        derivative_matrix);
-
-    // update marginal effects and delta using discrete differences just for
-    // categorical variables
-    Matrix x_set;
-    Matrix x_unset;
-    if (!args[6].isNull() && !args[7].isNull()){
-        // the matrix is read in column-order but passed in row-order
-        x_set = args[6].getAs<MappedMatrix>();
-        x_set.transposeInPlace();
-
-        x_unset = args[7].getAs<MappedMatrix>();
-        x_unset.transposeInPlace();
-    }
-    for (Index i = 0; i < state.numCategoricals; ++i) {
-        // Note: categorical_indices are assumed to be zero-based
-        double xc_set = dot(x_set.row(i), coef);
-        double p_set = logistic(xc_set);
-        double xc_unset = dot(x_unset.row(i), coef);
-        double p_unset = logistic(xc_unset);
-        current_me(static_cast<uint16_t>(state.categorical_indices(i))) = p_set - p_unset;
-
-        current_delta.row(static_cast<uint16_t>(state.categorical_indices(i))) = (
-               (p_set * (1 - p_set) * x_set.row(i) -
-                p_unset * (1 - p_unset) * x_unset.row(i)));
-    }
-
-    state.marginal_effects += current_me;
-    state.delta += current_delta;
-    return state;
-}
-
-
-/**
- * @brief Marginal effects: Merge transition states
- */
-AnyType
-margins_logregr_int_merge::run(AnyType &args) {
-    MarginsLogregrInteractionState<MutableArrayHandle<double> > stateLeft = args[0];
-    MarginsLogregrInteractionState<ArrayHandle<double> > stateRight = args[1];
-    // We first handle the trivial case where this function is called with one
-    // of the states being the initial state
-    if (stateLeft.numRows == 0)
-        return stateRight;
-    else if (stateRight.numRows == 0)
-        return stateLeft;
-
-    // Merge states together and return
-    stateLeft += stateRight;
-    return stateLeft;
-}
-
-/**
- * @brief Marginal effects: Final step
- */
-AnyType
-margins_logregr_int_final::run(AnyType &args) {
-    // We request a mutable object.
-    // Depending on the backend, this might perform a deep copy.
-    MarginsLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
-    // Aggregates that haven't seen any data just return Null.
-    if (state.numRows == 0)
-        return Null();
-
-    // Variance for marginal effects according to the delta method
-    Matrix variance;
-    variance = state.delta * state.training_data_vcov;
-    // we only need the diagonal elements of the variance, so we perform a dot
-    // product of each row with itself to compute each diagonal element.
-    // We divide by numRows^2 since we need the average variance
-    ColumnVector variance_diagonal =
-        variance.cwiseProduct(state.delta).rowwise().sum() / (state.numRows * state.numRows);
-
-    // Computing the final results
-    return margins_stateToResult(*this, variance_diagonal,
-                                 state.marginal_effects, state.numRows);
-}
-// ------------------------ End of Logistic Marginal ---------------------------
 
 // ---------------------------------------------------------------------------
 //             Marginal Effects Linear Regression States
@@ -522,19 +232,19 @@ margins_linregr_int_transition::run(AnyType &args) {
     if (!dbal::eigen_integration::isfinite(x))
         throw std::domain_error("Design matrix is not finite.");
 
-    MappedColumnVector coef = args[2].getAs<MappedColumnVector>();
+    MappedColumnVector beta = args[2].getAs<MappedColumnVector>();
 
-    // matrix is read in as a column-order matrix, the input is row-order.
-    Matrix derivative_matrix = args[4].getAs<MappedMatrix>();
-    derivative_matrix.transposeInPlace();
+    Matrix J_trans = args[4].getAs<MappedMatrix>();
+    J_trans.transposeInPlace(); // we actually pass-in J but transpose since
+                                // we only require J^T in our equations
 
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
                                     "larger than 65535.");
         state.initialize(*this,
-                         static_cast<uint16_t>(coef.size()),
-                         static_cast<uint16_t>(derivative_matrix.rows()));
+                         static_cast<uint16_t>(beta.size()),
+                         static_cast<uint16_t>(J_trans.rows()));
         Matrix training_data_vcov = args[3].getAs<MappedMatrix>();
         state.training_data_vcov = training_data_vcov;
     }
@@ -542,8 +252,8 @@ margins_linregr_int_transition::run(AnyType &args) {
     // Now do the transition step
     state.numRows++;
     // compute marginal effects and delta using 1st and 2nd derivatives
-    state.marginal_effects += derivative_matrix * coef;
-    state.delta += derivative_matrix;
+    state.marginal_effects += J_trans * beta;
+    state.delta += J_trans;
     return state;
 }
 
@@ -592,6 +302,358 @@ margins_linregr_int_final::run(AnyType &args) {
                                  state.marginal_effects, state.numRows);
 }
 
+// ---------------------------------------------------------------------------
+//             Marginal Effects Logistic Regression States
+// ---------------------------------------------------------------------------
+/**
+ * @brief State for marginal effects calculation for logistic regression
+ *
+ * TransitionState encapsualtes the transition state during the
+ * marginal effects calculation for the logistic-regression aggregate function.
+ * To the database, the state is exposed as a single DOUBLE PRECISION array,
+ * to the C++ code it is a proper object containing scalars and vectors.
+ *
+ * Note: We assume that the DOUBLE PRECISION array is initialized by the
+ * database with length at least 5, and all elemenets are 0.
+ *
+ */
+template <class Handle>
+class MarginsLogregrInteractionState {
+    template <class OtherHandle>
+    friend class MarginsLogregrInteractionState;
+
+  public:
+    MarginsLogregrInteractionState(const AnyType &inArray)
+        : mStorage(inArray.getAs<Handle>()) {
+
+        rebind(static_cast<uint16_t>(mStorage[1]),
+               static_cast<uint16_t>(mStorage[2]),
+               static_cast<uint16_t>(mStorage[3]));
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Initialize the marginal variance calculation state.
+     *
+     * This function is only called for the first iteration, for the first row.
+     */
+    inline void initialize(const Allocator &inAllocator,
+                           const uint16_t inWidthOfX,
+                           const uint16_t inNumBasis,
+                           const uint16_t inNumCategoricals) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+                                             dbal::DoZero, dbal::ThrowBadAlloc>(
+                arraySize(inWidthOfX, inNumBasis, inNumCategoricals));
+        rebind(inWidthOfX, inNumBasis, inNumCategoricals);
+        widthOfX = inWidthOfX;
+        numBasis = inNumBasis;
+        numCategoricalVarsInSubset = inNumCategoricals;
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    MarginsLogregrInteractionState &operator=(
+        const MarginsLogregrInteractionState<OtherHandle> &inOtherState) {
+
+        for (size_t i = 0; i < mStorage.size(); i++)
+            mStorage[i] = inOtherState.mStorage[i];
+        return *this;
+    }
+
+    /**
+     * @brief Merge with another State object by copying the intra-iteration
+     *     fields
+     */
+    template <class OtherHandle>
+    MarginsLogregrInteractionState &operator+=(
+        const MarginsLogregrInteractionState<OtherHandle> &inOtherState) {
+
+        if (mStorage.size() != inOtherState.mStorage.size() ||
+            widthOfX != inOtherState.widthOfX)
+            throw std::logic_error("Internal error: Incompatible transition "
+                                   "states");
+
+        numRows += inOtherState.numRows;
+        marginal_effects += inOtherState.marginal_effects;
+        delta += inOtherState.delta;
+        return *this;
+    }
+
+    /**
+     * @brief Reset the inter-iteration fields.
+     */
+    inline void reset() {
+        numRows = 0;
+        marginal_effects.fill(0);
+        categorical_basis_indices.fill(0);
+        training_data_vcov.fill(0);
+        delta.fill(0);
+    }
+
+  private:
+    static inline size_t arraySize(const uint16_t inWidthOfX,
+                                   const uint16_t inNumBasis,
+                                   const uint16_t inNumCategoricals) {
+        return 5 + inNumBasis + inNumCategoricals + (inWidthOfX + inNumBasis) * inWidthOfX;
+    }
+
+    /**
+     * @brief Rebind to a new storage array
+     *
+     * @param inWidthOfX The number of independent variables.
+     *
+     */
+    void rebind(uint16_t inWidthOfX, uint16_t inNumBasis, uint16_t inNumCategoricals) {
+        iteration.rebind(&mStorage[0]);
+        widthOfX.rebind(&mStorage[1]);
+        numBasis.rebind(&mStorage[2]);
+        numCategoricalVarsInSubset.rebind(&mStorage[3]);
+        numRows.rebind(&mStorage[4]);
+        marginal_effects.rebind(&mStorage[5], inNumBasis);
+        training_data_vcov.rebind(&mStorage[5 + inNumBasis], inWidthOfX, inWidthOfX);
+        delta.rebind(&mStorage[5 + inNumBasis + inWidthOfX * inWidthOfX],
+                     inNumBasis, inWidthOfX);
+        if (inNumCategoricals > 0)
+            categorical_basis_indices.rebind(&mStorage[5 + inNumBasis +
+                                            (inWidthOfX + inNumBasis) * inWidthOfX],
+                                            inNumCategoricals);
+    }
+    Handle mStorage;
+
+  public:
+
+    typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
+    typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
+    typename HandleTraits<Handle>::ReferenceToUInt16 numBasis;
+    typename HandleTraits<Handle>::ReferenceToUInt16 numCategoricalVarsInSubset;
+    typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap marginal_effects;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap categorical_basis_indices;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap training_data_vcov;
+    typename HandleTraits<Handle>::MatrixTransparentHandleMap delta;
+};
+// ----------------------------------------------------------------------
+
+/**
+ * @brief Perform the marginal effects transition step
+ */
+AnyType
+margins_logregr_int_transition::run(AnyType &args) {
+    MarginsLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
+    if (args[1].isNull() || args[2].isNull() ||
+            args[3].isNull() || args[4].isNull()) {
+        return args[0];
+    }    MappedColumnVector f;
+    try {
+        // an exception is raised in the backend if args[2] contains nulls
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        // x is a const reference, we can only rebind to change its pointer
+        f.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+
+    // The following check was added with MADLIB-138.
+    if (!dbal::eigen_integration::isfinite(f))
+        throw std::domain_error("Design matrix is not finite.");
+
+    // beta is the coefficient vector from logistic regression
+    MappedColumnVector beta = args[2].getAs<MappedColumnVector>();
+
+    // basis_indices represents the indices (from beta) of which we want to
+    // compute the marginal effect. We don't need to compute the ME for all
+    // variables, thus basis_indices could be a subset of all indices.
+    MappedColumnVector basis_indices = args[4].getAs<MappedColumnVector>();
+
+    // below symbols match the ones used in the design doc
+    const uint16_t N = beta.size();
+    const uint16_t M = basis_indices.size();
+    assert(N >= M);
+
+    Matrix J;  // J: N * M
+    if (args[5].isNull()){
+        J = Matrix::Zero(N, M);
+        for (Index i = 0; i < M; ++i)
+            J(basis_indices(i), i) = 1;
+    } else{
+        J = args[5].getAs<MappedMatrix>();
+    }
+    assert(J.rows() == N && J.cols() == M);
+
+    MappedColumnVector categorical_indices;
+    uint16_t numCategoricalVars = 0;
+
+    if (!args[6].isNull()) {
+        // categorical_indices represents which indices (from beta) are
+        // categorical variables
+        try {
+            MappedColumnVector xx = args[6].getAs<MappedColumnVector>();
+            categorical_indices.rebind(xx.memoryHandle(), xx.size());
+        } catch (const ArrayWithNullException &e) {
+             throw std::runtime_error("The categorical indices contain NULL values");
+        }
+        numCategoricalVars = categorical_indices.size();
+    }
+
+    if (state.numRows == 0) {
+        if (f.size() > std::numeric_limits<uint16_t>::max())
+            throw std::domain_error("Number of independent variables cannot be "
+                                    "larger than 65535.");
+        std::vector<uint16_t> tmp_cat_basis_indices;
+        if (numCategoricalVars > 0){
+            // find which of the variables in basis_indices are categorical
+            // and store only the indices for these variables in our state
+            for (Index i = 0; i < basis_indices.size(); ++i){
+                for (Index j = 0; j < categorical_indices.size(); ++j){
+                    if (basis_indices(i) == categorical_indices(j)){
+                        tmp_cat_basis_indices.push_back(i);
+                        continue;
+                    }
+                }
+            }
+            state.numCategoricalVarsInSubset = tmp_cat_basis_indices.size();
+        }
+        state.initialize(*this,
+                         static_cast<uint16_t>(N),
+                         static_cast<uint16_t>(M),
+                         static_cast<uint16_t>(state.numCategoricalVarsInSubset));
+
+        Matrix training_data_vcov = args[3].getAs<MappedMatrix>();
+        state.training_data_vcov = training_data_vcov;
+
+        if (state.numCategoricalVarsInSubset > 0){
+            for (int i=0; i < state.numCategoricalVarsInSubset; ++i){
+                state.categorical_basis_indices(i) = tmp_cat_basis_indices[i];
+            }
+        }
+    }
+
+    // Now do the transition step
+    state.numRows++;
+    double f_beta = dot(f, beta);
+    double p = std::exp(f_beta)/ (1 + std::exp(f_beta));
+
+    // compute marginal effects and delta using 1st and 2nd derivatives
+    ColumnVector J_trans_beta;
+    J_trans_beta = trans(J) * beta;
+    ColumnVector curr_margins = J_trans_beta * p * (1 - p);
+
+    Matrix curr_delta;
+    curr_delta = p * (1 - p) * (trans(J) +
+                                (1 - 2 * p) * J_trans_beta * trans(f));
+
+    // margins and delta using discrete differences for categoricals variables
+
+    // f_set_mat and f_unset_mat are matrices where each row corresponds to a
+    //  categorical basis variable and the columns correspond to all terms
+    // (basis and interaction)
+    Matrix f_set_mat;  // numCategoricalVarsInSubset x N
+    Matrix f_unset_mat;  // numCategoricalVarsInSubset x N
+    if (!args[7].isNull() && !args[8].isNull()){
+        // the matrix is read in column-order but passed in row-order
+        f_set_mat = args[7].getAs<MappedMatrix>();
+        f_set_mat.transposeInPlace();
+
+        f_unset_mat = args[8].getAs<MappedMatrix>();
+        f_unset_mat.transposeInPlace();
+    }
+
+    // PERFORMANCE TWEAK: for the no interaction case, f_set_mat and f_unset_mat
+    // only need column entries for the categorical variables (others are same
+    // as f). Since, passing a smaller matrix into the transition function is
+    // faster, for the no interaction case, we don't need to input the whole
+    // matrix into this function. For the interaction case, since it is unknown
+    // which indices have interaction, we require entries for all columns in the
+    // matrices.
+    bool no_interactions = (f_set_mat.cols() < N);
+    for (Index i = 0; i < state.numCategoricalVarsInSubset; ++i) {
+        // Note: categorical_indices are assumed to be zero-based
+        ColumnVector f_set;
+        ColumnVector f_unset;
+        ColumnVector shortened_f_set = f_set_mat.row(i);
+        ColumnVector shortened_f_unset = f_unset_mat.row(i);
+
+        if (no_interactions){
+            f_set = f;
+            f_unset = f;
+            for (Index j=0; j < shortened_f_set.size(); ++j){
+                f_set(categorical_indices(j)) = shortened_f_set(j);
+                f_unset(categorical_indices(j)) = shortened_f_unset(j);
+            }
+        } else {
+            f_set = shortened_f_set;
+            f_unset = shortened_f_unset;
+        }
+        double p_set = logistic(dot(f_set, beta));
+        double p_unset = logistic(dot(f_unset, beta));
+
+        curr_margins(static_cast<uint16_t>(state.categorical_basis_indices(i))) = p_set - p_unset;
+        curr_delta.row(static_cast<uint16_t>(state.categorical_basis_indices(i))) = (
+            p_set * (1 - p_set) * f_set - p_unset * (1 - p_unset) * f_unset);
+    }
+    state.marginal_effects += curr_margins;
+    state.delta += curr_delta;
+    return state;
+}
+
+
+/**
+ * @brief Marginal effects: Merge transition states
+ */
+AnyType
+margins_logregr_int_merge::run(AnyType &args) {
+    MarginsLogregrInteractionState<MutableArrayHandle<double> > stateLeft = args[0];
+    MarginsLogregrInteractionState<ArrayHandle<double> > stateRight = args[1];
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.numRows == 0)
+        return stateRight;
+    else if (stateRight.numRows == 0)
+        return stateLeft;
+
+    // Merge states together and return
+    stateLeft += stateRight;
+    return stateLeft;
+}
+
+/**
+ * @brief Marginal effects: Final step
+ */
+AnyType
+margins_logregr_int_final::run(AnyType &args) {
+    // We request a mutable object.
+    // Depending on the backend, this might perform a deep copy.
+    MarginsLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
+    // Aggregates that haven't seen any data just return Null.
+    if (state.numRows == 0)
+        return Null();
+
+    // Variance for marginal effects according to the delta method
+    Matrix variance;
+    variance = state.delta * state.training_data_vcov;
+
+    // we only need the diagonal elements of the variance, so we perform a dot
+    // product of each row with state.delta to compute each diagonal element.
+    // We divide by numRows^2 since we need the average variance
+    ColumnVector variance_diagonal =
+        variance.cwiseProduct(state.delta).rowwise().sum() / (state.numRows * state.numRows);
+
+    // Computing the final results
+    return margins_stateToResult(*this, variance_diagonal,
+                                 state.marginal_effects, state.numRows);
+}
+// ------------------------ End of Logistic Marginal ---------------------------
 
 // ---------------------------------------------------------------------------
 //             Marginal Effects Multilogistic Regression
@@ -650,7 +712,7 @@ class MarginsMLogregrInteractionState {
         widthOfX = inWidthOfX;
         numCategories = inNumCategories;
         numBasis = inNumBasis;
-        numCategoricalVars = inNumCategoricalVars;
+        numCategoricalVarsInSubset = inNumCategoricalVars;
     }
 
     /**
@@ -690,7 +752,7 @@ class MarginsMLogregrInteractionState {
     inline void reset() {
         numRows = 0;
         marginal_effects.fill(0);
-        categorical_indices.fill(0);
+        categorical_basis_indices.fill(0);
         training_data_vcov.fill(0);
         delta.fill(0);
     }
@@ -724,7 +786,7 @@ class MarginsMLogregrInteractionState {
         widthOfX.rebind(&mStorage[0]);
         numCategories.rebind(&mStorage[1]);
         numBasis.rebind(&mStorage[2]);
-        numCategoricalVars.rebind(&mStorage[3]);
+        numCategoricalVarsInSubset.rebind(&mStorage[3]);
         numRows.rebind(&mStorage[4]);
 
         if (L == 0) { return; }
@@ -740,7 +802,7 @@ class MarginsMLogregrInteractionState {
         current_length += N*(L-1)*M*(L-1);
 
         if (inNumCategoricalVars > 0)
-            categorical_indices.rebind(&mStorage[current_length], inNumCategoricalVars);
+            categorical_basis_indices.rebind(&mStorage[current_length], inNumCategoricalVars);
     }
     Handle mStorage;
 
@@ -749,10 +811,10 @@ class MarginsMLogregrInteractionState {
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;       // N
     typename HandleTraits<Handle>::ReferenceToUInt16 numCategories;  // L
     typename HandleTraits<Handle>::ReferenceToUInt16 numBasis;       // M
-    typename HandleTraits<Handle>::ReferenceToUInt16 numCategoricalVars;
+    typename HandleTraits<Handle>::ReferenceToUInt16 numCategoricalVarsInSubset;
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap marginal_effects; // ME
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap categorical_indices;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap categorical_basis_indices;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap training_data_vcov;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap delta;   // S
 };
@@ -789,48 +851,81 @@ margins_mlogregr_int_transition::run(AnyType &args) {
         throw std::domain_error("Design matrix is not finite.");
 
     // coefficients are arranged in a matrix
-    MappedMatrix beta = args[2].getAs<MappedMatrix>();  // beta: N * (L - 1)
-    MappedMatrix J = args[4].getAs<MappedMatrix>(); // J: N * M
-    // J.transposeInPlace();
+    MappedMatrix beta = args[2].getAs<MappedMatrix>();  // beta: N x (L - 1)
+
+    // basis_indices represents the indices (from beta) of which we want to
+    // compute the marginal effect. We don't need to compute the ME for all
+    // variables, thus basis_indices could be a subset of all indices.
+    MappedColumnVector basis_indices = args[4].getAs<MappedColumnVector>();
+
+    // all variable symbols correspond to the design document
+    const uint16_t N = beta.rows();
+    const uint16_t M = basis_indices.size();
+    assert(N >= M);
+
+    Matrix J;  // J: N x M
+    if (args[5].isNull()){
+        J = Matrix::Zero(N, M);
+        for (Index i = 0; i < M; ++i)
+            J(basis_indices(i), i) = 1;
+    } else{
+        J = args[5].getAs<MappedMatrix>();
+    }
+    assert(J.rows() == N && J.cols() == M);
+
+    MappedColumnVector categorical_indices;
+    uint16_t numCategoricalVars = 0;
+
+    if (!args[6].isNull()) {
+        // categorical_indices represents which indices (from beta) are
+        // categorical variables
+        try {
+            MappedColumnVector xx = args[6].getAs<MappedColumnVector>();
+            categorical_indices.rebind(xx.memoryHandle(), xx.size());
+        } catch (const ArrayWithNullException &e) {
+             throw std::runtime_error("The categorical indices contain NULL values");
+        }
+        numCategoricalVars = categorical_indices.size();
+    }
 
     if (state.numRows == 0) {
         if (f.size() > std::numeric_limits<uint16_t>::max())
             throw std::domain_error("Number of independent variables cannot be "
                                     "larger than 65535.");
-        Matrix training_data_vcov = args[3].getAs<MappedMatrix>();
-
-        MappedColumnVector categorical_indices;
-        uint16_t numCategoricalVars = 0;
-        if (!args[5].isNull()) {
-            try {
-                MappedColumnVector xx = args[5].getAs<MappedColumnVector>();
-                categorical_indices.rebind(xx.memoryHandle(), xx.size());
-            } catch (const ArrayWithNullException &e) {
-                throw std::runtime_error("The categorical indices contain NULL values");
+        std::vector<uint16_t> tmp_cat_basis_indices;
+        if (numCategoricalVars > 0){
+            // find which of the variables in basis_indices are categorical
+            // and store only the indices for these variables in our state
+            for (Index i = 0; i < basis_indices.size(); ++i){
+                for (Index j = 0; j < categorical_indices.size(); ++j){
+                    if (basis_indices(i) == categorical_indices(j)){
+                        tmp_cat_basis_indices.push_back(i);
+                        continue;
+                    }
+                }
             }
-            numCategoricalVars = categorical_indices.size();
+            state.numCategoricalVarsInSubset = tmp_cat_basis_indices.size();
         }
         state.initialize(*this,
                          static_cast<uint16_t>(J.rows()),
                          static_cast<uint16_t>(beta.cols() + 1),
                          static_cast<uint16_t>(J.cols()),
-                         static_cast<uint16_t>(numCategoricalVars));
+                         static_cast<uint16_t>(state.numCategoricalVarsInSubset));
 
+        Matrix training_data_vcov = args[3].getAs<MappedMatrix>();
         state.training_data_vcov = training_data_vcov;
-        if (numCategoricalVars > 0)
-            state.categorical_indices = categorical_indices;
+        if (state.numCategoricalVarsInSubset > 0){
+            for (int i=0; i < state.numCategoricalVarsInSubset; ++i){
+                state.categorical_basis_indices(i) = tmp_cat_basis_indices[i];
+            }
+        }
     }
 
     state.numRows++;
 
     // all variable symbols correspond to the design document
     const uint16_t & L = state.numCategories;
-    const uint16_t & N = state.widthOfX;
-    const uint16_t & M = state.numBasis;
-
-
     ColumnVector prob = trans(beta) * f;
-
     Matrix J_trans_beta = trans(J) * beta;
 
     // Calculate the odds ratio
@@ -839,10 +934,7 @@ margins_mlogregr_int_transition::run(AnyType &args) {
     prob = prob / (1 + prob_sum);
 
     ColumnVector JBP = J_trans_beta * prob;
-
-
     Matrix curr_margins = J_trans_beta * prob.asDiagonal() - JBP * trans(prob);
-
 
     // compute delta using 2nd derivatives
     // delta matrix is 2-D of size (L-1)M x (L-1)N:
@@ -852,10 +944,10 @@ margins_mlogregr_int_transition::run(AnyType &args) {
     int row_index, col_index, delta_l_l1;
     for (int m = 0; m < M; m++){
         // Skip the categorical variables
-        if (state.numCategoricalVars > 0) {
+        if (state.numCategoricalVarsInSubset > 0) {
             bool is_categorical = false;
-            for(int i = 0; i < state.categorical_indices.size(); i++)
-                if (m == state.categorical_indices(i)) {
+            for(int i = 0; i < state.categorical_basis_indices.size(); i++)
+                if (m == state.categorical_basis_indices(i)) {
                     is_categorical = true;
                     break;
                 }
@@ -881,45 +973,70 @@ margins_mlogregr_int_transition::run(AnyType &args) {
 
     // update marginal effects and delta using discrete differences just for
     // categorical variables
-    Matrix f_set_mat;   // numCategoricalVars * N
-    Matrix f_unset_mat; // numCategoricalVars * N
+    Matrix f_set_mat;   // numCategoricalVarsInSubset * N
+    Matrix f_unset_mat; // numCategoricalVarsInSubset * N
     // the above matrices contain the f_set and f_unset for all categorical variables
-    if (!args[6].isNull() && !args[7].isNull()){
+    if (!args[7].isNull() && !args[8].isNull()){
         // the matrix is read in column-order but passed in row-order
-        f_set_mat = args[6].getAs<MappedMatrix>();
+        f_set_mat = args[7].getAs<MappedMatrix>();
         f_set_mat.transposeInPlace();
 
-        f_unset_mat = args[7].getAs<MappedMatrix>();
+        f_unset_mat = args[8].getAs<MappedMatrix>();
         f_unset_mat.transposeInPlace();
     }
 
-    for (Index i = 0; i < state.numCategoricalVars; ++i) {
+    // PERFORMANCE TWEAK: for the no interaction case, f_set_mat and f_unset_mat
+    // only need column entries for the categorical variables (others are same
+    // as f). Since, passing a smaller matrix into the transition function is
+    // faster, for the no interaction case, we don't need to input the whole
+    // matrix into this function. For the interaction case, since it is unknown
+    // which indices have interaction, we require entries for all columns in the
+    // matrices.
+    bool no_interactions = (f_set_mat.cols() < N);
+    for (Index i = 0; i < state.numCategoricalVarsInSubset; ++i) {
         // Note: categorical_indices are assumed to be zero-based
-        RowVector p_set = f_set_mat.row(i) * beta;
+        ColumnVector f_set;
+        ColumnVector f_unset;
+        ColumnVector shortened_f_set = f_set_mat.row(i);
+        ColumnVector shortened_f_unset = f_unset_mat.row(i);
+
+        if (no_interactions){
+            f_set = f;
+            f_unset = f;
+            for (Index j=0; j < shortened_f_set.size(); ++j){
+                f_set(categorical_indices(j)) = shortened_f_set(j);
+                f_unset(categorical_indices(j)) = shortened_f_unset(j);
+            }
+        } else {
+            f_set = shortened_f_set;
+            f_unset = shortened_f_unset;
+        }
+
+        RowVector p_set = trans(f_set) * beta;
         {
             p_set = p_set.array().exp();
             double p_sum = p_set.sum();
             p_set = p_set / (1 + p_sum);
         }
 
-        RowVector p_unset = f_unset_mat.row(i) * beta;
+        RowVector p_unset = trans(f_unset) * beta;
         {
             p_unset = p_unset.array().exp();
             double p_sum = p_unset.sum();
             p_unset = p_unset / (1 + p_sum);
         }
         // Compute the marginal effect using difference method
-        curr_margins.row(static_cast<uint16_t>(state.categorical_indices(i))) = p_set - p_unset;
+        curr_margins.row(static_cast<uint16_t>(state.categorical_basis_indices(i))) = p_set - p_unset;
 
         // Compute the delta using difference method
-        int m = static_cast<uint16_t>(state.categorical_indices(i));
+        int m = static_cast<uint16_t>(state.categorical_basis_indices(i));
         for (int l = 0; l < L - 1; l++) {
             row_index = reindex(m, l, L - 1);
             for (int n = 0; n < N; n++) {
                 for (int l1 = 0; l1 < L - 1; l1++) {
-                    double delta = - p_set(l) * p_set(l1) * f_set_mat(i, n) + p_unset(l) * p_unset(l1) * f_unset_mat(i, n);
+                    double delta = - p_set(l) * p_set(l1) * f_set(n) + p_unset(l) * p_unset(l1) * f_unset(n);
                     if (l1 == l)
-                        delta += p_set(l) * f_set_mat(i, n) - p_unset(l) * f_unset_mat(i, n);
+                        delta += p_set(l) * f_set(n) - p_unset(l) * f_unset(n);
                     col_index = reindex(n, l1, L - 1);
                     state.delta(row_index, col_index) += delta;
                 }

@@ -19,7 +19,6 @@ m4_include(`SQLCommon.m4')
 <div class="toc"><b>Contents</b>
 <ul>
 <li><a href="#margins">Marginal Effects with Interaction Terms</a></li>
-<li><a href="#mlogregr_train">Marginal Effects for Multinomial Logistic Regression</a></li>
 <li><a href="#examples">Examples</a></li>
 <li><a href="#notes">Notes</a></li>
 <li><a href="#background">Technical Background</a></li>
@@ -41,10 +40,11 @@ source table.
 MADlib provides marginal effects regression functions for linear, logistic and
 multinomial logistic regressions.
 
-@warning The margins_logregr has been deprecated in favor of the 'margins' function.
+@warning The margins_logregr and margins_mlogregr have been deprecated in favor
+of the 'margins' function.
 
 @anchor margins
-@par Marginal Effects for Logistic Regression with Interaction Terms
+@par Marginal Effects with Interaction Terms
 <pre class="syntax">
 margins( modele_table,
          output_table,
@@ -120,8 +120,9 @@ variables and <em>'marginal_vars'</em> contains it's index,
 the <em>'margins'</em> function will ignore that variable for the output.
 
 @anchor logregr_train
-@warning This function has been deprecated.
 @par Marginal Effects for Logistic Regression
+@warning This function has been deprecated in favor of <em>'margins'</em>.
+
 <pre class="syntax">
 margins_logregr( source_table,
                  output_table,
@@ -183,6 +184,8 @@ margins_logregr( source_table,
 
 @anchor mlogregr_train
 @par Marginal Effects for Multinomial Logistic Regression
+@warning This function has been deprecated in favor of <em>'margins'</em>.
+
 <pre class="syntax">
 margins_mlogregr( source_table,
                   out_table,
@@ -319,12 +322,6 @@ z_stats   | {-1.58786269307674}
 p_values  | {0.112317391159946}
 </pre>
 
--# View online help for marginal effects multinomial logistic regression.
-<pre class="example">
-SELECT madlib.margins_mlogregr();
-</pre>
-
-
 -# Create a sample data set for multinomial logistic regression. (The full dataset has three categories.)
 <pre class="example">
 SELECT * FROM data;
@@ -352,11 +349,12 @@ SELECT margins_mlogregr('help');
 
 -# Run the regression function and then compute the marginal effects of all variables in the regression.
 <pre class="example">
-SELECT madlib.margins_mlogregr( 'test_data',
-                                'result_table',
-                                'category',
-                                'ARRAY[1, feature_1, feature_2]'
-                              );
+SELECT madlib.mlogregr_train('data', 'model_table', 'category',
+                             'ARRAY[1, feature_1, feature_2, feature_1*feature2]'
+                             0)
+SELECT madlib.margins('model_table',
+                      'result_table',
+                      '1, 2, 3, 2*3');
 SELECT * FROM result_table;
 </pre>
 Result:
@@ -367,53 +365,19 @@ z_stats  | {4.04872078394,-0.743894043547,-4.34453038911,-3.68855676202,2.023380
 p_values | {5.149834e-05, 4.569406e-01, 1.395739e-05, 2.255297e-04, 4.303397e-02, 1.638793e-04}
 </pre>
 
--# Run the regression and compute the marginal effects for the first dependent variable (all categories).
-<pre class="example">
-SELECT madlib.margins_mlogregr( 'test_data',
-                                'result_table',
-                                'category',
-                                'ARRAY[1, feature_1, feature_2]',
-                                0,
-                                NULL,
-                                ARRAY[1]
-                              );
-SELECT * FROM result_table;
-</pre>
-Result:
-<pre class="result">
-margins  | {0.741613239156,-0.972055011831}
-std_err  | {0.183172236055,0.263532615748}
-z_stats  | {4.04872078394,-3.68855676202}
-p_values | {5.149834e-05, 2.255297e-04}
-</pre>
-
 @anchor notes
 @par Notes
 
-<b>Multinomial-Logistic Regression Notes</b>
-
-- The reference category ranges from [0, numCategories - 1]. The default reference
-category is zero.
-
-- The marginal effects and supporting statistics are output in the following order.
-For a problem with K dependent variables (1, ..., K) and J categories (0,..., J-1).
-The output is \f$ \{ m_{k_1, j_0} \ldots m_{k_K, j_{0}},
-m_{k_1, j_1} \ldots m_{k_K, j_{1}}, m_{k_1, j_{J-1}} \ldots m_{k_K, j_{J-1}} \} \f$.
-The order is NOT CONSISTENT with mlogregr, robust_variance_mlogregr and clustered_variance_mlogregr.
-This is deliberate; the interfaces of the other functions will be changed
-to match that used in the marginal effects function.
-
-- Selectively picking the marginal effects of the independent variables will return
-the marginal effects of \e all categories associated with the independent variable.
-
-- The <em>independent_varname</em> argument can be the name of a column that contains an
-array of numeric values. It can also be a string with the format 'ARRAY[1, x1, x2, x3]',
-where <em>x1</em>, <em>x2</em>, and <em>x3</em> are column names.
-
-- The <em>vars</em> argument is an index list (base 1) with the set of indices
+- The <em>marginal_vars</em> argument is an index list (base 1) with the set of indices
 amongst the independent variables that must be selected.
-Use <em>NULL</em> to use all independent variables.
+Use <em>NULL</em> to use all independent variables. It is important to note here
+that the <em>independent_varname</em> in the underlying regression is assumed to
+start with a lower bound index of 1. Arrays that don't follow this would result
+in incorrect solution.
 
+- For <b>multinomial logistic regression</b>, selectively picking the marginal
+effects of the independent variables will return the marginal effects of \e all
+categories associated with the independent variable.
 
 @anchor background
 @par Technical Background
@@ -1267,6 +1231,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_logregr_int_transition(
     x                     DOUBLE PRECISION[],
     coef                  DOUBLE PRECISION[],
     vcov                  DOUBLE PRECISION[],
+    basis_indices         DOUBLE PRECISION[],
     derivative            DOUBLE PRECISION[],
     categorical_indices   DOUBLE PRECISION[],
     x_set                 DOUBLE PRECISION[],
@@ -1321,6 +1286,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__margins_int_logregr_agg(
     /*+ "independentVariables" */  DOUBLE PRECISION[],
     /*+ "coef" */                  DOUBLE PRECISION[],
     /*+ "vcov" */                  DOUBLE PRECISION[],
+    /*+ "basis_indices" */         DOUBLE PRECISION[],
     /*+ "derivative matrix" */     DOUBLE PRECISION[],
     /*+ "categorical_indices" */   DOUBLE PRECISION[],
     /*+ "x_set" */                 DOUBLE PRECISION[],
@@ -1342,6 +1308,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_mlogregr_int_transition(
     x                     DOUBLE PRECISION[],
     coef                  DOUBLE PRECISION[],
     vcov                  DOUBLE PRECISION[],
+    basis_indices         DOUBLE PRECISION[],
     derivative_matrix     DOUBLE PRECISION[],
     categorical_indices   DOUBLE PRECISION[],
     x_set                 DOUBLE PRECISION[],
@@ -1397,6 +1364,7 @@ CREATE AGGREGATE MADLIB_SCHEMA.__margins_int_mlogregr_agg(
     /*+ "independentVariables" */  DOUBLE PRECISION[],
     /*+ "coef" */                  DOUBLE PRECISION[],
     /*+ "vcov" */                  DOUBLE PRECISION[],
+    /*+ "basis_indices" */         DOUBLE PRECISION[],
     /*+ "derivative matrix" */     DOUBLE PRECISION[],
     /*+ "categorical_indices" */   DOUBLE PRECISION[],
     /*+ "x_set" */                 DOUBLE PRECISION[],

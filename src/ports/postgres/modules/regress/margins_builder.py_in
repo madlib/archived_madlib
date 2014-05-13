@@ -50,8 +50,31 @@ class MarginalEffectsBuilder(object):
         # of a single interaction term.
         self.interaction_terms = defaultdict(dict)
         self.n_basis_terms, self.n_int_terms = self._parse_design_string()
-        self.n_terms = self.n_basis_terms + self.n_int_terms
+
+        self._subset_basis = None  # represents a subset of basis_terms
+                                   #  only for which we want to compute margins
     #------------------------------------------------------------------------------
+
+    @property
+    def subset_basis(self):
+        return self._subset_basis
+
+    @subset_basis.setter
+    def subset_basis(self, list_value):
+        try:
+            self._subset_basis = [int(i) for i in list_value]
+        except TypeError:
+            raise TypeError("Margins Error: subset_basis values should "
+                            "be integer indices")
+
+    def contains_interaction(self):
+        return len(self.interaction_terms) > 0
+
+    def contains_indicators(self):
+        return len(self.indicator_terms) > 0
+
+    def is_categorical(self, basis_index):
+        return (basis_index in self.get_all_indicator_indices())
 
     @staticmethod
     def _strip_indicator(indicator_term):
@@ -230,7 +253,8 @@ class MarginalEffectsBuilder(object):
     #------------------------------------------------------------------------------
 
     @classmethod
-    def create_sum_int_terms(cls, interaction_terms, coef_array_name, indep_array_name=None, quoted=False):
+    def create_sum_int_terms(cls, interaction_terms, coef_array_name,
+                             indep_array_name=None, quoted=False):
         if not interaction_terms:
             return ""
         result = []
@@ -241,39 +265,43 @@ class MarginalEffectsBuilder(object):
         return " + ".join(result)
     #------------------------------------------------------------------------------
 
-    def create_2nd_derivative_matrix(self, data_arary_name=None, quoted=False,
-                                     discrete=True):
+    def create_2nd_derivative_matrix(self, data_array_name=None,
+                                     quoted=False, discrete=True):
         """
         Compute the \frac{\partial f_i}{\partial x_k} where i is the index of
         independant variable     and k is the index of basis variable
 
         Args:
-            @param data_arary_name: str, Array name of the data
+            @param data_array_name: str, Array name of the data
 
         """
+        basis_indices = self._subset_basis if self._subset_basis else self.basis_terms
         derivative_matrix_str_list = []
         if not self.interaction_terms:
             # return an identity matrix of size num_basis_terms x num_basis_terms
-            for i in range(self.n_basis_terms):
+            for outer in basis_indices:
                 derivative_matrix_str_list.append(py_list_to_sql_string(
-                    [1 if j==i else 0 for j in range(self.n_basis_terms)]))
+                    ['1' if outer==inner else '0' for inner in self.basis_terms],
+                    array_type="double precision[]"))
         else:
-            for index, each_basis in enumerate(self.basis_terms):
-                indicator_indices = self.get_all_ind_indices()
-                if discrete and each_basis in indicator_indices:
+            indicator_indices = self.get_indicator_indices()
+            for index, curr_basis in enumerate(basis_indices):
+                if discrete and curr_basis in indicator_indices:
                     set_values, unset_values = self.get_discrete_diff_arrays(
-                        each_basis, data_arary_name, quoted)
+                        curr_basis, data_array_name, quoted)
+                    append_str_list = ["0" if i==j else
+                                       "{0}-{1}".format(str(i), str(j))
+                                       for i, j in zip(set_values, unset_values)]
                     derivative_matrix_str_list.append(
-                        py_list_to_sql_string(["{0}-{1}".format(i, j)
-                                              for i, j in zip(set_values, unset_values)],
+                        py_list_to_sql_string(append_str_list,
                                               array_type="double precision[]"))
                 else:
-                    all_partial_deriv_list = ['0'] * self.n_terms
-                    all_partial_deriv_list[each_basis - 1] = 1
-                    curr_partial_deriv_dict = self.interaction_partial_deriv(each_basis)
+                    all_partial_deriv_list = ['0'] * self.n_total_terms
+                    all_partial_deriv_list[curr_basis - 1] = '1'
+                    curr_partial_deriv_dict = self.interaction_partial_deriv(curr_basis)
                     for each_index, each_term in curr_partial_deriv_dict.items():
                         all_partial_deriv_list[each_index - 1] = \
-                            self.str_int_term(each_term, data_arary_name, quoted)
+                            self.str_int_term(each_term, data_array_name, quoted)
                     derivative_matrix_str_list.append(
                         py_list_to_sql_string(all_partial_deriv_list,
                                               array_type="double precision[]"))
@@ -299,11 +327,220 @@ class MarginalEffectsBuilder(object):
         return result
     #------------------------------------------------------------------------------
 
+    def get_indicator_category(self, term):
+        """
+        Get the category for a given indicator term
+        Args:
+            @param term
+
+        Returns:
+            str.
+        """
+        if not self.indicator_terms or not term:
+            return None
+        for each_cat, all_ind_terms in self.indicator_terms.items():
+            if term in all_ind_terms:
+                return each_cat
+        return None
+    #------------------------------------------------------------------------------
+
+    def get_indicator_reference(self, term):
+        """
+        Get the reference variable for a given indicator term
+        Args:
+            @param term
+
+        Returns:
+            str.
+        """
+        if not self.indicator_terms or not term:
+            return None
+        return self.reference_terms[self.get_indicator_category(term)]
+    #------------------------------------------------------------------------------
+
+    @property
+    def n_total_terms(self):
+        """
+        Get the total number of terms in the x_design string
+        """
+        return len(self.basis_terms) + len(self.interaction_terms)
+    #------------------------------------------------------------------------------
+
+    def get_siblings(self, ind_term):
+        """
+        Args:
+            @param self
+            @param ind_term
+
+        Returns:
+            tuple (list, int). A tuple containing a list of terms that are
+            in the same category as the ind_term (without the reference) and an
+            int representing the index of the reference term. If no reference
+            term is provided then the 2nd output is None.
+        """
+        term_siblings = None
+        for each_cat, each_ind_list in self.indicator_terms.items():
+            if ind_term in each_ind_list:
+                term_siblings = list(each_ind_list)
+                term_siblings.remove(ind_term)
+                ref_term = self.get_indicator_reference(ind_term)
+                if ref_term and ref_term in term_siblings:
+                    term_siblings.remove(ref_term)
+                break
+        if term_siblings is None:  # term_siblings can be an empty list
+            raise ValueError("Computing discrete difference for a "
+                             "non-indicator term ({0})".format(ind_term))
+        return (term_siblings, ref_term)
+    #------------------------------------------------------------------------------
+
+    def get_discrete_diff_arrays(self, term_to_explore, array_name='x',
+                                 quoted=False, shortened_output=False):
+        """
+        Create a pair of strings that corresponds to the array expressions for
+        computing the marginal effect for an indicator term using
+        discrete differences
+
+        Args:
+            @param term_to_explore: int, Term for which to create discrete
+                                        difference expression
+            @param array_name: str, All variables that are not siblings of the
+                indicator variable in question are expressed as they were in
+                original expression. 'array_name' is the name of the array that
+                contains the values for the variables.
+            @param shortened_output: bool, If there is no interaction, then
+                all non-categorical items will be the same across the two strings.
+                If shortened_output=True, then only the categorical terms are
+                returned for the set and unset strings.
+
+        Returns:
+            tuple. A pair of strings each representing an array of data.
+            First one corresponding to term_to_explore
+            being 'set' (=1) with other siblings unset (=0) and the second one
+            corresponding to term_to_explore as 'unset' and other siblings also
+            'unset' (reference variable, if present, is 'set'). In both cases,
+            variables unrelated to term_to_explore are unchanged.
+        """
+        quote_str = "\"" if quoted else ""
+        term_siblings, ref_term = self.get_siblings(term_to_explore)
+        n_terms = self.n_total_terms
+
+        indicator_set_list = [None] * n_terms
+        indicator_unset_list = [None] * n_terms
+
+        def assign_discrete_diff(index, set_val, unset_val):
+            indicator_set_list[index] = set_val
+            indicator_unset_list[index] = unset_val
+
+        for basis_index in self.basis_terms:
+            # basis_index is index in the original array which is assumed to be 1-base
+            if basis_index == term_to_explore:
+                # set/unset the current variable ...
+                set_value, unset_value = '1', '0'
+            elif basis_index in term_siblings:
+                # unset all siblings in both cases ...
+                set_value, unset_value = '0', '0'
+            elif ref_term and basis_index == ref_term:
+                # except for the reference, set it when unsetting term_to_explore
+                set_value, unset_value = '0', '1'
+            else:
+                # all other variables are added in as is
+                basis_str = "{q}{0}{q}[{1}]".format(array_name, basis_index,
+                                                    q=quote_str)
+                set_value, unset_value = basis_str, basis_str
+
+            if (self.is_categorical(basis_index) or
+                    self.contains_interaction() or
+                    not shortened_output):
+                assign_discrete_diff(basis_index - 1, set_value, unset_value)
+
+        # repeat the process for interaction terms
+        for index, each_int_term in self.interaction_terms.items():
+            # again 'index' is for the original array (in DB) which is 1-base
+            if any(i in each_int_term for i in term_siblings):
+                # each sibling is unset in both cases
+                assign_discrete_diff(index - 1, '0', '0')
+            else:
+                def str_wo_term(term):
+                    copy_int_term = dict(each_int_term)
+                    copy_int_term.pop(term_to_explore)
+                    return self.str_int_term(copy_int_term, array_name, quoted)
+
+                if term_to_explore in each_int_term:
+                    if ref_term and ref_term in each_int_term:
+                        # reference is unset, when term_to_explore is set
+                        set_value = '0'
+                    else:
+                        set_value = str_wo_term(term_to_explore)
+                    assign_discrete_diff(index - 1, set_value, '0')
+                elif ref_term and ref_term in each_int_term:
+                    assign_discrete_diff(index - 1, '0', str_wo_term(ref_term))
+                else:
+                    term_as_is = self.str_int_term(each_int_term, array_name, quoted)
+                    assign_discrete_diff(index - 1, term_as_is, term_as_is)
+        return (indicator_set_list, indicator_unset_list)
+    #------------------------------------------------------------------------------
+
+    def get_all_indicator_indices(self):
+        """
+        Get the indices for all indicator terms present in the object.
+
+        Returns:
+            List
+
+        Example:
+            self.indicator_terms = {'color':[3, 4]};
+                Output: [3, 4]
+            self.indicator_terms = {'color':[3, 4], 'gender': [10]};
+                Output: [3, 4, 10]
+        """
+        return list(sorted(chain(* self.indicator_terms.values())))
+    #------------------------------------------------------------------------------
+
+    def get_indicator_indices(self):
+        """
+        Get the indices for all indicator terms present in subset_basis.
+        If subset_basis is None then all indicator terms in the object are
+        returned.
+
+        Returns:
+            List. Each element is an 'int'.
+
+        Example:
+            self.basis_terms = [1, 2, 3, 4, 8, 10]
+            self.indicator_terms = {'color':[3, 4]}
+
+            Output:
+                if self.subset_basis = None, then return [3, 4]
+                if self.subset_basis = [1, 2, 3, 4], then return [3, 4]
+                if self.subset_basis = [1, 2], then return []
+        """
+        indicator_indices = self.get_all_indicator_indices()
+        if self.subset_basis:
+            return sorted(set(indicator_indices) & set(self.subset_basis))
+        else:
+            return indicator_indices
+    #------------------------------------------------------------------------------
+
+    def get_all_reference_indices(self):
+        """
+        Get the indices for all reference indicator terms as a sorted list
+
+        Returns:
+            List
+        """
+        return list(sorted(self.reference_terms.values()))
+    #------------------------------------------------------------------------------
+
     def _parse_design_string(self):
         """
         Parse the design string to compute the basis terms,
         interaction terms, and any indicator variables in the independent
         variables list.
+
+        Returns:
+            Tuple with elements:
+                - int: number of basis terms
+                - int: number of interaction terms
 
         Updates:
             self.basis_terms, self.indicator_terms, self.interaction_terms
@@ -325,13 +562,14 @@ class MarginalEffectsBuilder(object):
             self.indicator_terms = {'color': [1, 2, 3], 'gender': [4], 'degree': [5]}
             self.reference_terms = {'color': 1}
 
-        A constant is not allowed as a multiplicative term in interaction_terms.
-        The partial derivative of an interaction term, however, can contain a
-        constant. This is represented as the value for key '0'.
-        Example: {0:2, 5: 1, 3: 1} corresponds to 2*x[5]*x[3] where 'x'
-        represents the original array for which '5' and '3' are indices.
-        The indices are assumed to be 1-base, thus no index of value '0' should
-        be present.
+        Note:
+            A constant is not allowed as a multiplicative term in
+            interaction_terms. The partial derivative of an interaction term,
+            however, can contain a constant. This is represented as the value
+            for key '0'. Example: {0:2, 5: 1, 3: 1} corresponds to 2*x[5]*x[3]
+            where 'x' represents the original array for which '5' and '3' are
+            indices. The indices are assumed to be 1-base, thus no index of
+            value '0' should be present.
         """
         if not self.design_str:
             raise ValueError("Invalid input for x_design: {0}".format(str(self.design_str)))
@@ -383,169 +621,7 @@ class MarginalEffectsBuilder(object):
         return len(self.basis_terms), len(self.interaction_terms)
     # -------------------------------------------------------------------------
 
-    def get_indicator_category(self, term):
-        """
-        Get the category for a given indicator term
-        Args:
-            @param term
-
-        Returns:
-            str.
-        """
-        if not self.indicator_terms or not term:
-            return None
-        for each_cat, all_ind_terms in self.indicator_terms.items():
-            if term in all_ind_terms:
-                return each_cat
-        return None
-    #------------------------------------------------------------------------------
-
-    def get_indicator_reference(self, term):
-        """
-        Get the reference variable for a given indicator term
-        Args:
-            @param term
-
-        Returns:
-            str.
-        """
-        if not self.indicator_terms or not term:
-            return None
-        return self.reference_terms[self.get_indicator_category(term)]
-    #------------------------------------------------------------------------------
-
-    def n_total_terms(self):
-        """
-        Get the total number of terms in the x_design string
-        """
-        return len(self.basis_terms) + len(self.interaction_terms)
-    #------------------------------------------------------------------------------
-
-    def get_siblings(self, ind_term):
-        """
-        Args:
-            @param self
-            @param ind_term
-
-        Returns:
-            tuple (list, int). A tuple containing a list of terms that are
-            in the same category as the ind_term (without the reference) and an
-            int representing the index of the reference term. If no reference
-            term is provided then the 2nd output is None.
-        """
-        term_siblings = None
-        for each_cat, each_ind_list in self.indicator_terms.items():
-            if ind_term in each_ind_list:
-                term_siblings = list(each_ind_list)
-                term_siblings.remove(ind_term)
-                ref_term = self.get_indicator_reference(ind_term)
-                if ref_term and ref_term in term_siblings:
-                    term_siblings.remove(ref_term)
-                break
-        if term_siblings is None:  # term_siblings can be an empty list
-            raise ValueError("Computing discrete difference for a non-indicator term")
-        return (term_siblings, ref_term)
-    #------------------------------------------------------------------------------
-
-    def get_discrete_diff_arrays(self, term_to_explore,
-                                 array_name='x', quoted=False):
-        """
-        Create a pair of strings that corresponds to the array expressions for
-        computing the marginal effect for an indicator term using
-        discrete differences
-
-        Args:
-            @param term_to_explore: int, For which term to create discrete
-                                        difference expression
-            @param array_name: str, All variables that are not siblings of the
-                                   indicator variable in question are expressed
-                                   as they were in original expression.
-                                   'array_name' is the name of the array that
-                                   contains the values for the variables.
-        Returns:
-            tuple. A pair of strings each representing an array of data.
-            First one corresponding to term_to_explore
-            being 'set' (=1) with other siblings unset (=0) and the second one
-            corresponding to term_to_explore as 'unset' and other siblings also
-            'unset' (reference variable, if present, is 'set'). In both cases,
-            variables unrelated to term_to_explore are unchanged.
-        """
-        quote_str = "\"" if quoted else ""
-        term_siblings, ref_term = self.get_siblings(term_to_explore)
-        n_terms = self.n_total_terms()
-        indicator_set_list = [None] * n_terms
-        indicator_unset_list = [None] * n_terms
-
-        def assign_discrete_diff(index, set_val, unset_val):
-            indicator_set_list[index] = set_val
-            indicator_unset_list[index] = unset_val
-
-        for basis_index in self.basis_terms:
-            # basis_index is index in the original array which is assumed to be 1-base
-            if basis_index == term_to_explore:
-                # set/unset the current variable ...
-                set_value, unset_value = '1', '0'
-            elif basis_index in term_siblings:
-                # unset all siblings in both cases ...
-                set_value, unset_value = '0', '0'
-            elif ref_term and basis_index == ref_term:
-                # except for the reference, set it when unsetting term_to_explore
-                set_value, unset_value = '0', '1'
-            else:
-                # all other variables are added in as is
-                basis_str = "{q}{0}{q}[{1}]".format(array_name, basis_index,
-                                                    q=quote_str)
-                set_value, unset_value = basis_str, basis_str
-            assign_discrete_diff(basis_index - 1, set_value, unset_value)
-
-        # repeat the process for interaction terms
-        for index, each_int_term in self.interaction_terms.items():
-            # again 'index' is for the original array (in DB) which is 1-base
-            if any(i in each_int_term for i in term_siblings):
-                # each sibling is unset in both cases
-                assign_discrete_diff(index - 1, '0', '0')
-            else:
-                def str_wo_term(term):
-                    copy_int_term = dict(each_int_term)
-                    copy_int_term.pop(term_to_explore)
-                    return self.str_int_term(copy_int_term, array_name, quoted)
-
-                if term_to_explore in each_int_term:
-                    if ref_term and ref_term in each_int_term:
-                        # reference is unset, when term_to_explore is set
-                        set_value = '0'
-                    else:
-                        set_value = str_wo_term(term_to_explore)
-                    assign_discrete_diff(index - 1, set_value, '0')
-                elif ref_term and ref_term in each_int_term:
-                    assign_discrete_diff(index - 1, '0', str_wo_term(ref_term))
-                else:
-                    term_as_is = self.str_int_term(each_int_term, array_name, quoted)
-                    assign_discrete_diff(index - 1, term_as_is, term_as_is)
-        return (indicator_set_list, indicator_unset_list)
-    #------------------------------------------------------------------------------
-
-    def get_all_ind_indices(self):
-        """
-        Get the indices for all indicator terms as a sorted list
-
-        Returns:
-            List
-        """
-        return list(sorted(chain(* self.indicator_terms.values())))
-    #------------------------------------------------------------------------------
-
-    def get_all_reference_indices(self):
-        """
-        Get the indices for all reference indicator terms as a sorted list
-
-        Returns:
-            List
-        """
-        return list(sorted(self.reference_terms.values()))
-    #------------------------------------------------------------------------------
-
-    def _int_term_partial_deriv(self, int_term_index, ref):
+    def _int_term_partial_deriv(self, int_term_index, denom):
         """
         Compute the derivate of product of polynomial terms (together making the
         a single interaction term)
@@ -554,19 +630,19 @@ class MarginalEffectsBuilder(object):
             @param int_terms: dict, Dictionary representing the product of
                                 power of basis terms (key is index of basis term,
                                                       and value is the power)
-            @param ref: int, reference variable (index) to compute partial derivative
+            @param denom: int, variable to compute partial derivative with respect to
         Returns:
             Dict.
         """
         int_term = self.interaction_terms[int_term_index]
         if not int_term:
             return int_term
-        if ref in int_term and int_term[ref] > 0:
+        if denom in int_term and int_term[denom] > 0:
             result = defaultdict(int)
             result.update(int_term)
-            if int_term[ref] > 1:
-                result[0] = int_term[ref]
-            result[ref] -= 1
+            if int_term[denom] > 1:
+                result[0] = int_term[denom]
+            result[denom] -= 1
             return result
         else:
             return defaultdict(int)
@@ -604,6 +680,9 @@ class MarginsTestCase(unittest.TestCase):
 
         self.xd2 = '1, 2, 3, 4, 5, 6, 7, 8, 3*2, 4*3*5, 5^2*4*6, 6^2, 7^3*8'
         self.int_obj2 = MarginalEffectsBuilder(self.xd2)
+
+        self.xd3 = '1, 2, 3, 4, 5, 6, 7, 8'
+        self.int_obj3 = MarginalEffectsBuilder(self.xd3)
 
     def tearDown(self):
         pass
@@ -724,6 +803,7 @@ class MarginsTestCase(unittest.TestCase):
                          {6: {5: 1, 2: 1}, 7: {5: 1, 3: 1}, 8: {5: 1, 4: 1},
                           9: {5: 1, 4: 1, 2: 1}, 10: {5: 1, 4: 1, 3: 1},
                           13: {5: 1, 11: 1}, 14: {5: 1, 11: 2}})
+        self.assertEqual(self.int_obj3._get_subset_int_terms(8), {})
 
     def test_partial_deriv_all(self):
         # self.xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
@@ -786,19 +866,18 @@ class MarginsTestCase(unittest.TestCase):
                           '"x"[4] * "x"[5]', '0', '0', '"x"[11]', '"x"[11]^2',
                           '"x"[11] * "x"[5]', '"x"[11]^2 * "x"[5]', '"x"[15]'])
 
-    # def test_parse_marginal_vars(self):
-    #     self.assertEqual(parse_marginal_vars('1,2,3,4'), [1, 2, 3, 4])
-    #     self.assertEqual(parse_marginal_vars('{1,2,3,4}'), [1, 2, 3, 4])
-    #     self.assertEqual(parse_marginal_vars('ARRAY[1,2,3,4]'), [1, 2, 3, 4])
-
     def test_derivative_matrix(self):
+        # self.xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+        #            "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+        #            "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+        #            "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
         self.assertEqual(self.int_obj.create_2nd_derivative_matrix('x'),
                          "ARRAY["
-                         "ARRAY[1-0,0-0,0-0,x[4]-x[4],x[5]-x[5],0-0,0-0,x[4] * x[5]-x[4] * x[5],0-0,0-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
-                         "ARRAY[0-1,1-0,0-0,x[4]-x[4],x[5]-x[5],x[5]-0,0-0,x[4] * x[5]-x[4] * x[5],x[4] * x[5]-0,0-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
-                         "ARRAY[0-1,0-0,1-0,x[4]-x[4],x[5]-x[5],0-0,x[5]-0,x[4] * x[5]-x[4] * x[5],0-0,x[4] * x[5]-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
-                         "ARRAY[x[1]-x[1],x[2]-x[2],x[3]-x[3],1-0,x[5]-x[5],x[2] * x[5]-x[2] * x[5],x[3] * x[5]-x[3] * x[5],x[5]-0,x[2] * x[5]-0,x[3] * x[5]-0,x[11]-x[11],x[11]^2-x[11]^2,x[11] * x[5]-x[11] * x[5],x[11]^2 * x[5]-x[11]^2 * x[5],x[15]-x[15]]::double precision[],"
-                         "ARRAY[x[1]-x[1],x[2]-x[2],x[3]-x[3],x[4]-x[4],1-0,x[2]-0,x[3]-0,x[4]-0,x[2] * x[4]-0,x[3] * x[4]-0,x[11]-x[11],x[11]^2-x[11]^2,x[11]-0,x[11]^2-0,x[15]-x[15]]::double precision[],"
+                         "ARRAY[1-0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0-1,1-0,0,0,0,x[5]-0,0,0,x[4] * x[5]-0,0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0-1,0,1-0,0,0,0,x[5]-0,0,0,x[4] * x[5]-0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,1-0,0,0,0,x[5]-0,x[2] * x[5]-0,x[3] * x[5]-0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,0,1-0,x[2]-0,x[3]-0,x[4]-0,x[2] * x[4]-0,x[3] * x[4]-0,0,0,x[11]-0,x[11]^2-0,0]::double precision[],"
                          "ARRAY[0,0,0,0,0,0,0,0,0,0,1,2 * x[11],x[5],2 * x[11] * x[5],0]::double precision[],"
                          "ARRAY[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]::double precision[]]")
 
@@ -816,6 +895,41 @@ class MarginsTestCase(unittest.TestCase):
         self.int_obj3 = MarginalEffectsBuilder('1, 2, 2*2')
         self.assertEqual(self.int_obj3.create_2nd_derivative_matrix('x', quoted=True),
                          "ARRAY[ARRAY[1,0,0]::double precision[],ARRAY[0,1,2 * \"x\"[2]]::double precision[]]")
+
+    def test_subset_basis_derivative(self):
+        xd = ("1, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+              "i.5.degree*i.2.color, i.5.degree*i.3.color, i.5.degree*i.4.gender,"
+              "i.5.degree*i.4.gender*i.2.color, i.5.degree*i.4.gender*i.3.color,"
+              "11, 11^2, i.5.degree*11, i.5.degree*11^2, 15")
+        interaction_obj = MarginalEffectsBuilder(xd)
+
+        interaction_obj.subset_basis = [2, 3, 11, 15]
+        self.assertEqual(interaction_obj.create_2nd_derivative_matrix('x'),
+                         "ARRAY["
+                         "ARRAY[0,1-0,0,0,0,x[5]-0,0,0,x[4] * x[5]-0,0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,1-0,0,0,0,x[5]-0,0,0,x[4] * x[5]-0,0,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,0,0,0,0,0,0,0,1,2 * x[11],x[5],2 * x[11] * x[5],0]::double precision[],"
+                         "ARRAY[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]::double precision[]]")
+
+        xd2 = ("1, 2, 3, 4, 5, 6, 7")
+        interaction_obj2 = MarginalEffectsBuilder(xd2)
+        interaction_obj2.subset_basis = [3, 4, 5]
+        self.assertEqual(interaction_obj2.create_2nd_derivative_matrix('x'),
+                         "ARRAY["
+                         "ARRAY[0,0,1,0,0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,1,0,0,0]::double precision[],"
+                         "ARRAY[0,0,0,0,1,0,0]::double precision[]]"
+                         )
+
+    def test_no_interaction_derivative(self):
+        xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree")
+        interaction_obj = MarginalEffectsBuilder(xd)
+        self.assertEqual(interaction_obj.create_2nd_derivative_matrix('x'),
+                         "ARRAY[ARRAY[1,0,0,0,0]::double precision[],"
+                         "ARRAY[0,1,0,0,0]::double precision[],"
+                         "ARRAY[0,0,1,0,0]::double precision[],"
+                         "ARRAY[0,0,0,1,0]::double precision[],"
+                         "ARRAY[0,0,0,0,1]::double precision[]]")
 
 
 if __name__ == '__main__':
