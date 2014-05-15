@@ -548,6 +548,237 @@ SparseData quad_sdata(SparseData sdata)
 	return(result);
 }
 
+/* Compare two SparseData.
+ * We can't assume that two SparseData are in canonical form.
+ *
+ * The algorithm is simple: we traverse the left SparseData element by
+ * element, and for each such element x, we traverse all the elements of
+ * the right SparseData that overlaps with x and check that they are equal.
+ *
+ * Note: This function only works on SparseData of float8s at present.
+ */
+int sparsedata_cmp(SparseData left, SparseData right)
+{
+	char * ix = left->index->data;
+	double * vals = (double *)left->vals->data;
+
+	char * rix = right->index->data;
+	double * rvals = (double *)right->vals->data;
+
+	int read = 0, rread = 0;
+	int rvid = 0;
+	int rrun_length, i;
+
+	for (i=0; i<left->unique_value_count; i++,ix+=int8compstoragesize(ix)) {
+		read += compword_to_int8(ix);
+
+		while (true) {
+			/*
+             * Note: IEEE754 specifies that NaN should not compare equal to
+             * any other floating-point value (including NaN). In order to
+             * allow floating-point values to be sorted and used in tree-based
+             * indexes, PostgreSQL treats NaN values as equal, and greater
+             * than all non-NaN values. NULLs are represented as NVPs here.
+             *
+             * NULL (NVP) > NaN > INF
+			 */
+            if (!IS_NVP(vals[i]) || !IS_NVP(rvals[rvid])) {
+                if (IS_NVP(vals[i])) { return 1; }
+                else if (IS_NVP(rvals[rvid])) { return -1; }
+                else if (!isnan(vals[i]) || !isnan(rvals[rvid])) {
+                    if (isnan(vals[i])) { return 1; }
+                    else if (isnan(rvals[rvid])) { return -1; }
+                    else if (vals[i] > rvals[rvid]) { return 1; }
+                    else if (vals[i] < rvals[rvid]) { return -1; }
+                }
+                // else NaN == NaN is true
+            }
+            // else NVP == NVP is true
+
+			/*
+			 * We never move the right element pointer beyond
+			 * the current left element
+			 */
+			rrun_length = compword_to_int8(rix);
+			if (rread + rrun_length > read) break;
+
+			/*
+			 * Increase counters if there are more elements in
+			 * the right SparseData that overlaps with current
+			 * left element
+			 */
+			rread += rrun_length;
+			if (rvid < right->unique_value_count) {
+				rix += int8compstoragesize(rix);
+				rvid++;
+			}
+			if (rvid == right->unique_value_count) {
+                Assert(left->total_value_count >= right->total_value_count);
+                if (left->total_value_count == right->total_value_count) {
+                    Assert(rread == read);
+                    return 0;
+                } else { return 1; }
+            }
+			if (rread == read) break;
+		}
+	}
+	return -1;
+}
+
+/* Compare two SparseData, and return true if the left one is less.
+ * We can't assume that two SparseData are in canonical form.
+ *
+ * The algorithm is simple: we traverse the left SparseData element by
+ * element, and for each such element x, we traverse all the elements of
+ * the right SparseData that overlaps with x and check that they are equal.
+ *
+ * Note: This function only works on SparseData of float8s at present.
+ */
+bool sparsedata_lt(SparseData left, SparseData right)
+{
+	char * ix = left->index->data;
+	double * vals = (double *)left->vals->data;
+
+	char * rix = right->index->data;
+	double * rvals = (double *)right->vals->data;
+
+	int read = 0, rread = 0;
+	int rvid = 0;
+	int rrun_length, i;
+
+	for (i=0; i<left->unique_value_count; i++,ix+=int8compstoragesize(ix)) {
+		read += compword_to_int8(ix);
+
+		while (true) {
+			/*
+             * Note: IEEE754 specifies that NaN should not compare equal to
+             * any other floating-point value (including NaN). In order to
+             * allow floating-point values to be sorted and used in tree-based
+             * indexes, PostgreSQL treats NaN values as equal, and greater
+             * than all non-NaN values. NULLs are represented as NVPs here.
+             *
+             * NULL (NVP) > NaN > INF
+			 */
+            if (!IS_NVP(vals[i]) || !IS_NVP(rvals[rvid])) {
+                if (IS_NVP(vals[i])) { return false; }
+                else if (IS_NVP(rvals[rvid])) { return true; }
+                else if (!isnan(vals[i]) || !isnan(rvals[rvid])) {
+                    if (isnan(vals[i])) { return false; }
+                    else if (isnan(rvals[rvid])) { return true; }
+                    else if (vals[i] > rvals[rvid]) { return false; }
+                    else if (vals[i] < rvals[rvid]) { return true; }
+                }
+                // else NaN == NaN is true
+            }
+            // else NVP == NVP is true
+
+			/*
+			 * We never move the right element pointer beyond
+			 * the current left element
+			 */
+			rrun_length = compword_to_int8(rix);
+			if (rread + rrun_length > read) break;
+
+			/*
+			 * Increase counters if there are more elements in
+			 * the right SparseData that overlaps with current
+			 * left element
+			 */
+			rread += rrun_length;
+			if (rvid < right->unique_value_count) {
+				rix += int8compstoragesize(rix);
+				rvid++;
+			}
+			if (rvid == right->unique_value_count) {
+                Assert(left->total_value_count >= right->total_value_count);
+                if (left->total_value_count == right->total_value_count) {
+                    Assert(rread == read);
+                    return false;
+                } else { return false; }
+            }
+			if (rread == read) break;
+		}
+	}
+	return true;
+}
+
+/* Compare two SparseData, and return true if the left one is greater.
+ * We can't assume that two SparseData are in canonical form.
+ *
+ * The algorithm is simple: we traverse the left SparseData element by
+ * element, and for each such element x, we traverse all the elements of
+ * the right SparseData that overlaps with x and check that they are equal.
+ *
+ * Note: This function only works on SparseData of float8s at present.
+ */
+bool sparsedata_gt(SparseData left, SparseData right)
+{
+	char * ix = left->index->data;
+	double * vals = (double *)left->vals->data;
+
+	char * rix = right->index->data;
+	double * rvals = (double *)right->vals->data;
+
+	int read = 0, rread = 0;
+	int rvid = 0;
+	int rrun_length, i;
+
+	for (i=0; i<left->unique_value_count; i++,ix+=int8compstoragesize(ix)) {
+		read += compword_to_int8(ix);
+
+		while (true) {
+			/*
+             * Note: IEEE754 specifies that NaN should not compare equal to
+             * any other floating-point value (including NaN). In order to
+             * allow floating-point values to be sorted and used in tree-based
+             * indexes, PostgreSQL treats NaN values as equal, and greater
+             * than all non-NaN values. NULLs are represented as NVPs here.
+             *
+             * NULL (NVP) > NaN > INF
+			 */
+            if (!IS_NVP(vals[i]) || !IS_NVP(rvals[rvid])) {
+                if (IS_NVP(vals[i])) { return true; }
+                else if (IS_NVP(rvals[rvid])) { return false; }
+                else if (!isnan(vals[i]) || !isnan(rvals[rvid])) {
+                    if (isnan(vals[i])) { return true; }
+                    else if (isnan(rvals[rvid])) { return false; }
+                    else if (vals[i] > rvals[rvid]) { return true; }
+                    else if (vals[i] < rvals[rvid]) { return false; }
+                }
+                // else NaN == NaN is true
+            }
+            // else NVP == NVP is true
+
+			/*
+			 * We never move the right element pointer beyond
+			 * the current left element
+			 */
+			rrun_length = compword_to_int8(rix);
+			if (rread + rrun_length > read) break;
+
+			/*
+			 * Increase counters if there are more elements in
+			 * the right SparseData that overlaps with current
+			 * left element
+			 */
+			rread += rrun_length;
+			if (rvid < right->unique_value_count) {
+				rix += int8compstoragesize(rix);
+				rvid++;
+			}
+			if (rvid == right->unique_value_count) {
+                Assert(left->total_value_count >= right->total_value_count);
+                if (left->total_value_count == right->total_value_count) {
+                    Assert(rread == read);
+                    return false;
+                } else { return true; }
+            }
+			if (rread == read) break;
+		}
+	}
+	return false;
+}
+
 /* Checks the equality of two SparseData. We can't assume that two
  * SparseData are in canonical form.
  *
@@ -577,8 +808,13 @@ bool sparsedata_eq(SparseData left, SparseData right)
 
 		while (true) {
 			/*
-			 * We need to use memcmp to handle NULLs (represented
-			 * as NaNs) properly
+             * Note: IEEE754 specifies that NaN should not compare equal to
+             * any other floating-point value (including NaN). In order to
+             * allow floating-point values to be sorted and used in tree-based
+             * indexes, PostgreSQL treats NaN values as equal, and greater
+             * than all non-NaN values.
+			 *
+			 * We use memcmp to handle NULLs and NaNs properly.
 			 */
 			if (memcmp(&(vals[i]),&(rvals[rvid]),sizeof(float8))!=0)
 				return false;

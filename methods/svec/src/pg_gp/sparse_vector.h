@@ -8,7 +8,6 @@
 #define SPARSEVECTOR_H
 
 #include "SparseData.h"
-#include "float_specials.h"
 
 /*!
  * \internal
@@ -49,9 +48,6 @@ typedef struct {
 
 /** @return True if input is a scalar */
 #define IS_SCALAR(x)	(((x)->dimension) < 0 ? 1 : 0 )
-
-/** @return True if input is a NULL, represented internally as a NVP */
-#define IS_NVP(x)  (memcmp(&(x),&(NVP),sizeof(double)) == 0)
 
 static inline int check_scalar(int i1, int i2)
 {

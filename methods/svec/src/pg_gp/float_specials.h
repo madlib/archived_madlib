@@ -149,4 +149,7 @@ static inline double _LAL_for_compiler_unused_warning(void) {return(COMPVEC[0].a
 #define NEGINF		COMPVEC[3].asDouble
 #define NVP		COMPVEC[4].asDouble
 
+/** @return True if input is a NULL, represented internally as a NVP */
+#define IS_NVP(x)  (memcmp(&(x),&(NVP),sizeof(double)) == 0)
+
 #endif 	/* FLOATSPECIALS_H */

@@ -27,6 +27,7 @@
 #include "lib/stringinfo.h"
 #include "utils/array.h"
 #include "catalog/pg_type.h"
+#include "float_specials.h"
 
 /*!
  * \internal
@@ -167,6 +168,9 @@ enum operation_t { subtract, add, multiply, divide };
 double sum_sdata_values_double(SparseData sdata);
 SparseData op_sdata_by_sdata(enum operation_t operation, SparseData left,
     SparseData right);
+int sparsedata_cmp(SparseData left, SparseData right);
+bool sparsedata_lt(SparseData left, SparseData right);
+bool sparsedata_gt(SparseData left, SparseData right);
 bool sparsedata_eq(SparseData left, SparseData right);
 bool sparsedata_eq_zero_is_equal(SparseData left, SparseData right);
 bool sparsedata_contains(SparseData left, SparseData right);

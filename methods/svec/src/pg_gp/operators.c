@@ -96,6 +96,96 @@ Datum svec_concat(PG_FUNCTION_ARGS)
 }
 
 /**
+ *  svec_cmp
+ *
+ *  Returns
+ *  -1 if left side is less than the right
+ *   1 if left side is greater than the right
+ *   0 otherwise
+ */
+Datum svec_cmp(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_cmp );
+Datum svec_cmp(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	PG_RETURN_INT32(sparsedata_cmp(left,right));
+}
+
+/**
+ *  svec_ge - returns true if the left is greater or equal to the right
+ */
+Datum svec_ge(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_ge );
+Datum svec_ge(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	PG_RETURN_BOOL(!sparsedata_lt(left,right));
+}
+
+/**
+ *  svec_lt - returns true if the left is less than the right
+ */
+Datum svec_lt(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_lt );
+Datum svec_lt(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	PG_RETURN_BOOL(sparsedata_lt(left,right));
+}
+
+/**
+ *  svec_le - returns true if the left is less or equal to the right
+ */
+Datum svec_le(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_le );
+Datum svec_le(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	PG_RETURN_BOOL(!sparsedata_gt(left,right));
+}
+
+/**
+ *  svec_gt - returns true if the left is greater
+ */
+Datum svec_gt(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_gt );
+Datum svec_gt(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	PG_RETURN_BOOL(sparsedata_gt(left,right));
+}
+
+/**
+ *  svec_ne - returns the inverse of equality of two svecs
+ */
+Datum svec_ne(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1( svec_ne );
+Datum svec_ne(PG_FUNCTION_ARGS)
+{
+	SvecType *svec1 = PG_GETARG_SVECTYPE_P(0);
+	SvecType *svec2 = PG_GETARG_SVECTYPE_P(1);
+	SparseData left  = sdata_from_svec(svec1);
+	SparseData right = sdata_from_svec(svec2);
+	PG_RETURN_BOOL(!sparsedata_eq(left,right));
+}
+
+
+/**
  *  svec_eq - returns the equality of two svecs
  */
 Datum svec_eq(PG_FUNCTION_ARGS);
