@@ -61,7 +61,7 @@ AnyType margins_stateToResult(
         stdErr(i) = std::sqrt(diagonal_of_variance_matrix(i));
         tStats(i) = marginal_effects(i) / stdErr(i);
 
-        // P-values only make sense if numRows > coef.size()
+        // p-values only make sense if numRows > coef.size()
         if (numRows > n_basis_terms)
             pValues(i) = 2. * prob::cdf( prob::normal(),
                                          -std::abs(tStats(i)));
@@ -1044,7 +1044,6 @@ margins_mlogregr_int_transition::run(AnyType &args) {
         }
 
     }
-
     state.marginal_effects += curr_margins;
     return state;
 }

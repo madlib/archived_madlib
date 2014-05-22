@@ -286,8 +286,10 @@ def __get_madlib_dbver(schema):
         @param schema MADlib schema name
     """
     try:
-        row = __run_sql_query("""SELECT count(*) AS cnt FROM pg_tables
-            WHERE schemaname='%s' AND tablename='migrationhistory'""" % (schema), True)
+        row = __run_sql_query("SELECT count(*) AS cnt FROM pg_tables "
+                              "WHERE schemaname='%s' AND "
+                              "tablename='migrationhistory'" %
+                              (schema), True)
         if int(row[0]['cnt']) > 0:
             row = __run_sql_query("""SELECT version FROM %s.migrationhistory
                 ORDER BY applied DESC LIMIT 1""" % schema, True)

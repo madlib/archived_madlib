@@ -435,23 +435,23 @@ class MarginalEffectsBuilder(object):
             # basis_index is index in the original array which is assumed to be 1-base
             if basis_index == term_to_explore:
                 # set/unset the current variable ...
-                set_value, unset_value = '1', '0'
+                set_val, unset_val = '1', '0'
             elif basis_index in term_siblings:
                 # unset all siblings in both cases ...
-                set_value, unset_value = '0', '0'
+                set_val, unset_val = '0', '0'
             elif ref_term and basis_index == ref_term:
                 # except for the reference, set it when unsetting term_to_explore
-                set_value, unset_value = '0', '1'
+                set_val, unset_val = '0', '1'
             else:
                 # all other variables are added in as is
                 basis_str = "{q}{0}{q}[{1}]".format(array_name, basis_index,
                                                     q=quote_str)
-                set_value, unset_value = basis_str, basis_str
+                set_val, unset_val = basis_str, basis_str
 
             if (self.is_categorical(basis_index) or
                     self.contains_interaction() or
                     not shortened_output):
-                assign_discrete_diff(basis_index - 1, set_value, unset_value)
+                assign_discrete_diff(basis_index - 1, set_val, unset_val)
 
         # repeat the process for interaction terms
         for index, each_int_term in self.interaction_terms.items():
@@ -468,12 +468,15 @@ class MarginalEffectsBuilder(object):
                 if term_to_explore in each_int_term:
                     if ref_term and ref_term in each_int_term:
                         # reference is unset, when term_to_explore is set
-                        set_value = '0'
+                        set_val = '0'
                     else:
-                        set_value = str_wo_term(term_to_explore)
-                    assign_discrete_diff(index - 1, set_value, '0')
+                        set_val = str_wo_term(term_to_explore)
+                        set_val = '1' if not set_val else set_val
+                    assign_discrete_diff(index - 1, set_val, '0')
                 elif ref_term and ref_term in each_int_term:
-                    assign_discrete_diff(index - 1, '0', str_wo_term(ref_term))
+                    unset_val = str_wo_term(ref_term)
+                    unset_val = '1' if not unset_val else unset_val
+                    assign_discrete_diff(index - 1, '0', unset_val)
                 else:
                     term_as_is = self.str_int_term(each_int_term, array_name, quoted)
                     assign_discrete_diff(index - 1, term_as_is, term_as_is)
@@ -865,6 +868,18 @@ class MarginsTestCase(unittest.TestCase):
                          ['1', '0', '0', '"x"[4]', '"x"[5]', '0', '0',
                           '"x"[4] * "x"[5]', '0', '0', '"x"[11]', '"x"[11]^2',
                           '"x"[11] * "x"[5]', '"x"[11]^2 * "x"[5]', '"x"[15]'])
+
+        xd2 = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"
+               "5*2, 5*3, 5*4, 5^2")
+        int_obj2 = MarginalEffectsBuilder(xd2)
+        ind_set, ind_unset = int_obj2.get_discrete_diff_arrays(5, 'x', True)
+        self.assertEqual(ind_set,
+                         ['"x"[1]', '"x"[2]', '"x"[3]', '"x"[4]', '1', '"x"[2]',
+                          '"x"[3]', '"x"[4]', '1'])
+        self.assertEqual(ind_unset,
+                         ['"x"[1]', '"x"[2]', '"x"[3]', '"x"[4]', '0', '0', '0',
+                          '0', '0'])
+
 
     def test_derivative_matrix(self):
         # self.xd = ("ir.1.color, i.2.color, i.3.color, i.4.gender, i.5.degree,"

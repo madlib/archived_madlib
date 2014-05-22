@@ -317,7 +317,7 @@ AnyType coxph_step_final::run(AnyType &args) {
     state.logLikelihood -=  state.multiplier*std::log(state.S);
 
 
-    if (isinf(static_cast<double>(state.logLikelihood)) || isnan(static_cast<double>(state.logLikelihood))) 
+    if (isinf(static_cast<double>(state.logLikelihood)) || isnan(static_cast<double>(state.logLikelihood)))
         throw NoSolutionFoundException("Over- or underflow in intermediate "
                                        "calulation. Input data is likely of poor numerical condition.");
 

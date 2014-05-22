@@ -60,7 +60,7 @@ def margins(schema_madlib, model_table, out_table, x_design=None,
         if not reg_type:
             plpy.error("Margins error: Regression type cannot be obtained "
                        "from the model table. 'margins()' currently only "
-                       "supported for linregr, logregr or mlogregr")
+                       "supported for linregr, logregr, mlogregr, or coxph")
         elif reg_type in ("linregr", "linear", "linear_regression",
                           "linear regression"):
             margins_method = margins_linregr
@@ -71,10 +71,14 @@ def margins(schema_madlib, model_table, out_table, x_design=None,
                           "multilogistic_regression",
                           "multinomial logistic regression"):
             margins_method = margins_mlogregr
+        elif reg_type in ("coxph", "cox_proportional_hazards",
+                          "cox prop", "cox proportional hazards"):
+            margins_method = margins_coxph
         else:
             plpy.error("""
                 Margins not supported for this model table.
-                Re-run training (linregr, logregr, mlogregr) before using margins().""")
+                Re-run training {linregr, logregr, mlogregr, coxph}_train
+                before using margins().""")
 
         # 3) ... and call the appropriate sub-function
         margins_method(schema_madlib, model_table, out_table, source_table,
@@ -105,7 +109,8 @@ A marginal effect (ME) or partial effect measures the effect on the
 conditional mean of a response (dependent variable) for a change in one of the
 regressors (independent variable).
 
-We currently only support margins for linear, logistic, and multinomial logistic regression.
+We currently only support margins for linear, logistic,
+multinomial logistic regression, and cox proportaional hazard.
 
 For more details on function usage:
     SELECT {schema_madlib}.margins('usage')
@@ -721,6 +726,112 @@ def margins_mlogregr(schema_madlib, model_table, out_table, source_table,
                        [i - 1 for i in x_design_parser.subset_basis]),
                    zero_base_categorical_indices=zero_base_categorical_indices,
                    summary_table=summary_table,
+                   derivative_str=derivative_str,
+                   set_string=set_string,
+                   unset_string=unset_string,
+                   num_basis=len(x_design_parser.subset_basis))
+    plpy.execute(execute_string)
+# -------------------------------------------------------------------------
+
+
+#------------------------------------------------------------------------------
+# Cox Proportional Hazards marginal effects
+#------------------------------------------------------------------------------
+def margins_coxph(schema_madlib, model_table, out_table, source_table,
+                  x_design=None, marginal_vars=None,
+                  *args, **kwargs):
+    """
+    Args:
+        @param schema_madlib
+        @param model_table
+        @param out_table
+        @param x_design
+        @param source_table
+        @param marginal_vars
+
+    Returns:
+        None
+
+    Raises:
+
+    """
+    # 1) Get all arguments and validate them
+    coef, independent_varname, grouping_col = _get_regression_arguments(schema_madlib, model_table)
+    summary_table = model_table + "_summary"
+
+    strata_cols = plpy.execute("SELECT strata from " + summary_table)[0]["strata"]
+
+    if not strata_cols:
+        strata_col_str = ""
+        strata_cols = ""
+    else:
+        strata_col_str = "GROUP BY " + strata_cols
+        strata_cols += ","
+
+    # 2) Parse x_design and marginal_vars argument
+    x_design_parser = _get_parser(coef, x_design, marginal_vars)
+    if not x_design_parser.subset_basis:
+        raise ValueError("Invalid marginal variables selected.")
+
+    # 3) Create a matrix representing the 2nd partial derivative
+    #       (1st order wrt x and 2nd order wrt \beta)
+    coef_array_name = 'coef'
+    indep_name = 'x'
+    if x_design_parser.contains_interaction():
+        derivative_str = x_design_parser.create_2nd_derivative_matrix(indep_name)
+    else:
+        derivative_str = "NULL::double precision[]"
+
+    # 4) Build the margins for indicator variables as discrete differences
+    set_string, unset_string = \
+        _get_categorical_set_unset_strings(x_design_parser,
+                                           indep_name,
+                                           shortened_output=True)
+    if x_design_parser.contains_indicators():
+        zero_base_categorical_indices = py_list_to_sql_string(
+            [i - 1 for i in x_design_parser.get_all_indicator_indices()])
+    else:
+        zero_base_categorical_indices = "NULL::double precision[]"
+
+    execute_string = """
+        CREATE TABLE {out_table} AS
+            SELECT
+                {index_array} as variables,
+                (res).margins as margins,
+                (res).std_err as std_err,
+                (res).z_stats as z_stats,
+                (res).p_values as p_values
+            FROM (
+                SELECT
+                    {schema_madlib}.__margins_int_coxph_agg(
+                        {indep_name}
+                        , coef
+                        , hessian
+                        , {zero_base_subset_indices}
+                        , {derivative_str}
+                        , {zero_base_categorical_indices}
+                        , {set_string}
+                        , {unset_string})
+                        as res
+                FROM (
+                    SELECT
+                        {independent_varname} as {indep_name}
+                    FROM {source_table} as s
+                ) q1, {model_table} as m
+            ) q2
+        """.format(schema_madlib=schema_madlib,
+                   source_table=source_table,
+                   out_table=out_table,
+                   independent_varname=independent_varname,
+                   indep_name=indep_name,
+                   coef_array_name=coef_array_name,
+                   index_array=py_list_to_sql_string(x_design_parser.subset_basis),
+                   strata_col_str=strata_col_str,
+                   strata_cols=strata_cols,
+                   model_table=model_table,
+                   zero_base_subset_indices=py_list_to_sql_string(
+                       [i - 1 for i in x_design_parser.subset_basis]),
+                   zero_base_categorical_indices=zero_base_categorical_indices,
                    derivative_str=derivative_str,
                    set_string=set_string,
                    unset_string=unset_string,

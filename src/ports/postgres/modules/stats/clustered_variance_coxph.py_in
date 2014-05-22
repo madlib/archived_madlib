@@ -31,8 +31,8 @@ def clustered_coxph(schema_madlib, model_table, output_table,
 
     size = plpy.execute(
         """
-        select array_upper({independent_variable},1) -
-               array_lower({independent_variable},1) + 1 as size
+        select array_upper({independent_varname},1) -
+               array_lower({independent_varname},1) + 1 as size
         from {source_table} limit 1
         """.format(**info))[0]['size']
 
@@ -52,19 +52,19 @@ def clustered_coxph(schema_madlib, model_table, output_table,
             create table {temp_H_S} as
                 select
                     {clustervar},
-                    ({independent_variable})::float8[] as {x},
-                    ({dependent_variable})::float8 as {y},
+                    ({independent_varname})::float8[] as {x},
+                    ({dependent_varname})::float8 as {y},
                     ({right_censoring_status})::boolean as {status},
                     {schema_madlib}.coxph_h_s(
-                        {independent_variable},
+                        {independent_varname},
                         (select coef from {model_table})
-                    ) over (order by {dependent_variable} desc) as {h_s}
+                    ) over (order by {dependent_varname} desc) as {h_s}
                 from
                     {source_table} s
                 where
-                    {independent_variable} is not NULL and
-                    {schema_madlib}.array_contains_null({independent_variable}) is False and
-                    {dependent_variable} is not NULL
+                    {independent_varname} is not NULL and
+                    {schema_madlib}.array_contains_null({independent_varname}) is False and
+                    {dependent_varname} is not NULL
             """.format(temp_H_S=temp_H_S, model_table=model_table,
                        clustervar=clustervar, x=x, y=y, status=status,
                        h_s=h_s, schema_madlib=schema_madlib, **info))
@@ -95,20 +95,20 @@ def clustered_coxph(schema_madlib, model_table, output_table,
                 select
                     {clustervar},
                     {strata},
-                    ({independent_variable})::float8[] as {x},
-                    ({dependent_variable})::float8 as {y},
+                    ({independent_varname})::float8[] as {x},
+                    ({dependent_varname})::float8 as {y},
                     ({right_censoring_status})::boolean as {status},
                     {schema_madlib}.coxph_h_s(
-                        {independent_variable},
+                        {independent_varname},
                         (select coef from {model_table})
                     ) over (partition by {strata}
-                            order by {dependent_variable} desc) as {h_s}
+                            order by {dependent_varname} desc) as {h_s}
                 from
                     {source_table} s
                 where
-                    {independent_variable} is not NULL and
-                    {schema_madlib}.array_contains_null({independent_variable}) is False and
-                    {dependent_variable} is not NULL
+                    {independent_varname} is not NULL and
+                    {schema_madlib}.array_contains_null({independent_varname}) is False and
+                    {dependent_varname} is not NULL
             """.format(temp_H_S=temp_H_S, model_table=model_table,
                        clustervar=clustervar, x=x, y=y, status=status,
                        h_s=h_s, schema_madlib=schema_madlib, **info))
@@ -132,7 +132,7 @@ def clustered_coxph(schema_madlib, model_table, output_table,
                        x=x, y=y, status=status, h_s=h_s, h=h, s=s,
                        schema_madlib=schema_madlib, clustervar=clustervar,
                        **info))
- 
+
     plpy.execute(
         """
         create table {output_table} as
@@ -141,7 +141,7 @@ def clustered_coxph(schema_madlib, model_table, output_table,
                 '{clustervar}'::TEXT as clustervar,
                 (v.f).std_err as clustered_se,
                 (v.f).z_stats as clustered_z,
-                (v.f).p_values as clustered_p, 
+                (v.f).p_values as clustered_p,
                 u.hessian
             from (
                 select {schema_madlib}.coxph_compute_clustered_stats(
@@ -149,10 +149,10 @@ def clustered_coxph(schema_madlib, model_table, output_table,
                     (select hessian from {model_table}),
                     s3.a) as f
                 from (
-                    select 
+                    select
                         {schema_madlib}.matrix_agg(s2.w) as a
                     from (
-                        select 
+                        select
                             m4_ifdef(`__POSTGRESQL__', `{schema_madlib}.__array_')sum(s1.w) as w
                         from (
                             select
@@ -190,7 +190,7 @@ def _validate_params(schema_madlib, model_table, output_table, clustervar):
     """
     if clustervar is None or clustervar.lower().strip() in ("", "null"):
         plpy.error("CoxPH clustered variance error: clustervar must be specified!")
-        
+
     _assert(model_table is not None and table_exists(model_table),
             "Clustered Variance Cox error: Model data table does not exist")
 
@@ -204,7 +204,7 @@ def _validate_params(schema_madlib, model_table, output_table, clustervar):
             " - some required columns missing")
 
     _assert(columns_exist_in_table(model_table + '_summary',
-            ['source_table', 'dependent_variable', 'independent_variable',
+            ['source_table', 'dependent_varname', 'independent_varname',
                 'right_censoring_status', 'strata']),
             "Clustered Variance Cox error: Invalid model summary table"
             " - some required columns missing")
@@ -229,7 +229,7 @@ def _validate_params(schema_madlib, model_table, output_table, clustervar):
     # To warn users who have multiple rows in the model table.
     if not_null_coef > 1:
         plpy.warning("Clustered Variance Cox Warning: multiple rows in "
-                "model_table {model_table}".format(model_table=model_table))
+                     "model_table {model_table}".format(model_table=model_table))
 
     coef_contains_null = plpy.execute("""
             SELECT {schema_madlib}.array_contains_null(coef) OR
@@ -237,7 +237,7 @@ def _validate_params(schema_madlib, model_table, output_table, clustervar):
                 AS contains_null
             FROM {model_table}
             """.format(schema_madlib=schema_madlib,
-            model_table=model_table))[0]["contains_null"]
+                       model_table=model_table))[0]["contains_null"]
 
     _assert(not coef_contains_null,
             "Clustered Variance Cox error: coef or hessian array in {0} contains "
@@ -250,9 +250,9 @@ def _validate_params(schema_madlib, model_table, output_table, clustervar):
                                     "{model_table}_summary".format(
                                         model_table=model_table))[0]['source_table']
         if not columns_exist_in_table(source_table,
-                                _string_to_array(clustervar), schema_madlib):
+                                      _string_to_array(clustervar), schema_madlib):
             plpy.error("Clustered Variance Cox error: Cluster column does not exist!")
-    
+
         where_str = " or ".join("\"" + cl + "\" is NULL" for cl in _string_to_array(clustervar))
         cluster_null_count = plpy.execute(
             """
@@ -266,7 +266,7 @@ def _validate_params(schema_madlib, model_table, output_table, clustervar):
 
                 The result might be different from the default results of R or Stata,
                 because MADlib treats the NULL as a valid value for clustering.
-                
+
                 In order to obtain the same result as the default result of R's coxph
                 function or Stata's stcox function, all rows that contain NULL values
                 in the clustering columns need to be filtered out before using

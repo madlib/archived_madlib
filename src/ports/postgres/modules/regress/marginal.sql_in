@@ -1377,6 +1377,91 @@ CREATE AGGREGATE MADLIB_SCHEMA.__margins_int_mlogregr_agg(
     INITCOND='{0, 0, 0, 0, 0, 0, 0, 0, 0}'
 );
 
+--------------------------------------------------------------------------------
+----------- Marginal Cox Proportional Hazards w/ Interaction ------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_coxph_int_transition(
+    state                 DOUBLE PRECISION[],
+    x                     DOUBLE PRECISION[],
+    coef                  DOUBLE PRECISION[],
+    vcov                  DOUBLE PRECISION[],
+    basis_indices         DOUBLE PRECISION[],
+    derivative_matrix     DOUBLE PRECISION[],
+    categorical_indices   DOUBLE PRECISION[],
+    x_set                 DOUBLE PRECISION[],
+    x_unset               DOUBLE PRECISION[]
+    )
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'margins_coxph_int_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+--------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_coxph_int_merge(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'margins_coxph_int_merge'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+--------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_coxph_int_final(
+    state DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.margins_result
+AS 'MODULE_PATHNAME', 'margins_coxph_int_final'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+--------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__margins_compute_stats(
+    marginal_effects DOUBLE PRECISION[],
+    std_err DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.margins_result
+AS 'MODULE_PATHNAME', 'margins_compute_stats'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+/**
+ * @brief Compute marginal effects for multinomial logistic regression.
+ *
+ * @param dependentVariable Column containing the dependent variable
+ * @param independentVariables Column containing the array of independent variables
+ * @param coef Column containing the array of the  coefficients (as obtained by logregr)
+ *
+ *
+ * @return A composite value:
+ *  - <tt>margins FLOAT8[] </tt>          - Array of marginal effects
+ *  - <tt>std_err FLOAT8[]</tt>           - Array of standard-errors (calculated by the delta method),
+ *  - <tt>z_stats FLOAT8[]</tt>           - Array of z-statistics
+ *  - <tt>p_values FLOAT8[]</tt>          - Array of p-values
+ *
+ * @usage
+ *  - Get all the diagnostic statistics:\n
+ *
+ * </pre>
+ */
+
+CREATE AGGREGATE MADLIB_SCHEMA.__margins_int_coxph_agg(
+    /*+ "independentVariables" */  DOUBLE PRECISION[],
+    /*+ "coef" */                  DOUBLE PRECISION[],
+    /*+ "vcov" */                  DOUBLE PRECISION[],
+    /*+ "basis_indices" */         DOUBLE PRECISION[],
+    /*+ "derivative matrix" */     DOUBLE PRECISION[],
+    /*+ "categorical_indices" */   DOUBLE PRECISION[],
+    /*+ "x_set" */                 DOUBLE PRECISION[],
+    /*+ "x_unset" */               DOUBLE PRECISION[]
+    )(
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.__margins_coxph_int_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `PREFUNC=MADLIB_SCHEMA.__margins_coxph_int_merge,')
+    FINALFUNC=MADLIB_SCHEMA.__margins_coxph_int_final,
+    INITCOND='{0, 0, 0, 0, 0, 0, 0, 0, 0}'
+);
+
 -------------------------------------------------------------------------
 -- New interface for margins
 -------------------------------------------------------------------------
@@ -1451,6 +1536,9 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
 -------------------------------------------------------------------------------------
 
+-- Dummy coding functions
+-- These functions should be moved to a separate module
+-- related to categorical variables
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_dummy_coding(
     origin_table   TEXT,
     out_table      TEXT,
