@@ -17,6 +17,8 @@ from utilities.utilities import py_list_to_sql_string
 from utilities.control import MinWarning
 
 from margins_builder import MarginalEffectsBuilder
+
+import re
 #------------------------------------------------------------------------------
 
 
@@ -110,7 +112,7 @@ conditional mean of a response (dependent variable) for a change in one of the
 regressors (independent variable).
 
 We currently only support margins for linear, logistic,
-multinomial logistic regression, and cox proportaional hazard.
+multinomial logistic regression, and cox proportional hazard.
 
 For more details on function usage:
     SELECT {schema_madlib}.margins('usage')
@@ -133,7 +135,7 @@ For more details on function usage:
     );
 
 -----------------------------------------------------------------------
-                            OUTUPT
+                            OUTPUT
 -----------------------------------------------------------------------
 The output table ('output_table' above) has the following columns
     variables       INTEGER[],            -- Indices of the basis variables,
@@ -269,16 +271,16 @@ def _get_categorical_set_unset_strings(x_design_parser, indep_name='x', shortene
     Return strings that represent the discrete difference strings (set and unset)
     string, along with the indices for all the categorical variables.
     """
-    subset_cat_indices = x_design_parser.get_indicator_indices()
-    # subset_cat_indices represents the indices of the categorical variables
+    subset_indicators = x_design_parser.get_subset_indicator_terms()
+    # subset_cat_indices represents the indicator variables
     # that are present in x_design_parser.subset_basis
     indicators_set_string = []
     indicators_unset_string = []
     create_indicator_string = lambda x: (py_list_to_sql_string(x,
-                                         array_type="double precision[]"))
-    for each_index in subset_cat_indices:
+                                         array_type="double precision"))
+    for each_term in subset_indicators:
         set_list, unset_list = x_design_parser.get_discrete_diff_arrays(
-            each_index, indep_name, shortened_output=shortened_output)
+            each_term, indep_name, shortened_output=shortened_output)
         set_list[:] = [i for i in set_list if i is not None]
         unset_list[:] = [i for i in unset_list if i is not None]
         # create two matrices - 1 with all set expressions,
@@ -287,9 +289,9 @@ def _get_categorical_set_unset_strings(x_design_parser, indep_name='x', shortene
         indicators_unset_string.append(create_indicator_string(unset_list))
 
     # create strings that represent the categorical discrete differences
-    if subset_cat_indices:
-        return (py_list_to_sql_string(indicators_set_string),
-                py_list_to_sql_string(indicators_unset_string))
+    if subset_indicators:
+        return [py_list_to_sql_string(i, array_type="double precision")
+                for i in (indicators_set_string, indicators_unset_string)]
     else:
         return ("NULL::double precision[]", "NULL::double precision[]")
 #------------------------------------------------------------------------------
@@ -297,16 +299,17 @@ def _get_categorical_set_unset_strings(x_design_parser, indep_name='x', shortene
 
 def _parse_marginal_vars(marginal_var_str):
     """
-    Marginal vars is supposed to be a list of integers separated by ','.
+    Marginal vars is supposed to be a list of identifiers separated by ','.
     It's possible that the user inputs it as an array string
     eg: ARRAY[1, 2, 3, 4] or '{2, 4, 5}'. We strip out the 'ARRAY' if present in
-    front and also strip and square/curly brackets.
+    front and also strip square/curly brackets.
     """
     if str.lower(marginal_var_str.strip()[:6]) == "array[":
         marginal_var_str = marginal_var_str[5:]
     marginal_var_str = marginal_var_str.strip(" {}[]")
     try:
-        marginal_var_list = map(int, marginal_var_str.split(','))
+        reg = re.compile('".*?"|[^\,]+')
+        marginal_var_list = [i.strip() for i in reg.findall(marginal_var_str.strip())]
     except Exception:
         raise ValueError("Margins error: Invalid input for marginal vars: {0}".
                          format(marginal_var_str))
@@ -367,40 +370,46 @@ def _get_parser(coef, x_design, marginal_vars=None):
             marginal_var_list: List of marginal variables
 
     """
+    if marginal_vars:
+        marginal_vars = marginal_vars.strip()
+
     n_indep = len(coef)
     if not x_design:
         x_design = ','.join(str(i+1) for i in range(n_indep))
 
     x_design_parser = MarginalEffectsBuilder(x_design)
+
     _assert(x_design_parser.n_total_terms == n_indep,
             "Margins error: Invalid x_design. Number of terms in x_design ({0}) "
             "not same as number of independent variables ({1})".
             format(x_design_parser.n_total_terms, n_indep))
 
+    basis_identifiers = x_design_parser.get_all_basis_identifiers()
     if marginal_vars:
         # basis terms are not necessarily continguous
         # example: basis_terms = [1, 2, 3, 5, 8, 11]
         # If all variables are needed in output then
         #   marginal_var_list would be [1, 2, 3, 4, 5, 6] (max value would be len(basis_terms))
         marginal_var_list = _parse_marginal_vars(marginal_vars)
-        _assert(all(x in x_design_parser.basis_terms for x in marginal_var_list),
+
+        _assert(all(x in basis_identifiers.keys() for x in marginal_var_list),
                 "Margins error: marginal_vars argument contains values not "
                 "present as a basis variable in x_design")
-        marginal_var_list = [x_design_parser.basis_terms.index(i) + 1 for i in marginal_var_list]
     else:
-        marginal_var_list = range(1, x_design_parser.n_basis_terms + 1)
+        # marginal_var_list
+        marginal_var_list = x_design_parser.get_sorted_basis_identifiers()
 
     # do not return any answer for reference terms
     ref_terms_removed = []
     if x_design_parser.reference_terms:
-        for each_ref in x_design_parser.get_all_reference_indices():
-            each_ref_index = x_design_parser.basis_terms.index(each_ref) + 1
-            if each_ref_index in marginal_var_list:
-                marginal_var_list.remove(each_ref_index)
-                ref_terms_removed.append(each_ref_index)
+        for each_ref in x_design_parser.reference_terms.values():
+            if each_ref.identifier in marginal_var_list:
+                marginal_var_list.remove(each_ref.identifier)
+                ref_terms_removed.append(each_ref.identifier)
+
+    plpy.info("Reference term removed ---> " + str(ref_terms_removed))
 
     x_design_parser.subset_basis = marginal_var_list
-
     if ref_terms_removed:
         plpy.warning("""
             Warning: Reference terms (Variable(s): {ref_terms}) are present in output variables. "
@@ -440,12 +449,17 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
     if not x_design_parser.subset_basis:
         raise ValueError("Invalid marginal variables selected.")
 
+    plpy.info("----------> " + str(x_design_parser.subset_basis))
+
     # 3) Create a matrix representing the 2nd partial derivative
     #  (1st order wrt x and 2nd order wrt \beta). For categorical, this is
     # the discrete difference.
     indep_name = 'x'
-    derivative_str = x_design_parser.create_2nd_derivative_matrix(indep_name)
-
+    derivative_list = x_design_parser.create_2nd_derivative_matrix(indep_name)
+    derivative_str = py_list_to_sql_string(
+        [py_list_to_sql_string(i, array_type="double precision")
+         for i in derivative_list],
+        array_type="double precision")
     # grouping arguments
     if not grouping_col:
         grouping_str1 = ""
@@ -489,13 +503,17 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
                    out_table=out_table,
                    independent_varname=independent_varname,
                    indep_name=indep_name,
-                   index_array=py_list_to_sql_string(x_design_parser.subset_basis),
+                   index_array=py_list_to_sql_string(
+                       [x_design_parser.basis_terms[i]
+                        for i in x_design_parser.subset_basis],
+                       array_type="text"),
                    model_table=model_table,
                    derivative_str=derivative_str,
                    grouping_str1=grouping_str1,
                    grouping_str2=grouping_str2,
                    using_str=using_str,
                    join_str=join_str)
+    plpy.info(execute_string)
     plpy.execute(execute_string)
 
 
@@ -531,16 +549,26 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
 
     # 3) Create a matrix representing the 2nd partial derivative
     #       (1st order wrt x and 2nd order wrt \beta)
-    coef_array_name = 'coef'
     indep_name = 'x'
     if x_design_parser.contains_interaction():
-        derivative_str = x_design_parser.create_2nd_derivative_matrix(indep_name)
+        derivative_list = x_design_parser.create_2nd_derivative_matrix(indep_name)
+        derivative_str = py_list_to_sql_string(
+            [py_list_to_sql_string(i, array_type="double precision")
+             for i in derivative_list],
+            array_type="double precision")
     else:
         derivative_str = "NULL::double precision[]"
 
     # 4) Build the margins for indicator variables as discrete differences
     set_string, unset_string = _get_categorical_set_unset_strings(
         x_design_parser, indep_name, shortened_output=True)
+
+    if x_design_parser.contains_indicators():
+        zero_base_categorical_indices = py_list_to_sql_string(
+            [i - 1 for i in x_design_parser.get_all_indicator_indices()],
+            array_type="double precision")
+    else:
+        zero_base_categorical_indices = "NULL::double precision[]"
 
     # grouping arguments
     if not grouping_col:
@@ -554,12 +582,7 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
         using_str = "USING (" + grouping_col + ")"
         join_str = "LEFT OUTER JOIN "
 
-    if x_design_parser.contains_indicators():
-        zero_base_categorical_indices = py_list_to_sql_string(
-            [i - 1 for i in x_design_parser.get_all_indicator_indices()])
-    else:
-        zero_base_categorical_indices = "NULL::double precision[]"
-
+    plpy.info("Executing query....")
     execute_string = """
         CREATE TABLE {out_table} AS
             SELECT
@@ -595,8 +618,10 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
                    out_table=out_table,
                    independent_varname=independent_varname,
                    indep_name=indep_name,
-                   coef_array_name=coef_array_name,
-                   index_array=py_list_to_sql_string(x_design_parser.subset_basis),
+                   index_array=py_list_to_sql_string(
+                        [x_design_parser.basis_terms[i]
+                         for i in x_design_parser.subset_basis],
+                        array_type="text"),
                    zero_base_categorical_indices=zero_base_categorical_indices,
                    model_table=model_table,
                    derivative_str=derivative_str,
@@ -607,7 +632,8 @@ def margins_logregr(schema_madlib, model_table, out_table, source_table,
                    using_str=using_str,
                    join_str=join_str,
                    zero_base_subset_indices=py_list_to_sql_string(
-                       [i - 1 for i in x_design_parser.subset_basis]))
+                       [i - 1 for i in x_design_parser.subset_basis],
+                       array_type="double precision"))
     plpy.execute(execute_string)
 
 
@@ -643,22 +669,24 @@ def margins_mlogregr(schema_madlib, model_table, out_table, source_table,
 
     # 3) Create a matrix representing the 2nd partial derivative
     #       (1st order wrt x and 2nd order wrt \beta)
-    coef_array_name = 'coef'
     indep_name = 'x'
     if x_design_parser.contains_interaction():
-        derivative_str = x_design_parser.create_2nd_derivative_matrix(indep_name)
+        derivative_list = x_design_parser.create_2nd_derivative_matrix(indep_name)
+        derivative_str = py_list_to_sql_string(
+            [py_list_to_sql_string(i, array_type="double precision")
+             for i in derivative_list],
+            array_type="double precision")
     else:
         derivative_str = "NULL::double precision[]"
 
     # 4) Build the margins for indicator variables as discrete differences
-    set_string, unset_string = \
-        _get_categorical_set_unset_strings(x_design_parser,
-                                           indep_name,
-                                           shortened_output=True)
+    set_string, unset_string = _get_categorical_set_unset_strings(
+        x_design_parser, indep_name, shortened_output=True)
 
     if x_design_parser.contains_indicators():
         zero_base_categorical_indices = py_list_to_sql_string(
-            [i - 1 for i in x_design_parser.get_all_indicator_indices()])
+            [i - 1 for i in x_design_parser.get_all_indicator_indices()],
+            array_type="double precision")
     else:
         zero_base_categorical_indices = "NULL::double precision[]"
 
@@ -720,10 +748,13 @@ def margins_mlogregr(schema_madlib, model_table, out_table, source_table,
                    out_table=out_table,
                    independent_varname=independent_varname,
                    indep_name=indep_name,
-                   coef_array_name=coef_array_name,
-                   index_array=py_list_to_sql_string(x_design_parser.subset_basis),
+                   index_array=py_list_to_sql_string(
+                        [x_design_parser.basis_terms[i]
+                         for i in x_design_parser.subset_basis],
+                        array_type="text"),
                    zero_base_subset_indices=py_list_to_sql_string(
-                       [i - 1 for i in x_design_parser.subset_basis]),
+                       [i - 1 for i in x_design_parser.subset_basis],
+                       array_type="double precision"),
                    zero_base_categorical_indices=zero_base_categorical_indices,
                    summary_table=summary_table,
                    derivative_str=derivative_str,
@@ -775,21 +806,24 @@ def margins_coxph(schema_madlib, model_table, out_table, source_table,
 
     # 3) Create a matrix representing the 2nd partial derivative
     #       (1st order wrt x and 2nd order wrt \beta)
-    coef_array_name = 'coef'
     indep_name = 'x'
     if x_design_parser.contains_interaction():
-        derivative_str = x_design_parser.create_2nd_derivative_matrix(indep_name)
+        derivative_list = x_design_parser.create_2nd_derivative_matrix(indep_name)
+        derivative_str = py_list_to_sql_string(
+            [py_list_to_sql_string(i, array_type="double precision")
+             for i in derivative_list],
+            array_type="double precision")
     else:
         derivative_str = "NULL::double precision[]"
 
     # 4) Build the margins for indicator variables as discrete differences
-    set_string, unset_string = \
-        _get_categorical_set_unset_strings(x_design_parser,
-                                           indep_name,
-                                           shortened_output=True)
+    set_string, unset_string = _get_categorical_set_unset_strings(
+        x_design_parser, indep_name, shortened_output=True)
+
     if x_design_parser.contains_indicators():
         zero_base_categorical_indices = py_list_to_sql_string(
-            [i - 1 for i in x_design_parser.get_all_indicator_indices()])
+            [i - 1 for i in x_design_parser.get_all_indicator_indices()],
+            array_type="double precision")
     else:
         zero_base_categorical_indices = "NULL::double precision[]"
 
@@ -824,13 +858,16 @@ def margins_coxph(schema_madlib, model_table, out_table, source_table,
                    out_table=out_table,
                    independent_varname=independent_varname,
                    indep_name=indep_name,
-                   coef_array_name=coef_array_name,
-                   index_array=py_list_to_sql_string(x_design_parser.subset_basis),
+                   index_array=py_list_to_sql_string(
+                        [x_design_parser.basis_terms[i]
+                         for i in x_design_parser.subset_basis],
+                        array_type="text"),
                    strata_col_str=strata_col_str,
                    strata_cols=strata_cols,
                    model_table=model_table,
                    zero_base_subset_indices=py_list_to_sql_string(
-                       [i - 1 for i in x_design_parser.subset_basis]),
+                       [i - 1 for i in x_design_parser.subset_basis],
+                       array_type="double precision"),
                    zero_base_categorical_indices=zero_base_categorical_indices,
                    derivative_str=derivative_str,
                    set_string=set_string,

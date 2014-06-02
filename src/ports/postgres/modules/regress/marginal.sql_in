@@ -46,7 +46,7 @@ of the 'margins' function.
 @anchor margins
 @par Marginal Effects with Interaction Terms
 <pre class="syntax">
-margins( modele_table,
+margins( model_table,
          output_table,
          x_design,
          source_table,
@@ -55,7 +55,7 @@ margins( modele_table,
 </pre>
 \b Arguments
 <dl class="arglist">
-    <dt>modele_table</dt>
+    <dt>model_table</dt>
     <dd>VARCHAR. Name of the model table, which is the output of
         '<em>logregr_train</em>' and '<em>mlogregr_train</em>'.</dd>
     <dt>output_table</dt>
@@ -85,16 +85,17 @@ margins( modele_table,
         </table>
     </dd>
     <dt>x_design(optional)</dt>
-    <dd>VARCHAR, default: NULL. The design of indepedent variables, necessary
-        only if interaction terms are present. This is necessary since the
-        independent variables in the underlying regression
-        could be a flat array, making it difficult to read interaction
-        effects between variables.
+    <dd>VARCHAR, default: NULL. The design of independent variables, necessary
+        only if interaction term or indicator (categorical) terms are present.
+        This parameter is necessary since the independent variables in the
+        underlying regression is not parsed to extract the relationship between
+        variables.
 
         Example:
         The user can provide independent_varname in the regression method
         either of the following ways:
-        - <code> ‘array[1, color_blue, color_green, gender_female, gpa, gpa^2, gender_female*gpa, gender_female*gpa^2, weight]’ </code>
+        - <code> ‘array[1, color_blue, color_green, gender_female, gpa, gpa^2,
+                        gender_female*gpa, gender_female*gpa^2, weight]’ </code>
         - <code> ‘x’ </code>
 
         In the second version, the column ‘x’ is an array containing data
@@ -103,8 +104,28 @@ margins( modele_table,
 
         The user would then supply an x_design argument to the <em>margins()</em>
         function in the following way:
-        - <code> ‘1, i.2.color, i.3.color, i.4.gender, 5, 5^2, 5*4, 5^2*4, 9’ </code>
+        - <code> ‘1, i.color_blue.color, i.color_green.color, i.gender_female,
+                  gpa, gpa^2, gender_female*gpa, gender_female*gpa^2, weight’</code>
+
+        The variable names (<em>'gpa', 'weight', ...</em>), referred here as
+        'identifiers', should be unique for each basis variable and need not be
+        same as the original variable name in '<em>independent_varname</em>'.
+        They should, however, be in the same order as the corresponding
+        variables in '<em>independent_varname</em>'. The length of
+        '<em>x_design</em>' is expected to be same as length of
+        '<em>independent_varname</em>'. Each 'identifier' name can only contain
+        alphanumeric characters and the underscore.
+
+        Indicator (dummy) variables are to be prefixed with an 'i.' (only
+        necessary  for the basis term, not needed in the interaction terms).
+        Indicator variables that are obtained from the same categorical variable
+        (like 'color_blue' and 'color_green') need to have a common and unique
+        suffix (like '.color'). The '.' is used to add the prefix and suffix.
+        If a reference indicator variable is present, it should contain a prefix
+        of 'ir.'.
+
         </dd>
+
     <dt>source_table (optional)</dt>
     <dd>VARCHAR, default: NULL. Name of data table to apply marginal effects on.
     If not provided or NULL then the marginal effects are computed on the training table.</dd>
@@ -114,10 +135,12 @@ margins( modele_table,
     marginal effects on. When NULL, computes marginal effects on all variables.</dd>
 </dl>
 
-@note No output will be provided for the reference dummy variable of a
-categorical variable. If a reference variable is included in the independent
-variables and <em>'marginal_vars'</em> contains it's index,
-the <em>'margins'</em> function will ignore that variable for the output.
+@note No output will be provided for the reference indicator variable, since the
+marginal effect for that variable is undefined. If a reference variable is
+included in the independent variables and <em>'marginal_vars'</em>, the
+<em>'margins'</em> function will ignore that variable for the output. The
+variable can still be included in the  regression and margins, since it will
+affect the values for other related indicator variables.
 
 @anchor logregr_train
 @par Marginal Effects for Logistic Regression
@@ -287,7 +310,7 @@ SELECT madlib.logregr_train( 'patients',
                            );
 SELECT madlib.margins( 'model_table',
                        'margins_table',
-                       '1, 2, 3, 2^2, 2*3',
+                       'intercept, treatment, trait_anxiety, treatment^2, treatment*trait_anxiety',
                        NULL,
                        NULL
                      );
@@ -296,26 +319,27 @@ SELECT * FROM margins_table;
 </pre>
 Result:
 <pre class="result">
-variables | {1,2,3}
+variables | {intercept, treatment, trait_anxiety}
 margins   | {-0.876046514609573,-0.0648833521465306,0.0177196513589633}
 std_err   | {0.551714275062467,0.373592457067442,0.00458001207971933}
 z_stats   | {-1.58786269307674,-0.173674149247659,3.86890930646828}
 p_values  | {0.112317391159946,0.862121554662231,0.000109323294026272}
 </pre>
 
--# Compute the marginal effects of the first variable using the previous model and view the results.
+-# Compute the marginal effects of the first variable using the previous model
+and view the results (using different names in 'x_design').
 <pre class="example">
 SELECT madlib.margins( 'model_table',
                        'result_table',
-                       '1, 2, 3, 2^2, 2*3',
+                       'i, tre, tra, tre^2, tre*tra',
                        NULL,
-                       '1'
+                       'treatment'
                      );
 SELECT * FROM result_table;
 </pre>
 Result:
 <pre class="result">
-variables | {1}
+variables | {tre}
 margins   | {-0.876046514609573}
 std_err   | {0.551714275062467}
 z_stats   | {-1.58786269307674}
@@ -342,11 +366,6 @@ Result:
 ...
 </pre>
 
--#  Get help for the marginal effects multinomial logistic regression function.
-<pre class="example">
-SELECT margins_mlogregr('help');
-</pre>
-
 -# Run the regression function and then compute the marginal effects of all variables in the regression.
 <pre class="example">
 SELECT madlib.mlogregr_train('data', 'model_table', 'category',
@@ -354,30 +373,28 @@ SELECT madlib.mlogregr_train('data', 'model_table', 'category',
                              0)
 SELECT madlib.margins('model_table',
                       'result_table',
-                      '1, 2, 3, 2*3');
+                      'intercept, feature_1, feature_2, feature_1*feature2');
 SELECT * FROM result_table;
 </pre>
 Result:
 <pre class="result">
-margins  | {0.741613239156,-0.032868883552,-0.0144502990691,-0.972055011831,0.112337273885,0.0172621628253}
-std_err  | {0.183172236055,0.044184899499,0.00332608999704,0.263532615748,0.0555196094594,0.00457999429836}
-z_stats  | {4.04872078394,-0.743894043547,-4.34453038911,-3.68855676202,2.02338011702,3.76903587663}
-p_values | {5.149834e-05, 4.569406e-01, 1.395739e-05, 2.255297e-04, 4.303397e-02, 1.638793e-04}
+variables | {intercept, feature_1, feature_2, feature_1*feature2}
+margins   | {0.741613239156,-0.032868883552,-0.0144502990691,-0.972055011831,0.112337273885,0.0172621628253}
+std_err   | {0.183172236055,0.044184899499,0.00332608999704,0.263532615748,0.0555196094594,0.00457999429836}
+z_stats   | {4.04872078394,-0.743894043547,-4.34453038911,-3.68855676202,2.02338011702,3.76903587663}
+p_values  | {5.149834e-05, 4.569406e-01, 1.395739e-05, 2.255297e-04, 4.303397e-02, 1.638793e-04}
 </pre>
 
 @anchor notes
-@par Notes
 
-- The <em>marginal_vars</em> argument is an index list (base 1) with the set of indices
-amongst the independent variables that must be selected.
-Use <em>NULL</em> to use all independent variables. It is important to note here
-that the <em>independent_varname</em> in the underlying regression is assumed to
-start with a lower bound index of 1. Arrays that don't follow this would result
-in incorrect solution.
-
-- For <b>multinomial logistic regression</b>, selectively picking the marginal
-effects of the independent variables will return the marginal effects of \e all
-categories associated with the independent variable.
+@note The <em>marginal_vars</em> argument is a list with the names matching those in
+'x_design'. If no 'x_design' is present (i.e. no interaction and no indicator
+variables), then <em>marginal_vars</em> have to be the indices (base 1) of
+variables in 'independent_varname'.
+Use <em>NULL</em> to use all independent
+variables. It is important to note here that the <em>independent_varname</em> in
+the underlying regression is assumed to start with a lower bound index of 1.
+Arrays that don't follow this would result in an incorrect solution.
 
 @anchor background
 @par Technical Background
@@ -1151,7 +1168,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 -- Marginal effects with Interactions terms
 -----------------------------------------------------------------------
 
-DROP TYPE IF EXISTS MADLIB_SCHEMA.margins_result;
+DROP TYPE IF EXISTS MADLIB_SCHEMA.margins_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.margins_result AS (
     margins  DOUBLE PRECISION[],
     std_err  DOUBLE PRECISION[],
